@@ -1,0 +1,108 @@
+// Domain-owned export projections. Generation sees pages, never metadata keys.
+// No generic "dump record" fallback: adding a persisted family needs an explicit
+// projection or a reasoned exclusion, and the inventory test pins that choice.
+import {FLAGS} from '../flags/registry.mjs';
+import {fault} from '../app/faults.mjs';
+import {exportPath} from './export-tar.mjs';
+const fields=text=>text.split(' '),pick=(row,names)=>Object.fromEntries(names.filter(k=>row?.[k]!==undefined).map(k=>[k,structuredClone(row[k])]));
+const COMMON=fields('v version id owner name label title description status state createdAt updatedAt modifiedAt expiresAt revision generation');
+// These fields can occur inside otherwise public descriptors. User message
+// bytes are separate immutable payloads and never pass through this projection.
+const PRIVATE=/^(?:blobRef|secret|sharedSecret|returnCapability|bootstrap|bootstrapMaterial|passwordHash|recoveryHash|sessionHash|csrfHash|token|tokens|accessToken|refreshToken|oauthToken|s3Key|privateKey|privateJwk|endpoint|auth|p256dh|jti|jtis|unsubscribeToken|credential|credentials|sealed|ciphertext)$/i;
+function publicValue(value){if(value?.kty)return pick(value,fields('kty crv x y n e alg kid use key_ops'));if(Array.isArray(value))return value.map(publicValue);if(value&&typeof value==='object')return Object.fromEntries(Object.entries(value).filter(([key])=>!PRIVATE.test(key.replace(/[-_]/g,''))&&!/hash|secret|token|bootstrap|password|private|vault|csrf|recovery/i.test(key)).map(([key,v])=>[key,publicValue(v)]));return value;}
+const projection=(row,names)=>Array.isArray(row)?row.map(v=>projection(v,names)):row&&typeof row==='object'?publicValue(pick(row,[...COMMON,...fields(names)])):row;
+const definitions=[
+ ['messages',['message/'],'collection mimeType size receivedAt readAt tags classification quarantined senderMetadata conversation grantId revision presentation'],
+ ['collections',['collection/'],'active'],['tags',['tag-labels/'],'labels'],['rules',['rules/','rule-defaults/'],'actions filter conditions enabled origin automatic updatedAt'],
+ ['views',['message-views/'],'filter sort'],['activity',['activity-item/'],'app item activity source content occurredAt readAt tags collection'],
+ ['notifications',['notification-preferences/','push-subscription/','activity-push-policy/','activity-push-app/','activity-push-device/'],'enabled email push collections quietHours rules previewConsent consent preferences'],
+ ['contacts',['contact-name/'],''],['contact-grants',['contact-grant/'],'recipient active quarantined claims revokedAt'],
+ ['conversations',['conversation/room/','conversation/history/','conversation/event/'],'source collection members permissions eventId threadId replyTo body content author occurredAt'],
+ ['links',['link/','link-change/'],'target recipient active revokedAt resource key methods scope'],
+ ['resources',['resource/','hosted/'],'provider builtin contracts capabilities verifiedAt key version size contentType modifiedAt'],
+ ['connections',['resource/'],'provider clientId scope fragments resources methods integration connectedAt disconnectedAt'],
+ ['integrations',['connections/slot/'],'slot occupants purposes selection'],
+ ['events',['evbus/bus/','evbus/rec/'],'bus seq schema spec manifest digest host retention retentionSeconds features type published_at publisher data content payload source occurredAt'],
+ ['external-storage',['drive/object/','drive/folder/'],'provider resource resourceId bucket prefix folderId key objectId fileId version size contentType'],
+ ['billing',['billing/state','billing/ever-paid/'],'plan periodStart periodEnd cancelAtPeriodEnd customerId since paidAt validUntil currency annualAmount subscriptionId pendingChange'],
+ ['lifecycle',['lifecycle/state-v1','lifecycle/paid-protection-v1','lifecycle/unpaid-origin-v1','retention/'],'phase deadlines notice lastActivityAt executeAfter graceDays usage exportOffered'],
+ ['quota',['quota/','hosted-usage','message-usage/'],'bytes messages objects limit storageBytes usage retention']
+];
+export const EXPORT_CLAIMED_PREFIXES=Object.freeze(Object.fromEntries(definitions.flatMap(([name,prefixes])=>prefixes.map(prefix=>[prefix,name]))));
+const excluded={
+ 'owner':'Identity subject is projected through the identity port.',
+ 'signing-key':'Secret: private keys leave only through the protected identity backup.',
+ 'identity-keys/':'Secret: private identity key material; public keys use the keys port.',
+ 'identity-encryption-key/':'Secret: encrypted private keys; public keys use the keys port.', 'encryption-key':'Secret: private-key pointer.', 'identity-key-retained/':'Key history is projected by the keys port.', 'identity-key-pruned/':'Derived: key pruning tombstones.',
+ 'contact-key/':'Secret: contact signing key.', 'contact-url/':'Secret: encrypted contact capability URL.',
+ 'vault/':'Secret: integration credentials.', 'resource-secret/':'Secret: connector credentials.',
+ 'activity-budget/':'Derived: abuse accounting.', 'activity-event/':'Transient: activity outbox.', 'activity-receipt/':'Transient: mutation receipts.',
+ 'activity-rev/':'Derived: activity index.', 'activity-tags/':'Derived: tag index.', 'activity-usage/':'Derived: quota counters.',
+ 'activity-push-bucket/':'Derived: push budgets.', 'activity-push-budget/':'Derived: push budgets.', 'activity-push-channel/':'Derived: channel readiness.',
+ 'activity-push-group/':'Transient: push coalescing.', 'activity-push-job/':'Transient: delivery queue.',
+ 'contact-author-day/':'Derived: anti-abuse counts.', 'contact-delivery-receipt/':'Transient: replay fence.',
+ 'message-receipt/':'Transient: message idempotency.', 'notification-email-budget/':'Derived: email budgets.',
+ 'message-receipt-budget/':'Derived: message ingress budgets.', 'message-postback/':'Secret: prepared form submissions.', 'message-postback-budget':'Derived: submission abuse accounting.',
+ 'notification-event/':'Transient: notification queue.', 'notification-job/':'Transient: delivery queue.', 'notification-unsubscribe/':'Secret: unsubscribe capabilities.',
+ 'search-queue-usage/':'Derived: search usage.', 'search-vector-revision/':'Derived: search vectors.',
+ 'search':'Derived: search indexes, queues and maintenance cursors.', 'item-index':'Derived: SQLite item index.',
+ 'beam/':'Transient: beam offers and capability material.', 'export/':'Transient: exports and download authority.',
+ 'deletion/':'Transient: deletion workflow and cancel-only capabilities; lifecycle projection carries owner deadlines.',
+ 'blob-garbage/':'Transient: physical deletion journal.', 'blob-garbage-cursor':'Transient: garbage continuation.',
+ 'message-view-receipts/':'Transient: mutation receipts.', 'message-views-receipts/':'Transient: mutation receipts.',
+ 'connections/outbox/':'Transient: severance delivery.', 'connections/cascade/':'Transient: cascade delivery.', 'connections/meta':'Derived: sequence and outbox counters.',
+ 'key-delegation/':'Public lineage is projected by the keys port; encrypted private authority is excluded.',
+ 'link-state/':'Derived: link sequence.', 'link-evaluations/':'Derived: link rate accounting.',
+ 'builtin/':'Derived: built-in resource pointer.', 'hosted-index':'Derived: hosted index.', 'storage/':'Transient: quota cleanup and reservations.',
+ 'rpc-journal/':'Transient: RPC replay journal.', 'links-rpc/':'Transient: RPC replay journal.',
+ 'integration-events/':'Transient: integration delivery outbox.', 'brokered/':'Secret: brokered authority and severance journal.',
+ 'shelved':'Derived: archive placement marker.', 'cold-index-mode':'Derived: archive placement marker.', 'lastOwnerActiveAt':'Lifecycle projection supplies activity time.', 'lastResourceActiveAt':'Lifecycle projection supplies activity time.',
+ 'lifecycle':'Lifecycle state uses the lifecycle contributor; transport/effect journals are transient.', '@alarm':'Transient: scheduler wake.',
+ 'maintenance/':'Transient: maintenance retry.', 'population/':'Derived: aggregate active population.',
+ 'billing/pending':'Transient: checkout intent.', 'billing/sync':'Derived: provider synchronization health.',
+ 'drive/oauth/':'Secret: OAuth callback state.', 'drive/folder-pending/':'Secret: folder creation and OAuth journal.', 'drive/pending/':'Transient: upload journal.', 'drive/retained/':'External mappings are projected by the external-storage port.', 'drive/usage/':'Derived: external quota counters.',
+ 'evbus/index/':'Derived: manifest index.', 'evbus/reader/':'Secret: reader cursor authority.', 'evbus/permit/':'Transient: history opt-in.', 'evbus/tx/':'Transient: publish journal.', 'evbus/rate/':'Derived: rate counters.', 'evbus/meter/':'Derived: quota meters.', 'evbus/wait/':'Transient: wait leases.',
+ 'conversation/outbox/':'Secret: delivery capabilities and pending tasks.', 'conversation/receipt/':'Transient: replay receipts.', 'conversation/delivery/':'Transient: fanout delivery tracking.', 'conversation/inbox-message/':'Transient: inbound replay receipts.', 'conversation/pending/':'Transient: pending invitations.',
+ 'google-drive/':'Secret: OAuth and callback state; external mapping uses a dedicated port.'
+};
+export const EXPORT_EXCLUDED_PREFIXES=Object.freeze(excluded);
+export function exportInventory(prefixes){return prefixes.map(prefix=>{const claimed=Object.keys(EXPORT_CLAIMED_PREFIXES).filter(p=>prefix.startsWith(p)).sort((a,b)=>b.length-a.length)[0];if(claimed)return {prefix,contributor:EXPORT_CLAIMED_PREFIXES[claimed]};const excluded=Object.keys(EXPORT_EXCLUDED_PREFIXES).filter(p=>prefix.startsWith(p)).sort((a,b)=>b.length-a.length)[0];return {prefix,...excluded?{reason:EXPORT_EXCLUDED_PREFIXES[excluded]}:{}};});}
+const stable=value=>{if(typeof value!=='string'||!/^[A-Za-z0-9_-]{1,100}$/.test(value))fault('invalid_export_id','A stable archive identifier is required.',409);return value;};
+export function identityExportRow(row){
+ const value=pick(row,fields('id handle aliases assignmentId createdAt status termsVersion termsAcceptedAt verifiedEmail emailVerifiedAt emailLoginEnabled audit lineage nameCertificate'));
+ value.passwordPresent=!!(row.passwordPresent??row.passwordHash??row.password);
+ value.passkeys=(row.passkeys??row.credentials??[]).map(v=>pick(v,fields('id label createdAt lastUsed backedUp')));
+ value.sessions=(row.sessions??[]).map(v=>pick(v,fields('label source createdAt lastUsed expiresAt')));value.audit=publicValue((value.audit??[]).slice(-100));const safe=publicValue(value);safe.passwordPresent=value.passwordPresent;return safe;
+}
+/** Read-only ports: identity(owner), keys(owner), grants.page({owner,cursor,limit}),
+ * externalStorage.page(...) (the decrypted host-held mapping, NEVER external
+ * bytes). Missing required ports fail closed rather than claim a complete export.
+ * Each contributor returns {rows,payloads,cursor,done}, at most limit rows and
+ * 500 payload descriptors (digested in groups of 32). `ref` stays private. */
+export function createExportContributors({accountStore,identity,keys,grants,externalStorage,flags,quota}={}){
+ const port=(name,reader,project)=>({name,version:1,async page({owner,cursor,limit}){if(!reader)fault('export_contributor_unavailable',`The ${name} export port is unavailable.`,503);const page=await reader({owner,cursor,limit});return {...page,rows:page.rows.map(project),payloads:[]};}});
+ const result=[
+  port('identity',identity&&(async({owner})=>({rows:[await identity(owner)],done:true})),identityExportRow),
+  port('keys',keys&&(async({owner})=>({rows:[await keys(owner)],done:true})),row=>projection(row,'publicKeys keyIds certificates backupWorkflow')),
+  port('grants',grants?.page?.bind(grants),row=>projection(row,'client clientId fragments fields resources methods created expires device label'))
+ ];
+ for(const [name,prefixes,names]of definitions){
+  if(name==='external-storage'){result.push(port(name,externalStorage?.page?.bind(externalStorage),row=>projection(row,names)));continue;}
+  result.push({name,version:1,prefixes,async page({owner,cursor,limit}){
+   const index=cursor?.index??0,prefix=prefixes[index],pageLimit=name==='messages'?Math.min(limit,15):limit,rows=await accountStore.list({prefix,startAfter:cursor?.after??'',limit:pageLimit}),payloads=[],out=[];
+   for(const [key,row]of rows){
+    if(row?.owner!==undefined&&row.owner!==owner||name==='connections'&&row?.kind!=='app-connection'||name==='resources'&&row?.kind==='app-connection')continue;
+    const value=name==='contacts'&&typeof row==='string'?{id:decodeURIComponent(key.split('/').filter(Boolean).at(-1)),name:row}:projection(row,names);out.push({schemaVersion:1,record:value});
+    if(row?.blobRef&&name==='messages')payloads.push({entryId:stable(row.id),kind:'message',source:{message:row.id,part:0},ref:row.blobRef,path:exportPath(`data/messages/${stable(row.id)}/0.bin`),size:row.size,contentType:row.mimeType});
+    if(name==='messages')for(const part of row.presentation?.history??[])if(part.blobRef)payloads.push({entryId:stable(row.id)+'_'+part.revision,kind:'message',source:{message:row.id,part:part.revision},ref:part.blobRef,path:exportPath(`data/messages/${stable(row.id)}/${part.revision}.bin`),size:part.size,contentType:part.mimeType??'application/octet-stream'});
+    if(row?.blobRef&&key.startsWith('hosted/')){const resource=key.split('/')[1];payloads.push({entryId:stable(row.version),kind:'object',source:{resource,key:row.key,version:row.version},ref:row.blobRef,path:exportPath(`data/objects/${stable(resource)}/${stable(row.version)}.bin`),size:row.size,contentType:row.contentType});}
+   }
+   const more=rows.size===pageLimit,next=more?{index,after:[...rows.keys()].at(-1)}:index+1<prefixes.length?{index:index+1}:null;
+   if(name==='quota'&&next===null){if(typeof quota!=='function')fault('export_contributor_unavailable','The quota export port is unavailable.',503);out.push({schemaVersion:1,limit:await quota(owner)});}
+   return {rows:out,payloads,cursor:next,done:next===null};
+  }});
+ }
+ result.push({name:'features',version:1,async page({owner}){const port=flags.for({subject:{kind:'account',owner}});return {rows:Object.values(FLAGS).filter(f=>f.class==='a').map(f=>({name:f.name,...port.evaluate(f.name)})),done:true};}});
+ result.push({name:'apps-held',version:1,async page({cursor,limit}){const rows=await accountStore.list({prefix:'resource/',startAfter:cursor??'',limit});return {rows:[...rows.values()].filter(v=>v.kind==='app-connection').map(v=>({...projection(v,'clientId provider'),guidance:'Export data held by this app through its own export controls.'})),cursor:rows.size===limit?[...rows.keys()].at(-1):null,done:rows.size<limit};}});
+ return result;
+}

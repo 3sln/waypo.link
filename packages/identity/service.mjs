@@ -7,10 +7,62 @@ import { IdentityCrypto, secureEqual } from './crypto.mjs';
 import { DeviceLogin } from './device-login.mjs';
 import { LinkedApproval, MemoryLinkedLimits, pruneLineage, revokeLineage, revokeAllLineage } from './linked-approval.mjs';
 
+/**
+ * DX-6 identity security state (docs/architecture/account-deletion-export.md §2.1, §3, §6, R1-H1).
+ *
+ * Record field `account.security = {epoch, changedAt}`:
+ *   epoch     non-negative safe integer. +1 in the SAME compareAndSwap as each security-sensitive change, so a
+ *             reader that sees a change also sees its bump, and a lost CAS race never bumps.
+ *   changedAt non-negative safe integer (identity clock, ms) of the latest bump; never moves backwards
+ *             (max(previous, now)), so a clock step cannot shorten the 72-hour window.
+ *   Creation (signup, operator onboarding, system bootstrap) writes {epoch:0, changedAt:createdAt}: establishing
+ *   the first credential is itself a security event. A record without the field (written before DX-6) reads as
+ *   {epoch:0, changedAt:0}. A malformed field fails closed: reads throw `identity_security_unavailable`.
+ *   The lifecycle tombstone discards it (not RETAINED; DX-3).
+ *
+ * Bumped by exactly these writes (one bump per CAS):
+ *   verified email added or changed (setupEmailConfirm, emailConfirm, only when the address differs),
+ *   verified email removed and the email-notice waiver (emailRemove), email sign-in enabled (configureEmailLogin
+ *   false→true), credential added (registerPasskey, credentialFinish) or removed (removePasskey), password set
+ *   (setPendingPassword; there is no other password-change path), recovery-file recovery (recover: start and resume)
+ *   and recovery-file rotation (downloadRecovery, which every setup and recovery completion requires).
+ * Never bumped by: sessions (create, use, close, revoke), step-up, terms acceptance, renames, passkey counter
+ *   updates, email-link or email-login requests, disabling email sign-in, handle claims. These are the cheap,
+ *   repeatable events that would otherwise let an attacker flush the change out of a rolling window.
+ *
+ * Trusted read-only port (never routed; adapters pass it to deletion and export):
+ *   identitySecurity(owner: UUID) → Promise<Readonly<{epoch:number, changedAt:number}> | null>
+ *     null  no identity record, or status 'deleted' (consumers fail closed);
+ *     throws on repository failure or malformed state (consumers fail closed).
+ *   Obtain it as `identitySecurityPort(repository)` (any repository with get(id): the Node IdentityRepository or the
+ *   Worker ShardedIdentityRepository) or `IdentityService#identitySecurity(owner)`.
+ *   Consumers: deletion grace (30 days when now - changedAt < 72 h; deadline >= changedAt + 14 d during grace),
+ *   the export ready-delay (notBefore = changedAt + 72 h) and the export download binding (job epoch === epoch).
+ *
+ * Email removal resources (constructor, both optional, both fail closed):
+ *   flags            flags port {for(ctx)} or a thunk returning the current one; EMAIL_REMOVAL_ENABLED is read with
+ *                    for({subject:{kind:'account', owner}}).enabled(). Missing port or unknown flag ⇒ disabled.
+ *   accountChannels  {state(owner) → {ready:boolean, count:number, revision:string}, notify?(owner, event)}; see
+ *                    packages/runtime/account-channels.mjs. Missing ⇒ no other notice channel.
+ */
+export const SECURITY_EVENTS = Object.freeze(['setup-email-verified','email-linked','email-removed','email-login-enabled','passkey-registered','passkey-added','passkey-removed','password-configured','recovery-file-issued','account-recovery-started','recovery-setup-resumed']);
 export class IdentityFault extends Error {
   constructor(code, message = 'The account request could not be completed.') { super(message); this.code = code; }
 }
-const fail = (code, message) => { throw new IdentityFault(code, message); };
+const fail = (code, message, status) => { const error = new IdentityFault(code, message); if (status) error.status = status; throw error; };
+const nonNegative = value => Number.isSafeInteger(value) && value >= 0;
+/** The record's security state; legacy records read as {epoch:0, changedAt:0}; malformed state throws. */
+export function securityState(account) {
+  if (account?.security === undefined) return Object.freeze({ epoch: 0, changedAt: 0 });
+  const { epoch, changedAt } = account.security ?? {};
+  if (!nonNegative(epoch) || !nonNegative(changedAt) || !Number.isSafeInteger(epoch + 1)) fail('identity_security_unavailable', 'Account security state needs review.', 503);
+  return Object.freeze({ epoch, changedAt });
+}
+/** identitySecurity(owner) over any identity repository with get(id). */
+export function identitySecurityPort(repository) {
+  if (typeof repository?.get !== 'function') throw new TypeError('An identity repository is required.');
+  return async owner => { const account = await repository.get(owner); return account && account.id === owner && account.status !== 'deleted' ? securityState(account) : null; };
+}
 const publicAccount = (a,badges=[]) => ({ id: a.id, handle: a.handle, status: a.status, createdAt: a.createdAt,
   badges,termsVersion: a.termsVersion, hasPassword: Boolean(a.passwordHash), passkeyCount: a.credentials.length,
   recoveryConfigured: Boolean(a.recoveryHash), paidHandle:a.paidHandle||null, aliases:[a.handle,...onboardingAlias(a)?[onboardingAlias(a)]:[],...a.paidHandle?[a.paidHandle]:[],...systemBadge(a)?[a.systemIdentity.handle]:[]],...systemBadge(a)?{systemBadge:systemBadge(a)}:{}, verifiedEmail: a.verifiedEmail || null, emailLoginEnabled: a.emailLoginEnabled === true, lastActiveAt: a.lastActiveAt });
@@ -40,7 +92,7 @@ const publicCredentials = account => account.credentials.map(({ id, label, devic
 /** Platform-independent account policy. Repository must implement linearizable
  * create and compareAndSwap; an in-memory repository is only a test resource. */
 export class IdentityService {
-  constructor({ repository, deviceRequests, linkedApprovals = deviceRequests, linkedLimits, linkedPollLimits, approvalNotices, crypto, clock = () => Date.now(), turnstile, rateLimiter, webauthn, passwordHasher, mailer, identityBackup, paidHandleEligibility, setupBilling, systemBootstrap, onboarding, resolveIdentityBadges, pushTransport, reservedHandle, config }) {
+  constructor({ repository, deviceRequests, linkedApprovals = deviceRequests, linkedLimits, linkedPollLimits, approvalNotices, crypto, clock = () => Date.now(), turnstile, rateLimiter, webauthn, passwordHasher, mailer, identityBackup, paidHandleEligibility, setupBilling, systemBootstrap, onboarding, resolveIdentityBadges, pushTransport, reservedHandle, flags, accountChannels, config }) {
     if (!repository || !turnstile || !rateLimiter || !webauthn || !passwordHasher || !config?.termsVersion) throw new TypeError('Identity resources and terms version are required');
     const origin = new URL(config.origin);
     if (origin.origin !== config.origin || origin.hostname !== config.rpID || (origin.protocol !== 'https:' && !(config.allowInsecureLocalhost && origin.protocol === 'http:' && origin.hostname === 'localhost'))) throw new TypeError('Exact RP origin is required');
@@ -50,7 +102,7 @@ export class IdentityService {
     // `linkedApprovals` is the renamed `deviceRequests` repository (create/get/findByUserCode/compareAndSwap).
     // `linkedLimits` is the durable window port for budgets; `linkedPollLimits` the non-durable poll limiter.
     this.deviceRequests = this.linkedApprovals = linkedApprovals; this.linkedLimits = linkedLimits ?? new MemoryLinkedLimits(clock); this.linkedPollLimits = linkedPollLimits ?? new MemoryLinkedLimits(clock); this.approvalNotices = approvalNotices;
-    this.setupBilling = setupBilling;this.systemBootstrap=systemBootstrap;this.onboarding=onboarding;this.resolveIdentityBadges=resolveIdentityBadges??defaultBadgeResolver;this.reservedHandle=reservedHandle;
+    this.setupBilling = setupBilling;this.systemBootstrap=systemBootstrap;this.onboarding=onboarding;this.resolveIdentityBadges=resolveIdentityBadges??defaultBadgeResolver;this.reservedHandle=reservedHandle;this.flags=flags;this.accountChannels=accountChannels;
     this.config = { rpName: '3sln.me', sessionTtlMs: 86400000, pendingTtlMs: 1800000, challengeTtlMs: 300000, ...config };
     if (!(this.config.sessionTtlMs > 0 && this.config.sessionTtlMs <= 86400000)) throw new TypeError('Sessions must expire within 24 hours');
   }
@@ -66,6 +118,10 @@ export class IdentityService {
     if (typeof input.turnstileToken !== 'string' || input.turnstileToken.length > 4096 || !await this.turnstile.verify({ token: input.turnstileToken, remoteIP: context.remoteIP, action: operation, hostname: new URL(this.config.origin).hostname })) fail('challenge_failed', 'Complete the security check and try again.');
   }
   audit(account, type) { account.audit = [...(account.audit || []).slice(-99), { id: this.crypto.id(), type, at: this.clock() }]; }
+  /** Bumps `security` on the record about to be CAS-written; call once per security-sensitive CAS (header JSDoc). */
+  securityChanged(account) { const { epoch, changedAt } = securityState(account); account.security = { epoch: epoch + 1, changedAt: Math.max(changedAt, this.clock()) }; }
+  /** Trusted read-only port (DX-6); see the header JSDoc for the contract. Never routed. */
+  async identitySecurity(owner) { return identitySecurityPort(this.repository)(owner); }
   async save(account, revision) {
     account.revision = revision + 1;
     if (!await this.repository.compareAndSwap(account.id, revision, account)) fail('conflict', 'The account changed; start this step again.');
@@ -128,7 +184,8 @@ export class IdentityService {
   }
   async sessionID(session) { return session.id || this.crypto.hash('session-public-id', session.hash); }
   // Privileged consoles need a per-session step-up, not merely a young session.
-  async privileged(context,windowMs=300000){const {account,session}=await this.authorized(context,true);if(!Number.isSafeInteger(session.stepUpAt)||session.stepUpAt>this.clock()||session.stepUpAt+windowMs<=this.clock())fail('step_up_required','Confirm your password or passkey to continue.');return {account,session,sessionId:await this.sessionID(session)};}
+  async privileged(context,windowMs=300000){const {account,session}=await this.authorized(context,true);this.requireStepUp(session,windowMs);return {account,session,sessionId:await this.sessionID(session)};}
+  requireStepUp(session,windowMs=300000){if(!Number.isSafeInteger(session.stepUpAt)||session.stepUpAt>this.clock()||session.stepUpAt+windowMs<=this.clock())fail('step_up_required','Confirm your password or passkey to continue.');}
   async stepUpBegin(input,context){const {account,session}=await this.authorized(context,true),revision=account.revision;if(!account.credentials.length)return {password:Boolean(account.passwordHash),passkey:false};const authenticationOptions=await this.webauthn.authenticationOptions({config:this.config});account.challenges=[...account.challenges.filter(c=>c.expiresAt>this.clock()&&c.purpose!=='step-up').slice(-4),{purpose:'step-up',value:authenticationOptions.challenge,sessionHash:session.hash,expiresAt:this.clock()+this.config.challengeTtlMs}];await this.save(account,revision);return {password:Boolean(account.passwordHash),passkey:true,authenticationOptions};}
   async stepUp(input,context){
     const {account,session}=await this.authorized(context,true),revision=account.revision;if(!await this.rateLimiter.check({operation:'step-up',remoteIP:context.remoteIP,handle:account.handle}))fail('rate_limited','Please wait before trying again.');
@@ -164,7 +221,7 @@ export class IdentityService {
     const account = { id, assignmentId, nameAssignmentId:assignmentId, revision: 0, handle: allocatedHandle, status: 'pending',
       admission:{version:1,kind:signupPlan==='free'?'free':'paid',plan:signupPlan,...signupPlan==='free'?{}:{incarnation:this.crypto.id(),checkoutStartUntil:this.clock()+86400000,initialPaymentRequired:true}},
       createdAt: this.clock(), lastActiveAt: this.clock(), termsVersion: this.config.termsVersion,
-      termsAcceptedAt: this.clock(), ...age, credentials: [], sessions: [], challenges: [], audit: [], recoveryHash: null, emailLoginEnabled: false,
+      termsAcceptedAt: this.clock(), ...age, security: { epoch: 0, changedAt: this.clock() }, credentials: [], sessions: [], challenges: [], audit: [], recoveryHash: null, emailLoginEnabled: false,
       passwordHash: selectedPassword ? await this.passwordHasher.hash(selectedPassword) : null };
     if(this.config.requireReachability===true){if(!context.setupBinding)fail('unauthorized','Start setup in the account browser.');account.setupBindingHash=await this.crypto.hash('setup-binding',context.setupBinding);}
     const pendingToken = await this.newPending(account,context);if(selectedPassword)await this.verifyPendingPassword(account,selectedPassword);
@@ -186,7 +243,7 @@ export class IdentityService {
     const binding=await this.crypto.hash('onboarding-setup-browser',context.setupBinding),prepared=await this.onboarding.prepare(input.onboardingToken,input.name,binding),{claims,digest,item,marker}=prepared,previous=await this.repository.get(item.owner);
     if(previous){if(previous.assignmentId!==item.assignmentId||!sameOnboardingIdentity(previous.onboardingIdentity,marker))fail('onboarding_conflict','Onboarding setup needs operator reconciliation.');await this.onboarding.finish(item,digest,binding);fail('onboarding_invitation_consumed','Setup already started for this name. Sign in with its credential, or ask the host operator for help.');}
     let canonical=prepared.reservation.canonical;if(!canonical){const allocated=await this.repository.allocateFreeHandle(undefined,item.owner,item.assignmentId),reservation=await this.onboarding.canonical(item,digest,binding,allocated);if(!reservation?.canonical)fail('onboarding_conflict','Onboarding setup needs operator reconciliation.');canonical=reservation.canonical;}
-    const account={id:item.owner,assignmentId:item.assignmentId,nameAssignmentId:item.assignmentId,revision:0,handle:canonical,status:'pending',onboardingIdentity:marker,badgeIds:[...item.badgeIds],admission:{version:1,kind:'operator',plan:'free'},createdAt:this.clock(),lastActiveAt:this.clock(),termsVersion:this.config.termsVersion,termsAcceptedAt:this.clock(),...age,credentials:[],sessions:[],challenges:[],audit:[],recoveryHash:null,emailLoginEnabled:false,passwordHash:selectedPassword?await this.passwordHasher.hash(selectedPassword):null};
+    const account={id:item.owner,assignmentId:item.assignmentId,nameAssignmentId:item.assignmentId,revision:0,handle:canonical,status:'pending',onboardingIdentity:marker,badgeIds:[...item.badgeIds],admission:{version:1,kind:'operator',plan:'free'},createdAt:this.clock(),lastActiveAt:this.clock(),termsVersion:this.config.termsVersion,termsAcceptedAt:this.clock(),...age,security:{epoch:0,changedAt:this.clock()},credentials:[],sessions:[],challenges:[],audit:[],recoveryHash:null,emailLoginEnabled:false,passwordHash:selectedPassword?await this.passwordHasher.hash(selectedPassword):null};
     const pendingToken=await this.newPending(account,context);if(selectedPassword)await this.verifyPendingPassword(account,selectedPassword);let registrationOptions;if(input.method==='passkey'){registrationOptions=await this.webauthn.registrationOptions({account,config:this.config});account.challenges.push({purpose:'register',value:registrationOptions.challenge,expiresAt:this.clock()+this.config.challengeTtlMs});}
     if(claims.expiresAt<=this.clock())fail('invalid_onboarding_invitation','This onboarding invitation expired before account creation.');this.audit(account,'operator-onboarding-pending');if(!await this.repository.create(account))fail('onboarding_conflict','Setup already started for this name. Sign in with its credential or ask the operator to reconcile it.');if(!await this.onboarding.finish(item,digest,binding))fail('onboarding_conflict','Onboarding setup needs operator reconciliation.');return {pendingToken,account:await this.projectAccount(account),registrationOptions,readyForRecovery:input.method==='password',signupPlan:'free',paymentRequired:false};
   }
@@ -200,7 +257,7 @@ export class IdentityService {
     const previous=await this.repository.get(claims.owner);
     if(previous){if(previous.assignmentId!==claims.assignmentId||!sameSystemIdentity(previous.systemIdentity,marker))fail('system_bootstrap_conflict','System setup needs operator reconciliation.');await this.systemBootstrap.finish(claims,digest,binding);fail('system_invitation_consumed','This invitation was already used. Sign in with the configured credential, or ask the operator to repair incomplete setup.');}
     let canonical=prepared.reservation.canonical;if(!canonical){const allocated=await this.repository.allocateFreeHandle(undefined,claims.owner,claims.assignmentId),reservation=await this.systemBootstrap.canonical(claims,digest,binding,allocated);if(!reservation?.canonical)fail('system_bootstrap_conflict','System setup needs operator reconciliation.');canonical=reservation.canonical;}
-    const account={id:claims.owner,assignmentId:claims.assignmentId,nameAssignmentId:claims.assignmentId,revision:0,handle:canonical,status:'pending',systemIdentity:marker,badgeIds:configuredBadgeIDs(this.config).includes('system')?['system']:[],admission:{version:1,kind:'system',plan:'free',initialSystemActivationRequired:true},createdAt:this.clock(),lastActiveAt:this.clock(),termsVersion:this.config.termsVersion,termsAcceptedAt:this.clock(),...age,credentials:[],sessions:[],challenges:[],audit:[],recoveryHash:null,emailLoginEnabled:false,passwordHash:selectedPassword?await this.passwordHasher.hash(selectedPassword):null};
+    const account={id:claims.owner,assignmentId:claims.assignmentId,nameAssignmentId:claims.assignmentId,revision:0,handle:canonical,status:'pending',systemIdentity:marker,badgeIds:configuredBadgeIDs(this.config).includes('system')?['system']:[],admission:{version:1,kind:'system',plan:'free',initialSystemActivationRequired:true},createdAt:this.clock(),lastActiveAt:this.clock(),termsVersion:this.config.termsVersion,termsAcceptedAt:this.clock(),...age,security:{epoch:0,changedAt:this.clock()},credentials:[],sessions:[],challenges:[],audit:[],recoveryHash:null,emailLoginEnabled:false,passwordHash:selectedPassword?await this.passwordHasher.hash(selectedPassword):null};
     const pendingToken=await this.newPending(account,context);if(selectedPassword)await this.verifyPendingPassword(account,selectedPassword);let registrationOptions;if(input.method==='passkey'){registrationOptions=await this.webauthn.registrationOptions({account,config:this.config});account.challenges.push({purpose:'register',value:registrationOptions.challenge,expiresAt:this.clock()+this.config.challengeTtlMs});}
     if(claims.expiresAt<=this.clock())fail('invalid_system_invitation','This system invitation expired before account creation.');
     this.audit(account,'system-bootstrap-pending');if(!await this.repository.create(account))fail('system_bootstrap_conflict','System setup was already started. Sign in with the configured credential or ask the operator to reconcile it.');
@@ -220,14 +277,14 @@ export class IdentityService {
     let credential;
     try { credential = await this.webauthn.verifyRegistration({ response: input.response, challenge: challenge.value, config: this.config }); } catch { fail('invalid_passkey', 'Passkey verification failed.'); }
     if (!credential?.id || !credential.publicKey || account.credentials.length >= 5 || account.credentials.some(c => c.id === credential.id)) fail('invalid_passkey');
-    account.pendingCredentialAt=this.clock();account.credentials.push({ ...credential, label: safeLabel(input.label, 'Passkey'), createdAt: this.clock() }); account.challenges = []; this.audit(account, 'passkey-registered');
+    account.pendingCredentialAt=this.clock();account.credentials.push({ ...credential, label: safeLabel(input.label, 'Passkey'), createdAt: this.clock() }); account.challenges = []; this.audit(account, 'passkey-registered'); this.securityChanged(account);
     await this.save(account, revision); return { readyForRecovery: true };
   }
   async verifyPendingPassword(account,value){if(!await this.passwordHasher.verify(value,account.passwordHash))fail('unauthorized','Password verification failed.');account.pendingCredentialAt=this.clock();}
   async setPendingPassword(input, context) {
     this.origin(context); const account = await this.pending(input.pendingToken,context); const revision = account.revision;
     account.passwordHash = await this.passwordHasher.hash(password(input.password));await this.verifyPendingPassword(account,input.password);
-    this.audit(account, 'password-configured'); await this.save(account, revision); return { readyForRecovery: true };
+    this.audit(account, 'password-configured'); this.securityChanged(account); await this.save(account, revision); return { readyForRecovery: true };
   }
   async downloadRecovery(input, context) {
     this.origin(context); const account = await this.pending(input.pendingToken,context); const revision = account.revision;
@@ -240,7 +297,7 @@ export class IdentityService {
       backup=await this.identityBackup.issue(account,recoveryToken);
       account.recoveryBackupVersion=2;
     }
-    this.audit(account, 'recovery-file-issued'); await this.save(account, revision);
+    this.audit(account, 'recovery-file-issued'); this.securityChanged(account); await this.save(account, revision);
     if(backup)return {fileName:`3sln-recovery-${account.id}.json`,content:JSON.stringify(backup),handle:account.handle,recoveryToken};
     return { fileName: `3sln-recovery-${account.handle}.json`, content: JSON.stringify({ version: 1,
       issuer: this.config.origin, handle: account.handle, recoveryToken,
@@ -272,7 +329,7 @@ export class IdentityService {
   async setupBillingCheckout(input,context){this.origin(context);const account=await this.pending(input.pendingToken,context);if(!['pending','recovering'].includes(account.status)||account.admission?.kind!=='paid'||account.admission.initialPaymentRequired===false||!this.setupBilling)fail('invalid_paid_setup');await this.requireSetupChannel(account);if(!await this.rateLimiter.check({operation:'paid-setup',remoteIP:context.remoteIP,handle:account.id}))fail('rate_limited');const result=await this.setupBilling.checkout(account.id,account.admission,{requestId:input.requestId,currency:input.currency,priceDigest:input.priceDigest});await this.pending(input.pendingToken,context);return result;}
   async setupBillingStatus(input,context){this.origin(context);const account=await this.pending(input.pendingToken,context);if(!['pending','recovering'].includes(account.status)||account.admission?.kind!=='paid'||account.admission.initialPaymentRequired===false||!this.setupBilling)fail('invalid_paid_setup');if(!await this.rateLimiter.check({operation:'paid-setup',remoteIP:context.remoteIP,handle:account.id}))fail('rate_limited');const result=await this.setupBilling.status(account.id,account.admission);await this.pending(input.pendingToken,context);return result;}
   async setupEmailStart(input,context){this.origin(context);if(input.locale!==undefined&&!['en','es'].includes(input.locale))fail('invalid_locale','Choose English or Spanish.');const account=await this.pending(input.pendingToken,context),revision=account.revision;if(typeof this.mailer?.sendSetupCode!=='function')fail('email_unavailable','Email delivery is not configured.');const email=emailAddress(input.email),now=this.clock();if(account.systemIdentity?.requiredEmail&&account.admission?.initialSystemActivationRequired!==false&&email!==emailAddress(account.systemIdentity.requiredEmail))fail('contact_required','Use the contact address assigned by the system invitation.');await this.setupSendAdmission(account,'Email',context,email);let number;do{number=globalThis.crypto.getRandomValues(new Uint32Array(1))[0];}while(number>=4200000000);const code=String(number%100000000).padStart(8,'0');account.setupEmailChallenge={email,hash:await this.crypto.hash('setup-email',account.id+'|'+account.pendingHash+'|'+email+'|'+code),pendingHash:account.pendingHash,expiresAt:now+600000,attempts:0};await this.save(account,revision);await this.mailer.sendSetupCode({email,code,issuer:this.config.origin,locale:input.locale??'en'});return {sent:true,...this.setupProjection(account)};}
-  async setupEmailConfirm(input,context){this.origin(context);const account=await this.pending(input.pendingToken,context),revision=account.revision,challenge=account.setupEmailChallenge;if(!challenge||challenge.pendingHash!==account.pendingHash||challenge.expiresAt<=this.clock()||challenge.attempts>=5||typeof input.code!=='string'||!/^\d{8}$/.test(input.code))fail('invalid_challenge','Request a fresh email code.');challenge.attempts++;if(!secureEqual(challenge.hash,await this.crypto.hash('setup-email',account.id+'|'+account.pendingHash+'|'+challenge.email+'|'+input.code))){await this.save(account,revision);fail('invalid_challenge','That email code is incorrect.');}const existing=await this.repository.findByEmail(challenge.email);if(existing&&existing.id!==account.id)fail('email_already_linked','This verified email belongs to another account. Sign in to that account.');account.verifiedEmail=challenge.email;account.emailVerifiedAt=this.clock();account.emailLoginEnabled=false;delete account.setupEmailChallenge;this.audit(account,'setup-email-verified');await this.save(account,revision);return this.setupProjection(account);}
+  async setupEmailConfirm(input,context){this.origin(context);const account=await this.pending(input.pendingToken,context),revision=account.revision,challenge=account.setupEmailChallenge;if(!challenge||challenge.pendingHash!==account.pendingHash||challenge.expiresAt<=this.clock()||challenge.attempts>=5||typeof input.code!=='string'||!/^\d{8}$/.test(input.code))fail('invalid_challenge','Request a fresh email code.');challenge.attempts++;if(!secureEqual(challenge.hash,await this.crypto.hash('setup-email',account.id+'|'+account.pendingHash+'|'+challenge.email+'|'+input.code))){await this.save(account,revision);fail('invalid_challenge','That email code is incorrect.');}const existing=await this.repository.findByEmail(challenge.email);if(existing&&existing.id!==account.id)fail('email_already_linked','This verified email belongs to another account. Sign in to that account.');if(account.verifiedEmail!==challenge.email){this.securityChanged(account);delete account.noticeWaiver;}account.verifiedEmail=challenge.email;account.emailVerifiedAt=this.clock();account.emailLoginEnabled=false;delete account.setupEmailChallenge;this.audit(account,'setup-email-verified');await this.save(account,revision);return this.setupProjection(account);}
   async setupPushStart(input,context){this.origin(context);if(input.locale!==undefined&&!['en','es'].includes(input.locale))fail('invalid_locale','Choose English or Spanish.');const account=await this.pending(input.pendingToken,context),revision=account.revision;if(typeof this.pushTransport?.send!=='function')fail('push_unavailable','Push delivery is not configured.');const subscription=input.subscription;if(!subscription||typeof subscription.endpoint!=='string'||subscription.endpoint.length>4096||!subscription.keys||typeof subscription.keys.p256dh!=='string'||typeof subscription.keys.auth!=='string'||JSON.stringify(subscription).length>8192)fail('invalid_subscription','Use a browser-created push subscription.');await this.setupSendAdmission(account,'Push',context,account.handle);const proof=account.id+'.'+this.crypto.random();account.setupPushChallenge={subscription:structuredClone(subscription),hash:await this.crypto.hash('setup-push',proof),pendingHash:account.pendingHash,expiresAt:this.clock()+300000};delete account.setupPushVerified;await this.save(account,revision);await this.pushTransport.send(subscription,{type:'bindle-setup-challenge',proof,owner:account.id,locale:input.locale??'en'});return {sent:true,...this.setupProjection(account)};}
   async setupPushConfirm(input,context){this.origin(context);const account=await this.pending(input.pendingToken,context),revision=account.revision,challenge=account.setupPushChallenge;if(typeof this.pushTransport?.send!=='function'||!challenge||challenge.pendingHash!==account.pendingHash||challenge.expiresAt<=this.clock()||typeof input.proof!=='string'||!secureEqual(challenge.hash,await this.crypto.hash('setup-push',input.proof)))fail('invalid_challenge','Enable notifications and request a fresh push check.');account.setupPushVerified={subscription:challenge.subscription,verifiedAt:this.clock(),expiresAt:account.pendingExpiresAt};delete account.setupPushChallenge;this.audit(account,'setup-push-verified');await this.save(account,revision);return this.setupProjection(account);}
   async requireSetupChannel(account){if(this.config.requireReachability!==true&&!account.systemIdentity)return;if(account.systemIdentity?.requiredEmail&&account.admission?.initialSystemActivationRequired!==false&&account.verifiedEmail!==emailAddress(account.systemIdentity.requiredEmail))fail('contact_required','Verify the contact address assigned by the system invitation.');if(account.verifiedEmail&&Number.isFinite(account.emailVerifiedAt)){const owner=await this.repository.findByEmail(account.verifiedEmail);if(owner?.id===account.id)return;}if(typeof this.pushTransport?.send==='function'&&account.setupPushVerified?.expiresAt>this.clock()){if(typeof this.pushTransport.register!=='function')fail('push_unavailable','Push registration is not configured.');await this.pushTransport.register({owner:account.id,subscription:account.setupPushVerified.subscription});if(account.pendingExpiresAt<=this.clock()||account.setupPushVerified.expiresAt<=this.clock())fail('unauthorized','This setup proof expired. Start another check.');return;}fail('contact_required','Verify an email address or enable and verify push notifications before activating your account.');}
@@ -349,7 +406,7 @@ export class IdentityService {
     // Resumption only rotates the limited setup authority; completed replacement
     // credentials and the replacement recovery file remain intact.
     account.challenges = [];
-    const pendingToken = await this.newPending(account,context); this.audit(account, resumed ? 'recovery-setup-resumed' : 'account-recovery-started');
+    const pendingToken = await this.newPending(account,context); this.audit(account, resumed ? 'recovery-setup-resumed' : 'account-recovery-started'); this.securityChanged(account);
     await this.save(account, revision);
     const credentialRequired = !account.passwordHash && !account.credentials.length;
     return { pendingToken, account: await this.projectAccount(account), credentialRequired, readyForRecovery: !credentialRequired, resumed };
@@ -389,7 +446,7 @@ export class IdentityService {
     try { credential = await this.webauthn.verifyRegistration({ response: input.response, challenge: challenge.value, config: this.config }); } catch { fail('invalid_passkey', 'Passkey verification failed.'); }
     if (!credential?.id || !credential.publicKey || account.credentials.length >= 5 || account.credentials.some(c => c.id === credential.id)) fail('invalid_passkey');
     account.credentials.push({ ...credential, label: challenge.label, createdAt: this.clock() });
-    account.challenges = account.challenges.filter(c => c !== challenge); this.audit(account, 'passkey-added');
+    account.challenges = account.challenges.filter(c => c !== challenge); this.audit(account, 'passkey-added'); this.securityChanged(account);
     await this.save(account, revision); return { credentials: publicCredentials(account) };
   }
   async renamePasskey(input, context) {
@@ -405,7 +462,7 @@ export class IdentityService {
     if (!account.recoveryHash || (account.credentials.length === 1 && !account.passwordHash)) fail('credential_required', 'Keep a working login method and your recovery file before removing this passkey.');
     account.credentials = account.credentials.filter(c => c.id !== input.credentialId);
     await this.pruneSessions(account,s=>s.credentialId===input.credentialId);
-    account.challenges = account.challenges.filter(c => c.purpose !== 'credential'); this.audit(account, 'passkey-removed');
+    account.challenges = account.challenges.filter(c => c.purpose !== 'credential'); this.audit(account, 'passkey-removed'); this.securityChanged(account);
     await this.save(account, revision); return { removed: true, currentSessionRevoked: !account.sessions.includes(session), credentials: publicCredentials(account) };
   }
   async renameSession(input, context) {
@@ -471,7 +528,7 @@ export class IdentityService {
     const hash = await this.crypto.hash('email', input.token);
     const challenge = account.emailChallenges?.find(c => c.purpose === 'link' && secureEqual(c.hash, hash) && secureEqual(c.sessionHash, session.hash) && c.expiresAt > this.clock());
     if (!challenge) fail('invalid_challenge', 'This email confirmation is expired or belongs to another browser session.');
-    if (account.verifiedEmail !== challenge.email) account.emailLoginEnabled = false;
+    if (account.verifiedEmail !== challenge.email) { account.emailLoginEnabled = false; this.securityChanged(account); delete account.noticeWaiver; }
     account.verifiedEmail = challenge.email; account.emailVerifiedAt = this.clock(); account.emailChallenges = [];
     this.audit(account, 'email-linked'); await this.save(account, revision); return { linked: true, account: await this.projectAccount(account) };
   }
@@ -502,10 +559,46 @@ export class IdentityService {
     const { account } = await this.recent(context); const revision = account.revision;
     if (typeof input.enabled !== 'boolean') fail('invalid_request', 'Choose whether email can sign in to this account.');
     if (input.enabled && !account.verifiedEmail) fail('verified_email_required', 'Verify a contact email before enabling email sign-in.');
+    if (input.enabled && account.emailLoginEnabled !== true) this.securityChanged(account);
     account.emailLoginEnabled = input.enabled;
     account.emailChallenges = (account.emailChallenges || []).filter(challenge => challenge.purpose !== 'login');
     this.audit(account, input.enabled ? 'email-login-enabled' : 'email-login-disabled');
     await this.save(account, revision); return { emailLoginEnabled: account.emailLoginEnabled, account: await this.projectAccount(account) };
+  }
+  /** EMAIL_REMOVAL_ENABLED for this owner through the flags port; any failure (no port, unknown flag) is "off". */
+  emailRemovalEnabled(owner) { try { const port = typeof this.flags === 'function' ? this.flags() : this.flags; return port?.for({ subject: { kind: 'account', owner } }).enabled('EMAIL_REMOVAL_ENABLED') === true; } catch { return false; } }
+  /** Other notice channels than email (verified, available push), via the account-channels port. */
+  async noticeChannels(owner) {
+    if (!this.accountChannels) return { ready: false, count: 0 };
+    let state; try { state = await this.accountChannels.state(owner); } catch { state = null; }
+    if (typeof state?.ready !== 'boolean' || !nonNegative(state.count) || state.ready && state.count < 1) fail('notice_channels_unavailable', 'Your notification devices could not be checked. Try again shortly.', 503);
+    return { ready: state.ready, count: state.count };
+  }
+  /** Wire identity.email-remove (account-deletion-export.md §3): one CAS removes the verified email, clears email
+   * sign-in and every email challenge, releases the email index (repository CAS), records the notice waiver when
+   * it is needed, and bumps `security`. Step-up (5 min) and CSRF; never removes credentials or recovery. */
+  async emailRemove(input, context) {
+    const { account, session } = await this.authorized(context, true); const revision = account.revision;
+    if (!this.emailRemovalEnabled(account.id)) fail('email_removal_unavailable', 'Email removal is not available.', 404);
+    this.requireStepUp(session, 300000);
+    if (!input || typeof input !== 'object' || Object.keys(input).some(name => !['confirmed', 'waiveNotice', 'expectedEmail'].includes(name)) || input.waiveNotice !== undefined && typeof input.waiveNotice !== 'boolean') fail('invalid_request', 'Unsupported email removal request.', 400);
+    if (input.confirmed !== true) fail('confirmation_required', 'Confirm that you want to remove your email.', 400);
+    const removed = account.verifiedEmail;
+    if (!removed) fail('email_not_linked', 'This account has no verified email.', 409);
+    // A removal confirmed while looking at one address never removes a different, newer one.
+    if (input.expectedEmail !== undefined && input.expectedEmail !== removed) fail('email_changed', 'Your email changed. Reload and try again.', 409);
+    const channels = await this.noticeChannels(account.id), waived = !channels.ready;
+    if (waived && input.waiveNotice !== true) fail('last_notice_channel', 'Email is your only notice channel. Enable notifications on a device first, or confirm that you accept in-app notices only.', 409);
+    // The waiver is consent under the current terms; it is recorded only when no other channel exists.
+    if (waived) { this.requireCurrentTerms(account); account.noticeWaiver = { at: this.clock(), termsVersion: this.config.termsVersion }; }
+    account.verifiedEmail = null; account.emailVerifiedAt = null; account.emailLoginEnabled = false; account.emailChallenges = [];
+    this.audit(account, 'email-removed'); this.securityChanged(account);
+    await this.save(account, revision);
+    // Notices are best effort after commit; acceptance is not delivery.
+    const notified = { email: false, push: false };
+    try { if (typeof this.mailer?.sendSecurityAlert === 'function') { await this.mailer.sendSecurityAlert({ email: removed, type: 'email-removed', owner: account.id }); notified.email = true; } } catch {}
+    try { if (channels.ready && typeof this.accountChannels?.notify === 'function') notified.push = (await this.accountChannels.notify(account.id, 'email-removed'))?.accepted > 0; } catch {}
+    return { removed: true, noticeWaived: waived, notified, account: await this.projectAccount(account) };
   }
   async logoutSaved(input,context){
     this.origin(context);const {account,session}=await this.authorized(context);const revision=account.revision;await this.pruneSessions(account,s=>s===session);this.audit(account,'session-closed');await this.save(account,revision);return {loggedOut:true};
