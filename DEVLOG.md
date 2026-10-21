@@ -2294,3 +2294,75 @@ Corrections recorded here so the ledger matches the conversation:
 - **Spam thresholds.** The coordinator suggested starting auto-reject at 0.98 rather than 0.97, pending the user.
 - **Signup offer tension.** Offering a bundled messaging instance at signup must not conflict with "built-in occupants are never preselected"; the offer must be an explicit opt-in step, not a preselected occupant.
 - **Roadmap update.** Conflict-resolution item 14 (30 d / 7 d app credentials) is superseded by the later lifetime model: no absolute lifetime, 180-day idle, 15/60-minute access tokens.
+
+## 2026-10-21 — Feature flags (user direction; design only)
+
+User direction: move feature flags from Workers variables to the admin console, with targeting (A/B, region, user, user shard, percentage). Design: [feature-flags.md](docs/architecture/feature-flags.md). No code changed.
+
+User decisions (2026-10-21, relayed by the coordinator):
+- **D-FF1:** env is a kill switch only. Enabling a feature must never need a deploy.
+- **D-FF2:** build aggregate-only A/B/n experiments now.
+
+Provisional design decisions (coordinator design, unsigned):
+- **Registry and env kill switch.**
+  - Flags are declared in a reviewed code registry and configured in the console.
+  - If env is unset, the console decides. With no console record, the flag takes its registry safe value.
+  - If env is explicitly the safe value, the flag is forced to it, even while the admin store is down. An invalid value counts as a kill.
+  - Env `"true"` is honoured only while the flag has no console record (the pre-console state and admin-less self-hosts). After that it is ignored with a warning, so a stale `keep_vars` dashboard value cannot override a console kill.
+  - The console shows each flag's env state: unset, kill, ignored, force-on (legacy) or invalid.
+
+  Reviewer: ___ Date: ___ Outcome: ___
+- **Cutover.** Seed, then verify, then remove the vars.
+  - The seed copies the env values the server observes into console records, one audited commit per flag.
+  - Seed-verify compares legacy and console evaluation over a context matrix.
+  - Only then are the class (a)/(c) vars removed, from `wrangler*.jsonc` and from the dashboard.
+  - Flags on in production today (signup, paid signup, waitlist, semantic search, beaming) stay on. `BILLING_ENABLED` is env-only, so it stays in env.
+  - The Node adapter must stop defaulting class (a)/(c) vars to `'false'`, which would now be a kill.
+
+  Reviewer: ___ Date: ___ Outcome: ___
+- **Release gates.** No env ceiling enforces them any more. While `RELEASE_READY != 'true'`, any edit that widens a flag with open gates requires:
+  - critical tier, passkey step-up, a reason, the typed flag name and a preview acknowledgement;
+  - `acknowledgeGates` equal to exactly the open gate set, recorded in the hash-chained audit log.
+
+  Widening only to verified internal accounts is exempt. A test keeps the registry's gate references in sync with open-items.
+
+  Reviewer: ___ Date: ___ Outcome: ___
+- **Classification.**
+  - 11 rollout flags get targeting.
+  - 8 are global-only console switches. Lifecycle dry run is narrow-only.
+  - 20 stay env-only: secrets, bindings, mounts, protocol metadata, lifecycle live/purge, work and storage limits, and derived capability values.
+  - Stateful flags never target by region.
+
+  Reviewer: ___ Date: ___ Outcome: ___
+- **Evaluation and storage.**
+  - One synchronous `flags.evaluate(name, ctx)` over a snapshot pinned per request, exposed as engine provider and operations.
+  - Percentage uses a salted murmur3 hash. Shard means the identity account bucket. Region comes only from trusted `cf` fields.
+  - No anonymous bucketing and no new cookie.
+  - Records live in `AdminStorage`, with audit and a monotonic version, cached per isolate and per colo (15 s each).
+  - Last-known-good is served up to 1 h. After that each flag uses its outage policy: `safe`, or `last-known` for the signup, federation, brokering and MCP switches.
+
+  Reviewer: ___ Date: ___ Outcome: ___
+- **Stateful features.** Flags gate new creation and exposure, never retention. Reverse and cleanup paths ignore targeting. The optional `retainExisting` keeps owners who already have feature state enabled, using a predicate over existing data rather than a stored enrolment record.
+
+  Reviewer: ___ Date: ___ Outcome: ___
+- **Experiments (FF-7, in scope).**
+  - Assignment comes from a hash of the account ID and a salt, frozen while the experiment runs. There is no per-user storage or event log.
+  - Counters record per-variant daily exposure and outcome counts, plus a daily distinct-account HyperLogLog whose key and sketch are deleted at rollup.
+  - Results appear only once every variant reaches 100 distinct accounts on at least one day. Cells below 20 are suppressed. Results are deleted 90 days after the experiment concludes.
+  - Admins start, stop and conclude experiments in the console.
+  - Experiments are forbidden on critical, pricing, limits, consent, security and lifecycle flags.
+  - The design matches privacy.md §3, which now states the 90-day result retention and the transient daily key.
+
+  Reviewer: ___ Date: ___ Outcome: ___
+- **Lifecycle and abuse limits stay env-only**, with a console "pause lifecycle" control that forces dry run. **One administrator** can make critical edits with the extra confirmations; no second approver. Both were recommended and accepted as provisional via the coordinator relay. Reviewer: ___ Date: ___ Outcome: ___
+
+Slices FF-1…FF-8, including FF-7 for experiment statistics, are in the design §10 with non-overlapping file ownership.
+
+## 2026-10-21 — Privacy policy and terms of service
+
+User requested a privacy policy and terms for 3sln.me. Drafts are in [docs/legal](docs/legal/README.md), written against an evidence-backed inventory of the as-built system at f6d3820. Features behind default-off flags are written as "if you use" / "when available". The drafts are not in effect and need counsel review. Placeholders: company, address, country, governing law and venue, refund policy, EU/UK Art. 27 representatives.
+
+- **Operator and scope.** The policies name a company (name pending) with contact@3sln.com and cover only the hosted service. Self-hosters need their own documents. Reviewer: ___ Date: ___ Outcome: ___
+- **Privacy regimes.** The policy covers a global baseline: EU/UK GDPR legal bases, transfers and rights, plus US state notices. It states plainly that content is not end-to-end encrypted and that the operator's systems can read it. No sale, no ads, no third-party analytics. Reviewer: ___ Date: ___ Outcome: ___
+- **Age rule (user decision).** Each jurisdiction requires the minimum age at which signup is lawful without verifiable parental consent or mandatory age verification, confirmed by a self-attestation toggle "I am older than N". Jurisdictions where a toggle cannot satisfy the law are blocked. The research snapshot and recommended config are in [age requirements](docs/release/age-requirements.md). Proposed blocks: CN, BR, ID, TR, RU, US-MS, US-TN, plus sanctioned territories. Paid plans require local majority. Not implemented yet. Reviewer: ___ Date: ___ Outcome: ___
+- **Publication blockers.** The drafts commit to features the system lacks: owner account deletion, hosted data export, email removal, the age gate, terms re-acceptance on version change, and `/privacy`/`/terms` pages with footer and client-metadata links. These are tracked in the [legal README](docs/legal/README.md). `release-status.json` `termsAndPrivacyApproved` stays false. Reviewer: ___ Date: ___ Outcome: ___
