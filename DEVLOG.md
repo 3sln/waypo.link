@@ -2493,3 +2493,29 @@ Pending user decisions (recommendations in the design):
 - the org issuer location, the two-admin deadlock, and the 300 s certificate lifetime.
 
 Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-21 — Versioned artefact references (design)
+
+User requirement: references between public artefacts carry integrity hashes. Artefacts change only additively, so a reference names a version plus that version's hash. Validators extract and check the named version, and providers cache the versions they pin.
+
+The [design](docs/architecture/artefact-references.md) and the [spec draft](docs/spec/artefacts.md) (rev 2):
+- **Envelope.** Each URL serves an envelope containing full-copy versions, each hash-chained to its predecessor (`{version, prev, body}`). The digest is SHA-256 over JCS. Old bodies can be offloaded to `<id>/versions/<n>`, up to 1,024 versions.
+- **References.** A reference is the URL member plus `version` and `digest`. Parsing is strict, numbers are safe integers only, and no Unicode normalization is applied.
+- **Additive rule.** Additions are allowed only at the growth points declared for each kind. New fields are withheld from grants pinned below the version that introduced them, and adding them counts as widening on upgrade.
+- **Caching and retraction.** Providers store records by digest before a pin commits. Retractions are sticky. Suspending grants requires a publisher signature.
+- **Migration.** Existing bodies become version 1, so existing digests are unchanged. The work ships behind the flag `ARTEFACT_VERSIONS_ENABLED`.
+
+Review round 1 found 6 High, all fixed in the text: contract-digest equivocation, digest-mismatch denial of service, unconsented widening through result or bus fields, a preference digest join, the size-cap trap, and contradictory number rules.
+
+Open items:
+- Cross-provider equivocation needs a transparency log or gossip before cross-provider relations ship.
+- Semantic additivity remains the publisher's obligation.
+- Growth rules for the `relation` kind belong to the organizations design.
+
+Recommendations pending user approval:
+- serve the envelope at the canonical URL;
+- an unsigned retraction only blocks new pins;
+- contract result objects are open;
+- no garbage collection of stored records in v1.
+
+Reviewer: ___ Date: ___ Outcome: ___
