@@ -145,7 +145,7 @@ test('signup wizard: a rapid triple click advances one question, and create-acco
   const before=await heading();visited.push(before);
   if(await card.getByRole('button',{name:'Use email',exact:true}).count())await card.getByRole('button',{name:'Use email',exact:true}).click();
   if(await card.locator('input[name=noticeEmail]').count())await card.locator('input[name=noticeEmail]').fill('person@setup.example');
-  if(await card.locator('input[name=termsAccepted]').count())await card.locator('input[name=termsAccepted]').check();
+  if(await card.locator('input[name=termsAccepted]').count()){await card.locator('input[name=ageConfirmed]').check();await card.locator('input[name=termsAccepted]').check();}
   await card.getByRole('button',{name:'Continue',exact:true}).click({clickCount:3});
   await page.waitForFunction(previous=>document.querySelector('.signup-wizard .wizard-heading')?.textContent!==previous,before);await c.settled();
   assert.equal((await c.alerts()).length,0,`no validation error leaks from extra clicks on "${before}"`);
@@ -223,7 +223,7 @@ test('billing upgrade (mocked, never Polar): triple-click checkout sends one req
  const c=await chaosConsole(browser,t,{data:{storage},handlers:{'GET /api/billing':route=>route.fulfill({json:billing()}),'POST /api/billing/checkout':route=>route.fulfill({json:{url:'https://polar.attacker.example/checkout'}})}});const {page}=c;
  let navigatedAway=false;page.on('framenavigated',frame=>{if(frame===page.mainFrame()&&!frame.url().startsWith(baseURL))navigatedAway=true;});
  await page.getByRole('button',{name:'Storage & billing',exact:true}).click();const choose=page.locator('.plan-card').filter({has:page.getByRole('heading',{name:'Paid',exact:true})}).getByRole('button',{name:'Choose plan',exact:true});await choose.waitFor();
- const held=c.hold('POST','/api/billing/checkout');await choose.click({clickCount:3});const gate=await held;await c.release(gate);await page.getByRole('alert').waitFor();await c.settled();
+ await page.locator('.plan-card').filter({has:page.getByRole('heading',{name:'Paid',exact:true})}).locator('[name=ageConfirmed]').check();const held=c.hold('POST','/api/billing/checkout');await choose.click({clickCount:3});const gate=await held;await c.release(gate);await page.getByRole('alert').waitFor();await c.settled();
  assert.equal(c.count('POST','/api/billing/checkout'),1);assert.equal(navigatedAway,false);assert.match((await c.alerts())[0],/payment page could not be opened/);
 });
 

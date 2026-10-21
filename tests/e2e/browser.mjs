@@ -38,7 +38,7 @@ export async function completeSignupQuestions(page,{email,channel='email'}={}){
   const heading=await card.locator('.wizard-heading').textContent();
   if(await card.getByRole('button',{name:/^(Use email|Usar correo)$/,exact:true}).count())await card.getByRole('button',{name:channel==='push'?/^(Use notifications|Usar notificaciones)$/:/^(Use email|Usar correo)$/,exact:true}).click();
   if(await card.locator('input[name=noticeEmail]').count()){if(!email)throw new Error('Signup fixture requires an email for the selected contact channel');await card.locator('input[name=noticeEmail]').fill(email);}
-  if(await card.locator('input[name=termsAccepted]').count())await card.locator('input[name=termsAccepted]').check();
+  if(await card.locator('input[name=termsAccepted]').count()){await card.locator('input[name=ageConfirmed]').check();await card.locator('input[name=termsAccepted]').check();}
   await card.getByRole('button',{name:/^(Continue|Continuar)$/,exact:true}).click();
   await page.waitForFunction(previous=>document.querySelector('.signup-wizard .wizard-heading')?.textContent!==previous,heading);
  }

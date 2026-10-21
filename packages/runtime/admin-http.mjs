@@ -1,6 +1,7 @@
 // Host administration routes (reference implementation, not Bindle protocol).
 // Mounted inside the /api/ block after the identity context is built. All
 // routes are same-origin POST; the console names its actor explicitly.
+import {adminFlagsRoutes} from './admin-flags-http.mjs';
 const bootCookieName=local=>local?'bindle_boot':'__Host-bindle_boot';
 const bootCookie=(token,local,maxAge)=>`${bootCookieName(local)}=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${maxAge}${local?'':'; Secure'}`;
 function bootSession(request,local){for(const piece of (request.headers.get('Cookie')||'').split(';')){const [key,...rest]=piece.trim().split('=');if(key===bootCookieName(local)){const value=rest.join('=');return /^[A-Za-z0-9_-]{43}$/.test(value)?value:undefined;}}}
@@ -13,6 +14,7 @@ export async function adminRoutes({path,request,env,local,context,body,json}){
  if(request.method!=='POST')return json({error:'method_not_allowed'},405,{Allow:'POST'});
  if(request.headers.get('Origin')!==env.APP_ORIGIN)return json({error:'csrf'},403);
  const admin=await env.ADMIN_SERVICE(),actor=request.headers.get('X-Bindle-Admin-Actor'),scoped={...context,origin:request.headers.get('Origin'),bootSession:bootSession(request,local),actor:['boot','admin'].includes(actor)?actor:undefined};
+ if(path.startsWith('/api/admin/flags/'))return adminFlagsRoutes({path,request,env,local,admin,scoped,body,json});
  if(path==='/api/admin/boot/begin'){const input=await body(request,128);if(Object.keys(input).length)return json({error:'invalid_request'},400);await admin.limited('boot-begin',scoped);const binding=context.setupBinding||crypto.randomUUID()+crypto.randomUUID();return json({ready:true},200,{'Set-Cookie':`${local?'bindle_setup':'__Host-bindle_setup'}=${binding}; Path=/; HttpOnly; SameSite=Strict; Max-Age=1800${local?'':'; Secure'}`});}
  // Logout and end always clear the boot cookie, even if the server-side record update fails.
  if(path==='/api/admin/boot/logout'){let result;try{result=await admin.bootLogout(await body(request,128),scoped);}catch(error){result={loggedOut:false,error:error.code||'invalid_request'};}return json(result,result.loggedOut?200:409,{'Set-Cookie':bootCookie('',local,0)});}

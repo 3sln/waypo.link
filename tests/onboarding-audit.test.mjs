@@ -16,7 +16,7 @@ function fixture(){
  const service=new IdentityService({repository,onboarding:port,clock:()=>now,config:{...config,origin,rpID:'onboarding.example',termsVersion:'v1',requireReachability:false},turnstile:{verify:async()=>true},rateLimiter:{check:async()=>true},passwordHasher:{hash:async value=>'hash:'+value,verify:async(value,hash)=>hash==='hash:'+value},webauthn:{registrationOptions:async()=>({challenge:'fixture'})},paidHandleEligibility:async()=>true});
  const claims={version:1,purpose:'bindle-ordinary-account-onboarding',issuer:origin,nonce:crypto.randomUUID(),issuedAt:now,expiresAt:now+3600000,names:['alice','bob'].map(name=>({name,owner:crypto.randomUUID(),assignmentId:crypto.randomUUID()}))};
  const context={origin,remoteIP:'192.0.2.3',setupBinding:'private-fixture-binding'};
- const input={method:'password',password:'long ordinary onboarding password',termsAccepted:true,termsVersion:'v1',turnstileToken:'fixture'};
+ const input={method:'password',password:'long ordinary onboarding password',ageConfirmed:18,termsAccepted:true,termsVersion:'v1',turnstileToken:'fixture'};
  return {metadata,budget,repository,guard,config,port,service,claims,context,input,close(){metadata.close();budget.close();}};
 }
 async function invitation(f){const token=await signOnboardingInvitation(f.claims,key,{now}),verified=await verifyOnboardingInvitation(token,key,origin,{now}),proof=await signOnboardingIssuance(verified.digest,origin,key,{now});return {token,proof};}

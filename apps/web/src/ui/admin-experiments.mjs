@@ -1,0 +1,16 @@
+import {h,select} from './release-primitives.mjs';
+import {button,form,input,data} from './admin-access.mjs';
+import {flagsState} from '../bl/admin-flags.mjs';
+export function experimentsView(state,row){const f=flagsState(state),e=f.draft?.experiment,results=f.results;
+ return h('section',h('h2','Experiment'),h('p','Only signed-in accounts are assigned. No anonymous cookie or per-user event log is created.'),
+  !e||['stopped','concluded','draft'].includes(e.status)?form(state,[input('variants','Variant keys (control first)','text',{required:true,value:'control, treatment'}),input('weights','Variant weights (sum 10000)','text',{required:true,value:'5000, 5000'}),input('percent','Eligible accounts (basis points)','number',{required:true,min:0,max:10000,step:1,value:10000}),...[
+   ['accounts','A','Allowed accounts (handles or owner IDs)'],['shards','S','Shards (00–63)'],['clients','C','Allowed client IDs']
+  ].filter(([,dimension])=>row.registry.dimensions.includes(dimension)).map(([name,,label])=>input(name,label)),input('from','From (UTC ISO timestamp)'),input('until','Until (UTC ISO timestamp)')],'flags-experiment-create','Preview draft experiment'):null,
+  e?h('div',data(e.status,'p'),h('ul',...e.variants.map(v=>h('li',data(v.key),data(' '+v.weight+'/10000')))),h('p','Eligibility'),data(e.eligibility.percent+'/10000'),e.status==='running'?h('p','Running experiment assignments are frozen. Stop before creating a new experiment.').classes('alert','warning-note'):null,
+   e.status==='draft'?button(state,'Start experiment','flags-experiment-lifecycle',{operation:'start'},'button primary',!f.draft.on):null,e.status==='running'?button(state,'Stop experiment','flags-experiment-lifecycle',{operation:'stop'},'button secondary'):null,
+   e.status==='stopped'?form(state,[select('winner','Winning variant',e.variants.map(v=>[v.key,data(v.key)]),e.variants[0].key)],'flags-experiment-lifecycle','Conclude experiment',{detail:{operation:'conclude'}}):null,
+   e.status==='concluded'?button(state,'Apply winner as fallthrough','flags-apply-winner',{},'button primary'):null,e.status!=='draft'?button(state,'Load experiment results','flags-experiment-results',{},'button secondary'):null):null,
+  h('p','Results require every variant to reach 100 estimated distinct accounts on at least one day. Cells below 20 events are suppressed. Daily unique counts are never added across days.').classes('field-help'),
+  results?results.visible?h('div',h('h3','Aggregate results'),...results.variants.map(v=>h('section',data(v.variant,'h4'),...v.daily.map(day=>h('div',data(day.day,'h5'),h('dl',h('dt','Estimated distinct accounts'),h('dd',data(day.distinct)),h('dt','Exposures'),h('dd',data(day.exposures)),...Object.entries(day.outcomes).flatMap(([metric,n])=>[h('dt',data(metric)),h('dd',data(n),day.rates[metric]?data(' '+day.rates[metric].rate+' (95%: '+JSON.stringify(day.rates[metric].interval)+')'):h('span','Rate suppressed'))])).classes('admin-facts'))),h('h5','Total events'),data(JSON.stringify(v.totals),'pre')))):h('p',results.reason==='minimum_cohort'?'Results are hidden until every variant meets the minimum cohort.':'Results are unavailable or expired.').attrs({role:'status'}).classes('alert','warning-note'):null
+ ).classes('subpanel');
+}

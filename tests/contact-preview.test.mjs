@@ -13,7 +13,7 @@ let lane=0;const fetchURL=(url,init={})=>{const request=new Request(new URL(url,
 test.before(async()=>{
  directory=await mkdtemp(join(tmpdir(),'bindle-preview-'));app=await createNodeServer({directory,config:{APP_ORIGIN:origin,BRAND_NAME:'3sln.me'}});
  const post=(path,value,headers={})=>fetchURL(path,{method:'POST',headers:{Origin:origin,'Content-Type':'application/json',...headers},body:JSON.stringify(value)});
- const signup=await post('/api/auth/signup',{method:'password',password:'Private preview account password!',termsAccepted:true,termsVersion:'2026-10-11',turnstileToken:'local-browser-test-token'}),pending=await signup.json(),setup={Cookie:signup.headers.get('Set-Cookie').split(';')[0]};
+ const signup=await post('/api/auth/signup',{method:'password',password:'Private preview account password!',ageConfirmed:18,termsAccepted:true,termsVersion:'2026-10-11',turnstileToken:'local-browser-test-token'}),pending=await signup.json(),setup={Cookie:signup.headers.get('Set-Cookie').split(';')[0]};
  const recovery=await (await post('/api/auth/recovery/download',{pendingToken:pending.pendingToken},setup)).json(),active=await post('/api/auth/recovery/confirm',{pendingToken:pending.pendingToken,recoveryToken:recovery.recoveryToken,downloadConfirmed:true},setup);
  const session=await active.json(),headers={Origin:origin,Cookie:active.headers.getSetCookie().find(c=>c.startsWith('bindle_session=')).split(';')[0],'X-CSRF-Token':session.csrfToken};
  owner={id:session.account.id,call:(path,value,method='POST')=>fetchURL(path,{method,headers:{...headers,...value===undefined?{}:{'Content-Type':'application/json'}},...value===undefined?{}:{body:JSON.stringify(value)}})};

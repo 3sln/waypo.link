@@ -4,7 +4,7 @@ import {hex} from './boot.mjs';
 // hold even for a buggy caller: optimistic revisions, forever-consumed boot
 // tokens, a hash-chained append-only audit log and per-actor windows.
 const fail=(code,message,status=409)=>{throw Object.assign(new Error(message),{code,status});};
-const KEY=/^(?:boot\/(?:principal|sessions)|boot-token\/[a-f0-9]{64}|catalog|reservation\/[a-z0-9][a-z0-9_-]{2,31}|claim\/[a-f0-9-]{36}|claim-name\/[a-z0-9][a-z0-9_-]{2,31}|principal\/[a-f0-9-]{36}|client-block\/[a-z0-9.-]{1,253})$/;
+const KEY=/^(?:boot\/(?:principal|sessions)|boot-token\/[a-f0-9]{64}|catalog|reservation\/[a-z0-9][a-z0-9_-]{2,31}|claim\/[a-f0-9-]{36}|claim-name\/[a-z0-9][a-z0-9_-]{2,31}|principal\/[a-f0-9-]{36}|client-block\/[a-z0-9.-]{1,253}|flag\/[A-Z][A-Z0-9_]{0,79}|flag-rev\/[A-Z][A-Z0-9_]{0,79}\/[1-9][0-9]{0,15}|flags-head|flag-experiment\/[a-f0-9-]{36})$/;
 const LIST=/^(?:audit\/|principal\/|reservation\/|claim\/|client-block\/)$/;
 // Not core/primitives canonical: undefined encodes as null here, and the audit hash chain depends on it.
 const canonical=value=>Array.isArray(value)?'['+value.map(canonical).join(',')+']':value&&typeof value==='object'?'{'+Object.keys(value).sort().map(key=>JSON.stringify(key)+':'+canonical(value[key])).join(',')+'}':JSON.stringify(value??null);
@@ -12,7 +12,9 @@ const auditHash=async(prev,entry)=>hex(await crypto.subtle.digest('SHA-256',new 
 const pad=seq=>String(seq).padStart(12,'0');
 export class AdminStorage {
  constructor(metadata){this.metadata=metadata;}
- async invoke(method,args){if(!['get','list','commit','verifyAudit'].includes(method))throw new TypeError('Unknown admin storage method');return this[method](...args);}
+ async invoke(method,args){if(!['get','list','commit','verifyAudit','flagsSnapshot'].includes(method))throw new TypeError('Unknown admin storage method');return this[method](...args);}
+ /** One consistent read, including the commit time rather than the reader's clock. */
+ async flagsSnapshot(){return this.metadata.transaction(async tx=>{const head=await tx.get('admin/flags-head'),rows=await tx.list({prefix:'admin/flag/'}),flags={};for(const [key,value]of rows){const {revision,...record}=value;Object.defineProperty(flags,key.slice(11),{value:record,enumerable:true});}return {v:1,version:head?.version??0,issuedAt:head?.issuedAt??0,flags};});}
  async get(key){if(!KEY.test(key)&&key!=='audit-head')throw new TypeError('Invalid admin key');return await this.metadata.get('admin/'+key)??null;}
  async list(prefix,{startAfter='',limit=50}={}){if(!LIST.test(prefix)||typeof startAfter!=='string'||startAfter.length>253||!Number.isInteger(limit)||limit<1||limit>100)throw new TypeError('Invalid admin listing');const rows=await this.metadata.list({prefix:'admin/'+prefix,startAfter:startAfter?'admin/'+prefix+startAfter:'',limit});return [...rows].map(([key,value])=>({key:key.slice(6+prefix.length),value}));}
  /** expect {key: revision|null}; writes {key: value|null}; audit entry; rate {key,limit,windowMs,now}. */
@@ -41,4 +43,4 @@ export class AdminStorage {
   const head=await this.get('audit-head');if(seen<count)return {valid:(head?.seq??0)===seq&&(head?.hash??'0'.repeat(64))===prev,seq};return {valid:true,seq};}
 }
 /** Worker adapter: every call crosses an RPC boundary as structured clones. */
-export const remoteAdminStore=invoke=>({get:key=>invoke('get',[key]),list:(prefix,options)=>invoke('list',[prefix,options]),commit:input=>invoke('commit',[input]),verifyAudit:options=>invoke('verifyAudit',[options])});
+export const remoteAdminStore=invoke=>({get:key=>invoke('get',[key]),list:(prefix,options)=>invoke('list',[prefix,options]),commit:input=>invoke('commit',[input]),verifyAudit:options=>invoke('verifyAudit',[options]),flagsSnapshot:()=>invoke('flagsSnapshot',[])});

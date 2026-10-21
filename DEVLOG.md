@@ -2366,3 +2366,76 @@ User requested a privacy policy and terms for 3sln.me. Drafts are in [docs/legal
 - **Privacy regimes.** The policy covers a global baseline: EU/UK GDPR legal bases, transfers and rights, plus US state notices. It states plainly that content is not end-to-end encrypted and that the operator's systems can read it. No sale, no ads, no third-party analytics. Reviewer: ___ Date: ___ Outcome: ___
 - **Age rule (user decision).** Each jurisdiction requires the minimum age at which signup is lawful without verifiable parental consent or mandatory age verification, confirmed by a self-attestation toggle "I am older than N". Jurisdictions where a toggle cannot satisfy the law are blocked. The research snapshot and recommended config are in [age requirements](docs/release/age-requirements.md). Proposed blocks: CN, BR, ID, TR, RU, US-MS, US-TN, plus sanctioned territories. Paid plans require local majority. Not implemented yet. Reviewer: ___ Date: ___ Outcome: ___
 - **Publication blockers.** The drafts commit to features the system lacks: owner account deletion, hosted data export, email removal, the age gate, terms re-acceptance on version change, and `/privacy`/`/terms` pages with footer and client-metadata links. These are tracked in the [legal README](docs/legal/README.md). `release-status.json` `termsAndPrivacyApproved` stays false. Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-21 — Feature flags FF-1–FF-4, FF-6, FF-7 implemented; legal plumbing
+
+User decisions on the [feature flags design](docs/architecture/feature-flags.md):
+- **D-FF1:** env variables are kill switches only. Enabling a feature never needs a deploy.
+- **D-FF2:** aggregate-only A/B/n experiments are in scope now.
+
+Landed behind the existing env behaviour. With no console records, evaluation reproduces today's flags exactly, pinned by a test over the current Worker and Node configurations.
+
+- **FF-1:** registry of 39 flags, pure evaluator, monotonic salted percentage hash, snapshot validator, `widens()`.
+- **FF-2:** versioned store in `AdminStorage` with the shared audit chain. Covers seed, seed-verify, take-control, update, rollback, reshuffle, gate acknowledgement and experiment lifecycle.
+- **FF-3:** `flags.*` engine operations, memory providers and CLI.
+- **FF-4:** per-isolate and per-colo caches, last-known-good fallback, trusted `cf` geo, monotonic writer refresh, Node pass-through of unset vars.
+- **FF-6:** admin HTTP adapter and console screens: list, edit, preview, explain, history, seed/cutover and experiments. Each save verifies a passkey, because sessions lack credential-method evidence.
+- **FF-7:** experiment statistics. Daily counters with a transient HLL key deleted at rollup, 100-account minimum cohort, suppression of cells below 20, 90-day expiry. Worker `FLAG_STATS` Durable Object (binding and migration v10 added) and a Node SQLite store.
+
+Remaining work:
+- FF-5a/b/c: migrate read sites off raw env.
+- FF-8 cutover: seed, verify, then remove class (a)/(c) vars from wrangler and the dashboard. This is an operator step.
+- Production colo propagation is unverified.
+
+**LG-1 and LG-1b (legal plumbing).**
+- `/privacy` and `/terms` are built from `docs/legal`, show a draft banner, and are linked from the footers, consent and discovery metadata (`op_policy_uri`/`op_tos_uri`). Client `policy_uri`/`tos_uri` are displayed.
+- The per-jurisdiction age gate is in `packages/identity/age-policy.mjs`. It uses trusted `cf` country and region only and is enforced on the server for signup, onboarding claims and paid checkout. Blocked regions see a localized screen. Attestation is recorded, never a birthdate.
+- Terms re-acceptance applies when the stored version differs. Cookie, bearer and RPC write paths are gated; reads, export and deletion are not. It is idempotent under concurrent tabs.
+- Spanish legal pages show the English text with a localized notice.
+- `TERMS_VERSION` is unchanged.
+
+Verification on the integrated tree:
+
+| Suite | Result |
+|---|---|
+| `npm test` | 2112 pass |
+| Worker | 69 pass |
+| UI-state | 291 pass |
+| admin-flags | 7 engine + 27 Chromium |
+| legal | 10 + 37 |
+| DOM, build, Worker dry run | pass |
+| e2e | 214 pass, 4 WebKit skips (environment) |
+
+Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-21 — Account deletion and export design
+
+[Design](docs/architecture/account-deletion-export.md), with independent review round 1: 4 High, 12 Medium, 11 Low; 26 resolved in text.
+- **Single executor.** Owner, admin and inactivity deletion all run through it.
+- **Grace period.** 14 days, or 30 after a recent security change. The security epoch is a dedicated field, not the 100-entry log.
+- **Ordering.** Billing is stopped first, then the identity is tombstoned early, before content deletion.
+- **Export.** Streamed tar archive with session-cookie download, step-up, notices and rate limits.
+- **Email removal.** Requires a waiver if no channel would remain.
+
+The review found that the existing flag-off inactivity purge shares the bugs fixed in the design: alarm shelving hides blobs, search backfill recreates embeddings, and export cleanup is missing. Fix these before `LIFECYCLE_PURGE_ENABLED` is ever enabled.
+
+Open: R1-M12, BindleBox data on account deletion. Recommendation: cascade via an owner-deletion event to operator-run apps. This must be decided before any deletion flag is enabled. Flags: `ACCOUNT_EXPORT_ENABLED`, `ACCOUNT_DELETION_ENABLED`, `EMAIL_REMOVAL_ENABLED`.
+
+Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-21 — Organizations (design in progress)
+
+The user requested "workspaces" for teams and companies:
+- independent users;
+- per-user grants;
+- relationships between self-contained units that change over time;
+- inter-entity sharing;
+- private membership checks through elements;
+- an entity switcher.
+
+The user's first use is their own company ERP.
+
+- **Term.** "Organization" accepted by the user. "Entity" stays the umbrella term ([terminology](docs/architecture/organizations-terminology.md)). Reviewer: ___ Date: ___ Outcome: ___
+- **Cross-provider membership is core (user clarification).** Members from any provider sign requests with a key certified by their home provider. Verification chain: home manifest → `directory.v1` identity document → member certificate → DPoP proof → live grants. There is no org sign-in. Certificate acquisition is unspecified (elements, fallback Bindle flow, device grant). The goal is proof of origin attested by the home provider; passkey-signed approvals are optional later. Reviewer: ___ Date: ___ Outcome: ___
+- **Status.** [Design](docs/architecture/organizations-design.md) rev 3 and [spec](docs/spec/organizations.md) rev 2 after review round 1 (5 High, 8 Medium, 8 Low). Review round 2 is in progress.
+- **Pending user decisions.** Signing model confirmation, the org issuer location, the two-admin deadlock, and certificate lifetimes. Accepted-provisional recommendations: no roles (per-member grants plus copy-on-apply templates), paid-only at launch, grantor-initiated offers, and a minimal ERP phase A that includes cross-provider members.

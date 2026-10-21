@@ -1,0 +1,60 @@
+/**
+ * FF-1 registry contract (host behaviour, not protocol). FLAGS[name] is immutable:
+ * {name,class,type,safe,onValue,dimensions,requires,risk,outage,gates,gateReferences,
+ * experiment,stateful,retainExisting,placement,client,narrowOnly,derived,envDefault,
+ * envDefaults,envParse}. requires are flag names; dependencyMode may select global.
+ * envDefault is the raw Worker default; envDefaults.node pins adapter differences.
+ * gates are release-status IDs; gateReferences point at the unsigned release ledger.
+ * Experiment metric names are server-side event names, never arbitrary client input.
+ * Consumers use flags.for(ctx): {version,evaluate(name),enabled(name),global(name),
+ * background(name),envState(name)}; evaluate returns {value,reason,variant?,experimentId?}.
+ * See snapshot.mjs for the persisted {v:1,version,issuedAt,flags} schema.
+ */
+export const GATE_SOURCE='docs/release/open-items.md#2-per-feature-flag-gates-before-enabling-in-production';
+export const GATE_REVISION='da57c7b1a49b7b2878ac8c329915ea0be4925cc3edad9e51bd4261e52f519c22';
+const common=['cloudflareTurnstileProductionConfigured','cloudflareBotProtectionVerified','realBrowserFlowsPassing','durableStorageAndArchiveRecoveryVerified','notificationTransportsVerified','emailLifecycleVerified','storageProviderConformanceVerified','federatedOAuthConformanceVerified','generalPreferenceConsentComplete','webArchiveRenderingComplete','lifecycleNoticesAndDeletionVerified','securityRedTeamFindingsResolved','termsAndPrivacyApproved'];
+export const RELEASE_GATES=Object.freeze(common);
+const rows=[
+ ['ACTIVITY_V2_ENABLED','a','G A S P C V',{stateful:true,client:true,experiment:{metrics:['activity_opened']},envParse:'boolean'}],
+ ['EVENT_BUSES_ENABLED','a','G A S P',{stateful:true,envParse:'boolean'}],
+ ['INTEGRATIONS_ENABLED','a','G A S P C',{risk:'crit',stateful:true,envParse:'boolean'}],
+ ['INCREMENTAL_AUTH_ENABLED','a','G A S P C',{risk:'crit',requires:['FEDERATION_ENABLED'],stateful:true}],
+ ['EXTENSIONS_ENABLED','a','G A C',{stateful:true,envParse:'boolean'}],
+ ['BINDLEBOX_ENABLED','a','G A S P',{stateful:true,envParse:'boolean'}],
+ ['EMAIL_BRIDGE_ENABLED','a','G A S P',{risk:'crit',requires:['BINDLEBOX_ENABLED'],stateful:true}],
+ ['SEMANTIC_SEARCH_ENABLED','a','G A S P V',{experiment:{metrics:['search_result_opened']},capabilities:['AI','SEARCH_VECTORS']}],
+ ['BEAM_ENABLED','a','G A S P V',{stateful:true,experiment:{metrics:['beam_completed']}}],
+ ['DEVICE_AUTHORIZATION_ENABLED','a','G A C',{risk:'crit',requires:['FEDERATION_ENABLED'],stateful:true,envParse:'boolean'}],
+ ['APP_METADATA_DISCOVERY_ENABLED','a','G C',{}],
+ ['SIGNUP_ENABLED','c','G R',{risk:'crit',outage:'last-known'}],
+ ['PAID_SIGNUP_ENABLED','c','G R',{risk:'crit',outage:'last-known',capabilities:['billing-configuration']}],
+ ['WAITLIST_ENABLED','c','G R',{outage:'last-known'}],
+ ['FEDERATION_ENABLED','c','G',{risk:'crit',outage:'last-known'}],
+ ['BROKERING_ENABLED','c','G C',{risk:'crit',outage:'last-known',requires:['INTEGRATIONS_ENABLED'],dependencyMode:'global'}],
+ ['MCP_ENABLED','c','G C',{risk:'crit',outage:'last-known'}],
+ ['CLIENT_METADATA_ENABLED','c','G',{risk:'crit'}],
+ ['LIFECYCLE_DRY_RUN','c','G',{safe:true,onValue:true,narrowOnly:true,risk:'crit',envDefault:true,envParse:'not-false-boolean'}],
+ ['LIFECYCLE_ENABLED','b','',{envParse:'boolean'}],['LIFECYCLE_PURGE_ENABLED','b','',{}],
+ ['WORK_LIMITS_ENABLED','b','',{safe:true,envParse:'work-authority',envDefaults:{node:'true'}}],
+ ['STORAGE_WRITE_ENABLED','b','',{safe:true,envParse:'boolean',envDefaults:{node:'true'}}],
+ ['BILLING_ENABLED','b','',{}],['MAIL_ENABLED','b','',{}],['PUSH_ENABLED','b','',{}],['BEAM_TURN_ENABLED','b','',{}],
+ ['BEAM_STUN_ENABLED','b','',{envDefaults:{node:'true'}}],
+ ['FEDERATION_REFRESH_ENABLED','b','',{safe:true,envDefault:true,envParse:'not-false'}],
+ ['FEDERATION_ENTRY_ENABLED','b','',{}],['ONBOARDING_ENABLED','b','',{}],['ADMIN_ENABLED','b','',{}],
+ ['ADMIN_CLAIMS_ENABLED','b','',{derived:true,envParse:'true-only'}],
+ ['BROKERED_INTROSPECTION_MOUNTED','b','',{derived:true,envParse:'true-only',parent:'BROKERING_ENABLED'}],
+ ['EVENT_BUS_WAITS_MOUNTED','b','',{derived:true,envParse:'true-only',parent:'EVENT_BUSES_ENABLED'}],
+ ['PUSH_AVAILABLE','b','',{derived:true,envParse:'true-only'}],['EMAIL_AVAILABLE','b','',{derived:true,envParse:'true-only'}],
+ ['EMAIL_SETUP_AVAILABLE','b','',{derived:true,envParse:'true-only'}],['WAITLIST_MAIL_AVAILABLE','b','',{derived:true,envParse:'true-only'}]
+];
+const freeze=value=>{if(value&&typeof value==='object'){for(const child of Object.values(value))freeze(child);Object.freeze(value);}return value;};
+export const FLAGS=freeze(Object.fromEntries(rows.map(([name,kind,dimensions,extra])=>[name,{name,class:kind,type:'boolean',safe:false,onValue:true,dimensions:dimensions?dimensions.split(' '):[],requires:[],risk:kind==='b'?null:'std',outage:kind==='b'?null:'safe',gates:[...common],gateReferences:[GATE_SOURCE],gateRevision:GATE_REVISION,experiment:null,stateful:false,retainExisting:false,placement:extra.stateful?'account':'edge',client:false,narrowOnly:false,derived:false,envDefault:undefined,envDefaults:{},envParse:'string',...extra,...extra.stateful?{retainExisting:true,hasState:name}:{}}])));
+export const registry=FLAGS;
+export const FLAG_NAMES=Object.freeze(Object.keys(FLAGS));
+export function getFlag(name){if(typeof name!=='string'||!Object.hasOwn(FLAGS,name))throw Object.assign(new TypeError(`Unknown flag: ${String(name)}`),{code:'unknown_flag'});return FLAGS[name];}
+export function validateRegistry(entries=FLAGS){
+ const seen=new Set(),active=new Set();
+ function visit(name){if(active.has(name))throw new TypeError(`Flag dependency cycle: ${name}`);if(seen.has(name))return;const f=entries[name];if(!f)throw new TypeError(`Unknown flag dependency: ${name}`);active.add(name);for(const dep of f.requires)visit(dep);active.delete(name);seen.add(name);}
+ for(const [name,f]of Object.entries(entries)){if(f.stateful&&f.dimensions.includes('R')||f.experiment&&(f.risk==='crit'||!f.dimensions.includes('V'))||f.class==='b'&&f.dimensions.length)throw new TypeError(`Invalid flag declaration: ${name}`);visit(name);}return entries;
+}
+validateRegistry();

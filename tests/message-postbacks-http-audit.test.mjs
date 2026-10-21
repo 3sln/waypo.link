@@ -4,6 +4,8 @@ import {mkdtemp,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import application from '../packages/runtime/http.mjs';
+import {Engine,Provider} from '../vendor/ngin/src/index.js';
+import {IdentityService} from '../packages/identity/service.mjs';
 import {IdentityFault} from '../packages/identity/index.mjs';
 import {AccountController} from '../packages/runtime/accounts.mjs';
 import {SqliteMetadata,SerialGate} from '../apps/node/resources.mjs';
@@ -22,7 +24,7 @@ async function fixture(t){
  const owner=crypto.randomUUID(),id=crypto.randomUUID(),directory=await mkdtemp(join(tmpdir(),'bindle-http-postback-audit-'));
  const db=new SqliteMetadata(join(directory,'state.sqlite')),blobs=new Map(),calls=[],rpc=[],lookups=[],identityCalls=[];
  const bucket={put:async(k,v)=>blobs.set(k,new Uint8Array(v)),get:async k=>blobs.has(k)?{arrayBuffer:async()=>blobs.get(k).buffer}:null,delete:async k=>blobs.delete(k)};
- const account={id:owner,status:'active',assignmentId:crypto.randomUUID(),recoveryHash:'private-initial-recovery-hash'};
+ const account={id:owner,status:'active',termsVersion:'2026-10-11',assignmentId:crypto.randomUUID(),recoveryHash:'private-initial-recovery-hash'};
  const pair=await crypto.subtle.generateKey({name:'ECDSA',namedCurve:'P-256'},true,['sign','verify']),kid=crypto.randomUUID();
  let response={status:204,headers:{},bytes:new Uint8Array()};
  const config={APP_ORIGIN:issuer,KEY_ENCRYPTION_KEY:Buffer.alloc(32,19).toString('base64'),WORK_LIMITS_ENABLED:'false',WORK_AUTHORITY:{consume:async()=>true},FORM_POSTBACK_ORIGINS:[app],FEDERATION_CLIENTS:[{id:app+'/client',name:'Fixture app',origin:app}],APP_NOTIFICATION_SIGNING_JWK:{...await crypto.subtle.exportKey('jwk',pair.privateKey),kid,alg:'ES256'},APP_NOTIFICATION_PUBLIC_JWKS:{keys:[{...await crypto.subtle.exportKey('jwk',pair.publicKey),kid,alg:'ES256'}]},FEDERATION_IDENTITY_CHECK:async(id,epoch)=>id===owner&&account.status==='active'&&epoch===await federationEpoch(account),FORM_POSTBACK_TRANSPORT:{send:async request=>{calls.push(request);return response;}}};
@@ -35,7 +37,7 @@ async function fixture(t){
  await db.put(key('message-usage',owner),{bytes:bytes.length,messages:1});
  const formDigest=await digest(crypto,messageFormFingerprint(parseMessageForms(source,app)[0]));
  const input=()=>({requestId:crypto.randomUUID(),expectedRevision:0,sourceDigest,formId:0,formDigest,fields:[['proof','bounded-app-proof'],['reply','Private submitted text']]});
- const env={...config,ABUSE:{consume:async()=>true},IDENTITY_REPOSITORY:{get:async value=>value===owner?account:null},IDENTITY_ENGINE:async()=>({dispose(){},query:query=>({peek:async()=>{identityCalls.push(query.context);if(query.context.sessionToken!=='owner-session')throw new IdentityFault('unauthorized');return {account:{id:owner,status:'active'},csrfToken:'owner-csrf'};}})}),ACCOUNTS:{get:value=>{lookups.push(value);assert.equal(value,owner);return {invoke:async call=>{rpc.push(call);return controller.invoke(call);}};}}};
+ const env={...config,ABUSE:{consume:async()=>true},IDENTITY_REPOSITORY:{get:async value=>value===owner?account:null},IDENTITY_ENGINE:async()=>new Engine({providers:{identity:Provider.fromSingleton({repository:{get:async id=>id===owner?account:null},config:{termsVersion:'2026-10-11'},requireCurrentTerms:IdentityService.prototype.requireCurrentTerms,authorized:async context=>{identityCalls.push(context);if(context.sessionToken!=='owner-session')throw new IdentityFault('unauthorized');return {account,session:{csrfToken:'owner-csrf'}};},owner:async(_input,context)=>{identityCalls.push(context);if(context.sessionToken!=='owner-session'||account.status!=='active')throw new IdentityFault('unauthorized');return {account,csrfToken:'owner-csrf'};}})}}),ACCOUNTS:{get:value=>{lookups.push(value);assert.equal(value,owner);return {invoke:async call=>{rpc.push(call);return controller.invoke(call);}};}}};
  const request=(suffix,{method='POST',headers={},body={}}={})=>application.fetch(new Request(`${issuer}/api/messages/${id}${suffix}`,{method,headers:{'Content-Type':'application/json',...headers},...['GET','HEAD'].includes(method)?{}:{body:typeof body==='string'?body:JSON.stringify(body)}}),env);
  const ownerHeaders={Origin:issuer,Cookie:'__Host-bindle_session=owner-session','X-CSRF-Token':'owner-csrf'};
  const prepare=(value=input(),headers=ownerHeaders)=>request('/postbacks/prepare',{headers,body:value});
@@ -76,7 +78,7 @@ test('HTTP cookie-free dispatch retains outcome without owner login, leaked cred
 test('HTTP prepared authority is invalidated by recovery, inactive identity and edited unsigned presentation',async t=>{
  const f=await fixture(t),cap=await (await f.prepare()).json(),initial=f.account.recoveryHash;
  f.account.recoveryHash='new-recovery-authority';assert.equal((await f.dispatch(cap.dispatchToken)).status,403);assert.equal(f.calls.length,0);
- f.account.recoveryHash=initial;f.account.status='recovering';assert.equal((await f.dispatch(cap.dispatchToken)).status,403);assert.equal((await f.prepare()).status,401);assert.equal(f.calls.length,0);
+ f.account.recoveryHash=initial;f.account.status='recovering';assert.equal((await f.dispatch(cap.dispatchToken)).status,401);assert.equal((await f.prepare()).status,401);assert.equal(f.calls.length,0);
  f.account.status='active';const edit=await f.request('/presentation',{headers:f.ownerHeaders,body:{requestId:crypto.randomUUID(),expectedRevision:0,sourceDigest:f.sourceDigest,mimeType:'text/html',text:source}});assert.equal(edit.status,200);
  const denied=await f.dispatch(cap.dispatchToken);assert.equal(denied.status,403);assert.equal((await denied.json()).error,'unverified_presentation');assert.equal(f.calls.length,0);
  const detail=await f.request('',{method:'GET',headers:f.ownerHeaders});assert.equal((await detail.json()).formPostbacks.reason,'unverified-presentation');
@@ -91,3 +93,5 @@ test('HTTP status results preserve only at most two bounded HTTPS navigation lin
  }
  assert.equal(f.calls.length,5);assert.equal((await f.controller.message(f.owner,f.id)).presentation.current,null);
 });
+
+test('a prepared cookie-free submission cannot create content while its owner owes terms re-acceptance',async t=>{const f=await fixture(t),cap=await(await f.prepare()).json();f.account.termsVersion='old';const denied=await f.dispatch(cap.dispatchToken);assert.equal(denied.status,403);assert.equal((await denied.json()).error,'terms_acceptance_required');assert.equal(f.calls.length,0);f.account.termsVersion='2026-10-11';assert.equal((await f.dispatch(cap.dispatchToken)).status,200);assert.equal(f.calls.length,1);});

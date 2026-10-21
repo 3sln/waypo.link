@@ -6,6 +6,7 @@ import {fail} from './schema.mjs';
 import {canonical,digest} from '../messaging/store.mjs';
 import {AppQuery} from '../app/engine.mjs';
 import {validateExtensions} from './extensions.mjs';
+import {providerLegalMetadata} from './legal.mjs';
 const declarationObject=value=>value!==null&&typeof value==='object'&&!Array.isArray(value);
 const declarationBytes=value=>new TextEncoder().encode(JSON.stringify(value)).length;
 const declarationFlag=(config,name)=>typeof name==='string'&&Object.hasOwn(config,name)&&(config[name]===true||config[name]==='true');
@@ -59,10 +60,10 @@ const faultResult=(code,message,error={})=>({__federationError:{code,message,...
 /** Portable composition boundary. Both hosted and self-hosted runtimes inject
  * metadata, live owner authentication and actual contract adapters here. */
 export class FederationController {
-  constructor({metadata,auth,issuer,clients=[],schemaFetcher,schemaHosts=[],dispatcher,crypto=globalThis.crypto,clock=()=>Date.now(),allowInsecureLocalhost=false,enabled=true,routingKey,validateSubject,resourceProvider,connections,refreshEnabled=false,objectURLs,dpop,embedView,embedOrigin,clientMetadata=false,manifestDeclarations,appSessions,incrementalIdentity,eventBusReader,appSessionLineage,deriveAppSession,incremental,brokering,integrations=false,clientAuth}){
+  constructor({metadata,auth,issuer,clients=[],schemaFetcher,schemaHosts=[],dispatcher,crypto=globalThis.crypto,clock=()=>Date.now(),allowInsecureLocalhost=false,enabled=true,routingKey,validateSubject,resourceProvider,connections,refreshEnabled=false,objectURLs,dpop,embedView,embedOrigin,clientMetadata=false,manifestDeclarations,appSessions,incrementalIdentity,eventBusReader,appSessionLineage,deriveAppSession,incremental,brokering,integrations=false,clientAuth,termsAllowed}){
     if(!metadata?.transaction||!auth?.owner)throw new TypeError('Transactional metadata and authenticated owner resource required');
     Object.assign(this,{metadata,auth,issuer,clients,dispatcher,clock,enabled,allowInsecureLocalhost,clientMetadata:clientMetadata===true,manifestDeclarations});
-    this.clientAuth=clientAuth;this.service=new FederationService({integrations,store:metadata,issuer,clients,crypto,clock,schemaFetcher,schemaHosts,allowInsecureLocalhost,routingKey,validateSubject,resourceProvider,connections,refreshEnabled,objectURLs,dpop,embedView,embedOrigin,appSessions,brokering,clientMetadata:clientMetadata===true,authenticateOwner:(authority)=>auth.owner(authority.context,{mutation:authority.mutation}),dispatchCapability:ctx=>this.dispatch(ctx,crypto)});
+    this.clientAuth=clientAuth;this.service=new FederationService({integrations,store:metadata,issuer,clients,crypto,clock,schemaFetcher,schemaHosts,allowInsecureLocalhost,routingKey,validateSubject,resourceProvider,connections,refreshEnabled,objectURLs,dpop,embedView,embedOrigin,appSessions,brokering,clientMetadata:clientMetadata===true,authenticateOwner:(authority)=>auth.owner(authority.context,{mutation:authority.mutation}),termsAllowed,dispatchCapability:ctx=>this.dispatch(ctx,crypto)});
     this.service.incrementalIdentity=incrementalIdentity;this.service.eventBusReader=eventBusReader;this.service.appSessionLineage=appSessionLineage;this.service.deriveAppSession=deriveAppSession;this.service.incremental=incremental;
     // Persisted metadata-client snapshots load once per instance before any operation that may consult a client.
     if(this.clientMetadata)for(const method of ['beginAuthorization','inspect','approve','entryIdentity','beginEntryAuthorization','revokeToken','redeemClaim','embedSession','embedState','embedForget','embedAvatar','embedEvents','embedEventsTick','embedEnd','configure','preferences','grants','revoke','exchange','refresh','tokenClient','rpc','inspectObjectURL','objectURL']){const call=this[method].bind(this);this[method]=async(...args)=>{this.requireReady();await this.service.ensureClients();return call(...args);};}
@@ -75,11 +76,13 @@ export class FederationController {
   incrementalPort(method,input){this.requireReady();return incrementalPort(this.service,method,input);}
   ready(){return this.enabled&&(this.clients.length>0||this.clientMetadata)&&typeof this.service.schemaFetcher==='function'&&(typeof this.dispatcher==='function'||typeof this.dispatcher?.execute==='function');}
   requireReady(){if(!this.ready())fail('temporarily_unavailable','Federation is not configured and release enabled.');}
-  manifest(){this.requireReady();return withManifestDeclarations({version:'0',issuer:this.issuer,grant_types_supported:['authorization_code',...this.service.refreshEnabled?['refresh_token']:[]],authorization_request_endpoint:`${this.issuer}/api/oauth/requests`,preferences_contract:'https://3sln.me/artefacts/contracts/preferences/v1',authorization_endpoint:`${this.issuer}/oauth/authorize`,token_endpoint:`${this.issuer}/oauth/token`,rpc_endpoint:`${this.issuer}/bindle/rpc`,jwks_uri:`${this.issuer}/oauth/jwks`,login_presentation:['redirect'],revocation_endpoint:`${this.issuer}/oauth/revoke`,...this.service.dpopNonces?{dpop_signing_alg_values_supported:['ES256']}:{},contracts:[]},this.manifestDeclarations?.()??{});}
-  authority(context,mutation){return {context,mutation};}
+  manifest(){this.requireReady();return withManifestDeclarations({version:'0',issuer:this.issuer,...providerLegalMetadata(this.issuer),grant_types_supported:['authorization_code',...this.service.refreshEnabled?['refresh_token']:[]],authorization_request_endpoint:`${this.issuer}/api/oauth/requests`,preferences_contract:'https://3sln.me/artefacts/contracts/preferences/v1',authorization_endpoint:`${this.issuer}/oauth/authorize`,token_endpoint:`${this.issuer}/oauth/token`,rpc_endpoint:`${this.issuer}/bindle/rpc`,jwks_uri:`${this.issuer}/oauth/jwks`,login_presentation:['redirect'],revocation_endpoint:`${this.issuer}/oauth/revoke`,...this.service.dpopNonces?{dpop_signing_alg_values_supported:['ES256']}:{},contracts:[]},this.manifestDeclarations?.()??{});}
+  // New grants and preference/resource content require current terms. Reads, token use, denial and revocation
+  // retain their ordinary authentication; the identity provider rechecks this trusted context at each owner read.
+  authority(context,mutation,requireCurrentTerms=false){return {context:requireCurrentTerms?{...context,requireCurrentTerms:true}:context,mutation};}
   beginAuthorization(input,options){this.requireReady();return this.service.beginAuthorization(input,options);}
   inspect(context,id){this.requireReady();return this.service.inspect(id,context?.sessionToken?this.authority(context,false):undefined);}
-  approve(context,input,options){this.requireReady();return this.service.approve(this.authority(context,true),input,options);}
+  approve(context,input,options){this.requireReady();return this.service.approve(this.authority(context,true,input?.denied!==true),input,options);}
   entryIdentity(context){this.requireReady();return this.service.entryIdentity(this.authority(context,true));}
   beginEntryAuthorization(context,input,options){this.requireReady();return this.service.beginEntryAuthorization(this.authority(context,true),input,options);}
   revokeToken(input){this.requireReady();return this.service.revokeToken(input);}
@@ -92,8 +95,8 @@ export class FederationController {
   embedEventsTick(input){this.requireReady();return this.service.embedEventsTick(input);}
   embedEnd(input){this.requireReady();return this.service.embedEnd(input);}
   async dpopNonce(purpose){this.requireReady();if(!['token','embed'].includes(purpose)||!this.service.dpopNonces)fail('temporarily_unavailable');return this.service.dpopNonces.issue(purpose);}
-  async configure(context,input){this.requireReady();const out=await this.service.configure(this.authority(context,true),input);await this.service.drainBrokeredEvents();return out;}
-  registerResource(context,input){this.requireReady();return this.service.registerResource(this.authority(context,true),input);}
+  async configure(context,input){this.requireReady();const out=await this.service.configure(this.authority(context,true,true),input);await this.service.drainBrokeredEvents();return out;}
+  registerResource(context,input){this.requireReady();return this.service.registerResource(this.authority(context,true,true),input);}
   async cleanup(input){const events=await this.service.drainBrokeredEvents(),out=await this.service.cleanup(input);return events.pending?{...out,remaining:true,nextAlarmAt:this.clock()+60000}:out;}
   preferences(context){this.requireReady();return this.service.preferences(this.authority(context,false));}
   grants(context){this.requireReady();return this.service.grants(this.authority(context,false));}

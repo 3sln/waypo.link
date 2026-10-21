@@ -35,7 +35,7 @@ test('Chromium private link scrubs before app load, selects only invited name an
   assert.deepEqual(await page.locator('[name=onboardingName] option').evaluateAll(nodes=>nodes.map(n=>n.value)),['','alice']);
   await page.selectOption('[name=onboardingName]','alice');assert(!(await page.locator('body').innerText()).includes(token));assert.equal(await page.locator('[name=password],[name=onboardingToken]').count(),0);await mkdir('artifacts/browser',{recursive:true});await page.screenshot({path:'artifacts/browser/private-onboarding-names.png'});await page.getByRole('button',{name:'Continue',exact:true}).click();
   await page.getByRole('button',{name:'Password',exact:true}).click();await page.getByRole('button',{name:'Continue',exact:true}).click();
-  await page.locator('[name=termsAccepted]').check();await page.getByRole('button',{name:'Continue',exact:true}).click();
+  await page.locator('input[name=ageConfirmed]').check();await page.locator('[name=termsAccepted]').check();await page.getByRole('button',{name:'Continue',exact:true}).click();
   await page.locator('[name=password]').fill('a long private password');await page.getByRole('button',{name:'Create my account',exact:true}).click();
   await page.waitForURL(origin+'/recovery/setup');
   const claim=calls.find(c=>c.path.endsWith('/claim'));assert.equal(claim.body.name,'alice');assert.equal(claim.body.onboardingToken,token);assert.equal(claim.body.signupPlan,undefined);

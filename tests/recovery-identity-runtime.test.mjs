@@ -31,7 +31,7 @@ async function fixture(t, config = {}) {
     directory, request, get app() { return app; },
     async restart() { await app.close(); app = await createNodeServer({ directory, config }); },
     async signup() {
-      const result = await request('/api/auth/signup', { method: 'password', password, termsAccepted: true, termsVersion: '2026-10-11', turnstileToken: challenge });
+      const result = await request('/api/auth/signup', { method: 'password', password, ageConfirmed: 18, termsAccepted: true, termsVersion: '2026-10-11', turnstileToken: challenge });
       assert.equal(result.status, 200, result.value.error);
       return result.value;
     },

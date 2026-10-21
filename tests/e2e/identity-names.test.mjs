@@ -9,7 +9,7 @@ test('actual Worker signup freshness and inline step-up preserve identity and pu
  const config=await (await context.request.get(baseURL+'/api/config')).json();
  const post=(path,data)=>context.request.post(baseURL+path,{headers:{Origin:baseURL},data});
  const password='Browser identity certificate test password!';
- const start=await post('/api/auth/signup',{method:'password',password,termsAccepted:true,termsVersion:config.termsVersion,turnstileToken:'local-browser-test-token'});assert.equal(start.status(),200);
+ const start=await post('/api/auth/signup',{method:'password',password,ageConfirmed:18,termsAccepted:true,termsVersion:config.termsVersion,turnstileToken:'local-browser-test-token'});assert.equal(start.status(),200);
  const pending=await start.json();assert.match(pending.account.handle,/^n\.[0-9abcdefghjkmnpqrstvwxyz]+$/);
  const file=await (await post('/api/auth/recovery/download',{pendingToken:pending.pendingToken})).json();const backup=JSON.parse(file.content);assert.equal(backup.handle,undefined);assert.equal(backup.nameAssignment,undefined);
  const activated=await post('/api/auth/recovery/confirm',{pendingToken:pending.pendingToken,recoveryToken:file.recoveryToken,downloadConfirmed:true});assert.equal(activated.status(),200);const session=await activated.json();

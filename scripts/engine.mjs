@@ -25,7 +25,7 @@ import {parseArgs} from 'node:util';
 import repl from 'node:repl';
 import {createMemoryEngine,OWNER,OTHER,ownerActor} from '../packages/app/memory-providers.mjs';
 import {PROVIDERS} from '../packages/app/providers.mjs';
-import {ACCOUNT_OPERATIONS} from '../packages/app/operations.mjs';
+import {MEMORY_OPERATIONS as ACCOUNT_OPERATIONS} from '../packages/app/memory-providers.mjs';
 import {AppQuery,perform,read} from '../packages/app/engine.mjs';
 import {faultOf} from '../packages/app/faults.mjs';
 

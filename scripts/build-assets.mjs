@@ -163,6 +163,8 @@ for(const page of pages){
 
 const {buildLanding}=await import('./build-landing.mjs');
 result.html.push(...await buildLanding({out:outputRoot,css:result.entries.app.css}));
+const {buildLegalPages}=await import('../apps/web/legal-page.mjs');
+result.html.push(...await buildLegalPages({out:outputRoot,css:result.entries.app.css}));
 
 async function files(directory){
   const out=[];

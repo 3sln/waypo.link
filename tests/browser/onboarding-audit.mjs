@@ -18,7 +18,7 @@ async function fixture(step='credential'){
  const api={csrf:'current-owner-csrf',async request(path,body){calls.push({path,body});return wait;},async get(){throw Error('Unexpected GET');}};
  const engine=new Engine({providers:{state:StateProvider,api:Provider.fromSingleton(api),browser:Provider.fromSingleton(browser),portalContributions:Provider.fromSingleton({}),recoveryFile:Provider.fromSingleton({})}});
  const write=patch=>engine.container.use({state:{write:true}},({state})=>state.transition(s=>Object.assign(s,patch)));
- await write({loading:false,auth:'signup',authMethod:'password',signupMode:'onboarding',signupStep:step,signupTermsAccepted:true,onboardingName:'alice',onboardingNames:[{name:'alice',status:'available'}],beamGeneration:1,config:{origin:'https://space.example',signupEnabled:false,tokenOnboardingEnabled:true,localDevelopment:true,signupContactRequired:false},route:{kind:'home'}});
+ await write({loading:false,auth:'signup',authMethod:'password',signupMode:'onboarding',signupStep:step,signupTermsAccepted:true,signupAgeConfirmed:18,onboardingName:'alice',onboardingNames:[{name:'alice',status:'available'}],beamGeneration:1,config:{origin:'https://space.example',signupEnabled:false,tokenOnboardingEnabled:true,localDevelopment:true,signupContactRequired:false},route:{kind:'home'}});
  return {secrets,calls,navigation,browser,api,write,resolve,reject,read:()=>engine.container.use(['state'],({state})=>state.snapshot()),act:action=>engine.dispatch(action).next('complete'),close:()=>engine.dispose()};
 }
 async function started(f){for(let n=0;n<100&&!f.calls.length;n++)await new Promise(resolve=>setTimeout(resolve,0));assert.equal(f.calls.length,1);}

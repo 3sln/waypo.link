@@ -1,3 +1,4 @@
+import {clientPolicyLinks} from './legal.mjs';
 // CX-2 projection only. Selection, suggestions, readiness and transport live in
 // authorize-entry-consent's ngin domain. All untrusted strings are text nodes.
 import {dodo as d} from '../shared/stack.mjs';
@@ -83,7 +84,7 @@ export function consentWalkthroughView(state,ctx){
  const title=t(state.step==='recap'?'recap':state.step==='setup'?'setup':state.step==='confirm'?'confirm':state.intent==='configure'?'configure':state.intent==='grant-more'?'more':'connection',{app});
  const steps=[...state.hasSetup?['setup']:[],'review',...needsConfirmation(state)?['confirm']:[]],step=steps.indexOf(state.step);
  return h('section',consentStyle(),h('header',h('p',t('website',{host:appHost})),state.entry.client.reviewed===false?h('p',t('unreviewed')):null,state.entry.client.claimedName?h('p',t('name',{name:state.entry.client.claimedName})):null,ctx.account?h('p',t('account',{account:ctx.account})):null,
-  h('h2',title).attrs({id:'consent-step-title',tabindex:'-1'}),steps.length>1&&step>=0?h('p',t('step',{n:step+1,total:steps.length,step:t(state.step)})):null),ctx.error?h('p',ctx.error).attrs({role:'alert'}):null,state.completedSetup.length&&state.step==='review'?h('p',t('setupSaved')):null,...body,
+  clientPolicyLinks(state.entry.client,state.locale),h('h2',title).attrs({id:'consent-step-title',tabindex:'-1'}),steps.length>1&&step>=0?h('p',t('step',{n:step+1,total:steps.length,step:t(state.step)})):null),ctx.error?h('p',ctx.error).attrs({role:'alert'}):null,state.completedSetup.length&&state.step==='review'?h('p',t('setupSaved')):null,...body,
   ['grant-more','configure'].includes(state.intent)&&!['stop','recap'].includes(state.step)?h('button',t('stop',{app})).props({type:'button',disabled:busy}).classes('text-button').on({click:()=>send('stop')}):null).classes('consent-walkthrough').attrs({'aria-busy':busy?'true':'false','data-consent-step':state.step,lang:state.locale});
 }
 const ownSuggestion=(values,name)=>Object.hasOwn(values,name);

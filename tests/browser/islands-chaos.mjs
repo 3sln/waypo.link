@@ -106,7 +106,7 @@ async function fixture(t,name,faults){
   const account=await provider.evaluate(async avatar=>{
     const post=(path,body,headers={})=>fetch(path,{method:path==='/api/profile'?'PUT':'POST',headers:{'Content-Type':'application/json',...headers},body:JSON.stringify(body)}).then(async r=>{const text=await r.text();try{return {status:r.status,body:JSON.parse(text)};}catch{return {status:r.status,body:{text:text.slice(0,300),path}};}});
     const config=await(await fetch('/api/config')).json();
-    const signup=await post('/api/auth/signup',{method:'password',password:'Islands browser fixture password!',termsAccepted:true,termsVersion:config.termsVersion,turnstileToken:'local-browser-test-token'});if(!signup.body.pendingToken)return {error:signup};
+    const signup=await post('/api/auth/signup',{method:'password',password:'Islands browser fixture password!',ageConfirmed:18,termsAccepted:true,termsVersion:config.termsVersion,turnstileToken:'local-browser-test-token'});if(!signup.body.pendingToken)return {error:signup};
     const file=await post('/api/auth/recovery/download',{pendingToken:signup.body.pendingToken});const confirmed=await post('/api/auth/recovery/confirm',{pendingToken:signup.body.pendingToken,recoveryToken:file.body.recoveryToken,downloadConfirmed:true});if(confirmed.status!==200)return {error:confirmed};
     const session=await(await fetch('/api/session')).json(),member={'X-Bindle-Account':session.account.id,'X-Bindle-Session-Context':session.sessionContext,'X-CSRF-Token':session.csrfToken};
     const profile=await post('/api/profile',{displayName:'Display alex',bio:'',avatar,discloseToContacts:false},member);if(profile.status!==200)return {error:profile};

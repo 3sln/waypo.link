@@ -1,3 +1,4 @@
+import {ageRequirement,trustedAgeLocation} from './age-policy.mjs';
 import {validateHostAlias,configuredReservedName,projectAccountBadges,defaultBadgeResolver,configuredBadgeIDs} from './badge-policy.mjs';
 import {onboardingAlias,sameOnboardingIdentity} from './onboarding.mjs';
 import {systemMarker,systemBadge,sameSystemIdentity} from './system-bootstrap.mjs';
@@ -105,8 +106,10 @@ export class IdentityService {
     if(context.expectedOwner&&context.expectedOwner!==account.id)throw Object.assign(new Error('Reload the account chooser before continuing.'),{code:'account_context_conflict',status:409});
     if(context.sessionContext&&context.sessionContext!==await this.sessionID(session))throw Object.assign(new Error('Reload the account chooser before continuing.'),{code:'session_context_conflict',status:409});
     if (mutation && !secureEqual(session.csrfToken, context.csrfToken)) fail('csrf', 'Reload the account page and try again.');
+    if(context.requireCurrentTerms===true)this.requireCurrentTerms(account);
     return { account, session };
   }
+  requireCurrentTerms(account){if(account.termsVersion!==this.config.termsVersion)throw Object.assign(new IdentityFault('terms_acceptance_required','Accept the current terms before creating content or granting access.'),{status:403});}
   authAt(session){return Math.max(session.source==='activation'&&Number.isSafeInteger(session.activationCredentialAt)&&session.activationCredentialAt<=this.clock()?session.activationCredentialAt:-Infinity,session.source==='credential'&&Number.isSafeInteger(session.createdAt)&&session.createdAt<=this.clock()?session.createdAt:-Infinity,Number.isSafeInteger(session.stepUpAt)&&session.stepUpAt<=this.clock()?session.stepUpAt:-Infinity);}
   /** Removes sessions and their transitive descendants. Removing a still-live session is an explicit termination
    * in every mode: approval lineage through it ends and its app families enter the revocation outbox in this same
@@ -134,6 +137,12 @@ export class IdentityService {
     else fail('invalid_method');
     session.stepUpAt=this.clock();this.audit(account,'step-up');await this.save(account,revision);return {stepUpUntil:session.stepUpAt+300000};
   }
+  ageAttestation(input,context,{paid=false,bootstrap=false}={}){const location=trustedAgeLocation({country:context?.ageLocation?.country,regionCode:context?.ageLocation?.region}),requirement=ageRequirement(location),minimum=paid?requirement.paidMinimumAge:requirement.minimumAge;if(requirement.blocked&&!bootstrap)throw Object.assign(new IdentityFault('signup_region_blocked',"Sign-up isn't available in your region."),{status:403});if(input.ageConfirmed===undefined)fail('age_confirmation_required','Confirm the minimum signup age.');if(!Number.isSafeInteger(input.ageConfirmed)||input.ageConfirmed<minimum||input.ageConfirmed>150)fail('age_confirmation_insufficient','Confirm the required signup age.');return {ageConfirmedAt:this.clock(),ageMinimum:minimum,ageCountry:location.country};}
+  async acceptTerms(input,context){
+    // CAS retries re-authenticate each time: revocation cannot be overwritten by a stale tab.
+    for(let attempt=0;attempt<32;attempt++){const {account}=await this.authorized(context,true);if(input.termsVersion!==this.config.termsVersion)fail('terms_required','Review the current account terms.');if(account.termsVersion===this.config.termsVersion)return {account:await this.projectAccount(account)};const revision=account.revision;account.termsVersion=this.config.termsVersion;account.termsAcceptedAt=this.clock();this.audit(account,'terms-accepted');account.revision=revision+1;if(await this.repository.compareAndSwap(account.id,revision,account))return {account:await this.projectAccount(account)};}
+    fail('conflict','The account changed; try accepting again.');
+  }
   async signup(input, context) {
     await this.guard('signup', input, context);
     // Portable repositories without an allocator keep the canonical handle, so
@@ -142,7 +151,7 @@ export class IdentityService {
     if (input.termsAccepted !== true || input.termsVersion !== this.config.termsVersion) fail('terms_required', 'Agree to the current account terms.');
     if (!['passkey', 'password'].includes(input.method)) fail('invalid_method');
     const selectedPassword = input.method === 'password' ? password(input.password) : null;
-    const signupPlan=input.signupPlan??'free';if(!['free','paid','plus','ultra'].includes(signupPlan))fail('invalid_plan','Choose a supported signup plan.');
+    const signupPlan=input.signupPlan??'free';if(!['free','paid','plus','ultra'].includes(signupPlan))fail('invalid_plan','Choose a supported signup plan.');const age=this.ageAttestation(input,context,{paid:signupPlan!=='free'});
     if(signupPlan!=='free'&&(this.config.paidSignupEnabled!==true||!this.setupBilling))throw Object.assign(new IdentityFault('paid_signup_unavailable','Paid signup is not available.'),{status:503});
     if (!this.repository.allocateFreeHandle&&await this.repository.findByHandle(requestedHandle)) fail('handle_unavailable', 'Choose another account handle.');
     // Global/daily creation capacity is reserved only for a valid proof and
@@ -155,7 +164,7 @@ export class IdentityService {
     const account = { id, assignmentId, nameAssignmentId:assignmentId, revision: 0, handle: allocatedHandle, status: 'pending',
       admission:{version:1,kind:signupPlan==='free'?'free':'paid',plan:signupPlan,...signupPlan==='free'?{}:{incarnation:this.crypto.id(),checkoutStartUntil:this.clock()+86400000,initialPaymentRequired:true}},
       createdAt: this.clock(), lastActiveAt: this.clock(), termsVersion: this.config.termsVersion,
-      termsAcceptedAt: this.clock(), credentials: [], sessions: [], challenges: [], audit: [], recoveryHash: null, emailLoginEnabled: false,
+      termsAcceptedAt: this.clock(), ...age, credentials: [], sessions: [], challenges: [], audit: [], recoveryHash: null, emailLoginEnabled: false,
       passwordHash: selectedPassword ? await this.passwordHasher.hash(selectedPassword) : null };
     if(this.config.requireReachability===true){if(!context.setupBinding)fail('unauthorized','Start setup in the account browser.');account.setupBindingHash=await this.crypto.hash('setup-binding',context.setupBinding);}
     const pendingToken = await this.newPending(account,context);if(selectedPassword)await this.verifyPendingPassword(account,selectedPassword);
@@ -171,18 +180,18 @@ export class IdentityService {
   async inspectOnboarding(input,context){this.origin(context);if(Object.keys(input).length!==1||typeof input.onboardingToken!=='string')fail('invalid_onboarding_invitation');if(!this.onboarding)fail('onboarding_unavailable');return this.onboarding.inspect(input.onboardingToken);}
   async issueOnboarding(input,context){this.origin(context);if(Object.keys(input).length!==2||typeof input.onboardingToken!=='string'||typeof input.issuanceProof!=='string')fail('invalid_onboarding_issuance');if(!this.onboarding)fail('onboarding_unavailable');return this.onboarding.issue(input.onboardingToken,input.issuanceProof);}
   async claimOnboarding(input,context){
-    await this.guard('onboarding',input,context);if(!this.onboarding)fail('onboarding_unavailable','Account onboarding is not configured.');if(!context.setupBinding)fail('setup_binding_required','Prepare account onboarding in this browser before continuing.');
-    if(Object.keys(input).some(name=>!['onboardingToken','name','method','password','termsAccepted','termsVersion','turnstileToken'].includes(name)))fail('invalid_onboarding_request');
+    const age=this.ageAttestation(input,context);await this.guard('onboarding',input,context);if(!this.onboarding)fail('onboarding_unavailable','Account onboarding is not configured.');if(!context.setupBinding)fail('setup_binding_required','Prepare account onboarding in this browser before continuing.');
+    if(Object.keys(input).some(name=>!['onboardingToken','name','method','password','termsAccepted','termsVersion','ageConfirmed','turnstileToken'].includes(name)))fail('invalid_onboarding_request');
     if(input.termsAccepted!==true||input.termsVersion!==this.config.termsVersion)fail('terms_required','Agree to the current account terms.');if(!['passkey','password'].includes(input.method))fail('invalid_method');const selectedPassword=input.method==='password'?password(input.password):null;
     const binding=await this.crypto.hash('onboarding-setup-browser',context.setupBinding),prepared=await this.onboarding.prepare(input.onboardingToken,input.name,binding),{claims,digest,item,marker}=prepared,previous=await this.repository.get(item.owner);
     if(previous){if(previous.assignmentId!==item.assignmentId||!sameOnboardingIdentity(previous.onboardingIdentity,marker))fail('onboarding_conflict','Onboarding setup needs operator reconciliation.');await this.onboarding.finish(item,digest,binding);fail('onboarding_invitation_consumed','Setup already started for this name. Sign in with its credential, or ask the host operator for help.');}
     let canonical=prepared.reservation.canonical;if(!canonical){const allocated=await this.repository.allocateFreeHandle(undefined,item.owner,item.assignmentId),reservation=await this.onboarding.canonical(item,digest,binding,allocated);if(!reservation?.canonical)fail('onboarding_conflict','Onboarding setup needs operator reconciliation.');canonical=reservation.canonical;}
-    const account={id:item.owner,assignmentId:item.assignmentId,nameAssignmentId:item.assignmentId,revision:0,handle:canonical,status:'pending',onboardingIdentity:marker,badgeIds:[...item.badgeIds],admission:{version:1,kind:'operator',plan:'free'},createdAt:this.clock(),lastActiveAt:this.clock(),termsVersion:this.config.termsVersion,termsAcceptedAt:this.clock(),credentials:[],sessions:[],challenges:[],audit:[],recoveryHash:null,emailLoginEnabled:false,passwordHash:selectedPassword?await this.passwordHasher.hash(selectedPassword):null};
+    const account={id:item.owner,assignmentId:item.assignmentId,nameAssignmentId:item.assignmentId,revision:0,handle:canonical,status:'pending',onboardingIdentity:marker,badgeIds:[...item.badgeIds],admission:{version:1,kind:'operator',plan:'free'},createdAt:this.clock(),lastActiveAt:this.clock(),termsVersion:this.config.termsVersion,termsAcceptedAt:this.clock(),...age,credentials:[],sessions:[],challenges:[],audit:[],recoveryHash:null,emailLoginEnabled:false,passwordHash:selectedPassword?await this.passwordHasher.hash(selectedPassword):null};
     const pendingToken=await this.newPending(account,context);if(selectedPassword)await this.verifyPendingPassword(account,selectedPassword);let registrationOptions;if(input.method==='passkey'){registrationOptions=await this.webauthn.registrationOptions({account,config:this.config});account.challenges.push({purpose:'register',value:registrationOptions.challenge,expiresAt:this.clock()+this.config.challengeTtlMs});}
     if(claims.expiresAt<=this.clock())fail('invalid_onboarding_invitation','This onboarding invitation expired before account creation.');this.audit(account,'operator-onboarding-pending');if(!await this.repository.create(account))fail('onboarding_conflict','Setup already started for this name. Sign in with its credential or ask the operator to reconcile it.');if(!await this.onboarding.finish(item,digest,binding))fail('onboarding_conflict','Onboarding setup needs operator reconciliation.');return {pendingToken,account:await this.projectAccount(account),registrationOptions,readyForRecovery:input.method==='password',signupPlan:'free',paymentRequired:false};
   }
   async bootstrapSystem(input,context){
-    await this.guard('system-bootstrap',input,context);
+    const age=this.ageAttestation(input,context,{bootstrap:true});await this.guard('system-bootstrap',input,context);
     if(!this.systemBootstrap||!this.repository.reserveSystemIdentity)fail('system_bootstrap_unavailable','System setup is not configured.');
     if(!context.setupBinding)fail('setup_binding_required','Prepare system setup in this browser before continuing.');
     if(input.termsAccepted!==true||input.termsVersion!==this.config.termsVersion)fail('terms_required','Agree to the current account terms.');
@@ -191,7 +200,7 @@ export class IdentityService {
     const previous=await this.repository.get(claims.owner);
     if(previous){if(previous.assignmentId!==claims.assignmentId||!sameSystemIdentity(previous.systemIdentity,marker))fail('system_bootstrap_conflict','System setup needs operator reconciliation.');await this.systemBootstrap.finish(claims,digest,binding);fail('system_invitation_consumed','This invitation was already used. Sign in with the configured credential, or ask the operator to repair incomplete setup.');}
     let canonical=prepared.reservation.canonical;if(!canonical){const allocated=await this.repository.allocateFreeHandle(undefined,claims.owner,claims.assignmentId),reservation=await this.systemBootstrap.canonical(claims,digest,binding,allocated);if(!reservation?.canonical)fail('system_bootstrap_conflict','System setup needs operator reconciliation.');canonical=reservation.canonical;}
-    const account={id:claims.owner,assignmentId:claims.assignmentId,nameAssignmentId:claims.assignmentId,revision:0,handle:canonical,status:'pending',systemIdentity:marker,badgeIds:configuredBadgeIDs(this.config).includes('system')?['system']:[],admission:{version:1,kind:'system',plan:'free',initialSystemActivationRequired:true},createdAt:this.clock(),lastActiveAt:this.clock(),termsVersion:this.config.termsVersion,termsAcceptedAt:this.clock(),credentials:[],sessions:[],challenges:[],audit:[],recoveryHash:null,emailLoginEnabled:false,passwordHash:selectedPassword?await this.passwordHasher.hash(selectedPassword):null};
+    const account={id:claims.owner,assignmentId:claims.assignmentId,nameAssignmentId:claims.assignmentId,revision:0,handle:canonical,status:'pending',systemIdentity:marker,badgeIds:configuredBadgeIDs(this.config).includes('system')?['system']:[],admission:{version:1,kind:'system',plan:'free',initialSystemActivationRequired:true},createdAt:this.clock(),lastActiveAt:this.clock(),termsVersion:this.config.termsVersion,termsAcceptedAt:this.clock(),...age,credentials:[],sessions:[],challenges:[],audit:[],recoveryHash:null,emailLoginEnabled:false,passwordHash:selectedPassword?await this.passwordHasher.hash(selectedPassword):null};
     const pendingToken=await this.newPending(account,context);if(selectedPassword)await this.verifyPendingPassword(account,selectedPassword);let registrationOptions;if(input.method==='passkey'){registrationOptions=await this.webauthn.registrationOptions({account,config:this.config});account.challenges.push({purpose:'register',value:registrationOptions.challenge,expiresAt:this.clock()+this.config.challengeTtlMs});}
     if(claims.expiresAt<=this.clock())fail('invalid_system_invitation','This system invitation expired before account creation.');
     this.audit(account,'system-bootstrap-pending');if(!await this.repository.create(account))fail('system_bootstrap_conflict','System setup was already started. Sign in with the configured credential or ask the operator to reconcile it.');
@@ -425,7 +434,7 @@ export class IdentityService {
   // config.deviceAuthorizationEnabled. The system operations below are for the federation engine and are never routed.
   async linkedStart(input, context) { return this.linkedFlow().start(input, context); }
   async linkedResolve(input, context) { return this.linkedFlow().resolve(input, context); }
-  async linkedApprove(input, context) { return this.linkedFlow().approve(input, context); }
+  async linkedApprove(input, context) { this.requireCurrentTerms((await this.authorized(context,true)).account);return this.linkedFlow().approve(input, context); }
   async linkedDeny(input, context) { return this.linkedFlow().deny(input, context); }
   async linkedPoll(input, context) { return this.linkedFlow().poll(input, context); }
   async linkedAccept(input, context) { return this.linkedFlow().accept(input, context); }
@@ -439,7 +448,7 @@ export class IdentityService {
   async linkedOutboxAck(input) { return this.linkedFlow().outboxAck(input); }
   async createDeviceLogin(input, context) { return this.deviceFlow().create(input, context); }
   async deviceRequest(input, context) { return this.deviceFlow().inspect(input, context); }
-  async approveDeviceLogin(input, context) { return this.deviceFlow().approve(input, context); }
+  async approveDeviceLogin(input, context) { this.requireCurrentTerms((await this.authorized(context,true)).account);return this.deviceFlow().approve(input, context); }
   async denyDeviceLogin(input, context) { return this.deviceFlow().deny(input, context); }
   async pollDeviceLogin(input, context) { return this.deviceFlow().poll(input, context); }
   async cancelDeviceLogin(input, context) { return this.deviceFlow().cancel(input, context); }

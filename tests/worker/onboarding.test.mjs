@@ -21,7 +21,7 @@ test('actual Worker closed host reserves ordinary names and charges each once wi
  const inspected=await post('inspect',{onboardingToken},cookie);assert.equal(inspected.status,200);assert.deepEqual((await inspected.json()).names,[{name:'alice',status:'available'},{name:'bob',status:'available'}]);
  const pending=[];
  for(const item of claims.names){
-  const input={onboardingToken,name:item.name,method:'password',password:'isolated private-host account password',termsAccepted:true,termsVersion:'2026-10-11',turnstileToken:'local-browser-test-token'};
+  const input={onboardingToken,name:item.name,method:'password',password:'isolated private-host account password',ageConfirmed:18,termsAccepted:true,termsVersion:'2026-10-11',turnstileToken:'local-browser-test-token'};
   const response=await post('claim',input,cookie);assert.equal(response.status,200,await response.clone().text());
   const value=await response.json();pending.push(value);assert.equal(value.account.id,item.owner);assert.equal(value.account.systemBadge,undefined);assert.deepEqual(value.account.badges,item.badgeIds);
   assert.equal((await h.directory.findByHandle(item.name)).id,item.owner);

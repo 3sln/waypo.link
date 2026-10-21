@@ -1,3 +1,5 @@
+import {verifyPreparedPostbackToken} from '../message-postbacks.mjs';
+import {AcceptTerms,PaidCheckoutAllowed,TermsCreationAllowed,TermsRequestAllowed,TermsSubjectAllowed,trustedAgeLocation} from '../../identity/age-policy.mjs';
 // HTTP routes of slice 13a, Edge engine and identity (docs/architecture/app-engine.md §12): recovery authority, the signup gate, account sessions, device login and identity actions.
 // Stage handlers and route-module shape: packages/runtime/routes/index.mjs.
 import {accountSessionRoutes,installAccountSession} from '../account-session-http.mjs';
@@ -6,7 +8,7 @@ import {recoveryAuthorityPublic} from '../identity-backup.mjs';
 import {IdentityAction,OwnerQuery,LinkedApprovalAction,LinkedResolveQuery,IdentityFault} from '../../identity/index.mjs';
 import {deviceAuthorizationEnabled} from '../device-grant.mjs';
 import QRCode from 'qrcode';
-import {json,body,cookie,signupEnabled,accountHandle,status} from './shared.mjs';
+import {json,body,cookie,signupEnabled,accountHandle,status,identity} from './shared.mjs';
 
 const authMethods={
  '/api/auth/step-up/begin':'stepUpBegin','/api/auth/step-up':'stepUp',
@@ -54,6 +56,7 @@ async function linkedRoutes({request,env,path,local,engine,context,vault}){
    return json(result,200,headers);
   }
   const authenticated=await engine.query(new OwnerQuery(context)).peek(),owner=authenticated.account.id;
+  if(path==='/api/auth/linked/approve'||path==='/api/auth/linked/configure')await engine.query(new TermsCreationAllowed(context)).peek();
   if(context.csrfToken!==authenticated.csrfToken)return json({error:'csrf',message:'Reload the account page before continuing.'},403);
   const review=async()=>approvalReview(grant?await grant.review({owner,context:ctx,code:input.code,...input.locator!==undefined?{requestId:input.locator}:{},...input.turnstileToken?{turnstileToken:input.turnstileToken}:{}}):{linked:await engine.query(new LinkedResolveQuery({code:input.code,...input.locator!==undefined?{locator:input.locator}:{},...input.turnstileToken?{turnstileToken:input.turnstileToken}:{}},ctx)).peek()},authenticated,Date.now());
   if(path==='/api/auth/linked/resolve')return json(await review());
@@ -84,7 +87,20 @@ export function allowedMethods(path){
  if(path.startsWith('/api/auth/'))return ['POST'];
  return null;
 }
+// Terms gates: new content, saved views/rules, contact links, conversations, storage connections,
+// uploads, app grants and authorization changes. GET/HEAD, export, deletion, revoke, cleanup,
+// security settings, billing cancellation and sign-out remain accessible.
+export {createsContentOrGrant} from '../../identity/age-policy.mjs';
 export const stages={
+ async public({request,env,path}){
+  // Incoming contact-delivery capabilities authorize recipient ingress; their authors may belong to another
+  // provider. Hosted authors create envelopes through the gated /api/links/envelope path. Remote delivery
+  // and retries of already-signed envelopes do not create a new local-owner grant.
+  // Preparations made before a policy update cannot submit new content afterwards.
+  const postback=/^\/api\/messages\/([a-f0-9-]{36})\/postbacks$/.exec(path);
+  if(postback&&request.method==='POST'&&!request.headers.has('Cookie')&&request.headers.get('Origin')===env.APP_ORIGIN){const token=request.headers.get('Authorization')?.match(/^Bearer (.+)$/)?.[1];let owner;try{owner=await verifyPreparedPostbackToken(env,token,postback[1]);}catch{return;}const document=await body(request.clone(),128);if(Object.keys(document).length)return json({error:'invalid_request'},400);const engine=await identity(env);try{await engine.query(new TermsSubjectAllowed(owner)).peek();}finally{engine.dispose();}}
+ },
+ async beforeActivity({request,path,engine,context}){if(path==='/api/billing/checkout'&&request.method==='POST')await engine.query(new PaidCheckoutAllowed(await body(request.clone()),context)).peek();if(['POST','PUT','PATCH'].includes(request.method)){const multiplexed=/^\/api\/(?:rules|connections\/(?:owner|setup)|automation\/(?:prepare|invoke)|profile|email-bridge|contacts\/[^/]+\/beam|conversations\/[^/]+\/[^/]+\/action|events\/buses\/[^/]+\/features)$/.test(path),document=multiplexed?await body(request.clone()):{};await engine.query(new TermsRequestAllowed(context,{path,method:request.method,document})).peek();}},
  async anonymous({request,env,path}){
    if(path==='/api/recovery/authority'){if(request.method!=='GET')return json({error:'method_not_allowed'},405,{Allow:'GET'});return json(recoveryAuthorityPublic(env));}
  },
@@ -92,6 +108,8 @@ export const stages={
     if(path==='/api/auth/signup'&&request.method==='POST'&&!signupEnabled(env))return json({error:'release_gated',message:'Account creation is not open yet.'},503);
  },
  async session({request,env,path,local,engine,context,vault,accountPath,accountMember}){
+    context.ageLocation=trustedAgeLocation(request.cf);
+    if(path==='/api/auth/terms/accept'){if(request.method!=='POST')return json({error:'method_not_allowed'},405);return json((await engine.dispatch(new AcceptTerms(await body(request),context)).next('result')).detail);}
     if(accountPath)return await accountSessionRoutes({request,env,local,engine,context,body,json,legacyCleared:cookie('',local,0)});
     if(['/api/auth/signup','/api/auth/recover','/api/auth/login/password','/api/auth/login/passkey/finish'].includes(path))context.setupBinding=crypto.randomUUID()+crypto.randomUUID();
     if(path==='/api/auth/device/start')context.deviceBinding=crypto.randomUUID()+crypto.randomUUID();
@@ -114,6 +132,7 @@ export const stages={
         if(context.csrfToken!==authenticated.csrfToken)return json({error:'csrf',message:'Reload the account page before continuing.'},403);
         await accountHandle(env,authenticated.account.id).touch(authenticated.account.id);
       }
+      if(authMethods[path]==='approveDeviceLogin')await engine.query(new TermsCreationAllowed(context)).peek();
       const event=await engine.dispatch(new IdentityAction(authMethods[path],input,context)).next('result');const result=event.detail;
       if(['/api/auth/signup','/api/auth/system/bootstrap','/api/auth/onboarding/claim'].includes(path)&&result.account?.status==='pending')await accountHandle(env,result.account.id).rememberSignupOrigin(result.account.id,{createdAt:result.account.createdAt});
       if(result.sessionToken&&result.account?.id){try{await accountHandle(env,result.account.id).touch(result.account.id);result.billingSync=await accountHandle(env,result.account.id).billingRefresh(result.account.id,{force:true});}catch{result.billingSync={checked:false,error:'billing_provider_unavailable'};}}

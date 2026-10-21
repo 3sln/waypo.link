@@ -18,7 +18,7 @@ async function fixture() {
   const service = new IdentityService({ repository, deviceRequests, clock: () => now,
     config: { origin: context.origin, rpID: 'bindle.example', termsVersion: 'test', linkedEphemeralKey: true },
     turnstile: { verify: async () => true }, rateLimiter: { check: async () => true }, webauthn: {}, passwordHasher: {} });
-  const account = { id: service.crypto.id(), handle: 'alice', revision: 0, status: 'active', credentials: [], sessions: [], createdAt: now };
+  const account = { id: service.crypto.id(), handle: 'alice', revision: 0, status: 'active', termsVersion:'test', credentials: [], sessions: [], createdAt: now };
   const phone = await service.session(account, { label: 'Phone' });
   const unrelated = await service.session(account, { label: 'Another browser' });
   await repository.create(account);

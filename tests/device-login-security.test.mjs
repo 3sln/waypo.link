@@ -74,7 +74,7 @@ test('QR generation refuses code-bearing links and the anonymous inspection rout
 
 for(const method of ['password','passkey','pending-password','no-ceremony','expired-ceremony','future-ceremony'])test(`activation freshness requires this setup credential ceremony: ${method}`,async()=>{
  const f=identityEngine({webauthn:{registrationOptions:async()=>({challenge:'register'}),verifyRegistration:async()=>({id:'registered',publicKey:'key'})}});try{
-  const passwordSignup=['password','no-ceremony','expired-ceremony','future-ceremony'].includes(method),pending=await f.act('signup',{handle:'new-owner',method:passwordSignup?'password':'passkey',password:PASSWORD,termsAccepted:true,termsVersion:'2026-10-11',turnstileToken:'verified'});
+  const passwordSignup=['password','no-ceremony','expired-ceremony','future-ceremony'].includes(method),pending=await f.act('signup',{handle:'new-owner',method:passwordSignup?'password':'passkey',password:PASSWORD,ageConfirmed:18,termsAccepted:true,termsVersion:'2026-10-11',turnstileToken:'verified'});
   if(method==='passkey')await f.act('registerPasskey',{...pending,response:{id:'registered'}});
   if(method==='pending-password')await f.act('setPendingPassword',{...pending,password:PASSWORD});
   if(['no-ceremony','future-ceremony'].includes(method)){const account=await f.repository.get(pending.account.id);if(method==='no-ceremony')delete account.pendingCredentialAt;else account.pendingCredentialAt=f.clock.now()+1000;await f.repository.compareAndSwap(account.id,account.revision,account);}
@@ -87,5 +87,5 @@ for(const method of ['password','passkey','pending-password','no-ceremony','expi
 });
 
 test('rotating setup authority discards previous ceremony evidence',async()=>{
- const f=identityEngine();try{const pending=await f.act('signup',{handle:'rotated-owner',method:'password',password:PASSWORD,termsAccepted:true,termsVersion:'2026-10-11',turnstileToken:'verified'}),account=await f.repository.get(pending.account.id);assert(Number.isSafeInteger(account.pendingCredentialAt));await f.service.newPending(account,context);assert.equal(account.pendingCredentialAt,undefined);}finally{await f.engine.dispose();}
+ const f=identityEngine();try{const pending=await f.act('signup',{handle:'rotated-owner',method:'password',password:PASSWORD,ageConfirmed:18,termsAccepted:true,termsVersion:'2026-10-11',turnstileToken:'verified'}),account=await f.repository.get(pending.account.id);assert(Number.isSafeInteger(account.pendingCredentialAt));await f.service.newPending(account,context);assert.equal(account.pendingCredentialAt,undefined);}finally{await f.engine.dispose();}
 });

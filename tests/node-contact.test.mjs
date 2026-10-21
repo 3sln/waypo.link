@@ -12,7 +12,7 @@ async function fixture(){
  const directory=await mkdtemp(join(tmpdir(),'bindle-node-contact-'));let app=await createNodeServer({directory,config:{APP_ORIGIN:origin,BRAND_NAME:'Private Notes'}});
  const request=(path,{method='GET',value,headers={},form}={})=>app.fetch(new Request(new URL(path,origin),{method,headers:{...(value===undefined?{}:{'Content-Type':'application/json'}),...headers},...(form?{body:form}:value===undefined?{}:{body:JSON.stringify(value)})}));
  const post=(path,value,headers={})=>request(path,{method:'POST',value,headers:{Origin:origin,...headers}});
- const signup=await post('/api/auth/signup',{method:'password',password:'Private self-host account password!',termsAccepted:true,termsVersion:'2026-10-11',turnstileToken:'local-browser-test-token'});assert.equal(signup.status,200);const pending=await signup.json();
+ const signup=await post('/api/auth/signup',{method:'password',password:'Private self-host account password!',ageConfirmed:18,termsAccepted:true,termsVersion:'2026-10-11',turnstileToken:'local-browser-test-token'});assert.equal(signup.status,200);const pending=await signup.json();
  const recovery=await (await post('/api/auth/recovery/download',{pendingToken:pending.pendingToken})).json();
  const activated=await post('/api/auth/recovery/confirm',{pendingToken:pending.pendingToken,recoveryToken:recovery.recoveryToken,downloadConfirmed:true});assert.equal(activated.status,200);const session=await activated.json(),cookie=activated.headers.get('Set-Cookie').split(';')[0];
  const headers={Origin:origin,Cookie:cookie,'X-CSRF-Token':session.csrfToken};

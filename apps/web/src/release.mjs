@@ -1,3 +1,4 @@
+import {AcceptTerms,termsPending} from './bl/legal.mjs';
 import {Provider} from './shared/stack.mjs';
 import {getDomain} from '/vendor/tldts/index.js';
 import {createConnectionsPort} from './bl/connections-port.mjs';
@@ -51,6 +52,7 @@ const readModel=await engine.container.use(['state'],({state})=>state.snapshot);
 const messageFrameResource=await engine.container.use(['messageActions'],({messageActions})=>messageActions);
 const prepareBeamDestination=await engine.container.use(['beaming'],({beaming})=>beaming.prepareDestination);
 const constructors={
+ 'accept-terms':AcceptTerms,
  'confirm-owner':ConfirmOwner,'cancel-owner-confirmation':CancelOwnerConfirmation,
  'open-accounts':accountActions.OpenAccounts,'close-accounts':accountActions.CloseAccounts,'add-account':accountActions.AddAccount,'switch-account':accountActions.SwitchAccount,'logout-account':accountActions.LogoutAccounts,'logout-all-accounts':accountActions.LogoutAccounts,'retry-account-cleanup':accountActions.RetryAccountCleanup,
  'message-submission-unknown':messageActions.MessageSubmissionUnknown,'review-message-action':messageActions.ReviewMessageAction,'submit-message-action':messageActions.SubmitMessageAction,'load-message-revision':messageActions.LoadMessageRevision,
@@ -106,7 +108,7 @@ engine.feed.addEventListener('portal-intent',event=>dispatchIntent(event.detail)
 engine.feed.addEventListener('shortcut-chord-expired',event=>engine.dispatch(new actions.ClearShortcutChord(event.detail)));
 // Native default prevention must use the provider's current read handle, not
 // wait for the next paint of the Query Cell. No second keyboard model is held.
-function keydown(event){if(event.repeat)return;const model=readModel(),stroke=normalizeKeyStroke(event,navigator.platform);if(!stroke)return;const context=portalContext(model,{textInputFocus:isTextInputTarget(event.target)});const result=resolveKeybinding(compileKeybindings(defaultKeybindings(registry),model.keybindingOverrides??[],registry.list('commands')),context,model.keyChord,stroke);if(result.consumed){event.preventDefault();event.stopPropagation();}if(!result.consumed&&context.textInputFocus){if(model.keyChord?.strokes?.length)engine.dispatch(new actions.ClearShortcutChord({startedAt:model.keyChord.startedAt}));return;}engine.dispatch(new actions.PressShortcut({stroke}));}
+function keydown(event){if(termsPending(readModel()))return;if(event.repeat)return;const model=readModel(),stroke=normalizeKeyStroke(event,navigator.platform);if(!stroke)return;const context=portalContext(model,{textInputFocus:isTextInputTarget(event.target)});const result=resolveKeybinding(compileKeybindings(defaultKeybindings(registry),model.keybindingOverrides??[],registry.list('commands')),context,model.keyChord,stroke);if(result.consumed){event.preventDefault();event.stopPropagation();}if(!result.consumed&&context.textInputFocus){if(model.keyChord?.strokes?.length)engine.dispatch(new actions.ClearShortcutChord({startedAt:model.keyChord.startedAt}));return;}engine.dispatch(new actions.PressShortcut({stroke}));}
 window.addEventListener('keydown',keydown);
 engine.feed.addEventListener('device-poll-due',()=>engine.dispatch(new actions.PollDeviceLogin()));
 engine.feed.addEventListener('session-check-due',()=>engine.dispatch(new actions.RecheckSession()));
@@ -129,7 +131,8 @@ dodo.reconcile(root,[watch(stateCell,state=>watch(contextCell,context=>{return w
 messageFrameResource.connect(root,readModel,dispatchIntent);
 let accessHash='',consoleOwner='';const syncIntegrationRoute=()=>{const s=readModel();if(!s.config?.integrationsEnabled||!s.session?.account||s.offline)return;const route=accessRoute(location.hash),key=s.session.account.id+':'+s.session.sessionContext+':'+s.beamGeneration+':'+location.hash;if(route&&key!==accessHash){accessHash=key;engine.dispatch(new actions.NavigateSpace({kind:'navigate',view:'access'}));engine.dispatch(new AccessAction('open',{route}));}if(s.view==='connections'&&consoleOwner!==key){consoleOwner=key;engine.dispatch(new ConnectionsIntent({action:'reload'}));}};addEventListener('hashchange',syncIntegrationRoute);engine.feed.addEventListener('browser-state-updated',syncIntegrationRoute);
 let privateGeneration=readModel().beamGeneration??0;engine.feed.addEventListener('browser-state-updated',()=>{const generation=readModel().beamGeneration??0;if(generation!==privateGeneration){privateGeneration=generation;cancelRecovery();}messageFrameResource.sync();});
+const termsFocus=new MutationObserver(()=>{const dialog=root.querySelector('[data-terms-update]');if(dialog&&!dialog.contains(document.activeElement))dialog.querySelector('h2')?.focus();});termsFocus.observe(root,{childList:true,subtree:true});
 engine.dispatch(new actions.InitializeSpace());
-window.addEventListener('pagehide',()=>{cancelRecovery();window.removeEventListener('keydown',keydown);dodo.reconcile(root,[]);engine.dispose();},{once:true});
+window.addEventListener('pagehide',()=>{termsFocus.disconnect();cancelRecovery();window.removeEventListener('keydown',keydown);dodo.reconcile(root,[]);engine.dispose();},{once:true});
 // Back/forward cache restores a torn-down page: reload instead of showing a blank console.
 window.addEventListener('pageshow',event=>{if(event.persisted)location.reload();});

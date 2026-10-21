@@ -223,7 +223,7 @@ async function runtime(t) {
   const directory = await mkdtemp(join(tmpdir(), 'identity-keys-runtime-')), app = await createNodeServer({ directory, config: {} });
   t.after(async () => { await app.close(); await rm(directory, { recursive: true, force: true }); });
   const request = async (path, input) => { const response = await app.fetch(new Request(origin + path, { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' }, body: JSON.stringify(input) })); return { status: response.status, value: await response.json() }; };
-  const pending = (await request('/api/auth/signup', { method: 'password', password, termsAccepted: true, termsVersion: '2026-10-11', turnstileToken: challenge })).value;
+  const pending = (await request('/api/auth/signup', { method: 'password', password, ageConfirmed: 18, termsAccepted: true, termsVersion: '2026-10-11', turnstileToken: challenge })).value;
   const file = (await request('/api/auth/recovery/download', { pendingToken: pending.pendingToken })).value;
   assert.equal((await request('/api/auth/recovery/confirm', { pendingToken: pending.pendingToken, recoveryToken: file.recoveryToken, downloadConfirmed: true })).status, 200);
   const id = pending.account.id, recover = () => request('/api/auth/recover', { recoveryToken: file.recoveryToken, identityBackup: JSON.parse(file.content), turnstileToken: challenge });

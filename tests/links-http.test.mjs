@@ -15,7 +15,7 @@ let lane=0;const fetchURL=(url,init={})=>{const request=new Request(new URL(url,
 let network=1;
 async function account(){
  const ip=`198.51.100.${network++}`,post=(path,value,headers={})=>fetchURL(path,{method:'POST',headers:{Origin:origin,'Content-Type':'application/json','CF-Connecting-IP':ip,...headers},body:JSON.stringify(value)});
- const signup=await post('/api/auth/signup',{method:'password',password:'Private links account password!',termsAccepted:true,termsVersion:'2026-10-11',turnstileToken:'local-browser-test-token'}),pending=await signup.json(),setup={Cookie:signup.headers.get('Set-Cookie').split(';')[0]};
+ const signup=await post('/api/auth/signup',{method:'password',password:'Private links account password!',ageConfirmed:18,termsAccepted:true,termsVersion:'2026-10-11',turnstileToken:'local-browser-test-token'}),pending=await signup.json(),setup={Cookie:signup.headers.get('Set-Cookie').split(';')[0]};
  const recovery=await (await post('/api/auth/recovery/download',{pendingToken:pending.pendingToken},setup)).json();
  const activated=await post('/api/auth/recovery/confirm',{pendingToken:pending.pendingToken,recoveryToken:recovery.recoveryToken,downloadConfirmed:true},setup);assert.equal(activated.status,200,await activated.clone().text());
  const session=await activated.json(),headers={Cookie:activated.headers.getSetCookie().find(c=>c.startsWith('bindle_session=')).split(';')[0],'X-CSRF-Token':session.csrfToken};

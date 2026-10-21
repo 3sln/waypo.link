@@ -2,13 +2,18 @@
 // SQLite defaults to :memory:; wrap decorates platform resources before lazy providers obtain them.
 // Test fault injection is supplied by tests/helpers/app-engine.mjs, never imported here.
 import { Provider } from '../../vendor/ngin/index.js';
-import { createAppEngine, perform, read, operate } from './engine.mjs';
+import { createAppEngine, perform, read, operate, operations } from './engine.mjs';
 import { memoryAudit } from './providers.mjs';
 import { ACCOUNT_OPERATIONS } from './operations.mjs';
+import { EDGE_OPERATIONS } from './edge-operations.mjs';
 import { accountProviders } from './account.mjs';
 import { MessagingService } from '../messaging/index.mjs';
 import { AccountItemIndex } from '../runtime/item-index.mjs';
 import { SqliteMetadata } from '../../apps/node/resources.mjs';
+import { AdminStorage } from '../identity/admin-store.mjs';
+import { createFlags } from '../flags/evaluate.mjs';
+import { memoryFlagStats } from '../flags/stats.mjs';
+export const MEMORY_OPERATIONS=operations(...Object.values(ACCOUNT_OPERATIONS),...Object.values(EDGE_OPERATIONS));
 export function createRandom(seed = 1) {
   let state = seed >>> 0;
   const next = () => {
@@ -54,9 +59,27 @@ const MessagingProvider = Provider.fromLazySingleton(async ({ accountStore, cloc
   return new MessagingService({ store: metadataStore(store), tokens: null, clock: time.now, crypto: { randomUUID: ids.uuid, subtle: crypto.subtle, getRandomValues: array => crypto.getRandomValues(array) } });
 }, undefined, { deps: ['accountStore', 'clock', 'random'] });
 
-const FACTS = [...new Set(Object.values(ACCOUNT_OPERATIONS).map(Operation => Operation.changes).filter(Boolean))];
+// Each lease pins a fresh committed snapshot; the evaluator stays synchronous
+// for its lifetime, including while a concurrent admin commits a newer version.
+class MemoryFlagsProvider extends Provider {
+  static deps=['flagStore','config','clock'];
+  #deps; #held=new WeakMap();
+  constructor(deps){super();this.#deps=deps;}
+  async obtain(){
+    const resources={},held=[];
+    try{for(const name of this.constructor.deps){resources[name]=await this.#deps[name].obtain();held.push(name);}
+      const {flagStore,config,clock}=resources,flags=createFlags({snapshot:await flagStore.flagsSnapshot(),env:config,clock:()=>clock.now(),platform:config.FLAGS_PLATFORM??'worker'});
+      this.#held.set(flags,{resources,held});return flags;
+    }catch(error){for(const name of held)await this.#deps[name].release(resources[name]);throw error;}
+  }
+  async release(flags){const state=this.#held.get(flags);if(!state)return;this.#held.delete(flags);for(const name of state.held)await this.#deps[name].release(state.resources[name]);}
+}
+const MemoryFlagStatsProvider=Provider.fromLazySingleton(async({clock,random})=>{
+  const time=await clock.obtain();try{const ids=await random.obtain();try{return {...memoryFlagStats({clock:time,random:ids}),clock:time,random:ids};}catch(error){await random.release(ids);throw error;}}catch(error){await clock.release(time);throw error;}
+},async(resource,{clock,random})=>{await clock.release(resource.clock);await random.release(resource.random);},{deps:['clock','random']});
+const FACTS = [...new Set(Object.values(MEMORY_OPERATIONS).map(Operation => Operation.changes).filter(Boolean))];
 
-export async function createMemoryEngine({ db = ':memory:', seed = Number(process.env.CHAOS_SEED ?? 1), clock = fakeClock(), random, wrap = {}, providers = {}, interceptors = [], incomingReady = true } = {}) {
+export async function createMemoryEngine({ db = ':memory:', seed = Number(process.env.CHAOS_SEED ?? 1), clock = fakeClock(), random, wrap = {}, providers = {}, interceptors = [], incomingReady = true, config = {} } = {}) {
   // Two streams: fault probabilities draw from `random`, generated IDs from `ids`, so adding a fault rule
   // never shifts the IDs a seed produces.
   random ??= createRandom(seed); const ids = createRandom((seed ^ 0x5eed5eed) >>> 0);
@@ -64,14 +87,15 @@ export async function createMemoryEngine({ db = ':memory:', seed = Number(proces
   if (incomingReady && !await metadata.get('item-index-ready')) { await metadata.put('item-index-ready', true); itemIndex.migrateIncoming(); }
   const decorate=(name,resource)=>wrap[name]?wrap[name](resource):resource;
   const audit = memoryAudit({ clock });
+  const flagStore=decorate('flagStore',new AdminStorage(metadata));
   // The production account composition over in-process resources; `providers` overrides by name.
-  const engine = createAppEngine({ providers: { ...accountProviders({ accountStore: decorate('accountStore', metadata), itemIndex: decorate('itemIndex', itemIndex), messaging: MessagingProvider, clock, random: seededRandom(ids), audit }), ...providers }, interceptors });
+  const engine = createAppEngine({ providers: { ...accountProviders({ accountStore: decorate('accountStore', metadata), itemIndex: decorate('itemIndex', itemIndex), messaging: MessagingProvider, clock, random: seededRandom(ids), audit }), config:Object.freeze({...config}),flagStore,flags:MemoryFlagsProvider,flagStats:MemoryFlagStatsProvider,...providers }, interceptors });
   // Every engineFeed fact the registered operations declare, in order: what UI and reactions would see.
   const events = [], record = event => events.push({ type: event.type, ...event.detail });
   for (const fact of FACTS) engine.feed.addEventListener(fact, record);
-  const byName = (name, params = {}) => { if (!Object.hasOwn(ACCOUNT_OPERATIONS, name)) throw new TypeError(`Unknown operation ${name}`); return new ACCOUNT_OPERATIONS[name]({ actor: ownerActor(), ...params }); };
+  const byName = (name, params = {}) => { if (!Object.hasOwn(MEMORY_OPERATIONS, name)) throw new TypeError(`Unknown operation ${name}`); return new MEMORY_OPERATIONS[name]({ actor: ownerActor(), ...params }); };
   return {
-    engine, metadata, itemIndex, clock, audit, events, random,
+    engine, metadata, itemIndex, clock, audit, events, random, flagStore,
     actor: ownerActor,
     perform: (action, options) => perform(engine, action, options),
     read: query => read(engine, query),

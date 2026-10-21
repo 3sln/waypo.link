@@ -26,6 +26,7 @@ const STUCK=()=>[...document.querySelectorAll('button')].filter(button=>button.t
 /** One browser context whose /api surface is a mutable fixture model. */
 export async function chaosConsole(browser,t,{account={id:OWNER_A,handle:'n.chaos',status:'active',hasPassword:true,passkeyCount:0},signedIn=true,config={},data={},views=builtinViews(),incoming={},viewport={width:1440,height:1000},contextOptions={},handlers={},goto='/console'}={}){
  const context=await browser.newContext({viewport,serviceWorkers:'block',...contextOptions});t.after(()=>context.close());
+ account={termsVersion:config.termsVersion??'2026-10-11',...account};
  const model={account,signedIn,config:{environment:'UI chaos fixture',termsVersion:'2026-10-11',localDevelopment:true,signupEnabled:true,providers:{},...config},data:{account,collections:[{id:'inbox',name:'Inbox'}],messages:[],contacts:[],rules:[],resources:[],grants:[],...data},views,incoming,calls:[],faults:[],gates:[],handlers};
  const waiters=new Set(),record=(method,path,body)=>{model.calls.push({method,path,body});for(const waiter of waiters)waiter();};
  const count=(method,path)=>model.calls.filter(call=>call.method===method&&(typeof path==='string'?call.path===path:path.test(call.path))).length;

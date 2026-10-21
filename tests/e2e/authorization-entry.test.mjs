@@ -11,7 +11,7 @@ test('authorization entry: cookieless creation, strict entry document, owner sel
  const browser=await launch();t.after(()=>browser.close());
  const context=await browser.newContext({permissions:['local-network-access'],extraHTTPHeaders:{'CF-Connecting-IP':`198.51.100.${40+Math.floor(Math.random()*150)}`}});
  const config=await(await context.request.get(baseURL+'/api/config')).json(),post=(path,data)=>context.request.post(baseURL+path,{headers:{Origin:baseURL},data});
- const signup=await(await post('/api/auth/signup',{method:'password',password:'Authorization entry browser password!',termsAccepted:true,termsVersion:config.termsVersion,turnstileToken:'local-browser-test-token'})).json();assert.ok(signup.pendingToken,JSON.stringify(signup));
+ const signup=await(await post('/api/auth/signup',{method:'password',password:'Authorization entry browser password!',ageConfirmed:18,termsAccepted:true,termsVersion:config.termsVersion,turnstileToken:'local-browser-test-token'})).json();assert.ok(signup.pendingToken,JSON.stringify(signup));
  const file=await(await post('/api/auth/recovery/download',{pendingToken:signup.pendingToken})).json();assert.equal((await post('/api/auth/recovery/confirm',{pendingToken:signup.pendingToken,recoveryToken:file.recoveryToken,downloadConfirmed:true})).status(),200);
  // F8: the entry feature is advertised because the routes are mounted; the components profile because the islands shell
  // is built, the embed routes are mounted and DPoP is configured (a loopback embed origin only under LOCAL_DEVELOPMENT).

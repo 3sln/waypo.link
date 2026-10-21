@@ -25,7 +25,7 @@ class DeviceRepository {
 }
 const config = { origin: 'https://3sln.example', rpID: '3sln.example', rpName: '3sln', termsVersion: '2026-10-11', linkedCodeKey: 'test-linked-code-key-0001' };
 const context = { origin: config.origin, remoteIP: '192.0.2.1' };
-const signup = { handle: 'alice', method: 'password', password: 'correct horse battery staple', termsAccepted: true, termsVersion: config.termsVersion, turnstileToken: 'verified' };
+const signup = { handle: 'alice', method: 'password', password: 'correct horse battery staple', ageConfirmed: 18, termsAccepted: true, termsVersion: config.termsVersion, turnstileToken: 'verified' };
 async function fixture() {
   let now = Date.now(); const messages = []; const repository = new Repository();
   const resources = { repository, deviceRequests: new DeviceRepository(), clock: () => now, config,

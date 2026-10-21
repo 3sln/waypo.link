@@ -1,3 +1,4 @@
+import {clientPolicyLinks} from './legal.mjs';
 // Rendering for the provider-owned authorization entry page (slice A7). Pure projection of the entry model: the
 // page module supplies `dispatch`, the arming guard and the shared consent kit. Account handles appear only on
 // this provider page; approval controls ("Continue as …", "Allow selected access", "Sign out") are armed by
@@ -42,7 +43,7 @@ export function entryView(model,ctx){
  const unreviewed=entry?.client.reviewed===false;
  const origin=entry?h('div',h('p',t('App website: '),h('strong',hostOf(entry.client.origin)).attrs({translate:'no'}),' ',h('span',entry.client.origin).classes('field-help').attrs({translate:'no'})),
   unreviewed?h('p',t('{host} has not reviewed this app. Continue only if you trust {site}.',{host,site:isolate(hostOf(entry.client.origin))})).classes('security-note').data({unreviewedClient:'true'}):null,
-  unreviewed&&entry.client.claimedName?h('p',t('Name the app gives itself (not verified): '),h('span',isolate(entry.client.claimedName)).attrs({translate:'no'})).classes('field-help').data({claimedName:'true'}):null).key('entry-origin'):null;
+  unreviewed&&entry.client.claimedName?h('p',t('Name the app gives itself (not verified): '),h('span',isolate(entry.client.claimedName)).attrs({translate:'no'})).classes('field-help').data({claimedName:'true'}):null,clientPolicyLinks(entry.client,model.locale??ctx.locale??'en')).key('entry-origin'):null;
  const cancel=entry&&entry.intent!=='end-session'?plain(model.phase==='consent'?t('Cancel connection'):t('Cancel'),()=>dispatch('cancel')):null;
  const account=handle=>isolate(handle+'@'+host);
  // A real link (never window.open with noopener, whose null result hides a blocked popup); middle-click works too.

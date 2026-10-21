@@ -13,6 +13,7 @@ import {fail,object,exact,https} from './schema.mjs';
 import {verifyProof,EMBED_PROOF_TYP,jktPattern} from './dpop.mjs';
 import {componentsDeclaration,COMPONENTS_PROFILE} from './components-profile.mjs';
 import {metadataClientHost,validClientSnapshot,clientSite} from './client-metadata.mjs';
+import {clientPolicyLinks,withClientPolicies} from './legal.mjs';
 import {UUID_V4 as UUID} from '../core/primitives.mjs';
 import {INCREMENTAL_INTENTS,incrementalMembers} from './incremental.mjs';
 export const ENTRY_INTENTS=['login','select-account','reauthenticate','end-session'];
@@ -25,7 +26,7 @@ const generic=()=>fail('invalid_request','The authorization entry could not be c
 const expired=()=>fail('invalid_request','This sign-in expired. Start again from the application.');
 const unauthorized=()=>fail('unauthorized','Sign in to continue.');
 // Owner-shard refusals raised before any code exists (service.approve validation); anything else keeps the decision hold.
-const RELEASING=['stale_consent','consent_stale','consent_required','invalid_grant','invalid_preferences','invalid_args','reauthentication_required','account_mismatch','csrf','unauthorized','account_context_conflict','session_context_conflict'];
+const RELEASING=['stale_consent','consent_stale','consent_required','invalid_grant','invalid_preferences','invalid_args','reauthentication_required','terms_acceptance_required','account_mismatch','csrf','unauthorized','account_context_conflict','session_context_conflict'];
 const random=(crypto,size=32)=>base64url(crypto.getRandomValues(new Uint8Array(size)));
 /** Shard ('00'–'63') of a 43-character base64url value: its first character. Entry IDs and remote keys use it. */
 export function entryShard(value){if(typeof value!=='string'||!ID.test(value))expired();return String(ALPHABET.indexOf(value[0])).padStart(2,'0');}
@@ -48,7 +49,7 @@ export class AuthorizationEntries {
   if(shard!==undefined&&(typeof shard!=='string'||!/^\d{2}$/.test(shard)||Number(shard)>=ENTRY_SHARDS||typeof store==='function'))throw new TypeError('A single-shard host needs one store and a shard between 00 and 63.');
   if(embedOrigin!==undefined&&(new URL(embedOrigin).origin!==embedOrigin||embedOrigin===issuer))throw new TypeError('The embed origin must be a dedicated origin.');
   Object.assign(this,{store,shard,issuer,authority,embedOrigin,crypto,clock,dpop:dpop===true,pinSchema,endSession:endSession===true,limits:{...ENTRY_LIMITS,...limits}});
-  this.clients=new Map(clients.map(client=>[client.id,client]));
+  this.clients=new Map(clients.map(client=>[client.id,withClientPolicies(client)]));
   // Metadata-document clients (client-id-metadata.v1): `directory` resolves them where this instance faces callers;
   // a sharded host behind a resolving facade sets `clientMetadata` and accepts the facade's validated snapshot.
   this.directory=directory;this.clientMetadata=clientMetadata===true||directory?.enabled===true;
@@ -139,7 +140,7 @@ export class AuthorizationEntries {
  async view(entryId){
   const {hash,store}=await this.locate(entryId),record=await store.transaction(tx=>this.load(tx,hash)),client=this.clients.get(record.clientId)??(this.clientMetadata&&record.client?.id===record.clientId&&validClientSnapshot(record.client,{integrations:this.directory?.integrations===true||this.integrations===true})?record.client:null);if(!client)expired();
   // An unreviewed client is labelled by its verified origin; its self-declared name is marked as unverified.
-  return {entry:{client:{id:client.id,name:client.name,origin:client.origin,...client.reviewed===false?{reviewed:false,...client.claimedName?{claimedName:client.claimedName}:{}}:{}},redirectUri:record.redirectUri,intent:record.intent,requests:structuredClone(record.requests),presentation:record.presentation,delivery:record.delivery,nonce:record.nonce,expiresAt:record.expiresAt,...record.loginHint?{loginHint:record.loginHint}:{},...record.subjectConstraint?{subjectConstraint:record.subjectConstraint}:{},...record.maxAge!==undefined?{maxAge:record.maxAge}:{},...record.reason!==undefined?{reason:record.reason}:{},...record.target?{target:structuredClone(record.target)}:{},...record.suggestion?{suggestion:structuredClone(record.suggestion)}:{},...record.uiLocales?{uiLocales:record.uiLocales}:{},...record.colorScheme?{colorScheme:record.colorScheme}:{},...record.delivery==='embed-popup'?{embed:{attested:!!record.attested,plain:!!record.plain,...this.embedOrigin?{origin:this.embedOrigin}:{}}}:{}},pageToken:await this.pageToken(entryId,record)};
+  return {entry:{client:{id:client.id,name:client.name,origin:client.origin,...clientPolicyLinks(client),...client.reviewed===false?{reviewed:false,...client.claimedName?{claimedName:client.claimedName}:{}}:{}},redirectUri:record.redirectUri,intent:record.intent,requests:structuredClone(record.requests),presentation:record.presentation,delivery:record.delivery,nonce:record.nonce,expiresAt:record.expiresAt,...record.loginHint?{loginHint:record.loginHint}:{},...record.subjectConstraint?{subjectConstraint:record.subjectConstraint}:{},...record.maxAge!==undefined?{maxAge:record.maxAge}:{},...record.reason!==undefined?{reason:record.reason}:{},...record.target?{target:structuredClone(record.target)}:{},...record.suggestion?{suggestion:structuredClone(record.suggestion)}:{},...record.uiLocales?{uiLocales:record.uiLocales}:{},...record.colorScheme?{colorScheme:record.colorScheme}:{},...record.delivery==='embed-popup'?{embed:{attested:!!record.attested,plain:!!record.plain,...this.embedOrigin?{origin:this.embedOrigin}:{}}}:{}},pageToken:await this.pageToken(entryId,record)};
  }
  /** COOP class of the static entry document (§9). Unknown entries get the strict page. */
  async documentPolicy(entryId,mode){if(mode!==undefined&&mode!=='plain')return 'same-origin';let record=null;try{const {hash,store}=await this.locate(entryId);record=await store.transaction(tx=>tx.get(`entry/${hash}`));}catch{}return record&&record.expiresAt>this.clock()&&record.delivery==='embed-popup'&&!record.plain&&mode!=='plain'?'unsafe-none':'same-origin';}
@@ -217,7 +218,9 @@ export class AuthorizationEntries {
   * the ladder and may record a suppression. A retry after completion returns the stored answer (CX §6.7). */
  async decideIncremental(entryId,context,input,page){
   exact(input,['nonce','pageSecret','plain','approved','denied','notice','suppress','reveal','changes','sharedAcknowledged','setup']);if(!this.incremental)expired();
-  const {owner,identity}=await this.caller(context),{hash,store}=await this.locate(entryId);
+  // Incremental Allow can save preferences or create grants without the ordinary approve adapter.
+  const allowing=input.approved!==undefined||input.changes!==undefined;
+  const {owner,identity}=await this.caller(allowing?{...context,requireCurrentTerms:true}:context),{hash,store}=await this.locate(entryId);
   const record=await store.transaction(async tx=>{const raw=await tx.get(`entry/${hash}`);if(raw?.completed&&raw.v===2&&raw.expiresAt>this.clock()&&INCREMENTAL_INTENTS.includes(raw.intent)){await this.checkPage(entryId,raw,page);if(input.nonce!==raw.nonce)fail('invalid_request');}else await this.opened(tx,entryId,hash,page,input.nonce);const record=raw;if(!await tx.get(`selection/${hash}/${owner}`))fail('invalid_request','Choose an account first.');await this.gate(tx,hash,record,input);return record;});
   const {nonce,pageSecret,plain,...decision}=input,completion=await this.incremental.decide({entryHash:hash,subject:identity.subject,decision});
   await this.complete(store,hash);return this.incrementalRedirect(record,completion);

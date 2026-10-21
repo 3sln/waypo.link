@@ -67,6 +67,10 @@
       {
         "name": "EMAIL_BRIDGE",
         "class_name": "EmailBridgeObject"
+      },
+      {
+        "name": "FLAG_STATS",
+        "class_name": "FlagStatsObject"
       }
     ]
   },
@@ -125,6 +129,12 @@
       "tag": "v9",
       "new_sqlite_classes": [
         "EmailBridgeObject"
+      ]
+    },
+    {
+      "tag": "v10",
+      "new_sqlite_classes": [
+        "FlagStatsObject"
       ]
     }
   ],

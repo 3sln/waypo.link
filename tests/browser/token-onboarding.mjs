@@ -1,3 +1,4 @@
+import {waitFor} from '../helpers/async.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
@@ -29,11 +30,11 @@ test('explicit inspect lists only invitation names, rejects invented/claimed cho
 });
 
 test('ordinary invitation claim uses scoped endpoint and existing limited recovery setup, with no signupPlan or role',async()=>{
- const f=await fixture({signupStep:'credential',signupTermsAccepted:true,onboardingName:'alice',onboardingNames:[{name:'alice',status:'available'}]});try{await f.act(new SignUp({values:{password:'a long private password'}}));assert.equal(f.calls.length,1);assert.equal(f.calls[0].path,'/api/auth/onboarding/claim');assert.equal(f.calls[0].body.name,'alice');assert.equal(f.calls[0].body.onboardingToken,token);assert.equal('signupPlan' in f.calls[0].body,false);assert.equal('role' in f.calls[0].body,false);assert.equal(f.secrets.onboardingToken,null);assert.equal((await f.read()).pending,true);assert.equal((await f.read()).session,null);assert.deepEqual(f.nav,['/recovery/setup']);assert.equal(JSON.stringify(await f.read()).includes('a long private password'),false);}finally{await f.close();}
+ const f=await fixture({signupStep:'credential',signupTermsAccepted:true,signupAgeConfirmed:18,onboardingName:'alice',onboardingNames:[{name:'alice',status:'available'}]});try{await f.act(new SignUp({values:{password:'a long private password'}}));assert.equal(f.calls.length,1);assert.equal(f.calls[0].path,'/api/auth/onboarding/claim');assert.equal(f.calls[0].body.name,'alice');assert.equal(f.calls[0].body.onboardingToken,token);assert.equal('signupPlan' in f.calls[0].body,false);assert.equal('role' in f.calls[0].body,false);assert.equal(f.secrets.onboardingToken,null);assert.equal((await f.read()).pending,true);assert.equal((await f.read()).session,null);assert.deepEqual(f.nav,['/recovery/setup']);assert.equal(JSON.stringify(await f.read()).includes('a long private password'),false);}finally{await f.close();}
 });
 
 test('ambiguous claim is never automatically or manually resent as another setup',async()=>{
- const f=await fixture({signupStep:'credential',signupTermsAccepted:true,onboardingName:'alice',onboardingNames:[{name:'alice',status:'available'}]});try{f.api.request=async(path,body)=>{f.calls.push({path,body});throw Error('Network outcome unknown');};await f.act(new SignUp({values:{password:'a long private password'}}));await f.act(new SignUp({values:{password:'another private password'}}));assert.equal(f.calls.length,1);const s=await f.read();assert.equal(s.pending,false);assert.equal(s.onboardingClaimUnknown,true);assert.equal(render(s).querySelectorAll('input[name=password]').length,0);assert.match(render(s).textContent,/may have started/);assert.match(render({...s,locale:'es'}).textContent,/configuración ya haya comenzado/);}finally{await f.close();}
+ const f=await fixture({signupStep:'credential',signupTermsAccepted:true,signupAgeConfirmed:18,onboardingName:'alice',onboardingNames:[{name:'alice',status:'available'}]});try{f.api.request=async(path,body)=>{f.calls.push({path,body});throw Error('Network outcome unknown');};await f.act(new SignUp({values:{password:'a long private password'}}));await f.act(new SignUp({values:{password:'another private password'}}));assert.equal(f.calls.length,1);const s=await f.read();assert.equal(s.pending,false);assert.equal(s.onboardingClaimUnknown,true);assert.equal(render(s).querySelectorAll('input[name=password]').length,0);assert.match(render(s).textContent,/may have started/);assert.match(render({...s,locale:'es'}).textContent,/configuración ya haya comenzado/);}finally{await f.close();}
 });
 
 test('closed host removes normal signup CTA while sign-in and recovery remain; private invited names still work',async()=>{
@@ -41,7 +42,7 @@ test('closed host removes normal signup CTA while sign-in and recovery remain; p
 });
 
 test('late inspection after leaving invitation cannot restore names into unrelated auth state',async()=>{
- const f=await fixture();let finish;try{f.api.request=async path=>path.endsWith('/begin')?{ready:true}:new Promise(resolve=>finish=resolve);const pending=f.act(new SignupNext({values:{}}));while(!finish)await new Promise(resolve=>setTimeout(resolve,0));f.secrets.onboardingToken=null;await f.write({signupMode:'ordinary',auth:'login'});finish({issuer:origin,expiresAt:Date.now()+60000,names:[{name:'alice',status:'available'}]});await pending;assert.equal((await f.read()).onboardingNames,undefined);}finally{await f.close();}
+ const f=await fixture();let finish;try{f.api.request=async path=>path.endsWith('/begin')?{ready:true}:new Promise(resolve=>finish=resolve);const pending=f.act(new SignupNext({values:{}}));await waitFor(()=>finish,'fixture request to start');f.secrets.onboardingToken=null;await f.write({signupMode:'ordinary',auth:'login'});finish({issuer:origin,expiresAt:Date.now()+60000,names:[{name:'alice',status:'available'}]});await pending;assert.equal((await f.read()).onboardingNames,undefined);}finally{await f.close();}
 });
 
 test('static landing hides public creation and free marketing after closed-host availability, retaining sign-in',async()=>{
@@ -55,14 +56,14 @@ test('static landing hides public creation and free marketing after closed-host 
 });
 
 test('late claim result or failure cannot restore setup or clear a replacement account session',async()=>{
- for(const reject of [false,true]){const f=await fixture({signupStep:'credential',signupTermsAccepted:true,onboardingName:'alice',onboardingNames:[{name:'alice',status:'available'}]});let finish;try{
+ for(const reject of [false,true]){const f=await fixture({signupStep:'credential',signupTermsAccepted:true,signupAgeConfirmed:18,onboardingName:'alice',onboardingNames:[{name:'alice',status:'available'}]});let finish;try{
   f.api.request=()=>new Promise((resolve,rejectPromise)=>finish=reject?()=>rejectPromise(Object.assign(Error('stale secret failure'),{status:401})):()=>resolve({pendingToken:'stale-limited',account:{handle:'n.old'}}));
-  const pending=f.act(new SignUp({values:{password:'a long private password'}}));while(!finish)await new Promise(resolve=>setTimeout(resolve,0));
+  const pending=f.act(new SignUp({values:{password:'a long private password'}}));await waitFor(()=>finish,'fixture request to start');
   f.secrets.onboardingToken=null;await f.write({auth:'login',signupMode:'ordinary',beamGeneration:2,session:{account:{id:'replacement'}}});finish();await pending;
   const s=await f.read();assert.equal(s.session.account.id,'replacement');assert.equal(s.pending,false);assert.equal(f.secrets.pending,undefined);assert.deepEqual(f.nav,[]);assert.equal(s.error,'');
  }finally{await f.close();}}
 });
 
 test('cancellation during begin prevents later inspect and stale failures never clear replacement session',async()=>{
- for(const reject of [false,true]){const f=await fixture();let finish;try{f.api.request=path=>{f.calls.push({path});return new Promise((resolve,rejectPromise)=>finish=reject?()=>rejectPromise(Object.assign(Error('stale'),{status:401})):()=>resolve({ready:true}));};const pending=f.act(new SignupNext({values:{}}));while(!finish)await new Promise(resolve=>setTimeout(resolve,0));f.secrets.onboardingToken=null;await f.write({auth:'login',signupMode:'ordinary',session:{account:{id:'replacement'}}});finish();await pending;assert.equal(f.calls.length,1);assert.equal((await f.read()).session.account.id,'replacement');assert.equal((await f.read()).error,'');}finally{await f.close();}}
+ for(const reject of [false,true]){const f=await fixture();let finish;try{f.api.request=path=>{f.calls.push({path});return new Promise((resolve,rejectPromise)=>finish=reject?()=>rejectPromise(Object.assign(Error('stale'),{status:401})):()=>resolve({ready:true}));};const pending=f.act(new SignupNext({values:{}}));await waitFor(()=>finish,'fixture request to start');f.secrets.onboardingToken=null;await f.write({auth:'login',signupMode:'ordinary',session:{account:{id:'replacement'}}});finish();await pending;assert.equal(f.calls.length,1);assert.equal((await f.read()).session.account.id,'replacement');assert.equal((await f.read()).error,'');}finally{await f.close();}}
 });

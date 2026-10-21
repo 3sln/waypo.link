@@ -9,7 +9,7 @@ export async function buildLanding({out,css}){
  const bridge=(await readFile('apps/web/landing.js','utf8')).replace('/*__LANDING_MESSAGES__*/null',JSON.stringify(messages));
  const bridgeURL='/assets/landing.'+createHash('sha256').update(bridge).digest('hex').slice(0,20)+'.js';
  await writeFile(join(out,bridgeURL.slice(1)),bridge);
- const source=await readFile('apps/web/index.html','utf8');
+ const source=(await readFile('apps/web/index.html','utf8')).replace('</nav></footer>','<a href="/privacy">Privacy policy</a><a href="/terms">Terms of service</a></nav></footer>');
  for(const locale of ['en','es']){
   const {t}=createLocalization({locale});
   let html=source.replace('/landing.js',bridgeURL).replace('href="/styles.css"',`href="${css}"`).replace('<html lang="en">',`<html lang="${locale}">`);
@@ -19,6 +19,7 @@ export async function buildLanding({out,css}){
   html=html.replace('content="One account for compatible apps, flexible storage, and conversations you control."',`content="${escape(t('One account for compatible apps, flexible storage, and conversations you control.'))}"`);
   if(locale==='es'){html=html.replace('value="es"','value="es" selected').replaceAll('/console?signup','/console?signup&amp;lang=es').replaceAll('/console?signin','/console?signin&amp;lang=es').replace('href="/console"','href="/console?lang=es"').replace('3sln.me · Your apps. Your files. Your choice.',escape(`3sln.me · ${t('Your apps.')} ${t('Your files.')} ${t('Your choice.')}`));}
   html=html.replace(/aria-label="([^"]+)"/g,(_,label)=>`aria-label="${escape(t(label))}"`);
+  if(locale==='es')html=html.replace('href="/privacy"','href="/privacy?lang=es"').replace('href="/terms"','href="/terms?lang=es"').replace('>Privacy policy<','>Política de privacidad<').replace('>Terms of service<','>Términos del servicio<');
   await writeFile(join(out,locale==='es'?'index.es.html':'index.html'),html);
  }
  // Only recognized legacy private fragment entry points are forwarded. Never

@@ -1,3 +1,4 @@
+import {subjectTermsAllowed} from '../identity/age-policy.mjs';
 import {bridgeConfig} from '../email-bridge/engine.mjs';
 import {appSessionDerivation} from './app-session-lineage.mjs';
 import {holdBusRPC,busWaitsPort} from '../events/waiter.mjs';
@@ -108,6 +109,7 @@ export function federationControllerOptions({config,repository,accounts,owner,ma
   eventBusReader:config.EVENT_BUSES_ENABLED==='true'?input=>account.eventBusReader(owner,input):undefined,
   embedView:async candidate=>{if(candidate!==subject)fail('unauthorized','The embedded session is unavailable.');const current=await repository.get(owner),profile=await account.beamProfile(owner);if(!current||current.status!=='active')fail('unauthorized','The embedded session is unavailable.');return {handle:current.handle,name:profile.displayName||undefined,avatar:profile.avatar||null};},
   schemaHosts:Object.keys(schemas).map(url=>new URL(url).host),schemaFetcher:async url=>{if(!Object.hasOwn(schemas,url))fail('untrusted_schema_host','This fragment has not been registered with this provider.');return structuredClone(schemas[url]);},
+  termsAllowed:candidate=>{if(candidate!==subject)fail('unauthorized');return subjectTermsAllowed(repository,identity.config.termsVersion,owner);},
   auth:{owner:async(context,{mutation})=>{const {account:current,session}=await identity.authorized(context,mutation);if(current.id!==owner)fail('forbidden','Sign in to the identity requested by this application.');return {subject,epoch:await federationEpoch(current),authTime:sessionAuthTime(session),sessionId:await identity.sessionID(session),approvalChain:(()=>{const chain=[session.id];for(let parent=session.parentSessionId;parent&&!chain.includes(parent)&&chain.length<16;parent=current.sessions.find(s=>s.id===parent)?.parentSessionId)chain.push(parent);return chain;})()};}},validateSubject,
   resourceProvider:async()=>{
    const resources=await account.resources(owner),contract='https://3sln.me/artefacts/contracts/object-storage/v1';

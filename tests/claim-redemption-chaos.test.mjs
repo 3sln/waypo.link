@@ -32,7 +32,7 @@ test('chaos: revoking a claim while it is redeemed serializes on the claim recor
   const boot=await f.boot(),name='staff-member';await f.admin.reserve({name},boot);const minted=await f.admin.mintClaim({name},boot);
   const onboardingToken=decodeURIComponent(minted.link.split('#token=')[1]),setup=f.ctx({setupBinding:'claim-browser'});
   const [redeem,revoke]=await f.scheduler.run([
-   ()=>f.identity.claimOnboarding({onboardingToken,name,method:'password',password:'long internal account password',termsAccepted:true,termsVersion:'v1',turnstileToken:'ok'},setup),
+   ()=>f.identity.claimOnboarding({onboardingToken,name,method:'password',password:'long internal account password',ageConfirmed:18,termsAccepted:true,termsVersion:'v1',turnstileToken:'ok'},setup),
    ()=>f.admin.revokeClaim({nonce:minted.nonce},boot)]);
   const trace=`trace ${f.scheduler.trace.join(' | ')}`,claim=await f.storage.get('claim/'+minted.nonce),row=await f.repository.onboardingLookup(name);
   assert.notEqual(redeem.status===revoke.status,true,`exactly one of redemption and revocation wins; ${trace}`);

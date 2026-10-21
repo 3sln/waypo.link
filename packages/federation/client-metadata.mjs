@@ -10,6 +10,7 @@
 // `bindle_integration` (./integrations.mjs) and fetches key sets through the same egress port, budgets and cache rules.
 // Otherwise every confidential document is refused exactly as before. Inline keys and client secrets are always refused.
 import {fail,object} from './schema.mjs';
+import {clientPolicyLinks,withClientPolicies} from './legal.mjs';
 import {TEXT_BAD,presentationText as presentation,prefixedURL,validateIntegrationManifest,validIntegrationValue,validateJwks,classifyIntegrationChange} from './integrations.mjs';
 export const CLIENT_METADATA_FEATURE='client-id-metadata.v1';
 export const CLIENT_METADATA_LIMITS=Object.freeze({maxBytes:16384,timeoutMs:3000,defaultMs:3600000,minMs:300000,maxMs:86400000,negativeMs:60000,cacheEntries:512,blockMs:30000,inFlight:16,
@@ -58,19 +59,19 @@ export function validateClientMetadata(document,clientId,{integrations=false,sha
  const initiateLoginUri=integrations&&prefixedURL(document.initiate_login_uri,clientId);
  let integration;
  if(integrations===true&&Object.hasOwn(document,'bindle_integration'))integration=sharedHost?{status:'invalid',reason:'shared_host'}:validateIntegrationManifest(document.bindle_integration,{clientId,confidential,redirectUris:uris,...confidential?{jwksUri:document.jwks_uri}:{},reserved});
- return {id:clientId,name:url.host,origin,redirectUris:[...uris],reviewed:false,...claimedName?{claimedName}:{},...clientUri?{clientUri}:{},...logoUri?{logoUri}:{},...initiateLoginUri?{initiateLoginUri}:{},
+ return {id:clientId,name:url.host,origin,redirectUris:[...uris],reviewed:false,...claimedName?{claimedName}:{},...clientUri?{clientUri}:{},...logoUri?{logoUri}:{},...clientPolicyLinks({origin,policy_uri:document.policy_uri,tos_uri:document.tos_uri}),...initiateLoginUri?{initiateLoginUri}:{},
   ...confidential?{authMethod:'private_key_jwt',jwksUri:document.jwks_uri}:{},...integration&&integration.status!=='absent'?{integration}:{}};
 }
 /** Shape check for a snapshot crossing a trust boundary inside the runtime (entry store → owner shard). Integration
  * members (`authMethod`, `jwksUri`, `integration`) are accepted only when the caller runs with `integrations`, and the
  * whole snapshot must re-derive exactly, so a manifest never disagrees with the client fields it was validated with. */
 export function validClientSnapshot(value,{integrations=false,reserved=[]}={}){
- const keys=['id','name','origin','redirectUris','reviewed','claimedName','clientUri','logoUri',...integrations===true?['authMethod','jwksUri','integration','initiateLoginUri']:[]];
+ const keys=['id','name','origin','redirectUris','reviewed','claimedName','clientUri','logoUri','policyUri','tosUri',...integrations===true?['authMethod','jwksUri','integration','initiateLoginUri']:[]];
  if(!object(value)||value.reviewed!==false||Object.keys(value).some(k=>!keys.includes(k)))return false;
  const url=metadataClientURL(value.id);if(!url||value.origin!==url.origin||value.name!==url.host)return false;
  if(value.integration!==undefined&&!validIntegrationValue(value.integration,{clientId:value.id,confidential:value.authMethod==='private_key_jwt',redirectUris:value.redirectUris,...value.authMethod==='private_key_jwt'?{jwksUri:value.jwksUri}:{},reserved}))return false;
  const {integration,...rest}=value;
- try{return JSON.stringify(validateClientMetadata({client_id:value.id,redirect_uris:value.redirectUris,...value.claimedName?{client_name:value.claimedName}:{},...value.clientUri?{client_uri:value.clientUri}:{},...value.logoUri?{logo_uri:value.logoUri}:{},...value.initiateLoginUri?{initiate_login_uri:value.initiateLoginUri}:{},...value.authMethod!==undefined?{token_endpoint_auth_method:value.authMethod}:{},...value.jwksUri!==undefined?{jwks_uri:value.jwksUri}:{}},value.id,{integrations}))===JSON.stringify(rest);}catch{return false;}
+ try{return JSON.stringify(validateClientMetadata({client_id:value.id,redirect_uris:value.redirectUris,...value.claimedName?{client_name:value.claimedName}:{},...value.clientUri?{client_uri:value.clientUri}:{},...value.logoUri?{logo_uri:value.logoUri}:{},...value.policyUri?{policy_uri:value.policyUri}:{},...value.tosUri?{tos_uri:value.tosUri}:{},...value.initiateLoginUri?{initiate_login_uri:value.initiateLoginUri}:{},...value.authMethod!==undefined?{token_endpoint_auth_method:value.authMethod}:{},...value.jwksUri!==undefined?{jwks_uri:value.jwksUri}:{}},value.id,{integrations}))===JSON.stringify(rest);}catch{return false;}
 }
 /** In-process sliding-window limiter with the `consume(key,{windowMs,limit})` shape of the runtime ABUSE port. */
 export function memoryLimiter({clock=()=>Date.now(),maxKeys=4096}={}){
@@ -106,6 +107,7 @@ export class ClientDirectory {
   * validated `integration` value (operator registrations may use a shared host); without, it is dropped. A
   * registration declares confidentiality with `authMethod: "private_key_jwt"` and a path-prefixed `jwksUri`. */
  registered(client){
+  if(object(client))client=withClientPolicies(client);
   if(!object(client)||!Object.hasOwn(client,'bindle_integration')&&client.authMethod===undefined&&client.jwksUri===undefined)return client;
   const {bindle_integration:manifest,authMethod,jwksUri,...rest}=client;
   // X3-S5: a registration that declares client authentication never silently downgrades to a public client.

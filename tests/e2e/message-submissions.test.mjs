@@ -32,7 +32,7 @@ test.after(async()=>{await browser?.close();await app?.close();if(directory)awai
 async function activeOwner(context){
  const post=(path,data)=>context.request.post(origin+path,{headers:{Origin:origin},data});
  const config=await(await context.request.get(origin+'/api/config')).json();
- const created=await post('/api/auth/signup',{method:'password',password:'Independent browser primary password 2026!',termsAccepted:true,termsVersion:config.termsVersion,turnstileToken:'local-browser-test-token'});assert.equal(created.status(),200);const pending=await created.json();
+ const created=await post('/api/auth/signup',{method:'password',password:'Independent browser primary password 2026!',ageConfirmed:18,termsAccepted:true,termsVersion:config.termsVersion,turnstileToken:'local-browser-test-token'});assert.equal(created.status(),200);const pending=await created.json();
  assert.equal((await post('/api/auth/setup/email/start',{pendingToken:pending.pendingToken,email:'reader@submissions.example'})).status(),200);assert.equal(mail.length,1);
  assert.equal((await post('/api/auth/setup/email/confirm',{pendingToken:pending.pendingToken,code:mail[0].code})).status(),200);
  const file=await(await post('/api/auth/recovery/download',{pendingToken:pending.pendingToken})).json();const confirmed=await post('/api/auth/recovery/confirm',{pendingToken:pending.pendingToken,recoveryToken:file.recoveryToken,downloadConfirmed:true});assert.equal(confirmed.status(),200);const session=await confirmed.json();assert.equal(session.account.status,'active');return session;

@@ -22,7 +22,7 @@ async function fixture(t,overrides={}){
  const directory=await mkdtemp(join(tmpdir(),'bindle-app-messages-'));let db=new SqliteMetadata(join(directory,'account.sqlite')),fedDB=new SqliteMetadata(join(directory,'federation.sqlite'));t.after(async()=>{db.close();fedDB.close();await rm(directory,{recursive:true,force:true});});
  const blobs=new Map();let puts=0,failPut=false,afterPut;
  const bucket={put:async(path,bytes)=>{puts++;if(failPut)throw Error('lost storage response');blobs.set(path,new Uint8Array(bytes));await afterPut?.();},get:async path=>blobs.has(path)?{arrayBuffer:async()=>blobs.get(path).buffer}:null,delete:async path=>blobs.delete(path)};
- const identity={id:OWNER,status:'active',handle:'n.1',assignmentId:crypto.randomUUID(),recoveryHash:'recovery'},epoch=await federationEpoch(identity);
+ const identity={id:OWNER,status:'active',termsVersion:'2026-10-11',handle:'n.1',assignmentId:crypto.randomUUID(),recoveryHash:'recovery'},epoch=await federationEpoch(identity);
  const config={APP_ORIGIN:ISSUER,KEY_ENCRYPTION_KEY:Buffer.alloc(32,7).toString('base64'),FEDERATION_ENABLED:'true',FEDERATION_CLIENTS:[structuredClone(client)],FEDERATION_SCHEMAS:{[APP_NOTIFICATION_PREFERENCES]:fragment},FEDERATION_IDENTITY_CHECK:async(owner,value)=>owner===OWNER&&value===epoch&&identity.status==='active',...await keys(),...overrides};
  let account=new AccountController({metadata:db,gate:new SerialGate(),blobs:bucket,archives:bucket,config,sql:db.sql});await account.touch(OWNER);
  const options=federationControllerOptions({config,repository:{get:async id=>id===OWNER?identity:null},accounts:{get:()=>account},owner:OWNER});

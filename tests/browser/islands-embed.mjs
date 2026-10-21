@@ -11,7 +11,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {spawn} from 'node:child_process';
-import {readFile,writeFile,mkdtemp,rm,mkdir} from 'node:fs/promises';
+import {readFile,writeFile,mkdtemp,rm,mkdir,cp} from 'node:fs/promises';
 import {request as httpRequest} from 'node:http';
 import {createServer} from 'node:net';
 import {tmpdir} from 'node:os';
@@ -32,7 +32,7 @@ function forwardTo(port,{method,url,headers,body}){
 }
 async function startWorker(){
   const port=await freePort(),directory=await mkdtemp(resolve(await mkdir('.output',{recursive:true}).then(()=>'.output'),'islands-e2e-')),persistence=await mkdtemp(`${tmpdir()}/3sln-islands-state-`);
-  const config=JSON.parse(await readFile('wrangler.local.jsonc','utf8'));config.main=resolve(config.main);config.assets.directory=resolve(config.assets.directory);delete config.$schema;
+  const config=JSON.parse(await readFile('wrangler.local.jsonc','utf8'));config.main=resolve(config.main);const assetSnapshot=resolve(directory,'public');await cp(resolve(config.assets.directory),assetSnapshot,{recursive:true});config.assets.directory=assetSnapshot;delete config.$schema;
   Object.assign(config.vars,{APP_ORIGIN:ISSUER,RP_ID:'provider.example',EMBED_ORIGIN:EMBED,FEDERATION_ENABLED:'true',FEDERATION_ENTRY_ENABLED:'true',
     FEDERATION_CLIENTS:JSON.stringify([{id:CLIENT,name:'Islands fixture app',origin:APP,redirectUris:[APP+'/callback']}]),
     SIGNUP_SUBNET_DAILY_LIMIT:'500',SIGNUP_REGION_HOURLY_LIMIT:'500',SIGNUP_REGION_DAILY_LIMIT:'500',SIGNUP_GLOBAL_HOURLY_LIMIT:'500',SIGNUP_GLOBAL_DAILY_LIMIT:'500'});
@@ -147,7 +147,7 @@ async function fixture(t,name){
   const account=await provider.evaluate(async avatar=>{
     const post=(path,body,headers={})=>fetch(path,{method:path==='/api/profile'?'PUT':'POST',headers:{'Content-Type':'application/json',...headers},body:JSON.stringify(body)}).then(async r=>{const text=await r.text();try{return {status:r.status,body:JSON.parse(text)};}catch{return {status:r.status,body:{text:text.slice(0,300),path}};}});
     const config=await(await fetch('/api/config')).json();
-    const signup=await post('/api/auth/signup',{method:'password',password:'Islands browser fixture password!',termsAccepted:true,termsVersion:config.termsVersion,turnstileToken:'local-browser-test-token'});if(!signup.body.pendingToken)return {error:signup};
+    const signup=await post('/api/auth/signup',{method:'password',password:'Islands browser fixture password!',ageConfirmed:18,termsAccepted:true,termsVersion:config.termsVersion,turnstileToken:'local-browser-test-token'});if(!signup.body.pendingToken)return {error:signup};
     const file=await post('/api/auth/recovery/download',{pendingToken:signup.body.pendingToken});const confirmed=await post('/api/auth/recovery/confirm',{pendingToken:signup.body.pendingToken,recoveryToken:file.body.recoveryToken,downloadConfirmed:true});if(confirmed.status!==200)return {error:confirmed};
     const session=await(await fetch('/api/session')).json(),member={'X-Bindle-Account':session.account.id,'X-Bindle-Session-Context':session.sessionContext,'X-CSRF-Token':session.csrfToken};
     const profile=await post('/api/profile',{displayName:'Display alex',bio:'',avatar,discloseToContacts:false},member);if(profile.status!==200)return {error:profile};
@@ -249,6 +249,8 @@ for(const name of ['chromium','firefox','webkit'])test(`islands in ${name}`,{tim
     // The island redeems its claim (nonce, key proof) before it ends the flow.
     await page.waitForFunction(()=>window.types('s1').includes('flow:ended:completed'),null,{timeout:10000});
     assert.deepEqual(await types_(page,'s1'),['ready','flow:started','code','flow:ended:completed']);
+    // The stand-in popup stays open after ack; inspect app rendering in a foreground tab.
+    await page.bringToFront();
     const popupState=await popup.evaluate(()=>({hasOpener:window.hasOpener,name:window.nameAtLoad,log:window.log,acked:window.acked})).catch(()=>null);
     if(popupState){assert.equal(popupState.hasOpener,true);assert.equal(popupState.name,'','the popup is never named');assert.ok(popupState.log.filter(l=>l.type==='bindle-embed-proof').every(l=>l.origin===EMBED&&l.fromOpener));}
     const opens=(await p8(frames.s1)).calls.filter(c=>c.startsWith('open:'));assert.deepEqual(opens,['open:about:blank|_blank|popup']);
@@ -339,7 +341,7 @@ async function islandSignIn(f,page){
   const popup=await popupPromise;
   await page.waitForFunction(()=>window.events.some(e=>e.type==='bindle-sign-in-end'),null,{timeout:20000});
   const end=await page.evaluate(()=>window.events.find(e=>e.type==='bindle-sign-in-end').detail);assert.equal(end.outcome,'completed',JSON.stringify(end));
-  return popup;
+  await page.bringToFront();return popup;
 }
 for(const name of ['chromium','firefox','webkit'])test(`elements mount real islands in ${name}`,{timeout:180000},async t=>{
   const f=await fixture(t,name);if(!f)return;
@@ -386,8 +388,8 @@ for(const name of ['chromium','firefox','webkit'])test(`elements mount real isla
     await page.waitForFunction(()=>!document.querySelector('bindle-session').session);
     await until(avatar,async()=>await new Promise(ok=>{const req=indexedDB.open('bindle-embed');req.onsuccess=()=>{const db=req.result,c=db.transaction('credentials').objectStore('credentials').count();c.onsuccess=()=>{db.close();ok(c.result===0);};};}),null,10000);
     assert.equal(islandFrame(page,'avatar'),avatar,'the avatar island was not remounted');assert.equal(islandFrame(page,'account-switcher'),f.frames.switcher,'nor the switcher');
-    for(let i=0;i<50&&!f.log.some(e=>e.method==='POST'&&e.url===`${EMBED}/embed/api/forget`);i++)await sleep(100);
-    assert.ok(f.log.some(e=>e.method==='POST'&&e.url===`${EMBED}/embed/api/forget`),'the provider credential was forgotten too');
+    for(let i=0;i<50&&!f.log.some(e=>e.method==='POST'&&e.url===`${EMBED}/embed/api/forget`&&e.status===200);i++)await sleep(100);
+    assert.ok(f.log.some(e=>e.method==='POST'&&e.url===`${EMBED}/embed/api/forget`&&e.status===200),'the provider completed forgetting the old credential before the next sign-in');
     assert.equal(await page.evaluate(()=>document.querySelector('bindle-account').state.islands.avatar),'live');
     assert.deepEqual(f.errors.filter(e=>!/ResizeObserver/.test(e)),[]);
   });

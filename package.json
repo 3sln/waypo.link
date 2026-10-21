@@ -4,6 +4,8 @@
   "type": "module",
   "scripts": {
     "test:connections": "node --experimental-loader ./tests/browser/loader.mjs --test tests/browser/connections-engine.mjs && node --test tests/browser/connections-browser.mjs",
+    "test:admin-flags": "node --experimental-loader ./tests/browser/loader.mjs --test tests/browser/admin-flags-engine.mjs && node --test tests/browser/admin-flags-browser.mjs",
+    "test:legal": "node --experimental-loader ./tests/browser/loader.mjs --test tests/browser/legal-engine.mjs && node --test tests/browser/legal-browser.mjs tests/browser/legal-pages-browser.mjs",
     "test:access": "node --experimental-loader ./tests/browser/loader.mjs --test tests/browser/access-engine.mjs && node --test tests/browser/access-browser.mjs",
     "test:request": "node --test tests/browser/request-element-engine.mjs tests/browser/request-element-sdk.mjs && node --test tests/browser/request-element-browser.mjs",
     "test:consent": "node --experimental-loader ./tests/browser/loader.mjs --test tests/browser/consent-engine.mjs tests/browser/consent-entry.mjs tests/browser/consent-provider.mjs && node --test tests/browser/consent-browser.mjs",
