@@ -1,6 +1,6 @@
 # Organizations: design spike
 
-Status: **provisional design, 2026-10-21, revision 4.2.** Revision 4.2 defines the additive growth points of the `relation` artefact kind (spec §9.2) and how each maps to widening. Revision 4.1: Revision 4.1 applies the user's decision on relation admission (§8a.9): membership in an instance is per edge, and partial membership is first-class. Revision 4: Revision 4 adopts the user's relations proposal (§1b, §8a), separates provider roles and adds 3sln.me product rules (§12a). Its effect on the review findings is in [Revision 4 reconciliation](#revision-4-reconciliation), and it was reviewed in [Review round 3](#review-round-3), whose resolved findings are applied (R3-…); its open items remain open. Earlier, revision 2 applied the resolved findings of [Review round 1](#review-round-1); open items there remain open. Revision 3 applies the user's clarification (§1a) and is reconciled with the review in [Revision 3 reconciliation](#revision-3-reconciliation). Revision 3 was reviewed in [Review round 2](#review-round-2), whose resolved findings are applied (R2-…); its open items remain open. Design only: nothing here is implemented, routed or production-verified, and no code changed. The coordinator records decisions in DEVLOG.md. Every decision below is unsigned until it gets a reviewer, a date and an outcome. Terminology: [organizations terminology](organizations-terminology.md). Draft normative skeleton: [spec/organizations.md](../spec/organizations.md).
+Status: **provisional design, 2026-10-21, revision 4.3.** Revision 4.3 adds the user's 3sln.me grant-management policy (§12b) and makes governance explicitly provider policy in the spec (§6.3). Revision 4.2: Revision 4.2 defines the additive growth points of the `relation` artefact kind (spec §9.2) and how each maps to widening. Revision 4.1: Revision 4.1 applies the user's decision on relation admission (§8a.9): membership in an instance is per edge, and partial membership is first-class. Revision 4: Revision 4 adopts the user's relations proposal (§1b, §8a), separates provider roles and adds 3sln.me product rules (§12a). Its effect on the review findings is in [Revision 4 reconciliation](#revision-4-reconciliation), and it was reviewed in [Review round 3](#review-round-3), whose resolved findings are applied (R3-…); its open items remain open. Earlier, revision 2 applied the resolved findings of [Review round 1](#review-round-1); open items there remain open. Revision 3 applies the user's clarification (§1a) and is reconciled with the review in [Revision 3 reconciliation](#revision-3-reconciliation). Revision 3 was reviewed in [Review round 2](#review-round-2), whose resolved findings are applied (R2-…); its open items remain open. Design only: nothing here is implemented, routed or production-verified, and no code changed. The coordinator records decisions in DEVLOG.md. Every decision below is unsigned until it gets a reviewer, a date and an outcome. Terminology: [organizations terminology](organizations-terminology.md). Draft normative skeleton: [spec/organizations.md](../spec/organizations.md).
 
 Protocol/security/architecture sign-off: reviewer ___ / date ___ / outcome ___.
 
@@ -55,7 +55,7 @@ All decisions are provisional. Each is reversible until the spec is published.
 | ORG-D7 | **Member context for apps.** An app gets "member M in organization O" only by presenting a certificate that M's home provider issued for O and for that app, either at O's token endpoint (giving a DPoP-bound token that never outlives the certificate, with no refresh token) or directly on each request. The result binds an opaque **membership ID**. Not a member, not connected and failed verification all look the same to the app. | §9, spec §7 |
 | ORG-D8 | ~~Offers and grantor-minted cross-entity tokens.~~ **Superseded by ORG-D15 and ORG-D16** (rev 4). | §8a |
 | ORG-D9 | **Membership is never publicly checkable.** Membership IDs are pairwise per organization, actor chains are pairwise per grantor, and no endpoint answers "is X a member of Y". | §9.1 |
-| ORG-D10 | **Governance is a provider feature.** 3sln.me v1 has a single `admin` power and recommends at least two admins. Critical actions are delayed and notified, and break-glass recovery uses the existing recovery-file format. None of this is spec. | §7, §10 |
+| ORG-D10 | **Governance is a provider feature.** 3sln.me v1 has a single `admin` power and recommends at least two admins. Critical actions are delayed and notified, and break-glass recovery uses the existing recovery-file format. None of this is spec. Rev 4.3: changing or removing another member's grant-management grant needs that member's consent or the owner's (billing owner's) elevation (§12b). The spec only requires each provider to define and disclose its policy. | §7, §10, §12b |
 | ORG-D11 | **Resources belong to exactly one entity.** Membership never confers ownership, and leaving transfers nothing. The organization is the controller of its pool, and 3sln.me is its processor. A DPA is needed. | §12 |
 | ORG-D12 | **The directory/identity-document profile is specified in [spec §3a](../spec/organizations.md#3a-identity-documents-and-key-discovery-directoryv1)** (`directory.v1`) and is a phase A prerequisite (rev 3). It is shared with BindleBox, links and contact delivery, and may move to a companion document later. | §6.1, §13 |
 | ORG-D13 | **Acquiring certificates is out of spec.** The spec fixes the artifact and its verification. Mechanisms are named only as non-normative examples: the home provider's embedded elements with a non-extractable key, a general Bindle authorization flow as a fallback, and native or CLI device grants. 3sln.me's element-based acquisition is an app feature. | §6.2 |
@@ -261,7 +261,7 @@ Alice's home is `alt.example`. Acme and the ERP connection live on 3sln.me. If A
 **Sale of U to Buyer B:**
 
 1. U's current admins (H staff) invite B's staff as U admins, with invitations bound to each invitee. Each admin addition is a critical action: notified to every admin, and effective 72 h after the invitee accepts, unless another admin cancels. The invitee's acceptance never shortens the delay (R1-H4). An organization with a single admin has no one to object, so the delay applies only as notice.
-2. At closing, B's admins remove H's staff. Removing an admin is critical: delayed and notified, with any other admin able to cancel. A departing admin can remove themselves immediately.
+2. At closing, ownership of U transfers to B's nominee (§12b.3: new subscription, atomic switch). H's staff resign their admin power (self-narrowing is immediate). Otherwise B's owner removes them by elevation (§12b.2), with notice and audit.
 3. U leaves the `group` instance, which ends all of U's edges. H and S end theirs to U.
 4. A transition services agreement becomes a new two-party instance of a `transition-services` relation, with `expires_at` 90 days.
 5. U's integrations are U's own connections, so nothing moves. This only works if each subsidiary connected its own integrations rather than sharing H's. The design rule: **shared services are the same app connected to each organization separately.**
@@ -326,7 +326,7 @@ See §9. In short, an app learns that a user is a member only when the organizat
 ### 5.11 Lost admin (bus factor)
 
 - **Admin lost their device.** Home-provider recovery restores the same `(iss, sub)`, so the membership returns with the next certificate. Recovery changes `aep`, so the admin power resumes after re-confirmation (§5.2a). Nothing organization-specific is needed. This is the common case.
-- **Admin gone for good** (left the company, unreachable, died), and another admin exists. The remaining admin removes the departed one: delayed 72 h and notified, unless the departed admin cancels.
+- **Admin gone for good** (left the company, unreachable, died), and another admin exists. Rev 4.3 (§12b): removing a departed admin's GM grant needs that admin's consent, which they cannot give, or an **owner-approved elevation**. If the owner is the one who is gone, see §12b.3.
 - **No admin left.** Break-glass:
   - At creation, 3sln.me gives the organization a **recovery file** in the existing [recovery file](../spec/recovery-file.md) format, with the organization UUID and a reset credential.
   - Restoring it **adds** a new admin principal; it never removes existing admins. The change completes 72 h after notifying every member and every admin. Any current admin who authenticates freshly during that window cancels it, because then the organization is not adminless. A contested organization is a legal dispute that 3sln.me cannot adjudicate (R1-H4).
@@ -849,6 +849,69 @@ These are user decisions of 2026-10-21. Prices are deliberately not fixed here.
 - **Billing** uses the existing Polar merchant-of-record path, with zero KYC. The organization is the customer, and a paying admin's card pays for it. Polar's per-transaction fee (5% + $0.50 in the model) favours annual billing. Lapsed payment needs a defined degradation: read-only, then export-only, then deletion after a notice period. It must never cut off severance, leaving or export (§10, export abuse). This is a 3sln.me lifecycle rule to add to the account lifecycle design.
 - **Interactions:** `PAID_SIGNUP_ENABLED` and billing configuration; [storage write costs](storage-write-costs.md); the free-account cap docs (organizations do not count).
 
+## 12b. 3sln.me grant-management policy (app feature, not spec)
+
+This is a user decision of 2026-10-21. It is 3sln.me policy only: the spec requires each organization provider to define and disclose its own policy (spec §6.3).
+
+The user's words: "for entities, when it comes to removing or changing grants that allow removing or changing those same grants (as in, changes to admin grants, by another admin) the user who's grants are being changed must consent, or there needs to be an elevation to the org owner (the one who pays the bills)".
+
+### 12b.1 Definitions
+
+- **Grant-management grant (GM grant).** A grant that lets its holder create, change or revoke grants: other members' grants, its own, and other GM grants. In v1 the only GM grant is the `admin` power. Future granular powers such as "manage members" or "manage grants" are GM grants too.
+- **Organization owner.** The **owner of record** is exactly one 3sln.me account, determined from billing state:
+  1. While billing is enabled and the organization has a subscription that is active, in its grace period or past due, the owner is the 3sln.me account that **created that subscription's checkout**. That is the account recorded on the organization's billing record at checkout, not the Polar customer email or the card.
+  2. Changing the payment method within Polar never changes the owner, even when someone else's card is entered.
+  3. A different account can become owner only through a **transfer** (§12b.3) or the **lapse rule** (§12b.3).
+  4. Before billing is enabled (phase A, internal allowlist), the owner is the account designated when the organization was created: its creator.
+  5. The owner must be a member. Ownership by itself gives no GM grant. It gives only elevation approvals, transfer and billing.
+
+### 12b.2 The rule
+
+| Action | Needs |
+| --- | --- |
+| Another admin changes or removes member M's GM grant | M's consent, **or** an owner-approved elevation |
+| M narrows or resigns its own GM grant | Nothing, but the last-admin guard applies: the last admin cannot resign. The owner can first make someone else admin. |
+| Granting a GM grant to someone new | The normal admin rules: a bound invitation, then a 72 h notified delay after acceptance (R1-H4) |
+| Any non-GM grant (resources, member fields, integrations) | The normal admin rules |
+| Changing the owner's own GM grant | The owner's consent only. Nothing ranks above the owner, so no elevation is possible. |
+
+**Mechanics:**
+
+- **Consent request.** Single pending request per (target, change), with a reason (plain text, ≤ 280 characters). It expires after **7 days**, and expiry counts as a decline. The target sees it in the activity center, approves with fresh authentication, and may decline silently.
+- **Elevation.** The requesting admin asks the owner. The owner approves with a fresh passkey step-up (a status-checked certificate, spec §5.2 step 4). The change takes effect immediately. The affected member is notified immediately with the requester, the owner and the reason, and the change is written to the hash-chained audit. Immediate effect is deliberate: elevation exists mainly to stop a rogue admin.
+- **Flood and harassment controls.**
+  - At most 3 consent or elevation requests per (requester, target) per 30 days.
+  - Identical pending requests are deduplicated.
+  - The owner and the target can mute a requester: muted requests auto-decline and are logged.
+  - Repeated requests are visible in the audit.
+- **Owner abuse.** The owner can remove any admin through elevation, because the owner pays and is accountable. The mitigations are transparency, not prevention:
+  - immediate notice to the affected member;
+  - the audit entry, visible to every admin;
+  - the member's freedom to leave.
+
+  This is stated to members at joining.
+
+### 12b.3 Ownership changes and edge cases
+
+- **Transfer.** The owner nominates a member. The nominee accepts with fresh authentication and starts a new subscription. Ownership switches atomically when that subscription activates, and the old subscription is cancelled. All admins are notified.
+- **Billing lapse.** After the grace period ends without payment, the organization becomes read-only (§12a). Thirty days later, any admin may start a new subscription and propose itself as owner. This takes effect after a **72 h** notice to the old owner and all admins, and the old owner cancels it by paying. The rule stops an absent owner from blocking forever, and paying is the only way to claim the role.
+- **Owner unreachable.** Elevations are unavailable, so GM changes need the target's consent. Everything else works.
+- **Owner lost** (home account recovered or compromised):
+  - The owner's admin power and elevation authority are **held** after an authority reset (spec §5.2a, R1-H3). Re-confirmation for the owner is a 72 h notice to all admins; any admin may object, which moves the organization to break-glass.
+  - **Break-glass** uses the recovery file (§5.11). Restoring it after the delay adds an admin and lets that admin take over ownership through the lapse or transfer path. It never removes admins by itself.
+- **Owner also the admin being changed.** Only the owner's own consent changes it (table above).
+- **Relation edges.** GM grants, like all owner-interface authority, never cross an edge (spec §6.2 rule 3). An external organization can never manage another organization's grants, and relation documents cannot express it.
+
+### 12b.4 Effect on the two-admin deadlock (Q8)
+
+**Resolved for the common case.** One admin can no longer remove another without the target's consent or the owner's approval. So the mutual cancel-forever loop of R1-H4 (d) cannot arise: there is nothing to cancel, only a consent request or an elevation.
+
+**Residuals:**
+
+- If the owner is one of two feuding admins, the owner wins. That is intended: the owner pays.
+- If the owner is absent, a feud ends only by consent, the billing-lapse rule or break-glass.
+- 3sln.me still adjudicates nothing beyond these rules.
+
 ## 13. Implementation slices (later)
 
 Engine-first: every operation is an ngin Action or Query in a domain module, dispatched in the organization's account single writer (the same `createAppEngine` placement as persons). HTTP and UI are thin adapters. Tests are mostly engine-level, with seeded chaos for membership races, revocation fencing and intersection properties ("effective ⊆ every ceiling" for random grant sets).
@@ -899,6 +962,15 @@ Engine-first: every operation is an ngin Action or Query in a domain module, dis
   - Member context: DPoP-bound tokens that never outlive the certificate, no refresh token, the membership ID, and the projection intersection.
   - Organization-as-itself background access, approved separately (R1-H1).
   - The `aep` hold after recovery (R1-H3), bound admin invitations (R1-H4), the `member-removed` SET and the actor-chain audit.
+  - **The grant-management policy (rev 4.3, §12b):**
+    - the owner of record, which in phase A is the creator, designated while billing is disabled;
+    - `admin` as the GM grant;
+    - consent requests with 7-day expiry;
+    - owner elevation with step-up, immediate notice and audit;
+    - self-resignation, the last-admin guard and request rate limits;
+    - the owner's own admin power changeable only with the owner's consent.
+
+    Transfer and the lapse rule arrive with billing (phase C, before the first external organization). Break-glass stays in phase B.
 
   - **Rev 4 additions** (product rules, §12a): creation needs a 3sln.me account; the organization is on a paid tier, which for the user's own company can be an internal allowlist until billing is enabled. No relations: one company needs none. Phase A's connections already carry the counterparty kind `entity` in their schema, so relations need no migration later.
 
@@ -933,7 +1005,7 @@ Rev 3 status: Q1 is accepted. Q2 and Q6 are superseded by the 2026-10-21 clarifi
 | Q5 | ~~Grantor-initiated offers only?~~ | **Superseded** by relations (§8a). There is still no access-request queue in v1. |
 | Q6 | ~~Phase A same provider only?~~ | **Superseded.** Phase A includes members from any provider (§13.3). |
 | Q7 | **Where does Acme's own identity live?** (a) `3sln.me/identity/<o>` now, accepting a one-time re-key later; (b) its own domain as issuer, which needs custom-domain hosting on Workers; (c) write identity continuity first. | **(a) now**, with membership IDs, grants and ERP data keyed so a re-key is a scripted migration. Write identity continuity (c) before the first cross-provider *relationship* (phase D), when re-keying would also break counterparties. Pick (b) only if custom-domain hosting proves cheap. |
-| Q8 | **Two-admin deadlock** (R1-H4 d): a removal target cancels its own removal, and two rogue admins cancel each other forever. | Position B: a mutual cancellation freezes governance into a visible "disputed" state, with members' grants unaffected. Only the recovery-file holder (meant to be the legal owner, not an operator admin) or an off-platform process ends it. This does not reward whoever acts first. |
+| Q8 | ~~**Two-admin deadlock**~~ **Resolved by the user's grant-management rule (2026-10-21, §12b.4)**, which leaves the residuals listed there. Original question: a removal target cancels its own removal, and two rogue admins cancel each other forever. | Position B: a mutual cancellation freezes governance into a visible "disputed" state, with members' grants unaffected. Only the recovery-file holder (meant to be the legal owner, not an operator admin) or an off-platform process ends it. This does not reward whoever acts first. |
 | Q9 | **BindleBox and other operator-run apps on account deletion.** | Belongs to the deletion design: [account deletion and export](account-deletion-export.md), finding R1-M12. For organizations: a member's home-account deletion stops certificates, so the membership becomes unusable; the organization keeps the membership record and ex-member data as controller (§12). Deleting the organization itself follows the same deletion design once it covers organization accounts. |
 | Q10 | **Certificate lifetime:** 300 s default and 600 s maximum? | Yes. It bounds revocation at about 6 minutes (10 at most). Owner-interface actions also check status, within 60 s. Entity certificates are capped at 300 s. |
 | Q11 | **Name for relations** (still pending; the user's casual "coven" in the Q12 decision is not a naming decision). "Relation" in the spec and "Relationship" in the UI, or one of the user's suggestions ("bond", "coven")? | **Relation / Relationship.** "Bond" clashes with finance vocabulary in an ERP-first product (bonds payable, surety bonds). "Coven" reads as a joke. The full check is in [terminology §6](organizations-terminology.md#6-relation-naming-check). |
@@ -1151,4 +1223,13 @@ Counts: **2 High, 7 Medium, 4 Low.** Resolved in text: 2 High, 4 Medium (M1 part
 | --- | --- | --- |
 | Artefact-references review R1-L2 (relation documents have no kind) | Open, coordinate | **Resolved in spec §9.2.** The `relation` kind's growth table: new slots (with `min` = 0); appended access entries (`required` only for new slot pairs); appended fields, methods and per-field method maps; and superseding entries to follow fragment growth. Everything else is frozen, including slot names, arity in either direction, `kinds`, existing entries and ceilings. Any delta for an edge's own pair is a widening that needs grantor consent and grantee acceptance. Unknown until the table is signed (artefacts §6.4). |
 | R3-L4 (upgrade loopholes) | Resolved: raising ceilings counted as widening | **Tightened.** Ceilings and `required` are frozen values, so raising a ceiling needs a new relation `id`. |
+
+## Revision 4.3 reconciliation
+
+| Finding | Earlier status | Revision 4.3 |
+| --- | --- | --- |
+| R1-H4 (d), Q8 (two-admin stalemate) | Open | **Resolved** by the user's rule (§12b.4). Residuals are stated there: the owner prevails, and an absent owner falls back to consent, the lapse rule or break-glass. |
+| R1-H4 (a)–(c) | Resolved | Unchanged. Adding admins keeps the bound invitation and the 72 h delay. Break-glass now also feeds ownership through transfer or lapse. |
+| R1-H3 (recovery takeover) | Resolved (normative hold) | The hold stays normative. The re-confirmation mechanism is now provider policy (spec §5.2a). For 3sln.me, the owner's own reset is re-confirmed by a 72 h notice to the admins, and an objection leads to break-glass. |
+| Spec governance rules | Partly normative | **Moved to provider policy** (spec §6.3). The spec requires only a defined, disclosed policy, plus bound owner-interface invitations, recovery holds, the no-operator-less rule and no owner-interface authority across edges. |
 

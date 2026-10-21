@@ -2530,3 +2530,22 @@ Reviewer: ___ Date: ___ Outcome: ___
 - Widening an edge's own slot pair needs grantor consent and grantee acceptance.
 
 Validators treat `relation` as an unknown kind until these rules are signed off. Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-21 — Organizations rev 4.3: grant-management governance (user decision)
+
+The user decided that changing or removing grants which themselves allow grant management (admin grants) requires the affected holder's consent or an elevation to the org owner, the account paying the bills. This is 3sln.me policy, not Bindle.
+
+**Spec §6.3.** Grant management is provider policy that must be defined and disclosed before members accept admin authority. Four interoperable rules remain:
+- admin invitations are bound to a specific member;
+- an admin is held after account recovery;
+- an org is never left with no one able to run it;
+- relation edges never carry admin authority.
+
+**3sln.me policy (design §12b).**
+- **Changes by another admin.** These need the holder's consent, which expires after 7 days, or an owner elevation (passkey step-up, immediate notice to the holder, audit entry).
+- **Self-resignation.** Free, subject to the last-admin guard.
+- **Who the owner is.** The account that created the current subscription checkout. Changing the payment method never moves ownership. Ownership changes only by transfer, or by an admin repaying after a lapse with 72 h notice. Before billing exists, the creator is the owner.
+
+**Resolved.** Q8, the two-admin deadlock: the owner prevails. Phase A now includes the owner of record, consent and elevation, the guards, and audit.
+
+Reviewer: ___ Date: ___ Outcome: ___
