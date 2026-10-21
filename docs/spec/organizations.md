@@ -1,6 +1,6 @@
 # Organizations, membership and relations — normative draft (skeleton)
 
-Status: **skeleton, 2026-10-21, revision 3.** Revision 3 replaces inter-entity offers with **relations** (§9), following the user's proposal of 2026-10-21 ([design §8a](../architecture/organizations-design.md#8a-relations-proposal-assessment)). It was reviewed in [Review round 3](../architecture/organizations-design.md#review-round-3), whose resolved findings are applied (marked R3-…); its open items are not resolved. Nothing here is implemented, published or production-verified. Revision 1 applied the resolved findings of the first independent review ([design, Review round 1](../architecture/organizations-design.md#review-round-1)); items that review left open are not resolved here. Revision 2 applies the user's clarification of 2026-10-21 ([design §1a](../architecture/organizations-design.md#1a-user-clarification-2026-10-21)). Members from any provider are core. Their requests are signed by a key their home provider certified, and the organization verifies that through a directory profile (§3a). There is no separate sign-in at the organization. This replaces the federated login of revision 1. Revision 2 was reviewed in [Review round 2](../architecture/organizations-design.md#review-round-2), and the resolved findings of that round are applied here (marked R2-…); its open items are not resolved. Identifiers under `https://spec.bindle.example/` and hosts under `.example` are placeholders. MUST, SHOULD and MAY express draft requirements. Sections marked **TBD** are reserved and carry no requirements yet. §15 lists the core amendments this draft needs; they are **proposed and unsigned**.
+Status: **skeleton, 2026-10-21, revision 3.2.** Revision 3.2 registers the `relation` artefact kind's growth points (§9.2, artefact-references review R1-L2). Revision 3.1: Revision 3.1 applies the user's admission decision of 2026-10-21: membership in an instance is per edge, and partial membership is a normal state (§9.3, §9.4). It is not independently reviewed. Revision 3: Revision 3 replaces inter-entity offers with **relations** (§9), following the user's proposal of 2026-10-21 ([design §8a](../architecture/organizations-design.md#8a-relations-proposal-assessment)). It was reviewed in [Review round 3](../architecture/organizations-design.md#review-round-3), whose resolved findings are applied (marked R3-…); its open items are not resolved. Nothing here is implemented, published or production-verified. Revision 1 applied the resolved findings of the first independent review ([design, Review round 1](../architecture/organizations-design.md#review-round-1)); items that review left open are not resolved here. Revision 2 applies the user's clarification of 2026-10-21 ([design §1a](../architecture/organizations-design.md#1a-user-clarification-2026-10-21)). Members from any provider are core. Their requests are signed by a key their home provider certified, and the organization verifies that through a directory profile (§3a). There is no separate sign-in at the organization. This replaces the federated login of revision 1. Revision 2 was reviewed in [Review round 2](../architecture/organizations-design.md#review-round-2), and the resolved findings of that round are applied here (marked R2-…); its open items are not resolved. Identifiers under `https://spec.bindle.example/` and hosts under `.example` are placeholders. MUST, SHOULD and MAY express draft requirements. Sections marked **TBD** are reserved and carry no requirements yet. §15 lists the core amendments this draft needs; they are **proposed and unsigned**.
 
 Protocol/security/interop sign-off: reviewer ___ / date ___ / outcome ___.
 
@@ -465,7 +465,35 @@ The relation document is served as an artefact envelope ([artefacts](artefacts.m
 - Metadata is untrusted plain text. `publisher` is shown only when it is same-origin with `id`, and always as unverified, as for slots (extensions §5.1).
 - A provider MUST NOT create a grant from a relation document without the grantor's consent for that counterparty (§9.4).
 
-**Versioning.** Versions follow the cross-artefact reference mechanism (§9.8). A later version MAY add slots, access entries, fields and methods. It MUST NOT remove, rename or narrow anything. A publisher that needs to narrow publishes a new `id`. An existing entry's `required` flag MUST NOT change. Raising an entry's `reshare` or `actor_disclosure` ceiling, or adding an entry for a pair, counts as widening for the upgrade rules of §9.6, including acceptance by the grantee for `"named"` (review R3-L4).
+**Versioning: the `relation` kind and its growth points** (artefact-references review R1-L2). A relation document is an artefact line of kind `relation`. This table registers that kind's growth points under [artefacts §6.3](artefacts.md#63-growth-points-by-kind). Additivity is as defined there, ART-D6: version *N*'s body embeds in version *N*+1's, arrays only append, and text is frozen. Until this table is signed, validators process `relation` as an unknown kind (artefacts §6.4): they may use the versions they hold pins for, and they never advance a head.
+
+| Pattern | Operation | Constraint | Widening for existing edges? |
+| --- | --- | --- | --- |
+| `/slots` | add-member | The new slot has `arity.min` = 0, stated explicitly, so no existing view becomes incomplete. | No. New slot holders get edges only by per-edge consent (§9.4). |
+| `/access` | append | A valid entry. `required: true` is allowed only if version *N* has no entry for the same (`grantor`, `grantee`) slot pair; otherwise it is `required: false`, so existing edges stay live. | **Yes**, for every edge whose pair the entry applies to |
+| `/access/*/fields` | append | Only where that entry has `fields` in version *N*. An absent `fields` already means every field of the pinned fragment version, and cannot grow. The new name exists in the entry's pinned fragment version, and a resource field arrives together with its `methods` member (next row). | **Yes** |
+| `/access/*/methods` | add-member | Only for a field appended to `fields` in the same version | **Yes** |
+| `/access/*/methods/*/*` (one contract's method array) | append | A method of that contract. Adding a new contract key for an existing field is not allowed, as with `contracts` lists (artefacts §6.3). | **Yes** |
+
+**Superseding entries.** A relation cannot change an existing entry's fragment pin in place: `version` and `digest` are values, and values are frozen. To follow a fragment's growth, a later version appends an entry for the same (`grantor`, `grantee`, fragment line) with a higher fragment `version`. For edges pinned at or above the version that appended it, that entry supersedes the earlier ones. It MUST embed the earlier entry's grants: the same `required`, the same ceilings, `fields` ⊇ and `methods` ⊇. Superseding is a **widening** whenever the later fragment version or the larger sets add anything for that pair.
+
+**Never additive** (changing any of these needs a new relation `id`):
+
+- `id`, `kind`, `crit`, `publisher`, and every title and description (text is frozen);
+- slot names, as keys;
+- `arity`, whether tightened or loosened;
+- `kinds`;
+- in an existing entry: `grantor`, `grantee`, the fragment reference (`fragment`, `version`, `digest`), existing `fields` and `methods` members, `required`, and the `reshare` and `actor_disclosure` ceilings;
+- adding a top-level member;
+- removing, reordering or narrowing anything.
+
+Raising a ceiling is therefore not additive either. It can only be done by appending a superseding entry, and superseding entries keep the same ceilings, so in practice it needs a new `id`. This replaces revision 3's statement that raising a ceiling counts as widening (review R3-L4).
+
+**Upgrades** (§9.6; artefacts §10.5). An edge pinned at *N* that moves to *M* computes the delta for its own (`grantor`, `grantee`) pair: entries appended or superseded, and fields or methods appended, between *N* and *M*.
+
+- **A non-empty delta is a widening.** The grantor consents, choosing values for any new entries or fields, and the grantee accepts, with the delta shown to both.
+- **An empty delta** (only other pairs or new slots changed) advances the pin without asking, and is recorded in the access history.
+- **Pinned versions stay authoritative.** An edge pinned at *N* never receives an entry, field or method added after *N*. A declined delta leaves the edge working at *N*.
 
 ### 9.3 Instances, parties and edges
 
@@ -479,8 +507,13 @@ The relation document is served as an artefact envelope ([artefacts](artefacts.m
   - both ends pin a common relation version that contains the entry (§9.6).
 
   Grantor consent includes choosing which of X's assigned resources Y may use, as protocol §4 requires per consumer. Adding resources to X's fragment later never extends Y's access without new consent.
-- **Arity.** Each party enforces arity over its own view and refuses to accept more counterparts in a slot than `max` allows. There is no global roster and no consensus. A party's view of an instance is its live edges plus its counterparts' participation statements.
-- **Views can differ** (review R3-M1). Two parties may each hold a counterpart in a slot with `max: 1` and disagree on who it is. Authority is unaffected, because every edge is consented separately. Applications and providers MUST NOT treat a slot holder as globally unique, and MUST key anything derived from an instance by (instance, own view, counterpart `(iss, sub)`), never by instance and slot alone. Every relation invitation MUST carry the inviter's own participation statement for the instance, and the invitee verifies it, so that every admission traces to a party already in the inviter's view.
+- **Recognition is per edge** (user decision, 2026-10-21). Party X *recognizes* party Z in an instance exactly when at least one edge between X and Z is live. Recognition is not instance-wide.
+  - Each existing party whose slot grants to Z's slot recognizes Z independently, by consenting with its own fragment values.
+  - Each party that only receives from Z recognizes Z by accepting.
+  - Until then, that edge does not exist.
+  - Parties whose slots have no access entries with Z's slot never need to recognize Z.
+- **Partial membership is a normal state.** No roster, document or provider holds "the members of the instance". Each party's **view** is its own recognized set, plus its counterparts' participation statements. Some parties may recognize Z while others decline, ignore it or have not yet decided. This is neither an error nor an inconsistency, and no protocol step waits for it to converge.
+- **Arity is per view.** A party MUST NOT recognize more holders of a slot than its `max`. `min` is advisory: a view below `min` makes the relation incomplete for that party, which a provider MAY surface, and it never invalidates existing edges. Two parties may each recognize a different holder of a slot with `max: 1` (review R3-M1, reframed). Authority is unaffected, because every edge is consented separately. Applications and providers MUST NOT treat a slot holder as globally unique. They MUST key anything derived from an instance by (instance, own view, counterpart `(iss, sub)`), never by instance and slot alone. Every relation invitation MUST carry the inviter's own participation statement for the instance, and the invitee verifies it.
 - **Participation statement.** A JWS signed with the party entity's identity key, with header `typ: "bindle-relation-participation+jwt"` and payload exactly:
 
   ```json
@@ -526,7 +559,18 @@ The inviter's provider verifies:
 
 It then records the counterpart, activates the grants the inviter consented to when inviting, and returns its own participation statement and its events endpoint.
 
-**More than two parties.** A joiner becomes a counterpart of other existing parties only through invitations exchanged with each of them, because every grantor consents for itself. Provider interfaces MAY batch these.
+**More than two parties: proposal and admission** (user decision, 2026-10-21).
+
+- **Proposal.** Any party MAY propose a newcomer Z for a slot. Its provider sends an **introduction**, a SET of type `…/events/relation-introduction/v1`, to the events endpoint of each counterpart it has a live edge with whose slot has access entries with Z's slot. The introduction carries:
+  - `instance`;
+  - `slot`;
+  - `candidate` `{iss, sub}`;
+  - the proposer's participation statement.
+
+  An introduction confers nothing. It only lets the receiving party's provider queue a decision for its operators. A party MAY also propose itself, by asking an existing party for an invitation out of band.
+- **Admission into an edge** needs that edge's grantor to consent, with its own fragment values, and its grantee to accept. In practice, a grantor that decides to recognize Z issues Z a relation invitation, and redemption follows as above. Nothing else admits Z into any edge. Admission into one edge never implies admission into another.
+- **Recognition notices.** A party that recognizes or declines an introduced candidate MAY tell the proposer, with no reason given. A party MUST NOT tell anyone other than the proposer, and never the candidate, that it declined or has not decided.
+- **What the newcomer sees.** The candidate learns only the edges that exist: the invitations it receives and the edges it redeems. Providers MUST NOT disclose to Z which other parties were introduced to it, declined it or have not decided. Z's interface MUST NOT imply that parties without an edge to Z share anything with it.
 
 - A party MAY pre-accept *receiving* from future parties of a slot. Receiving exposes none of its own resources, but it does admit counterpart-authored data, such as purchase orders and invoices, into its pipelines (review R3-M2). Therefore each counterpart admitted under pre-acceptance MUST be shown to the party's operators, and imported resources from it MUST be marked as pre-accepted to the party's integrations, keyed by the counterpart's `(iss, sub)`. A provider MAY hold such imports `unavailable` until an operator confirms.
 - A party MUST NOT pre-consent to *granting* to future parties in this version.
@@ -673,7 +717,7 @@ The common contract between organization providers is §3a plus §9. Between an 
 | AMD-O1 | protocol §1, §6 | Define entity kinds `person` and `organization`. Remove "organization membership" from the §6 list of out-of-scope items and point here. Delegation stays out of scope. |
 | AMD-O2 | protocol §3 | Replace "only the user's authenticated provider UI" with "only the entity's owner interface (organizations: §6.3)". |
 | AMD-O3 | auth; federation-implementation | The member-context token form (`jwt-bearer` grant with a member certificate, DPoP-bound, no refresh token); the token response member `bindle_member`; the `BindleMember` authorization scheme. (Revision 1's `entity` entry member, `affiliation` and `auth_time`/`amr` are withdrawn.) |
-| AMD-O4 | integrations §1, §3, §6.2 | Connection counterparty kinds. The `member-removed` event. |
+| AMD-O4 | integrations §1, §3, §6.2 | Connection counterparty kinds. The `member-removed` and `relation-introduction` events. |
 | AMD-O5 | integrations §5.1, §5.3; contracts preferences v2 | Relay projection for imported resources (`token_type: "BindleEntity"`, `grantor`, `instance`); brokered tokens for relation parties with `bindle.actor`. |
 | AMD-O6 | events §2.1, §7.2 | The `entity` value in `readers` (`publishers` reserved); doorbells to an entity grantee's events endpoint. |
 | AMD-O7 | links | The organization-invitation and relation-invitation link types. Signature-domain table rows for both, for `bindle-relation-participation+jwt`, and for the `BindleMember` and `BindleEntity` proofs. (Revision 2's offer type and `bindle-entity-client+jwt` are withdrawn.) |
@@ -722,6 +766,7 @@ The common contract between organization providers is §3a plus §9. Between an 
   - an invitation without the inviter's participation statement is refused, and a refused redemption discards the invitee's pending participation (R3-M1, R3-L1);
   - an invalid relation document (bounds, unknown `crit`, an access entry without methods for a resource field, `reshare:true`) is refused;
   - no edge exists without both grantor consent and grantee acceptance; a third party joining needs each grantor's consent; pre-acceptance of receiving never creates outgoing grants;
+  - partial recognition is stable: some grantors recognize a newcomer while others do not, without error; an introduction creates no edge; the newcomer cannot learn which parties declined or have not decided; no party recognizes more holders of a slot than its `max`;
   - a relation invitation redeemed by an entity other than its `invitee`, or with a mismatched statement, fails;
   - arity is enforced in each party's view;
   - an upgrade that widens an edge needs grantor consent and grantee acceptance, and one that does not completes automatically;

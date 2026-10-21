@@ -2519,3 +2519,14 @@ Recommendations pending user approval:
 - no garbage collection of stored records in v1.
 
 Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-21 — Organizations rev 4.2: per-edge admission, relation growth rules
+
+**Admission (user decision).** Adding a party to a relation requires consent from every org whose slot grants to the newcomer's slot, each deciding independently with its own fragment values. Partial membership is a normal state. There is no global roster: each party's recognized set is its view, and arity is checked per party. Any party may propose a newcomer through an introduction event, which grants nothing on its own. Pending introductions surface in the activity center and expire after 30 days. A newcomer sees only the edges that are live. This resolves Q12 and turns review round 3's split-view finding into intended behaviour. Reviewer: ___ Date: ___ Outcome: ___
+
+**Relation growth rules** (spec §9.2, per artefacts §6.3):
+- New versions may append slots, matrix entries, and fields or methods, and may supersede an entry when following a newer fragment version.
+- Slot ids, arity, existing entries, ceilings and text are frozen. Raising a ceiling requires a new relation id.
+- Widening an edge's own slot pair needs grantor consent and grantee acceptance.
+
+Validators treat `relation` as an unknown kind until these rules are signed off. Reviewer: ___ Date: ___ Outcome: ___

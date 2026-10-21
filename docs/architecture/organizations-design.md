@@ -1,6 +1,6 @@
 # Organizations: design spike
 
-Status: **provisional design, 2026-10-21, revision 4.** Revision 4 adopts the user's relations proposal (§1b, §8a), separates provider roles and adds 3sln.me product rules (§12a). Its effect on the review findings is in [Revision 4 reconciliation](#revision-4-reconciliation), and it was reviewed in [Review round 3](#review-round-3), whose resolved findings are applied (R3-…); its open items remain open. Earlier, revision 2 applied the resolved findings of [Review round 1](#review-round-1); open items there remain open. Revision 3 applies the user's clarification (§1a) and is reconciled with the review in [Revision 3 reconciliation](#revision-3-reconciliation). Revision 3 was reviewed in [Review round 2](#review-round-2), whose resolved findings are applied (R2-…); its open items remain open. Design only: nothing here is implemented, routed or production-verified, and no code changed. The coordinator records decisions in DEVLOG.md. Every decision below is unsigned until it gets a reviewer, a date and an outcome. Terminology: [organizations terminology](organizations-terminology.md). Draft normative skeleton: [spec/organizations.md](../spec/organizations.md).
+Status: **provisional design, 2026-10-21, revision 4.2.** Revision 4.2 defines the additive growth points of the `relation` artefact kind (spec §9.2) and how each maps to widening. Revision 4.1: Revision 4.1 applies the user's decision on relation admission (§8a.9): membership in an instance is per edge, and partial membership is first-class. Revision 4: Revision 4 adopts the user's relations proposal (§1b, §8a), separates provider roles and adds 3sln.me product rules (§12a). Its effect on the review findings is in [Revision 4 reconciliation](#revision-4-reconciliation), and it was reviewed in [Review round 3](#review-round-3), whose resolved findings are applied (R3-…); its open items remain open. Earlier, revision 2 applied the resolved findings of [Review round 1](#review-round-1); open items there remain open. Revision 3 applies the user's clarification (§1a) and is reconciled with the review in [Revision 3 reconciliation](#revision-3-reconciliation). Revision 3 was reviewed in [Review round 2](#review-round-2), whose resolved findings are applied (R2-…); its open items remain open. Design only: nothing here is implemented, routed or production-verified, and no code changed. The coordinator records decisions in DEVLOG.md. Every decision below is unsigned until it gets a reviewer, a date and an outcome. Terminology: [organizations terminology](organizations-terminology.md). Draft normative skeleton: [spec/organizations.md](../spec/organizations.md).
 
 Protocol/security/architecture sign-off: reviewer ___ / date ___ / outcome ___.
 
@@ -616,7 +616,7 @@ Use a separate organization when the team owns resources, integrations, billing 
 3. **"On behalf of" in Bindle Messaging.** An organization mailbox message should show "Acme (Alice)". The BindleBox author descriptor has no member attribution.
 4. **Member-addressed activity.** "PO needs your approval" from Acme's ERP to Alice's activity feed works on one host. Across providers it needs forwarding.
 5. **Import fan-in.** A supplier with 500 customers holds 500 imported purchase-order buses, one per edge. Fragment resource fields are bounded (cardinality 8 in examples). It needs a listing query over imports by relation and slot.
-10. **Admission delegation.** Joining an n-party instance needs each grantor's consent. A "slot owner admits" policy is deferred (Q12).
+10. ~~Admission delegation.~~ Resolved by the user (§8a.9): every grantor consents for itself, and partial membership is normal.
 6. **Access requests.** There is no asynchronous "please share X with us" queue.
 7. **Resource transfer** between entities (merger, sale of a business line).
 8. **Identity continuity** for provider moves, shared with persons.
@@ -661,8 +661,8 @@ That is exactly how an application's fragment request works today: a public docu
 
 ### 8a.4 Arity and lifecycle (spec §9.3–§9.6)
 
-- **Consent.** Every edge needs grantor consent and grantee acceptance, so a newcomer reaches each existing party only with that party's consent. Parties may pre-accept *receiving* from future joiners, but never pre-consent to *granting*. Delegating admission to a "slot owner" (for example, the parent admits subsidiaries) is deferred (Q12).
-- **Arity.** Each party enforces arity over its own view. There is no global roster or consensus, because no central host is wanted and none is needed for authority.
+- **Consent.** Every edge needs grantor consent and grantee acceptance, so a newcomer reaches each existing party only with that party's consent. Parties may pre-accept *receiving* from future joiners, but never pre-consent to *granting*. Rev 4.1: this is now the user's decision, and partial membership is normal (§8a.9).
+- **Arity.** Each party enforces arity over its own view: it never recognizes more holders of a slot than `max`. There is no global roster or consensus, because no central host is wanted and none is needed for authority.
 - **Leaving and removal.** Leaving is unilateral and ends all of that party's edges. Removal is per grantor ("stop sharing with them"). There is no instance-wide vote.
 - **Upgrade.** Each edge is pinned to a version both ends accepted. A wider version needs re-consent from the grantor and acceptance from the grantee. A non-widening upgrade completes once both ends pin it.
 - **Dissolution.** When no edges remain, imported resources go `unavailable`, and the grantee's dependent fragment fields report `requiresConsent`. Nothing is recalled.
@@ -700,6 +700,31 @@ Relations need, from the [artefact references](artefact-references.md) design:
 - provider caches so instances survive a document's disappearance.
 
 The conflict with protocol §3's "immutable at a URL" rule belongs to that design (AMD-O13). Until it lands, relation documents are treated as immutable at their URLs and pinned with a digest.
+
+### 8a.9 Admission and partial membership (user decision, 2026-10-21)
+
+The user's words: "for adding new parties to a relationship, every org in a slot that grants resources to the slot in which an org was added, must consent to share their resources. This means partial additions to the coven can exist, where some parties decide to share, and others do not recognize an org's membership, or haven't yet consented." The user said "coven" casually; the name is still pending (Q11).
+
+**Recognition is per edge.**
+
+- Party X recognizes newcomer Z exactly when an edge between them is live.
+- Each grantor whose slot grants to Z's slot decides independently, with its own fragment values. Grantees accept.
+- No edge exists until both have acted.
+- There is no instance-wide membership: each party's view is its own recognized set. Some parties may share with Z while others decline or have not decided yet. That is a normal state, and nothing waits for views to converge.
+
+**Arity is per view.** A party never recognizes more holders of a slot than `max` allows. `min` is advisory. When views differ, each party's own view is authoritative *for that party only*. Review R3-M1's "split views" are therefore the intended model, not a defect: two suppliers may recognize different "buyers" in a `max: 1` slot, and each is right about its own edges. Nothing may treat a slot holder as globally unique. This resolves R3-M1's open question without a canonical view. R3-M1's position B (only the creator admits) is not needed, because uniqueness matters only within a view, and each view enforces it.
+
+**Who proposes.** Any party may propose a newcomer, through an **introduction** event sent to its counterparts whose slots grant to, or receive from, the newcomer's slot (spec §9.4). It confers nothing. **Recommended over "creator only for one-holder slots"**, because a creator-only rule would recreate a central authority that the per-edge model makes unnecessary. A party is never forced to recognize anyone, and arity protects its own view.
+
+**Admission** into any edge needs that edge's grantor consent and grantee acceptance, through a relation invitation and redemption, as before.
+
+**UX (3sln.me feature):**
+
+- **Recognition state.** Shown to the proposer's admins ("recognized by 2 of 3 grantors you introduced Z to"), from the recognition notices counterparts choose to send. Other parties' admins see their own decision and pending introductions.
+- **Pending decisions.** Introductions waiting for a decision appear in the activity center as operator items, with the candidate's identity URI and handle, the relation, the slot and the full matrix that would apply. They expire after 30 days, and an expired introduction is a silent decline.
+- **The newcomer** sees only the edges that exist ("Acme shares purchase orders with you"). It never sees "waiting for Beta" or "Beta declined", and nothing implies that unconsented parties share anything.
+
+**Privacy.** Minimal disclosure: the newcomer learns only the edges that exist. Decline and pending states go only to the proposer, and only if the deciding party chooses to send them. This prevents the newcomer from inferring a counterpart's business decisions, and it matches the uniform-outcome rules elsewhere (§9.1).
 
 ## 9. Private membership checks, elements and switching
 
@@ -911,8 +936,8 @@ Rev 3 status: Q1 is accepted. Q2 and Q6 are superseded by the 2026-10-21 clarifi
 | Q8 | **Two-admin deadlock** (R1-H4 d): a removal target cancels its own removal, and two rogue admins cancel each other forever. | Position B: a mutual cancellation freezes governance into a visible "disputed" state, with members' grants unaffected. Only the recovery-file holder (meant to be the legal owner, not an operator admin) or an off-platform process ends it. This does not reward whoever acts first. |
 | Q9 | **BindleBox and other operator-run apps on account deletion.** | Belongs to the deletion design: [account deletion and export](account-deletion-export.md), finding R1-M12. For organizations: a member's home-account deletion stops certificates, so the membership becomes unusable; the organization keeps the membership record and ex-member data as controller (§12). Deleting the organization itself follows the same deletion design once it covers organization accounts. |
 | Q10 | **Certificate lifetime:** 300 s default and 600 s maximum? | Yes. It bounds revocation at about 6 minutes (10 at most). Owner-interface actions also check status, within 60 s. Entity certificates are capped at 300 s. |
-| Q11 | **Name for relations.** "Relation" in the spec and "Relationship" in the UI, or one of the user's suggestions ("bond", "coven")? | **Relation / Relationship.** "Bond" clashes with finance vocabulary in an ERP-first product (bonds payable, surety bonds). "Coven" reads as a joke. The full check is in [terminology §6](organizations-terminology.md#6-relation-naming-check). |
-| Q12 | **Admission to many-party instances.** Must every grantor consent to each joiner (chosen), or may a relation document name a slot whose holder admits others on everyone's behalf? | Every grantor, for now. Delegated admission is a real convenience for groups with many subsidiaries, but it is authority by proxy. Add it later as an explicit, per-party opt-in ("I accept whoever the parent admits") with a cap. |
+| Q11 | **Name for relations** (still pending; the user's casual "coven" in the Q12 decision is not a naming decision). "Relation" in the spec and "Relationship" in the UI, or one of the user's suggestions ("bond", "coven")? | **Relation / Relationship.** "Bond" clashes with finance vocabulary in an ERP-first product (bonds payable, surety bonds). "Coven" reads as a joke. The full check is in [terminology §6](organizations-terminology.md#6-relation-naming-check). |
+| Q12 | ~~**Admission to many-party instances.**~~ **Resolved by the user, 2026-10-21 (§8a.9):** every grantor consents per edge, and partial membership is normal. Any party may propose. Original question: Must every grantor consent to each joiner (chosen), or may a relation document name a slot whose holder admits others on everyone's behalf? | Every grantor, for now. Delegated admission is a real convenience for groups with many subsidiaries, but it is authority by proxy. Add it later as an explicit, per-party opt-in ("I accept whoever the parent admits") with a cap. |
 | Q13 | **Membership as a relation?** | No (§8a.6). Keep membership distinct, because grants are per person and governance is involved. The console may list memberships and relations together. |
 
 ## Review round 1
@@ -1110,3 +1135,20 @@ Counts: **2 High, 7 Medium, 4 Low.** Resolved in text: 2 High, 4 Medium (M1 part
 ### Phase A forward compatibility
 
 **Still sound.** Phase A has no relations, and its connections already carry the counterparty kind `entity`. The R3 fixes add certificate members (`resource`, `methods`) and projection rules that phase A never emits, so neither phase A data nor phase A member tokens change. One caution: if the R3-M5 rename to "position" is accepted, make it before any relation code or schema exists (phase C), because it costs nothing now.
+
+## Revision 4.1 reconciliation
+
+| Finding | Earlier status | Revision 4.1 |
+| --- | --- | --- |
+| R3-M1 (split views of an instance) | Partly resolved; who may admit was open (position A: any party; position B: creator only) | **Resolved by the user's decision.** Per-edge recognition makes per-party views the model, and partial membership is first-class. Arity is enforced per view. Any party may propose, through a non-authorizing introduction. Every edge needs its grantor's consent. Position B is not adopted. |
+| Q12 (admission delegation) | Open | **Resolved** (§8a.9). |
+| R3-M2 (pre-accepting receipt) | Resolved | Unchanged. Pre-acceptance is a grantee-side recognition and stays marked and visible. |
+| Spec §9.3 "no global roster" | Rule | Strengthened into a definition: an instance has no membership list, only per-party views (spec §9.3). |
+
+## Revision 4.2 reconciliation
+
+| Finding | Earlier status | Revision 4.2 |
+| --- | --- | --- |
+| Artefact-references review R1-L2 (relation documents have no kind) | Open, coordinate | **Resolved in spec §9.2.** The `relation` kind's growth table: new slots (with `min` = 0); appended access entries (`required` only for new slot pairs); appended fields, methods and per-field method maps; and superseding entries to follow fragment growth. Everything else is frozen, including slot names, arity in either direction, `kinds`, existing entries and ceilings. Any delta for an edge's own pair is a widening that needs grantor consent and grantee acceptance. Unknown until the table is signed (artefacts §6.4). |
+| R3-L4 (upgrade loopholes) | Resolved: raising ceilings counted as widening | **Tightened.** Ceilings and `required` are frozen values, so raising a ceiling needs a new relation `id`. |
+
