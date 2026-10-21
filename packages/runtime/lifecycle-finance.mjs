@@ -1,3 +1,4 @@
+import {capability} from '../flags/read.mjs';
 import {rememberEverPaid} from '../identity/lifecycle-protection.mjs';
 
 // Live ever-paid lookup for the account lifecycle. It asks Polar whether this
@@ -10,7 +11,7 @@ import {rememberEverPaid} from '../identity/lifecycle-protection.mjs';
 const bounded=value=>typeof value==='string'&&/^[A-Za-z0-9_-]{1,200}$/.test(value);
 const unavailable=()=>Object.assign(new Error('Payment history could not be verified.'),{code:'financial_review_unavailable'});
 export async function everPaidReview({billing,config,owner,metadata,now=Date.now()}){
- if(config.BILLING_ENABLED!=='true')throw unavailable();
+ if(!capability(config,'BILLING_ENABLED'))throw unavailable();
  let client,organizationId=config.POLAR_ORGANIZATION_ID;
  try{client=await billing.client();if(!bounded(organizationId))organizationId=(await billing.catalog()).organizationId;}catch{throw unavailable();}
  if(!bounded(organizationId))throw unavailable();

@@ -95,6 +95,7 @@ export class LinkedApproval {
   fail(code, message = 'The sign-in request could not be completed.', extra = {}) { throw Object.assign(new this.Fault(code, message), extra); }
   invalid() { this.fail('invalid_code', "That code doesn't match a sign-in request. Check the code on your device."); }
   enabled() { if (this.identity.config.deviceAuthorizationEnabled !== true) this.fail('not_found', 'Linked approval is not enabled.'); }
+  allowed(account,request){return this.identity.config.deviceAuthorizationAllowed?.({owner:account.id,...request.kind==='app'?{clientId:request.app.clientId}:{}})!==false;}
   get repository() { const repository = this.identity.linkedApprovals; if (!repository) this.fail('device_unavailable', 'Device sign-in is not configured.'); return repository; }
   now() { return this.identity.clock(); }
   async save(request, revision) { request.revision = revision + 1; return this.repository.compareAndSwap(request.id, revision, request); }
@@ -240,6 +241,7 @@ export class LinkedApproval {
     if (input.approved !== true || ((legacy || input.accountHandle !== undefined) && input.accountHandle !== account.handle)) this.fail('confirmation_required', 'Confirm the account and code shown on the device you are signing in.');
     const request = await check(), app = request.kind === 'app', now = this.now();
     if (legacy && app) this.invalid();
+    if(!legacy&&!this.allowed(account,request))this.fail('not_found','Linked approval is not enabled.');
     if (!this.fresh(session, request)) this.fail('reauthentication_required', 'Confirm your password or passkey before approving this sign-in.');
     const choice = legacy ? 'session' : input.choice ?? (app ? 'ongoing' : 'session'), lifetime = linkedLifetime({ kind: request.kind, choice, now, sessionExpiresAt: session.expiresAt, sessionTtlMs: identity.config.sessionTtlMs, idleMs: this.idleMs() });
     if (!lifetime) this.fail('invalid_choice', 'Choose how long this sign-in lasts.');
@@ -293,7 +295,7 @@ export class LinkedApproval {
     const pace = await this.pace(request); if (!pace.ok) return { status: 'slow_down', interval: pace.interval };
     if (request.status !== 'approved') return { status: 'authorization_pending', interval: pace.interval };
     if (request.legacy) return this.consume(request);
-    const account = await this.identity.repository.get(request.owner), parent = this.parent(account, request); if (!parent) return { status: 'access_denied' };
+    const account = await this.identity.repository.get(request.owner), parent = this.parent(account, request); if (!parent||!this.allowed(account,request)) return { status: 'access_denied' };
     return { status: 'confirm', account: { handle: account.handle }, expiresAt: Math.min(parent.expiresAt, request.approval.expiresAt) };
   }
   async accept(input, context) {
@@ -306,7 +308,7 @@ export class LinkedApproval {
   // has not reached account storage yet (device-login-cancellation-review.md).
   async consume(request) {
     const identity = this.identity, revision = request.revision, account = await identity.repository.get(request.owner), parent = this.parent(account, request);
-    if (!parent) return { status: 'access_denied' };
+    if (!parent||!request.legacy&&!this.allowed(account,request)) return { status: 'access_denied' };
     const accountRevision = account.revision, now = this.now();
     const result = await identity.session(account, { label: request.label, source: request.legacy ? 'device-approval' : 'linked-approval', parentSessionId: await identity.sessionID(parent), expiresAt: Math.min(parent.expiresAt, request.approval.expiresAt) });
     const issued = account.sessions.at(-1); issued.deviceRequestId = request.id;

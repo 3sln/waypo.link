@@ -1,3 +1,4 @@
+import {ownerFlags,recordFlag} from './flags.mjs';
 // AccountController slice 8, Search (docs/architecture/app-engine.md §12): lexical and semantic search, indexing and the search outbox.
 // `methods` are installed on AccountController.prototype (`this` is the controller); `rpc` lists the methods
 // `invoke` accepts and the placement policy it applies to each (packages/runtime/account/index.mjs).
@@ -18,6 +19,7 @@ export const methods={
     await tx.setAlarm(Date.now()+60000);return event;
   },
   async configureSemanticSearch(owner){
+    this.semanticBudget.configured=ownerFlags(this.config,owner).enabled('SEMANTIC_SEARCH_ENABLED')&&Boolean(this.config.AI?.run&&(this.config.SEARCH_VECTORS?.query||[0,1,2,3].every(shard=>this.config[`SEARCH_VECTORS_${shard}`]?.query)));
     if(!this.search||!this.semanticBudget.configured)return;
     if(this.search.vectorIndex){if(this.search.vectorIndex.owner!==owner)throw new StorageError('forbidden','Search owner mismatch.',403);return;}
     const route=await vectorBinding(this.config,owner),priorRoute=await this.metadata.get('search-vector-route');
@@ -27,10 +29,10 @@ export const methods={
     // This gate is distinct from the account gate already held by invoke/alarm.
     this.search.vectorIndex=new VectorizeSearchIndex({binding:route.binding,state:this.metadata,gate:this.vectorGate,owner,dimensions:SEMANTIC_DIMENSIONS,maxVectors:this.semanticBudget.limits.vectors,budget:this.semanticBudget});
   },
-  async searchPreferences(owner){return {...await this.semanticBudget.status(owner),indexingPending:Boolean(await this.metadata.get('search-semantic-backfill')),cleanupPending:Boolean(await this.metadata.get('search-vector-purge')),error:(await this.metadata.get('search-semantic-error'))?.code||null};},
+  async searchPreferences(owner){await this.configureSemanticSearch(owner);return {...await this.semanticBudget.status(owner),indexingPending:Boolean(await this.metadata.get('search-semantic-backfill')),cleanupPending:Boolean(await this.metadata.get('search-vector-purge')),error:(await this.metadata.get('search-semantic-error'))?.code||null};},
   async updateSearchPreferences(owner,input){
     await this.warm(owner);if(!input||Object.keys(input).some(name=>name!=='enabled')||typeof input.enabled!=='boolean')throw new StorageError('invalid_request','Choose whether to enable semantic search.',400);
-    const current=await this.semanticBudget.status(owner);if(current.enabled===input.enabled)return this.searchPreferences(owner);
+    await this.configureSemanticSearch(owner);const current=await this.semanticBudget.status(owner);if(current.enabled===input.enabled)return this.searchPreferences(owner);
     if(input.enabled&&await this.metadata.get('search-vector-purge'))throw new StorageError('semantic_cleanup_pending','Semantic search cleanup is still pending. Try again shortly.',409);
     await this.semanticBudget.consent(owner,input.enabled);await this.configureSemanticSearch(owner);this.search?.sessions.clear();
     // Consent authorizes bounded backfill; revocation authorizes bounded purge.
@@ -81,7 +83,7 @@ export const methods={
     try{const result=await this.search.drain(owner,{limit});await this.metadata.delete('search-index-error');await this.metadata.delete('search/extraction-retry');return result;}catch(error){await retryFailure(this.metadata,'search/extraction-retry',error);await this.metadata.put('search-index-error',{code:error.code||'index_unavailable',at:Date.now()});throw error;}
   },
   async searchRebuild(owner,options={}){await this.warm(owner);if(!this.search)throw new StorageError('temporarily_unavailable','Search is unavailable.',503);await this.configureSemanticSearch(owner);return this.search.rebuild(owner,{...options,limit:Math.min(options.limit||50,50)});},
-  async omniSearch(owner,input){await this.warm(owner);if(!this.search)throw new StorageError('temporarily_unavailable','Search is unavailable.',503);await this.configureSemanticSearch(owner);const result=await this.search.search(owner,input);const pending=(await this.metadata.get(key('search-queue-usage',owner)))?.count||0;const error=await this.metadata.get('search-index-error');return {...result,semantic:await this.searchPreferences(owner),indexing:{pending,ready:pending===0&&!error&&Boolean(await this.metadata.get('search-backfill-ready')),backfillPending:!await this.metadata.get('search-backfill-ready'),limited:Boolean(error),error:error?.code||null}};},
+  async omniSearch(owner,input){await this.warm(owner);if(!this.search)throw new StorageError('temporarily_unavailable','Search is unavailable.',503);await this.configureSemanticSearch(owner);recordFlag(this,owner,'SEMANTIC_SEARCH_ENABLED','exposure');const result=await this.search.search(owner,input);const pending=(await this.metadata.get(key('search-queue-usage',owner)))?.count||0;const error=await this.metadata.get('search-index-error');return {...result,semantic:await this.searchPreferences(owner),indexing:{pending,ready:pending===0&&!error&&Boolean(await this.metadata.get('search-backfill-ready')),backfillPending:!await this.metadata.get('search-backfill-ready'),limited:Boolean(error),error:error?.code||null}};},
 };
 
 export const rpc={

@@ -79,7 +79,7 @@ test('actual Worker signup stays unauthenticated until recovery proof; cookie se
   const { result, cookie, pending, file } = await signup();
   assert.equal(result.sessionToken, undefined); assert.equal(result.account.status, 'active');
   const session = await request('/api/session', { headers: { Cookie: cookie } }); assert.equal((await session.json()).authenticated, true);
-  assert.equal(session.headers.get('Cache-Control'), 'no-store');
+  assert.equal(session.headers.get('Cache-Control'), 'private, no-store');
   const stored = JSON.stringify(await directory.get(result.account.id));
   assert(!stored.includes(decodeURIComponent(cookie.split('=')[1]))); assert(!stored.includes(file.recoveryToken)); assert(!stored.includes(pending.pendingToken));
   assert(!stored.includes('isolated test account password'));

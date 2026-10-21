@@ -1,3 +1,4 @@
+import {siteGlobal,capability} from '../flags/read.mjs';
 import {eventDoorbellGrant} from './event-readers.mjs';
 import {appSessionInventory} from './session-inventory.mjs';
 import {incrementalPort} from './incremental-ports.mjs';
@@ -60,13 +61,19 @@ const faultResult=(code,message,error={})=>({__federationError:{code,message,...
 /** Portable composition boundary. Both hosted and self-hosted runtimes inject
  * metadata, live owner authentication and actual contract adapters here. */
 export class FederationController {
-  constructor({metadata,auth,issuer,clients=[],schemaFetcher,schemaHosts=[],dispatcher,crypto=globalThis.crypto,clock=()=>Date.now(),allowInsecureLocalhost=false,enabled=true,routingKey,validateSubject,resourceProvider,connections,refreshEnabled=false,objectURLs,dpop,embedView,embedOrigin,clientMetadata=false,manifestDeclarations,appSessions,incrementalIdentity,eventBusReader,appSessionLineage,deriveAppSession,incremental,brokering,integrations=false,clientAuth,termsAllowed}){
+  constructor({flagConfig,schemaHostProvider,metadata,auth,issuer,clients=[],schemaFetcher,schemaHosts=[],dispatcher,crypto=globalThis.crypto,clock=()=>Date.now(),allowInsecureLocalhost=false,enabled=true,routingKey,validateSubject,resourceProvider,connections,refreshEnabled=false,objectURLs,dpop,embedView,embedOrigin,clientMetadata=false,manifestDeclarations,appSessions,incrementalIdentity,eventBusReader,appSessionLineage,deriveAppSession,incremental,brokering,integrations=false,clientAuth,termsAllowed}){
     if(!metadata?.transaction||!auth?.owner)throw new TypeError('Transactional metadata and authenticated owner resource required');
     Object.assign(this,{metadata,auth,issuer,clients,dispatcher,clock,enabled,allowInsecureLocalhost,clientMetadata:clientMetadata===true,manifestDeclarations});
     this.clientAuth=clientAuth;this.service=new FederationService({integrations,store:metadata,issuer,clients,crypto,clock,schemaFetcher,schemaHosts,allowInsecureLocalhost,routingKey,validateSubject,resourceProvider,connections,refreshEnabled,objectURLs,dpop,embedView,embedOrigin,appSessions,brokering,clientMetadata:clientMetadata===true,authenticateOwner:(authority)=>auth.owner(authority.context,{mutation:authority.mutation}),termsAllowed,dispatchCapability:ctx=>this.dispatch(ctx,crypto)});
     this.service.incrementalIdentity=incrementalIdentity;this.service.eventBusReader=eventBusReader;this.service.appSessionLineage=appSessionLineage;this.service.deriveAppSession=deriveAppSession;this.service.incremental=incremental;
     // Persisted metadata-client snapshots load once per instance before any operation that may consult a client.
-    if(this.clientMetadata)for(const method of ['beginAuthorization','inspect','approve','entryIdentity','beginEntryAuthorization','revokeToken','redeemClaim','embedSession','embedState','embedForget','embedAvatar','embedEvents','embedEventsTick','embedEnd','configure','preferences','grants','revoke','exchange','refresh','tokenClient','rpc','inspectObjectURL','objectURL']){const call=this[method].bind(this);this[method]=async(...args)=>{this.requireReady();await this.service.ensureClients();return call(...args);};}
+    if(this.clientMetadata||flagConfig)for(const method of ['beginAuthorization','inspect','approve','entryIdentity','beginEntryAuthorization','revokeToken','redeemClaim','embedSession','embedState','embedForget','embedAvatar','embedEvents','embedEventsTick','embedEnd','configure','preferences','grants','revoke','exchange','refresh','tokenClient','rpc','inspectObjectURL','objectURL']){const call=this[method].bind(this);this[method]=async(...args)=>{this.requireReady();await this.service.ensureClients();return call(...args);};}
+    if(schemaHostProvider)Object.defineProperty(this.service,'schemaHosts',{get:schemaHostProvider});
+    if(flagConfig){
+     Object.defineProperty(this.service,'incremental',{get:()=>siteGlobal(flagConfig,'INCREMENTAL_AUTH_ENABLED')?incremental:undefined});
+     for(const [target,key,name]of [[this,'enabled','FEDERATION_ENABLED'],[this,'clientMetadata','CLIENT_METADATA_ENABLED'],[this.service,'clientMetadata','CLIENT_METADATA_ENABLED'],[this.service,'integrations','INTEGRATIONS_ENABLED']])Object.defineProperty(target,key,{get:()=>siteGlobal(flagConfig,name)});
+     Object.defineProperty(this.service,'brokering',{get:()=>capability(flagConfig,'BROKERED_INTROSPECTION_MOUNTED')?brokering:null});
+    }
   }
   integrationClientAuth(clientId){this.requireReady();return this.clientAuth?.(clientId)??null;}
   integrationSnapshot(input){this.requireReady();return this.service.integrationSnapshot(input);}

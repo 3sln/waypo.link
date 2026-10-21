@@ -397,3 +397,14 @@ test('lifecycle tombstone atomically revokes naturally expired app lineage and r
  await port.tombstone(ref.owner);assert.deepEqual((await f.repository.get(ref.owner)).lineageOutbox,account.lineageOutbox);
  }finally{await f.engine.dispose();}
 });
+
+
+test('session rollout checks the authenticated owner again at approval and consume without requiring federation',async()=>{
+ let allowed=true;const seen=[],f=fixture({config:{deviceAuthorizationAllowed:ctx=>{seen.push(ctx);return allowed;}}});
+ try{
+  const {owner}=await activate(f.act),request=await startSession(f);allowed=false;
+  await assert.rejects(approve(f,request,owner),{code:'not_found'});assert.deepEqual(seen.at(-1),{owner:owner.account.id});
+  allowed=true;await approve(f,request,owner);f.clock.advance(5000);allowed=false;
+  assert.equal((await f.la('linkedAccept',request,tv)).status,'access_denied');assert.equal((await f.la('linkedCancel',request,tv)).cancelled,true);
+ }finally{await f.engine.dispose();}
+});

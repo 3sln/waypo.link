@@ -1,3 +1,4 @@
+import {siteGlobal} from '../flags/read.mjs';
 // Federation half of the device authorization grant (docs/spec/device-authorization.md, `device-authorization.v1`;
 // docs/architecture/linked-approval.md slice LA2). The identity half is the LA1 linked-approval core, reached only
 // through its unrouted system operations (linked-approval.md §10.1) via the `linked` port. Nothing here is routed:
@@ -145,7 +146,7 @@ export async function revokeDeviceFamilies(service,familyIds){
  * - `nonces`: the token-endpoint DPoP nonce issuer/checker (dpop.mjs `dpopNonces`), shared with the owner shards.
  * - `limits`: durable windows `consume(key,{windowMs,limit})` (creation); `pollLimits`: the non-durable limiter.
  */
-export function createDeviceGrantProvider({issuer,clients=[],linked,shard,nonces,limits,pollLimits,crypto=globalThis.crypto,clock=()=>Date.now(),jti=new MemoryJtiCache(clock)}={}){
+export function createDeviceGrantProvider({issuer,clients=[],linked,shard,nonces,limits,pollLimits,featureAllowed=()=>true,crypto=globalThis.crypto,clock=()=>Date.now(),jti=new MemoryJtiCache(clock)}={}){
  if(!issuer||!linked||typeof shard!=='function'||!nonces||!limits?.consume||!pollLimits?.consume)throw new TypeError('The device grant needs an issuer, the linked port, owner shards, DPoP nonces and limiters.');
  const registry=new Map(clients.map(client=>[client.id,client]));
  const serviceOf=owner=>{const value=shard(owner);return value?.service??value;};
@@ -164,7 +165,7 @@ export function createDeviceGrantProvider({issuer,clients=[],linked,shard,nonces
   async authorize(input={}){
    try{
     const headers=lower(input.headers);if(fromBrowser(headers)||!formType(headers))fault('invalid_request');
-    const params=form(input.body,['client_id','dpop_jkt','bindle_requests','identity','ui_locales']),client=eligible(params.get('client_id'));
+    const params=form(input.body,['client_id','dpop_jkt','bindle_requests','identity','ui_locales']),client=eligible(params.get('client_id'));if(!featureAllowed({clientId:client.id}))fault('unauthorized_client');
     const jkt=params.get('dpop_jkt');if(!jktPattern.test(jkt??''))fault('invalid_request');
     const requests=fragmentRequests(params.get('bindle_requests'),client),identity=params.get('identity'),locales=params.get('ui_locales');
     if(identity!==null&&(!identity.trim()||identity.length>254||control(identity)))fault('invalid_request');
@@ -201,7 +202,7 @@ export function createDeviceGrantProvider({issuer,clients=[],linked,shard,nonces
    * checked again; any failure after the consume closes the request with access_denied and ends the lineage. */
   async issue(linkedRequestId,grant,proof){
    const ref={owner:grant.owner,lineageId:grant.lineageId,familyId:grant.familyId},service=serviceOf(grant.owner);let response;
-   try{response=await issueDeviceSession(service,{linkedRequestId,grant,proof});}
+   try{if(!featureAllowed({owner:grant.owner,clientId:grant.clientId}))fault('access_denied');response=await issueDeviceSession(service,{linkedRequestId,grant,proof});}
    catch(error){try{await linked.lineageRevoke({owner:grant.owner,lineageId:grant.lineageId});}catch{}if(['access_denied','unauthorized','invalid_grant','stale_consent','forbidden','rate_limited'].includes(error?.code))fault('access_denied');throw error;}
    let live=false;try{live=await linked.lineageLive(ref)===true;}catch{}
    if(!live){await revokeDeviceFamilies(service,[grant.familyId]);try{await linked.lineageRevoke({owner:grant.owner,lineageId:grant.lineageId});}catch{}fault('access_denied');}
@@ -211,7 +212,7 @@ export function createDeviceGrantProvider({issuer,clients=[],linked,shard,nonces
    * values, revisions and resources). `input`: {context, requestId, code, turnstileToken?}. */
   async review({context,requestId,code,turnstileToken}={}){
    const view=await linked.resolve({code,locator:requestId,...turnstileToken?{turnstileToken}:{}},context);if(view.kind!=='app')return {linked:view};
-   const client=eligible(view.app.clientId);
+   const client=eligible(view.app.clientId);if(!featureAllowed({owner:view.account.id,clientId:client.id}))fault('access_denied');
    return {linked:view,consent:await deviceConsentView(serviceOf(view.account.id),context,{owner:view.account.id,linkedRequestId:view.requestId,client,requests:view.app.requests})};
   },
   /** Approval page, `app` kind, step 2: owner consent in the owner shard, then the linked decision (fresh step-up,
@@ -224,7 +225,7 @@ export function createDeviceGrantProvider({issuer,clients=[],linked,shard,nonces
    if(view.freshness?.satisfied!==true)fault('reauthentication_required','Confirm your password or passkey before approving this sign-in.');
    if(choice!==undefined&&!view.durations.some(option=>option.choice===choice))fault('invalid_choice','Choose how long this sign-in lasts.');
    const client=eligible(view.app.clientId),owner=view.account.id,service=serviceOf(owner),target={owner,linkedRequestId:view.requestId};
-   await sweepDeviceFamilies(service,owner);
+   if(!featureAllowed({owner,clientId:client.id}))fault('access_denied');await sweepDeviceFamilies(service,owner);
    await deviceConsentApprove(service,context,{...target,client,requests:view.app.requests,approved});
    try{return await linked.approve({requestId,code,approved:true,...choice!==undefined?{choice}:{},...accountHandle!==undefined?{accountHandle}:{}},context);}
    catch(error){await deviceConsentRevert(service,target);throw error;}
@@ -243,7 +244,7 @@ export function createDeviceGrantProvider({issuer,clients=[],linked,shard,nonces
    if(family?.lineage){let live=false;try{live=await linked.lineageLive({owner:family.lineage.owner,lineageId:family.lineage.lineageId,familyId:family.familyId})===true;}catch{fault('temporarily_unavailable','Try again shortly.');}
     if(!live){await revokeDeviceFamilies(service,[family.familyId]);fault('unauthorized','This application session ended.');}}
    // A client whose device eligibility was withdrawn loses its sessions (review LA2-S11).
-   if(family){try{eligible(family.clientId);}catch{await revokeDeviceFamilies(service,[family.familyId]);await endLineage(service,[family]);fault('unauthorized','This application session ended.');}}
+   if(family){try{eligible(family.clientId);if(!featureAllowed({owner,clientId:family.clientId}))fault('access_denied');}catch{await revokeDeviceFamilies(service,[family.familyId]);await endLineage(service,[family]);fault('unauthorized','This application session ended.');}}
    if(checkOnly===true&&typeof busResume==='string'){await service.store.transaction(async tx=>service.tokenRecord(tx,await tx.get(key('token',id))));return {version:'0',tx:envelope.tx,result:{live:true}};}
    const response=await service.rpc(token,envelope,{tokenHash:id,requestOrigin:origin,busWaits,...busResume!==undefined?{busResume}:{}});await bindChildTokens(service,response.result,proof.jkt);
    if(response.result?.__federationError){const {result,...rest}=response;return {...rest,error:result.__federationError};}return response;
@@ -270,7 +271,7 @@ export function createDeviceGrantProvider({issuer,clients=[],linked,shard,nonces
   },
  });
 }
-function enabled(config){if(config?.DEVICE_AUTHORIZATION_ENABLED!==true&&config?.DEVICE_AUTHORIZATION_ENABLED!=='true')fail('not_found','Device authorization is not enabled.');}
+function enabled(config){if(!siteGlobal(config,'DEVICE_AUTHORIZATION_ENABLED'))fail('not_found','Device authorization is not enabled.');}
 // Engine operations (unrouted; LA3 mounts them). Each is absent unless DEVICE_AUTHORIZATION_ENABLED is on.
 export class DeviceAuthorize extends AppAction {static operation='federation.device.authorize';static deps=['config','deviceGrant'];run({config,deviceGrant}){enabled(config);return deviceGrant.authorize(this.input);}}
 export class DeviceToken extends AppAction {static operation='federation.device.token';static deps=['config','deviceGrant'];run({config,deviceGrant}){enabled(config);return deviceGrant.token(this.input);}}

@@ -1,3 +1,4 @@
+import {flagsFor,ownerFlags,capability,existingFeature} from './flags.mjs';
 // AccountController slice EV-2, event buses (docs/spec/events.md; docs/architecture/consent-experience.md §12).
 // `methods` are installed on AccountController.prototype (`this` is the controller); `rpc` lists what `invoke` accepts
 // (packages/runtime/account/index.mjs). Everything answers `not_found` unless EVENT_BUSES_ENABLED is on.
@@ -17,7 +18,7 @@
 import {createAppEngine,perform,read,AppQuery} from '../../app/engine.mjs';
 import {systemClock,cryptoRandom,nullAudit} from '../../app/providers.mjs';
 import {eventBusProvider,EVENT_BUS_OPERATIONS,EVENT_BUS_OWNER_OPERATIONS,EVENT_BUS_APP_OPERATIONS,ApproveEventBusReader,RevokeEventBusReader,SweepEventBuses,EventBusDescriptors} from '../../app/domains/events.mjs';
-import {busKeys,eventBusesEnabled,EVENT_BUS_CONTRACT,busWaitsPort} from '../../events/index.mjs';
+import {busKeys,EVENT_BUS_CONTRACT,busWaitsPort} from '../../events/index.mjs';
 import {BILLING_STATE_KEY,entitlementFromState} from '../../billing/catalog.mjs';
 import {withDoorbellKick} from '../../events/doorbell.mjs';
 import {StorageError} from '../../storage/policy.mjs';
@@ -37,8 +38,8 @@ function eventBusEngine(c){
  let engine=engines.get(c);
  if(!engine){
   let keys;const waits=eventBusWaits(c.config),notifier=withDoorbellKick(waits,owner=>c.integrationEventsKick(owner),{store:c.metadata});
-  engine=createAppEngine({providers:{clock:systemClock,random:cryptoRandom,audit:nullAudit,accountStore:c.metadata,eventBus:eventBusProvider({enabled:eventBusesEnabled(c.config),keys:()=>keys??=busKeys(c.config),issuer:c.config.APP_ORIGIN,
-   plan:async store=>{const state=await store.get(BILLING_STATE_KEY);return entitlementFromState(state,Date.now(),c.config).plan==='free'?'free':'paid';},notifier,waits:!!waits&&c.config.EVENT_BUS_WAITS_MOUNTED===true})}});
+  engine=createAppEngine({providers:{clock:systemClock,random:cryptoRandom,audit:nullAudit,accountStore:c.metadata,eventBus:eventBusProvider({enabled:true,config:c.config,keys:()=>keys??=busKeys(c.config),issuer:c.config.APP_ORIGIN,
+   plan:async store=>{const state=await store.get(BILLING_STATE_KEY);return entitlementFromState(state,Date.now(),c.config).plan==='free'?'free':'paid';},notifier,waits:()=>!!waits&&capability(c.config,'EVENT_BUS_WAITS_MOUNTED')})}});
   engines.set(c,engine);
  }
  return engine;
@@ -61,7 +62,8 @@ function clientOrigin(c,clientId){
 
 export const methods={
   async eventBusOwner(owner,{operation,id,input}={}){
-   if(!eventBusesEnabled(this.config)||typeof operation!=='string'||![...EVENT_BUS_OWNER_OPERATIONS,'events.push','events.subscriptions'].includes(operation))notFound();
+   if(!existingFeature(this.config,'EVENT_BUSES_ENABLED',owner)||typeof operation!=='string'||![...EVENT_BUS_OWNER_OPERATIONS,'events.push','events.subscriptions'].includes(operation))notFound();
+   if(operation==='events.create'&&!ownerFlags(this.config,owner).enabled('EVENT_BUSES_ENABLED'))notFound();
    await this.warm(owner);if(['events.push','events.subscriptions'].includes(operation))return this.eventDoorbellOwner(owner,{operation,id,input});let value=shape(input);
    if(operation==='events.create'){if(!plain(value)||Object.keys(value).some(key=>key!=='url')||typeof value.url!=='string')throw new StorageError('invalid_request','Choose a registered feed manifest.');value={url:value.url,manifest:reviewedManifest(this,value.url)};}
    await this.scheduleAlarm(Date.now()+600000);
@@ -70,14 +72,14 @@ export const methods={
    if(['events.purge','events.delete'].includes(operation))await this.eventBusSweep(owner).catch(()=>{});return result;
   },
   async eventBusReader(owner,{operation,id,input}={}){
-   if(!eventBusesEnabled(this.config)||!['approved','revoked'].includes(operation))notFound();
+   if(!existingFeature(this.config,'EVENT_BUSES_ENABLED',owner)||!['approved','revoked'].includes(operation)||operation==='approved'&&!ownerFlags(this.config,owner,input?.clientId).enabled('EVENT_BUSES_ENABLED'))notFound();
    await this.warm(owner);const Operation=operation==='approved'?ApproveEventBusReader:RevokeEventBusReader;let value=shape(input);
    // One epoch derivation with the resource handler: `grant:<readSince>` (review hardening note on EV2-S1).
    if(operation==='approved'){const {clientId,readSince,history}=value??{};if(typeof readSince!=='string'||!readSince||readSince.length>200)throw new StorageError('invalid_request','Reader approval needs its read-approval identity.');value={clientId,epoch:`grant:${readSince}`,...history!==undefined?{history}:{}};}
    const result=await run(this,new Operation({actor:{kind:'system',owner},...id!==undefined?{id}:{},input:value}));if(operation==='revoked')await this.eventDoorbellCancel(owner,{id,clientId:value?.clientId});return result;
   },
-  async eventBusSweep(owner){if(!eventBusesEnabled(this.config))return {more:false};return run(this,new SweepEventBuses({actor:{kind:'system',owner}}));},
-  async eventBusDescriptors(owner){if(!eventBusesEnabled(this.config))return [];return run(this,new EventBusDescriptors({actor:{kind:'system',owner}}));},
+  async eventBusSweep(owner){if(!flagsFor(this.config).background('EVENT_BUSES_ENABLED')||!(await this.metadata.list({prefix:'evbus/bus/',limit:1})).size)return {more:false};return run(this,new SweepEventBuses({actor:{kind:'system',owner}}));},
+  async eventBusDescriptors(owner){if(!ownerFlags(this.config,owner).enabled('EVENT_BUSES_ENABLED'))return [];return run(this,new EventBusDescriptors({actor:{kind:'system',owner}}));},
 };
 
 export const rpc={
@@ -94,7 +96,8 @@ export const rpc={
  * re-approved, never on widening or connection-generation changes (EV2-S1/S6), and is the reader-floor epoch. The live connection is checked here and again inside each commit.
  */
 export async function eventBusResourceMethod(c,owner,context){
- if(!eventBusesEnabled(c.config))notFound();
+ if(!existingFeature(c.config,'EVENT_BUSES_ENABLED',owner))notFound();
+ if(['publish','subscribe'].includes(context.method)&&!ownerFlags(c.config,owner,context.clientId).enabled('EVENT_BUSES_ENABLED'))notFound();
  if(context.contract!==EVENT_BUS_CONTRACT)throw new StorageError('unsupported_contract','Unsupported contract.',400);
  if(!['publish','read','subscribe','unsubscribe'].includes(context.method))throw new StorageError('unsupported_method','Unsupported feed method.',400);
  const prefix=`${c.config.APP_ORIGIN}/entities/${owner}/buses/`,id=typeof context.resource==='string'&&context.resource.startsWith(prefix)?context.resource.slice(prefix.length):'';

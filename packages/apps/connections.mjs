@@ -1,3 +1,4 @@
+import {siteGlobal} from '../flags/read.mjs';
 import {digest} from '../messaging/store.mjs';
 import {validateIntegrationManifest} from '../federation/integrations.mjs';
 import {validateSlotManifest,validateExtensions,createSlotOperation} from '../federation/extensions.mjs';
@@ -31,7 +32,7 @@ const freeze=v=>{if(v&&typeof v==='object'){Object.values(v).forEach(freeze);Obj
 export const ITEM_CLASSIFIER_MANIFEST=freeze(classifierSlot);
 export const PUBLIC_INTAKE_MANIFEST=freeze({id:'https://spec.bindle.example/slots/public-message-intake/v1',title:'Receives public messages',description:'Receives bridged public requests with provider provenance.',publisher:'https://spec.bindle.example',fields:{occupants:{title:'Public intake app',type:'resource',cardinality:{min:0,max:1},contracts:['https://spec.bindle.example/contracts/public-intake/v1']}},slot:{v:1,field:'occupants',selection:'exclusive',consumers:['provider'],supersedes:null}});
 export const RECOGNIZED_SLOTS=Object.freeze({[MESSAGING_INGRESS_SLOT]:MESSAGING_INGRESS_MANIFEST,[classifierSlot.id]:ITEM_CLASSIFIER_MANIFEST});
-export const recognizedSlots=config=>[true,'true'].includes(config?.EMAIL_BRIDGE_ENABLED)&&[true,'true'].includes(config?.BINDLEBOX_ENABLED)?{...RECOGNIZED_SLOTS,[PUBLIC_INTAKE_MANIFEST.id]:PUBLIC_INTAKE_MANIFEST}:RECOGNIZED_SLOTS;
+export const recognizedSlots=config=>siteGlobal(config,'EMAIL_BRIDGE_ENABLED')&&siteGlobal(config,'BINDLEBOX_ENABLED')?{...RECOGNIZED_SLOTS,[PUBLIC_INTAKE_MANIFEST.id]:PUBLIC_INTAKE_MANIFEST}:RECOGNIZED_SLOTS;
 const pad=n=>String(n).padStart(16,'0');
 const plain=v=>v!==null&&typeof v==='object'&&!Array.isArray(v)&&Object.getPrototypeOf(v)===Object.prototype;
 const only=(v,names)=>plain(v)&&Object.keys(v).every(k=>names.includes(k));

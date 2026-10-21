@@ -196,3 +196,13 @@ test('a configure save that succeeded before a failure resumes as configured, ne
  const decision={changes:[{field:'day',take:'suggested',via:'field'}]},go=()=>run(e,IncrementalDecide,{entryHash:admitted.input.entryHash,subject,decision});
  await assert.rejects(go(),{code:'temporarily_unavailable'});f.time.advance(30000);assert.deepEqual(await go(),{result:'configured'});assert.equal(f.p.calls.save,1);assert.equal(f.p.calls.commit,0);
 });
+
+test('rollout checks use verified connection and persisted entry context, with declines and abandonment still available',async t=>{
+ let allow=true;const seen=[],f=fixture({featureAllowed:ctx=>{seen.push({subject:ctx.subject,clientId:ctx.clientId});return allow;}});withCalendar(f);const e=await engine(t,f),admitted=grantMoreInput([calRequest()]);
+ await run(e,IncrementalAdmit,admitted.input);assert.deepEqual(seen.at(-1),{subject,clientId:tasks.id});
+ allow=false;await assert.rejects(run(e,IncrementalBegin,{entryHash:admitted.input.entryHash,subject}),{code:'access_denied'});
+ allow=true;await run(e,IncrementalBegin,{entryHash:admitted.input.entryHash,subject});f.time.advance(1500);allow=false;
+ await assert.rejects(run(e,IncrementalDecide,{entryHash:admitted.input.entryHash,subject,decision:{approved:[{fragment:CAL,fields:['calendar']}]}}),{code:'access_denied'});assert.equal(f.p.calls.commit,0);
+ assert.ok((await run(e,IncrementalDecide,{entryHash:admitted.input.entryHash,subject,decision:{denied:true}})).code);assert.deepEqual(seen.at(-1),{subject,clientId:tasks.id});
+ f.time.advance(86400001);const next=grantMoreInput([calRequest()]);allow=true;await run(e,IncrementalAdmit,next.input);allow=false;assert.ok((await run(e,IncrementalAbandon,{entryHash:next.input.entryHash})).code);
+});

@@ -5,8 +5,7 @@ import {callerAgeRequirement} from '../../identity/age-policy.mjs';
 import {onboardingEnabled,onboardingOnly} from '../../identity/onboarding.mjs';
 import {publicBadgePolicy,compileBadgeSprite} from '../../identity/badge-policy.mjs';
 import {publicArtifact} from '../../core/public-contracts.mjs';
-import {json,privateHeaders,signupEnabled,securePage,brandPage,passthrough} from './shared.mjs';
-import {deviceAuthorizationEnabled} from '../device-grant.mjs';
+import {flagGlobal,flagEnabled,capability,json,privateHeaders,signupEnabled,securePage,brandPage,passthrough} from './shared.mjs';
 
 async function badgePresentation(env){
  const policy=publicBadgePolicy(env);if(!policy.path)return policy;
@@ -33,7 +32,7 @@ export const stages={
    if(path==='/manifest.webmanifest'&&request.method==='GET'){const asset=await env.ASSETS.fetch(request);const manifest=await asset.json();const name=env.BRAND_NAME||'3sln.me';return new Response(JSON.stringify({...manifest,name,short_name:name,...name==='3sln.me'?{}:{icons:[{src:'/generic-icon.svg',sizes:'any',type:'image/svg+xml',purpose:'any'}]}}),{headers:{'Content-Type':'application/manifest+json','Cache-Control':'no-cache'}});}
  },
  async anonymous({request,env,path,local}){
-   if(path==='/api/config')return json({ageRequirement:await callerAgeRequirement(request.cf),origin:env.APP_ORIGIN,brand:{name:env.BRAND_NAME||(local?'3sln.me':'3sln.me'),host:new URL(env.APP_ORIGIN).host},termsVersion:env.TERMS_VERSION,turnstileSiteKey:env.TURNSTILE_SITE_KEY,localDevelopment:local,signupEnabled:signupEnabled(env),onboardingOnly:onboardingOnly(env),tokenOnboardingEnabled:onboardingEnabled(env)||env.ADMIN_CLAIMS_ENABLED===true,badgePolicy:await badgePresentation(env),signupContactRequired:env.SIGNUP_CONTACT_REQUIRED==='true',emailSetupAvailable:env.EMAIL_SETUP_AVAILABLE===true,pushSetupAvailable:env.PUSH_AVAILABLE===true,passwordEnabled:true,passkeyEnabled:true,emailEnabled:env.EMAIL_AVAILABLE===true,notificationEmailEnabled:false,pushEnabled:false,vapidPublicKey:env.VAPID_PUBLIC_KEY,deviceAuthorizationEnabled:deviceAuthorizationEnabled(env),incrementalAuthorizationEnabled:env.INCREMENTAL_AUTH_ENABLED==='true'&&env.INCREMENTAL_AUTHORIZATION?.mounted===true,billingEnabled:env.BILLING_ENABLED==='true',integrationsEnabled:env.INTEGRATIONS_ENABLED==='true',eventBusesEnabled:env.EVENT_BUSES_ENABLED==='true',incrementalAuthEnabled:env.INCREMENTAL_AUTH_ENABLED==='true'&&env.INCREMENTAL_AUTHORIZATION?.mounted===true,activityV2Enabled:env.ACTIVITY_V2_ENABLED===true||env.ACTIVITY_V2_ENABLED==='true',searchEnabled:true,semanticSearchEnabled:env.SEMANTIC_SEARCH_ENABLED==='true',providers:providerConfig(env)});
+   if(path==='/api/config')return json({ageRequirement:await callerAgeRequirement(request.cf),origin:env.APP_ORIGIN,brand:{name:env.BRAND_NAME||(local?'3sln.me':'3sln.me'),host:new URL(env.APP_ORIGIN).host},termsVersion:env.TERMS_VERSION,turnstileSiteKey:env.TURNSTILE_SITE_KEY,localDevelopment:local,signupEnabled:signupEnabled(env,{request}),onboardingOnly:onboardingOnly(env),tokenOnboardingEnabled:onboardingEnabled(env)||capability(env,'ADMIN_CLAIMS_ENABLED'),badgePolicy:await badgePresentation(env),signupContactRequired:env.SIGNUP_CONTACT_REQUIRED==='true',emailSetupAvailable:capability(env,'EMAIL_SETUP_AVAILABLE'),pushSetupAvailable:capability(env,'PUSH_AVAILABLE'),passwordEnabled:true,passkeyEnabled:true,emailEnabled:capability(env,'EMAIL_AVAILABLE'),notificationEmailEnabled:false,pushEnabled:false,vapidPublicKey:env.VAPID_PUBLIC_KEY,deviceAuthorizationEnabled:flagEnabled(env,'DEVICE_AUTHORIZATION_ENABLED',{request}),incrementalAuthorizationEnabled:flagEnabled(env,'INCREMENTAL_AUTH_ENABLED',{request},true)&&env.INCREMENTAL_AUTHORIZATION?.mounted===true,billingEnabled:capability(env,'BILLING_ENABLED'),integrationsEnabled:flagEnabled(env,'INTEGRATIONS_ENABLED',{request},true),eventBusesEnabled:flagEnabled(env,'EVENT_BUSES_ENABLED',{request},true),incrementalAuthEnabled:flagEnabled(env,'INCREMENTAL_AUTH_ENABLED',{request},true)&&env.INCREMENTAL_AUTHORIZATION?.mounted===true,activityV2Enabled:flagEnabled(env,'ACTIVITY_V2_ENABLED',{request}),searchEnabled:true,semanticSearchEnabled:flagEnabled(env,'SEMANTIC_SEARCH_ENABLED',{request},true),providers:providerConfig(env)});
  },
  async pages({request,env,url,path}){
    if(path==='/privacy'||path==='/terms'){
@@ -63,7 +62,7 @@ export const stages={
    // Linked approval (LA3, behind DEVICE_AUTHORIZATION_ENABLED): /approve is the LA4 page, served from the
    // authorization document with no referrer, no framing and its own browsing context group; /device and
    // /device/approve redirect to it for one release (LA-13; browsers carry the fragment, the page drops any code).
-   if(deviceAuthorizationEnabled(env)&&(path==='/approve'||path==='/device'||path==='/device/approve')){
+   if(flagGlobal(env,'DEVICE_AUTHORIZATION_ENABLED')&&(path==='/approve'||path==='/device'||path==='/device/approve')){
     if(!['GET','HEAD'].includes(request.method))return json({error:'method_not_allowed'},405,{Allow:'GET, HEAD'});
     if(path!=='/approve')return new Response(null,{status:302,headers:{...privateHeaders,Location:'/approve'}});
     const page=await securePage(await brandPage(await env.ASSETS.fetch(new Request(new URL('/authorize.html',url),request)),env)),headers=new Headers(page.headers);

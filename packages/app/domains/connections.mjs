@@ -1,7 +1,7 @@
 // Connections domain, EXT-X4 (docs/spec/integrations.md §1, §3, §7; docs/spec/extensions.md §3, §5;
 // docs/architecture/extensibility-design.md EX-5). Engine-first: AppConnections (packages/apps/connections.mjs) is the
-// provider resource over the account store; the Actions/Queries below are the operations. Everything is refused with
-// `not_found` unless INTEGRATIONS_ENABLED is on, so existing app connections behave exactly as before with the flag off.
+// provider resource over the account store; the Actions/Queries below are the operations. INTEGRATIONS_ENABLED
+// gates new authority; owner reads, reverse paths and cleanup remain available during rollout changes.
 //
 // Actors (built by trusted adapters only, never from a request body; packages/runtime/account/connections.mjs):
 //   {kind:'owner', owner, authTime?}  list, slots, built-in connect, suspend, resume, disconnect, approve a staged
@@ -18,50 +18,56 @@ import { Provider } from '../../../vendor/ngin/index.js';
 import { AppAction, AppQuery } from '../engine.mjs';
 import { AppFault } from '../faults.mjs';
 import { UUID } from '../../core/primitives.mjs';
+import {createFlags} from '../../flags/evaluate.mjs';
 
 const unauthorized = () => { throw new AppFault('unauthorized', 'Sign in to continue.', 401); };
 const forbidden = () => { throw new AppFault('forbidden', 'This operation is not available to this caller.', 403); };
 const plain = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const input = (value, names) => { if (value === undefined) return {}; if (!plain(value) || Object.keys(value).some(name => !names.includes(name))) throw new AppFault('invalid_request', 'Unsupported connections request.', 400); return value; };
-export const integrationsEnabled = config => config?.INTEGRATIONS_ENABLED === true || config?.INTEGRATIONS_ENABLED === 'true';
+/** New grants/exposure only; ctx carries the verified owner subject and client. */
+export const integrationsEnabled = (config={},ctx={}) => (config?.flags??config?.FLAGS??createFlags({snapshot:{v:1,version:0,issuedAt:0,flags:{}},env:config??{}})).for(ctx).enabled('INTEGRATIONS_ENABLED');
 
 /** The `connections` provider class for createAppEngine. `connections`: an AppConnections over the account store.
  * `enabled`: INTEGRATIONS_ENABLED, from configuration. `account(owner)` -> {status} | null: the identity directory
- * status (IDENTITY_ACCOUNT); a non-active account is severed when the occupancy port observes it. */
-export function connectionsProvider({ connections, enabled = false, account } = {}) {
-  return class extends ConnectionsProvider { static deps = []; constructor() { super(); Object.assign(this, { connections, enabled: enabled === true, account }); } };
+ * status (IDENTITY_ACCOUNT); a non-active account is severed when the occupancy port observes it.
+ * `config`/`flags`: pinned port, consulted per lease (never captured in the cached engine). With these inputs,
+ * only new authority is gated; reads, disconnect, vacate, severance and outbox work remain available. */
+export function connectionsProvider({ connections, enabled = false, account, config, flags } = {}) {
+  return class extends ConnectionsProvider { static deps = []; constructor() { super(); Object.assign(this, { connections, enabled: enabled === true, account, config, flags }); } };
 }
 export class ConnectionsProvider extends Provider {
   async obtain({ actor } = {}) {
-    if (!this.enabled || !this.connections) throw new AppFault('not_found', 'Not found.', 404);
+    if ((!this.config&&!this.flags&&!this.enabled) || !this.connections) throw new AppFault('not_found', 'Not found.', 404);
     if (!UUID.test(actor?.owner ?? '') || !['owner', 'system'].includes(actor?.kind)) unauthorized();
     // The account store's bound owner must be the actor's, whoever dispatched.
     const bound = await this.connections.metadata.get('owner'); if (bound !== undefined && bound !== actor.owner) throw new AppFault('forbidden', 'Account owner mismatch.', 403);
-    return Object.freeze(scope(this.connections, actor, this.account));
+    const config=this.config??{},flags=config.flags??config.FLAGS??this.flags,admit=clientId=>{if((this.config||this.flags)&&!integrationsEnabled({...config,flags},{subject:{kind:'account',owner:actor.owner},...clientId||actor.clientId?{client:{clientId:clientId??actor.clientId}}:{}}))throw new AppFault('not_found','Not found.',404);};
+    return Object.freeze(scope(this.connections, actor, this.account, admit));
   }
   release() {}
 }
 // The owner-scoped handle: methods take no owner argument, so an operation never holds an ID it could swap.
-function scope(service, actor, account) {
+function scope(service, actor, account, admit) {
   const owner = actor.owner, system = actor.kind === 'system', ownerOnly = () => { if (system) forbidden(); }, systemOnly = () => { if (!system) forbidden(); };
   return {
     list: async () => ({ connections: await service.list(owner), slots: await service.slots(owner) }),
     slots: () => service.slots(owner),
-    connect: value => { systemOnly(); const v = input(value, ['client', 'snapshot', 'expectedGeneration']); return service.connect(owner, v); },
-    connectBuiltIn: value => { ownerOnly(); return service.connectBuiltIn(owner, input(value, ['integration'])); },
+    connect: value => { systemOnly(); const v = input(value, ['client', 'snapshot', 'expectedGeneration']); admit(v.client?.id); return service.connect(owner, v); },
+    connectBuiltIn: value => { ownerOnly(); admit(); return service.connectBuiltIn(owner, input(value, ['integration'])); },
     transition: (op, value) => {
       const v = input(value, ['connection', 'expectedGeneration', 'configured', 'degraded', 'stagedRevision']);
       if (['suspend', 'resume', 'approve'].includes(op)) ownerOnly(); else systemOnly();
+      if (['resume','approve'].includes(op)) admit();
       // W5-S3: approving a staged change (possibly a replaced key set) needs a recent owner verification, like occupy.
       const { connection, ...rest } = v; return service.transition(owner, connection, op, rest, op === 'approve' ? { authTime: actor.authTime } : {});
     },
     disconnect: value => { const v = input(value, ['connection', 'expectedGeneration']); return service.disconnect(owner, typeof v.connection === 'string' ? v.connection : '', { reason: system ? 'system' : 'uninstalled', expectedGeneration: v.expectedGeneration }); },
     revalidated: value => { systemOnly(); const v = input(value, ['connection', 'expectedGeneration', 'result']); return service.revalidated(owner, v.connection, v); },
     severAll: value => { systemOnly(); return service.severAll(owner, input(value, ['reason'])); },
-    occupy: value => { ownerOnly(); return service.occupy(owner, value, { authTime: actor.authTime }); },
+    occupy: value => { ownerOnly(); admit(); return service.occupy(owner, value, { authTime: actor.authTime }); },
     vacate: value => { ownerOnly(); return service.vacate(owner, value); },
     reorder: value => { ownerOnly(); return service.reorder(owner, value); },
-    configureSeat: value => { ownerOnly(); return service.configureSeat(owner, value); },
+    configureSeat: value => { ownerOnly(); admit(); return service.configureSeat(owner, value); },
     setIngress: value => { systemOnly(); return service.setIngress(owner, value); },
     // The occupancy port: available occupants plus the account fence, which also consults the identity directory.
     occupant: async value => {

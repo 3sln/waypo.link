@@ -1,7 +1,8 @@
+// FF-5a: legacy mount visibility is preserved; after console adoption owner reads/reversal ignore targeting.
 // HTTP routes of slice 10, Notifications, push, app connections and MCP account tools (docs/architecture/app-engine.md §12): app-notification keys, unsubscribe, app connections, notification preferences and push devices.
 // Stage handlers and route-module shape: packages/runtime/routes/index.mjs.
 import {publicNotificationKeys} from '../app-notifications.mjs';
-import {json,body,privateHeaders} from './shared.mjs';
+import {flagReadable,flagEnabled,json,body,privateHeaders} from './shared.mjs';
 
 export function allowedMethods(path){
  if(/^\/api\/apps\/[a-f0-9-]{36}\/notifications$/.test(path))return ['PUT'];
@@ -53,7 +54,8 @@ export const stages={
 // ACT-2 activity push settings: absent (404) unless ACTIVITY_V2_ENABLED. Dispatcher claim/authorize/finish are
 // never reachable from HTTP; the account RPC `activityPush` admits only the owner settings operations.
 async function activityPushRoute({request,env,path,id,object}){
- if(env.ACTIVITY_V2_ENABLED!=='true')return json({error:'not_found'},404);
+ if(!flagReadable(env,'ACTIVITY_V2_ENABLED',true))return json({error:'not_found'},404);
+ if(request.method==='PUT'&&!flagEnabled(env,'ACTIVITY_V2_ENABLED',{subject:{kind:'account',owner:id}},true)){const input=await body(request.clone(),32768);if(input.enabled!==false)return json({error:'feature_unavailable'},409);}
  if(path==='/api/notifications/activity')return json(request.method==='PUT'?await object.activityPush(id,'configure',{input:await body(request,32768)}):await object.activityPush(id,'settings'));
  const target=/^\/api\/notifications\/activity\/(apps|devices|explain)\/([A-Za-z0-9_-]{1,64})$/.exec(path);if(!target)return json({error:'not_found'},404);
  if(target[1]==='explain'&&request.method==='GET')return json(await object.activityPush(id,'explain',{id:target[2]}));

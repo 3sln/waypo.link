@@ -1,6 +1,6 @@
-# Organizations, membership and inter-entity grants — normative draft (skeleton)
+# Organizations, membership and relations — normative draft (skeleton)
 
-Status: **skeleton, 2026-10-21, revision 2.** Nothing here is implemented, published or production-verified. Revision 1 applied the resolved findings of the first independent review ([design, Review round 1](../architecture/organizations-design.md#review-round-1)); items that review left open are not resolved here. Revision 2 applies the user's clarification of 2026-10-21 ([design §1a](../architecture/organizations-design.md#1a-user-clarification-2026-10-21)). Members from any provider are core. Their requests are signed by a key their home provider certified, and the organization verifies that through a directory profile (§3a). There is no separate sign-in at the organization. This replaces the federated login of revision 1. Revision 2 was reviewed in [Review round 2](../architecture/organizations-design.md#review-round-2), and the resolved findings of that round are applied here (marked R2-…); its open items are not resolved. Identifiers under `https://spec.bindle.example/` and hosts under `.example` are placeholders. MUST, SHOULD and MAY express draft requirements. Sections marked **TBD** are reserved and carry no requirements yet. §15 lists the core amendments this draft needs; they are **proposed and unsigned**.
+Status: **skeleton, 2026-10-21, revision 3.** Revision 3 replaces inter-entity offers with **relations** (§9), following the user's proposal of 2026-10-21 ([design §8a](../architecture/organizations-design.md#8a-relations-proposal-assessment)). It was reviewed in [Review round 3](../architecture/organizations-design.md#review-round-3), whose resolved findings are applied (marked R3-…); its open items are not resolved. Nothing here is implemented, published or production-verified. Revision 1 applied the resolved findings of the first independent review ([design, Review round 1](../architecture/organizations-design.md#review-round-1)); items that review left open are not resolved here. Revision 2 applies the user's clarification of 2026-10-21 ([design §1a](../architecture/organizations-design.md#1a-user-clarification-2026-10-21)). Members from any provider are core. Their requests are signed by a key their home provider certified, and the organization verifies that through a directory profile (§3a). There is no separate sign-in at the organization. This replaces the federated login of revision 1. Revision 2 was reviewed in [Review round 2](../architecture/organizations-design.md#review-round-2), and the resolved findings of that round are applied here (marked R2-…); its open items are not resolved. Identifiers under `https://spec.bindle.example/` and hosts under `.example` are placeholders. MUST, SHOULD and MAY express draft requirements. Sections marked **TBD** are reserved and carry no requirements yet. §15 lists the core amendments this draft needs; they are **proposed and unsigned**.
 
 Protocol/security/interop sign-off: reviewer ___ / date ___ / outcome ___.
 
@@ -22,7 +22,7 @@ This document adds no new principal type, token transport, RPC transport or auth
 1. **Counterparty kinds for connections** (§4). A connection, the existing coupling of [integrations §1](integrations.md#1-model), may have an integration, a person or an organization as its counterparty. A **membership** is an organization's connection to a person.
 2. **Grants to connections and effective authority** (§6). The authority of any actor is the live intersection of the grants along its chain. Nothing is inherited across a connection.
 3. **Member context** (§7). An application obtains authority to act for a member within an organization only by presenting a member certificate that the member's home provider issued for that organization and for that application, together with a proof made by the certified key.
-4. **Inter-entity grants** (§9–§11). An entity offers another entity grants. The grantee redeems the offer. The provider hosting the resource mints short-lived, sender-bound tokens that carry an actor chain.
+4. **Relations** (§9–§11). Public, versioned relation documents define slots and an access matrix over preferences fragments. Entities join instances in slots. Each grantor consents per counterpart, and grantees consume the granted fragments as integrations do. Requests carry entity certificates issued by the acting entity's own provider.
 
 ## 2. Terms
 
@@ -43,6 +43,10 @@ This document adds no new principal type, token transport, RPC transport or auth
 | Authority epoch | A non-negative integer at the home provider that increases whenever the identity's account authority is reset: recovery, a credential reset, or a key reset without continuity (§5.2a). It never decreases (review R2-M1). |
 | Grantee | The counterparty of the connection a grant is attached to. |
 | Imported resource | A record in a grantee's pool that refers to a resource hosted for a grantor entity (§10). |
+| Relation | A public, versioned document defining slots and an access matrix over fragments (§9.2). |
+| Relation instance | One concrete association of entities, each of which joined it in a slot (§9.3). |
+| Edge | The set of grants from one party of an instance to another, realized as a connection (§9.3). |
+| Entity certificate | A short-lived JWS by which an entity's provider certifies a holder key for that entity, a counterpart and a client (§9.5). |
 | Actor chain | The ordered list of entities, members and clients through which a call is made (§13). |
 
 ## 3. Organization entities
@@ -52,7 +56,7 @@ This document adds no new principal type, token transport, RPC transport or auth
 - An organization MUST NOT have passwords, passkeys, email login or recovery credentials that authenticate *as* the organization at the authorization endpoint. Every interactive action for an organization is taken by an authenticated person through the owner interface (§6.3) or member context (§7).
 - An organization's identity signing key MAY sign:
   - links the organization issues (links §3);
-  - client assertions for inter-entity grants (§9.3);
+  - entity certificates (§9.5) and relation participation statements (§9.3);
   - key-continuity statements.
 
   These are all separated by `typ` or by a domain prefix, as the links §7.2 signature-domain table requires (AMD-O7).
@@ -147,7 +151,7 @@ A connection has exactly one grantor entity and one counterparty:
 | --- | --- | --- |
 | `integration` | OAuth client ([integrations §3](integrations.md#3-connection-lifecycle)) | Integration installation (existing) |
 | `person` | A member certificate from the person's home provider plus a holder-key proof (§5.2) | Membership acceptance (§5.1) |
-| `organization` or `person` as an entity grantee | A client assertion signed by the grantee entity's key (§9.3) | Offer redemption (§9) |
+| `organization` or `person` as a relation party | An entity certificate from the party's own provider (§9.5) | Joining a relation instance (§9.4) |
 
 Rules:
 
@@ -155,9 +159,9 @@ Rules:
 2. A connection's states, generation, suspension, disconnection and tombstone semantics are those of [integrations §3.1](integrations.md#31-states), applied to every counterparty kind. Reconnecting creates a new generation, and no earlier grant revives.
 3. Either side can end its own half alone:
    - The grantor disconnects through its owner interface.
-   - An entity grantee revokes its connection refresh token at the grantor's revocation endpoint ([RFC 7009](https://www.rfc-editor.org/rfc/rfc7009.html)). The grantor MUST then mark the connection `disconnected`.
+   - A relation party leaves the instance (§9.6).
    - A member leaves (§5.4).
-4. Relationship labels such as "parent" or "supplier" are local presentation of the side that sets them. They MUST NOT affect authority, and they are not exchanged as attested data.
+4. Relation titles and slot names (such as "parent" or "supplier") describe; they never authorize. Authority comes only from the consented grants on each edge (§9.1).
 
 ## 5. Membership
 
@@ -269,14 +273,14 @@ Whatever the mechanism, the home provider MUST obtain the member's consent for e
 - It is stable per (organization, person principal), including across leaving and rejoining (a new connection generation), MUST NOT equal or encode the person's `sub` or handle, and MUST NOT be reused for another principal.
 - Organizations MUST store members by the full `(iss, sub)` of the home identity, never by a bare local account ID, even when the issuer is local.
 - The organization's own applications receive the same membership ID for the same member (§7.2). This deliberately lets an organization's applications agree on a member. It does not prevent an application that the person uses in several entities from linking that person's membership IDs (§12).
-- In actor chains sent to other entities (§9.4), the organization MUST send a **pairwise** identifier per grantor unless the grant's `actor_disclosure` is `"named"`. For example, an HMAC of the membership ID under an organization secret, keyed by the grantor.
+- In actor chains sent to other entities (§9.5), the organization MUST send a **pairwise** identifier per grantor unless the grant's `actor_disclosure` is `"named"`. For example, an HMAC of the membership ID under an organization secret, keyed by the grantor.
 
 ### 5.4 Leaving, removal and expiry
 
 - A membership MAY carry `expires_at`. Expiry, removal by the owner interface and the member leaving all set the connection to `disconnected` in one commit, which also:
   - ends the member's member-context tokens and owner-interface sessions;
   - enqueues `member-removed` to each of the organization's integrations that has obtained member context for this membership (§7.4);
-  - when the organization holds tokens obtained from other entities for this member, triggers revocation of those tokens at their grantors (§9.5).
+  - stops issuing entity certificates that name this member (§9.5). Outstanding ones end within their lifetime (§9.6).
 - A member MUST be able to leave through the organization's provider at any time.
 - Leaving or removal MUST NOT transfer, delete or change ownership of any resource. Resources belong to exactly one entity.
 
@@ -289,10 +293,10 @@ A grant ([protocol §4](protocol.md#4-grants-and-live-authorization), [security]
 | Caveat | Applies to | Meaning |
 | --- | --- | --- |
 | `expires_at` | all | Unix seconds. After it, the grant is unusable, and every live check treats it as revoked. |
-| `reshare` | entity grantees | Default `false`. When `true`, the grantee may attach a narrower grant on the same resource to its own connection with a third entity (§9.6). **TBD in this version: providers MUST refuse `true`.** |
-| `actor_disclosure` | entity grantees | `"pairwise"` (default) or `"named"`. With `"named"`, actor chains name the member by verified `(iss, sub)` (§13). |
+| `reshare` | relation edges (from the access entry) | Default `false`. When `true`, the grantee may grant the resource onward in another instance (§9.7). **TBD in this version: providers MUST refuse `true`.** |
+| `actor_disclosure` | relation edges (from the access entry) | `"pairwise"` (default) or `"named"`. With `"named"`, actor chains name the member by verified `(iss, sub)` (§13). |
 
-Grants to members name resources, methods and an optional scope ([resource scoping](../architecture/resource-scoping.md)). Grants to integrations are unchanged: fragment-based.
+Grants to members name resources, methods and an optional scope ([resource scoping](../architecture/resource-scoping.md)). Grants to integrations are unchanged: fragment-based. Grants to relation parties are fragment-based too, bounded by the access entry (§9.2).
 
 ### 6.2 Effective authority
 
@@ -302,7 +306,7 @@ For every call, the provider hosting the resource MUST authorize the intersectio
    - the live grant O→application, through its fragment assignment;
    - the live grant O→member on R.
 
-   For an imported resource (§10), add the live grant grantor→O on R. The grantor checks that one, and O checks the hops inside O before requesting a token (rule 4).
+   For an imported resource (§10), add the live grant grantor→O on R. The grantor checks that one, and O checks the hops inside O before issuing an entity certificate (rule 4, §9.5).
 2. The state and generation of every connection along the chain.
 3. The resource's implemented contracts and the requested method.
 
@@ -311,7 +315,7 @@ Rules:
 1. **No implicit flow.** A connection, a relationship label or a counterparty's own authority confers nothing. Authority over a resource exists only through a grant naming that resource (or its scope) on that connection.
 2. **Use within the grantee.** An entity grantee MAY exercise a grant only through its own members and its own connected applications, each within its own grants to them. It MUST NOT exercise it for any other entity unless `reshare` applies.
 3. **Owner-interface authority is not a grant.** It is never obtainable by an application, never attached to an entity grantee and never part of a token in this version.
-4. **Deputies check before asking.** A provider that requests a token from another entity's provider on behalf of its member or application MUST first evaluate its own hops under this section, and MUST NOT request more than that evaluation allows.
+4. **Deputies check before certifying.** A provider that issues an entity certificate (§9.5), or requests a token at another entity's provider, on behalf of its member or application MUST first evaluate its own hops under this section, and MUST NOT certify or request more than that evaluation allows.
 5. **Organization as itself.** An integration acting for an organization with no member present (offline access, integrations §3.4) is authorized by the organization's grants to it alone. Member grants do not limit this access, so it is a superset of every member-context authority the same client can obtain (review R1-H1). Therefore:
    - Before approving a connection, the owner interface MUST disclose that organization-as-itself access is not limited by member grants.
    - A provider MUST let the owner approve a connection **without** organization-as-itself resource access. Such a connection may still read its configuration, receive events and contribute resources; it MUST NOT obtain tokens for resource RPC with no member present.
@@ -396,119 +400,243 @@ Integrations §6.2 gains (AMD-O4):
 - Applications cannot write them.
 - Consent discloses that administrators set them per member.
 
-## 9. Inter-entity grants
+## 9. Relations
 
-### 9.1 Offer link type
+Revision 3 replaces the offers and grantor-minted tokens of revisions 1–2 with relations. The user proposed relations on 2026-10-21; [design §8a](../architecture/organizations-design.md#8a-relations-proposal-assessment) gives the assessment. Connections, fragment grants, the intersection rule (§6.2) and imported resources (§10) remain as the mechanics underneath.
 
-An offer is a link of type `https://spec.bindle.example/links/entity-offer/v1`, issued by the grantor's provider and signed with the grantor entity's key.
+### 9.1 Model
 
-The type-specific meta members are:
+A **relation** is a public, versioned document describing one kind of association between entities. It names **slots**, each with an arity. Its **access matrix** states which preferences fragment an entity in one slot may grant to an entity in another slot, with which fields and methods.
 
-- `grantee`: `{iss, sub}`;
-- `offer_digest`: the digest of the stored grant proposal;
-- `accept`: the grantee provider's `entity-grants.v1` `accept_endpoint`, as resolved by the grantor at issue time.
+A **relation instance** is one concrete association: the entities that have each explicitly joined it in a slot.
 
-The proposal itself is not in the link. It lists resources, contracts, methods, scope and caveats. The grantor stores it, and it is disclosed at acceptance (§9.2).
+**Authority** comes only from consent at each end of each edge:
 
-- Single use; `exp − iat` ≤ 30 days (**TBD**).
-- Only the named grantee can redeem.
-- Errors are uniform under links §8.
+- The grantor consents to granting its own fragment values to that counterparty.
+- The grantee accepts receiving them.
 
-### 9.2 Acceptance
+The document bounds what may be granted. It grants nothing, and neither a relation's title nor a slot name confers anything. This is the consent model protocol §3 already applies to applications, with an entity in place of the application. A grantee entity consumes a grantor's fragment exactly as an integration does.
 
-1. Opening the offer at the owner host shows the owner host's page, which names the grantor's origin.
-2. The page navigates top-level, with a form POST of the link alone, to the grantee provider's `accept_endpoint`. This follows the links §9 opener pattern: that POST MUST NOT accept or sign anything by itself.
-3. The grantee provider authenticates a person who can operate the grantee's owner interface. It retrieves the proposal from the grantor (**TBD**: an unauthenticated read bound to the offer, or a read authenticated by the grantee's client assertion). It discloses:
-   - the grantor's verified origin **and** the grantor entity's identity URI and handle. Entities on one provider share an origin, so the origin alone does not identify the grantor (review R1-M6);
-   - each resource with its methods and scope;
-   - `expires_at`, `reshare` and `actor_disclosure`;
-   - that the grantor's provider will see the grantee's actor chain;
+**Mechanics.** An instance is a set of directional connections (§4) with counterparty kind `entity`, at most one per ordered pair of parties. Each carries fragment grants derived from the matrix entries that apply to that pair. Requests travel with entity certificates (§9.5). Values received appear in the grantee's pool as imported resources (§10).
+
+### 9.2 Relation document
+
+The relation document is served as an artefact envelope ([artefacts](artefacts.md) §2) whose `versions` entries each hold a complete body. One version's body:
+
+```json
+{"id":"https://erp.example/relations/supply",
+ "title":"Supply","description":"A buyer and its suppliers exchange purchase orders and invoices.",
+ "publisher":"https://erp.example","crit":[],
+ "slots":{
+   "buyer":{"title":"Buyer","arity":{"min":1,"max":1},"kinds":["organization"]},
+   "supplier":{"title":"Supplier","arity":{"min":1,"max":256},"kinds":["organization","person"]}},
+ "access":[
+   {"grantor":"buyer","grantee":"supplier","required":true,
+    "fragment":"https://erp.example/buses/purchase-orders","version":1,"digest":"sha256-…",
+    "methods":{"bus":{"https://spec.bindle.example/contracts/event-bus/v1":["read","subscribe","unsubscribe"]}}},
+   {"grantor":"buyer","grantee":"supplier","required":false,
+    "fragment":"https://erp.example/fragments/po-desk","version":2,"digest":"sha256-…",
+    "fields":["orders"],
+    "methods":{"orders":{"https://erp.example/contracts/purchase-order/v1":["status","acknowledge"]}}},
+   {"grantor":"supplier","grantee":"buyer","required":true,
+    "fragment":"https://erp.example/buses/invoices","version":1,"digest":"sha256-…",
+    "methods":{"bus":{"https://spec.bindle.example/contracts/event-bus/v1":["read","subscribe","unsubscribe"]}}}]}
+```
+
+**Slots.**
+
+- 1–8 slots. Names match `^[a-z][a-z0-9-]{0,31}$`.
+- `arity` is `{min, max}`, with 0 ≤ min ≤ max ≤ 1024.
+- `kinds` is a nonempty subset of `person` and `organization`.
+
+**Access entries** (1–64):
+
+- `grantor` and `grantee` are slot names. They MAY be equal, so siblings in one slot can share with each other. An entity never grants to itself.
+- `fragment` is a pinned reference (§9.8) to a fragment, including slot and bus manifests.
+- `fields` is a subset of the fragment's fields. Absent means all of them. Narrowing is enforced by the grantor's provider, which is the only party that ever projects the grantor's values, so it holds across providers (review R3-L2). It narrows which fields are shared, not the data behind a resource; that is bounded by `methods` and the grantor's per-edge scope choice. Atomic values become the grantee's copies when read.
+- `methods` is the exact contract → methods map for each resource field it covers, in the shape of a fragment request (protocol §3). It is required for every resource field covered.
+- `required` defaults to `true`. An edge is live only when every required entry for that pair is granted. A grantor MAY decline optional entries.
+- `reshare` defaults to `false`; **this version refuses `true`**. `actor_disclosure` is `"pairwise"` (default) or `"named"`. Both carry the §6.1 caveat meanings.
+- **The document sets ceilings, the edge decides** (review R3-M3). The document's `reshare` and `actor_disclosure` are the most an edge may carry. They are not imposed by the publisher: the grantor consents to any `reshare`, and the grantee accepts any `"named"` disclosure, per edge. Either side may stay below the ceiling, and an edge below it is still live.
+
+**Processing.**
+
+- The document is I-JSON, at most 32 KiB. Unknown members are ignored, unless named in `crit`, which makes the document invalid for a processor that does not implement them. Unknown members are fail-closed in that sense (review R1-L2).
+- Metadata is untrusted plain text. `publisher` is shown only when it is same-origin with `id`, and always as unverified, as for slots (extensions §5.1).
+- A provider MUST NOT create a grant from a relation document without the grantor's consent for that counterparty (§9.4).
+
+**Versioning.** Versions follow the cross-artefact reference mechanism (§9.8). A later version MAY add slots, access entries, fields and methods. It MUST NOT remove, rename or narrow anything. A publisher that needs to narrow publishes a new `id`. An existing entry's `required` flag MUST NOT change. Raising an entry's `reshare` or `actor_disclosure` ceiling, or adding an entry for a pair, counts as widening for the upgrade rules of §9.6, including acceptance by the grantee for `"named"` (review R3-L4).
+
+### 9.3 Instances, parties and edges
+
+- **Instance identifier.** An opaque HTTPS URI minted by the provider of the entity that creates the instance, for example `https://3sln.me/relations/i/<uuid>`. It identifies the instance and confers nothing. No provider holds authority over other parties' edges.
+- **Participation.** Each party's provider holds that party's participation: the instance, the relation pin, the party's slot or slots, its state, the counterparts it has accepted and the grants it has given.
+  - An entity MAY hold several slots in one instance, and MAY join several instances of one relation. Each (instance, slot, party) is distinct.
+- **Edges.** For each access entry and each pair (X in its `grantor` slot, Y in its `grantee` slot, X ≠ Y), the edge X→Y is live when all of these hold:
+  - X consented to grant that entry to Y;
+  - Y accepted receiving from X;
+  - both participations are live;
+  - both ends pin a common relation version that contains the entry (§9.6).
+
+  Grantor consent includes choosing which of X's assigned resources Y may use, as protocol §4 requires per consumer. Adding resources to X's fragment later never extends Y's access without new consent.
+- **Arity.** Each party enforces arity over its own view and refuses to accept more counterparts in a slot than `max` allows. There is no global roster and no consensus. A party's view of an instance is its live edges plus its counterparts' participation statements.
+- **Views can differ** (review R3-M1). Two parties may each hold a counterpart in a slot with `max: 1` and disagree on who it is. Authority is unaffected, because every edge is consented separately. Applications and providers MUST NOT treat a slot holder as globally unique, and MUST key anything derived from an instance by (instance, own view, counterpart `(iss, sub)`), never by instance and slot alone. Every relation invitation MUST carry the inviter's own participation statement for the instance, and the invitee verifies it, so that every admission traces to a party already in the inviter's view.
+- **Participation statement.** A JWS signed with the party entity's identity key, with header `typ: "bindle-relation-participation+jwt"` and payload exactly:
+
+  ```json
+  {"bindle", "v", "instance", "relation": {"artefact", "version", "digest"}, "slot", "party": {"iss", "sub"}, "invitation"?, "iat", "jti"}
+  ```
+
+  It is evidence of the party's own claim, verifiable through §3a, and confers nothing.
+
+### 9.4 Joining
+
+**Relation invitation link.** A link of type `https://spec.bindle.example/links/relation-invitation/v1`, signed with the inviting entity's key. Its type-specific meta members are:
+
+- `instance`;
+- `relation` `{artefact, version, digest}`;
+- `slot` (the slot offered);
+- `invitee` `{iss, sub}`, required;
+- `accept`: the invitee provider's `relations.v1` `accept_endpoint`, resolved at issue time.
+
+It is single use; `exp − iat` ≤ 30 days (**TBD**). Errors are uniform under links §8.
+
+**Acceptance** at the invitee's provider follows the links §9 opener pattern: a top-level form POST of the link alone, which accepts nothing by itself. The invitee's provider then:
+
+1. Authenticates a person who can operate the invitee's owner interface.
+2. Obtains the pinned relation version and validates its hash (§9.8).
+3. Discloses:
+   - the inviter's identity URI, handle and verified origin. Entities on one provider share an origin, so the origin alone does not identify the inviter (review R1-M6);
+   - the relation's title and host, with the publisher shown as unverified. If the invitee has never used this relation `id`, or uses a different `id` with the same or a similar title, the page MUST say so prominently (review R3-M6);
+   - the slot;
+   - the access matrix **as it applies to the invitee**: what it would receive, and what it would grant, from which of its own fragments, with which fields and methods;
+   - the caveats;
+   - that the counterparty's provider sees the actor chain;
    - that copies already read cannot be recalled.
+4. Lets the admin configure any fragment the invitee would grant that is still unconfigured, inline, as incremental authorization §4.2 does. The admin chooses the resources per entry.
+5. Records the participation and the grants it gives, in one commit, as **pending**. They become live only when redemption succeeds, and are discarded if the inviter refuses (for example because its view of the slot is full) (review R3-L1).
 
-   The decision is an explicit, CSRF-protected action on the grantee provider's own page. A grantee provider MUST refuse an offer whose proposal contains a caveat it does not implement. Caveats are fail-closed (review R1-L2).
-4. The grantee provider MUST key the resulting connection and imported resources by the grantor's `(iss, sub)`, never by label or handle.
+**Redemption.** The invitee's provider POSTs `{invitation, statement}` to the inviter's `relations.v1` `join_endpoint`. `statement` is the invitee's participation statement, with `invitation` set to the digest of the invitation meta.
 
-### 9.3 Redemption
+The inviter's provider verifies:
 
-The grantee provider redeems at the grantor's token endpoint with:
+- the statement, through §3a.5, with no request-triggered fetch beyond what the presented, verified invitation justifies;
+- that the statement matches the invitation's `invitee`, `instance`, `relation` and `slot`;
+- that the invitation is live.
 
-- `grant_type=https://spec.bindle.example/grant-types/entity-offer/v1`;
-- `offer`;
-- `client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer`;
-- `client_assertion`: a JWT with header `typ: "bindle-entity-client+jwt"`, signed by the grantee entity's identity signing key. `iss` and `sub` are the grantee's identity URI, `aud` is the grantor's token endpoint, and there is a `jti`. `exp − iat` ≤ 60 s.
+It then records the counterpart, activates the grants the inviter consented to when inviting, and returns its own participation statement and its events endpoint.
 
-The grantor's provider verifies:
+**More than two parties.** A joiner becomes a counterpart of other existing parties only through invitations exchanged with each of them, because every grantor consents for itself. Provider interfaces MAY batch these.
 
-1. the assertion key:
-   - same host: against its own records;
-   - other hosts: under §3a.5, with pinned continuity (§3a.4). A grantee whose provider does not declare `directory.v1` is refused with `entity_unverifiable`, with no fetch beyond the manifest.
-2. that the grantee equals `grantee`;
-3. the digest and liveness of the offer.
+- A party MAY pre-accept *receiving* from future parties of a slot. Receiving exposes none of its own resources, but it does admit counterpart-authored data, such as purchase orders and invoices, into its pipelines (review R3-M2). Therefore each counterpart admitted under pre-acceptance MUST be shown to the party's operators, and imported resources from it MUST be marked as pre-accepted to the party's integrations, keyed by the counterpart's `(iss, sub)`. A provider MAY hold such imports `unavailable` until an operator confirms.
+- A party MUST NOT pre-consent to *granting* to future parties in this version.
 
-It then creates the connection and returns a connection-bound refresh token (integrations §3.4 bounds), `bindle_connection` and the granted resources. The grantee's events endpoint is taken from its entity client metadata (**TBD**, AMD-O10).
+### 9.5 Entity certificates and requests
 
-### 9.4 Token requests
+An entity acting at a counterpart's resources authenticates with an **entity certificate**: a holder key certified by the acting entity's own provider. It is the counterpart of the member certificate (§5.2), and it replaces revision 2's client assertions and grantor-minted token requests.
 
-To use a granted resource, the grantee provider requests a token from the grantor's token endpoint, by token exchange ([RFC 8693](https://www.rfc-editor.org/rfc/rfc8693.html)) authenticated with a client assertion as in §9.3, with:
+The header is exactly `{alg:"ES256", kid:<the entity's active signing kid>, typ:"bindle-entity-certificate+jwt"}`. The payload contains exactly:
 
-- `resource`: the grantor resource ID;
-- `bindle_methods`: a contract → methods map that MUST be a subset of the grant;
-- an optional narrower `bindle_scope`;
-- `bindle_actor`: `{member?: string, client?: client_id}`, where `member` follows §5.3 and `actor_disclosure`;
-- `dpop_jkt`: the thumbprint of the key that will present the token, which the grantee provider MUST have proven through its consumer's session.
+| Member | Definition |
+| --- | --- |
+| `bindle`, `v` | `"entity-certificate"`, `1` |
+| `iss`, `sub`, `identity` | The acting entity |
+| `aud` | The counterpart entity's identity URI |
+| `instance` | The relation instance |
+| `purposes` | `["…/purposes/relation-access/v1"]` |
+| `client` | `{client_id, origin}`: the acting entity's application, or its provider gateway, that holds the key |
+| `actor` | `{member?, client?}`, asserted by the issuer. `member` follows §5.3 and `actor_disclosure`. |
+| `resource` | The grantor's resource ID this certificate is for (one per certificate), taken from the imported resource (review R3-H1) |
+| `methods` | The contract → methods map the issuer's own evaluation (§6.2 rule 4) allows for this actor on `resource`, and optionally `scope`. It MUST be a subset of the edge grant. |
+| `cnf`, `delegate` | As in §5.2 |
+| `jti`, `iat`, `exp` | `exp − iat` ≤ 300 s |
 
-The grantor's provider:
+**Issuance.** The acting entity's provider issues a certificate only after evaluating its own hops (§6.2 rule 4): the member is live and holds a grant on the imported resource, and the application's connection is live. It binds `client.origin` and delivers the certificate as §5.2 requires. Its status endpoint applies.
 
-- checks §6.2 for its own hops;
-- refuses anything outside the grant with `invalid_scope`;
-- mints a token with `aud` = the hosting RPC endpoint, `exp − iat` ≤ 300 s and `cnf.jkt` required. When the requested methods include any write-capable method (contracts method metadata), `exp − iat` MUST be ≤ 60 s, because the grantor cannot see revocations inside the grantee (review R1-M1);
-- journals calls made with these tokens under the key (grantor entity, connection, `client_id`, `tx`), so that two grantees using the same client cannot collide or replay each other's results (review R1-L1);
-- records the actor chain (§13).
+**Presentation and verification.** Presentation uses the §7.1 token form (no refresh token, and expiry no later than the certificate's) or the direct form `Authorization: BindleEntity <certificate>` with DPoP.
 
-Grantor-hosted resources use opaque issuer tokens, which are checked live. For a grantor's integration-hosted resource, the grantor mints a brokered token (integrations §5.3) with `client_id` = the grantee's identity URI and the actor chain in `bindle.actor`.
+The counterpart verifies as in §5.2 steps 1–3, with these substitutions:
 
-There is no refresh token for these tokens. Bearer tokens MUST NOT be issued under this section.
+- `aud` is this entity.
+- Step 1 checks that a live edge from this entity to the certificate's entity exists in `instance`.
+- The no-oracle and background-refresh rules of §5.2 apply unchanged.
 
-### 9.5 Severance and revocation
+It then authorizes the call under §6.2: the envelope's `resource`, contract and method MUST match the certificate's `resource` and `methods`, and MUST fall within the live grants of the edge from this entity to the acting entity **in the certificate's `instance`** only (review R3-H1, R3-M4). Grants on other edges between the same two entities never apply. Without per-certificate scope, the deputy's own evaluation would bind nothing: one certificate issued for a member allowed `get` on one ledger would reach every resource and method on the edge.
 
-- Integrations §7 applies to entity-grantee connections. The grantor sends `connection-revoked`, `credential-revoked` and `resource-detached` to the grantee's events endpoint, and the bound `access_ends_by` applies to integration-hosted resources.
-- When a member, application or internal grant on the grantee side ends, the grantee provider MUST stop requesting tokens for that actor, and MUST revoke outstanding tokens for it at the grantor's revocation endpoint, enqueued in the same commit and retried. The grantee-side revocation bound is therefore receipt of that revocation, and at worst the token lifetime plus 60 s.
-- Grantor-hosted resources stop on the next call after the grantor's commit.
+**Write-capable methods** (contracts method metadata) additionally require a certificate with `now − iat` ≤ 60 s, or a status check at the issuer no older than 60 s. The grantor cannot see revocations inside the acting entity (review R1-M1). For this rule, a certificate whose `iat` is more than 30 s in the future is invalid, and no further skew is allowed: the effective bound is 90 s (review R3-M4). An application in relay mode obtains such certificates by re-reading its projection; write-heavy applications SHOULD use proxy mode or the token form, which needs one exchange per minute.
 
-### 9.6 Re-sharing (TBD)
+**Journal and integration-hosted resources.**
 
-**TBD.** This reserves chained offers from a grantee holding `reshare:true`. Every token is still minted by the resource's host after checking every hop. Revoking any hop cuts every descendant.
+- Calls are journaled under the key (grantor entity, acting entity, `client_id`, `tx`) (review R1-L1).
+- For a grantor's integration-hosted resource, the grantor's provider mints a brokered token (integrations §5.3) with `client_id` = the acting entity's identity URI and the verified actor in `bindle.actor`.
+
+**Provenance.** Every call at a counterpart thus carries the acting entity's provider-signed identity and asserted actor. Resources and applications record both (§13).
+
+### 9.6 Leaving, removal, upgrade and dissolution
+
+- **Leaving.** A party leaves unilaterally. Its provider disconnects all of its outgoing connections in the instance, stops issuing entity certificates for it, and sends `connection-revoked` to each counterpart. Counterparts end their edges to that party.
+- **Removal.** There is no instance-wide removal. Each grantor ends its own edges to a party, which is always allowed, as is narrowing to optional entries only. A party is "out" from X's point of view when X has no live edge with it.
+- **Grantee-side revocation.** When a member or application inside the acting entity loses its grant, the acting entity stops issuing certificates for it at once. Outstanding certificates end within 300 s, or 60 s for write-capable methods.
+- **Upgrade.** Each edge is pinned to a relation version that both ends accepted. Moving an edge to a later version requires both ends to pin it. When the later version widens what the edge carries (new entries, fields or methods applying to that pair), the grantor consents to the wider grant and the grantee accepts it, with a disclosure of the difference. Otherwise the move completes when both have pinned. Versions are additive, so an upgrade never narrows anything.
+- **Expiry.** A participation and individual grants MAY carry `expires_at` (§6.1).
+- **Dissolution.** An instance ends when it has no live edges. Imported resources from ended edges become `unavailable`. Grantee fragments that had them assigned report the field in `requiresConsent`, as AMD-C3 does for unapproved resources. There is no recall. Audit history is kept (§13).
+  - Dissolution, like membership of an instance, is a per-party view: each party knows only that its own edges ended (review R3-L3).
+  - If the field was required by an integration's setup fragment, that connection returns to `configuring` (integrations §3.1), and the owner is told why.
+  - Atomic values and records the grantee already copied, including bus records and cached projections, stay with the grantee. Data the grantee wrote into the grantor's resources stays the grantor's.
+
+### 9.7 Re-sharing (TBD)
+
+**TBD.** This reserves `reshare:true`. A grantee would then assign an imported resource to an entry it grants in another instance. Every certificate would still be verified by the resource's host against every hop. Assigning imported resources to the grantee's *own* fragments for its own members and applications is ordinary use within the grantee (§6.2 rule 2), not re-sharing.
+
+**Composition rule** (review R3-H2). Because an imported resource can sit in the same fragment that the grantee grants to another entity, re-sharing could otherwise happen by composition (for example a generic storage fragment, holding an imported ledger, granted in a `share` relation). Therefore, in this version:
+
+- When a provider projects or grants one of its entity's fragments over an edge, it MUST omit imported resources from every resource field. The edge consent page MUST NOT offer them.
+- A provider MUST issue entity certificates only for its own entity's members, applications and gateway, never on behalf of another entity's actors.
+- A resource host refuses a certificate whose `iss` is not the grantee of a live edge in `instance` (above), so a third entity cannot use a re-shared reference directly. A proxying provider can still forward a third party's requests under its own identity. That is a violation of §6.2 rule 2 that the host cannot detect, and the relation acceptance page discloses it.
+
+### 9.8 Integrity references (dependency)
+
+The [artefact references](../architecture/artefact-references.md) design and its draft [spec/artefacts.md](artefacts.md) (both provisional, by another agent) define references between public artefacts as three members, the container's URL member plus `version` and `digest` (ART-D5), over envelopes of additive versions (ART-D2, ART-D6), with validation (ART-D7) and caching (ART-D8). This section depends on it for four things:
+
+1. **Fragment references.** References from relation documents to fragments, slot manifests and bus manifests, pinned as `fragment` (or `slot`, `manifest`) plus `version` plus `digest`.
+2. **Instance pins.** Pins of each edge and participation to a relation `{artefact, version, digest}`.
+3. **Extraction.** Extracting a pinned version from a later, additively extended document, and checking its hash.
+4. **Caching.** Provider caching of every pinned version a live instance depends on, so instances keep working when a document disappears or is unreachable. Invitations can only be accepted when the pinned version is obtainable.
+
+This also interacts with protocol §3's rule that a fragment URL identifies an immutable version (AMD-O13). Until that design lands, relation documents and the fragments they reference MUST be treated as immutable at their URLs and pinned with the AMD-C2 `digest`.
 
 ## 10. Imported resources
 
-- A grantee provider represents each granted resource as an imported resource in the grantee's pool. It can be assigned to the grantee's fragments and is subject to the grantee's own grants.
-- Its `status` is `unavailable` while the connection or grant is not live.
-- Under preferences v2 ([contracts](contracts.md#preferences-v2)), an imported resource MAY be projected in relay form (AMD-O5):
+- Values a grantee receives through an edge appear in its pool as imported resources. Each is keyed by the grantor's `(iss, sub)`, the instance and the entry, never by label or handle (review R1-M6).
+- An imported resource can be assigned to the grantee's own fragments for its own members and applications. Its use is then subject to the grantee's own grants (§6.2). Its `status` is `unavailable` while its edge is not live.
+- **Relay projection.** Under preferences v2 ([contracts](contracts.md#preferences-v2)), an imported resource MAY be projected to the grantee's application in relay form (AMD-O5):
 
   ```json
-  {"id":"<grantee's scoped reference>","label":"Acme Ltd · Ledgers 2026","status":"available",
-   "contracts":["…"],"token":"<grantor-minted>","token_type":"DPoP","expires_at":1792500000,
-   "grantor":"https://3sln.me/identity/<o>",
+  {"id":"<grantee's scoped reference>","label":"Acme Ltd · Purchase orders","status":"available",
+   "contracts":["…"],"token":"<entity certificate>","token_type":"BindleEntity","expires_at":1792500300,
+   "grantor":"https://3sln.me/identity/<o>","instance":"https://3sln.me/relations/i/<uuid>",
    "broker":{"endpoint":"https://3sln.me/bindle/rpc","origin":"https://3sln.me","resource":"<grantor resource ID>"}}
   ```
 
-- The consumer cannot see who minted an opaque token. It MUST send `token` only to `broker.endpoint`, and only when `broker.origin` equals the origin of `grantor`, and `broker.endpoint` equals the `rpc_endpoint` of that origin's validated manifest (protocol §2). It MUST NOT send any other credential to `broker.endpoint`. This relaxes, for `grantor` items only, any consumer rule that a broker origin differs from the issuer's (review R1-L5).
-- Alternatively, a grantee provider MAY proxy calls through its own gateway. That is provider-internal and needs no projection change.
+  `token` is an entity certificate (§9.5), issued by the grantee's provider for the application's session key (`cnf.jkt`) with the actor filled in. The application uses it in the direct form at `broker.endpoint`, or exchanges it at the grantor's token endpoint.
+- **Where the token may go.** The consumer MUST send `token` only to `broker.endpoint`, only when `broker.origin` equals the origin of `grantor`, and only when `broker.endpoint` equals the `rpc_endpoint` of that origin's validated manifest (review R1-L5).
+- **Proxy mode.** Alternatively, a grantee provider MAY proxy calls through its own gateway, using certificates whose `client` is that gateway.
 
 ## 11. Event buses across entities
 
 - [Events §2.1](events.md#21-the-slotbus-member) `readers` gains the value `entity` (AMD-O6). Cross-entity exchange uses the outbox model: each entity publishes only to buses it owns. `entity` in `publishers` is **reserved**; it needs a publisher attribution kind carrying the actor chain, which this version does not define (review R1-L3).
-- A provider MUST NOT attach a grant on a bus to an entity grantee unless the manifest lists `entity` in the matching member.
+- A bus manifest MAY appear in a relation access entry only if it lists `entity` in `readers`. A provider MUST NOT attach a grant on a bus to an entity grantee unless the manifest lists `entity` in the matching member.
 - Doorbells (events §7.2) to an entity grantee go to its events endpoint. The grantee provider MAY forward a doorbell for the imported bus to its own integrations.
 
 ## 12. Privacy requirements
 
 1. No endpoint, document, link result or error MAY reveal whether a principal is a member of an organization, except to that principal or under §7.
 2. Identity documents MUST NOT list members or affiliations (§3a.3). Home-provider records of which organizations a member uses are private and confer no authority.
-3. Invitation, offer and member-context failures are uniform as specified in §5.1, §9.1 and §7.3.
+3. Invitation, relation-invitation, entity-certificate and member-context failures are uniform as specified in §5.1, §9.4, §9.5 and §7.3.
 4. Actor chains to other entities use pairwise member identifiers unless `actor_disclosure:"named"` applies.
 5. Pairwise identifiers protect against correlation between entities. They do not protect against an application that the person uses in several entities, which can link the contexts through its own client state. Providers MUST NOT describe membership IDs as unlinkable by applications (review R1-M4).
-6. Changing a grant from `pairwise` to `named` lets the grantor link past pairwise identifiers to persons. The grantee's acceptance page MUST say so.
+6. Changing an edge from `pairwise` to `named` (through a relation upgrade) lets the grantor link past pairwise identifiers to persons. The grantee's acceptance page MUST say so.
+9. Participation in a relation instance is visible only to its counterparts. Relation documents are public, but instances and their parties are not published.
 7. A home provider necessarily learns which organizations and clients its member acts in, and when certificates are renewed. Consent at first issuance (§5.2) MUST say so. An organization learns the member's home issuer and `(iss, sub)`. A client holding certificates learns the same (§7.2).
 8. Directory fetches reveal to the member's home provider that the verifying organization's provider is evaluating that identity. Caching (§3a.4) bounds how often this happens.
 
@@ -516,7 +644,7 @@ There is no refresh token for these tokens. Bearer tokens MUST NOT be issued und
 
 - Each provider MUST record, for every owner-interface action and every authorized call on an entity's resources, the actor chain `{entity, via:[{entity?, member?}, {client?}]}` together with the action, resource, contract, method, `tx` and time. Audit entries MUST NOT contain payloads, tokens or preference values (security).
 - Audit history MUST survive the end of the connection it refers to, for the provider's documented retention.
-- An organization's export MUST include its memberships (as principals and membership IDs), the grants it issued, its connections, its imported-resource references and its audit, in documented formats. **TBD:** formats and a grantable `audit-log/v1` contract.
+- An organization's export MUST include its memberships (as principals and membership IDs), the grants it issued, its connections, its relation participations (with relation pins and counterparts' statements), its imported-resource references and its audit, in documented formats. **TBD:** formats and a grantable `audit-log/v1` contract.
 
 ## 14. Feature declarations
 
@@ -525,9 +653,18 @@ There is no refresh token for these tokens. Bearer tokens MUST NOT be issued und
 | `directory.v1` | `directory_url` (issuer origin) | Handle lookup and identity documents (§3a). Required of any provider whose identities act in organizations hosted elsewhere, and of any provider that hosts organizations. | Its identities cannot be verified by other hosts. Verifiers fail with no fetch beyond the manifest. |
 | `organizations.v1` | none | The provider hosts organizations. It verifies member certificates and serves the member-context token form and `bindle_member` (§5.2, §7). | No organizations at this provider. |
 | `key-delegation.v1` (with the AMD-O12 purposes) | none | As a home provider, it issues member certificates (§5.2) and serves their delegation status. | Its identities cannot act as members of organizations. |
-| `entity-grants.v1` | `accept_endpoint` (issuer origin) | The provider accepts offers addressed to its entities (§9.2), redeems them as a grantee, and honours the offer grant type, entity token requests and §10 as a grantor. Requires `organizations.v1` or person grantors (**TBD**). | No inter-entity grants with this provider. |
+| `relations.v1` | `accept_endpoint`, `join_endpoint` (issuer origin) | The provider's entities can be relation parties. It accepts relation invitations (§9.4), issues and verifies entity certificates (§9.5), and serves the §10 projection. | Its entities cannot join relations. |
 
 How a client acquires certificates needs no declaration in this specification (§5.2).
+
+**Provider roles.** Identity hosting and organization hosting are separate roles. A provider may play either or both, and 3sln.me plays both.
+
+| Role | Declares | Does |
+| --- | --- | --- |
+| Identity provider (persons) | `directory.v1`, `key-delegation.v1` | Publishes identity documents and issues member certificates for its persons |
+| Organization provider | `organizations.v1`, `directory.v1`, `relations.v1` | Hosts organizations; publishes their identity documents; verifies member certificates; issues and verifies entity certificates for its organizations |
+
+The common contract between organization providers is §3a plus §9. Between an organization provider and a foreign identity provider, it is §3a plus §5.2. Neither needs prior registration between the providers.
 
 ## 15. Core amendments — proposed (unsigned)
 
@@ -537,14 +674,16 @@ How a client acquires certificates needs no declaration in this specification (�
 | AMD-O2 | protocol §3 | Replace "only the user's authenticated provider UI" with "only the entity's owner interface (organizations: §6.3)". |
 | AMD-O3 | auth; federation-implementation | The member-context token form (`jwt-bearer` grant with a member certificate, DPoP-bound, no refresh token); the token response member `bindle_member`; the `BindleMember` authorization scheme. (Revision 1's `entity` entry member, `affiliation` and `auth_time`/`amr` are withdrawn.) |
 | AMD-O4 | integrations §1, §3, §6.2 | Connection counterparty kinds. The `member-removed` event. |
-| AMD-O5 | integrations §5.1, §5.3; contracts preferences v2 | Relay projection for imported resources, `grantor`, cross-entity brokered tokens with `bindle.actor`. |
+| AMD-O5 | integrations §5.1, §5.3; contracts preferences v2 | Relay projection for imported resources (`token_type: "BindleEntity"`, `grantor`, `instance`); brokered tokens for relation parties with `bindle.actor`. |
 | AMD-O6 | events §2.1, §7.2 | The `entity` value in `readers` (`publishers` reserved); doorbells to an entity grantee's events endpoint. |
-| AMD-O7 | links | The invitation and offer link types; signature-domain table rows for `bindle-entity-client+jwt` and the new link types. |
+| AMD-O7 | links | The organization-invitation and relation-invitation link types. Signature-domain table rows for both, for `bindle-relation-participation+jwt`, and for the `BindleMember` and `BindleEntity` proofs. (Revision 2's offer type and `bindle-entity-client+jwt` are withdrawn.) |
 | AMD-O8 | security, "Grants and resource authority" | Replace "A future organization owner is a separate principal…" with a pointer to §6. |
 | AMD-O9 | contracts, "Useful follow-ons" | Replace the organizations sentence with a pointer here. |
 | AMD-O10 | protocol §2; contact delivery; links §7.3; BindleBox §3.3 | The `directory.v1` feature and §3a as the shared directory profile, replacing the "unwritten profile" references. The identity document `kind`. Entity client metadata (`events_endpoint`, key set) under identity-level `features` (**TBD**). |
 | AMD-O11 | protocol §3 | The field member `scope: "member"` (phase B). |
-| AMD-O12 | `key-delegation.v1` (currently proposed in BindleBox §3.2) | Generalize the core feature to two certificate profiles: `bindle-key-delegation+jwt` (BindleBox, unchanged) and `bindle-member-certificate+jwt` (§5.2), with the purposes `member-access` and `member-accept`. Add rows for both, and for the `BindleMember` DPoP proof, to the links §7.2 signature-domain table. The current implementation's "one active delegate key per principal" rule and its messaging-occupant check (`packages/identity/delegation.mjs`) apply to the BindleBox profile only. Member certificates instead allow several active keys, at least one per (`aud`, `client`) issuance grant (§5.2), or a member's second organization, client or device would revoke the first (R2-M5). |
+| AMD-O13 | protocol §3, §6; contracts | Versioned integrity references (URL plus `version` plus `digest`, additive versions, provider caching) as defined by the [artefact references](../architecture/artefact-references.md) design. They replace "a fragment URL identifies an immutable version" for every artefact class that adopts them. Owned by that design. |
+| AMD-O14 | protocol §1; the contract registry | Relation documents as a public artefact class (`/artefacts/relations/`), next to fragments, slots, buses and contracts. |
+| AMD-O12 | `key-delegation.v1` (currently proposed in BindleBox §3.2) | Generalize the core feature to three certificate profiles: `bindle-key-delegation+jwt` (BindleBox, unchanged), `bindle-member-certificate+jwt` (§5.2, purposes `member-access` and `member-accept`) and `bindle-entity-certificate+jwt` (§9.5, purpose `relation-access`). Add rows for both, and for the `BindleMember` DPoP proof, to the links §7.2 signature-domain table. The current implementation's "one active delegate key per principal" rule and its messaging-occupant check (`packages/identity/delegation.mjs`) apply to the BindleBox profile only. Member certificates instead allow several active keys, at least one per (`aud`, `client`) issuance grant (§5.2), or a member's second organization, client or device would revoke the first (R2-M5). |
 
 ## 16. Conformance tests (minimum)
 
@@ -576,30 +715,35 @@ How a client acquires certificates needs no declaration in this specification (�
   - a document reviving a retired, revoked or superseded kid, or rolling back to an ancestor key, is rejected and is not treated as a reset (R2-H3);
   - the home provider binds `client.origin` to the observed requester origin and lists every issuance grant and holder key to the member (R2-M2, R2-M3);
   - an unreachable issuer gives a retryable error, never acceptance, and per-issuer fetch budgets hold under a flood of certificates naming unknown issuers.
-- **Inter-entity:**
-  - an offer redeemed by the wrong entity fails;
-  - an assertion with the wrong `typ` or key fails;
-  - foreign redemption from a provider without `directory.v1` gives `entity_unverifiable`, with no fetch beyond the manifest;
-  - downscoping is enforced and Bearer tokens are refused;
-  - tokens carrying write-capable methods live at most 60 s;
-  - an offer with an unknown caveat is refused by the grantee;
-  - two grantees using one `client_id` and one `tx` neither collide nor replay each other's results;
-  - `reshare:true` is refused;
-  - grantor revocation stops the next call, and grantee revocation applies on acknowledgement;
-  - a bus without `entity` cannot be granted to an entity.
+- **Relations:**
+  - an entity certificate is refused for a resource or method outside its `resource`/`methods`, and for grants on another instance's edge (R3-H1, R3-M4);
+  - imported resources never appear in a fragment granted over an edge, and a third entity's certificate is refused at the host (R3-H2);
+  - a write with a certificate older than 60 s (or `iat` more than 30 s ahead) fails without a fresh status check (R3-M4);
+  - an invitation without the inviter's participation statement is refused, and a refused redemption discards the invitee's pending participation (R3-M1, R3-L1);
+  - an invalid relation document (bounds, unknown `crit`, an access entry without methods for a resource field, `reshare:true`) is refused;
+  - no edge exists without both grantor consent and grantee acceptance; a third party joining needs each grantor's consent; pre-acceptance of receiving never creates outgoing grants;
+  - a relation invitation redeemed by an entity other than its `invitee`, or with a mismatched statement, fails;
+  - arity is enforced in each party's view;
+  - an upgrade that widens an edge needs grantor consent and grantee acceptance, and one that does not completes automatically;
+  - leaving ends all of the party's edges, and dissolution makes imported resources `unavailable` and reports `requiresConsent` in the grantee's fragments;
+  - entity certificates: wrong `aud` or `instance`, no live edge, lifetime over 300 s and replayed proofs all fail uniformly with no request-triggered fetch;
+  - write-capable methods require certificate age ≤ 60 s or a fresh status check;
+  - two acting entities using one `client_id` and one `tx` neither collide nor replay each other's results;
+  - a bus without `entity` cannot be granted through an edge;
+  - a relation document that has disappeared does not break a live instance whose pinned version is cached.
 - **Races:**
   - a removal racing token minting;
-  - an offer redeemed twice;
+  - a relation invitation redeemed twice;
   - the last admin removed;
   - a connection generation raised mid-request.
-- **Privacy:** no membership signal in identity documents, links, offers or errors; pairwise actor IDs differ per grantor.
+- **Privacy:** no membership or participation signal in identity documents, links, invitations or errors; pairwise actor IDs differ per grantor.
 
 ## Sign-off checkpoints
 
 - [ ] **O1 — Kinds and connections:** organization as an entity kind; directional connections; no implicit flow.
 - [ ] **O0 — Directory:** identity documents, key continuity and caching bounds; verification of unknown providers.
 - [ ] **O2 — Members:** home-certified holder keys and signed requests; revocation bounds; membership IDs; uniform member context.
-- [ ] **O3 — Inter-entity:** offers, redemption, actor chain, ≤ 300 s DPoP tokens; dependency on the directory profile.
+- [ ] **O3 — Relations:** relation documents, consent per edge, instances without a central host, entity certificates, lifecycle; dependency on artefact references.
 - [ ] **O4 — Privacy and audit:** no enumeration; pairwise identifiers; actor-chain audit.
 
 Reviewer / date / notes: _pending; these checkpoints do not block drafting._

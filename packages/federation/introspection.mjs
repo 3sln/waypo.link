@@ -1,3 +1,4 @@
+import {capability} from '../flags/read.mjs';
 // EXT-X8 brokered consumer tokens, severance draining and introspection (docs/spec/integrations.md §5.1, §5.3–§5.5,
 // §5.7, §6.2, §7; extensibility-design X8; AMD-C3/C8/C9/C10). Engine-first: `brokeredTokensProvider` is the
 // system-scoped handle over the account store, used beside the X7 `brokeredResources` provider; the Actions/Queries
@@ -227,7 +228,7 @@ export const runBrokered=(engine,Operation,params)=>{const operation=new Operati
 // BROKERED_CONTRACT_PINS (trusted pins beyond the reviewed catalogue), BROKERED_INTROSPECTION_MOUNTED (the endpoint
 // below is mounted by the adapter). Without the mint port, minting answers brokering_unavailable.
 const engines=new WeakMap();
-function engineOf(c){let engine=engines.get(c);if(!engine){engine=brokeredTokensEngine({store:c.metadata,issuer:c.config.APP_ORIGIN,integrations:integrationsFlag(c.config),brokering:brokeringFlag(c.config),mint:typeof c.config.BROKERING_CONSUMER_MINT==='function'?c.config.BROKERING_CONSUMER_MINT:undefined,pins:contractPins(c.config.BROKERED_CONTRACT_PINS),introspection:c.config.BROKERED_INTROSPECTION_MOUNTED===true,...c.config.CONNECTION_SLOTS?{slots:c.config.CONNECTION_SLOTS}:{}});engines.set(c,engine);}return engine;}
+function engineOf(c){let engine=engines.get(c);if(!engine){engine=brokeredTokensEngine({store:c.metadata,issuer:c.config.APP_ORIGIN,integrations:integrationsFlag(c.config),brokering:brokeringFlag(c.config),mint:typeof c.config.BROKERING_CONSUMER_MINT==='function'?c.config.BROKERING_CONSUMER_MINT:undefined,pins:contractPins(c.config.BROKERED_CONTRACT_PINS),introspection:capability(c.config,'BROKERED_INTROSPECTION_MOUNTED'),...c.config.CONNECTION_SLOTS?{slots:c.config.CONNECTION_SLOTS}:{}});engines.set(c,engine);}return engine;}
 async function bound(c,owner){if(!integrationsFlag(c.config)||!brokeringFlag(c.config)||typeof owner!=='string'||!UUID.test(owner)||await c.metadata.get('owner')!==owner)notFound();}
 const system=(c,owner,Operation,input)=>runBrokered(engineOf(c),Operation,{actor:{kind:'system',owner},...input===undefined?{}:{input}});
 export const account={

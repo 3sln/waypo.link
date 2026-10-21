@@ -3,10 +3,11 @@
 // of packages/runtime/routes/index.mjs between them. Shared helpers live in packages/runtime/routes/shared.mjs.
 import {accountRoutePaths} from './account-session-http.mjs';
 import {accountCookiesEnabled,selectedAccountMember,parseAccountCookies,hasAccountVault,installedAccountCookies,accountFault} from './account-cookies.mjs';
+import {FlagsRuntime} from './flags.mjs';
 import {OwnerQuery,IdentityFault} from '../identity/index.mjs';
 import {MessagingFault} from '../messaging/index.mjs';
 import {StorageError} from '../storage/policy.mjs';
-import {json,status,body,cookie,sessionToken,setupCookie,deviceCookie,signedContactPath,identity,limit,turnstile,accountHandle} from './routes/shared.mjs';
+import {flagReadable,sessionFeatures,json,status,body,cookie,sessionToken,setupCookie,deviceCookie,signedContactPath,identity,limit,turnstile,accountHandle} from './routes/shared.mjs';
 import {stage,routeMethods,admission} from './routes/index.mjs';
 export {subnet,signupEnabled} from './routes/shared.mjs';
 
@@ -18,6 +19,7 @@ export default {
  async fetch(request,env,execution){
   let engine;
   try{
+   if(!env.flags&&!env.FLAGS)env={...env,flags:await new FlagsRuntime({env,platform:env.FLAGS_PLATFORM??'worker'}).pin({request})};
    const url=new URL(request.url);const local=env.LOCAL_DEVELOPMENT==='true';
    const route={request,env,execution,url,local};let response;
    response=await stage('edge',route);if(response)return response.passthrough??response;
@@ -42,8 +44,8 @@ export default {
     // Header-less private writes would follow a mutable default; tabs must name their member.
     // (Header-less mutations never select the default member, so identity writes fail closed too.)
     if(vaultPresent&&mutation&&request.headers.get('X-Bindle-Account')===null)throw accountFault('account_context_conflict',409);
-    let owner;try{owner=await engine.query(new OwnerQuery(context)).peek();}catch(error){if(path==='/api/session'&&error.code==='unauthorized')return json({authenticated:false});throw error;}
-    if(path==='/api/session'){if(vault&&!accountMember&&!vaultPresent&&context.sessionToken){const headers=new Headers();for(const value of await installedAccountCookies(env,{owner:owner.account.id,token:context.sessionToken,expiresAt:owner.expiresAt,sessionContext:owner.sessionContext},local))headers.append('Set-Cookie',value);headers.append('Set-Cookie',cookie('',local,0));return json({authenticated:true,...owner},200,headers);}return json({authenticated:true,...owner});}
+    let owner;try{owner=await engine.query(new OwnerQuery(context)).peek();}catch(error){if(path==='/api/session'&&error.code==='unauthorized')return json({authenticated:false},200,{'Cache-Control':'private, no-store'});throw error;}
+    if(path==='/api/session'){if(vault&&!accountMember&&!vaultPresent&&context.sessionToken){const headers=new Headers({'Cache-Control':'private, no-store'});for(const value of await installedAccountCookies(env,{owner:owner.account.id,token:context.sessionToken,expiresAt:owner.expiresAt,sessionContext:owner.sessionContext},local))headers.append('Set-Cookie',value);headers.append('Set-Cookie',cookie('',local,0));return json({authenticated:true,...owner,features:sessionFeatures(env,owner.account.id)},200,headers);}return json({authenticated:true,...owner,features:sessionFeatures(env,owner.account.id)},200,{'Cache-Control':'private, no-store'});}
     const id=owner.account.id;const object=accountHandle(env,id);
     // Engine-first routes (docs/architecture/app-engine.md §7): parse, dispatch one account operation as this owner, serialize.
     const dispatch=(Operation,params={})=>object.dispatch(id,{operation:Operation.operation,...params});
@@ -57,7 +59,7 @@ export default {
     const capacityExempt=protective||request.method==='DELETE'||admission.exempt(path);
     if(mutation&&!capacityExempt&&allowedMethods(path))await object.admitWork(id,{initialize:true});
     await object.touch(id);
-    if(path==='/api/account'&&request.method==='GET')return json({...await object.snapshot(id),account:owner.account,credentials:owner.credentials,devices:owner.devices,audit:owner.audit,grants:[],...env.DEVICE_AUTHORIZATION_ENABLED==='true'&&env.FEDERATION_AUTHORITY?.ready()?{appSessions:(await env.FEDERATION_AUTHORITY.appSessions(context)).sessions}:{}});
+    if(path==='/api/account'&&request.method==='GET')return json({...await object.snapshot(id),account:owner.account,credentials:owner.credentials,devices:owner.devices,audit:owner.audit,grants:[],features:sessionFeatures(env,id),...flagReadable(env,'DEVICE_AUTHORIZATION_ENABLED')&&env.FEDERATION_AUTHORITY?.ready()?{appSessions:(await env.FEDERATION_AUTHORITY.appSessions(context)).sessions}:{}},200,{'Cache-Control':'private, no-store'});
     response=await stage('owner',route);if(response)return response.passthrough??response;
     return json({error:'not_found'},404);
    }

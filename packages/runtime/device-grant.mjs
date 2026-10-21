@@ -1,3 +1,4 @@
+import {flagsFor,capability,siteGlobal,siteEnabled,featureConfig} from './account/flags.mjs';
 // LA3 composition of the device authorization grant (docs/architecture/linked-approval.md §10.2; slice LA3).
 // Shared by the Worker and Node adapters. Nothing here is reachable unless DEVICE_AUTHORIZATION_ENABLED is on AND the
 // adapter can mount every route the declaration names (federation on, refresh on, a DPoP nonce key): only then does
@@ -17,10 +18,10 @@ import {federationDpopSecret,federationClients} from './federation.mjs';
 import {UUID_V4 as UUID} from '../core/primitives.mjs';
 
 export {DEVICE_GRANT,MemoryJtiCache};
-export const deviceAuthorizationEnabled=config=>config?.DEVICE_AUTHORIZATION_ENABLED===true||config?.DEVICE_AUTHORIZATION_ENABLED==='true';
+export const deviceAuthorizationEnabled=config=>siteGlobal(config,'DEVICE_AUTHORIZATION_ENABLED');
 /** Mount evidence for the app kind: the flag plus everything the declared members depend on. Session-kind linked
  * routes need only the flag (routes/identity.mjs). */
-export const deviceGrantMountable=config=>deviceAuthorizationEnabled(config)&&config.FEDERATION_ENABLED==='true'&&config.FEDERATION_REFRESH_ENABLED!=='false'&&!!federationDpopSecret(config);
+export const deviceGrantMountable=config=>deviceAuthorizationEnabled(config)&&siteGlobal(config,'FEDERATION_ENABLED')&&capability(config,'FEDERATION_REFRESH_ENABLED')&&!!federationDpopSecret(config);
 const LINKED_CLASSES=Object.freeze({LinkedSystemAction,LinkedApprovalAction,LinkedResolveQuery,LinkedLineageQuery,LinkedOutboxQuery});
 const PORT_METHODS=['startApp','redeem','cancelApp','lineageRevoke','outboxAck','lineageLive','outbox','resolve','approve'];
 /** The LA1 `linked` port over the main identity resources, one fresh identity engine per call (disposed after), so
@@ -32,12 +33,12 @@ export function engineLinkedPort(makeEngine){
 export const deviceLimits=abuse=>Object.freeze({consume:(key,window)=>abuse.consume('device-v1:'+key,window)});
 /** Dispatches each device operation through a short-lived app engine over `deviceGrant`. */
 export function deviceGrantRunner({config,deviceGrant}){
- const run=async(Kind,input)=>{const engine=createAppEngine({providers:{config,deviceGrant,clock:systemClock,random:cryptoRandom,audit:nullAudit}});try{return await perform(engine,new Kind({input}));}finally{await engine.dispose();}};
- return Object.freeze({mounted:true,authorize:input=>run(DeviceAuthorize,input),token:input=>run(DeviceToken,input),cancel:input=>run(DeviceCancel,input),rpc:input=>run(DeviceRpc,input),review:input=>run(DeviceReview,input),approve:input=>run(DeviceApprove,input),drain:input=>run(DeviceLineageDrain,input)});
+ const run=async(Kind,input)=>{const ctx=null,projected=featureConfig(config,ctx),reverse=Kind===DeviceCancel||Kind===DeviceApprove&&input?.approved===false,background=Kind===DeviceLineageDrain,settings=reverse||background?new Proxy(projected,{get:(target,name,receiver)=>name==='DEVICE_AUTHORIZATION_ENABLED'?(reverse||flagsFor(config).background(name)?'true':'false'):Reflect.get(target,name,receiver)}):projected;const engine=createAppEngine({providers:{config:settings,flags:{for:ctx=>flagsFor(config,ctx)},deviceGrant,clock:systemClock,random:cryptoRandom,audit:nullAudit}});try{return await perform(engine,new Kind({input}));}finally{await engine.dispose();}};
+ return Object.freeze({get mounted(){return deviceGrantMountable(config);},authorize:input=>run(DeviceAuthorize,input),token:input=>run(DeviceToken,input),cancel:input=>run(DeviceCancel,input),rpc:input=>run(DeviceRpc,input),review:input=>run(DeviceReview,input),approve:input=>run(DeviceApprove,input),drain:input=>run(DeviceLineageDrain,input)});
 }
 /** The provider over local owner shards (Node, and the Worker's owner FederationObject). */
 export function localDeviceGrant({config,linked,shard,limits,pollLimits,jti=new MemoryJtiCache()}){
- return createDeviceGrantProvider({issuer:config.APP_ORIGIN,clients:federationClients(config),linked,shard,nonces:dpopNonces({secret:federationDpopSecret(config)}),limits,pollLimits,jti});
+ return createDeviceGrantProvider({issuer:config.APP_ORIGIN,clients:federationClients(config),featureAllowed:({owner,clientId})=>siteEnabled(config,'DEVICE_AUTHORIZATION_ENABLED',{subject:owner?{kind:'account',owner}:{kind:'anonymous'},...clientId?{client:{clientId}}:{}}),linked,shard,nonces:dpopNonces({secret:federationDpopSecret(config)}),limits,pollLimits,jti});
 }
 const fault=(code,message)=>Object.assign(new Error(message??code),{code});
 const tokenOwner=authorization=>{const match=typeof authorization==='string'&&/^DPoP ([a-f0-9-]{36})\.[A-Za-z0-9_-]{43}$/.exec(authorization);return match&&UUID.test(match[1])?match[1]:null;};

@@ -1,3 +1,4 @@
+import {siteGlobal} from '../flags/read.mjs';
 // EXT-X3: the integration manifest (docs/spec/integrations.md §2) is the `bindle_integration` member of a client's OAuth
 // metadata (client ID metadata document or operator registration) and nothing else; it is never fetched separately.
 // A manifest is presentation and claims only: parsing it grants nothing, assigns nothing and widens no grant. Every URL
@@ -207,7 +208,7 @@ export function createIntegrationsProvider({directory,slots,contracts={}}={}){
   revalidate:input=>{if(!directory?.integrations)fail('integrations_disabled');return directory.revalidateIntegration(input?.clientId,input?.pinned);},
  });
 }
-function enabled(config){if(config?.INTEGRATIONS_ENABLED!==true&&config?.INTEGRATIONS_ENABLED!=='true')fail('integrations_disabled');}
+function enabled(config){if(!siteGlobal(config,'INTEGRATIONS_ENABLED'))fail('integrations_disabled');}
 export class IntegrationManifest extends AppQuery {static operation='integrations.manifest';static deps=['config','integrations'];fetch({config,integrations}){enabled(config);return integrations.manifest(this.input);}}
 export class IntegrationClient extends AppQuery {static operation='integrations.client';static deps=['config','integrations'];fetch({config,integrations}){enabled(config);return integrations.resolve(this.input);}}
 export class IntegrationRevalidation extends AppQuery {static operation='integrations.revalidate';static deps=['config','integrations'];fetch({config,integrations}){enabled(config);return integrations.revalidate(this.input);}}

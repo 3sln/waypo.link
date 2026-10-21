@@ -1,3 +1,4 @@
+import {capability} from '../flags/read.mjs';
 import webpush from 'web-push';
 
 export const PUSH_ORIGINS = Object.freeze([
@@ -26,7 +27,7 @@ export function validatePushSubscription(subscription) {
  * Acceptance is not proof that a pending account received its challenge.
  */
 export function createPushTransport(config = {}, {fetcher = fetch} = {}) {
-  if (config.PUSH_ENABLED !== 'true' || !config.VAPID_PUBLIC_KEY || !config.VAPID_PRIVATE_KEY) return null;
+  if (!capability(config,'PUSH_ENABLED') || !config.VAPID_PUBLIC_KEY || !config.VAPID_PRIVATE_KEY) return null;
   const subject = config.VAPID_SUBJECT ?? config.APP_ORIGIN;
   try {
     webpush.generateRequestDetails({endpoint: PUSH_ORIGINS[0] + '/wp/configuration-check'}, null, {

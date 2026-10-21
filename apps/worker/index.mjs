@@ -1,3 +1,4 @@
+import {siteEnabled,siteGlobal,capability,flagsFor} from '../../packages/flags/read.mjs';
 import {workerFlags,flagAccounts,disabledFlagStats} from '../../packages/runtime/flags.mjs';
 import {createWorkerFlagStats} from './flag-stats.mjs';
 export {FlagStatsObject} from './objects.mjs';
@@ -50,7 +51,7 @@ import {handleEmail} from '../../packages/email-bridge/worker.mjs';
 export {EmailBridgeObject} from '../../packages/email-bridge/worker-object.mjs';
 // `cloudflare:email` is loaded only when a reply is possible, so bundles and tests without it still build.
 const emailModule='cloudflare:'+'email';
-async function emailMessageClass(env){if(env.EMAIL_BRIDGE_ENABLED!=='true')return undefined;try{return (await import(emailModule)).EmailMessage;}catch{return undefined;}}
+async function emailMessageClass(env){if(!siteGlobal(env,'EMAIL_BRIDGE_ENABLED',true))return undefined;try{return (await import(emailModule)).EmailMessage;}catch{return undefined;}}
 
 // Workers Assets canonicalizes .html URLs; retain the authenticated snapshot's
 // public URL while following only this exact same-origin internal canonicalization.
@@ -71,17 +72,18 @@ let clientDirectory,clientDirectoryEnv;
 function workerClientDirectory(env,limiter){
  if(clientDirectoryEnv===env&&clientDirectory)return clientDirectory;
  // Without the admin authority there is no block list, so the feature stays off (fails closed).
- const enabled=clientMetadataEnabled(env)&&Boolean(env.ADMIN_AUTHORITY),store=env.ADMIN_AUTHORITY?remoteAdminStore((method,args)=>env.ADMIN_AUTHORITY.get(env.ADMIN_AUTHORITY.idFromName('admin-v1')).invoke(method,args)):null;
+ const enabled=Boolean(env.ADMIN_AUTHORITY),store=env.ADMIN_AUTHORITY?remoteAdminStore((method,args)=>env.ADMIN_AUTHORITY.get(env.ADMIN_AUTHORITY.idFromName('admin-v1')).invoke(method,args)):null;
  clientDirectory=federationClientDirectory(env,enabled?{fetch:createWorkerClientMetadataFetch({publicRouting:true}),limiter,blocked:store?host=>adminClientBlocked(store,host):undefined}:{});clientDirectoryEnv=env;return clientDirectory;
 }
-function resources(env,resolveIdentityBadges,flags){
+function resources(bindings,resolveIdentityBadges,flags){
+ const env=flags?{...bindings,flags,FLAGS:flags}:bindings;
  const repository=new ShardedIdentityRepository({shard:name=>env.IDENTITIES.get(env.IDENTITIES.idFromName(name)),layout:env.IDENTITY_LAYOUT,config:env});
  const devices=repository;
  const deviceRequests={create:r=>devices.createDevice(r),get:id=>devices.getDevice(id),findByUserCode:code=>devices.findDeviceByCode(code),compareAndSwap:(id,revision,r)=>devices.compareAndSwapDevice(id,revision,r)};
  // Linked approval: `deviceRequests` is the `linkedApprovals` repository; guess budgets and start admission use the durable abuse windows.
  const linkedLimits={consume:(key,window)=>env.ABUSE.get(env.ABUSE.idFromName('linked-v1:'+key)).consume(window)};
  const mailer=mailTransport(env);
- const value={...env,EVENT_BUS_WAITS_MOUNTED:env.EVENT_BUSES_ENABLED==='true'&&!!env.EVENT_BUS_WAITS,DEVELOPER_CONTACT_POPULATION:workerActivePopulation(env),BILLING_CATALOG:workerCatalogPort(env),ASSETS:assetResource(env.ASSETS),EMAIL_AVAILABLE:Boolean(mailer),WAITLIST_MAIL_AVAILABLE:typeof mailer?.sendWaitlistConfirmation==='function',WAITLIST_MAILER:mailer,IDENTITY_REPOSITORY:repository,ACCOUNTS:flags?flagAccounts({get:id=>env.ACCOUNTS.get(env.ACCOUNTS.idFromName(id))},flags):{get:id=>env.ACCOUNTS.get(env.ACCOUNTS.idFromName(id))},SIGNUP_STATUS_CACHE_KEY:env.ABUSE,ABUSE:{waitlist:(method,input)=>env.ABUSE.get(env.ABUSE.idFromName('signup:waitlist:v1')).waitlistAction(method,input),consume:(key,limits)=>env.ABUSE.get(env.ABUSE.idFromName(key)).consume(limits),consumeSignup:(key,limits)=>env.ABUSE.get(env.ABUSE.idFromName(key)).consumeSignup(limits),signupStatus:(key,limits)=>env.ABUSE.get(env.ABUSE.idFromName(key)).signupStatus(limits)}};
+ const value={...env,EVENT_BUS_WAITS_MOUNTED:siteGlobal(env,'EVENT_BUSES_ENABLED',true)&&!!env.EVENT_BUS_WAITS,DEVELOPER_CONTACT_POPULATION:workerActivePopulation(env),BILLING_CATALOG:workerCatalogPort(env),ASSETS:assetResource(env.ASSETS),EMAIL_AVAILABLE:Boolean(mailer),WAITLIST_MAIL_AVAILABLE:typeof mailer?.sendWaitlistConfirmation==='function',WAITLIST_MAILER:mailer,IDENTITY_REPOSITORY:repository,ACCOUNTS:flags?flagAccounts({get:id=>env.ACCOUNTS.get(env.ACCOUNTS.idFromName(id))},flags):{get:id=>env.ACCOUNTS.get(env.ACCOUNTS.idFromName(id))},SIGNUP_STATUS_CACHE_KEY:env.ABUSE,ABUSE:{waitlist:(method,input)=>env.ABUSE.get(env.ABUSE.idFromName('signup:waitlist:v1')).waitlistAction(method,input),consume:(key,limits)=>env.ABUSE.get(env.ABUSE.idFromName(key)).consume(limits),consumeSignup:(key,limits)=>env.ABUSE.get(env.ABUSE.idFromName(key)).consumeSignup(limits),signupStatus:(key,limits)=>env.ABUSE.get(env.ABUSE.idFromName(key)).signupStatus(limits)}};
  Object.assign(value,workerIntegrationPorts(env,{describe:async query=>{const response=await value.ACCOUNTS.get(query.owner).invoke({method:'integrationsMessagingDescribe',args:[query]});if(response?.$fault)throw Object.assign(new Error(response.$fault.message),response.$fault);return response;}}));
  const delivery=createPushTransport(env),pushTransport=delivery?{...delivery,async register({owner,subscription}){const result=await value.ACCOUNTS.get(owner).invoke({method:'registerSignupPush',args:[owner,{subscription}]});if(result?.$fault)throw Object.assign(new Error(result.$fault.message),result.$fault);return result;}}:null;
  // Island avatar sources on operator-approved origins (EMBED_AVATAR_ORIGINS) use the global fetch, which
@@ -95,7 +97,7 @@ function resources(env,resolveIdentityBadges,flags){
  const directory=env.FEDERATION?workerClientDirectory(env,value.ABUSE):undefined;
  if(env.FEDERATION&&incrementalMountable(env))value.INCREMENTAL_AUTHORIZATION=incrementalRemote((method,args)=>env.FEDERATION.get(env.FEDERATION.idFromName(INCREMENTAL_STORE)).incremental(method,args));
  if(env.FEDERATION)value.FEDERATION_ENTRIES=federationEntriesRemote({config:env,endSession:true,directory,incremental:value.INCREMENTAL_AUTHORIZATION,invoke:(shard,method,args)=>env.FEDERATION.get(env.FEDERATION.idFromName(entryStoreName(shard))).entries(method,args,shard)});
- if(env.FEDERATION&&env.BROKERING_ENABLED==='true')value.FEDERATION_BROKERING={enabled:true,jwks:()=>env.FEDERATION.get(env.FEDERATION.idFromName(BROKERING_STORE)).brokeringJwks()};
+ if(env.FEDERATION&&siteGlobal(env,'BROKERING_ENABLED',true))value.FEDERATION_BROKERING={enabled:true,jwks:()=>env.FEDERATION.get(env.FEDERATION.idFromName(BROKERING_STORE)).brokeringJwks()};
  // Device grant (LA3): mounted, and so declared, only with the flag and every dependency of the declared members.
  const deviceMounted=Boolean(env.FEDERATION)&&deviceGrantMountable(env);
  if(env.FEDERATION)value.FEDERATION_AUTHORITY=federationAuthority({config:value,repository,directory,manifestMounts:{deviceAuthorization:deviceMounted,messagingAddress:messagingAddressMounted(value)},shard:owner=>federationRemote({invoke:(method,args)=>env.FEDERATION.get(env.FEDERATION.idFromName(`${FEDERATION_LAYOUT}/${owner}`)).invoke(method,args,owner)})});
@@ -106,11 +108,11 @@ function resources(env,resolveIdentityBadges,flags){
  // Administration is mounted only once boot is configured (BOOTSTRAP_TOKEN_SHA256) or the operator keeps it on
  // afterwards with ADMIN_ENABLED=true. One identity resource set serves the engine and the host administration service (docs/architecture/boot-and-admin.md).
  const approvalNotices=hostApprovalNotices({config:env,repository,accounts:value.ACCOUNTS,mail:mailer,push:pushTransport});
- let identityResources,adminService;const admin=env.ADMIN_AUTHORITY&&(bootConfigured(env)||env.ADMIN_ENABLED==='true')?()=>adminService??=sharedIdentity().then(shared=>new AdminService({connectionsSeverAccount:async(owner,input)=>{const result=await value.ACCOUNTS.get(owner).invoke({method:'connectionsSeverAccount',args:[owner,input]});if(result?.$fault)throw Object.assign(new Error(result.$fault.message),result.$fault);return result;},store:remoteAdminStore((method,args)=>env.ADMIN_AUTHORITY.get(env.ADMIN_AUTHORITY.idFromName('admin-v1')).invoke(method,args)),identity:new IdentityService(shared),onboarding:shared.onboarding,webauthn:shared.webauthn,passwordHasher:shared.passwordHasher,rateLimiter:shared.rateLimiter,config:env})):null;
- const sharedIdentity=()=>identityResources??=(async()=>({approvalNotices,repository,deviceRequests,linkedApprovals:deviceRequests,linkedLimits,linkedPollLimits,crypto,mailer,pushTransport,resolveIdentityBadges,...admin?{reservedHandle:async name=>(await admin()).isReserved(name)}:{},onboarding:onboardingPort({config:env,repository,authority:value.ABUSE,...admin?{runtimeName:async(name,digest)=>(await admin()).runtimeName(name,digest),redeemName:async(name,digest)=>(await admin()).redeemName(name,digest)}:{}}),systemBootstrap:systemBootstrapPort({config:env,repository:repository,authority:value.ABUSE}),setupBilling:setupBillingPort(value.ACCOUNTS),identityBackup:identityBackupPort({config:env,accounts:value.ACCOUNTS}),paidHandleEligibility:async owner=>{const result=await value.ACCOUNTS.get(owner).invoke({method:'paidHandleEligibility',args:[owner]});if(result?.$fault)throw Object.assign(new Error(result.$fault.message),result.$fault);return result===true;},turnstile:{verify:input=>application.turnstile(value,input)},rateLimiter:{check:input=>application.rateLimit(value,input)},webauthn:await createWebAuthnAdapter(),passwordHasher:createWorkerArgon2Hasher(),config:{BADGE_DEFINITIONS:env.BADGE_DEFINITIONS,HOST_NAME_POLICY:env.HOST_NAME_POLICY,ONBOARDING_NAMES:env.ONBOARDING_NAMES,paidSignupEnabled:paidSignupEnabled(env),requireReachability:env.SIGNUP_CONTACT_REQUIRED==='true',origin:env.APP_ORIGIN,rpID:env.RP_ID,rpName:env.BRAND_NAME||'3sln.me',termsVersion:env.TERMS_VERSION,allowInsecureLocalhost:env.LOCAL_DEVELOPMENT==='true',linkedCodeKey:env.LINKED_CODE_KEY||env.KEY_ENCRYPTION_KEY||null,deviceAuthorizationEnabled:env.DEVICE_AUTHORIZATION_ENABLED==='true'}}))();
+ let identityResources,adminService;const admin=env.ADMIN_AUTHORITY&&(bootConfigured(env)||capability(env,'ADMIN_ENABLED'))?()=>adminService??=sharedIdentity().then(shared=>new AdminService({connectionsSeverAccount:async(owner,input)=>{const result=await value.ACCOUNTS.get(owner).invoke({method:'connectionsSeverAccount',args:[owner,input]});if(result?.$fault)throw Object.assign(new Error(result.$fault.message),result.$fault);return result;},store:remoteAdminStore((method,args)=>env.ADMIN_AUTHORITY.get(env.ADMIN_AUTHORITY.idFromName('admin-v1')).invoke(method,args)),identity:new IdentityService(shared),onboarding:shared.onboarding,webauthn:shared.webauthn,passwordHasher:shared.passwordHasher,rateLimiter:shared.rateLimiter,config:env})):null;
+ const sharedIdentity=()=>identityResources??=(async()=>({approvalNotices,repository,deviceRequests,linkedApprovals:deviceRequests,linkedLimits,linkedPollLimits,crypto,mailer,pushTransport,resolveIdentityBadges,...admin?{reservedHandle:async name=>(await admin()).isReserved(name)}:{},onboarding:onboardingPort({config:env,repository,authority:value.ABUSE,...admin?{runtimeName:async(name,digest)=>(await admin()).runtimeName(name,digest),redeemName:async(name,digest)=>(await admin()).redeemName(name,digest)}:{}}),systemBootstrap:systemBootstrapPort({config:env,repository:repository,authority:value.ABUSE}),setupBilling:setupBillingPort(value.ACCOUNTS),identityBackup:identityBackupPort({config:env,accounts:value.ACCOUNTS}),paidHandleEligibility:async owner=>{const result=await value.ACCOUNTS.get(owner).invoke({method:'paidHandleEligibility',args:[owner]});if(result?.$fault)throw Object.assign(new Error(result.$fault.message),result.$fault);return result===true;},turnstile:{verify:input=>application.turnstile(value,input)},rateLimiter:{check:input=>application.rateLimit(value,input)},webauthn:await createWebAuthnAdapter(),passwordHasher:createWorkerArgon2Hasher(),config:{BADGE_DEFINITIONS:env.BADGE_DEFINITIONS,HOST_NAME_POLICY:env.HOST_NAME_POLICY,ONBOARDING_NAMES:env.ONBOARDING_NAMES,paidSignupEnabled:paidSignupEnabled(env),requireReachability:env.SIGNUP_CONTACT_REQUIRED==='true',origin:env.APP_ORIGIN,rpID:env.RP_ID,rpName:env.BRAND_NAME||'3sln.me',termsVersion:env.TERMS_VERSION,allowInsecureLocalhost:env.LOCAL_DEVELOPMENT==='true',linkedCodeKey:env.LINKED_CODE_KEY||env.KEY_ENCRYPTION_KEY||null,deviceAuthorizationAllowed:({owner,clientId})=>siteEnabled(env,'DEVICE_AUTHORIZATION_ENABLED',{subject:{kind:'account',owner},...clientId?{client:{clientId}}:{}}),deviceAuthorizationEnabled:siteGlobal(env,'DEVICE_AUTHORIZATION_ENABLED',true)}}))();
  if(admin){value.ADMIN_SERVICE=admin;value.ADMIN_CLAIMS_ENABLED=onboardingKeyReady(env);}
  value.IDENTITY_ENGINE=async()=>createIdentityEngine(await sharedIdentity());
- if(flags)Object.assign(value,{flags,FLAGS:flags,FLAGS_RUNTIME:workerFlags(env),flagStore:env.ADMIN_AUTHORITY?remoteAdminStore((method,args)=>env.ADMIN_AUTHORITY.get(env.ADMIN_AUTHORITY.idFromName('admin-v1')).invoke(method,args)):null,flagStats:env.FLAG_STATS?createWorkerFlagStats(env.FLAG_STATS):disabledFlagStats});
+ if(flags)Object.assign(value,{flags,FLAGS:flags,FLAGS_RUNTIME:workerFlags(bindings),flagStore:env.ADMIN_AUTHORITY?remoteAdminStore((method,args)=>env.ADMIN_AUTHORITY.get(env.ADMIN_AUTHORITY.idFromName('admin-v1')).invoke(method,args)):null,flagStats:env.FLAG_STATS?createWorkerFlagStats(env.FLAG_STATS):disabledFlagStats});
  return value;
 }
 const DEVICE_METHODS=['issue','review','approve','rpc','drain'];
@@ -118,10 +120,11 @@ const DEVICE_METHODS=['issue','review','approve','rpc','drain'];
  * lineage port when composed, the front's owner-shard steps run here on the same provider, and the alarm drains the
  * account's lineage outbox. Without the mount this is exactly the base object. */
 export class FederationObject extends FederationBase {
- deviceLinked(){return this.linkedPort??=engineLinkedPort(()=>resources(this.env).IDENTITY_ENGINE());}
+ deviceLinked(){return this.linkedPort??=engineLinkedPort(async()=>resources(this.bindings,undefined,this.flagsRuntime.scope.getStore()??await this.flagsRuntime.pin()).IDENTITY_ENGINE());}
  async compose(owner){const controller=await super.compose(owner);if(deviceGrantMountable(this.env))attachAppSessions(controller.service,{linked:this.deviceLinked(),config:this.env});return controller;}
- async device(method,args=[],owner){
-  if(!DEVICE_METHODS.includes(method)||!deviceGrantMountable(this.env))return {ok:false,error:{code:'not_found',message:'Device authorization is not enabled.'}};
+ async device(...args){return this.withFlags(()=>this.deviceHost(...args));}
+ async deviceHost(method,args=[],owner){
+  if(!DEVICE_METHODS.includes(method)||!(method==='drain'?flagsFor(this.env).background('DEVICE_AUTHORIZATION_ENABLED')&&flagsFor(this.env).background('FEDERATION_ENABLED'):deviceGrantMountable(this.env)))return {ok:false,error:{code:'not_found',message:'Device authorization is not enabled.'}};
   try{
    if(!UUID_V4.test(owner))throw Object.assign(new Error('Invalid federation account locator.'),{code:'forbidden'});
    const ready=await this.invoke('ready',[],owner);if(!ready.ok)return ready;
@@ -133,11 +136,12 @@ export class FederationObject extends FederationBase {
  }
  /** Lineage drain on the owner alarm (architecture §7.4): revoke queued families, then acknowledge them; retried while
   * items remain. RPC and refresh already fail closed on the lineage, so the drain is cleanup, never the control. */
- async alarm(){
-  await super.alarm();const owner=await this.storage.get('@federation-owner');if(!owner||!deviceGrantMountable(this.env))return;
+ async alarm(...args){return this.withFlags(()=>this.alarmHost(...args),true);}
+ async alarmHost(){
+  await super.alarm();const owner=await this.storage.get('@federation-owner');if(!owner||!flagsFor(this.env).background('DEVICE_AUTHORIZATION_ENABLED')||!flagsFor(this.env).background('FEDERATION_ENABLED'))return;
   let pending=false;try{await this.device('drain',[{owner}],owner);pending=(await this.deviceLinked().outbox({owner})).length>0;}catch{pending=true;}
   if(pending&&await this.storage.getAlarm()===null)await this.storage.setAlarm(Date.now()+600000);
  }
 }
-export function createWorker({resolveIdentityBadges}={}){if(resolveIdentityBadges!==undefined&&typeof resolveIdentityBadges!=='function')throw new TypeError('Badge resolver must be injected code.');return {fetch:async(request,env,ctx)=>{const flags=await workerFlags(env).pin({request,execution:ctx});return application.fetch(request,resources(env,resolveIdentityBadges,flags),ctx);},scheduled:async(event,env,ctx)=>application.scheduled(event,resources(env,resolveIdentityBadges,await workerFlags(env).pin({execution:ctx,alarm:true})),ctx),email:async(message,env,ctx)=>{await handleEmail(message,env,ctx,{EmailMessage:await emailMessageClass(env)});}};}
+export function createWorker({resolveIdentityBadges}={}){if(resolveIdentityBadges!==undefined&&typeof resolveIdentityBadges!=='function')throw new TypeError('Badge resolver must be injected code.');return {fetch:async(request,env,ctx)=>{const flags=await workerFlags(env).pin({request,execution:ctx});return application.fetch(request,resources(env,resolveIdentityBadges,flags),ctx);},scheduled:async(event,env,ctx)=>application.scheduled(event,resources(env,resolveIdentityBadges,await workerFlags(env).pin({execution:ctx,alarm:true})),ctx),email:async(message,env,ctx)=>{const flags=await workerFlags(env).pin({execution:ctx}),config={...env,flags};await handleEmail(message,config,ctx,{EmailMessage:await emailMessageClass(config)});}};}
 export default createWorker();

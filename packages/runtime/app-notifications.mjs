@@ -1,8 +1,8 @@
+import {siteEnabled,recordFlag} from './account/flags.mjs';
 import {validateContent} from '../messaging/content.mjs';
 import {APP_NOTIFICATIONS,ACTIVITY_CONTRACT,ACTIVITY_METHODS,notificationInput} from '../federation/app-notifications.mjs';
 import {perform} from '../app/engine.mjs';
 import {ACTIVITY_APP_OPERATIONS} from '../app/domains/activity.mjs';
-import {activityEnabled} from '../activity/index.mjs';
 import {StorageError} from '../storage/policy.mjs';
 import {key,canonical,digest,base64url} from '../messaging/store.mjs';
 import {initialTags,applyRules,escapeLegacyTag,isSystemTag} from '../messaging/tags.mjs';
@@ -72,9 +72,10 @@ export async function createAppNotification(c,owner,context){
 // connection. The app actor and signer are built here from verified state only; content fields cannot name another
 // app, account, sender or channel. Off unless ACTIVITY_V2_ENABLED, where the contract is unknown (not_found).
 export async function activityResourceMethod(c,owner,context){
- if(!activityEnabled(c.config))fail('not_found','Activity is unavailable.',404);
  if(!ACTIVITY_METHODS.includes(context.method))fail('unsupported_method','Unsupported activity method.',400);
  await c.warm(owner);const client=await configuredContext(c,owner,context,{path:'activity',contract:ACTIVITY_CONTRACT,methods:ACTIVITY_METHODS});
+ recordFlag(c,owner,'ACTIVITY_V2_ENABLED','exposure',client.id);
+ if(context.method!=='retractOwn'&&!siteEnabled(c.config,'ACTIVITY_V2_ENABLED',{subject:{kind:'account',owner},client:{clientId:client.id}},true))fail('not_found','Activity is unavailable.',404);
  if(typeof context.tx!=='string')fail('invalid_args','A stable operation identifier is required.',400);
  await c.admitWork(owner,{clientId:client.id});const keys=await appNotificationSigner(c.config);
  const actor={kind:'app',owner,issuer:c.config.APP_ORIGIN,app:{clientId:client.id,origin:client.origin,name:client.name},connection:{id:context.connection.id,generation:context.connection.generation,admissionGeneration:context.connection.notifications.generation}};

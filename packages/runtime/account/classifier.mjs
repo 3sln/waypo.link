@@ -1,3 +1,4 @@
+import {ownerFlags} from './flags.mjs';
 // EXT-X10. One immutable slot artifact for the host occupant and BindleBox consumer. No automatic connection,
 // assignment, threshold or model fallback. The built-in registry offers this definition; the integrator supplies
 // the recognized slot pin and gateway discovery. X4 alone writes connections/occupancy. The contract stays unpublished pending its publisher.
@@ -7,7 +8,6 @@ import manifest from '../../../docs/artefacts/slots/item-classifier-v1.json' wit
 import {AppAction,AppQuery,createAppEngine,perform,read,operations} from '../../app/engine.mjs';
 import {AppFault} from '../../app/faults.mjs';
 import {systemClock,cryptoRandom,nullAudit} from '../../app/providers.mjs';
-import {integrationsEnabled} from '../../app/domains/connections.mjs';
 import {SemanticBudgetError} from '../semantic-budget.mjs';
 import {SEMANTIC_LAYOUT,semanticShard} from '../semantic-routing.mjs';
 
@@ -21,7 +21,7 @@ const HINTS=['auto-submitted','list-id','list-unsubscribe','precedence-bulk'],US
 const plain=v=>v!==null&&typeof v==='object'&&!Array.isArray(v),only=(v,keys)=>plain(v)&&Object.keys(v).every(k=>keys.includes(k));
 const bytes=v=>new TextEncoder().encode(typeof v==='string'?v:JSON.stringify(v)).length;
 const fail=(code,message,status=400)=>{throw new AppFault(code,message,status);};
-const enabled=config=>{if(!integrationsEnabled(config)||![true,'true'].includes(config?.EXTENSIONS_ENABLED))fail('not_found','Not found.',404);};
+const enabled=(config,actor)=>{const flags=ownerFlags(config,actor?.owner,actor?.clientId);if(!flags.enabled('INTEGRATIONS_ENABLED')||!flags.enabled('EXTENSIONS_ENABLED'))fail('not_found','Not found.',404);};
 const actorOwner=async(actor,store)=>{if(!['owner','system'].includes(actor?.kind)||!/^[a-f0-9-]{36}$/.test(actor.owner??''))fail('unauthorized','Sign in to continue.',401);if(await store.get('owner')!==actor.owner)fail('forbidden','Account owner mismatch.',403);return actor.owner;};
 function boundedInput(value){
  if(!only(value,['text','hints'])||typeof value.text!=='string'||bytes(value.text)>CLASSIFIER_LIMITS.inputBytes||value.hints!==undefined&&(!Array.isArray(value.hints)||value.hints.length>16||value.hints.some(h=>!HINTS.includes(h))))fail('invalid_args','Use bounded text and recognized header hints.');
@@ -72,12 +72,12 @@ function resultOf(value,evidence){
 }
 export class ClassifierStatus extends AppQuery {
  static operation='classifier.status';static deps=['config','accountStore','connections','ai'];static refreshOn=['connections-changed'];
- async fetch({config,accountStore,connections,ai}){enabled(config);await actorOwner(this.actor,accountStore);let assigned=false;try{await selected(connections,config);assigned=true;}catch(error){if(error.code!=='forbidden'&&error.code!=='unsupported_slot')throw error;}return {configured:ai.configured===true,assigned,evidence:{...ai.evidence},limits:{...CLASSIFIER_LIMITS}};}
+ async fetch({config,accountStore,connections,ai}){enabled(config,this.actor);await actorOwner(this.actor,accountStore);let assigned=false;try{await selected(connections,config);assigned=true;}catch(error){if(error.code!=='forbidden'&&error.code!=='unsupported_slot')throw error;}return {configured:ai.configured===true,assigned,evidence:{...ai.evidence},limits:{...CLASSIFIER_LIMITS}};}
 }
 export class ClassifierDescriptors extends AppQuery {
  static operation='classifier.descriptors';static deps=['config','accountStore','connections','ai'];static refreshOn=['connections-changed'];
  async fetch({config,accountStore,connections,ai}){
-  enabled(config);const owner=await actorOwner(this.actor,accountStore);if(ai.configured!==true)return [];
+  enabled(config,this.actor);const owner=await actorOwner(this.actor,accountStore);if(ai.configured!==true)return [];
   let seat;try{seat=await selected(connections,config);}catch(error){if(['forbidden','unsupported_slot'].includes(error.code))return [];throw error;}
   const {connections:rows}=await connections.list(),record=rows.find(r=>seat.startsWith(`${r.id}:${r.generation}:`));if(!record)return [];
   return [{id:`${config.APP_ORIGIN}/entities/${owner}/resources/${record.id}`,label:CLASSIFIER_INTEGRATION.name,provider:'bindle',contracts:{[CLASSIFIER_CONTRACT]:['decide']},generation:String(record.generation),limits:{maxRequestBytes:CLASSIFIER_LIMITS.requestBytes,maxResultBytes:CLASSIFIER_LIMITS.responseBytes,txRetentionSeconds:86400}}];
@@ -86,7 +86,7 @@ export class ClassifierDescriptors extends AppQuery {
 export class ClassifierDecide extends AppAction {
  static operation='classifier.decide';static deps=['config','accountStore','connections','ai','clock'];
  async run({config,accountStore,connections,ai,clock}){
-  enabled(config);const owner=await actorOwner(this.actor,accountStore),request=classifierRequest(this.input);
+  enabled(config,this.actor);const owner=await actorOwner(this.actor,accountStore),request=classifierRequest(this.input);
   if(ai.configured!==true)fail('temporarily_unavailable','Classifier is not configured.',503);
   const seat=await selected(connections,config);if(await ai.eligible(owner)!==true)fail('forbidden','Classification needs a current paid entitlement.',403);
   if(await ai.admitWork(owner)!==true)fail('rate_limited','Activity allowance is exhausted.',429);
@@ -104,19 +104,19 @@ function runtimeEngine(c,owner){return createAppEngine({providers:{clock:systemC
  ai:classifierAI({binding:c.config.AI,spend:c.config.SEMANTIC_SPEND,version:c.config.CLASSIFIER_MODEL_VERSION,eligible:async id=>{await c.billingRefresh(id);return ['paid','plus','ultra'].includes((await c.billing.entitlement(id)).plan);},admitWork:id=>c.admitWork(id,{clientId:'@classifier'})})}});}
 // Contract adapter: context comes only from verified federation RPC, never from content or consumer parameters.
 export async function classifierResourceMethod(c,owner,context){
- enabled(c.config);if(context?.method!=='decide')fail('unsupported_method','Unsupported classifier method.');
+ enabled(c.config,{owner,clientId:context?.clientId});if(context?.method!=='decide')fail('unsupported_method','Unsupported classifier method.');
  if(context.authority!=='bindle'||context.contract!==CLASSIFIER_CONTRACT||context.subject!==`${c.config.APP_ORIGIN}/entities/${owner}`||!context.connection||!context.epoch||typeof context.clientId!=='string')fail('forbidden','Classifier access denied.',403);
  await c.warm(owner);
  if(typeof c.config.FEDERATION_IDENTITY_CHECK!=='function'||await c.config.FEDERATION_IDENTITY_CHECK(owner,context.epoch)!==true)fail('unauthorized','Application authorization is no longer active.',401);
  await c.apps.check(owner,context.connection.id,context.connection.generation,context.clientId);
  const rows=await c.connectionsSystem(owner,{operation:'connections.list'}),classifier=rows.connections.find(r=>r.integration?.builtin==='classifier');
  if(!classifier||context.resource!==`${c.config.APP_ORIGIN}/entities/${owner}/resources/${classifier.id}`||context.resourceGeneration!==String(classifier.generation))fail('forbidden','Classifier resource changed.',403);
- const engine=runtimeEngine(c,owner);try{const result=await perform(engine,new ClassifierDecide({actor:{kind:'system',owner},input:context.args}));if(await c.config.FEDERATION_IDENTITY_CHECK(owner,context.epoch)!==true)fail('unauthorized','Application authorization is no longer active.',401);await c.apps.check(owner,context.connection.id,context.connection.generation,context.clientId);return result;}finally{await engine.dispose();}
+ const engine=runtimeEngine(c,owner);try{const result=await perform(engine,new ClassifierDecide({actor:{kind:'system',owner,clientId:context.clientId},input:context.args}));if(await c.config.FEDERATION_IDENTITY_CHECK(owner,context.epoch)!==true)fail('unauthorized','Application authorization is no longer active.',401);await c.apps.check(owner,context.connection.id,context.connection.generation,context.clientId);return result;}finally{await engine.dispose();}
 }
 
 export const methods={
  async classifierDescriptors(owner){
-  if(!integrationsEnabled(this.config)||![true,'true'].includes(this.config.EXTENSIONS_ENABLED))return [];
+  if(!ownerFlags(this.config,owner).enabled('INTEGRATIONS_ENABLED')||!ownerFlags(this.config,owner).enabled('EXTENSIONS_ENABLED'))return [];
   const engine=runtimeEngine(this,owner);try{return await read(engine,new ClassifierDescriptors({actor:{kind:'system',owner}}));}finally{await engine.dispose();}
  },
 };

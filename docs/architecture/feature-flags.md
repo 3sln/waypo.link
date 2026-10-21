@@ -80,7 +80,7 @@ Columns:
 | `EMAIL_BRIDGE_ENABLED` | a | G A S P | off | `BINDLEBOX_ENABLED` | crit | safe | off | Subject = recipient owner. Paid entitlement and owner opt-in still apply. |
 | `SEMANTIC_SEARCH_ENABLED` | a | G A S P V | off | — | std | safe | **on** | Also needs the AI/Vectorize bindings (adapter capability). The global budget is unchanged. |
 | `BEAM_ENABLED` | a | G A S P V | off | — | std | safe | **on** | Stateful, so no R. |
-| `DEVICE_AUTHORIZATION_ENABLED` | a | G A C | off | device grant: `FEDERATION_ENABLED` | crit | safe | off | Its declaration uses the global component only (§3.6). |
+| `DEVICE_AUTHORIZATION_ENABLED` | a | G A C | off | app device grant only: `FEDERATION_ENABLED` | crit | safe | off | Its declaration uses the global component only (§3.6). |
 | `APP_METADATA_DISCOVERY_ENABLED` | a | G C | off | — | std | safe | off (Worker unset) | |
 | `SIGNUP_ENABLED` | c | G R | off | — | crit | last-known | **on** | No subject exists yet. R uses the same trusted `cf.country` as admission. |
 | `PAID_SIGNUP_ENABLED` | c | G R | off | valid env billing configuration | crit | last-known | **on** | |
@@ -367,6 +367,9 @@ experiment: { id /*uuid*/, status:'draft'|'running'|'stopped'|'concluded',
 - At most 3 experiments run at once per host, to bound the load on the counter DO.
 
 **Recording.**
+- `search_result_opened` is declared for future use but remains unrecorded: opening a search result has no verified server-side outcome signal. Search exposure alone must not be counted as an open.
+- Device authorization, incremental authorization and email bridge are non-retainable in the registry: their requests, lineages and queues live in external identity/federation/bridge stores, so the account writer has no authoritative `hasState` predicate. Existing owner reads and reverse paths remain available.
+
 - `flags.record({experimentId, variant, kind:'exposure'|metric, day})` is called at the server point where the variant actually changes what the subject gets (exposure), or where a declared outcome happens.
 - The account writer or edge sends it to a `flagStats` port, fire-and-forget with `waitUntil` and bounded retry. A lost increment is tolerated.
 - **Counters:**

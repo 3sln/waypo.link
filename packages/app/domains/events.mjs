@@ -1,5 +1,6 @@
 // Event buses domain, EV-2 (docs/spec/events.md §3.1, §4–§9): the 3sln.me-hosted bus as engine operations over
-// BusStore (packages/events/store.mjs). Everything is refused with `not_found` unless EVENT_BUSES_ENABLED is on.
+// BusStore (packages/events/store.mjs). EVENT_BUSES_ENABLED gates new authority and app exposure, never owner
+// reads or reverse paths. Sweeps follow only the env kill.
 //
 // Actors (built by trusted adapters only, never from a request body; packages/runtime/account/events.mjs):
 //   {kind:'owner', owner}                         list, inspect, create the built-in occupant, retention, purge,
@@ -15,6 +16,7 @@ import {AppAction,AppQuery} from '../engine.mjs';
 import {AppFault} from '../faults.mjs';
 import {UUID} from '../../core/primitives.mjs';
 import {BusStore} from '../../events/store.mjs';
+import {createFlags} from '../../flags/evaluate.mjs';
 
 const plain=value=>value!==null&&typeof value==='object'&&!Array.isArray(value);
 const input=(value,names)=>{if(value===undefined)return {};if(!plain(value)||Object.keys(value).some(name=>!names.includes(name)))throw new AppFault('invalid_request','Unsupported feed request.',400);return value;};
@@ -27,28 +29,32 @@ const input=(value,names)=>{if(value===undefined)return {};if(!plain(value)||Obj
  *   plan      async (accountStore) => 'free' | 'paid'
  *   grants    {check({actor,bus,method}), live?(tx,actor)}; a function (actor) => grants is called per obtain
  *   notifier  {advance, revoke} of the wait object; `waits` true when the adapter holds long-polls outside the account
+ *   config/flags  request-pinned flags port. Gates new authority/app exposure for the bus owner; owner reverse
+ *                 paths ignore targeting and sweep follows only background() (the env kill).
  */
-export function eventBusProvider({enabled=false,keys,issuer,plan,grants,notifier,waits=false,limits}={}){
- return class extends EventBusProvider{static deps=['accountStore','clock','random'];constructor(deps){super(deps);Object.assign(this,{enabled:enabled===true,keys,issuer,plan,grants,notifier,waits,limits});}};
+export function eventBusProvider({enabled=false,keys,issuer,plan,grants,notifier,waits=false,limits,config,flags}={}){
+ return class extends EventBusProvider{static deps=['accountStore','clock','random'];constructor(deps){super(deps);Object.assign(this,{enabled:enabled===true,keys,issuer,plan,grants,notifier,waits,limits,config,flags});}};
 }
 export class EventBusProvider extends Provider{
  #deps;#held=new WeakMap();
  constructor(deps){super();this.#deps=deps;this.readRate=new Map();}
  async obtain({actor,bus,grants:callGrants}={}){
-  if(!this.enabled)throw new AppFault('not_found','Not found.',404);
+  if(!this.config&&!this.flags&&!this.enabled)throw new AppFault('not_found','Not found.',404);
   if(!['owner','system','app','feature'].includes(actor?.kind)||typeof actor.owner!=='string'||!UUID.test(actor.owner))throw new AppFault('unauthorized','Sign in to continue.',401);
   const resources={},obtained=[];
   try{
    for(const name of this.constructor.deps){resources[name]=await this.#deps[name].obtain();obtained.push(name);}
    const bound=await resources.accountStore.get('owner');if(bound!==undefined&&bound!==actor.owner)throw new AppFault('forbidden','Account owner mismatch.',403);
-   const keys=await this.keys?.();if(!keys)throw new AppFault('temporarily_unavailable','Feeds are unavailable.',503);
+   const flags=this.config||this.flags?(this.config?.flags??this.config?.FLAGS??this.flags??createFlags({snapshot:{v:1,version:0,issuedAt:0,flags:{}},env:this.config,clock:resources.clock.now})).for({subject:{kind:'account',owner:actor.owner},...actor.clientId?{client:{clientId:actor.clientId}}:{}}):null;
+   const keys=await this.keys?.(),ready=()=>{if(!keys)throw new AppFault('temporarily_unavailable','Feeds are unavailable.',503);};if(!flags)ready();
+   const admit=(background=false)=>{if(flags&&!(background?flags.background('EVENT_BUSES_ENABLED'):flags.enabled('EVENT_BUSES_ENABLED')))throw new AppFault('not_found','Not found.',404);if(!background)ready();};
    const plan=typeof this.plan==='function'?await this.plan(resources.accountStore):this.plan;
    const grants=callGrants??(typeof this.grants==='function'?this.grants(actor):this.grants);
-   const store=new BusStore({accountStore:resources.accountStore,clock:resources.clock,random:resources.random,keys,owner:actor.owner,issuer:this.issuer,plan,grants,notifier:this.notifier,waits:this.waits,readRate:this.readRate,...this.limits?{limits:this.limits}:{}});
+   const store=new BusStore({accountStore:resources.accountStore,clock:resources.clock,random:resources.random,keys,owner:actor.owner,issuer:this.issuer,plan,grants,notifier:this.notifier,waits:typeof this.waits==='function'?this.waits():this.waits,readRate:this.readRate,...this.limits?{limits:this.limits}:{}});
    const frozen=Object.freeze(structuredClone(actor));let handle;
-   if(actor.kind==='owner')handle={list:()=>store.list(),get:id=>store.get(id),create:value=>store.create(value),setRetention:value=>store.setRetention(value),purge:value=>store.purge(value),remove:value=>store.remove(value),allowHistory:value=>store.allowHistory(value),setFeature:value=>store.setFeature(value)};
-   else if(actor.kind==='system')handle={readerApproved:value=>store.readerApproved(value),readerRevoked:value=>store.readerRevoked(value),sweep:value=>store.sweep(value),descriptors:()=>store.descriptors(),limits:id=>store.limits(id)};
-   else{if(typeof bus!=='string'||!UUID.test(bus))throw new AppFault('forbidden','This feed access is not allowed.',403);const at=store.at(bus);handle={publish:(args,options)=>at.publish(frozen,args,options),read:(args,options)=>at.read(frozen,args,options)};}
+   if(actor.kind==='owner')handle={list:()=>store.list(),get:id=>store.get(id),create:value=>{admit();return store.create(value);},setRetention:value=>store.setRetention(value),purge:value=>store.purge(value),remove:value=>store.remove(value),allowHistory:value=>{admit();return store.allowHistory(value);},setFeature:value=>{if(value?.read||value?.publish)admit();else ready();return store.setFeature(value);}};
+   else if(actor.kind==='system')handle={readerApproved:value=>{admit();return store.readerApproved(value);},readerRevoked:value=>{ready();return store.readerRevoked(value);},sweep:value=>{admit(true);return store.sweep(value);},descriptors:()=>store.descriptors(),limits:id=>store.limits(id)};
+   else{if(typeof bus!=='string'||!UUID.test(bus))throw new AppFault('forbidden','This feed access is not allowed.',403);const at=store.at(bus);handle={publish:(args,options)=>{admit();return at.publish(frozen,args,options);},read:(args,options)=>{admit();return at.read(frozen,args,options);}};}
    handle=Object.freeze(handle);this.#held.set(handle,{resources,obtained});return handle;
   }catch(error){for(const name of obtained)await this.#deps[name].release(resources[name]);throw error;}
  }

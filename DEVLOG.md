@@ -2443,3 +2443,53 @@ The user's first use is their own company ERP.
   - Open: certificate lifetime (recommend 300 s mandatory), home key reset restoring access immediately, and correlation (later: certificates encrypted to the org).
   - Foreign issuers stay behind an empty allowlist until the Workers outbound-fetch gate passes and an independently written spec-only issuer passes the tests.
 - **Pending user decisions.** Signing model confirmation, the org issuer location, the two-admin deadlock, and certificate lifetimes. Accepted-provisional recommendations: no roles (per-member grants plus copy-on-apply templates), paid-only at launch, grantor-initiated offers, and a minimal ERP phase A that includes cross-provider members.
+
+## 2026-10-21 — Feature flags FF-5 complete
+
+FF-5a/b/c migrated read sites in routes, the account writer and jobs, and domain packages to `flags.for(ctx)`. FF-5d integrated them:
+- adapters and mounting;
+- legacy parsing reproduced per flag;
+- verified owner and client context for protocol flows;
+- device, incremental and email-bridge flags marked non-retainable with justifications;
+- `search_result_opened` left unrecorded, since there is no server signal.
+
+The raw-env guard now enforces everywhere with zero violations. With no console records, behaviour is unchanged, pinned by equivalence tests. Account-targeted bootstrap values are sent with `Cache-Control: private, no-store`.
+
+Remaining: the FF-8 cutover. This means seed and verify in the console, then remove class (a)/(c) vars from wrangler and the Cloudflare dashboard (`keep_vars`). It is an operator step.
+
+Gates:
+
+| Suite | Result |
+|---|---|
+| `npm test` | 2130 |
+| Worker | 70 |
+| UI-state | 291 |
+| admin-flags | 34 |
+| legal | 47 |
+| DOM, build, dry run | pass |
+| e2e | 214, 4 WebKit environment skips |
+
+Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-21 — Organizations rev 4: relations (user proposal adopted)
+
+The user proposed public relation documents: named slots with arity and a fragment-access matrix (optionally narrowed by field), opted into by org admins as instances. Multiple instances and slots are allowed, and everything is shared via preferences fragments. The proposal also covers org and user credentials for provenance, separate identity and organization provider roles, and product rules: an account is required to create an org, orgs are always paid, and pricing is tiered first, metered later.
+
+Design rev 4 and spec rev 3 adopt the proposal as the user-facing model, replacing offers and cross-entity tokens. A relation document grants nothing by itself. Each edge needs grantor fragment consent and grantee acceptance. Slot names never authorize. The primitive count drops from 11 to 10.
+
+Entity certificates carry resource and methods (review round 3, H1). Imports are never included in fragments granted over an edge (H2, re-sharing by composition). The ceilings for `reshare` and `actor_disclosure` come from the relation document. Writes use certificates under 60 s old, an effective 90 s with skew.
+
+Review round 3: 2 High (fixed), 7 Medium, 4 Low.
+
+Phase A is unchanged and forward-compatible: no relations, members from any provider, the ERP.
+
+Pending user decisions (recommendations in the design):
+- name: "Relation"/"Relationship" ("bond" clashes with finance terms);
+- rename "slot" to avoid clashing with extension slots (reviewer suggests "position");
+- admission for one-holder slots: creator only;
+- counterpart key reset: suspend edges until confirmed;
+- delegated admission: later, as an opt-in;
+- membership stays separate from relations;
+- the org issuer location, the two-admin deadlock, and the 300 s certificate lifetime.
+
+Reviewer: ___ Date: ___ Outcome: ___

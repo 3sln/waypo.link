@@ -6,9 +6,8 @@ import {accountSessionRoutes,installAccountSession} from '../account-session-htt
 import {removedAccountCookies} from '../account-cookies.mjs';
 import {recoveryAuthorityPublic} from '../identity-backup.mjs';
 import {IdentityAction,OwnerQuery,LinkedApprovalAction,LinkedResolveQuery,IdentityFault} from '../../identity/index.mjs';
-import {deviceAuthorizationEnabled} from '../device-grant.mjs';
 import QRCode from 'qrcode';
-import {json,body,cookie,signupEnabled,accountHandle,status,identity} from './shared.mjs';
+import {flagReadable,flagGlobal,flagEnabled,json,body,cookie,signupEnabled,accountHandle,status,identity} from './shared.mjs';
 
 const authMethods={
  '/api/auth/step-up/begin':'stepUpBegin','/api/auth/step-up':'stepUp',
@@ -56,6 +55,7 @@ async function linkedRoutes({request,env,path,local,engine,context,vault}){
    return json(result,200,headers);
   }
   const authenticated=await engine.query(new OwnerQuery(context)).peek(),owner=authenticated.account.id;
+  if(['/api/auth/linked/approve','/api/auth/linked/configure'].includes(path)&&!flagEnabled(env,'DEVICE_AUTHORIZATION_ENABLED',authenticated))return json({error:'feature_unavailable'},409);
   if(path==='/api/auth/linked/approve'||path==='/api/auth/linked/configure')await engine.query(new TermsCreationAllowed(context)).peek();
   if(context.csrfToken!==authenticated.csrfToken)return json({error:'csrf',message:'Reload the account page before continuing.'},403);
   const review=async()=>approvalReview(grant?await grant.review({owner,context:ctx,code:input.code,...input.locator!==undefined?{requestId:input.locator}:{},...input.turnstileToken?{turnstileToken:input.turnstileToken}:{}}):{linked:await engine.query(new LinkedResolveQuery({code:input.code,...input.locator!==undefined?{locator:input.locator}:{},...input.turnstileToken?{turnstileToken:input.turnstileToken}:{}},ctx)).peek()},authenticated,Date.now());
@@ -105,7 +105,7 @@ export const stages={
    if(path==='/api/recovery/authority'){if(request.method!=='GET')return json({error:'method_not_allowed'},405,{Allow:'GET'});return json(recoveryAuthorityPublic(env));}
  },
  async api({request,env,path}){
-    if(path==='/api/auth/signup'&&request.method==='POST'&&!signupEnabled(env))return json({error:'release_gated',message:'Account creation is not open yet.'},503);
+    if(path==='/api/auth/signup'&&request.method==='POST'&&!signupEnabled(env,{request}))return json({error:'release_gated',message:'Account creation is not open yet.'},503);
  },
  async session({request,env,path,local,engine,context,vault,accountPath,accountMember}){
     context.ageLocation=trustedAgeLocation(request.cf);
@@ -113,17 +113,17 @@ export const stages={
     if(accountPath)return await accountSessionRoutes({request,env,local,engine,context,body,json,legacyCleared:cookie('',local,0)});
     if(['/api/auth/signup','/api/auth/recover','/api/auth/login/password','/api/auth/login/passkey/finish'].includes(path))context.setupBinding=crypto.randomUUID()+crypto.randomUUID();
     if(path==='/api/auth/device/start')context.deviceBinding=crypto.randomUUID()+crypto.randomUUID();
-    if(deviceAuthorizationEnabled(env)&&(LINKED_REQUESTER[path]||LINKED_MEMBER.includes(path)))return await linkedRoutes({request,env,path,local,engine,context,vault});
+    if((path==='/api/auth/linked/start'?flagGlobal(env,'DEVICE_AUTHORIZATION_ENABLED'):flagReadable(env,'DEVICE_AUTHORIZATION_ENABLED'))&&(LINKED_REQUESTER[path]||LINKED_MEMBER.includes(path)))return await linkedRoutes({request,env,path,local,engine,context,vault});
     // QR codes carry a locator, never a code (LA-5): the legacy /device#request= form, and with the flag on the
     // linked /approve#r= form.
     if(path==='/api/auth/device/qr'){
       const input=await body(request);let qr;try{qr=new URL(input.verificationUriComplete);}catch{return json({error:'invalid_request'},400);}
-      const legacy=qr.pathname==='/device'&&/^#request=[a-f0-9-]{36}$/.test(qr.hash),linked=deviceAuthorizationEnabled(env)&&qr.pathname==='/approve'&&/^#r=[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(qr.hash);
+      const legacy=qr.pathname==='/device'&&/^#request=[a-f0-9-]{36}$/.test(qr.hash),linked=flagGlobal(env,'DEVICE_AUTHORIZATION_ENABLED')&&qr.pathname==='/approve'&&/^#r=[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(qr.hash);
       if(qr.origin!==env.APP_ORIGIN||qr.search||!(legacy||linked)||qr.username||qr.password)return json({error:'invalid_request'},400);return json({svg:await QRCode.toString(qr.href,{type:'svg',width:320,margin:2})});
     }
     if(authMethods[path]){
       if(request.method!=='POST')return json({error:'method_not_allowed'},405);
-      if(path==='/api/auth/signup'&&!signupEnabled(env))return json({error:'release_gated',message:'Account creation is not open yet.'},503);
+      if(path==='/api/auth/signup'&&!signupEnabled(env,{request}))return json({error:'release_gated',message:'Account creation is not open yet.'},503);
       const input=await body(request);
       // Sign-out also forgets this device's push subscription for that account (best effort).
       if(path==='/api/auth/logout'&&Object.hasOwn(input,'pushSubscription')){const id=input.pushSubscription;delete input.pushSubscription;if(typeof id==='string'&&/^[A-Za-z0-9_-]{43}$/.test(id))try{const signedIn=await engine.query(new OwnerQuery(context)).peek();await accountHandle(env,signedIn.account.id).removeSubscription(signedIn.account.id,id);}catch{}}

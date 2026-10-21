@@ -1,3 +1,4 @@
+import {legacyValue} from '../flags/env.mjs';
 import {BILLING_STATE_KEY,entitlementFromState,assertOwner} from '../billing/catalog.mjs';
 import {StorageError} from '../storage/policy.mjs';
 const STATE='storage-write/v1';
@@ -17,7 +18,7 @@ function windowInfo(history,now,duration,limit,units=0){const rows=history.filte
 /** Counts physical attempts, not successful writes. No refund on failed I/O or
  * uncertain service allocations. Both blob and archive ports share this meter. */
 export class AccountStorageWriteBudget{
- constructor({metadata,authority,config={},clock=()=>Date.now()}){Object.assign(this,{metadata,authority,clock,config});this.limits=storageWriteLimits(config);this.enabled=config.STORAGE_WRITE_ENABLED!==false&&config.STORAGE_WRITE_ENABLED!=='false';this.tail=Promise.resolve();}
+ constructor({metadata,authority,config={},clock=()=>Date.now()}){Object.assign(this,{metadata,authority,clock,config});this.limits=storageWriteLimits(config);this.enabled=legacyValue('STORAGE_WRITE_ENABLED',config,{parse:'not-false-boolean'});this.tail=Promise.resolve();}
  async status(owner){assertOwner(owner);return this.metadata.transaction(async tx=>{if(await tx.get('owner')!==owner)fail('forbidden','Account owner mismatch.',403);const now=this.clock(),month=monthAt(now),state=await tx.get(STATE);if(state!==undefined&&(!valid(state)||state.last>now||state.month>month))fail();const billing=await tx.get(BILLING_STATE_KEY),entitlement=entitlementFromState(billing?.owner===owner?billing:null,now,this.config),plan=entitlement.plan,paid=plan!=='free',history=historyAt(state,now),day=windowInfo(history,now,86400000,paid?(entitlement.activityDay??this.limits.paidDay):this.limits.freeDay,1),hour=windowInfo(history,now,3600000,paid?(entitlement.activityHour??this.limits.paidHour):this.limits.freeHour,1);return {enabled:this.enabled,period:'rolling-day',month,used:day.used,limit:paid?(entitlement.activityDay??this.limits.paidDay):this.limits.freeDay,hourUsed:hour.used,hourLimit:paid?(entitlement.activityHour??this.limits.paidHour):this.limits.freeHour,maintenanceUsed:state?.month===month?state.maintenance.used:0,maintenanceLimit:this.limits.ownerMaintenance,resetsAt:day.wait>0?now+day.wait:day.resetsAt,hourResetsAt:hour.wait>0?now+hour.wait:hour.resetsAt,unit:'admitted-activity-units'};});}
  async admit(owner,options={}){const before=this.tail;let release;this.tail=new Promise(resolve=>release=resolve);await before;try{return await this.serial(owner,options);}finally{release();}}
  async serial(owner,{clientId='@system',units=1,maintenance=false,initialize=false}={}){

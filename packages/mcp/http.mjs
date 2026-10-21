@@ -3,6 +3,7 @@ import * as z from 'zod/v4';
 import {toolSchemas as schemas,boundedToolResult} from '../automation/catalog.mjs';
 import {McpFault,TOOLS,parseClients,shardOf} from './service.mjs';
 import {accountCall} from './runtime.mjs';
+import {createFlags} from '../flags/evaluate.mjs';
 const headers={'Cache-Control':'no-store','Referrer-Policy':'no-referrer','X-Content-Type-Options':'nosniff'};
 const json=(data,status=200,extra={})=>new Response(JSON.stringify(data),{status,headers:{...headers,'Content-Type':'application/json',...extra}});
 export const mcpPublicPath=path=>path==='/mcp'||path.startsWith('/mcp/oauth/')||path==='/.well-known/oauth-protected-resource/mcp'||path==='/.well-known/oauth-authorization-server/mcp/oauth';
@@ -12,24 +13,28 @@ function params(value,allowed){const p=new URLSearchParams(value);if(new Set(p.k
 function challenge(origin,code,scope){return `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource/mcp"${code?`, error="${code}"`:''}${scope?`, scope="${scope}"`:''}`;}
 function cors(request,env,clientId){const origin=request.headers.get('Origin');if(!origin||origin===env.APP_ORIGIN)return {};const clients=parseClients(env);if(!clients.some(c=>(!clientId||c.id===clientId)&&(c.origins||[]).includes(origin)))throw new McpFault('forbidden','Application origin is not registered.',403);return {'Access-Control-Allow-Origin':origin,Vary:'Origin','Access-Control-Expose-Headers':'WWW-Authenticate, MCP-Protocol-Version, MCP-Session-Id'};}
 function addHeaders(response,extra){const h=new Headers(response.headers);for(const[k,v]of Object.entries({...headers,...extra}))h.set(k,v);return new Response(response.body,{status:response.status,headers:h});}
+const mcpFlags=(env,ctx={})=>(env.flags??env.FLAGS??createFlags({snapshot:{v:1,version:0,issuedAt:0,flags:{}},env})).for(ctx);
+// Only registered/authority-verified client IDs reach targeting. Discovery and mounts are global.
+function admitClient(env,clientId,owner){if(parseClients(env).some(c=>c.id===clientId)&&!mcpFlags(env,{client:{clientId},...owner?{subject:{kind:'account',owner}}:{}}).enabled('MCP_ENABLED'))throw new McpFault('access_denied','MCP is not available for this application.',403);}
 export async function handleMcpPublic(request,env){
  let extra={};const origin=env.APP_ORIGIN,issuer=`${origin}/mcp/oauth`,resource=`${origin}/mcp`,path=new URL(request.url).pathname;
  try{
-  extra=cors(request,env);if(env.MCP_ENABLED!=='true'||!env.MCP_AUTHORITY)throw new McpFault('temporarily_unavailable','MCP is not enabled on this service.',503);
+  extra=cors(request,env);if(!mcpFlags(env).global('MCP_ENABLED')||!env.MCP_AUTHORITY)throw new McpFault('temporarily_unavailable','MCP is not enabled on this service.',503);
   if(request.method==='OPTIONS')return new Response(null,{status:204,headers:{...headers,...extra,'Access-Control-Allow-Methods':path==='/mcp'?'POST, GET, DELETE, OPTIONS':'GET, POST, OPTIONS','Access-Control-Allow-Headers':'Authorization, Content-Type, MCP-Protocol-Version, MCP-Session-Id','Access-Control-Max-Age':'300'}});
   if(path==='/.well-known/oauth-protected-resource/mcp'&&request.method==='GET')return json({resource,authorization_servers:[issuer],bearer_methods_supported:['header'],scopes_supported:['mcp:collections_list','mcp:items_list','mcp:item_read']},200,extra);
   if(path==='/.well-known/oauth-authorization-server/mcp/oauth'&&request.method==='GET')return json({issuer,authorization_endpoint:`${issuer}/authorize`,token_endpoint:`${issuer}/token`,response_types_supported:['code'],grant_types_supported:['authorization_code','refresh_token'],token_endpoint_auth_methods_supported:['none'],code_challenge_methods_supported:['S256'],scopes_supported:TOOLS.map(t=>`mcp:${t.name}`),authorization_response_iss_parameter_supported:true},200,extra);
   if(path==='/mcp/oauth/authorize'&&request.method==='GET'){
    const input=params(new URL(request.url).search,['client_id','redirect_uri','response_type','code_challenge','code_challenge_method','state','scope','resource']);
+   admitClient(env,input.client_id);
    const {requestId}=await env.MCP_AUTHORITY.begin(input);return new Response(null,{status:302,headers:{...headers,Location:`${origin}/mcp/consent#request=${requestId}`}});
   }
   if(path==='/mcp/oauth/token'&&request.method==='POST'){
    if(request.headers.get('Content-Type')?.split(';')[0].trim()!=='application/x-www-form-urlencoded')throw new McpFault('invalid_request','Use form encoding.',415);
-   const input=params(await read(request,8192),['grant_type','code','code_verifier','client_id','redirect_uri','resource','refresh_token']);extra=cors(request,env,input.client_id);return json(await env.MCP_AUTHORITY.exchange(input),200,extra);
+   const input=params(await read(request,8192),['grant_type','code','code_verifier','client_id','redirect_uri','resource','refresh_token']);extra=cors(request,env,input.client_id);admitClient(env,input.client_id);return json(await env.MCP_AUTHORITY.exchange(input),200,extra);
   }
   if(path!=='/mcp')return json({error:'method_not_allowed'},405,{...extra,Allow:path.endsWith('/authorize')?'GET':'POST'});
   const authorization=request.headers.get('Authorization');if(!authorization?.startsWith('Bearer ')||new URL(request.url).search)throw new McpFault('invalid_token','A bearer token is required in the Authorization header.',401);
-  const bearer=authorization.slice(7);try{shardOf(bearer);}catch{throw new McpFault('invalid_token','A valid bearer token is required.',401);}const auth=await env.MCP_AUTHORITY.verify(bearer);extra=cors(request,env,auth.clientId);
+  const bearer=authorization.slice(7);try{shardOf(bearer);}catch{throw new McpFault('invalid_token','A valid bearer token is required.',401);}const auth=await env.MCP_AUTHORITY.verify(bearer);extra=cors(request,env,auth.clientId);admitClient(env,auth.clientId,auth.owner);
   let parsedBody;if(request.method==='POST'){
    if(request.headers.get('Content-Type')?.split(';')[0].trim()!=='application/json')throw new McpFault('invalid_request','Use application/json.',415);
    try{parsedBody=JSON.parse(await read(request));}catch(e){if(e instanceof McpFault)throw e;throw new McpFault('invalid_request','Invalid JSON.');}
@@ -58,11 +63,11 @@ export async function handleMcpPublic(request,env){
 }
 export async function handleMcpOwner({request,env,owner,body}){
  const path=new URL(request.url).pathname,id=owner.account.id;
- if(env.MCP_ENABLED!=='true'||!env.MCP_AUTHORITY)return json({error:'temporarily_unavailable'},503);
+ if(!env.MCP_AUTHORITY)return json({error:'temporarily_unavailable'},503);
  try{
   const pending=/^\/api\/mcp\/requests\/([0-9]{2}\.[A-Za-z0-9_-]{43})$/.exec(path);
   if(pending&&request.method==='GET')return json({...await env.MCP_AUTHORITY.inspect(id,pending[1]),collections:await accountCall(env.ACCOUNTS,id,'mcpCollections')});
-  if(path==='/api/mcp/approve'&&request.method==='POST')return json(await env.MCP_AUTHORITY.approve(id,await body(request)));
+  if(path==='/api/mcp/approve'&&request.method==='POST'){const input=await body(request);if(!input||typeof input!=='object'||Array.isArray(input))throw new McpFault('invalid_request');if(input.denied!==true){const pending=await env.MCP_AUTHORITY.inspect(id,input.requestId);if(!mcpFlags(env).global('MCP_ENABLED'))throw new McpFault('temporarily_unavailable','MCP is not enabled on this service.',503);admitClient(env,pending.client.id,id);}return json(await env.MCP_AUTHORITY.approve(id,input));}
   if(path==='/api/mcp/grants'&&request.method==='GET')return json({grants:await env.MCP_AUTHORITY.grants(id)});
   const revoke=/^\/api\/mcp\/grants\/([0-9]{2}\.[A-Za-z0-9_-]{43})$/.exec(path);if(revoke&&request.method==='DELETE')return json(await env.MCP_AUTHORITY.revoke(id,revoke[1]));
   return json({error:'method_not_allowed'},405);

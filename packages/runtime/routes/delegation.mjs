@@ -1,3 +1,4 @@
+// FF-5a: legacy mount visibility is preserved; after console adoption owner reads/reversal ignore targeting.
 // HTTP routes of slice C3, key-delegation.v1 (docs/spec/bindlebox.md §3.4; messaging-extraction.md C3): the public
 // delegation status endpoint receivers query, and owner views and revocation. Mounted only with BINDLEBOX_ENABLED;
 // with the flag off nothing here answers, so the paths stay 404 and no allowlist reveals them.
@@ -7,11 +8,10 @@
 // answered as an unknown jkt ({status:'revoked'}) without waking any account, so the endpoint enumerates nothing.
 // Cache-Control: `public, max-age=300` (the §3.4 window; shared caches must honor Age) except a persisted revocation,
 // which is final (`max-age=86400, immutable`); "cannot be determined" is 503 `no-store` with Retry-After.
-import {json,body,privateHeaders,accountHandle,pseudonym,subnet,consume} from './shared.mjs';
+import {flagReadable,json,body,privateHeaders,accountHandle,pseudonym,subnet,consume} from './shared.mjs';
 import {statusCacheControl,isJkt} from '../../identity/delegation.mjs';
 
 const STATUS=/^\/identity\/([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})\/delegations\/([^/]+)$/;
-const enabled=env=>env.BINDLEBOX_ENABLED==='true';
 const publicHeaders={'X-Robots-Tag':'noindex, nofollow','Referrer-Policy':'no-referrer'};
 const answer=(request,value,status=200,extra={})=>new Response(request.method==='HEAD'?null:JSON.stringify(value),{status,headers:{...privateHeaders,...publicHeaders,'Content-Type':'application/json',...extra}});
 const statusBody=result=>result.status==='active'?{status:'active'}:Number.isSafeInteger(result.revokedHour)?{status:'revoked',revokedHour:result.revokedHour}:{status:'revoked'};
@@ -29,7 +29,7 @@ async function admitted(env,request,local,subject){
 export const admission={exempt:path=>path==='/api/delegations/revoke'};
 export const stages={
  async public({request,env,path,local}){
-  if(!enabled(env))return;
+  if(!flagReadable(env,'BINDLEBOX_ENABLED',true))return;
   const match=STATUS.exec(path);if(!match)return;
   if(!['GET','HEAD'].includes(request.method))return json({error:'method_not_allowed',message:'Use GET.'},405,{...publicHeaders,Allow:'GET, HEAD'});
   const [,subject,jkt]=match;
@@ -47,7 +47,7 @@ export const stages={
  },
  // Owner views and revocation (bindlebox §3.2: the owner can revoke any delegate key, a client's keys, or all).
  async owner({request,env,path,object,id}){
-  if(!enabled(env)||!path.startsWith('/api/delegations'))return;
+  if(!flagReadable(env,'BINDLEBOX_ENABLED',true)||!path.startsWith('/api/delegations'))return;
   if(path==='/api/delegations'){const refused=only(request,'GET');if(refused)return refused;return json(await object.listDelegations(id));}
   if(path==='/api/delegations/revoke'){const refused=only(request,'POST');if(refused)return refused;return json(await object.revokeDelegations(id,await body(request,4096)));}
  },

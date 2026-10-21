@@ -115,7 +115,7 @@ test('real password setup resumes, recovery rotates, contacts constrain messages
   await page.getByRole('button',{name:'Resources',exact:true}).click();await screenshot(page,'live-resources-desktop');
   await page.getByRole('button',{name:'Notifications',exact:true}).click();await screenshot(page,'live-notifications-desktop');
   await page.getByRole('button',{name:'Messages',exact:true}).first().click();
-  const account=await ownerAPI(page,'/api/account',null,'GET');assert.equal(account.cache,'no-store');
+  const account=await ownerAPI(page,'/api/account',null,'GET');assert.equal(account.cache,'private, no-store');
   const collection=account.body.collections[0].id;
   const contact=await ownerAPI(page,'/api/contacts',{name:'Adversarial test',collections:[collection],mimeTypes:['text/html'],expiresAt:Date.now()+3600000,maxMessages:1,maxMessageBytes:65536,maxBytes:65536});assert.equal(contact.status,200);
   const share=new URL(contact.body.url);assert.ok(share.pathname.includes('/contact/'));assert.ok(share.searchParams.get('sig'));assert.equal((await context.request.get(share.href,{headers:{Accept:'application/vnd.bindle.contact-token+jwt'}})).status(),406);

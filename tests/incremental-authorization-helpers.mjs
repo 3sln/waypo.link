@@ -43,11 +43,11 @@ export function consentPort(){
  const pin=(id,methods)=>({schema:{$id:id,'x-methods':methods},digest:'sha256-fixture'});
  return createConsentProvider({contracts:{[CALENDAR]:pin(CALENDAR,{readEvents:{effect:'read'},createEvent:{effect:'write'}}),[MAIL]:pin(MAIL,{send:{effect:'write',categories:['send-as-you']},list:{effect:'read'}})},apps:{[tasks.id]:{reviewed:true},[stranger.id]:{reviewed:false}},registrableDomain});
 }
-export function fixture({start,limits,schemas=SCHEMAS}={}){
+export function fixture({start,limits,schemas=SCHEMAS,featureAllowed}={}){
  const time=clock(start),p=ports({time}),store=new MemoryMessagingStore(),pins=[];
  const clients=new Map([tasks,tasksMobile,stranger].map(c=>[c.id,c]));
  const pinSchema=async url=>{pins.push(url);if(!Object.hasOwn(schemas,url))throw Object.assign(new Error('unsupported'),{code:'unsupported_fragment'});return {schema:structuredClone(schemas[url]),digest:createHash('sha256').update(canonical(schemas[url])).digest('base64url')};};
- const incremental=createIncrementalProvider({store,issuer,crypto:webcrypto,clock:time,registrableDomain,grants:p.grantsPort,preferences:p.preferencesPort,sessions:p.sessionsPort,consent:consentPort(),pinSchema,clients:id=>clients.get(id)??null,limits});
+ const incremental=createIncrementalProvider({featureAllowed,store,issuer,crypto:webcrypto,clock:time,registrableDomain,grants:p.grantsPort,preferences:p.preferencesPort,sessions:p.sessionsPort,consent:consentPort(),pinSchema,clients:id=>clients.get(id)??null,limits});
  for(const client of [tasks,tasksMobile,stranger])p.connect(client.id);
  return {time,p,store,incremental,pins,clients};
 }

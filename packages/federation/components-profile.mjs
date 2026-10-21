@@ -1,3 +1,4 @@
+import {capability} from '../flags/read.mjs';
 // 3sln.me components profile (provider-operated components: frame, islands, key-bound embed credentials). It is a
 // 3sln.me-defined sub-spec, not part of the Bindle protocol (docs/profiles/components-v1.md). This module is the
 // only place that knows the declaration members: logic reads configured values through componentsProfile() and
@@ -12,7 +13,7 @@ export const COMPONENTS_PARTS={avatar:{versions:[1]},'account-switcher':{version
  * HTTPS origin without an IP literal; loopback http/IP origins are accepted only under LOCAL_DEVELOPMENT. A
  * misconfigured value disables components (no embed routes, no declaration) instead of failing every request. */
 export function componentsProfile(config){
- const embedOrigin=config?.EMBED_ORIGIN;if(config?.FEDERATION_ENTRY_ENABLED!=='true'||!embedOrigin)return null;
+ const embedOrigin=config?.EMBED_ORIGIN;if(!capability(config,'FEDERATION_ENTRY_ENABLED')||!embedOrigin)return null;
  let url;try{url=new URL(embedOrigin);}catch{return null;}
  const local=config.LOCAL_DEVELOPMENT==='true',ip=/^\[|^\d+(?:\.\d+){3}$/.test(url.hostname);
  if(url.origin!==embedOrigin||url.origin===config.APP_ORIGIN||!local&&(url.protocol!=='https:'||ip)||local&&!['https:','http:'].includes(url.protocol))return null;

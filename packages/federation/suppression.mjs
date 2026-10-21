@@ -1,3 +1,4 @@
+import {siteGlobal} from '../flags/read.mjs';
 // IA-2: request suppression, caps and the decline ladder (docs/spec/incremental-authorization.md §9, §10). Owner data
 // held in the owner shard's federation store next to grants, keyed by entity and *app site*: the registrable domain of
 // the client's verified origin, so sibling client IDs (web, mobile) share every record and counter (§9.1). Nothing
@@ -87,7 +88,7 @@ export class RequestSuppressions {
  async export(tx,{subject}){return {suppressions:await this.list(tx,{subject})};}
  async erase(tx,{subject}){let removed=0;for(const kind of ['s','c','l','d'])for(const row of await tx.list(suppressionKey(kind,subject,''))){await tx.delete(row.key);removed++;}return {removed};}
 }
-const enabled=config=>{if(config?.INCREMENTAL_AUTH_ENABLED!==true&&config?.INCREMENTAL_AUTH_ENABLED!=='true')fail('not_found','Not found.');};
+const enabled=config=>{if(!siteGlobal(config,'INCREMENTAL_AUTH_ENABLED'))fail('not_found','Not found.');};
 /** Owner operations (CX §7.1 access views; mounted by CX-3). The owner names an app by client ID; the provider maps it
  * to the app site. Removing a suppression never re-sends or replays an earlier request. */
 export class SuppressionList extends AppQuery {static operation='federation.incremental.suppressions';static deps=['config','incremental'];fetch({config,incremental}){enabled(config);return incremental.suppressionList(ownerOf(this.actor),this.input??{});}}

@@ -1,3 +1,4 @@
+import {flagsFor,capability,siteGlobal,siteEnabled,featureConfig,existingFeature} from './account/flags.mjs';
 import {federationSchemas} from './federation.mjs';
 import {verifyProof,dpopNonces,consumeProof,DPOP_TYP} from '../federation/dpop.mjs';
 import {consentContracts} from '../consent/contracts.mjs';
@@ -17,15 +18,15 @@ import {systemClock,cryptoRandom,nullAudit} from '../app/providers.mjs';
 import {IncrementalAdmit,IncrementalBegin,IncrementalDecide,IncrementalAbandon,IncrementalExchange,IncrementalCleanup,IncrementalLoginDelta,IncrementalLoginOutcome} from '../federation/incremental.mjs';
 import {SuppressionList,SuppressionAdd,SuppressionRemove,SuppressionExport,SuppressionErase,RequestOwnerActed} from '../federation/suppression.mjs';
 
-export const incrementalAuthorizationEnabled=config=>config?.INCREMENTAL_AUTH_ENABLED===true||config?.INCREMENTAL_AUTH_ENABLED==='true';
+export const incrementalAuthorizationEnabled=config=>siteGlobal(config,'INCREMENTAL_AUTH_ENABLED');
 /** Mount evidence: the flag plus the entry routes the intents ride on. The adapter still has to supply the provider. */
-export const incrementalMountable=config=>incrementalAuthorizationEnabled(config)&&config.FEDERATION_ENABLED==='true'&&config.FEDERATION_ENTRY_ENABLED==='true';
+export const incrementalMountable=config=>incrementalAuthorizationEnabled(config)&&siteGlobal(config,'FEDERATION_ENABLED')&&capability(config,'FEDERATION_ENTRY_ENABLED');
 /** The adapter port over one `incremental` provider; null (unmounted) with the flag off. */
-export function incrementalRunner({config,incremental,clock=systemClock}){
- if(!incrementalAuthorizationEnabled(config)||!incremental)return null;
- const engine=()=>createAppEngine({providers:{config,incremental,clock,random:cryptoRandom,audit:nullAudit}});
- const act=async(Kind,input,actor)=>{const e=engine();try{return await perform(e,new Kind({input,...actor?{actor}:{}}));}finally{await e.dispose();}};
- const query=async(Kind,input,actor)=>{const e=engine();try{return await read(e,new Kind({input,actor}));}finally{await e.dispose();}};
+export function incrementalRunner({config,incremental,clock=systemClock,provision=false}){
+ if(!provision&&!existingFeature(config,'INCREMENTAL_AUTH_ENABLED')||!incremental)return null;
+ const engine=(Kind,input,actor)=>{const ctx=actor?.owner?{subject:{kind:'account',owner:actor.owner}}:null,reverse=[IncrementalAbandon,SuppressionList,SuppressionRemove,SuppressionExport,SuppressionErase,RequestOwnerActed].includes(Kind),background=Kind===IncrementalCleanup,projected=featureConfig(config,ctx),settings=reverse||background?new Proxy(projected,{get:(target,name,receiver)=>name==='INCREMENTAL_AUTH_ENABLED'?(reverse||flagsFor(config).background(name)?'true':'false'):Reflect.get(target,name,receiver)}):projected;return createAppEngine({providers:{config:settings,flags:{for:ctx=>flagsFor(config,ctx)},incremental,clock,random:cryptoRandom,audit:nullAudit}});};
+ const act=async(Kind,input,actor)=>{const e=engine(Kind,input,actor);try{return await perform(e,new Kind({input,...actor?{actor}:{}}));}finally{await e.dispose();}};
+ const query=async(Kind,input,actor)=>{const e=engine(Kind,input,actor);try{return await read(e,new Kind({input,actor}));}finally{await e.dispose();}};
  const owner=id=>({kind:'owner',owner:id});
  return Object.freeze({mounted:true,admit:input=>act(IncrementalAdmit,input),begin:input=>act(IncrementalBegin,input),decide:input=>act(IncrementalDecide,input),abandon:input=>act(IncrementalAbandon,input),exchange:input=>act(IncrementalExchange,input),cleanup:input=>act(IncrementalCleanup,input),loginDelta:input=>act(IncrementalLoginDelta,input),loginOutcome:input=>act(IncrementalLoginOutcome,input),
   suppressionList:(id,input)=>query(SuppressionList,input,owner(id)),suppressionAdd:(id,input)=>act(SuppressionAdd,input,owner(id)),suppressionRemove:(id,input)=>act(SuppressionRemove,input,owner(id)),
@@ -56,15 +57,15 @@ import {createConsentProvider} from '../consent/index.mjs';
 import {clientSite} from '../federation/client-metadata.mjs';
 import {pinSchema} from '../federation/schema.mjs';
 /** Durable pre-owner state; all owner data is read/committed on its FederationService shard. */
-export function federationIncremental({config,store,shard}){
- if(!incrementalMountable(config))return null;
+export function federationIncremental({config,store,shard,provision=false}){
+ if(!provision&&!incrementalMountable(config))return null;
  const schemas=federationSchemas(config),clients=typeof config.FEDERATION_CLIENTS==='string'?JSON.parse(config.FEDERATION_CLIENTS):config.FEDERATION_CLIENTS??[];
  const call=name=>input=>{const prefix=`${config.APP_ORIGIN}/entities/`,owner=input?.subject?.startsWith(prefix)?input.subject.slice(prefix.length):'';if(!/^[a-f0-9-]{36}$/.test(owner))throw Object.assign(new Error('Invalid account.'),{code:'forbidden'});return shard(owner).incrementalPort(name,input);};
- const provider=createIncrementalProvider({store,issuer:config.APP_ORIGIN,registrableDomain:clientSite,clients:id=>clients.find(c=>c.id===id),consent:{model:async input=>createConsentProvider({contracts:await consentContracts(),manifests:Object.fromEntries(Object.entries(schemas).map(([url,schema])=>[url,{schema}])),apps:Object.fromEntries(clients.map(c=>[c.id,{reviewed:true}])),registrableDomain:clientSite}).model(input)},
-  pinSchema:url=>pinSchema({store,crypto,schemaHosts:Object.keys(schemas).map(url=>new URL(url).host),schemaFetcher:async url=>{if(!Object.hasOwn(schemas,url))throw Object.assign(new Error('Unsupported fragment.'),{code:'unsupported_fragment'});return structuredClone(schemas[url]);}},url),
+ const provider=createIncrementalProvider({store,issuer:config.APP_ORIGIN,featureAllowed:({subject,clientId})=>siteEnabled(config,'INCREMENTAL_AUTH_ENABLED',{subject:subject?.startsWith(config.APP_ORIGIN+'/entities/')?{kind:'account',owner:subject.slice((config.APP_ORIGIN+'/entities/').length)}:{kind:'anonymous'},...clientId?{client:{clientId}}:{}}),registrableDomain:clientSite,clients:id=>clients.find(c=>c.id===id),consent:{model:async input=>createConsentProvider({contracts:await consentContracts(),manifests:Object.fromEntries(Object.entries(federationSchemas(config)).map(([url,schema])=>[url,{schema}])),apps:Object.fromEntries(clients.map(c=>[c.id,{reviewed:true}])),registrableDomain:clientSite}).model(input)},
+  pinSchema:url=>{const schemas=federationSchemas(config);return pinSchema({store,crypto,schemaHosts:Object.keys(schemas).map(url=>new URL(url).host),schemaFetcher:async url=>{if(!Object.hasOwn(schemas,url))throw Object.assign(new Error('Unsupported fragment.'),{code:'unsupported_fragment'});return structuredClone(schemas[url]);}},url);},
   grants:Object.fromEntries(['connection','siteConnection','current','commit'].map(n=>[n,call(n)])),preferences:Object.fromEntries(['read','receivers','candidates','save'].map(n=>[n,call(n)])),sessions:Object.fromEntries(['newest','issue','revoke'].map(n=>[n,call(n)]))});
- const runner=incrementalRunner({config,incremental:provider}),nonces=dpopNonces({secret:config.DPOP_NONCE_KEY||config.KEY_ENCRYPTION_KEY});
- return Object.freeze({...runner,tokenNonce:()=>nonces.issue('token'),async tokenProof(proof){const verified=await verifyProof(crypto,proof,{typ:DPOP_TYP,htm:'POST',htu:`${config.APP_ORIGIN}/oauth/token`,now:Date.now(),nonce:value=>nonces.check('token',value)});await store.transaction(tx=>consumeProof(tx,'incremental-dpop/',verified,crypto,Date.now));return verified.jkt;},async cleanup(input){const result=await runner.cleanup(input);await store.transaction(async tx=>{for(const row of await tx.list('incremental-dpop/'))if(row.value.expiresAt<=Date.now())await tx.delete(row.key);});return result;}});
+ const runner=incrementalRunner({config,incremental:provider,provision}),nonces=dpopNonces({secret:config.DPOP_NONCE_KEY||config.KEY_ENCRYPTION_KEY});
+ return Object.freeze({...runner,get mounted(){return incrementalMountable(config);},tokenNonce:()=>nonces.issue('token'),async tokenProof(proof){const verified=await verifyProof(crypto,proof,{typ:DPOP_TYP,htm:'POST',htu:`${config.APP_ORIGIN}/oauth/token`,now:Date.now(),nonce:value=>nonces.check('token',value)});await store.transaction(tx=>consumeProof(tx,'incremental-dpop/',verified,crypto,Date.now));return verified.jkt;},async cleanup(input){const result=await runner.cleanup(input);await store.transaction(async tx=>{for(const row of await tx.list('incremental-dpop/'))if(row.value.expiresAt<=Date.now())await tx.delete(row.key);});return result;}});
 }
 export const INCREMENTAL_STORE='bindle-incremental-v1';
 export const INCREMENTAL_METHODS=['admit','begin','decide','abandon','exchange','cleanup','loginDelta','loginOutcome','tokenProof','tokenNonce','suppressionList','suppressionAdd','suppressionRemove','suppressionExport','suppressionErase','ownerActed'];

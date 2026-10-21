@@ -1,3 +1,4 @@
+import {existingFeature,siteEnabled} from './flags.mjs';
 import {key} from '../../core/records.mjs';
 // AccountController slice 10, Notifications, push, app connections and MCP account tools (docs/architecture/app-engine.md §12): notification preferences, push devices, app connections and MCP account operations.
 // `methods` are installed on AccountController.prototype (`this` is the controller); `rpc` lists the methods
@@ -8,7 +9,7 @@ import {ACTIVITY_PUSH_OWNER_OPERATIONS} from '../../messaging/notifications.mjs'
 import {operate} from '../../app/engine.mjs';
 
 export const methods={
-  async approvalNoticeContacts(owner){if(this.config.DEVICE_AUTHORIZATION_ENABLED!=='true')return {subscriptions:[]};return {subscriptions:[...(await this.metadata.list({prefix:key('push-subscription',owner)})).values()].filter(r=>r?.owner===owner&&typeof r.endpoint==='string').slice(0,10)};},
+  async approvalNoticeContacts(owner){if(!siteEnabled(this.config,'DEVICE_AUTHORIZATION_ENABLED',{subject:{kind:'account',owner}},true))return {subscriptions:[]};return {subscriptions:[...(await this.metadata.list({prefix:key('push-subscription',owner)})).values()].filter(r=>r?.owner===owner&&typeof r.endpoint==='string').slice(0,10)};},
   async appConnections(owner){return this.apps.list(owner);},
   async appConnectionBinding(owner,clientId){return this.apps.binding(owner,clientId);},
   async appConnect(owner,client,expected){return this.apps.register(owner,client,expected);},
@@ -26,7 +27,7 @@ export const methods={
   async unsubscribeLink(owner){return `${owner}.${await this.notifications.issueUnsubscribe(owner,'email')}`;},
   // ACT-2 owner activity push settings; the only entry point to those engine operations, absent with the flag off.
   async activityPush(owner,name,{id,input}={}){
-   if(this.config.ACTIVITY_V2_ENABLED!=='true'||typeof name!=='string'||!Object.hasOwn(ACTIVITY_PUSH_OWNER_OPERATIONS,name))throw Object.assign(new Error('Not found.'),{code:'not_found',status:404});
+   if(!existingFeature(this.config,'ACTIVITY_V2_ENABLED',owner,true)||!['settings','explain'].includes(name)&&input?.enabled!==false&&!siteEnabled(this.config,'ACTIVITY_V2_ENABLED',{subject:{kind:'account',owner}},true)||typeof name!=='string'||!Object.hasOwn(ACTIVITY_PUSH_OWNER_OPERATIONS,name))throw Object.assign(new Error('Not found.'),{code:'not_found',status:404});
    const Operation=ACTIVITY_PUSH_OWNER_OPERATIONS[name];return operate(this.engine,new Operation({actor:{kind:'owner',owner},id,input:structuredClone(input)}));
   },
 };

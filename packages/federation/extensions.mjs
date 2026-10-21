@@ -1,3 +1,4 @@
+import {siteGlobal} from '../flags/read.mjs';
 import {AppAction,AppQuery} from '../app/engine.mjs';
 import {canonical,digest,boundedString} from '../messaging/store.mjs';
 import {fail,object,https,strings,validateSchema,validateFields,validateValue} from './schema.mjs';
@@ -115,7 +116,7 @@ export function slotOperationResult(state){
 
 // Unmounted edge operations. Future adapters bind this provider explicitly; config alone never advertises support.
 export function createExtensionsProvider(options={}){return Object.freeze({validateSlot:input=>validateSlotManifest(input.schema,input.url??input.schema?.id,{contracts:options.contracts}),declarations:input=>validateExtensions(input.entries,{kind:input.kind,slots:options.slots,contracts:options.contracts}),selection:input=>createSlotOperation(input.schema,input.occupants,{contracts:options.contracts,consumer:input.consumer,featureEnabled:input.featureEnabled}),pin:input=>pinSlotManifest(options,input.url,input.digest)});}
-function enabled(config){if(config?.EXTENSIONS_ENABLED!==true&&config?.EXTENSIONS_ENABLED!=='true')fail('extensions_disabled');}
+function enabled(config){if(!siteGlobal(config,'EXTENSIONS_ENABLED'))fail('extensions_disabled');}
 export class SlotManifest extends AppQuery {static operation='extensions.slot';static deps=['config','extensions'];fetch({config,extensions}){enabled(config);return extensions.validateSlot(this.input);}}
 export class ExtensionDeclarations extends AppQuery {static operation='extensions.declarations';static deps=['config','extensions'];fetch({config,extensions}){enabled(config);return extensions.declarations(this.input);}}
 export class SlotSelection extends AppQuery {static operation='extensions.selection';static deps=['config','extensions'];fetch({config,extensions}){enabled(config);return extensions.selection(this.input);}}

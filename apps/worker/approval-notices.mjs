@@ -1,3 +1,4 @@
+import {siteGlobal} from '../../packages/flags/read.mjs';
 // LA7: injected after-approval port. The integrator supplies verified owner contacts;
 // no account lookup, production delivery, or notification on pending requests is implied.
 import {Action,Engine,Provider} from '../../vendor/ngin/index.js';
@@ -34,7 +35,7 @@ export class SendApprovalNotice extends Action {
 export function createApprovalNotices(ports){const engine=new Engine({providers:{approvalDelivery:Provider.fromSingleton(ports)}});return {approved:notice=>engine.dispatch(new SendApprovalNotice(notice)).next('complete'),dispose:()=>engine.dispose()};}
 /** Host composition: verified identity contact and the account dispatcher subscriptions, never request text. */
 export function hostApprovalNotices({config,repository,accounts,mail,push}){
- if(config.DEVICE_AUTHORIZATION_ENABLED!=='true')return undefined;
+ if(!siteGlobal(config,'DEVICE_AUTHORIZATION_ENABLED',true))return undefined;
  return createApprovalNotices({enabled:true,origin:config.APP_ORIGIN,mail,push,owner:async id=>{
   const owner=await repository.get(id);if(owner?.status!=='active')return null;
   const result=await accounts.get(id).invoke({method:'approvalNoticeContacts',args:[id]});if(result?.$fault)throw new Error('Notice contacts unavailable.');

@@ -1,5 +1,9 @@
 // Helpers shared by the HTTP router (packages/runtime/http.mjs) and its per-slice route modules
 // (packages/runtime/routes/index.mjs): responses, cookies, bounded bodies, rate limits and the account RPC handle.
+import {createFlags} from '../../flags/evaluate.mjs';
+import {getFlag} from '../../flags/registry.mjs';
+import {legacyValue} from '../../flags/env.mjs';
+import {flagContext} from '../flags.mjs';
 import {enforceAbusePolicy} from '../../core/abuse-policy.mjs';
 import {CONTACT_DELIVERY_STATUS} from '../../messaging/contact-delivery-service.mjs';
 
@@ -20,7 +24,22 @@ export async function limit(env,{operation,remoteIP,region,handle,phase,onDenied
   return enforceAbusePolicy({consume:async window=>{if(window.signup){if(!env.ABUSE.consumeSignup)throw Object.assign(new Error('Signup capacity is unavailable.'),{code:'signup_capacity_unavailable',status:503});// The admission ID makes a redelivered capacity claim idempotent: one unit per signup.
 const receipt=typeof admissionId==='string'?{admissionId,admissionDigest:[...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode('signup\0'+window.signup.kind+'\0'+admissionId)))].map(x=>x.toString(16).padStart(2,'0')).join('')}:{};const result=await env.ABUSE.consumeSignup(window.key,{limit:window.limit,freeLimit:window.signup.freeLimit,kind:window.signup.kind,...receipt});if(result?.admitted===true)return true;if(!['free','global'].includes(result?.capacity))throw Object.assign(new Error('Signup capacity is unavailable.'),{code:'signup_capacity_unavailable',status:503});throw Object.assign(new Error(result.capacity==='free'?'Free signups are closed for now while we bootstrap and scale.':'Signups are closed for now while we bootstrap and scale.'),{code:'signup_capacity_reached',capacity:result.capacity,status:503});}const admitted=await consume(env,window.key,window.windowMs,window.limit,window.lifetime===true);if(!admitted)onDenied?.(window);return admitted;}},{operation,phase,signupKind,ipHash:ip,subnetHash:network,handleHash:handle?await pseudonym(handle,secret):undefined,regionHash:await pseudonym(region||'unknown',secret),signupLimits:env});
 }
-export function signupEnabled(env){if(env.SIGNUP_ENABLED==='false')return false;const present=value=>typeof value==='string'&&value.trim().length>0;const local=env.LOCAL_DEVELOPMENT==='true';return (env.SIGNUP_CONTACT_REQUIRED!=='true'||env.EMAIL_SETUP_AVAILABLE===true||env.PUSH_AVAILABLE===true)&&present(env.RECOVERY_SIGNING_KEY)&&(local||(env.SIGNUP_ENABLED===undefined?env.RELEASE_READY==='true':env.SIGNUP_ENABLED==='true')&&[env.TURNSTILE_SITE_KEY,env.TURNSTILE_SECRET_KEY,env.KEY_ENCRYPTION_KEY].every(present));}
+/** The platform port is already pinned. The empty-store fallback supports direct/local adapters. */
+export const routeFlags=(env,ctx={})=>(env.flags??env.FLAGS??createFlags({snapshot:{v:1,version:0,issuedAt:0,flags:{}},env})).for(env.flags||env.FLAGS?ctx:flagContext(ctx,{request:ctx.request,platform:env.FLAGS_PLATFORM??'worker',now:Date.now()}));
+export const capability=(env,name)=>legacyValue(name,env,{platform:env.FLAGS_PLATFORM??'worker'});
+/** Preserve strict-string sites during the legacy cutover; managed values use the evaluator. */
+export function flagEnabled(env,name,ctx={},strict=false){const flags=routeFlags(env,ctx),decision=flags.evaluate(name),state=flags.envState(name),legacy=state.state==='force-on-legacy'&&(decision.reason==='legacy-env'||flags.version===0&&['DEVICE_AUTHORIZATION_ENABLED','INCREMENTAL_AUTH_ENABLED','BROKERING_ENABLED'].includes(name)&&getFlag(name).requires.some(dep=>decision.reason==='dependency:'+dep&&flags.evaluate(dep).reason==='no-record'));return legacy?strict?state.raw==='true':state.value:decision.value;}
+/** Protocol declarations and mounts ignore audience rules. */
+export const flagGlobal=(env,name)=>routeFlags(env).global(name)||flagEnabled(env,name)&&routeFlags(env).envState(name).state==='force-on-legacy';
+/** Legacy mounts stay hidden until console adoption. Once managed, retained owner paths ignore targeting and kills. */
+export const flagReadable=(env,name,strict=false)=>routeFlags(env).version>0||flagEnabled(env,name,{},strict);
+export const sessionFeatures=(env,owner)=>{const ctx={subject:{kind:'account',owner}};return {deviceAuthorizationEnabled:flagEnabled(env,'DEVICE_AUTHORIZATION_ENABLED',ctx),incrementalAuthorizationEnabled:flagEnabled(env,'INCREMENTAL_AUTH_ENABLED',ctx)&&env.INCREMENTAL_AUTHORIZATION?.mounted===true,integrationsEnabled:flagEnabled(env,'INTEGRATIONS_ENABLED',ctx,true),eventBusesEnabled:flagEnabled(env,'EVENT_BUSES_ENABLED',ctx,true),incrementalAuthEnabled:flagEnabled(env,'INCREMENTAL_AUTH_ENABLED',ctx)&&env.INCREMENTAL_AUTHORIZATION?.mounted===true,activityV2Enabled:flagEnabled(env,'ACTIVITY_V2_ENABLED',ctx),semanticSearchEnabled:flagEnabled(env,'SEMANTIC_SEARCH_ENABLED',ctx),beamEnabled:flagEnabled(env,'BEAM_ENABLED',ctx),extensionsEnabled:flagEnabled(env,'EXTENSIONS_ENABLED',ctx)};};
+export function signupEnabled(env,ctx={}){
+ const flags=routeFlags(env,ctx),decision=flags.evaluate('SIGNUP_ENABLED'),raw=flags.envState('SIGNUP_ENABLED').raw,local=env.LOCAL_DEVELOPMENT==='true',present=value=>typeof value==='string'&&value.trim().length>0;
+ // Local signup and RELEASE_READY were implicit defaults before console ownership.
+ const enabled=decision.reason==='no-record'?local||raw===undefined&&env.RELEASE_READY==='true':decision.value;
+ return enabled&&(env.SIGNUP_CONTACT_REQUIRED!=='true'||capability(env,'EMAIL_SETUP_AVAILABLE')||capability(env,'PUSH_AVAILABLE'))&&present(env.RECOVERY_SIGNING_KEY)&&(local||[env.TURNSTILE_SITE_KEY,env.TURNSTILE_SECRET_KEY,env.KEY_ENCRYPTION_KEY].every(present));
+}
 export async function turnstile(env,input){
   if(env.LOCAL_DEVELOPMENT==='true'&&input.token==='local-browser-test-token')return true;
   if(!env.TURNSTILE_SECRET_KEY)return false;

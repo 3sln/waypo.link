@@ -1,3 +1,4 @@
+import {siteGlobal} from '../flags/read.mjs';
 // Provider brokering key set (integrations §5.3, §7 item 7) and RFC 9068 brokered access tokens. ES256 (P-256) only.
 // Keys are purpose-separated (one kid per purpose), sealed at rest with an HKDF-derived AES-GCM key whose AAD binds
 // issuer, kid, purpose and public point, published before use and retained after retirement until every token they
@@ -14,7 +15,7 @@ const TYPES=Object.freeze({invoke:'at+jwt',describe:'at+jwt',discover:'at+jwt',e
 const N=0xffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551n,HALF=N>>1n;
 const big=bytes=>BigInt('0x'+Array.from(bytes,b=>b.toString(16).padStart(2,'0')).join(''));
 const lowS=sig=>{const s=big(sig.slice(32));if(s<=HALF)return sig;const out=new Uint8Array(sig);out.set(Uint8Array.from((N-s).toString(16).padStart(64,'0').match(/../g),h=>parseInt(h,16)),32);return out;};
-export const brokeringEnabled=config=>config?.BROKERING_ENABLED==='true';
+export const brokeringEnabled=config=>siteGlobal(config,'BROKERING_ENABLED',true);
 /** Provisional manifest member. AMD-C6: `brokered-resources.v1` (whose `jwks_uri` this becomes) is declared only once
  * EXT-X8 mounts preferences/v2 and minting; until then the flag publishes the key set without claiming the feature. */
 export const brokeringManifest=issuer=>({brokering_jwks_uri:`${issuer}${BROKERING_JWKS_PATH}`});

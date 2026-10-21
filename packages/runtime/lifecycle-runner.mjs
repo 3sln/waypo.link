@@ -1,3 +1,4 @@
+import {capability,flagsFor} from './account/flags.mjs';
 import {AccountLifecycle} from './account-lifecycle.mjs';
 import {dispatchLifecycleNotice} from './lifecycle-notices.mjs';
 import {key} from '../messaging/store.mjs';
@@ -31,10 +32,10 @@ const KNOWN=new Set(['active','warning',...BLOCKED]);
 export const COLD_MIN_BYTES=4194304;
 const integer=(value,fallback,min,max)=>{const parsed=value===undefined||value===''?fallback:Number(value);return Number.isSafeInteger(parsed)&&parsed>=min&&parsed<=max?parsed:fallback;};
 /** 'off' | 'dry-run' | 'live'. Anything but an exact "true" is off; anything but an exact "false" dry run is dry run. */
-export function lifecycleMode(config={}){if(config.LIFECYCLE_ENABLED!=='true'&&config.LIFECYCLE_ENABLED!==true)return 'off';return config.LIFECYCLE_DRY_RUN==='false'||config.LIFECYCLE_DRY_RUN===false?'live':'dry-run';}
+export function lifecycleMode(config={}){if(!capability(config,'LIFECYCLE_ENABLED'))return 'off';return !flagsFor(config).enabled('LIFECYCLE_DRY_RUN')?'live':'dry-run';}
 export function lifecycleSettings(config={}){
  const mode=lifecycleMode(config),live=mode==='live';
- return {mode,purge:live&&config.LIFECYCLE_PURGE_ENABLED==='true',cold:live&&config.LIFECYCLE_COLD_STORAGE==='true',coldSupported:config.LIFECYCLE_COLD_STORAGE_SUPPORTED===true,coldMinBytes:integer(config.LIFECYCLE_COLD_MIN_BYTES,COLD_MIN_BYTES,0,1073741824),coldBudget:integer(config.LIFECYCLE_COLD_BATCH,16,1,256),purgeBudget:integer(config.LIFECYCLE_PURGE_BATCH,64,1,512),finance:config.LIFECYCLE_FINANCE_REVIEW==='local-only'&&!(live&&config.LIFECYCLE_PURGE_ENABLED==='true')?'local-only':'polar'};
+ return {mode,purge:live&&capability(config,'LIFECYCLE_PURGE_ENABLED'),cold:live&&config.LIFECYCLE_COLD_STORAGE==='true',coldSupported:config.LIFECYCLE_COLD_STORAGE_SUPPORTED===true,coldMinBytes:integer(config.LIFECYCLE_COLD_MIN_BYTES,COLD_MIN_BYTES,0,1073741824),coldBudget:integer(config.LIFECYCLE_COLD_BATCH,16,1,256),purgeBudget:integer(config.LIFECYCLE_PURGE_BATCH,64,1,512),finance:config.LIFECYCLE_FINANCE_REVIEW==='local-only'&&!(live&&capability(config,'LIFECYCLE_PURGE_ENABLED'))?'local-only':'polar'};
 }
 /** Structured operator log; never includes email, push endpoints, tokens or message content. */
 export function lifecycleLog(config,event){const sink=typeof config.LIFECYCLE_LOG==='function'?config.LIFECYCLE_LOG:value=>console.log(JSON.stringify(value));try{sink({event:'account-lifecycle',...event});}catch{}}

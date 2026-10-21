@@ -12,7 +12,7 @@ import {getFlag} from './registry.mjs';
 import {assertBillingConfiguration} from '../billing/catalog.mjs';
 export function legacyValue(name,env={},options={}){
  const f=getFlag(name),raw=env[name],value=raw===undefined?(options.platform==='node'?f.envDefaults.node??f.envDefault:f.envDefault):raw;
- switch(f.envParse){case 'true-only':return value===true;case 'boolean':return value===true||value==='true';case 'not-false':return value!=='false';case 'not-false-boolean':return value!==false&&value!=='false';case 'work-authority':return value===true||value==='true'||value===undefined&&Boolean(env.WORK_AUTHORITY);default:return value==='true';}
+ switch(options.parse??f.envParse){case 'true-only':return value===true;case 'boolean':return value===true||value==='true';case 'not-false':return value!=='false';case 'not-false-boolean':return value!==false&&value!=='false';case 'work-authority':return value===true||value==='true'||value===undefined&&Boolean(env.WORK_AUTHORITY);default:return value==='true';}
 }
 export const envParse=legacyValue;
 export function parseEnv(name,env={},hasRecord=false,options={}){

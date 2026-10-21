@@ -1,3 +1,4 @@
+import {ownerFlags} from './flags.mjs';
 // AccountController slice 13a, Edge engine and identity (docs/architecture/app-engine.md §12): account identity keys and signup bookkeeping.
 // `methods` are installed on AccountController.prototype (`this` is the controller); `rpc` lists the methods
 // `invoke` accepts and the placement policy it applies to each (packages/runtime/account/index.mjs).
@@ -7,8 +8,7 @@ import {encryptSecret,decryptSecret} from '../secrets.mjs';
 import {StorageError} from '../../storage/policy.mjs';
 import {createAppEngine,perform,read,operations,AppQuery} from '../../app/engine.mjs';
 import {systemClock,cryptoRandom,nullAudit} from '../../app/providers.mjs';
-import {integrationsEnabled} from '../../app/domains/connections.mjs';
-import {DelegationRegistry,delegationsProvider,delegationsEnabled,DELEGATION_OPERATIONS,DelegationList,DelegationStatus,RevokeDelegation,ReconcileDelegations} from '../../identity/delegation.mjs';
+import {DelegationRegistry,delegationsProvider,DELEGATION_OPERATIONS,DelegationList,DelegationStatus,RevokeDelegation,ReconcileDelegations} from '../../identity/delegation.mjs';
 
 // One identity key engine per controller, over the controller's transactional account store (packages/identity/keys.mjs).
 // Private keys are sealed under KEY_ENCRYPTION_KEY exactly as before; nothing here logs or returns key material
@@ -28,12 +28,12 @@ const delegationEngines=new WeakMap();
 function delegationEngine(c){
  let engine=delegationEngines.get(c);
  if(!engine){
-  const registry=new DelegationRegistry({store:c.store,issuer:c.config.APP_ORIGIN,signer:owner=>c.signingKey(owner),occupant:typeof c.config.DELEGATION_SLOT_OCCUPANT==='function'?c.config.DELEGATION_SLOT_OCCUPANT:integrationsEnabled(c.config)?query=>c.delegationSlotOccupant(query):undefined,account:typeof c.config.IDENTITY_ACCOUNT==='function'?owner=>c.config.IDENTITY_ACCOUNT(owner):undefined,lifetime:c.config.DELEGATION_CERTIFICATE_SECONDS,allowLoopback:c.config.LOCAL_DEVELOPMENT==='true'});
-  engine=createAppEngine({providers:{clock:systemClock,random:cryptoRandom,audit:nullAudit,delegations:delegationsProvider({registry,enabled:delegationsEnabled(c.config)})}});delegationEngines.set(c,engine);
+  const registry=new DelegationRegistry({store:c.store,issuer:c.config.APP_ORIGIN,signer:owner=>c.signingKey(owner),occupant:typeof c.config.DELEGATION_SLOT_OCCUPANT==='function'?c.config.DELEGATION_SLOT_OCCUPANT:query=>c.delegationSlotOccupant(query),account:typeof c.config.IDENTITY_ACCOUNT==='function'?owner=>c.config.IDENTITY_ACCOUNT(owner):undefined,lifetime:c.config.DELEGATION_CERTIFICATE_SECONDS,allowLoopback:c.config.LOCAL_DEVELOPMENT==='true'});
+  engine=createAppEngine({providers:{clock:systemClock,random:cryptoRandom,audit:nullAudit,delegations:delegationsProvider({registry,enabled:true,config:c.config,flags:c.config.flags})}});delegationEngines.set(c,engine);
  }
  return engine;
 }
-const delegate=(c,Operation,params)=>{const operation=new Operation(params);return operation instanceof AppQuery?read(delegationEngine(c),operation):perform(delegationEngine(c),operation);};
+const delegate=(c,Operation,params)=>{if(['delegations.issue','delegations.renew'].includes(Operation.operation)&&!ownerFlags(c.config,params.actor?.owner,params.actor?.clientId).enabled('BINDLEBOX_ENABLED'))throw new StorageError('not_found','Not found.',404);const operation=new Operation(params);return operation instanceof AppQuery?read(delegationEngine(c),operation):perform(delegationEngine(c),operation);};
 const delegationInput=input=>{if(input===null||typeof input!=='object'||Array.isArray(input))throw new StorageError('invalid_request','Unsupported delegation request.');return structuredClone(input);};
 
 export const methods={

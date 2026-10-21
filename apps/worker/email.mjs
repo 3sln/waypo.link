@@ -1,3 +1,4 @@
+import {capability,siteGlobal} from '../../packages/flags/read.mjs';
 import {approvalNoticeTemplate} from './approval-notices.mjs';
 import { emailLogoBase64 } from '../../packages/branding/email-logo.mjs';
 import { createLocalization } from '../../packages/i18n/index.mjs';
@@ -77,7 +78,7 @@ function emailPresentation({ subject, text, brand, origin }) {
  * idempotency facility. Retry keys are not forwarded as deduplication promises.
  */
 export function mailTransport(env = {}) {
-  if (env.MAIL_ENABLED !== 'true' || typeof env.EMAIL?.send !== 'function' || !validOrigin(env.APP_ORIGIN)) return null;
+  if (!capability(env,'MAIL_ENABLED') || typeof env.EMAIL?.send !== 'function' || !validOrigin(env.APP_ORIGIN)) return null;
   const origin = env.APP_ORIGIN;
   const domain = env.MAIL_SENDER_DOMAIN ?? new URL(origin).hostname;
   const brand = env.BRAND_NAME ?? new URL(origin).hostname;
@@ -108,7 +109,7 @@ export function mailTransport(env = {}) {
   };
   return {
     async sendApprovalNotice({email,notice,locale='en'}) {
-      if(env.DEVICE_AUTHORIZATION_ENABLED!=='true')return {enabled:false};
+      if(!siteGlobal(env,'DEVICE_AUTHORIZATION_ENABLED',true))return {enabled:false};
       const template=approvalNoticeTemplate(notice,{origin,locale});
       return send({from:senders.security,to:email,subject:template.subject,text:template.text});
     },

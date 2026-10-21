@@ -76,9 +76,35 @@ Words to avoid in specs and UI copy:
 | --- | --- |
 | Solo founder's company | "Acme Ltd · Company". One member, who is an admin. |
 | Team inside a company | Either a separate organization ("Payments · Team") connected to the company, or (later) a member set inside it. Design §8.4 says which to use. |
-| Parent and subsidiaries | Three organizations, each with its own connections. The UI shows "Acme UK — shares with Acme Holdings". The spec has no "parent" kind. |
+| Parent and subsidiaries | Three organizations in one `group` relationship (slots "Parent" and "Subsidiary"). The UI shows "Acme UK · Subsidiary in Acme group". Slot names describe, and grant nothing (§6). |
 | Joint venture | An organization with expiring connections to both parents. |
 | Club | "Chess club · Club". |
 | Family | "The Okafors · Household". Minors cannot hold accounts under the current [age policy](../release/age-requirements.md), so household organizations are adults-only until that changes. |
 | Person and organization switchers in the UI | "Personal", then "Acme Ltd", then "Acme UK". |
 | Spec sentence | "An organization grants a member read on a ledger resource. The organization's ERP integration acts for that member with the intersection of both grants." |
+
+## 6. Relation naming check
+
+Added 2026-10-21, rev 4. The user proposed public relation documents ([design §8a](organizations-design.md#8a-relations-proposal-assessment)) and suggested "bond" or "coven". The candidates were scored against the §2 tests, plus T7: the word must name both the public document ("a supply ___") and an instance of it ("Acme's ___ with Beta").
+
+| Candidate | T1 fit | T2 UI | T4–T6 clashes | T7 | Verdict |
+| --- | --- | --- | --- | --- | --- |
+| **relation** (spec) / **relationship** (UI) | ✓ (supply, group, engagement, joint venture, household) | ✓ "Relationships", "Join a supply relationship" | CRM "relationship" means the same thing. No OAuth, SCIM or Bindle clash. | ✓ | **Chosen** |
+| bond | ✓ | ✓ | ✗ Finance and ERP: bonds payable, surety and customs bonds. Collides in the user's first product. | ✓ | Rejected |
+| coven | ~ | ✗ Reads as a joke or as witchcraft | — | ✓ | Rejected |
+| pact | ~ Odd for parent and subsidiary | ✓ | ~ "Pact" contract testing (pact.io); treaty connotation | ✓ | Runner-up |
+| agreement | ✓ | ✓ | ✗ Implies a legal contract; ERP "purchase agreements" | ✓ | Rejected (misleads about legal effect) |
+| alliance | ✗ Peers only | ✓ | — | ✓ | Rejected |
+| covenant | ~ | ~ | ✗ Loan covenants; religious | ✓ | Rejected |
+| association | ✓ | ✓ | ✗ A legal entity type (an association *is* an organization) | ~ | Rejected |
+| federation | ✓ | ~ | ✗ OpenID Federation; "federated" identity | ✓ | Rejected |
+| link, connection | — | — | ✗ Existing Bindle terms | — | Rejected |
+| charter, accord, compact | ~ | ~ | ~ Honda, adjective ambiguity, governance documents | ✓ | Rejected |
+
+**Terms:**
+
+- Spec: **relation** (the document), **relation instance**, **slot**, **access entry**, **edge** and **party**.
+- UI: **Relationship** for an instance ("Acme Ltd ↔ Beta GmbH · Supply"). A **Relationship type** is the document, and roles in it are its slots ("Buyer", "Supplier"), shown with the slot titles from the document.
+- Avoid "relation role" in UI copy. Slots carry no authority by name, and "role" is reserved (§4).
+
+**Open naming clash (review R3-M5).** "Slot" is already a Bindle term (extension slots, T6), and relation access entries reference slot manifests, so one spec section uses "slot" in two senses. The reviewer recommends renaming the relation term to **position** ("the buyer position"; T1–T7 pass, with no Bindle, OAuth or ERP clash found). "Seat" and "side" were considered: "side" fails for more than two positions, and "seat" reads as a billing seat in 3sln.me pricing. This needs the user's decision. Also, "relationship" now names an instance in the UI, while spec §4 rule 4 still says "relationship labels" for local labels; these should become "local labels" when the rename lands.

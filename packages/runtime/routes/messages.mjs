@@ -1,8 +1,9 @@
+// FF-5a: legacy mount visibility is preserved; after console adoption owner reads/reversal ignore targeting.
 // HTTP routes of slice 2, Messages and collections (docs/architecture/app-engine.md §12): prepared postback dispatch, message pages, collections, message reads, updates, presentations and downloads.
 // Stage handlers and route-module shape: packages/runtime/routes/index.mjs.
 import {federationEpoch} from '../federation.mjs';
 import {verifyPreparedPostbackToken} from '../message-postbacks.mjs';
-import {json,body,limit,privateHeaders,accountHandle} from './shared.mjs';
+import {flagReadable,json,body,limit,privateHeaders,accountHandle} from './shared.mjs';
 import {ActivityFeed,ActivityItem,LegacyActivityPage,MarkActivity,ArchiveActivity,DeleteActivity} from '../../app/domains/activity.mjs';
 
 export function allowedMethods(path){
@@ -44,7 +45,7 @@ export const stages={
 // ACT-1 owner activity routes, one engine operation each; absent (404) unless ACTIVITY_V2_ENABLED.
 const invalid=()=>{throw Object.assign(new Error('Choose a valid activity request.'),{code:'invalid_args',status:400});};
 async function activityRoute({request,env,url,path,dispatch}){
- if(env.ACTIVITY_V2_ENABLED!=='true')return json({error:'not_found'},404);
+ if(!flagReadable(env,'ACTIVITY_V2_ENABLED',true))return json({error:'not_found'},404);
  const p=url.searchParams,one=k=>p.getAll(k).length===1,bool=k=>p.get(k)==='true'?true:p.get(k)==='false'?false:invalid();
  if(path==='/api/activity'){
   if([...p.keys()].some(k=>!['app','tagApp','tag','archived','unread','state','limit','cursor'].includes(k)||!one(k))||p.has('tag')!==p.has('tagApp'))invalid();

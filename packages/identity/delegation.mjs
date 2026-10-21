@@ -1,8 +1,8 @@
 // Core feature key-delegation.v1, provider side (docs/spec/bindlebox.md §3.2–§3.4; messaging-extraction.md slice C3;
 // messaging-app.md §4). The provider certifies an app-held per-user P-256 delegate key with a short-lived compact JWS
 // signed by the owner's current identity signing key (packages/identity/keys.mjs). Engine-first: DelegationRegistry is
-// the provider resource, and the Actions/Queries below are the operations over it. Everything is refused with
-// `not_found` unless BINDLEBOX_ENABLED is on.
+// the provider resource, and the Actions/Queries below are the operations over it. New issuance needs
+// BINDLEBOX_ENABLED; owner reads, status and revocations remain available during rollout changes.
 //
 // Core may not import BindleBox (tests/bindlebox/import-boundary.test.mjs), so the certificate encoding is written
 // here against packages/bindlebox-protocol/certificate.mjs (parseDelegation/verifyDelegation) and pinned to it by the
@@ -52,6 +52,7 @@ import { key, base64url, fromBase64url, textEncoder } from '../core/records.mjs'
 import { UUID } from '../core/primitives.mjs';
 import { keyState } from './keys.mjs';
 import { MESSAGING_INGRESS_SLOT } from '../links/types.mjs';
+import {createFlags} from '../flags/evaluate.mjs';
 
 // Placeholder identifiers under spec.bindle.example, equal to bindlebox-protocol PURPOSES (cross-tested).
 const SPEC = 'https://spec.bindle.example/bindlebox/v1';
@@ -71,8 +72,8 @@ const fault = (code, message, status) => { throw new AppFault(code, message, sta
 const forbidden = () => fault('forbidden', 'This app cannot hold delegated signing keys for this account.', 403);
 const invalid = message => fault('invalid_request', message ?? 'Unsupported delegation request.', 400);
 const unavailable = () => fault('delegation_unavailable', 'Delegated signing is unavailable right now.', 503);
-const enabledFlag = value => value === true || value === 'true';
-export const delegationsEnabled = config => enabledFlag(config?.BINDLEBOX_ENABLED);
+/** Creation/renewal only. ctx carries the verified owner subject; reverse/status paths never target. */
+export const delegationsEnabled = (config={},ctx={}) => (config?.flags??config?.FLAGS??createFlags({snapshot:{v:1,version:0,issuedAt:0,flags:{}},env:config??{}})).for(ctx).enabled('BINDLEBOX_ENABLED');
 const CLIENT = value => typeof value === 'string' && value.length > 0 && value.length <= 2048 && value.isWellFormed() && !/[\p{Cc}\p{Bidi_Control}\u2028\u2029\u200b\ufeff]/u.test(value);
 const plain = value => value !== null && typeof value === 'object' && !Array.isArray(value) && Object.getPrototypeOf(value) === Object.prototype;
 const only = (value, names) => plain(value) && Object.keys(value).every(name => names.includes(name));
@@ -301,17 +302,20 @@ export class DelegationRegistry {
 //   {kind:'app', owner, clientId}     issue, renew, revoke {jkt} of its own keys; occupancy decides issuance
 //   {kind:'system', owner}            revoke {clientId}|{all} and reconcile (slot handoff, uninstall, suspension)
 //   {kind:'public', owner}            status only; `owner` is the subject named in the status URL
-export function delegationsProvider({ registry, enabled = false } = {}) {
-  return class extends DelegationsProvider { static deps = []; constructor() { super(); Object.assign(this, { registry, enabled: enabled === true }); } };
+/** config/flags opt into per-owner issuance gates; owner reads, status and all revocations stay available.
+ * A cached engine reads config.flags per lease, so a prior request cannot pin the next request's snapshot. */
+export function delegationsProvider({ registry, enabled = false, config, flags } = {}) {
+  return class extends DelegationsProvider { static deps = []; constructor() { super(); Object.assign(this, { registry, enabled: enabled === true, config, flags }); } };
 }
 export class DelegationsProvider extends Provider {
   async obtain({ actor } = {}) {
-    if (!this.enabled || !this.registry) throw new AppFault('not_found', 'Not found.', 404);
+    if ((!this.config&&!this.flags&&!this.enabled) || !this.registry) throw new AppFault('not_found', 'Not found.', 404);
     if (!UUID.test(actor?.owner ?? '') || !['owner', 'app', 'system', 'public'].includes(actor?.kind) || (actor.kind === 'app' && !CLIENT(actor.clientId))) throw new AppFault('unauthorized', 'Sign in to continue.', 401);
     const registry = this.registry, owner = actor.owner, kind = actor.kind, deny = () => forbidden();
+    const config=this.config??{},flags=config.flags??config.FLAGS??this.flags,admit=()=>{if((this.config||this.flags)&&!delegationsEnabled({...config,flags},{subject:{kind:'account',owner},...actor.clientId?{client:{clientId:actor.clientId}}:{}}))throw new AppFault('not_found','Not found.',404);};
     return Object.freeze({
-      issue: input => kind === 'app' ? registry.issue(owner, { clientId: actor.clientId }, input) : deny(),
-      renew: input => kind === 'app' ? registry.issue(owner, { clientId: actor.clientId }, input, { renew: true }) : deny(),
+      issue: input => { if(kind!=='app')return deny();admit();return registry.issue(owner, { clientId: actor.clientId }, input); },
+      renew: input => { if(kind!=='app')return deny();admit();return registry.issue(owner, { clientId: actor.clientId }, input, { renew: true }); },
       revoke: input => kind === 'public' ? deny() : registry.revoke(owner, { kind, clientId: actor.clientId }, input),
       reconcile: () => ['owner', 'system'].includes(kind) ? registry.reconcile(owner, { kind }) : deny(),
       list: () => kind === 'owner' ? registry.list(owner) : deny(),

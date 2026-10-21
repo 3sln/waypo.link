@@ -24,7 +24,7 @@ const web={id:'https://web.example/app',name:'Web app',origin:'https://web.examp
 const unreviewed={...cli,id:'https://unreviewed.example/cli',origin:'https://unreviewed.example',redirectUris:['https://unreviewed.example/cb'],reviewed:false};
 const body=fields=>new URLSearchParams(fields).toString();
 
-async function fixture({clock=fakeClock(),flag=true,repository,deviceRequests,linkedPollLimits,policy={}}={}){
+async function fixture({clock=fakeClock(),flag=true,repository,deviceRequests,linkedPollLimits,policy={},featureAllowed}={}){
  const id=identityEngine({clock,config:{...identityConfig,deviceAuthorizationEnabled:true},...repository?{repository}:{},...deviceRequests?{deviceRequests}:{},...linkedPollLimits?{linkedPollLimits}:{}});
  const linked=linkedPort(id.engine,{LinkedSystemAction,LinkedApprovalAction,LinkedResolveQuery,LinkedLineageQuery,LinkedOutboxQuery});
  const shards=new Map(),clients=[cli,web,unreviewed];
@@ -35,7 +35,7 @@ async function fixture({clock=fakeClock(),flag=true,repository,deviceRequests,li
    auth:{owner:async(ctx,{mutation})=>{const {account,session}=await id.service.authorized(ctx,mutation);if(account.id!==owner)throw Object.assign(new Error('forbidden'),{code:'forbidden'});return {subject,epoch:'epoch-1',authTime:id.service.authAt(session)};}}});
   attachAppSessions(controller.service,{linked,config:policy});shards.set(owner,controller);}return shards.get(owner);};
  const nonces=dpopNonces({secret:SECRET,crypto:webcrypto,clock:clock.now}),pollLimits=new MemoryLinkedLimits(clock.now);
- const provider=createDeviceGrantProvider({issuer,clients,linked,shard,nonces,limits:new MemoryLinkedLimits(clock.now),pollLimits,crypto:webcrypto,clock:clock.now});
+ const provider=createDeviceGrantProvider({issuer,clients,featureAllowed,linked,shard,nonces,limits:new MemoryLinkedLimits(clock.now),pollLimits,crypto:webcrypto,clock:clock.now});
  const engine=await createTestEngine({providers:{config:{DEVICE_AUTHORIZATION_ENABLED:flag?'true':'false'},deviceGrant:provider}});
  const op=(Kind,input)=>engine.perform(new Kind({input}));
  const iat=()=>Math.floor(clock.now()/1000);
@@ -307,4 +307,18 @@ test('LA3 mount relaxes only a lone Sec-Fetch-Mode cors, preserving every other 
   await stages.public({request,env:{APP_ORIGIN:'https://provider.example',DEVICE_AUTHORIZATION_ENABLED:true,DEVICE_GRANT:grant},path:'/oauth/device_authorization',local:false});
   const lone=Object.keys(headers).length===1&&headers['Sec-Fetch-Mode']==='cors';for(const [name,value] of Object.entries(headers))assert.equal(received[name.toLowerCase()],lone?undefined:value,JSON.stringify(headers));
  }
+});
+
+
+test('rollout context comes from registered clients, linked owner resolution and DPoP-bound sessions',async()=>{
+ let allow=true;const seen=[],f=await fixture({featureAllowed:ctx=>{seen.push(ctx);return allow;}});
+ try{
+  const {owner:session}=await activate(f.id.act),key=await dpopKey(),flow=await f.start(key);
+  assert.deepEqual(seen.at(-1),{clientId:cli.id});
+  await f.review(session,flow);assert.deepEqual(seen.at(-1),{owner:session.account.id,clientId:cli.id});
+  allow=false;await assert.rejects(f.review(session,flow),{code:'access_denied'});
+  allow=true;await f.approve(session,flow);f.clock.advance(5000);const token=await f.poll(key,flow);assert.equal(token.status,200);assert.deepEqual(seen.at(-1),{owner:session.account.id,clientId:cli.id});
+  allow=false;await assert.rejects(f.rpc(key,token.body.access_token),{code:'unauthorized'});
+  const rejected=await f.authorize({client_id:cli.id,dpop_jkt:key.jkt});assert.equal(rejected.body.error,'unauthorized_client');
+ }finally{await f.dispose();}
 });

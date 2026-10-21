@@ -1,3 +1,4 @@
+import {siteGlobal} from '../flags/read.mjs';
 import {AppAction,AppQuery} from '../app/engine.mjs';
 import {canonical} from '../messaging/store.mjs';
 import {fail,object,strings,pinSchema} from './schema.mjs';
@@ -75,6 +76,6 @@ export async function pinBusManifest(options,url,expectedDigest){
  return {...pin,digest:'sha256-'+pin.digest};
 }
 export function createEventBusesProvider(options={}){return Object.freeze({validate:input=>validateBusManifest(input.schema,input.url??input.schema?.id,{contracts:options.contracts}),pin:input=>pinBusManifest(options,input.url,input.digest)});}
-function enabled(config){if(config?.EVENT_BUSES_ENABLED!==true&&config?.EVENT_BUSES_ENABLED!=='true')fail('event_buses_disabled');}
+function enabled(config){if(!siteGlobal(config,'EVENT_BUSES_ENABLED'))fail('event_buses_disabled');}
 export class BusManifest extends AppQuery {static operation='events.manifest';static deps=['config','eventBuses'];fetch({config,eventBuses}){enabled(config);return eventBuses.validate(this.input);}}
 export class PinBusManifest extends AppAction {static operation='events.pin';static deps=['config','eventBuses'];run({config,eventBuses}){enabled(config);return eventBuses.pin(this.input);}}

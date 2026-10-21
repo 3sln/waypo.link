@@ -1,3 +1,4 @@
+import {siteGlobal} from '../flags/read.mjs';
 // IA-1: incremental authorization (`grant-more`) and configuration requests (`configure`) as engine operations
 // (docs/spec/incremental-authorization.md; host design docs/architecture/consent-experience.md). The pre-owner entry
 // store (authorization-entries.mjs) pins client, exact callback, PKCE, state, nonce and the intent members; this module
@@ -111,7 +112,7 @@ export function consentGrants(items){
  * - `pinSchema(url)` → `{schema,digest}` (immutable pins); errors `unsupported_fragment`/`unavailable` map to outcomes.
  * - `clients(clientId)` → verified client snapshot for owner operations; `registrableDomain(host)` → PSL domain.
  */
-export function createIncrementalProvider({store,issuer,crypto=globalThis.crypto,clock=()=>Date.now(),registrableDomain,grants,preferences,sessions,consent,pinSchema,clients,limits={}}={}){
+export function createIncrementalProvider({store,issuer,crypto=globalThis.crypto,clock=()=>Date.now(),registrableDomain,grants,preferences,sessions,consent,pinSchema,clients,featureAllowed=()=>true,limits={}}={}){
  if(!store?.transaction||typeof issuer!=='string'||!grants||!preferences||!sessions||typeof pinSchema!=='function'||typeof registrableDomain!=='function')throw new TypeError('The incremental provider needs a store, issuer, grants, preferences, sessions, pinSchema and a registrable-domain resolver.');
  const L={...INCREMENTAL_LIMITS,...limits},now=()=>clock(),sup=new RequestSuppressions({clock,crypto,registrableDomain,limits:limits.requests});
  const random=(size=32)=>base64url(crypto.getRandomValues(new Uint8Array(size)));
@@ -128,7 +129,7 @@ export function createIncrementalProvider({store,issuer,crypto=globalThis.crypto
  async function admit(input){
   const {entryHash,subject,clientId,client,intent,binding}=input??{};
   if(typeof entryHash!=='string'||!ID.test(entryHash)||!validSubject(subject)||!INCREMENTAL_INTENTS.includes(intent)||client?.id!==clientId||!object(binding)||typeof binding.redirectUri!=='string'||intent==='grant-more'!==(typeof binding.challenge==='string'))generic();
-  const site=appSite(client,registrableDomain);if(!await grants.connection({subject,clientId}))generic();
+  const site=appSite(client,registrableDomain);if(!await grants.connection({subject,clientId})||!featureAllowed({subject,clientId}))generic();
   let record;
   if(intent==='grant-more'){
    const items=[];
@@ -205,7 +206,7 @@ export function createIncrementalProvider({store,issuer,crypto=globalThis.crypto
  const declinedResult=(record,s)=>record.intent==='configure'?{result:'unchanged'}:{outcomes:s.items.map(i=>fragmentOutcome(i,i.current,i.current)),added:false};
  async function begin({entryHash,subject}={}){
   const record=await load(entryHash,subject);if(record.status==='superseded'){await store.transaction(async tx=>{const current=await tx.get(entryKey(entryHash));if(current?.status==='superseded'&&!current.begunAt){current.begunAt=now();await tx.set(entryKey(entryHash),current);}});return {view:{superseded:true}};}if(record.status!=='open')expired();
-  const s=await state(record);
+  if(!featureAllowed(record))fail('access_denied');const s=await state(record);
   // Nothing new: complete without a page, every outcome `granted`, and no tokens (§4.1).
   if(record.intent==='grant-more'&&s.items.every(i=>i.status||i.delta.empty))return {complete:await finish(record,{result:{outcomes:s.items.map(i=>fragmentOutcome(i,i.current,i.current)),added:false}})};
   if(record.intent==='configure'&&!s.fields.length)return {complete:await finish(record,{result:{result:'unchanged'}})};
@@ -278,7 +279,7 @@ export function createIncrementalProvider({store,issuer,crypto=globalThis.crypto
   if(!object(decision))fail('invalid_args');const decisionHash=await digest(crypto,canonical(decision));
   const claim=await store.transaction(async tx=>{
    const record=await tx.get(entryKey(entryHash));if(!record||record.v!==1||record.expiresAt<=now())expired();if(record.subject!==subject)fail('account_mismatch','Sign in to the account this application is connected to.');
-   if(record.status==='completed'){if(record.decisionHash===decisionHash)return {done:record.completion};expired();}
+   if(decision?.denied!==true&&decision?.notice!=='return'&&!featureAllowed(record))fail('access_denied');if(record.status==='completed'){if(record.decisionHash===decisionHash)return {done:record.completion};expired();}
    if(!record.begunAt||now()<record.begunAt+L.minDwellMs)fail('decision_not_armed','Wait for the buttons to be ready.');
    if(record.status==='superseded')return {record,superseded:true};
    if(record.deciding&&(record.deciding.expiresAt>now()||record.deciding.committing&&record.deciding.decisionHash!==decisionHash))fail('decision_in_progress','This decision is still being saved.');
@@ -341,7 +342,7 @@ export function createIncrementalProvider({store,issuer,crypto=globalThis.crypto
   const status=await store.transaction(async tx=>{const record=await tx.get(name);if(!record||record.expiresAt<=now()&&!record.used)return {};if(record.used){record.reused=true;const revoke=!!record.family&&!record.revoked;if(revoke)record.revoked=true;await tx.set(name,record);return {replayed:revoke?record:null};}
    if(record.clientId!==clientId||record.binding.redirectUri!==redirectUri||await digest(crypto,codeVerifier)!==record.binding.challenge||record.binding.dpopJkt!==undefined&&record.binding.dpopJkt!==dpopJkt)return {};record.used=true;record.expiresAt=now()+L.codeTtl;await tx.set(name,record);return {record};});
   if(status.replayed?.family)await sessions.revoke({subject:status.replayed.subject,clientId:status.replayed.clientId,family:status.replayed.family}).catch(()=>{});if(!status.record)refuse();const record=status.record;
-  const response={fragment_outcomes:copy(record.outcomes)};if(!record.added)return response;
+  if(!featureAllowed(record))refuse();const response={fragment_outcomes:copy(record.outcomes)};if(!record.added)return response;
   // The new session never outlives the connection's newest session (expiry and auth_time); none live → outcomes only.
   const newest=await sessions.newest({subject:record.subject,clientId:record.clientId});if(!newest)return response;
   const {family,...tokens}=await sessions.issue({subject:record.subject,clientId:record.clientId,...record.binding.dpopJkt?{dpopJkt:record.binding.dpopJkt}:{},notAfter:newest.expiresAt??null,authTime:newest.authTime});
@@ -358,7 +359,7 @@ export function createIncrementalProvider({store,issuer,crypto=globalThis.crypto
   * only). Idempotent per entry and subject. Returns `{first:true}` for a first connection. */
  async function loginDelta({entryHash,subject,clientId,client,requests}={}){
   if(typeof entryHash!=='string'||!ID.test(entryHash)||!validSubject(subject)||client?.id!==clientId||!Array.isArray(requests))generic();
-  if(!requests.length)return {first:true};const site=appSite(client,registrableDomain),name=key('L',entryHash,subject),prior=await store.transaction(tx=>tx.get(name));if(prior)return copy(prior.answer);
+  if(!requests.length||!featureAllowed({subject,clientId}))return {first:true};const site=appSite(client,registrableDomain),name=key('L',entryHash,subject),prior=await store.transaction(tx=>tx.get(name));if(prior)return copy(prior.answer);
   // IA-R2a: "existing connection" is per app site, so a fresh sibling client ID (a metadata app can mint one at will)
   // is not a first connection when the site is connected or has any request history with this account.
   const history=await store.transaction(async tx=>{for(const kind of ['s','c','l','d'])if((await tx.list(key(kind,subject,site,''))).length||await tx.get(key(kind,subject,site)))return true;return false;});
@@ -425,7 +426,7 @@ export function createIncrementalProvider({store,issuer,crypto=globalThis.crypto
    return store.transaction(async tx=>{await sup.reset(tx,{subject:subjectOf(owner),site,targets:list});return {reset:list.length};});
   }});
 }
-const enabled=config=>{if(config?.INCREMENTAL_AUTH_ENABLED!==true&&config?.INCREMENTAL_AUTH_ENABLED!=='true')fail('not_found','Not found.');};
+const enabled=config=>{if(!siteGlobal(config,'INCREMENTAL_AUTH_ENABLED'))fail('not_found','Not found.');};
 /** System operations called by the entry store and the token route (runtime/incremental-authorization.mjs). */
 export class IncrementalAdmit extends AppAction {static operation='federation.incremental.admit';static deps=['config','incremental'];run({config,incremental}){enabled(config);return incremental.admit(this.input);}}
 export class IncrementalBegin extends AppAction {static operation='federation.incremental.begin';static deps=['config','incremental'];run({config,incremental}){enabled(config);return incremental.begin(this.input);}}

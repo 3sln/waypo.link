@@ -1,3 +1,4 @@
+import {flagsFor,ownerFlags,existingFeature,featureConfig} from './flags.mjs';
 // AccountController slice BB-C1a, core links (docs/architecture/messaging-extraction.md C1): the links-contract
 // service and its engine over this account's store. `methods` are installed on AccountController.prototype (`this`
 // is the controller); `rpc` lists what `invoke` accepts (packages/runtime/account/index.mjs).
@@ -29,7 +30,6 @@ import {linksProvider,LINK_OPERATIONS,LinkList,LinkChanges,RevokeLink} from '../
 import {decideLinkAudience} from '../../links/audience.mjs';
 import {linkPolicyRegistry} from '../../links/policies.mjs';
 import {StorageError} from '../../storage/policy.mjs';
-import {integrationsEnabled} from '../../app/domains/connections.mjs';
 import {verifyAuthorProof} from '../../links/author-proof.mjs';
 import {LinkHandoff} from '../../links/handoff.mjs';
 import {LINKS_CONTRACT,LINK_SLOT_TABLE} from '../../links/types.mjs';
@@ -40,7 +40,7 @@ import {canonical,digest} from '../../core/records.mjs';
 
 export const LINK_ENGINE_OPERATIONS=operations(...LINK_OPERATIONS);
 const engines=new WeakMap();
-export const linksEnabled=config=>config?.BINDLEBOX_ENABLED==='true'||config?.BINDLEBOX_ENABLED===true;
+export const linksEnabled=(config,ctx)=>flagsFor(config,ctx).enabled('BINDLEBOX_ENABLED');
 /** The controller's LinkService: current-key minting through `signingKey`, verification through the registry history. */
 export function linkService(c){
  return new LinkService({store:c.store,issuer:c.config.APP_ORIGIN,keys:c.tokens.keys,signingKey:owner=>c.signingKey(owner),decide:input=>decideLinkAudience(c,input),verifyAuthor:input=>verifyAuthorProof(input.proof,{...input,...authorPorts(c)}),policies:linkPolicyRegistry(c.config)});
@@ -55,17 +55,17 @@ export function authorPorts(c){
   status:async({issuer,subject,jkt})=>{if(issuer!==c.config.APP_ORIGIN)throw new Error('unverifiable');if(await local(subject))return c.delegationStatus(subject,jkt);const remote=c.config.CONVERSATION_ACCOUNT?.(subject);if(!remote)throw new Error('unavailable');const result=await remote.invoke({method:'delegationStatus',args:[subject,jkt]});if(result?.$fault)throw new Error('unavailable');return result;},
  };
 }
-const occupantPort=c=>typeof c.config.LINK_SLOT_OCCUPANT==='function'?c.config.LINK_SLOT_OCCUPANT:integrationsEnabled(c.config)?query=>c.linkSlotOccupant(query):undefined;
+const occupantPort=c=>typeof c.config.LINK_SLOT_OCCUPANT==='function'?c.config.LINK_SLOT_OCCUPANT:query=>c.linkSlotOccupant(query);
 // The descriptor's occupant: the link seat plus the occupant origin (the ingress must be on it) when known.
 const handoffOccupant=c=>{const seat=occupantPort(c);if(!seat)return undefined;return async query=>{const found=await seat(query);if(!found)return null;if(typeof found.origin==='string'||typeof c.config.LINK_SLOT_OCCUPANT==='function')return found;const d=await c.delegationSlotOccupant(query);return d?.clientId===found.clientId?{...found,origin:d.origin}:found;};};
 const handoffs=new WeakMap();
 export function linkHandoff(c){let h=handoffs.get(c);if(!h){h=new LinkHandoff({service:linkService(c),occupant:handoffOccupant(c),describe:typeof c.config.MESSAGING_DESCRIBE==='function'?c.config.MESSAGING_DESCRIBE:undefined,allowLoopback:c.config.LOCAL_DEVELOPMENT==='true'});handoffs.set(c,h);}return h;}
 function linksEngine(c){
  let engine=engines.get(c);
- if(!engine){engine=createAppEngine({providers:{clock:systemClock,random:cryptoRandom,audit:nullAudit,links:linksProvider({service:linkService(c),enabled:linksEnabled(c.config),occupant:occupantPort(c)})}});engines.set(c,engine);}
+ if(!engine){engine=createAppEngine({providers:{clock:systemClock,random:cryptoRandom,audit:nullAudit,links:linksProvider({service:linkService(c),enabled:true,config:c.config,flags:c.config.flags,occupant:occupantPort(c)})}});engines.set(c,engine);}
  return engine;
 }
-const run=(c,Operation,params)=>{const operation=new Operation(params);return operation instanceof AppQuery?read(linksEngine(c),operation):perform(linksEngine(c),operation);};
+const run=(c,Operation,params)=>{if(['links.issue','links.rotate'].includes(Operation.operation)&&!ownerFlags(c.config,params.actor?.owner,params.actor?.clientId).enabled('BINDLEBOX_ENABLED'))throw new StorageError('not_found','Not found.',404);const operation=new Operation(params);return operation instanceof AppQuery?read(linksEngine(c),operation):perform(linksEngine(c),operation);};
 const owned=(owner,input)=>{if(input!==undefined&&(input===null||typeof input!=='object'||Array.isArray(input)))throw new StorageError('invalid_request','Unsupported link request.');return {actor:{kind:'owner',owner},...input===undefined?{}:{input}};};
 
 export const methods={
@@ -83,7 +83,7 @@ export const methods={
   },
   // Public messaging-address handoff (bindlebox §2.3): the descriptor for one of this owner's verified links.
   async linkDescriptor(owner,url){
-   if(!linksEnabled(this.config))throw new StorageError('not_found','Not found.',404);
+   if(!ownerFlags(this.config,owner).enabled('BINDLEBOX_ENABLED'))throw new StorageError('not_found','Not found.',404);
    if(await this.metadata.get('owner')!==owner)throw new StorageError('recipient_unavailable','The recipient is unavailable.',503);
    try{return await linkHandoff(this).descriptor(url);}
    catch(error){throw error?.code==='link_malformed'?new StorageError('link_malformed','The link is malformed.',400):error?.code==='link_invalid'?new StorageError('link_invalid','The link is not valid.',401):new StorageError('recipient_unavailable','The recipient is unavailable.',503);}
@@ -95,7 +95,8 @@ const LINK_METHODS=Object.freeze({issue:'links.issue',revoke:'links.revoke',rota
 const WRITES=['issue','revoke','rotate'];
 const denied=()=>{throw new StorageError('forbidden','Link access denied.',403);};
 export async function linksResourceMethod(c,owner,context){
- if(!linksEnabled(c.config))throw new StorageError('not_found','Not found.',404);
+ if(!existingFeature(c.config,'BINDLEBOX_ENABLED',owner))throw new StorageError('not_found','Not found.',404);
+ if(['issue','rotate'].includes(context.method)&&!ownerFlags(c.config,owner,context.clientId).enabled('BINDLEBOX_ENABLED'))throw new StorageError('not_found','Not found.',404);
  if(typeof context?.method!=='string'||!Object.hasOwn(LINK_METHODS,context.method))throw new StorageError('unsupported_method','Unsupported link method.',400);
  const args=context.args;if(args===null||typeof args!=='object'||Array.isArray(args))throw new StorageError('invalid_args','Unsupported link request.',400);
  if(context.authority!=='bindle'||context.resource!==`${c.config.APP_ORIGIN}/entities/${owner}/links`||context.resourceGeneration!==owner||context.contract!==LINKS_CONTRACT)denied();
@@ -109,7 +110,7 @@ export async function linksResourceMethod(c,owner,context){
  // BRIDGE methods are advertised only with the bridge flags. The live intake seat is checked for acceptance;
  // keys are public, but the caller still needs this resource's ordinary authenticated grant.
  if(['consumerKey','accepted'].includes(context.method)){
-  if(!bridgeConfig(c.config).enabled)throw new StorageError('not_found','Not found.',404);
+  if(!bridgeConfig(featureConfig(c.config,{subject:{kind:'account',owner},client:{clientId:context.clientId}})).enabled)throw new StorageError('not_found','Not found.',404);
   if(context.method==='consumerKey'){if(Object.keys(args).some(k=>!['consumer','keyId'].includes(k)))denied();const key=await bridgeKey(c.config);return key&&args.consumer===c.config.APP_ORIGIN&&args.keyId===key.keyId?{keyId:key.keyId,publicJwk:key.publicJwk}:null;}
   if(Object.keys(args).some(k=>k!=='jti')||typeof args.jti!=='string'||!args.jti||args.jti.length>128)denied();
   const seat=await c.integrationsIntakeSeat(owner);if(!seat||seat.clientId!==context.clientId||seat.connection!==context.connection.id||seat.generation!==context.connection.generation)denied();

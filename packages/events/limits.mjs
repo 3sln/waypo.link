@@ -1,3 +1,4 @@
+import {siteGlobal} from '../flags/read.mjs';
 // Reference-host values of docs/spec/events.md §9 (3sln.me policy, provisional; product review pending). A protocol
 // host publishes its own values in descriptor `limits` (§4.4); `busLimits` derives them from one bus record.
 const DAY=86400;
@@ -16,7 +17,7 @@ export const BUS_LIMITS=Object.freeze({
 });
 export const EVENT_BUS_CONTRACT='https://spec.bindle.example/contracts/event-bus/v1';
 export const BUS_METHODS=Object.freeze(['publish','read','subscribe','unsubscribe']);
-export const eventBusesEnabled=config=>config?.EVENT_BUSES_ENABLED===true||config?.EVENT_BUSES_ENABLED==='true';
+export const eventBusesEnabled=config=>siteGlobal(config,'EVENT_BUSES_ENABLED');
 export const planOf=value=>value==='paid'?'paid':'free';
 /** Publish-journal retention: min(24 h, retention.max_seconds), never below 10 minutes (§4.1). */
 export const txRetentionSeconds=bus=>Math.max(BUS_LIMITS.journal.minSeconds,Math.min(BUS_LIMITS.journal.maxSeconds,bus.spec.retention.max_seconds));

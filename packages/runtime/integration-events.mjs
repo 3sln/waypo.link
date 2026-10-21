@@ -1,3 +1,4 @@
+import {flagsFor,ownerFlags,existingFeature} from './account/flags.mjs';
 // EXT-X6, the integration event outbox and its delivery (docs/spec/integrations.md §6, §7.2–7.3, §10, §11;
 // docs/architecture/extensibility-design.md EX-7/EX-8, §10 X6). Engine-first: the `integrationEvents` provider is an
 // actor-scoped handle over the account store; the Actions/Queries below are the operations, and the account slice at
@@ -32,12 +33,10 @@ import {Provider} from '../../vendor/ngin/index.js';
 import {AppAction,AppQuery,createAppEngine,operations,perform,read} from '../app/engine.mjs';
 import {AppFault} from '../app/faults.mjs';
 import {systemClock,cryptoRandom,nullAudit} from '../app/providers.mjs';
-import {integrationsEnabled} from '../app/domains/connections.mjs';
 import {PREFERENCES_UPDATED_EVENT,prefixedURL} from '../federation/integrations.mjs';
 import {publicAddress} from '../apps/form-fetch-policy.mjs';
 // ==== EV-3 doorbell hunk (imports) ====
 import {BUS_ADVANCED_EVENT,doorbellTarget,markDoorbellSent,eventDoorbellsProvider,RingEventDoorbells,CancelEventDoorbells,SetEventBusPush,EventBusSubscriptions,EVENT_DOORBELL_APP_OPERATIONS} from '../events/doorbell.mjs';
-import {eventBusesEnabled} from '../events/limits.mjs';
 import {busKeys} from '../events/cursor.mjs';
 // ==== end EV-3 doorbell hunk ====
 
@@ -401,8 +400,8 @@ function limitsOf(over={}){
  * X4 system operations for that owner. `signer.sign('event', claims)` -> {token}: brokering keys (X5). `egress.send({url,
  * body, timeoutMs})` -> {status, bytes}: an adapter above. `snapshot({owner, connection, clientId, generation, fragment})`
  * -> {revision, values}: X8's preferences/v2 projection for the integration (values null when its grant is revoked). */
-export function integrationEventsProvider({enabled=false,issuer,subject,connections,signer,egress,snapshot,limits,doorbellGrant/* EV-3 */}={}){
- const options=Object.freeze({enabled:enabled===true,issuer,subject:subject??(owner=>`${issuer}/entities/${owner}`),connections,signer,egress,snapshot,limits:limitsOf(limits),doorbellGrant});
+export function integrationEventsProvider({enabled=false,issuer,subject,connections,signer,egress,snapshot,limits,ports,doorbellGrant/* EV-3 */}={}){
+ const options=Object.freeze({enabled:enabled===true,issuer,subject:subject??(owner=>`${issuer}/entities/${owner}`),connections,signer,egress,snapshot,ports,limits:limitsOf(limits),doorbellGrant});
  return class extends IntegrationEventsProvider{static deps=['accountStore','clock','random','audit'];constructor(deps){super(deps,options);}};
 }
 export class IntegrationEventsProvider extends Provider{
@@ -415,7 +414,7 @@ export class IntegrationEventsProvider extends Provider{
   try{
    for(const name of ['accountStore','clock','random','audit']){resources[name]=await this.#deps[name].obtain();obtained.push(name);}
    const bound=await resources.accountStore.get('owner');if(bound!==undefined&&bound!==actor.owner)fault('forbidden','Account owner mismatch.',403);
-   const handle=Object.freeze(scope({...o,store:resources.accountStore,clock:resources.clock,random:resources.random,audit:resources.audit},actor));this.#held.set(handle,{resources,obtained});return handle;
+   const handle=Object.freeze(scope({...o,...o.ports?o.ports():{},store:resources.accountStore,clock:resources.clock,random:resources.random,audit:resources.audit},actor));this.#held.set(handle,{resources,obtained});return handle;
   }catch(error){for(const name of obtained)await this.#deps[name].release(resources[name]);throw error;}
  }
  async release(handle){const held=this.#held.get(handle);if(!held)return;this.#held.delete(handle);for(const name of held.obtained)await this.#deps[name].release(held.resources[name]);}
@@ -455,22 +454,22 @@ function eventsEngine(c){
  let engine=engines.get(c);
  if(!engine){
   const ports=c.config.INTEGRATION_EVENT_PORTS??{},system=(owner,operation,input)=>c.connectionsSystem(owner,{operation,...input===undefined?{}:{input}});
-  engine=createAppEngine({providers:{clock:systemClock,random:cryptoRandom,audit:ports.audit??nullAudit,accountStore:c.metadata,integrationEvents:integrationEventsProvider({enabled:integrationsEnabled(c.config),issuer:c.config.APP_ORIGIN,signer:ports.signer,egress:ports.egress,snapshot:ports.snapshot?.available===false?undefined:ports.snapshot,limits:ports.limits,doorbellGrant:ports.doorbellGrant/* EV-3 */,
+  engine=createAppEngine({providers:{clock:systemClock,random:cryptoRandom,audit:ports.audit??nullAudit,accountStore:c.metadata,integrationEvents:integrationEventsProvider({enabled:true,ports:()=>{const ports=c.config.INTEGRATION_EVENT_PORTS??{};return {signer:ports.signer,egress:ports.egress,snapshot:ports.snapshot?.available===false?undefined:ports.snapshot,doorbellGrant:ports.doorbellGrant};},issuer:c.config.APP_ORIGIN,signer:ports.signer,egress:ports.egress,snapshot:ports.snapshot?.available===false?undefined:ports.snapshot,limits:ports.limits,doorbellGrant:ports.doorbellGrant/* EV-3 */,
    connections:owner=>({outbox:input=>system(owner,'connections.outbox',input),ack:input=>system(owner,'connections.ack',input),list:()=>system(owner,'connections.list'),health:input=>system(owner,'connections.health',input)})}),
    // EV-3 doorbell hunk: the doorbell provider shares this engine's account store and X6 rows.
-   eventDoorbells:eventDoorbellsProvider({enabled:doorbellsEnabled(c.config),keys:()=>busKeys(c.config),enqueue:(tx,event,{now})=>enqueueIntegrationEvent(tx,event,{now,limits:limitsOf(ports.limits)}),cancel:cancelIntegrationDoorbell,subscribed:ports.doorbellGrant,issuer:c.config.APP_ORIGIN})}});
+   eventDoorbells:eventDoorbellsProvider({enabled:true,keys:()=>busKeys(c.config),enqueue:(tx,event,{now})=>enqueueIntegrationEvent(tx,event,{now,limits:limitsOf(ports.limits)}),cancel:cancelIntegrationDoorbell,subscribed:input=>{const grant=c.config.INTEGRATION_EVENT_PORTS?.doorbellGrant;if(typeof grant!=='function')throw new AppFault('temporarily_unavailable','Feed notifications are unavailable.',503);return grant(input);},issuer:c.config.APP_ORIGIN})}});
   engines.set(c,engine);
  }
  return engine;
 }
-const doorbellsEnabled=config=>integrationsEnabled(config)&&eventBusesEnabled(config);/* EV-3 */
-async function bound(c,owner){return integrationsEnabled(c.config)&&typeof owner==='string'&&UUID.test(owner)&&await c.metadata.get('owner')===owner;}
+const doorbellsEnabled=(config,owner)=>ownerFlags(config,owner).background('INTEGRATIONS_ENABLED')&&ownerFlags(config,owner).background('EVENT_BUSES_ENABLED');/* EV-3 */
+async function bound(c,owner){return flagsFor(c.config).background('INTEGRATIONS_ENABLED')&&typeof owner==='string'&&UUID.test(owner)&&await c.metadata.get('owner')===owner;}
 export const methods={
  /** The account alarm hook: ingest, one bounded delivery pass, then re-arm for the earliest due row. */
  async integrationEventsAlarm(owner){
   if(!await bound(this,owner))return {ready:false};const engine=eventsEngine(this),actor={kind:'system',owner};
   const ingested=await perform(engine,new IngestIntegrationEvents({actor}));if(ingested.ready===false)return {ready:false};
-  const rang=doorbellsEnabled(this.config)?await perform(engine,new RingEventDoorbells({actor})):null;/* EV-3 */
+  const rang=doorbellsEnabled(this.config,owner)&&(typeof this.config.INTEGRATION_EVENT_PORTS?.doorbellGrant==='function'||(await this.metadata.list({prefix:'evbus/sub/',limit:1})).size)?await perform(engine,new RingEventDoorbells({actor})):null;/* EV-3 */
   const delivered=await perform(engine,new DeliverIntegrationEvents({actor}));
   const next=Math.min(Number.isSafeInteger(delivered.next)?delivered.next:Infinity,Number.isSafeInteger(rang?.next)?rang.next:Infinity);/* EV-3 */
   if(Number.isSafeInteger(next))await this.scheduleAlarm(Math.max(next,Date.now()+1000));
@@ -484,15 +483,16 @@ export const methods={
  /** The `event-bus/v1` subscribe/unsubscribe handler body: `context` as eventBusResourceMethod verified it, plus the
   * bus `id` it parsed and the actor it built; `epoch` is `grant:<readSince>`. Then kicks the alarm. */
  async eventDoorbellApp(owner,{method,id,actor,resource,epoch}={}){
-  if(!doorbellsEnabled(this.config)||!await bound(this,owner))throw new AppFault('not_found','Not found.',404);
+  if((method!=='unsubscribe'&&(!ownerFlags(this.config,owner,actor?.clientId).enabled('INTEGRATIONS_ENABLED')||!ownerFlags(this.config,owner,actor?.clientId).enabled('EVENT_BUSES_ENABLED')))||!await bound(this,owner))throw new AppFault('not_found','Not found.',404);
   const Operation=Object.hasOwn(EVENT_DOORBELL_APP_OPERATIONS,method)?EVENT_DOORBELL_APP_OPERATIONS[method]:null;if(!Operation)throw new AppFault('unsupported_method','Unsupported feed method.',400);
   const result=await perform(eventsEngine(this),new Operation({actor,id,resource,epoch}));await this.integrationEventsKick(owner);return result;
  },
  /** Revocation, reduction, disconnect and bus-deletion hooks: {id?, clientId?, connection?}. */
- async eventDoorbellCancel(owner,{id,...input}={}){if(!doorbellsEnabled(this.config)||!await bound(this,owner))return {cancelled:0};return perform(eventsEngine(this),new CancelEventDoorbells({actor:{kind:'system',owner},...id!==undefined?{id}:{},input}));},
+ async eventDoorbellCancel(owner,{id,...input}={}){if(!doorbellsEnabled(this.config,owner)||!await bound(this,owner)||!(await this.metadata.list?.({prefix:'evbus/sub/',limit:1}))?.size)return {cancelled:0};return perform(eventsEngine(this),new CancelEventDoorbells({actor:{kind:'system',owner},...id!==undefined?{id}:{},input}));},
  /** Owner: 'events.push' {enabled} or 'events.subscriptions' for bus `id`. */
  async eventDoorbellOwner(owner,{operation,id,input}={}){
-  if(!doorbellsEnabled(this.config)||!await bound(this,owner)||!['events.push','events.subscriptions'].includes(operation))throw new AppFault('not_found','Not found.',404);
+  if(!existingFeature(this.config,'INTEGRATIONS_ENABLED',owner)||!existingFeature(this.config,'EVENT_BUSES_ENABLED',owner)||!await bound(this,owner)||!['events.push','events.subscriptions'].includes(operation))throw new AppFault('not_found','Not found.',404);
+  if(operation==='events.push'&&input?.enabled===true&&(!ownerFlags(this.config,owner).enabled('INTEGRATIONS_ENABLED')||!ownerFlags(this.config,owner).enabled('EVENT_BUSES_ENABLED')))throw new AppFault('not_found','Not found.',404);
   const actor={kind:'owner',owner};if(operation==='events.subscriptions')return read(eventsEngine(this),new EventBusSubscriptions({actor,id}));const result=await perform(eventsEngine(this),new SetEventBusPush({actor,id,input}));await this.integrationEventsKick(owner);return result;
  },
  // ==== end EV-3 doorbell hunk ====

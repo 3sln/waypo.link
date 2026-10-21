@@ -21,7 +21,10 @@ export function flagContext(ctx={}, {request,platform='worker',now}={}){
 }
 export const disabledFlagStats=Object.freeze({configure:async()=>({accepted:false,reason:'disabled'}),record:async()=>({accepted:false,reason:'disabled'}),results:async({experimentId}={})=>({experimentId,visible:false,reason:'disabled',variants:[]}),rollup:async()=>({rolledUp:0,expired:0})});
 export class FlagsRuntime{
- constructor({store=null,cache=null,cacheKey='https://flags.example/flags-v1',env={},platform='worker',clock=()=>Date.now(),maxStale=env.FLAGS_MAX_STALE_MS}={}){Object.assign(this,{store,cache,cacheKey,env,platform,clock,maxStale:flagsMaxStale(maxStale)});this.entry=null;this.freshUntil=0;this.flight=null;this.writes=Promise.resolve();this.generation=0;}
+ constructor({store=null,cache=null,cacheKey='https://flags.example/flags-v1',env={},platform='worker',clock=()=>Date.now(),maxStale=env.FLAGS_MAX_STALE_MS}={}){Object.assign(this,{store,cache,cacheKey,env,platform,clock,maxStale:flagsMaxStale(maxStale)});this.scope=new AsyncLocalStorage();this.entry=null;this.freshUntil=0;this.flight=null;this.writes=Promise.resolve();this.generation=0;}
+ current(){return this.scope.getStore()??createFlags({snapshot:this.entry?.snapshot,env:this.env,platform:this.platform,clock:this.clock,usable:!!this.entry&&this.clock()-this.entry.checkedAt<=this.maxStale,fallback:this.entry&&this.clock()-this.entry.checkedAt<FLAGS_FALLBACK_MS?this.entry.snapshot:null});}
+ bind(config){return new Proxy(config,{get:(target,name,receiver)=>name==='FLAGS_RUNTIME'?this:['flags','FLAGS'].includes(name)?this.current():Reflect.get(target,name,receiver)});}
+ run(flags,operation){return this.scope.run(flags,operation);}
  invalidate(){this.generation++;this.freshUntil=0;}
  accept(snapshot,checkedAt=this.clock()){
   const next=validateSnapshot(snapshot),previous=this.entry;
@@ -74,10 +77,11 @@ export function workerFlags(env){
 export function flagAccounts(accounts,flags){return {get:id=>{const target=accounts.get(id);return new Proxy(target,{get:(object,key)=>key==='invoke'?envelope=>object.invoke({...envelope,flagsVersion:flags.version}):typeof object[key]==='function'?object[key].bind(object):object[key]});}};}
 /** Async scope keeps a writer's port pinned throughout overlapping async work.
  * The controller retains its existing gate/transaction/lifecycle policies. */
-export function flagWriter(controller,runtime,{flagStats=disabledFlagStats}={}){
+export function flagWriter(controller,runtime,{flagStats=disabledFlagStats,configure}={}){
  const scope=new AsyncLocalStorage();let latest=null;
- for(const key of ['flags','FLAGS'])Object.defineProperty(controller.config,key,{configurable:true,enumerable:true,get:()=>scope.getStore()??latest});
+ for(const key of ['flags','FLAGS'])Object.defineProperty(controller.config,key,{configurable:true,enumerable:true,get:()=>scope.getStore()?.flags??latest});
  Object.assign(controller.config,{FLAGS_RUNTIME:runtime,flagStats});
- const run=async(method,args)=>{let flags;try{flags=await runtime.pin({writer:true,minVersion:method==='invoke'?args[0]?.flagsVersion??0:0,alarm:method==='alarm'});}catch(error){if(method!=='invoke')throw error;return {$fault:{code:error.code??'flags_unavailable',message:'Feature configuration is temporarily unavailable.',status:503}};}latest=flags;return scope.run(flags,()=>controller[method](...args));};
+ if(configure)for(const name of ['INTEGRATION_EVENT_PORTS','BROKERING_CONSUMER_MINT','BROKERED_INTROSPECTION_MOUNTED','BROKERING_MINT','INTEGRATION_EGRESS','MESSAGING_DESCRIBE','INTEGRATION_CLIENT_SNAPSHOT','EVENT_BUS_WAITS_MOUNTED']){const initial=controller.config[name];Object.defineProperty(controller.config,name,{configurable:true,enumerable:true,get:()=>scope.getStore()?scope.getStore().ports[name]:initial});}
+ const run=async(method,args)=>{let flags;try{flags=await runtime.pin({writer:true,minVersion:method==='invoke'?args[0]?.flagsVersion??0:0,alarm:method==='alarm'});}catch(error){if(method!=='invoke')throw error;return {$fault:{code:error.code??'flags_unavailable',message:'Feature configuration is temporarily unavailable.',status:503}};}latest=flags;return scope.run({flags,ports:configure?.(flags)??{}},()=>controller[method](...args));};
  return new Proxy(controller,{get:(target,key)=>['invoke','alarm'].includes(key)?(...args)=>run(key,args):typeof target[key]==='function'?target[key].bind(target):target[key]});
 }

@@ -4,4 +4,6 @@ export {ACTIVITY_LIMITS,ACTIVITY_PURPOSE,PRIORITIES,ActivityFault,activityInput,
 export {admissionEvidence,attest,verifyEvidence,verifyRevision,contentDigest} from './evidence.mjs';
 export {ActivityStore,activityScope,activityState,liveConnection} from './store.mjs';
 export {activityFromAppMessage,verifyLegacyAppMessage,LEGACY_PURPOSE} from './legacy.mjs';
-export const activityEnabled=config=>config?.ACTIVITY_V2_ENABLED==='true';
+import {createFlags} from '../flags/evaluate.mjs';
+/** New app exposure only; ctx carries the verified owner and creating client. */
+export function activityEnabled(config={},ctx={}){const flags=(config?.flags??config?.FLAGS??createFlags({snapshot:{v:1,version:0,issuedAt:0,flags:{}},env:config??{}})).for(ctx),result=flags.evaluate('ACTIVITY_V2_ENABLED');return result.value&&(result.reason!=='legacy-env'||flags.envState('ACTIVITY_V2_ENABLED').raw==='true');}

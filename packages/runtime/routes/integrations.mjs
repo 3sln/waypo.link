@@ -1,3 +1,4 @@
+// FF-5a: legacy mount visibility is preserved; after console adoption owner reads/reversal ignore targeting.
 // HTTP routes and AccountController slice of EXT-X7, resource discovery and brokered records
 // (docs/spec/integrations.md §4, §5.6; docs/architecture/extensibility-design.md X7). Mounted only with
 // INTEGRATIONS_ENABLED; record routes also need BROKERING_ENABLED (the domain answers not_found otherwise). With the
@@ -21,14 +22,13 @@
 // set) and INTEGRATION_EGRESS ({send}, createIntegrationEgress or a DNS-pinned equivalent); without them discovery and
 // describe answer discovery_unavailable and descriptors stay recipient_unavailable. The change-hint endpoint
 // (integrations §8) is not mounted: it needs an issuer-wide connection -> account directory and client-key egress.
-import {bridgeConfig} from '../../email-bridge/engine.mjs';
 import {createAppEngine,perform,read,operations,AppQuery} from '../../app/engine.mjs';
 import {systemClock,cryptoRandom,nullAudit} from '../../app/providers.mjs';
 import {AppConnections,recognizedSlots} from '../../apps/connections.mjs';
-import {brokeredResourcesProvider,readConnection,integrationsFlag,brokeringFlag,BROKERED_OPERATIONS,BROKERED_OWNER_OPERATIONS,DescribeOccupant,RevalidateBrokeredRecords,BrokeredRecords} from '../../federation/brokered.mjs';
+import {brokeredResourcesProvider,readConnection,BROKERED_OPERATIONS,BROKERED_OWNER_OPERATIONS,DescribeOccupant,RevalidateBrokeredRecords,BrokeredRecords} from '../../federation/brokered.mjs';
 import {DiscoveryClient,sharedDiscoveryBudget} from '../../federation/resource-discovery.mjs';
 import {validateDescribe} from '../../links/handoff.mjs';
-import {json,body} from './shared.mjs';
+import {flagReadable,routeFlags,flagEnabled,json,body} from './shared.mjs';
 
 export const BROKERED_ENGINE_OPERATIONS=operations(...BROKERED_OPERATIONS);
 const SEARCH=['integrations.candidates','integrations.discover'];
@@ -39,17 +39,25 @@ const engines=new WeakMap(),refusals=new WeakMap();
 // Failed describes are remembered per (owner, seat incarnation) for a minute, so anonymous descriptor requests cost at
 // most one integration call per minute on failure (successes are cached by the link handoff for an hour; X7-R2).
 const REFUSAL_MS=60000,REFUSALS=1024;
-function engineOf(c){
- let engine=engines.get(c);
+function engineOf(c,features){
+ const key=JSON.stringify(features),cache=engines.get(c)??new Map();let engine=cache.get(key);
  if(!engine){
   const issuer=c.config.APP_ORIGIN,reserved=[c.config.EMBED_ORIGIN].filter(v=>typeof v==='string'&&v).map(v=>{try{return new URL(v).hostname;}catch{return null;}}).filter(Boolean);
   const discovery=new DiscoveryClient({issuer,reserved,mint:typeof c.config.BROKERING_MINT==='function'?c.config.BROKERING_MINT:undefined,egress:typeof c.config.INTEGRATION_EGRESS?.send==='function'?c.config.INTEGRATION_EGRESS:undefined,budget:c.config.INTEGRATION_DISCOVERY_BUDGET??sharedDiscoveryBudget});
-  engine=createAppEngine({providers:{clock:systemClock,random:cryptoRandom,audit:nullAudit,brokeredResources:brokeredResourcesProvider({store:c.metadata,discovery,issuer,integrations:integrationsFlag(c.config),brokering:brokeringFlag(c.config),emailBridge:bridgeConfig(c.config).enabled,slots:c.config.CONNECTION_SLOTS??recognizedSlots(c.config)})}});
-  engines.set(c,engine);
+  engine=createAppEngine({providers:{clock:systemClock,random:cryptoRandom,audit:nullAudit,brokeredResources:brokeredResourcesProvider({store:c.metadata,discovery,issuer,...features,slots:c.config.CONNECTION_SLOTS??recognizedSlots(c.config)})}});
+  cache.set(key,engine);engines.set(c,cache);
  }
  return engine;
 }
-const run=(c,Operation,params)=>{const operation=new Operation(params);return operation instanceof AppQuery?read(engineOf(c),operation):perform(engineOf(c),operation);};
+const REVERSE=new Set(['integrations.records','integrations.unassign','integrations.detach','integrations.severance','integrations.severance-done']);
+const run=async(c,Operation,params)=>{
+ const operation=new Operation(params),owner=params.actor?.owner,ctx={subject:{kind:'account',owner}},system=params.actor?.kind==='system',reverse=!system&&REVERSE.has(Operation.operation);
+ // Client targeting uses the persisted connection, never the caller's clientId.
+ if(!reverse){let connection=params.input?.connection;if(!connection&&params.input?.record){const record=await c.metadata.get('integrations/record/'+params.input.record);if(record?.owner===owner)connection=record.connection;}if(connection){const row=await c.metadata.transaction(tx=>readConnection(tx,owner,connection));if(row?.clientId)ctx.client={clientId:row.clientId};}}
+ const flags=routeFlags(c.config,ctx),features={integrations:reverse||(system?flags.background('INTEGRATIONS_ENABLED'):flagEnabled(c.config,'INTEGRATIONS_ENABLED',ctx)),brokering:reverse||(system?flags.background('BROKERING_ENABLED'):flagEnabled(c.config,'BROKERING_ENABLED',ctx)),emailBridge:flagEnabled(c.config,'EMAIL_BRIDGE_ENABLED',ctx)};
+ if(!reverse&&(!features.integrations||!features.brokering&&!SEARCH.includes(Operation.operation)))fail('feature_unavailable','This feature is not available.',409);
+ return operation instanceof AppQuery?read(engineOf(c,features),operation):perform(engineOf(c,features),operation);
+};
 const shape=value=>{if(value!==undefined&&(value===null||typeof value!=='object'||Array.isArray(value)))fail('invalid_request','Unsupported integrations request.',400);return value===undefined?undefined:structuredClone(value);};
 // Discovery health feeds the connection lifecycle (integrations §3.1 `degraded`); a failing report never fails the call.
 async function report(c,owner,connection,health){
@@ -58,7 +66,7 @@ async function report(c,owner,connection,health){
 }
 async function owned(c,owner,operation,list,{id,input}){
  const Operation=typeof operation==='string'&&list.includes(operation)?BROKERED_ENGINE_OPERATIONS[operation]:null;
- if(!integrationsFlag(c.config)||!Operation)notFound();
+ if(!flagReadable(c.config,'INTEGRATIONS_ENABLED')||!Operation)notFound();
  const params={actor:{kind:'owner',owner},input:{...shape(input)??{},...id===undefined?{}:{[operation==='integrations.revalidate'?'connection':'record']:id}}};
  try{const result=await run(c,Operation,params);if(typeof c.integrationEventsKick==='function')await c.integrationEventsKick(owner);await report(c,owner,result?.connection??params.input.connection,result?.health);return result;}
  catch(error){await report(c,owner,params.input.connection,error?.health);throw error;}
@@ -72,7 +80,7 @@ export const account={
   async integrationsSearch(owner,{operation,input}={}){if(await this.metadata.get('owner')!==owner)notFound();return owned(this,owner,operation,SEARCH,{input});},
   async integrationsSystem(owner,{operation,input}={}){
    const Operation=typeof operation==='string'&&Object.hasOwn(BROKERED_ENGINE_OPERATIONS,operation)?BROKERED_ENGINE_OPERATIONS[operation]:null;
-   if(!integrationsFlag(this.config)||!Operation)notFound();
+   if(!Operation)notFound();
    return run(this,Operation,{actor:{kind:'system',owner},...input===undefined?{}:{input:shape(input)}});
   },
   // The occupant's `describe`, validated against bindlebox §2.3, for links/handoff.mjs. The occupancy port answers
@@ -80,7 +88,7 @@ export const account={
   // described. Any failure is recipient_unavailable upstream. A changed ingress is recorded on the seat (C1b).
   async integrationsMessagingDescribe({owner,slot,occupant}={}){
    const down=()=>fail('recipient_unavailable','The recipient is unavailable.',503);
-   if(!integrationsFlag(this.config)||!brokeringFlag(this.config)||typeof owner!=='string'||await this.metadata.get('owner')!==owner)down();
+   if(!flagEnabled(this.config,'INTEGRATIONS_ENABLED',{subject:{kind:'account',owner}})||!flagEnabled(this.config,'BROKERING_ENABLED',{subject:{kind:'account',owner}})||typeof owner!=='string'||await this.metadata.get('owner')!==owner)down();
    const port=await this.linkSlotOccupant({owner,slot});if(!port||port.clientId!==occupant?.clientId||(occupant?.generation??null)!==port.generation)down();
    const found=await new AppConnections({metadata:this.metadata,origin:this.config.APP_ORIGIN,slots:this.config.CONNECTION_SLOTS??recognizedSlots(this.config)}).occupant(owner,slot);
    const seat=found.sever?null:found.occupants.find(o=>o.cnx===port.cnx);if(!seat||typeof seat.resource!=='string')down();
@@ -96,7 +104,7 @@ export const account={
   // Account alarm hook (§4.4 "at least daily"): revalidates connections whose records were last checked a day ago, or
   // whose records went stale with a resume/approval (descriptors never rebind from the public path).
   async integrationsRevalidateDue(owner,{now=Date.now(),limit=4}={}){
-   if(!integrationsFlag(this.config)||!brokeringFlag(this.config)||await this.metadata.get('owner')!==owner)return {revalidated:0};
+   if(!routeFlags(this.config).background('INTEGRATIONS_ENABLED')||!routeFlags(this.config).background('BROKERING_ENABLED')||await this.metadata.get('owner')!==owner)return {revalidated:0};
    const {records}=await run(this,BrokeredRecords,{actor:{kind:'system',owner}});const due=[...new Set(records.filter(r=>r.state==='stale'||now-(r.revalidatedAt??0)>=86400000).map(r=>r.connection))].slice(0,limit);let revalidated=0;
    for(const connection of due){try{const result=await run(this,RevalidateBrokeredRecords,{actor:{kind:'system',owner},input:{connection,reason:'scheduled'}});await report(this,owner,connection,result?.health);revalidated++;}catch{/* Budgets or egress: retried next time. */}}
    return {revalidated,pending:Math.max(0,new Set(records.map(r=>r.connection)).size-revalidated)};
@@ -109,7 +117,9 @@ const only=(request,...methods)=>methods.includes(request.method)?null:json({err
 const RECORD_ACTIONS={reconfirm:'integrations.reconfirm',unassign:'integrations.unassign',scope:'integrations.scope-describe'};
 export const stages={
  async owner({request,env,path,url,object,id}){
-  if(!integrationsFlag(env)||!(path==='/api/integrations'||path.startsWith('/api/integrations/')))return;
+  if(!flagReadable(env,'INTEGRATIONS_ENABLED')||!(path==='/api/integrations'||path.startsWith('/api/integrations/')))return;
+  const reverse=request.method==='GET'||request.method==='DELETE'||/^\/api\/integrations\/records\/[^/]+\/unassign$/.test(path);
+  if(!reverse&&!flagEnabled(env,'INTEGRATIONS_ENABLED',{subject:{kind:'account',owner:id}})){const input=await body(request.clone(),8192),listed=typeof input.connection==='string'?await object.connectionsOwner(id,{operation:'connections.list'}):null,clientId=listed?.connections.find(c=>c.id===input.connection)?.clientId;if(!clientId||!flagEnabled(env,'INTEGRATIONS_ENABLED',{subject:{kind:'account',owner:id},client:{clientId}}))return json({error:'feature_unavailable'},409);}
   // Discovery is egress the owner causes; it draws the owner's work allowance like other owner writes.
   const admit=()=>object.admitWork(id,{initialize:true});
   if(path==='/api/integrations/candidates'||path==='/api/integrations/discover'){const refused=only(request,'POST');if(refused)return refused;await admit();return json(await object.integrationsSearch(id,{operation:path.endsWith('candidates')?'integrations.candidates':'integrations.discover',input:await body(request,8192)}));}

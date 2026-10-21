@@ -1,3 +1,5 @@
+import {workerFlags} from '../runtime/flags.mjs';
+import {capability} from '../flags/read.mjs';
 // BRIDGE Cloudflare adapter (no `cloudflare:*` import here, so Node tests load it). The Worker `email(message, env,
 // ctx)` handler: Email Routing hands us a ForwardableEmailMessage {from, to, headers, raw, rawSize, setReject(reason),
 // reply(EmailMessage)} (https://developers.cloudflare.com/email-service/api/route-emails/email-handler/). `reply()`
@@ -53,7 +55,7 @@ export async function workerOwnerPorts(env,storage){
   occupant:brokeredOccupant({seat:async owner=>{try{return await accountCall(env,owner,'integrationsIntakeSeat',[])??null;}catch{return null;}},call:async({owner,seat,body})=>accountCall(env,owner,'integrationsIntakeDeliver',[{seat,body}])}),
   signer:await workerSigner(env),
   // Follow-ups use the existing onboarded system sender role; Auto-Submitted and X- headers are allowlisted by EMAIL.send.
-  mail:env.MAIL_ENABLED==='true'&&typeof env.EMAIL?.send==='function'&&domain?{send:async({to,subject,text,headers})=>{const r=await env.EMAIL.send({from:`notify@${domain.toLowerCase()}`,to,subject,text,headers});return {messageId:r?.messageId??null};}}:{},
+  mail:capability(env,'MAIL_ENABLED')&&typeof env.EMAIL?.send==='function'&&domain?{send:async({to,subject,text,headers})=>{const r=await env.EMAIL.send({from:`notify@${domain.toLowerCase()}`,to,subject,text,headers});return {messageId:r?.messageId??null};}}:{},
  };
 }
 
@@ -61,7 +63,7 @@ export async function workerOwnerPorts(env,storage){
 export async function runOwnerOperation(env,storage,operation,owner,input){
  const Operation=BRIDGE_OPERATIONS[operation];if(!Operation||operation==='bridge.receive'||!OWNER.test(owner??''))throw Object.assign(new Error('Not found.'),{code:'not_found'});
  const bound=await storage.get('@owner');if(bound!==undefined&&bound!==owner)throw Object.assign(new Error('Owner mismatch.'),{code:'forbidden'});if(bound===undefined)await storage.put('@owner',owner);
- const engine=createBridgeEngine({providers:{config:env,...effects,...await workerOwnerPorts(env,storage)}});
+ const flags=await workerFlags(env).pin({writer:true}),config={...env,flags};const engine=createBridgeEngine({providers:{config,...effects,...await workerOwnerPorts(config,storage)}});
  try{const op=new Operation({actor:{kind:operation==='bridge.configure'?'owner':'system',owner},input});return op instanceof BridgeReceive?null:await (operation==='bridge.settings'||operation==='bridge.status'?read(engine,op):perform(engine,op));}finally{engine.dispose();}
 }
 export const runSenderMethod=(storage,method,key,options)=>{if(!['consume','refund','suppressed','suppress'].includes(method))throw Object.assign(new Error('Not found.'),{code:'not_found'});return storeSenders(storage)[method](key,options);};

@@ -1,3 +1,5 @@
+import {BeamService} from '../../beaming/index.mjs';
+import {capability,recordFlag,featureConfig} from './flags.mjs';
 // AccountController slice 11, Beaming (docs/architecture/app-engine.md §12): beams, beam contacts and invites.
 // `methods` are installed on AccountController.prototype (`this` is the controller); `rpc` lists the methods
 // `invoke` accepts and the placement policy it applies to each (packages/runtime/account/index.mjs).
@@ -5,12 +7,14 @@ import {BeamError} from '../../beaming/index.mjs';
 import {CloudflareTurnAdapter} from '../../beaming/turn.mjs';
 import {encryptSecret,decryptSecret} from '../secrets.mjs';
 
+const beamService=(c,owner)=>new BeamService({metadata:c.metadata,config:featureConfig(c.config,{subject:{kind:'account',owner}}),entitlement:id=>c.billing.entitlement(id)});
+
 export const methods={
   async beamOutbox(owner,device){return this.beams.outbox(owner,device);},
-  async beamStatus(owner){return this.beams.status(owner);},
-  async beamCreate(owner,actor,input){const result=await this.beams.create(owner,actor,input);await this.scheduleAlarm(result.expiresAt);return result;},
+  async beamStatus(owner){return beamService(this,owner).status(owner);},
+  async beamCreate(owner,actor,input){recordFlag(this,owner,'BEAM_ENABLED','exposure');const result=await beamService(this,owner).create(owner,actor,input);await this.scheduleAlarm(result.expiresAt);return result;},
   async beamRaw(owner,id){return this.beams.raw(id);},
-  async beamAction(owner,id,actor,operation,input){const result=await this.beams.action(id,actor,operation,input);if(operation!=='get')await this.scheduleAlarm(result.expiresAt);return result;},
+  async beamAction(owner,id,actor,operation,input){const result=await this.beams.action(id,actor,operation,input);if(operation!=='get')await this.scheduleAlarm(result.expiresAt);if(operation==='signal'&&input?.type==='complete')recordFlag(this,owner,'BEAM_ENABLED','beam_completed');return result;},
   async beamMailbox(owner,device){return this.beams.mailbox(owner,device);},
   async beamNotify(owner,input){const result=await this.beams.notify(owner,input);await this.scheduleAlarm(input.expiresAt);return result;},
   async beamProfile(owner,input){return this.beamContacts.profile(owner,input);},
@@ -30,8 +34,8 @@ export const methods={
   async beamPair(owner,id,peer,expiresAt,deviceId,senderDevice){return this.beamContacts.pair(owner,id,peer,expiresAt,deviceId,senderDevice);},
   async beamIce(owner,id,actor){
     const r=await this.beams.raw(id),role=this.beams.authorize(r,actor);if(r.state!=='accepted')throw new BeamError('beam_not_accepted','Accept the selected files first.',409);
-    const status=await this.beams.status(owner);if(!status.paid)throw new BeamError('beam_paid_required','The sending plan is no longer paid.',403);
-    if(!status.relayEnabled)return {iceServers:this.config.BEAM_STUN_ENABLED==='true'?[{urls:['stun:stun.cloudflare.com:3478']}]:[],relayEnabled:false};
+    const status=await beamService(this,owner).status(owner);if(!status.paid)throw new BeamError('beam_paid_required','The sending plan is no longer paid.',403);
+    if(!status.relayEnabled)return {iceServers:capability(this.config,'BEAM_STUN_ENABLED')?[{urls:['stun:stun.cloudflare.com:3478']}]:[],relayEnabled:false};
     await this.metadata.transaction(async tx=>{const current=await tx.get('beam/offer/'+id);if(!current)throw new BeamError('beam_expired','This transfer has expired.',410);this.beams.authorize(current,actor);if(current.state!=='accepted')throw new BeamError('beam_not_accepted','This transfer is no longer accepted.',409);if(current.iceIssued[role])throw new BeamError('beam_turn_already_issued','TURN credentials were already issued for this participant.',409);current.iceIssued[role]='issuing';await tx.put('beam/offer/'+id,current);});
     const bytes=r.files.filter(f=>r.selected.includes(f.id)).reduce((n,f)=>n+f.size,0)*2;
     const reservation=await this.config.BEAM_RELAY_BUDGET.reserve({owner,transfer:id,role,maxBytes:bytes,ttl:300});if(!reservation?.enforced)throw new BeamError('beam_turn_unfunded','An enforceable relay allowance is required.',503);

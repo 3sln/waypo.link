@@ -18,19 +18,19 @@ const rows=[
  ['ACTIVITY_V2_ENABLED','a','G A S P C V',{stateful:true,client:true,experiment:{metrics:['activity_opened']},envParse:'boolean'}],
  ['EVENT_BUSES_ENABLED','a','G A S P',{stateful:true,envParse:'boolean'}],
  ['INTEGRATIONS_ENABLED','a','G A S P C',{risk:'crit',stateful:true,envParse:'boolean'}],
- ['INCREMENTAL_AUTH_ENABLED','a','G A S P C',{risk:'crit',requires:['FEDERATION_ENABLED'],stateful:true}],
+ ['INCREMENTAL_AUTH_ENABLED','a','G A S P C',{risk:'crit',requires:['FEDERATION_ENABLED'],stateful:true,retainExisting:false,retentionReason:'Pending requests and grants live in federation stores; no account-local predicate.',envParse:'boolean'}],
  ['EXTENSIONS_ENABLED','a','G A C',{stateful:true,envParse:'boolean'}],
  ['BINDLEBOX_ENABLED','a','G A S P',{stateful:true,envParse:'boolean'}],
- ['EMAIL_BRIDGE_ENABLED','a','G A S P',{risk:'crit',requires:['BINDLEBOX_ENABLED'],stateful:true}],
+ ['EMAIL_BRIDGE_ENABLED','a','G A S P',{risk:'crit',requires:['BINDLEBOX_ENABLED'],stateful:true,retainExisting:false,retentionReason:'Holding queues and opt-in live in the external email-bridge store; no account-local predicate.',envParse:'boolean'}],
  ['SEMANTIC_SEARCH_ENABLED','a','G A S P V',{experiment:{metrics:['search_result_opened']},capabilities:['AI','SEARCH_VECTORS']}],
  ['BEAM_ENABLED','a','G A S P V',{stateful:true,experiment:{metrics:['beam_completed']}}],
- ['DEVICE_AUTHORIZATION_ENABLED','a','G A C',{risk:'crit',requires:['FEDERATION_ENABLED'],stateful:true,envParse:'boolean'}],
+ ['DEVICE_AUTHORIZATION_ENABLED','a','G A C',{risk:'crit',stateful:true,retainExisting:false,retentionReason:'Linked requests and lineages live in identity stores; session authorization is independent of federation.',envParse:'boolean'}],
  ['APP_METADATA_DISCOVERY_ENABLED','a','G C',{}],
  ['SIGNUP_ENABLED','c','G R',{risk:'crit',outage:'last-known'}],
  ['PAID_SIGNUP_ENABLED','c','G R',{risk:'crit',outage:'last-known',capabilities:['billing-configuration']}],
  ['WAITLIST_ENABLED','c','G R',{outage:'last-known'}],
  ['FEDERATION_ENABLED','c','G',{risk:'crit',outage:'last-known'}],
- ['BROKERING_ENABLED','c','G C',{risk:'crit',outage:'last-known',requires:['INTEGRATIONS_ENABLED'],dependencyMode:'global'}],
+ ['BROKERING_ENABLED','c','G C',{risk:'crit',outage:'last-known',requires:['INTEGRATIONS_ENABLED'],dependencyMode:'global',envParse:'boolean'}],
  ['MCP_ENABLED','c','G C',{risk:'crit',outage:'last-known'}],
  ['CLIENT_METADATA_ENABLED','c','G',{risk:'crit'}],
  ['LIFECYCLE_DRY_RUN','c','G',{safe:true,onValue:true,narrowOnly:true,risk:'crit',envDefault:true,envParse:'not-false-boolean'}],
@@ -48,7 +48,7 @@ const rows=[
  ['EMAIL_SETUP_AVAILABLE','b','',{derived:true,envParse:'true-only'}],['WAITLIST_MAIL_AVAILABLE','b','',{derived:true,envParse:'true-only'}]
 ];
 const freeze=value=>{if(value&&typeof value==='object'){for(const child of Object.values(value))freeze(child);Object.freeze(value);}return value;};
-export const FLAGS=freeze(Object.fromEntries(rows.map(([name,kind,dimensions,extra])=>[name,{name,class:kind,type:'boolean',safe:false,onValue:true,dimensions:dimensions?dimensions.split(' '):[],requires:[],risk:kind==='b'?null:'std',outage:kind==='b'?null:'safe',gates:[...common],gateReferences:[GATE_SOURCE],gateRevision:GATE_REVISION,experiment:null,stateful:false,retainExisting:false,placement:extra.stateful?'account':'edge',client:false,narrowOnly:false,derived:false,envDefault:undefined,envDefaults:{},envParse:'string',...extra,...extra.stateful?{retainExisting:true,hasState:name}:{}}])));
+export const FLAGS=freeze(Object.fromEntries(rows.map(([name,kind,dimensions,extra])=>[name,{name,class:kind,type:'boolean',safe:false,onValue:true,dimensions:dimensions?dimensions.split(' '):[],requires:[],risk:kind==='b'?null:'std',outage:kind==='b'?null:'safe',gates:[...common],gateReferences:[GATE_SOURCE],gateRevision:GATE_REVISION,experiment:null,stateful:false,retainExisting:false,placement:extra.stateful?'account':'edge',client:false,narrowOnly:false,derived:false,envDefault:undefined,envDefaults:{},envParse:'string',...extra,...extra.stateful?{retainExisting:extra.retainExisting??true,...extra.retainExisting===false?{}:{hasState:name}}:{}}])));
 export const registry=FLAGS;
 export const FLAG_NAMES=Object.freeze(Object.keys(FLAGS));
 export function getFlag(name){if(typeof name!=='string'||!Object.hasOwn(FLAGS,name))throw Object.assign(new TypeError(`Unknown flag: ${String(name)}`),{code:'unknown_flag'});return FLAGS[name];}

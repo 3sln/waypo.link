@@ -1,3 +1,4 @@
+import {siteGlobal,siteEnabled,flagsFor} from '../flags/read.mjs';
 // BRIDGE (implementation-roadmap Wave 7; public-email-bridge.md; messaging-app.md §13; bindlebox.md §9): the provider's
 // public email bridge as ngin Actions/Queries over injected providers. The same operations run at every placement:
 // the Worker email handler and EmailBridgeObject, the Node adapter and the tests; only the provider set differs.
@@ -52,10 +53,10 @@ export const senderKey=address=>hex(`email-bridge-sender-v1\0${address.toLowerCa
 const domainKey=address=>hex(`email-bridge-domain-v1\0${address.slice(address.lastIndexOf('@')+1).toLowerCase()}`);
 
 /** Effective deployment switch: EMAIL_BRIDGE_ENABLED and BINDLEBOX_ENABLED, an exact HTTPS origin and a receiving domain. */
-export function bridgeConfig(config={}){
+export function bridgeConfig(config={},owner){
  let origin=null;try{const u=new URL(config.APP_ORIGIN);if(u.protocol==='https:'&&u.origin===config.APP_ORIGIN)origin=u.origin;}catch{}
  const domain=String(config.EMAIL_BRIDGE_DOMAIN??(origin?new URL(origin).hostname:'')).toLowerCase();
- const enabled=flag(config.EMAIL_BRIDGE_ENABLED)&&flag(config.BINDLEBOX_ENABLED)&&!!origin&&/^[a-z0-9.-]+\.[a-z]{2,}$/.test(domain);
+ const enabled=(owner?siteEnabled(config,'EMAIL_BRIDGE_ENABLED',{subject:{kind:'account',owner}}):siteGlobal(config,'EMAIL_BRIDGE_ENABLED'))&&(owner?siteEnabled(config,'BINDLEBOX_ENABLED',{subject:{kind:'account',owner}}):siteGlobal(config,'BINDLEBOX_ENABLED'))&&!!origin&&/^[a-z0-9.-]+\.[a-z]{2,}$/.test(domain);
  return {enabled,origin,domain,link:origin?`${origin}/`:null,// A configured authserv-id is honoured only with the operator's attestation that the receiving MTA removes
  // sender-supplied Authentication-Results bearing it (RFC 8601 §5; review EB-1). Cloudflare: leave both unset.
  authservId:flag(config.EMAIL_BRIDGE_AUTHSERV_STRIPS)&&typeof config.EMAIL_BRIDGE_AUTHSERV_ID==='string'&&/^[A-Za-z0-9.-]{1,253}$/.test(config.EMAIL_BRIDGE_AUTHSERV_ID)?config.EMAIL_BRIDGE_AUTHSERV_ID:null};
@@ -99,7 +100,7 @@ export const operate=(engine,op)=>op instanceof Query?read(engine,op):perform(en
 class BridgeAction extends Action{constructor({actor,input}={}){super();this.actor=actor;this.input=input;}async execute(resources,context){context.dispatchFeed.dispatchEvent(new CustomEvent('result',{detail:await this.run(resources,context)}));}}
 class BridgeQuery extends Query{constructor({actor,input}={}){super();this.actor=actor;this.input=input;}async boot(resources,{notify}){notify(await this.fetch(resources));}}
 const ownerOf=(actor,kinds=['system'])=>{if(!kinds.includes(actor?.kind)||typeof actor.owner!=='string'||!/^[a-f0-9-]{36}$/.test(actor.owner))fault('unauthorized','Sign in to continue.',401);return actor.owner;};
-const live=config=>{const c=bridgeConfig(config);if(!c.enabled)fault('not_found','Not found.',404);return c;};
+const live=config=>{const c=bridgeConfig(config);if(!c.enabled&&flagsFor(config).version===0)fault('not_found','Not found.',404);return c;};
 
 // ---- Owner store rows ----
 export const defaultSettings=()=>({enabled:false,autoReply:true,revision:0});
@@ -134,7 +135,7 @@ export class BridgeReceive extends BridgeAction{
   const bucket=parseInt((await hex(`email-bridge-src-v1\0${envelopeFrom?envelopeFrom.slice(envelopeFrom.lastIndexOf('@')+1):'<>'}`)).slice(0,2),16);
   if(!await limiter.consume(`email-bridge/source-v1/${bucket}`,{limit:L.sourcePerHour,windowMs:3600000}))return reject;
   let target;try{target=await directory.resolve(local);}catch{return reject;}
-  if(!target||target.active!==true||target.entitled!==true||!/^[a-f0-9-]{36}$/.test(target.owner??''))return reject;
+  if(!target||target.active!==true||target.entitled!==true||!/^[a-f0-9-]{36}$/.test(target.owner??'')||!bridgeConfig(config,target.owner).enabled)return reject;
   // Charged only for eligible recipients (review EB-3), so mail to nonexistent handles cannot exhaust bridge intake.
   if(!await limiter.consume('email-bridge/ingress-v1',{limit:L.ingressPerHour,windowMs:3600000}))return reject;
   let parsed;try{parsed=await parseEmail(await v.read(MIME_LIMITS.rawBytes),{envelopeFrom,authservId:c.authservId});}catch(error){if(error instanceof BridgeMimeError)return reject;throw error;}
@@ -147,7 +148,7 @@ export class BridgeReceive extends BridgeAction{
 export class BridgeAdmit extends BridgeAction{
  static operation='bridge.admit';static deps=['config','clock','random','stores','senders'];
  async run({config,clock,random,stores,senders}){
-  const owner=ownerOf(this.actor),c=bridgeConfig(config);if(!c.enabled)return {accepted:false};
+  const owner=ownerOf(this.actor),c=bridgeConfig(config,owner);if(!c.enabled)return {accepted:false};
   const {envelope,principal,parsed,dmarcGate}=this.input??{},now=clock.now(),store=stores.for(owner);
   const {message,from,replyTo,messageId,hints,auth,headerFrom,multipleReplyTo}=parsed,envelopeFrom=envelope.from;
   const digest=await intakeDigest(message),fp=await ingressFingerprint({owner,envelopeFrom,messageId,digest}),tx=await deliveryTx(owner,fp);
@@ -293,7 +294,7 @@ export class BridgeSettings extends BridgeQuery{
 export class BridgeConfigure extends BridgeAction{
  static operation='bridge.configure';static deps=['config','stores'];
  async run({config,stores}){
-  const owner=ownerOf(this.actor,['owner']);live(config);const v=this.input??{};
+  const owner=ownerOf(this.actor,['owner']);live(config);const v=this.input??{};if((v.enabled===true||v.autoReply===true)&&!bridgeConfig(config,owner).enabled)fault('not_found','Not found.',404);
   if(!plain(v)||Object.keys(v).some(k=>!['enabled','autoReply'].includes(k))||Object.values(v).some(x=>typeof x!=='boolean'))fault('invalid_input','Choose on or off.',400);
   return stores.for(owner).transaction(async t=>{const s=settingsOf(await t.get(K.settings)),next={...s,...v,revision:s.revision+1};await t.put(K.settings,next);return {enabled:next.enabled,autoReply:next.autoReply,revision:next.revision};});
  }

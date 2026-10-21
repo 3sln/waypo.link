@@ -3,14 +3,18 @@ import {isFreeHandle,BOOT_HANDLE} from './handles.mjs';
 import {validateHostAlias,configuredTokenNames,configuredBadgeIDs} from './badge-policy.mjs';
 import {signupCapacityLimits} from '../core/abuse-policy.mjs';
 import {isUUID as uuid} from '../core/primitives.mjs';
+import {legacyValue} from '../flags/env.mjs';
+import {createFlags} from '../flags/evaluate.mjs';
 const utf8=new TextEncoder();
 const fail=(code,message,status=403)=>{throw Object.assign(new Error(message),{code,status});};
 function exact(value,keys){return value&&Object.getPrototypeOf(value)===Object.prototype&&Object.keys(value).length===keys.length&&keys.every(key=>Object.hasOwn(value,key));}
 function origin(value){let url;try{url=new URL(value);}catch{}if(!url||url.origin!==value||url.protocol!=='https:'&&!(url.protocol==='http:'&&url.hostname==='localhost'))fail('invalid_onboarding_invitation','This onboarding invitation is invalid or expired.');return value;}
 export const configuredOnboardingNames=config=>configuredTokenNames(config);
-export function onboardingEnabled(config){try{return config.ONBOARDING_ENABLED==='true'&&/^[A-Za-z0-9_-]{43}$/.test(config.ONBOARDING_KEY)&&encode(decode(config.ONBOARDING_KEY))===config.ONBOARDING_KEY&&configuredOnboardingNames(config).length>0;}catch{return false;}}
+export function onboardingEnabled(config){try{return legacyValue('ONBOARDING_ENABLED',config)&&/^[A-Za-z0-9_-]{43}$/.test(config.ONBOARDING_KEY)&&encode(decode(config.ONBOARDING_KEY))===config.ONBOARDING_KEY&&configuredOnboardingNames(config).length>0;}catch{return false;}}
 export function onboardingKeyReady(config){try{return /^[A-Za-z0-9_-]{43}$/.test(config.ONBOARDING_KEY)&&encode(decode(config.ONBOARDING_KEY))===config.ONBOARDING_KEY;}catch{return false;}}
-export const onboardingOnly=config=>config.ONBOARDING_ENABLED==='true'&&config.SIGNUP_ENABLED==='false';
+// ctx is adapter-verified; the pinned request port supplies trusted signup geo.
+// Without a console record, only the old explicit string "false" means onboarding-only.
+export function onboardingOnly(config,ctx={}){const flags=(config.flags??config.FLAGS??createFlags({snapshot:{v:1,version:0,issuedAt:0,flags:{}},env:config})).for(ctx),signup=flags.evaluate('SIGNUP_ENABLED');return legacyValue('ONBOARDING_ENABLED',config)&&!signup.value&&(!['no-record','env-kill'].includes(signup.reason)||flags.envState('SIGNUP_ENABLED').raw==='false');}
 export function onboardingClaims(value,issuer,now=Date.now()){
  if(!exact(value,['version','purpose','issuer','nonce','issuedAt','expiresAt','names'])||value.version!==1||value.purpose!=='bindle-ordinary-account-onboarding'||value.issuer!==origin(issuer)||!uuid(value.nonce)||!Number.isSafeInteger(value.issuedAt)||value.issuedAt<0||value.issuedAt>now||!Number.isSafeInteger(value.expiresAt)||value.expiresAt<=now||value.expiresAt<=value.issuedAt||value.expiresAt-value.issuedAt>7*86400000||!Array.isArray(value.names)||value.names.length<1||value.names.length>64)fail('invalid_onboarding_invitation','This onboarding invitation is invalid or expired.');
  const names=value.names.map(item=>{if(!exact(item,['name','owner','assignmentId',...item?.badgeIds!==undefined?['badgeIds']:[]])||!uuid(item.owner)||!uuid(item.assignmentId))fail('invalid_onboarding_invitation','This onboarding invitation is invalid or expired.');try{if(validateHostAlias(item.name)!==item.name||item.name===BOOT_HANDLE)throw Error();}catch{fail('invalid_onboarding_invitation','This onboarding invitation is invalid or expired.');}const badgeIds=item.badgeIds??[];if(!Array.isArray(badgeIds)||badgeIds.length>4||new Set(badgeIds).size!==badgeIds.length||badgeIds.some(id=>typeof id!=='string'||! /^[a-z][a-z0-9-]{0,47}$/.test(id)))fail('invalid_onboarding_invitation','This onboarding invitation is invalid or expired.');return {name:item.name,owner:item.owner,assignmentId:item.assignmentId,badgeIds:[...badgeIds]};});

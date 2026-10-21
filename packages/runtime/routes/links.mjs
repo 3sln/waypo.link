@@ -1,3 +1,4 @@
+// FF-5a: legacy mount visibility is preserved; after console adoption owner reads/reversal ignore targeting.
 // HTTP routes of slice BB-C1a, core links (docs/architecture/messaging-extraction.md §2.5): owner views and
 // revocation of app-issued links. Mounted only with BINDLEBOX_ENABLED; with the flag off nothing here answers, so
 // the paths stay 404 and no allowlist reveals them. The contact landing, inspection, oEmbed and audience-response
@@ -9,7 +10,7 @@
 // itself, matches only that exact media type (everything else falls through untouched), and exists only with
 // BINDLEBOX_ENABLED. Responses are no-store, no-referrer, credentialless CORS, never vary on cookies, and every
 // failure after link verification is the uniform 503 recipient_unavailable with Retry-After 3600.
-import {json,body,limit,privateHeaders,accountHandle,signedContactPath} from './shared.mjs';
+import {flagReadable,flagGlobal,json,body,limit,privateHeaders,accountHandle,signedContactPath} from './shared.mjs';
 import {parseLinkQuery,parseLinkMeta} from '../../links/envelope.mjs';
 import {DESCRIPTOR_MEDIA_TYPE} from '../../links/types.mjs';
 
@@ -22,7 +23,7 @@ const unavailable=()=>json({error:'recipient_unavailable',message:'The recipient
 const linkInvalid=()=>json({error:'link_invalid',message:'The link is not valid.'},401,descriptorHeaders);
 const wantsDescriptor=request=>{const accept=(request.headers.get('Accept')||'').split(',').map(part=>part.split(';')[0].trim().toLowerCase()).filter(Boolean);return accept.length===1&&accept[0]===DESCRIPTOR_MEDIA_TYPE;};
 export async function descriptorRoute({request,env,url,local}){
- if(env.BINDLEBOX_ENABLED!=='true'||url.origin!==env.APP_ORIGIN)return;
+ if(!flagGlobal(env,'BINDLEBOX_ENABLED')||url.origin!==env.APP_ORIGIN)return;
  const path=url.pathname;// the edge stage runs before the router sets `path`
  const contact=signedContactPath.exec(path);if(!contact||!['GET','HEAD','OPTIONS'].includes(request.method)||(request.method!=='OPTIONS'&&!wantsDescriptor(request)))return;
  if(request.method==='OPTIONS'){if(request.headers.get('Access-Control-Request-Method')!=='GET'||(request.headers.get('Access-Control-Request-Headers')||'').toLowerCase().split(',').some(h=>h.trim()&&h.trim()!=='accept'))return;return new Response(null,{status:204,headers:{...descriptorHeaders,'Access-Control-Allow-Methods':'GET, HEAD','Access-Control-Allow-Headers':'Accept'}});}
@@ -41,7 +42,7 @@ export async function descriptorRoute({request,env,url,local}){
 export const stages={
  edge:descriptorRoute,
  async owner({request,env,url,path,object,id}){
-  if(env.BINDLEBOX_ENABLED!=='true'||!path.startsWith('/api/links'))return;
+  if(!flagReadable(env,'BINDLEBOX_ENABLED',true)||!path.startsWith('/api/links'))return;
   if(path==='/api/links'){
    const refused=only(request,'GET');if(refused)return refused;
    const p=url.searchParams;if([...p.keys()].some(k=>!['type','cursor','limit'].includes(k)||p.getAll(k).length!==1))return bad();

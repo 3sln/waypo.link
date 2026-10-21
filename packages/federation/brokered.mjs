@@ -1,3 +1,4 @@
+import {siteGlobal} from '../flags/read.mjs';
 // EXT-X7 brokered resource records and provider-to-integration resource calls (docs/spec/integrations.md §4.3–§4.5,
 // §5.3, §5.6, §7.1; docs/spec/bindlebox.md §2.2; extensibility-design X7). Engine-first: `brokeredResourcesProvider`
 // is the owner-scoped resource over the account store; the Actions/Queries below are the operations. Everything is
@@ -50,8 +51,8 @@ const pad=n=>String(n).padStart(16,'0');
 // The lookup anchor: a contract an assignment actually uses, so narrowing elsewhere stays visible in the claims.
 const anchorOf=r=>r.assignments.find(a=>a.contracts.length)?.contracts[0]??r.contracts[0];
 const epochOf=s=>Number.isSafeInteger(s?.capabilityEpoch)?s.capabilityEpoch:0;
-export const brokeringFlag=config=>config?.BROKERING_ENABLED===true||config?.BROKERING_ENABLED==='true';
-export const integrationsFlag=config=>config?.INTEGRATIONS_ENABLED===true||config?.INTEGRATIONS_ENABLED==='true';
+export const brokeringFlag=config=>siteGlobal(config,'BROKERING_ENABLED');
+export const integrationsFlag=config=>siteGlobal(config,'INTEGRATIONS_ENABLED');
 const indexKey=async(connection,resource)=>INDEX+[...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(`brokered-record/v1\0${connection}\0${resource}`)))].map(b=>b.toString(16).padStart(2,'0')).join('');
 
 // ---- Connection reads (mirror AppConnections.check: the same store, record shape and lifecycle fence) ----
