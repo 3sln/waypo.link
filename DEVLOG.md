@@ -2437,5 +2437,9 @@ The user's first use is their own company ERP.
 
 - **Term.** "Organization" accepted by the user. "Entity" stays the umbrella term ([terminology](docs/architecture/organizations-terminology.md)). Reviewer: ___ Date: ___ Outcome: ___
 - **Cross-provider membership is core (user clarification).** Members from any provider sign requests with a key certified by their home provider. Verification chain: home manifest → `directory.v1` identity document → member certificate → DPoP proof → live grants. There is no org sign-in. Certificate acquisition is unspecified (elements, fallback Bindle flow, device grant). The goal is proof of origin attested by the home provider; passkey-signed approvals are optional later. Reviewer: ___ Date: ___ Outcome: ___
-- **Status.** [Design](docs/architecture/organizations-design.md) rev 3 and [spec](docs/spec/organizations.md) rev 2 after review round 1 (5 High, 8 Medium, 8 Low). Review round 2 is in progress.
+- **Status.** [Design](docs/architecture/organizations-design.md) rev 3 and [spec](docs/spec/organizations.md) rev 2.
+  - Review round 1 found 5 High, 8 Medium, 8 Low.
+  - Review round 2 found 3 High, 8 Medium, 3 Low. All Highs are fixed in text: uniform errors and no request-triggered fetch for non-members; the identity document URL comes only from the directory or a pin; key states only move forward, with no revoked-key resurrection.
+  - Open: certificate lifetime (recommend 300 s mandatory), home key reset restoring access immediately, and correlation (later: certificates encrypted to the org).
+  - Foreign issuers stay behind an empty allowlist until the Workers outbound-fetch gate passes and an independently written spec-only issuer passes the tests.
 - **Pending user decisions.** Signing model confirmation, the org issuer location, the two-admin deadlock, and certificate lifetimes. Accepted-provisional recommendations: no roles (per-member grants plus copy-on-apply templates), paid-only at launch, grantor-initiated offers, and a minimal ERP phase A that includes cross-provider members.
