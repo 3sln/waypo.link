@@ -1,4 +1,5 @@
 import {lifecycleMode,lifecycleLog} from './lifecycle-runner.mjs';
+import {sweepDeletionDue} from './account-deletion.mjs';
 
 // Bounded, resumable sweep over identity shards. It arms lifecycle schedules for
 // accounts that never return (migration and Node restart wake-up) and nudges a
@@ -18,7 +19,10 @@ export class LifecycleSweep {
  }
  async status(){const state=await this.metadata.get(KEY);return state?{cursor:state.cursor!==null,passes:state.passes,lastRun:state.lastRun??null,running:Boolean(state.lease&&state.lease.until>this.clock())}:{cursor:false,passes:0,lastRun:null,running:false};}
  async run({trigger='cron'}={}){
-  const mode=lifecycleMode(this.config);if(mode==='off')return {mode};
+  // DX-3: due deletion requests are ticked independent of LIFECYCLE_ENABLED, so an abandoned account whose alarm
+  // was lost still commits at its deadline (§2.2, R1-M4). The index is the adapter's ACCOUNT_DELETION_DUE.
+  let deletion;if(typeof this.config.ACCOUNT_DELETION_DUE?.due==='function'){try{deletion=await sweepDeletionDue({index:this.config.ACCOUNT_DELETION_DUE,accounts:this.accounts,now:this.clock()});}catch{deletion={ticked:0,failed:1};}if(deletion.ticked||deletion.failed)lifecycleLog(this.config,{action:'deletion-sweep',trigger,...deletion});}
+  const mode=lifecycleMode(this.config);if(mode==='off')return {mode,...deletion?{deletion}:{}};
   const budget=integer(this.config.LIFECYCLE_SWEEP_BATCH,200,1,2000),timeBudget=integer(this.config.LIFECYCLE_SWEEP_TIME_MS,25000,1000,600000),continueMs=integer(this.config.LIFECYCLE_SWEEP_CONTINUE_MS,900000,60000,86400000);
   const started=this.clock(),lease=crypto.randomUUID();
   const claimed=await this.metadata.transaction(async tx=>{

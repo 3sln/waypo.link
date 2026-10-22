@@ -2,6 +2,8 @@
 // Stage handlers and route-module shape: packages/runtime/routes/index.mjs.
 import {everPaidEvent} from '../../identity/lifecycle-protection.mjs';
 import {verifyPolarWebhook} from '../../billing/index.mjs';
+import {revokeDeletedOwner,paidEvents} from '../../billing/closure.mjs';
+import {siteGlobal,flagsFor} from '../../flags/read.mjs';
 import {UUID as uuidPattern} from '../../core/primitives.mjs';
 import {json,body,limit,accountHandle} from './shared.mjs';
 
@@ -22,6 +24,9 @@ export const stages={
     const account=await env.IDENTITY_REPOSITORY.get(verified.owner);
     // Lifecycle ever-paid evidence is kept for every non-deleted identity, before the billing status filter.
     if(account&&account.status!=='deleted'&&everPaidEvent(verified))await accountHandle(env,verified.owner).lifecycleEverPaid(verified.owner,{type:verified.type,productIds:verified.productIds});
+    // DX-4 (account-deletion-export.md §2.3, R1-L2): a deleted account must never carry a live subscription. With the
+    // deletion flag on, a new paid event for a deleted identity is revoked and alerted instead of silently acknowledged.
+    if(account?.status==='deleted'&&paidEvents.has(verified.type)&&siteGlobal(env,'ACCOUNT_DELETION_ENABLED'))return json(await revokeDeletedOwner({config:env,flags:{for:ctx=>flagsFor(env,ctx)},clock:{now:()=>Date.now()},alert:async entry=>console.log(JSON.stringify({event:'account-lifecycle',kind:'account-deletion',action:'operator-alert',...entry})),owner:verified.owner,verified:{owner:verified.owner,id:verified.id,type:verified.type}}));
     if(!account||(account.status!=='active'&&!(['pending','recovering'].includes(account.status)&&account.admission?.version===1&&account.admission.kind==='paid'&&account.admission.initialPaymentRequired!==false)))return json({accepted:true,ignored:true});
     return json(await accountHandle(env,verified.owner).billingWebhookVerified(verified.owner,verified));
    }

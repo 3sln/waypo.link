@@ -9,7 +9,7 @@ const fail=(code='billing_provider_unavailable',message='Billing closure could n
 const missing=error=>error?.statusCode===404&&error?.error?.error==='ResourceNotFound';
 const inactive=error=>['AlreadyCanceledSubscription','InactiveSubscription'].includes(error?.error?.error);
 const states=new Set(['incomplete','incomplete_expired','trialing','active','past_due','canceled','unpaid','paused']);
-const paidEvents=new Set(['subscription.created','subscription.active','order.paid']);
+export const paidEvents=new Set(['subscription.created','subscription.active','order.paid']);
 
 export class BillingClosure {
  // §6 port: cancelAtPeriodEnd returns {set:[{subscriptionId,canceledAt}],uncertain,evidence};
@@ -147,3 +147,11 @@ export class RevokeBillingClosure extends ClosureAction {static operation='billi
 export class AnonymizeBillingClosure extends ClosureAction {static operation='billing.closure-anonymize';apply(closure,owner){return closure.anonymize(owner);}}
 export class ClosureBillingWebhook extends ClosureAction {static operation='billing.closure-webhook';apply(closure,owner){return closure.webhook(owner,this.input?.verified,{deleted:this.input?.deleted===true});}}
 export const BILLING_CLOSURE_OPERATIONS=Object.freeze([CancelBillingAtPeriodEnd,UncancelBillingClosure,RevokeBillingClosure,AnonymizeBillingClosure,ClosureBillingWebhook]);
+
+/** A paid event for an identity that is already deleted (its account store holds only the tombstone): revoke and
+ * alert over a throwaway store, so reconciliation never writes rows back into the tombstoned account. */
+export async function revokeDeletedOwner({config,flags,clock,client,alert,owner,verified}){
+ const rows=new Map([['owner',owner]]),store={get:async k=>structuredClone(rows.get(k)),put:async(k,v)=>{rows.set(k,structuredClone(v));},delete:async k=>{rows.delete(k);},list:async({prefix='',limit=1000}={})=>new Map([...rows].filter(([k])=>k.startsWith(prefix)).sort(([a],[b])=>a<b?-1:1).slice(0,limit)),transaction:async fn=>fn(store)};
+ const billing=new BillingService({config,metadata:store,client});
+ return new BillingClosure({billing,metadata:store,client,clock,flags,alert}).webhook(owner,verified,{deleted:true});
+}

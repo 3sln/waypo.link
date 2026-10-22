@@ -56,7 +56,7 @@ export const PROVIDERS = Object.freeze({
   storageQuota: row('account', 'domain', 'planned', 'Storage quota, reservations and write budgets.'),
   billing: row('account', 'domain', 'planned', 'BillingService (entitlement, webhooks, changes).'),
   search: row('account', 'domain', 'planned', 'SearchService and semantic budget.'),
-  lifecycle: row('account', 'domain', 'planned', 'Account lifecycle runner and retention protection.'),
+  lifecycle: row('account', 'domain', 'pilot', 'Account lifecycle runner and retention protection. DX-3: the DeletionService behind deletion.* (packages/runtime/account-deletion.mjs); ACCOUNT_DELETION_ENABLED required for new requests.'),
   notifications: row('account', 'domain', 'planned', 'NotificationService and app notifications.'),
   beams: row('account', 'domain', 'planned', 'BeamService and beam contacts.'),
   apps: row('account', 'domain', 'planned', 'App connections and MCP account operations.'),

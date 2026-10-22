@@ -365,9 +365,7 @@ test('identity port: tombstone reasons are validated and the deletion hold ignor
 test('account slice: composes over a real AccountController; the alarm hook steps first and reports the fence',async t=>{
  const {AccountController}=await import('../packages/runtime/accounts.mjs');
  const {SerialGate}=await import('../apps/node/resources.mjs');
- const {installAccountMethods}=await import('../packages/runtime/account/index.mjs');
- const deletion=await import('../packages/runtime/account/deletion.mjs');
- class DeletionController extends AccountController{}installAccountMethods(DeletionController.prototype,{deletion});
+ class DeletionController extends AccountController{}// the deletion slice is registered (packages/runtime/account/index.mjs)
  const x=await deletionFixture(t);let now=x.clock.now();
  const db=new SqliteMetadata(':memory:');t.after(()=>db.close());
  // Real flag evaluation (registry row from DX-1): default off for new requests, background on unless env-killed.

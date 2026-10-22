@@ -13,6 +13,9 @@ export class EmailBridgeObject extends DurableObject{
   if(operation==='bridge.drain'&&Number.isSafeInteger(result?.nextAt))await this.arm(result.nextAt);
   return result;
  }
+ /** DX-3 E5b: account deletion erases this owner instance (settings, holding queue, dedup, reply ledger). Sender
+  * shards are keyed by external sender and are never erased here. */
+ async erase(owner){const bound=await this.ctx.storage.get('@owner');if(bound!==undefined&&bound!==owner)throw new Error('Email bridge owner mismatch.');await this.ctx.storage.deleteAlarm();await this.ctx.storage.deleteAll();return {erased:true};}
  senders(method,key,options){return runSenderMethod(this.ctx.storage,method,key,options);}
  async arm(at){const current=await this.ctx.storage.getAlarm();if(current===null||current>at)await this.ctx.storage.setAlarm(at);}
  async alarm(){const owner=await this.ctx.storage.get('@owner');if(owner)await this.operate('bridge.drain',owner,{});}

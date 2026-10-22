@@ -21,6 +21,8 @@ const authMethods={
  ,'/api/auth/passkeys/begin':'credentialBegin','/api/auth/passkeys/finish':'credentialFinish','/api/auth/passkeys/remove':'removePasskey','/api/auth/passkeys/rename':'renamePasskey','/api/auth/devices/rename':'renameSession','/api/auth/devices/revoke':'revokeSession','/api/auth/devices/revoke-others':'revokeOtherSessions'
  ,'/api/auth/device/start':'createDeviceLogin','/api/auth/device/approve':'approveDeviceLogin','/api/auth/device/deny':'denyDeviceLogin','/api/auth/device/poll':'pollDeviceLogin','/api/auth/device/cancel':'cancelDeviceLogin'
  ,'/api/auth/email/login/settings':'configureEmailLogin'
+ // DX-6 email removal (account-deletion-export.md §3): CSRF here, step-up and EMAIL_REMOVAL_ENABLED in IdentityService.
+ ,'/api/auth/email/remove':'emailRemove'
 };
 
 // Linked approval (LA3 mount of the LA1 contract, docs/architecture/linked-approval.md §10.1), all behind
@@ -127,7 +129,7 @@ export const stages={
       const input=await body(request);
       // Sign-out also forgets this device's push subscription for that account (best effort).
       if(path==='/api/auth/logout'&&Object.hasOwn(input,'pushSubscription')){const id=input.pushSubscription;delete input.pushSubscription;if(typeof id==='string'&&/^[A-Za-z0-9_-]{43}$/.test(id))try{const signedIn=await engine.query(new OwnerQuery(context)).peek();await accountHandle(env,signedIn.account.id).removeSubscription(signedIn.account.id,id);}catch{}}
-      if(['credentialBegin','credentialFinish','renamePasskey','renameSession','approveDeviceLogin','emailStart','emailConfirm','configureEmailLogin'].includes(authMethods[path])){
+      if(['credentialBegin','credentialFinish','renamePasskey','renameSession','approveDeviceLogin','emailStart','emailConfirm','configureEmailLogin','emailRemove'].includes(authMethods[path])){
         const authenticated=await engine.query(new OwnerQuery(context)).peek();
         if(context.csrfToken!==authenticated.csrfToken)return json({error:'csrf',message:'Reload the account page before continuing.'},403);
         await accountHandle(env,authenticated.account.id).touch(authenticated.account.id);

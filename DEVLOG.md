@@ -2549,3 +2549,62 @@ The user decided that changing or removing grants which themselves allow grant m
 **Resolved.** Q8, the two-admin deadlock: the owner prevails. Phase A now includes the owner of record, consent and elevation, the guards, and audit.
 
 Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-21 — Account deletion and export: DX-1, DX-3, DX-4, DX-6 implemented and integrated
+
+The slices are implemented per the [design](docs/architecture/account-deletion-export.md) and wired into the Worker and Node adapters behind default-off flags (`ACCOUNT_EXPORT_ENABLED`, `ACCOUNT_DELETION_ENABLED`, `EMAIL_REMOVAL_ENABLED`).
+
+- **DX-1: export core.** Deterministic resumable tar, contributors, sealing and expiry. Durable write intents and lease epochs. History trimming keeps records that are still pending cleanup.
+- **DX-3: deletion executor.**
+  - `DeletionService` with six engine operations.
+  - A generalized `purgeBatch` with persisted, append-only stage plans and a fence before each stage. An unconfigured stage holds.
+  - Covers E5 vector hold, E8 shelving re-check, unconditional restore, the empty-object check, the min-merge alarm and the due index.
+  - Owner, admin and inactivity deletion share the executor.
+  - Chaos coverage: a crash at every mutating call, sign-in racing the deadline, export versus delete, shelving and restore races. A workerd-versus-Node parity test passes.
+- **DX-4: billing closure** against Polar fakes. Checkout and plan changes are refused while deletion is scheduled. A paid event on a fenced or deleted owner is revoked and alerted; the alerts go to the structured log, since no operator notice transport exists.
+- **DX-6: email removal and security state.**
+  - `security:{epoch, changedAt}` is bumped in the same CAS as every security change, read through `identitySecurity(owner)`.
+  - `emailRemove` requires step-up, uses a notice waiver, and releases the index in the same write.
+  - Route: `POST /api/auth/email/remove`.
+- **Integration.**
+  - Federation, MCP (64-shard fan-out) and email-bridge erase operations.
+  - Cross-slice export/delete chaos tests run against the real `AccountExport`.
+  - The due index lives in the scheduler DO (Worker) or `identities.sqlite` (Node).
+
+Provisional decisions taken by the coordinator:
+
+- The inactivity purge now runs the common erasure stages: grants, drain, operator apps, email bridge and exports. The alarm returns early while a purge job exists. These are the review's R1-H2/H3 fixes and only take effect with `LIFECYCLE_PURGE_ENABLED`, which is off. Reviewer: ___ Date: ___ Outcome: ___
+- DX-6 deviations:
+  - New accounts count as recently security-changed for their first 72 h.
+  - Recovery resume and recovery-file rotation bump the epoch.
+  - Re-verifying the same email does not bump it.
+  - Added an optional `expectedEmail`.
+  - The waiver requires current terms acceptance.
+
+  Reviewer: ___ Date: ___ Outcome: ___
+- DX-3 deviations:
+  - Up to 16 hashed cancel tokens, one per notice.
+  - Holds are represented as a field, not a state.
+  - The E2 severance reason is `deleted`.
+  - A security change during grace requires a newly accepted notice.
+  - The completion notice can be dropped after one day.
+  - `admin-underage` gets 30-day grace.
+
+  Reviewer: ___ Date: ___ Outcome: ___
+
+Open items:
+- R1-M12, BindleBox on deletion. `operatorApps` is an explicit no-op, and the deletion flag stays off until this is decided.
+- DX-6 item 6: invalidating notification budgets and unsubscribe tokens.
+- Erasing device grants beyond lineage revocation.
+- Q3, a Polar sandbox anonymization check.
+- Remaining slices: DX-2 export routes, DX-5 deletion routes and notices, DX-7 admin-assisted deletion, DX-8 UI, DX-9 over-quota hook and CLI.
+
+Gates:
+
+| Suite | Result |
+|---|---|
+| `npm test` | 2238 |
+| Worker | 73 |
+| UI-state | 291 |
+| DOM, build, dry run | pass |
+| e2e | 214, 4 WebKit environment skips |

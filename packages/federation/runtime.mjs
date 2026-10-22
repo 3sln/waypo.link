@@ -105,6 +105,10 @@ export class FederationController {
   async configure(context,input){this.requireReady();const out=await this.service.configure(this.authority(context,true,true),input);await this.service.drainBrokeredEvents();return out;}
   registerResource(context,input){this.requireReady();return this.service.registerResource(this.authority(context,true,true),input);}
   async cleanup(input){const events=await this.service.drainBrokeredEvents(),out=await this.service.cleanup(input);return events.pending?{...out,remaining:true,nextAlarmAt:this.clock()+60000}:out;}
+  /** DX-3 E3 (account-deletion-export.md §2.3): this store is one owner's federation shard, so erasing the subject
+   * deletes every `federation/` row in it: grants, token families, preferences, brokered JTIs, requests, resources
+   * and persisted client snapshots. Access already ended at the identity tombstone; this removes the records. */
+  async eraseSubject(){let deleted=0;for(;;){const rows=await this.metadata.list({prefix:'federation/',limit:256});if(!rows.size)return {deleted};await this.metadata.delete([...rows.keys()]);deleted+=rows.size;}}
   preferences(context){this.requireReady();return this.service.preferences(this.authority(context,false));}
   grants(context){this.requireReady();return this.service.grants(this.authority(context,false));}
   async revoke(context,id){this.requireReady();const out=await this.service.revoke(this.authority(context,true),id);await this.service.drainBrokeredEvents();return out;}

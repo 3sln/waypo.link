@@ -17,11 +17,13 @@ import {createNodeFormFetch} from '../../packages/apps/node-form-fetch.mjs';
 import {PlanCatalogRegistry,cachedCatalogPort} from '../../packages/billing/registry.mjs';
 import { DatabaseSync } from 'node:sqlite';
 import { mkdir, readFile, writeFile, rename, unlink, stat, open } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
 import { resolve, join, extname } from 'node:path';
 import {nodeSqlPort} from '../../packages/search/index.mjs';
 import { IdentityRepository, FixedWindowGuard, AccountController } from '../../packages/runtime/accounts.mjs';
 import {McpShardController,mcpAuthorities} from '../../packages/mcp/runtime.mjs';
+import {MCP_SHARDS} from '../../packages/mcp/service.mjs';
 import {FederationController,federationMetadata} from '../../packages/federation/runtime.mjs';
 import {messagingAddressMounted,federationAuthority,federationControllerOptions,federationEntries,federationEntriesCleanup,FEDERATION_LAYOUT,federationEpoch,federationClientDirectory,clientMetadataEnabled} from '../../packages/runtime/federation.mjs';
 import {createNodeClientMetadataFetch} from '../../packages/federation/node-client-metadata-fetch.mjs';
@@ -33,7 +35,9 @@ import {AdminStorage} from '../../packages/identity/admin-store.mjs';
 import {MemoryLinkedLimits} from '../../packages/identity/linked-approval.mjs';
 import {deviceGrantMountable} from '../../packages/runtime/device-grant.mjs';
 import {attachAppSessions} from '../../packages/federation/device-authorization.mjs';
-import {lifecycleIdentityPort,lifecycleAdminHoldPort} from '../../packages/identity/lifecycle-tombstone.mjs';
+import {lifecycleIdentityPort,lifecycleAdminHoldPort,deletionHoldPort,deletionAdminAuthorityPort} from '../../packages/identity/lifecycle-tombstone.mjs';
+import {identitySecurityPort} from '../../packages/identity/service.mjs';
+import {deletionDueIndex,sweepDeletionDue} from '../../packages/runtime/account-deletion.mjs';
 import {lifecycleMode} from '../../packages/runtime/lifecycle-runner.mjs';
 import {LifecycleSweep} from '../../packages/runtime/lifecycle-scheduler.mjs';
 import {createPushTransport} from '../../packages/messaging/web-push.mjs';
@@ -90,10 +94,10 @@ export async function nodeResources({directory,config,formTransport,mailer}){
  // Restore the one bounded waitlist expiry alarm even before its next visitor.
  await guardFor('signup:waitlist:v1');
  const eventWaits=memoryBusWaits(),eventConfig=eventWaits?{EVENT_BUS_WAITER:eventWaits,EVENT_BUS_WAITS_MOUNTED:true}:{};
- let integrationConfig={};
+ let integrationConfig={};const deletionPorts={},deletionConfig={ACCOUNT_DELETION_PORTS:deletionPorts};// filled once the shards exist (below)
  const accounts={get:id=>{
    if(!/^[a-f0-9-]{36}$/.test(id))throw new Error('Invalid account identifier');
-   if(!accountMap.has(id)){const metadata=new SqliteMetadata(join(directory,'accounts',id+'.sqlite'));const controller=flagWriter(new AccountController({metadata,gate:new SerialGate(),blobs,archives,config:{...config,...integrationConfig,...lifecycleConfig,...eventConfig,FORM_POSTBACK_TRANSPORT:formTransport,DEVELOPER_CONTACT_POPULATION:population,BILLING_CATALOG:catalog,FEDERATION_IDENTITY_CHECK:async(owner,epoch)=>{const account=await repository.get(owner);return account?.status==='active'&&await federationEpoch(account)===epoch;},WORK_AUTHORITY:abuse,CONVERSATION_ACCOUNT:owner=>accounts.get(owner),IDENTITY_ACCOUNT:async owner=>{const account=await repository.get(owner);return account?{status:account.status,handle:account.handle}:null;}},sql:metadata.sql}),flagsRuntime,{flagStats});metadata.onAlarm=()=>controller.alarm();metadata.getAlarm().then(time=>{if(time)metadata.arm(time);});accountMap.set(id,{metadata,controller});}return accountMap.get(id).controller;
+   if(!accountMap.has(id)){const metadata=new SqliteMetadata(join(directory,'accounts',id+'.sqlite'));const controller=flagWriter(new AccountController({metadata,gate:new SerialGate(),blobs,archives,config:{...config,...integrationConfig,...lifecycleConfig,...deletionConfig,...eventConfig,FORM_POSTBACK_TRANSPORT:formTransport,DEVELOPER_CONTACT_POPULATION:population,BILLING_CATALOG:catalog,FEDERATION_IDENTITY_CHECK:async(owner,epoch)=>{const account=await repository.get(owner);return account?.status==='active'&&await federationEpoch(account)===epoch;},WORK_AUTHORITY:abuse,CONVERSATION_ACCOUNT:owner=>accounts.get(owner),IDENTITY_ACCOUNT:async owner=>{const account=await repository.get(owner);return account?{status:account.status,handle:account.handle}:null;}},sql:metadata.sql}),flagsRuntime,{flagStats});metadata.onAlarm=()=>controller.alarm();metadata.getAlarm().then(time=>{if(time)metadata.arm(time);});accountMap.set(id,{metadata,controller});}return accountMap.get(id).controller;
  }};
 
  population=activePopulationPort({repository,accounts,threshold:Number(config.DEVELOPER_CONTACT_ACTIVE_THRESHOLD??1500),authority:async(name,method,input)=>(await guardFor(name)).populationAction(method,input)});await (await guardFor('active-user-v1/census')).populationAction('baseline');
@@ -102,7 +106,7 @@ export async function nodeResources({directory,config,formTransport,mailer}){
    try{const data=await readFile(path);const type={'.html':'text/html; charset=utf-8','.mjs':'text/javascript','.js':'text/javascript','.css':'text/css','.json':'application/json','.webmanifest':'application/manifest+json','.svg':'image/svg+xml','.md':'text/markdown; charset=utf-8','.txt':'text/plain; charset=utf-8'}[extname(path)]||'application/octet-stream';return new Response(data,{headers:{'Content-Type':type,'Cache-Control':'no-cache'}});}catch(error){if(['ENOENT','EISDIR'].includes(error.code))return new Response('Not found',{status:404});throw error;}
  }};
  await mkdir(join(directory,'mcp'),{recursive:true,mode:0o700});const mcpMap=new Map();
- const mcp=mcpAuthorities(shard=>{if(!mcpMap.has(shard)){const metadata=new SqliteMetadata(join(directory,'mcp',`mcp-auth-v1-64-${shard}.sqlite`));const controller=new McpShardController({metadata,config,shard,accounts,repository});metadata.onAlarm=()=>controller.cleanup();metadata.getAlarm().then(time=>{if(time)metadata.arm(time);});mcpMap.set(shard,{metadata,controller});}return mcpMap.get(shard).controller;});
+ const mcpShard=shard=>{if(!mcpMap.has(shard)){const metadata=new SqliteMetadata(join(directory,'mcp',`mcp-auth-v1-64-${shard}.sqlite`));const controller=new McpShardController({metadata,config,shard,accounts,repository});metadata.onAlarm=()=>controller.cleanup();metadata.getAlarm().then(time=>{if(time)metadata.arm(time);});mcpMap.set(shard,{metadata,controller});}return mcpMap.get(shard).controller;},mcp=mcpAuthorities(mcpShard);
  await mkdir(join(directory,'federation'),{recursive:true,mode:0o700});const federationMap=new Map();
  // client-id-metadata.v1 (CLIENT_METADATA_ENABLED): DNS-pinned public egress, process-wide plus durable ABUSE budgets,
  // and the administrator block list (read lazily; an unreadable store fails closed). An injected CLIENT_METADATA_FETCH
@@ -119,6 +123,15 @@ export async function nodeResources({directory,config,formTransport,mailer}){
  integrationConfig.INTEGRATION_CLIENT_SNAPSHOT=async client=>integrationSnapshot(client,await clientDirectory.resolveKeys(client));
  for(const {controller}of accountMap.values())Object.assign(controller.config,integrationConfig);
  const federationShard=owner=>{if(!federationMap.has(owner)){const metadata=new SqliteMetadata(join(directory,'federation',`${FEDERATION_LAYOUT}-${owner}.sqlite`));const implementation=new FederationController({...federationControllerOptions({config:{...config,...integrationConfig,...eventConfig},repository,accounts,owner,incremental:{loginDelta:input=>incremental.loginDelta(input),loginOutcome:input=>incremental.loginOutcome(input)},manifestMounts:{messagingAddress:messagingAddressMounted({...config,...integrationConfig})}}),metadata:federationMetadata(metadata)});if(deviceMounted&&device.linked)attachAppSessions(implementation.service,{linked:device.linked,config});metadata.onAlarm=async()=>{const result=await implementation.cleanup();if(result.remaining)await metadata.setAlarm(result.nextAlarmAt);if(device.drain){let pending=false;try{await device.drain({owner});pending=(await device.linked.outbox({owner})).length>0;}catch{pending=true;}if(pending&&!await metadata.getAlarm())await metadata.setAlarm(Date.now()+600000);}};metadata.getAlarm().then(time=>{if(time)metadata.arm(time);});const controller=new Proxy(implementation,{get:(target,method)=>typeof target[method]==='function'?async(...args)=>{const call=async()=>{const result=await target[method](...args);if(!['ready','manifest','cleanup'].includes(method)&&!await metadata.getAlarm())await metadata.setAlarm(Date.now()+600000);return result;};return flagsRuntime.scope.getStore()?call():flagsRuntime.run(await flagsRuntime.pin({alarm:method==='cleanup'}),call);}:target[method]});federationMap.set(owner,{metadata,controller});}return federationMap.get(owner).controller;};
+ // DX-3 account deletion ports, independent of LIFECYCLE_ENABLED (new requests still need ACCOUNT_DELETION_ENABLED).
+ // Erasure only opens shard files that already exist, so deleting an account never creates federation or MCP stores.
+ // Node has no email bridge. R1-M12 is undecided: operatorApps is null, which keeps the inactivity purge unchanged;
+ // the deletion flag stays off until it is decided. The notices port (DX-5) is not wired: requests hold before commit.
+ const deletionDue=deletionDueIndex(identities);
+ Object.assign(deletionPorts,{identity:lifecycleIdentityPort(repository),security:identitySecurityPort(repository),hold:owner=>deletionHoldPort({store:adminStore,repository})(owner),adminAuthority:owner=>deletionAdminAuthorityPort({store:adminStore,repository})(owner),due:deletionDue,
+  erasure:{federation:{eraseSubject:async owner=>existsSync(join(directory,'federation',`${FEDERATION_LAYOUT}-${owner}.sqlite`))?federationShard(owner).eraseSubject():{deleted:0,absent:true}},
+   mcp:{eraseSubject:async owner=>{let deleted=0;for(let n=0;n<MCP_SHARDS;n++){const shard=String(n).padStart(2,'0');if(!existsSync(join(directory,'mcp',`mcp-auth-v1-64-${shard}.sqlite`)))continue;const result=await mcpShard(shard).invoke('eraseSubject',[owner]);if(!result.ok)throw Object.assign(new Error(result.error.message),result.error);deleted+=result.result.deleted;}return {deleted};}},
+   emailBridge:null,operatorApps:null}});
  const federation=federationAuthority({config:{...config,...integrationConfig,...eventConfig},repository,directory:clientDirectory,manifestMounts:{deviceAuthorization:deviceMounted,messagingAddress:messagingAddressMounted({...config,...integrationConfig})},shard:federationShard});
  // The pre-owner authorization-entry store, sharded by entry ID like the MCP stores (one SQLite file per shard, each
  // pruned by its own alarm); null unless FEDERATION_ENTRY_ENABLED. packages/runtime/http.mjs mounts the provider
@@ -139,9 +152,12 @@ export async function nodeResources({directory,config,formTransport,mailer}){
  // Opening each swept account re-arms its persisted alarm, so abandoned accounts wake after a restart.
  let lifecycleDb=null,lifecycleTimers=[];
  if(lifecycleMode(config)!=='off'){
-  lifecycleDb=new SqliteMetadata(join(directory,'lifecycle.sqlite'));const sweep=new LifecycleSweep({metadata:lifecycleDb,repository,accounts,config});const run=trigger=>sweep.run({trigger}).catch(()=>{});
+  lifecycleDb=new SqliteMetadata(join(directory,'lifecycle.sqlite'));const sweep=new LifecycleSweep({metadata:lifecycleDb,repository,accounts,config:{...config,ACCOUNT_DELETION_DUE:deletionDue}});const run=trigger=>sweep.run({trigger}).catch(()=>{});
   lifecycleDb.onAlarm=()=>run('alarm');{const alarm=await lifecycleDb.getAlarm();if(alarm)lifecycleDb.arm(alarm);}
   lifecycleTimers=[setTimeout(()=>run('startup'),60000),setInterval(()=>run('cron'),6*3600000)];for(const timer of lifecycleTimers)timer.unref();
+ }else if(siteGlobal(config,'ACCOUNT_DELETION_ENABLED')){
+  // DX-3: with the lifecycle off, due account deletions are still swept (the per-account alarm is primary).
+  const run=()=>sweepDeletionDue({index:deletionDue,accounts}).catch(()=>{});lifecycleTimers=[setTimeout(run,60000),setInterval(run,6*3600000)];for(const timer of lifecycleTimers)timer.unref();
  }
  linkedLimits={consume:(key,window)=>abuse.consume('linked-v1:'+key,window)};
  const attachDeviceGrant=({linked,drain})=>{if(!deviceMounted)return;device.linked=linked;device.drain=drain;for(const {controller}of federationMap.values())attachAppSessions(controller.service,{linked,config});};

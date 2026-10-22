@@ -42,7 +42,7 @@ test('Worker adapter: suspension fences HTTP APIs, restricted reactivation, cron
  // Final grace elapsed: purge removes hosted data and all account storage, keeps the handle forever.
  const blobs=await h.mf.getR2Bucket('BLOBS'),ref=`objects/${owner}/hosted/v1`;await blobs.put(ref,'hosted bytes');
  await account.seed(owner,[['lifecycle/state-v1',await pastState(owner,h.origin,'purge-review')],['hosted-object/file',{key:'file',version:'v1',blobRef:ref}],['lifecycle/live-v1',{at:Date.now()}]]);
- const deleted=await account.lifecycleTick(owner,{source:'test'});assert.equal(deleted.action,'deleted');
+ const deleted=await account.lifecycleTick(owner,{source:'test'});assert.equal(deleted.action,'deleted',JSON.stringify(deleted));
  assert(polar.some(path=>path.startsWith('/v1/orders')&&path.includes('external_customer_id='+owner)&&!path.includes('status=')&&!path.includes('product_id=')));
  assert.equal(await blobs.get(ref),null);
  assert.deepEqual((await account.rows()).map(([key])=>key).sort(),['lifecycle/tombstone-v1','owner']);

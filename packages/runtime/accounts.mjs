@@ -25,6 +25,7 @@ import {GoogleDriveService} from '../storage/google-drive.mjs';
 import {AppConnections} from '../apps/connections.mjs';
 import {retryReady,retryTime,retryFailure} from './cleanup-retry.mjs';
 import {lifecycleMethods,lifecycleBlocked,lifecycleActivity,lifecycleTick} from './lifecycle-runner.mjs';
+import {armAlarm,alarmFenced} from './account-deletion.mjs';
 import {BeamService} from '../beaming/index.mjs';
 import {BeamContacts} from '../beaming/contacts.mjs';
 import {ContactTokenService,ContactEndpointService,MessagingService,NotificationService} from '../../packages/messaging/index.mjs';
@@ -227,7 +228,7 @@ export class AccountController {
     // Engine operations declare their own lifecycle level, gate placement and activity (`operationPolicy`);
     // named methods declare theirs in their slice's `rpc` (packages/runtime/account/index.mjs).
     const policy=method==='dispatch'?operationPolicy(ACCOUNT_OPERATIONS,args[1]?.operation):ACCOUNT_RPC[method];
-    try{const blocked=await lifecycleBlocked(this,method,policy);if(blocked)return {$fault:blocked};}catch{return {$fault:{code:'lifecycle_unavailable',message:'Account status is temporarily unavailable.',status:503}};}
+    try{const blocked=await lifecycleBlocked(this,method,policy,args[0]);if(blocked)return {$fault:blocked};}catch{return {$fault:{code:'lifecycle_unavailable',message:'Account status is temporarily unavailable.',status:503}};}
     if(method in lifecycleMethods){try{return await this[method](...args);}catch(error){return {$fault:{code:error.code||'invalid_request',message:error.code?error.message:'The account operation could not be completed.',status:error.status}};}}
     // Fanout runs outside the account gate: a recipient may concurrently submit
     // to this source while its own account gate is held. Receiver writes retain
@@ -274,19 +275,32 @@ export class AccountController {
   async gated(operation){const outcome=await this.gate.run(async()=>{try{return {value:await operation()};}catch(error){return {error};}});if(outcome.error)throw outcome.error;return outcome.value;}
   async alarm(){return withWriterFlags(this,this.flagConfig,()=>this.alarmPinned(),{background:true});}
   async alarmPinned(){
-    // Lifecycle runs first and outside the account gate; a deleted account does no further work.
+    // Deletion runs first (DX-3), then lifecycle, both outside the account gate. While a deletion fence or any purge
+    // job exists the alarm does nothing else (R1-H2): no shelving, backfill or drains behind the executor's back.
+    // The deletion wake is min-merged back in `finally`, after every other path (R1-M4).
+    let deletionWake=null;
+    try{
+    const deletion=await this.deletionAlarm();deletionWake=deletion.wakeAt;if(deletion.stop)return;
     if((await lifecycleTick(this,{source:'alarm'})).action==='deleted')return;
+    if(await alarmFenced(this.metadata))return;
+    await this.alarmMaintenance();
+    }finally{if(Number.isSafeInteger(deletionWake))await armAlarm(this.metadata,deletionWake);}
+  }
+  async alarmMaintenance(){
     await cleanupPostbackPreparations(this);
     const populationOwner=await this.metadata.get('owner');if(populationOwner)await recordOwnerPopulation(this,populationOwner,{retry:true});
     const conversationOwner=await this.metadata.get('owner');if(conversationOwner&&flagsFor(this.config).background('EVENT_BUSES_ENABLED')&&(await this.metadata.list({prefix:'evbus/bus/',limit:1})).size){const swept=await this.eventBusSweep(conversationOwner);if(swept.more||(await this.metadata.list({prefix:'evbus/bus/',limit:1})).size)await this.scheduleAlarm(Date.now()+(swept.more?1000:600000));}if(conversationOwner){if(flagsFor(this.config).background('BROKERING_ENABLED')&&capability(this.config,'BROKERED_INTROSPECTION_MOUNTED'))await this.brokeredSeveranceDrain(conversationOwner);await this.integrationEventsAlarm(conversationOwner);const revalidated=await this.integrationsRevalidateDue(conversationOwner);if(revalidated.revalidated||revalidated.pending)await this.scheduleAlarm(Date.now()+3600000);await this.conversationDrain(conversationOwner,{limit:16});}
-    const retry=await this.metadata.get('maintenance/alarm-retry');if(!retryReady(retry)){await this.metadata.setAlarm(retry?.paused?Date.now()+7*86400000:retryTime(retry));return;}try{await this.gate.run(async()=>{
+    const retry=await this.metadata.get('maintenance/alarm-retry');if(!retryReady(retry)){await armAlarm(this.metadata,retry?.paused?Date.now()+7*86400000:retryTime(retry));return;}try{await this.gate.run(async()=>{
       if(flagsFor(this.config).background('BEAM_ENABLED')){await this.beams.cleanup();const beamExpiry=[];for(const prefix of ['beam/offer/','beam/mailbox/','beam/invite/','beam/nearby/'])for(const r of (await this.metadata.list({prefix,limit:129})).values())beamExpiry.push(r.expiresAt);if(beamExpiry.length)await this.scheduleAlarm(Math.min(...beamExpiry));}
       await this.quota.cleanup();await this.collectBlobGarbage();const owner=await this.metadata.get('owner');if(!owner)return;await collectLinkState(this,owner);
       if(await this.metadata.get('shelved')){await this.scheduleAlarm(Date.now()+7*86400000);return;}
-      await this.migrateItemIndex(owner);await this.configureSemanticSearch(owner);try{if(flagsFor(this.config).background('SEMANTIC_SEARCH_ENABLED')){await this.purgeSearchVectors(owner);await this.backfillSemanticSearch(owner);}}catch(error){await this.metadata.put('search-index-error',{code:error.code||'index_unavailable',at:Date.now()});}
+      // A scheduled deletion freezes the shelved state and semantic backfill (R1-H2); vector purges may continue.
+      const deletionPending=await this.deletionMaintenanceRefused();
+      await this.migrateItemIndex(owner);await this.configureSemanticSearch(owner);try{if(flagsFor(this.config).background('SEMANTIC_SEARCH_ENABLED')){await this.purgeSearchVectors(owner);if(!deletionPending)await this.backfillSemanticSearch(owner);}}catch(error){await this.metadata.put('search-index-error',{code:error.code||'index_unavailable',at:Date.now()});}
       if((await this.metadata.get(key('search-queue-usage',owner)))?.count){try{await this.searchDrain(owner,{limit:10});}catch{/* Durable outbox and health marker retain retry work. */}}
       if((await this.metadata.get(key('search-queue-usage',owner)))?.count||this.itemIndex&&(!await this.metadata.get('item-index-ready')||!await this.metadata.get('search-backfill-ready')||this.itemIndex.incomingState('ready')!=='1')){await this.scheduleAlarm(Date.now()+7*86400000);return;}
       const semanticPending=await this.metadata.get('search-semantic-backfill');if(semanticPending&&!semanticPending.paused||await this.metadata.get('search-vector-purge')){await this.scheduleAlarm(Date.now()+7*86400000);return;}
+      if(deletionPending){await this.scheduleAlarm(Date.now()+7*86400000);return;}
       const last=await this.metadata.get('lastOwnerActiveAt')||0;if(Date.now()-last<7*86400000){await this.scheduleAlarm(last+7*86400000);return;}
       const messageRows=await this.metadata.list({prefix:key('message',owner),limit:2001}),resourceRows=await this.metadata.list({prefix:'resource/',limit:201});if(messageRows.size>2000||resourceRows.size>200){await this.metadata.put('cold-index-mode',{mode:'indexed-sqlite',reason:'paged-metadata-shelving-pending'});await this.scheduleAlarm(Date.now()+7*86400000);return;}const all=new Map([...messageRows,...resourceRows]);
       // Keep signing/public capability records hot, so invalid bearers cannot
@@ -297,7 +311,7 @@ export class AccountController {
       await this.archives.put(archiveKey,serialized,{httpMetadata:{contentType:'application/json'}});
       const verified=await this.archives.get(archiveKey);if(!verified||await verified.text()!==serialized)throw new Error('Archive verification failed');
       await this.metadata.transaction(async tx=>{for(let i=0;i<rows.length;i+=100)await tx.delete(rows.slice(i,i+100).map(([k])=>k));await tx.put('shelved',true);});await this.scheduleAlarm(Date.now()+7*86400000);
-    });await this.metadata.delete('maintenance/alarm-retry');}catch(error){const retry=await retryFailure(this.metadata,'maintenance/alarm-retry',error);await this.metadata.setAlarm(retry.paused?Date.now()+7*86400000:retry.retryAt);}
+    });await this.metadata.delete('maintenance/alarm-retry');}catch(error){const retry=await retryFailure(this.metadata,'maintenance/alarm-retry',error);await armAlarm(this.metadata,retry.paused?Date.now()+7*86400000:retry.retryAt);}
   }
 }
 // Per-slice methods and the `invoke` allowlist (packages/runtime/account/index.mjs). The core's own RPC methods:

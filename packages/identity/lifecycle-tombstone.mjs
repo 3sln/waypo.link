@@ -65,3 +65,11 @@ export function deletionHoldPort({store,repository}){
  if(typeof repository?.get!=='function')throw new TypeError('An identity repository is required.');
  return async owner=>{if(!uuid(owner))throw new TypeError('Invalid account identifier');if(!store)return {held:false,since:null,releasedAt:null};return AdminService.prototype.lifecycleHold.call({store,repository},owner);};
 }
+
+/** Built-in admin role port for deletion requests (R1-L9): AdminService's own effective authority over the admin
+ * store, without composing the full service. Without an admin store nobody holds the role. Failures reject. */
+export function deletionAdminAuthorityPort({store,repository}){
+ if(typeof repository?.get!=='function')throw new TypeError('An identity repository is required.');
+ const view=Object.assign(Object.create(AdminService.prototype),{store,repository});
+ return async owner=>{if(!uuid(owner))throw new TypeError('Invalid account identifier');if(!store)return {admin:false};const authority=await view.authority(owner);return {admin:authority.admin===true};};
+}

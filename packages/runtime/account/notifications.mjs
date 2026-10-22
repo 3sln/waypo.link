@@ -1,4 +1,5 @@
 import {existingFeature,siteEnabled} from './flags.mjs';
+import {StorageError} from '../../storage/policy.mjs';
 import {key} from '../../core/records.mjs';
 // AccountController slice 10, Notifications, push, app connections and MCP account tools (docs/architecture/app-engine.md §12): notification preferences, push devices, app connections and MCP account operations.
 // `methods` are installed on AccountController.prototype (`this` is the controller); `rpc` lists the methods
@@ -7,8 +8,16 @@ import {appNotificationCheck} from '../app-notifications.mjs';
 import {mcpCollections as accountMcpCollections,mcpOperation as accountMcpOperation} from '../../mcp/account.mjs';
 import {ACTIVITY_PUSH_OWNER_OPERATIONS} from '../../messaging/notifications.mjs';
 import {operate} from '../../app/engine.mjs';
+import {accountChannelState,accountSecurityNotice} from '../account-channels.mjs';
+import {createPushTransport} from '../../messaging/web-push.mjs';
+// DX-6: the push transport this account reaches its own devices with (the lifecycle's when configured).
+const pushOf=c=>c.config.LIFECYCLE_PUSH??(c.securityPush??=createPushTransport(c.config));
 
 export const methods={
+ /** DX-6 (account-deletion-export.md §3): which other notice channels remain, for email removal. */
+ async accountChannels(owner){if(await this.metadata.get('owner')!==owner)throw new StorageError('forbidden','Account owner mismatch.',403);return accountChannelState(this.metadata,owner,{push:pushOf(this)});},
+ /** DX-6: a data-free security notice to this account's push devices (the service worker renders it). */
+ async accountSecurityNotice(owner,{event}={}){if(await this.metadata.get('owner')!==owner)throw new StorageError('forbidden','Account owner mismatch.',403);return accountSecurityNotice(this.metadata,owner,{push:pushOf(this),event});},
   async approvalNoticeContacts(owner){if(!siteEnabled(this.config,'DEVICE_AUTHORIZATION_ENABLED',{subject:{kind:'account',owner}},true))return {subscriptions:[]};return {subscriptions:[...(await this.metadata.list({prefix:key('push-subscription',owner)})).values()].filter(r=>r?.owner===owner&&typeof r.endpoint==='string').slice(0,10)};},
   async appConnections(owner){return this.apps.list(owner);},
   async appConnectionBinding(owner,clientId){return this.apps.binding(owner,clientId);},
@@ -33,6 +42,8 @@ export const methods={
 };
 
 export const rpc={
+ accountChannels:{lifecycle:'suspended'},
+ accountSecurityNotice:{lifecycle:'suspended'},
  approvalNoticeContacts:{warm:true},
  notificationPreferences:{},
  subscribe:{},

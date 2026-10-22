@@ -48,8 +48,11 @@ export class AccountExport {
    if(await tx.get(ACTIVE))fault('export_active','An export is already active.',409);
    if(history.filter(h=>h.createdAt>now-7*DAY).length>=2)fault('export_rate_limited','Two exports are available per seven days.',429);
    const job={v:1,id,owner,purpose:'owner',operationId:input.operationId,fingerprint,createdAt:now,notBefore:security.changedAt?Math.max(now,security.changedAt+3*DAY):now,securityEpoch:security.epoch,state:'queued',revision:0,contributor:0,cursor:null,parts:[],buffers:{},sequences:{},payloads:{count:0,bytes:0},counts:{},payloadEntries:[],keys:[],downloadedBytes:0,sessionsSeen:[],noticePending:true};
-   const receipts=[...history,{id,operationId:input.operationId,fingerprint,createdAt:now}];for(const old of receipts.slice(0,-32))await tx.delete(JOB+old.id);
-   await tx.put(JOB+id,job);await tx.put(ACTIVE,id);await tx.put(HISTORY,receipts.slice(-32));return {job,created:true};
+   // History is bounded, but a job whose exact keys are still pending cleanup keeps its record and receipt, so
+   // expiry and DX-3's E6 cancelAll (which walks history) can still delete those keys.
+   const receipts=[...history,{id,operationId:input.operationId,fingerprint,createdAt:now}],kept=[];
+   for(const [i,old]of receipts.entries()){if(i>=receipts.length-32){kept.push(old);continue;}const prior=await tx.get(JOB+old.id);if(prior&&(!terminal(prior.state)||prior.cleanupPending))kept.push(old);else await tx.delete(JOB+old.id);}
+   await tx.put(JOB+id,job);await tx.put(ACTIVE,id);await tx.put(HISTORY,kept);return {job,created:true};
   });
   if(result.job?.noticePending)await this.deliverNotice(result.job,'export-created');return safeJob(result.job);
  }

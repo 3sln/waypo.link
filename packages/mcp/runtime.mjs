@@ -15,7 +15,8 @@ export class McpShardController{
  async execute(token,tool,args){return this.service.execute(token,tool,args,async(owner,clientId,t,a,permissions,connection)=>{await this.active(owner);if(t==='item_write')await subjectTermsAllowed(this.repository,this.config.TERMS_VERSION??'2026-10-11',owner);if(t==='collections_list')return {collections:(await accountCall(this.accounts,owner,'mcpOperation',[clientId,t,a,connection])).filter(c=>permissions.some(p=>p.collectionId===c.id&&p.tools.includes(t))).map(c=>({...c,tools:c.tools.filter(t=>permissions.some(p=>p.collectionId===c.id&&p.tools.includes(t)))}))};return accountCall(this.accounts,owner,'mcpOperation',[clientId,t,a,connection]);});}
  grants(owner){return this.service.grants(owner);}
  revoke(owner,id){return this.service.revoke(owner,id);}
- async invoke(method,args){if(!['begin','inspect','approve','exchange','verify','execute','grants','revoke'].includes(method))return {ok:false,error:{code:'unsupported_method',message:'Unsupported MCP operation.',status:400}};try{const result=await this[method](...args);if(['begin','approve','exchange'].includes(method))await this.schedule();return {ok:true,result};}catch(error){return {ok:false,error:{code:error.code||'temporarily_unavailable',message:error.code?error.message:'The MCP operation is temporarily unavailable.',status:error.status||503}};}}
+ eraseSubject(owner){return this.service.eraseSubject(owner);}
+ async invoke(method,args){if(!['begin','inspect','approve','exchange','verify','execute','grants','revoke','eraseSubject'].includes(method))return {ok:false,error:{code:'unsupported_method',message:'Unsupported MCP operation.',status:400}};try{const result=await this[method](...args);if(['begin','approve','exchange'].includes(method))await this.schedule();return {ok:true,result};}catch(error){return {ok:false,error:{code:error.code||'temporarily_unavailable',message:error.code?error.message:'The MCP operation is temporarily unavailable.',status:error.status||503}};}}
 }
 export function mcpAuthorities(shard){
  const call=async(id,method,args)=>{const result=await shard(id).invoke(method,args);if(!result.ok)throw new McpFault(result.error.code,result.error.message,result.error.status);return result.result;};
@@ -23,6 +24,8 @@ export function mcpAuthorities(shard){
  return {
   begin:input=>call(String(crypto.getRandomValues(new Uint8Array(1))[0]%MCP_SHARDS).padStart(2,'0'),'begin',[input]),
   inspect:(owner,id)=>call(route(id),'inspect',[owner,id]),approve:(owner,input)=>call(route(input.requestId),'approve',[owner,input]),exchange:input=>call(route(input.grant_type==='refresh_token'?input.refresh_token:input.code),'exchange',[input]),verify:token=>call(route(token),'verify',[token]),execute:(token,tool,args)=>call(route(token),'execute',[token,tool,args]),revoke:(owner,id)=>call(route(id),'revoke',[owner,id]),
+  // DX-3 E3: an owner's grants may sit on any shard; erase all of them, eight at a time.
+  eraseSubject:async owner=>{let deleted=0;for(let base=0;base<MCP_SHARDS;base+=8){const part=await Promise.all(Array.from({length:8},(_,i)=>call(String(base+i).padStart(2,'0'),'eraseSubject',[owner])));for(const r of part)deleted+=r?.deleted??0;}return {deleted};},
   grants:async owner=>{const rows=[];for(let base=0;base<MCP_SHARDS;base+=8){const part=await Promise.all(Array.from({length:8},(_,i)=>call(String(base+i).padStart(2,'0'),'grants',[owner])));rows.push(...part.flat());}return rows.sort((a,b)=>b.approvedAt-a.approvedAt);}
  };
 }

@@ -116,3 +116,21 @@ test('Node parity: the same deletion over SqliteMetadata, FileBucket and the Nod
  assert.deepEqual(node,{rows:['lifecycle/tombstone-v1','owner'],deletedBlobs:REFS,foreignReferences:1,reason:'owner'});
  if(globalThis.workerdParity)assert.deepEqual(node,globalThis.workerdParity,'workerd and Node end in the same state');
 });
+
+test('Worker adapter: deletion ports are wired; request, scheduler due index, cancel, and the bridge and federation erasers',{timeout:180000},async t=>{
+ const {createHarness}=await import('./harness.mjs');
+ const h=await createHarness({bindings:{ACCOUNT_DELETION_ENABLED:'true'}});t.after(()=>h.close());
+ const {result}=await h.signup(),owner=result.account.id,handle=(await h.directory.get(owner)).handle,account=h.accounts.get(h.accounts.idFromName(owner));
+ const refused=await account.invoke({method:'deletionRequest',args:[owner,{...input,confirmHandle:handle},{stepUpAt:Date.now()-400000}]});assert.equal(refused.$fault.code,'step_up_required');
+ const scheduled=await account.invoke({method:'deletionRequest',args:[owner,{...input,confirmHandle:handle},{stepUpAt:Date.now()-1000}]});
+ assert.equal(scheduled.state,'scheduled',JSON.stringify(scheduled));assert.equal(scheduled.cancellable,true);
+ const scheduler=await h.mf.getDurableObjectNamespace('LIFECYCLE_SCHEDULER'),sweep=scheduler.get(scheduler.idFromName('lifecycle-sweep-v1'));
+ const swept=await sweep.run({trigger:'cron'});assert.equal(swept.mode,'off');
+ assert.equal((await account.invoke({method:'deletionStatus',args:[owner]})).state,'scheduled');
+ assert.equal((await account.invoke({method:'deletionCancel',args:[owner]})).state,'cancelled');
+ // E5b and E3 erasers over the real objects: an unbound store holds nothing; a bound bridge instance is emptied.
+ const bridge=await h.mf.getDurableObjectNamespace('EMAIL_BRIDGE'),stub=bridge.get(bridge.idFromName(`owner/${owner}`));
+ assert.equal((await stub.erase(owner)).erased,true);
+ const federation=await h.mf.getDurableObjectNamespace('FEDERATION'),shard=federation.get(federation.idFromName(`bindle-federation-v1/${owner}`));
+ const erased=await shard.eraseSubject(owner);assert.equal(erased.absent,true);assert.equal(erased.deleted,0);
+});

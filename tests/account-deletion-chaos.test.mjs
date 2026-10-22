@@ -208,3 +208,55 @@ test('restore racing the wipe (Worker deleteAll path): the object always ends wi
   const tombstone=await w.metadata.get(TOMBSTONE_KEY);assert.equal(tombstone.owner,OWNER);assert(['owner'].includes(tombstone.reason));
  });
 });
+
+// ---- Cross-slice: DX-1's real AccountExport against the DX-3 executor ----
+import {AccountExport,createExportDigest} from '../packages/runtime/export-generation.mjs';
+function bytesBucket(){const map=new Map();return {map,async put(name,value){map.set(name,typeof value==='string'?new TextEncoder().encode(value):new Uint8Array(value));},async delete(names){for(const name of [names].flat())map.delete(name);},async get(name){const bytes=map.get(name);return bytes?{size:bytes.length,body:new Blob([bytes]).stream(),arrayBuffer:async()=>bytes.slice().buffer,text:async()=>new TextDecoder().decode(bytes),json:async()=>JSON.parse(new TextDecoder().decode(bytes))}:null;}};}
+
+test('cross-slice: real DX-1 generation interleaved with request, commit and E6 never leaves an export object behind',async t=>{
+ const outcomes={};
+ await forEachSeed(RUNS||60,async random=>{
+  const clock=fakeClock(),store=new MemoryMetadata(),idDb=new MemoryMetadata(),blobs=bytesBucket(),archives=bytesBucket(),scheduler=createScheduler(random);
+  const repository=new IdentityRepository({metadata:idDb,config:{}});
+  await repository.create({id:OWNER,handle:HANDLE,assignmentId:'assignment-1',status:'active',createdAt:clock.now()-DAY,revision:1,verifiedEmail:null,emailVerifiedAt:null,sessions:[],credentials:[],passwordHash:'h',recoveryHash:'r',audit:[]});
+  await store.put('owner',OWNER);
+  for(let i=0;i<6;i++){await store.put(`hosted-object/m/${i}`,{blobRef:`messages/${OWNER}/m${i}`});await blobs.put(`messages/${OWNER}/m${i}`,'hello');}
+  const flags={for:()=>({enabled:()=>true,background:()=>true,global:()=>true})},sStore=scheduler.wrap(store,'account'),sArchives=scheduler.wrap(archives,'archives');
+  const contributors=[{name:'messages',version:1,async page({cursor}){const at=cursor??0,ids=[at,at+1];return {rows:ids.map(id=>({id:'m'+id})),payloads:ids.map(id=>({entryId:'m'+id,path:`data/messages/m${id}/0.bin`,kind:'message',source:{message:'m'+id,part:0},ref:`messages/${OWNER}/m${id}`,size:5})),cursor:at+2,done:at+2>=6};}}];
+  const exporter=new AccountExport({accountStore:sStore,archives:sArchives,blobs,clock,random:{uuid:()=>crypto.randomUUID()},flags,config:{APP_ORIGIN:'https://issuer.example'},identitySecurity:async()=>({epoch:0,changedAt:0}),digest:createExportDigest(),quota:async()=>1000000,notice:async()=>{},contributors});
+  const ports={identity:lifecycleIdentityPort(repository,{clock:clock.now}),security:async()=>({epoch:1,changedAt:null}),hold:async()=>({held:false}),adminAuthority:async()=>({admin:false}),billing:null,notices:{deliver:async()=>({accepted:true})},erasure:{federation:null,mcp:null,emailBridge:null,operatorApps:null},exports:{cancelAll:(owner,options)=>exporter.cancelAll(owner,options)}};
+  const service=new DeletionService({executor:{metadata:sStore,blobs,archives:sArchives,config:{}},ports,flags,clock,random:{uuid:()=>crypto.randomUUID(),bytes:n=>crypto.getRandomValues(new Uint8Array(n))},budget:8});
+  const owner={kind:'owner',owner:OWNER,sessionId:'s1',stepUpAt:clock.now(),stepUpMethod:'password'};
+  // A ready export first in some seeds (E6 must remove it), a generating one in others.
+  const ready=random.chance(0.5);
+  if(ready){await exporter.create(OWNER,{operationId:crypto.randomUUID()},owner);for(let i=0;i<20;i++){const out=await exporter.step(OWNER);if(out.wakeAt>clock.now()+2000)break;}}
+  await service.request({kind:'owner',owner:OWNER,stepUpAt:clock.now()-1000},{confirmHandle:HANDLE,acknowledgements:{messages:true,storage:true,names:true,plan:true},operationId:'op-cross-0123456789'});
+  clock.set((await store.get(REQUEST_KEY)).executeAfter);
+  const generate=async()=>{let job;try{job=ready?null:await exporter.create(OWNER,{operationId:crypto.randomUUID()},{...owner,stepUpAt:clock.now()});}catch(error){return error.code;}for(let i=0;i<6;i++){try{await exporter.step(OWNER);}catch(error){return error.code;}}return job?'stepped':'idle';};
+  const deleting=async()=>{for(let i=0;i<6;i++){const out=await service.step({kind:'system',owner:OWNER});if(out.action==='deleted')return out.action;}return 'running';};
+  const [g]=await scheduler.run([generate,deleting,generate]);
+  outcomes[g.value??g.reason?.code]=(outcomes[g.value??g.reason?.code]??0)+1;
+  // Converge outside the scheduler; a writer lease is honoured by jumping to its expiry.
+  for(let i=0;i<600;i++){const out=await service.step({kind:'system',owner:OWNER});if(out.action==='deleted')break;if(Number.isSafeInteger(out.wakeAt)&&out.wakeAt>clock.now())clock.set(out.wakeAt);}
+  assert.deepEqual([...store.rows.keys()].sort(),[TOMBSTONE_KEY,'owner']);
+  // Generation after deletion writes nothing.
+  try{await exporter.step(OWNER);}catch{}
+  assert.deepEqual([...archives.map.keys()].filter(k=>k.startsWith('exports/')),[],'no export part, pack, buffer or manifest survives');
+  assert.equal([...blobs.map.keys()].some(k=>k.startsWith(`messages/${OWNER}/`)),false);
+ });
+ t.diagnostic(`generator outcomes across seeds: ${JSON.stringify(outcomes)}`);assert(Object.keys(outcomes).length>=2,JSON.stringify(outcomes));
+});
+
+test('cross-slice: an export step that fences after its puts deletes exactly what it wrote',async()=>{
+ const clock=fakeClock(),store=new MemoryMetadata(),blobs=bytesBucket(),archives=bytesBucket();await store.put('owner',OWNER);
+ for(let i=0;i<2;i++)await blobs.put(`messages/${OWNER}/m${i}`,'hello');
+ const flags={for:()=>({enabled:()=>true,background:()=>true,global:()=>true})};
+ // The fence lands between the write-intent commit and the cursor commit (the last transaction before the puts settle).
+ const fencing={...archives,async put(name,value){await archives.put(name,value);await store.put(FENCE_KEY,{v:1,owner:OWNER,requestId:'r',at:clock.now()});}};
+ const contributors=[{name:'messages',version:1,async page(){return {rows:[{id:'m0'}],payloads:[{entryId:'m0',path:'data/messages/m0/0.bin',kind:'message',source:{message:'m0',part:0},ref:`messages/${OWNER}/m0`,size:5}],done:true};}}];
+ const exporter=new AccountExport({accountStore:store,archives:fencing,blobs,clock,random:{uuid:()=>crypto.randomUUID()},flags,config:{APP_ORIGIN:'https://issuer.example'},identitySecurity:async()=>({epoch:0,changedAt:0}),digest:createExportDigest(),quota:async()=>1000000,notice:async()=>{},contributors});
+ await exporter.create(OWNER,{operationId:crypto.randomUUID()},{kind:'owner',owner:OWNER,sessionId:'s',stepUpAt:clock.now()});
+ const out=await exporter.step(OWNER);assert.equal(out.busy,true);
+ assert.deepEqual([...archives.map.keys()],[],'the fenced cursor commit deletes its writes');
+ await assert.rejects(exporter.step(OWNER),{code:'account_deleting'});
+});

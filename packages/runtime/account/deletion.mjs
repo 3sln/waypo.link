@@ -1,4 +1,4 @@
-import {flagsFor} from './flags.mjs';
+import {flagsFor,capability} from './flags.mjs';
 // AccountController slice DX-3, account deletion (docs/architecture/account-deletion-export.md §2, §8.2; carve-out from
 // FF-5b's account/** glob, R1-M11). `methods` are installed on AccountController.prototype (`this` is the controller);
 // `rpc` lists what `invoke` accepts (packages/runtime/account/index.mjs, coordinator registration).
@@ -11,23 +11,43 @@ import {flagsFor} from './flags.mjs';
 //   deletionTick(owner, {source})                         the LifecycleScheduler sweep over the deletion-due index
 //   deletionSchedule(owner, input)                        internal (no rpc): DX-7 admin bases
 //   deletionAlarm()                                       internal (no rpc): the account alarm calls it first
+//   deletionPortsFor(c)                                   DeletionPorts for this controller (also the lifecycle purge)
 //   deletionMaintenanceRefused()                          internal: shelving and semantic backfill refuse while true
 // Ports come from `config.ACCOUNT_DELETION_PORTS` (DeletionPorts, packages/runtime/account-deletion.mjs), wired by the
 // Worker and Node adapters. Without them every new request refuses and every execution step holds.
 import {createAppEngine,perform,read} from '../../app/engine.mjs';
 import {cryptoRandom,nullAudit} from '../../app/providers.mjs';
-import {DeletionService,alarmFenced,deletionBlocksMaintenance,REQUEST_KEY} from '../account-deletion.mjs';
+import {DeletionService,deletionBlocksMaintenance,REQUEST_KEY,FENCE_KEY} from '../account-deletion.mjs';
+import {PURGE_KEY,TOMBSTONE_KEY} from '../lifecycle-storage.mjs';
 import {RequestAccountDeletion,AccountDeletionStatus,CancelAccountDeletion,CancelAccountDeletionByToken,StepAccountDeletion,ScheduleAdminDeletion} from '../../app/domains/account-deletion.mjs';
 import {lifecycleLog} from '../lifecycle-runner.mjs';
+import {AccountExport} from '../export-generation.mjs';
+import {BillingClosure} from '../../billing/closure.mjs';
 
-const engines=new WeakMap();
+const engines=new WeakMap(),local=new WeakMap();
 const clockOf=c=>typeof c.config.LIFECYCLE_CLOCK==='function'?c.config.LIFECYCLE_CLOCK:Date.now;
+/** DeletionPorts for this controller: the adapter's shared `ACCOUNT_DELETION_PORTS`, plus the two account-local
+ * ports built over this controller unless the adapter set them explicitly. E6 uses DX-1's
+ * AccountExport.cancelAll (its write intents, never a parts-only fallback); E1/E9 and the request-time
+ * cancel-at-period-end use DX-4's BillingClosure, `null` when billing is not enabled. Its operator alert has no
+ * dedicated transport yet and goes to the structured operator log (never email, endpoints or tokens). */
+export function deletionPortsFor(c){
+ const configured=c.config.ACCOUNT_DELETION_PORTS;if(!configured||typeof configured!=='object')return configured;
+ let own=local.get(c);
+ if(!own){
+  const clock={now:()=>clockOf(c)()},flags={for:ctx=>flagsFor(c.config,ctx)};let exporter;
+  const exportPort={cancelAll:(owner,options)=>(exporter??=new AccountExport({accountStore:c.metadata,archives:c.archives,blobs:c.blobs,clock,random:cryptoRandom,flags,config:c.config,...c.config.exportPorts})).cancelAll(owner,options)};
+  const billing=capability(c.config,'BILLING_ENABLED')&&c.billing?new BillingClosure({billing:c.billing,metadata:c.metadata,clock,flags,alert:async entry=>lifecycleLog(c.config,{kind:'account-deletion',action:'operator-alert',...entry})}):null;
+  own={exports:exportPort,billing};local.set(c,own);
+ }
+ return {...configured,...configured.exports===undefined?{exports:own.exports}:{},...configured.billing===undefined?{billing:own.billing}:{}};
+}
 /** The controller's deletion service and engine (one per controller). Flags and ports are read per call. */
 export function deletionEngine(c){
  let entry=engines.get(c);
  if(!entry){
   const clock={now:()=>clockOf(c)()};
-  const service=new DeletionService({executor:c,ports:()=>c.config.ACCOUNT_DELETION_PORTS,flags:{for:ctx=>flagsFor(c.config,ctx)},clock,random:cryptoRandom,
+  const service=new DeletionService({executor:c,ports:()=>deletionPortsFor(c),flags:{for:ctx=>flagsFor(c.config,ctx)},clock,random:cryptoRandom,
    log:event=>lifecycleLog(c.config,{kind:'account-deletion',...event}),wake:time=>typeof c.scheduleAlarm==='function'?c.scheduleAlarm(time):undefined,
    budget:Number.isSafeInteger(c.config.ACCOUNT_DELETION_BATCH)&&c.config.ACCOUNT_DELETION_BATCH>0&&c.config.ACCOUNT_DELETION_BATCH<=512?c.config.ACCOUNT_DELETION_BATCH:64});
   entry={service,engine:createAppEngine({providers:{clock,random:cryptoRandom,audit:nullAudit,lifecycle:service}})};
@@ -52,7 +72,9 @@ export const methods={
   let result=null;
   try{const owner=await this.metadata.get('owner');if(owner&&await this.metadata.get(REQUEST_KEY)!==undefined)result=await perform(deletionEngine(this).engine,new StepAccountDeletion({actor:{kind:'system',owner,reason:'alarm'}}));}
   catch(error){lifecycleLog(this.config,{kind:'account-deletion',action:'alarm-error',code:error?.code||'unavailable'});result={action:'error',wakeAt:clockOf(this)()+3600000};}
-  let stop=true;try{stop=await alarmFenced(this.metadata);}catch{stop=true;}
+  // Stop for a deletion fence, or a tombstone with no unfinished inactivity purge. A running inactivity purge is
+  // left to lifecycleTick, after which the alarm stops on `alarmFenced` (R1-H2).
+  let stop=true;try{stop=await this.metadata.get(FENCE_KEY)!==undefined||await this.metadata.get(TOMBSTONE_KEY)!==undefined&&!(await this.metadata.get(PURGE_KEY).then(job=>job&&(job.reason??'inactive')==='inactive'));}catch{stop=true;}
   return {stop,wakeAt:Number.isSafeInteger(result?.wakeAt)?result.wakeAt:null,action:result?.action??'none'};
  },
  async deletionMaintenanceRefused(){try{return await deletionBlocksMaintenance(this.metadata);}catch{return true;}},

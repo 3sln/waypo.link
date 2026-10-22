@@ -31,6 +31,14 @@ export class FederationObject extends DurableObject {
    const result=await(await this.controllerPromise)[method](...args);if(method!=='cleanup'&&!['ready','manifest'].includes(method)&&await this.storage.getAlarm()===null)await this.storage.setAlarm(Date.now()+600000);return {ok:true,result};
   }catch(error){return {ok:false,error:{code:error.code??'temporarily_unavailable',message:error.code?error.message:'Federation operation could not be completed.',status:error.status,retryAfter:error.retryAfter,ownerReviewUri:error.ownerReviewUri}};}
  }
+ /** DX-3 E3: erase one owner's federation shard over storage alone (composing the controller needs the
+  * federation configuration, which erasure must not depend on). A store never bound to this owner holds nothing. */
+ async eraseSubject(owner){
+  if(!UUID_V4.test(owner))throw new Error('Invalid federation account locator.');
+  const bound=await this.storage.get('@federation-owner');if(bound===undefined)return {deleted:0,absent:true};if(bound!==owner)throw new Error('Invalid federation account locator.');
+  let deleted=0;for(;;){const rows=await this.storage.list({prefix:'federation/',limit:256});if(!rows.size)break;await this.storage.delete([...rows.keys()]);deleted+=rows.size;}
+  this.controllerPromise=null;return {deleted};
+ }
  /** Provider-wide brokering keys use their own durable instance, separate from owner and entry stores. */
  async brokeringVerify(...args){return this.withFlags(()=>this.brokeringVerifyPinned(...args));}
  async brokeringVerifyPinned(token,options){return (await this.brokeringStore()).verify(token,options);}

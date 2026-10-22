@@ -172,11 +172,15 @@ export async function restoreDeletedAccount(c,owner,identity,{clock=Date.now}={}
 /** Empty-object identity check for `lifecycleBlocked` (R1-M7). Whenever `owner` is absent, asks the identity port
  * once per object lifetime; a deleted identity gets its tombstone restored and the caller answers
  * `account_deleted`. An unreadable identity refuses rather than materialising. Returns a fault or null. */
-export async function emptyAccountCheck(c,owner,identity){
+/** `restore:false` answers without writing (the request path cannot prove the object is addressed by `owner`);
+ * `failOpen:true` lets an unreadable identity through unmemoized instead of refusing. */
+export async function emptyAccountCheck(c,owner,identity,{restore=true,failOpen=false}={}){
  if(!identity||typeof identity.get!=='function'||!isUUID(owner)||c.deletionIdentityChecked===owner)return null;
- if(await c.metadata.get('owner')!==undefined)return null;
- let result;try{result=await restoreDeletedAccount(c,owner,identity);}catch{return {code:'lifecycle_unavailable',message:'Account status is temporarily unavailable.',status:503};}
- if(result.deleted)return {code:'account_deleted',message:'This account was deleted.',status:410};
+ if(await c.metadata.get('owner')!==undefined){c.deletionIdentityChecked=owner;return null;}
+ let deleted;
+ try{deleted=restore?(await restoreDeletedAccount(c,owner,identity)).deleted:(await identity.get(owner))?.status==='deleted';}
+ catch{return failOpen?null:{code:'lifecycle_unavailable',message:'Account status is temporarily unavailable.',status:503};}
+ if(deleted)return {code:'account_deleted',message:'This account was deleted.',status:410};
  c.deletionIdentityChecked=owner;return null;
 }
 

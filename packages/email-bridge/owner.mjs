@@ -7,3 +7,5 @@ export async function ownerOperation(env,id,operation,input){
  if(typeof port?.[name]==='function')return port[name](id,operation==='bridge.accepted'?input.jti:input);
  unavailable();
 }
+/** DX-3 E5b: erase the owner's bridge instance. Cloudflare only; Node has no bridge storage to erase. */
+export async function eraseOwner(env,owner){if(!env.EMAIL_BRIDGE?.get||!env.EMAIL_BRIDGE?.idFromName)return {erased:false,absent:true};return env.EMAIL_BRIDGE.get(env.EMAIL_BRIDGE.idFromName(bridgeObjectName(owner))).erase(owner);}

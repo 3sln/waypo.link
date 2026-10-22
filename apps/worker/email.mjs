@@ -29,7 +29,9 @@ const SECURITY_ALERTS = Object.freeze({
   'recovery-used': ['{brand} account recovery used', 'An account recovery file was used.'],
   'passkey-added': ['{brand} passkey added', 'A passkey was added to your account.'],
   'passkey-removed': ['{brand} passkey removed', 'A passkey was removed from your account.'],
-  'password-changed': ['{brand} password changed', 'Your account password was changed.']
+  'password-changed': ['{brand} password changed', 'Your account password was changed.'],
+  // DX-6: sent to the removed address. No other account detail is included.
+  'email-removed': ['{brand} email removed', 'This email address was removed from a {brand} account. If you did not do this, sign in and secure your account.']
 });
 
 function safeHeader(value, max = 2048) {

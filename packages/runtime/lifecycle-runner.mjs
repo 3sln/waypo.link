@@ -6,6 +6,8 @@ import {accountRemovalProtection,rememberEverPaid,everPaidEvent} from '../identi
 import {everPaidReview} from './lifecycle-finance.mjs';
 import {APP_NOTIFICATIONS} from '../federation/app-notifications.mjs';
 import {PURGE_KEY,COLD_KEY,TOMBSTONE_KEY,coldJob,coldBatch,purgeBatch,externalResourcesPresent,purgeEligibleInTransaction} from './lifecycle-storage.mjs';
+import {FENCE_KEY,REQUEST_KEY,emptyAccountCheck,erasureStages,restoreDeletedAccount} from './account-deletion.mjs';
+import {deletionPortsFor} from './account/deletion.mjs';
 
 // Wires AccountLifecycle into an AccountController (Worker Durable Object or
 // Node SQLite account). Everything is behind LIFECYCLE_ENABLED (default off).
@@ -40,6 +42,8 @@ export function lifecycleSettings(config={}){
 /** Structured operator log; never includes email, push endpoints, tokens or message content. */
 export function lifecycleLog(config,event){const sink=typeof config.LIFECYCLE_LOG==='function'?config.LIFECYCLE_LOG:value=>console.log(JSON.stringify(value));try{sink({event:'account-lifecycle',...event});}catch{}}
 const clockOf=c=>typeof c.config.LIFECYCLE_CLOCK==='function'?c.config.LIFECYCLE_CLOCK:Date.now;
+// DX-3: the identity port for deletion checks, wired independently of LIFECYCLE_ENABLED when deletion ports exist.
+const deletionIdentity=c=>c.config.ACCOUNT_DELETION_PORTS?.identity??c.config.LIFECYCLE_IDENTITY;
 function revision(text){let a=0x811c9dc5,b=0x01000193;for(let i=0;i<text.length;i++){const code=text.charCodeAt(i);a=Math.imul(a^code,16777619)>>>0;b=Math.imul(b^code,2246822507)>>>0;}return `c1-${text.length}-${a.toString(16)}-${b.toString(16)}`;}
 async function pushSubscriptions(reader,owner){return [...(await reader.list({prefix:key('push-subscription',owner)})).values()].filter(row=>row?.owner===owner&&typeof row.endpoint==='string');}
 
@@ -68,10 +72,16 @@ const fault=(code,message,status)=>({code,message,status});
 /** Request-path enforcement, before any account method runs. Live mode only. */
 /** `policy` is the declared lifecycle level of an engine operation (`Operation.lifecycle`) or of a named RPC method
  * (its slice's `rpc`): 'active' (default), 'suspended' (also while suspended) or 'purging' (also while purging). */
-export async function lifecycleBlocked(c,method,policy={}){
+export async function lifecycleBlocked(c,method,policy={},owner){
  const suspendedOk=policy.lifecycle==='suspended'||policy.lifecycle==='purging',purgingOk=policy.lifecycle==='purging';
  // A deletion tombstone is final in every mode, including after the flag is turned off.
  if(await c.metadata.get(TOMBSTONE_KEY)!==undefined)return method==='lifecycleStatus'||method==='lifecycleTick'?null:fault('account_deleted','This account was deleted after its final notice period.',410);
+ // DX-3: a committed owner/admin deletion fences every operation not declared 'purging', in every mode.
+ if(await c.metadata.get(FENCE_KEY)!==undefined&&!purgingOk)return fault('account_deleting','Account deletion has begun.',410);
+ // R1-M7: an object without `owner` for a deleted identity must never materialise (an Inbox, built-in storage).
+ // Answer only; the owner-addressed restore path (lifecycleTick) writes the tombstone. An unreadable identity
+ // fails open, as before, and is re-checked on the next call.
+ if(method!=='lifecycleStatus'&&method!=='lifecycleTick'){const empty=await emptyAccountCheck(c,owner,deletionIdentity(c),{restore:false,failOpen:true});if(empty)return empty;}
  if(lifecycleMode(c.config)!=='live')return null;
  let state=await c.metadata.get(STATE_KEY);if(state===undefined)return null;
  // Payment lifts suspension immediately rather than at the next scheduled tick.
@@ -122,10 +132,13 @@ async function consumeEffects(c,lifecycle,owner){
 /** One bounded lifecycle tick for this account (alarm, cron sweep or reactivation). */
 export async function lifecycleTick(c,{source='alarm'}={}){
  const settings=lifecycleSettings(c.config),mode=settings.mode,log=event=>lifecycleLog(c.config,{mode,source,...event});
- if(await c.metadata.get(TOMBSTONE_KEY)!==undefined)return {mode,action:'deleted'};
+ // The tombstone is written before the wipe; an inactivity purge interrupted between them continues to finish it.
+ if(await c.metadata.get(TOMBSTONE_KEY)!==undefined){const job=await c.metadata.get(PURGE_KEY);if(!job||(job.reason??'inactive')!=='inactive')return {mode,action:'deleted'};}
  if(mode==='off')return {mode};
  const owner=await c.metadata.get('owner');if(!owner)return {mode,action:'unmaterialized'};
  const clock=clockOf(c),lifecycle=lifecycleOf(c);
+ // DX-3: the two executors never share lifecycle/purge-v1. A scheduled or executing deletion holds the lifecycle.
+ if(['scheduled','executing'].includes((await c.metadata.get(REQUEST_KEY))?.state)){log({owner,action:'hold',reason:'deletion-scheduled'});await c.scheduleAlarm(clock()+DAY);return {mode,action:'hold',reason:'deletion-scheduled'};}
  let identity;try{identity=await c.config.LIFECYCLE_IDENTITY?.get(owner);}catch{identity=undefined;}
  if(identity===undefined){log({owner,action:'hold',reason:'identity-unavailable'});await c.scheduleAlarm(clock()+DAY);return {mode,action:'hold',reason:'identity-unavailable'};}
  c.lifecycleContact=identity?{owner,verifiedEmail:identity.verifiedEmail,emailVerifiedAt:identity.emailVerifiedAt}:null;
@@ -147,7 +160,8 @@ export async function lifecycleTick(c,{source='alarm'}={}){
   let busy=false;
   if(result.phase==='purging'&&result.action==='purging'&&settings.purge){
    const fence=async()=>(await lifecycle.step(owner)).action==='purging';
-   const batch=await purgeBatch(c,owner,{identity:c.config.LIFECYCLE_IDENTITY,fence,budget:settings.purgeBudget,log});
+   // Common erasure stages (R1-H3/H4): grants, drain, operator apps, email bridge and exports, as owner deletion.
+   const batch=await purgeBatch(c,owner,{identity:c.config.LIFECYCLE_IDENTITY,fence,budget:settings.purgeBudget,log,clock,stages:erasureStages(c,{ports:deletionPortsFor(c),clock,log})});
    if(batch.done)return {mode,action:'deleted'};busy=!batch.halted;result={...result,purgeStage:batch.stage};
   }
   if(settings.cold&&(result.phase==='suspended'||result.phase==='purge-review')){
@@ -187,7 +201,8 @@ export const lifecycleMethods={
  async lifecycleTick(owner,{source='sweep'}={}){
   const stored=await this.metadata.get('owner');if(stored!==undefined&&stored!==owner)throw Object.assign(new Error('Account owner mismatch.'),{code:'forbidden',status:403});
   // A purge interrupted between the storage wipe and the tombstone write is completed from the identity tombstone.
-  if(stored===undefined&&lifecycleMode(this.config)!=='off'&&(await this.config.LIFECYCLE_IDENTITY?.get(owner).catch(()=>null))?.status==='deleted'){await this.metadata.put('owner',owner);await this.metadata.put(TOMBSTONE_KEY,{version:1,owner,deletedAt:clockOf(this)(),reason:'inactive-unpaid',restored:true});return {mode:lifecycleMode(this.config),action:'deleted'};}
+  // In every lifecycle mode (DX-3), with the reason recorded by the identity tombstone (R1-L1).
+  if(stored===undefined&&deletionIdentity(this)){const restored=await restoreDeletedAccount(this,owner,deletionIdentity(this),{clock:clockOf(this)}).catch(()=>null);if(restored?.deleted)return {mode:lifecycleMode(this.config),action:'deleted'};}
   return lifecycleTick(this,{source});
  }
 };

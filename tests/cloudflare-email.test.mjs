@@ -100,13 +100,13 @@ test('account and security notice resources restrict templates and senders', asy
     assert.match(sent.at(-1).text, /Open https:\/\/space.example\//);
   }
   assert.doesNotMatch(sent[1].text, /\d{4}-\d{2}-\d{2}|grace|days/);
-  for (const type of ['recovery-used', 'passkey-added', 'passkey-removed', 'password-changed']) {
+  for (const type of ['recovery-used', 'passkey-added', 'passkey-removed', 'password-changed', 'email-removed']) {
     await transport.sendSecurityAlert({ email, type });
     assert.equal(sent.at(-1).from, 'security@sys.3sln.me');
   }
   assert.throws(() => transport.sendAccountNotice({ email, type: 'unknown' }), /Invalid mail notice type/);
   assert.throws(() => transport.sendSecurityAlert({ email, type: 'toString' }), /Invalid mail notice type/);
-  assert.equal(sent.length, 7);
+  assert.equal(sent.length, 8);
 });
 
 test('mail rejects CRLF envelopes, token injection, malformed addresses and substituted issuers before binding calls', async () => {
