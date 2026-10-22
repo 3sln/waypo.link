@@ -382,13 +382,14 @@ Node has no Vectorize, email bridge or BindleBox, so E5 and E5b are no-ops there
 ### 2.4 Others' contact links and delivered messages
 
 - **Delivered messages and conversation copies** in other accounts stay theirs. Deletion cannot retract copies (security.md, Trust boundaries). No automatic `retract` is sent: it would be lossy for recipients and cannot be guaranteed. The confirmation screen says so, and owners can delete or retract their own items before requesting deletion.
-- **Contact links and capabilities that others hold** keep pointing at an account that now answers `account_deleted` (410) on every delivery, preview or resolution. It does not answer 404.
-  - Handle resolution answers the identity tombstone's `status:'deleted'`, so peers can mark the contact as deleted.
+- **Contact links and capabilities that others hold** keep pointing at an account that now answers exactly as an unknown or invalid one would on every delivery, preview or resolution: the uniform `link_invalid`/`unauthorized` refusal on link and delivery routes, and the uniform 404 of [organizations §3a.2](../spec/organizations.md#3a2-handle-lookup) on directory and identity-document lookups. Public surfaces never answer `410` or expose `status:'deleted'` (rule RR1-R1 in [app uninstall §7.5a](app-uninstall.md#75a-what-deleted-identities-answer-404-not-410-rr1-r1); provisional, unsigned). `410 account_deleted`/`account_deleting` stays on owner-authenticated surfaces only.
+  - Why: a distinguishable answer would let anyone holding a handle or link confirm that a particular person deleted their account, and after a move's redirect period ends the source answers for a moved identity exactly as for a deleted one ([identity portability](../spec/identity-portability.md)), so a "deleted" answer would mislabel people who moved. Peers see the contact as no longer reachable, not as deleted.
+  - Public routes already behave this way (they check the identity is `active` first). One gap to close in this slice: during the deletion fence, before E2 tombstones the identity, a signed contact delivery can reach `lifecycleBlocked` and surface its `410`; public delivery paths must map lifecycle faults to the uniform refusal.
   - Because names are never reassigned, the old link can never reach a new person.
   - No outbound fan-out to contacts is needed or sent.
 - **Issued contact grants** die with the account store. Pending outbound deliveries in our outbox are dropped at the wipe; their receivers' replay fences expire normally.
-- **Apps' copies** of granted data stay with the apps (security.md S1). Integrations receive severance with `reason:'account-deleted'` at E4.
-- **Public keys** are not retained on the tombstone; this is the current `RETAINED` list. Verifiers of past signatures see `account_deleted`. Retaining them would add data that privacy §8 does not list.
+- **Apps' copies** of granted data stay with the apps (security.md S1). Integrations receive `connection-revoked` (terminal) from the E2 severance and, where `subject-deleted.v1` is declared, a `subject-deleted` event enqueued in the same transaction and dispatched by E4 no earlier than `access_ends_by` ([app removal §8](../spec/app-removal.md#8-subject-deletion), proposed). The SET wire carries no reason member.
+- **Public keys** are not retained on the tombstone; this is the current `RETAINED` list. Verifiers of past signatures see the same uniform answer as for an unknown identity. Retaining them would add data that privacy §8 does not list.
 
 ### 2.5 What is retained, and why
 

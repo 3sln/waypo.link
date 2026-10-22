@@ -2741,3 +2741,25 @@ Gates: `npm test` 2365, Worker 76, UI-state 291, build and dry run pass. e2e: 21
 - **Low, open.** Link responses and author proofs are still signed with the identity key. This is for the messaging and links owners.
 
 Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-22 — App removal design (clean and force) and the subject-deleted signal
+
+The user asked for clean app removal: the user is sent to the app's own cleanup UI, where they can keep, delete or archive data, and then all access is revoked. Force removal revokes immediately with no cleanup. Account deletion signals every installed app so it can clean up.
+
+The [design](docs/architecture/app-uninstall.md) (rev 2) and [spec](docs/spec/app-removal.md) (rev 2) cover:
+- **One revocation commit for both modes.** Every authority the app holds is revoked; no user data is deleted.
+- **The clean removal request.** Provider-signed, single-use and valid for 5 minutes, bound to the browser.
+- **Declaration.** The app declares `bindle_integration.removal` in its manifest.
+- **`subject-deleted` event.** Sent after revocation, once brokered access has ended (`access_ends_by`). Delivery is drained for up to 72 h and is best-effort on the app's side.
+
+User decisions:
+- No hard deadline. `cleanup_by` is only a reminder: the app operates normally until it completes or the user force-removes it. Reminders fire at `cleanup_by`, +24 h and +7 days, and force removal becomes the primary action. Reviewer: ___ Date: ___ Outcome: ___
+- App settings are kept after removal, with a delete option in "What's left". Reviewer: ___ Date: ___ Outcome: ___
+- No `subject-deleted` signal to apps that were already removed. Reviewer: ___ Date: ___ Outcome: ___
+
+Review round 1 found three High issues:
+- **H1, fixed.** Freeze and closure disconnect connections before E2, so `subject-deleted` reached no one. The recipient rule is fixed.
+- **H2, accepted under the no-deadline decision.** A pending-removal app keeps acting. Consent pages now show the pending removal next to "Remove now".
+- **H3, open.** For org-installed apps, a single admin can trigger app-side deletion of org data. An `actor` claim was added; the gate itself is a user decision (second admin or a 24 h delay).
+
+**404 vs 410.** Every public surface gives a uniform "unknown" answer. 410 is used only on owner-authenticated or internal paths, and account-deletion-export §2.4 was updated to match. A possible public leak remains: a signed contact delivery during the deletion fence can surface a 410 through `routes/shared.mjs` `status()`. Queued as a code fix. Reviewer: ___ Date: ___ Outcome: ___
