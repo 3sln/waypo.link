@@ -2683,3 +2683,20 @@ Gates:
 | deletion | 6 |
 | DOM, build, dry run | pass |
 | e2e | 214, 4 WebKit environment skips |
+
+## 2026-10-21 — DX-9 over-quota hook and CLI; ART-1 artefact core library
+
+**DX-9.**
+- `export-hooks.mjs` provides the over-quota episode allowance and `exportOffered` evidence as engine operations. The evidence records availability of an export, not delivery.
+- `scripts/bindle-export.mjs` downloads via a grant, with checkpoints and resume, and verifies the tar against the manifest. 120 chaos seeds pass, including process interruption and corruption detection.
+- Not yet wired into adapters (`CreateExportWithHooks`, offer/evidence registration, the D092 episode producer). No over-quota removal exists or is enabled.
+
+**ART-1.** Pure modules `packages/core/strict-json.mjs` and `packages/core/artefacts.mjs`:
+- strict parsing and JCS;
+- envelopes, hash chains, offloaded records and reference checks;
+- extensible growth rules and retractions;
+- H2 evidence rules.
+
+The JSON conformance vectors are in `docs/architecture/artefacts/` for reuse by other implementations. 59 tests run, and are now part of `npm test`. Store, fetch and call-site wiring remain for ART-2 through ART-6.
+
+Gates: `npm test` 2365, Worker 76, UI-state 291, build and dry run pass. e2e: 214, with 4 WebKit environment skips.

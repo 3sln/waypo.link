@@ -1,0 +1,336 @@
+{
+  "format": "bindle.artefact-conformance.v1",
+  "spec": "docs/spec/artefacts.md revision 2",
+  "notes": "JSON source strings preserve duplicate names and invalid numeric spellings. hex bytes exercise UTF-8. Expected hashes use SHA-256 over the supplied UTF-8 canonical text. No Unicode normalization. utf16 arrays describe host-language string inputs which cannot be represented in well-formed UTF-8.",
+  "parse": [
+    {
+      "name": "safe negative",
+      "source": "{\"n\":-9007199254740991}",
+      "canonical": "{\"n\":-9007199254740991}",
+      "digest": "sha256-1J1xOCH8FJ-B72yoBUvuumlvXaBS8Ks-LXc4CMWp1iU"
+    },
+    {
+      "name": "safe positive",
+      "source": "9007199254740991",
+      "canonical": "9007199254740991",
+      "digest": "sha256-9AtCPC3ZX_Ky8CfiIgj0OM9yQoYuXnRoYOaXMIya3SY"
+    },
+    {
+      "name": "escaped names and whitespace",
+      "source": " { \"\\u0061\" : \"\\u0062\", \"x\": [null,true,false,0] } ",
+      "canonical": "{\"a\":\"b\",\"x\":[null,true,false,0]}",
+      "digest": "sha256-ISsUYcUHVuCDZkkQHqzB68pFV6uu30vmJCUeSgvEnPw"
+    },
+    {
+      "name": "prototype names",
+      "source": "{\"__proto__\":{\"ok\":true},\"constructor\":0}",
+      "canonical": "{\"__proto__\":{\"ok\":true},\"constructor\":0}",
+      "digest": "sha256-ddFPrb8DSCWWO_Oe0qNs5wzCmAGWyjF9EHxZRGegUJ4"
+    },
+    {
+      "name": "UTF-16 order (RFC 8785 section 3.2.3 subset)",
+      "source": "{\"דּ\":6,\"😀\":5,\"€\":4,\"ö\":3,\"1\":1,\"\\r\":0,\"\":2}",
+      "canonical": "{\"\\r\":0,\"1\":1,\"\":2,\"ö\":3,\"€\":4,\"😀\":5,\"דּ\":6}",
+      "digest": "sha256-EC4SmJI7g7JyL-wgCijKBYL1c2vRdy8TqOYzls6s-iU"
+    },
+    {
+      "name": "NFC",
+      "source": "\"café\"",
+      "canonical": "\"café\"",
+      "digest": "sha256-KDgP64ck1mm8jUz1taW7GtvcYbgevQbz-rxWe087D8U"
+    },
+    {
+      "name": "NFD",
+      "source": "\"café\"",
+      "canonical": "\"café\"",
+      "digest": "sha256-x9fnK4rQ3ZG-tARKS7F8bIqWcsxiDEx25lhPNSXUANE"
+    },
+    {
+      "name": "duplicate",
+      "source": "{\"effect\":\"read\",\"effect\":\"destructive\"}",
+      "error": "malformed"
+    },
+    {
+      "name": "escaped duplicate",
+      "source": "{\"a\":0,\"\\u0061\":1}",
+      "error": "malformed"
+    },
+    {
+      "name": "nested duplicate",
+      "source": "{\"a\":[{\"b\":1,\"b\":2}]}",
+      "error": "malformed"
+    },
+    {
+      "name": "negative zero",
+      "source": "-0",
+      "error": "malformed"
+    },
+    {
+      "name": "fraction",
+      "source": "1.0",
+      "error": "malformed"
+    },
+    {
+      "name": "exponent",
+      "source": "1e2",
+      "error": "malformed"
+    },
+    {
+      "name": "1e21",
+      "source": "1e21",
+      "error": "malformed"
+    },
+    {
+      "name": "big integer",
+      "source": "9007199254740993",
+      "error": "malformed"
+    },
+    {
+      "name": "rounded unsafe",
+      "source": "9007199254740992",
+      "error": "malformed"
+    },
+    {
+      "name": "negative unsafe",
+      "source": "-9007199254740992",
+      "error": "malformed"
+    },
+    {
+      "name": "leading zero",
+      "source": "01",
+      "error": "malformed"
+    },
+    {
+      "name": "escaped high surrogate",
+      "source": "\"\\ud800\"",
+      "error": "malformed"
+    },
+    {
+      "name": "escaped low surrogate",
+      "source": "\"\\udfff\"",
+      "error": "malformed"
+    },
+    {
+      "name": "raw high surrogate",
+      "error": "malformed",
+      "utf16": [
+        34,
+        55296,
+        34
+      ]
+    },
+    {
+      "name": "noncharacter",
+      "source": "\"\\ufdd0\"",
+      "error": "malformed"
+    },
+    {
+      "name": "astral noncharacter",
+      "source": "\"\\udbff\\udfff\"",
+      "error": "malformed"
+    },
+    {
+      "name": "BOM",
+      "source": "﻿{}",
+      "error": "malformed"
+    },
+    {
+      "name": "trailing value",
+      "source": "{}{}",
+      "error": "malformed"
+    },
+    {
+      "name": "trailing comma",
+      "source": "[0,]",
+      "error": "malformed"
+    },
+    {
+      "name": "invalid UTF-8",
+      "hex": "22c08022",
+      "error": "malformed"
+    },
+    {
+      "name": "UTF-8 surrogate",
+      "hex": "22eda08022",
+      "error": "malformed"
+    },
+    {
+      "name": "UTF-8 BOM",
+      "hex": "efbbbf7b7d",
+      "error": "malformed"
+    },
+    {
+      "name": "positive exponent",
+      "source": "1e+21",
+      "error": "malformed"
+    },
+    {
+      "name": "uppercase exponent",
+      "source": "1E2",
+      "error": "malformed"
+    },
+    {
+      "name": "fractional value",
+      "source": "0.5",
+      "error": "malformed"
+    },
+    {
+      "name": "leading plus",
+      "source": "+1",
+      "error": "malformed"
+    },
+    {
+      "name": "negative leading zero",
+      "source": "-01",
+      "error": "malformed"
+    }
+  ],
+  "chain": {
+    "id": "https://artefact.example/line",
+    "kind": "document",
+    "versions": [
+      {
+        "version": 1,
+        "prev": null,
+        "body": {
+          "title": "café"
+        }
+      },
+      {
+        "version": 2,
+        "prev": "sha256-ExxY-LeN6LETT4nczZnc38kvuqawrmK489X4fxC9J7I",
+        "body": {
+          "title": "café"
+        }
+      }
+    ],
+    "canonical": [
+      "{\"body\":{\"title\":\"café\"},\"id\":\"https://artefact.example/line\",\"kind\":\"document\",\"prev\":null,\"t\":\"bindle.artefact-version.v1\",\"version\":1}",
+      "{\"body\":{\"title\":\"café\"},\"id\":\"https://artefact.example/line\",\"kind\":\"document\",\"prev\":\"sha256-ExxY-LeN6LETT4nczZnc38kvuqawrmK489X4fxC9J7I\",\"t\":\"bindle.artefact-version.v1\",\"version\":2}"
+    ],
+    "digests": [
+      "sha256-ExxY-LeN6LETT4nczZnc38kvuqawrmK489X4fxC9J7I",
+      "sha256-rrK-sY2ytwIUas1UBowU9XMfZ6MaEqUrGFBsLcLuCu4"
+    ]
+  },
+  "additive": [
+    {
+      "name": "optional fragment field",
+      "kind": "fragment",
+      "old": {
+        "fields": {}
+      },
+      "next": {
+        "fields": {
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean",
+            "cardinality": {
+              "min": 0,
+              "max": 1
+            }
+          }
+        }
+      },
+      "additive": true
+    },
+    {
+      "name": "required fragment field",
+      "kind": "fragment",
+      "old": {
+        "fields": {}
+      },
+      "next": {
+        "fields": {
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean",
+            "cardinality": {
+              "min": 1,
+              "max": 1
+            }
+          }
+        }
+      },
+      "additive": false
+    },
+    {
+      "name": "frozen document",
+      "kind": "document",
+      "old": {
+        "title": "café"
+      },
+      "next": {
+        "title": "café"
+      },
+      "additive": false
+    },
+    {
+      "name": "unknown relation",
+      "kind": "relation",
+      "old": {},
+      "next": {
+        "new": 1
+      },
+      "additive": null
+    },
+    {
+      "name": "extensible enum",
+      "kind": "fragment",
+      "old": {
+        "fields": {
+          "mode": {
+            "title": "Mode",
+            "type": "enum",
+            "values": [
+              "a"
+            ],
+            "extensible": true
+          }
+        }
+      },
+      "next": {
+        "fields": {
+          "mode": {
+            "title": "Mode",
+            "type": "enum",
+            "values": [
+              "a",
+              "b"
+            ],
+            "extensible": true
+          }
+        }
+      },
+      "additive": true
+    },
+    {
+      "name": "frozen enum",
+      "kind": "fragment",
+      "old": {
+        "fields": {
+          "mode": {
+            "title": "Mode",
+            "type": "enum",
+            "values": [
+              "a"
+            ]
+          }
+        }
+      },
+      "next": {
+        "fields": {
+          "mode": {
+            "title": "Mode",
+            "type": "enum",
+            "values": [
+              "a",
+              "b"
+            ]
+          }
+        }
+      },
+      "additive": false
+    }
+  ]
+}
