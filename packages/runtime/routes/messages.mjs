@@ -3,7 +3,7 @@
 // Stage handlers and route-module shape: packages/runtime/routes/index.mjs.
 import {federationEpoch} from '../federation.mjs';
 import {verifyPreparedPostbackToken} from '../message-postbacks.mjs';
-import {flagReadable,json,body,limit,privateHeaders,accountHandle} from './shared.mjs';
+import {flagReadable,json,lifecycleUnknown,body,limit,privateHeaders,accountHandle} from './shared.mjs';
 import {ActivityFeed,ActivityItem,LegacyActivityPage,MarkActivity,ArchiveActivity,DeleteActivity} from '../../app/domains/activity.mjs';
 
 export function allowedMethods(path){
@@ -20,7 +20,7 @@ export function allowedMethods(path){
 export const stages={
  async public({request,env,path,local}){
    const postbackDispatch=/^\/api\/messages\/([a-f0-9-]{36})\/postbacks$/.exec(path);
-   if(postbackDispatch){
+   if(postbackDispatch){try{
     if(request.method!=='POST')return json({error:'method_not_allowed'},405,{Allow:'POST'});
     if(request.headers.has('Cookie')||request.headers.get('Origin')!==env.APP_ORIGIN)return json({error:'unauthorized',message:'Use a prepared cookie-free submission.'},403);
     const token=request.headers.get('Authorization')?.match(/^Bearer ([a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}\.[A-Za-z0-9_-]{43}\.[0-9]{13}\.[A-Za-z0-9_-]{43})$/)?.[1];
@@ -30,6 +30,8 @@ export const stages={
     if(!await limit(env,{operation:'message-postback-dispatch',remoteIP}))return json({error:'rate_limited'},429,{'Retry-After':'60'});
     const input=await body(request,128);if(Object.keys(input).length)return json({error:'invalid_request'},400);
     return json(await accountHandle(env,ownerId).messagePostbackDispatch(ownerId,postbackDispatch[1],token));
+    // U404 (app-uninstall §7.5a): the capability's own owner being deleted/deleting/moved makes it an invalid credential, never 404/410.
+    }catch(error){if(lifecycleUnknown(error))return json({error:'unauthorized',message:'This prepared submission is invalid or expired.'},401);throw error;}
    }
  },
  async owner({request,env,url,path,id,object,dispatch}){

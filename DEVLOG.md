@@ -2802,3 +2802,16 @@ Review round 1 found three High issues:
   - signed intents (not in v1, recommended).
 
 Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-22 — Uniform public 404 for unknown targets (U404), with the credential boundary
+
+Implements the app-uninstall §7.5a rule ([inventory](docs/release/uniform-unknown-review.md)).
+- **Targets.** A public lookup that names an identity, link, owner or room gives one uniform 404 whether the target is missing, never created, deleted, deleting behind a fence, suspended or moved. This covers contact links and their previews, avatars, ingress descriptors, contact-delivery JWTs, public conversation routes, delegation certificates and OAuth identity admission. Contact links are the one place a link or delivery-token refusal is also folded into the 404, because the link names the target.
+- **Deletion-fence leak fixed.** Public delegation reads no longer opt into purging access, and identity admission goes through the account single writer (`PublicIdentityAvailable` / `PublicAccountAvailable`), so a still-active directory entry can't bypass a committed deletion fence.
+- **Credentials keep their protocol refusals.** Bearer and DPoP tokens, refresh tokens and codes, object capabilities, embed credentials, MCP tokens, postback capabilities and introspection keep their standard 400/401 refusals (RFC 6749/6750/7662/9449). A credential whose own account is deleted, deleting, suspended or moved gets the same refusal, never 404 or 410.
+- **Correction during implementation.** The first pass also turned credential refusals into 404 and rewrote 16 protocol test files to match. That was reverted, and the original assertions are restored.
+- **Test fixture bug found.** The shared matrix had never mounted introspection: it passed a string where the flag needs a boolean, so the "404" came from the router's catch-all. Fixed. The matrix is now split into target and credential surfaces and runs on Node, the engine (12 seeded fence schedules) and workerd.
+- **Not claimed:** constant-time responses. Presence-dependent lookup cost remains, and only the avatar has a fixed deadline. Streams that are already open keep their committed status.
+- **Gates:** core 2417, Worker 77, UI-state 291, e2e 214 passed with 4 WebKit skips (browser not installed), asset build and Worker dry run.
+
+Reviewer: ___ Date: ___ Outcome: ___

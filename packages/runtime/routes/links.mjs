@@ -9,8 +9,8 @@
 // `edge` stage because the contacts module answers every contact path in `public`; it therefore checks the app origin
 // itself, matches only that exact media type (everything else falls through untouched), and exists only with
 // BINDLEBOX_ENABLED. Responses are no-store, no-referrer, credentialless CORS, never vary on cookies, and every
-// failure after link verification is the uniform 503 recipient_unavailable with Retry-After 3600.
-import {flagReadable,flagGlobal,json,body,limit,privateHeaders,accountHandle,signedContactPath} from './shared.mjs';
+// unknown identity/link is a uniform 404; occupant failures use 503 recipient_unavailable with Retry-After 3600.
+import {flagReadable,flagGlobal,json,publicUnknown,contactUnknown,body,limit,privateHeaders,accountHandle,signedContactPath} from './shared.mjs';
 import {parseLinkQuery,parseLinkMeta} from '../../links/envelope.mjs';
 import {DESCRIPTOR_MEDIA_TYPE} from '../../links/types.mjs';
 
@@ -20,7 +20,7 @@ const only=(request,method)=>request.method===method?null:json({error:'method_no
 
 const descriptorHeaders={...privateHeaders,'Access-Control-Allow-Origin':'*','X-Robots-Tag':'noindex, nofollow'};
 const unavailable=()=>json({error:'recipient_unavailable',message:'The recipient is unavailable.'},503,{...descriptorHeaders,'Retry-After':'3600'});
-const linkInvalid=()=>json({error:'link_invalid',message:'The link is not valid.'},401,descriptorHeaders);
+const linkInvalid=request=>publicUnknown(descriptorHeaders,request);
 const wantsDescriptor=request=>{const accept=(request.headers.get('Accept')||'').split(',').map(part=>part.split(';')[0].trim().toLowerCase()).filter(Boolean);return accept.length===1&&accept[0]===DESCRIPTOR_MEDIA_TYPE;};
 export async function descriptorRoute({request,env,url,local}){
  if(!flagGlobal(env,'BINDLEBOX_ENABLED')||url.origin!==env.APP_ORIGIN)return;
@@ -30,12 +30,12 @@ export async function descriptorRoute({request,env,url,local}){
 // Rate limit by network first, before any identity lookup, so handle/subject pairs are not an unthrottled oracle (LH-4).
  if(!await limit(env,{operation:'contact-preview',remoteIP:request.headers.get('CF-Connecting-IP')||(local?'127.0.0.1':'unknown')}))return json({error:'rate_limited',message:'Too many requests. Try again later.'},429,{...descriptorHeaders,'Retry-After':'60'});
  let query;try{query=parseLinkQuery(request.url);}catch{return json({error:'link_malformed',message:'The link is malformed.'},400,descriptorHeaders);}
- if(query.form!=='link')return linkInvalid();if(query.data!==undefined)return json({error:'link_malformed',message:'The link is malformed.'},400,descriptorHeaders);
+ if(query.form!=='link')return linkInvalid(request);if(query.data!==undefined)return json({error:'link_malformed',message:'The link is malformed.'},400,descriptorHeaders);
  let sub;try{const claims=parseLinkMeta(query.meta).claims;if(claims.aud===env.APP_ORIGIN+path)sub=claims.sub;}catch{}
- if(typeof sub!=='string'||!/^[a-f0-9-]{36}$/.test(sub))return linkInvalid();
- const recipient=await env.IDENTITY_REPOSITORY?.get(sub);if(!recipient||recipient.status!=='active'||recipient.handle!==contact[1])return linkInvalid();
+ if(typeof sub!=='string'||!/^[a-f0-9-]{36}$/.test(sub))return linkInvalid(request);
+ const recipient=await env.IDENTITY_REPOSITORY?.get(sub);if(!recipient||recipient.status!=='active'||recipient.handle!==contact[1])return linkInvalid(request);
  let descriptor;try{descriptor=await accountHandle(env,sub).linkDescriptor(sub,`${env.APP_ORIGIN}${path}?bindle_meta=${query.meta}`);}
- catch(error){if(error?.code==='link_invalid')return linkInvalid();if(error?.code==='link_malformed')return json({error:'link_malformed',message:'The link is malformed.'},400,descriptorHeaders);return unavailable();}
+ catch(error){if(contactUnknown(error))return linkInvalid(request);if(error?.code==='link_malformed')return json({error:'link_malformed',message:'The link is malformed.'},400,descriptorHeaders);return unavailable();}
  return new Response(request.method==='HEAD'?null:JSON.stringify(descriptor),{status:200,headers:{...descriptorHeaders,'Content-Type':DESCRIPTOR_MEDIA_TYPE}});
 }
 

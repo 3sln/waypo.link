@@ -75,7 +75,7 @@ test('Worker binds signed URL to path, recipient, issuer and unambiguous query; 
  const issued=await contact();const original=new URL(issued.url);
  const corrupted=new URL(original);const pieces=corrupted.searchParams.get('sig').split('.');pieces[2]='A'.repeat(86);corrupted.searchParams.set('sig',pieces.join('.'));
  for(const url of [issued.url+'&extra=1',issued.url+'&sig=duplicate',issued.url.replace('/'+owner.result.account.handle+'/','/another_owner/'),issued.url.replace(issued.id,crypto.randomUUID()),original.origin+original.pathname,corrupted.href]){
-  const response=await mint(url);assert.equal(response.status,401,url);assert.equal(response.headers.get('Set-Cookie'),null);assert.equal(response.headers.get('Access-Control-Allow-Origin'),'*');
+  const response=await mint(url);assert.equal(response.status,404,url);assert.equal(response.headers.get('Set-Cookie'),null);assert.equal(response.headers.get('Access-Control-Allow-Origin'),'*');
  }
  assert.equal((await mint(issued.url.replace(h.origin,'https://wrong.example'))).status,403);
  assert.equal((await mint(issued.url+'&bindle_meta=a.b.c')).status,400);assert.equal((await mint(issued.url.replace('?sig=','?%73ig=')+'&bindle_meta=a.b.c')).status,400);
@@ -111,7 +111,7 @@ test('Worker live quarantine suppresses notifications and revocation rejects min
  const issued=await contact();const token=await (await mint(issued.url)).text();const quarantined=await h.request(`/api/contacts/${issued.id}/quarantine`,{method:'POST',headers:ownerHeaders(),value:{quarantined:true}});assert.equal(quarantined.status,200);assert.equal((await quarantined.json()).quarantined,true);
  const response=await send(issued.url);assert.equal(response.status,202);const accepted=(await response.json()).receipt.payload.messageId;const rows=new Map(await object.rows());assert.equal(rows.get(`message/${owner.result.account.id}/${accepted}/`).quarantined,true);assert.equal(rows.has(`notification-event/${owner.result.account.id}/${accepted}/`),false);
  assert.equal((await h.request(`/api/contacts/${issued.id}`,{method:'DELETE',headers:ownerHeaders()})).status,200);
- assert.equal((await mint(issued.url)).status,401);assert.equal((await send(issued.url)).status,401);assert.equal((await rpc(token,await message(issued.url))).status,401);
+ assert.equal((await mint(issued.url)).status,404);assert.equal((await send(issued.url)).status,404);assert.equal((await rpc(token,await message(issued.url))).status,404);
 });
 
 test('Worker metadata updates do not read payload R2 objects; cold restore retains payload references',async()=>{
@@ -146,12 +146,12 @@ test('Worker new-form links: owner issuance, conditional evaluation consumed onc
  assert.deepEqual((await (await inspect(`${developer.url}&bindle_data=${data}`)).json()).audience,{state:'stale'});
  assert.equal((await h.mf.dispatchFetch(`${developer.url}&bindle_data=${data}`,{headers:{Accept:'text/html'}})).status,400);
  const rotated=await h.request(`/api/contacts/${developer.grantId}/rotate`,{method:'POST',headers:ownerHeaders(),value:{}});assert.equal(rotated.status,200);const {url}=await rotated.json();assert.notEqual(url,developer.url);
- assert.equal((await inspect(developer.url)).status,401);assert.deepEqual((await (await inspect(url)).json()).audience,{state:'required'});
+ assert.equal((await inspect(developer.url)).status,404);assert.deepEqual((await (await inspect(url)).json()).audience,{state:'required'});
 });
 
 test('Worker expires parent authority and signing-key retirement invalidates existing delivery bearers',async()=>{
  const issued=await contact();const bearer=await (await mint(issued.url)).text();const pending=await message(issued.url);const rows=new Map(await object.rows());const path=`contact-grant/${issued.id}/`,grant=rows.get(path);grant.claims.exp=Math.floor(Date.now()/1000)-1;await object.seed(owner.result.account.id,[[path,grant]]);
- assert.equal((await mint(issued.url)).status,401);assert.equal((await send(issued.url,pending)).status,401);assert.equal((await rpc(bearer,pending)).status,401);
+ assert.equal((await mint(issued.url)).status,404);assert.equal((await send(issued.url,pending)).status,404);assert.equal((await rpc(bearer,pending)).status,404);
  const other=await contact();const liveToken=await (await mint(other.url)).text();const live=await message(other.url);const fresh=new Map(await object.rows());const keyPath=[...fresh.keys()].find(key=>key.startsWith('contact-key/'));await object.seed(owner.result.account.id,[[keyPath,{...fresh.get(keyPath),active:false}]]);
- assert.equal((await mint(other.url)).status,401);assert.equal((await rpc(liveToken,live)).status,401);
+ assert.equal((await mint(other.url)).status,404);assert.equal((await rpc(liveToken,live)).status,404);
 });

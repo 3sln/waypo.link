@@ -1,3 +1,4 @@
+import {lifecycleUnknown} from './public-unknown.mjs';
 import {flagsFor,capability,siteGlobal,siteEnabled,featureConfig,existingFeature} from './account/flags.mjs';
 import {federationSchemas} from './federation.mjs';
 import {verifyProof,dpopNonces,consumeProof,DPOP_TYP} from '../federation/dpop.mjs';
@@ -49,7 +50,9 @@ export async function handleIncrementalToken(request,{port,issuer,proofs,origins
  let dpopJkt;const proof=request.headers.get('DPoP'),nonceHeaders=async()=>proof!==null&&proofs.nonce?{'DPoP-Nonce':await proofs.nonce(),'Access-Control-Expose-Headers':'DPoP-Nonce'}:{};
  if(proof!==null){try{dpopJkt=await proofs.verify(proof,{htm:'POST',htu:`${issuer}/oauth/token`});}catch(error){return oauth({error:error?.code==='use_dpop_nonce'?'use_dpop_nonce':'invalid_dpop_proof'},400,{...cors,...await nonceHeaders()});}if(typeof dpopJkt!=='string')return oauth({error:'invalid_dpop_proof'},400,cors);}
  try{return oauth(await port.exchange({clientId:params.get('client_id'),code:params.get('code'),redirectUri:params.get('redirect_uri'),codeVerifier:params.get('code_verifier'),...dpopJkt?{dpopJkt}:{}}),200,{...cors,...await nonceHeaders()});}
- catch(error){if(error?.code==='temporarily_unavailable')return oauth({error:'temporarily_unavailable'},503,{...cors,'Retry-After':'5'});return oauth({error:['invalid_grant','not_found'].includes(error?.code)?'invalid_grant':'invalid_request'},400,cors);}
+ catch(error){if(error?.code==='temporarily_unavailable')return oauth({error:'temporarily_unavailable'},503,{...cors,'Retry-After':'5'});
+  // U404: a code whose own subject is deleted/deleting/moved is an invalid grant (RFC 6749), never 404/410.
+  return oauth({error:['invalid_grant','not_found'].includes(error?.code)||lifecycleUnknown(error)?'invalid_grant':'invalid_request'},400,cors);}
 }
 
 import {createIncrementalProvider} from '../federation/incremental.mjs';

@@ -53,7 +53,7 @@ test('new-form link: owner issuance, side-effect-free intake metadata, JSON insp
 test('edge routing uses the shared raw-query parser; data is refused outside the JSON inspection GET',async()=>{
  const link=await (await alice.owner('/api/contact-links',{name:'Edge',mimeTypes:['text/plain'],expiresAt:Date.now()+86400000,maxMessages:5,maxMessageBytes:4096})).json(),meta=new URL(link.url).searchParams.get('bindle_meta'),base=link.url.split('?')[0];
  for(const url of [`${link.url}&%73ig=x`,`${link.url}&bindle_meta=${meta}`,`${link.url}&Bindle_meta=x`,`${base}?bindle_meta=${meta}%2E`,`${link.url}&bindle_x=1`])assert.equal((await fetchURL(url,{headers:{Accept:INTAKE}})).status,400,url);
- for(const url of [`${base.replace(link.id,crypto.randomUUID())}?bindle_meta=${meta}`,`${base.replace('/'+alice.handle+'/','/'+bob.handle+'/')}?bindle_meta=${meta}`]){const r=await fetchURL(url,{headers:{Accept:INTAKE}});assert.equal(r.status,401,url);assert.equal((await r.json()).error,'link_invalid');}
+ for(const url of [`${base.replace(link.id,crypto.randomUUID())}?bindle_meta=${meta}`,`${base.replace('/'+alice.handle+'/','/'+bob.handle+'/')}?bindle_meta=${meta}`]){const r=await fetchURL(url,{headers:{Accept:INTAKE}});assert.equal(r.status,404,url);assert.equal((await r.json()).error,'not_found');}
  const data=`${link.url}&bindle_data=a.b.c`;
  for(const [method,accept] of [['GET','text/html'],['HEAD',INTAKE],['GET',INTAKE],['GET','application/vnd.bindle.contact-profile+json'],['GET',DELIVERY]])assert.equal((await fetchURL(data,{method,headers:{Accept:accept}})).status,400,`${method} ${accept}`);
  assert.equal((await send(data,await authored(bob.sign,link.url))).status,400);
@@ -82,8 +82,8 @@ test('contact-delivery bearer: profile negotiation, RPC admission through the di
  const message=await authored(bob.sign,link.url,{text:'via rpc'}),request=rpcDeliveryRequest(message.envelope,base64url(message.body));
  const rpc=await fetchURL('/bindle/rpc',{method:'POST',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:JSON.stringify(request)});assert.equal(rpc.status,200,await rpc.clone().text());const result=await rpc.json();assert.equal(result.tx,message.envelope.payload.operationId);assert.equal(result.result.payload.authorship,'identity');
  const viaURL=await send(link.url,message);assert.equal(viaURL.status,202);assert.deepEqual((await viaURL.json()).receipt,result.result);
- const tampered=token.slice(0,-4)+(token.endsWith('AAAA')?'BBBB':'AAAA');assert.equal((await fetchURL('/bindle/rpc',{method:'POST',headers:{Authorization:'Bearer '+tampered,'Content-Type':'application/json'},body:JSON.stringify(request)})).status,401);
- await alice.owner(`/api/contacts/${link.id}`,undefined,'DELETE');assert.equal((await fetchURL('/bindle/rpc',{method:'POST',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:JSON.stringify(rpcDeliveryRequest((await authored(bob.sign,link.url)).envelope,base64url(new TextEncoder().encode('Hello'))))})).status,401);
+ const tampered=token.slice(0,-4)+(token.endsWith('AAAA')?'BBBB':'AAAA');assert.equal((await fetchURL('/bindle/rpc',{method:'POST',headers:{Authorization:'Bearer '+tampered,'Content-Type':'application/json'},body:JSON.stringify(request)})).status,404);
+ await alice.owner(`/api/contacts/${link.id}`,undefined,'DELETE');assert.equal((await fetchURL('/bindle/rpc',{method:'POST',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:JSON.stringify(rpcDeliveryRequest((await authored(bob.sign,link.url)).envelope,base64url(new TextEncoder().encode('Hello'))))})).status,404);
 });
 
 test('opener operations are owner-authenticated, CSRF-checked and same-host only; tags and default rules are routed',async()=>{

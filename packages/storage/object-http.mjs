@@ -1,3 +1,4 @@
+import {lifecycleUnknown} from '../runtime/public-unknown.mjs';
 const headers={'Cache-Control':'no-store','Referrer-Policy':'no-referrer','X-Content-Type-Options':'nosniff','Content-Security-Policy':"sandbox; default-src 'none'",'X-Frame-Options':'DENY','X-Robots-Tag':'noindex, nofollow, nosnippet','Access-Control-Allow-Origin':'*','Access-Control-Allow-Methods':'GET, PUT, OPTIONS','Access-Control-Allow-Headers':'Content-Type, Range, If-Match, If-None-Match','Access-Control-Expose-Headers':'ETag, Content-Range, X-Bindle-Content-Type, Retry-After'};
 const error=(code,status=400,retryAfter)=>new Response(JSON.stringify({error:code}),{status,headers:{...headers,'Content-Type':'application/json',...Number.isSafeInteger(retryAfter)&&retryAfter>0?{'Retry-After':String(retryAfter)}:{}}});
 const fail=(code,status=400)=>{throw Object.assign(new Error(code),{code,status});};
@@ -34,5 +35,5 @@ export async function handleObjectURL(request,{controller,enabled}){
   if(typeof result.object?.contentType==='string'&&!/[\r\n]/.test(result.object.contentType))extra['X-Bindle-Content-Type']=result.object.contentType;
   if(args.range)extra['Content-Range']=`bytes ${args.range.start}-${args.range.start+bytes.byteLength-1}/*`;
   return new Response(bytes,{status:args.range?206:200,headers:{...headers,...extra}});
- }catch(cause){return error(cause.code??'temporarily_unavailable',cause.status??({unauthorized:401,forbidden:403,not_found:404,conflict:409,tx_conflict:409,indeterminate:409,quota_exceeded:429,rate_limited:429,temporarily_unavailable:503,storage_write_unavailable:503}[cause.code]??400),cause.retryAfter);}
+ }catch(cause){if(lifecycleUnknown(cause))return error('unauthorized',401);return error(cause.code??'temporarily_unavailable',cause.status??({unauthorized:401,forbidden:403,not_found:404,conflict:409,tx_conflict:409,indeterminate:409,quota_exceeded:429,rate_limited:429,temporarily_unavailable:503,storage_write_unavailable:503}[cause.code]??400),cause.retryAfter);}
 }

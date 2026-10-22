@@ -5,8 +5,8 @@
 //
 // Status: GET|HEAD {identityURI}/delegations/{jkt}, identityURI = <APP_ORIGIN>/identity/<subject> (contact delivery
 // S13 naming). The body is exactly {status} or {status, revokedHour}. Unknown, inactive or nonexistent subjects are
-// answered as an unknown jkt ({status:'revoked'}) without waking any account, so the endpoint enumerates nothing.
-// Cache-Control: `public, max-age=300` (the §3.4 window; shared caches must honor Age) except a persisted revocation,
+// answered as an unknown jkt (no-store 404) without waking any account, so the endpoint enumerates nothing.
+// Known-status Cache-Control: `public, max-age=300` (the §3.4 window; shared caches must honor Age) except a persisted revocation,
 // which is final (`max-age=86400, immutable`); "cannot be determined" is 503 `no-store` with Retry-After.
 import {flagReadable,json,body,privateHeaders,accountHandle,pseudonym,subnet,consume} from './shared.mjs';
 import {statusCacheControl,isJkt} from '../../identity/delegation.mjs';
@@ -43,6 +43,7 @@ export const stages={
    try{result=account?.status==='active'?await accountHandle(env,subject).delegationStatus(subject,jkt):unknown;}catch(error){if(error?.code==='delegation_unavailable')throw error;result=unknown;}
    if(!result||!['active','revoked'].includes(result.status))throw new Error('indeterminate');
   }catch{return answer(request,{error:'delegation_unavailable',message:'Delegation status cannot be determined right now.'},503,{'Cache-Control':'no-store','Retry-After':'60'});}
+  if(result.status!=='active'&&!Number.isSafeInteger(result.revokedHour))return answer(request,{error:'not_found'},404,{'Cache-Control':'no-store'});
   return answer(request,statusBody(result),200,{'Cache-Control':statusCacheControl(result)});
  },
  // Owner views and revocation (bindlebox §3.2: the owner can revoke any delegate key, a client's keys, or all).

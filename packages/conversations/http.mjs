@@ -1,7 +1,9 @@
+import {lookupUnknown} from '../runtime/public-unknown.mjs';
 import {participant,uuid,ConversationError} from './index.mjs';
 const headers={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Methods':'GET, POST, OPTIONS','Access-Control-Allow-Headers':'Content-Type, Authorization','Access-Control-Expose-Headers':'Retry-After','X-Robots-Tag':'noindex, nofollow, nosnippet'};
 export function conversationAllowedMethods(path){if(path==='/api/conversations')return ['GET','POST'];if(/^\/api\/conversations\/[a-f0-9-]{36}\/[a-f0-9-]{36}(?:\/action)?$/.test(path))return ['GET','POST'];return null;}
 export async function publicConversationRoutes(request,env,{account,body,json,limit,execution}){
+ try{
  const url=new URL(request.url),path=url.pathname,identity=/^\/api\/conversations\/identity\/([a-f0-9-]{36})$/.exec(path),invitations=/^\/api\/conversations\/invitations\/([a-f0-9-]{36})$/.exec(path),inbox=/^\/api\/conversations\/inbox\/([a-f0-9-]{36})$/.exec(path),join=/^\/api\/conversations\/([a-f0-9-]{36})\/([a-f0-9-]{36})\/join$/.exec(path),room=/^\/api\/conversations\/([a-f0-9-]{36})\/([a-f0-9-]{36})$/.exec(path);
  if(!identity&&!invitations&&!inbox&&!join&&!(room&&request.headers.get('Authorization')?.startsWith('Bearer '))&&!(room&&request.method==='OPTIONS'))return null;
  if([...url.searchParams.keys()].some(k=>k!=='receipt')||url.searchParams.getAll('receipt').length>1||request.method!=='GET'&&url.search)return json({error:'conversation_query_invalid'},400,headers);
@@ -15,6 +17,7 @@ export async function publicConversationRoutes(request,env,{account,body,json,li
  if(inbox)return json(await object.conversationReceive(owner,input.kind,input.input),200,headers);
  if(join){if(input.envelope?.payload?.id!==join[2]||input.envelope?.payload?.source?.owner!==owner||input.envelope?.payload?.source?.origin!==env.APP_ORIGIN)return json({error:'conversation_invalid'},400,headers);const result=await object.conversationJoin(owner,input.envelope);execution?.waitUntil?.(object.conversationDrain(owner,{limit:32}).catch(()=>{}));return json(result,202,headers);}
  const token=request.headers.get('Authorization').slice(7);if(token.length!==43)return json({error:'unauthorized'},401,headers);const source={origin:env.APP_ORIGIN,owner};const result=await object.conversationSubmit(owner,source,room[2],token,input.envelope||input);execution?.waitUntil?.(object.conversationDrain(owner,{limit:32}).catch(()=>{}));return json(result,202,headers);
+ }catch(error){if(lookupUnknown(error))return json({error:'conversation_account_unavailable'},404,headers);throw error;}
 }
 export async function ownerConversationRoutes(request,env,{owner,account,body,json}){
  const url=new URL(request.url),path=url.pathname,object=account(env,owner);

@@ -95,7 +95,7 @@ test('durable signed recovery adopts the existing signer and preserves valid and
   assert.equal((await f.request('/api/contacts/' + revoked.value.id, undefined, owner.headers, 'DELETE')).status, 200);
   const inspect = async url => f.app.fetch(new Request(url, { headers: { Accept: 'application/json' } }));
   assert.equal((await inspect(active.value.url)).status, 200);
-  assert.equal((await inspect(revoked.value.url)).status, 401);
+  assert.equal((await inspect(revoked.value.url)).status,404);
   const beforeKeys = digest(await f.app.resources.accounts.get(accountId).identityKeychain(accountId, { create: false }));
   await f.restart();
   assert.equal(digest(await readFile(authorityPath, 'utf8')), digest(authorityText));
@@ -103,7 +103,7 @@ test('durable signed recovery adopts the existing signer and preserves valid and
   assert.equal(recovered.status, 200, recovered.value.error);
   assert.equal(recovered.value.account.id, accountId);
   assert.equal(recovered.value.account.handle, assignedHandle);
-  assert.equal((await inspect(active.value.url)).status, 401, 'Recovering accounts cannot accept contact access');
+  assert.equal((await inspect(active.value.url)).status,404, 'Recovering accounts cannot accept contact access');
   assert.equal((await f.request('/api/session', undefined, owner.headers, 'GET')).value.authenticated, false);
   const pendingToken = recovered.value.pendingToken;
   assert.equal((await f.request('/api/auth/password/pending', { pendingToken, password })).status, 200);
@@ -122,7 +122,7 @@ test('durable signed recovery adopts the existing signer and preserves valid and
   assert.equal(returnedCertificate.status, 200);
   assert.equal(JSON.parse(returnedCertificate.value.content).assignmentId, assignment.assignmentId);
   assert.equal((await inspect(active.value.url)).status, 200);
-  assert.equal((await inspect(revoked.value.url)).status, 401);
+  assert.equal((await inspect(revoked.value.url)).status,404);
   const beforeReplay = digest(await f.app.resources.repository.get(accountId));
   const replay = await f.recover(file);
   assert.equal(replay.status, 401);

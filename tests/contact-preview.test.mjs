@@ -19,7 +19,7 @@ test.before(async()=>{
  owner={id:session.account.id,call:(path,value,method='POST')=>fetchURL(path,{method,headers:{...headers,...value===undefined?{}:{'Content-Type':'application/json'}},...value===undefined?{}:{body:JSON.stringify(value)}})};
 });
 test.after(async()=>{await app?.close();if(directory)await rm(directory,{recursive:true,force:true});});
-const html=async url=>{const response=await fetchURL(url,{headers:{Accept:'text/html'}});assert.equal(response.status,200);return {response,text:await response.text()};};
+const html=async(url,status=200)=>{const response=await fetchURL(url,{headers:{Accept:'text/html'}});assert.equal(response.status,status);return {response,text:await response.text()};};
 const metaContent=(text,name)=>new RegExp(`<meta (?:property|name)="${name}" content="([^"]*)">`).exec(text)?.[1];
 const link=async(extra={})=>(await (await owner.call('/api/contact-links',{name:'Preview',mimeTypes:['text/plain'],expiresAt:Date.now()+86400000,maxMessages:5,maxMessageBytes:4096,...extra})).json());
 
@@ -46,10 +46,10 @@ test('owner-permitted profile appears escaped in the page, the previews and oEmb
 
 test('revoked, expired, conditional-with-data and malformed links fall back to the generic card; oEmbed is link-only',async()=>{
  const issued=await link();await owner.call(`/api/contacts/${issued.id}`,undefined,'DELETE');
- const {text}=await html(issued.url);assert.equal(metaContent(text,'og:url'),origin);assert.equal(text.includes('data-bindle-intent'),false);assert.equal(text.includes('application/json+oembed'),false);
+ const {text}=await html(issued.url,404);assert.equal(metaContent(text,'og:url'),origin);assert.equal(text.includes('data-bindle-intent'),false);assert.equal(text.includes('application/json+oembed'),false);
  const embedded=await (await fetchURL(`/oembed?format=json&url=${encodeURIComponent(issued.url)}`)).json();assert.equal(embedded.title,'Send a private message on 3sln.me');assert.equal(embedded.type,'link');assert.equal(embedded.thumbnail_url,origin+'/branding/3sln-avatar.png');
  assert.equal((await fetchURL(`/oembed?format=xml&url=${encodeURIComponent(issued.url)}`)).status,501);assert.equal((await fetchURL('/oembed?format=json')).status,400);assert.equal((await fetchURL('/oembed',{method:'POST'})).status,405);
- const avatar=await fetchURL(`${issued.url.split('?')[0]}/avatar?${issued.url.split('?')[1]}`,{redirect:'manual'});assert.equal(avatar.headers.get('Location'),origin+'/branding/3sln-avatar.png');
+ const avatar=await fetchURL(`${issued.url.split('?')[0]}/avatar?${issued.url.split('?')[1]}`,{redirect:'manual'});assert.equal(avatar.status,404);assert.equal(avatar.headers.get('Location'),null);
  assert.equal((await fetchURL(issued.url+'&bindle_data=a.b.c',{headers:{Accept:'text/html'}})).status,400,'data is never evaluated by the HTML representation');
 });
 

@@ -1,3 +1,6 @@
+import {createAppEngine,read} from '../../app/engine.mjs';
+import {systemClock,cryptoRandom,nullAudit} from '../../app/providers.mjs';
+import {PublicIdentityAvailable} from '../../app/domains/public-identity.mjs';
 import {holdBusRPC,busWaitsPort} from '../../events/waiter.mjs';
 import {EVENT_BUS_CONTRACT} from '../../federation/event-buses.mjs';
 import {handleIncrementalToken} from '../incremental-authorization.mjs';
@@ -13,7 +16,7 @@ import {SHELL_TEMPLATE,SHELL_BUILD,shellBuild,shellConfig,fillShell,shellPolicy}
 import {AVATAR,avatarOrigins,readAvatarSource,reencodeAvatar} from '../../federation/embed-avatar.mjs';
 import {handleObjectURL} from '../../storage/object-http.mjs';
 import {UUID as uuidPattern} from '../../core/primitives.mjs';
-import {flagGlobal,capability,json,body,cookie,sessionToken,pseudonym,subnet,identity,securePage,brandPage,passthrough} from './shared.mjs';
+import {flagGlobal,capability,json,lifecycleUnknown,body,cookie,sessionToken,pseudonym,subnet,identity,securePage,brandPage,passthrough} from './shared.mjs';
 
 const encoder=new TextEncoder();
 export const stages={
@@ -47,7 +50,8 @@ export const stages={
     const entryResponse=await handleAuthorizationEntry(request,{entries:env.FEDERATION_ENTRIES,issuer:env.APP_ORIGIN,assets:env.ASSETS,allowInsecureLocalhost:local,enabled:flagGlobal(env,'FEDERATION_ENABLED')&&Boolean(env.FEDERATION_ENTRIES),remote:()=>entryRemote,ownerContext:entryRequest=>entryOwnerContext(entryRequest,env,local),endSession:(entryRequest,context,subject)=>entryEndSession(entryRequest,env,local,subject)});
     if(entryResponse)return entryResponse.headers.get('Content-Type')?.includes('text/html')?passthrough(securePage(await brandPage(entryResponse,env),false,false,{keepPolicy:true})):entryResponse;
     if(flagGlobal(env,'INCREMENTAL_AUTH_ENABLED')){const incremental=await handleIncrementalToken(request,{port:env.INCREMENTAL_AUTHORIZATION,issuer:env.APP_ORIGIN,origins:(origin,id)=>env.FEDERATION_AUTHORITY?.clients?.some(c=>c.origin===origin)||env.FEDERATION_AUTHORITY?.directory?.isMetadataId(id)&&new URL(id).origin===origin,authorizeClient:async id=>{const directory=env.FEDERATION_AUTHORITY?.directory;if(directory?.isMetadataId(id))await directory.assertAllowed(id);},proofs:{verify:proof=>env.INCREMENTAL_AUTHORIZATION.tokenProof(proof),nonce:()=>env.INCREMENTAL_AUTHORIZATION.tokenNonce()}});if(incremental)return incremental;}
-    const response=await handleFederation(request,{controller:env.FEDERATION_AUTHORITY,issuer:env.APP_ORIGIN,allowInsecureLocalhost:local,assets:env.ASSETS,enabled:flagGlobal(env,'FEDERATION_ENABLED'),brokering:flagGlobal(env,'BROKERING_ENABLED')?env.FEDERATION_BROKERING:undefined,ownerContext:ownerRequest=>entryOwnerContext(ownerRequest,env,local)});
+    const authority=env.FEDERATION_AUTHORITY,controller=authority&&path==='/api/oauth/requests'&&request.method==='POST'?new Proxy(authority,{get:(target,method)=>method==='beginAuthorization'?async input=>{const parts=typeof input.identity==='string'?input.identity.split('@'):[];if(parts.length===2&&parts[1].toLowerCase()===new URL(env.APP_ORIGIN).host){const probe=createAppEngine({providers:{identityShards:env.IDENTITY_REPOSITORY,accounts:env.ACCOUNTS,clock:systemClock,random:cryptoRandom,audit:nullAudit}});try{await read(probe,new PublicIdentityAvailable({input:{handle:parts[0]}}));}finally{probe.dispose();}}return target.beginAuthorization(input);}:Reflect.get(target,method,target)}):authority;
+    const response=await handleFederation(request,{controller,issuer:env.APP_ORIGIN,allowInsecureLocalhost:local,assets:env.ASSETS,enabled:flagGlobal(env,'FEDERATION_ENABLED'),brokering:flagGlobal(env,'BROKERING_ENABLED')?env.FEDERATION_BROKERING:undefined,ownerContext:ownerRequest=>entryOwnerContext(ownerRequest,env,local)});
     // Contact intents (links §6.4, core feature `intents.v1`): this host accepts `bindle_intent` on its console entry.
     // Entry routes and the components profile are advertised only while this adapter mounts them (review F8).
     if(response&&path==='/.well-known/bindle/manifest.json'&&request.method==='GET'&&response.ok){const manifest=await response.json(),entries=env.FEDERATION_ENTRIES?env.FEDERATION_ENTRIES.manifest({components:await embedShellMounted(env)}):{};return json({...manifest,features:{...manifest.features,...entries.features,'intents.v1':{intents:[...CONTACT_INTENTS],login_endpoint:`${env.APP_ORIGIN}/console`}},...entries.profiles?{profiles:{...manifest.profiles,...entries.profiles}}:{}},200,{'Access-Control-Allow-Origin':'*'});}
@@ -97,7 +101,9 @@ async function deviceRoutes(request,env,path,local){
  if(path==='/oauth/token'&&request.method==='POST'&&formRequest(request)){
   const text=await boundedText(request.clone(),8192);if(text===null||new URLSearchParams(text).get('grant_type')!==DEVICE_URN)return null;
   // Overload is RFC 8628 back-off, never a terminal error; an unexpected failure after redemption is a 503 (LA3-S4).
-  let result;try{result=await grant.token({headers:deviceHeaders(request),body:text,remoteIP:deviceNetwork(request,local).remoteIP});}catch{return json({error:'temporarily_unavailable'},503,{'Cache-Control':'no-store','Retry-After':'5'});}
+  let result;try{result=await grant.token({headers:deviceHeaders(request),body:text,remoteIP:deviceNetwork(request,local).remoteIP});}catch(error){if(!lifecycleUnknown(error))return json({error:'temporarily_unavailable'},503,{'Cache-Control':'no-store','Retry-After':'5'});result={status:410};}
+  // U404: a grant whose own subject is deleted/deleting/moved is an invalid grant (RFC 6749), never 404/410.
+  if(lifecycleUnknown({code:result.body?.error,status:result.status}))result={status:400,body:{error:'invalid_grant'}};
   if(result.status===503&&result.body?.error==='temporarily_unavailable')result={...result,status:400,body:{error:'slow_down',interval:10}};
   return oauthResponse(result);
  }
@@ -117,8 +123,10 @@ async function deviceRoutes(request,env,path,local){
   if(request.headers.get('Content-Type')?.split(';')[0].trim()!=='application/json')return json({error:'json_required'},415,{'Cache-Control':'no-store'});
   const text=await boundedText(request,1500000);let envelope;try{envelope=text===null?null:JSON.parse(text);}catch{}
   if(!envelope||typeof envelope!=='object'||Array.isArray(envelope))return json({error:'invalid_request'},400,{'Cache-Control':'no-store'});
-  try{const input={authorization:request.headers.get('Authorization'),dpop:request.headers.get('DPoP'),envelope,...request.headers.has('Origin')?{origin:request.headers.get('Origin')}:{}},waits=busWaitsPort(env.EVENT_BUS_WAITS)??env.EVENT_BUS_WAITER,held=flagGlobal(env,'EVENT_BUSES_ENABLED')&&waits&&envelope.contract===EVENT_BUS_CONTRACT&&envelope.method==='read';return json(held?await holdBusRPC({owner:input.authorization.slice(5).split('.')[0],waits,rpc:lease=>grant.rpc({...input,busWaits:true,...lease?{busResume:lease}:{}}),recheck:lease=>grant.rpc({...input,busResume:lease,checkOnly:true})}):await grant.rpc(input),200,{'Cache-Control':'no-store'});}
-  catch(error){const status={unauthorized:401,use_dpop_nonce:401,forbidden:403,rate_limited:429,temporarily_unavailable:503,not_found:404}[error.code]??400;return json({error:error.code??'invalid_request',message:error.code?error.message:'The request could not be completed.'},status,{'Cache-Control':'no-store',...status===401?{'WWW-Authenticate':error.code==='use_dpop_nonce'?'DPoP error="use_dpop_nonce", algs="ES256"':'DPoP algs="ES256"'}:{},...Number.isSafeInteger(error.retryAfter)?{'Retry-After':String(error.retryAfter)}:{}});}
+  try{const input={authorization:request.headers.get('Authorization'),dpop:request.headers.get('DPoP'),envelope,...request.headers.has('Origin')?{origin:request.headers.get('Origin')}:{}},waits=busWaitsPort(env.EVENT_BUS_WAITS)??env.EVENT_BUS_WAITER,held=flagGlobal(env,'EVENT_BUSES_ENABLED')&&waits&&envelope.contract===EVENT_BUS_CONTRACT&&envelope.method==='read';const result=held?await holdBusRPC({owner:input.authorization.slice(5).split('.')[0],waits,rpc:lease=>grant.rpc({...input,busWaits:true,...lease?{busResume:lease}:{}}),recheck:lease=>grant.rpc({...input,busResume:lease,checkOnly:true})}):await grant.rpc(input);if(result?.error&&lifecycleUnknown(result.error))throw Object.assign(new Error('A DPoP access token is required.'),{code:'unauthorized'});return json(result,200,{'Cache-Control':'no-store'});}
+  catch(caught){
+  // U404: a token whose own subject is deleted/deleting/moved is an invalid token (RFC 6750 401), never 404/410.
+  const error=lifecycleUnknown(caught)?Object.assign(new Error('A DPoP access token is required.'),{code:'unauthorized'}):caught;const status={unauthorized:401,use_dpop_nonce:401,forbidden:403,rate_limited:429,temporarily_unavailable:503,not_found:404}[error.code]??400;return json({error:error.code??'invalid_request',message:error.code?error.message:'The request could not be completed.'},status,{'Cache-Control':'no-store',...status===401?{'WWW-Authenticate':error.code==='use_dpop_nonce'?'DPoP error="use_dpop_nonce", algs="ES256"':'DPoP algs="ES256"'}:{},...Number.isSafeInteger(error.retryAfter)?{'Retry-After':String(error.retryAfter)}:{}});}
  }
  return null;
 }

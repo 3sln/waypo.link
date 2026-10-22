@@ -88,9 +88,9 @@ test('ordinary non-beam contact import and signed profile representation disclos
  const hidden=await publicGet(privateLink.value.url);assert.equal(hidden.status,200);assert.equal(hidden.value.profile,null);assert.equal(hidden.response.headers.get('Content-Type'),mime);assert.equal(hidden.response.headers.get('Set-Cookie'),null);
  const named=await publicGet(namedLink.value.url);assert.deepEqual(named.value,{identityURI:`${origin}/users/${f.recipient.account.handle}`,beamEnabled:false,profile:{displayName:'Scoped name'}});assert.equal(JSON.stringify([...await controller.metadata.list()]),before);
  assert.equal((await f.post('/api/contacts/redeem',{url:namedLink.value.url},f.sender)).status,200);assert.deepEqual((await f.request('/api/contacts/directory',{headers:f.sender.headers})).value[0].profile,{displayName:'Scoped name'});
- const bad=new URL(namedLink.value.url),sig=bad.searchParams.get('sig');bad.searchParams.set('sig',sig.slice(0,-2)+(sig.at(-2)==='a'?'b':'a')+sig.at(-1));assert.equal((await publicGet(bad.href)).status,401);
+ const bad=new URL(namedLink.value.url),sig=bad.searchParams.get('sig');bad.searchParams.set('sig',sig.slice(0,-2)+(sig.at(-2)==='a'?'b':'a')+sig.at(-1));assert.equal((await publicGet(bad.href)).status,404);
  await f.post('/api/contacts/'+namedLink.value.id+'/quarantine',{quarantined:true},f.recipient);assert.equal((await publicGet(namedLink.value.url)).status,403);assert.equal((await f.post('/api/contacts/redeem',{url:namedLink.value.url},f.sender)).value.error,'contact_quarantined');
- await f.request('/api/contacts/'+privateLink.value.id,{method:'DELETE',headers:f.recipient.headers});assert.equal((await publicGet(privateLink.value.url)).status,401);
+ await f.request('/api/contacts/'+privateLink.value.id,{method:'DELETE',headers:f.recipient.headers});assert.equal((await publicGet(privateLink.value.url)).status,404);
  }finally{await f.close();}
 });
 test('relay issuance reserves participant once and cannot overwrite a cancellation after a provider wait',async()=>{

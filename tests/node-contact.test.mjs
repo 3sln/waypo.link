@@ -34,7 +34,7 @@ test('Node signed contact uses configured origin and survives SQLite restart wit
   const before=await f.send(contact.url);assert.equal(before.status,202,await before.clone().text());const id=(await before.json()).receipt.payload.messageId;
   await f.restart();assert.equal((await f.request(contact.url,{headers:{Accept:MIME}})).status,200);
   const download=await f.request(`/api/messages/${id}/download`,{headers:f.headers});assert.equal(download.status,200);assert.equal(await download.text(),'Private payload');
-  const revoked=await f.request(`/api/contacts/${contact.id}`,{method:'DELETE',headers:f.headers});assert.equal(revoked.status,200);assert.equal((await f.request(contact.url,{headers:{Accept:MIME}})).status,401);
+  const revoked=await f.request(`/api/contacts/${contact.id}`,{method:'DELETE',headers:f.headers});assert.equal(revoked.status,200);assert.equal((await f.request(contact.url,{headers:{Accept:MIME}})).status,404);
  }finally{await f.close();}
 });
 

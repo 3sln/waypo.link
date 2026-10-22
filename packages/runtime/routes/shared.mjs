@@ -7,10 +7,12 @@ import {flagContext} from '../flags.mjs';
 import {enforceAbusePolicy} from '../../core/abuse-policy.mjs';
 import {CONTACT_DELIVERY_STATUS} from '../../messaging/contact-delivery-service.mjs';
 
+export {lifecycleUnknown,lookupUnknown,contactUnknown} from '../public-unknown.mjs';
 const encoder=new TextEncoder();
 export const signedContactPath=/^\/users\/((?:[a-z0-9][a-z0-9_-]{2,31}|n\.[0-9abcdefghjkmnpqrstvwxyz]{1,9}))\/contact\/([a-f0-9-]{36})$/;
 export const privateHeaders={ 'Cache-Control':'no-store','Referrer-Policy':'no-referrer','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY','Permissions-Policy':'camera=(), microphone=(), geolocation=(), tools=(self)' };
 export const json=(data,status=200,extra={})=>{const headers=new Headers({...privateHeaders,'Content-Type':'application/json'});if(extra instanceof Headers){for(const [key,value]of extra)if(key!=='set-cookie')headers.set(key,value);for(const value of extra.getSetCookie())headers.append('Set-Cookie',value);}else for(const [key,value]of Object.entries(extra))headers.set(key,value);return new Response(JSON.stringify(data),{status,headers});};
+export const publicUnknown=(headers={},request)=>{const response=json({error:'not_found'},404,headers);return request?.method==='HEAD'?new Response(null,{status:404,headers:response.headers}):response;};
 export const cookie=(token,local,maxAge=86400)=>`${local?'bindle_session':'__Host-bindle_session'}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${maxAge}${local?'':'; Secure'}`;
 export function sessionToken(request,local){const name=local?'bindle_session':'__Host-bindle_session';for(const piece of (request.headers.get('Cookie')||'').split(';')){const [key,...rest]=piece.trim().split('=');if(key===name)return decodeURIComponent(rest.join('='));}return undefined;}
 export function setupCookie(request,local){const name=local?'bindle_setup':'__Host-bindle_setup';for(const piece of (request.headers.get('Cookie')||'').split(';')){const [key,...rest]=piece.trim().split('=');if(key===name){const value=rest.join('=');return /^[a-f0-9-]{72}$/.test(value)?value:undefined;}}}

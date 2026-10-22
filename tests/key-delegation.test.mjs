@@ -345,8 +345,8 @@ test('flag on: issuance through the account, protocol verification, and status e
     // Unknown key and unknown subject: identical body and cache class, no account woken for the stranger.
     const stranger = await delegateKey(), ghost = crypto.randomUUID();
     const a = await s.fetchURL(`/identity/${s.id}/delegations/${stranger.jkt}`), b = await s.fetchURL(`/identity/${ghost}/delegations/${key.jkt}`);
-    assert.deepEqual([a.status, await a.json(), a.headers.get('Cache-Control')], [200, { status: 'revoked' }, 'public, max-age=300']);
-    assert.deepEqual([b.status, await b.json(), b.headers.get('Cache-Control')], [200, { status: 'revoked' }, 'public, max-age=300']);
+    assert.deepEqual([a.status, await a.json(), a.headers.get('Cache-Control')], [404, { error: 'not_found' }, 'no-store']);
+    assert.deepEqual([b.status, await b.json(), b.headers.get('Cache-Control')], [404, { error: 'not_found' }, 'no-store']);
     assert.equal(s.app.resources.accounts.has?.(ghost) ?? false, false);
     // Owner list and revoke over HTTP; the revocation is final and cacheable for long.
     const listed = await (await s.owner('/api/delegations')).json();
@@ -367,7 +367,7 @@ test('flag on: issuance through the account, protocol verification, and status e
     try {
       const unavailable = await failing.fetchURL(`/identity/${failing.id}/delegations/${key.jkt}`);
       // Nothing was ever issued there, so the key is unknown; only an active record consults the port.
-      assert.equal(unavailable.status, 200);
+      assert.equal(unavailable.status,404);
     } finally { await failing.close(); }
   } finally { await s.close(); }
 });

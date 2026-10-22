@@ -88,5 +88,5 @@ export const rpc={
  registerSignupPush:{},
  listDelegations:{},
  revokeDelegations:{},
- delegationStatus:{lifecycle:'purging',gate:'none'},
+ delegationStatus:{gate:'none'},
 };

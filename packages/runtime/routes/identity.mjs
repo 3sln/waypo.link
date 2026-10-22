@@ -7,7 +7,7 @@ import {removedAccountCookies} from '../account-cookies.mjs';
 import {recoveryAuthorityPublic} from '../identity-backup.mjs';
 import {IdentityAction,OwnerQuery,LinkedApprovalAction,LinkedResolveQuery,IdentityFault} from '../../identity/index.mjs';
 import QRCode from 'qrcode';
-import {flagReadable,flagGlobal,flagEnabled,json,body,cookie,signupEnabled,accountHandle,status,identity} from './shared.mjs';
+import {flagReadable,flagGlobal,flagEnabled,json,lifecycleUnknown,body,cookie,signupEnabled,accountHandle,status,identity} from './shared.mjs';
 
 const authMethods={
  '/api/auth/step-up/begin':'stepUpBegin','/api/auth/step-up':'stepUp',
@@ -100,7 +100,7 @@ export const stages={
   // and retries of already-signed envelopes do not create a new local-owner grant.
   // Preparations made before a policy update cannot submit new content afterwards.
   const postback=/^\/api\/messages\/([a-f0-9-]{36})\/postbacks$/.exec(path);
-  if(postback&&request.method==='POST'&&!request.headers.has('Cookie')&&request.headers.get('Origin')===env.APP_ORIGIN){const token=request.headers.get('Authorization')?.match(/^Bearer (.+)$/)?.[1];let owner;try{owner=await verifyPreparedPostbackToken(env,token,postback[1]);}catch{return;}const document=await body(request.clone(),128);if(Object.keys(document).length)return json({error:'invalid_request'},400);const engine=await identity(env);try{await engine.query(new TermsSubjectAllowed(owner)).peek();}finally{engine.dispose();}}
+  if(postback&&request.method==='POST'&&!request.headers.has('Cookie')&&request.headers.get('Origin')===env.APP_ORIGIN){const token=request.headers.get('Authorization')?.match(/^Bearer (.+)$/)?.[1];let owner;try{owner=await verifyPreparedPostbackToken(env,token,postback[1]);}catch{return;}const document=await body(request.clone(),128);if(Object.keys(document).length)return json({error:'invalid_request'},400);const engine=await identity(env);try{await engine.query(new TermsSubjectAllowed(owner)).peek();}catch(error){if(lifecycleUnknown(error)||error.code==='unauthorized')return json({error:'unauthorized',message:'This prepared submission is invalid or expired.'},401);throw error;}finally{engine.dispose();}}
  },
  async beforeActivity({request,path,engine,context}){if(path==='/api/billing/checkout'&&request.method==='POST')await engine.query(new PaidCheckoutAllowed(await body(request.clone()),context)).peek();if(['POST','PUT','PATCH'].includes(request.method)){const multiplexed=/^\/api\/(?:rules|connections\/(?:owner|setup)|automation\/(?:prepare|invoke)|profile|email-bridge|contacts\/[^/]+\/beam|conversations\/[^/]+\/[^/]+\/action|events\/buses\/[^/]+\/features)$/.test(path),document=multiplexed?await body(request.clone()):{};await engine.query(new TermsRequestAllowed(context,{path,method:request.method,document})).peek();}},
  async anonymous({request,env,path}){

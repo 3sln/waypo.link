@@ -46,11 +46,11 @@ test('descriptor route: occupant descriptor, uniform unavailability, link checks
     seat.value = { ...BOX, generation: 1 };
     // Links that do not verify, and data on the URL.
     const meta = new URL(issued.link).searchParams.get('bindle_meta');
-    assert.equal((await get(`${s.origin}/users/${s.handle}/contact/${crypto.randomUUID()}?bindle_meta=${meta}`)).status, 401);
-    assert.equal((await get(issued.link.replace(meta.slice(-4), 'AAAA'))).status, 401);
+    assert.equal((await get(`${s.origin}/users/${s.handle}/contact/${crypto.randomUUID()}?bindle_meta=${meta}`)).status,404);
+    assert.equal((await get(issued.link.replace(meta.slice(-4), 'AAAA'))).status,404);
     assert.equal((await get(`${issued.link}&bindle_data=a.b.c`)).status, 400);
     await c.linkOperation(s.id, { actor, operation: 'links.revoke', id: issued.jti });
-    assert.equal((await get(issued.link)).status, 401, 'a revoked link resolves nothing');
+    assert.equal((await get(issued.link)).status,404, 'a revoked link resolves nothing');
     // Other media types are left to the contacts module (no descriptor body).
     const html = await get(issued.link, 'text/html'); assert.notEqual(html.headers.get('Content-Type'), DESCRIPTOR_MEDIA_TYPE);
   } finally { await s.close(); }

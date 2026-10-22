@@ -1,3 +1,4 @@
+import {lifecycleUnknown} from '../runtime/public-unknown.mjs';
 import {McpServer,createMcpHandler} from '@modelcontextprotocol/server';
 import * as z from 'zod/v4';
 import {toolSchemas as schemas,boundedToolResult} from '../automation/catalog.mjs';
@@ -43,9 +44,10 @@ export async function handleMcpPublic(request,env){
     if(TOOLS.some(t=>t.name===name)&&!auth.permissions.some(p=>p.tools.includes(name)&&(name==='collections_list'||p.collectionId===args.collectionId)))throw new McpFault('insufficient_scope',`mcp:${name}`,403);
    }
   }
+  // Resolved before the SDK handler so an owner lifecycle fault reaches the credential mapping below.
+  const collections=await accountCall(env.ACCOUNTS,auth.owner,'mcpCollections');
   const handler=createMcpHandler(async()=>{
    const server=new McpServer({name:'3sln.me',version:'0.1.0'});
-   const collections=await accountCall(env.ACCOUNTS,auth.owner,'mcpCollections');
    const permitted=collections.filter(c=>auth.permissions.some(p=>p.collectionId===c.id));
    for(const tool of TOOLS.filter(t=>permitted.some(c=>c.tools.includes(t.name)&&auth.permissions.some(p=>p.collectionId===c.id&&p.tools.includes(t.name)))))server.registerTool(tool.name,{title:tool.label,description:tool.label,inputSchema:schemas[tool.name],annotations:{readOnlyHint:tool.readOnly,destructiveHint:tool.destructive,openWorldHint:false}},async args=>{
     try{const result=boundedToolResult(await env.MCP_AUTHORITY.execute(bearer,tool.name,args));return {content:[{type:'text',text:JSON.stringify(result)}],structuredContent:result};}catch(e){return {isError:true,content:[{type:'text',text:e.code?`${e.code}: ${e.message}`:'The operation could not be completed.'}]};}
@@ -59,7 +61,10 @@ export async function handleMcpPublic(request,env){
    });return server;
   },{legacy:'stateless',maxRequestBodySize:131072});
   try{return addHeaders(await handler.fetch(request,{parsedBody,authInfo:{token:bearer,clientId:auth.clientId,scopes:auth.scopes}}),extra);}finally{await handler.close();}
- }catch(error){const code=error.code||'temporarily_unavailable',status=error.status||503;return json({error:code,message:error.code?error.message:'MCP is temporarily unavailable.'},status,{...extra,...[401,403].includes(status)?{'WWW-Authenticate':challenge(origin,status===401?'invalid_token':code==='insufficient_scope'?'insufficient_scope':undefined,code==='insufficient_scope'?error.message:status===401?'mcp:collections_list mcp:items_list mcp:item_read':undefined)}:{}});}
+ }catch(caught){
+  // U404 (app-uninstall §7.5a): a token or grant whose own owner is deleted/deleting/suspended/moved is an invalid credential, never 404/410.
+  const error=lifecycleUnknown(caught)?path==='/mcp/oauth/token'?new McpFault('invalid_grant'):new McpFault('invalid_token','The connection has expired or was revoked.',401):caught;
+  const code=error.code||'temporarily_unavailable',status=error.status||503;return json({error:code,message:error.code?error.message:'MCP is temporarily unavailable.'},status,{...extra,...[401,403].includes(status)?{'WWW-Authenticate':challenge(origin,status===401?'invalid_token':code==='insufficient_scope'?'insufficient_scope':undefined,code==='insufficient_scope'?error.message:status===401?'mcp:collections_list mcp:items_list mcp:item_read':undefined)}:{}});}
 }
 export async function handleMcpOwner({request,env,owner,body}){
  const path=new URL(request.url).pathname,id=owner.account.id;

@@ -1,3 +1,4 @@
+import {lifecycleUnknown} from '../runtime/public-unknown.mjs';
 import {siteGlobal,capability} from '../flags/read.mjs';
 import {eventDoorbellGrant} from './event-readers.mjs';
 import {appSessionInventory} from './session-inventory.mjs';
@@ -136,7 +137,7 @@ export class FederationController {
     if(prior){if(prior.status==='complete'){await ctx.reauthorize?.();return prior.result;}return faultResult('indeterminate','The previous operation outcome is unknown. Reconcile through a fresh read.');}
     const save=record=>transact(tx=>tx.set(journalKey,record));
     let result;try{result=await execute();}
-    catch(error){if(['invalid_args','invalid_actions','unsupported_contract','unsupported_method','not_found','forbidden','conflict','quota_exceeded','account_quota_exceeded','rate_limited','storage_write_unavailable','tx_conflict','app_notifications_unavailable','message_receipt_limited','message_receipt_unavailable','message_receipt_disabled','message_receipt_too_large','operation_expired','body_too_large'].includes(error.code)){result=faultResult(error.code,'The requested operation could not be completed.',error);await save({fingerprint,status:'complete',result,expiresAt:this.clock()+86400000});return result;}if(writing){result=faultResult('indeterminate','The operation outcome is unknown. Reconcile through a fresh read.');await save({fingerprint,status:'indeterminate',expiresAt:this.clock()+86400000});return result;}throw error;}
+    catch(error){if(['invalid_args','invalid_actions','unsupported_contract','unsupported_method','not_found','forbidden','conflict','quota_exceeded','account_quota_exceeded','rate_limited','storage_write_unavailable','tx_conflict','app_notifications_unavailable','message_receipt_limited','message_receipt_unavailable','message_receipt_disabled','message_receipt_too_large','operation_expired','body_too_large'].includes(error.code)){result=faultResult(error.code,'The requested operation could not be completed.',error);await save({fingerprint,status:'complete',result,expiresAt:this.clock()+86400000});return result;}if(lifecycleUnknown(error))throw error;if(writing){result=faultResult('indeterminate','The operation outcome is unknown. Reconcile through a fresh read.');await save({fingerprint,status:'indeterminate',expiresAt:this.clock()+86400000});return result;}throw error;}
     await save({fingerprint,status:'complete',result,expiresAt:this.clock()+86400000});return result;
   }
 }
