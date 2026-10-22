@@ -1,6 +1,6 @@
 # Organizations, membership and relations — normative draft (skeleton)
 
-Status: **skeleton, 2026-10-21, revision 3.3.** Revision 3.3 makes governance explicitly provider policy (§6.3). Revision 3.2: Revision 3.2 registers the `relation` artefact kind's growth points (§9.2, artefact-references review R1-L2). Revision 3.1: Revision 3.1 applies the user's admission decision of 2026-10-21: membership in an instance is per edge, and partial membership is a normal state (§9.3, §9.4). It is not independently reviewed. Revision 3: Revision 3 replaces inter-entity offers with **relations** (§9), following the user's proposal of 2026-10-21 ([design §8a](../architecture/organizations-design.md#8a-relations-proposal-assessment)). It was reviewed in [Review round 3](../architecture/organizations-design.md#review-round-3), whose resolved findings are applied (marked R3-…); its open items are not resolved. Nothing here is implemented, published or production-verified. Revision 1 applied the resolved findings of the first independent review ([design, Review round 1](../architecture/organizations-design.md#review-round-1)); items that review left open are not resolved here. Revision 2 applies the user's clarification of 2026-10-21 ([design §1a](../architecture/organizations-design.md#1a-user-clarification-2026-10-21)). Members from any provider are core. Their requests are signed by a key their home provider certified, and the organization verifies that through a directory profile (§3a). There is no separate sign-in at the organization. This replaces the federated login of revision 1. Revision 2 was reviewed in [Review round 2](../architecture/organizations-design.md#review-round-2), and the resolved findings of that round are applied here (marked R2-…); its open items are not resolved. Identifiers under `https://spec.bindle.example/` and hosts under `.example` are placeholders. MUST, SHOULD and MAY express draft requirements. Sections marked **TBD** are reserved and carry no requirements yet. §15 lists the core amendments this draft needs; they are **proposed and unsigned**.
+Status: **skeleton, 2026-10-22, revision 4** (with the resolved findings of [Review round 4](../architecture/organizations-design.md#review-round-4) applied, marked R4-…; its open items are not resolved). Revision 4 applies the user's decisions of 2026-10-22: organization identities are ordinary identities with a recovery file (§3); certificate lifetime is the issuer's choice (§5.2, §9.5); "relation slot" is the term where ambiguous; and portability is referenced, not designed here. It is not independently reviewed. Revision 3.3: Revision 3.3 makes governance explicitly provider policy (§6.3). Revision 3.2: Revision 3.2 registers the `relation` artefact kind's growth points (§9.2, artefact-references review R1-L2). Revision 3.1: Revision 3.1 applies the user's admission decision of 2026-10-21: membership in an instance is per edge, and partial membership is a normal state (§9.3, §9.4). It is not independently reviewed. Revision 3: Revision 3 replaces inter-entity offers with **relations** (§9), following the user's proposal of 2026-10-21 ([design §8a](../architecture/organizations-design.md#8a-relations-proposal-assessment)). It was reviewed in [Review round 3](../architecture/organizations-design.md#review-round-3), whose resolved findings are applied (marked R3-…); its open items are not resolved. Nothing here is implemented, published or production-verified. Revision 1 applied the resolved findings of the first independent review ([design, Review round 1](../architecture/organizations-design.md#review-round-1)); items that review left open are not resolved here. Revision 2 applies the user's clarification of 2026-10-21 ([design §1a](../architecture/organizations-design.md#1a-user-clarification-2026-10-21)). Members from any provider are core. Their requests are signed by a key their home provider certified, and the organization verifies that through a directory profile (§3a). There is no separate sign-in at the organization. This replaces the federated login of revision 1. Revision 2 was reviewed in [Review round 2](../architecture/organizations-design.md#review-round-2), and the resolved findings of that round are applied here (marked R2-…); its open items are not resolved. Identifiers under `https://spec.bindle.example/` and hosts under `.example` are placeholders. MUST, SHOULD and MAY express draft requirements. Sections marked **TBD** are reserved and carry no requirements yet. §15 lists the core amendments this draft needs; they are **proposed and unsigned**.
 
 Protocol/security/interop sign-off: reviewer ___ / date ___ / outcome ___.
 
@@ -14,7 +14,7 @@ An **organization** is an entity ([protocol §1](protocol.md#1-model-and-custody
 - identity keys;
 - a resource pool, preferences, connections and grants.
 
-Unlike a person, it has no credentials of its own. People act for it as **members**, and only within grants the organization holds for them.
+An organization's identity works exactly like a person's: a stable UUID, aliases (handles) that point to it, provider-custodied keys, and a recovery file issued at creation (§3). What differs is how it acts. Nobody signs in *as* an organization. People act for it as **members**, only within grants the organization holds for them, and its provider uses its key on their behalf.
 
 This document adds no new principal type, token transport, RPC transport or authorization store. It specifies five things:
 
@@ -53,7 +53,12 @@ This document adds no new principal type, token transport, RPC transport or auth
 
 - An organization's identity URI, handle and keys follow the same rules as a person's. Handles are discovery hints, never identity (auth).
 - The identity document (§3a) carries `kind`, which is either `"person"` or `"organization"`. Absence means `"person"`.
-- An organization MUST NOT have passwords, passkeys, email login or recovery credentials that authenticate *as* the organization at the authorization endpoint. Every interactive action for an organization is taken by an authenticated person through the owner interface (§6.3) or member context (§7).
+- **Same identity model as persons** (user decision, 2026-10-22). An organization's `sub` is a stable UUID. Handles and other aliases are pointers to it, never identity. Its signing and encryption keys are custodied by its provider, exactly as persons' keys are. At creation, the provider issues an **organization recovery file** in the same format and through the same flow as a person's ([recovery identity](recovery-identity.md), [recovery file](recovery-file.md)), containing the organization's UUID and private keys. Key rotation and succession are deferred, as they are for persons.
+- **No interactive login as the organization.** An organization MUST NOT have passwords, passkeys or email login. Every interactive action for it is taken by an authenticated person through the owner interface (§6.3) or member context (§7). The recovery file is used only in the recovery flow.
+- **Recovery.** An organization's recovery is an authority reset for the organization. It increases the organization's authority epoch when the recovery **takes effect** under the provider's policy, not when the file is presented. A recovery that the policy cancels leaves the epoch unchanged, so a thief who presents a stolen file and is cancelled cannot force epoch churn, and edge holds, on every counterpart (review R4-M2). Its entity certificates carry the epoch (§9.5). Recovery never grants owner-interface authority by itself. Which person may operate the recovered organization is decided by the provider's grant-management policy (§6.3), applied after recovery. Who holds the file is likewise provider policy.
+- **Key use.** Members never hold the organization's private key. The provider signs with it on the organization's behalf, and only for artifacts that an authorized owner-interface action or the organization's own live grants justify: links, entity certificates, participation statements and continuity statements.
+- **Recovery files hold the identity signing key, so it cannot sign certificates** (review R4-H1). Every recovery file ever issued for an identity, including copies held by a former owner or a thief, contains that identity's private signing key, and rotation does not exist yet. Member and entity certificates are therefore signed with a separate **certification key** (§3a.3), which the provider holds and which is never placed in a recovery file or an export. The identity signing key signs only links, participation statements and continuity statements, none of which confers authority at a verifier.
+- **Portability.** Moving an identity between providers, for persons and organizations alike, is defined by the separate [identity portability](../architecture/identity-portability.md) design (in progress, not yet written at review round 4), not here. That design MUST NOT accept possession of an identity's private key, or of a superseded recovery file, as authority to move or transfer an identity. Otherwise a former owner's old file is a standing hijack capability (review R4-H2).
 - An organization's identity signing key MAY sign:
   - links the organization issues (links §3);
   - entity certificates (§9.5) and relation participation statements (§9.3);
@@ -103,7 +108,9 @@ It MUST NOT list contacts, memberships, affiliations, connections, delegations, 
 
 **`keys`.** The member lists signing keys (`use:"sig"`) in states `active`, `retired` or `revoked`. `created` is OPTIONAL, and a provider MAY omit keys older than the current key's continuity chain needs, because key history reveals account age and rotation habits (R2-L3). Each key carries the continuity statement of [`keys.mjs`](../../packages/identity/keys.mjs) (domain `3sln-identity-key-continuity-v1`, signed by the predecessor). Encryption keys (`use:"enc"`) MAY appear.
 
-- At most one signing key is `active`. Only an `active` key verifies a **fresh** signature: certificates, link responses, author proofs and client assertions.
+**Certification keys** (`use:"cert"`, review R4-H1). A provider that issues member or entity certificates lists one or more ES256 certification keys for the identity, in states `active`, `retired` or `revoked`. They are provider-held, MUST NOT appear in recovery files or exports, and need no continuity statement: the provider rotates them freely, because the live identity document is their only authority. The no-rollback rule (§3a.4) applies to them as to signing keys. Certificates verify only against an `active` certification key.
+
+- At most one signing key is `active`. Only an `active` key verifies a **fresh** signature: link responses, author proofs and participation statements. Certificates use certification keys (above).
 - `retired` keys verify only artifacts that the issuer itself stores and re-serves.
 - `revoked` keys verify nothing.
 
@@ -193,7 +200,7 @@ A member is identified only by their home provider's `(iss, sub)`. The organizat
 
 **Certificate.** A member certificate is a compact JWS under the `key-delegation.v1` feature (AMD-O12).
 
-The protected header is exactly `{alg:"ES256", kid:<the identity's active signing kid>, typ:"bindle-member-certificate+jwt"}`. This `typ` differs from `bindle-key-delegation+jwt`, so neither profile accepts the other's certificates.
+The protected header is exactly `{alg:"ES256", kid:<an active certification kid of the identity (§3a.3)>, typ:"bindle-member-certificate+jwt"}`. This `typ` differs from `bindle-key-delegation+jwt`, so neither profile accepts the other's certificates.
 
 The payload contains exactly these members:
 
@@ -207,11 +214,11 @@ The payload contains exactly these members:
 | `client` | `{client_id, origin}`: the client that holds the key, as verified by the home provider when it issued the certificate. |
 | `cnf` | `{jkt}`: the RFC 7638 thumbprint of the holder public key, which is carried as `delegate`. |
 | `aep` | The identity's current authority epoch: a non-negative safe integer that never decreases (R2-M1). |
-| `jti`, `iat`, `exp` | Unix seconds. `exp − iat` MUST be at most **600 s**, and SHOULD be at most 300 s. |
+| `jti`, `iat`, `exp` | Unix seconds, `iat < exp`. **The lifetime is the issuer's choice** (user decision, 2026-10-22): verifiers learn it from the certificate. An issuer MUST disclose its maximum certificate lifetime and its revocation bound (§14, `key-delegation.v1` members). A verifier MAY refuse certificates longer than its own policy allows, as local policy. A verifier SHOULD instead cap the **effective** lifetime at `iat` plus its own maximum, treating an older certificate as expired with the ordinary uniform error, so that clients simply renew. The disclosed revocation bound is the issuer's claim; a verifier bounds its own exposure by this cap, by status checks, and by the write-age rule (review R4-M3). |
 
 Issuance rules for the home provider:
 
-- It signs only with the identity's `active` signing key.
+- It signs only with an `active` certification key of the identity, never with the identity signing key (R4-H1).
 - It issues only while the account is active and the member's consent for (`aud`, `client`) is live.
 - It issues only on the strength of an authenticated member session at the home provider, or of a client grant the member approved for this (`aud`, `client`). Either must be listed to the member, with the holder keys it has certified, and revocable by the member at any time. Revoking it makes the status of those keys `revoked` (R2-M2).
 - `client.origin` MUST be the origin the home provider observed for the requesting document (the embedder origin of its own frame, the `Origin` of the request, or the exact registered redirect URI the certificate is delivered to), never a value taken from request parameters. The certificate MUST be delivered only to documents of that origin, by the same rules as an authorization code (auth) (R2-M3).
@@ -226,7 +233,7 @@ Issuance rules for the home provider:
 **Verification.** The organization's provider MUST verify, in this order:
 
 1. The certificate's syntax, `typ`, `bindle`, `v`, `aud` = this organization, purpose, expiry (60 s skew) and `exp − iat` bound. Then, with no network fetch, that a membership or the presented live invitation (§5.1) exists for that `(iss, sub)`.
-2. The signature, under §3a.5 and §3a.4. The `kid` MUST be the identity's `active` signing key.
+2. The signature, under §3a.5 and §3a.4. The `kid` MUST be an `active` certification key of the identity. A certificate signed by the identity signing key MUST fail (R4-H1).
 
 **No membership oracle** (review R2-H1). Anyone can construct an unsigned or wrongly signed certificate naming any `(iss, sub)`. Step 1 runs before the signature check, so the result MUST NOT depend on whether step 1 passed:
 
@@ -242,7 +249,7 @@ Issuance rules for the home provider:
 **Revocation reaching the organization.** When a home provider suspends the member, revokes the consent for a client, revokes a holder key or recovers the account, it stops issuing certificates at once. Outstanding certificates then fail:
 
 - for owner-interface actions, at the next status check (at most 60 s);
-- otherwise, at certificate expiry: at most 600 s, or 300 s where the recommended lifetime is used, plus 60 s skew.
+- otherwise, at certificate expiry: within the issuer's disclosed lifetime plus 60 s skew. For 3sln.me as issuer, the default is about 11 minutes (660 s), configurable per organization, so about 12 minutes in the worst case.
 
 A home provider MAY also send `connection-revoked` when the organization's provider has an events endpoint. On receipt, the organization ends that member's member-context tokens. This replaces the revision 1 home-validation staleness bound (review R1-H5): renewal needs a fresh certificate, and each certificate is a fresh live check at the home provider.
 
@@ -444,7 +451,7 @@ The relation document is served as an artefact envelope ([artefacts](artefacts.m
     "methods":{"bus":{"https://spec.bindle.example/contracts/event-bus/v1":["read","subscribe","unsubscribe"]}}}]}
 ```
 
-**Slots.**
+**Relation slots.** "Slot" in this section means a *relation slot*. Where that could be confused with an extension slot (extensions §2), whose manifests access entries may reference, write "relation slot" (user decision, 2026-10-22).
 
 - 1–8 slots. Names match `^[a-z][a-z0-9-]{0,31}$`.
 - `arity` is `{min, max}`, with 0 ≤ min ≤ max ≤ 1024.
@@ -580,7 +587,7 @@ It then records the counterpart, activates the grants the inviter consented to w
 
 An entity acting at a counterpart's resources authenticates with an **entity certificate**: a holder key certified by the acting entity's own provider. It is the counterpart of the member certificate (§5.2), and it replaces revision 2's client assertions and grantor-minted token requests.
 
-The header is exactly `{alg:"ES256", kid:<the entity's active signing kid>, typ:"bindle-entity-certificate+jwt"}`. The payload contains exactly:
+The header is exactly `{alg:"ES256", kid:<an active certification kid of the entity (§3a.3)>, typ:"bindle-entity-certificate+jwt"}`. The payload contains exactly:
 
 | Member | Definition |
 | --- | --- |
@@ -593,8 +600,9 @@ The header is exactly `{alg:"ES256", kid:<the entity's active signing kid>, typ:
 | `actor` | `{member?, client?}`, asserted by the issuer. `member` follows §5.3 and `actor_disclosure`. |
 | `resource` | The grantor's resource ID this certificate is for (one per certificate), taken from the imported resource (review R3-H1) |
 | `methods` | The contract → methods map the issuer's own evaluation (§6.2 rule 4) allows for this actor on `resource`, and optionally `scope`. It MUST be a subset of the edge grant. |
+| `aep` | The acting entity's authority epoch (§3, §5.2a). Each counterpart records the highest `aep` it has accepted from that entity. A lower `aep` MUST fail, as for members (R2-M1, review R4-M1). Whether to hold edges on an increase is the counterpart's provider policy. |
 | `cnf`, `delegate` | As in §5.2 |
-| `jti`, `iat`, `exp` | `exp − iat` ≤ 300 s |
+| `jti`, `iat`, `exp` | The lifetime is the issuer's choice and disclosed, as in §5.2. Write-capable methods still need a certificate with `now − iat` ≤ 60 s (below). |
 
 **Issuance.** The acting entity's provider issues a certificate only after evaluating its own hops (§6.2 rule 4): the member is live and holds a grant on the imported resource, and the application's connection is live. It binds `client.origin` and delivers the certificate as §5.2 requires. Its status endpoint applies.
 
@@ -621,7 +629,7 @@ It then authorizes the call under §6.2: the envelope's `resource`, contract and
 
 - **Leaving.** A party leaves unilaterally. Its provider disconnects all of its outgoing connections in the instance, stops issuing entity certificates for it, and sends `connection-revoked` to each counterpart. Counterparts end their edges to that party.
 - **Removal.** There is no instance-wide removal. Each grantor ends its own edges to a party, which is always allowed, as is narrowing to optional entries only. A party is "out" from X's point of view when X has no live edge with it.
-- **Grantee-side revocation.** When a member or application inside the acting entity loses its grant, the acting entity stops issuing certificates for it at once. Outstanding certificates end within 300 s, or 60 s for write-capable methods.
+- **Grantee-side revocation.** When a member or application inside the acting entity loses its grant, the acting entity stops issuing certificates for it at once. Outstanding certificates end within the issuer's disclosed lifetime plus 60 s skew. Write-capable methods stop within 60 s (90 s with skew), because of the age rule in §9.5.
 - **Upgrade.** Each edge is pinned to a relation version that both ends accepted. Moving an edge to a later version requires both ends to pin it. When the later version widens what the edge carries (new entries, fields or methods applying to that pair), the grantor consents to the wider grant and the grantee accepts it, with a disclosure of the difference. Otherwise the move completes when both have pinned. Versions are additive, so an upgrade never narrows anything.
 - **Expiry.** A participation and individual grants MAY carry `expires_at` (§6.1).
 - **Dissolution.** An instance ends when it has no live edges. Imported resources from ended edges become `unavailable`. Grantee fragments that had them assigned report the field in `requiresConsent`, as AMD-C3 does for unapproved resources. There is no recall. Audit history is kept (§13).
@@ -697,7 +705,7 @@ This also interacts with protocol §3's rule that a fragment URL identifies an i
 | --- | --- | --- | --- |
 | `directory.v1` | `directory_url` (issuer origin) | Handle lookup and identity documents (§3a). Required of any provider whose identities act in organizations hosted elsewhere, and of any provider that hosts organizations. | Its identities cannot be verified by other hosts. Verifiers fail with no fetch beyond the manifest. |
 | `organizations.v1` | none | The provider hosts organizations. It verifies member certificates and serves the member-context token form and `bindle_member` (§5.2, §7). | No organizations at this provider. |
-| `key-delegation.v1` (with the AMD-O12 purposes) | none | As a home provider, it issues member certificates (§5.2) and serves their delegation status. | Its identities cannot act as members of organizations. |
+| `key-delegation.v1` (with the AMD-O12 purposes) | `max_certificate_seconds`, `revocation_bound_seconds` | As an issuer, it issues member and entity certificates (§5.2, §9.5) and serves their delegation status. The members disclose its longest certificate lifetime and the bound within which a revocation it commits is reflected in its status responses. | Its identities cannot act as members of organizations. |
 | `relations.v1` | `accept_endpoint`, `join_endpoint` (issuer origin) | The provider's entities can be relation parties. It accepts relation invitations (§9.4), issues and verifies entity certificates (§9.5), and serves the §10 projection. | Its entities cannot join relations. |
 
 How a client acquires certificates needs no declaration in this specification (§5.2).
@@ -754,8 +762,12 @@ The common contract between organization providers is §3a plus §9. Between an 
   - member-context tokens are DPoP-bound to the certificate's key, never outlive the certificate, come with no refresh token, and Bearer is refused;
   - a certificate naming a different client, or a client not connected to O, gets the uniform result.
 - **Directory and certificates:**
+  - a member or entity certificate signed by the identity signing key (the key in recovery files) fails; only an `active` certification key verifies, and recovery files and exports never contain one (R4-H1);
+  - an entity certificate with a lower `aep` than recorded fails (R4-M1);
+  - an organization recovery that the provider's policy cancels leaves the authority epoch unchanged (R4-M2);
+  - a verifier capping effective lifetime treats an older certificate as expired with the uniform error (R4-M3);
   - identity documents contain only the permitted members, and unknown and suspended identities give an identical 404;
-  - wrong `typ` (including a BindleBox delegation certificate), wrong `aud`, a lifetime over 600 s, a retired or revoked signing key, a holder key equal to an identity key, and a replayed proof `jti` all fail;
+  - wrong `typ` (including a BindleBox delegation certificate), wrong `aud`, a lifetime above the verifier's local policy, a retired or revoked signing key, a holder key equal to an identity key, and a replayed proof `jti` all fail;
   - a key rotation with continuity is accepted silently, and one without continuity counts as an authority reset;
   - a document reviving a retired, revoked or superseded kid, or rolling back to an ancestor key, is rejected and is not treated as a reset (R2-H3);
   - the home provider binds `client.origin` to the observed requester origin and lists every issuance grant and holder key to the member (R2-M2, R2-M3);
@@ -772,7 +784,8 @@ The common contract between organization providers is §3a plus §9. Between an 
   - arity is enforced in each party's view;
   - an upgrade that widens an edge needs grantor consent and grantee acceptance, and one that does not completes automatically;
   - leaving ends all of the party's edges, and dissolution makes imported resources `unavailable` and reports `requiresConsent` in the grantee's fragments;
-  - entity certificates: wrong `aud` or `instance`, no live edge, lifetime over 300 s and replayed proofs all fail uniformly with no request-triggered fetch;
+  - entity certificates: wrong `aud` or `instance`, no live edge, a lifetime above local policy and replayed proofs all fail uniformly with no request-triggered fetch;
+  - an organization created on a provider gets a recovery file; completing recovery increases its `aep` and confers no owner-interface authority by itself;
   - write-capable methods require certificate age ≤ 60 s or a fresh status check;
   - two acting entities using one `client_id` and one `tx` neither collide nor replay each other's results;
   - a bus without `entity` cannot be granted through an edge;

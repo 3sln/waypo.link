@@ -1,6 +1,6 @@
 # Organizations: design spike
 
-Status: **provisional design, 2026-10-21, revision 4.3.** Revision 4.3 adds the user's 3sln.me grant-management policy (§12b) and makes governance explicitly provider policy in the spec (§6.3). Revision 4.2: Revision 4.2 defines the additive growth points of the `relation` artefact kind (spec §9.2) and how each maps to widening. Revision 4.1: Revision 4.1 applies the user's decision on relation admission (§8a.9): membership in an instance is per edge, and partial membership is first-class. Revision 4: Revision 4 adopts the user's relations proposal (§1b, §8a), separates provider roles and adds 3sln.me product rules (§12a). Its effect on the review findings is in [Revision 4 reconciliation](#revision-4-reconciliation), and it was reviewed in [Review round 3](#review-round-3), whose resolved findings are applied (R3-…); its open items remain open. Earlier, revision 2 applied the resolved findings of [Review round 1](#review-round-1); open items there remain open. Revision 3 applies the user's clarification (§1a) and is reconciled with the review in [Revision 3 reconciliation](#revision-3-reconciliation). Revision 3 was reviewed in [Review round 2](#review-round-2), whose resolved findings are applied (R2-…); its open items remain open. Design only: nothing here is implemented, routed or production-verified, and no code changed. The coordinator records decisions in DEVLOG.md. Every decision below is unsigned until it gets a reviewer, a date and an outcome. Terminology: [organizations terminology](organizations-terminology.md). Draft normative skeleton: [spec/organizations.md](../spec/organizations.md).
+Status: **provisional design, 2026-10-22, revision 5** (reviewed in [Review round 4](#review-round-4); resolved findings applied as R4-…, open items remain open). Revision 5 applies the user's decisions of 2026-10-22 (§1c): organization identity is the same as user identity, with a recovery file; Q7, Q10 and Q11 are resolved; and messaging apps get no special treatment. It is not independently reviewed. Revision 4.3: Revision 4.3 adds the user's 3sln.me grant-management policy (§12b) and makes governance explicitly provider policy in the spec (§6.3). Revision 4.2: Revision 4.2 defines the additive growth points of the `relation` artefact kind (spec §9.2) and how each maps to widening. Revision 4.1: Revision 4.1 applies the user's decision on relation admission (§8a.9): membership in an instance is per edge, and partial membership is first-class. Revision 4: Revision 4 adopts the user's relations proposal (§1b, §8a), separates provider roles and adds 3sln.me product rules (§12a). Its effect on the review findings is in [Revision 4 reconciliation](#revision-4-reconciliation), and it was reviewed in [Review round 3](#review-round-3), whose resolved findings are applied (R3-…); its open items remain open. Earlier, revision 2 applied the resolved findings of [Review round 1](#review-round-1); open items there remain open. Revision 3 applies the user's clarification (§1a) and is reconciled with the review in [Revision 3 reconciliation](#revision-3-reconciliation). Revision 3 was reviewed in [Review round 2](#review-round-2), whose resolved findings are applied (R2-…); its open items remain open. Design only: nothing here is implemented, routed or production-verified, and no code changed. The coordinator records decisions in DEVLOG.md. Every decision below is unsigned until it gets a reviewer, a date and an outcome. Terminology: [organizations terminology](organizations-terminology.md). Draft normative skeleton: [spec/organizations.md](../spec/organizations.md).
 
 Protocol/security/architecture sign-off: reviewer ___ / date ___ / outcome ___.
 
@@ -26,7 +26,7 @@ The coordinator relayed these decisions:
 4. The spec defines the certificate and how it is verified. How a client acquires a certificate is open-ended.
 5. Non-repudiation is reframed as **proof of origin from the home provider**. That provider could still forge, and this is stated as a limit. Passkey-signed approvals and organization-key audit checkpoints are later and optional. Re-evaluate review findings R1-H2 and R1-H5 in this model.
 6. Phase A includes cross-provider members. Members are stored by `(iss, sub)` from day one.
-7. Three questions stay open (§15): the organization's own issuer, the two-admin deadlock, and operator-run apps on account deletion.
+7. Three questions stay open (§15): the organization's own issuer (resolved in rev 5), the two-admin deadlock (resolved in rev 4.3), and messaging apps on account deletion. Rev 5: Parley is a regular app with no special treatment.
 
 ## 1b. User input: relations, provider roles, product rules (2026-10-21)
 
@@ -40,6 +40,14 @@ The user had not read this design. They proposed the points below, relayed close
 6. **3sln.me product rules.** Creating an organization needs a 3sln.me account. Organizations are always paid. Pricing is tiered at first (up to about 100 TB, plus N AI credits, and so on) and later metered for large organizations.
 7. **Versioned integrity references.** Integrity is cross-cutting and designed elsewhere ([artefact references](artefact-references.md), in progress). Relations depend on it.
 
+## 1c. User decisions (2026-10-22)
+
+1. **Organization identity is the same as user identity.** The user's words: "Org identities should be the same as user identities; when the org is created they get a recovery file, including the org's private key. We can consider key rotation/succession options later. Like user identities, there's an underlying stable UUID, the more human friendly aliases are just that, aliases/pointers/handles for the underlying stable UUID."
+2. **Where the organization's identity lives (Q7)** is resolved by item 1 plus a separate [identity portability](identity-portability.md) design, which a parallel agent is writing (in progress). It covers provider-to-provider moves through permanent HTTP redirects, 3sln.me transfers that require the original recovery file, and redirect guarantees. This design references it and does not design it.
+3. **Certificate lifetime (Q10)** is outside Bindle. The issuer decides, verifiers read it from the certificate, and issuers disclose their revocation bound. 3sln.me defaults to about 11 minutes, configurable per organization.
+4. **Naming (Q11):** Relation, Relationship, and "relation slot" where "slot" alone is ambiguous.
+5. **Parley,** the messaging app, is a regular app. It stores its data in the user's configured object-storage resource. Nothing in this design gives operator-run apps special treatment.
+
 ## 2. Decisions
 
 All decisions are provisional. Each is reversible until the spec is published.
@@ -47,10 +55,10 @@ All decisions are provisional. Each is reversible until the spec is published.
 | ID | Decision | Section |
 | --- | --- | --- |
 | ORG-D1 | **Term.** "Organization" in the spec and the UI ("Org" where space is tight), with an optional display kind label. "Entity" stays the spec umbrella for persons and organizations, and the SDK uses it for the acting entity. **Accepted by the user on 2026-10-21, relayed by the coordinator.** | [terminology](organizations-terminology.md) |
-| ORG-D2 | **No new principal type.** An organization is an entity like a person: it has its own `(iss, sub)`, keys, pool, preferences, connections and grants. It has no credentials of its own. Its **owner interface** is operated by members who hold governance powers. On 3sln.me it is an account record of kind `organization` in its own account single writer. | §6.1 |
+| ORG-D2 | **No new principal type; same identity as persons** (rev 5). An organization is an entity with a stable UUID, aliases, provider-custodied keys, and a recovery file issued at creation to its owner, exactly like a user identity. Nobody signs in *as* it: its **owner interface** is operated by members with governance powers, and the provider uses its key on their behalf. On 3sln.me it is an identity record of kind `organization` in its own account single writer. | §6.1 |
 | ORG-D3 | **The directional connection is the mechanism; users see memberships, integrations and relations.** A connection runs from a grantor to an integration, a person or an entity relation party. A membership is an organization→person connection. Each edge of a relation instance is an entity connection. Each side holds and can sever only its own half (rev 4 wording). | §6.5, §8a |
 | ORG-D4 | **Grants, not roles.** Grants are the only authority that Bindle evaluates. A grant names its grantee by connection and carries caveats: `expires_at`; for entity grantees also `reshare` (default `false`) and `actor_disclosure`. The spec defines no roles. 3sln.me offers copy-on-apply templates. App-specific vocabularies such as "approver" are member-scoped fields in the app's own public fragment. | §6.3 |
-| ORG-D5 | **Members sign their requests with a key their home provider certified** (rev 3, superseding federated login). A member certificate binds a holder key to the member's `(iss, sub)`, one organization (`aud`) and one client, for at most 600 s. Each request carries a proof by that key. The organization verifies home manifest → identity document → certificate → proof, then checks live grants for `(iss, sub)`. There is no sign-in at the organization. Same-provider members are the case where the issuer is local. | §6.2 |
+| ORG-D5 | **Members sign their requests with a key their home provider certified** (rev 3, superseding federated login). A member certificate binds a holder key to the member's `(iss, sub)`, one organization (`aud`) and one client, for a lifetime the issuer chooses and discloses (rev 5). Each request carries a proof by that key. The organization verifies home manifest → identity document → certificate → proof, then checks live grants for `(iss, sub)`. There is no sign-in at the organization. Same-provider members are the case where the issuer is local. | §6.2 |
 | ORG-D6 | **Effective authority is the intersection along the chain**, checked on every call. Nothing flows across a connection unless a grant at that hop says so. Re-sharing to a third entity needs an explicit `reshare` caveat. Governance powers are never delegated to apps or to other entities in v1. | §6.4 |
 | ORG-D7 | **Member context for apps.** An app gets "member M in organization O" only by presenting a certificate that M's home provider issued for O and for that app, either at O's token endpoint (giving a DPoP-bound token that never outlives the certificate, with no refresh token) or directly on each request. The result binds an opaque **membership ID**. Not a member, not connected and failed verification all look the same to the app. | §9, spec §7 |
 | ORG-D8 | ~~Offers and grantor-minted cross-entity tokens.~~ **Superseded by ORG-D15 and ORG-D16** (rev 4). | §8a |
@@ -61,7 +69,7 @@ All decisions are provisional. Each is reversible until the spec is published.
 | ORG-D13 | **Acquiring certificates is out of spec.** The spec fixes the artifact and its verification. Mechanisms are named only as non-normative examples: the home provider's embedded elements with a non-extractable key, a general Bindle authorization flow as a fallback, and native or CLI device grants. 3sln.me's element-based acquisition is an app feature. | §6.2 |
 | ORG-D14 | **Proof of origin, not non-repudiation.** The chain proves "this identity's provider attests that this request came from this identity, through this client, for this organization". That is sufficient. The provider could forge, and this is stated as a limit. Passkey-signed approvals and organization-key audit checkpoints are optional later extensions. | §6.2 |
 | ORG-D15 | **Relations (the user's proposal, adopted).** Public, versioned relation documents define slots with arity and an access matrix over pinned fragment references. Entities join instances in slots, possibly several slots and several instances. Every edge needs grantor consent (the grantor's own fragment values, per counterpart) and grantee acceptance. The document never authorizes by title or slot name. There is no central host: each party holds its participation. Values received arrive as imported resources, usable in the grantee's own fragments. | §8a, spec §9 |
-| ORG-D16 | **Entity certificates.** An organization acting at a counterpart signs its requests with a holder key that **its own** provider certified (`aud` = counterpart, `instance`, `client`, asserted `actor`, ≤ 300 s, and a 60 s age rule for writes). This gives one credential shape for persons and organizations, and replaces grantor-minted tokens and client assertions. | spec §9.5 |
+| ORG-D16 | **Entity certificates.** An organization acting at a counterpart signs its requests with a holder key that **its own** provider certified (`aud` = counterpart, `instance`, `client`, asserted `actor`, a lifetime the issuer discloses, and a 60 s age rule for writes). This gives one credential shape for persons and organizations, and replaces grantor-minted tokens and client assertions. | spec §9.5 |
 | ORG-D17 | **Provider roles.** Identity hosting (`directory.v1`, member certificates) and organization hosting (`organizations.v1`, `directory.v1` for its organizations, `relations.v1`) are separate roles; 3sln.me plays both. The common contract needs no registration between providers. | spec §14 |
 | ORG-D18 | **3sln.me product rules** (user decisions): creating an organization needs a 3sln.me account; organizations are always paid; tiers first, metered later. App feature, not spec. | §12a |
 | ORG-D19 | **Integrity references are a dependency.** Relations need references to fragments as URL plus `version` plus `digest` (ART-D5), instance pins to a relation version, and provider caching, from the [artefact references](artefact-references.md) design. Until it lands: immutable URLs plus a digest. | spec §9.8 |
@@ -91,7 +99,7 @@ Reviewer ___ / date ___ / outcome ___ (for each row).
 The wargames in §5 derived this set. Revision 4 folds in the user's relations (§8a), which removes three revision 3 primitives (the offer, the cross-entity token, the entity-grant flavour) and adds two (the relation document and the relation instance). Each primitive is either new or a generalization of an existing one.
 
 0. **Identity document and certificates.** A read-only public key discovery per identity (`directory.v1`), plus short-lived certificates in which an entity's own provider binds a holder key to that entity, an audience and a client. **Member certificates** come from a person's home provider (rev 3). **Entity certificates** come from an organization's provider, for relations (rev 4). Every request is signed with the certified key (this generalizes `key-delegation.v1`).
-1. **Organization entity.** An entity of kind `organization`, with no credentials, whose owner interface members operate (generalizes the entity).
+1. **Organization entity** (rev 5). An identity like a person's (stable UUID, aliases, provider-custodied keys, recovery file at creation) of kind `organization`. It has no interactive login, and members operate its owner interface (generalizes the entity).
 2. **Directional connection with counterparty kinds.** The counterparty is an integration, a person or an entity relation party. It has a state, a generation and severance. It is mechanics: users see memberships, integrations and relations (generalizes the integration connection).
 3. **Membership.** An organization→person connection, plus an opaque membership ID, per-member grants, governance powers and an optional `expires_at` (§8a.6: not a relation).
 4. **Grant with caveats.** A fragment grant, as for apps, or a member resource grant, with `expires_at`. Relation edges add `reshare` (refused for now) and `actor_disclosure`, taken from the access entry.
@@ -124,7 +132,7 @@ Names: **Acme** is the user's company, on 3sln.me unless stated otherwise. **ERP
 
 ### 5.1 Setting up the ERP
 
-1. Ray, signed in as a person, chooses "Create organization". The provider creates the account record `kind:"organization"` with UUID `o`, issuer `https://3sln.me`, its signing and encryption keys (`IdentityKeyRegistry.ensure`), and a membership `m_ray` holding the `admin` power. The audit records `{actor:{person:ray}, action:"org.create"}`.
+1. Ray, signed in as a person, chooses "Create organization". The provider creates the account record `kind:"organization"` with UUID `o`, issuer `https://3sln.me`, its signing and encryption keys (`IdentityKeyRegistry.ensure`), and a membership `m_ray` holding the `admin` power. Ray, as owner of record (§12b.1), receives the **organization recovery file** through the ordinary recovery-file flow (encrypted under his answers, with save acknowledgement), containing `o` and the organization's private keys (rev 5). The audit records `{actor:{person:ray}, action:"org.create"}`.
 2. The console switches context to Acme. This is an owner transition under the [multi-account UI rules](multi-account-ui.md#owner-transition-is-a-security-boundary): a new epoch and blanked state. Every owner-interface request now carries `(session principal, target entity, epoch)`. The server resolves Ray's powers in `o` before every read or mutation.
 3. Ray installs the ERP for Acme. This is the ordinary integration flow ([integrations §3.2](../spec/integrations.md#32-installation)) with the owner `o`. The consent page shows "Connect **Acme Ltd** to erp.example" and is approved by Ray as admin. The connection `c_erp` is created, the ERP's setup fragments are configured with Acme's resources (ledger object store, invoices bus), and the token response carries `bindle_connection`.
 
@@ -228,7 +236,7 @@ Alice's home is `alt.example`. Acme and the ERP connection live on 3sln.me. If A
 5. **Import.** "Acme Ltd · Ledgers 2026" appears in Ledgerly's pool. Ledgerly's admin grants Bob `get` on it and assigns it to the fragment of Ledgerly's accounting app.
 6. **Use.**
    - Bob uses the accounting app in Ledgerly context.
-   - For the imported resource, Ledgerly's provider issues an **entity certificate**: `aud` = Acme, `instance`, `client` = accounting.example, `actor:{member:pw(Bob, Acme)}`, `cnf` = the app's key, ≤ 300 s.
+   - For the imported resource, Ledgerly's provider issues an **entity certificate**: `aud` = Acme, `instance`, `client` = accounting.example, `actor:{member:pw(Bob, Acme)}`, `cnf` = the app's key, with the issuer's lifetime (660 s by default on 3sln.me).
    - The app calls Acme's RPC directly with the certificate and a DPoP proof (relay projection, spec §10).
    - Acme verifies the certificate and checks the edge live.
    - Acme's audit reads "Ledgerly › member p_7f… › accounting.example", backed by Ledgerly's provider signature.
@@ -317,7 +325,7 @@ See §9. In short, an app learns that a user is a member only when the organizat
 
 | Compromise | Effect | Response |
 | --- | --- | --- |
-| Alice's home account taken over | The attacker can obtain certificates as Alice | Recovery keeps the UUID, so the membership survives, for the real Alice **or for whoever completed the recovery**. Recovery also changes her authority epoch, so the next certificate carries a new `aep`, and Acme holds her admin power until another admin re-confirms or a 72 h notified delay passes (spec §5.2a, R1-H3). Certificates issued before recovery expire within 600 s. Admin actions check delegation status, so they stop within 60 s. |
+| Alice's home account taken over | The attacker can obtain certificates as Alice | Recovery keeps the UUID, so the membership survives, for the real Alice **or for whoever completed the recovery**. Recovery also changes her authority epoch, so the next certificate carries a new `aep`, and Acme holds her admin power until another admin re-confirms or a 72 h notified delay passes (spec §5.2a, R1-H3). Certificates issued before recovery stop at once when Acme sees the higher `aep`, and otherwise expire within the issuer's lifetime. Admin actions check delegation status, so they stop within 60 s. |
 | The ERP page's holder key | Misuse in the page (XSS) while the attacker's script runs. A non-extractable key cannot be exported. | Alice revokes the `jkt` at home, and certificates stop. Status-checked actions fail within 60 s, and others within the certificate lifetime. There is no refresh token to steal. |
 | Alice's home provider's identity signing key | Forged certificates for its users in any organization | Home rotates and revokes, and organizations stop accepting within 300 s + 60 s (spec §3a.4). Home custody is otherwise an inherent trust (§6.2). |
 | An organization's identity key | Forged entity certificates, participation statements, invitations or links | The provider rotates (`keys.mjs` continuity) and revokes the kid. It raises the generation on every inter-entity connection, as for a brokering-key compromise ([integrations §7.1](../spec/integrations.md#71-operations)). Counterparties cache key sets for at most 1 h; that is the residual risk. Governance is not signed with this key, so membership cannot be forged with it. |
@@ -327,11 +335,13 @@ See §9. In short, an app learns that a user is a member only when the organizat
 
 - **Admin lost their device.** Home-provider recovery restores the same `(iss, sub)`, so the membership returns with the next certificate. Recovery changes `aep`, so the admin power resumes after re-confirmation (§5.2a). Nothing organization-specific is needed. This is the common case.
 - **Admin gone for good** (left the company, unreachable, died), and another admin exists. Rev 4.3 (§12b): removing a departed admin's GM grant needs that admin's consent, which they cannot give, or an **owner-approved elevation**. If the owner is the one who is gone, see §12b.3.
-- **No admin left.** Break-glass:
-  - At creation, 3sln.me gives the organization a **recovery file** in the existing [recovery file](../spec/recovery-file.md) format, with the organization UUID and a reset credential.
-  - Restoring it **adds** a new admin principal; it never removes existing admins. The change completes 72 h after notifying every member and every admin. Any current admin who authenticates freshly during that window cancels it, because then the organization is not adminless. A contested organization is a legal dispute that 3sln.me cannot adjudicate (R1-H4).
-  - The file is reissued, and the previous one invalidated, whenever the admin set changes, so a departed admin's copy stops working. The console asks a remaining admin to store the new file.
-  - 3sln.me does no KYC, so it cannot adjudicate disputes beyond this.
+- **No admin left, or the owner gone.** Break-glass is now ordinary **organization recovery** (rev 5). It is the same flow as person recovery, applied to the organization's identity, followed by the grant-management policy:
+  - **The file.** At creation, the owner of record (§12b.1) receives the organization's recovery file. It is the same format as a person's ([recovery identity](../spec/recovery-identity.md)), containing the organization UUID and private keys, and it is issued through the same encrypted, save-confirmed flow.
+  - **Reissue.** The file is reissued, and the previous reset credential invalidated, on every **ownership** change (transfer or lapse, §12b.3), so a former owner's copy stops working. Admin changes do not trigger a reissue, because the file belongs to the owner role. A copy reissued after a transfer still contains the same keys, because rotation is deferred. The old reset credential cannot start a recovery, but the old owner did hold the private keys, and that is a stated residual until rotation exists (spec §3). Since review round 4, certificates are signed by provider-held certification keys that no file contains, so the old keys cannot mint working certificates (R4-H1). What remains is limited to non-authorizing signatures (links, participation statements) and whatever identity portability accepts (R4-H2).
+  - **Passphrase.** An organization file guards durable private keys of a high-value identity against offline guessing, so 3sln.me requires a generated high-entropy passphrase for it, never personal-knowledge answers (R4-M5).
+  - **Recovery.** Completing it requires a person authenticated with their own identity. It increases the organization's authority epoch (spec §3) and confers no owner-interface authority by itself.
+  - **After recovery (3sln.me policy).** The recovering person becomes a candidate owner and admin. This takes effect 72 h after notice to the current owner and every admin, and only the **current owner of record**, freshly authenticated, can cancel it. Admins cannot, because the file is the owner's instrument (§12b.2). If the recovering person *is* the current owner, it takes effect at once.
+  - 3sln.me does no KYC and adjudicates no dispute beyond this.
   - **Provisional parameters** for the user to confirm.
 - **Domain-anchored organizations** (§6.1) can later add DNS-proof recovery.
 
@@ -383,11 +393,11 @@ During an audit, Acme may need a **retention lock** on the ledgers, meaning no d
 
 ### 6.1 Identity, keys, self-containment, portability
 
-An organization has everything a person has except credentials:
+An organization has everything a person has, including a recovery file, except interactive login (rev 5):
 
 - `(iss, sub)`, with `sub` a UUID;
 - a handle in the provider's namespace, such as `acme@3sln.me`, or a custom domain;
-- signing and encryption keys custodied by its provider;
+- signing and encryption keys custodied by its provider, which signs with them only for authorized owner-interface actions and live grants (spec §3). Members never hold them, and the only export is the owner's recovery file;
 - a resource pool, preferences, connections, grants and audit.
 
 Its identity document (directory profile) adds `kind: "organization"`. **Self-contained** therefore means two things. Everything that defines the organization lives in its own account. Every association is a connection it can sever alone.
@@ -411,7 +421,7 @@ A member is always their own person entity at their home provider. An organizati
 **Model** ([spec §5.2](../spec/organizations.md#52-member-authentication-certificates-and-signed-requests)):
 
 - The client acting for the member holds a holder key.
-- The home provider certifies that key for (member, organization, client), for at most 600 s (300 s recommended).
+- The home provider certifies that key for (member, organization, client), for a lifetime it chooses and discloses (rev 5; 3sln.me's default is about 11 minutes, configurable per organization).
 - Every request carries a proof by the key.
 - The organization verifies the chain and derives authority from `(iss, sub)` by live grant checks.
 
@@ -419,7 +429,7 @@ A member is always their own person entity at their home provider. An organizati
 
 1. The certificate's `iss` → the home manifest (an SSRF-safe fetch, cached ≤ 1 h) → `directory.v1`.
 2. The identity URI → the identity document → the `active` signing key (continuity-pinned, cached ≤ 300 s).
-3. The certificate itself: `typ`, `aud` = this organization, purpose, `client`, lifetime ≤ 600 s, `cnf.jkt` and `aep`.
+3. The certificate itself: `typ`, `aud` = this organization, purpose, `client`, expiry (and the verifier's local maximum, if any), `cnf.jkt` and `aep`.
 4. The request proof by the holder key (DPoP: method, URL, freshness, `jti`).
 5. Live membership and grants for `(iss, sub)`, intersected with the client's connection. For owner-interface actions, also the delegation status at home.
 
@@ -444,7 +454,7 @@ Whatever the mechanism, the home provider obtains consent for each (organization
 **Revocation bounds** (replacing the R1-H5 home check). Renewal requires a new certificate, and each certificate is a live check at home. When a member is suspended, a consent is revoked or a key is revoked at home:
 
 - owner-interface actions fail within 60 s, through the status check;
-- other requests fail within the certificate lifetime plus 60 s: ≤ 360 s at the recommended 300 s, or ≤ 660 s at the 600 s maximum.
+- other requests fail within the issuer's disclosed lifetime plus 60 s: about 12 minutes at 3sln.me's 660 s default. An organization may shorten it for certificates it accepts, as verifier policy, and 3sln.me as issuer honours that setting.
 
 An optional `connection-revoked` SET to the organization shortens this. Same-host members are checked live.
 
@@ -481,7 +491,7 @@ An optional `connection-revoked` SET to the organization shortens this. Same-hos
 
 - Each hop is a **grant record at that hop's grantor**: U→H at U (the relation edge), H→Carol at H, H→the consolidation app at H. Each grantor revokes its own hop immediately, at its own provider.
 - Credentials are short-lived and sender-bound. Since rev 4, each acting entity's own provider certifies a holder key after checking its own hops, and the resource's host verifies the certificate and checks its own hop live (spec §9.5).
-- Attenuation: the edge carries only the matrix entries the grantor consented to. Certificates are ≤ 300 s, and write-capable methods need certificates younger than 60 s.
+- Attenuation: the edge carries only the matrix entries the grantor consented to. Certificate lifetimes are the issuer's choice (rev 5), and write-capable methods need certificates younger than 60 s.
 
 **Rules:**
 
@@ -505,11 +515,11 @@ A relation instance (§8a) is the user-facing container. Underneath it is one co
 
 | Revocation | Issuer-hosted RPC | Integration-hosted (brokered) | Relation edge at the grantor (entity certificates) |
 | --- | --- | --- | --- |
-| Member removed or expired | Next call (live check) | ≤ 360 s (`access_ends_by`) | The grantee stops certifying keys for that member: ≤ 300 s + 60 s, and ≤ 60 s for write-capable methods |
+| Member removed or expired | Next call (live check) | ≤ 360 s (`access_ends_by`) | The grantee stops certifying keys for that member: the issuer's lifetime + 60 s, and ≤ 60 s for write-capable methods |
 | Organization→app connection revoked | Next call | ≤ 360 s | As above |
 | Grantor ends an edge | Next call at the grantor | ≤ 360 s | Next call (the grantor checks the edge live) |
 | Party leaves the instance | — | — | Unilateral: its edges end, and counterparts get `connection-revoked` (spec §9.6) |
-| Home-account recovery, suspension or key or consent revocation | Home stops issuing certificates. Owner-interface actions stop within 60 s (status check). Other calls stop within the certificate lifetime plus 60 s (≤ 360 s at 300 s certificates). An optional SET to the organization makes it immediate. A recovery also changes `aep`, which holds admin power (§5.2a). | As left | As left |
+| Home-account recovery, suspension or key or consent revocation | Home stops issuing certificates. Owner-interface actions stop within 60 s (status check). Other calls stop within the issuer's disclosed certificate lifetime plus 60 s (about 12 minutes at 3sln.me's 660 s default). An optional SET to the organization makes it immediate. A recovery also changes `aep`, which holds admin power (§5.2a). | As left | As left |
 
 ### 6.7 Audit
 
@@ -573,7 +583,7 @@ The audit never contains payloads, tokens or preference values ([security](../sp
 | Commands and queries | Resource RPC on a published contract (protocol §5) | Existing RPC, with entity certificates (§8.3) |
 | A grantor's integration-hosted resource | The grantor's provider verifies the entity certificate, then mints a brokered token whose `client_id` is the grantee entity and which carries the actor chain | A profile of [integrations §5.3](../spec/integrations.md#53-consumer-credentials) |
 | Human conversation | Bindle Messaging between organization principals | **Gap:** "on behalf of member" attribution |
-| "Contact Acme" public intake | Contact links on the organization principal | Existing (BindleBox), with the organization as owner |
+| "Contact Acme" public intake | Contact links on the organization principal | Existing, with the organization as owner, through whichever messaging app occupies its messaging-ingress slot (for example Parley, a regular app) |
 | Severing, events, bounds | Connection generation, SETs, `access_ends_by` | Reused |
 | Brokered credentials the provider can sever | The grantor's provider owns every credential | Reused |
 | Asking a counterparty for more access | A relation upgrade, or a new instance | No request queue in v1 |
@@ -600,7 +610,7 @@ It behaves like any other resource:
 | Issued by | The **acting** entity's own provider, after its own hop checks. The grantor verifies it, and for its integration-hosted resources mints a brokered token. |
 | Audience | The counterpart entity (`aud`), within one `instance` |
 | Scope | The live edge's grants, checked by the grantor on every call |
-| Expiry | ≤ 300 s, with no refresh. Write-capable methods need certificates younger than 60 s or a fresh status check. |
+| Expiry | The issuer's disclosed lifetime, with no refresh. Write-capable methods need certificates younger than 60 s or a fresh status check. |
 | Key binding | `cnf.jkt` is **required**: the consumer app's key in relay mode, or the grantee provider's gateway key in proxy mode |
 | Actor chain | `actor: {member?, client?}`, asserted and signed by the acting entity's provider, recorded by the grantor, and never authority by itself |
 | Severance | Edge connections follow [integrations §7](../spec/integrations.md#7-severance). Inside the grantee, revocation means it stops certifying. |
@@ -898,7 +908,7 @@ The user's words: "for entities, when it comes to removing or changing grants th
 - **Owner unreachable.** Elevations are unavailable, so GM changes need the target's consent. Everything else works.
 - **Owner lost** (home account recovered or compromised):
   - The owner's admin power and elevation authority are **held** after an authority reset (spec §5.2a, R1-H3). Re-confirmation for the owner is a 72 h notice to all admins; any admin may object, which moves the organization to break-glass.
-  - **Break-glass** uses the recovery file (§5.11). Restoring it after the delay adds an admin and lets that admin take over ownership through the lapse or transfer path. It never removes admins by itself.
+  - **Break-glass** is organization recovery with the owner's recovery file (§5.11, rev 5). After recovery the recovering person becomes candidate owner and admin under the 72 h rule, and only the current owner can cancel. It never removes admins by itself; any removals afterwards follow §12b.2.
 - **Owner also the admin being changed.** Only the owner's own consent changes it (table above).
 - **Relation edges.** GM grants, like all owner-interface authority, never cross an edge (spec §6.2 rule 3). An external organization can never manage another organization's grants, and relation documents cannot express it.
 
@@ -962,6 +972,7 @@ Engine-first: every operation is an ngin Action or Query in a domain module, dis
   - Member context: DPoP-bound tokens that never outlive the certificate, no refresh token, the membership ID, and the projection intersection.
   - Organization-as-itself background access, approved separately (R1-H1).
   - The `aep` hold after recovery (R1-H3), bound admin invitations (R1-H4), the `member-removed` SET and the actor-chain audit.
+  - **Organization identity (rev 5):** the identity record with a stable UUID and aliases, keys, and the organization recovery file issued to the owner at creation through the existing recovery-file flow; organization recovery through the person recovery flow, followed by the §12b rules; entity-certificate `aep`; and the per-organization certificate-lifetime setting, with a 660 s default. Rotation and succession, and portability, are not in phase A.
   - **The grant-management policy (rev 4.3, §12b):**
     - the owner of record, which in phase A is the creator, designated while billing is disabled;
     - `admin` as the GM grant;
@@ -1004,11 +1015,11 @@ Rev 3 status: Q1 is accepted. Q2 and Q6 are superseded by the 2026-10-21 clarifi
 | Q4 | ~~Organizations paid-only at launch?~~ | **Decided by the user:** always paid; creation needs a 3sln.me account (§12a) |
 | Q5 | ~~Grantor-initiated offers only?~~ | **Superseded** by relations (§8a). There is still no access-request queue in v1. |
 | Q6 | ~~Phase A same provider only?~~ | **Superseded.** Phase A includes members from any provider (§13.3). |
-| Q7 | **Where does Acme's own identity live?** (a) `3sln.me/identity/<o>` now, accepting a one-time re-key later; (b) its own domain as issuer, which needs custom-domain hosting on Workers; (c) write identity continuity first. | **(a) now**, with membership IDs, grants and ERP data keyed so a re-key is a scripted migration. Write identity continuity (c) before the first cross-provider *relationship* (phase D), when re-keying would also break counterparties. Pick (b) only if custom-domain hosting proves cheap. |
+| Q7 | ~~**Where does Acme's own identity live?**~~ **Resolved (user, 2026-10-22):** the organization identity is an ordinary identity with a recovery file, and moves follow [identity portability](identity-portability.md) (in progress). Original question: (a) `3sln.me/identity/<o>` now, accepting a one-time re-key later; (b) its own domain as issuer, which needs custom-domain hosting on Workers; (c) write identity continuity first. | **(a) now**, with membership IDs, grants and ERP data keyed so a re-key is a scripted migration. Write identity continuity (c) before the first cross-provider *relationship* (phase D), when re-keying would also break counterparties. Pick (b) only if custom-domain hosting proves cheap. |
 | Q8 | ~~**Two-admin deadlock**~~ **Resolved by the user's grant-management rule (2026-10-21, §12b.4)**, which leaves the residuals listed there. Original question: a removal target cancels its own removal, and two rogue admins cancel each other forever. | Position B: a mutual cancellation freezes governance into a visible "disputed" state, with members' grants unaffected. Only the recovery-file holder (meant to be the legal owner, not an operator admin) or an off-platform process ends it. This does not reward whoever acts first. |
-| Q9 | **BindleBox and other operator-run apps on account deletion.** | Belongs to the deletion design: [account deletion and export](account-deletion-export.md), finding R1-M12. For organizations: a member's home-account deletion stops certificates, so the membership becomes unusable; the organization keeps the membership record and ex-member data as controller (§12). Deleting the organization itself follows the same deletion design once it covers organization accounts. |
-| Q10 | **Certificate lifetime:** 300 s default and 600 s maximum? | Yes. It bounds revocation at about 6 minutes (10 at most). Owner-interface actions also check status, within 60 s. Entity certificates are capped at 300 s. |
-| Q11 | **Name for relations** (still pending; the user's casual "coven" in the Q12 decision is not a naming decision). "Relation" in the spec and "Relationship" in the UI, or one of the user's suggestions ("bond", "coven")? | **Relation / Relationship.** "Bond" clashes with finance vocabulary in an ERP-first product (bonds payable, surety bonds). "Coven" reads as a joke. The full check is in [terminology §6](organizations-terminology.md#6-relation-naming-check). |
+| Q9 | **Messaging apps on account deletion.** Rev 5: Parley (formerly BindleBox) is a regular app that stores data in the user's own object-storage resource, and this design treats operator-run apps like any other. | Belongs to the deletion design: [account deletion and export](account-deletion-export.md), finding R1-M12. For organizations: a member's home-account deletion stops certificates, so the membership becomes unusable; the organization keeps the membership record and ex-member data as controller (§12). Deleting the organization itself follows the same deletion design once it covers organization accounts. |
+| Q10 | ~~**Certificate lifetime**~~ **Resolved (user, 2026-10-22):** the issuer's choice, disclosed with its revocation bound. 3sln.me defaults to about 11 minutes, configurable per organization. Original question: 300 s default and 600 s maximum? | Yes. It bounds revocation at about 6 minutes (10 at most). Owner-interface actions also check status, within 60 s. Entity certificates are capped at 300 s. |
+| Q11 | ~~**Name for relations**~~ **Resolved (user, 2026-10-22):** Relation, Relationship, and "relation slot" where ambiguous. Original question: "Relation" in the spec and "Relationship" in the UI, or one of the user's suggestions ("bond", "coven")? | **Relation / Relationship.** "Bond" clashes with finance vocabulary in an ERP-first product (bonds payable, surety bonds). "Coven" reads as a joke. The full check is in [terminology §6](organizations-terminology.md#6-relation-naming-check). |
 | Q12 | ~~**Admission to many-party instances.**~~ **Resolved by the user, 2026-10-21 (§8a.9):** every grantor consents per edge, and partial membership is normal. Any party may propose. Original question: Must every grantor consent to each joiner (chosen), or may a relation document name a slot whose holder admits others on everyone's behalf? | Every grantor, for now. Delegated admission is a real convenience for groups with many subsidiaries, but it is authority by proxy. Add it later as an explicit, per-party opt-in ("I accept whoever the parent admits") with a cap. |
 | Q13 | **Membership as a relation?** | No (§8a.6). Keep membership distinct, because grants are per person and governance is involved. The console may list memberships and relations together. |
 
@@ -1233,3 +1244,73 @@ Counts: **2 High, 7 Medium, 4 Low.** Resolved in text: 2 High, 4 Medium (M1 part
 | R1-H3 (recovery takeover) | Resolved (normative hold) | The hold stays normative. The re-confirmation mechanism is now provider policy (spec §5.2a). For 3sln.me, the owner's own reset is re-confirmed by a 72 h notice to the admins, and an objection leads to break-glass. |
 | Spec governance rules | Partly normative | **Moved to provider policy** (spec §6.3). The spec requires only a defined, disclosed policy, plus bound owner-interface invitations, recovery holds, the no-operator-less rule and no owner-interface authority across edges. |
 
+## Revision 5 reconciliation
+
+| Finding | Earlier status | Revision 5 |
+| --- | --- | --- |
+| R2-M4 (lifetime bound versus "about 6 minutes") | Open | **Resolved by the user.** The lifetime is the issuer's choice. Issuers disclose `max_certificate_seconds` and `revocation_bound_seconds`. 3sln.me defaults to 660 s (about 12 minutes worst case) and is configurable per organization. Every latency statement now says "issuer's disclosed lifetime plus 60 s". |
+| R3-M5 ("slot" collides with extension slots) | Open | **Resolved by the user:** keep "slot", and write "relation slot" where ambiguous (spec §9.2, terminology §6). "Position" is not adopted. |
+| R3-M7 (counterpart organization key reset or recovery) | Open | **Narrowed.** Organizations now have recovery and an authority epoch, and entity certificates carry `aep`, so counterparts can detect organization recovery. Whether to hold edges on an increase is provider policy (spec §9.5). A key reset without continuity is still R2-M8 / R3-M7 territory. |
+| R1-H3 (recovery takeover) | Resolved | **Extends to organizations.** Organization recovery is an authority reset that confers no owner-interface authority. The 3sln.me post-recovery rule (72 h, cancellable only by the current owner) applies. |
+| R1-H4 (c) (a fired admin keeps the recovery file) | Resolved: file reissued on admin-set change | **Revised.** The file belongs to the owner role and is reissued on ownership change. An admin never holds it. A former owner keeps old key material until rotation exists, which is a stated residual. |
+| Q7, Q10, Q11 | Open | **Resolved** (§1c). |
+| Q9 / operator-run apps | Open in the deletion design | Parley is a regular app. The organization design has no special case for operator-run apps. |
+
+
+## Review round 4
+
+Independent adversarial review of design revision 5 and spec revision 4 (organization identities with recovery files, recovery as break-glass, issuer-chosen certificate lifetimes, rev 4.1 per-edge admission, rev 4.3 grant-management policy), 2026-10-22. Checked against [recovery identity](../spec/recovery-identity.md), which confirms that recovery files contain the original **signing and encryption private keys**, for persons and organizations alike. Reviewer sign-off on this round: reviewer ___ / date ___ / outcome ___. Resolutions are **provisional**.
+
+Counts: **2 High, 5 Medium, 2 Low.** Resolved in text: 1 High, 4 Medium, 1 Low. Open: R4-H2 (dependency), R4-M4, R4-L2.
+
+### High
+
+**R4-H1. Any recovery-file holder could mint working certificates offline** (resolved). Certificates were signed with the identity's active signing key, the same key every recovery file contains. Rotation does not exist, and reissuing a file keeps the key. *Scenarios:*
+
+- A former owner (after a transfer) keeps the old file. They mint Acme entity certificates with any `resource`, `methods`, `actor` and `aep`, and call Ledgerly's resources on every live edge. This bypasses Acme's provider, its grant evaluation (R3-H1), its audit and the 72 h recovery window.
+- A thief who cracks a stolen file offline does the same at once. There is no recovery to cancel.
+- For persons, a stolen person file mints member certificates into every organization the person belongs to. That bypasses home suspension, issuance grants (R2-M2) and the `aep` hold (R1-H3), since the attacker writes the current `aep`. Only owner-interface actions are safe, because their status check reports an unknown `jkt` as revoked.
+
+Non-write reads are not status-checked, and writes accept a fresh certificate instead of a status check, so the gap was broad. *Fix:* spec §3 and §3a.3. Certificates are signed only by provider-held **certification keys** (`use:"cert"`), which are listed in the live identity document, never placed in files or exports, and rotated freely. A certificate signed by the identity key fails. *Alternative considered:* mandatory status checks for every certificate. That also works, because status is `active` only for keys the provider certified, but it costs a cross-provider fetch per new key and per verifier, and it fails closed on every outage. The certification key is cheaper and keeps offline verification. After this fix, a former owner's old keys sign only non-authorizing artifacts (links, participation statements), and the R1-H4 (c) residual shrinks to that, plus R4-H2.
+
+**R4-H2. Identity portability may turn old files into hijack tools (open, dependency).** `identity-portability.md` does not exist yet. §1c says 3sln.me transfers "require the original recovery file", and that provider moves use permanent HTTP redirects. *Scenarios:* (1) if a transfer accepts key possession or any historical file, a former owner moves Acme to a provider they control; (2) if a redirect from the old issuer is enough, whoever controls the old domain redirects the identity; (3) §3a fetches forbid redirects, and memberships, edges, and ERP data are all keyed by `(iss, sub)`, so a move that changes `iss` breaks every key unless portability defines how verifiers carry the old `(iss, sub)` forward. *Requirement added to spec §3:* portability MUST NOT accept a private key or a superseded file as transfer authority. *Open, for the portability author:* the current reset credential plus current owner-interface authority (with the §12b delays) as transfer authority; a successor statement that verifiers pin, rather than HTTP redirects; and an explicit rule that verifiers keep the original `(iss, sub)` as the stable key across moves. Phase A depends on this answer for the user's organization (Q7 is resolved "by portability").
+
+### Medium
+
+**R4-M1. Counterparts had no rule for a lower organization `aep`** (resolved, spec §9.5). The member rule (R2-M1) was not carried over to entity certificates, so an old-epoch certificate kept working after recovery. Counterparts record the highest `aep` per entity, and a lower one fails.
+
+**R4-M2. Presenting a stolen file churned every counterpart** (resolved, spec §3). The epoch rose at recovery *completion*, before the 72 h window, so a thief who was later cancelled had still bumped `aep`. If counterparts hold edges on an increase, that is a repeatable denial of service across all relations. The epoch now rises when recovery takes effect under provider policy, and a cancelled recovery changes nothing.
+
+**R4-M3. Verifiers could not bound issuer-chosen lifetimes** (resolved, spec §5.2). Refusing long certificates breaks interop silently, and the disclosed `revocation_bound_seconds` is an unverifiable claim. Verifiers now SHOULD cap the effective lifetime at `iat` plus their own maximum and answer with the uniform error, so clients renew. With status checks for governance and the 60 s write rule, verifiers bound their own exposure whatever the issuer picks. The 3sln.me default of 660 s is fine.
+
+**R4-M4. The 72 h owner-only cancel fails exactly when break-glass is needed (open).** *Scenarios:*
+
+- **The owner is absent** (the case break-glass exists for), and a thief, or an ex-partner who kept a copy, presents the file. Admins are notified but cannot cancel, so after 72 h the thief is owner and admin. As owner, they can then remove every admin immediately through elevation (§12b.2).
+- **The owner is the attacker.** Recovery adds nothing to powers they already have, so the 72 h rule is irrelevant.
+- **The owner's own account is compromised** and held under §5.2a. It is undefined whether a held owner may cancel.
+
+*Position A (current):* owner-only cancel. The file is the owner's instrument, and admins must not veto a legitimate successor (an estate, a liquidator). *Position B (reviewer leans):* keep the owner-only cancel, but add three things. Any admin objection extends the window to 14 days. A recovery-derived owner cannot use elevation against existing admins for 30 days, so they gain billing and admin but cannot purge. A held owner cannot cancel, but may cancel once re-confirmed. This bounds a thief's damage without letting admins block a real successor forever.
+
+**R4-M5. Offline guessing of organization files** (resolved as 3sln.me policy, §5.11). Person files are protected by answer-derived encryption, which recovery identity already warns is guessable. An organization file protects a higher-value identity, so 3sln.me requires a generated high-entropy passphrase for it.
+
+### Low
+
+- **R4-L1. Recovery versus grant-management policy** (resolved by R4-M2 and stated here). Recovery confers no owner-interface authority (spec §3). The recoverer's admin and owner standing comes only from the §12b.3 rule after the window. A cancelled recovery changes neither grants nor epoch. GM changes by a recovery-derived owner are elevations and are notified, as for any owner.
+- **R4-L2. The identity key still signs link responses and author proofs** (open, outside these files). Under BindleBox, contact delivery and links, a recovery-file holder can still forge an organization's (or person's) link responses and contact author proofs until rotation exists. Moving those profiles onto certification keys, or onto delegation certificates signed by them, is for the messaging and links owners. Flagged for the coordinator.
+
+### Earlier resolutions under revision 5
+
+| Finding | Status |
+| --- | --- |
+| R1-H1 organization-as-itself | **Holds.** |
+| R1-H2, R2-M2 member-bound tokens and issuance grants | **Held only after R4-H1.** Before it, a person-file holder bypassed both. |
+| R1-H3, R2-M1 recovery hold and ordered `aep` | **Hold after R4-H1** (the `aep` could not be forged before), extended to organizations by R4-M1 and R4-M2. |
+| R1-H4 governance | (a), (b) hold. (c) is narrowed by R4-H1, and the residual is R4-H2. (d) is resolved by the §12b policy, with the residual R4-M4. |
+| R2-H1, R2-H2, R2-H3 directory | **Hold.** The no-rollback rule now also covers certification keys. |
+| R2-M6 egress and clean-room issuer | **Holds.** |
+| R3-H1, R3-H2 certificate scope and composition | **Hold after R4-H1.** Before it, a key holder could write any scope. |
+| R3-M1 to R3-L4 | **Hold** as reconciled in rev 4.1 to 4.3. |
+
+### Phase A forward compatibility
+
+**Conditionally sound.** Phase A must issue member certificates under certification keys from day one, which costs nothing now and is a migration of every verifier later. Its member records stay keyed by `(iss, sub)`. The remaining dependency is R4-H2: until identity portability says how an identity's `(iss, sub)` survives a move, Acme's long-term identity, and every ERP key derived from it, rests on an unwritten design. The reviewer recommends that portability adopt "the original `(iss, sub)` remains the stable key, with a pinned successor statement" before phase A data accrues.

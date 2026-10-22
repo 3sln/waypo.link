@@ -103,8 +103,8 @@ Added 2026-10-21, rev 4. The user proposed public relation documents ([design §
 
 **Terms:**
 
-- Spec: **relation** (the document), **relation instance**, **slot**, **access entry**, **edge** and **party**.
+- Spec: **relation** (the document), **relation instance**, **slot** ("relation slot" where it could be confused with an extension slot), **access entry**, **edge** and **party**.
 - UI: **Relationship** for an instance ("Acme Ltd ↔ Beta GmbH · Supply"). A **Relationship type** is the document, and roles in it are its slots ("Buyer", "Supplier"), shown with the slot titles from the document.
 - Avoid "relation role" in UI copy. Slots carry no authority by name, and "role" is reserved (§4).
 
-**Open naming clash (review R3-M5).** "Slot" is already a Bindle term (extension slots, T6), and relation access entries reference slot manifests, so one spec section uses "slot" in two senses. The reviewer recommends renaming the relation term to **position** ("the buyer position"; T1–T7 pass, with no Bindle, OAuth or ERP clash found). "Seat" and "side" were considered: "side" fails for more than two positions, and "seat" reads as a billing seat in 3sln.me pricing. This needs the user's decision. Also, "relationship" now names an instance in the UI, while spec §4 rule 4 still says "relationship labels" for local labels; these should become "local labels" when the rename lands.
+**Resolved (user, 2026-10-22): keep "slot"; write "relation slot" where ambiguous.** Original note (review R3-M5): "Slot" is already a Bindle term (extension slots, T6), and relation access entries reference slot manifests, so one spec section uses "slot" in two senses. The reviewer recommends renaming the relation term to **position** ("the buyer position"; T1–T7 pass, with no Bindle, OAuth or ERP clash found). "Seat" and "side" were considered: "side" fails for more than two positions, and "seat" reads as a billing seat in 3sln.me pricing. This needs the user's decision. Also, "relationship" now names an instance in the UI, while spec §4 rule 4 still says "relationship labels" for local labels; these should become "local labels" when the rename lands.

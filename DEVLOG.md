@@ -2718,3 +2718,26 @@ Gates: `npm test` 2365, Worker 76, UI-state 291, build and dry run pass. e2e: 21
   Reviewer: ___ Date: ___ Outcome: ___
 - **Certificate lifetime.** Out of scope for Bindle: the issuer decides and discloses its revocation bound. 3sln.me defaults to about 11 minutes, configurable per org. Reviewer: ___ Date: ___ Outcome: ___
 - **Naming.** Relation / Relationship. Keep "slot", and say "relation slot" where ambiguous. Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-22 — Organizations rev 5 (org identity) and review round 4
+
+**Rev 5.**
+- Orgs are full identities: stable UUID, aliases, provider-held keys, and a recovery file issued at creation and held by the owner. It is reissued when ownership changes.
+- Break-glass is now ordinary org recovery. Recovery raises the org authority epoch. On 3sln.me, the recoverer becomes candidate owner after 72 h, and only the current owner can cancel.
+- The certificate lifetime is chosen by the issuer, which must disclose it. 3sln.me defaults to 660 s, configurable per org.
+
+**Review round 4** (2 High, 5 Medium, 2 Low):
+- **H1, fixed.** Recovery files contain the identity signing key, so a former owner or a file thief could mint certificates offline. Certificates are now signed only by provider-held certification keys (`use:"cert"`) that never appear in files or exports.
+- **Medium, fixed.**
+  - Counterparts reject a lower org epoch.
+  - The epoch is raised only when a recovery takes effect.
+  - Verifiers may cap a certificate's effective lifetime.
+  - Org recovery files get a generated high-entropy passphrase.
+- **H2, open.** Portability must not accept key possession or a superseded file as transfer authority. Verifiers keep the original `(iss, sub)` and pin a signed successor statement; redirects are hints only. Forwarded to the portability designer.
+- **Open: owner absent during an org recovery.**
+  - Reviewer proposal: an admin objection extends the window to 14 days, and a recovery-derived owner cannot remove admins for 30 days.
+  - Also proposed: an owner on recovery hold cannot cancel.
+  - Needs a user decision.
+- **Low, open.** Link responses and author proofs are still signed with the identity key. This is for the messaging and links owners.
+
+Reviewer: ___ Date: ___ Outcome: ___
