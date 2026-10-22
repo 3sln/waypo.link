@@ -2763,3 +2763,42 @@ Review round 1 found three High issues:
 - **H3, open.** For org-installed apps, a single admin can trigger app-side deletion of org data. An `actor` claim was added; the gate itself is a user decision (second admin or a 24 h delay).
 
 **404 vs 410.** Every public surface gives a uniform "unknown" answer. 410 is used only on owner-authenticated or internal paths, and account-deletion-export §2.4 was updated to match. A possible public leak remains: a signed contact delivery during the deletion fence can surface a 410 through `routes/shared.mjs` `status()`. Queued as a code fix. Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-22 — Identity portability and intent links (design, review round 1)
+
+**Identity portability** ([spec](docs/spec/identity-portability.md) rev 2, [design](docs/architecture/identity-portability.md)):
+- **What moves.** The identity keeps its UUID and key; the host changes. Handles never move. Verifiers key by the origin principal `(iss₀, sub)` and keep a successor pin.
+- **Proof of a move.** A move statement signed by the identity key, plus an old-provider attestation bound to one destination, one transfer, one statement and `redirect_base`. Key possession alone never suffices.
+- **Transfer authority.** The current recovery credential, plus either a step-up session or a 7-day public wait. The wait cannot start within 7 days of an authority reset or a channel change. Notices also go to channels removed in the last 30 days, with a cancel link that needs no sign-in.
+- **Adoption.** No automatic adoption while the source still serves the identity as active. Verifiers use attestation key sets at most 1 h old.
+- **Redirects.** 308 redirects are hints only. Canonical paths only.
+- **3sln.me specifics.** 90 free days of redirects, a US$10 ten-year extension (Polar one-time), and a "moved" tombstone with proposed privacy and terms text.
+- **Review round 1.** 3 High, all fixed in the text: the recover-then-wait hijack, an automatic hijack through a leaked attestation key or lapsed source domain, and unbound authorizations.
+- **Residual.** A verifier that first meets an identity after its source is gone cannot detect a forged chain; only pre-rotation would close that.
+- **Open:**
+  - a 24 h delay before person moves commit;
+  - admin blocking of suspicious org moves;
+  - pre-rotation;
+  - the user's confirmation that "original recovery file" means the current file;
+  - the extension price;
+  - the export window.
+
+**Intent links** ([spec](docs/spec/intents.md) rev 2, [design](docs/architecture/intent-links.md)):
+- **Format.** `bintent=<base64url JSON>` carrying a pinned intent-kind artefact plus data. Unsigned links are shown as from an unknown sender. Signed links use certification keys.
+- **Handlers.** Declared in the integration manifest. The provider hands off by form POST, then by fragment to the handler. Handlers must confirm actions, refuse framing, and name the acting account.
+- **Migration.** `send-message` and `add-contact` subsume `web+bindle` and `bindle_intent`.
+- **Review round 1.** 5 High, all fixed in the text:
+  - publisher spoofing;
+  - borrowed voice in previews;
+  - forged attribution through retired keys;
+  - unguarded handler routes;
+  - drive-by "always", which now needs fetch-metadata user-activation signals.
+
+  Mediums are fixed too: kind lookups happen only after sign-in, plus canonical validation and migration paths.
+- **Open:**
+  - handle-entry phishing;
+  - offering org-installed apps to members;
+  - the fragment form being required for contact links (recommended);
+  - signed intents (not in v1, recommended).
+
+Reviewer: ___ Date: ___ Outcome: ___
