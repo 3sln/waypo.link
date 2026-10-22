@@ -2700,3 +2700,21 @@ Gates:
 The JSON conformance vectors are in `docs/architecture/artefacts/` for reuse by other implementations. 59 tests run, and are now part of `npm test`. Store, fetch and call-site wiring remain for ART-2 through ART-6.
 
 Gates: `npm test` 2365, Worker 76, UI-state 291, build and dry run pass. e2e: 214, with 4 WebKit environment skips.
+
+## 2026-10-22 — User decisions: Parley data on deletion, org identity, certificates, naming
+
+- **R1-M12 resolved.** The messaging app (the user calls it Parley) is a regular app that stores its data in the user's configured object-storage resource. Deleting a 3sln.me account deletes hosted storage, and Parley gets no special operator treatment. The `operatorApps` stage stays a no-op.
+
+  **Gap:** the current BindleBox implementation keeps hot state in its own `MailboxObject`: metadata, the encrypted delegate key, and up to 64 MiB of bodies while storage is unavailable. As a regular app, it must purge that state when it receives the standard connection-severed / account-deleted signal. This is required before `BINDLEBOX_ENABLED`, but not before `ACCOUNT_DELETION_ENABLED`.
+
+  Reviewer: ___ Date: ___ Outcome: ___
+- **Org identity.** An org identity is the same kind of thing as a user identity: a stable UUID, aliases as pointers, keys, and a recovery file containing the org's private key, issued at creation. Rotation and succession are deferred. This goes into organizations rev 5. Reviewer: ___ Date: ___ Outcome: ___
+- **Identity portability and intent links (new design work).**
+  - Moves between providers use HTTP permanent redirects.
+  - 3sln.me transfer-out requires the original recovery file, with 3 months of free redirects and a cheap 10-year extension.
+  - Stable, app-agnostic intent links use `bintent=<base64 JSON>`. Apps declare intent handlers in their manifests. The user chooses among handlers and gives first-use consent (once or always). Intent kinds are public artefacts.
+  - The split between the Bindle spec and provider choices must be explicit. A design agent is drafting this.
+
+  Reviewer: ___ Date: ___ Outcome: ___
+- **Certificate lifetime.** Out of scope for Bindle: the issuer decides and discloses its revocation bound. 3sln.me defaults to about 11 minutes, configurable per org. Reviewer: ___ Date: ___ Outcome: ___
+- **Naming.** Relation / Relationship. Keep "slot", and say "relation slot" where ambiguous. Reviewer: ___ Date: ___ Outcome: ___
