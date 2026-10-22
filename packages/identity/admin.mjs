@@ -6,6 +6,8 @@ import {signOnboardingInvitation,verifyOnboardingInvitation,signOnboardingIssuan
 import {systemBadge} from './system-bootstrap.mjs';
 import {BOOT_HANDLE,isFreeHandle,normalizeHandle} from './handles.mjs';
 import {secureEqual} from './crypto.mjs';
+import {flagsFor} from '../flags/read.mjs';
+import {AppAction,AppQuery} from '../app/engine.mjs';
 import {isUUID as uuid} from '../core/primitives.mjs';
 // Host/reference administration, not Bindle protocol. Boot is a deploy-token
 // principal outside the account directory; administrators are ordinary signed-in
@@ -21,8 +23,11 @@ const bootSummary=p=>p&&{status:p.status,generation:p.generation,claimedAt:p.cla
 /** Block-list read for adapters that hold the admin store but not the service. Invalid hosts read as blocked; store
  * errors propagate so callers fail closed. */
 export async function adminClientBlocked(store,host){if(typeof host!=='string'||!/^[a-z0-9.-]{1,253}$/.test(host))return true;return Boolean(await store.get('client-block/'+host));}
+const deletionPasskeys=new WeakMap();
+// Trusted HTTP adapter only, after the existing passkey-only step-up boundary.
+export function adminDeletionPasskeyContext(admin,context){const scoped={...context};deletionPasskeys.set(scoped,{admin,at:admin.clock()});return scoped;}
 export class AdminService {
- constructor({store,identity,onboarding,webauthn,passwordHasher,rateLimiter,clock=()=>Date.now(),connectionsSeverAccount,config}){if(!store||!identity||!webauthn||!passwordHasher||!rateLimiter||!config?.APP_ORIGIN)throw new TypeError('Admin resources are required');Object.assign(this,{store,identity,repository:identity.repository,onboarding,webauthn,passwordHasher,rateLimiter,clock,connectionsSeverAccount,config});}
+ constructor({store,identity,onboarding,webauthn,passwordHasher,rateLimiter,clock=()=>Date.now(),connectionsSeverAccount,deletion=null,config}){if(!store||!identity||!webauthn||!passwordHasher||!rateLimiter||!config?.APP_ORIGIN)throw new TypeError('Admin resources are required');Object.assign(this,{store,identity,repository:identity.repository,onboarding,webauthn,passwordHasher,rateLimiter,clock,connectionsSeverAccount,deletion,config});}
  hash(purpose,value){return this.identity.crypto.hash(purpose,value);}
  async limited(operation,context){if(!await this.rateLimiter.check({operation,remoteIP:context.remoteIP}))fail('rate_limited','Please wait before trying again.',429);}
  async catalog(){const row=await this.store.get('catalog');if(!row)return {catalog:EMPTY_CATALOG,revision:null};const {revision,...value}=row;try{return {catalog:validateCatalog(value),revision};}catch{fail('admin_unavailable','Administration state requires operator review.',503);}}
@@ -108,7 +113,7 @@ export class AdminService {
  async readAudit(actor,now,action,target,after){await this.commit({expect:actor.expect,rate:this.rate(actor,now,true),audit:this.entry(actor,now,action,target,null,after)});}
  rate(actor,now,read=false){return {key:(read?'read-':'')+actor.rate,...RATE,limit:read?300:RATE.limit,now};}
  async account(owner){if(!uuid(owner))fail('invalid_request','Choose an account identifier.',400);const account=await this.repository.get(owner);if(!account)fail('not_found','Account not found.',404);return account;}
- async userView(account){const {catalog}=await this.catalog(),target=await this.principalFor(account),hold=await this.store.get('principal/'+account.id);return {id:account.id,handle:account.handle,aliases:[account.handle,...onboardingAlias(account)?[onboardingAlias(account)]:[],...account.paidHandle?[account.paidHandle]:[],...systemBadge(account)?[account.systemIdentity.handle]:[]],status:account.status,createdAt:account.createdAt,lastActiveAt:account.lastActiveAt,badgeIds:Array.isArray(account.badgeIds)?[...account.badgeIds]:[],internal:target.internal,provenance:target.evidence?.kind??null,roles:target.principal.roles,authority:effectiveAuthority(catalog,target.principal,{internal:target.internal,active:account.status==='active'}),email:mask(account.verifiedEmail),principalRevision:target.revision,suspendedByAdmin:Boolean(hold?.hold)};}
+ async userView(account){const {catalog}=await this.catalog(),target=await this.principalFor(account),hold=await this.store.get('principal/'+account.id);return {id:account.id,handle:account.handle,aliases:[account.handle,...onboardingAlias(account)?[onboardingAlias(account)]:[],...account.paidHandle?[account.paidHandle]:[],...systemBadge(account)?[account.systemIdentity.handle]:[]],status:account.status,createdAt:account.createdAt,lastActiveAt:account.lastActiveAt,badgeIds:Array.isArray(account.badgeIds)?[...account.badgeIds]:[],internal:target.internal,provenance:target.evidence?.kind??null,roles:target.principal.roles,authority:effectiveAuthority(catalog,target.principal,{internal:target.internal,active:account.status==='active'}),email:mask(account.verifiedEmail),principalRevision:target.revision,suspendedByAdmin:Boolean(hold?.assignmentId===account.assignmentId&&hold.hold),identityRevision:account.revision,deletion:{operationId:hold?.assignmentId===account.assignmentId&&hold.closure?.state==='intent'?hold.closure.operationId:this.identity.crypto.id(),enabled:this.deletionEnabled(),emailEligible:Boolean(account.verifiedEmail&&account.emailLoginEnabled===true),closure:hold?.assignmentId===account.assignmentId&&hold.closure?.state!=='reversed'?this.closureView(hold.closure):null}};}
  // ---- operations ----
  async overview(input,context){return this.run(context,true,async(actor,now)=>{await this.readAudit(actor,now,'console.overview',null,null);const {catalog,revision}=await this.catalog(),boot=await this.store.get('boot/principal'),policy=configuredNamePolicy(this.config),runtime=await this.store.list('reservation/',{limit:100}),claims=await this.store.list('claim/',{limit:100}),head=await this.store.get('audit-head');let badges=[];try{badges=configuredBadgeIDs(this.config).map(id=>({id,class:badgeClass(catalog,id)}));}catch{}
   return {actor:{kind:actor.kind,...actor.owner?{owner:actor.owner}:{}},boot:boot?{...bootSummary(boot),active:boot.status==='active'&&boot.expiresAt>this.clock()}:null,catalog,catalogRevision:revision,badges,reservations:{static:policy.reserved.filter(n=>n!==BOOT_HANDLE),runtime:runtime.map(({value:{revision:_r,...v}})=>v)},claims:claims.map(({value:c})=>({nonce:c.nonce,name:c.name,state:c.state,roles:c.roles,badgeIds:c.badgeIds,expiresAt:c.expiresAt,createdAt:c.createdAt,...c.redeemedAt?{redeemedAt:c.redeemedAt}:{},linkAvailable:actor.kind==='boot'||c.mintedBy?.kind==='admin'&&c.mintedBy.owner===actor.owner})),audit:{seq:head?.seq??0}};});}
@@ -169,7 +174,7 @@ export class AdminService {
  async principals(input,context){return this.run(context,true,async(actor,now)=>{const startAfter=input?.startAfter??'';if(startAfter&&!uuid(startAfter))fail('invalid_request','Invalid cursor.',400);await this.readAudit(actor,now,'principals.list',null,{startAfter});const rows=await this.store.list('principal/',{startAfter,limit:50});return {principals:rows.map(({key,value})=>({owner:key,roles:value.roles??[],hold:Boolean(value.hold),updatedAt:value.updatedAt})),next:rows.length===50?rows.at(-1).key:null};});}
  async audit(input,context){return this.run(context,true,async()=>{if(!exact(input??{},[],['fromSeq','verify']))fail('invalid_request','Unsupported audit fields.',400);const head=await this.store.get('audit-head'),seq=head?.seq??0,from=input?.fromSeq??Math.max(1,seq-49);if(!Number.isSafeInteger(from)||from<1)fail('invalid_request','Invalid audit position.',400);const rows=await this.store.list('audit/',{startAfter:String(from-1).padStart(12,'0'),limit:50});return {entries:rows.map(r=>r.value),head:seq,verified:rows.length?await this.store.verifyAudit(input?.verify===true?{}:{from,count:rows.length}):{valid:true,seq:from-1}};});}
  async setRoles(input,context){return this.run(context,false,async(actor,now)=>{if(!exact(input,['owner','roles','expectedRevision']))fail('invalid_request','Provide owner, roles and expected revision.',400);const account=await this.account(input.owner),{catalog,revision}=await this.catalog(),target=await this.principalFor(account);if(input.expectedRevision!==target.revision)fail('conflict','Roles changed; reload and try again.',409);const roles=assignmentDecision(actor,{owner:account.id,internal:target.internal,roles:target.principal.roles},catalog,input.roles),row=await this.store.get('principal/'+account.id);
-  await this.commit({expect:{...actor.expect,catalog:revision,...target.expect},writes:{['principal/'+account.id]:{owner:account.id,assignmentId:account.assignmentId,roles,hold:row?.assignmentId===account.assignmentId?row.hold??null:null,...row?.assignmentId===account.assignmentId&&row.lastHold?{lastHold:row.lastHold}:{},updatedAt:now}},rate:this.rate(actor,now),audit:this.entry(actor,now,roles.includes(ADMIN_ROLE)!==target.principal.roles.includes(ADMIN_ROLE)?(roles.includes(ADMIN_ROLE)?'admin.grant':'admin.revoke'):'roles.set',account.id,target.principal.roles,roles)});return {user:await this.userView(await this.account(account.id))};});}
+  await this.commit({expect:{...actor.expect,catalog:revision,...target.expect},writes:{['principal/'+account.id]:{owner:account.id,assignmentId:account.assignmentId,roles,hold:row?.assignmentId===account.assignmentId?row.hold??null:null,...row?.assignmentId===account.assignmentId&&row.lastHold?{lastHold:row.lastHold}:{},...row?.assignmentId===account.assignmentId&&row.closure?{closure:row.closure}:{},...row?.assignmentId===account.assignmentId&&row.assistedDeletion?{assistedDeletion:row.assistedDeletion}:{},updatedAt:now}},rate:this.rate(actor,now),audit:this.entry(actor,now,roles.includes(ADMIN_ROLE)!==target.principal.roles.includes(ADMIN_ROLE)?(roles.includes(ADMIN_ROLE)?'admin.grant':'admin.revoke'):'roles.set',account.id,target.principal.roles,roles)});return {user:await this.userView(await this.account(account.id))};});}
  /** Cross-store edits commit their store writes, the target revisions they
   * decided on and an `intent` entry together, then CAS the identity record,
   * then record `applied`/`failed` with any compensating store writes. */
@@ -188,6 +193,117 @@ export class AdminService {
  // (set before suspension commits, cleared after reactivation) freezes automatic
  // lifecycle steps; `releasedAt` lets a hold missed between two steps still resume safely.
  async lifecycleHold(owner){if(!uuid(owner))throw new TypeError('Invalid account identifier');const row=await this.store.get('principal/'+owner),account=await this.repository.get(owner),same=Boolean(account&&row&&row.assignmentId===account.assignmentId);return {held:Boolean(same&&row.hold),since:same&&Number.isSafeInteger(row.hold?.at)?row.hold.at:null,releasedAt:same&&Number.isSafeInteger(row.lastHold?.releasedAt)?row.lastHold.releasedAt:null};}
+ // ---- admin-assisted deletion (DX-7; account mutations stay in DX-3's engine) ----
+ // Trusted composition contract: schedule(owner,input), cancel(owner), status(owner),
+ // sendConfirmation({email,handle,link,expiresAt,operationId}), notifyClosure({owner,handle,
+ // exportUntil,executeAfter,reason,operationId}) -> {accepted:true}, notifyReopen({owner,handle,reason,operationId}) -> {accepted:true}, closureSessionsReady:true.
+ // Adapters must compose these explicitly. Missing ports never imply an empty or successful effect.
+ deletionEnabled(){const flags=flagsFor(this.config);return flags.global('ADMIN_ENABLED')&&flags.global('ACCOUNT_DELETION_ENABLED');}
+ deletionCleanupPort(...methods){const flags=flagsFor(this.config);if(!flags.global('ADMIN_ENABLED')||!flags.background('ACCOUNT_DELETION_ENABLED'))fail('deletion_unavailable','Account deletion is temporarily unavailable.',503);if(methods.some(method=>typeof this.deletion?.[method]!=='function'))fail('deletion_unavailable','Account deletion is temporarily unavailable.',503);return this.deletion;}
+ deletionPort(...methods){if(!this.deletionEnabled())fail('not_found','Account deletion is not available.',404);if(methods.some(method=>typeof this.deletion?.[method]!=='function'))fail('deletion_unavailable','Account deletion is temporarily unavailable.',503);return this.deletion;}
+ closureView(value){return value?{basis:value.basis,exportUntil:value.exportUntil,executeAfter:value.executeAfter,state:value.state,reason:value.reason,...value.reversal?{reversal:{operationId:value.reversal.operationId,reason:value.reversal.reason}}:{}}:null;}
+ async deletionActor(input,context){
+  // The adapter verifies through the existing passkey-only route. Evidence is
+  // one-use, in-process and tied to this service; JSON timestamps confer nothing.
+  const evidence=deletionPasskeys.get(context);deletionPasskeys.delete(context);
+  if(evidence?.admin!==this||evidence.at>this.clock()||evidence.at+MUTATION_MS<=this.clock())fail('step_up_required','Confirm this action with a passkey.',403);
+  return this.actor(context,false);
+ }
+ deletionInput(input,optional=[]){if(!exact(input,['owner','confirmHandle','operationId','expectedRevision','expectedIdentityRevision'],['passkeyResponse','challengeId',...optional])||!uuid(input.operationId)||!Number.isSafeInteger(input.expectedIdentityRevision)||input.expectedRevision!==null&&!Number.isSafeInteger(input.expectedRevision))fail('invalid_request','Provide the target, typed handle, operation ID and current revisions.',400);}
+ deletionTarget(actor,account,target,input){this.guardTarget(actor,account,target);if(actor.kind!=='boot'&&target.internal)fail('admin_target_forbidden','Only boot can request deletion or closure of internal accounts.');if(input.confirmHandle!=='@'+account.handle)fail('handle_mismatch','Type the complete account handle, including @.',400);}
+ deletionRevision(account,target,input){if(account.revision!==input.expectedIdentityRevision||target.revision!==input.expectedRevision)fail('conflict','The account changed; reload and review it again.',409);}
+ deletionReason(value){if(typeof value!=='string'||value.trim()!==value||[...value].length<10||[...value].length>500||/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/u.test(value))fail('reason_required','Give a reason of 10–500 characters.',400);return value;}
+ async deletionOutcome(actor,action,owner,seq,phase,after=null){await this.commit({audit:{...this.entry(actor,this.clock(),action,owner,null,after),phase,ref:seq}});}
+ async requestDeletion(input,context){
+  if(input?.basis==='admin-underage'){this.deletionInput(input,['basis','reason']);const {basis,...rest}=input;return this.closeUser({...rest,exportUntil:null},context,basis);}
+  this.deletionInput(input);const ports=this.deletionPort('sendConfirmation','schedule'),actor=await this.deletionActor(input,context),now=this.clock(),account=await this.account(input.owner),target=await this.principalFor(account);
+  this.deletionTarget(actor,account,target,input);
+  if(account.status!=='active')fail('invalid_state','Only active accounts can use email confirmation.',409);
+  if(!account.verifiedEmail)fail('no_verified_email','The owner must sign in or use recovery; there is no verified email.',409);
+  if(account.emailLoginEnabled!==true)fail('email_login_disabled','Email sign-in is disabled. The owner must use recovery.',409);
+  const key='principal/'+account.id,row=await this.store.get(key),prior=row?.assignmentId===account.assignmentId?row.assistedDeletion:null;
+  if(prior?.operationId===input.operationId){if(['sent','confirming','applied'].includes(prior.state)){await this.readAudit(actor,now,'users.request-deletion-replay',account.id,{operationId:input.operationId});return {confirmationSent:true,user:await this.userView(account)};}fail('operation_conflict','The previous delivery outcome is unknown. Reload before sending another.',409);}
+  this.deletionRevision(account,target,input);
+  if(prior?.state==='confirming')fail('conflict','An email confirmation is in progress. Reload before trying again.',409);
+  const token=this.identity.crypto.random(),proof={operationId:input.operationId,state:'pending',tokenHash:await this.hash('admin-deletion-confirm',token),emailHash:await this.hash('admin-deletion-email',account.verifiedEmail),emailVerifiedAt:account.emailVerifiedAt??null,securityEpoch:account.security?.epoch??0,bootAuthorized:actor.kind==='boot',createdAt:now,expiresAt:now+86400000};
+  const intent=await this.commit({expect:{...actor.expect,...target.expect},writes:{[key]:{...this.holdRecord(account,target,row,row?.hold??null,now),assistedDeletion:proof}},rate:this.rate(actor,now),audit:{...this.entry(actor,now,'users.request-deletion',account.id,null,{email:mask(account.verifiedEmail),operationId:input.operationId}),phase:'intent'}});
+  // The intent sequence is stable across mail retries and confirmation. No raw
+  // token or full address is persisted in the principal, audit, or admin response.
+  let current=intent.records[key];const {revision,...base}=current;proof.adminAuditSeq=intent.audit.seq;
+  const prepared=await this.commit({expect:{[key]:revision},writes:{[key]:{...base,assistedDeletion:proof}}});current=prepared.records[key];
+  try{
+   const identity=await this.account(account.id);if(identity.revision!==account.revision)fail('conflict','The account changed before confirmation was sent.',409);
+   const link=this.config.APP_ORIGIN+'/api/admin/users/deletion/confirmation#owner='+account.id+'&token='+token;
+   const result=await ports.sendConfirmation({email:account.verifiedEmail,handle:account.handle,link,expiresAt:proof.expiresAt,operationId:input.operationId});
+   if(result?.accepted!==true)fail('notice_unavailable','The confirmation could not be accepted. Reload before trying again.',503);
+   const latest=await this.store.get(key);if(latest.assistedDeletion?.operationId!==proof.operationId)fail('conflict','The confirmation was superseded.',409);const {revision,...value}=latest;await this.commit({expect:{[key]:revision},writes:{[key]:{...value,assistedDeletion:{...latest.assistedDeletion,...latest.assistedDeletion.state==='pending'?{state:'sent'}:{}}}},audit:{...this.entry(actor,this.clock(),'users.request-deletion',account.id,null,{confirmationSent:true}),phase:'applied',ref:intent.audit.seq}});
+   return {confirmationSent:true,user:await this.userView(await this.account(account.id))};
+  }catch(error){await this.deletionOutcome(actor,'users.request-deletion',account.id,intent.audit.seq,'failed',{code:error.code??'notice_unavailable'});throw error;}
+ }
+ async confirmDeletion(input,context){
+  this.identity.origin(context);const ports=this.deletionPort('schedule','status');await this.limited('admin-deletion-confirm',context);
+  if(!exact(input,['owner','token','acknowledgements'])||!uuid(input.owner)||typeof input.token!=='string'||!/^[A-Za-z0-9_-]{43}$/.test(input.token))fail('invalid_token','This confirmation is invalid or no longer available.',400);
+  const ack=input.acknowledgements;if(!exact(ack,['messages','storage','names','plan'])||Object.values(ack).some(value=>value!==true))fail('acknowledgement_required','Confirm each consequence before scheduling deletion.',400);
+  const key='principal/'+input.owner,row=await this.store.get(key),proof=row?.assistedDeletion,account=await this.repository.get(input.owner),invalid=()=>fail('invalid_token','This confirmation is invalid or no longer available.',400);
+  if(!proof||!account||row.assignmentId!==account.assignmentId||proof.expiresAt<=this.clock()||!secureEqual(proof.tokenHash,await this.hash('admin-deletion-confirm',input.token))||account.status!=='active'||account.emailLoginEnabled!==true||!account.verifiedEmail||proof.emailVerifiedAt!==(account.emailVerifiedAt??null)||proof.securityEpoch!==(account.security?.epoch??0)||!secureEqual(proof.emailHash,await this.hash('admin-deletion-email',account.verifiedEmail)))invalid();
+  if(row.closure&&row.closure.state!=='reversed')invalid();const target=await this.principalFor(account);if(!proof.bootAuthorized&&(target.principal.roles.includes(ADMIN_ROLE)||target.internal))invalid();
+  if(proof.state==='applied'){const status=await ports.status(account.id);if(status.id!==proof.requestId||status.state!=='scheduled')invalid();await this.commit({audit:{at:this.clock(),actor:{kind:'email-confirmation'},action:'users.confirm-deletion-replay',target:account.id,ref:proof.adminAuditSeq}});return {scheduled:true};}if(!['pending','sent','confirming'].includes(proof.state))invalid();
+  const {revision,...base}=row,actor={audit:{kind:'email-confirmation'},expect:{}};
+  const intent=await this.commit({expect:{...target.expect,[key]:revision},writes:{[key]:{...base,assistedDeletion:{...proof,state:'confirming'}}},audit:{...this.entry(actor,this.clock(),'users.confirm-deletion',account.id,null,{operationId:proof.operationId}),phase:'intent'}});
+  try{const scheduled=await ports.schedule(account.id,{basis:'admin-email',operationId:proof.operationId,adminAuditSeq:proof.adminAuditSeq});
+   const latest=await this.store.get(key);if(latest.assistedDeletion?.operationId!==proof.operationId)fail('conflict','Confirmation state changed.',409);
+   const {revision,...value}=latest;await this.commit({expect:{[key]:revision},writes:{[key]:{...value,assistedDeletion:{...proof,state:'applied',requestId:scheduled.id}}},audit:{...this.entry(actor,this.clock(),'users.confirm-deletion',account.id,null,{scheduled:true}),phase:'applied',ref:intent.audit.seq}});return {scheduled:true};
+  }catch(error){await this.deletionOutcome(actor,'users.confirm-deletion',account.id,intent.audit.seq,'failed',{code:error.code??'deletion_unavailable'});throw error;}
+ }
+ async closeUser(input,context,basis='admin-closure'){
+  const action=basis==='admin-underage'?'users.request-deletion':'users.close';
+  this.deletionInput(input,['reason','exportUntil']);this.deletionReason(input.reason);const ports=this.deletionPort('schedule','notifyClosure','status');
+  // Never close an account until its runtime can issue and enforce restricted sessions.
+  if(basis==='admin-closure'&&ports.closureSessionsReady!==true||typeof this.connectionsSeverAccount!=='function')fail('deletion_unavailable','Account closure is temporarily unavailable.',503);
+  const actor=await this.deletionActor(input,context),now=this.clock(),account=await this.account(input.owner),target=await this.principalFor(account);this.deletionTarget(actor,account,target,input);
+  const key='principal/'+account.id,row=await this.store.get(key),old=row?.assignmentId===account.assignmentId?row.closure:null,fingerprint=await this.hash('admin-closure',JSON.stringify({owner:account.id,basis,confirmHandle:input.confirmHandle,reason:input.reason,exportUntil:input.exportUntil===undefined?'default':input.exportUntil}));
+  if(old?.operationId===input.operationId){if(old.fingerprint!==fingerprint)fail('operation_conflict','This operation ID was already used for a different closure.',409);if(old.state==='applied'){await this.readAudit(actor,now,action+'-replay',account.id,{operationId:input.operationId});return {user:await this.userView(account)};}if(old.state!=='intent')fail('invalid_state','This closure has been reversed.',409);}
+  else{this.deletionRevision(account,target,input);if(row?.assistedDeletion?.state==='confirming')fail('conflict','An email confirmation is in progress. Reload before closing this account.',409);const deletion=await ports.status(account.id);if(['scheduled','executing'].includes(deletion.state))fail('deletion_scheduled','Deletion is already scheduled. Review it before closing this account.',409);if(account.status!=='active'||old&&old.state!=='reversed'||row?.hold)fail('invalid_state','Only an active account without a hold can be closed.',409);}
+  const exportUntil=old?.operationId===input.operationId?old.exportUntil:input.exportUntil===undefined?now+30*86400000:input.exportUntil;
+  if(exportUntil!==null&&(!Number.isSafeInteger(exportUntil)||exportUntil<now+30*86400000||exportUntil>now+366*86400000)&&old?.operationId!==input.operationId)fail('invalid_request','Offer at least 30 days to export, or record why no export is lawful.',400);
+  let closure=old;
+  if(old?.operationId!==input.operationId){closure={auditFrom:(await this.store.get('audit-head'))?.seq??0,basis,operationId:input.operationId,fingerprint,reason:input.reason,at:now,exportUntil,executeAfter:exportUntil??now+30*86400000,state:'intent'};
+   const intent=await this.commit({expect:{...actor.expect,...target.expect},writes:{[key]:{...this.holdRecord(account,target,row,null,now),closure}},rate:this.rate(actor,now),audit:{...this.entry(actor,now,action,account.id,{status:account.status},{reason:input.reason,exportUntil,operationId:input.operationId}),phase:'intent'}});
+   const current=intent.records[key],{revision,...base}=current;closure={...closure,adminAuditSeq:intent.audit.seq};await this.commit({expect:{[key]:revision},writes:{[key]:{...base,closure}}});
+  }else await this.readAudit(actor,now,action+'-resume',account.id,{operationId:closure.operationId});
+  if(!Number.isSafeInteger(closure.adminAuditSeq)){let startAfter=String(closure.auditFrom).padStart(12,'0');for(;;){const rows=await this.store.list('audit/',{startAfter,limit:100}),entry=rows.find(({value})=>value.action===action&&value.target===account.id&&value.after?.operationId===closure.operationId&&value.phase==='intent');if(entry){closure={...closure,adminAuditSeq:entry.value.seq};break;}if(rows.length<100)fail('admin_unavailable','The closure intent needs operator review.',503);startAfter=rows.at(-1).key;}}
+  try{
+   if(account.status==='active'){const revision=account.revision,next=structuredClone(account);revokeAllLineage(next,now);next.status='suspended';next.sessions=[];next.revision=revision+1;if(!await this.repository.compareAndSwap(account.id,revision,next))fail('conflict','The account changed; reload and retry the closure.',409);}
+   else if(account.status!=='suspended')fail('invalid_state','This account can no longer be closed.',409);
+   await this.connectionsSeverAccount?.(account.id,{reason:'admin-suspended'});
+   await ports.schedule(account.id,{basis,operationId:closure.operationId,adminAuditSeq:closure.adminAuditSeq,exportUntil:closure.exportUntil});
+   const notice=await ports.notifyClosure({basis,owner:account.id,handle:account.handle,exportUntil:closure.exportUntil,executeAfter:closure.executeAfter,reason:closure.reason,operationId:closure.operationId});if(notice?.accepted!==true)fail('notice_unavailable','The closure notice is pending. Reload and retry this closure.',503);
+   const latest=await this.store.get(key);if(latest.closure?.operationId!==closure.operationId)fail('conflict','Closure state changed.',409);const {revision,...base}=latest;
+   await this.commit({expect:{[key]:revision},writes:{[key]:{...base,closure:{...closure,state:'applied'}}},audit:{...this.entry(actor,this.clock(),action,account.id,null,{status:'suspended',exportUntil:closure.exportUntil}),phase:'applied',ref:closure.adminAuditSeq}});return {user:await this.userView(await this.account(account.id))};
+  }catch(error){await this.deletionOutcome(actor,action,account.id,closure.adminAuditSeq,'failed',{code:error.code??'deletion_unavailable'});throw error;}
+ }
+ async reopenUser(input,context){
+  this.deletionInput(input,['reason']);this.deletionReason(input.reason);const ports=this.deletionCleanupPort('cancel','notifyReopen'),actor=await this.deletionActor(input,context),now=this.clock(),account=await this.account(input.owner),target=await this.principalFor(account);this.deletionTarget(actor,account,target,input);
+  const key='principal/'+account.id,row=await this.store.get(key),closure=row?.assignmentId===account.assignmentId?row.closure:null,retry=closure?.reversal?.operationId===input.operationId;
+  if(retry&&closure.reversal.reason!==input.reason)fail('operation_conflict','This operation ID was already used for another reversal.',409);
+  if(retry&&closure.state==='reversed'){await this.readAudit(actor,now,'users.reopen-replay',account.id,{operationId:input.operationId});return {user:await this.userView(account)};}
+  if(!retry)this.deletionRevision(account,target,input);
+  if(!closure||!['applied','reversing'].includes(closure.state)||!['suspended',...retry?['active']:[]].includes(account.status)||closure.state==='reversing'&&!retry)fail('invalid_state','Finish the closure before reversing it, or resume its existing reversal.',409);
+  let reversal=closure.reversal;
+  if(!retry){reversal={auditFrom:(await this.store.get('audit-head'))?.seq??0,operationId:input.operationId,reason:input.reason};const intent=await this.commit({expect:{...actor.expect,...target.expect},writes:{[key]:{...this.holdRecord(account,target,row,row.hold??null,now),closure:{...closure,state:'reversing',reversal}}},rate:this.rate(actor,now),audit:{...this.entry(actor,now,'users.reopen',account.id,{status:'suspended'},{reason:input.reason,operationId:input.operationId}),phase:'intent'}});reversal={...reversal,adminAuditSeq:intent.audit.seq};}
+  else await this.readAudit(actor,now,'users.reopen-resume',account.id,{operationId:input.operationId});
+  if(!Number.isSafeInteger(reversal.adminAuditSeq)){let startAfter=String(reversal.auditFrom).padStart(12,'0');for(;;){const rows=await this.store.list('audit/',{startAfter,limit:100}),entry=rows.find(({value})=>value.action==='users.reopen'&&value.target===account.id&&value.after?.operationId===reversal.operationId&&value.phase==='intent');if(entry){reversal={...reversal,adminAuditSeq:entry.value.seq};break;}if(rows.length<100)fail('admin_unavailable','The reversal intent needs operator review.',503);startAfter=rows.at(-1).key;}}
+  try{
+   // Cancellation linearizes with DX-3's fence. Never reactivate if commit won.
+   await ports.cancel(account.id);
+   if(account.status==='suspended'){const revision=account.revision,next=structuredClone(account);next.status='active';next.sessions=[];next.revision=revision+1;if(!await this.repository.compareAndSwap(account.id,revision,next))fail('conflict','The account changed. Reload before reopening it.',409);}
+   const notice=await ports.notifyReopen({owner:account.id,handle:account.handle,reason:reversal.reason,operationId:reversal.operationId});if(notice?.accepted!==true)fail('notice_unavailable','The reopening notice is pending. Reload and retry this reversal.',503);
+   const latest=await this.store.get(key),{revision,...base}=latest;await this.commit({expect:{[key]:revision},writes:{[key]:{...base,closure:{...closure,reversal,state:'reversed',reversedAt:now}}},audit:{...this.entry(actor,this.clock(),'users.reopen',account.id,null,{status:'active'}),phase:'applied',ref:reversal.adminAuditSeq??closure.adminAuditSeq}});return {user:await this.userView(await this.account(account.id))};
+  }catch(error){await this.deletionOutcome(actor,'users.reopen',account.id,reversal.adminAuditSeq??closure.adminAuditSeq,'failed',{code:error.code??'deletion_unavailable'});throw error;}
+ }
+ /** Identity adapter port. Re-read on EVERY restricted authentication; never an
+  * HTTP operation, and never grants general authorized() or owner-session access. */
+ async closureExport(owner){const account=await this.repository.get(owner),row=await this.store.get('principal/'+owner),closure=row?.assignmentId===account?.assignmentId?row.closure:null;return account?.status==='suspended'&&closure&&['intent','applied'].includes(closure.state)&&Number.isSafeInteger(closure.exportUntil)&&closure.exportUntil>this.clock()?{scope:'closure-export',expiresAt:closure.exportUntil}:null;}
  // ---- metadata-document client hosts (client-id-metadata.v1 abuse control) ----
  /** Narrow capability: block or unblock one client host. Blocking refuses new metadata resolution, entries, code
   * exchange, refresh and cross-origin calls for URL client IDs on that host and its subdomains; reviewed static clients are
@@ -203,3 +319,10 @@ export class AdminService {
  /** Embedder port: effective roles/capabilities for an account (fails closed). */
  async authority(owner){const account=uuid(owner)&&await this.repository.get(owner);if(!account)return {roles:[],capabilities:[],admin:false};const {catalog}=await this.catalog(),target=await this.principalFor(account);return effectiveAuthority(catalog,target.principal,{internal:target.internal,active:account.status==='active'});}
 }
+
+// Engine operations keep the admin HTTP edge a parse/dispatch/serialize adapter.
+export class RequestUserDeletion extends AppAction {static operation='users.request-deletion';static deps=['admin'];run({admin}){return admin.requestDeletion(this.input,this.actor.context);}}
+export class CloseUser extends AppAction {static operation='users.close';static deps=['admin'];run({admin}){return admin.closeUser(this.input,this.actor.context);}}
+export class ConfirmUserDeletion extends AppAction {static operation='users.confirm-deletion';static deps=['admin'];run({admin}){return admin.confirmDeletion(this.input,this.actor.context);}}
+export class ClosureExportAuthority extends AppQuery {static operation='users.closure-export';static deps=['admin'];fetch({admin}){if(this.actor?.kind!=='system')fail('forbidden','Trusted identity authority is required.');return admin.closureExport(this.actor.owner);}}
+export class ReopenUser extends AppAction {static operation='users.reopen';static deps=['admin'];run({admin}){return admin.reopenUser(this.input,this.actor.context);}}

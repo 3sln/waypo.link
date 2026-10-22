@@ -1,4 +1,5 @@
 import { h, icon, fire, logo } from './release-primitives.mjs';
+import {createLocalization,catalogueForContributions} from '../shared/i18n.mjs';
 import { interfaceText as tx } from './interface-text.mjs';
 // Boot setup, boot sign-in, the administrator gate and the shared console frame.
 // Operation screens live in admin-console.mjs and are imported only after access.
@@ -75,9 +76,9 @@ export const ERRORS={
  step_up_failed:'That confirmation did not succeed. Try again.',
  unexpected_response:'The service returned an unexpected response.'
 };
-export const errorText=error=>error?ERRORS[error.code]??tx('The request could not be completed ({code}).',{code:String(error.code??'unknown').slice(0,64)}):null;
+export const errorText=(error,locale='en')=>error?LIFECYCLE_ERRORS[error.code]?lifecycleText(LIFECYCLE_ERRORS[error.code],locale):ERRORS[error.code]??tx('The request could not be completed ({code}).',{code:String(error.code??'unknown').slice(0,64)}):null;
 export const NOTICES={reserved:'Reservation saved.',unreserved:'Reservation released.',revoked:'Claim token revoked.','catalog-saved':'Role catalog saved.','roles-saved':'Roles saved.','badges-saved':'Badges saved.',suspended:'Account suspended.',reactivated:'Account reactivated.','step-up-cancelled':'Not confirmed. Nothing was changed.','signed-out':'You signed out of boot.',claimed:'Boot is claimed. This browser now holds a boot session.',restored:'Boot is restored. Older boot sessions no longer work.','client-blocked':'Client host blocked.','client-unblocked':'Client host unblocked.'};
-export const noticeText=notice=>NOTICES[notice]??notice;
+export const noticeText=(notice,locale='en')=>LIFECYCLE_NOTICES[notice]?lifecycleText(LIFECYCLE_NOTICES[notice],locale):NOTICES[notice]??notice;
 export const data=(value,tag='span')=>h(tag,String(value??'')).attrs({translate:'no'});
 export function formatTime(value,locale){if(!Number.isFinite(value))return '—';try{return new Intl.DateTimeFormat(locale,{dateStyle:'medium',timeStyle:'short'}).format(new Date(value));}catch{return new Date(value).toISOString();}}
 export const when=(value,locale)=>data(formatTime(value,locale));
@@ -88,7 +89,7 @@ export function form(state,children,kind,label,{detail={},cls='',danger=false,cl
  return h('form',...children,h('div',h('button',state.busy?'Please wait…':label).props({type:'submit',disabled:disabled||state.busy}).classes('button',danger?'danger-button':'primary')).classes('form-actions')).props({method:'post'}).on({submit:event=>{event.preventDefault();const node=event.currentTarget;if(state.busy||disabled||!node.checkValidity()){node.reportValidity?.();return;}const values={};for(const [key,value] of new FormData(node))if(typeof value==='string'){if(Object.hasOwn(values,key))values[key]=[].concat(values[key],value);else values[key]=value;}for(const box of node.querySelectorAll('input[type=checkbox][data-list]'))if(!Object.hasOwn(values,box.name))values[box.name]=[];fire(node,kind,{...detail,values});if(clear)for(const input of node.querySelectorAll('input[type=password]'))input.value='';}}).classes('form','admin-form',...cls.split(' ').filter(Boolean));
 }
 export function input(name,label,type='text',extra={},help){const id=`field-${name}`;const {minLength,maxLength,min,max,list,...rest}=extra,props={},attributes={};for(const [key,value] of Object.entries(rest))(key.startsWith('data-')?attributes:props)[key]=value;if(list)attributes.list=list;return h('div',h('label',label).attrs({for:id}),h('input').props({id,name,type,...props}).attrs({...attributes,...help?{'aria-describedby':id+'-help'}:{},...minLength!==undefined?{minlength:String(minLength)}:{},...maxLength!==undefined?{maxlength:String(maxLength)}:{},...min!==undefined?{min:String(min)}:{},...max!==undefined?{max:String(max)}:{},autocapitalize:'off',spellcheck:'false'}).classes('input').key(`${name}:${type}`),help?h('p',help).props({id:id+'-help'}).classes('field-help'):null).classes('field');}
-export function alerts(state){return h('div',state.error?h('div',h('p',errorText(state.error)),state.error.issuer?h('p',tx('Token issuer: {issuer}',{issuer:state.error.issuer})).classes('field-help'):null,button(state,'Dismiss','dismiss',{},'text-button',false)).attrs({role:'alert'}).classes('alert','error','admin-alert'):null,state.notice?h('p',icon('check'),h('span',noticeText(state.notice)),state.noticeSubject?h('strong',String(state.noticeSubject)).attrs({translate:'no'}).classes('notice-subject'):null).attrs({role:'status'}).classes('alert','success'):null).classes('alerts');}
+export function alerts(state){return h('div',state.error?h('div',h('p',errorText(state.error,state.locale)),state.error.issuer?h('p',tx('Token issuer: {issuer}',{issuer:state.error.issuer})).classes('field-help'):null,button(state,'Dismiss','dismiss',{},'text-button',false)).attrs({role:'alert'}).classes('alert','error','admin-alert'):null,state.notice?h('p',icon('check'),h('span',noticeText(state.notice,state.locale)),state.noticeSubject?h('strong',String(state.noticeSubject)).attrs({translate:'no'}).classes('notice-subject'):null).attrs({role:'status'}).classes('alert','success'):null).classes('alerts');}
 /** Persistent boot banner: a countdown to boot expiry (role=timer, so assistive
  * technology is not interrupted every second) with a plain-language deadline. */
 export function bootBanner(state){
@@ -150,3 +151,34 @@ function accessScreen(state){
  if(p==='left')return frame(state,h('p','Leaving host administration…').attrs({role:'status'}));
  return frame(state,panel('Administration unavailable',h('p','Host administration is not available on this deployment right now.').classes('muted'),h('a','Back to your space').props({href:'/console'}).classes('button','secondary')));
 }
+
+// DX-7 owns its scoped interface catalogue in this admin-only module.
+const LIFECYCLE_ERRORS={ handle_mismatch:'Type the full handle exactly, including @.',
+ reason_required:'Give a reason of 10–500 characters.',
+ no_verified_email:'This account has no verified email. Ask the owner to sign in or use recovery.',
+ email_login_disabled:'The owner disabled email sign-in. Ask them to use recovery.',
+ deletion_unavailable:'Account deletion or closure is temporarily unavailable. No successful action has been confirmed.',
+ notice_unavailable:'The notice could not be confirmed. Reload the account and review its status before retrying.',
+ export_unavailable:'Exports are temporarily unavailable. Try again later or contact the service operator.',
+ deletion_in_progress:'Deletion has started and this account can no longer be reopened.',
+ deletion_scheduled:'Deletion is already scheduled. Reload and review the account.',
+ operation_conflict:'This request has already been used. Reload and review the account before trying again.',
+};
+const LIFECYCLE_NOTICES={'deletion-confirmation-sent':'Confirmation was sent to the account’s verified email. Deletion starts only after the owner confirms.','account-closed':'Account closed. Deletion is scheduled and the owner was notified.','closure-reversed':'Closure reversed and scheduled deletion cancelled.',};
+const LIFECYCLE_ES={
+ 'Type the full handle exactly, including @.':'Escribe el identificador completo exactamente, con @.',
+ 'Give a reason of 10–500 characters.':'Escribe un motivo de entre 10 y 500 caracteres.',
+ 'This account has no verified email. Ask the owner to sign in or use recovery.':'Esta cuenta no tiene correo verificado. Pide al titular que inicie sesión o recupere la cuenta.',
+ 'The owner disabled email sign-in. Ask them to use recovery.':'El titular desactivó el acceso por correo. Pídele que recupere la cuenta.',
+ 'Account deletion or closure is temporarily unavailable. No successful action has been confirmed.':'La eliminación o el cierre de cuentas no está disponible temporalmente. No se ha confirmado ninguna acción.',
+ 'The notice could not be confirmed. Reload the account and review its status before retrying.':'No se pudo confirmar el aviso. Recarga la cuenta y revisa su estado antes de reintentar.',
+ 'Exports are temporarily unavailable. Try again later or contact the service operator.':'Las exportaciones no están disponibles temporalmente. Reintenta más tarde o contacta al operador.',
+ 'Deletion has started and this account can no longer be reopened.':'La eliminación ha comenzado y esta cuenta ya no puede reabrirse.',
+ 'Deletion is already scheduled. Reload and review the account.':'La eliminación ya está programada. Recarga y revisa la cuenta.',
+ 'This request has already been used. Reload and review the account before trying again.':'Esta solicitud ya se ha utilizado. Recarga y revisa la cuenta antes de reintentar.',
+ 'Confirmation was sent to the account’s verified email. Deletion starts only after the owner confirms.':'Se envió una confirmación al correo verificado de la cuenta. La eliminación solo se programa cuando el titular confirma.',
+ 'Account closed. Deletion is scheduled and the owner was notified.':'Cuenta cerrada. La eliminación está programada y se notificó al titular.',
+ 'Closure reversed and scheduled deletion cancelled.':'Se revirtió el cierre y se canceló la eliminación programada.'
+};
+const lifecycleLocalizations=Object.fromEntries(['en','es'].map(locale=>[locale,createLocalization({locale,catalogue:catalogueForContributions([{catalogue:{en:{'':Object.fromEntries(Object.keys(LIFECYCLE_ES).map(key=>[key,key]))},es:{'':LIFECYCLE_ES}}}],locale)})]));
+export const lifecycleText=(text,locale='en')=>h('span',(lifecycleLocalizations[locale]??lifecycleLocalizations.en).t(text)).attrs({translate:'no'});

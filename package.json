@@ -3,6 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "test:admin-deletion": "node --test tests/admin-deletion.test.mjs && node --experimental-loader ./tests/browser/loader.mjs --test tests/browser/admin-deletion-engine.mjs && node --test tests/browser/admin-deletion-browser.mjs",
+    "test:account-data": "node --experimental-loader ./tests/browser/loader.mjs --test tests/browser/account-data-engine.mjs && node --test tests/browser/account-data-sw.mjs tests/browser/account-data-browser.mjs",
     "test:connections": "node --experimental-loader ./tests/browser/loader.mjs --test tests/browser/connections-engine.mjs && node --test tests/browser/connections-browser.mjs",
     "test:admin-flags": "node --experimental-loader ./tests/browser/loader.mjs --test tests/browser/admin-flags-engine.mjs && node --test tests/browser/admin-flags-browser.mjs",
     "test:legal": "node --experimental-loader ./tests/browser/loader.mjs --test tests/browser/legal-engine.mjs && node --test tests/browser/legal-browser.mjs tests/browser/legal-pages-browser.mjs",

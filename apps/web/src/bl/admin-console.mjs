@@ -156,7 +156,7 @@ export class SaveBadgeClasses extends CatalogAction {
 }
 // ---- users ----
 export class Lookup extends ConsoleAction {
- async perform(r,ctx,detail){const by=['handle','owner','email'].includes(detail.values?.by)?detail.values.by:'handle',query=String(detail.values?.query??'').trim();update(r,ctx,{user:null,lookupQuery:null});
+ async perform(r,ctx,detail){const by=['handle','owner','email'].includes(detail.values?.by)?detail.values.by:'handle',query=String(detail.values?.query??'').trim();update(r,ctx,{user:null,lookupQuery:null,modal:null});
   if(!query||query.length>254)throw failure('invalid_request');if(by==='owner'&&!UUID.test(query.toLowerCase()))throw failure('invalid_owner');if(by==='email'&&!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(query))throw failure('invalid_email');
   const result=await this.call(r,'/api/admin/users/lookup',{[by]:by==='owner'?query.toLowerCase():query});update(r,ctx,{user:result.user??null,lookupQuery:{by,found:Boolean(result.user)}});r.browser.focus('#lookup-result');}
  async clear(r,ctx){update(r,ctx,{user:null,lookupQuery:null});}
@@ -179,6 +179,31 @@ export class Suspend extends UserAction {
 }
 export class Reactivate extends UserAction {
  async perform(r,ctx,detail){const user=current(r).user;if(!user||user.id!==detail.owner)throw failure('invalid_request');if(confirmFirst(r,ctx,detail,{title:'Reactivate this account?',body:'The account can sign in again. Only an administrator suspension is lifted; other account states are unchanged.',confirmLabel:'Reactivate account',subject:user.handle}))return;await this.done(r,ctx,await this.call(r,'/api/admin/users/reactivate',{owner:user.id}),'reactivated');}
+}
+// The proposal keeps its operation ID and target revisions across passkey retries.
+// Opening another account, a stale result, sign-out or authority loss drops it.
+export class OpenUserLifecycle extends Action {
+ static deps={state:{write:true},browser:{}};constructor(detail){super();this.detail=detail;}
+ execute(r,ctx){const state=current(r),user=state.user,operation=this.detail.operation;if(state.busy||!user||user.id!==this.detail.owner||!user.deletion?.enabled||!['request-deletion','underage','close','reopen'].includes(operation))return;
+  if(state.mode==='admin'&&(user.internal||user.id===state.account?.id||user.roles.includes(ADMIN_ROLE)))return;
+  r.browser.rememberFocus();update(r,ctx,{modal:{kind:'user-lifecycle',operation,owner:user.id,handle:user.handle,operationId:operation==='reopen'&&user.deletion.closure?.reversal?.operationId?user.deletion.closure.reversal.operationId:user.deletion.operationId,expectedRevision:user.principalRevision,expectedIdentityRevision:user.identityRevision,reason:operation==='reopen'&&user.deletion.closure?.reversal?user.deletion.closure.reversal.reason:user.deletion.closure?.state==='intent'?user.deletion.closure.reason:'',noExport:user.deletion.closure?.state==='intent'&&user.deletion.closure.exportUntil===null,error:null},error:null});r.browser.focus('.admin-modal [data-autofocus]');
+ }
+}
+export class ConfirmUserLifecycle extends UserAction {
+ async perform(r,ctx,detail){
+  const state=current(r),modal=state.modal,user=state.user,values=detail.values??{};if(modal?.kind!=='user-lifecycle'||!user||user.id!==modal.owner||user.handle!==modal.handle||user.identityRevision!==modal.expectedIdentityRevision||user.principalRevision!==modal.expectedRevision)throw failure('conflict');
+  if(values.confirmHandle!=='@'+modal.handle)throw failure('handle_mismatch');
+  if(modal.operation!=='request-deletion'&&(typeof values.reason!=='string'||values.reason.trim().length<10||values.reason.trim().length>500))throw failure('reason_required');
+  const body={owner:modal.owner,confirmHandle:values.confirmHandle,operationId:modal.operationId,expectedRevision:modal.expectedRevision,expectedIdentityRevision:modal.expectedIdentityRevision,...modal.operation!=='request-deletion'?{reason:values.reason.trim()}:{},...modal.operation==='close'&&values.noExport==='on'?{exportUntil:null}:{}};
+  const boot=state.mode==='boot',options=await this.call(r,boot?'/api/admin/boot/login/begin':'/api/admin/step-up/begin',{});if(!options.passkey)throw failure('passkey_required');
+  body.passkeyResponse=await r.browser.authenticatePasskey(options.authenticationOptions);if(boot)body.challengeId=options.challengeId;
+  const result=await this.call(r,'/api/admin/users/'+(modal.operation==='underage'?'request-deletion':modal.operation),{...body,...modal.operation==='underage'?{basis:'admin-underage'}:{}});if(modal.operation==='request-deletion'&&result?.confirmationSent!==true)throw failure('unexpected_response');
+  await this.done(r,ctx,result,modal.operation==='request-deletion'?'deletion-confirmation-sent':modal.operation==='close'?'account-closed':'closure-reversed');
+ }
+ async failed(r,ctx,error){const code=error?.code??'unexpected_response';
+  if(['conflict','invalid_state','deletion_scheduled','operation_conflict','deletion_in_progress','account_deleted'].includes(code)){update(r,ctx,{modal:null,error:{code}});await this.reload(r,ctx).catch(()=>{});return;}
+  const modal=current(r).modal;update(r,ctx,{modal:modal?.kind==='user-lifecycle'?{...modal,error:{code}}:null,error:modal?null:{code}});
+ }
 }
 export class LoadPrincipals extends ConsoleAction {
  static intent='load-principals';
@@ -219,7 +244,7 @@ export const constructors={
  navigate:Navigate,'close-modal':CloseModal,'open-editor':OpenEditor,'step-up-confirm':StepUpConfirm,'reload-overview':LoadOverview,
  reserve:Reserve,unreserve:Unreserve,'mint-claim':MintClaim,'claim-link':ClaimLink,'revoke-claim':RevokeClaim,'copy-reveal':CopyReveal,'dismiss-reveal':DismissReveal,
  'save-role':SaveRole,'delete-role':DeleteRole,'save-capability':SaveCapability,'delete-capability':DeleteCapability,'set-capability-class':SetCapabilityClass,'save-badge-classes':SaveBadgeClasses,
- lookup:Lookup,'set-roles':SetRoles,'set-badges':SetBadges,suspend:Suspend,reactivate:Reactivate,'load-principals':LoadPrincipals,'principals-back':PrincipalsBack,
+ 'open-user-lifecycle':OpenUserLifecycle,'confirm-user-lifecycle':ConfirmUserLifecycle,lookup:Lookup,'set-roles':SetRoles,'set-badges':SetBadges,suspend:Suspend,reactivate:Reactivate,'load-principals':LoadPrincipals,'principals-back':PrincipalsBack,
  'load-client-blocks':LoadClientBlocks,'block-client':BlockClient,'unblock-client':UnblockClient,
  'load-audit':LoadAudit,'end-boot':EndBoot
 };

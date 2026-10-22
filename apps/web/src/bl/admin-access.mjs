@@ -23,7 +23,7 @@ export function sessionFailure(r,ctx,error){
   // Before a session exists (setup, sign-in) these are ordinary, shown errors.
   if(live&&SESSION_LOST.includes(code)){wipe(r,ctx,{phase:mode==='boot'?(code==='boot_unclaimed'?'boot-setup':'boot-signin'):'admin-signin',error:{code}});return true;}
   if(live&&code==='forbidden'&&mode==='admin'){wipe(r,ctx,{phase:'admin-denied',error:{code}});return true;}
-  if(['admin_unavailable','boot_unavailable'].includes(code)||error?.status===503&&!['claims_unavailable','rate_limited'].includes(code)){wipe(r,ctx,{phase:'unavailable',error:{code}});return true;}
+  if(['admin_unavailable','boot_unavailable'].includes(code)||error?.status===503&&!['claims_unavailable','rate_limited','deletion_unavailable','notice_unavailable','export_unavailable'].includes(code)){wipe(r,ctx,{phase:'unavailable',error:{code}});return true;}
   return false;
 }
 /** Base for every console Action: one operation at a time, failures classified. */
