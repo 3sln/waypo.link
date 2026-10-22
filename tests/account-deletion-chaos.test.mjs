@@ -284,3 +284,31 @@ test('GC pin race: a garbage sweep and DX-1 pinning the same ref linearize; a re
  });
  t.diagnostic(`export outcomes: ${JSON.stringify(tally)}`);
 });
+
+test('DX-7 race, seeded: admin-email scheduling interleaved with an email change never leaves a stale-confirmed request unguarded',async t=>{
+ const {identitySecurityPort}=await import('../packages/identity/service.mjs');const tally={};
+ await forEachSeed(RUNS||200,async random=>{
+  const clock=fakeClock(),store=new MemoryMetadata(),idDb=new MemoryMetadata(),scheduler=createScheduler(random),repository=new IdentityRepository({metadata:idDb,config:{}});
+  await repository.create({id:OWNER,handle:HANDLE,assignmentId:'assignment-1',status:'active',createdAt:clock.now()-DAY,revision:1,verifiedEmail:EMAIL,emailVerifiedAt:clock.now()-DAY,emailLoginEnabled:true,security:{epoch:5,changedAt:clock.now()-10*DAY},sessions:[],credentials:[],audit:[]});
+  await store.put('owner',OWNER);
+  const sRepo=scheduler.wrap(repository,'identity'),flags={for:()=>({enabled:()=>true,background:()=>true,global:()=>true})};
+  const delivered=[],ports={identity:lifecycleIdentityPort(sRepo,{clock:clock.now}),security:identitySecurityPort(sRepo),hold:async()=>({held:false}),adminAuthority:async()=>({admin:false}),billing:null,notices:{deliver:async input=>{delivered.push({kind:input.kind,email:input.channels.email});return {accepted:true};}},erasure:{federation:null,mcp:null,emailBridge:null,operatorApps:null},exports:null};
+  const service=new DeletionService({executor:{metadata:scheduler.wrap(store,'account'),blobs:memoryBucket(),archives:memoryBucket(),config:{}},ports,flags,clock,random:{uuid:()=>crypto.randomUUID(),bytes:n=>crypto.getRandomValues(new Uint8Array(n))}});
+  const confirmed={securityEpoch:5,emailVerifiedAt:clock.now()-DAY,verifiedEmail:EMAIL};
+  const change=async()=>{for(;;){const a=await sRepo.get(OWNER);if(await sRepo.compareAndSwap(OWNER,a.revision,{...a,verifiedEmail:'new@chaos.example',emailVerifiedAt:clock.now(),security:{epoch:6,changedAt:clock.now()},revision:a.revision+1}))return 'changed';}};
+  const [scheduled]=await scheduler.run([()=>service.scheduleAdmin({kind:'system',owner:OWNER},{basis:'admin-email',operationId:'op-chaos-race-0123456',adminAuditSeq:1,confirmed}),change]);
+  const request=await store.get(REQUEST_KEY),outcome=scheduled.status==='fulfilled'?'scheduled':scheduled.reason.code;tally[outcome]=(tally[outcome]??0)+1;
+  if(outcome==='scheduled'){
+   // The change committed after verification: it is a change during grace, so the first step extends the deadline
+   // to at least 14 days after it and requires a fresh accepted notice before any commit.
+   assert.equal(request.state,'scheduled');assert.equal(request.securityEpoch,5);
+   const changedAt=(await repository.get(OWNER)).security.changedAt;
+   for(let i=0;i<40&&(await store.get(REQUEST_KEY)).state==='scheduled';i++){const r=await store.get(REQUEST_KEY);clock.set(Math.max(clock.now()+1,Math.min(r.executeAfter,clock.now()+DAY)));await service.step({kind:'system',owner:OWNER});}
+   const final=await store.get(REQUEST_KEY);assert.equal(final.state,'executing');
+   assert(final.executeAfter>=changedAt+14*DAY,'the deadline is at least 14 days after the change');
+   // The snapshot (the confirmed, original address) received a fresh scheduled notice after the change.
+   assert(delivered.filter(d=>d.kind==='scheduled').length>=2);assert(delivered.every(d=>d.email===EMAIL));
+  }else{assert.equal(outcome,'confirmation_stale');assert(!request||request.state==='cancelled');}
+ });
+ t.diagnostic(`outcomes: ${JSON.stringify(tally)}`);assert(Object.keys(tally).length===2,JSON.stringify(tally));
+});

@@ -268,7 +268,7 @@ export class DeletionService{
   * `input`: {basis, operationId, adminAuditSeq, exportUntil?}. */
  async scheduleAdmin(actor,input){
   if(actor?.kind!=='system'||!isUUID(actor.owner))fail('forbidden','Admin deletion requires a system actor.',403);
-  const owner=actor.owner,v=exact(input,['basis','operationId','adminAuditSeq','exportUntil']);
+  const owner=actor.owner,v=exact(input,['basis','operationId','adminAuditSeq','exportUntil','confirmed']);
   if(!['admin-email','admin-underage','admin-closure'].includes(v.basis))fail('invalid_request','Unsupported deletion basis.',400);
   if(!deletionGlobal(this.flags))notFound();
   if(typeof v.operationId!=='string'||!OPERATION_ID.test(v.operationId)||!Number.isSafeInteger(v.adminAuditSeq)||v.adminAuditSeq<0)fail('invalid_request','Operation ID and audit sequence are required.',400);
@@ -283,11 +283,18 @@ export class DeletionService{
    if(!identity.verifiedEmail)fail('no_verified_email','The account has no verified email.',409);
    // An owner who turned email sign-in off said the mailbox alone is not authority (R1-M3).
    if(identity.emailLoginEnabled!==true)fail('email_login_disabled','Email sign-in is disabled; use account recovery.',409);
+   // The emailed confirmation is authority only over the address and security epoch it was issued for (DX-7):
+   // scheduling commits only if both are still current, checked before and again right after the commit.
+   const c=exact(v.confirmed,['securityEpoch','emailVerifiedAt','verifiedEmail']);
+   if(!Number.isSafeInteger(c.securityEpoch)||typeof c.verifiedEmail!=='string'||!(c.emailVerifiedAt===null||Number.isSafeInteger(c.emailVerifiedAt)))fail('invalid_request','The confirmation evidence is required.',400);
   }
   if(v.exportUntil!==undefined&&v.exportUntil!==null&&(v.basis!=='admin-closure'||!Number.isSafeInteger(v.exportUntil)||v.exportUntil<=now||v.exportUntil>now+366*DAY))fail('invalid_request','Invalid export window.',400);
   let security;try{security=validSecurity(await this.port('security')(owner));}catch(error){if(error instanceof AppFault)throw error;unavailable();}
+  const confirmedCurrent=async(current,currentSecurity)=>current?.status==='active'&&current.emailLoginEnabled===true&&current.verifiedEmail===v.confirmed.verifiedEmail&&(current.emailVerifiedAt??null)===v.confirmed.emailVerifiedAt&&currentSecurity?.epoch===v.confirmed.securityEpoch;
+  if(v.basis==='admin-email'&&!await confirmedCurrent(identity,security))fail('confirmation_stale','The account email or security settings changed after this confirmation was sent.',409);
   const {graceDays,executeAfter}=deletionGrace({now,security,basis:v.basis,exportUntil:v.exportUntil??undefined});
-  return this.schedule(owner,{basis:v.basis,operationId:v.operationId,fingerprint,now,graceDays,executeAfter,security,identity,actor:{kind:'admin',adminAuditSeq:v.adminAuditSeq},billing:this.port('billing'),exportUntil:v.basis==='admin-closure'?v.exportUntil??null:undefined});
+  const verify=v.basis!=='admin-email'?undefined:async()=>{try{return await confirmedCurrent(await this.port('identity').get(owner),validSecurity(await this.port('security')(owner)));}catch{return false;}};
+  return this.schedule(owner,{basis:v.basis,operationId:v.operationId,fingerprint,now,graceDays,executeAfter,security,identity,actor:{kind:'admin',adminAuditSeq:v.adminAuditSeq},billing:this.port('billing'),exportUntil:v.basis==='admin-closure'?v.exportUntil??null:undefined,verify});
  }
 
  /** An operation ID replays its request: the current view while that request is current, else the stored result. */
@@ -297,7 +304,7 @@ export class DeletionService{
   const current=await this.metadata.get(REQUEST_KEY);
   return current?.operationId===operationId?deletionView(current,{fenced:await this.metadata.get(FENCE_KEY)!==undefined}):receipt.result;
  }
- async schedule(owner,{basis,operationId,fingerprint,now,graceDays,executeAfter,security,identity,actor,billing,exportUntil}){
+ async schedule(owner,{basis,operationId,fingerprint,now,graceDays,executeAfter,security,identity,actor,billing,exportUntil,verify}){
   const id=this.random.uuid();
   const record=await this.metadata.transaction(async tx=>{
    const replay=await tx.get(RECEIPT_PREFIX+operationId);if(replay){if(replay.fingerprint!==fingerprint)fail('operation_conflict','This operation ID was already used for a different request.',409);return {replay:replay.result};}
@@ -312,6 +319,12 @@ export class DeletionService{
   });
   if(record.replay)return (await this.replayed(operationId,fingerprint))??record.replay;
   let request=record.request;
+  // Post-commit re-check (DX-7 race): an identity change that committed before this read voids the request and
+  // its receipt; one that commits after it is a change during grace, which moves the deadline (R1-M2).
+  if(verify&&!await verify(request)){
+   await this.metadata.transaction(async tx=>{const live=await tx.get(REQUEST_KEY);if(live?.id===request.id&&live.state==='scheduled')await tx.put(REQUEST_KEY,{...live,state:'cancelled',cancelledAt:this.now(),cancelledBy:'confirmation-stale',channels:null,cancelTokenHashes:[],revision:live.revision+1});await tx.delete(RECEIPT_PREFIX+operationId);});
+   fail('confirmation_stale','The account email or security settings changed after this confirmation was sent.',409);
+  }
   this.log({action:'deletion-requested',owner,basis,graceDays});
   // Cancel-at-period-end is attempted synchronously; a Polar failure keeps billing.pending and step retries hourly.
   if(billing!==null)request=await this.retryBilling(request)??request;

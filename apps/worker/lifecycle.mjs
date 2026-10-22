@@ -12,6 +12,7 @@ import {MCP_LAYOUT} from '../../packages/mcp/service.mjs';
 import {eraseOwner} from '../../packages/email-bridge/owner.mjs';
 import {createDeletionNotices} from '../../packages/runtime/deletion-notices.mjs';
 import {createExportAdapterPorts} from '../../packages/runtime/account/exports.mjs';
+import {exportNoticePort,exportGrantsPort} from '../../packages/runtime/export-ports.mjs';
 import {flagsFor} from '../../packages/flags/read.mjs';
 import {mailTransport} from './email.mjs';
 import {createPushTransport} from '../../packages/messaging/web-push.mjs';
@@ -39,9 +40,13 @@ export function workerDeletionConfig(env){
  // DX-5 notices over the existing accounts@ mail and Web Push transports. An unusable origin leaves the port unwired
  // (requests then hold before commit) rather than breaking the account object.
  let notices;try{notices=createDeletionNotices({origin:env.APP_ORIGIN,flags:{for:ctx=>flagsFor(env,ctx)},mail:mailTransport(env),push:createPushTransport(env)});}catch{notices=undefined;}
- // DX-2: trusted export ports. The audit/notice port and the keys, grants and external-storage projections are
- // not composed yet, so export creation fails closed (export_unavailable) even with ACCOUNT_EXPORT_ENABLED on.
- return {exportPorts:createExportAdapterPorts({repository}),ACCOUNT_DELETION_PORTS:{
+ // DX-1/DX-2 export ports: the owner audit/notice port (mail here; push is added inside the account object) and the
+ // grants projection over the owner's federation shard and MCP shards. Keys and the external-storage mapping are
+ // account-local (packages/runtime/account/exports.mjs).
+ const exportPorts=createExportAdapterPorts({repository,notice:exportNoticePort({repository,mailer:mailTransport(env)}),contributorPorts:{grants:exportGrantsPort({
+  federation:env.FEDERATION?owner=>env.FEDERATION.get(env.FEDERATION.idFromName(`${FEDERATION_LAYOUT}/${owner}`)).exportGrants(owner):null,
+  mcp:mcp?owner=>mcp.grants(owner):null})}});
+ return {exportPorts,ACCOUNT_DELETION_PORTS:{
   ...notices?{notices}:{},
   identity:lifecycleIdentityPort(repository),security:identitySecurityPort(repository),hold:deletionHoldPort({store:admin,repository}),adminAuthority:deletionAdminAuthorityPort({store:admin,repository}),
   erasure:{

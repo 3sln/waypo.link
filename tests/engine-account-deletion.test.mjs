@@ -280,7 +280,9 @@ test('admin closure: a suspended closed account executes at exportUntil; a legal
  assert.equal(deletionReason(await x.repository.get(OWNER)),'admin-closure');
  const y=await deletionFixture(t,{identity:{emailLoginEnabled:false}});
  await assert.rejects(y.engine.perform(new ScheduleAdminDeletion({actor:{kind:'system',owner:OWNER,reason:'admin'},input:{basis:'admin-email',operationId:'op-email-01234567890',adminAuditSeq:8}})),{code:'email_login_disabled'});
- const z=await deletionFixture(t);const email=await z.engine.perform(new ScheduleAdminDeletion({actor:{kind:'system',owner:OWNER,reason:'admin'},input:{basis:'admin-email',operationId:'op-email-01234567890',adminAuditSeq:8}}));
+ const z=await deletionFixture(t),confirmed={securityEpoch:3,emailVerifiedAt:(await z.identityPort.get(OWNER)).emailVerifiedAt,verifiedEmail:EMAIL};
+ await assert.rejects(z.engine.perform(new ScheduleAdminDeletion({actor:{kind:'system',owner:OWNER,reason:'admin'},input:{basis:'admin-email',operationId:'op-email-01234567890',adminAuditSeq:8}})),{code:'invalid_request'},'admin-email needs the confirmation evidence');
+ const email=await z.engine.perform(new ScheduleAdminDeletion({actor:{kind:'system',owner:OWNER,reason:'admin'},input:{basis:'admin-email',operationId:'op-email-01234567890',adminAuditSeq:8,confirmed}}));
  assert.equal(email.graceDays,30);assert.equal(email.cancellable,true);
  const reversed=await z.engine.perform(new CancelAccountDeletion({actor:{kind:'system',owner:OWNER,reason:'closure-reversed'}}));assert.equal(reversed.state,'cancelled');
 });
@@ -423,4 +425,19 @@ test('end to end with the real DX-5 notices port: request, accepted notice, grac
  assert.equal(mails.at(-1).cancellable,false);assert.equal(mails.at(-1).token,undefined);
  assert.deepEqual(await x.rows(),['lifecycle/tombstone-v1','owner']);assert.equal((await x.repository.get(OWNER)).status,'deleted');
  assert.deepEqual(x.erased,{federation:1,mcp:1,emailBridge:1});assert.equal(x.blobs.map.has(`objects/${OWNER}/res/v0`),false);
+});
+
+test('DX-7 race regression: admin-email scheduling commits only against the confirmed email and security epoch',async t=>{
+ const x=await deletionFixture(t),view=await x.identityPort.get(OWNER),confirmed={securityEpoch:3,emailVerifiedAt:view.emailVerifiedAt,verifiedEmail:EMAIL};
+ const schedule=(operationId,extra={})=>x.engine.perform(new ScheduleAdminDeletion({actor:{kind:'system',owner:OWNER,reason:'admin'},input:{basis:'admin-email',operationId,adminAuditSeq:9,confirmed:{...confirmed,...extra}}}));
+ // A change committed before scheduling is refused outright.
+ await assert.rejects(schedule('op-stale-epoch-0123456',{securityEpoch:2}),{code:'confirmation_stale'});
+ await assert.rejects(schedule('op-stale-email-0123456',{verifiedEmail:'old@deletion.example'}),{code:'confirmation_stale'});
+ assert.equal(await x.record(),undefined);
+ // DX-7's reproduction: the email changes after the pre-check but before the commit is verified.
+ let reads=0;const get=x.ports.identity.get;x.ports.identity.get=async owner=>{const value=await get(owner);if(++reads===2){const a=await x.repository.get(OWNER);await x.repository.compareAndSwap(OWNER,a.revision,{...a,verifiedEmail:'attacker@deletion.example',revision:a.revision+1});x.setSecurity({epoch:4,changedAt:x.clock.now()});}return value;};
+ await assert.rejects(schedule('op-race-01234567890'),{code:'confirmation_stale'});
+ const record=await x.record();assert.equal(record.state,'cancelled');assert.equal(record.cancelledBy,'confirmation-stale');
+ assert.equal(await x.metadata.get('deletion/receipt/op-race-01234567890'),undefined,'a retry re-evaluates instead of replaying');
+ assert.equal((await x.ports.due.due({now:Infinity})).length,0);assert.equal(x.billingCalls.includes('cancelAtPeriodEnd'),false,'no effect ran');
 });

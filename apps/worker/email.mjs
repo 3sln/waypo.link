@@ -32,7 +32,10 @@ const SECURITY_ALERTS = Object.freeze({
   'passkey-removed': ['{brand} passkey removed', 'A passkey was removed from your account.'],
   'password-changed': ['{brand} password changed', 'Your account password was changed.'],
   // DX-6: sent to the removed address. No other account detail is included.
-  'email-removed': ['{brand} email removed', 'This email address was removed from a {brand} account. If you did not do this, sign in and secure your account.']
+  'email-removed': ['{brand} email removed', 'This email address was removed from a {brand} account. If you did not do this, sign in and secure your account.'],
+  // DX-1 export notices (§1.4): sent on creation and on the first download from each session or CLI grant.
+  'export-created': ['{brand} data export requested', 'An export of your account data was requested. Not you? Sign in, cancel the export and secure your account.'],
+  'export-downloaded': ['{brand} data export downloaded', 'Your account data export was downloaded from a new session or device. Not you? Sign in, cancel the export and secure your account.']
 });
 
 function safeHeader(value, max = 2048) {
@@ -111,6 +114,23 @@ export function mailTransport(env = {}) {
     return send({ from, to: email, subject: format(subject), text: `${format(text)}\n\nOpen ${origin}/console\n\nIf you did not request this change, review your account security in your personal space.` });
   };
   return {
+    // DX-7: admin-assisted deletion confirmation, sent only to the account's own verified address. The capability
+    // stays in the fragment; opening the link changes nothing until the page confirms with POST.
+    async sendAdminDeletionConfirmation({email,handle,link,expiresAt}) {
+      const prefix=`${origin}/api/admin/users/deletion/confirmation#owner=`;
+      if(typeof link!=='string'||!link.startsWith(prefix)||!/^[0-9a-f-]{36}&token=[A-Za-z0-9_-]{43}$/.test(link.slice(prefix.length))||typeof handle!=='string'||!safeHeader(handle,64)||!Number.isSafeInteger(expiresAt))throw new Error('Invalid deletion confirmation request.');
+      return send({from:senders.account,to:email,subject:`Confirm deletion of your ${brand} account`,text:[`Someone asked ${brand} to delete the account @${handle} on your behalf. Only continue if you asked for this.`,link,`The link expires on ${new Date(expiresAt).toISOString().slice(0,16).replace('T',' ')} UTC. Opening it does not delete anything until you confirm on the page. Deletion is then scheduled for 30 days later, and you can cancel it during that time.`,'If you did not ask for this, ignore this email.'].join('\n\n')});
+    },
+    // DX-7: closure and reopening notices (terms §10). The export window is stated; no reason text is mailed.
+    async sendClosureNotice({email,handle,exportUntil,executeAfter}) {
+      if(typeof handle!=='string'||!safeHeader(handle,64)||!Number.isSafeInteger(executeAfter)||exportUntil!==null&&!Number.isSafeInteger(exportUntil))throw new Error('Invalid closure notice.');
+      const day=value=>new Date(value).toISOString().slice(0,10);
+      return send({from:senders.account,to:email,subject:`Your ${brand} account was closed`,text:[`The account @${handle} was closed by the service operator. It will be deleted on ${day(executeAfter)}.`,exportUntil===null?'No export is offered for this account.':`Until ${day(exportUntil)} you can sign in to export your data. Only export and deletion status are available.`,`Open ${origin}/console`,'To appeal, reply to the service operator.'].join('\n\n')});
+    },
+    async sendReopenNotice({email,handle}) {
+      if(typeof handle!=='string'||!safeHeader(handle,64))throw new Error('Invalid reopening notice.');
+      return send({from:senders.account,to:email,subject:`Your ${brand} account was reopened`,text:[`The account @${handle} was reopened by the service operator and its scheduled deletion was cancelled. Sign in again to continue.`,`Open ${origin}/console`].join('\n\n')});
+    },
     // DX-5: deletion notices carry the cancel-only link in a fragment, from the fixed accounts@ sender.
     async sendDeletionNotice({email,notice,locale='en'}) {
       const template=deletionNoticeTemplate(notice,{origin,locale});

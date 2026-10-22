@@ -69,3 +69,83 @@ test('erasure ports: MCP rows on existing shards and the federation shard are er
  const check=new SqliteMetadata(join(f.directory,'mcp','mcp-auth-v1-64-07.sqlite'));t.after(()=>check.close());
  assert.deepEqual([...(await check.list({prefix:'mcp/v1/'})).keys()],['mcp/v1/grant/07.b']);
 });
+
+// ---- Export end to end over the real Node adapter (DX-1/DX-2 with the composed ports) ----
+import {FileBucket} from '../apps/node/resources.mjs';
+import {key as recordKey} from '../packages/core/records.mjs';
+function untar(bytes){
+ const entries=new Map(),text=(at,length)=>new TextDecoder().decode(bytes.subarray(at,at+length)).replace(/\0.*$/s,'');let at=0,pax=null;
+ while(at+512<=bytes.length){
+  if(bytes.subarray(at,at+512).every(b=>b===0))break;
+  const size=parseInt(text(at+124,12).trim(),8),type=text(at+156,1),name=(text(at+345,155)?text(at+345,155)+'/':'')+text(at,100),data=bytes.subarray(at+512,at+512+size);
+  at+=512+Math.ceil(size/512)*512;
+  if(type==='x'){pax=Object.fromEntries(new TextDecoder().decode(data).split('\n').filter(Boolean).map(line=>{const [k,...v]=line.slice(line.indexOf(' ')+1).split('=');return [k,v.join('=')];}));continue;}
+  entries.set(pax?.path??name,data.slice());pax=null;
+ }
+ return entries;
+}
+test('export end to end: create with step-up, alarm generation, HTTP download with Range resume, tar contents against the inventory, expiry',async t=>{
+ let offset=0;const f=await fixture(t,{ACCOUNT_EXPORT_ENABLED:'true',LOCAL_DEVELOPMENT:'true',LIFECYCLE_CLOCK:()=>Date.now()+offset}),{jar,body}=await f.signup(),owner=body.account.id;
+ const controller=f.app.resources.accounts.get(owner),blobs=new FileBucket(join(f.directory,'blobs'));
+ // A small (packed) and a large (streamed from BLOBS) message payload; the large one exercises the Node range reader.
+ const small=new TextEncoder().encode('hello export'),large=Uint8Array.from({length:300*1024},(_,i)=>i%251);
+ for(const [id,bytes] of [['m-small',small],['m-large',large]]){const ref=`messages/${owner}/${id}`;await blobs.put(ref,bytes);await controller.metadata.put(recordKey('message',owner,id),{id,owner,collection:'inbox',mimeType:'text/plain',size:bytes.length,receivedAt:Date.now(),blobRef:ref});}
+ const headers=f.as(body),post=(path,value,extra={})=>f.call(path,{jar,method:'POST',value,headers:{...headers,...extra}});
+ // Creation needs a fresh step-up; without it the route refuses.
+ {const refused=await post('/api/exports',{operationId:crypto.randomUUID()});assert.equal((await refused.json()).error,'step_up_required');}
+ assert.equal((await post('/api/auth/step-up',{method:'password',password:PASSWORD})).status,200);
+ const created=await post('/api/exports',{operationId:crypto.randomUUID()});assert.equal(created.status,200,await created.clone().text());const job=await created.json();
+ assert.equal((await f.app.resources.repository.get(owner)).audit.filter(e=>e.type==='export-created').length,1,'the owner security log records creation');
+ // A new account counts as a recent security change: the export is ready only 72 hours later.
+ offset=4*86400000;
+ for(let i=0;i<60;i++){const status=await (await f.call('/api/exports/'+job.id,{jar,headers})).json();if(status.state==='ready')break;await controller.alarm();}
+ const ready=await (await f.call('/api/exports/'+job.id,{jar,headers})).json();assert.equal(ready.state,'ready',JSON.stringify(ready));
+ const volumes=[];
+ for(const volume of ready.volumes){
+  const path=`/api/exports/${job.id}/volumes/${volume.n}.tar`,full=new Uint8Array(await (await f.call(path,{jar,headers})).arrayBuffer());assert.equal(full.length,volume.bytes);
+  // Resume: a partial download, then the remainder by Range; the bytes equal the full stream.
+  const cut=Math.min(1000,volume.bytes-1),first=await f.call(path,{jar,headers:{...headers,Range:`bytes=0-${cut-1}`}});assert.equal(first.status,206);
+  const rest=await f.call(path,{jar,headers:{...headers,Range:`bytes=${cut}-`}});assert.equal(rest.status,206);assert.equal(rest.headers.get('Content-Type'),'application/x-tar');assert.match(rest.headers.get('Cache-Control'),/no-store/);
+  const joined=new Uint8Array([...new Uint8Array(await first.arrayBuffer()),...new Uint8Array(await rest.arrayBuffer())]);assert.deepEqual(joined,full);volumes.push(full);
+ }
+ const files=new Map(volumes.flatMap(v=>[...untar(v)]));
+ const manifest=JSON.parse(new TextDecoder().decode(files.get('manifest.json')));assert.equal(manifest.format,'bindle-export/1');assert.equal(manifest.subject,owner);
+ for(const part of manifest.parts.filter(p=>!p.path.startsWith('pack.')))assert(files.has(part.path),`manifest part ${part.path} is in the archive`);
+ assert.deepEqual(files.get('data/messages/m-small/0.bin'),small);assert.deepEqual(files.get('data/messages/m-large/0.bin'),large);
+ const jsonl=[...files].filter(([name])=>name.endsWith('.jsonl')).map(([,data])=>new TextDecoder().decode(data)).join('\n');
+ for(const contributor of ['identity','keys','grants','external-storage','messages','features'])assert(manifest.parts.some(p=>p.path.startsWith(`account/${contributor}.`))||manifest.counts[contributor],`contributor ${contributor} is present`);
+ // Redaction: no password or recovery hash, session token, CSRF token, private key or blob reference.
+ const record=await f.app.resources.repository.get(owner);
+ for(const secret of [record.passwordHash,record.recoveryHash,body.csrfToken,...record.sessions.map(s=>s.hash)].filter(Boolean))assert.equal(jsonl.includes(secret),false);
+ assert.doesNotMatch(jsonl,/"(?:d|privateJwk|blobRef|passwordHash|recoveryHash)"\s*:/);assert.match(jsonl,/"publicJwk"/);
+ // Expiry deletes every exact part key.
+ const stored=await controller.metadata.get('export/job/'+job.id),keys=stored.keys;assert(keys.length>0);
+ offset+=8*86400000;for(let i=0;i<10;i++)await controller.alarm();
+ assert.equal((await (await f.call('/api/exports/'+job.id,{jar,headers})).json()).state,'expired');
+ const archives=new FileBucket(join(f.directory,'archives'));for(const name of keys)assert.equal(await archives.get(name),null,name);
+});
+
+test('closure-export sessions: credential sign-in to a closed account is restricted, time-bound and server-enforced',async t=>{
+ const f=await fixture(t,{ACCOUNT_EXPORT_ENABLED:'true',ACCOUNT_DELETION_ENABLED:'true',ADMIN_ENABLED:'true'}),{body}=await f.signup(),owner=body.account.id,repo=f.app.resources.repository;
+ const handle=(await repo.get(owner)).handle,login=jar=>f.call('/api/auth/login/password',{jar,method:'POST',value:{handle,password:PASSWORD,turnstileToken:'local-browser-test-token'}});
+ // Closed by an administrator (as AdminService.closeUser leaves it): suspended, sessions ended, closure applied.
+ const exportUntil=Date.now()+30*86400000,account=await repo.get(owner);
+ assert(await repo.compareAndSwap(owner,account.revision,{...account,status:'suspended',sessions:[],revision:account.revision+1}));
+ // Without an applied closure a suspended account cannot sign in at all.
+ assert.equal((await login(new Jar())).status,401);
+ await f.app.resources.adminStore.commit({writes:{['principal/'+owner]:{owner,assignmentId:account.assignmentId,roles:[],hold:null,closure:{state:'applied',basis:'admin-closure',exportUntil,executeAfter:exportUntil,operationId:crypto.randomUUID(),adminAuditSeq:1}}}});
+ const scheduled=await f.invoke(owner,'deletionSchedule',[{basis:'admin-closure',operationId:'op-closure-integration-1',adminAuditSeq:1,exportUntil}]);assert.equal(scheduled.state,'scheduled',JSON.stringify(scheduled));
+ const jar=new Jar(),signedIn=jar.apply(await login(jar));assert.equal(signedIn.status,200);const session=await signedIn.json();
+ assert.equal(session.scope,'closure-export');assert.equal(session.account.scope,'closure-export');assert.equal(session.closure.exportUntil,exportUntil);
+ assert(session.expiresAt<=Date.now()+3600000+1000,'restricted sessions last at most an hour');
+ const headers={'X-Bindle-Account':owner,'X-Bindle-Session-Context':session.sessionContext,'X-CSRF-Token':session.csrfToken};
+ const who=await f.call('/api/session',{jar,headers});assert.equal(who.status,200);assert.equal((await who.json()).scope,'closure-export');
+ const status=await f.call('/api/account/deletion',{jar,headers});assert.equal(status.status,200);const view=await status.json();assert.equal(view.basis,'admin-closure');assert.equal(view.cancellable,false);
+ for(const [path,method] of [['/api/account','GET'],['/api/contacts','POST'],['/api/account/deletion','POST'],['/api/account/deletion/cancel','POST'],['/api/messages','GET']]){const r=await f.call(path,{jar,method,value:method==='POST'?{}:undefined,headers});assert([401,403,404].includes(r.status),`${method} ${path} answered ${r.status}`);}
+ // Export: list and create (the credential sign-in counts as a fresh step-up for five minutes).
+ assert.equal((await f.call('/api/exports',{jar,headers})).status,200);
+ const created=await f.call('/api/exports',{jar,method:'POST',value:{operationId:crypto.randomUUID()},headers});assert.equal(created.status,200,await created.clone().text());
+ // Reopening (or the window ending) ends restricted access; sign-out works for the restricted session.
+ assert.equal((await f.call('/api/auth/logout',{jar,method:'POST',value:{},headers})).status,200);
+ assert.equal((await f.call('/api/exports',{jar,headers})).status,401);
+});

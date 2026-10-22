@@ -108,6 +108,8 @@ export class FederationController {
   /** DX-3 E3 (account-deletion-export.md §2.3): this store is one owner's federation shard, so erasing the subject
    * deletes every `federation/` row in it: grants, token families, preferences, brokered JTIs, requests, resources
    * and persisted client snapshots. Access already ended at the identity tombstone; this removes the records. */
+  /** DX-1 export (grants contributor): this owner shard's grant rows, read without composing authority. */
+  async exportGrants(){return [...(await this.metadata.list({prefix:'federation/grant/',limit:1000})).values()];}
   async eraseSubject(){let deleted=0;for(;;){const rows=await this.metadata.list({prefix:'federation/',limit:256});if(!rows.size)return {deleted};await this.metadata.delete([...rows.keys()]);deleted+=rows.size;}}
   preferences(context){this.requireReady();return this.service.preferences(this.authority(context,false));}
   grants(context){this.requireReady();return this.service.grants(this.authority(context,false));}

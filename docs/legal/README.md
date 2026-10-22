@@ -19,9 +19,9 @@ Publication is blocked until each is built, handled manually with a documented p
 
 | Commitment | Where | Current state |
 |---|---|---|
-| Account deletion on request | Privacy §8–9, Terms §10 | No owner deletion endpoint. Lifecycle tombstone purge exists behind `LIFECYCLE_PURGE_ENABLED`. Manual operator procedure or self-serve deletion needed. |
-| Data export on request; export before closure and over-quota removal | Privacy §9, Terms §7, §10 | No hosted export. BindleBox archive export is flag-off. |
-| Removing a confirmed email (erasure) | Privacy §9 | Email can be replaced, apparently not removed (unverified). |
+| Account deletion on request | Privacy §8–9, Terms §10 | Implemented behind `ACCOUNT_DELETION_ENABLED` (off): self-serve with 14/30-day grace and admin-assisted. Enabling is blocked on R1-M12 (BindleBox data on deletion) and the Polar sandbox check. |
+| Data export on request; export before closure and over-quota removal | Privacy §9, Terms §7, §10 | Implemented behind `ACCOUNT_EXPORT_ENABLED` (off), including closure-window export sessions. The over-quota hook (DX-9) is pending. Device grants and S3/WebDAV mappings are not exported yet. |
+| Removing a confirmed email (erasure) | Privacy §9 | Implemented behind `EMAIL_REMOVAL_ENABLED` (off). A waiver is required when no other notice channel remains. |
 | Age confirmation by country, region blocking | Privacy §3, §10; Terms §2 | Not implemented. Research: [age research](../release/age-requirements.md). |
 | Re-acceptance of new terms at next sign-in | Terms §12 | `termsVersion` is recorded at signup only; no re-acceptance flow. |
 | Policies linked from signup, landing and console footers, OAuth/client metadata | — | Only an in-app summary dialog at signup (`apps/web/src/ui/release-dialogs.mjs`). No `/privacy` or `/terms` pages, no `policy_uri`/`tos_uri`. |

@@ -64,12 +64,24 @@ export function createExportAdapterPorts({repository,notice,contributorPorts={},
  if(typeof repository?.get!=='function')throw new TypeError('An identity repository is required');
  return {...ports,identitySecurity:identitySecurityPort(repository),notice,contributorPorts:{identity:owner=>repository.get(owner),...contributorPorts}};
 }
+const PUSHED={'export-created':'export-created','export-grant-created':'export-created','export-downloaded':'export-downloaded'};
+/** Public key history only (§1.1 `keys`); private keys leave only through the protected identity backup. */
+async function exportKeys(c,owner){
+ const history=[];for(const purpose of ['signing','encryption'])history.push(...await c.identityKeyHistory(owner,{purpose}));
+ return {publicKeys:history.map(k=>({kid:k.kid,purpose:k.purpose,alg:k.alg,publicJwk:k.publicJwk,state:k.state,current:k.current,createdAt:k.createdAt,retiredAt:k.retiredAt,revokedAt:k.revokedAt})),keyIds:history.map(k=>k.kid),certificates:[],backupWorkflow:'Private keys leave only through the separately protected identity backup in your security settings.'};
+}
+/** The host-held logical-key to provider-object mapping (§1.5): references only, never external bytes or tokens. */
+function externalStorageMapping(c){return {async page({cursor,limit}){const rows=await c.metadata.list({prefix:'drive/object/',startAfter:cursor??'',limit});return {rows:[...rows].map(([path,row])=>{const resourceId=path.split('/')[2];return {provider:'google-drive',resource:resourceId,resourceId,key:row.key,fileId:row.fileId,version:row.version,size:row.size,contentType:row.contentType};}),cursor:rows.size===limit?[...rows.keys()].at(-1):null,done:rows.size<limit};}};}
 export function exportEngine(c){
  let engine=engines.get(c);if(!engine){const clock={now:()=>typeof c.config.LIFECYCLE_CLOCK==='function'?c.config.LIFECYCLE_CLOCK():Date.now()},flags={for:ctx=>flagsFor(c.config,ctx)};
   // Port properties are read per operation, preserving request-pinned flags and
   // adapter changes. Missing contributor/notice ports remain fail-closed in DX-1.
-  const config=new Proxy(c.config,{get(target,key){if(key==='exportPorts')return {digest:createExportDigest(),quota:owner=>c.metadata.transaction(async tx=>{if(await tx.get('owner')!==owner)fault('forbidden','Account owner mismatch.',403);return (await storageState(tx,owner,clock.now(),c.config)).storageBytes;}),...target.exportPorts};return target[key];}});
-  engine=createAppEngine({providers:{accountStore:c.metadata,archives:c.archives,blobs:c.blobs,clock,random:cryptoRandom,audit:nullAudit,flags,config}});engines.set(c,engine);
+  const config=new Proxy(c.config,{get(target,key){if(key==='exportPorts'){const ports=target.exportPorts??{};return {digest:createExportDigest(),quota:owner=>c.metadata.transaction(async tx=>{if(await tx.get('owner')!==owner)fault('forbidden','Account owner mismatch.',403);return (await storageState(tx,owner,clock.now(),c.config)).storageBytes;}),...ports,
+   // The adapter's notice records the owner audit event and mails; this adds the owner's own push devices.
+   ...typeof ports.notice==='function'?{notice:async event=>{const out=await ports.notice(event);if(PUSHED[event.type]&&typeof c.accountSecurityNotice==='function')try{await c.accountSecurityNotice(event.owner,{event:PUSHED[event.type]});}catch{/* best effort */}return out;}}:{},
+   // Account-local projections: public key history and the host-held external storage mapping.
+   contributorPorts:{keys:owner=>exportKeys(c,owner),externalStorage:externalStorageMapping(c),...ports.contributorPorts}};}return target[key];}});
+  engine=createAppEngine({providers:{accountStore:c.metadata,archives:c.exportArchives??c.archives,blobs:c.blobs,clock,random:cryptoRandom,audit:nullAudit,flags,config}});engines.set(c,engine);
  }return engine;
 }
 const actor=(owner,evidence={})=>({kind:'owner',owner,...typeof evidence.sessionId==='string'?{sessionId:evidence.sessionId}:{},...Number.isSafeInteger(evidence.stepUpAt)?{stepUpAt:evidence.stepUpAt}:{}});

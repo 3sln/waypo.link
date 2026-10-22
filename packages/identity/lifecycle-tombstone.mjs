@@ -73,3 +73,9 @@ export function deletionAdminAuthorityPort({store,repository}){
  const view=Object.assign(Object.create(AdminService.prototype),{store,repository});
  return async owner=>{if(!uuid(owner))throw new TypeError('Invalid account identifier');if(!store)return {admin:false};const authority=await view.authority(owner);return {admin:authority.admin===true};};
 }
+
+/** DX-7 closure window port for IdentityService: the applied closure's export window recorded on the admin principal
+ * for this exact assignment, or null. No admin store means no closure. */
+export function closureWindowPort({store}){
+ return Object.freeze({async window(owner,assignmentId){if(!store||!uuid(owner))return null;const row=await store.get('principal/'+owner),closure=row?.assignmentId===assignmentId?row.closure:null;return closure?.state==='applied'&&Number.isSafeInteger(closure.exportUntil)?{exportUntil:closure.exportUntil}:null;}});
+}

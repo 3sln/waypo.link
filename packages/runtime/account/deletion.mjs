@@ -9,7 +9,7 @@ import {flagsFor,capability} from './flags.mjs';
 //   deletionStatus(owner), deletionCancel(owner)          owner (cancel needs no step-up: it is the safe direction)
 //   deletionCancelToken(owner, {token})                   cancel-only link page (POST), no session
 //   deletionTick(owner, {source})                         the LifecycleScheduler sweep over the deletion-due index
-//   deletionSchedule(owner, input)                        internal (no rpc): DX-7 admin bases
+//   deletionSchedule(owner, input), deletionSystemCancel, deletionSystemStatus   DX-7 admin port (system actor)
 //   deletionAlarm()                                       internal (no rpc): the account alarm calls it first
 //   deletionPortsFor(c)                                   DeletionPorts for this controller (also the lifecycle purge)
 //   deletionMaintenanceRefused()                          internal: shelving and semantic backfill refuse while true
@@ -36,7 +36,7 @@ export function deletionPortsFor(c){
  let own=local.get(c);
  if(!own){
   const clock={now:()=>clockOf(c)()},flags={for:ctx=>flagsFor(c.config,ctx)};let exporter;
-  const exportPort={cancelAll:(owner,options)=>(exporter??=new AccountExport({accountStore:c.metadata,archives:c.archives,blobs:c.blobs,clock,random:cryptoRandom,flags,config:c.config,...c.config.exportPorts})).cancelAll(owner,options)};
+  const exportPort={cancelAll:(owner,options)=>(exporter??=new AccountExport({accountStore:c.metadata,archives:c.exportArchives??c.archives,blobs:c.blobs,clock,random:cryptoRandom,flags,config:c.config,...c.config.exportPorts})).cancelAll(owner,options)};
   const billing=capability(c.config,'BILLING_ENABLED')&&c.billing?new BillingClosure({billing:c.billing,metadata:c.metadata,clock,flags,alert:async entry=>lifecycleLog(c.config,{kind:'account-deletion',action:'operator-alert',...entry})}):null;
   own={exports:exportPort,billing};local.set(c,own);
  }
@@ -65,6 +65,7 @@ export const methods={
  async deletionTick(owner,{source='sweep'}={}){return perform(deletionEngine(this).engine,new StepAccountDeletion({actor:{kind:'system',owner,reason:source}}));},
  async deletionSchedule(owner,input){return perform(deletionEngine(this).engine,new ScheduleAdminDeletion({actor:{kind:'system',owner,reason:'admin'},input}));},
  async deletionSystemCancel(owner,{reason='admin'}={}){return perform(deletionEngine(this).engine,new CancelAccountDeletion({actor:{kind:'system',owner,reason}}));},
+ async deletionSystemStatus(owner){return read(deletionEngine(this).engine,new AccountDeletionStatus({actor:{kind:'system',owner}}));},
  /** Account alarm hook (§2.2, R1-H2). Runs one deletion step when a request exists, before `lifecycleTick`, and
   * reports whether the alarm must return right after it (`stop`: a fence, a purge job or a tombstone exists) and
   * the deletion wake time for the alarm's `finally` min-merge. Never throws. */
@@ -85,4 +86,8 @@ export const rpc={
  deletionCancel:{lifecycle:'purging'},
  deletionCancelToken:{lifecycle:'purging'},
  deletionTick:{lifecycle:'purging'},
+ // DX-7 admin port (packages/runtime/admin-deletion-ports.mjs); edge code only, never a client-selected method.
+ deletionSchedule:{lifecycle:'suspended'},
+ deletionSystemCancel:{lifecycle:'purging'},
+ deletionSystemStatus:{lifecycle:'purging'},
 };

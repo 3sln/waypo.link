@@ -4,7 +4,12 @@
 import {accountRoutePaths} from './account-session-http.mjs';
 import {accountCookiesEnabled,selectedAccountMember,parseAccountCookies,hasAccountVault,installedAccountCookies,accountFault} from './account-cookies.mjs';
 import {FlagsRuntime} from './flags.mjs';
-import {OwnerQuery,IdentityFault} from '../identity/index.mjs';
+import {OwnerQuery,ClosureOwnerQuery,IdentityFault} from '../identity/index.mjs';
+import * as deletionRoutes from './routes/deletion.mjs';
+import * as exportRoutes from './routes/exports.mjs';
+// DX-7 closure-export sessions reach only these routes: session, deletion status and the owner's export.
+const CLOSURE_ROUTES=[[/^\/api\/session$/,['GET']],[/^\/api\/account\/deletion$/,['GET']],[/^\/api\/exports$/,['GET','POST']],[/^\/api\/exports\/[a-f0-9-]{36}$/,['GET']],[/^\/api\/exports\/[a-f0-9-]{36}\/cancel$/,['POST']],[/^\/api\/exports\/[a-f0-9-]{36}\/volumes\/[1-9][0-9]{0,8}\.tar$/,['GET','HEAD']]];
+const closureRoute=(path,method)=>CLOSURE_ROUTES.some(([pattern,methods])=>pattern.test(path)&&methods.includes(method));
 import {MessagingFault} from '../messaging/index.mjs';
 import {StorageError} from '../storage/policy.mjs';
 import {flagReadable,sessionFeatures,json,status,body,cookie,sessionToken,setupCookie,deviceCookie,signedContactPath,identity,limit,turnstile,accountHandle} from './routes/shared.mjs';
@@ -44,7 +49,18 @@ export default {
     // Header-less private writes would follow a mutable default; tabs must name their member.
     // (Header-less mutations never select the default member, so identity writes fail closed too.)
     if(vaultPresent&&mutation&&request.headers.get('X-Bindle-Account')===null)throw accountFault('account_context_conflict',409);
-    let owner;try{owner=await engine.query(new OwnerQuery(context)).peek();}catch(error){if(path==='/api/session'&&error.code==='unauthorized')return json({authenticated:false},200,{'Cache-Control':'private, no-store'});throw error;}
+    let owner,closure=null;try{owner=await engine.query(new OwnerQuery(context)).peek();}catch(error){
+     // A closed account's restricted session is tried only after the ordinary owner refused, and only on its routes.
+     if(error.code==='unauthorized'&&closureRoute(path,request.method))try{closure=await engine.query(new ClosureOwnerQuery(context)).peek();}catch{closure=null;}
+     if(!closure){if(path==='/api/session'&&error.code==='unauthorized')return json({authenticated:false},200,{'Cache-Control':'private, no-store'});throw error;}
+    }
+    if(closure){
+     const id=closure.account.id;if(path==='/api/session')return json({authenticated:true,...closure,features:sessionFeatures(env,id)},200,{'Cache-Control':'private, no-store'});
+     if(mutation&&context.csrfToken!==closure.csrfToken)return json({error:'csrf',message:'Reload the account page before continuing.'},403);
+     Object.assign(route,{owner:closure,id,object:accountHandle(env,id),dispatch:null});route.context={...context,allowClosure:true};
+     const restricted=await deletionRoutes.stages.beforeActivity(route)??await exportRoutes.stages.beforeActivity(route);if(restricted)return restricted.passthrough??restricted;
+     return json({error:'closure_restricted',message:'Only export and deletion status are available for this account.'},403);
+    }
     if(path==='/api/session'){if(vault&&!accountMember&&!vaultPresent&&context.sessionToken){const headers=new Headers({'Cache-Control':'private, no-store'});for(const value of await installedAccountCookies(env,{owner:owner.account.id,token:context.sessionToken,expiresAt:owner.expiresAt,sessionContext:owner.sessionContext},local))headers.append('Set-Cookie',value);headers.append('Set-Cookie',cookie('',local,0));return json({authenticated:true,...owner,features:sessionFeatures(env,owner.account.id)},200,headers);}return json({authenticated:true,...owner,features:sessionFeatures(env,owner.account.id)},200,{'Cache-Control':'private, no-store'});}
     const id=owner.account.id;const object=accountHandle(env,id);
     // Engine-first routes (docs/architecture/app-engine.md §7): parse, dispatch one account operation as this owner, serialize.

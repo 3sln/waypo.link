@@ -41,6 +41,7 @@ import {identitySecurityPort} from '../../packages/identity/service.mjs';
 import {deletionDueIndex,sweepDeletionDue} from '../../packages/runtime/account-deletion.mjs';
 import {createDeletionNotices} from '../../packages/runtime/deletion-notices.mjs';
 import {createExportAdapterPorts} from '../../packages/runtime/account/exports.mjs';
+import {exportNoticePort,exportGrantsPort} from '../../packages/runtime/export-ports.mjs';
 import {lifecycleMode} from '../../packages/runtime/lifecycle-runner.mjs';
 import {LifecycleSweep} from '../../packages/runtime/lifecycle-scheduler.mjs';
 import {createPushTransport} from '../../packages/messaging/web-push.mjs';
@@ -111,7 +112,11 @@ export async function nodeResources({directory,config,formTransport,mailer}){
  // Restore the one bounded waitlist expiry alarm even before its next visitor.
  await guardFor('signup:waitlist:v1');
  const eventWaits=memoryBusWaits(),eventConfig=eventWaits?{EVENT_BUS_WAITER:eventWaits,EVENT_BUS_WAITS_MOUNTED:true}:{};
- let integrationConfig={};const deletionPorts={},deletionConfig={ACCOUNT_DELETION_PORTS:deletionPorts,exportPorts:createExportAdapterPorts({repository})};// filled once the shards exist (below)
+ let integrationConfig={};const deletionPorts={},deletionConfig={ACCOUNT_DELETION_PORTS:deletionPorts,
+  // DX-1/DX-2 export ports. Grants read only shard files that already exist (MCP fan-out never creates stores).
+  exportPorts:createExportAdapterPorts({repository,notice:exportNoticePort({repository,mailer}),contributorPorts:{grants:exportGrantsPort({
+   federation:async owner=>existsSync(join(directory,'federation',`${FEDERATION_LAYOUT}-${owner}.sqlite`))?federationShard(owner).exportGrants():[],
+   mcp:async owner=>{const rows=[];for(let n=0;n<MCP_SHARDS;n++){const shard=String(n).padStart(2,'0');if(!existsSync(join(directory,'mcp',`mcp-auth-v1-64-${shard}.sqlite`)))continue;const result=await mcpShard(shard).invoke('grants',[owner]);if(!result.ok)throw Object.assign(new Error(result.error.message),result.error);rows.push(...result.result);}return rows;}})}})};// filled once the shards exist (below)
  const accounts={get:id=>{
    if(!/^[a-f0-9-]{36}$/.test(id))throw new Error('Invalid account identifier');
    if(!accountMap.has(id)){const metadata=new SqliteMetadata(join(directory,'accounts',id+'.sqlite'));const controller=flagWriter(new AccountController({metadata,gate:new SerialGate(),blobs,archives,config:{...config,...integrationConfig,...lifecycleConfig,...deletionConfig,...eventConfig,FORM_POSTBACK_TRANSPORT:formTransport,DEVELOPER_CONTACT_POPULATION:population,BILLING_CATALOG:catalog,FEDERATION_IDENTITY_CHECK:async(owner,epoch)=>{const account=await repository.get(owner);return account?.status==='active'&&await federationEpoch(account)===epoch;},WORK_AUTHORITY:abuse,CONVERSATION_ACCOUNT:owner=>accounts.get(owner),IDENTITY_ACCOUNT:async owner=>{const account=await repository.get(owner);return account?{status:account.status,handle:account.handle}:null;}},sql:metadata.sql}),flagsRuntime,{flagStats});metadata.onAlarm=()=>controller.alarm();metadata.getAlarm().then(time=>{if(time)metadata.arm(time);});accountMap.set(id,{metadata,controller});}return accountMap.get(id).controller;

@@ -92,7 +92,7 @@ const publicCredentials = account => account.credentials.map(({ id, label, devic
 /** Platform-independent account policy. Repository must implement linearizable
  * create and compareAndSwap; an in-memory repository is only a test resource. */
 export class IdentityService {
-  constructor({ repository, deviceRequests, linkedApprovals = deviceRequests, linkedLimits, linkedPollLimits, approvalNotices, crypto, clock = () => Date.now(), turnstile, rateLimiter, webauthn, passwordHasher, mailer, identityBackup, paidHandleEligibility, setupBilling, systemBootstrap, onboarding, resolveIdentityBadges, pushTransport, reservedHandle, flags, accountChannels, config }) {
+  constructor({ repository, deviceRequests, linkedApprovals = deviceRequests, linkedLimits, linkedPollLimits, approvalNotices, crypto, clock = () => Date.now(), turnstile, rateLimiter, webauthn, passwordHasher, mailer, identityBackup, paidHandleEligibility, setupBilling, systemBootstrap, onboarding, resolveIdentityBadges, pushTransport, reservedHandle, flags, accountChannels, closure, config }) {
     if (!repository || !turnstile || !rateLimiter || !webauthn || !passwordHasher || !config?.termsVersion) throw new TypeError('Identity resources and terms version are required');
     const origin = new URL(config.origin);
     if (origin.origin !== config.origin || origin.hostname !== config.rpID || (origin.protocol !== 'https:' && !(config.allowInsecureLocalhost && origin.protocol === 'http:' && origin.hostname === 'localhost'))) throw new TypeError('Exact RP origin is required');
@@ -102,7 +102,7 @@ export class IdentityService {
     // `linkedApprovals` is the renamed `deviceRequests` repository (create/get/findByUserCode/compareAndSwap).
     // `linkedLimits` is the durable window port for budgets; `linkedPollLimits` the non-durable poll limiter.
     this.deviceRequests = this.linkedApprovals = linkedApprovals; this.linkedLimits = linkedLimits ?? new MemoryLinkedLimits(clock); this.linkedPollLimits = linkedPollLimits ?? new MemoryLinkedLimits(clock); this.approvalNotices = approvalNotices;
-    this.setupBilling = setupBilling;this.systemBootstrap=systemBootstrap;this.onboarding=onboarding;this.resolveIdentityBadges=resolveIdentityBadges??defaultBadgeResolver;this.reservedHandle=reservedHandle;this.flags=flags;this.accountChannels=accountChannels;
+    this.setupBilling = setupBilling;this.systemBootstrap=systemBootstrap;this.onboarding=onboarding;this.resolveIdentityBadges=resolveIdentityBadges??defaultBadgeResolver;this.reservedHandle=reservedHandle;this.flags=flags;this.accountChannels=accountChannels;this.closure=closure;
     this.config = { rpName: '3sln.me', sessionTtlMs: 86400000, pendingTtlMs: 1800000, challengeTtlMs: 300000, ...config };
     if (!(this.config.sessionTtlMs > 0 && this.config.sessionTtlMs <= 86400000)) throw new TypeError('Sessions must expire within 24 hours');
   }
@@ -138,7 +138,7 @@ export class IdentityService {
     account.pendingHash = await this.crypto.hash('pending', value); account.pendingExpiresAt = this.clock() + this.config.pendingTtlMs;
     return value;
   }
-  async session(account, { label, credentialId, source = 'credential', activationCredentialAt, parentSessionId, expiresAt: cap = Infinity } = {}) {
+  async session(account, { label, credentialId, source = 'credential', activationCredentialAt, parentSessionId, expiresAt: cap = Infinity, scope } = {}) {
     const sessionToken = `${account.id}.${this.crypto.random()}`; const csrfToken = this.crypto.random();
     const expiresAt = Math.min(this.clock() + this.config.sessionTtlMs, cap);
     await this.pruneSessions(account, s => s.expiresAt <= this.clock(), { natural: true });
@@ -149,22 +149,34 @@ export class IdentityService {
     while(account.sessions.length>=10){const target=account.sessions.find(s=>!protectedIds.has(s.id)&&!busy(s))??account.sessions.find(s=>!protectedIds.has(s.id));if(!target)fail('conflict');await this.pruneSessions(account,s=>s===target);}
     account.sessions = [...account.sessions, {
       id: this.crypto.id(), label: safeLabel(label), credentialId, source, parentSessionId, ...source==='activation'&&Number.isSafeInteger(activationCredentialAt)?{activationCredentialAt}:{},
+      // DX-7 closure-export: the credential was verified just now, so the session starts stepped up.
+      ...scope==='closure-export'?{scope,stepUpAt:this.clock()}:{},
       hash: await this.crypto.hash('session', sessionToken), csrfToken, expiresAt, createdAt: this.clock(), lastUsedAt: this.clock() }];
     account.lastActiveAt = this.clock(); this.audit(account, 'session-created');
     return { account: await this.projectAccount(account), sessionToken, csrfToken, expiresAt, sessionContext:account.sessions.at(-1).id };
   }
-  async authorized(context, mutation = false) {
+  async authorized(context, mutation = false, { closure = false } = {}) {
     if (mutation) this.origin(context);
     const [id] = tokenParts(context?.sessionToken); const account = await this.repository.get(id);
     const hash = await this.crypto.hash('session', context.sessionToken);
     const session = account?.sessions.find(s => secureEqual(s.hash, hash) && s.expiresAt > this.clock());
-    if (!account || account.status !== 'active' || !session) fail('unauthorized', 'Sign in to continue.');
+    if (!account || !session) fail('unauthorized', 'Sign in to continue.');
+    // DX-7: a closure-export session is accepted only where the caller opted in (export, status, step-up and
+    // sign-out), only for a suspended account whose applied closure still offers an export window.
+    if (session.scope === 'closure-export') { if (!closure || account.status !== 'suspended' || !await this.closureWindow(account)) fail('unauthorized', 'Sign in to continue.'); }
+    else if (session.scope !== undefined || account.status !== 'active') fail('unauthorized', 'Sign in to continue.');
     if(context.expectedOwner&&context.expectedOwner!==account.id)throw Object.assign(new Error('Reload the account chooser before continuing.'),{code:'account_context_conflict',status:409});
     if(context.sessionContext&&context.sessionContext!==await this.sessionID(session))throw Object.assign(new Error('Reload the account chooser before continuing.'),{code:'session_context_conflict',status:409});
     if (mutation && !secureEqual(session.csrfToken, context.csrfToken)) fail('csrf', 'Reload the account page and try again.');
     if(context.requireCurrentTerms===true)this.requireCurrentTerms(account);
     return { account, session };
   }
+  /** The applied closure's export window for a suspended account, or null (DX-7, terms §10). */
+  async closureWindow(account){if(account?.status!=='suspended'||typeof this.closure?.window!=='function')return null;let window;try{window=await this.closure.window(account.id,account.assignmentId);}catch{return null;}return Number.isSafeInteger(window?.exportUntil)&&window.exportUntil>this.clock()?{exportUntil:window.exportUntil}:null;}
+  /** A credential sign-in to a closed account during its export window: a restricted, time-bound session. */
+  async closureSession(account,revision,options){const window=await this.closureWindow(account);if(!window)fail('unauthorized','Authentication failed.');const result=await this.session(account,{...options,scope:'closure-export',expiresAt:Math.min(this.clock()+3600000,window.exportUntil)});await this.save(account,revision);return {...result,account:{...result.account,scope:'closure-export'},scope:'closure-export',closure:window};}
+  /** The restricted owner view for closure-export routes (export and deletion status only). */
+  async closureOwner(context){const {account,session}=await this.authorized(context,false,{closure:true});if(session.scope!=='closure-export')fail('unauthorized','Sign in to continue.');const window=await this.closureWindow(account);return {account:{...await this.projectAccount(account),scope:'closure-export'},scope:'closure-export',closure:window,csrfToken:session.csrfToken,expiresAt:session.expiresAt,authTime:Number.isFinite(this.authAt(session))?this.authAt(session):null,sessionContext:await this.sessionID(session),credentials:[],devices:[],audit:[]};}
   requireCurrentTerms(account){if(account.termsVersion!==this.config.termsVersion)throw Object.assign(new IdentityFault('terms_acceptance_required','Accept the current terms before creating content or granting access.'),{status:403});}
   authAt(session){return Math.max(session.source==='activation'&&Number.isSafeInteger(session.activationCredentialAt)&&session.activationCredentialAt<=this.clock()?session.activationCredentialAt:-Infinity,session.source==='credential'&&Number.isSafeInteger(session.createdAt)&&session.createdAt<=this.clock()?session.createdAt:-Infinity,Number.isSafeInteger(session.stepUpAt)&&session.stepUpAt<=this.clock()?session.stepUpAt:-Infinity);}
   /** Removes sessions and their transitive descendants. Removing a still-live session is an explicit termination
@@ -184,11 +196,11 @@ export class IdentityService {
   }
   async sessionID(session) { return session.id || this.crypto.hash('session-public-id', session.hash); }
   // Privileged consoles need a per-session step-up, not merely a young session.
-  async privileged(context,windowMs=300000){const {account,session}=await this.authorized(context,true);this.requireStepUp(session,windowMs);return {account,session,sessionId:await this.sessionID(session)};}
+  async privileged(context,windowMs=300000){const {account,session}=await this.authorized(context,true,{closure:context?.allowClosure===true});this.requireStepUp(session,windowMs);return {account,session,sessionId:await this.sessionID(session)};}
   requireStepUp(session,windowMs=300000){if(!Number.isSafeInteger(session.stepUpAt)||session.stepUpAt>this.clock()||session.stepUpAt+windowMs<=this.clock())fail('step_up_required','Confirm your password or passkey to continue.');}
-  async stepUpBegin(input,context){const {account,session}=await this.authorized(context,true),revision=account.revision;if(!account.credentials.length)return {password:Boolean(account.passwordHash),passkey:false};const authenticationOptions=await this.webauthn.authenticationOptions({config:this.config});account.challenges=[...account.challenges.filter(c=>c.expiresAt>this.clock()&&c.purpose!=='step-up').slice(-4),{purpose:'step-up',value:authenticationOptions.challenge,sessionHash:session.hash,expiresAt:this.clock()+this.config.challengeTtlMs}];await this.save(account,revision);return {password:Boolean(account.passwordHash),passkey:true,authenticationOptions};}
+  async stepUpBegin(input,context){const {account,session}=await this.authorized(context,true,{closure:true}),revision=account.revision;if(!account.credentials.length)return {password:Boolean(account.passwordHash),passkey:false};const authenticationOptions=await this.webauthn.authenticationOptions({config:this.config});account.challenges=[...account.challenges.filter(c=>c.expiresAt>this.clock()&&c.purpose!=='step-up').slice(-4),{purpose:'step-up',value:authenticationOptions.challenge,sessionHash:session.hash,expiresAt:this.clock()+this.config.challengeTtlMs}];await this.save(account,revision);return {password:Boolean(account.passwordHash),passkey:true,authenticationOptions};}
   async stepUp(input,context){
-    const {account,session}=await this.authorized(context,true),revision=account.revision;if(!await this.rateLimiter.check({operation:'step-up',remoteIP:context.remoteIP,handle:account.handle}))fail('rate_limited','Please wait before trying again.');
+    const {account,session}=await this.authorized(context,true,{closure:true}),revision=account.revision;if(!await this.rateLimiter.check({operation:'step-up',remoteIP:context.remoteIP,handle:account.handle}))fail('rate_limited','Please wait before trying again.');
     if(input.method==='password'){password(input.password);if(!account.passwordHash||!await this.passwordHasher.verify(input.password,account.passwordHash))fail('unauthorized','Authentication failed.');}
     else if(input.method==='passkey'){const challenge=account.challenges.find(c=>c.purpose==='step-up'&&secureEqual(c.sessionHash,session.hash)&&c.expiresAt>this.clock()),credential=account.credentials.find(c=>c.id===input.response?.id);if(!challenge||!credential)fail('unauthorized','Authentication failed.');let verified;try{verified=await this.webauthn.verifyAuthentication({response:input.response,challenge:challenge.value,credential,account,config:this.config});}catch{fail('unauthorized','Authentication failed.');}credential.counter=verified.counter;credential.backedUp=verified.backedUp;account.challenges=account.challenges.filter(c=>c!==challenge);}
     else fail('invalid_method');
@@ -355,6 +367,7 @@ export class IdentityService {
     const dummyHash = await this.dummyPasswordHash;
     const hash = account?.passwordHash || dummyHash;
     const verified = await this.passwordHasher.verify(input.password, hash);
+    if (account?.status==='suspended' && account.passwordHash && verified && await this.closureWindow(account)) return this.closureSession(account, account.revision, { label: input.label });
     if (!account || !['active',...(this.config.requireReachability===true||account?.systemIdentity||account?.onboardingIdentity)?['pending','recovering']:[]].includes(account.status) || !account.passwordHash || !verified) fail('unauthorized', 'Authentication failed.');
     if(account.status!=='active')return this.resumeSetupCredential(account,context);
     const revision = account.revision; const result = await this.session(account, { label: input.label }); await this.save(account, revision); return result;
@@ -364,7 +377,7 @@ export class IdentityService {
     const account = await this.repository.findByHandle(input.handle);
     const authenticationOptions = await this.webauthn.authenticationOptions({ config: this.config });
     const challengeToken = `${account?.id || this.crypto.id()}.${this.crypto.random()}`;
-    if (account?.status === 'active'||(this.config.requireReachability===true||account?.systemIdentity||account?.onboardingIdentity)&&['pending','recovering'].includes(account?.status)) {
+    if (account?.status === 'active'||(this.config.requireReachability===true||account?.systemIdentity||account?.onboardingIdentity)&&['pending','recovering'].includes(account?.status)||await this.closureWindow(account)) {
       const revision = account.revision;
       account.challenges = [...account.challenges.filter(c => c.expiresAt > this.clock() && c.purpose !== 'register').slice(-4),
         { purpose: 'login', value: authenticationOptions.challenge, hash: await this.crypto.hash('challenge', challengeToken), expiresAt: this.clock() + this.config.challengeTtlMs }];
@@ -379,11 +392,13 @@ export class IdentityService {
     const hash = await this.crypto.hash('challenge', input.challengeToken);
     const challenge = account?.challenges.find(c => c.purpose === 'login' && secureEqual(c.hash, hash) && c.expiresAt > this.clock());
     const credential = account?.credentials.find(c => c.id === input.response?.id);
-    if (!account || !['active',...(this.config.requireReachability===true||account?.systemIdentity||account?.onboardingIdentity)?['pending','recovering']:[]].includes(account.status) || !challenge || !credential) fail('unauthorized', 'Authentication failed.');
+    const closed = account?.status==='suspended' && Boolean(await this.closureWindow(account));
+    if (!account || !(closed||['active',...(this.config.requireReachability===true||account?.systemIdentity||account?.onboardingIdentity)?['pending','recovering']:[]].includes(account.status)) || !challenge || !credential) fail('unauthorized', 'Authentication failed.');
     const revision = account.revision; let verified;
     try { verified = await this.webauthn.verifyAuthentication({ response: input.response, challenge: challenge.value, credential, account, config: this.config }); } catch { fail('unauthorized', 'Authentication failed.'); }
     credential.counter = verified.counter; credential.backedUp = verified.backedUp;
     account.challenges = account.challenges.filter(c => c !== challenge);
+    if(closed)return this.closureSession(account,revision,{ label: input.label, credentialId: credential.id });
     if(account.status!=='active')return this.resumeSetupCredential(account,context,revision);
     const result = await this.session(account, { label: input.label, credentialId: credential.id }); await this.save(account, revision); return result;
   }
@@ -601,10 +616,10 @@ export class IdentityService {
     return { removed: true, noticeWaived: waived, notified, account: await this.projectAccount(account) };
   }
   async logoutSaved(input,context){
-    this.origin(context);const {account,session}=await this.authorized(context);const revision=account.revision;await this.pruneSessions(account,s=>s===session);this.audit(account,'session-closed');await this.save(account,revision);return {loggedOut:true};
+    this.origin(context);const {account,session}=await this.authorized(context,false,{closure:true});const revision=account.revision;await this.pruneSessions(account,s=>s===session);this.audit(account,'session-closed');await this.save(account,revision);return {loggedOut:true};
   }
   async logout(input, context) {
-    const { account, session } = await this.authorized(context, true); const revision = account.revision;
+    const { account, session } = await this.authorized(context, true, { closure: true }); const revision = account.revision;
     await this.pruneSessions(account,s=>s===session); this.audit(account, 'session-closed');
     await this.save(account, revision); return { loggedOut: true };
   }

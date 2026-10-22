@@ -64,9 +64,11 @@ self.addEventListener('push',event=>event.waitUntil((async()=>{let payload;try{i
  if(!path||!['scheduled','reminder-3d','reminder-1d','executing'].includes(payload.kind)||typeof payload.title!=='string'||payload.title.length>160||typeof payload.body!=='string'||payload.body.length>2048)return;
  await self.registration.showNotification(payload.title,{body:payload.body,tag:'bindle-deletion-notice:'+payload.owner,data:{type:'bindle-deletion-notice',owner:payload.owner,path}});return;
 }if(payload?.type==='bindle-security-notice'){
- const path=securityNoticePath(payload.owner,payload.path);if(!path||payload.event!=='email-removed')return;
- const spanish=(typeof payload.locale==='string'?payload.locale:self.navigator?.language??'en').split('-')[0]==='es';
- await self.registration.showNotification(spanish?'Correo eliminado':'Email removed',{body:spanish?'Se eliminó el correo de tu cuenta. ¿No fuiste tú? Inicia sesión y protege tu cuenta.':'Your email was removed. Not you? Sign in and secure your account.',tag:'bindle-security-notice:'+payload.owner,data:{type:'bindle-security-notice',owner:payload.owner,path}});return;
+ // Text is fixed here per event; the payload carries no free text (DX-6 email removal, DX-1 export notices).
+ const texts={'email-removed':[['Email removed','Your email was removed. Not you? Sign in and secure your account.'],['Correo eliminado','Se eliminó el correo de tu cuenta. ¿No fuiste tú? Inicia sesión y protege tu cuenta.']],'export-created':[['Data export requested','An export of your account data was requested. Not you? Sign in and cancel it.'],['Exportación solicitada','Se solicitó una exportación de los datos de tu cuenta. ¿No fuiste tú? Inicia sesión y cancélala.']],'export-downloaded':[['Data export downloaded','Your data export was downloaded from a new session. Not you? Sign in and cancel it.'],['Exportación descargada','Tu exportación se descargó desde una nueva sesión. ¿No fuiste tú? Inicia sesión y cancélala.']]};
+ const path=securityNoticePath(payload.owner,payload.path);if(!path||!Object.hasOwn(texts,payload.event))return;
+ const spanish=(typeof payload.locale==='string'?payload.locale:self.navigator?.language??'en').split('-')[0]==='es',[title,body]=texts[payload.event][spanish?1:0];
+ await self.registration.showNotification(title,{body,tag:'bindle-security-notice:'+payload.owner,data:{type:'bindle-security-notice',owner:payload.owner,path}});return;
 }if(payload?.type==='bindle-approval-notice'){
  if(event.data.text().length>4096||!/^([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/.test(payload.owner??'')||typeof payload.title!=='string'||payload.title.length>160||typeof payload.body!=='string'||payload.body.length>2048)return;
  await self.registration.showNotification(payload.title,{body:payload.body,tag:'bindle-approval-notice:'+payload.owner,data:{type:'bindle-approval-notice',owner:payload.owner}});return;

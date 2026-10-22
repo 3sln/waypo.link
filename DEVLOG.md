@@ -2641,3 +2641,45 @@ Gates:
 | DOM, build, dry run | pass |
 | e2e | 214, 4 WebKit environment skips |
 | deletion cancel page (Chromium) | 6 |
+
+## 2026-10-21 — Account deletion and export: DX-7, DX-8 and final integration
+
+**DX-7: admin-assisted deletion and closure.** Admin actions require a passkey step-up, are audited and notify the owner. There is an explicit reopen action, and confirmation links last 24 h. Worker and Node ports cover schedule, cancel, status, confirmation, closure and reopen notices.
+
+**Closure-export sessions.** These are restricted sessions issued to a suspended account with an open export window. They last at most 1 h and never beyond `exportUntil`. The server lets them reach only the session, deletion status and the owner's export routes.
+
+**DX-8: owner "Your data" screen.** It covers export, deletion with a checklist and typed handle, cancel, and email removal with a waiver. It also includes the deletion interstitial, the restricted closure view, and service-worker handling of security and export notices.
+
+**Security fix.** Admin-email scheduling is now bound to the confirmed security epoch and email revision, checked both before and after commit. A stale confirmation returns `confirmation_stale`. A regression test and a 200-seed chaos test cover it.
+
+**Export deferral lifted.**
+- The notice port writes an idempotent audit entry, sends mail best-effort, and pushes.
+- Grants are exported without tokens, token families or JTIs.
+- Keys are exported as public history only.
+- Drive mappings are included.
+- An end-to-end test runs on the real Node adapter: step-up, 72 h delay, generation, download with Range resume, tar contents checked against the manifest, a redaction check, and expiry.
+
+`sessionFeatures()` projects the three DX flags as evaluated values with `private, no-store`.
+
+**Provisional coordinator decision.** Export part writes bypass the monthly archive write allowance (16 writes, meant for cold shelving), which a single small export exhausted. They are bounded instead by the export limits: one active export, two per week, sized to the account. A dedicated metered budget remains an option. Reviewer: ___ Date: ___ Outcome: ___
+
+**Deferred or open:**
+- DX-9: over-quota hook and CLI downloader.
+- DX-6 item 6.
+- Device grants and S3/WebDAV mappings are not in exports.
+- R1-M12 must be decided before the deletion flag is enabled.
+- Q3: Polar sandbox check.
+- [Legal README](docs/legal/README.md) commitments are updated to "implemented, flag-off".
+
+**Gates:**
+
+| Suite | Result |
+|---|---|
+| `npm test` | 2295 |
+| Worker | 76 |
+| UI-state | 291 |
+| admin-deletion | 48 |
+| account-data | 74 |
+| deletion | 6 |
+| DOM, build, dry run | pass |
+| e2e | 214, 4 WebKit environment skips |

@@ -15,6 +15,12 @@ export class IdentityAction extends Action {
     engineFeed.dispatchEvent(new Event('identity-updated'));
   }
 }
+/** DX-7: the restricted closure-export owner, for the export and deletion-status routes only. */
+export class ClosureOwnerQuery extends Query {
+  static deps = ['identity'];
+  constructor(context) { super(); this.context = context; }
+  async fetch({ identity }) { return identity.closureOwner(this.context); }
+}
 export class OwnerQuery extends Query {
   static deps = ['identity'];
   constructor(context) { super(); this.context = context; }
