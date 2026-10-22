@@ -2608,3 +2608,36 @@ Gates:
 | UI-state | 291 |
 | DOM, build, dry run | pass |
 | e2e | 214, 4 WebKit environment skips |
+
+## 2026-10-21 — DX-2 export routes and DX-5 deletion routes and notices integrated
+
+**What landed:**
+- Export routes with edge streaming, Range support and resume, a CLI grant and exact-ref pins.
+- Node `FileBucket` range reads. Reads without a range are byte-identical to before.
+- Deletion routes and a cancel-token page.
+- Mail and push notices carrying the cancel link, through the existing transports. The notices port is guarded so a bad `APP_ORIGIN` holds requests instead of breaking account objects.
+- Service-worker handling for deletion notices, with URLs restricted to two same-origin destinations bound to the account.
+
+**Blob GC.** All physical blob deletes now go through `collectGarbageRef`. With no active export this is the old path. With an export active, a claim-or-defer transaction prevents GC racing an export pin; 120 seeds exercise both outcomes. The proposed storage-quota release rework was not applied: the path is live, and abandoned upload refs can never be pinned.
+
+**Provisional coordinator decisions** on flags-off differences (Reviewer: ___ Date: ___ Outcome: ___):
+- The cancel page and cancel-token endpoint stay live unless the env kill is set, so a ramp-down never strands cancel links already sent. With no request they are inert, and the token endpoint answers `invalid_token`.
+- Deletion and export endpoints now answer 405 for wrong methods and 403 for cross-origin requests, instead of 404. A same-origin GET with the flag off and no state still answers 404.
+- Deletion status answers even under the env kill; cancel refuses under it.
+
+**Deferred:**
+- Exports fail closed (`export_unavailable`) until the export notice/audit port and the keys, grants and external-storage contributors are composed.
+- Node deletion email needs an injected mailer that implements `sendDeletionNotice`.
+- Open from the previous pass: service-worker handling of security notices (DX-8), DX-6 item 6, R1-M12, and the Q3 Polar sandbox check.
+- DX-7 and DX-8.
+
+**Gates:**
+
+| Suite | Result |
+|---|---|
+| `npm test` | 2263 |
+| Worker | 76 |
+| UI-state | 291 |
+| DOM, build, dry run | pass |
+| e2e | 214, 4 WebKit environment skips |
+| deletion cancel page (Chromium) | 6 |

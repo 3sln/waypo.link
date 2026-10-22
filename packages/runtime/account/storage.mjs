@@ -16,6 +16,7 @@ import {EVENT_BUS_CONTRACT} from '../../events/limits.mjs';
 import {LINKS_CONTRACT} from '../../links/types.mjs';
 import {linksResourceMethod} from './links.mjs';
 import {CLASSIFIER_CONTRACT,classifierResourceMethod} from './classifier.mjs'; // EXT-X10
+import {collectGarbageRef} from '../export-pins.mjs';
 
 // Append-only: add one contract handler per slice. Handlers receive (controller,owner,context)
 // and own method validation, live authorization and replay checks before effects or cached results.
@@ -144,7 +145,9 @@ export const methods={
   },
   async collectBlobGarbage({limit=32}={}){
     const retry=await this.metadata.get('storage/garbage-retry');if(!retryReady(retry))return {cleaned:0,paused:Boolean(retry?.paused)};let failed=false;const cursor=await this.metadata.get('blob-garbage-cursor');let rows=await this.metadata.list({prefix:'blob-garbage/',...cursor?{startAfter:cursor}:{},limit});if(!rows.size&&cursor)rows=await this.metadata.list({prefix:'blob-garbage/',limit});
-    let cleaned=0;for(const [path,ref]of rows){try{await this.blobs.delete(ref);await this.metadata.delete(path);cleaned++;}catch{failed=true;/* Retain ownership of retryable garbage. */}}
+    let cleaned=0,deferred=0;for(const [path,ref]of rows){try{if(await collectGarbageRef(this,path,ref)==='deferred')deferred++;else cleaned++;}catch{failed=true;/* Retain ownership of retryable garbage. */}}
+    // DX-2: rows deferred only by an export pin wait an hour instead of re-arming the alarm every minute.
+    if(!failed&&deferred&&!cleaned&&deferred===rows.size){await this.metadata.put('storage/garbage-retry',{failures:0,paused:false,retryAt:Date.now()+3600000,code:'export_pinned',updatedAt:Date.now()});if(rows.size)await this.metadata.put('blob-garbage-cursor',[...rows.keys()].at(-1));return {cleaned,deferred};}
     if(failed)await retryFailure(this.metadata,'storage/garbage-retry',null);else if(!(await this.metadata.list({prefix:'blob-garbage/',limit:1})).size)await this.metadata.delete('storage/garbage-retry');if(rows.size)await this.metadata.put('blob-garbage-cursor',[...rows.keys()].at(-1));return {cleaned};
   },
 };

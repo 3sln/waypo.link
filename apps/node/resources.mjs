@@ -1,4 +1,4 @@
-import {siteGlobal,capability} from '../../packages/flags/read.mjs';
+import {siteGlobal,capability,flagsFor} from '../../packages/flags/read.mjs';
 import {FlagsRuntime,flagWriter} from '../../packages/runtime/flags.mjs';
 import {createNodeFlagStats} from './flag-stats.mjs';
 import {lookup} from 'node:dns/promises';
@@ -17,7 +17,8 @@ import {createNodeFormFetch} from '../../packages/apps/node-form-fetch.mjs';
 import {PlanCatalogRegistry,cachedCatalogPort} from '../../packages/billing/registry.mjs';
 import { DatabaseSync } from 'node:sqlite';
 import { mkdir, readFile, writeFile, rename, unlink, stat, open } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { existsSync, createReadStream } from 'node:fs';
+import { Readable } from 'node:stream';
 import { createHash, randomUUID } from 'node:crypto';
 import { resolve, join, extname } from 'node:path';
 import {nodeSqlPort} from '../../packages/search/index.mjs';
@@ -38,6 +39,8 @@ import {attachAppSessions} from '../../packages/federation/device-authorization.
 import {lifecycleIdentityPort,lifecycleAdminHoldPort,deletionHoldPort,deletionAdminAuthorityPort} from '../../packages/identity/lifecycle-tombstone.mjs';
 import {identitySecurityPort} from '../../packages/identity/service.mjs';
 import {deletionDueIndex,sweepDeletionDue} from '../../packages/runtime/account-deletion.mjs';
+import {createDeletionNotices} from '../../packages/runtime/deletion-notices.mjs';
+import {createExportAdapterPorts} from '../../packages/runtime/account/exports.mjs';
 import {lifecycleMode} from '../../packages/runtime/lifecycle-runner.mjs';
 import {LifecycleSweep} from '../../packages/runtime/lifecycle-scheduler.mjs';
 import {createPushTransport} from '../../packages/messaging/web-push.mjs';
@@ -73,7 +76,21 @@ export class FileBucket {
  constructor(directory){this.directory=directory;}
  path(key){return join(this.directory,createHash('sha256').update(key).digest('hex'));}
  async put(key,content){await mkdir(this.directory,{recursive:true,mode:0o700});const destination=this.path(key),temporary=destination+'.'+randomUUID();const bytes=typeof content==='string'?content:new Uint8Array(content);try{const file=await open(temporary,'wx',0o600);try{await file.writeFile(bytes);await file.sync();}finally{await file.close();}await rename(temporary,destination);}catch(error){try{await unlink(temporary);}catch{}throw error;}const directory=await open(this.directory,'r');try{await directory.sync();}finally{await directory.close();}return {key};}
- async get(key){const path=this.path(key);try{const size=(await stat(path)).size;return {size,arrayBuffer:async()=>{const b=await readFile(path);return b.buffer.slice(b.byteOffset,b.byteOffset+b.byteLength);},text:async()=>(await readFile(path)).toString('utf8'),json:async()=>JSON.parse((await readFile(path)).toString('utf8'))};}catch(error){if(error.code==='ENOENT')return null;throw error;}}
+ // DX-2 (R1-M9): an optional single range, and a lazily opened streaming body. Without a range the object reads
+ // exactly as before.
+ async get(key,{range}={}){
+  const path=this.path(key);try{
+   const size=(await stat(path)).size;
+   if(range!==undefined&&(!Number.isSafeInteger(range?.offset)||range.offset<0||!Number.isSafeInteger(range.length)||range.length<0))throw new RangeError('Invalid object range');
+   const offset=range?.offset??0,length=range?Math.max(0,Math.min(range.length,size-offset)):size;let body;
+   const bytes=async()=>{const b=await readFile(path);return range?b.subarray(offset,offset+length):b;};
+   return {size,
+    get body(){return body??=(length?Readable.toWeb(createReadStream(path,{start:offset,end:offset+length-1})):new Blob([]).stream());},
+    arrayBuffer:async()=>{const b=await bytes();return b.buffer.slice(b.byteOffset,b.byteOffset+b.byteLength);},
+    text:async()=>(await bytes()).toString('utf8'),
+    json:async()=>JSON.parse((await bytes()).toString('utf8'))};
+  }catch(error){if(error.code==='ENOENT')return null;throw error;}
+ }
  async delete(keys){let deleted=false;for(const key of Array.isArray(keys)?keys:[keys])try{await unlink(this.path(key));deleted=true;}catch(error){if(error.code!=='ENOENT')throw error;}if(deleted){const directory=await open(this.directory,'r');try{await directory.sync();}finally{await directory.close();}}}
 }
 export async function nodeResources({directory,config,formTransport,mailer}){
@@ -94,7 +111,7 @@ export async function nodeResources({directory,config,formTransport,mailer}){
  // Restore the one bounded waitlist expiry alarm even before its next visitor.
  await guardFor('signup:waitlist:v1');
  const eventWaits=memoryBusWaits(),eventConfig=eventWaits?{EVENT_BUS_WAITER:eventWaits,EVENT_BUS_WAITS_MOUNTED:true}:{};
- let integrationConfig={};const deletionPorts={},deletionConfig={ACCOUNT_DELETION_PORTS:deletionPorts};// filled once the shards exist (below)
+ let integrationConfig={};const deletionPorts={},deletionConfig={ACCOUNT_DELETION_PORTS:deletionPorts,exportPorts:createExportAdapterPorts({repository})};// filled once the shards exist (below)
  const accounts={get:id=>{
    if(!/^[a-f0-9-]{36}$/.test(id))throw new Error('Invalid account identifier');
    if(!accountMap.has(id)){const metadata=new SqliteMetadata(join(directory,'accounts',id+'.sqlite'));const controller=flagWriter(new AccountController({metadata,gate:new SerialGate(),blobs,archives,config:{...config,...integrationConfig,...lifecycleConfig,...deletionConfig,...eventConfig,FORM_POSTBACK_TRANSPORT:formTransport,DEVELOPER_CONTACT_POPULATION:population,BILLING_CATALOG:catalog,FEDERATION_IDENTITY_CHECK:async(owner,epoch)=>{const account=await repository.get(owner);return account?.status==='active'&&await federationEpoch(account)===epoch;},WORK_AUTHORITY:abuse,CONVERSATION_ACCOUNT:owner=>accounts.get(owner),IDENTITY_ACCOUNT:async owner=>{const account=await repository.get(owner);return account?{status:account.status,handle:account.handle}:null;}},sql:metadata.sql}),flagsRuntime,{flagStats});metadata.onAlarm=()=>controller.alarm();metadata.getAlarm().then(time=>{if(time)metadata.arm(time);});accountMap.set(id,{metadata,controller});}return accountMap.get(id).controller;
@@ -132,6 +149,8 @@ export async function nodeResources({directory,config,formTransport,mailer}){
   erasure:{federation:{eraseSubject:async owner=>existsSync(join(directory,'federation',`${FEDERATION_LAYOUT}-${owner}.sqlite`))?federationShard(owner).eraseSubject():{deleted:0,absent:true}},
    mcp:{eraseSubject:async owner=>{let deleted=0;for(let n=0;n<MCP_SHARDS;n++){const shard=String(n).padStart(2,'0');if(!existsSync(join(directory,'mcp',`mcp-auth-v1-64-${shard}.sqlite`)))continue;const result=await mcpShard(shard).invoke('eraseSubject',[owner]);if(!result.ok)throw Object.assign(new Error(result.error.message),result.error);deleted+=result.result.deleted;}return {deleted};}},
    emailBridge:null,operatorApps:null}});
+ // DX-5 notices over the injected mailer (sendDeletionNotice) and Web Push. An unusable origin leaves it unwired.
+ try{deletionPorts.notices=createDeletionNotices({origin:config.APP_ORIGIN,flags:{for:ctx=>flagsFor(config,ctx)},mail:mailer??null,push:createPushTransport(config)});}catch{/* requests hold before commit */}
  const federation=federationAuthority({config:{...config,...integrationConfig,...eventConfig},repository,directory:clientDirectory,manifestMounts:{deviceAuthorization:deviceMounted,messagingAddress:messagingAddressMounted({...config,...integrationConfig})},shard:federationShard});
  // The pre-owner authorization-entry store, sharded by entry ID like the MCP stores (one SQLite file per shard, each
  // pruned by its own alarm); null unless FEDERATION_ENTRY_ENABLED. packages/runtime/http.mjs mounts the provider
@@ -160,6 +179,8 @@ export async function nodeResources({directory,config,formTransport,mailer}){
   const run=()=>sweepDeletionDue({index:deletionDue,accounts}).catch(()=>{});lifecycleTimers=[setTimeout(run,60000),setInterval(run,6*3600000)];for(const timer of lifecycleTimers)timer.unref();
  }
  linkedLimits={consume:(key,window)=>abuse.consume('linked-v1:'+key,window)};
+ // DX-2: the edge export stream reads parts and payloads directly from the buckets, as the Worker's bindings do.
+ Object.assign(integrationConfig,{BLOBS:blobs,ARCHIVES:archives});
  const attachDeviceGrant=({linked,drain})=>{if(!deviceMounted)return;device.linked=linked;device.drain=drain;for(const {controller}of federationMap.values())attachAppSessions(controller.service,{linked,config});};
  return {flagsRuntime,flagStats,integrationConfig,incremental,eventWaits,repository,deviceRequests,linkedLimits,linkedPollLimits,accounts,abuse,population,assets,mcp,federation,federationShard,attachDeviceGrant,brokering,federationEntries:federationEntryStore,adminStore,catalog,close(){const statsClosed=flagStats.close();incrementalDb?.close();brokeringDb?.close();for(const timer of lifecycleTimers)clearTimeout(timer);lifecycleDb?.close();catalogDb.close();adminDb.close();for(const {db}of entryShards.values())db.close();identities.close();deviceDb.close();for(const {metadata}of accountMap.values())metadata.close();for(const {metadata}of guardMap.values())metadata.close();for(const {metadata}of mcpMap.values())metadata.close();for(const {metadata}of federationMap.values())metadata.close();return statsClosed;}};
 }

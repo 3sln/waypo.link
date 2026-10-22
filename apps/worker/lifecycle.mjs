@@ -10,6 +10,9 @@ import {FEDERATION_LAYOUT} from '../../packages/runtime/federation.mjs';
 import {mcpAuthorities} from '../../packages/mcp/runtime.mjs';
 import {MCP_LAYOUT} from '../../packages/mcp/service.mjs';
 import {eraseOwner} from '../../packages/email-bridge/owner.mjs';
+import {createDeletionNotices} from '../../packages/runtime/deletion-notices.mjs';
+import {createExportAdapterPorts} from '../../packages/runtime/account/exports.mjs';
+import {flagsFor} from '../../packages/flags/read.mjs';
 import {mailTransport} from './email.mjs';
 import {createPushTransport} from '../../packages/messaging/web-push.mjs';
 
@@ -33,7 +36,13 @@ export function workerDeletionConfig(env){
  const repository=repositoryOf(env),admin=env.ADMIN_AUTHORITY?remoteAdminStore((method,args)=>env.ADMIN_AUTHORITY.get(env.ADMIN_AUTHORITY.idFromName('admin-v1')).invoke(method,args)):null;
  const scheduler=env.LIFECYCLE_SCHEDULER?()=>env.LIFECYCLE_SCHEDULER.get(env.LIFECYCLE_SCHEDULER.idFromName(LIFECYCLE_SCHEDULER_NAME)):null;
  const mcp=env.MCP_AUTH?mcpAuthorities(shard=>({invoke:(method,args)=>env.MCP_AUTH.get(env.MCP_AUTH.idFromName(`${MCP_LAYOUT}-${shard}`)).invoke(shard,method,args)})):null;
- return {ACCOUNT_DELETION_PORTS:{
+ // DX-5 notices over the existing accounts@ mail and Web Push transports. An unusable origin leaves the port unwired
+ // (requests then hold before commit) rather than breaking the account object.
+ let notices;try{notices=createDeletionNotices({origin:env.APP_ORIGIN,flags:{for:ctx=>flagsFor(env,ctx)},mail:mailTransport(env),push:createPushTransport(env)});}catch{notices=undefined;}
+ // DX-2: trusted export ports. The audit/notice port and the keys, grants and external-storage projections are
+ // not composed yet, so export creation fails closed (export_unavailable) even with ACCOUNT_EXPORT_ENABLED on.
+ return {exportPorts:createExportAdapterPorts({repository}),ACCOUNT_DELETION_PORTS:{
+  ...notices?{notices}:{},
   identity:lifecycleIdentityPort(repository),security:identitySecurityPort(repository),hold:deletionHoldPort({store:admin,repository}),adminAuthority:deletionAdminAuthorityPort({store:admin,repository}),
   erasure:{
    federation:env.FEDERATION?{eraseSubject:owner=>env.FEDERATION.get(env.FEDERATION.idFromName(`${FEDERATION_LAYOUT}/${owner}`)).eraseSubject(owner)}:null,

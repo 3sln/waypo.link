@@ -402,3 +402,25 @@ test('billing races: a cancel that commits while cancel-at-period-end is in flig
  const y=await deletionFixture(t);await y.request();await y.metadata.put(PURGE_KEY,{version:1,owner:OWNER,reason:'inactive',plan:PURGE_PLANS.lifecycle,stage:'identity'});await y.toDeadline();
  assert.equal((await y.step()).reason,'inactivity-purge-running');assert.equal(await y.metadata.get(FENCE_KEY),undefined);
 });
+
+test('end to end with the real DX-5 notices port: request, accepted notice, grace, commit, erasure, completion notice, tombstone',async t=>{
+ const {createDeletionNotices}=await import('../packages/runtime/deletion-notices.mjs');
+ const x=await deletionFixture(t),mails=[],pushes=[];
+ const mail={async sendDeletionNotice({email,notice}){mails.push({email,kind:notice.kind,cancellable:notice.cancellable,token:notice.cancelToken});return {messageId:'mail-'+mails.length};}};
+ const push={async send(subscription,payload){pushes.push({endpoint:subscription.endpoint,kind:payload.kind,path:payload.path});return {accepted:true};}};
+ const notices=createDeletionNotices({origin:'https://deletion.example',flags:x.flagPort,mail,push});t.after(()=>notices.dispose());
+ x.ports.notices=notices;
+ const scheduled=await x.request();assert.equal(scheduled.notice.accepted,true);
+ assert.deepEqual(mails.map(m=>[m.email,m.kind,m.cancellable]),[[EMAIL,'scheduled',true]]);
+ assert.equal(pushes[0].endpoint,'https://push.example/p1');assert.match(pushes[0].path,new RegExp(`^/account/deletion/cancel#owner=${OWNER}&token=[A-Za-z0-9_-]{43}$`));
+ // The mailed cancel-only token works through the engine operation while scheduled (verified, then a fresh request).
+ assert.equal((await x.cancelToken(mails[0].token)).state,'cancelled');
+ x.clock.advance(3600000);await x.request({operationId:'op-e2e-second-012345'});
+ // Grace: reminders at T-3 and T-1 days, then commit and the full erasure order to the tombstone.
+ const results=await x.run();assert.equal(results.at(-1).action,'deleted');
+ const kinds=mails.map(m=>m.kind);assert.deepEqual(kinds,['scheduled','scheduled','reminder-3d','reminder-1d','executing','completed']);
+ assert.deepEqual(pushes.map(p=>p.kind),['scheduled','scheduled','reminder-3d','reminder-1d','executing'],'the completion notice is email only');
+ assert.equal(mails.at(-1).cancellable,false);assert.equal(mails.at(-1).token,undefined);
+ assert.deepEqual(await x.rows(),['lifecycle/tombstone-v1','owner']);assert.equal((await x.repository.get(OWNER)).status,'deleted');
+ assert.deepEqual(x.erased,{federation:1,mcp:1,emailBridge:1});assert.equal(x.blobs.map.has(`objects/${OWNER}/res/v0`),false);
+});

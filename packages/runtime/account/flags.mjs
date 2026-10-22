@@ -17,6 +17,9 @@ export class AccountFeatureState extends AppQuery{
  const any=async(prefix,predicate)=>{let startAfter;for(;;){const rows=await store.list({prefix,limit:64,...startAfter?{startAfter}:{}});for(const row of rows.values())if(predicate(row))return true;if(rows.size<64)return false;startAfter=[...rows.keys()].at(-1);}},state={};
   state.ACTIVITY_V2_ENABLED=await any(key('activity-item',owner),r=>live(r,owner)&&r.state==='active'&&(r.expiresAt==null||r.expiresAt>clock.now()));
   state.EVENT_BUSES_ENABLED=await any('evbus/bus/',r=>live(r,owner)&&r.state==='active');
+  // DX-1/DX-3 stateful flags: an existing export job or deletion request stays serviceable through a ramp-down.
+  state.ACCOUNT_EXPORT_ENABLED=await store.get('export/active')!==undefined;
+  state.ACCOUNT_DELETION_ENABLED=['scheduled','executing'].includes((await store.get('deletion/request-v1'))?.state);
   state.INTEGRATIONS_ENABLED=await any('resource/',r=>live(r,owner)&&r.kind==='app-connection'&&!!r.integration);
   state.EXTENSIONS_ENABLED=await any('connections/slot/',r=>r?.occupants?.length>0);
   state.BINDLEBOX_ENABLED=await any('link/',r=>live(r,owner))||await any(key('key-delegation',owner),r=>live(r,owner));

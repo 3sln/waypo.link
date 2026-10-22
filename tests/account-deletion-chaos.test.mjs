@@ -260,3 +260,27 @@ test('cross-slice: an export step that fences after its puts deletes exactly wha
  assert.deepEqual([...archives.map.keys()],[],'the fenced cursor commit deletes its writes');
  await assert.rejects(exporter.step(OWNER),{code:'account_deleting'});
 });
+
+test('GC pin race: a garbage sweep and DX-1 pinning the same ref linearize; a ready export never indexes deleted bytes',async t=>{
+ const {collectGarbageRef}=await import('../packages/runtime/export-pins.mjs');const tally={};
+ await forEachSeed(RUNS||120,async random=>{
+  const clock=fakeClock(),store=new MemoryMetadata(),blobs=bytesBucket(),archives=bytesBucket(),scheduler=createScheduler(random);await store.put('owner',OWNER);
+  const big=new Uint8Array(300*1024).fill(7),ref=`messages/${OWNER}/m0`;await blobs.put(ref,big);
+  // The message row was deleted after the pager read its page: its ref sits in blob-garbage/.
+  await store.put('blob-garbage/g1',ref);
+  const flags={for:()=>({enabled:()=>true,background:()=>true,global:()=>true})},sStore=scheduler.wrap(store,'account'),sBlobs=scheduler.wrap(blobs,'blobs');
+  const contributors=[{name:'messages',version:1,async page(){return {rows:[{id:'m0'}],payloads:[{entryId:'m0',path:'data/messages/m0/0.bin',kind:'message',source:{message:'m0',part:0},ref,size:big.length}],done:true};}}];
+  const exporter=new AccountExport({accountStore:sStore,archives,blobs:sBlobs,clock,random:{uuid:()=>crypto.randomUUID()},flags,config:{APP_ORIGIN:'https://issuer.example'},identitySecurity:async()=>({epoch:0,changedAt:0}),digest:createExportDigest(),quota:async()=>10000000,notice:async()=>{},contributors});
+  await exporter.create(OWNER,{operationId:crypto.randomUUID()},{kind:'owner',owner:OWNER,sessionId:'s',stepUpAt:clock.now()});
+  const c={metadata:sStore,blobs:sBlobs};
+  await scheduler.run([async()=>{for(let i=0;i<8;i++){try{const out=await exporter.step(OWNER);if(out.wakeAt>clock.now()+2000)return;}catch(error){return error.code;}}},()=>collectGarbageRef(c,'blob-garbage/g1',ref)]);
+  for(let i=0;i<8;i++){try{const out=await exporter.step(OWNER);if(out.wakeAt>clock.now()+2000)break;}catch{break;}}
+  const id=await store.get('export/active')??(await store.get('export/history'))?.at(-1)?.id,job=await store.get('export/job/'+id);
+  tally[job.state]=(tally[job.state]??0)+1;
+  if(job.state==='ready')assert.equal(blobs.map.has(ref),true,'a ready export keeps every referenced payload');
+  else {assert.equal(job.state,'failed');assert.equal(job.failure,'export_payload_missing');}
+  // Deferred garbage is collected once the export is cancelled and its pins released.
+  if(job.state==='ready'){await exporter.cancel(OWNER,job.id);await collectGarbageRef({metadata:store,blobs},'blob-garbage/g1',ref);assert.equal(blobs.map.has(ref),false);}
+ });
+ t.diagnostic(`export outcomes: ${JSON.stringify(tally)}`);
+});

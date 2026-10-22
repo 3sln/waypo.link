@@ -27,6 +27,7 @@ import * as site from './site.mjs';
 import * as admin from './admin.mjs';
 import * as identity from './identity.mjs';
 import * as lifecycle from './lifecycle.mjs';
+import * as deletion from './deletion.mjs';
 import * as automation from './automation.mjs';
 import * as conversations from './conversations.mjs';
 import * as beams from './beams.mjs';
@@ -47,8 +48,9 @@ import * as appSessions from './app-sessions.mjs';
 import * as integrations from './integrations.mjs';
 import * as connections from './connections.mjs';
 import * as emailBridge from './email-bridge.mjs';
+import * as exports from './exports.mjs';
 
-export const ROUTES=Object.freeze([site,admin,identity,lifecycle,automation,conversations,beams,contacts,delivery,messages,views,storage,billing,search,notifications,federation,links,delegation,incremental,events,appSessions,integrations,connections,emailBridge]);
+export const ROUTES=Object.freeze([site,admin,identity,lifecycle,deletion,automation,conversations,beams,contacts,delivery,messages,views,storage,billing,search,notifications,federation,links,delegation,incremental,events,appSessions,integrations,connections,emailBridge,exports]);
 export const STAGES=Object.freeze(['edge','public','anonymous','unauthenticated','api','session','beforeActivity','owner','pages']);
 for(const module of ROUTES)for(const name of Object.keys(module.stages??{}))if(!STAGES.includes(name))throw new TypeError(`Unknown route stage ${name}`);
 

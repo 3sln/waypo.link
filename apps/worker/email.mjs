@@ -4,6 +4,7 @@ import { emailLogoBase64 } from '../../packages/branding/email-logo.mjs';
 import { createLocalization } from '../../packages/i18n/index.mjs';
 import { waitlistMailLocalization } from '../../packages/i18n/waitlist-mail.mjs';
 import { UUID } from '../../packages/core/primitives.mjs';
+import {deletionNoticeTemplate} from '../../packages/runtime/deletion-notices.mjs';
 
 const SENDER_ROLES = Object.freeze({
   link: 'verify', login: 'login', reminder: 'notify',
@@ -110,6 +111,11 @@ export function mailTransport(env = {}) {
     return send({ from, to: email, subject: format(subject), text: `${format(text)}\n\nOpen ${origin}/console\n\nIf you did not request this change, review your account security in your personal space.` });
   };
   return {
+    // DX-5: deletion notices carry the cancel-only link in a fragment, from the fixed accounts@ sender.
+    async sendDeletionNotice({email,notice,locale='en'}) {
+      const template=deletionNoticeTemplate(notice,{origin,locale});
+      return send({from:senders.account,to:email,subject:template.subject,text:template.text});
+    },
     async sendApprovalNotice({email,notice,locale='en'}) {
       if(!siteGlobal(env,'DEVICE_AUTHORIZATION_ENABLED',true))return {enabled:false};
       const template=approvalNoticeTemplate(notice,{origin,locale});

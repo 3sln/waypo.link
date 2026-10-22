@@ -26,6 +26,7 @@ import {AppConnections} from '../apps/connections.mjs';
 import {retryReady,retryTime,retryFailure} from './cleanup-retry.mjs';
 import {lifecycleMethods,lifecycleBlocked,lifecycleActivity,lifecycleTick} from './lifecycle-runner.mjs';
 import {armAlarm,alarmFenced} from './account-deletion.mjs';
+import {collectGarbageRef} from './export-pins.mjs';
 import {BeamService} from '../beaming/index.mjs';
 import {BeamContacts} from '../beaming/contacts.mjs';
 import {ContactTokenService,ContactEndpointService,MessagingService,NotificationService} from '../../packages/messaging/index.mjs';
@@ -197,7 +198,7 @@ export class AccountController {
         delete:async k=>{const value=await tx.get(k);if(value?.blobRef){const garbageKey=`blob-garbage/${crypto.randomUUID()}`;await tx.put(garbageKey,value.blobRef);garbage.push({key:garbageKey,blobRef:value.blobRef});const alarm=typeof tx.getAlarm==='function'?await tx.getAlarm():null;await tx.setAlarm?.(alarm?Math.min(alarm,Date.now()+60000):Date.now()+60000);}if(k.startsWith('message/')&&value){await erasePostbackPreparations(tx,value.owner,value.id);await erasePresentations(tx,value,garbage);await this.queueMessageSearch(tx,value,'tombstone');this.itemIndex?.remove(value.id);}await tx.delete(k);},
         list:async prefix=>[...(await tx.list({prefix}))].map(([key,value])=>{if(value?.blobRef){const {blobRef,...record}=value;return {key,value:record};}return {key,value};})
       }));
-      for(const {key,blobRef}of garbage){try{await this.blobs.delete(blobRef);await this.metadata.delete(key);}catch{/* Ownership was committed with logical deletion; GC can retry after a crash. */}}
+      for(const {key,blobRef}of garbage){try{await collectGarbageRef(this,key,blobRef);}catch{/* Ownership was committed with logical deletion; GC can retry after a crash. */}}
       return result;
     }};
     this.store=store;this.tokens=new ContactTokenService({store,issuer:config.APP_ORIGIN,allowInsecureLocalhost:config.LOCAL_DEVELOPMENT==='true'});
@@ -283,6 +284,9 @@ export class AccountController {
     const deletion=await this.deletionAlarm();deletionWake=deletion.wakeAt;if(deletion.stop)return;
     if((await lifecycleTick(this,{source:'alarm'})).action==='deleted')return;
     if(await alarmFenced(this.metadata))return;
+    // DX-2: export generation and expiry only when no deletion fence or purge job exists (checked above and again
+    // inside every generation transaction). It never runs while fenced, so E6 owns cleanup from the fence on.
+    await this.exportAlarm();
     await this.alarmMaintenance();
     }finally{if(Number.isSafeInteger(deletionWake))await armAlarm(this.metadata,deletionWake);}
   }
