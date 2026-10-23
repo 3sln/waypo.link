@@ -1,4 +1,4 @@
-import {capability} from '../flags/read.mjs';
+import {siteGlobal,capability} from '../flags/read.mjs';
 // EXT-X8 brokered consumer tokens, severance draining and introspection (docs/spec/integrations.md §5.1, §5.3–§5.5,
 // §5.7, §6.2, §7; extensibility-design X8; AMD-C3/C8/C9/C10). Engine-first: `brokeredTokensProvider` is the
 // system-scoped handle over the account store, used beside the X7 `brokeredResources` provider; the Actions/Queries
@@ -38,7 +38,7 @@ import {UUID} from '../core/primitives.mjs';
 import {REVIEWED_CONTRACTS} from '../consent/reviewed-contracts.mjs';
 import {brokeredResourcesProvider,readConnection,integrationsFlag,brokeringFlag} from './brokered.mjs';
 import {peekAccessToken,BROKERING_JWKS_PATH,ACCESS_LIFETIMES} from './signing.mjs';
-import {pinnedKeys} from './integrations.mjs';
+import {contractReferences,pinnedKeys} from './integrations.mjs';
 import {enqueueIntegrationEvent,currentSeq} from '../runtime/integration-events.mjs';
 import {PREFERENCES_V2} from './service.mjs';
 
@@ -64,13 +64,13 @@ const b64u=bytes=>{let s='';for(const b of bytes)s+=String.fromCharCode(b);retur
 // ---- Contract pins (AMD-C10): method effects decide write capability; unknown effects count as writes ----
 /** Pins: {[contract]: {methods: {[name]: {effect, introspect?}}, brokerable?}}. The reviewed catalogue is the base;
  * `extra` (trusted composition data, never request input) adds or overrides contracts. */
-export function contractPins(extra={}){
- const out={};for(const [contract,entry] of Object.entries(REVIEWED_CONTRACTS))out[contract]={methods:Object.fromEntries(Object.entries(entry.methods).map(([m,v])=>[m,{effect:v.effect}]))};
+export function contractPins(extra={},{artefactVersions=false}={}){
+ const out={};for(const [contract,entry] of Object.entries(REVIEWED_CONTRACTS))out[contract]={methods:Object.fromEntries(Object.entries(entry.methods).map(([m,v])=>[m,{effect:v.effect}])),...artefactVersions&&entry.version!==undefined?contractReferences({[contract]:entry})[contract]:{}};
  const more=typeof extra==='string'?JSON.parse(extra):extra??{};if(!plain(more))throw new TypeError('Brokered contract pins must be an object.');
  for(const [contract,entry] of Object.entries(more)){
   if(!https(contract,512)||!plain(entry)||!plain(entry.methods)||entry.brokerable!==undefined&&typeof entry.brokerable!=='boolean'||Object.keys(entry.methods).length>64)throw new TypeError(`Invalid brokered contract pin ${contract}.`);
   const methods={};for(const [m,v] of Object.entries(entry.methods)){if(!METHOD.test(m)||!plain(v)||typeof v.effect!=='string'||v.introspect!==undefined&&typeof v.introspect!=='boolean')throw new TypeError(`Invalid brokered method pin ${contract}#${m}.`);methods[m]={effect:v.effect,...v.introspect?{introspect:true}:{}};}
-  out[contract]={methods,...entry.brokerable===false?{brokerable:false}:{}};
+  out[contract]={methods,...artefactVersions&&entry.version!==undefined?contractReferences({[contract]:entry})[contract]:{},...artefactVersions&&entry.schema?{schema:structuredClone(entry.schema)}:{},...entry.brokerable===false?{brokerable:false}:{}};
  }
  return Object.freeze(out);
 }
@@ -93,8 +93,8 @@ export const brokeredResourceId=(subject,record)=>`${subject}/resources/brokered
 /** `store`: the account store (X7 records, X4 connections, X6 rows). `mint(claims)` -> {token, tokenType, expiresAt}:
  * mintAccessToken over the brokering key set for app consumers. `enqueue(tx, event, {now})` and `seq(tx, connection)`:
  * the X6 same-commit outbox and configuration `seq`. `introspection`: the endpoint is mounted (write methods mintable). */
-export function brokeredTokensProvider({store,issuer,enabled=false,mint,pins=contractPins(),introspection=false,enqueue,seq,clock=()=>Date.now()}={}){
- return class extends BrokeredTokensProvider{static deps=[];constructor(){super();Object.assign(this,{store,issuer,enabled:enabled===true,mint,pins,introspection:introspection===true,enqueue,seq,clock});}};
+export function brokeredTokensProvider({store,issuer,enabled=false,mint,pins=contractPins(),introspection=false,artefactVersions=false,enqueue,seq,clock=()=>Date.now()}={}){
+ return class extends BrokeredTokensProvider{static deps=[];constructor(){super();Object.assign(this,{store,issuer,enabled:enabled===true,mint,pins,introspection:introspection===true,artefactVersions:artefactVersions===true,enqueue,seq,clock});}};
 }
 export class BrokeredTokensProvider extends Provider{
  async obtain({actor}={}){
@@ -122,17 +122,18 @@ function scope(p,actor){
    * intersected with the pinned descriptor); they are attenuated again here. */
   async mint(br,input){
    system();if(typeof p.mint!=='function')fault('brokering_unavailable','Brokered tokens are unavailable.',503);
-   const v=only(input,['clientId','record','fragment','field','methods','jkt']);
+   const v=only(input,['clientId','record','fragment','field','methods','jkt',...p.artefactVersions?['cv']:[]]);
    if(!https(v.clientId)||v.clientId===p.issuer||typeof v.record!=='string'||!UUID.test(v.record)||!https(v.fragment,256)||typeof v.field!=='string'||!FIELD.test(v.field)||v.jkt!==undefined&&(typeof v.jkt!=='string'||!JKT.test(v.jkt)))invalid();methodsInput(v.methods);
    const mark=(await br.severance({limit:1})).seq;
    const {record,assignment}=await assignmentOf(br,v.record,a=>a.consumer.clientId===v.clientId&&a.binding.fragment===v.fragment&&a.binding.field===v.field);
    let c;try{c=await br.mintable({record:record.id,grant:assignment.grant});}catch(e){if(e?.code==='not_found')unavailable();throw e;}
    if(c.clientId!==v.clientId||c.feature!==undefined)unavailable();
    const revoked=await revokedAt(br,c.grant,c.connection);if(revoked&&p.clock()<revoked+ACCESS_ENDS_BY_MS)unavailable();
+   const cv=p.artefactVersions?contractReferences(v.cv??{},Object.keys(v.methods)):undefined;
    const methods=attenuate(v.methods,c.contracts,p.pins,{introspection:p.introspection});if(!Object.keys(methods).length)unavailable();
    // §5.4: a DPoP-bound consumer is always bound where the integration supports it; `required` without a key mints nothing.
    if(c.dpop==='required'&&!v.jkt)unavailable();const jkt=['supported','required'].includes(c.dpop)?v.jkt:undefined;
-   const signedAt=p.clock(),minted=await p.mint({subject:c.subject,audience:c.audience,clientId:v.clientId,purpose:'invoke',connection:c.connection,generation:c.generation,resource:c.resource,grant:c.grant,methods,scope:null,...jkt?{jkt}:{}});
+   const signedAt=p.clock(),minted=await p.mint({subject:c.subject,audience:c.audience,clientId:v.clientId,purpose:'invoke',connection:c.connection,generation:c.generation,resource:c.resource,grant:c.grant,methods,scope:null,...p.artefactVersions?{cv:contractReferences(cv,Object.keys(methods))}:{},...jkt?{jkt}:{}});
    if(typeof minted?.token!=='string'||!Number.isSafeInteger(minted.expiresAt)||minted.expiresAt>signedAt+ACCESS_LIFETIMES.invoke*1000+1000||!['Bearer','DPoP'].includes(minted.tokenType))fault('brokering_unavailable','Brokered tokens are unavailable.',503);
    // Confirm (§7.4): nothing that invalidates this token committed between the check and now.
    let again;try{again=await br.mintable({record:record.id,grant:assignment.grant});}catch{unavailable();}
@@ -153,9 +154,9 @@ function scope(p,actor){
   },
   /** Live checks for introspection (account half). Inactive is `{active:false}`, never a fault. */
   async introspect(br,input){
-   system();const v=only(input,['connection','generation','resource','grant','methods','clientId','audience','iat']);
+   system();const v=only(input,['connection','generation','resource','grant','methods','clientId','audience','iat',...p.artefactVersions?['cv']:[]]);
    try{
-    if(!Number.isSafeInteger(v.iat)||typeof v.connection!=='string'||!Number.isSafeInteger(v.generation)||typeof v.resource!=='string'||typeof v.grant!=='string'||!https(v.clientId)||v.clientId===p.issuer||typeof v.audience!=='string')return {active:false};methodsInput(v.methods);
+    if(!Number.isSafeInteger(v.iat)||typeof v.connection!=='string'||!Number.isSafeInteger(v.generation)||typeof v.resource!=='string'||typeof v.grant!=='string'||!https(v.clientId)||v.clientId===p.issuer||typeof v.audience!=='string')return {active:false};methodsInput(v.methods);if(p.artefactVersions)contractReferences(v.cv,Object.keys(v.methods));
     const c=await connectionOf(v.connection);if(!c?.serving||c.manifest.resources?.rpc_endpoint!==v.audience)return {active:false};
     const {records}=await br.records({connection:v.connection}),r=records.find(x=>x.resource===v.resource&&x.assignments.some(a=>a.grant===v.grant)),a=r?.assignments.find(x=>x.grant===v.grant);
     if(!r||a.consumer.clientId!==v.clientId||!a.binding.fragment)return {active:false};
@@ -217,9 +218,9 @@ export const BROKERED_TOKEN_OPERATIONS=operations(MintBrokeredToken,BrokeredDesc
 // The X7 provider needs a discovery client to obtain; nothing here performs discovery, so every call refuses.
 const NO_DISCOVERY=Object.freeze({forget(){},endpoint(){fault('discovery_unavailable','Discovery is not available here.',503);},discover(){fault('discovery_unavailable','Discovery is not available here.',503);},call(){fault('discovery_unavailable','Discovery is not available here.',503);}});
 /** One engine over an account store with the X7 and X8 providers. Used by the account slice and the tests. */
-export function brokeredTokensEngine({store,issuer,integrations=false,brokering=false,mint,pins,introspection=false,enqueue=enqueueIntegrationEvent,seq=currentSeq,slots,clock=systemClock,random=cryptoRandom,audit=nullAudit}){
+export function brokeredTokensEngine({store,issuer,integrations=false,brokering=false,mint,pins,introspection=false,artefactVersions=false,enqueue=enqueueIntegrationEvent,seq=currentSeq,slots,clock=systemClock,random=cryptoRandom,audit=nullAudit}){
  const enabled=integrations===true&&brokering===true;
- return createAppEngine({providers:{clock,random,audit,brokeredResources:brokeredResourcesProvider({store,discovery:NO_DISCOVERY,issuer,integrations,brokering,...slots?{slots}:{},clock:()=>clock.now()}),brokeredTokens:brokeredTokensProvider({store,issuer,enabled,mint,...pins?{pins}:{},introspection,enqueue,seq,clock:()=>clock.now()})}});
+ return createAppEngine({providers:{clock,random,audit,brokeredResources:brokeredResourcesProvider({store,discovery:NO_DISCOVERY,issuer,integrations,brokering,artefactVersions,...slots?{slots}:{},clock:()=>clock.now()}),brokeredTokens:brokeredTokensProvider({store,issuer,enabled,mint,...pins?{pins}:{},introspection,artefactVersions,enqueue,seq,clock:()=>clock.now()})}});
 }
 export const runBrokered=(engine,Operation,params)=>{const operation=new Operation(params);return operation instanceof AppQuery?read(engine,operation):perform(engine,operation);};
 
@@ -228,7 +229,7 @@ export const runBrokered=(engine,Operation,params)=>{const operation=new Operati
 // BROKERED_CONTRACT_PINS (trusted pins beyond the reviewed catalogue), BROKERED_INTROSPECTION_MOUNTED (the endpoint
 // below is mounted by the adapter). Without the mint port, minting answers brokering_unavailable.
 const engines=new WeakMap();
-function engineOf(c){let engine=engines.get(c);if(!engine){engine=brokeredTokensEngine({store:c.metadata,issuer:c.config.APP_ORIGIN,integrations:integrationsFlag(c.config),brokering:brokeringFlag(c.config),mint:typeof c.config.BROKERING_CONSUMER_MINT==='function'?c.config.BROKERING_CONSUMER_MINT:undefined,pins:contractPins(c.config.BROKERED_CONTRACT_PINS),introspection:capability(c.config,'BROKERED_INTROSPECTION_MOUNTED'),...c.config.CONNECTION_SLOTS?{slots:c.config.CONNECTION_SLOTS}:{}});engines.set(c,engine);}return engine;}
+function engineOf(c){let engine=engines.get(c);if(!engine){engine=brokeredTokensEngine({store:c.metadata,issuer:c.config.APP_ORIGIN,integrations:integrationsFlag(c.config),brokering:brokeringFlag(c.config),mint:typeof c.config.BROKERING_CONSUMER_MINT==='function'?c.config.BROKERING_CONSUMER_MINT:undefined,artefactVersions:siteGlobal(c.config,'ARTEFACT_VERSIONS_ENABLED'),pins:contractPins(c.config.BROKERED_CONTRACT_PINS,{artefactVersions:siteGlobal(c.config,'ARTEFACT_VERSIONS_ENABLED')}),introspection:capability(c.config,'BROKERED_INTROSPECTION_MOUNTED'),...c.config.CONNECTION_SLOTS?{slots:c.config.CONNECTION_SLOTS}:{}});engines.set(c,engine);}return engine;}
 async function bound(c,owner){if(!integrationsFlag(c.config)||!brokeringFlag(c.config)||typeof owner!=='string'||!UUID.test(owner)||await c.metadata.get('owner')!==owner)notFound();}
 const system=(c,owner,Operation,input)=>runBrokered(engineOf(c),Operation,{actor:{kind:'system',owner},...input===undefined?{}:{input}});
 export const account={
@@ -314,7 +315,7 @@ async function boundedBody(request,max){const reader=request.body?.getReader();i
  * Ports: `verifyToken(token, {audience, purposes, leeway})` (brokeringKeys.verify: published set + signed-while);
  * `account(owner)` -> {brokeredIntegrationAuth, brokeredIntrospect}; `federation(owner)` -> {brokeredGrantLive};
  * `clientKeys({clientId, jwksUri})` -> validated key set (ClientDirectory.resolveKeys); `replay`, `limiter`. */
-export async function handleBrokeredIntrospection(request,{issuer,enabled=false,verifyToken,account,federation,clientKeys,replay,limiter,clock=()=>Date.now(),crypto=globalThis.crypto}={}){
+export async function handleBrokeredIntrospection(request,{issuer,enabled=false,artefactVersions=false,verifyToken,account,federation,clientKeys,replay,limiter,clock=()=>Date.now(),crypto=globalThis.crypto}={}){
  const url=new URL(request.url);if(url.pathname!==INTROSPECTION_PATH||enabled!==true)return null;
  if(url.origin!==issuer)return reply({error:'invalid_request'},403);
  if(request.method!=='POST')return reply({error:'method_not_allowed'},405,{Allow:'POST'});
@@ -344,10 +345,10 @@ export async function handleBrokeredIntrospection(request,{issuer,enabled=false,
   // Standard leeway for the signed-while key window (a key activated within the token's iat second); expiry is strict.
   const {claims}=await verifyToken(params.get('token'),{audience:auth.endpoints.rpc,purposes:['invoke']});
   const b=claims.bindle;if(claims.exp*1000<=clock()||b.connection!==connection||claims.client_id===issuer||b.feature!==undefined||b.scope!==null)return inactive();
-  const live=await account(owner).brokeredIntrospect({connection,iat:claims.iat,generation:b.generation,resource:b.resource,grant:b.grant,methods:b.methods,clientId:claims.client_id,audience:claims.aud});
+  const live=await account(owner).brokeredIntrospect({connection,iat:claims.iat,generation:b.generation,resource:b.resource,grant:b.grant,methods:b.methods,...artefactVersions?{cv:contractReferences(b.cv,Object.keys(b.methods))}:{},clientId:claims.client_id,audience:claims.aud});
   if(live?.active!==true)return inactive();
-  if(await federation(owner).brokeredGrantLive({clientId:claims.client_id,resourceId:live.resourceId,fragment:live.fragment,field:live.field,methods:b.methods,jti:claims.jti,iat:claims.iat})!==true)return inactive();
-  return reply({active:true,iss:claims.iss,sub:claims.sub,aud:claims.aud,client_id:claims.client_id,iat:claims.iat,exp:claims.exp,jti:claims.jti,token_type:claims.cnf?'DPoP':'Bearer',bindle:{v:1,purpose:b.purpose,connection:b.connection,generation:b.generation,resource:b.resource,grant:b.grant,methods:b.methods,scope:b.scope},...claims.cnf?{cnf:{jkt:claims.cnf.jkt}}:{}});
+  if(await federation(owner).brokeredGrantLive({clientId:claims.client_id,resourceId:live.resourceId,fragment:live.fragment,field:live.field,methods:b.methods,...artefactVersions?{cv:b.cv}:{},jti:claims.jti,iat:claims.iat})!==true)return inactive();
+  return reply({active:true,iss:claims.iss,sub:claims.sub,aud:claims.aud,client_id:claims.client_id,iat:claims.iat,exp:claims.exp,jti:claims.jti,token_type:claims.cnf?'DPoP':'Bearer',bindle:{v:1,purpose:b.purpose,connection:b.connection,generation:b.generation,resource:b.resource,grant:b.grant,methods:b.methods,scope:b.scope,...artefactVersions?{cv:b.cv}:{}},...claims.cnf?{cnf:{jkt:claims.cnf.jkt}}:{}});
  }catch{return inactive();}
 }
 const sharedReplay=memoryReplayCache(),sharedLimiter=introspectionLimiter();

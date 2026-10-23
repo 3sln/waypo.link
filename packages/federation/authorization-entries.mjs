@@ -15,6 +15,7 @@ import {componentsDeclaration,COMPONENTS_PROFILE} from './components-profile.mjs
 import {metadataClientHost,validClientSnapshot,clientSite} from './client-metadata.mjs';
 import {clientPolicyLinks,withClientPolicies} from './legal.mjs';
 import {UUID_V4 as UUID} from '../core/primitives.mjs';
+import {parseReference} from '../core/artefacts.mjs';
 import {INCREMENTAL_INTENTS,incrementalMembers} from './incremental.mjs';
 export const ENTRY_INTENTS=['login','select-account','reauthenticate','end-session'];
 export const ENTRY_LIMITS={ttl:600000,challenge:60000,window:600000,perClient:30,perRemote:60,perClientHost:300,global:20000,challenges:3};
@@ -44,11 +45,12 @@ export class AuthorizationEntries {
  /** `store` is one transactional store, or `shard=>store` for a sharded deployment. A host that serves a single
   * shard (a Worker Durable Object) passes its `shard`, so minted IDs land there and foreign IDs are refused.
   * `endSession` says the adapter mounts a provider session-ending hook at the end-session route. */
- constructor({store,shard,issuer,clients=[],authority,embedOrigin,crypto=globalThis.crypto,clock=()=>Date.now(),dpop=false,pinSchema,endSession=false,limits={},directory,clientMetadata=false,incremental}){
+ constructor({store,shard,issuer,clients=[],authority,embedOrigin,crypto=globalThis.crypto,clock=()=>Date.now(),dpop=false,pinSchema,endSession=false,limits={},directory,clientMetadata=false,incremental,artefactVersions=false}){
   if(!(typeof store==='function'||store?.transaction)||!authority)throw new TypeError('Entry storage and the federation authority are required.');
   if(shard!==undefined&&(typeof shard!=='string'||!/^\d{2}$/.test(shard)||Number(shard)>=ENTRY_SHARDS||typeof store==='function'))throw new TypeError('A single-shard host needs one store and a shard between 00 and 63.');
   if(embedOrigin!==undefined&&(new URL(embedOrigin).origin!==embedOrigin||embedOrigin===issuer))throw new TypeError('The embed origin must be a dedicated origin.');
   Object.assign(this,{store,shard,issuer,authority,embedOrigin,crypto,clock,dpop:dpop===true,pinSchema,endSession:endSession===true,limits:{...ENTRY_LIMITS,...limits}});
+  this.artefactVersions=artefactVersions===true;
   this.clients=new Map(clients.map(client=>[client.id,withClientPolicies(client)]));
   // Metadata-document clients (client-id-metadata.v1): `directory` resolves them where this instance faces callers;
   // a sharded host behind a resolving facade sets `clientMetadata` and accepts the facade's validated snapshot.
@@ -74,7 +76,7 @@ export class AuthorizationEntries {
  async budget(tx,scope,limit){const window=Math.floor(this.clock()/this.limits.window),name=`budget/${scope}/${window}`,record=await tx.get(name)??{count:0,expiresAt:(window+2)*this.limits.window};if(record.count>=limit)fail('rate_limited','Too many sign-in attempts. Try again shortly.');record.count++;await tx.set(name,record);}
  validRequests(requests,intent){
   if(!Array.isArray(requests)||requests.length>8||intent==='end-session'&&requests.length||new TextEncoder().encode(canonical(requests)).length>16384)generic();const seen=new Set();
-  for(const request of requests){if(!object(request)||Object.keys(request).some(k=>!['fragment','required','purpose','fields','methods'].includes(k))||typeof request.required!=='boolean'||!boundedString(request.purpose,1000)||!Array.isArray(request.fields)||!request.fields.length||request.fields.length>32||request.fields.some(f=>!boundedString(f,200))||new Set(request.fields).size!==request.fields.length||request.methods!==undefined&&!object(request.methods)||seen.has(request.fragment))generic();try{https(request.fragment);}catch{generic();}seen.add(request.fragment);}
+  for(const request of requests){if(!object(request)||Object.keys(request).some(k=>![...['fragment','required','purpose','fields','methods'],...this.artefactVersions?['version','digest','contract_versions']:[]].includes(k))||typeof request.required!=='boolean'||!boundedString(request.purpose,1000)||!Array.isArray(request.fields)||!request.fields.length||request.fields.length>32||request.fields.some(f=>!boundedString(f,200))||new Set(request.fields).size!==request.fields.length||request.methods!==undefined&&!object(request.methods)||seen.has(request.fragment))generic();try{https(request.fragment);if(this.artefactVersions){parseReference(request,{urlMember:'fragment'});if(request.contract_versions!==undefined){if(!object(request.contract_versions))generic();for(const [contract,pin]of Object.entries(request.contract_versions)){if(!object(pin)||Object.keys(pin).some(k=>!['version','digest'].includes(k)))generic();parseReference({contract,...pin},{urlMember:'contract'});}}}}catch{generic();}seen.add(request.fragment);}
   return structuredClone(requests);
  }
  /** Per-caller and per-client-from-that-caller creation budgets, on the caller's own shard. Adapters must supply a
@@ -109,8 +111,8 @@ export class AuthorizationEntries {
   if((input.intent==='reauthenticate')!==(input.maxAge!==undefined)||input.maxAge!==undefined&&(!Number.isSafeInteger(input.maxAge)||input.maxAge<0||input.maxAge>86400))generic();
   if(input.dpopJkt!==undefined&&(!this.dpop||input.intent==='end-session'||!jktPattern.test(input.dpopJkt)))generic();
   if(input.loginHint!==undefined&&!boundedString(input.loginHint,320)||input.colorScheme!==undefined&&!['light','dark'].includes(input.colorScheme)||input.uiLocales!==undefined&&(!Array.isArray(input.uiLocales)||input.uiLocales.length>4||input.uiLocales.some(tag=>typeof tag!=='string'||tag.length>35||!/^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8}){0,4}$/.test(tag))))generic();
-  const members=incremental?incrementalMembers(input):null,requests=incremental?members.requests??[]:this.validRequests(input.requests,input.intent);let digests;
-  if(this.pinSchema&&requests.length){try{digests=await Promise.all(requests.map(async r=>(await this.pinSchema(r.fragment)).digest));}catch{generic();}}
+  const members=incremental?incrementalMembers(input,{artefactVersions:this.artefactVersions}):null,requests=incremental?members.requests??[]:this.validRequests(input.requests,input.intent);let digests;
+  if(this.pinSchema&&requests.length){try{digests=await Promise.all(requests.map(async r=>{const pin=await this.pinSchema(this.artefactVersions?r:r.fragment);if(this.artefactVersions){r.digest=pin.digest;if(pin.version)r.version=pin.version;}return pin.digest;}));}catch{generic();}}
   // A hint naming another host is ignored, never resolved at creation.
   const hint=input.loginHint?.split('@'),loginHint=hint?.length===2&&hint[1].toLowerCase()===new URL(this.issuer).host?input.loginHint:undefined;
   // A single-shard host mints IDs on its own shard; 250 random bits remain.

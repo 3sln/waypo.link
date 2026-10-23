@@ -3032,3 +3032,17 @@ An independent adversarial review found no High issues: old files can't get sign
 - **Gates:** core 2484, Worker 80, UI-state 291, e2e 214 with 4 WebKit skips (a first run timed out during concurrent consent edits; the rerun was clean), asset build and Worker dry run.
 
 Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-22 — ART-5b and ART-6 engine paths: versioned incremental grants, contract deltas, bindle.cv validation
+
+- **Done** (behind `ARTEFACT_VERSIONS_ENABLED`):
+  - durable version pins for incremental authorization;
+  - contract upgrade deltas and silent-advance history;
+  - digest validation (R1-H1), where a foreign mismatch fails only that request;
+  - pinned result projection in the brokered, introspection and integrations paths;
+  - seeded concurrency tests.
+- **Deviation (provisional):** result projection removes every member the pinned version doesn't name, and unsupported schema constructs fail closed.
+- **Remaining end to end:** signing, forwarding grants to tokens, runtime flag and resolver wiring, and detailed consent rendering.
+- **Gates:** core 2512, Worker 80, UI-state 291, consent, DOM, asset build and Worker dry run. e2e: 213 passed, plus 1 one-second refresh-lifetime timing assertion that passed 4/4 on an isolated rerun; 4 WebKit skips.
+
+Reviewer: ___ Date: ___ Outcome: ___

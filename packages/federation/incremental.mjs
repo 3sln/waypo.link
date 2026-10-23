@@ -1,3 +1,5 @@
+import {parseReference} from '../core/artefacts.mjs';
+import {contractUpgradeDelta} from '../consent/reviewed-contracts.mjs';
 import {siteGlobal} from '../flags/read.mjs';
 // IA-1: incremental authorization (`grant-more`) and configuration requests (`configure`) as engine operations
 // (docs/spec/incremental-authorization.md; host design docs/architecture/consent-experience.md). The pre-owner entry
@@ -36,7 +38,7 @@ const atomicJSON=value=>['string','number','boolean'].includes(typeof value)||Ar
 const hostOf=value=>{try{return new URL(value).hostname.toLowerCase();}catch{return null;}};
 /** Structural validation of the members an incremental entry adds (§3), at creation in the pre-owner store. Anything
  * unexpected is the generic `invalid_request`; owner-state checks happen in `admit`. */
-export function incrementalMembers(input){
+export function incrementalMembers(input,{artefactVersions=false}={}){
  if(!object(input)||!INCREMENTAL_INTENTS.includes(input.intent))generic();
  if(input.reason!==undefined&&!plainText(input.reason,INCREMENTAL_LIMITS.reason))generic();
  const reason=input.reason!==undefined?{reason:input.reason}:{};
@@ -44,23 +46,24 @@ export function incrementalMembers(input){
   if(input.target!==undefined||input.suggestion!==undefined||!Array.isArray(input.requests)||!input.requests.length||input.requests.length>INCREMENTAL_LIMITS.fragments)generic();
   const seen=new Set(),requests=input.requests.map(r=>{
    // `required` MUST be absent or false (rule 1): incremental requests are always optional.
-   if(!object(r)||Object.keys(r).some(k=>!['fragment','required','purpose','fields','methods','digest'].includes(k))||r.required!==undefined&&r.required!==false||!boundedString(r.purpose,1000)||!Array.isArray(r.fields)||!r.fields.length||r.fields.length>32||r.fields.some(f=>typeof f!=='string'||!FIELD.test(f))||new Set(r.fields).size!==r.fields.length||r.digest!==undefined&&(typeof r.digest!=='string'||!DIGEST.test(r.digest))||seen.has(r.fragment))generic();
-   try{https(r.fragment);}catch{generic();}seen.add(r.fragment);const methods={};
+   if(!object(r)||Object.keys(r).some(k=>!['fragment','required','purpose','fields','methods','digest',...artefactVersions?['version','contract_versions']:[]].includes(k))||r.required!==undefined&&r.required!==false||!boundedString(r.purpose,1000)||!Array.isArray(r.fields)||!r.fields.length||r.fields.length>32||r.fields.some(f=>typeof f!=='string'||!FIELD.test(f))||new Set(r.fields).size!==r.fields.length||r.digest!==undefined&&(typeof r.digest!=='string'||!DIGEST.test(r.digest))||seen.has(r.fragment))generic();
+   try{https(r.fragment);if(artefactVersions)parseReference(r,{urlMember:'fragment'});}catch{generic();}seen.add(r.fragment);const methods={};
    if(r.methods!==undefined){if(!object(r.methods)||Object.keys(r.methods).length>32)generic();
     for(const [field,contracts] of Object.entries(r.methods)){if(!r.fields.includes(field)||!object(contracts)||!Object.keys(contracts).length||Object.keys(contracts).length>16)generic();methods[field]={};
      for(const [contract,list] of Object.entries(contracts)){try{https(contract);}catch{generic();}if(!Array.isArray(list)||!list.length||list.length>32||list.some(m=>typeof m!=='string'||!METHOD.test(m))||new Set(list).size!==list.length)generic();methods[field][contract]=[...list];}}}
-   return {fragment:r.fragment,purpose:r.purpose,fields:[...r.fields],methods,...r.digest?{digest:r.digest}:{}};
+   let references;if(r.contract_versions!==undefined){if(!object(r.contract_versions)||Object.keys(r.contract_versions).length>16)generic();references={};for(const [contract,ref]of Object.entries(r.contract_versions)){if(!Object.values(methods).some(cs=>Object.hasOwn(cs,contract))||!object(ref)||Object.keys(ref).some(k=>!['version','digest'].includes(k)))generic();try{parseReference({contract,...ref},{urlMember:'contract'});}catch{generic();}references[contract]=copy(ref);}}
+   return {fragment:r.fragment,purpose:r.purpose,fields:[...r.fields],methods,...r.digest?{digest:r.digest}:{},...r.version!==undefined?{version:r.version}:{},...references?{contract_versions:references}:{}};
   });
   if(new TextEncoder().encode(canonical(requests)).length>16384)generic();return {requests,...reason};
  }
  // `configure`: no requests, a target of one fragment, and an optional suggestion of atomic values within it.
  if(input.requests!==undefined)generic();const t=input.target;
- if(!object(t)||Object.keys(t).some(k=>!['fragment','digest','fields'].includes(k))||t.digest!==undefined&&(typeof t.digest!=='string'||!DIGEST.test(t.digest)))generic();try{https(t.fragment);}catch{generic();}
+ if(!object(t)||Object.keys(t).some(k=>!['fragment','digest','fields',...artefactVersions?['version']:[]].includes(k))||t.digest!==undefined&&(typeof t.digest!=='string'||!DIGEST.test(t.digest)))generic();try{https(t.fragment);if(artefactVersions)parseReference(t,{urlMember:'fragment'});}catch{generic();}
  if(t.fields!==undefined&&(!Array.isArray(t.fields)||!t.fields.length||t.fields.length>INCREMENTAL_LIMITS.fields||t.fields.some(f=>typeof f!=='string'||!FIELD.test(f))||new Set(t.fields).size!==t.fields.length))generic();
  let suggestion;
  if(input.suggestion!==undefined){const s=input.suggestion;if(!object(s)||Object.keys(s).length!==1||!object(s.values)||!Object.keys(s.values).length||Object.keys(s.values).length>INCREMENTAL_LIMITS.fields||new TextEncoder().encode(JSON.stringify(s)).length>INCREMENTAL_LIMITS.suggestionBytes)generic();
   for(const [name,value] of Object.entries(s.values))if(!FIELD.test(name)||t.fields&&!t.fields.includes(name)||!atomicJSON(value))generic();suggestion={values:copy(s.values)};}
- return {target:{fragment:t.fragment,...t.digest?{digest:t.digest}:{},...t.fields?{fields:[...t.fields]}:{}},...suggestion?{suggestion}:{},...reason};
+ return {target:{fragment:t.fragment,...t.digest?{digest:t.digest}:{},...t.version!==undefined?{version:t.version}:{},...t.fields?{fields:[...t.fields]}:{}},...suggestion?{suggestion}:{},...reason};
 }
 /** Delta of one request against the current grant (§4.1): only items not already held. */
 export function grantDelta(request,current){
@@ -68,14 +71,18 @@ export function grantDelta(request,current){
  for(const [field,contracts] of Object.entries(request.methods??{}))for(const [contract,list] of Object.entries(contracts)){const missing=list.filter(m=>!current?.methods?.[field]?.[contract]?.includes(m));if(missing.length)(methods[field]??={})[contract]=missing;}
  return {fields,methods,empty:!fields.length&&!Object.keys(methods).length};
 }
-const grantView=grant=>({fields:[...grant?.fields??[]].sort(),methods:copy(grant?.methods??{}),...grant?.resources&&Object.keys(grant.resources).length?{resources:copy(grant.resources)}:{}});
+const grantView=(grant,artefactVersions=false)=>({...artefactVersions&&grant?.version?{version:grant.version,digest:grant.digest}:{},...artefactVersions&&grant?.contract_versions?{contract_versions:copy(grant.contract_versions)}:{},fields:[...grant?.fields??[]].sort(),methods:copy(grant?.methods??{}),...grant?.resources&&Object.keys(grant.resources).length?{resources:copy(grant.resources)}:{}});
 /** Per-fragment outcome (§6.1) from the authoritative grant after the decision. `granted` always lists the complete
  * current grant on that fragment; `declined` carries none. */
-export function fragmentOutcome(item,before,after){
+export function fragmentOutcome(item,before,after,{artefactVersions=false}={}){
  if(item.status)return {fragment:item.fragment,outcome:item.status};
- const missing=grantDelta(item,after),wanted=grantDelta(item,before),size=delta=>delta.fields.length+countMethods(delta.methods);if(missing.empty)return {fragment:item.fragment,outcome:'granted',granted:grantView(after)};
- return size(missing)<size(wanted)?{fragment:item.fragment,outcome:'partial',granted:grantView(after)}:{fragment:item.fragment,outcome:'declined'};
+ const delta=grant=>{const d=grantDelta(item,grant);for(const [field,cs]of Object.entries(item.delta?.updated??{}))for(const [contract,list]of Object.entries(cs))if(grant?.contract_versions?.[contract]?.digest!==item.contract_versions?.[contract]?.digest)(d.methods[field]??={})[contract]=unionMethods(d.methods[field]?.[contract],list);d.empty=!d.fields.length&&!Object.keys(d.methods).length;return d;};
+ const missing=delta(after),wanted=delta(before),size=delta=>delta.fields.length+countMethods(delta.methods);if(missing.empty)return {fragment:item.fragment,outcome:'granted',granted:grantView(after,artefactVersions)};
+ return size(missing)<size(wanted)?{fragment:item.fragment,outcome:'partial',granted:grantView(after,artefactVersions)}:{fragment:item.fragment,outcome:'declined'};
 }
+const mergeMethods=(a={},b={})=>{const out=copy(a);for(const [field,cs]of Object.entries(b))for(const [contract,list]of Object.entries(cs))(out[field]??={})[contract]=unionMethods(out[field]?.[contract],list);return out;};
+const mergeResources=(a={},b={})=>Object.fromEntries(unionMethods(Object.keys(a),Object.keys(b)).map(f=>[f,unionMethods(a[f],b[f])]));
+const unionMethods=(a=[],b=[])=>[...new Set([...a,...b])];
 const countMethods=methods=>Object.values(methods).reduce((n,contracts)=>n+Object.values(contracts).reduce((m,list)=>m+list.length,0),0);
 /** §5.2 rule 5: sensitive fields need an individual acceptance; bulk acceptance never covers them. */
 export function fieldSensitivity(field,receivers=[]){
@@ -112,8 +119,9 @@ export function consentGrants(items){
  * - `pinSchema(url)` → `{schema,digest}` (immutable pins); errors `unsupported_fragment`/`unavailable` map to outcomes.
  * - `clients(clientId)` → verified client snapshot for owner operations; `registrableDomain(host)` → PSL domain.
  */
-export function createIncrementalProvider({store,issuer,crypto=globalThis.crypto,clock=()=>Date.now(),registrableDomain,grants,preferences,sessions,consent,pinSchema,clients,featureAllowed=()=>true,limits={}}={}){
+export function createIncrementalProvider({store,issuer,crypto=globalThis.crypto,clock=()=>Date.now(),registrableDomain,grants,preferences,sessions,consent,pinSchema,pinContract,artefactVersions=false,clients,featureAllowed=()=>true,limits={}}={}){
  if(!store?.transaction||typeof issuer!=='string'||!grants||!preferences||!sessions||typeof pinSchema!=='function'||typeof registrableDomain!=='function')throw new TypeError('The incremental provider needs a store, issuer, grants, preferences, sessions, pinSchema and a registrable-domain resolver.');
+ const outcome=(item,before,after)=>fragmentOutcome(item,before,after,{artefactVersions});
  const L={...INCREMENTAL_LIMITS,...limits},now=()=>clock(),sup=new RequestSuppressions({clock,crypto,registrableDomain,limits:limits.requests});
  const random=(size=32)=>base64url(crypto.getRandomValues(new Uint8Array(size)));
  const subjectOf=owner=>`${issuer}/entities/${owner}`;
@@ -125,19 +133,23 @@ export function createIncrementalProvider({store,issuer,crypto=globalThis.crypto
  const describe=async(url,site,pinned)=>{const chain=await chainOf(url,pinned),host=hostOf(url);return {chain,host,own:registrableDomain(host)===site,root:chain[chain.length-1]};};
  const targets=record=>record.intent==='grant-more'?record.items.filter(i=>!i.status).map(i=>ladderTarget({kind:'grant-more',...i})):record.item.fields.map(field=>ladderTarget({kind:'configure',...record.item,field}));
  const itemFor=(record,item,field)=>({kind:record.intent,chain:item.chain,host:item.host,own:item.own,...field?{field}:{}});
- async function pinned(url,digestValue){const result=await pinSchema(url);if(digestValue!==undefined&&bare(digestValue)!==bare(result.digest))generic();return result;}
+ const reference=item=>artefactVersions&&(item.version!==undefined||item.digest!==undefined)?{fragment:item.fragment,...item.version!==undefined?{version:item.version}:{},...item.digest!==undefined?{digest:item.digest}:{}}:item.fragment;
+ async function pinned(url,digestValue,version){const result=await pinSchema(artefactVersions&&(version!==undefined||digestValue!==undefined)?{fragment:url,...version!==undefined?{version}:{},...digestValue!==undefined?{digest:digestValue}:{}}:url);if(digestValue!==undefined&&bare(digestValue)!==bare(result.digest)){if(artefactVersions)fail('artefact_digest_mismatch');generic();}return result;}
  async function admit(input){
   const {entryHash,subject,clientId,client,intent,binding}=input??{};
   if(typeof entryHash!=='string'||!ID.test(entryHash)||!validSubject(subject)||!INCREMENTAL_INTENTS.includes(intent)||client?.id!==clientId||!object(binding)||typeof binding.redirectUri!=='string'||intent==='grant-more'!==(typeof binding.challenge==='string'))generic();
+  if(!artefactVersions&&(input.requests?.some(r=>r.version!==undefined||r.contract_versions!==undefined)||input.target?.version!==undefined))generic();
+  if(artefactVersions)input={...input,...incrementalMembers(input,{artefactVersions})};
   const site=appSite(client,registrableDomain);if(!await grants.connection({subject,clientId})||!featureAllowed({subject,clientId}))generic();
   let record;
   if(intent==='grant-more'){
    const items=[];
    for(const r of input.requests){
-    let pin;try{pin=await pinned(r.fragment,r.digest);}catch(error){if(['unsupported_fragment','unavailable'].includes(error?.code)){items.push({fragment:r.fragment,purpose:r.purpose,fields:[...r.fields],methods:copy(r.methods),status:error.code==='unavailable'?'unavailable':'unsupported'});continue;}generic();}
+    let pin;try{pin=await pinned(r.fragment,r.digest,r.version);}catch(error){if(artefactVersions&&error?.code==='artefact_digest_mismatch')throw error;if(['unsupported_fragment','unavailable'].includes(error?.code)){items.push({fragment:r.fragment,purpose:r.purpose,fields:[...r.fields],methods:copy(r.methods),status:error.code==='unavailable'?'unavailable':'unsupported'});continue;}generic();}
     const fields=pin.schema.fields;for(const f of r.fields)if(!Object.hasOwn(fields,f))generic();
     for(const [field,contracts] of Object.entries(r.methods))for(const contract of Object.keys(contracts))if(fields[field].type!=='resource'||!fields[field].contracts.includes(contract))generic();
-    items.push({fragment:r.fragment,purpose:r.purpose,fields:[...r.fields],methods:copy(r.methods),digest:pin.digest,types:Object.fromEntries(r.fields.map(f=>[f,fields[f].type])),...await describe(r.fragment,site,pin)});
+    const contract_versions={},contractPins={};if(artefactVersions)for(const cs of Object.values(r.methods??{}))for(const contract of Object.keys(cs)){if(typeof pinContract!=='function')generic();const ref=r.contract_versions?.[contract],cp=await pinContract(ref?{contract,...ref}:contract);if(ref&&(cp.version!==ref.version||cp.digest!==ref.digest))generic();if(!cp.version||!cp.digest||cp.schema?.$id!==contract||cs[contract].some(method=>!Object.hasOwn(cp.schema['x-methods']??{},method)))generic();contract_versions[contract]={version:cp.version,digest:cp.digest};contractPins[contract]=copy(cp);}
+    items.push({fragment:r.fragment,purpose:r.purpose,fields:[...r.fields],methods:copy(r.methods),digest:pin.digest,...pin.version?{version:pin.version}:{},...artefactVersions?{contract_versions,contractPins}:{},types:Object.fromEntries(r.fields.map(f=>[f,fields[f].type])),...await describe(r.fragment,site,pin)});
    }
    // Unreviewed apps cannot ask for act-as-you, money, identity or public access (CX-1 tier 4). Fails closed.
    const cards=consentGrants(items);if(client.reviewed===false&&cards.length){if(!consent?.model)generic();let model;try{model=await consent.model({app:clientId,grants:cards});}catch{generic();}
@@ -145,12 +157,12 @@ export function createIncrementalProvider({store,issuer,crypto=globalThis.crypto
     if((model?.grants??[]).some(card=>(card.rows??[]).some(row=>row.risk?.missingEffect===true||row.risk?.tier===4)))generic();}
    record={items};
   }else{
-   const {target,suggestion}=input;let pin;try{pin=await pinned(target.fragment,target.digest);}catch{generic();}
+   const {target,suggestion}=input;let pin;try{pin=await pinned(target.fragment,target.digest,target.version);}catch(error){if(artefactVersions&&error?.code==='artefact_digest_mismatch')throw error;generic();}
    const current=await grants.current({subject,clientId,fragment:target.fragment});if(!current?.fields?.length)generic();
    // Only fields the app already holds a grant on (§5.1); the suggestion stays within them and is atomic (§5.2 1–2).
    const opened=target.fields??[...current.fields].sort();if(opened.some(f=>!current.fields.includes(f)||!Object.hasOwn(pin.schema.fields,f)))generic();
    for(const [name,value] of Object.entries(suggestion?.values??{})){const field=pin.schema.fields[name];if(!opened.includes(name)||field.type==='resource')generic();try{validateValue(field,value);}catch{generic();}}
-   record={item:{fragment:target.fragment,digest:pin.digest,fields:opened,...await describe(target.fragment,site,pin)},...suggestion?{suggestion:copy(suggestion)}:{}};
+   record={item:{fragment:target.fragment,digest:pin.digest,...pin.version?{version:pin.version}:{},fields:opened,...await describe(target.fragment,site,pin)},...suggestion?{suggestion:copy(suggestion)}:{}};
   }
   Object.assign(record,{v:1,entryHash,subject,clientId,client:{id:client.id,name:client.name,origin:client.origin,reviewed:client.reviewed!==false},site,intent,binding:{redirectUri:binding.redirectUri,...binding.challenge?{challenge:binding.challenge}:{},...binding.dpopJkt?{dpopJkt:binding.dpopJkt}:{}},...input.reason!==undefined?{reason:input.reason}:{},status:'open',createdAt:now(),expiresAt:now()+L.entryTtl});
   return store.transaction(async tx=>{
@@ -164,15 +176,28 @@ export function createIncrementalProvider({store,issuer,crypto=globalThis.crypto
   });
  }
  async function load(entryHash,subject){if(typeof entryHash!=='string'||!ID.test(entryHash))expired();const record=await store.transaction(tx=>tx.get(entryKey(entryHash)));if(!record||record.v!==1||record.expiresAt<=now())expired();if(subject!==undefined&&record.subject!==subject)fail('account_mismatch','Sign in to the account this application is connected to.');return record;}
+ async function deltaFor(item,current){
+  if(artefactVersions&&current){const carried={};for(const [field,cs]of Object.entries(current.methods??{}))for(const [contract,list]of Object.entries(cs))if(Object.hasOwn(item.contractPins??{},contract))(carried[field]??={})[contract]=list;item.methods=mergeMethods(item.methods,carried);}
+  const delta=grantDelta(item,current);if(!artefactVersions)return delta;if(current?.version&&item.version<current.version)fail('stale_consent');const updated={},display=[],additions=[];
+  for(const [field,cs]of Object.entries(item.methods??{}))for(const [contract,list]of Object.entries(cs)){
+   const held=list.filter(m=>current?.methods?.[field]?.[contract]?.includes(m));if(!held.length)continue;
+   const target=item.contractPins?.[contract],prior=current.contract_versions?.[contract];if(!target)generic();
+   if(prior?.version>target.version)fail('stale_consent');if(prior?.digest===target.digest)continue;
+   let changes;if(!prior)changes={updated:held,display:[]};else{const old=await pinContract({contract,...prior});if(old.digest!==prior.digest||old.version!==prior.version)generic();changes=contractUpgradeDelta(old,target,held);}
+   const review=unionMethods(changes.updated,changes.display.map(text=>text.method));if(review.length)(updated[field]??={})[contract]=review;display.push(...changes.display.map(text=>({field,contract,...text})));additions.push(...(changes.additions??[]).map(change=>({field,contract,...change})));
+  }
+  for(const [field,cs]of Object.entries(updated))for(const [contract,list]of Object.entries(cs))(delta.methods[field]??={})[contract]=unionMethods(delta.methods[field]?.[contract],list);
+  return {...delta,updated,display,additions,empty:delta.empty&&!Object.keys(updated).length&&!display.length};
+ }
  /** Live state of an entry: current grants, deltas, values and which items suppression pre-declines. */
  async function state(record){
   const records=await store.transaction(tx=>sup.records(tx,record.subject,record.site)),blocked=item=>records.some(r=>suppresses(r,item));
   if(record.intent==='grant-more'){
    const items=[];
-   for(const item of record.items){if(item.status){items.push({...item});continue;}const current=await grants.current({subject:record.subject,clientId:record.clientId,fragment:item.fragment});items.push({...item,current,delta:grantDelta(item,current),suppressed:blocked(itemFor(record,item))});}
+   for(const item of record.items){if(item.status){items.push({...item});continue;}const current=await grants.current({subject:record.subject,clientId:record.clientId,fragment:item.fragment});const delta=await deltaFor(item,current);items.push({...item,current,delta,suppressed:blocked(itemFor(record,item))});}
    return {items,blocked:items.some(i=>!i.status&&!i.delta.empty)&&items.filter(i=>!i.status&&!i.delta.empty).every(i=>i.suppressed)};
   }
-  const item=record.item,pin=await pinSchema(item.fragment),current=await grants.current({subject:record.subject,clientId:record.clientId,fragment:item.fragment}),prefs=await preferences.read({subject:record.subject,fragment:item.fragment});
+  const item=record.item,pin=await pinSchema(reference(item)),current=await grants.current({subject:record.subject,clientId:record.clientId,fragment:item.fragment}),prefs=await preferences.read({subject:record.subject,fragment:item.fragment});
   const fields=[];
   // A field revoked since creation is no longer opened (§5.1).
   for(const name of item.fields){if(!current?.fields?.includes(name))continue;const field=pin.schema.fields[name],receivers=await preferences.receivers({subject:record.subject,fragment:item.fragment,field:name,clientId:record.clientId})??[];fields.push({name,field,receivers,current:prefs&&Object.hasOwn(prefs.values,name)?prefs.values[name]:null,suppressed:blocked(itemFor(record,item,name)),...fieldSensitivity(field,receivers)});}
@@ -188,11 +213,11 @@ export function createIncrementalProvider({store,issuer,crypto=globalThis.crypto
     if(i.status){requests.push({fragment:i.fragment,purpose:i.purpose,status:i.status});continue;}
     const prefs=await preferences.read({subject:record.subject,fragment:i.fragment}),setup=[];
     for(const f of i.delta.fields)if(!prefs||!Object.hasOwn(prefs.values,f))setup.push({field:f,type:i.types[f],...i.types[f]==='resource'?{candidates:await candidatesFor(record,i.fragment,f)}:{}});
-    requests.push({fragment:i.fragment,digest:i.digest,purpose:i.purpose,alreadyAllowed:grantView(i.current),delta:{fields:i.delta.fields,methods:i.delta.methods},suppressed:i.suppressed,setup,ownSite:i.own});
+    requests.push({fragment:i.fragment,digest:i.digest,...i.version?{version:i.version}:{},...artefactVersions?{contract_versions:copy(i.contract_versions)}:{},purpose:i.purpose,alreadyAllowed:grantView(i.current,artefactVersions),delta:{fields:i.delta.fields,methods:i.delta.methods,...artefactVersions?{updated:i.delta.updated,display:i.delta.display,additions:i.delta.additions}:{}},suppressed:i.suppressed,setup,ownSite:i.own});
    }
    return {...common,requests};
   }
-  return {...common,fragment:record.item.fragment,digest:record.item.digest,ownSite:record.item.own,revision:s.revision,fields:await Promise.all(s.fields.map(async f=>{const suggested=record.suggestion&&Object.hasOwn(record.suggestion.values,f.name)&&!f.suppressed?{suggested:copy(record.suggestion.values[f.name]),...displayHost(f.field,record.suggestion.values[f.name])?{suggestedHost:displayHost(f.field,record.suggestion.values[f.name])}:{}}:{};
+  return {...common,fragment:record.item.fragment,digest:record.item.digest,...record.item.version?{version:record.item.version}:{},ownSite:record.item.own,revision:s.revision,fields:await Promise.all(s.fields.map(async f=>{const suggested=record.suggestion&&Object.hasOwn(record.suggestion.values,f.name)&&!f.suppressed?{suggested:copy(record.suggestion.values[f.name]),...displayHost(f.field,record.suggestion.values[f.name])?{suggestedHost:displayHost(f.field,record.suggestion.values[f.name])}:{}}:{};
    return {name:f.name,type:f.field.type,current:f.current,...suggested,sensitive:f.sensitive,sensitivity:f.reasons,receivers:copy(f.receivers),suppressed:f.suppressed,...f.field.type==='resource'?{occupant:f.current===null?{candidates:await candidatesFor(record,record.item.fragment,f.name)}:'settings'}:{}};}))};
  }
  async function mint(tx,record,result){
@@ -203,12 +228,16 @@ export function createIncrementalProvider({store,issuer,crypto=globalThis.crypto
  async function finish(record,{token,result,decisionHash,effects=async()=>{}}){
   return store.transaction(async tx=>{const current=await tx.get(entryKey(record.entryHash));if(!current||current.status==='completed'||(token===undefined?current.deciding&&(current.deciding.committing||current.deciding.expiresAt>now()):current.deciding?.token!==token))expired();await effects(tx);const completion=await mint(tx,current,result);Object.assign(current,{status:'completed',completion,decisionHash,completedAt:now()});delete current.deciding;await tx.set(entryKey(record.entryHash),current);const open=await tx.get(key('o',current.subject,current.site));if(open?.entryHash===current.entryHash)await tx.delete(key('o',current.subject,current.site));return completion;});
  }
- const declinedResult=(record,s)=>record.intent==='configure'?{result:'unchanged'}:{outcomes:s.items.map(i=>fragmentOutcome(i,i.current,i.current)),added:false};
+ const declinedResult=(record,s)=>record.intent==='configure'?{result:'unchanged'}:{outcomes:s.items.map(i=>outcome(i,i.current,i.current)),added:false};
  async function begin({entryHash,subject}={}){
   const record=await load(entryHash,subject);if(record.status==='superseded'){await store.transaction(async tx=>{const current=await tx.get(entryKey(entryHash));if(current?.status==='superseded'&&!current.begunAt){current.begunAt=now();await tx.set(entryKey(entryHash),current);}});return {view:{superseded:true}};}if(record.status!=='open')expired();
   if(!featureAllowed(record))fail('access_denied');const s=await state(record);
   // Nothing new: complete without a page, every outcome `granted`, and no tokens (§4.1).
-  if(record.intent==='grant-more'&&s.items.every(i=>i.status||i.delta.empty))return {complete:await finish(record,{result:{outcomes:s.items.map(i=>fragmentOutcome(i,i.current,i.current)),added:false}})};
+  if(record.intent==='grant-more'&&s.items.every(i=>i.status||i.delta.empty)){
+   if(artefactVersions){const changes=s.items.filter(i=>!i.status&&i.current&&(i.version>(i.current.version??0)||Object.entries(i.contract_versions??{}).some(([c,r])=>r.digest!==i.current.contract_versions?.[c]?.digest))).map(i=>({fragment:i.fragment,digest:i.digest,...i.version?{version:i.version}:{},fields:copy(i.current.fields),methods:copy(i.current.methods),resources:copy(i.current.resources??{}),contract_versions:{...i.current.contract_versions,...i.contract_versions},silent:true}));
+    if(changes.length){const committed=await grants.commit({subject:record.subject,clientId:record.clientId,decision:record.entryHash+'-pin',changes});for(const result of committed.results){const item=s.items.find(i=>i.fragment===result.fragment);item.current=result.after;}}}
+   return {complete:await finish(record,{result:{outcomes:s.items.map(i=>outcome(i,i.current,i.current)),added:false}})};
+  }
   if(record.intent==='configure'&&!s.fields.length)return {complete:await finish(record,{result:{result:'unchanged'}})};
   const begun=await store.transaction(async tx=>{const current=await tx.get(entryKey(entryHash));if(current?.status!=='open')expired();current.begunAt??=now();await tx.set(entryKey(entryHash),current);return current;});
   return {view:await view(begun,s)};
@@ -227,13 +256,14 @@ export function createIncrementalProvider({store,issuer,crypto=globalThis.crypto
    const item=s.items.find(i=>i.fragment===selection.fragment&&!i.status);if(!item)fail('invalid_args');
    const fields=selection.fields??[],methods=selection.methods??{};if(!Array.isArray(fields)||fields.some(f=>!item.fields.includes(f))||new Set(fields).size!==fields.length||!object(methods))fail('invalid_args');
    const held=new Set([...item.current?.fields??[],...fields]),addFields=fields.filter(f=>!item.current?.fields?.includes(f)),addMethods={};
-   for(const [field,contracts] of Object.entries(methods)){if(!object(contracts)||!held.has(field))fail('invalid_args');for(const [contract,list] of Object.entries(contracts)){if(!Array.isArray(list)||list.some(m=>!item.methods?.[field]?.[contract]?.includes(m)))fail('invalid_args');const added=list.filter(m=>!item.current?.methods?.[field]?.[contract]?.includes(m));if(added.length)(addMethods[field]??={})[contract]=[...new Set(added)];}}
+   for(const [field,contracts] of Object.entries(methods)){if(!object(contracts)||!held.has(field))fail('invalid_args');for(const [contract,list] of Object.entries(contracts)){if(!Array.isArray(list)||list.some(m=>!item.methods?.[field]?.[contract]?.includes(m)))fail('invalid_args');const added=list.filter(m=>!item.current?.methods?.[field]?.[contract]?.includes(m)||item.delta.updated?.[field]?.[contract]?.includes(m));if(added.length)(addMethods[field]??={})[contract]=[...new Set(added)];}}
    // IA-R7: resources only for a field the grant holds none on, chosen from the §4.2-filtered candidates.
    let resources;if(selection.resources!==undefined){if(!object(selection.resources))fail('invalid_args');for(const [field,ids] of Object.entries(selection.resources)){if(!held.has(field)||item.types[field]!=='resource'||!Array.isArray(ids)||!ids.length||ids.length>16||new Set(ids).size!==ids.length||ids.some(id=>!boundedString(id,2048))||(item.current?.resources?.[field]??[]).length)fail('invalid_args');const allowed=(await candidatesFor(record,item.fragment,field)).map(c=>c.id);if(ids.some(id=>!allowed.includes(id)))fail('invalid_args');}resources=copy(selection.resources);}
    if(!addFields.length&&!Object.keys(addMethods).length&&!resources)continue;
    // A pre-declined (suppressed) item is answered only after the owner revealed it; answering lifts the block (§9.3 2).
    if(item.suppressed){if(decision.reveal!==true)fail('invalid_args');lifted.push(itemFor(record,item));}
-   changes.push({fragment:item.fragment,digest:item.digest,fields:addFields,methods:addMethods,...resources?{resources}:{}});
+   const contract_versions={...item.current?.contract_versions};if(artefactVersions)for(const [field,cs]of Object.entries(addMethods))for(const contract of Object.keys(cs)){for(const [f,cs]of Object.entries(item.current?.methods??{}))for(const m of cs[contract]??[])if(!item.methods?.[f]?.[contract]?.includes(m))fail('invalid_args');const required=Object.entries(item.delta.updated??{}).flatMap(([f,contracts])=>(contracts[contract]??[]).map(method=>({field:f,method})));if(required.some(r=>!addMethods[r.field]?.[contract]?.includes(r.method)))fail('invalid_args');contract_versions[contract]=item.contract_versions[contract];}
+   changes.push({fragment:item.fragment,digest:item.digest,...item.version?{version:item.version}:{},...artefactVersions?{contract_versions}:{},fields:artefactVersions?unionMethods(item.current?.fields,addFields):addFields,methods:artefactVersions?mergeMethods(item.current?.methods,addMethods):addMethods,...artefactVersions?{resources:mergeResources(item.current?.resources,resources)}:resources?{resources}:{}});
   }
   return {changes,lifted};
  }
@@ -244,7 +274,7 @@ export function createIncrementalProvider({store,issuer,crypto=globalThis.crypto
   for(const step of decision.setup){
    if(!object(step)||Object.keys(step).some(k=>!['fragment','values','sharedAcknowledged'].includes(k))||!object(step.values)||seen.has(step.fragment))fail('invalid_args');seen.add(step.fragment);
    const item=s.items.find(i=>i.fragment===step.fragment&&!i.status);if(!item||!changes.some(c=>c.fragment===item.fragment))fail('invalid_args');
-   const pin=await pinSchema(item.fragment),prefs=await preferences.read({subject:record.subject,fragment:item.fragment}),values=copy(prefs?.values??{});let shared=false;
+   const pin=await pinSchema(reference(item)),prefs=await preferences.read({subject:record.subject,fragment:item.fragment}),values=copy(prefs?.values??{});let shared=false;
    for(const [name,value] of Object.entries(step.values)){
     const field=pin.schema.fields[name];if(!item.fields.includes(name)||!field)fail('invalid_args');try{validateValue(field,value);}catch{fail('invalid_args');}
     const had=prefs&&Object.hasOwn(prefs.values,name),change=changes.find(c=>c.fragment===item.fragment);
@@ -327,8 +357,8 @@ export function createIncrementalProvider({store,issuer,crypto=globalThis.crypto
    for(const save of saves)if(!await saved(save.fragment,save.fields))await preferences.save({subject,fragment:save.fragment,values:save.values,expectedRevision:save.expectedRevision});
    const committed=changes.length?await grants.commit({subject,clientId:record.clientId,decision:entryHash,changes}):{results:[]},byFragment=new Map((committed?.results??[]).map(r=>[r.fragment,r]));
    // Tokens only when the authoritative commit changed a grant, never on an unchanged one (§4.4).
-   const added=[...byFragment.values()].some(r=>canonical(grantView(r.before))!==canonical(grantView(r.after)));
-   const outcomes=s.items.map(i=>{const r=byFragment.get(i.fragment);return fragmentOutcome(i,r?r.before:i.current,r?r.after:i.current);});
+   const added=[...byFragment.values()].some(r=>canonical(grantView(r.before,artefactVersions))!==canonical(grantView(r.after,artefactVersions)));
+   const outcomes=s.items.map(i=>{const r=byFragment.get(i.fragment);return outcome(i,r?r.before:i.current,r?r.after:i.current);});
    const approvedTargets=s.items.filter((i,n)=>!i.status&&outcomes[n].outcome==='granted'&&!i.delta.empty).map(i=>ladderTarget({kind:'grant-more',...i})),declinedTargets=s.items.filter((i,n)=>!i.status&&!i.delta.empty&&outcomes[n].outcome==='declined').map(i=>ladderTarget({kind:'grant-more',...i}));
    return await finish(record,{token,decisionHash,result:{outcomes,added},effects:async tx=>{for(const item of lifted)await sup.lift(tx,{subject,site:record.site,item});await sup.reset(tx,{subject,site:record.site,targets:approvedTargets});if(declinedTargets.length)await sup.step(tx,{subject,site:record.site,targets:declinedTargets});}});
   }catch(error){await release();throw error;}
@@ -389,7 +419,7 @@ export function createIncrementalProvider({store,issuer,crypto=globalThis.crypto
     }
     const r={...copy(i.request),required:false};
     if(blocked){predeclined.push(i.request.fragment);const fields=r.fields.filter(f=>i.current?.fields?.includes(f));if(!fields.length)continue;const methods={};for(const [field,contracts] of Object.entries(r.methods??{}))for(const [contract,list] of Object.entries(contracts)){const held=list.filter(m=>i.current?.methods?.[field]?.[contract]?.includes(m));if(held.length&&fields.includes(field))(methods[field]??={})[contract]=held;}r.fields=fields;r.methods=methods;}
-    else if(target)presented.push({fragment:i.request.fragment,target,delta:{fields:i.delta.fields,methods:i.delta.methods}});
+    else if(target)presented.push({fragment:i.request.fragment,target,delta:{fields:i.delta.fields,methods:i.delta.methods,...artefactVersions?{updated:i.delta.updated,display:i.delta.display,additions:i.delta.additions}:{}}});
     out.push({index:i.index,request:r});
    }
    const answer={first:false,requests:out.map(o=>o.request),keep:out.map(o=>o.index),additions:presented.map(({fragment,delta})=>({fragment,delta})),predeclined};

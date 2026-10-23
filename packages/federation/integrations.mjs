@@ -8,6 +8,7 @@ import {siteGlobal} from '../flags/read.mjs';
 // change of `jwks_uri`, auth method or `redirect_uris`, is staged for owner review and adopts nothing that widens.
 // Unmounted: these are pure validators plus gated engine Queries; INTEGRATIONS_ENABLED and an injected directory are
 // required, and no route, token, event or feature declaration is produced here.
+import {parseReference,versionDigest} from '../core/artefacts.mjs';
 import {AppQuery} from '../app/engine.mjs';
 import {fail,object} from './schema.mjs';
 import {validateExtensions,validateExtensionDigest} from './extensions.mjs';
@@ -33,7 +34,7 @@ export function prefixedURL(value,clientId,max=INTEGRATION_LIMITS.urlLength){
 // Identifier URLs (fragments, contracts, events, slots): canonical HTTPS, bounded, no userinfo, query or fragment.
 const idURL=value=>{if(typeof value!=='string'||value.length>INTEGRATION_LIMITS.idLength||value.includes('?')||value.includes('#'))return undefined;try{const url=new URL(value);return url.href===value&&url.protocol==='https:'&&!url.username&&!url.password?value:undefined;}catch{return undefined;}};
 const idList=(value,max,{empty=false}={})=>Array.isArray(value)&&value.length<=max&&(empty||value.length>0)&&new Set(value).size===value.length&&value.every(idURL)?[...value]:undefined;
-function setupFragment(entry){
+function setupFragment(entry,{artefactVersions=false}={}){
  if(!object(entry))return undefined;
  // The implemented protocol §3 request names the fragment `fragment`; the integrations §2.1 example uses `id`.
  const id=entry.fragment??entry.id;if(entry.fragment!==undefined&&entry.id!==undefined&&entry.fragment!==entry.id||!idURL(id))return undefined;
@@ -41,14 +42,18 @@ function setupFragment(entry){
  if(!Array.isArray(fields)||!fields.length||fields.length>INTEGRATION_LIMITS.fields||new Set(fields).size!==fields.length||fields.some(name=>typeof name!=='string'||!/^[A-Za-z][A-Za-z0-9_-]{0,63}$/.test(name)))return undefined;
  let methods;if(entry.methods!==undefined){if(!object(entry.methods)||Object.keys(entry.methods).length>INTEGRATION_LIMITS.contracts)return undefined;for(const [contract,list] of Object.entries(entry.methods))if(!idURL(contract)||!Array.isArray(list)||!list.length||list.length>INTEGRATION_LIMITS.methods||new Set(list).size!==list.length||list.some(name=>typeof name!=='string'||!/^[A-Za-z][A-Za-z0-9_.-]{0,63}$/.test(name)))return undefined;methods=structuredClone(entry.methods);}
  if(entry.digest!==undefined)try{validateExtensionDigest(entry.digest);}catch{return undefined;}
- return {fragment:id,required:entry.required===true,purpose,fields:[...fields],...methods?{methods}:{},...entry.digest!==undefined?{digest:entry.digest}:{}};
+ let contract_versions;if(artefactVersions){
+  if(entry.version!==undefined)try{parseReference({fragment:id,version:entry.version,digest:entry.digest},{urlMember:'fragment'});}catch{return undefined;}
+  if(entry.contract_versions!==undefined)try{contract_versions=contractReferences(entry.contract_versions);if(Object.keys(contract_versions).some(c=>!Object.hasOwn(methods??{},c)))return undefined;}catch{return undefined;}
+ }
+ return {fragment:id,required:entry.required===true,purpose,fields:[...fields],...methods?{methods}:{},...entry.digest!==undefined?{digest:entry.digest}:{},...artefactVersions&&entry.version!==undefined?{version:entry.version}:{},...contract_versions?{contract_versions}:{}};
 }
 /** Validates `bindle_integration` for one exact client. `confidential` is true only for a validated private_key_jwt
  * client; `redirectUris` and `jwksUri` are the document's own values, which must share the path prefix; `reserved` are
  * the provider's hosts. `slots`/`contracts` are trusted pins for claim validation; without them extension entries stay
  * syntax-checked (`unknown`) so the snapshot never depends on fetch timing. Returns
  * {status:'absent'|'valid'|'unrecognized'|'invalid', manifest?, v?, reason?}; never throws for hostile input. */
-export function validateIntegrationManifest(value,{clientId,confidential=false,redirectUris=[],jwksUri,reserved=[],slots,contracts={}}={}){
+export function validateIntegrationManifest(value,{clientId,confidential=false,redirectUris=[],jwksUri,reserved=[],slots,contracts={},artefactVersions=false}={}){
  if(value===undefined)return {status:'absent'};
  const invalid=reason=>({status:'invalid',reason});
  const prefix=clientPrefix(clientId);if(!prefix)return invalid('invalid_client');
@@ -61,14 +66,15 @@ export function validateIntegrationManifest(value,{clientId,confidential=false,r
  const declaresOccupant=Array.isArray(value.extensions)&&value.extensions.some(entry=>object(entry)&&entry.role==='occupant');
  if(!confidential&&(Object.hasOwn(value,'events_endpoint')||Object.hasOwn(value,'resources')||declaresOccupant))return invalid('confidential_required');
  const manifest={v:1};
- if(object(value.setup)&&Array.isArray(value.setup.fragments)&&value.setup.fragments.length<=INTEGRATION_LIMITS.fragments){const fragments=value.setup.fragments.map(setupFragment);if(fragments.length&&fragments.every(Boolean)&&new Set(fragments.map(f=>f.fragment)).size===fragments.length)manifest.setup={fragments};}
+ if(object(value.setup)&&Array.isArray(value.setup.fragments)&&value.setup.fragments.length<=INTEGRATION_LIMITS.fragments){const fragments=value.setup.fragments.map(entry=>setupFragment(entry,{artefactVersions}));if(fragments.length&&fragments.every(Boolean)&&new Set(fragments.map(f=>f.fragment)).size===fragments.length)manifest.setup={fragments};}
  const management=prefixedURL(value.management_url,clientId);if(management)manifest.management_url=management;
  const events=prefixedURL(value.events_endpoint,clientId);
  if(events){manifest.events_endpoint=events;const subscribed=value.events===undefined?[PREFERENCES_UPDATED_EVENT]:idList(value.events,INTEGRATION_LIMITS.events,{empty:true});if(subscribed)manifest.events=subscribed;else manifest.events=[PREFERENCES_UPDATED_EVENT];}
  const r=value.resources;
  if(object(r)){
+  let cv;if(artefactVersions&&r.cv!==undefined)try{cv=contractReferences(r.cv,r.contracts);}catch{return invalid('invalid_contract_reference');}
   const rpc=prefixedURL(r.rpc_endpoint,clientId),discovery=prefixedURL(r.discovery_endpoint,clientId),list=idList(r.contracts,INTEGRATION_LIMITS.contracts),dpop=r.dpop===undefined?'none':DPOP.includes(r.dpop)?r.dpop:undefined;
-  if(rpc&&discovery&&list&&dpop)manifest.resources={rpc_endpoint:rpc,discovery_endpoint:discovery,contracts:list,dpop};
+  if(rpc&&discovery&&list&&dpop)manifest.resources={rpc_endpoint:rpc,discovery_endpoint:discovery,contracts:list,dpop,...cv?{cv}:{}};
  }
  // Each audience names exactly one purpose; a collision is a security-relevant defect, never silently repaired.
  const endpoints=[manifest.events_endpoint,manifest.resources?.rpc_endpoint,manifest.resources?.discovery_endpoint].filter(Boolean);
@@ -138,7 +144,7 @@ const sorted=list=>[...list??[]].sort();
  * `keySet` is the validated current key set, null when the set was invalid, or undefined when its fetch failed
  * transiently. Returns {decision:'unchanged'|'adopt'|'review'|'invalid', changes, next, staged?}: `next` is the pin to
  * keep now (only narrowing or audited same-prefix endpoint moves are adopted); `staged` awaits owner review. */
-export function classifyIntegrationChange(pinned,observed,keySet){
+export function classifyIntegrationChange(pinned,observed,keySet,{artefactVersions=false}={}){
  const out=(decision,changes,next=pinned,staged)=>({decision,changes,next:structuredClone(next),...staged?{staged}:{}});
  if(observed?.transient||!observed?.gone&&!observed?.invalid&&!observed?.client)return out('unchanged',['transient']);
  if(observed.gone)return out('invalid',['client_gone']);
@@ -172,6 +178,8 @@ export function classifyIntegrationChange(pinned,observed,keySet){
  else if(pr&&cr){
   const kept=pr.contracts.filter(c=>cr.contracts.includes(c));if(kept.length<pr.contracts.length){changes.push('contracts_narrowed');if(kept.length)next.manifest.resources.contracts=kept;else delete next.manifest.resources;}
   if(cr.contracts.some(c=>!pr.contracts.includes(c)))review.push('contracts_widened');
+  if(artefactVersions&&!same(pr.cv,cr.cv))review.push('contract_versions_changed');
+  if(artefactVersions&&next.manifest.resources?.cv)next.manifest.resources.cv=Object.fromEntries(Object.entries(next.manifest.resources.cv).filter(([k])=>kept.includes(k)));
  }else if(cr)review.push('resources_added');
  if(old.events_endpoint&&!current.events_endpoint){changes.push('events_removed');delete next.manifest.events_endpoint;delete next.manifest.events;}
  else if(!old.events_endpoint&&current.events_endpoint)review.push('events_added');
@@ -201,9 +209,10 @@ const currentSnapshot=(client,keySet)=>({clientId:client.id,redirectUris:sorted(
 
 // --- Engine edge operations (unmounted; INTEGRATIONS_ENABLED required) ---
 /** `directory` is a ClientDirectory constructed with `integrations:true`; `slots`/`contracts` are trusted pins. */
-export function createIntegrationsProvider({directory,slots,contracts={}}={}){
+export function createIntegrationsProvider({directory,slots,contracts={},artefactVersions=false,contractResolver,compileContract}={}){
  return Object.freeze({
-  manifest:input=>validateIntegrationManifest(input?.manifest,{clientId:input?.clientId,confidential:input?.confidential===true,redirectUris:input?.redirectUris,jwksUri:input?.jwksUri,reserved:directory?.reservedHosts??[],slots,contracts}),
+  contract:versionedContractProvider({enabled:artefactVersions,resolve:contractResolver,compile:compileContract}).contract,
+  manifest:input=>validateIntegrationManifest(input?.manifest,{clientId:input?.clientId,confidential:input?.confidential===true,redirectUris:input?.redirectUris,jwksUri:input?.jwksUri,reserved:directory?.reservedHosts??[],slots,contracts,artefactVersions}),
   resolve:input=>{if(!directory?.integrations)fail('integrations_disabled');return directory.resolve(input?.clientId);},
   revalidate:input=>{if(!directory?.integrations)fail('integrations_disabled');return directory.revalidateIntegration(input?.clientId,input?.pinned);},
  });
@@ -212,3 +221,81 @@ function enabled(config){if(!siteGlobal(config,'INTEGRATIONS_ENABLED'))fail('int
 export class IntegrationManifest extends AppQuery {static operation='integrations.manifest';static deps=['config','integrations'];fetch({config,integrations}){enabled(config);return integrations.manifest(this.input);}}
 export class IntegrationClient extends AppQuery {static operation='integrations.client';static deps=['config','integrations'];fetch({config,integrations}){enabled(config);return integrations.resolve(this.input);}}
 export class IntegrationRevalidation extends AppQuery {static operation='integrations.revalidate';static deps=['config','integrations'];fetch({config,integrations}){enabled(config);return integrations.revalidate(this.input);}}
+
+// ART-6: foreign references are request-scoped assertions, never publication-fault evidence.
+export function contractReferences(value,contracts){
+ if(!object(value)||Array.isArray(value)||![Object.prototype,null].includes(Object.getPrototypeOf(value))||Object.keys(value).length>32)fail('artefact_digest_mismatch');const out={};
+ for(const contract of contracts??Object.keys(value).sort()){
+  const ref=Object.hasOwn(value,contract)?value[contract]:null;
+  if(!idURL(contract)||!object(ref)||Array.isArray(ref)||![Object.prototype,null].includes(Object.getPrototypeOf(ref))||!Object.hasOwn(ref,'version')||!Object.hasOwn(ref,'digest')||!Number.isSafeInteger(ref.version)||ref.version<1||ref.version>1024||typeof ref.digest!=='string'||!/^sha256-[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$/.test(ref.digest))fail('artefact_digest_mismatch');
+  out[contract]={version:ref.version,digest:ref.digest};
+ }return out;
+}
+/** A resolver returns the accepted immutable {record, digest}; compilation receives a detached body and MUST create
+ * an isolated validator context. No URL-keyed cache: concurrent versions with the same $id cannot alias validators.
+ * `validate` returns true/false; `shape` returns the result admitted by this pin, with later-named members removed.
+ * Requiring both hooks makes unsupported schema dialects fail closed instead of approximating JSON Schema. */
+export function versionedContractProvider({enabled=false,resolve,compile=compileContractVersion}={}){
+ return Object.freeze({async contract(input){
+  if(!enabled)fail('unsupported_artefact_version');const v=input??{},ref=contractReferences({[v.contract]:v.reference})[v.contract];
+  const pin=structuredClone(await resolve?.({contract:v.contract,...ref}));
+  if(!pin?.record||pin.record.id!==v.contract||pin.record.kind!=='rpc-contract'||pin.record.version!==ref.version||pin.digest!==ref.digest)fail('artefact_digest_mismatch');
+  if(await versionDigest(pin.record)!==ref.digest)fail('artefact_digest_mismatch');
+  const validator=await compile?.(structuredClone(pin.record.body),{digest:ref.digest,version:ref.version,contract:v.contract});
+  if(typeof validator?.validate!=='function'||typeof validator?.shape!=='function')fail('artefact_unverifiable');
+  if(typeof v.method!=='string'||!await validator.validate({method:v.method,args:structuredClone(v.args)}))fail('invalid_args');
+  if(!Object.hasOwn(v,'result'))return {reference:ref,valid:true};
+  const result=await validator.shape(v.method,structuredClone(v.result),{version:ref.version,digest:ref.digest});
+  return {reference:ref,result:shapeContractResult(pin.record.body,v.method,result)};
+ }});
+}
+export class IntegrationContract extends AppQuery {static operation='integrations.contract';static deps=['config','integrations'];fetch({config,integrations}){enabled(config);if(!siteGlobal(config,'ARTEFACT_VERSIONS_ENABLED'))fail('unsupported_artefact_version');return integrations.contract(this.input);}}
+
+/** Conservative pinned projection. Unknown object members are withheld even where an old schema was open: this
+ * also withholds every member a later version might name, without trusting an incomplete view of the head. */
+export function shapeContractResult(root,method,value){
+ const pointer=ref=>{if(ref==='#')return root;if(typeof ref!=='string'||!ref.startsWith('#/'))fail('artefact_unverifiable');return ref.slice(2).split('/').reduce((v,k)=>v&&Object.hasOwn(v,k.replaceAll('~1','/').replaceAll('~0','~'))?v[k.replaceAll('~1','/').replaceAll('~0','~')]:undefined,root);};
+ const resolve=(schema,seen=new Set())=>{if(typeof schema==='string')schema=pointer(schema);while(schema?.$ref){if(seen.has(schema.$ref))fail('artefact_unverifiable');seen.add(schema.$ref);schema=pointer(schema.$ref);}if(schema===undefined)fail('artefact_unverifiable');return schema;};
+ const shape=(schema,v,depth=0)=>{schema=resolve(schema);if(depth>32||schema===false)fail('invalid_result');if(schema===true){if(v!==null&&typeof v==='object')fail('artefact_unverifiable');return v;}
+  if(!object(schema)||['oneOf','anyOf','allOf','if','patternProperties','$dynamicRef'].some(k=>Object.hasOwn(schema,k)))fail('artefact_unverifiable');
+  if(Array.isArray(v)){if(!schema.items)fail('artefact_unverifiable');return v.map(x=>shape(schema.items,x,depth+1));}
+  if(object(v)){const out={};for(const [k,s] of Object.entries(schema.properties??{}))if(Object.hasOwn(v,k))Object.defineProperty(out,k,{value:shape(s,v[k],depth+1),enumerable:true,writable:true,configurable:true});return out;}return v;
+ };
+ const result=Object.hasOwn(root['x-methods']??{},method)?root['x-methods'][method].result:undefined;if(result===undefined)fail('artefact_unverifiable');return shape(result,value);
+}
+
+/** Isolated validator for the shipped JSON Schema dialect. Unsupported assertion keywords fail closed; no registry,
+ * coercion, defaults, remote references or mutable compilation cache. The caller keys each instance by record digest. */
+export function compileContractVersion(root){
+ const annotations=new Set(['$schema','$id','$defs','title','description','examples','default','deprecated','readOnly','writeOnly','x-methods','x-enumDescriptions']);
+ const supported=new Set(['$ref','type','const','enum','properties','required','additionalProperties','items','prefixItems','minItems','maxItems','uniqueItems','minLength','maxLength','pattern','format','minimum','maximum','exclusiveMinimum','exclusiveMaximum','multipleOf','minProperties','maxProperties','oneOf','anyOf','allOf','not']);
+ const reference=ref=>{if(ref==='#')return root;if(typeof ref!=='string'||!ref.startsWith('#/'))fail('artefact_unverifiable');const s=ref.slice(2).split('/').reduce((v,k)=>v&&Object.hasOwn(v,k.replaceAll('~1','/').replaceAll('~0','~'))?v[k.replaceAll('~1','/').replaceAll('~0','~')]:undefined,root);if(s===undefined)fail('artefact_unverifiable');return s;};
+ const same=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
+ const check=(s,v,depth=0)=>{
+  if(depth>64)fail('artefact_unverifiable');if(typeof s==='boolean')return s;if(!object(s))fail('artefact_unverifiable');
+  for(const k of Object.keys(s))if(!annotations.has(k)&&!supported.has(k))fail('artefact_unverifiable');
+  if(s.$ref!==undefined&&!check(reference(s.$ref),v,depth+1))return false;
+  if(s.const!==undefined&&!same(s.const,v)||s.enum&&!s.enum.some(x=>same(x,v)))return false;
+  const types=Array.isArray(s.type)?s.type:s.type?[s.type]:[];
+  const matches=t=>t==='null'?v===null:t==='array'?Array.isArray(v):t==='object'?object(v)&&!Array.isArray(v):t==='integer'?Number.isSafeInteger(v):t==='number'?typeof v==='number'&&Number.isFinite(v):typeof v===t;
+  if(types.length&&!types.some(matches))return false;
+  if(s.oneOf&&s.oneOf.filter(x=>check(x,v,depth+1)).length!==1||s.anyOf&&!s.anyOf.some(x=>check(x,v,depth+1))||s.allOf&&!s.allOf.every(x=>check(x,v,depth+1))||s.not&&check(s.not,v,depth+1))return false;
+  if(typeof v==='string'){
+   if(s.minLength!==undefined&&[...v].length<s.minLength||s.maxLength!==undefined&&[...v].length>s.maxLength||s.pattern!==undefined&&!new RegExp(s.pattern,'u').test(v))return false;
+   if(s.format!==undefined){if(!['uri','uri-reference','date-time','date','time','email','uuid','hostname','ipv4','ipv6'].includes(s.format))fail('artefact_unverifiable');
+    if(s.format==='uri'||s.format==='uri-reference'){try{new URL(v,...s.format==='uri-reference'?['https://reference.example']:[]);}catch{return false;}}
+    else if(s.format==='uuid'){if(!/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(v))return false;}
+    else fail('artefact_unverifiable');
+   }
+  }
+  if(typeof v==='number')for(const [k,ok] of [['minimum',v>=s.minimum],['maximum',v<=s.maximum],['exclusiveMinimum',v>s.exclusiveMinimum],['exclusiveMaximum',v<s.exclusiveMaximum],['multipleOf',Number.isInteger(v/s.multipleOf)]])if(s[k]!==undefined&&!ok)return false;
+  if(Array.isArray(v)){
+   if(s.minItems!==undefined&&v.length<s.minItems||s.maxItems!==undefined&&v.length>s.maxItems||s.uniqueItems&&v.some((x,i)=>v.slice(0,i).some(y=>same(x,y))))return false;
+   for(const [i,x] of v.entries()){const item=s.prefixItems?.[i]??s.items;if(item!==undefined&&!check(item,x,depth+1))return false;}
+  }else if(object(v)){
+   const keys=Object.keys(v);if(s.required?.some(k=>!Object.hasOwn(v,k))||s.minProperties!==undefined&&keys.length<s.minProperties||s.maxProperties!==undefined&&keys.length>s.maxProperties)return false;
+   for(const k of keys){const member=Object.hasOwn(s.properties??{},k)?s.properties[k]:s.additionalProperties;if(member!==undefined&&!check(member,v[k],depth+1))return false;}
+  }return true;
+ };
+ return {validate:request=>check(root,request),shape(method,result){const schema=Object.hasOwn(root['x-methods']??{},method)?root['x-methods'][method].result:undefined;if(schema===undefined)fail('artefact_unverifiable');const out=shapeContractResult(root,method,result);if(!check(typeof schema==='string'?reference(schema):schema,out))fail('invalid_result');return out;}};
+}

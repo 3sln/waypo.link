@@ -1,10 +1,15 @@
+import {AppAction,AppQuery} from '../app/engine.mjs';
 import {clientSite} from './client-metadata.mjs';
 import {syncEventReaders} from './event-readers.mjs';
 // Trusted owner-shard ports for incremental consent. No HTTP caller supplies these operations.
+import {canonical} from '../core/primitives.mjs';
 import {fail,validateValue} from './schema.mjs';
 import {createAppSession,revokeFamily,lineageLive,NO_EXPIRY} from './app-sessions.mjs';
 const key=(kind,id)=>`federation/${kind}/${id}`,copy=structuredClone,union=(a=[],b=[])=>[...new Set([...a,...b])];
 const view=rows=>rows.length?rows.reduce((out,g)=>{out.fields=union(out.fields,g.fields);for(const [f,cs]of Object.entries(g.methods??{}))for(const [c,ms]of Object.entries(cs))(out.methods[f]??={})[c]=union(out.methods[f][c],ms);for(const [f,ids]of Object.entries(g.resources??{}))out.resources[f]=union(out.resources[f],ids);return out;},{fields:[],methods:{},resources:{}}):null;
+// Distinct pins are distinct authority: never let a union silently upgrade an older grant.
+const contractRank=g=>Object.values(g.contract_versions??{}).reduce((n,p)=>n+(p.version??0),0);
+const pinnedView=(rows,selector={})=>{const ordered=rows.slice().reverse().sort((a,b)=>(b.version??0)-(a.version??0)||contractRank(b)-contractRank(a)||(b.approvedAt??0)-(a.approvedAt??0)),pin=ordered.find(g=>(selector.version===undefined||g.version===selector.version)&&(selector.digest===undefined||g.digest===selector.digest));if(!pin)return null;const out=view(ordered.filter(g=>g.digest===pin.digest&&g.version===pin.version&&canonical(g.contract_versions??{})===canonical(pin.contract_versions??{})));return {...out,...pin.version?{version:pin.version}:{},digest:pin.digest,...pin.contract_versions?{contract_versions:copy(pin.contract_versions)}:{},...pin.pinHistory?{pinHistory:copy(pin.pinHistory)}:{}};};
 export async function incrementalPort(s,method,input){
  const {subject,clientId,fragment}=input??{};if(subject!==`${s.issuer}/entities/${s.routingKey}`)fail('forbidden');
  await s.ensureClients();const identity=await s.incrementalIdentity?.(subject);if(!identity)fail('unauthorized');await s.active(subject,identity.epoch);
@@ -12,7 +17,7 @@ export async function incrementalPort(s,method,input){
  const rows=async tx=>{let c;try{c=await connection();}catch(error){if(['invalid_request','invalid_token','unauthorized','not_found'].includes(error.code))return [];throw error;}return (await tx.list(key('grant',''))).map(r=>r.value).filter(g=>g.active&&g.subject===subject&&g.clientId===clientId&&g.epoch===identity.epoch&&g.connection?.id===c.id&&g.connection?.generation===c.generation);};
  if(method==='siteConnection'){for(const client of s.clients.values()){if(clientSite(new URL(client.origin).hostname)!==input.site)continue;const binding=await s.connections?.binding(client.id);try{if(binding&&await s.connections.check(binding,client.id)===true)return true;}catch(error){if(!['invalid_token','unauthorized','not_found'].includes(error.code))throw error;}}return false;}
  if(method==='connection'){try{return await connection();}catch{return null;}}
- if(method==='current')return s.store.transaction(async tx=>view((await rows(tx)).filter(g=>g.fragment===fragment)));
+ if(method==='current')return s.store.transaction(async tx=>{const grants=(await rows(tx)).filter(g=>g.fragment===fragment);return s.artefactVersions?pinnedView(grants,input):view(grants);});
  if(['read','receivers','candidates'].includes(method)){
   await s.syncResources(subject);const schema=method==='candidates'?(await s.schema(fragment)).schema:null;return s.store.transaction(async tx=>{if(method==='read')return await tx.get(key('preferences',`${subject}|${fragment}`))??null;
    if(method==='receivers')return (await s.consumerSnapshot(tx,subject,fragment,identity.epoch)).consumers.filter(c=>c.client!==clientId&&c.fields?.includes(input.field));
@@ -26,19 +31,21 @@ export async function incrementalPort(s,method,input){
   return scoped.configure(authority,{fragment,values:input.values,expectedRevision:input.expectedRevision,reviewedConsumerDigest:snapshot.digest,updateShared:true});
  }
  if(method==='commit'){
-  await s.syncResources(subject);const c=await connection(),pins=new Map();for(const change of input.changes)pins.set(change.fragment,await s.schema(change.fragment));
+  await s.syncResources(subject);const c=await connection(),pins=new Map();for(const change of input.changes)pins.set(change.fragment,await s.schema(s.artefactVersions?{fragment:change.fragment,...change.version?{version:change.version}:{},...change.digest?{digest:change.digest}:{}}:change.fragment));
   const committed=await s.store.transaction(async tx=>{
    const journal=key('incremental-decision',`${subject}|${clientId}|${input.decision}`),prior=await tx.get(journal);if(prior){if(prior.connection?.id!==c.id||prior.connection?.generation!==c.generation)fail('unauthorized');return {results:prior.results};}
    await s.active(subject,identity.epoch);if(await s.connections.check(c,clientId)!==true)fail('unauthorized');const results=[];
-   for(const change of input.changes){const pin=pins.get(change.fragment);if(pin.digest!==change.digest)fail('stale_consent');const preferences=await tx.get(key('preferences',`${subject}|${change.fragment}`));if(!preferences||preferences.digest!==pin.digest)fail('invalid_preferences');
-    const before=view((await rows(tx)).filter(g=>g.fragment===change.fragment)),after=view([before??{fields:[],methods:{},resources:{}},change]);
+   for(const change of input.changes){const pin=pins.get(change.fragment);if(pin.digest!==change.digest)fail('stale_consent');const preferences=await tx.get(key('preferences',`${subject}|${change.fragment}`));if(!preferences||(s.artefactVersions?!await s.referenceMatches(tx,change.fragment,pin,preferences):preferences.digest!==pin.digest))fail('invalid_preferences');
+    const existing=(await rows(tx)).filter(g=>g.fragment===change.fragment);if(s.artefactVersions&&existing.some(g=>(g.version??0)>(pin.version??0)||Object.entries(change.contract_versions??{}).some(([url,ref])=>(g.contract_versions?.[url]?.version??0)>(ref.version??0))))fail('stale_consent');
+    const before=s.artefactVersions?pinnedView(existing):view(existing),compatible=before&&(!s.artefactVersions||before.digest===pin.digest&&before.version===pin.version&&canonical(before.contract_versions??{})===canonical(change.contract_versions??{})),after=view([compatible?before:{fields:[],methods:{},resources:{}},change]);
+    if(s.artefactVersions){Object.assign(after,{digest:pin.digest,...pin.version?{version:pin.version}:{},...change.contract_versions?{contract_versions:copy(change.contract_versions)}:{}});if(change.silent===true){if(!before||['fields','methods','resources'].some(k=>canonical(before[k])!==canonical(after[k])))fail('stale_consent');const ref=v=>({...v.version?{version:v.version}:{},digest:v.digest,...v.contract_versions?{contract_versions:copy(v.contract_versions)}:{}});after.pinHistory=[...before.pinHistory??[],{at:s.clock(),from:ref(before),to:ref(after)}];}}
     const resources=after.resources??{},assignedResources={},resourceScopes={},resourceGenerations={};
     for(const f of after.fields){const field=pin.schema.fields[f];if(!field)fail('invalid_args');validateValue(field,preferences.values[f],v=>s.url(v));if(field.type!=='resource')continue;
      const values=(field.cardinality?.max??1)===1?[preferences.values[f]]:preferences.values[f];assignedResources[f]=values.map(v=>typeof v==='string'?v:v.resource);resourceScopes[f]={};
      for(const id of resources[f]??[]){if(!assignedResources[f].includes(id))fail('invalid_resource');const r=await tx.get(key('resource',id));if(!r||r.owner!==subject)fail('invalid_resource');resourceGenerations[id]=r.generation??null;resourceScopes[f][id]=values.find(v=>(typeof v==='string'?v:v.resource)===id)?.scope??{};
       for(const [contract,ms]of Object.entries(after.methods[f]??{}))if(!field.contracts.includes(contract)||ms.some(m=>!r.contracts[contract]?.includes(m)))fail('invalid_args');}
     }
-    const id=s.random();await s.bounded(tx,'grant',256);await tx.set(key('grant',id),{id,subject,clientId,fragment:change.fragment,digest:pin.digest,...after,active:true,epoch:identity.epoch,connection:copy(c),assignedResources,approvedResources:copy(resources),resourceScopes,resourceGenerations,approvedAt:s.clock()});results.push({fragment:change.fragment,before,after});
+    const id=s.random();await s.bounded(tx,'grant',256);await tx.set(key('grant',id),{id,subject,clientId,fragment:change.fragment,digest:pin.digest,...after,...s.artefactVersions?{...pin.version?{version:pin.version}:{},...change.contract_versions?{contract_versions:copy(change.contract_versions)}:{}}:{},active:true,epoch:identity.epoch,connection:copy(c),assignedResources,approvedResources:copy(resources),resourceScopes,resourceGenerations,approvedAt:s.clock()});results.push({fragment:change.fragment,before,after});
    }
    await s.bounded(tx,'incremental-decision',512);const result={results};await tx.set(journal,{...result,connection:copy(c),expiresAt:s.clock()+86400000});return result;
   });await syncEventReaders(s,subject);return committed;
@@ -59,3 +66,7 @@ export async function incrementalPort(s,method,input){
  if(method==='revoke')return s.store.transaction(async tx=>{const f=await tx.get(key('family',input.family));if(f?.subject===subject&&f.clientId===clientId)await revokeFamily(s,tx,f);});
  fail('unsupported_method');
 }
+
+// Account engine boundary for trusted owner-shard incremental ports.
+export class CommitIncrementalGrants extends AppAction{static operation='federation.commit-incremental-grants';static deps=['federation'];run({federation}){return incrementalPort(federation,'commit',this.input);}}
+export class CurrentIncrementalGrants extends AppQuery{static operation='federation.current-incremental-grants';static deps=['federation'];fetch({federation}){return incrementalPort(federation,'current',this.input);}}

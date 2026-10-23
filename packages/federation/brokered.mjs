@@ -28,6 +28,7 @@ import {UUID} from '../core/primitives.mjs';
 import {connectionState,RECOGNIZED_SLOTS} from '../apps/connections.mjs';
 import {MESSAGING_INGRESS_SLOT,MESSAGING_ADDRESS_DECLARATION} from '../links/types.mjs';
 import {RESOURCE_SCOPING} from '../storage/scoping.mjs';
+import {contractReferences} from './integrations.mjs';
 import {resourceId,DISCOVERY_LIMITS} from './resource-discovery.mjs';
 
 export const MAILBOX_CONTRACT='https://spec.bindle.example/bindlebox/v1/contracts/mailbox';
@@ -96,8 +97,8 @@ const sameAssignment=(a,{binding,consumer})=>JSON.stringify(a.binding)===JSON.st
 /** The `connections`-style provider class for createAppEngine. `store`: the account's transactional metadata (the
  * same store as the connection records). `discovery`: a DiscoveryClient (mint + egress injected). `brokering`:
  * BROKERING_ENABLED. `issuer`: the provider origin. */
-export function brokeredResourcesProvider({store,discovery,issuer,integrations=false,brokering=false,emailBridge=false,slots=RECOGNIZED_SLOTS,clock=()=>Date.now(),uuid=()=>crypto.randomUUID()}={}){
- return class extends BrokeredResourcesProvider{static deps=[];constructor(){super();Object.assign(this,{store,discovery,issuer,integrations:integrations===true,brokering:brokering===true,emailBridge:emailBridge===true,slots,clock,uuid});}};
+export function brokeredResourcesProvider({store,discovery,issuer,integrations=false,brokering=false,emailBridge=false,artefactVersions=false,slots=RECOGNIZED_SLOTS,clock=()=>Date.now(),uuid=()=>crypto.randomUUID()}={}){
+ return class extends BrokeredResourcesProvider{static deps=[];constructor(){super();Object.assign(this,{store,discovery,issuer,integrations:integrations===true,brokering:brokering===true,emailBridge:emailBridge===true,artefactVersions:artefactVersions===true,slots,clock,uuid});}};
 }
 export class BrokeredResourcesProvider extends Provider{
  async obtain({actor}={}){
@@ -141,7 +142,7 @@ function scope(p,actor){
  async function brokeredCall(c,record,{purpose,contract,method,grant,feature,pool='owner'}){
   if(c.manifest.resources?.dpop==='required')unavailable();// The provider consumer holds no DPoP key (§5.4).
   const url=p.discovery.endpoint(c,'rpc_endpoint');if(resourceId(record.resource,url.href)!==record.resource)unavailable();
-  const txId=p.uuid(),answer=await p.discovery.call({connection:c,url,pool,maxBytes:BROKERED_LIMITS.callBytes,claims:{subject,purpose,connection:c.id,generation:c.generation,resource:record.resource,grant,methods:{[contract]:[method]},scope:null,lifetime:60,...feature?{feature}:{}},body:{version:"0",tx:txId,resource:record.resource,contract,method,args:{}}});
+  const txId=p.uuid(),answer=await p.discovery.call({connection:c,url,pool,maxBytes:BROKERED_LIMITS.callBytes,claims:{subject,purpose,connection:c.id,generation:c.generation,resource:record.resource,grant,methods:{[contract]:[method]},scope:null,lifetime:60,...p.artefactVersions?{cv:contractReferences(c.manifest.resources.cv,[contract])}:{},...feature?{feature}:{}},body:{version:"0",tx:txId,resource:record.resource,contract,method,args:{}}});
   if(answer.status!==200||!/^application\/json(?:\s*;.*)?$/i.test(answer.contentType??''))fault('describe_failed','The integration did not describe this resource.',502);
   let body;try{body=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(answer.bytes));}catch{body=null;}
   if(!plain(body)||Object.keys(body).some(k=>!['version','tx','result','error'].includes(k))||body.version!=='0'||body.tx!==txId||Object.hasOwn(body,'error')||!plain(body.result))fault('describe_failed','The integration did not describe this resource.',502);
@@ -262,7 +263,7 @@ function scope(p,actor){
    const a=r.assignments.find(a=>a.binding.slot===INTAKE_SLOT&&a.consumer.feature==='email-bridge'&&a.contracts.includes(INTAKE_CONTRACT));
    if(!a||!c||!usable(r,c)||r.resource!==seat.resource||r.connection!==seat.connection||c.clientId!==seat.clientId||c.generation!==seat.generation||!r.contracts.includes(INTAKE_CONTRACT)||c.manifest.resources?.dpop==='required')unavailable();
    const url=p.discovery.endpoint(c,'rpc_endpoint');if(resourceId(r.resource,url.href)!==r.resource)unavailable();
-   let answer;try{answer=await p.discovery.call({connection:c,url,pool:'owner',maxBytes:BROKERED_LIMITS.callBytes,claims:{subject,purpose:'invoke',connection:c.id,generation:c.generation,resource:r.resource,grant:`${a.grant}.${seat.cnx}`,methods:{[INTAKE_CONTRACT]:['deliver']},scope:null,lifetime:60,feature:'email-bridge'},requestBytes:1500000,body:rpc});}
+   let answer;try{answer=await p.discovery.call({connection:c,url,pool:'owner',maxBytes:BROKERED_LIMITS.callBytes,claims:{subject,purpose:'invoke',connection:c.id,generation:c.generation,resource:r.resource,grant:`${a.grant}.${seat.cnx}`,methods:{[INTAKE_CONTRACT]:['deliver']},scope:null,lifetime:60,...p.artefactVersions?{cv:contractReferences(c.manifest.resources.cv,[INTAKE_CONTRACT])}:{},feature:'email-bridge'},requestBytes:1500000,body:rpc});}
    catch(error){if(['discovery_rate_limited','brokering_unavailable','discovery_unavailable','egress_busy'].includes(error?.code))throw error;fault('indeterminate','Delivery outcome unknown.',502,{indeterminate:true});}
    let json;try{if(!/^application\/json(?:\s*;.*)?$/i.test(answer.contentType??''))throw Error();json=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(answer.bytes));}catch{fault('indeterminate','Delivery outcome unknown.',502,{indeterminate:true});}
    if(answer.status===200&&(!plain(json)||Object.keys(json).some(k=>!['version','tx','result','error'].includes(k))||json.version!=='0'||json.tx!==rpc.tx||Object.hasOwn(json,'error')&&!plain(json.error)||!Object.hasOwn(json,'error')&&!plain(json.result)))fault('indeterminate','Delivery outcome unknown.',502,{indeterminate:true});
@@ -276,7 +277,7 @@ function scope(p,actor){
    * grant ∩ this assignment's contracts); minting must run in this account's serialization domain. */
   async mintable(input){systemOnly();records();const v=only(input,['record','grant']);
    return tx(async t=>{const r=await load(t,v.record),c=await readConnection(t,owner,r.connection),a=r.assignments.find(x=>x.grant===v.grant);if(!a||!c||!usable(r,c))unavailable();
-    return {subject,audience:c.manifest.resources.rpc_endpoint,connection:c.id,generation:c.generation,resource:r.resource,grant:a.grant,contracts:a.contracts.filter(k=>r.contracts.includes(k)),dpop:c.manifest.resources.dpop??'none',...a.consumer.feature?{feature:a.consumer.feature}:{clientId:a.consumer.clientId}};});
+    return {subject,audience:c.manifest.resources.rpc_endpoint,connection:c.id,generation:c.generation,resource:r.resource,grant:a.grant,contracts:a.contracts.filter(k=>r.contracts.includes(k)),...p.artefactVersions&&c.manifest.resources.cv?{cv:contractReferences(c.manifest.resources.cv,a.contracts.filter(k=>r.contracts.includes(k)))}:{},dpop:c.manifest.resources.dpop??'none',...a.consumer.feature?{feature:a.consumer.feature}:{clientId:a.consumer.clientId}};});
   },
   /** X8 severance hooks: committed rows in order, and acknowledgment once their events are durably enqueued. */
   async severance(input){systemOnly();records();const v=only(input,['after','limit']),after=v.after??0,limit=v.limit??100;if(!Number.isSafeInteger(after)||after<0||!Number.isSafeInteger(limit)||limit<1||limit>500)invalid();
