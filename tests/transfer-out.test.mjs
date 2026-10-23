@@ -36,7 +36,7 @@ test('path (a): begin, authorize, notices with per-channel dispute tokens, state
  fx.clock.advance(HOUR);const attested=await fx.post();assert.equal(attested.status,'attested');
  // The attestation is over exactly this statement, under the attestation key (spec §5.3).
  const statement=parseMoveStatement(fx.body.statement),parsed=await verifyMoveAttestation(attested.attestation,{statement,publicJwk:fx.attestation.publicJwk});
- assert.equal(parsed.payload.statement,await statementDigest(statement.input));assert.equal(parsed.payload.iss,ISSUER);assert.equal(parsed.payload.aep,3);assert.deepEqual(parsed.payload.to,{iss:DEST,identity:`${DEST}/identity/${OWNER}`});
+ assert.equal(parsed.payload.statement,await statementDigest(statement.input));assert.equal(parsed.payload.iss,ISSUER);assert.equal(parsed.payload.aep,0,'the authority epoch, not security.epoch (3)');assert.deepEqual(parsed.payload.to,{iss:DEST,identity:`${DEST}/identity/${OWNER}`});
  assert.equal(attested.redirect_until,Math.floor((fx.clock.now()+90*DAY)/1000));
  // Idempotent per statement; a different redirect_base or statement is refused.
  assert.deepEqual(await fx.post(),attested);assert.deepEqual(await fx.post({redirect_base:`${DEST}/other/`}),{status:'refused'});
@@ -396,4 +396,12 @@ test('a path (b) request inside the 30-day window after an elevated abort is con
  await fx.elevate({side:'disputer'},{credentialId:'pk-two'});
  await fx.patchIdentity(a=>({...a,recoveryHash:a.recoveryHash??'x'}));
  await assert.rejects(fx.waiting(),{code:'transfer_contested'});assert.equal((await fx.lock()).contested.reason,'conflicting-request-after-elevated-abort');
+});
+
+test('review: the move attestation carries the authority epoch (aep), not security.epoch',async t=>{
+ const fx=await transferFixture(t,{identity:{aep:7}});
+ const draft=await fx.begin({redirect:true});await fx.authorize({draft:draft.draft});await fx.post();fx.clock.advance(24*HOUR);
+ const attested=await fx.post();assert.equal(attested.status,'attested');
+ const statement=parseMoveStatement(fx.body.statement),parsed=await verifyMoveAttestation(attested.attestation,{statement,publicJwk:fx.attestation.publicJwk});
+ assert.equal(parsed.payload.aep,7);assert.equal((await fx.get()).aep,7);
 });

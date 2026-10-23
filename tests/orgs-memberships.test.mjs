@@ -96,3 +96,56 @@ test('ORG-2 seeded duplicate invitation acceptance consumes exactly one proposal
  const scheduler=createScheduler(random),original=w.service.metadata;w.service.metadata=scheduler.wrap(original,'org-store');const proposed=await scheduler.run([()=>w.run('orgs.invite',A,{invitee:p(B),grants:[{resource:'r',methods:{c:['get']}}]}),()=>w.run('orgs.invite',A,{invitee:p(B),grants:[{resource:'r',methods:{c:['put']}}]})]);assert.ok(proposed.every(r=>r.status==='fulfilled'));
  const results=await scheduler.run(proposed.map(r=>()=>w.run('orgs.accept',B,{invitation:r.value.invitation})));assert.equal(results.filter(r=>r.status==='fulfilled').length,1);assert.equal(results.find(r=>r.status==='rejected').reason.code,'invitation_invalid');assert.equal(Object.values((await w.record()).invitations).filter(i=>i.state==='accepted').length,1);assert.equal((await w.member(B)).generation,1);w.service.metadata=original;
  }finally{await w.close();}}));
+// Security review regressions (organizations phase A, findings M1, M2, M3, L1).
+const tight=w=>({verification:{enrolledAt:0,securityChangedAt:0,stepUpAt:w.clock.now()}});
+test('review M1: response period floor is one day; lowering notifies admins and applies only to new requests',async()=>{const w=await world();try{
+ const b=await w.join(B,[{power:'admin'}]);w.clock.advance(3*DAY);
+ for(const responsePeriodMs of [0,1,DAY-1,-1])await rejects(w.run('orgs.membership-policy',A,{responsePeriodMs}),'invalid_request');
+ const {request:old}=await w.run('orgs.member-grants',A,{membership:b.id,grants:[{power:'admin'},{resource:'r',methods:{c:['m']}}].slice(1),reason:'Before the change'});
+ const outbox=(await w.record()).memberOutbox.length;
+ await w.run('orgs.membership-policy',A,{responsePeriodMs:DAY});
+ const r=await w.record(),notice=r.memberOutbox.slice(outbox).find(e=>e.type==='member-response-period-lowered');
+ assert.ok(notice,'admins are notified when the period is lowered');assert.deepEqual(new Set(notice.recipients),new Set([(await w.member(A)).id,b.id]));
+ assert.equal(r.grantRequests[old.id].elevateAt,old.createdAt+7*DAY,'requests created before the change keep the old period');
+ await w.run('orgs.membership-policy',A,{responsePeriodMs:2*DAY});assert.equal((await w.record()).memberOutbox.filter(e=>e.type==='member-response-period-lowered').length,1,'raising does not notify as lowering');
+ await w.run('orgs.membership-policy',A,{responsePeriodMs:DAY});
+ const {request:q}=await w.run('orgs.remove-member',A,{membership:b.id,reason:'purge'});
+ await rejects(w.run('orgs.decide-grants',A,{request:q.id,decision:'elevate'}),'invalid_decision');
+ await rejects(w.run('orgs.decide-grants',A,{request:q.id,decision:'accept'},tight(w)),'invalid_decision');
+ assert.equal((await w.member(B)).state,'live','the subject cannot be removed at t+0 without a chance to respond');
+ w.clock.advance(DAY);await w.run('orgs.decide-grants',A,{request:q.id,decision:'elevate'});await w.run('orgs.decide-grants',A,{request:q.id,decision:'accept'},tight(w));assert.equal((await w.member(B)).state,'ended');
+ }finally{await w.close();}});
+test('review M2: a held owner cannot reject through mute, and mute requires fresh authentication',async()=>{const w=await world();try{
+ await w.join(B,[{power:'admin'}]);const c=await w.join(C,[{power:'admin'}]),d=await w.join('eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',[{power:'admin'}]);w.clock.advance(3*DAY);
+ const {request:q}=await w.run('orgs.remove-member',B,{membership:c.id,reason:'rogue admin C'});
+ await w.run('orgs.decide-grants',C,{request:q.id,decision:'reject'});await w.run('orgs.decide-grants',B,{request:q.id,decision:'elevate'});
+ await rejects(w.run('orgs.mute-requests',A,{requester:p(B),muted:true},{authTime:0}),'reauthentication_required');
+ assert.equal((await w.record()).grantRequests[q.id].state,'elevated');
+ await w.service.observeAuthority(p(A),{aep:1});assert.ok((await w.member(A)).hold);
+ await rejects(w.run('orgs.decide-grants',A,{request:q.id,decision:'reject'},{aep:1}),'authority_held');
+ await rejects(w.run('orgs.mute-requests',A,{requester:p(B),muted:true},{aep:1,authTime:0}),'reauthentication_required');
+ await w.run('orgs.mute-requests',A,{requester:p(B),muted:true},{aep:1});
+ const r=await w.record();assert.equal(r.grantRequests[q.id].state,'elevated','held owner mute closes nothing');assert.ok(r.memberships[principalKey(p(A))].mutedRequesters.some(x=>x.sub===B),'the preference is recorded');
+ // The recorded preference does not auto-reject later elevations while the owner is still held.
+ const {request:q2}=await w.run('orgs.remove-member',B,{membership:d.id,reason:'second'});w.clock.advance(7*DAY);await w.run('orgs.decide-grants',B,{request:q2.id,decision:'elevate'});
+ assert.equal((await w.record()).grantRequests[q2.id].state,'elevated');
+ }finally{await w.close();}});
+test('review M3: membership operations honour the deletion fence; exit paths stay open',async()=>{const w=await world();try{
+ const b=await w.join(B,[{resource:'r1',methods:{c:['m']}}]),i=await w.run('orgs.invite',A,{invitee:p(C),grants:[]});
+ await w.run('orgs.schedule-deletion',A,{});
+ for(const scheduled of [true,false]){
+  if(!scheduled){w.clock.advance(31*DAY);await w.run('orgs.tick','system');assert.equal((await w.record()).state,'deletion-due');}
+  await rejects(w.run('orgs.invite',A,{invitee:p(C),grants:[]}),'organization_deletion_pending');
+  await rejects(w.run('orgs.accept',C,{invitation:i.invitation}),'organization_deletion_pending');
+  await rejects(w.run('orgs.member-grants',A,{membership:b.id,grants:[{resource:'r2',methods:{c:['m']}}]}),'organization_deletion_pending');
+  await rejects(w.run('orgs.membership-policy',A,{responsePeriodMs:DAY}),'organization_deletion_pending');
+  await rejects(w.run('orgs.member-context',B,{client:'https://app.example'}),'organization_deletion_pending');
+  await rejects(w.run('orgs.remove-member',A,{membership:b.id,reason:'x'}),'organization_deletion_pending');
+ }
+ await w.run('orgs.mute-requests',B,{requester:p(A),muted:true});
+ await w.run('orgs.leave',B);assert.equal((await w.member(B)).state,'ended','members can still exit');
+ }finally{await w.close();}});
+test('review L1: a held sole admin does not block a not-yet-effective admin from leaving',async()=>{const w=await world();try{
+ await w.join(B,[{power:'admin'}]);await w.service.observeAuthority(p(A),{aep:1});
+ await w.run('orgs.leave',B);assert.equal((await w.member(B)).state,'ended');
+ }finally{await w.close();}});

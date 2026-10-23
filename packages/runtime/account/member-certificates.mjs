@@ -12,8 +12,9 @@
 //   memberContextEnd(org, input)                       ORG-2 hook: end tokens for a membership or principal
 //   memberCertificateLifetime(org)                     the organization's lifetime, read by home issuers (gate none)
 //   memberCertificateSettingsDispatch(org, request)    admin settings, actor resolved by ORG-0 `accountActor`
-// Foreign issuers are not wired here yet: no ORG-7 directory instance exists in the runtime, so `foreign` is null and
-// foreign certificates fail uniformly even with ORG_FOREIGN_MEMBERS_ENABLED (the allowlist is empty by default too).
+// Foreign issuers: the ORG-7 directory from ./foreign-directory.mjs (adapter-injected SSRF-screened egress) is the
+// `foreign` port only while DIRECTORY_ENABLED and ORG_FOREIGN_MEMBERS_ENABLED are on; the engine is rebuilt when that
+// gate changes. The allowlist ORG_FOREIGN_ISSUERS is empty by default, so foreign certificates still fail uniformly.
 import {createAppEngine,perform,read,AppQuery} from '../../app/engine.mjs';
 import {systemClock,cryptoRandom,nullAudit} from '../../app/providers.mjs';
 import {StorageError} from '../../storage/policy.mjs';
@@ -21,11 +22,12 @@ import {encryptSecret,decryptSecret} from '../secrets.mjs';
 import {flagsFor} from './flags.mjs';
 import {authorityEpoch} from '../../identity/authority-epoch.mjs';
 import {MemberCertificateIssuer,memberCertificatesProvider,certificationSigner,certificationKeyList,memberCertificateLifetime,GrantMemberConsent,IssueMemberCertificate,RevokeMemberConsent,RevokeMemberKey,MemberCertificateList,MemberCertificateStatus,MEMBER_CERTIFICATES_FLAG,MEMBER_CERTIFICATE_DEFAULT_SECONDS} from '../../identity/member-certificates.mjs';
-import {MemberContextService,memberContextProvider,cachedIssuerKeys,memberPrincipalKey,MemberToken,MemberTokenAdmit,MemberDirect,MemberAuthenticate,EndMemberTokens,MemberKeyRefresh,MEMBER_CONTEXT_OWNER_OPERATIONS,ORG_FOREIGN_MEMBERS_FLAG} from '../../orgs/certificates.mjs';
+import {MemberContextService,memberContextProvider,cachedIssuerKeys,directoryIssuerKeys,memberPrincipalKey,MemberToken,MemberTokenAdmit,MemberDirect,MemberAuthenticate,EndMemberTokens,MemberKeyRefresh,MEMBER_CONTEXT_OWNER_OPERATIONS,ORG_FOREIGN_MEMBERS_FLAG} from '../../orgs/certificates.mjs';
 import {ORG_RECORD,ORG_EPOCH,ORGANIZATIONS_FLAG} from '../../orgs/organizations.mjs';
 import {accountActor} from '../../orgs/authority.mjs';
 import {orgsEngine} from './orgs.mjs';
 import {connectionState} from '../../apps/connections.mjs';
+import {foreignDirectory,foreignDirectoryEnabled,foreignIssuers} from './foreign-directory.mjs';
 
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const identityURI=(config,id)=>`${config.APP_ORIGIN}/identity/${id}`;
@@ -51,6 +53,8 @@ function issuerEngine(c){
 function membershipPort(c,org){
  return Object.freeze({
   async lookup(principal){const r=await c.metadata.get(ORG_RECORD),m=r?.kind==='organization'&&r.id===org?r.memberships?.[memberPrincipalKey(principal)]:null;return m?.state==='live'&&(m.expires_at===undefined||m.expires_at>Date.now()/1000)?{id:m.id,generation:m.generation,aep:Number.isSafeInteger(m.aep)?m.aep:0}:null;},
+  /** Background key-refresh discovery only (never the request path): live member principals. */
+  async roster(){const r=await c.metadata.get(ORG_RECORD),now=Date.now()/1000;return r?.kind==='organization'&&r.id===org?Object.values(r.memberships??{}).filter(m=>m.state==='live'&&(m.expires_at===undefined||m.expires_at>now)).map(m=>({iss:m.principal.iss??null,sub:m.principal.sub})):[];},
   observe:(principal,{aep,reset})=>orgsEngine(c).service.observeAuthority(principal,{aep,reset}),
   async context(principal,{client,generation}){
    // ORG-0's per-principal epoch rule applies to every organization actor: pass the epoch already seen, so a
@@ -66,15 +70,16 @@ async function clientConnected(c,org,clientId,origin){
 }
 const contexts=new WeakMap();
 function contextEngine(c,org){
- let entry=contexts.get(c);if(entry?.org===org)return entry.engine;const config=c.config,issuer=config.APP_ORIGIN;
+ const config=c.config,gate=foreignDirectoryEnabled(config,org);let entry=contexts.get(c);if(entry?.org===org&&entry.gate===gate)return entry.engine;
+ const issuer=config.APP_ORIGIN,directory=gate?foreignDirectory(config,{store:c.metadata,owner:org}):null;
  const service=new MemberContextService({metadata:c.metadata,organization:{id:org,identity:identityURI(config,org)},issuer,members:membershipPort(c,org),
-  local:cachedIssuerKeys({metadata:c.metadata,issuer,read:subject=>peer(config,subject,'memberCertificateKeys',[subject])}),foreign:null,
+  local:cachedIssuerKeys({metadata:c.metadata,issuer,read:subject=>peer(config,subject,'memberCertificateKeys',[subject])}),foreign:directory?directoryIssuerKeys(directory):null,
   connections:{check:({clientId,origin})=>clientConnected(c,org,clientId,origin)},
   status:async({issuer:iss,subject,jkt})=>iss===issuer?(await peer(config,subject,'memberCertificateStatus',[subject,jkt]))?.status??null:null,
   flags:{organizations:()=>flagsFor(config,{subject:{kind:'account',owner:org}}).enabled(ORGANIZATIONS_FLAG),foreign:()=>flagsFor(config,{subject:{kind:'account',owner:org}}).enabled(ORG_FOREIGN_MEMBERS_FLAG)},
-  foreignIssuers:[],allowLoopback:config.LOCAL_DEVELOPMENT==='true'});
+  foreignIssuers:directory?foreignIssuers(config):[],allowLoopback:config.LOCAL_DEVELOPMENT==='true'});
  const engine=createAppEngine({providers:{clock:systemClock,random:cryptoRandom,audit:nullAudit,memberContext:memberContextProvider(service)}});
- contexts.set(c,{org,engine});return engine;
+ contexts.set(c,{org,gate,engine});return engine;
 }
 const uniform=token=>token?new StorageError('invalid_grant','invalid_grant',400):new StorageError('invalid_token','invalid_token',401);
 /** A wire form at an organization: anything but a verified result is the uniform fault (no account-state signal). */

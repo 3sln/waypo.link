@@ -106,3 +106,27 @@ test('runtime: default off — no consent or issuance, and the jwt-bearer grant 
   await assert.rejects(s.certify(s.alice, key), { code: 'not_found' });
   const listed = await s.invoke(s.alice, 'memberCertificatesList', [s.alice]); assert.deepEqual(listed.consents, []);
 });
+
+// Integration gap 3: member-token RPC rides the DPoP path, mounted under the organization/member flags without the
+// device grant (DEVICE_AUTHORIZATION_ENABLED is off in this fixture); device-grant behaviour is unchanged.
+test('runtime: member-token DPoP RPC is mounted under the org/member flags without the device grant', async t => {
+  const s = await setup(t), key = await holder(), issued = await s.certify(s.alice, key);
+  await s.tokenRequest(issued.certificate, key); await new Promise(resolve => setTimeout(resolve, 400));
+  const minted = await (await s.tokenRequest((await s.certify(s.alice, key)).certificate, key)).json();
+  assert.equal(minted.token_type, 'DPoP', JSON.stringify(minted));
+  const envelope = () => ({ version: '0', tx: crypto.randomUUID(), resource: '@profile', contract: 'https://3sln.me/artefacts/contracts/profile/v1', method: 'read', args: {} });
+  const rpc = async (token, proofKey = key, extra = {}) => s.app.fetch(new Request(`${ORIGIN}/bindle/rpc`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `DPoP ${token}`, DPoP: await dpop(proofKey, { htu: `${ORIGIN}/bindle/rpc`, nowMs: Date.now(), ath: token, ...extra }) }, body: JSON.stringify(envelope()) }));
+  // Authenticated by the DPoP path, then refused by the shard's live §6.2 intersection (this grant has no @profile
+  // method); without the mount the router answers 401 "Bearer token required." instead.
+  const ok = await rpc(minted.access_token), body = await ok.json();
+  assert.equal(ok.status, 403, JSON.stringify(body)); assert.equal(body.error, 'forbidden');
+  // The proof must be by the certified key, and a forged token is refused as on the device path.
+  const wrongKey = await rpc(minted.access_token, await holder()); assert.equal(wrongKey.status, 401);
+  const forged = await rpc(`${s.org}.${'A'.repeat(43)}`); assert.equal(forged.status, 401);
+});
+test('runtime: member-token DPoP RPC is not mounted with the member flags off', async t => {
+  const { MEMBER_CERTIFICATES_ENABLED, ...flags } = flagsOn; void MEMBER_CERTIFICATES_ENABLED;
+  const f = await fixture(t, { flags }), key = await holder(), token = `${crypto.randomUUID()}.${'A'.repeat(43)}`;
+  const response = await f.app.fetch(new Request(`${ORIGIN}/bindle/rpc`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `DPoP ${token}`, DPoP: await dpop(key, { htu: `${ORIGIN}/bindle/rpc`, nowMs: Date.now(), ath: token }) }, body: JSON.stringify({ version: '0', tx: crypto.randomUUID(), resource: '@profile', contract: 'x', method: 'read', args: {} }) }));
+  const body = await response.json(); assert.equal(response.status, 401); assert.equal(body.message, 'Bearer token required.', 'the DPoP provider path is not reached');
+});

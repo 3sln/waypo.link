@@ -23,13 +23,14 @@ async function world({ foreign = false, allowlist = [] } = {}) {
   const directory = new IdentityDirectory({ store: new MemoryMessagingStore(), fetch: second.fetch, enabled: true, issuers: [second.origin], clock: clock.now });
   const metadata = new SqliteMetadata(':memory:'), memberships = new Map(), flags = { foreign }, holds = [], lastProvenance = {};
   const members = {
+    async roster() { return [...memberships.values()].filter(m => m.state === 'live').map(m => ({ ...m.principal })); },
     async lookup(principal) { const m = memberships.get(memberPrincipalKey(principal)); return m?.state === 'live' ? { id: m.id, generation: m.generation, aep: m.aep } : null; },
     async observe(principal, { aep, reset, addedUnder }) { lastProvenance.value = addedUnder; const m = memberships.get(memberPrincipalKey(principal)); if (!m) return null; if (aep < m.aep) throw Object.assign(new Error('stale'), { code: 'authority_epoch_stale' }); if (aep > m.aep || reset) { m.aep = aep; holds.push({ aep, reset }); } return m; },
     async context(principal, { generation }) { const m = memberships.get(memberPrincipalKey(principal)); return { membership_id: m.id, generation }; },
   };
   const service = new MemberContextService({ metadata, organization: { id: ORG, identity: AUD }, issuer: HOST, members, local: cachedIssuerKeys({ metadata, issuer: HOST, read: async () => null, clock: clock.now }), foreign: directoryIssuerKeys(directory), connections: { check: async ({ clientId, origin }) => clientId === ERP.client_id && origin === ERP.origin }, flags: { organizations: () => true, foreign: () => flags.foreign }, foreignIssuers: allowlist.length ? allowlist : [], clock: clock.now });
   const engine = createAppEngine({ providers: { clock: { now: clock.now }, random: { uuid: () => crypto.randomUUID() }, audit: memoryAudit({ clock: { now: clock.now } }), memberContext: memberContextProvider(service) } });
-  const add = sub => { const m = { id: crypto.randomUUID().replaceAll('-', ''), state: 'live', generation: 1, aep: 0 }; memberships.set(memberPrincipalKey({ iss: second.origin, sub }), m); return m; };
+  const add = sub => { const m = { id: crypto.randomUUID().replaceAll('-', ''), principal: { iss: second.origin, sub }, state: 'live', generation: 1, aep: 0 }; memberships.set(memberPrincipalKey({ iss: second.origin, sub }), m); return m; };
   const token = async (certificate, key) => perform(engine, new MemberToken({ actor: { kind: 'system', owner: ORG }, input: { assertion: certificate, clientId: ERP.client_id, dpop: await dpop(key, { htu: TOKEN_URL, nowMs: clock.now() }), htu: TOKEN_URL, network: 'n' } }));
   const refresh = () => perform(engine, new MemberKeyRefresh({ actor: { kind: 'system', owner: ORG } }));
   return { clock, second, directory, flags, add, token, refresh, holds, service, lastProvenance };

@@ -26,3 +26,9 @@ export function createWorkerDirectoryFetch({publicRouting=false,fetcher=globalTh
   return fetcher(url.href,{method:'GET',headers:{Accept:'application/json','Accept-Encoding':'identity'},credentials:'omit',redirect:'manual',cache:'no-store',referrerPolicy:'no-referrer',signal});
  };
 }
+/** The Worker adapter's DIRECTORY_EGRESS (packages/runtime/account/foreign-directory.mjs): issuers -> the screened
+ * port above, additionally refusing any origin outside the allowlist before DNS. */
+export function workerDirectoryEgress(options={}){
+ let port;
+ return issuers=>{const allowed=new Set(issuers);port??=createWorkerDirectoryFetch({publicRouting:true,...options});return async(value,init)=>{let origin;try{origin=new URL(value).origin;}catch{}if(!allowed.has(origin))throw Object.assign(new Error('The directory issuer is not allowed.'),{code:'issuer_refused'});return port(value,init);};};
+}

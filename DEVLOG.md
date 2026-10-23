@@ -3251,3 +3251,35 @@ Following the [organizations design](docs/architecture/organizations-design.md) 
 **Gates (combined tree):** core 2792, Worker 83, UI-state 292, e2e 214 with 4 WebKit skips, asset build and Worker dry run.
 
 Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-23 — Org phase A review fixes, foreign directory wiring, member RPC; ORG-5 console (partial) and ORG-6a acquisition
+
+**Independent review of 5e6c459 and b28786e:** no High findings. The actor seam, epochs, grants evaluator, certificate verification, last-admin races and directory SSRF checks held. Six findings are fixed, each with a regression test:
+- **M1:** the owner could remove an admin instantly with a 0 ms response period. The minimum is now 24 h (`ORG_MIN_RESPONSE_MS`, provisional). Lowering it notifies all admins and applies only to new requests.
+- **M2:** a held owner could reject through `mute`. Now `requireFresh` applies, and a held owner's mute records only the preference.
+- **M3:** membership operations ignored the deletion fence. They are now refused unless the organization is active; leave, decide, mute and reconfirm stay open. The admin member listing is refused too.
+- **M4:** the per-app token-form failure budget was charged before signature verification, enabling lockouts. It's now charged only after verification; the per-network budget always applies.
+- **LM1:** a refresh-queue write revealed membership through timing. Nothing is written on the request path now; the background refresh walks the roster.
+- **L1:** a held sole admin blocked other admins from leaving. The guard now applies only to an effective admin grant.
+
+**Integration:**
+- **Foreign directory:** constructed in the Node and Worker account controllers (`foreign-directory.mjs`) behind `ORG_FOREIGN_MEMBERS_ENABLED` and `DIRECTORY_ENABLED`. The new `ORG_FOREIGN_ISSUERS` config is empty by default, and any invalid entry empties it. End-to-end SSRF tests run on both runtimes, with Node-only DNS and socket test hooks.
+- **Transfer-out** attests `authorityEpoch()`.
+- **Member tokens:** a member-only `MemberDpopRpc` path is mounted independently of the device grant.
+
+**ORG-5 console (partial):**
+- the context switcher;
+- creation (behind the paid allowlist), rename and kind label;
+- members, invitations and the acceptance page;
+- per-member grants, the elevation flows and the audit view;
+- the organization recovery-file download at creation.
+
+Missing server APIs: organization connections and preferences adapters, discovering organizations as a non-owner, and request discovery for non-admins.
+
+**ORG-6a:** a top-level acquisition consent page and an SDK `member.mjs` helper.
+- **Deviation:** consent and issuance are separate operations, so consent may survive a failed issuance.
+- **Not yet reviewed:** acquisition hasn't been through the security review.
+
+**Gates (combined tree):** core 2817, Worker 87, UI-state 314, org browser matrix 50, e2e 214 with 4 WebKit skips, asset build and Worker dry run.
+
+Reviewer: ___ Date: ___ Outcome: ___

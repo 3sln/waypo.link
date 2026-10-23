@@ -41,7 +41,7 @@ import {createWorkerClientMetadataFetch} from './client-metadata-fetch.mjs';
 import {adminClientBlocked} from '../../packages/identity/admin.mjs';
 import {federationRemote} from '../../packages/federation/runtime.mjs';
 import {FederationObject as FederationBase} from './federation.mjs';
-import {deviceGrantMountable,deviceGrantRunner,engineLinkedPort,localDeviceGrant,remoteDeviceGrant,deviceLimits,MemoryJtiCache} from '../../packages/runtime/device-grant.mjs';
+import {deviceGrantMountable,memberRpcMountable,dpopProviderMountable,deviceGrantRunner,engineLinkedPort,localDeviceGrant,remoteDeviceGrant,deviceLimits,MemoryJtiCache} from '../../packages/runtime/device-grant.mjs';
 import {attachAppSessions} from '../../packages/federation/device-authorization.mjs';
 import {UUID_V4} from '../../packages/core/primitives.mjs';
 export {LifecycleScheduler} from './lifecycle.mjs';
@@ -108,7 +108,9 @@ function resources(bindings,resolveIdentityBadges,flags){
  // Device grant (LA3): mounted, and so declared, only with the flag and every dependency of the declared members.
  const deviceMounted=Boolean(env.FEDERATION)&&deviceGrantMountable(env);
  if(env.FEDERATION)value.FEDERATION_AUTHORITY=federationAuthority({config:value,repository,directory,manifestMounts:{deviceAuthorization:deviceMounted,messagingAddress:messagingAddressMounted(value)},shard:owner=>federationRemote({invoke:(method,args)=>env.FEDERATION.get(env.FEDERATION.idFromName(`${FEDERATION_LAYOUT}/${owner}`)).invoke(method,args,owner)})});
- if(deviceMounted){
+ // The same front provider serves member-token DPoP RPC (ORG-4 §7.2) under the organization/member flags, independently
+ // of the device grant; DEVICE_GRANT.mounted still gates every device route.
+ if(env.FEDERATION&&dpopProviderMountable(env)){
   const remote=async(owner,method,args)=>{const envelope=await env.FEDERATION.get(env.FEDERATION.idFromName(`${FEDERATION_LAYOUT}/${owner}`)).device(method,args,owner);if(!envelope.ok)throw Object.assign(new Error(envelope.error.message),envelope.error);return envelope.result;};
   value.DEVICE_GRANT=deviceGrantRunner({config:env,deviceGrant:remoteDeviceGrant({config:env,linked:engineLinkedPort(()=>value.IDENTITY_ENGINE()),limits:deviceLimits(value.ABUSE),pollLimits:linkedPollLimits,jti:deviceJti,remote,active:async owner=>(await repository.get(owner))?.status==='active'})});
  }
@@ -122,7 +124,7 @@ function resources(bindings,resolveIdentityBadges,flags){
  if(flags)Object.assign(value,{flags,FLAGS:flags,FLAGS_RUNTIME:workerFlags(bindings),flagStore:env.ADMIN_AUTHORITY?remoteAdminStore((method,args)=>env.ADMIN_AUTHORITY.get(env.ADMIN_AUTHORITY.idFromName('admin-v1')).invoke(method,args)):null,flagStats:env.FLAG_STATS?createWorkerFlagStats(env.FLAG_STATS):disabledFlagStats});
  return value;
 }
-const DEVICE_METHODS=['issue','review','approve','rpc','drain'];
+const DEVICE_METHODS=['issue','review','approve','rpc','drain','memberRpc'];
 /** Owner shard with the device grant (LA3): every owner FederationService gets the host app-session policy and the
  * lineage port when composed, the front's owner-shard steps run here on the same provider, and the alarm drains the
  * account's lineage outbox. Without the mount this is exactly the base object. */
@@ -131,14 +133,14 @@ export class FederationObject extends FederationBase {
  async compose(owner){const controller=await super.compose(owner);if(deviceGrantMountable(this.env))attachAppSessions(controller.service,{linked:this.deviceLinked(),config:this.env});return controller;}
  async device(...args){return this.withFlags(()=>this.deviceHost(...args));}
  async deviceHost(method,args=[],owner){
-  if(!DEVICE_METHODS.includes(method)||!(method==='drain'?flagsFor(this.env).background('DEVICE_AUTHORIZATION_ENABLED')&&flagsFor(this.env).background('FEDERATION_ENABLED'):deviceGrantMountable(this.env)))return {ok:false,error:{code:'not_found',message:'Device authorization is not enabled.'}};
+  if(!DEVICE_METHODS.includes(method)||!(method==='drain'?flagsFor(this.env).background('DEVICE_AUTHORIZATION_ENABLED')&&flagsFor(this.env).background('FEDERATION_ENABLED'):method==='memberRpc'?memberRpcMountable(this.env):deviceGrantMountable(this.env)))return {ok:false,error:{code:'not_found',message:'Device authorization is not enabled.'}};
   try{
    if(!UUID_V4.test(owner))throw Object.assign(new Error('Invalid federation account locator.'),{code:'forbidden'});
    const ready=await this.invoke('ready',[],owner);if(!ready.ok)return ready;
    const controller=await this.controllerPromise;
    if(!this.deviceGrant){const env=this.env,abuse={consume:(key,limits)=>env.ABUSE.get(env.ABUSE.idFromName(key)).consume(limits)};const provider=localDeviceGrant({config:env,linked:this.deviceLinked(),limits:deviceLimits(abuse),pollLimits:new MemoryLinkedLimits(),shard:candidate=>{if(candidate!==owner)throw Object.assign(new Error('Sign in to the account that approved this request.'),{code:'forbidden'});return controller;}});this.deviceGrant={provider,runner:deviceGrantRunner({config:env,deviceGrant:provider})};}
    const result=method==='issue'?await this.deviceGrant.provider.issue(...args):await this.deviceGrant.runner[method](...args);
-   if(method!=='drain'&&await this.storage.getAlarm()===null)await this.storage.setAlarm(Date.now()+600000);return {ok:true,result};
+   if(!['drain','memberRpc'].includes(method)&&await this.storage.getAlarm()===null)await this.storage.setAlarm(Date.now()+600000);return {ok:true,result};
   }catch(error){return {ok:false,error:{code:error.code??'temporarily_unavailable',message:error.code?error.message:'Device sign-in could not be completed.',status:error.status,retryAfter:error.retryAfter,interval:error.interval}};}
  }
  /** Lineage drain on the owner alarm (architecture §7.4): revoke queued families, then acknowledge them; retried while

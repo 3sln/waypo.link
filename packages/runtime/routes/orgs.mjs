@@ -19,8 +19,8 @@ import {OrganizationCreation,organizationCreationProvider,CreateOrganization} fr
 import {organizationIdentityPort} from '../../identity/organizations.mjs';
 import {identityBackupPort} from '../identity-backup.mjs';
 
-const ROOT='/api/orgs',ORG=/^\/api\/orgs\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:\/(audit|name|label|deletion|members|invitations|accept|leave|member-grants|grant-decision|membership-policy|reconfirm|mute-requests))?$/;
-const POST_ACTIONS={name:'orgs.rename',label:'orgs.set-label',deletion:'orgs.schedule-deletion',invitations:'orgs.invite',accept:'orgs.accept',leave:'orgs.leave','member-grants':'orgs.member-grants','grant-decision':'orgs.decide-grants','membership-policy':'orgs.membership-policy',reconfirm:'orgs.reconfirm','mute-requests':'orgs.mute-requests'};
+const ROOT='/api/orgs',ORG=/^\/api\/orgs\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:\/(audit|name|label|deletion|members|invitations|accept|leave|remove-member|member-grants|grant-decision|membership-policy|reconfirm|mute-requests))?$/;
+const POST_ACTIONS={name:'orgs.rename',label:'orgs.set-label',deletion:'orgs.schedule-deletion',invitations:'orgs.invite',accept:'orgs.accept',leave:'orgs.leave','remove-member':'orgs.remove-member','member-grants':'orgs.member-grants','grant-decision':'orgs.decide-grants','membership-policy':'orgs.membership-policy',reconfirm:'orgs.reconfirm','mute-requests':'orgs.mute-requests'};
 export function allowedMethods(path){
  if(path===ROOT)return ['GET','POST'];const match=ORG.exec(path);if(!match)return null;
  return !match[2]?['GET']:['audit','members'].includes(match[2])?['GET']:match[2]==='deletion'?['POST','DELETE']:['POST'];

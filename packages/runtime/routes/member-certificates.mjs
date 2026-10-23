@@ -16,6 +16,9 @@
 // uses the existing DPoP path and ORG-3's `token.member` hook. The direct form (`Authorization: BindleMember`) is the
 // account method memberDirect; no RPC route mounts it yet.
 import {json,body,accountHandle,flagReadable,flagEnabled,flagGlobal,pseudonym,subnet,consume,privateHeaders} from './shared.mjs';
+import {createAppEngine,perform,read} from '../../app/engine.mjs';
+import {systemClock,cryptoRandom,nullAudit} from '../../app/providers.mjs';
+import {InspectMemberAcquisition,AcquireMemberCertificate} from '../../app/domains/member-acquisition.mjs';
 import {actingAs} from '../../orgs/authority.mjs';
 import {JWT_BEARER} from '../../orgs/certificates.mjs';
 import {memberStatusCacheControl} from '../../identity/member-certificates.mjs';
@@ -74,11 +77,22 @@ async function status({request,env,path,local}){
 }
 
 export const admission={exempt:path=>path==='/api/member-certificates/revoke'};
-export function allowedMethods(path){return path==='/api/member-certificates'?['GET']:path==='/api/member-certificates/revoke'?['POST']:SETTINGS.test(path)?['GET','POST']:null;}
+export function allowedMethods(path){return path==='/api/member-certificates/acquire'?['GET','POST']:path==='/api/member-certificates'?['GET']:path==='/api/member-certificates/revoke'?['POST']:SETTINGS.test(path)?['GET','POST']:null;}
 export const stages={
  async public(ctx){if(ctx.path==='/oauth/token')return token(ctx);if(STATUS.test(ctx.path))return status(ctx);},
  async owner({request,env,path,id,object,actor}){
   if(!allowedMethods(path))return;
+  if(path==='/api/member-certificates/acquire'){
+   const enabled=clientId=>flagEnabled(env,'ORGANIZATIONS_ENABLED',{subject:{kind:'account',owner:id},client:{clientId}},true)&&flagEnabled(env,'MEMBER_CERTIFICATES_ENABLED',{subject:{kind:'account',owner:id},client:{clientId}},true);
+   if(!['GET','POST'].includes(request.method))return json({error:'method_not_allowed'},405,{Allow:'GET, POST'});
+   const directory=env.FEDERATION_AUTHORITY?.directory,clients=env.FEDERATION_AUTHORITY?.clients??[];
+   const engine=createAppEngine({providers:{clock:systemClock,random:cryptoRandom,audit:nullAudit,config:{issuer:env.APP_ORIGIN,allowLoopback:env.LOCAL_DEVELOPMENT==='true',enabled},federationStore:{resolve:clientId=>directory?.resolve(clientId)??clients.find(c=>c.id===clientId)},accounts:{get:owner=>owner===id?object:accountHandle(env,owner)}}});
+   try{
+    if(request.method==='GET'){const input=Object.fromEntries(new URL(request.url).searchParams);return json(await read(engine,new InspectMemberAcquisition({actor:{kind:'owner',owner:id},input})),200,privateHeaders);}
+    if(request.headers.get('Origin')!==env.APP_ORIGIN)return json({error:'invalid_origin'},403,privateHeaders);
+    return json(await perform(engine,new AcquireMemberCertificate({actor:{kind:'owner',owner:id},input:await body(request,8192)})),200,privateHeaders);
+   }finally{await engine.dispose();}
+  }
   if(!flagReadable(env,'MEMBER_CERTIFICATES_ENABLED',true)&&!flagReadable(env,'ORGANIZATIONS_ENABLED',true))return;
   if(path==='/api/member-certificates'){if(request.method!=='GET')return json({error:'method_not_allowed'},405,{Allow:'GET'});return json(await object.memberCertificatesList(id),200,privateHeaders);}
   if(path==='/api/member-certificates/revoke'){if(request.method!=='POST')return json({error:'method_not_allowed'},405,{Allow:'POST'});return json(await object.memberCertificatesRevoke(id,await body(request,4096)),200,privateHeaders);}

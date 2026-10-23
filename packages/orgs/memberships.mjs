@@ -11,7 +11,9 @@ const equal=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
 const currentAdmin=(m,now)=>m?.grants?.some(g=>g.power==='admin'&&(g.expires_at===undefined||g.expires_at>now/1000));
 const grantShape=g=>Object.fromEntries(Object.entries(g).filter(([k])=>!['grantedBy','grantedAt','notBefore'].includes(k)));
 const stamp=(grants,actor,now,prior=[])=>grants.map(g=>prior.find(old=>equal(grantShape(old),g))??{...g,grantedBy:party(actor.principal),grantedAt:now});
-export const ORG_RESPONSE_MS=7*DAY,ORG_ADMIN_DELAY_MS=3*DAY;
+// ORG_MIN_RESPONSE_MS is a provisional coordinator choice (security review M1): no request can elevate before the subject
+// had a day to answer. Lowering the period notifies every admin and applies only to requests created afterwards.
+export const ORG_RESPONSE_MS=7*DAY,ORG_ADMIN_DELAY_MS=3*DAY,ORG_MIN_RESPONSE_MS=DAY;
 export function membershipState(record,random,now){
  if(!record.memberships){const p=record.initialAdmin;record.memberships={[principalKey(p)]:{id:random.uuid().replaceAll('-',''),principal:party(p),state:'live',generation:1,grants:[{power:'admin',grantedBy:party(p),grantedAt:now}],aep:0,addedUnder:null,createdAt:now}};}
  record.invitations??={};record.grantRequests??={};record.memberOutbox??=[];record.responsePeriodMs??=ORG_RESPONSE_MS;return record;
@@ -25,11 +27,13 @@ export class MembershipService extends OrganizationService{
  }
 
  initializeMembership(record,now,addedUnder){membershipState(record,this.random,now);record.memberships[principalKey(record.initialAdmin)].addedUnder=structuredClone(addedUnder??null);}
- async frame(actor,input,names,apply,{admin=false,allowOwner=false,exposure=true,fresh=false}={}){
+ async frame(actor,input,names,apply,{admin=false,allowOwner=false,exposure=true,fresh=false,exit=false}={}){
   if(!input||typeof input!=='object'||Array.isArray(input)||Object.keys(input).some(k=>!names.includes(k)))fail('invalid_request','Unsupported membership request.',400);
   if(exposure&&!this.enabled(actor?.owner))fail('not_found','Not found.',404);
   return this.metadata.transaction(async tx=>{
    const r=membershipState(await this.organization(tx,actor,{write:true}),this.random,this.clock.now()),now=this.clock.now(),m=r.memberships[principalKey(actor.principal)];
+   // Deletion fence (review M3): only exit paths (leave, decide, mute, reconfirm) stay open while deletion is pending.
+   if(!exit&&r.state!=='active')fail('organization_deletion_pending','This organization is scheduled for deletion.',409);
    const powers=organizationPowers(r,actor.principal,{now});
    if(admin&&!powers.includes('admin')&&!(allowOwner&&powers.includes('owner-of-record')))fail('not_found','Not found.',404);
    if(fresh)requireFresh(actor,now);
@@ -41,7 +45,7 @@ export class MembershipService extends OrganizationService{
  async end(r,m,actor,reason,now,tx){
   if(m.state!=='live')return;
   if(samePrincipal(m.principal,r.ownerOfRecord))fail('owner_must_be_member','Transfer ownership before leaving.',409);
-  const admin=hasAdmin(m);m.state='ended';m.generation++;m.endedAt=now;m.endReason=reason;if(admin)this.operator(r,now);
+  const admin=memberPowers(m,now).includes('admin');m.state='ended';m.generation++;m.endedAt=now;m.endReason=reason;if(admin)this.operator(r,now);
   for(const client of m.contextClients??[])this.notice(r,'member-removed',{client,membership_id:m.id,generation:m.generation},now);
   for(const q of Object.values(r.grantRequests))if(q.target===m.id&&['subject','elevated'].includes(q.state)){q.state='closed';await this.audit(tx,r,'member-grant-request-closed',actor,{request:q.id});}
   await this.audit(tx,r,'member-ended',actor,{membership:m.id,reason});
@@ -66,7 +70,7 @@ export class MembershipService extends OrganizationService{
   r.memberships[key]=m;i.state='accepted';i.membership=m.id;this.notice(r,'member-joined',{membership_id:m.id},now);await this.audit(tx,r,'member-accepted',actor,{membership:m.id});return {membership_id:m.id,generation:m.generation,adminNotBefore:hasAdmin(m)?now+ORG_ADMIN_DELAY_MS:null};
  });}
  members(actor,input={}){return this.frame(actor,input,[],async r=>({members:Object.values(r.memberships).filter(m=>m.state==='live'),requests:Object.values(r.grantRequests)}),{admin:true});}
- leave(actor,input={}){return this.frame(actor,input,[],async(r,v,now,m,tx)=>{if(!m||m.state!=='live')fail('not_found','Not found.',404);await this.end(r,m,actor,'left',now,tx);return {left:true};},{exposure:false});}
+ leave(actor,input={}){return this.frame(actor,input,[],async(r,v,now,m,tx)=>{if(!m||m.state!=='live')fail('not_found','Not found.',404);await this.end(r,m,actor,'left',now,tx);return {left:true};},{exposure:false,exit:true});}
  remove(actor,input){return this.frame(actor,input,['membership','reason'],async(r,v,now,self,tx)=>{
   const m=Object.values(r.memberships).find(m=>m.id===v.membership&&m.state==='live');if(!m)fail('not_found','Not found.',404);
   if(hasAdmin(m)&&!samePrincipal(m.principal,actor.principal))return this.request(r,actor,m,[],true,v.reason,now,tx);
@@ -98,7 +102,7 @@ export class MembershipService extends OrganizationService{
   const subject=samePrincipal(m.principal,actor.principal),requester=samePrincipal(q.requester,actor.principal),owner=samePrincipal(r.ownerOfRecord,actor.principal),ownerSubject=samePrincipal(m.principal,r.ownerOfRecord),powers=organizationPowers(r,actor.principal,{now});
   if(v.decision==='retract'&&requester)q.state='retracted';
   else if(v.decision==='elevate'&&requester&&!ownerSubject&&(q.subjectRejected||now>=q.elevateAt)){
-   if(!powers.includes('admin')&&!powers.includes('owner-of-record'))fail('not_found','Not found.',404);q.state=(r.memberships[principalKey(r.ownerOfRecord)]?.mutedRequesters??[]).some(p=>samePrincipal(p,q.requester))?'rejected':'elevated';this.notice(r,'member-grant-elevated',{request:q.id},now);
+   if(!powers.includes('admin')&&!powers.includes('owner-of-record'))fail('not_found','Not found.',404);const ownerMember=r.memberships[principalKey(r.ownerOfRecord)];q.state=!ownerMember?.hold&&(ownerMember?.mutedRequesters??[]).some(p=>samePrincipal(p,q.requester))?'rejected':'elevated';this.notice(r,'member-grant-elevated',{request:q.id},now);
   }else if(v.decision==='reject'&&(subject||owner&&q.state==='elevated')){requireFresh(actor,now);if(!subject&&self?.hold)fail('authority_held','Governance authority is held.',403);if(subject&&!ownerSubject)q.subjectRejected=true;else q.state='rejected';}
   else if(v.decision==='accept'&&(subject||owner&&q.state==='elevated'&&!ownerSubject)){
    requireFresh(actor,now);if(self?.hold)fail('authority_held','Governance authority is held.',403);
@@ -106,9 +110,23 @@ export class MembershipService extends OrganizationService{
    if(q.remove)await this.end(r,m,actor,'removed',now,tx);else{m.grants=stamp(q.grants,actor,now,m.grants).map(g=>({...g,...g.power&&m.grants.find(old=>old.power===g.power)?.notBefore?{notBefore:m.grants.find(old=>old.power===g.power).notBefore}:{}}));this.operator(r,now);}q.state='accepted';this.notice(r,'member-grants-changed',{membership_id:m.id,request:q.id,requester:q.requester,owner:r.ownerOfRecord,reason:q.reason},now);
   }else fail('invalid_decision','This decision is not available.',409);
   await this.audit(tx,r,'member-grant-decision',actor,{request:q.id,decision:v.decision});return {request:q};
- },{exposure:false});}
- mute(actor,input){return this.frame(actor,input,['requester','muted'],async(r,v,now,m,tx)=>{if(!m||m.state!=='live'||!v.requester||typeof v.requester.iss!=='string'||typeof v.requester.sub!=='string'||typeof v.muted!=='boolean')fail('invalid_request','Invalid mute.',400);m.mutedRequesters=(m.mutedRequesters??[]).filter(p=>!samePrincipal(p,v.requester));if(v.muted)m.mutedRequesters.push(party(v.requester));for(const q of Object.values(r.grantRequests))if(v.muted&&samePrincipal(q.requester,v.requester)){if(q.target===m.id&&q.state==='subject')q.subjectRejected=true;if(samePrincipal(m.principal,r.ownerOfRecord)&&q.state==='elevated')q.state='rejected';}await this.audit(tx,r,'member-request-mute',actor,{requester:v.requester,muted:v.muted});return {muted:v.muted};},{exposure:false});}
- policy(actor,input){return this.frame(actor,input,['responsePeriodMs'],async(r,v)=>{if(!Number.isSafeInteger(v.responsePeriodMs)||v.responsePeriodMs<0||v.responsePeriodMs>365*DAY)fail('invalid_request','Invalid response period.',400);r.responsePeriodMs=v.responsePeriodMs;return {responsePeriodMs:r.responsePeriodMs};},{admin:true});}
+ },{exposure:false,exit:true});}
+ // Review M2: mute is a decision path. It needs fresh authentication, and a held member's mute closes nothing as owner;
+ // it records only the preference (which decide's elevation also ignores while the owner is held).
+ mute(actor,input){return this.frame(actor,input,['requester','muted'],async(r,v,now,m,tx)=>{
+  if(!m||m.state!=='live'||!v.requester||typeof v.requester.iss!=='string'||typeof v.requester.sub!=='string'||typeof v.muted!=='boolean')fail('invalid_request','Invalid mute.',400);
+  requireFresh(actor,now);
+  m.mutedRequesters=(m.mutedRequesters??[]).filter(p=>!samePrincipal(p,v.requester));if(v.muted)m.mutedRequesters.push(party(v.requester));
+  for(const q of Object.values(r.grantRequests))if(v.muted&&samePrincipal(q.requester,v.requester)){if(q.target===m.id&&q.state==='subject')q.subjectRejected=true;if(samePrincipal(m.principal,r.ownerOfRecord)&&q.state==='elevated'&&!m.hold)q.state='rejected';}
+  await this.audit(tx,r,'member-request-mute',actor,{requester:v.requester,muted:v.muted});return {muted:v.muted};
+ },{exposure:false,exit:true});}
+ policy(actor,input){return this.frame(actor,input,['responsePeriodMs'],async(r,v,now,m,tx)=>{
+  if(!Number.isSafeInteger(v.responsePeriodMs)||v.responsePeriodMs<ORG_MIN_RESPONSE_MS||v.responsePeriodMs>365*DAY)fail('invalid_request','The response period must be between one day and one year.',400);
+  const previous=r.responsePeriodMs;if(previous===v.responsePeriodMs)return {responsePeriodMs:previous};
+  // Existing requests keep the elevateAt computed when they were created, so a lowered period applies only afterwards.
+  r.responsePeriodMs=v.responsePeriodMs;if(v.responsePeriodMs<previous)this.notice(r,'member-response-period-lowered',{previous,responsePeriodMs:v.responsePeriodMs},now);
+  await this.audit(tx,r,'member-response-period',actor,{previous,responsePeriodMs:v.responsePeriodMs});return {responsePeriodMs:r.responsePeriodMs};
+ },{admin:true});}
  async lookup(actor,{principal}={}){if(actor?.kind!=='system')fail('forbidden','System only.',403);return this.metadata.transaction(async tx=>{const r=await tx.get(ORG_RECORD);if(r?.id!==actor.owner)return null;const m=r.memberships?.[principalKey(principal)],now=this.clock.now();return m?.state==='live'&&(m.expires_at===undefined||m.expires_at>now/1000)?{id:m.id,generation:m.generation,aep:m.aep}:null;});}
  async observe(actor,input){if(actor?.kind!=='system'||(await this.metadata.get(ORG_RECORD))?.id!==actor.owner)fail('not_found','Not found.',404);return this.observeAuthority(input.principal,input);}
  /** Internal ORG-4 port, never owner wire input. Checks principal + opaque id + generation and tracks recipients. */
@@ -138,7 +156,7 @@ export class MembershipService extends OrganizationService{
   else if(v.decision==='object'&&other&&admin){m.hold.objected=true;}
   else fail('invalid_decision','This decision is not available.',409);
   await this.audit(tx,r,'member-reconfirmation',actor,{membership:m.id,aep:v.aep,decision:v.decision});return {held:Boolean(m.hold)};
- },{exposure:false});}
+ },{exposure:false,exit:true});}
  async sweep(actor){
   if(actor?.kind!=='system')fail('forbidden','System only.',403);
   return this.metadata.transaction(async tx=>{if(await tx.get('owner')!==actor.owner)fail('forbidden','Account mismatch.',403);const r=await tx.get(ORG_RECORD);if(!r)return {wakeAt:null};membershipState(r,this.random,this.clock.now());const before=JSON.stringify(r),now=this.clock.now();let wakeAt=null;const wake=t=>{if(t>now)wakeAt=Math.min(wakeAt??Infinity,t);};

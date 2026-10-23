@@ -11,7 +11,7 @@ import {flagsFor,capability,siteGlobal,siteEnabled,featureConfig} from './accoun
 // forwards owner-shard steps to the owner's FederationObject (apps/worker/index.mjs), which runs the same provider.
 import {createAppEngine,perform} from '../app/engine.mjs';
 import {systemClock,cryptoRandom,nullAudit} from '../app/providers.mjs';
-import {DeviceAuthorize,DeviceToken,DeviceReview,DeviceApprove,DeviceRpc,DeviceCancel,DeviceLineageDrain,createDeviceGrantProvider,linkedPort,MemoryJtiCache,DEVICE_GRANT} from '../federation/device-authorization.mjs';
+import {DeviceAuthorize,DeviceToken,DeviceReview,DeviceApprove,DeviceRpc,DeviceCancel,DeviceLineageDrain,MemberDpopRpc,createDeviceGrantProvider,linkedPort,MemoryJtiCache,DEVICE_GRANT} from '../federation/device-authorization.mjs';
 import {dpopNonces} from '../federation/dpop.mjs';
 import {LinkedSystemAction,LinkedApprovalAction,LinkedResolveQuery,LinkedLineageQuery,LinkedOutboxQuery} from '../identity/index.mjs';
 import {federationDpopSecret,federationClients} from './federation.mjs';
@@ -22,6 +22,11 @@ export const deviceAuthorizationEnabled=config=>siteGlobal(config,'DEVICE_AUTHOR
 /** Mount evidence for the app kind: the flag plus everything the declared members depend on. Session-kind linked
  * routes need only the flag (routes/identity.mjs). */
 export const deviceGrantMountable=config=>deviceAuthorizationEnabled(config)&&siteGlobal(config,'FEDERATION_ENABLED')&&capability(config,'FEDERATION_REFRESH_ENABLED')&&!!federationDpopSecret(config);
+/** Member-token DPoP RPC (ORG-4 §7.2): independent of the device grant, under the organization and member certificate
+ * flags, with federation on and a DPoP nonce key. The device grant's own RPC path is unchanged where it is mounted. */
+export const memberRpcMountable=config=>siteGlobal(config,'FEDERATION_ENABLED')&&siteGlobal(config,'ORGANIZATIONS_ENABLED')&&siteGlobal(config,'MEMBER_CERTIFICATES_ENABLED')&&!!federationDpopSecret(config);
+/** Whether an adapter should build the DPoP provider at all (the runner's `mounted` still gates the device grant). */
+export const dpopProviderMountable=config=>deviceGrantMountable(config)||memberRpcMountable(config);
 const LINKED_CLASSES=Object.freeze({LinkedSystemAction,LinkedApprovalAction,LinkedResolveQuery,LinkedLineageQuery,LinkedOutboxQuery});
 const PORT_METHODS=['startApp','redeem','cancelApp','lineageRevoke','outboxAck','lineageLive','outbox','resolve','approve'];
 /** The LA1 `linked` port over the main identity resources, one fresh identity engine per call (disposed after), so
@@ -34,7 +39,7 @@ export const deviceLimits=abuse=>Object.freeze({consume:(key,window)=>abuse.cons
 /** Dispatches each device operation through a short-lived app engine over `deviceGrant`. */
 export function deviceGrantRunner({config,deviceGrant}){
  const run=async(Kind,input)=>{const ctx=null,projected=featureConfig(config,ctx),reverse=Kind===DeviceCancel||Kind===DeviceApprove&&input?.approved===false,background=Kind===DeviceLineageDrain,settings=reverse||background?new Proxy(projected,{get:(target,name,receiver)=>name==='DEVICE_AUTHORIZATION_ENABLED'?(reverse||flagsFor(config).background(name)?'true':'false'):Reflect.get(target,name,receiver)}):projected;const engine=createAppEngine({providers:{config:settings,flags:{for:ctx=>flagsFor(config,ctx)},deviceGrant,clock:systemClock,random:cryptoRandom,audit:nullAudit}});try{return await perform(engine,new Kind({input}));}finally{await engine.dispose();}};
- return Object.freeze({get mounted(){return deviceGrantMountable(config);},authorize:input=>run(DeviceAuthorize,input),token:input=>run(DeviceToken,input),cancel:input=>run(DeviceCancel,input),rpc:input=>run(DeviceRpc,input),review:input=>run(DeviceReview,input),approve:input=>run(DeviceApprove,input),drain:input=>run(DeviceLineageDrain,input)});
+ return Object.freeze({get mounted(){return deviceGrantMountable(config);},get memberRpcMounted(){return memberRpcMountable(config);},memberRpc:input=>run(MemberDpopRpc,input),authorize:input=>run(DeviceAuthorize,input),token:input=>run(DeviceToken,input),cancel:input=>run(DeviceCancel,input),rpc:input=>run(DeviceRpc,input),review:input=>run(DeviceReview,input),approve:input=>run(DeviceApprove,input),drain:input=>run(DeviceLineageDrain,input)});
 }
 /** The provider over local owner shards (Node, and the Worker's owner FederationObject). */
 export function localDeviceGrant({config,linked,shard,limits,pollLimits,jti=new MemoryJtiCache()}){
@@ -53,5 +58,5 @@ export function remoteDeviceGrant({config,linked,limits,pollLimits,jti,remote,ac
   // A lost owner-shard call after redemption ends the reserved lineage, so no live lineage is left without a family.
   issue:async(linkedRequestId,grant,proof)=>{try{return await remote(grant.owner,'issue',[linkedRequestId,grant,proof]);}catch(error){if(typeof error?.code==='string'&&error.code!=='temporarily_unavailable')throw error;try{await linked.lineageRevoke({owner:grant.owner,lineageId:grant.lineageId});}catch{}throw fault('access_denied');}},
   review:input=>remote(owned(input),'review',[input]),approve:input=>remote(owned(input),'approve',[input]),drain:input=>remote(owned(input),'drain',[input]),
-  async rpc(input){const owner=tokenOwner(input?.authorization);if(!owner||!await active(owner))throw fault('unauthorized','A DPoP access token is required.');return remote(owner,'rpc',[input]);}});
+  async rpc(input){const owner=tokenOwner(input?.authorization);if(!owner||!await active(owner))throw fault('unauthorized','A DPoP access token is required.');return remote(owner,input?.memberOnly===true?'memberRpc':'rpc',[input]);}});
 }

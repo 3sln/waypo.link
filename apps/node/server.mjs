@@ -58,7 +58,9 @@ export async function createNodeServer({directory=resolve('.data'),config={},mai
  if(adminEnabled){ports.ADMIN_SERVICE=()=>admin;ports.ADMIN_CLAIMS_ENABLED=onboardingKeyReady(settings);}
  ports.IDENTITY_ENGINE=()=>createIdentityEngine(identityResources);
  // Device grant (LA3): only with the flag and every dependency of its declared members (runtime/device-grant.mjs).
- if(capability(settings,'FEDERATION_REFRESH_ENABLED')&&!!(settings.DPOP_NONCE_KEY||settings.KEY_ENCRYPTION_KEY)){
+ // The same DPoP provider also serves member-token RPC (ORG-4 §7.2) under the organization/member flags, so it is built
+ // with a DPoP key even without refresh; the runner's `mounted` and `memberRpcMounted` gate each path at request time.
+ if(!!(settings.DPOP_NONCE_KEY||settings.KEY_ENCRYPTION_KEY)){
   const linked=engineLinkedPort(ports.IDENTITY_ENGINE),provider=localDeviceGrant({config:settings,linked,shard:owner=>resources.federationShard(owner),limits:deviceLimits(resources.abuse),pollLimits:resources.linkedPollLimits});
   ports.DEVICE_GRANT=deviceGrantRunner({config:settings,deviceGrant:provider});resources.attachDeviceGrant({linked,drain:input=>ports.DEVICE_GRANT.drain(input)});
  }

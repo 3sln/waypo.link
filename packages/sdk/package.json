@@ -16,6 +16,7 @@
     "./callback.mjs": "./src/callback.mjs",
     "./identity.mjs": "./src/identity.mjs",
     "./capabilities.mjs": "./src/capabilities.mjs",
-    "./testing.mjs": "./src/testing.mjs"
+    "./testing.mjs": "./src/testing.mjs",
+    "./member.mjs": "./src/member.mjs"
   }
 }

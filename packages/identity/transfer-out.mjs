@@ -33,7 +33,7 @@ import { base64url } from '../core/records.mjs';
 import { parseMoveStatement, verifyMoveStatement, statementDigest, validateRedirectBase, httpsOrigin, SuccessionError } from './succession.mjs';
 import { IdentityCrypto, secureEqual } from './crypto.mjs';
 import { recoveryCredential, securityState } from './service.mjs';
-import {raiseAuthorityEpoch} from './authority-epoch.mjs';
+import {raiseAuthorityEpoch,authorityEpoch} from './authority-epoch.mjs';
 import { revokeAllLineage, revokeLineage, pruneLineage } from './linked-approval.mjs';
 import { movedWindow, MOVED_AUDIT } from './lifecycle-tombstone.mjs';
 import { attestorFromConfig } from './attestation-keys.mjs';
@@ -408,9 +408,12 @@ export class TransferOutService {
     if (!identity || identity.status !== 'active') return { record: await this.end(record, 'cancelled', 'identity-inactive', { block: true }), action: 'cancelled' };
     const s = record.statement, redirectUntil = record.redirect ? now + TIMING.redirect : null, exportUntil = now + TIMING.exportWindow;
     const movedUntil = Math.max(redirectUntil ?? 0, now + TIMING.attestationRetention);
-    let attestation;
+    // The attested `aep` is the same-host authority epoch (authority-epoch.mjs), never `security.epoch`, which also rises on
+    // routine credential changes; a malformed epoch fails closed into the hold.
+    let attestation, aep;
     try {
-      attestation = await attestor.sign({ bindle: 'move-attestation', v: 1, iss: this.issuer, sub: owner, seq: 1, statement: s.digest, to: s.to, aep: identity.security.epoch, at: seconds(now) });
+      aep = authorityEpoch(identity);
+      attestation = await attestor.sign({ bindle: 'move-attestation', v: 1, iss: this.issuer, sub: owner, seq: 1, statement: s.digest, to: s.to, aep, at: seconds(now) });
     } catch { this.log({ action: 'transfer-hold', owner, reason: 'attestation-failed' }); return { record, action: 'hold', reason: 'attestation-failed', wakeAt: now + HOUR }; }
     // One account commit. Everything the transaction re-reads decides against a deletion, cancellation or dispute
     // that committed first (spec §6.2: serialized in the identity's single writer). An attestation signed for a commit
@@ -420,7 +423,7 @@ export class TransferOutService {
       if (live?.id !== record.id || live.revision !== record.revision || live.state !== 'pending') return null;
       const request = await tx.get(DELETION_REQUEST);
       if (['scheduled', 'executing'].includes(request?.state) || await tx.get(DELETION_FENCE) !== undefined || await tx.get(PURGE) !== undefined || await tx.get(TOMBSTONE) !== undefined) return null;
-      const next = { ...live, state: 'committed', attestation, committedAt: now, redirectUntil, exportUntil, movedUntil, aep: identity.security.epoch, tokens: [], hold: null, stages: {}, revision: live.revision + 1 };
+      const next = { ...live, state: 'committed', attestation, committedAt: now, redirectUntil, exportUntil, movedUntil, aep, tokens: [], hold: null, stages: {}, revision: live.revision + 1 };
       await tx.put(TRANSFER_KEY, next); return next;
     });
     if (!committed) { const fresh = await this.metadata.get(TRANSFER_KEY); return { record: fresh, action: 'retry', wakeAt: now + 1000 }; }
@@ -753,7 +756,7 @@ export function transferIdentityPort(repository, { clock = () => Date.now(), cry
         email: typeof account.verifiedEmail === 'string' && time(account.emailVerifiedAt) ? { address: account.verifiedEmail, verifiedAt: account.emailVerifiedAt } : null,
         removedEmails: Array.isArray(account.removedEmails) ? account.removedEmails.filter(entry => typeof entry?.address === 'string' && time(entry.removedAt)).map(entry => ({ address: entry.address, removedAt: entry.removedAt })) : [],
         recovery: credential ? { issuedAt: credential.issuedAt, version: credential.version, keyKid: credential.keyKid, ref: await ref(account.recoveryHash) } : null,
-        security: securityState(account),
+        security: securityState(account), ...account.aep === undefined ? {} : { aep: account.aep },
         sessions: (account.sessions ?? []).filter(s => typeof s?.id === 'string' && s.expiresAt > now).map(s => ({ id: s.id, createdAt: s.createdAt, credentialId: s.credentialId ?? null })),
         credentials: (account.credentials ?? []).filter(c => typeof c?.id === 'string').map(c => ({ id: c.id, createdAt: time(c.createdAt) ? c.createdAt : 0 })),
         moved: account.status === 'moved' && plain(account.moved) ? structuredClone(account.moved) : null,

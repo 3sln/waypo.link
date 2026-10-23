@@ -54,3 +54,9 @@ export function createNodeDirectoryFetch({allowedOrigins,lookup=nodeLookup,reque
   });}finally{active--;}
  };
 }
+/** The Node adapter's DIRECTORY_EGRESS (packages/runtime/account/foreign-directory.mjs): issuers -> one budgeted,
+ * process-wide fetcher per allowlist. An empty allowlist dials nothing. */
+export function nodeDirectoryEgress(options={}){
+ let key,port;
+ return issuers=>{const k=JSON.stringify(issuers);if(k!==key){key=k;port=issuers.length?createNodeDirectoryFetch({...options,allowedOrigins:issuers}):async()=>{throw new Error('No directory issuer is allowed.');};}return port;};
+}

@@ -15,7 +15,7 @@ import {FederationController} from '../packages/federation/runtime.mjs';
 import {MemoryFederationStore} from '../packages/federation/index.mjs';
 import {dpopNonces} from '../packages/federation/dpop.mjs';
 import {NO_EXPIRY} from '../packages/federation/app-sessions.mjs';
-import {bindChildTokens,sweepDeviceFamilies,createDeviceGrantProvider,linkedPort,attachAppSessions,deviceManifest,DEVICE_GRANT,DEVICE_FEATURE,DeviceAuthorize,DeviceToken,DeviceReview,DeviceApprove,DeviceRpc,DeviceCancel,DeviceLineageDrain} from '../packages/federation/device-authorization.mjs';
+import {bindChildTokens,sweepDeviceFamilies,createDeviceGrantProvider,linkedPort,attachAppSessions,deviceManifest,DEVICE_GRANT,DEVICE_FEATURE,DeviceAuthorize,DeviceToken,DeviceReview,DeviceApprove,DeviceRpc,DeviceCancel,DeviceLineageDrain,MemberDpopRpc} from '../packages/federation/device-authorization.mjs';
 
 const DAY=86400000,MINUTE=60000,issuer=identityConfig.origin,SECRET='device-test-dpop-secret-0001',FORM={'Content-Type':'application/x-www-form-urlencoded'};
 const fragment='https://schema.example/settings/v1',schema={id:fragment,title:'Settings',description:'Shared settings',publisher:'https://schema.example',fields:{theme:{title:'Theme',type:'enum',values:['dark','light']}}};
@@ -320,5 +320,14 @@ test('rollout context comes from registered clients, linked owner resolution and
   allow=true;await f.approve(session,flow);f.clock.advance(5000);const token=await f.poll(key,flow);assert.equal(token.status,200);assert.deepEqual(seen.at(-1),{owner:session.account.id,clientId:cli.id});
   allow=false;await assert.rejects(f.rpc(key,token.body.access_token),{code:'unauthorized'});
   const rejected=await f.authorize({client_id:cli.id,dpop_jkt:key.jkt});assert.equal(rejected.body.error,'unauthorized_client');
+ }finally{await f.dispose();}
+});
+
+test('member-token DPoP RPC path: refuses device grant tokens, and is absent without the organization/member flags',async()=>{
+ const f=await fixture();try{
+  await activate(f.id.act);const {key,token}=await signedIn(f),proof=async()=>key.sign({htu:`${issuer}/bindle/rpc`,ath:token.access_token,iat:Math.floor(f.clock.now()/1000)});
+  assert.equal(await rpcCode(f.provider.rpc({authorization:`DPoP ${token.access_token}`,dpop:await proof(),envelope:envelope(),memberOnly:true})),'unauthorized','a device token is not a member-context token');
+  assert.equal(await rpcCode(f.op(MemberDpopRpc,{authorization:`DPoP ${token.access_token}`,dpop:await proof(),envelope:envelope()})),'not_found','flags off');
+  assert.equal(await rpcCode(f.rpc(key,token.access_token)),'forbidden','the device path is unchanged');
  }finally{await f.dispose();}
 });

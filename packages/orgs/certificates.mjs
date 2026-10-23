@@ -12,8 +12,8 @@
 //      membership for the certificate's origin principal (successor index), with no network fetch;
 //   2. the signature under an ACTIVE CERTIFICATION key of the identity (R4-H1), resolved CACHE-ONLY for the claimed
 //      (iss, sub, kid), and the certificate's `identity` equal to the directory-derived or pinned identity URI (R2-H2);
-//      when step 1 failed or the key is not cached, an equivalent verification runs against a fixed dummy key, and a
-//      member's cache miss only schedules a background refresh;
+//      when step 1 failed or the key is not cached, an equivalent verification runs against a fixed dummy key; the
+//      request path writes nothing for a cache miss (the background refresh discovers stale members from the roster);
 //   3. the DPoP proof by the certified key: thumbprint = cnf.jkt = thumbprint(delegate), htm, htu, iat within 60 s,
 //      `ath` (direct form: SHA-256 of the certificate) and the jti replay row in this organization's store, which
 //      every request for the organization shares (one single writer; R2-L2);
@@ -22,7 +22,8 @@
 //      reset, is an authority reset that ORG-2 persists before anything is refused (R2-M1);
 //   6. the membership live (again, after every await) and the organization's connection to `client.client_id`
 //      `active` or `degraded` with `client.origin` its verified origin (§7.1).
-// Failed presentations are rate-limited per client and per network with identical limits whatever step failed.
+// Failed presentations are rate-limited per network whatever step failed, and per client only once a member key verified
+// the signature (so unsigned garbage naming an app cannot lock its members out); cost and result stay uniform.
 //
 // Same-host issuers are local: their certification keys are read from the member's own account into a bounded cache
 // here (`cachedIssuerKeys`), refreshed in the background, so the request path costs the same for members, non-members
@@ -37,8 +38,8 @@
 //   org/cert/proof/<sha256(jkt,jti)>  DPoP replay rows until the proof window ends
 //   org/cert/key-epoch/<principal>    the highest directory key-reset epoch seen for a member (foreign issuers)
 //   org/cert/keys/<principal>         the same-host certification key cache (TTL 300 s, negative 60 s)
-//   org/cert/refresh/<principal>      background refresh queue (due at once after a member's miss, then exponential
-//                                     back-off; bounded; run after the uniform answer is computed)
+//   org/cert/refresh/<principal>      background refresh queue (filled by roster discovery in refreshDue, never on the
+//                                     request path; exponential back-off; bounded; run after the uniform answer)
 import { Provider } from '../../vendor/ngin/index.js';
 import { AppAction, AppQuery } from '../app/engine.mjs';
 import { AppFault } from '../app/faults.mjs';
@@ -50,7 +51,7 @@ export const ORG_FOREIGN_MEMBERS_FLAG = 'ORG_FOREIGN_MEMBERS_ENABLED';
 export const JWT_BEARER = 'urn:ietf:params:oauth:grant-type:jwt-bearer';
 export const MEMBER_SKEW_SECONDS = 60, MEMBER_PROOF_WINDOW_SECONDS = 60, MEMBER_KEY_CACHE_MS = 300000, MEMBER_KEY_NEGATIVE_MS = 60000;
 export const MEMBER_FAILURE_LIMITS = Object.freeze({ windowMs: 60000, client: 60, network: 120 });
-export const MEMBER_TOKENS_PER_MEMBERSHIP = 64, MEMBER_TOKEN_LIMIT = 4096, MEMBER_REFRESH_QUEUE = 256;
+export const MEMBER_TOKENS_PER_MEMBERSHIP = 64, MEMBER_TOKEN_LIMIT = 4096, MEMBER_REFRESH_QUEUE = 256, MEMBER_DISCOVERY_MS = 60000, MEMBER_DISCOVERY_BATCH = 64;
 const SETTINGS = 'org/cert/settings', TOKEN = 'org/cert/token/', PROOF = 'org/cert/proof/', KEY_EPOCH = 'org/cert/key-epoch/', KEYS = 'org/cert/keys/', REFRESH = 'org/cert/refresh/';
 const TOKEN_PATTERN = /^mc_[A-Za-z0-9_-]{43}$/, CERT_PATTERN = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/;
 const ES256 = { name: 'ECDSA', hash: 'SHA-256' }, P256 = { name: 'ECDSA', namedCurve: 'P-256' };
@@ -92,6 +93,12 @@ export function cachedIssuerKeys({ metadata, issuer, read, clock = () => Date.no
       const entry = Array.isArray(row.keys) ? row.keys.find(k => k?.kid === kid && k.state === 'active') : null;
       return entry ? { publicJwk: { kty: 'EC', crv: 'P-256', x: entry.publicJwk.x, y: entry.publicJwk.y }, identity: row.identity, authorityEpoch: 0, signing: row.signing ? { kid: row.signing.kid, publicJwk: { kty: 'EC', crv: 'P-256', x: row.signing.publicJwk.x, y: row.signing.publicJwk.y } } : null, stale: row.until - now < ttlMs / 2 } : null;
     },
+    /** Background discovery only (never the request path): missing, expired or half-way stale cache rows. */
+    async needsRefresh({ issuer: iss, subject }) {
+      if (iss !== issuer || typeof subject !== 'string') return false;
+      const row = await metadata.get(path(subject)), now = clock();
+      return !plain(row) || !(row.until > now) || (row.identity !== null && row.until - now < ttlMs / 2);
+    },
     async refresh({ issuer: iss, subject }) {
       if (iss !== issuer || typeof subject !== 'string') return null;
       const found = await read(subject), now = clock();
@@ -112,6 +119,8 @@ export function directoryIssuerKeys(directory) {
       const signing = sig ? await directory.resolve({ issuer, subject, kid: sig.kid, purpose: 'signing', identity: found.identity }) : null;
       return { publicJwk: found.publicJwk, identity: found.identity, authorityEpoch: nonNegative(found.authorityEpoch) ? found.authorityEpoch : 0, signing: signing ? { kid: signing.kid, publicJwk: signing.publicJwk } : null };
     },
+    /** Background discovery only: the directory has no cached document for this member. */
+    async needsRefresh({ issuer, subject }) { const entry = directory?.cache?.get?.(`${issuer}\n${subject}`); const now = typeof directory?.clock === 'function' ? directory.clock() : Date.now(); return !entry || !(entry.until > now); },
     async refresh({ issuer, subject }) { await directory?.refresh?.({ issuer, subject }); return true; },
   });
 }
@@ -127,7 +136,7 @@ export class MemberContextService {
   constructor({ metadata, organization, issuer, members, successors, local, foreign, connections, status, flags = {}, foreignIssuers = [], clock = () => Date.now(), crypto = globalThis.crypto, random, allowLoopback = false, failureLimits = MEMBER_FAILURE_LIMITS }) {
     if (typeof metadata?.transaction !== 'function' || typeof metadata.get !== 'function') throw new TypeError('Member context needs the organization account store.');
     Object.assign(this, { metadata, organization, issuer, members, successors, local, foreign, connections, status, flags, foreignIssuers: new Set(foreignIssuers), clock, crypto, random: random ?? (n => crypto.getRandomValues(new Uint8Array(n))), allowLoopback: allowLoopback === true, failureLimits });
-    this.failures = new Map();
+    this.failures = new Map(); this.discovery = { at: -Infinity, cursor: 0 };
   }
   #flag(name) { try { return this.flags?.[name]?.() === true; } catch { return false; } }
   foreignAllowed(iss) { return iss !== this.issuer && this.#flag('foreign') && this.foreignIssuers.has(iss); }
@@ -175,11 +184,15 @@ export class MemberContextService {
     try { parsed = parseMemberCertificate(input.certificate, { allowLoopback: this.allowLoopback }); claims = parsed.payload; } catch { ok = false; }
     const budget = this.#budget(claims?.client?.client_id ?? input.clientId, input.network);
     if (this.#blocked(budget)) { await dummyCheck(this.crypto); return { ok: false }; }
-    const result = await this.#steps(input, parsed, claims, ok, now, seconds).catch(() => ({ ok: false }));
-    if (!result.ok) this.#failed(budget);
+    // Review M4: unsigned garbage naming an app must not exhaust that app's budget for its genuine members, so the per-app
+    // budget is charged only once a member key verified the signature; the per-network budget is always charged. Cost
+    // and result stay uniform (the dummy check still runs whenever the signature is not computed).
+    const trace = { signed: false };
+    const result = await this.#steps(input, parsed, claims, ok, now, seconds, trace).catch(() => ({ ok: false }));
+    if (!result.ok) this.#failed(trace.signed ? budget : budget.slice(1));
     return result;
   }
-  async #steps(input, parsed, claims, ok, now, seconds) {
+  async #steps(input, parsed, claims, ok, now, seconds, trace = {}) {
     const settings = await this.settings(), purpose = input.purpose ?? MEMBER_PURPOSES.access;
     if (!this.#flag('organizations')) ok = false;
     // Step 1: everything checkable offline, then the membership (no fetch).
@@ -195,7 +208,9 @@ export class MemberContextService {
     const key = claims ? await this.#key(claims, parsed.header.kid) : null;
     const signed = key && member && claims ? await verifyMemberSignature(parsed, key.publicJwk, this.crypto) : await dummyCheck(this.crypto);
     if (!signed || !key || key.identity !== claims?.identity) ok = false;
-    if (member && claims && (!key || key.stale)) await this.#schedule(principal, claims.iss, claims.sub);
+    trace.signed = Boolean(signed && key && member && claims);
+    // Review LM1: no request-path store write for anyone. Key refresh scheduling is discovered in the background
+    // (refreshDue walks the live roster), so a member's cache miss costs the same as a non-member's.
     if (!ok) return { ok: false };
     // Step 3: the proof by the certified key, then its replay row.
     const holder = await memberHolderKey(claims, this.crypto); if (!holder) return { ok: false };
@@ -290,7 +305,24 @@ export class MemberContextService {
     return { ended };
   }
   /** System, background: performs due key refreshes (jittered queue). Returns {done, wakeAt}. */
+  /** Background only: enqueue live members whose cached keys are missing or stale. `members.roster()` -> [{iss, sub}]
+   * (live memberships). A rotating cursor bounds each pass; passes are at most once per MEMBER_DISCOVERY_MS. */
+  async #discover(now) {
+    if (typeof this.members?.roster !== 'function' || now - this.discovery.at < MEMBER_DISCOVERY_MS) return;
+    this.discovery.at = now;
+    let roster; try { roster = await this.members.roster(); } catch { return; }
+    if (!Array.isArray(roster) || !roster.length) return;
+    const start = this.discovery.cursor % roster.length, count = Math.min(roster.length, MEMBER_DISCOVERY_BATCH);
+    this.discovery.cursor = start + count;
+    for (let i = 0; i < count; i++) {
+      const principal = roster[(start + i) % roster.length]; if (!plain(principal) || typeof principal.sub !== 'string') continue;
+      const iss = principal.iss ?? this.issuer, port = iss === this.issuer ? this.local : this.foreignAllowed(iss) ? this.foreign : null;
+      let needed = false; try { needed = typeof port?.needsRefresh === 'function' && await port.needsRefresh({ issuer: iss, subject: principal.sub }) === true; } catch { needed = false; }
+      if (needed) await this.#schedule({ iss, sub: principal.sub }, iss, principal.sub);
+    }
+  }
   async refreshDue({ limit = 16 } = {}) {
+    await this.#discover(this.clock());
     const now = this.clock(), due = [...await this.metadata.transaction(tx => tx.list({ prefix: REFRESH, limit: MEMBER_REFRESH_QUEUE }))].filter(([, row]) => row?.dueAt <= now).slice(0, limit);
     let done = 0;
     for (const [path, row] of due) {

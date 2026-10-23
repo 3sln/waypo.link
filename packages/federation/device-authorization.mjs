@@ -233,13 +233,13 @@ export function createDeviceGrantProvider({issuer,clients=[],linked,shard,nonces
   /** Resource RPC with a DPoP-bound access token (`Authorization: DPoP`, spec §6.3). `input`: {authorization, dpop,
    * envelope, origin?}. Checks the proof (ath, iat window, jti), the token's key, then the approval lineage, before
    * the owner shard's own live token, grant, account and connection checks. */
-  async rpc({authorization,dpop,envelope,origin,busWaits=false,busResume,checkOnly=false}={}){
+  async rpc({authorization,dpop,envelope,origin,busWaits=false,busResume,checkOnly=false,memberOnly=false}={}){
    const token=typeof authorization==='string'&&authorization.startsWith('DPoP ')?authorization.slice(5):'',owner=OWNER_TOKEN.exec(token)?.[1];if(!owner)fault('unauthorized','A DPoP access token is required.');
    if(typeof dpop!=='string'||!dpop||dpop.includes(',')||dpop.length>4096)fault('unauthorized','A DPoP proof is required.');
    let proof;try{proof=await verifyProof(crypto,dpop,{typ:DPOP_TYP,htm:'POST',htu:`${issuer}/bindle/rpc`,now:clock(),ath:token,nonce:value=>value===undefined?null:nonces.check('rpc',value)});}catch(error){fault(error?.code==='use_dpop_nonce'?'use_dpop_nonce':'unauthorized','A valid DPoP proof is required.');}
    if(busResume===undefined&&!jti.claim(`rpc:${proof.jkt}:${proof.jti}`,proof.expiresAt))fault('unauthorized','This proof was already used.');
    const service=serviceOf(owner),id=await boundTokenId(service,token);
-   const family=await service.store.transaction(async tx=>{const record=await tx.get(key('token',id));if(!record||record.jkt!==proof.jkt||record.expiresAt<=clock())fault('unauthorized','A DPoP access token is required.');return record.familyId?tx.get(key('family',record.familyId)):null;});
+   const family=await service.store.transaction(async tx=>{const record=await tx.get(key('token',id));if(!record||record.jkt!==proof.jkt||record.expiresAt<=clock()||memberOnly===true&&(record.member===null||typeof record.member!=='object'||record.familyId!==undefined))fault('unauthorized','A DPoP access token is required.');return record.familyId?tx.get(key('family',record.familyId)):null;});
    // Lineage on every RPC: ending the approving session stops access at once, before the outbox drains.
    if(family?.lineage){let live=false;try{live=await linked.lineageLive({owner:family.lineage.owner,lineageId:family.lineage.lineageId,familyId:family.familyId})===true;}catch{fault('temporarily_unavailable','Try again shortly.');}
     if(!live){await revokeDeviceFamilies(service,[family.familyId]);fault('unauthorized','This application session ended.');}}
@@ -280,4 +280,9 @@ export class DeviceApprove extends AppAction {static operation='federation.devic
 export class DeviceRpc extends AppAction {static operation='federation.device.rpc';static deps=['config','deviceGrant'];run({config,deviceGrant}){enabled(config);return deviceGrant.rpc(this.input);}}
 export class DeviceCancel extends AppAction {static operation='federation.device.cancel';static deps=['config','deviceGrant'];run({config,deviceGrant}){enabled(config);return deviceGrant.cancel(this.input);}}
 export class DeviceLineageDrain extends AppAction {static operation='federation.device.drain';static deps=['config','deviceGrant'];run({config,deviceGrant}){enabled(config);return deviceGrant.drain(this.input);}}
+// The member-token DPoP RPC path (ORG-4, organizations spec §7.2): the same proof, replay and live token checks, but
+// only for ORG-3 member-context tokens (`member`, no refresh family), mounted under the organization and member
+// certificate flags whether or not the device grant is. Device grant tokens are refused here.
+function memberRpcEnabled(config){if(!siteGlobal(config,'ORGANIZATIONS_ENABLED')||!siteGlobal(config,'MEMBER_CERTIFICATES_ENABLED'))fail('not_found','Member access is not enabled.');}
+export class MemberDpopRpc extends AppAction {static operation='federation.member.rpc';static deps=['config','deviceGrant'];run({config,deviceGrant}){memberRpcEnabled(config);return deviceGrant.rpc({...this.input,memberOnly:true});}}
 export const DEVICE_OPERATIONS=Object.freeze([DeviceAuthorize,DeviceToken,DeviceReview,DeviceApprove,DeviceRpc,DeviceCancel,DeviceLineageDrain]);

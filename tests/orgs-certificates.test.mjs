@@ -22,6 +22,13 @@ const ERP = { client_id: 'https://erp.example/client.json', origin: 'https://erp
 const identityOf = sub => `${ISSUER}/identity/${sub}`, ACCESS = [MEMBER_PURPOSES.access];
 const failure = error => ({ code: error?.code, status: error?.status, message: error?.message });
 
+/** Counts write operations on an organization's store (review LM1/F1: the request path writes nothing for anyone). */
+function instrument(o) {
+  const tx = o.metadata.transaction.bind(o.metadata), put = o.metadata.put.bind(o.metadata), del = o.metadata.delete?.bind(o.metadata); let writes = 0;
+  o.metadata.transaction = fn => tx(t => fn({ get: k => t.get(k), list: a => t.list(a), delete: k => { writes++; return t.delete(k); }, put: (k, v) => { writes++; return t.put(k, v); } }));
+  o.metadata.put = (k, v) => { writes++; return put(k, v); }; if (del) o.metadata.delete = k => { writes++; return del(k); };
+  return () => { const n = writes; writes = 0; return n; };
+}
 async function world({ seed = 1, verifyCrypto } = {}) {
   const clock = fakeClock(1800000000000), people = new Map(), orgs = new Map();
   function person(sub) {
@@ -39,6 +46,7 @@ async function world({ seed = 1, verifyCrypto } = {}) {
       const metadata = new SqliteMetadata(':memory:'), memberships = new Map(), connections = new Map([[ERP.client_id, { origin: ERP.origin, state: 'active' }], [CRM.client_id, { origin: CRM.origin, state: 'active' }]]), flags = { organizations: true, foreign: false };
       const log = { observed: [], contexts: [], reads: 0, holds: [] };
       const members = {
+        async roster() { return [...memberships.values()].filter(m => m.state === 'live').map(m => ({ ...m.principal })); },
         async lookup(principal) { const m = memberships.get(memberPrincipalKey(principal)); return m?.state === 'live' ? { id: m.id, generation: m.generation, aep: m.aep, ...m.label ? { label: m.label } : {} } : null; },
         async observe(principal, { aep, reset, addedUnder }) { log.observed.push({ principal, aep, reset, addedUnder }); const m = memberships.get(memberPrincipalKey(principal)); if (!m || m.state !== 'live') return null; if (aep < m.aep) throw Object.assign(new Error('stale'), { code: 'authority_epoch_stale' }); if (aep > m.aep || reset) { m.aep = aep; m.hold = true; log.holds.push(aep); } return m; },
         async context(principal, { client, generation }) { const m = memberships.get(memberPrincipalKey(principal)); if (!m || m.state !== 'live' || m.generation !== generation) throw Object.assign(new Error('gone'), { code: 'not_found' }); log.contexts.push(client); return { membership_id: m.id, generation: m.generation, aep: m.aep }; },
@@ -108,16 +116,17 @@ test('direct form: Authorization BindleMember with a proof bound to the certific
   assert.ok((await w.direct(o, cert)).member);
 });
 
-test('a member key cache miss fails uniformly without a request-path read and is warmed in the background', async () => {
+test('a member key cache miss fails uniformly without a request-path read or write and is warmed in the background', async () => {
   const w = await world(), o = w.org(ORG); o.add(ALICE);
-  const cert = await w.certify(ALICE, o);
+  const cert = await w.certify(ALICE, o), writes = instrument(o);
   await assert.rejects(w.token(o, cert), { code: 'invalid_grant' });
   assert.equal(o.log.reads, 0, 'no read of the member\'s account on the request path');
-  w.clock.advance(5000);
-  assert.equal((await perform(o.engine, new MemberKeyRefresh({ actor: w.sys(o) }))).done, 1); assert.equal(o.log.reads, 1);
-  assert.ok((await w.token(o, cert)).access_token);
-  // A non-member's forged or genuine certificate never schedules a refresh.
+  // Review LM1: nothing is written on the request path for anyone, so the refresh queue is filled by roster discovery.
   const bob = await w.certify(BOB, o); await assert.rejects(w.token(o, bob), { code: 'invalid_grant' });
+  assert.equal(writes(), 0, 'no request-path store write for a member or a non-member');
+  w.clock.advance(5000);
+  assert.equal((await perform(o.engine, new MemberKeyRefresh({ actor: w.sys(o) }))).done, 1); assert.equal(o.log.reads, 1, 'only the live member is refreshed');
+  assert.ok((await w.token(o, cert)).access_token);
   assert.equal((await perform(o.engine, new MemberKeyRefresh({ actor: w.sys(o) }))).done, 0); assert.equal(o.log.reads, 1);
 });
 
@@ -235,12 +244,14 @@ test('cross-organization confusion: a certificate, token or proof for one organi
   assert.equal(b.code, 'delegation_revoked', 'a holder key never moves to another organization at home'); void a;
 });
 
-test('failed presentations are rate-limited identically whatever step failed, per client and per network', async () => {
+test('failed presentations are rate-limited per network whatever step failed, and per client once the signature verified', async () => {
   const w = await world(), o = w.org(ORG); o.add(ALICE); await w.warm(o, ALICE);
   const forgedMember = await w.certify(ALICE, o), nonMember = await w.certify(BOB, o), thief = await holder();
-  // Per client: failures after step 1 (a member's certificate with a stolen-key proof) and at step 1 (a non-member's
-  // genuine certificate) count the same against the certificate's client.
-  for (let i = 0; i < MEMBER_FAILURE_LIMITS.client; i++) await assert.rejects(w.token(o, i % 2 ? { ...forgedMember, key: thief } : nonMember, { network: `n${i}` }), { code: 'invalid_grant' });
+  // Per client: only failures whose signature a member key verified (a member's certificate with a stolen-key proof)
+  // count against the certificate's client (review M4); a non-member's certificate never reaches the signature check.
+  for (let i = 0; i < MEMBER_FAILURE_LIMITS.client; i++) await assert.rejects(w.token(o, nonMember, { network: `m${i}` }), { code: 'invalid_grant' });
+  assert.ok((await w.token(o, await w.certify(ALICE, o), { network: 'fresh-0' })).access_token, 'unverified failures do not charge the client');
+  for (let i = 0; i < MEMBER_FAILURE_LIMITS.client; i++) await assert.rejects(w.token(o, { ...forgedMember, key: thief }, { network: `n${i}` }), { code: 'invalid_grant' });
   await assert.rejects(w.token(o, await w.certify(ALICE, o), { network: 'fresh' }), { code: 'invalid_grant' }, 'the client is over its failure budget');
   assert.ok((await w.token(o, await w.certify(ALICE, o, { client: CRM }), { network: 'fresh', clientId: CRM.client_id })).access_token, 'another client is unaffected');
   // Per network: malformed presentations naming many clients exhaust the network.
@@ -282,4 +293,25 @@ test('the profile codec rejects every deviation from the exact members and types
     good.certificate.replace(/\.[^.]+$/, '.' + base64url(textEncoder.encode('short'))), `${good.certificate}.x`, good.certificate + '=',
   ];
   for (const certificate of bad) assert.throws(() => parseMemberCertificate(certificate), { code: 'invalid_certificate' }, certificate.slice(0, 40));
+});
+
+// Security review regressions (organizations phase A, findings LM1/F1 and M4/F2).
+test('review LM1 (F1): a forged certificate naming a member does the same request-path writes as a non-member (none)', async () => {
+  const w = await world(), o = w.org(ORG); o.add(ALICE);
+  const genuine = await w.certify(ALICE, o), parsed = parseMemberCertificate(genuine.certificate);
+  const forge = async sub => ({ certificate: await jws(parsed.header, { ...parsed.payload, sub, identity: identityOf(sub) }, (await holder()).privateKey), key: genuine.key });
+  const writes = instrument(o), counts = {};
+  for (const [name, sub, network] of [['nonMember', BOB, 'a'], ['unknown', 'ffffffff-ffff-4fff-8fff-ffffffffffff', 'b'], ['member', ALICE, 'c']]) { await assert.rejects(w.token(o, await forge(sub), { network }), { code: 'invalid_grant' }); counts[name] = writes(); }
+  assert.deepEqual(counts, { nonMember: 0, unknown: 0, member: 0 });
+});
+test('review M4 (F2): unsigned certificates naming an app do not lock its genuine members out', async () => {
+  const w = await world(), o = w.org(ORG); o.add(ALICE); await w.warm(o, ALICE);
+  const good = await w.certify(ALICE, o);
+  assert.ok((await w.token(o, good, { network: 'alice-net' })).access_token);
+  const parsed = parseMemberCertificate(good.certificate), attacker = await holder();
+  for (let i = 0; i < 60; i++) {
+    const cert = await jws(parsed.header, { ...parsed.payload, sub: BOB, identity: identityOf(BOB) }, attacker.privateKey);
+    await assert.rejects(w.token(o, { certificate: cert, key: attacker }, { network: `attacker-${i % 3}` }), { code: 'invalid_grant' });
+  }
+  assert.ok((await w.token(o, await w.certify(ALICE, o), { network: 'alice-net' })).access_token, 'a genuine member on her own network is admitted');
 });
