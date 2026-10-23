@@ -1,5 +1,5 @@
 const fault=(code,message,status)=>{throw Object.assign(new Error(message),{code,status});};
-import {REVIEWED_CONTRACTS,EVENT_BUS_CONTRACT} from './reviewed-contracts.mjs';
+import {REVIEWED_CONTRACTS,reviewedContractMethods,EVENT_BUS_CONTRACT} from './reviewed-contracts.mjs';
 import {chooseLocale,publisherText,CONSENT_STRINGS} from './localization.mjs';
 
 const object=value=>value!==null&&typeof value==='object'&&!Array.isArray(value),own=(value,key)=>object(value)&&Object.hasOwn(value,key);
@@ -22,9 +22,9 @@ function snapshot(value){if(value instanceof Map)return Object.fromEntries([...v
 
 /** Pure, immutable composition. All metadata/review/reader facts are trusted
  * provider inputs, never fields in a consent request. See README.md. */
-export function createConsentProvider({contracts={},manifests={},apps={},readers={},resources={},registrableDomain}={}){
+export function createConsentProvider({contracts={},contractsByGrant={},manifests={},apps={},readers={},resources={},registrableDomain}={}){
  if(typeof registrableDomain!=='function')throw new TypeError('consent requires a registrableDomain resolver');
- const pins=snapshot(contracts),fragments=snapshot(manifests),directory=snapshot(apps),currentReaders=snapshot(readers),descriptors=snapshot(resources);
+ const byGrant=snapshot(contractsByGrant),pins=snapshot(contracts),fragments=snapshot(manifests),directory=snapshot(apps),currentReaders=snapshot(readers),descriptors=snapshot(resources);
  const appOf=id=>{const host=url(id).hostname,record=get(directory,id);return {id,host,reviewed:record?.reviewed===true};};
  const selfPublished=(publisher,app)=>{
   if(publisher===app.host)return true;
@@ -37,8 +37,8 @@ export function createConsentProvider({contracts={},manifests={},apps={},readers
  const context=input=>{if(!object(input))invalid();const locale=chooseLocale(input.locale);return {locale,strings:CONSENT_STRINGS[locale],app:appOf(input.app)};};
  function methodRow(contract,name,ctx){
   const host=url(contract).hostname;token(name);
-  const pin=get(pins,contract),schema=pin?.schema,metadata=get(schema?.['x-methods'],name)??{},entry=get(REVIEWED_CONTRACTS,contract),digest=typeof pin?.digest==='string'?pin.digest.replace(/^sha256-/,''):null;
-  const reviewed=entry&&schema?.$id===contract&&digest===entry.digest.slice(7)?get(entry.methods,name):null;
+  const pin=get(ctx.pins??pins,contract),schema=pin?.schema,metadata=get(schema?.['x-methods'],name)??{},entry=get(REVIEWED_CONTRACTS,contract),digest=typeof pin?.digest==='string'?pin.digest.replace(/^sha256-/,''):null;
+  const reviewed=entry&&schema?.$id===contract?(pin.version?get(reviewedContractMethods(contract,pin,{reviewedPin:pin.reviewedPin}),name):digest===entry.digest.slice(7)?get(entry.methods,name):null):null;
   // A reviewed floor survives publisher omissions. Extra publisher categories
   // and stronger effects can only raise it. Subscription bookkeeping is read.
   const subscription=contract===EVENT_BUS_CONTRACT&&reviewed&&['subscribe','unsubscribe'].includes(name),claimed=subscription?'read':metadata.effect;
@@ -78,7 +78,7 @@ export function createConsentProvider({contracts={},manifests={},apps={},readers
   const row={kind:resource?'reference':'settings',risk:risk('read',cats,{locale:ctx.locale,reviewed:false}),text:catalogueText(resource?ctx.strings.resourceReference:ctx.strings.settings,ctx.locale),fields,publisher:source,warnings:[]};
   return card({...input,kind:resource?'reference':'settings'},[row],ctx,{fragment:input.fragment,publisher:source});
  }
- function grantCard(input,ctx){if(!object(input))invalid();let result;if(input.kind==='contract')result=contractCard(input,ctx);else if(input.kind==='bus')result=busCard(input,ctx);else if(input.kind==='settings')result=settingsCard(input,ctx);else if(input.kind==='reference')result=settingsCard(input,ctx,true);else invalid();const origin=get(descriptors,input.resource)?.brokerOrigin;if(origin!==undefined)result.broker={host:url(origin).host,text:ctx.strings.broker(url(origin).host)};return result;}
+ function grantCard(input,ctx){if(!object(input))invalid();ctx={...ctx,pins:get(byGrant,input.id)??pins};let result;if(input.kind==='contract')result=contractCard(input,ctx);else if(input.kind==='bus')result=busCard(input,ctx);else if(input.kind==='settings')result=settingsCard(input,ctx);else if(input.kind==='reference')result=settingsCard(input,ctx,true);else invalid();const origin=get(descriptors,input.resource)?.brokerOrigin;if(origin!==undefined)result.broker={host:url(origin).host,text:ctx.strings.broker(url(origin).host)};return result;}
  return Object.freeze({
   method(input){const ctx=context(input);return allowed([methodRow(input.contract,input.method,ctx)],ctx)[0];},
   contract(input){const ctx=context(input);return contractCard(input,ctx);},

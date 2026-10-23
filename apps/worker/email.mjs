@@ -5,6 +5,7 @@ import { createLocalization } from '../../packages/i18n/index.mjs';
 import { waitlistMailLocalization } from '../../packages/i18n/waitlist-mail.mjs';
 import { UUID } from '../../packages/core/primitives.mjs';
 import {deletionNoticeTemplate} from '../../packages/runtime/deletion-notices.mjs';
+import {transferNoticeTemplate} from '../../packages/identity/transfer-out.mjs';
 
 const SENDER_ROLES = Object.freeze({
   link: 'verify', login: 'login', reminder: 'notify',
@@ -130,6 +131,11 @@ export function mailTransport(env = {}) {
     async sendReopenNotice({email,handle}) {
       if(typeof handle!=='string'||!safeHeader(handle,64))throw new Error('Invalid reopening notice.');
       return send({from:senders.account,to:email,subject:`Your ${brand} account was reopened`,text:[`The account @${handle} was reopened by the service operator and its scheduled deletion was cancelled. Sign in again to continue.`,`Open ${origin}/console`].join('\n\n')});
+    },
+    // PORT-2: identity transfer notices carry the dispute link in a fragment, from the fixed security@ sender.
+    async sendTransferNotice({email,notice}) {
+      const template=transferNoticeTemplate(notice,{origin});
+      return send({from:senders.security,to:email,subject:template.subject,text:template.text});
     },
     // DX-5: deletion notices carry the cancel-only link in a fragment, from the fixed accounts@ sender.
     async sendDeletionNotice({email,notice,locale='en'}) {

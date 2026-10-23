@@ -1,3 +1,4 @@
+import {contractReferences} from './integrations.mjs';
 import {siteGlobal} from '../flags/read.mjs';
 // Provider brokering key set (integrations §5.3, §7 item 7) and RFC 9068 brokered access tokens. ES256 (P-256) only.
 // Keys are purpose-separated (one kid per purpose), sealed at rest with an HKDF-derived AES-GCM key whose AAD binds
@@ -45,11 +46,12 @@ function methodsValid(methods,describe){
 function claimsValid(c,issuer){
  const b=c.bindle,aud=httpsURL(c.aud),lifetime=ACCESS_LIFETIMES[b?.purpose];
  if(!exactKeys(c,['iss','sub','aud','client_id','iat','exp','jti','bindle','cnf'])||c.iss!==issuer||!safe(c.sub,512)||!aud||aud.origin===new URL(issuer).origin||!safe(c.client_id,2048)||!Number.isSafeInteger(c.iat)||!Number.isSafeInteger(c.exp)||!lifetime||c.exp<=c.iat||c.exp-c.iat>lifetime||typeof c.jti!=='string'||!JTI.test(c.jti))return false;
- if(!plain(b)||!exactKeys(b,['v','purpose','connection','generation','resource','grant','methods','scope','feature'])||b.v!==1||!CONNECTION.test(b.connection??'')||!Number.isSafeInteger(b.generation)||b.generation<0)return false;
+ if(!plain(b)||!exactKeys(b,['v','purpose','connection','generation','resource','grant','methods','scope','feature','cv'])||b.v!==1||!CONNECTION.test(b.connection??'')||!Number.isSafeInteger(b.generation)||b.generation<0)return false;
  if(b.feature!==undefined&&(!safe(b.feature,128)||c.client_id!==issuer))return false;
  if(b.purpose==='discover'){if(c.client_id!==issuer||['resource','grant','methods','scope'].some(k=>b[k]!==undefined))return false;}
  else{const resource=httpsURL(b.resource,512);if(!resource||resource.origin!==aud.origin||!GRANT.test(b.grant??'')||!methodsValid(b.methods,b.purpose==='describe')||b.purpose==='describe'&&c.client_id!==issuer)return false;
   if(b.scope!==null&&(!plain(b.scope)||JSON.stringify(b.scope).length>4096))return false;}
+ if(b.cv!==undefined){try{if(b.purpose==='discover'||!Object.keys(b.cv).length||Object.keys(b.cv).some(k=>!Object.hasOwn(b.methods,k)||!plain(b.cv[k])||!exactKeys(b.cv[k],['version','digest'])))return false;contractReferences(b.cv,Object.keys(b.methods));}catch{return false;}}
  if(c.cnf!==undefined&&(!plain(c.cnf)||!exactKeys(c.cnf,['jkt'])||!/^[A-Za-z0-9_-]{43}$/.test(c.cnf.jkt??'')))return false;
  return true;
 }
@@ -137,9 +139,9 @@ export function brokeringKeys({issuer,secret,metadata,crypto=globalThis.crypto,c
 }
 /** Mints one RFC 9068 brokered access token (integrations §5.3). Live minting checks (account epoch, connection
  * status and generation, grant, assignment, record, consumer session) are the caller's, inside the severance domain. */
-export async function mintAccessToken(keys,{subject,audience,clientId,purpose='invoke',connection,generation,resource,grant,methods,scope=null,feature,jkt,lifetime=ACCESS_LIFETIMES[purpose]},{clock=()=>Date.now(),crypto=globalThis.crypto}={}){
+export async function mintAccessToken(keys,{subject,audience,clientId,purpose='invoke',connection,generation,resource,grant,methods,scope=null,feature,cv,jkt,lifetime=ACCESS_LIFETIMES[purpose]},{clock=()=>Date.now(),crypto=globalThis.crypto}={}){
  const iat=Math.floor(clock()/1000);if(!Number.isSafeInteger(lifetime)||lifetime<1||lifetime>(ACCESS_LIFETIMES[purpose]??0))throw new FederationFault('invalid_request','Brokered token lifetime exceeds the purpose bound.');
- const bindle={v:1,purpose,connection,generation,...purpose==='discover'?{}:{resource,grant,methods,scope},...feature===undefined?{}:{feature}};
+ const bindle={v:1,purpose,connection,generation,...purpose==='discover'?{}:{resource,grant,methods,scope},...feature===undefined?{}:{feature},...cv===undefined?{}:{cv:structuredClone(cv)}};
  const claims={iss:keys.issuer,sub:subject,aud:audience,client_id:clientId,iat,exp:iat+lifetime,jti:b64u(crypto.getRandomValues(new Uint8Array(16))),bindle,...jkt===undefined?{}:{cnf:{jkt}}};
  if(!claimsValid(structuredClone(claims),keys.issuer))throw new FederationFault('invalid_request','Brokered token claims are invalid.');
  const {kid,token}=await keys.sign(purpose,claims);

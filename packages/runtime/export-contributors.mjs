@@ -48,6 +48,7 @@ const excluded={
  'search':'Derived: search indexes, queues and maintenance cursors.', 'item-index':'Derived: SQLite item index.',
  'beam/':'Transient: beam offers and capability material.', 'export/':'Transient: exports and download authority.',
  'deletion/':'Transient: deletion workflow and cancel-only capabilities; lifecycle projection carries owner deadlines.',
+ 'transfer-out/':'Transient: identity transfer-out workflow (PORT-2), dispute-token hashes and custody markers; the move record is published by the destination.',
  'blob-garbage/':'Transient: physical deletion journal.', 'blob-garbage-cursor':'Transient: garbage continuation.',
  'message-view-receipts/':'Transient: mutation receipts.', 'message-views-receipts/':'Transient: mutation receipts.',
  'connections/outbox/':'Transient: severance delivery.', 'connections/cascade/':'Transient: cascade delivery.', 'connections/meta':'Derived: sequence and outbox counters.',

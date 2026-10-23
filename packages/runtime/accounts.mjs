@@ -191,7 +191,7 @@ export class AccountController {
     // monthly archive write allowance meant for cold shelving (16 writes), which a single small export exceeds.
     this.exportArchives=archives;blobs=wrap(blobs,false);archives=wrap(archives,true);
     this.messageReceiptBudget=new MessageReceiptBudget({metadata,config});
-    this.metadata=metadata;this.googleDrive=new GoogleDriveService({metadata,config,fetcher:config.GOOGLE_DRIVE_FETCH??fetch});this.apps=new AppConnections({metadata,origin:config.APP_ORIGIN,severed:async owner=>{await this.connectionsDrain(owner);await this.integrationEventsKick(owner);}});this.gate=gate;this.workBudget=this.storageWriteBudget;this.blobs=blobs;this.archives=archives;this.config=config;this.quota=new StorageQuota({metadata,blobs,config});this.itemIndex=sql?new AccountItemIndex(sql):null;this.billing=new BillingService({config,metadata});this.searchIndex=sql?new SqliteSearchIndex({sql,transaction:sqlTransaction||sql.transaction?.bind(sql)}):null;this.searchOutbox=new MetadataSearchOutbox(metadata);this.semanticBudget=new DurableSemanticBudget({state:metadata,configured:flagsFor(config).global('SEMANTIC_SEARCH_ENABLED')&&Boolean(config.AI?.run&&(config.SEARCH_VECTORS?.query||[0,1,2,3].every(shard=>config[`SEARCH_VECTORS_${shard}`]?.query))),globalSpend:config.SEMANTIC_SPEND});this.vectorGate=new SearchMutationGate();this.search=this.searchIndex?new SearchService({index:this.searchIndex,outbox:this.searchOutbox,semanticPolicy:this.semanticBudget,onSemanticError:(event,error)=>this.deferSemanticSearch(event,error),authority:{get:(owner,id,options)=>this.searchDocument(owner,id,options),scan:(owner,options)=>this.scanSearchDocuments(owner,options)}}):null;
+    this.metadata=metadata;this.googleDrive=new GoogleDriveService({metadata,config,fetcher:config.GOOGLE_DRIVE_FETCH??fetch});this.apps=new AppConnections({config,metadata,origin:config.APP_ORIGIN,severed:async owner=>{await this.connectionsDrain(owner);await this.integrationEventsKick(owner);}});this.gate=gate;this.workBudget=this.storageWriteBudget;this.blobs=blobs;this.archives=archives;this.config=config;this.quota=new StorageQuota({metadata,blobs,config});this.itemIndex=sql?new AccountItemIndex(sql):null;this.billing=new BillingService({config,metadata});this.searchIndex=sql?new SqliteSearchIndex({sql,transaction:sqlTransaction||sql.transaction?.bind(sql)}):null;this.searchOutbox=new MetadataSearchOutbox(metadata);this.semanticBudget=new DurableSemanticBudget({state:metadata,configured:flagsFor(config).global('SEMANTIC_SEARCH_ENABLED')&&Boolean(config.AI?.run&&(config.SEARCH_VECTORS?.query||[0,1,2,3].every(shard=>config[`SEARCH_VECTORS_${shard}`]?.query))),globalSpend:config.SEMANTIC_SPEND});this.vectorGate=new SearchMutationGate();this.search=this.searchIndex?new SearchService({index:this.searchIndex,outbox:this.searchOutbox,semanticPolicy:this.semanticBudget,onSemanticError:(event,error)=>this.deferSemanticSearch(event,error),authority:{get:(owner,id,options)=>this.searchDocument(owner,id,options),scan:(owner,options)=>this.scanSearchDocuments(owner,options)}}):null;
     const store={transaction:async operation=>{
       const garbage=[];
       const result=await this.metadata.transaction(async tx=>operation({
@@ -281,16 +281,19 @@ export class AccountController {
     // Deletion runs first (DX-3), then lifecycle, both outside the account gate. While a deletion fence or any purge
     // job exists the alarm does nothing else (R1-H2): no shelving, backfill or drains behind the executor's back.
     // The deletion wake is min-merged back in `finally`, after every other path (R1-M4).
-    let deletionWake=null;
+    let deletionWake=null,transferWake=null;
     try{
     const deletion=await this.deletionAlarm();deletionWake=deletion.wakeAt;if(deletion.stop)return;
-    if((await lifecycleTick(this,{source:'alarm'})).action==='deleted')return;
+    // PORT-2: a live transfer steps here; a moved purge owns the account (`stop`), and a committed move is no longer
+    // subject to the inactivity lifecycle (`moved`). Its wake is min-merged in `finally` like the deletion's.
+    const transfer=await this.transferOutAlarm();transferWake=transfer.wakeAt;if(transfer.stop)return;
+    if(!transfer.moved&&(await lifecycleTick(this,{source:'alarm'})).action==='deleted')return;
     if(await alarmFenced(this.metadata))return;
     // DX-2: export generation and expiry only when no deletion fence or purge job exists (checked above and again
     // inside every generation transaction). It never runs while fenced, so E6 owns cleanup from the fence on.
     await this.exportAlarm();
     await this.alarmMaintenance();
-    }finally{if(Number.isSafeInteger(deletionWake))await armAlarm(this.metadata,deletionWake);}
+    }finally{if(Number.isSafeInteger(deletionWake))await armAlarm(this.metadata,deletionWake);if(Number.isSafeInteger(transferWake))await armAlarm(this.metadata,transferWake);}
   }
   async alarmMaintenance(){
     await cleanupPostbackPreparations(this);

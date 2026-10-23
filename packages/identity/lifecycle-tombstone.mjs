@@ -3,11 +3,31 @@ import {AdminService} from './admin.mjs';
 import {isUUID as uuid} from '../core/primitives.mjs';
 
 // Kept on the tombstone so permanent namespace claims stay bound and are never recycled. Everything else,
-// including the identity `security` state (account-deletion-export.md §2.1), is discarded.
+// including the identity `security` state (account-deletion-export.md §2.1), is discarded. A moved identity
+// (identity portability PORT-2, design §6.5) additionally keeps its `moved` record until `movedUntil`.
 const RETAINED=['id','handle','assignmentId','systemIdentity','onboardingIdentity','createdAt'];
-export const TOMBSTONE_REASONS=new Set(['inactive','owner','admin-email','admin-underage','admin-closure']);
+export const RETAINED_MOVED=Object.freeze([...RETAINED,'moved']);
+export const TOMBSTONE_REASONS=new Set(['inactive','owner','admin-email','admin-underage','admin-closure','moved']);
+/** The audit type the transfer-out commit writes on the identity (packages/identity/transfer-out.mjs). */
+export const MOVED_AUDIT='identity-moved';
 /** The deletion reason recorded on an identity tombstone, or null when it carries none. */
 export function deletionReason(account){const event=Array.isArray(account?.audit)?account.audit.map(entry=>entry?.event).find(name=>typeof name==='string'&&name.startsWith('account-deleted-')):null,reason=event?.slice('account-deleted-'.length);return TOMBSTONE_REASONS.has(reason)?reason:null;}
+const time=value=>Number.isSafeInteger(value)&&value>=0;
+/** Design §6.4–§6.5 windows of a moved record at `now`: `live` while the redirect runs (a target and a redirect base,
+ * before `redirectUntil`), `proof` while the statement and attestation are kept (before `movedUntil`, at least 30 days
+ * after commit), and the next time either ends. */
+export function movedWindow(moved,now){
+ if(!moved||typeof moved!=='object'||moved.ended===true)return {live:false,proof:false,nextAt:null};
+ const live=typeof moved.redirectBase==='string'&&time(moved.redirectUntil)&&now<moved.redirectUntil&&moved.to?.iss!==undefined,proof=time(moved.movedUntil)&&now<moved.movedUntil&&typeof moved.attestation==='string';
+ const next=[live?moved.redirectUntil:null,proof?moved.movedUntil:null].filter(time);return {live,proof,nextAt:next.length?Math.min(...next):null};
+}
+/** What a moved tombstone keeps at `now` (design §6.5 items 3–4): the record while its windows run, then only the
+ * marker that the identity moved. After `movedUntil` nothing that names the new address is kept. */
+export function retainedMoved(moved,now){
+ const window=movedWindow(moved,now);if(!moved||typeof moved!=='object')return null;
+ if(window.live||window.proof){const kept=structuredClone(moved);if(!window.live){delete kept.redirectBase;delete kept.reminderEmail;delete kept.extensionOrder;}return kept;}
+ return null;
+}
 
 /** Trusted account-lifecycle identity port over the identity repository. It is
  * never an HTTP operation. `get` projects only what notice/arming needs. `tombstone`
@@ -24,19 +44,26 @@ export function lifecycleIdentityPort(repository,{clock=()=>Date.now()}={}){
    // setting (R1-M3) and, once deleted, the reason recorded by the tombstone (restore path, R1-L1).
    return {status:account.status,assignmentId:account.assignmentId,createdAt:account.createdAt,verifiedEmail:email,emailVerifiedAt:email?account.emailVerifiedAt:null,
     handle:typeof account.handle==='string'?account.handle:null,systemIdentity:Boolean(account.systemIdentity),emailLoginEnabled:account.emailLoginEnabled===true,
-    ...account.status==='deleted'?{deletionReason:deletionReason(account)}:{}};
+    ...account.status==='deleted'?{deletionReason:deletionReason(account)}:{},...account.status==='moved'?{moved:true}:{}};
   },
   /** `reason` names the deletion path: 'inactive' (the lifecycle default, unchanged), or the deletion basis
-   * ('owner', 'admin-email', 'admin-underage', 'admin-closure'). It is recorded as `account-deleted-${reason}`. */
+   * ('owner', 'admin-email', 'admin-underage', 'admin-closure'), or 'moved' (PORT-2: the purge after a committed move's
+   * export window). It is recorded as `account-deleted-${reason}`. A moved tombstone keeps status `moved` and its
+   * `moved` record while the redirect or proof windows run, then answers exactly as a deleted identity. 'moved'
+   * only applies to an identity in status `moved`; any other identity refuses it. */
   async tombstone(owner,{assignmentId,reason='inactive'}={}){
    if(!uuid(owner)||typeof assignmentId!=='string'&&assignmentId!==undefined||!TOMBSTONE_REASONS.has(reason))throw new TypeError('Invalid tombstone request');
    for(let attempt=0;attempt<4;attempt++){
     const account=await repository.get(owner);if(!account)return false;
     if(assignmentId!==undefined&&account.assignmentId!==assignmentId)throw Object.assign(new Error('Account assignment changed.'),{code:'lifecycle_assignment_changed',status:409});
     if(account.status==='deleted')return true;
+    const moved=reason==='moved';
+    if(moved&&account.status!=='moved'||!moved&&account.status==='moved')throw Object.assign(new Error('A moved identity is purged only with reason moved.'),{code:'lifecycle_identity_conflict',status:409});
+    if(moved&&time(account.movedPurgedAt))return true;
     const now=clock(),next=Object.fromEntries(RETAINED.filter(key=>account[key]!==undefined).map(key=>[key,structuredClone(account[key])]));
     revokeAllLineage(account,now);if(account.lineageOutbox?.length)next.lineageOutbox=account.lineageOutbox;
     Object.assign(next,{status:'deleted',deletedAt:now,revision:account.revision+1,sessions:[],credentials:[],challenges:[],emailChallenges:[],passwordHash:null,recoveryHash:null,audit:[{event:`account-deleted-${reason}`,at:now}]});
+    if(moved){const kept=retainedMoved(account.moved,now);next.movedPurgedAt=now;if(kept){next.status='moved';next.moved=kept;}}
     if(await repository.compareAndSwap(owner,account.revision,next))return true;
    }
    throw Object.assign(new Error('The identity changed during deletion; retry later.'),{code:'lifecycle_identity_conflict',status:409});

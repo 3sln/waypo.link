@@ -46,17 +46,21 @@ export async function purgeEligibleInTransaction(tx){for(const value of (await t
 // common to both callers; only billing and the owner notice depend on the reason (R1-H3).
 export const PURGE_PLANS=Object.freeze({
  deletion:Object.freeze(['billing-stop','identity','grants','drain','operator-apps','vectors','email-bridge','exports','archive','blobs','billing-anonymize','notice','metadata']),
+ // PORT-2: the purge after a committed identity move's export window (identity-portability design §6.5). No
+ // operator-app notification and no owner notice: a moved identity is not deleted, so nothing may tell apps to purge
+ // it (spec §6.3, AR-9), and the move's own notices already went out. Stages run under the deletion stage names.
+ moved:Object.freeze(['billing-stop','identity','grants','drain','vectors','email-bridge','exports','archive','blobs','billing-anonymize','metadata']),
  lifecycle:Object.freeze(['identity','grants','drain','operator-apps','vectors','email-bridge','exports','archive','blobs','metadata']),
  // A caller that injects no stage hooks (the pre-DX-3 lifecycle runner) keeps the original stages only.
  legacy:Object.freeze(['identity','vectors','archive','blobs','metadata']),
 });
-export const PURGE_REASONS=Object.freeze(['inactive','owner','admin']);
+export const PURGE_REASONS=Object.freeze(['inactive','owner','admin','moved']);
 // Injected hook per hook-driven stage. A hook is called as hook(owner, {reason, basis, state, log, budget}).
 // It returns undefined/true/{done:true, ...evidence} to advance, {done:false, retryAt?|wakeAt?} to run again later,
 // {held:true, reason} to hold, or throws (the caller holds with backoff). `state` is the stage's durable scratch
 // object, saved with the job, so a hook can keep its own deadline or counters across batches.
 const HOOKS=Object.freeze({'billing-stop':'billingStop',grants:'eraseGrants',drain:'drain','operator-apps':'notifyOperatorApps','email-bridge':'eraseEmailBridge',exports:'exportsCancel','billing-anonymize':'billingAnonymize',notice:'notice'});
-const KNOWN_STAGES=new Set([...PURGE_PLANS.deletion,...PURGE_PLANS.lifecycle]);
+const KNOWN_STAGES=new Set([...PURGE_PLANS.deletion,...PURGE_PLANS.lifecycle,...PURGE_PLANS.moved]);
 const tombstoneReason=reason=>reason==='inactive'?'inactive-unpaid':reason;
 function smallEvidence(value){try{const text=JSON.stringify(value??null);return text.length<=4096?JSON.parse(text):{truncated:true};}catch{return {unserializable:true};}}
 
@@ -72,7 +76,7 @@ export async function purgeBatch(c,owner,{identity,fence,budget=64,log=()=>{},re
  if(!PURGE_REASONS.includes(reason))throw new TypeError('Invalid purge reason');
  const hooked=stages!==undefined&&stages!==null;if(reason!=='inactive'&&!hooked)throw new TypeError('Deletion requires stage hooks');
  let job=await c.metadata.get(PURGE_KEY);
- if(!job){const current=await identity.get(owner);job={version:1,owner,reason,basis,plan:[...PURGE_PLANS[reason==='inactive'?hooked?'lifecycle':'legacy':'deletion']],stage:null,assignmentId:current?.assignmentId,cursor:null,archiveIndex:0,archiveDigest:null,deleted:0,foreign:0,startedAt:clock(),hooks:{},evidence:{}};job.stage=job.plan[0];await c.metadata.put(PURGE_KEY,job);}
+ if(!job){const current=await identity.get(owner);job={version:1,owner,reason,basis,plan:[...PURGE_PLANS[reason==='inactive'?hooked?'lifecycle':'legacy':reason==='moved'?'moved':'deletion']],stage:null,assignmentId:current?.assignmentId,cursor:null,archiveIndex:0,archiveDigest:null,deleted:0,foreign:0,startedAt:clock(),hooks:{},evidence:{}};job.stage=job.plan[0];await c.metadata.put(PURGE_KEY,job);}
  if(job.version!==1||job.owner!==owner)throw Object.assign(new Error('Purge job requires review'),{code:'lifecycle_unavailable'});
  // A job written before stage plans existed is an inactivity purge on the legacy plan.
  if(!Array.isArray(job.plan)){job.reason='inactive';job.plan=[...PURGE_PLANS.legacy];job.hooks={};job.evidence={};}
@@ -100,7 +104,8 @@ export async function purgeBatch(c,owner,{identity,fence,budget=64,log=()=>{},re
   }
   if(stage==='identity'){
    // The connections vocabulary (apps/connections.mjs severAll) names owner deletion 'deleted'.
-   await c.connectionsSeverAccount?.(owner,{reason:reason==='inactive'?'lifecycle-tombstone':'deleted'});
+   // A moved identity's connections were severed at commit with the non-deletion vocabulary; repeat it, never 'deleted'.
+   await c.connectionsSeverAccount?.(owner,{reason:reason==='inactive'?'lifecycle-tombstone':reason==='moved'?'system':'deleted'});
    // Authentication, sessions, recovery and the email claim end first; the handle stays reserved forever.
    if(!await identity.tombstone(owner,{assignmentId:job.assignmentId,...reason==='inactive'?{}:{reason:basis}}))throw Object.assign(new Error('Identity unavailable for tombstoning'),{code:'lifecycle_identity_unavailable'});
    log({action:'purge-identity-tombstoned'});await advance();continue;

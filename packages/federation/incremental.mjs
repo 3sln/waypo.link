@@ -1,3 +1,4 @@
+import {contractMethods} from '../core/contract-methods.mjs';
 import {parseReference} from '../core/artefacts.mjs';
 import {contractUpgradeDelta} from '../consent/reviewed-contracts.mjs';
 import {siteGlobal} from '../flags/read.mjs';
@@ -148,7 +149,7 @@ export function createIncrementalProvider({store,issuer,crypto=globalThis.crypto
     let pin;try{pin=await pinned(r.fragment,r.digest,r.version);}catch(error){if(artefactVersions&&error?.code==='artefact_digest_mismatch')throw error;if(['unsupported_fragment','unavailable'].includes(error?.code)){items.push({fragment:r.fragment,purpose:r.purpose,fields:[...r.fields],methods:copy(r.methods),status:error.code==='unavailable'?'unavailable':'unsupported'});continue;}generic();}
     const fields=pin.schema.fields;for(const f of r.fields)if(!Object.hasOwn(fields,f))generic();
     for(const [field,contracts] of Object.entries(r.methods))for(const contract of Object.keys(contracts))if(fields[field].type!=='resource'||!fields[field].contracts.includes(contract))generic();
-    const contract_versions={},contractPins={};if(artefactVersions)for(const cs of Object.values(r.methods??{}))for(const contract of Object.keys(cs)){if(typeof pinContract!=='function')generic();const ref=r.contract_versions?.[contract],cp=await pinContract(ref?{contract,...ref}:contract);if(ref&&(cp.version!==ref.version||cp.digest!==ref.digest))generic();if(!cp.version||!cp.digest||cp.schema?.$id!==contract||cs[contract].some(method=>!Object.hasOwn(cp.schema['x-methods']??{},method)))generic();contract_versions[contract]={version:cp.version,digest:cp.digest};contractPins[contract]=copy(cp);}
+    const contract_versions={},contractPins={};if(artefactVersions)for(const cs of Object.values(r.methods??{}))for(const contract of Object.keys(cs)){if(typeof pinContract!=='function')generic();const ref=r.contract_versions?.[contract],cp=await pinContract(ref?{contract,...ref}:contract);if(ref&&(cp.version!==ref.version||cp.digest!==ref.digest))generic();if(!cp.version||!cp.digest||cp.schema?.$id!==contract||cs[contract].some(method=>!Object.hasOwn(contractMethods(cp.schema),method)))generic();contract_versions[contract]={version:cp.version,digest:cp.digest};contractPins[contract]=copy(cp);}
     items.push({fragment:r.fragment,purpose:r.purpose,fields:[...r.fields],methods:copy(r.methods),digest:pin.digest,...pin.version?{version:pin.version}:{},...artefactVersions?{contract_versions,contractPins}:{},types:Object.fromEntries(r.fields.map(f=>[f,fields[f].type])),...await describe(r.fragment,site,pin)});
    }
    // Unreviewed apps cannot ask for act-as-you, money, identity or public access (CX-1 tier 4). Fails closed.

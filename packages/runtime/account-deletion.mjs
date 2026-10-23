@@ -40,6 +40,10 @@ const MAX_TOKENS=16,MAX_PUSH=16;
 export const DRAIN_PREFIXES=Object.freeze(['connections/cascade/','integration-events/row/']);
 const DRAINS=Object.freeze(['connectionsDrain','brokeredSeveranceDrain','integrationEventsAlarm','eventBusSweep']);
 const CANCELLABLE=new Set(['owner','admin-email']);
+// PORT-2 (identity portability, IP-R1-L10): the transfer-out record (packages/identity/transfer-out.mjs TRANSFER_KEY).
+// A committed move refuses deletion (the moved identity is purged by its own `moved` purge); a deletion request
+// cancels a pending move explicitly, in the same account transaction that schedules the deletion.
+const TRANSFER_KEY='transfer-out/v1',TRANSFER_PENDING=new Set(['pending','held','contested']);
 const OPERATION_ID=/^[A-Za-z0-9_-]{16,128}$/;
 
 const fail=(code,message,status)=>{throw new AppFault(code,message,status);};
@@ -165,7 +169,7 @@ export async function restoreDeletedAccount(c,owner,identity,{clock=Date.now}={}
  if(await c.metadata.get(TOMBSTONE_KEY)!==undefined)return {deleted:true,restored:false};
  if(stored!==undefined)return {deleted:false,restored:false};
  const account=await identity.get(owner);if(account?.status!=='deleted')return {deleted:false,restored:false};
- const basis=account.deletionReason,tombstone={version:1,owner,deletedAt:clock(),reason:!basis||basis==='inactive'?'inactive-unpaid':basis==='owner'?'owner':'admin',...basis&&basis!=='inactive'?{basis}:{},restored:true};
+ const basis=account.deletionReason,tombstone={version:1,owner,deletedAt:clock(),reason:!basis||basis==='inactive'?'inactive-unpaid':basis==='owner'?'owner':basis==='moved'?'moved':'admin',...basis&&basis!=='inactive'?{basis}:{},restored:true};
  const restored=await c.metadata.transaction(async tx=>{if(await tx.get('owner')!==undefined||await tx.get(TOMBSTONE_KEY)!==undefined)return false;await tx.put('owner',owner);await tx.put(TOMBSTONE_KEY,tombstone);return true;});
  return {deleted:true,restored};
 }
@@ -311,6 +315,8 @@ export class DeletionService{
    if(await tx.get(TOMBSTONE_KEY)!==undefined)fail('account_deleted','This account was deleted.',410);
    if(await tx.get(FENCE_KEY)!==undefined||await tx.get(PURGE_KEY)!==undefined)fail('account_deleting','Account deletion has begun.',410);
    const existing=await tx.get(REQUEST_KEY);if(['scheduled','executing'].includes(existing?.state))fail('deletion_scheduled','Deletion is already scheduled.',409);
+   const transfer=await tx.get(TRANSFER_KEY);if(transfer?.state==='committed')fail('account_unavailable','Account unavailable.',409);
+   if(TRANSFER_PENDING.has(transfer?.state))await tx.put(TRANSFER_KEY,{...transfer,state:'cancelled',reason:'deletion',endedAt:now,tokens:[],hold:null,channels:null,notices:{},revision:transfer.revision+1});
    const request={v:1,id,owner,basis,operationId,fingerprint,requestedAt:now,executeAfter,graceDays,actor,handle:identity.handle??null,...exportUntil!==undefined?{exportUntil}:{},
     channels:await channelSnapshot(tx,owner,identity),cancelTokenHashes:[],securityEpoch:security.epoch,securityChangedAt:security.changedAt,
     billing:billing===null?{none:true}:{pending:true,retryAt:now},notices:{},noticeAccepted:false,dueIndexed:null,state:'scheduled',hold:null,revision:1};

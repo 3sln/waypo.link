@@ -16,3 +16,8 @@ test('a blocked view returns a notice decision with an explicit app-scope suppre
  const f=await fixture('grant-more',{intent:'grant-more',blocked:true,offerAppScope:true,armAt:0,requests:[{fragment,digest:'D'.repeat(43),purpose:'More settings',alreadyAllowed:{fields:[],methods:{}},delta:{fields:['extra'],methods:{}},setup:[],suppressed:true}]});await f.act('stop');await f.act('scope',{scope:'app'});await f.act('suppress');assert.deepEqual(f.posts[0].body,{nonce:'N'.repeat(22),notice:'return',suppress:{scope:'app'}});
 });
 test('a superseded configure view needs no field facts and can return safely',async()=>{const f=await fixture('configure',{superseded:true});assert.equal(f.model.walkthrough.superseded,true);assert.equal(f.model.walkthrough.blocked,true);await f.act('decline');assert.deepEqual(f.posts[0].body,{nonce:'N'.repeat(22),denied:true});});
+
+test('ART-8 detailed delta facts survive the provider engine and stay bound to their field',async()=>{
+ const delta={fields:['extra'],methods:{},updated:{extra:{}},display:[{field:'extra',method:'get',lang:'es',text:'Texto añadido'}],additions:[{field:'extra',method:'get',path:'/result/properties/email',value:{type:'string'}}]};
+ const f=await fixture('grant-more',{intent:'grant-more',armAt:0,requests:[{fragment,version:2,digest:'D'.repeat(43),purpose:'More settings',alreadyAllowed:{version:1,fields:['theme'],methods:{}},delta,setup:[],suppressed:false}]});assert.deepEqual(f.model.walkthrough.items[0].versionDelta,{from:1,to:2,updated:{},display:delta.display,additions:delta.additions});
+});

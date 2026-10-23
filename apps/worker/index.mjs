@@ -1,3 +1,4 @@
+import {remoteArtefacts,ARTEFACT_STORE} from '../../packages/runtime/artefact-pins.mjs';
 import {siteEnabled,siteGlobal,capability,flagsFor} from '../../packages/flags/read.mjs';
 import {workerFlags,flagAccounts,disabledFlagStats} from '../../packages/runtime/flags.mjs';
 import {createWorkerFlagStats} from './flag-stats.mjs';
@@ -93,12 +94,14 @@ function resources(bindings,resolveIdentityBadges,flags){
  // global_fetch_strictly_public keeps off private and internal addresses. Node has no equivalent guard, so it injects none.
  value.EMBED_AVATAR_FETCH=(input,init)=>fetch(input,init);
  // The sweep also ticks due account deletions (DX-3), so it runs whenever the deletion flag is on, whatever the lifecycle mode.
- if(env.LIFECYCLE_SCHEDULER&&(lifecycleMode(env)!=='off'||siteGlobal(env,'ACCOUNT_DELETION_ENABLED')))value.LIFECYCLE_SWEEP={run:input=>env.LIFECYCLE_SCHEDULER.get(env.LIFECYCLE_SCHEDULER.idFromName(LIFECYCLE_SCHEDULER_NAME)).run(input)};
+ // PORT-2: it also sweeps the transfer-due index while IDENTITY_TRANSFER_OUT_ENABLED is globally on.
+ if(env.LIFECYCLE_SCHEDULER&&(lifecycleMode(env)!=='off'||siteGlobal(env,'ACCOUNT_DELETION_ENABLED')||siteGlobal(env,'IDENTITY_TRANSFER_OUT_ENABLED')))value.LIFECYCLE_SWEEP={run:input=>env.LIFECYCLE_SCHEDULER.get(env.LIFECYCLE_SCHEDULER.idFromName(LIFECYCLE_SCHEDULER_NAME)).run(input)};
  value.PUSH_AVAILABLE=Boolean(pushTransport);value.EMAIL_SETUP_AVAILABLE=typeof mailer?.sendSetupCode==='function';
  if(env.MCP_AUTH)value.MCP_AUTHORITY=mcpAuthorities(shard=>({invoke:(method,args)=>env.MCP_AUTH.get(env.MCP_AUTH.idFromName(`${MCP_LAYOUT}-${shard}`)).invoke(shard,method,args)}));
  // The entry store, sharded by entry ID over FederationObject instances (review M5); null unless FEDERATION_ENTRY_ENABLED.
  // packages/runtime/http.mjs always mounts the provider session-ending hook here, so end-session is offered.
  const directory=env.FEDERATION?workerClientDirectory(env,value.ABUSE):undefined;
+ if(env.FEDERATION)value.ARTEFACTS=remoteArtefacts(value,(method,input)=>env.FEDERATION.get(env.FEDERATION.idFromName(ARTEFACT_STORE)).artefacts(method,input));
  if(env.FEDERATION&&incrementalMountable(env))value.INCREMENTAL_AUTHORIZATION=incrementalRemote((method,args)=>env.FEDERATION.get(env.FEDERATION.idFromName(INCREMENTAL_STORE)).incremental(method,args));
  if(env.FEDERATION)value.FEDERATION_ENTRIES=federationEntriesRemote({config:env,endSession:true,directory,incremental:value.INCREMENTAL_AUTHORIZATION,invoke:(shard,method,args)=>env.FEDERATION.get(env.FEDERATION.idFromName(entryStoreName(shard))).entries(method,args,shard)});
  if(env.FEDERATION&&siteGlobal(env,'BROKERING_ENABLED',true))value.FEDERATION_BROKERING={enabled:true,jwks:()=>env.FEDERATION.get(env.FEDERATION.idFromName(BROKERING_STORE)).brokeringJwks()};

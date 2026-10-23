@@ -39,7 +39,7 @@ export const clientSite=host=>host.split('.').slice(-2).join('.');
  * security-relevant member that fails makes the whole document invalid. With `integrations` (AMD-C7) a confidential
  * private_key_jwt client is accepted and `bindle_integration` is parsed; `sharedHost` refuses the manifest on a
  * multi-tenant client origin; `reserved` are the provider's own hosts. */
-export function validateClientMetadata(document,clientId,{integrations=false,sharedHost=false,reserved=[]}={}){
+export function validateClientMetadata(document,clientId,{integrations=false,artefactVersions=false,sharedHost=false,reserved=[]}={}){
  const url=metadataClientURL(clientId);if(!url||!object(document)||Object.keys(document).length>64)unavailable();
  if(document.client_id!==clientId)unavailable();
  const origin=url.origin,uris=document.redirect_uris;
@@ -58,18 +58,18 @@ export function validateClientMetadata(document,clientId,{integrations=false,sha
  const claimedName=presentation(document.client_name,100),clientUri=sameOrigin(document.client_uri),logoUri=sameOrigin(document.logo_uri);
  const initiateLoginUri=integrations&&prefixedURL(document.initiate_login_uri,clientId);
  let integration;
- if(integrations===true&&Object.hasOwn(document,'bindle_integration'))integration=sharedHost?{status:'invalid',reason:'shared_host'}:validateIntegrationManifest(document.bindle_integration,{clientId,confidential,redirectUris:uris,...confidential?{jwksUri:document.jwks_uri}:{},reserved});
+ if(integrations===true&&Object.hasOwn(document,'bindle_integration'))integration=sharedHost?{status:'invalid',reason:'shared_host'}:validateIntegrationManifest(document.bindle_integration,{artefactVersions,clientId,confidential,redirectUris:uris,...confidential?{jwksUri:document.jwks_uri}:{},reserved});
  return {id:clientId,name:url.host,origin,redirectUris:[...uris],reviewed:false,...claimedName?{claimedName}:{},...clientUri?{clientUri}:{},...logoUri?{logoUri}:{},...clientPolicyLinks({origin,policy_uri:document.policy_uri,tos_uri:document.tos_uri}),...initiateLoginUri?{initiateLoginUri}:{},
   ...confidential?{authMethod:'private_key_jwt',jwksUri:document.jwks_uri}:{},...integration&&integration.status!=='absent'?{integration}:{}};
 }
 /** Shape check for a snapshot crossing a trust boundary inside the runtime (entry store → owner shard). Integration
  * members (`authMethod`, `jwksUri`, `integration`) are accepted only when the caller runs with `integrations`, and the
  * whole snapshot must re-derive exactly, so a manifest never disagrees with the client fields it was validated with. */
-export function validClientSnapshot(value,{integrations=false,reserved=[]}={}){
+export function validClientSnapshot(value,{integrations=false,artefactVersions=false,reserved=[]}={}){
  const keys=['id','name','origin','redirectUris','reviewed','claimedName','clientUri','logoUri','policyUri','tosUri',...integrations===true?['authMethod','jwksUri','integration','initiateLoginUri']:[]];
  if(!object(value)||value.reviewed!==false||Object.keys(value).some(k=>!keys.includes(k)))return false;
  const url=metadataClientURL(value.id);if(!url||value.origin!==url.origin||value.name!==url.host)return false;
- if(value.integration!==undefined&&!validIntegrationValue(value.integration,{clientId:value.id,confidential:value.authMethod==='private_key_jwt',redirectUris:value.redirectUris,...value.authMethod==='private_key_jwt'?{jwksUri:value.jwksUri}:{},reserved}))return false;
+ if(value.integration!==undefined&&!validIntegrationValue(value.integration,{artefactVersions,clientId:value.id,confidential:value.authMethod==='private_key_jwt',redirectUris:value.redirectUris,...value.authMethod==='private_key_jwt'?{jwksUri:value.jwksUri}:{},reserved}))return false;
  const {integration,...rest}=value;
  try{return JSON.stringify(validateClientMetadata({client_id:value.id,redirect_uris:value.redirectUris,...value.claimedName?{client_name:value.claimedName}:{},...value.clientUri?{client_uri:value.clientUri}:{},...value.logoUri?{logo_uri:value.logoUri}:{},...value.policyUri?{policy_uri:value.policyUri}:{},...value.tosUri?{tos_uri:value.tosUri}:{},...value.initiateLoginUri?{initiate_login_uri:value.initiateLoginUri}:{},...value.authMethod!==undefined?{token_endpoint_auth_method:value.authMethod}:{},...value.jwksUri!==undefined?{jwks_uri:value.jwksUri}:{}},value.id,{integrations}))===JSON.stringify(rest);}catch{return false;}
 }
@@ -93,13 +93,13 @@ async function boundedBody(response,maxBytes,signal){
  * SSRF-safe egress port (Node: the DNS-pinned metadata adapter; Workers: strictly-public global fetch with DoH screening);
  * `limiter` is a `consume` port (fleet-wide where available); `blocked(host)` is the administrator block list. */
 export class ClientDirectory {
- constructor({clients=[],enabled=false,fetch,limiter,blocked,clock=()=>Date.now(),limits={},reservedHosts=[],integrations=false,sharedHosts=[],crypto=globalThis.crypto}={}){
+ constructor({clients=[],enabled=false,fetch,limiter,blocked,clock=()=>Date.now(),limits={},reservedHosts=[],integrations=false,artefactVersions=false,sharedHosts=[],crypto=globalThis.crypto}={}){
   // The provider's own hosts (issuer, embed origin) and their subdomains are never third-party clients.
   this.reservedHosts=reservedHosts.filter(host=>typeof host==='string'&&host).map(host=>host.toLowerCase());
   // integrations.v1 (AMD-C7) is declared by the caller only when the feature is enabled and mounted.
-  this.integrations=integrations===true;this.crypto=crypto;
+  this.artefactVersions=artefactVersions===true;this.integrations=integrations===true;this.crypto=crypto;
   this.sharedHosts=sharedHosts.filter(host=>typeof host==='string'&&host).map(host=>host.toLowerCase());
-  this.static=new Map(clients.map(client=>[client.id,this.registered(client)]));this.limits={...CLIENT_METADATA_LIMITS,...limits};
+  this.registrations=new Map(clients.map(client=>[client.id,structuredClone(client)]));this.static=new Map(clients.map(client=>[client.id,this.registered(client)]));this.limits={...CLIENT_METADATA_LIMITS,...limits};
   this.enabled=enabled===true&&typeof fetch==='function';Object.assign(this,{fetcher:fetch,limiter:limiter??memoryLimiter({clock}),blockedPort:blocked,clock});
   this.cache=new Map();this.blocks=new Map();this.inFlight=new Map();this.keyCache=new Map();
  }
@@ -115,7 +115,7 @@ export class ClientDirectory {
   const confidential=authMethod==='private_key_jwt'&&!!metadataClientURL(jwksUri)&&!!prefixedURL(jwksUri,client.id)&&jwksUri!==client.id;
   if(declared&&(!this.integrations||!confidential))throw new TypeError(`Reviewed client ${client.id} declares client authentication that this provider cannot honor (integrations.v1 and a path-prefixed jwksUri are required).`);
   if(!this.integrations)return rest;
-  const integration=manifest===undefined?undefined:validateIntegrationManifest(manifest,{clientId:client.id,confidential,redirectUris:client.redirectUris??[],...confidential?{jwksUri}:{},reserved:this.reservedHosts});
+  const integration=manifest===undefined?undefined:validateIntegrationManifest(manifest,{artefactVersions:this.artefactVersions,clientId:client.id,confidential,redirectUris:client.redirectUris??[],...confidential?{jwksUri}:{},reserved:this.reservedHosts});
   return {...rest,...confidential?{authMethod,jwksUri}:{},...integration?{integration}:{}};
  }
  sharedHost(host){return this.sharedHosts.some(name=>host===name||host.endsWith('.'+name));}
@@ -137,12 +137,12 @@ export class ClientDirectory {
  invalidate(host){for(const name of hostAndParents(host))this.blocks.delete(name);for(const id of [...this.cache.keys()])if(metadataClientHost(id)===host)this.cache.delete(id);for(const name of [...this.keyCache.keys()])if(metadataClientHost(name.split('\n')[0])===host)this.keyCache.delete(name);}
  /** A reviewed client, or a freshly validated snapshot of a metadata client. Throws `invalid_client` otherwise. */
  async resolve(clientId){
-  const registered=this.static.get(clientId);if(registered)return structuredClone(registered);
+  const registered=this.static.get(clientId);if(registered)return structuredClone(this.registered(this.registrations.get(clientId)));
   if(!this.isMetadataId(clientId))unavailable();const host=new URL(clientId).hostname;if(await this.isBlocked(host))unavailable();
-  const now=this.clock(),cached=this.cache.get(clientId);
+  const now=this.clock(),candidate=this.cache.get(clientId),cached=candidate&&Boolean(candidate.artefactVersions)===Boolean(this.artefactVersions)?candidate:null;
   if(cached&&cached.until>now){if(!cached.client)unavailable();return structuredClone(cached.client);}
-  let pending=this.inFlight.get(clientId);
-  if(!pending){if(this.inFlight.size>=this.limits.inFlight)unavailable();pending=this.fetchDocument(clientId,host).finally(()=>this.inFlight.delete(clientId));this.inFlight.set(clientId,pending);}
+  const flight=clientId+'\n'+Boolean(this.artefactVersions);let pending=this.inFlight.get(flight);
+  if(!pending){if(this.inFlight.size>=this.limits.inFlight)unavailable();pending=this.fetchDocument(clientId,host).finally(()=>this.inFlight.delete(flight));this.inFlight.set(flight,pending);}
   let client;
   // A known-good document past its freshness is served for up to one more hour when budgets refuse a refetch, so
   // cold-miss floods from other callers cannot take down a working client.
@@ -176,12 +176,12 @@ export class ClientDirectory {
  }
  async fetchDocument(clientId,host){
   const limits=this.limits;await this.budget(host);let result=null,ttl=limits.negativeMs,gone=false,invalid=false;
-  const options={integrations:this.integrations,sharedHost:this.integrations&&this.sharedHost(host),reserved:this.reservedHosts};
+  const options={artefactVersions:this.artefactVersions,integrations:this.integrations,sharedHost:this.integrations&&this.sharedHost(host),reserved:this.reservedHosts};
   try{const outcome=await this.fetchJSON(clientId,['application/json'],document=>validateClientMetadata(document,clientId,options));result=outcome.value;ttl=outcome.ttl;}
   catch(error){result=null;gone=error?.code==='gone';invalid=error?.code==='invalid_document';}
   // Only a validated document whose client_id equals this exact key is cached under it; failures are remembered
   // briefly (never as documents) so a broken or hostile host is not refetched on every request.
-  this.remember(this.cache,clientId,{client:result,until:this.clock()+ttl,...gone?{gone}:{},...invalid?{invalid}:{}},limits.cacheEntries);
+  this.remember(this.cache,clientId,{client:result,...options.artefactVersions?{artefactVersions:true}:{},until:this.clock()+ttl,...gone?{gone}:{},...invalid?{invalid}:{}},limits.cacheEntries);
   return result;
  }
  /** Current validated key set of a resolved confidential client, from its own `jwks_uri` under the client-metadata
@@ -224,6 +224,6 @@ export class ClientDirectory {
   catch(error){if(error?.code!=='invalid_client'&&error?.code!=='rate_limited')throw error;const cached=this.cache.get(clientId),live=cached&&cached.until>this.clock();observed=live&&cached.gone===true?{gone:true}:live&&cached.invalid===true?{invalid:true}:{transient:true};}
   if(!observed.client)return classifyIntegrationChange(pinned,observed);
   const keys=observed.client.authMethod==='private_key_jwt'?await this.resolveKeys(observed.client):null;
-  return classifyIntegrationChange(pinned,observed,keys);
+  return classifyIntegrationChange(pinned,observed,keys,{artefactVersions:this.artefactVersions});
  }
 }

@@ -21,8 +21,11 @@
 //
 // Routes of different modules in one stage must not overlap. Where they do, this order decides: `delivery`
 // answers contact-delivery bearer RPC on /bindle/rpc before `federation`, and `beams` answers the methods of
-// /api/contacts/{redeem,directory} before `contacts`. Append-only: one import and one entry per slice; a slice
+// /api/contacts/{redeem,directory} before `contacts`. `moved` (PORT-3) is first on purpose: its edge-stage router
+// answers per-identity paths of a moved identity (308 during the redirect period) before any per-identity route,
+// and falls through for every other identity. Append-only otherwise: one import and one entry per slice; a slice
 // adds routes to its own module.
+import * as moved from './moved.mjs';
 import * as site from './site.mjs';
 import * as admin from './admin.mjs';
 import * as identity from './identity.mjs';
@@ -50,7 +53,7 @@ import * as connections from './connections.mjs';
 import * as emailBridge from './email-bridge.mjs';
 import * as exports from './exports.mjs';
 
-export const ROUTES=Object.freeze([site,admin,identity,lifecycle,deletion,automation,conversations,beams,contacts,delivery,messages,views,storage,billing,search,notifications,federation,links,delegation,incremental,events,appSessions,integrations,connections,emailBridge,exports]);
+export const ROUTES=Object.freeze([moved,site,admin,identity,lifecycle,deletion,automation,conversations,beams,contacts,delivery,messages,views,storage,billing,search,notifications,federation,links,delegation,incremental,events,appSessions,integrations,connections,emailBridge,exports]);
 export const STAGES=Object.freeze(['edge','public','anonymous','unauthenticated','api','session','beforeActivity','owner','pages']);
 for(const module of ROUTES)for(const name of Object.keys(module.stages??{}))if(!STAGES.includes(name))throw new TypeError(`Unknown route stage ${name}`);
 

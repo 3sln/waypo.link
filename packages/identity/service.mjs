@@ -182,7 +182,7 @@ export class IdentityService {
     if (!account || !session) fail('unauthorized', 'Sign in to continue.');
     // DX-7: a closure-export session is accepted only where the caller opted in (export, status, step-up and
     // sign-out), only for a suspended account whose applied closure still offers an export window.
-    if (session.scope === 'closure-export') { if (!closure || account.status !== 'suspended' || !await this.closureWindow(account)) fail('unauthorized', 'Sign in to continue.'); }
+    if (session.scope === 'closure-export') { if (!closure || !['suspended', 'moved'].includes(account.status) || !await this.closureWindow(account)) fail('unauthorized', 'Sign in to continue.'); }
     else if (session.scope !== undefined || account.status !== 'active') fail('unauthorized', 'Sign in to continue.');
     if(context.expectedOwner&&context.expectedOwner!==account.id)throw Object.assign(new Error('Reload the account chooser before continuing.'),{code:'account_context_conflict',status:409});
     if(context.sessionContext&&context.sessionContext!==await this.sessionID(session))throw Object.assign(new Error('Reload the account chooser before continuing.'),{code:'session_context_conflict',status:409});
@@ -190,12 +190,13 @@ export class IdentityService {
     if(context.requireCurrentTerms===true)this.requireCurrentTerms(account);
     return { account, session };
   }
-  /** The applied closure's export window for a suspended account, or null (DX-7, terms §10). */
-  async closureWindow(account){if(account?.status!=='suspended'||typeof this.closure?.window!=='function')return null;let window;try{window=await this.closure.window(account.id,account.assignmentId);}catch{return null;}return Number.isSafeInteger(window?.exportUntil)&&window.exportUntil>this.clock()?{exportUntil:window.exportUntil}:null;}
+  /** The applied closure's export window for a suspended account, or null (DX-7, terms §10). A moved identity (PORT-2,
+   * identity-portability design §6.5 item 1) has the same read-only window until its record's `exportUntil`. */
+  async closureWindow(account){if(account?.status==='moved'){const until=account.moved?.exportUntil;return Number.isSafeInteger(until)&&until>this.clock()?{exportUntil:until,moved:true}:null;}if(account?.status!=='suspended'||typeof this.closure?.window!=='function')return null;let window;try{window=await this.closure.window(account.id,account.assignmentId);}catch{return null;}return Number.isSafeInteger(window?.exportUntil)&&window.exportUntil>this.clock()?{exportUntil:window.exportUntil}:null;}
   /** A credential sign-in to a closed account during its export window: a restricted, time-bound session. */
   async closureSession(account,revision,options){const window=await this.closureWindow(account);if(!window)fail('unauthorized','Authentication failed.');const result=await this.session(account,{...options,scope:'closure-export',expiresAt:Math.min(this.clock()+3600000,window.exportUntil)});await this.save(account,revision);return {...result,account:{...result.account,scope:'closure-export'},scope:'closure-export',closure:window};}
   /** The restricted owner view for closure-export routes (export and deletion status only). */
-  async closureOwner(context){const {account,session}=await this.authorized(context,false,{closure:true});if(session.scope!=='closure-export')fail('unauthorized','Sign in to continue.');const window=await this.closureWindow(account);return {account:{...await this.projectAccount(account),scope:'closure-export'},scope:'closure-export',closure:window,csrfToken:session.csrfToken,expiresAt:session.expiresAt,authTime:Number.isFinite(this.authAt(session))?this.authAt(session):null,sessionContext:await this.sessionID(session),credentials:[],devices:[],audit:[]};}
+  async closureOwner(context){const {account,session}=await this.authorized(context,false,{closure:true});if(session.scope!=='closure-export')fail('unauthorized','Sign in to continue.');const window=await this.closureWindow(account);return {account:{...await this.projectAccount(account),scope:'closure-export'},scope:'closure-export',closure:window,...window?.moved?{moved:{error:'identity_moved'}}:{},csrfToken:session.csrfToken,expiresAt:session.expiresAt,authTime:Number.isFinite(this.authAt(session))?this.authAt(session):null,sessionContext:await this.sessionID(session),credentials:[],devices:[],audit:[]};}
   requireCurrentTerms(account){if(account.termsVersion!==this.config.termsVersion)throw Object.assign(new IdentityFault('terms_acceptance_required','Accept the current terms before creating content or granting access.'),{status:403});}
   authAt(session){return Math.max(session.source==='activation'&&Number.isSafeInteger(session.activationCredentialAt)&&session.activationCredentialAt<=this.clock()?session.activationCredentialAt:-Infinity,session.source==='credential'&&Number.isSafeInteger(session.createdAt)&&session.createdAt<=this.clock()?session.createdAt:-Infinity,Number.isSafeInteger(session.stepUpAt)&&session.stepUpAt<=this.clock()?session.stepUpAt:-Infinity);}
   /** Removes sessions and their transitive descendants. Removing a still-live session is an explicit termination
@@ -392,7 +393,7 @@ export class IdentityService {
     const dummyHash = await this.dummyPasswordHash;
     const hash = account?.passwordHash || dummyHash;
     const verified = await this.passwordHasher.verify(input.password, hash);
-    if (account?.status==='suspended' && account.passwordHash && verified && await this.closureWindow(account)) return this.closureSession(account, account.revision, { label: input.label });
+    if (['suspended','moved'].includes(account?.status) && account.passwordHash && verified && await this.closureWindow(account)) return this.closureSession(account, account.revision, { label: input.label });
     if (!account || !['active',...(this.config.requireReachability===true||account?.systemIdentity||account?.onboardingIdentity)?['pending','recovering']:[]].includes(account.status) || !account.passwordHash || !verified) fail('unauthorized', 'Authentication failed.');
     if(account.status!=='active')return this.resumeSetupCredential(account,context);
     const revision = account.revision; const result = await this.session(account, { label: input.label }); await this.save(account, revision); return result;
@@ -417,7 +418,7 @@ export class IdentityService {
     const hash = await this.crypto.hash('challenge', input.challengeToken);
     const challenge = account?.challenges.find(c => c.purpose === 'login' && secureEqual(c.hash, hash) && c.expiresAt > this.clock());
     const credential = account?.credentials.find(c => c.id === input.response?.id);
-    const closed = account?.status==='suspended' && Boolean(await this.closureWindow(account));
+    const closed = ['suspended','moved'].includes(account?.status) && Boolean(await this.closureWindow(account));
     if (!account || !(closed||['active',...(this.config.requireReachability===true||account?.systemIdentity||account?.onboardingIdentity)?['pending','recovering']:[]].includes(account.status)) || !challenge || !credential) fail('unauthorized', 'Authentication failed.');
     const revision = account.revision; let verified;
     try { verified = await this.webauthn.verifyAuthentication({ response: input.response, challenge: challenge.value, credential, account, config: this.config }); } catch { fail('unauthorized', 'Authentication failed.'); }

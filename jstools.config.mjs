@@ -20,7 +20,7 @@ export const publicSources = [
   'packages/messaging/form-policy.mjs',
   'packages/messaging/tags.mjs',
   'packages/messaging/store.mjs',
-  'packages/core/primitives.mjs',
+  'packages/core/primitives.mjs','packages/core/contract-methods.mjs','packages/core/legacy-object-storage.mjs',
   'modules/publications',
   'scripts/recovery-kdf-worker.mjs',
   'scripts/message-frame-controller.mjs',

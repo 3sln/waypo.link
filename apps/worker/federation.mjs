@@ -82,7 +82,7 @@ export class FederationObject extends DurableObject {
   const authority=federationAuthority({config:this.flagsRuntime.bind(env),repository,shard:owner=>federationRemote({invoke:(method,args)=>env.FEDERATION.get(env.FEDERATION.idFromName(`${FEDERATION_LAYOUT}/${owner}`)).invoke(method,args,owner)})});
   const incremental=incrementalMountable(env)?incrementalRemote((method,args)=>env.FEDERATION.get(env.FEDERATION.idFromName(INCREMENTAL_STORE)).incremental(method,args)):null;
   // The Worker always mounts the provider session-ending hook (packages/runtime/http.mjs), so end-session is offered.
-  return federationEntries({config:this.flagsRuntime.bind(env),store:federationMetadata(this.storage),...typeof shard==='string'?{shard}:{},authority,endSession:true,incremental});
+  return federationEntries({config:this.flagsRuntime.bind({...env,ARTEFACTS:this.artefactPort()}),store:federationMetadata(this.storage),...typeof shard==='string'?{shard}:{},authority,endSession:true,incremental});
  }
  async incremental(...args){return this.withFlags(()=>this.incrementalPinned(...args));}
  async incrementalPinned(method,args=[]){

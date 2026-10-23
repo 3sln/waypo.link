@@ -122,18 +122,18 @@ function scope(p,actor){
    * intersected with the pinned descriptor); they are attenuated again here. */
   async mint(br,input){
    system();if(typeof p.mint!=='function')fault('brokering_unavailable','Brokered tokens are unavailable.',503);
-   const v=only(input,['clientId','record','fragment','field','methods','jkt',...p.artefactVersions?['cv']:[]]);
+   const v=only(input,['clientId','record','fragment','field','methods','jkt',...p.artefactVersions||input?.cv!==undefined?['cv']:[]]);
    if(!https(v.clientId)||v.clientId===p.issuer||typeof v.record!=='string'||!UUID.test(v.record)||!https(v.fragment,256)||typeof v.field!=='string'||!FIELD.test(v.field)||v.jkt!==undefined&&(typeof v.jkt!=='string'||!JKT.test(v.jkt)))invalid();methodsInput(v.methods);
    const mark=(await br.severance({limit:1})).seq;
    const {record,assignment}=await assignmentOf(br,v.record,a=>a.consumer.clientId===v.clientId&&a.binding.fragment===v.fragment&&a.binding.field===v.field);
    let c;try{c=await br.mintable({record:record.id,grant:assignment.grant});}catch(e){if(e?.code==='not_found')unavailable();throw e;}
    if(c.clientId!==v.clientId||c.feature!==undefined)unavailable();
    const revoked=await revokedAt(br,c.grant,c.connection);if(revoked&&p.clock()<revoked+ACCESS_ENDS_BY_MS)unavailable();
-   const cv=p.artefactVersions?contractReferences(v.cv??{},Object.keys(v.methods)):undefined;
+   const cv=v.cv!==undefined?contractReferences(v.cv??{},Object.keys(v.methods)):undefined;
    const methods=attenuate(v.methods,c.contracts,p.pins,{introspection:p.introspection});if(!Object.keys(methods).length)unavailable();
    // §5.4: a DPoP-bound consumer is always bound where the integration supports it; `required` without a key mints nothing.
    if(c.dpop==='required'&&!v.jkt)unavailable();const jkt=['supported','required'].includes(c.dpop)?v.jkt:undefined;
-   const signedAt=p.clock(),minted=await p.mint({subject:c.subject,audience:c.audience,clientId:v.clientId,purpose:'invoke',connection:c.connection,generation:c.generation,resource:c.resource,grant:c.grant,methods,scope:null,...p.artefactVersions?{cv:contractReferences(cv,Object.keys(methods))}:{},...jkt?{jkt}:{}});
+   const signedAt=p.clock(),minted=await p.mint({subject:c.subject,audience:c.audience,clientId:v.clientId,purpose:'invoke',connection:c.connection,generation:c.generation,resource:c.resource,grant:c.grant,methods,scope:null,...cv?{cv:contractReferences(cv,Object.keys(methods))}:{},...jkt?{jkt}:{}});
    if(typeof minted?.token!=='string'||!Number.isSafeInteger(minted.expiresAt)||minted.expiresAt>signedAt+ACCESS_LIFETIMES.invoke*1000+1000||!['Bearer','DPoP'].includes(minted.tokenType))fault('brokering_unavailable','Brokered tokens are unavailable.',503);
    // Confirm (§7.4): nothing that invalidates this token committed between the check and now.
    let again;try{again=await br.mintable({record:record.id,grant:assignment.grant});}catch{unavailable();}
@@ -154,9 +154,9 @@ function scope(p,actor){
   },
   /** Live checks for introspection (account half). Inactive is `{active:false}`, never a fault. */
   async introspect(br,input){
-   system();const v=only(input,['connection','generation','resource','grant','methods','clientId','audience','iat',...p.artefactVersions?['cv']:[]]);
+   system();const v=only(input,['connection','generation','resource','grant','methods','clientId','audience','iat',...p.artefactVersions||input?.cv!==undefined?['cv']:[]]);
    try{
-    if(!Number.isSafeInteger(v.iat)||typeof v.connection!=='string'||!Number.isSafeInteger(v.generation)||typeof v.resource!=='string'||typeof v.grant!=='string'||!https(v.clientId)||v.clientId===p.issuer||typeof v.audience!=='string')return {active:false};methodsInput(v.methods);if(p.artefactVersions)contractReferences(v.cv,Object.keys(v.methods));
+    if(!Number.isSafeInteger(v.iat)||typeof v.connection!=='string'||!Number.isSafeInteger(v.generation)||typeof v.resource!=='string'||typeof v.grant!=='string'||!https(v.clientId)||v.clientId===p.issuer||typeof v.audience!=='string')return {active:false};methodsInput(v.methods);if(v.cv!==undefined)contractReferences(v.cv,Object.keys(v.methods));
     const c=await connectionOf(v.connection);if(!c?.serving||c.manifest.resources?.rpc_endpoint!==v.audience)return {active:false};
     const {records}=await br.records({connection:v.connection}),r=records.find(x=>x.resource===v.resource&&x.assignments.some(a=>a.grant===v.grant)),a=r?.assignments.find(x=>x.grant===v.grant);
     if(!r||a.consumer.clientId!==v.clientId||!a.binding.fragment)return {active:false};
@@ -229,7 +229,7 @@ export const runBrokered=(engine,Operation,params)=>{const operation=new Operati
 // BROKERED_CONTRACT_PINS (trusted pins beyond the reviewed catalogue), BROKERED_INTROSPECTION_MOUNTED (the endpoint
 // below is mounted by the adapter). Without the mint port, minting answers brokering_unavailable.
 const engines=new WeakMap();
-function engineOf(c){let engine=engines.get(c);if(!engine){engine=brokeredTokensEngine({store:c.metadata,issuer:c.config.APP_ORIGIN,integrations:integrationsFlag(c.config),brokering:brokeringFlag(c.config),mint:typeof c.config.BROKERING_CONSUMER_MINT==='function'?c.config.BROKERING_CONSUMER_MINT:undefined,artefactVersions:siteGlobal(c.config,'ARTEFACT_VERSIONS_ENABLED'),pins:contractPins(c.config.BROKERED_CONTRACT_PINS,{artefactVersions:siteGlobal(c.config,'ARTEFACT_VERSIONS_ENABLED')}),introspection:capability(c.config,'BROKERED_INTROSPECTION_MOUNTED'),...c.config.CONNECTION_SLOTS?{slots:c.config.CONNECTION_SLOTS}:{}});engines.set(c,engine);}return engine;}
+function engineOf(c){const key=JSON.stringify([integrationsFlag(c.config),brokeringFlag(c.config),siteGlobal(c.config,'ARTEFACT_VERSIONS_ENABLED'),capability(c.config,'BROKERED_INTROSPECTION_MOUNTED')]),cache=engines.get(c)??new Map();let engine=cache.get(key);if(!engine){engine=brokeredTokensEngine({store:c.metadata,issuer:c.config.APP_ORIGIN,integrations:integrationsFlag(c.config),brokering:brokeringFlag(c.config),mint:typeof c.config.BROKERING_CONSUMER_MINT==='function'?c.config.BROKERING_CONSUMER_MINT:undefined,artefactVersions:siteGlobal(c.config,'ARTEFACT_VERSIONS_ENABLED'),pins:contractPins(c.config.BROKERED_CONTRACT_PINS,{artefactVersions:siteGlobal(c.config,'ARTEFACT_VERSIONS_ENABLED')}),introspection:capability(c.config,'BROKERED_INTROSPECTION_MOUNTED'),...c.config.CONNECTION_SLOTS?{slots:c.config.CONNECTION_SLOTS}:{}});cache.set(key,engine);engines.set(c,cache);}return engine;}
 async function bound(c,owner){if(!integrationsFlag(c.config)||!brokeringFlag(c.config)||typeof owner!=='string'||!UUID.test(owner)||await c.metadata.get('owner')!==owner)notFound();}
 const system=(c,owner,Operation,input)=>runBrokered(engineOf(c),Operation,{actor:{kind:'system',owner},...input===undefined?{}:{input}});
 export const account={
@@ -345,10 +345,10 @@ export async function handleBrokeredIntrospection(request,{issuer,enabled=false,
   // Standard leeway for the signed-while key window (a key activated within the token's iat second); expiry is strict.
   const {claims}=await verifyToken(params.get('token'),{audience:auth.endpoints.rpc,purposes:['invoke']});
   const b=claims.bindle;if(claims.exp*1000<=clock()||b.connection!==connection||claims.client_id===issuer||b.feature!==undefined||b.scope!==null)return inactive();
-  const live=await account(owner).brokeredIntrospect({connection,iat:claims.iat,generation:b.generation,resource:b.resource,grant:b.grant,methods:b.methods,...artefactVersions?{cv:contractReferences(b.cv,Object.keys(b.methods))}:{},clientId:claims.client_id,audience:claims.aud});
+  const live=await account(owner).brokeredIntrospect({connection,iat:claims.iat,generation:b.generation,resource:b.resource,grant:b.grant,methods:b.methods,...b.cv!==undefined?{cv:contractReferences(b.cv,Object.keys(b.methods))}:{},clientId:claims.client_id,audience:claims.aud});
   if(live?.active!==true)return inactive();
-  if(await federation(owner).brokeredGrantLive({clientId:claims.client_id,resourceId:live.resourceId,fragment:live.fragment,field:live.field,methods:b.methods,...artefactVersions?{cv:b.cv}:{},jti:claims.jti,iat:claims.iat})!==true)return inactive();
-  return reply({active:true,iss:claims.iss,sub:claims.sub,aud:claims.aud,client_id:claims.client_id,iat:claims.iat,exp:claims.exp,jti:claims.jti,token_type:claims.cnf?'DPoP':'Bearer',bindle:{v:1,purpose:b.purpose,connection:b.connection,generation:b.generation,resource:b.resource,grant:b.grant,methods:b.methods,scope:b.scope,...artefactVersions?{cv:b.cv}:{}},...claims.cnf?{cnf:{jkt:claims.cnf.jkt}}:{}});
+  if(await federation(owner).brokeredGrantLive({clientId:claims.client_id,resourceId:live.resourceId,fragment:live.fragment,field:live.field,methods:b.methods,...b.cv!==undefined?{cv:b.cv}:{},jti:claims.jti,iat:claims.iat})!==true)return inactive();
+  return reply({active:true,iss:claims.iss,sub:claims.sub,aud:claims.aud,client_id:claims.client_id,iat:claims.iat,exp:claims.exp,jti:claims.jti,token_type:claims.cnf?'DPoP':'Bearer',bindle:{v:1,purpose:b.purpose,connection:b.connection,generation:b.generation,resource:b.resource,grant:b.grant,methods:b.methods,scope:b.scope,...b.cv!==undefined?{cv:b.cv}:{}},...claims.cnf?{cnf:{jkt:claims.cnf.jkt}}:{}});
  }catch{return inactive();}
 }
 const sharedReplay=memoryReplayCache(),sharedLimiter=introspectionLimiter();

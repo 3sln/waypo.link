@@ -467,6 +467,27 @@ Engine-first: every operation is an ngin Action or Query in a domain module, dis
   - The rotation is an account commit that precedes the identity CAS. A retired key therefore keeps restoring its file while it is bound (`identity-key-recovery/<owner>/`). A rotation outside issuance clears that binding.
   - The account RPCs live in `packages/runtime/account/identity.mjs` (`recoveryKeychain`, `recoveryKeysMatch`). The port lives in `packages/runtime/identity-backup.mjs`. `packages/recovery/identity-backup.mjs` needed no change.
 - **Gap:** no active-account reissue path exists today. `downloadRecovery` accepts only a setup session, not the "signed-in session" that §1.1 assumes, so P15 covers the reissue paths that do exist.
+- **PORT-2: implemented locally, persons only, behind `IDENTITY_TRANSFER_OUT_ENABLED` (default off).**
+  - Engine: `packages/identity/transfer-out.mjs` (`TransferOutService` and `transfer.*` Actions/Queries), dispatched in the account single writer by `packages/runtime/account/transfer-out.mjs`.
+  - Covered: begin; authorize on path (a) and path (b); statement binding (IP-R1-H3); cancel and withdrawal; expiry; the 24 h person delay and the 7-day waiting period; tier-0 hold and abort; holds that abort after 30 days; tier-1 elevated proof on either side; contest and the support decision; the restart block; commit.
+  - The commit is one account transaction. It is followed by idempotent stages: identity `moved`, custody destroyed, delegations revoked, connections severed (`system`, never `subject-deleted`), grants erased, due rows and the notice.
+  - After that come the 30-day read-only export window (closure-export sessions for status `moved`), the purge through the shared executor with reason `moved`, and the moved tombstone.
+  - A deletion request cancels a pending move in its own transaction, and a committed move refuses deletion (IP-R1-L10).
+  - Tests: `tests/transfer-out.test.mjs` and the seeded `tests/transfer-out-chaos.test.mjs`.
+  - Organization moves (§6.2) are not implemented, because no organizations slice exists; an organization identity is refused.
+- **PORT-3: implemented locally.**
+  - `packages/runtime/routes/moved.mjs` is registered first. Its edge router answers `308` for `/users/<handle>/…` and `/identity/<sub>/…` while the redirect is live, and delegation status answers the final `revoked`.
+  - The authorization request answers `identity_moved` with `{to}` (hook in `packages/runtime/routes/federation.mjs`).
+  - The move endpoint is `POST /bindle/portability/move`. Hooks for directory.v1 and identity documents are exported, but those surfaces are not mounted, so `portability.v1` is not advertised.
+  - Tests: `tests/moved-routes.test.mjs`.
+- **Open after PORT-2/3 (unsigned, for owners):**
+  - The identity record keeps no history of removed or replaced emails, so path (b) notices reach only those detached by elevated proof.
+  - An elevated-proof abort invalidates the current file, but there is no active-account reissue path.
+  - The step-up credential is not recorded, so the contest window is keyed by the session's passkey or session.
+  - No certification keys exist to revoke, and open app removals are not concluded explicitly.
+  - `keys.mjs` `ensure` would mint a fresh key if any path called it for a moved owner. Every current caller needs an active identity.
+  - The attestation key is a single configured JWK until PORT-4's chained set exists.
+  - Notices need a transport that implements `sendTransferNotice` (Worker mail) or Web Push. Commits hold until a notice is accepted.
 
 ### 10.2 Flags (proposed rows for `packages/flags/registry.mjs`, all default off; the flags owner adds them)
 

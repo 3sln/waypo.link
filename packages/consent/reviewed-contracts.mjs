@@ -1,3 +1,4 @@
+import {contractMethods} from '../core/contract-methods.mjs';
 // CX-1 catalogue data. Exact immutable source pins, not a host-wide review badge.
 // Copy describes allowed effects only. Local/provisional; human release sign-off
 // remains in docs/release/events-consent-review.md and docs/spec/security.md.
@@ -24,12 +25,13 @@ export function resolvedContractMethod(pin,name){
  const resolve=(value,seen=new Set())=>{
   if(Array.isArray(value))return value.map(v=>resolve(v,seen));if(!value||typeof value!=='object')return value;
   if(Object.hasOwn(value,'$ref')&&Object.keys(value).length>1){const {$ref,...siblings}=value;return {allOf:[resolve({$ref},seen),resolve(siblings,seen)]};}
-  const out=Object.create(null);if(Object.hasOwn(value,'$ref')){const ref=value.$ref;if(typeof ref!=='string'||!ref.startsWith('#/'))throw new TypeError('Unresolved contract reference.');
-   if(seen.has(ref))out.$ref=ref;else{let target=schema;for(const part of ref.slice(2).split('/')){const key=part.replaceAll('~1','/').replaceAll('~0','~');if(!target||typeof target!=='object'||!Object.hasOwn(target,key))throw new TypeError('Unresolved contract reference.');target=target[key];}Object.assign(out,resolve(target,new Set([...seen,ref])));}}
+  const out=Object.create(null);if(Object.hasOwn(value,'$ref')){const ref=value.$ref;if(typeof ref!=='string'||ref!=='#'&&!ref.startsWith('#/'))throw new TypeError('Unresolved contract reference.');
+   if(seen.has(ref))out.$ref=ref;else{let target=schema;for(const part of ref==='#'?[]:ref.slice(2).split('/')){const key=part.replaceAll('~1','/').replaceAll('~0','~');if(!target||typeof target!=='object'||!Object.hasOwn(target,key))throw new TypeError('Unresolved contract reference.');target=target[key];}Object.assign(out,resolve(target,new Set([...seen,ref])));}}
   for(const key of Object.keys(value).sort())if(key!=='$ref')out[key]=resolve(value[key],seen);return out;
  };
- const method=Object.hasOwn(schema['x-methods']??{},name)?schema['x-methods'][name]:null;if(!method)throw new TypeError('Unknown contract method.');
- return {request:resolve(typeof method.request==='string'?{$ref:method.request}:method.request??{}),result:resolve(typeof method.result==='string'?{$ref:method.result}:method.result??{})};
+ const method=Object.hasOwn(contractMethods(schema),name)?contractMethods(schema)[name]:null;if(!method)throw new TypeError('Unknown contract method.');
+ const request=method.request==='#'?Object.fromEntries(Object.entries(schema).filter(([key])=>!['$schema','$id','$defs','title','description'].includes(key)&&!key.startsWith('x-'))):typeof method.request==='string'?{$ref:method.request}:method.request??{};
+ return {request:resolve(request),result:resolve(typeof method.result==='string'?{$ref:method.result}:method.result??{})};
 }
 const stable=value=>JSON.stringify(value,(_,v)=>v&&typeof v==='object'&&!Array.isArray(v)?Object.fromEntries(Object.keys(v).sort().map(k=>[k,v[k]])):v);
 /** §10.5: a granted method whose fully resolved request/result grew is an updated delta item. Added
@@ -38,7 +40,7 @@ export function contractUpgradeDelta(prior,next,methods){
  const updated=[],display=[],additions=[];for(const name of methods){
   const old=resolvedContractMethod(prior,name),target=resolvedContractMethod(next,name);if(stable(old)!==stable(target))updated.push(name);
   const added=(a,b,path)=>{if(!b||typeof b!=='object')return;for(const [key,value]of Object.entries(b)){const at=path+'/'+key.replaceAll('~','~0').replaceAll('/','~1');if(!a||!Object.hasOwn(a,key))additions.push({method:name,path:at,value:structuredClone(value)});else added(a[key],value,at);}};added(old,target,'');
-  const before=(prior.schema??prior.body)['x-methods']?.[name]?.summary??{},after=(next.schema??next.body)['x-methods']?.[name]?.summary??{};
+  const before=contractMethods(prior.schema??prior.body)[name]?.summary??{},after=contractMethods(next.schema??next.body)[name]?.summary??{};
   for(const [lang,text]of Object.entries(after))if(!Object.hasOwn(before,lang))display.push({method:name,lang,text});
  }return {updated,display,...additions.length?{additions}:{}};
 }

@@ -1,3 +1,4 @@
+import {contractMethods} from '../core/contract-methods.mjs';
 import {siteGlobal} from '../flags/read.mjs';
 // EXT-X3: the integration manifest (docs/spec/integrations.md §2) is the `bindle_integration` member of a client's OAuth
 // metadata (client ID metadata document or operator registration) and nothing else; it is never fetched separately.
@@ -261,13 +262,13 @@ export function shapeContractResult(root,method,value){
   if(Array.isArray(v)){if(!schema.items)fail('artefact_unverifiable');return v.map(x=>shape(schema.items,x,depth+1));}
   if(object(v)){const out={};for(const [k,s] of Object.entries(schema.properties??{}))if(Object.hasOwn(v,k))Object.defineProperty(out,k,{value:shape(s,v[k],depth+1),enumerable:true,writable:true,configurable:true});return out;}return v;
  };
- const result=Object.hasOwn(root['x-methods']??{},method)?root['x-methods'][method].result:undefined;if(result===undefined)fail('artefact_unverifiable');return shape(result,value);
+ const result=Object.hasOwn(contractMethods(root),method)?contractMethods(root)[method].result:undefined;if(result===undefined)fail('artefact_unverifiable');return shape(result,value);
 }
 
 /** Isolated validator for the shipped JSON Schema dialect. Unsupported assertion keywords fail closed; no registry,
  * coercion, defaults, remote references or mutable compilation cache. The caller keys each instance by record digest. */
 export function compileContractVersion(root){
- const annotations=new Set(['$schema','$id','$defs','title','description','examples','default','deprecated','readOnly','writeOnly','x-methods','x-enumDescriptions']);
+ const annotations=new Set(['$schema','$id','$defs','title','description','examples','default','deprecated','readOnly','writeOnly','x-methods','x-enumDescriptions','x-permissions','x-status']);
  const supported=new Set(['$ref','type','const','enum','properties','required','additionalProperties','items','prefixItems','minItems','maxItems','uniqueItems','minLength','maxLength','pattern','format','minimum','maximum','exclusiveMinimum','exclusiveMaximum','multipleOf','minProperties','maxProperties','oneOf','anyOf','allOf','not']);
  const reference=ref=>{if(ref==='#')return root;if(typeof ref!=='string'||!ref.startsWith('#/'))fail('artefact_unverifiable');const s=ref.slice(2).split('/').reduce((v,k)=>v&&Object.hasOwn(v,k.replaceAll('~1','/').replaceAll('~0','~'))?v[k.replaceAll('~1','/').replaceAll('~0','~')]:undefined,root);if(s===undefined)fail('artefact_unverifiable');return s;};
  const same=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
@@ -297,5 +298,5 @@ export function compileContractVersion(root){
    for(const k of keys){const member=Object.hasOwn(s.properties??{},k)?s.properties[k]:s.additionalProperties;if(member!==undefined&&!check(member,v[k],depth+1))return false;}
   }return true;
  };
- return {validate:request=>check(root,request),shape(method,result){const schema=Object.hasOwn(root['x-methods']??{},method)?root['x-methods'][method].result:undefined;if(schema===undefined)fail('artefact_unverifiable');const out=shapeContractResult(root,method,result);if(!check(typeof schema==='string'?reference(schema):schema,out))fail('invalid_result');return out;}};
+ return {validate:request=>check(root,request),shape(method,result){const schema=Object.hasOwn(contractMethods(root),method)?contractMethods(root)[method].result:undefined;if(schema===undefined)fail('artefact_unverifiable');const out=shapeContractResult(root,method,result);if(!check(typeof schema==='string'?reference(schema):schema,out))fail('invalid_result');return out;}};
 }

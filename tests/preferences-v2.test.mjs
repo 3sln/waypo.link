@@ -32,7 +32,7 @@ function memory(){const map=new Map();let tail=Promise.resolve();return {transac
 const keys=brokeringKeys({issuer:ISSUER,secret:Buffer.alloc(32,9).toString('base64'),metadata:memory()});
 
 /** The owner's account (X4 connection, X7 records, X8 tokens) and federation shard, wired as the adapters would. */
-async function fixture(t,{connections=false,seq,introspection=false,refreshEnabled=false}={}){
+async function fixture(t,{connections=false,seq,introspection=false,refreshEnabled=false,artefactVersions=false}={}){
  const metadata=new SqliteMetadata(':memory:');await metadata.put('owner',OWNER);t.after(()=>metadata.close());
  const clock=fakeClock(Date.now()),random={uuid:()=>crypto.randomUUID(),bytes:k=>crypto.getRandomValues(new Uint8Array(k))},audit=memoryAudit({clock});let n=0;
  const cx=createAppEngine({providers:{clock,random,audit,connections:C.connectionsProvider({connections:new AppConnections({metadata,origin:ISSUER,clock:clock.now,uuid:()=>`00000000-0000-4000-8000-${String(++n).padStart(12,'0')}`}),enabled:true,account:async()=>({status:'active'})})}});
@@ -40,7 +40,7 @@ async function fixture(t,{connections=false,seq,introspection=false,refreshEnabl
  const fetcher=async(url,init)=>{const body=JSON.parse(init.body),host=new URL(url).hostname;return Response.json({v:1,items:items(host).filter(i=>!body.ids||body.ids.includes(i.id)).map(i=>({container:false,facets_applied:[],...i})),cursor:null});};
  const discovery=new DiscoveryClient({issuer:ISSUER,mint:claims=>mintAccessToken(keys,claims,{clock:clock.now}),egress:createIntegrationEgress({fetcher,resolve:async()=>['93.184.216.34'],publicRouting:true}),budget:new DiscoveryBudget({budgets:{connectionPerMinute:1000,integrationPerMinute:1000}}),clock:clock.now});
  const x7=createAppEngine({providers:{clock,random,audit,brokeredResources:B.brokeredResourcesProvider({store:metadata,discovery,issuer:ISSUER,integrations:true,brokering:true,clock:clock.now})}});
- const x8=X.brokeredTokensEngine({store:metadata,issuer:ISSUER,integrations:true,brokering:true,mint:claims=>mintAccessToken(keys,claims,{clock:clock.now}),pins:PINS,introspection,clock,random,audit});
+ const x8=X.brokeredTokensEngine({store:metadata,issuer:ISSUER,integrations:true,brokering:true,artefactVersions,mint:claims=>mintAccessToken(keys,claims,{clock:clock.now}),pins:PINS,introspection,clock,random,audit});
  const system={kind:'system',owner:OWNER},ownerActor={kind:'owner',owner:OWNER,authTime:clock.now()},q=(Operation,input)=>X.runBrokered(x8,Operation,{actor:system,...input===undefined?{}:{input}});
  const snap=host=>{const clientId=`https://${host}/bindle/client.json`,r=validateIntegrationManifest({v:1,resources:{rpc_endpoint:`https://${host}/bindle/rpc`,discovery_endpoint:`https://${host}/bindle/resources`,contracts:[MODEL]}},{clientId,confidential:true,redirectUris:[`https://${host}/bindle/callback`],jwksUri:`https://${host}/bindle/jwks.json`});return {client:{id:clientId,name:host},snapshot:{clientId,redirectUris:[`https://${host}/bindle/callback`],authMethod:'private_key_jwt',jwksUri:`https://${host}/bindle/jwks.json`,thumbprints:['A'.repeat(43)],manifest:r.manifest}};};
  const integration=await perform(cx,new C.ConnectIntegration({actor:system,input:snap('models.example')}));
@@ -155,4 +155,11 @@ test('brokered-resources.v1 is declared through the registry only where mounted,
  assert.equal(federationDeclarations(config,{target:'authority',mounts:{integrations:true,brokeredResources:true,brokeredIntrospection:true}}).features['brokered-resources.v1'].introspection_endpoint,`${ISSUER}/oauth/brokering/introspect`);
  for(const [c,mounts] of [[config,{brokeredResources:true}],[config,{integrations:true}],[{...config,BROKERING_ENABLED:'false'},{integrations:true,brokeredResources:true}],[{...config,INTEGRATIONS_ENABLED:'false'},{integrations:true,brokeredResources:true}]])assert.deepEqual(federationDeclarations(c,{target:'authority',mounts}),{});
  assert.deepEqual(federationDeclarations(config,{target:'entries',mounts:{integrations:true,brokeredResources:true}}),{});
+});
+
+test('ART-8 federation grant references reach a signed brokered token through the account engine',async t=>{
+ const f=await fixture(t,{artefactVersions:true}),record=await f.register('https://models.example/r/fast'),id=X.brokeredResourceId(SUBJECT,record.id);await f.configure({theme:'dark',model:[id],store:[]});const token=await f.authorize({fields:['theme','model'],resources:{model:[id]},methods:{model:{[MODEL]:['decide']}},requested:{model:{[MODEL]:['decide']}}}),cv={[MODEL]:{version:1,digest:'sha256-'+'A'.repeat(43)}};
+ await f.s.store.transaction(async tx=>{for(const row of await tx.list('federation/grant/')){row.value.contract_versions=cv;await tx.set(row.key,row.value);}});f.s.schemaFetcher.artefacts={enabled:true};
+ const result=await f.read(token),entry=result.values.model[0];assert.equal(entry.status,'available');assert.deepEqual(entry.cv,cv);const {claims}=await verifyAccessToken(entry.token,{keys:await keys.jwks(),issuer:ISSUER,audience:entry.broker.endpoint,now:f.clock.now()});assert.deepEqual(claims.bindle.cv,cv);f.s.schemaFetcher.artefacts.enabled=false;assert.deepEqual((await f.read(token)).values.model[0].cv,cv);f.s.schemaFetcher.artefacts.enabled=true;
+ await f.s.store.transaction(async tx=>{for(const row of await tx.list('federation/grant/')){delete row.value.contract_versions;await tx.set(row.key,row.value);}});const legacy=(await f.read(token)).values.model[0];assert.equal(legacy.status,'available');assert.equal(legacy.cv,undefined);
 });

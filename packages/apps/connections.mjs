@@ -47,13 +47,13 @@ const bump=(r,field='generation')=>{if(!Number.isSafeInteger(r[field])||r[field]
 const cnxOf=entry=>`${entry.seat}.${entry.generation}`;
 /** Validates an approval snapshot (packages/federation/integrations.mjs integrationSnapshot): the manifest must re-derive
  * exactly from the snapshot's own client members, so a stored pin can never be widened by editing it. */
-export function connectionSnapshotValid(s,clientId,{reserved=[]}={}){
+export function connectionSnapshotValid(s,clientId,{reserved=[],artefactVersions=false}={}){
  if(!only(s,['clientId','redirectUris','authMethod','jwksUri','thumbprints','pendingThumbprints','manifest'])||s.clientId!==clientId||bytes(s)>16384)return false;
  if(!Array.isArray(s.redirectUris)||s.redirectUris.length>16||s.redirectUris.some(u=>typeof u!=='string'))return false;
  const tp=v=>Array.isArray(v)&&v.length>0&&v.length<=16&&v.every(t=>typeof t==='string'&&/^[A-Za-z0-9_-]{43}$/.test(t));
  if(s.authMethod==='private_key_jwt'){if(typeof s.jwksUri!=='string'||!tp(s.thumbprints)||s.pendingThumbprints!==undefined&&!tp(s.pendingThumbprints))return false;}
  else if(s.authMethod!=='none'||s.jwksUri!==undefined||s.thumbprints!==undefined||s.pendingThumbprints!==undefined)return false;
- let r;try{r=validateIntegrationManifest(s.manifest,{clientId,confidential:s.authMethod==='private_key_jwt',redirectUris:s.redirectUris,jwksUri:s.jwksUri,reserved});}catch{return false;}
+ let r;try{r=validateIntegrationManifest(s.manifest,{artefactVersions,clientId,confidential:s.authMethod==='private_key_jwt',redirectUris:s.redirectUris,jwksUri:s.jwksUri,reserved});}catch{return false;}
  return r.status==='valid'&&JSON.stringify(r.manifest)===JSON.stringify(s.manifest);
 }
 /** A provider-authored built-in manifest: {v:1, setup?, extensions?, resources?:{contracts}} with valid extension claims. */
@@ -67,7 +67,7 @@ export class AppConnections{
  /** `slots`: provider-recognized slot manifests by exact URL (trusted pins). `builtins`: provider-authored built-in
   * integrations by id -> {name, manifest}. `severed(owner)`: optional hook run after a legacy disconnect that wrote
   * cascade rows (the account controller drains them); its failure never undoes the committed disconnect. */
- constructor({metadata,origin,clock=()=>Date.now(),slots=RECOGNIZED_SLOTS,builtins={},severed,uuid=()=>crypto.randomUUID()}){Object.assign(this,{metadata,origin,clock,slotPins:slots,builtins,severed,uuid});}
+ constructor({metadata,origin,config,clock=()=>Date.now(),slots=RECOGNIZED_SLOTS,builtins={},severed,uuid=()=>crypto.randomUUID()}){Object.assign(this,{metadata,origin,config,clock,slotPins:slots,builtins,severed,uuid});}
  async id(owner,clientId){const encoded=await digest(globalThis.crypto,`app-connection/v1\0${owner}\0${clientId}`);const hex=[...atob(encoded.replace(/-/g,'+').replace(/_/g,'/'))].slice(0,16).map(c=>c.charCodeAt(0).toString(16).padStart(2,'0')).join('');return `${hex.slice(0,8)}-${hex.slice(8,12)}-8${hex.slice(13,16)}-a${hex.slice(17,20)}-${hex.slice(20,32)}`;}
  async binding(owner,clientId){const id=await this.id(owner,clientId);const r=await this.metadata.get(prefix+id);if(r&&!valid(r))fail('unavailable','Invalid connection record.',503);return {id,generation:r?.generation??0,notificationGeneration:r?.notifications?.generation??1};}
  async registerBrowser(owner){return this.register(owner,{id:`${this.origin}/automation/browser`,name:'Browser automation'},undefined,{transport:'browser',provenance:{kind:'owner-browser-consent'}});}
@@ -181,7 +181,7 @@ export class AppConnections{
   if(!only(client,['id','name','origin'])||typeof client.id!=='string')fail('invalid_request','Invalid integration client.');
   let origin;try{origin=new URL(client.id).origin;}catch{fail('invalid_request','Invalid integration client.');}
   if(!origin.startsWith('https://')||client.origin!==undefined&&client.origin!==origin)fail('invalid_request','The integration origin must be its client_id origin.');
-  if(!connectionSnapshotValid(snapshot,client.id,{reserved:[new URL(this.origin).hostname]}))fail('invalid_integration','The integration manifest snapshot is not valid.',400);
+  if(!connectionSnapshotValid(snapshot,client.id,{artefactVersions:siteGlobal(this.config??{},'ARTEFACT_VERSIONS_ENABLED'),reserved:[new URL(this.origin).hostname]}))fail('invalid_integration','The integration manifest snapshot is not valid.',400);
   return this.register(owner,{id:client.id,name:client.name,origin},expectedGeneration,{transport:'bindle',integration:{kind:'external',snapshot:structuredClone(snapshot)},provenance:{kind:'oauth-consent',issuer:this.origin}});
  }
  /** Built-in integrations are connections too (integrations §3.2): the owner's explicit action is the authorization. */
@@ -221,7 +221,7 @@ export class AppConnections{
     this.#fenced(r,input.expectedGeneration,true);const staged=r.integration?.staged;
     if(r.integration?.kind!=='external'||!staged)fail('invalid_state','There is no change to review.',409);
     if(r.integration.invalid)fail('manifest_invalid','The integration manifest is unavailable or invalid. Wait for it to be fixed.',409);
-    if(!connectionSnapshotValid(staged,r.clientId,{reserved:[new URL(this.origin).hostname]}))fail('invalid_integration','The staged manifest is not valid.',409);
+    if(!connectionSnapshotValid(staged,r.clientId,{artefactVersions:siteGlobal(this.config??{},'ARTEFACT_VERSIONS_ENABLED'),reserved:[new URL(this.origin).hostname]}))fail('invalid_integration','The staged manifest is not valid.',409);
     // W5-S2: the approval names the staged revision the owner reviewed; a re-staged snapshot needs a fresh review.
     if(typeof input.stagedRevision!=='string'||input.stagedRevision!==r.integration.stagedRevision)fail('connection_changed','This change was updated. Review it again.',409);
     if(!(Number.isSafeInteger(authTime)&&authTime<=now&&now-authTime<=RECENT_AUTH_MS))fail('reauthentication_required','Confirm it is you before approving this change.',401);
@@ -240,7 +240,7 @@ export class AppConnections{
    if(r.integration?.kind!=='external'||!r.integration.snapshot)fail('invalid_state','This connection has no integration manifest.',409);
    if(!only(result,['decision','changes','next','staged'])||!['unchanged','adopt','review','invalid'].includes(result.decision)||!Array.isArray(result.changes)||result.changes.length>32||result.changes.some(c=>typeof c!=='string'||!/^[a-z_]{1,40}$/.test(c)))fail('invalid_request','Unsupported revalidation result.');
    if(r.state==='disconnected')fail('connection_disconnected','This connection was disconnected.',409);
-   const reserved=[new URL(this.origin).hostname],okNext=result.next===undefined||connectionSnapshotValid(result.next,r.clientId,{reserved});if(!okNext)fail('invalid_request','Unsupported revalidation result.');
+   const reserved=[new URL(this.origin).hostname],artefactVersions=siteGlobal(this.config??{},'ARTEFACT_VERSIONS_ENABLED'),okNext=result.next===undefined||connectionSnapshotValid(result.next,r.clientId,{reserved,artefactVersions});if(!okNext)fail('invalid_request','Unsupported revalidation result.');
    const set=state=>{r.state=state;r.status=connectionStatus(state);r.stateChangedAt=now;};
    const invalidate=reason=>{if(r.state==='manifest-invalid'||r.state==='suspended')return;bump(r);set('manifest-invalid');events.push({type:'connection-revoked',connection:id,clientId:r.clientId,generation:r.generation,terminal:false,reason});};
    const security=result.changes.filter(c=>['identity_changed','keys_replaced','endpoint_collision','client_gone','client_invalid','client_mismatch','manifest_removed','manifest_invalid'].includes(c));
@@ -249,7 +249,7 @@ export class AppConnections{
    else{
     if(result.next&&JSON.stringify(result.next)!==JSON.stringify(r.integration.snapshot)){r.integration.snapshot=structuredClone(result.next);events.push({type:'manifest-adopted',connection:id,clientId:r.clientId,generation:r.generation,changes:result.changes.slice(0,32)});}
     if(result.decision==='review'){
-     if(result.staged!==undefined&&connectionSnapshotValid(result.staged,r.clientId,{reserved})&&JSON.stringify(result.staged)!==JSON.stringify(r.integration.staged)){r.integration.staged=structuredClone(result.staged);r.integration.stagedRevision=this.uuid();}
+     if(result.staged!==undefined&&connectionSnapshotValid(result.staged,r.clientId,{reserved,artefactVersions})&&JSON.stringify(result.staged)!==JSON.stringify(r.integration.staged)){r.integration.staged=structuredClone(result.staged);r.integration.stagedRevision=this.uuid();}
      if(security.length){r.integration.review={changes:security};affected=await this.#affected(tx,id);invalidate('manifest-review');}
     }else{
      const wasInvalid=Boolean(r.integration.invalid||r.integration.review);delete r.integration.invalid;delete r.integration.review;

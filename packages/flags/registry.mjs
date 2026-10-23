@@ -33,6 +33,11 @@ const rows=[
   gates:['termsAndPrivacyApproved','realBrowserFlowsPassing','lifecycleNoticesAndDeletionVerified','emailLifecycleVerified','notificationTransportsVerified','durableStorageAndArchiveRecoveryVerified','securityRedTeamFindingsResolved']}],
  ['EMAIL_REMOVAL_ENABLED','a','G A S P',{risk:'crit',envParse:'boolean',
   gates:['termsAndPrivacyApproved','realBrowserFlowsPassing','emailLifecycleVerified','lifecycleNoticesAndDeletionVerified']}],
+ // Identity portability PORT-2/PORT-3 (identity-portability design §10.2). Gates NEW transfers only: pending transfers,
+ // statements, commits and steps follow the env kill switch (background), so a ramp-down never strands a move, and
+ // committed redirects are a commitment that no flag gates. Cancellation and disputes are never gated.
+ ['IDENTITY_TRANSFER_OUT_ENABLED','a','G A S P',{risk:'crit',stateful:true,retainExisting:false,retentionReason:'Pending transfers continue under the env kill switch (background), not the evaluated flag; committed redirects are never flag-gated.',envParse:'boolean',
+  gates:['termsAndPrivacyApproved','realBrowserFlowsPassing','securityRedTeamFindingsResolved','lifecycleNoticesAndDeletionVerified','notificationTransportsVerified']}],
  ['SIGNUP_ENABLED','c','G R',{risk:'crit',outage:'last-known'}],
  ['PAID_SIGNUP_ENABLED','c','G R',{risk:'crit',outage:'last-known',capabilities:['billing-configuration']}],
  ['WAITLIST_ENABLED','c','G R',{outage:'last-known'}],

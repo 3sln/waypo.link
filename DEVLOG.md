@@ -3046,3 +3046,41 @@ Reviewer: ___ Date: ___ Outcome: ___
 - **Gates:** core 2512, Worker 80, UI-state 291, consent, DOM, asset build and Worker dry run. e2e: 213 passed, plus 1 one-second refresh-lifetime timing assertion that passed 4/4 on an isolated rerun; 4 WebKit skips.
 
 Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-22 — ART-8 (artefact versions end to end) and PORT-2/PORT-3 (transfer-out source engine, moved routes)
+
+**ART-8** ([artefact references](docs/architecture/artefact-references.md)):
+- signed `bindle.cv`, with grants forwarded to tokens;
+- runtime flag and resolver wiring for `ARTEFACT_VERSIONS_ENABLED`, plus the Worker and Node adapter hunks;
+- pinned validation and projection;
+- detailed consent rendering of version deltas.
+
+Optional publisher provenance signatures remain unimplemented. The slice table names what remains.
+
+**PORT-2 and PORT-3** ([identity portability](docs/architecture/identity-portability.md) §10.1), behind the new default-off `IDENTITY_TRANSFER_OUT_ENABLED`, for persons only:
+- **The source engine** (`packages/identity/transfer-out.mjs`, plus the account single writer):
+  - begin, both authorization paths, statement, cancel, expire and commit;
+  - the 24 h delay with dispute hold or abort, the P17 proof ladder and 30-day hold expiry;
+  - the P14 current-file age rule.
+- **After a move:**
+  - the `moved` tombstone reason and purge plan;
+  - the 30-day read-only export window, which reuses closure-export sessions;
+  - moved routes and redirects;
+  - the `identity_moved` hook at the authorization request.
+- **Spec defects found:**
+  - no removed-email history, so path (b) notices reach only emails detached by elevated proof;
+  - no active-account recovery reissue path, so the current file is invalidated after an elevated abort;
+  - step-up credentials aren't recorded, so the contest window is keyed by passkey or session.
+- **Not built yet:**
+  - organization moves, which wait for the organizations slices;
+  - certification-key revocation on commit;
+  - a guard against `keys.mjs` minting keys for moved owners;
+  - a multi-key attestation set (PORT-4);
+  - advertising `portability.v1`, which needs `directory.v1`;
+  - an admin route for support decisions.
+
+**e2e fixture:** `tests/e2e/multi-account.test.mjs` gives each signup a distinct test IP. Random per-call IPs could collide and trip the per-IP signup cooldown. No limits were changed.
+
+**Gates (combined tree):** core 2562, Worker 80, UI-state 292, consent 53 each in Chromium and Firefox, e2e 214 with 4 WebKit skips, asset build and Worker dry run.
+
+Reviewer: ___ Date: ___ Outcome: ___

@@ -41,6 +41,7 @@ import {lifecycleIdentityPort,lifecycleAdminHoldPort,deletionHoldPort,deletionAd
 import {identitySecurityPort} from '../../packages/identity/service.mjs';
 import {deletionDueIndex,sweepDeletionDue} from '../../packages/runtime/account-deletion.mjs';
 import {createDeletionNotices} from '../../packages/runtime/deletion-notices.mjs';
+import {transferIdentityPort,createTransferNotices,attestorFromJwk,transferDueIndex,sweepTransferDue} from '../../packages/identity/transfer-out.mjs';
 import {createExportAdapterPorts} from '../../packages/runtime/account/exports.mjs';
 import {exportNoticePort,exportGrantsPort} from '../../packages/runtime/export-ports.mjs';
 import {lifecycleMode} from '../../packages/runtime/lifecycle-runner.mjs';
@@ -114,7 +115,7 @@ export async function nodeResources({directory,config,formTransport,mailer}){
  // Restore the one bounded waitlist expiry alarm even before its next visitor.
  await guardFor('signup:waitlist:v1');
  const eventWaits=memoryBusWaits(),eventConfig=eventWaits?{EVENT_BUS_WAITER:eventWaits,EVENT_BUS_WAITS_MOUNTED:true}:{};
- let integrationConfig={};const deletionPorts={},deletionConfig={ACCOUNT_DELETION_PORTS:deletionPorts,
+ let integrationConfig={};const deletionPorts={},transferPorts={},deletionConfig={ACCOUNT_DELETION_PORTS:deletionPorts,TRANSFER_OUT_PORTS:transferPorts,
   // DX-1/DX-2 export ports. Grants read only shard files that already exist (MCP fan-out never creates stores).
   exportPorts:createExportAdapterPorts({repository,notice:exportNoticePort({repository,mailer}),contributorPorts:{grants:exportGrantsPort({
    devices:async owner=>{if(!existsSync(join(directory,'federation',`${FEDERATION_LAYOUT}-${owner}.sqlite`)))return [];federationShard(owner);return [...(await federationMap.get(owner).metadata.list({prefix:'federation/family/'})).values()].filter(row=>row.subject===`${config.APP_ORIGIN}/entities/${owner}`);},
@@ -144,7 +145,7 @@ export async function nodeResources({directory,config,formTransport,mailer}){
  const brokeringDb=new SqliteMetadata(join(directory,'federation','brokering-v1.sqlite')),brokering=brokeringDb?{enabled:true,...brokeringKeys({issuer:config.APP_ORIGIN,secret:config.KEY_ENCRYPTION_KEY,metadata:federationMetadata(brokeringDb)})}:undefined;
  integrationConfig=integrationPorts(config,brokering?{provision:true,introspection:true,snapshot:preferencesSnapshotPort(owner=>federationShard(owner)),signer:brokering,mint:claims=>mintAccessToken(brokering,claims),eventEgress:createNodeEventEgress({lookup,request:httpsRequest,issuer:config.APP_ORIGIN}),egress:createNodeIntegrationEgress({issuer:config.APP_ORIGIN,reserved:[config.EMBED_ORIGIN].filter(Boolean).map(v=>new URL(v).hostname)}),doorbellGrant:query=>federationShard(query.owner).eventDoorbellGrant(query),describe:query=>accounts.get(query.owner).integrationsMessagingDescribe(query)}:{});
  for(const name of Object.keys(integrationConfig))if(config[name]!==undefined)integrationConfig[name]=config[name];
- if(integrationConfig.BROKERED_INTROSPECTION_MOUNTED)integrationConfig.BROKERED_INTROSPECTION=request=>handleBrokeredIntrospection(request,{issuer:config.APP_ORIGIN,enabled:true,verifyToken:(token,options)=>brokering.verify(token,options),clientKeys:({clientId,jwksUri})=>clientDirectory.resolveKeys({id:clientId,jwksUri,authMethod:'private_key_jwt'}),account:owner=>new Proxy({},{get:(_,method)=>input=>accounts.get(owner)[method](owner,input)}),federation:owner=>federationShard(owner)});
+ if(integrationConfig.BROKERED_INTROSPECTION_MOUNTED)integrationConfig.BROKERED_INTROSPECTION=request=>handleBrokeredIntrospection(request,{issuer:config.APP_ORIGIN,enabled:true,artefactVersions:siteGlobal(config,'ARTEFACT_VERSIONS_ENABLED'),verifyToken:(token,options)=>brokering.verify(token,options),clientKeys:({clientId,jwksUri})=>clientDirectory.resolveKeys({id:clientId,jwksUri,authMethod:'private_key_jwt'}),account:owner=>new Proxy({},{get:(_,method)=>input=>accounts.get(owner)[method](owner,input)}),federation:owner=>federationShard(owner)});
  integrationConfig.INTEGRATION_CLIENT_SNAPSHOT=async client=>integrationSnapshot(client,await clientDirectory.resolveKeys(client));
  for(const {controller}of accountMap.values())Object.assign(controller.config,integrationConfig);
  const federationShard=owner=>{if(!federationMap.has(owner)){const metadata=new SqliteMetadata(join(directory,'federation',`${FEDERATION_LAYOUT}-${owner}.sqlite`));const implementation=new FederationController({...federationControllerOptions({config:{...config,...integrationConfig,...eventConfig},repository,accounts,owner,incremental:{loginDelta:input=>incremental.loginDelta(input),loginOutcome:input=>incremental.loginOutcome(input)},manifestMounts:{messagingAddress:messagingAddressMounted({...config,...integrationConfig})}}),metadata:federationMetadata(metadata)});if(deviceMounted&&device.linked)attachAppSessions(implementation.service,{linked:device.linked,config});metadata.onAlarm=async()=>{const result=await implementation.cleanup();if(result.remaining)await metadata.setAlarm(result.nextAlarmAt);if(device.drain){let pending=false;try{await device.drain({owner});pending=(await device.linked.outbox({owner})).length>0;}catch{pending=true;}if(pending&&!await metadata.getAlarm())await metadata.setAlarm(Date.now()+600000);}};metadata.getAlarm().then(time=>{if(time)metadata.arm(time);});const controller=new Proxy(implementation,{get:(target,method)=>typeof target[method]==='function'?async(...args)=>{const call=async()=>{const result=await target[method](...args);if(!['ready','manifest','cleanup'].includes(method)&&!await metadata.getAlarm())await metadata.setAlarm(Date.now()+600000);return result;};return flagsRuntime.scope.getStore()?call():flagsRuntime.run(await flagsRuntime.pin({alarm:method==='cleanup'}),call);}:target[method]});federationMap.set(owner,{metadata,controller});}return federationMap.get(owner).controller;};
@@ -159,6 +160,12 @@ export async function nodeResources({directory,config,formTransport,mailer}){
    emailBridge:null,operatorApps:null}});
  // DX-5 notices over the injected mailer (sendDeletionNotice) and Web Push. An unusable origin leaves it unwired.
  try{deletionPorts.notices=createDeletionNotices({origin:config.APP_ORIGIN,flags:{for:ctx=>flagsFor(config,ctx)},mail:mailer??null,push:createPushTransport(config)});}catch{/* requests hold before commit */}
+ // PORT-2 identity transfer-out ports (packages/identity/transfer-out.mjs): notices over the injected mailer
+ // (sendTransferNotice) and Web Push, the attestation key (IDENTITY_ATTESTATION_KEY; commits hold without it) and a
+ // transfer-due index in the identity directory, swept with the deletion index. New transfers need the flag.
+ const transferDue=transferDueIndex(identities);
+ Object.assign(transferPorts,{identity:transferIdentityPort(repository),attestor:attestorFromJwk(config.IDENTITY_ATTESTATION_KEY),issuer:config.APP_ORIGIN,due:transferDue});
+ try{transferPorts.notices=createTransferNotices({origin:config.APP_ORIGIN,mail:mailer??null,push:createPushTransport(config)});}catch{/* commits hold until a notice is accepted */}
  const federation=federationAuthority({config:{...config,...integrationConfig,...eventConfig},repository,directory:clientDirectory,manifestMounts:{deviceAuthorization:deviceMounted,messagingAddress:messagingAddressMounted({...config,...integrationConfig})},shard:federationShard});
  // The pre-owner authorization-entry store, sharded by entry ID like the MCP stores (one SQLite file per shard, each
  // pruned by its own alarm); null unless FEDERATION_ENTRY_ENABLED. packages/runtime/http.mjs mounts the provider
@@ -186,6 +193,8 @@ export async function nodeResources({directory,config,formTransport,mailer}){
   // DX-3: with the lifecycle off, due account deletions are still swept (the per-account alarm is primary).
   const run=()=>sweepDeletionDue({index:deletionDue,accounts}).catch(()=>{});lifecycleTimers=[setTimeout(run,60000),setInterval(run,6*3600000)];for(const timer of lifecycleTimers)timer.unref();
  }
+ // PORT-2 scheduler backstop: steps due transfers and ends moved records after their windows (the account alarm is primary).
+ {const run=()=>sweepTransferDue({index:transferDue,identity:transferPorts.identity,accounts}).catch(()=>{});const timers=[setTimeout(run,60000),setInterval(run,6*3600000)];for(const timer of timers)timer.unref();lifecycleTimers.push(...timers);}
  linkedLimits={consume:(key,window)=>abuse.consume('linked-v1:'+key,window)};
  // DX-2: the edge export stream reads parts and payloads directly from the buckets, as the Worker's bindings do.
  Object.assign(integrationConfig,{BLOBS:blobs,ARCHIVES:archives});

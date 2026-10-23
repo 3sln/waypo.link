@@ -149,3 +149,10 @@ test('signatures are low-s only, purposes fix the typ, and public JWKS reads nei
  const keys=brokeringKeys({issuer,secret,metadata:counted,clock:()=>clock.now});await keys.jwks();const [t0,w0]=[transactions,writes];assert.equal(w0,1,'first read provisions the set');
  for(let i=0;i<100;i++)await keys.jwks();assert.equal(transactions,t0,'memoized within cacheMs');clock.now+=6000;await keys.jwks();assert.equal(transactions,t0+1);assert.equal(writes,w0,'public reads never write');
 });
+
+test('ART-8 signing and verification preserve exact versioned contract claims and reject incomplete or foreign maps',async()=>{
+ const f=fixture(),cv={[contract]:{version:2,digest:'sha256-'+'A'.repeat(43)}},minted=await f.mint({cv});assert.deepEqual((await f.verify(minted.token)).claims.bindle.cv,cv);
+ for(const bad of [{},{[contract]:{version:0,digest:cv[contract].digest}},{[contract]:{version:1,digest:'bare'}},{'https://other.example/contract':cv[contract]}])await assert.rejects(f.mint({cv:bad}),{code:'invalid_request'});
+ await assert.rejects(f.mint({purpose:'discover',audience:discovery,clientId:issuer,cv}),{code:'invalid_request'});
+ const claims=peekAccessToken(minted.token).claims;claims.bindle.cv[contract].digest='bad';const forged=await f.keys.sign('invoke',claims);await reject(f.verify(forged.token),'claims');
+});

@@ -35,8 +35,9 @@ import * as classifier from './classifier.mjs';
 import {account as brokeredTokens} from '../../federation/introspection.mjs';
 import * as deletion from './deletion.mjs';
 import * as exports from './exports.mjs';
+import * as transferOut from './transfer-out.mjs';
 
-export const ACCOUNT_SLICES=Object.freeze({views,messages,contacts,delivery,conversations,storage,billing,search,lifecycle,notifications,beams,automation,identity,links,connections,events,integrations,integrationEvents,classifier,brokeredTokens,emailBridge,deletion,exports});
+export const ACCOUNT_SLICES=Object.freeze({views,messages,contacts,delivery,conversations,storage,billing,search,lifecycle,notifications,beams,automation,identity,links,connections,events,integrations,integrationEvents,classifier,brokeredTokens,emailBridge,deletion,exports,transferOut});
 
 /** Installs every slice's methods; a name defined twice (by two slices, or by a slice and the core) is a programming error. */
 export function installAccountMethods(prototype,slices=ACCOUNT_SLICES){
