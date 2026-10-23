@@ -26,7 +26,9 @@ import {AppFault} from '../app/faults.mjs';
 import {entityOf,hasPower,requirePower,requireFresh,organizationPowers} from './authority.mjs';
 
 export const ORG_RECORD='org/record-v1',ORG_ENTITY='identity/entity',ORG_AUDIT='org/audit/',ORG_EPOCH='org/principal-epoch/';
-export const ORG_CREATION='orgs/creation/',ORG_OWNED='orgs/owned/';
+export const ORG_CREATION='orgs/creation/',ORG_OWNED='orgs/owned/',ORG_JOINED='orgs/joined/';
+/** Provisional (coordinator): at most this many membership hints per person (ORG-5 discovery). */
+export const ORG_JOINED_LIMIT=256;
 export const ORGANIZATIONS_FLAG='ORGANIZATIONS_ENABLED';
 /** Display kind labels (terminology §4). Presentation only; never changes behaviour. */
 export const ORG_LABELS=Object.freeze(['organization','company','team','club','household','project']);
@@ -137,6 +139,28 @@ export class OrganizationService{
  /** The organizations a person is owner of record of (an index; each organization's own record is authoritative). */
  async list(actor){
   return this.metadata.transaction(async tx=>{await this.person(tx,actor);return {organizations:[...(await tx.list({prefix:ORG_OWNED})).values()].map(row=>({id:row.org,handle:row.handle,role:row.role,createdAt:row.createdAt})),pending:[...(await tx.list({prefix:ORG_CREATION})).values()].filter(row=>row.state==='reserved').map(row=>({request:row.request,id:row.org,name:row.name}))};});
+ }
+ // ORG-5 discovery hints (provisional coordinator work). `orgs/joined/<org>` records, in the PERSON's own account, that
+ // this person joined an organization. A hint is never evidence: discovery shows an organization only when that
+ // organization's writer confirms the person's live membership (packages/orgs/discovery.mjs), so a stale or invented
+ // hint reveals nothing and costs only the person's own lookups. Membership itself stays in the organization's record.
+ /** The organizations to ask about: owner-of-record index rows and membership hints. */
+ async candidates(actor){
+  return this.metadata.transaction(async tx=>{await this.person(tx,actor);const owned=[...(await tx.list({prefix:ORG_OWNED})).values()],joined=[...(await tx.list({prefix:ORG_JOINED})).values()];
+   return {owned:owned.map(row=>({id:row.org,handle:row.handle??null,role:row.role,createdAt:row.createdAt})),joined:joined.filter(row=>!owned.some(o=>o.org===row.org)).map(row=>({id:row.org,joinedAt:row.joinedAt})),pending:[...(await tx.list({prefix:ORG_CREATION})).values()].filter(row=>row.state==='reserved').map(row=>({request:row.request,id:row.org,name:row.name}))};});
+ }
+ /** Records a hint after the organization accepted this person (called by the acceptance adapter, never from input). */
+ async remember(actor,input){
+  const value=exact(input,['org']);if(typeof value.org!=='string'||!UUID.test(value.org))fail('invalid_request','Unsupported organization request.',400);
+  return this.metadata.transaction(async tx=>{await this.person(tx,actor);if(value.org===actor.owner)fail('invalid_request','Unsupported organization request.',400);
+   if(await tx.get(ORG_JOINED+value.org)!==undefined)return {remembered:true};
+   if((await tx.list({prefix:ORG_JOINED})).size>=ORG_JOINED_LIMIT)return {remembered:false};
+   await tx.put(ORG_JOINED+value.org,{v:1,org:value.org,joinedAt:this.clock.now()});return {remembered:true};});
+ }
+ /** Drops a hint (after leaving). Owner-of-record rows are not hints and stay. */
+ async forgetMembership(actor,input){
+  const value=exact(input,['org']);if(typeof value.org!=='string'||!UUID.test(value.org))fail('invalid_request','Unsupported organization request.',400);
+  return this.metadata.transaction(async tx=>{await this.person(tx,actor);const had=await tx.get(ORG_JOINED+value.org)!==undefined;if(had)await tx.delete(ORG_JOINED+value.org);return {forgotten:had};});
  }
  /** System: drop the index entry once an organization is gone. */
  async forget(actor,input){

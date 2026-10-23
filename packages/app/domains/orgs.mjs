@@ -45,9 +45,20 @@ export class MembershipOutboxDrain extends OrgAction{static operation='orgs.memb
 export class ObserveMemberAuthority extends OrgAction{static operation='orgs.observe-authority';static lifecycle='suspended';run({organizations}){return organizations.observe(this.actor,this.input);}}
 export class MemberSnapshot extends OrgAction{static operation='orgs.member-snapshot';run({organizations}){return organizations.snapshot(this.actor,this.input);}}
 export class MemberLookup extends OrgQuery{static operation='orgs.member-lookup';fetch({organizations}){return organizations.lookup(this.actor,this.input);}}
-export const MEMBERSHIP_OPERATIONS=Object.freeze([MuteMemberRequests,InviteMember,AcceptMembership,LeaveOrganization,RemoveMember,SetMemberGrants,DecideMemberGrants,MembershipPolicy,ReconfirmMember,OrganizationMembers,MemberContext,MemberAuthority]);
+// ORG-5 discovery and organization-context adapters (provisional coordinator work, 2026-10-23).
+// Person placement: discovery candidates and membership hints (packages/orgs/organizations.mjs). Hints are written
+// only by the acceptance and leave adapters; discovery confirms each one with the organization (packages/orgs/discovery.mjs).
+export class OrganizationCandidates extends OrgQuery{static operation='orgs.candidates';static entities=['person'];fetch({organizations}){return organizations.candidates(this.actor);}}
+export class RememberMembership extends OrgAction{static operation='orgs.remember-membership';static entities=['person'];run({organizations}){return organizations.remember(this.actor,this.input);}}
+export class ForgetMembership extends OrgAction{static operation='orgs.forget-membership';static entities=['person'];static lifecycle='suspended';run({organizations}){return organizations.forgetMembership(this.actor,this.input);}}
+// Organization placement: the acting member's own view, their role-filtered pending requests, and the power check the
+// connections and preferences adapters run in this writer before acting for the organization.
+export class OrganizationMembership extends OrgQuery{static operation='orgs.membership';static entities=['organization'];static membershipEntry=true;static lifecycle='suspended';fetch({organizations}){return organizations.membership(this.actor,this.input??{});}}
+export class OrganizationRequests extends OrgQuery{static operation='orgs.requests';static entities=['organization'];static membershipEntry=true;static lifecycle='suspended';fetch({organizations}){return organizations.requests(this.actor,this.input??{});}}
+export class OrganizationActingAuthority extends OrgAction{static operation='orgs.acting-authority';static entities=['organization'];static lifecycle='suspended';run({organizations}){return organizations.actingAuthority(this.actor,this.input);}}
+export const MEMBERSHIP_OPERATIONS=Object.freeze([MuteMemberRequests,InviteMember,AcceptMembership,LeaveOrganization,RemoveMember,SetMemberGrants,DecideMemberGrants,MembershipPolicy,ReconfirmMember,OrganizationMembers,MemberContext,MemberAuthority,OrganizationMembership,OrganizationRequests,OrganizationActingAuthority]);
 /** Owner-route operations: the account slice resolves their actor with `accountActor`. */
-export const ORG_OPERATIONS=Object.freeze([...MEMBERSHIP_OPERATIONS,ReserveOrganization,OrganizationList,OrganizationGet,OrganizationAudit,RenameOrganization,LabelOrganization,ScheduleOrganizationDeletion,CancelOrganizationDeletion]);
+export const ORG_OPERATIONS=Object.freeze([...MEMBERSHIP_OPERATIONS,ReserveOrganization,OrganizationList,OrganizationCandidates,RememberMembership,ForgetMembership,OrganizationGet,OrganizationAudit,RenameOrganization,LabelOrganization,ScheduleOrganizationDeletion,CancelOrganizationDeletion]);
 export const ORG_SYSTEM_OPERATIONS=Object.freeze([MemberLookup,ObserveMemberAuthority,MemberSnapshot,MembershipOutboxDrain,MembershipSweep,InitializeOrganization,ConfirmOrganization,ForgetOrganization,OrganizationTick]);
 
 /** Trusted in-writer ORG-4 membership port. It dispatches the same production operations as every other adapter. */

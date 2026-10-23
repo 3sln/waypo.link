@@ -86,7 +86,7 @@ export const stages={
    const enabled=clientId=>flagEnabled(env,'ORGANIZATIONS_ENABLED',{subject:{kind:'account',owner:id},client:{clientId}},true)&&flagEnabled(env,'MEMBER_CERTIFICATES_ENABLED',{subject:{kind:'account',owner:id},client:{clientId}},true);
    if(!['GET','POST'].includes(request.method))return json({error:'method_not_allowed'},405,{Allow:'GET, POST'});
    const directory=env.FEDERATION_AUTHORITY?.directory,clients=env.FEDERATION_AUTHORITY?.clients??[];
-   const engine=createAppEngine({providers:{clock:systemClock,random:cryptoRandom,audit:nullAudit,config:{issuer:env.APP_ORIGIN,allowLoopback:env.LOCAL_DEVELOPMENT==='true',enabled},federationStore:{resolve:clientId=>directory?.resolve(clientId)??clients.find(c=>c.id===clientId)},accounts:{get:owner=>owner===id?object:accountHandle(env,owner)}}});
+   const engine=createAppEngine({providers:{clock:systemClock,random:cryptoRandom,audit:nullAudit,config:{issuer:env.APP_ORIGIN,allowLoopback:env.LOCAL_DEVELOPMENT==='true',enabled},federationStore:{resolve:clientId=>directory?.resolve(clientId)??clients.find(c=>c.id===clientId)},organizations:{describe:aud=>typeof object?.memberCertificateOrganization==='function'?object.memberCertificateOrganization(id,aud):null},accounts:{get:owner=>owner===id?object:accountHandle(env,owner)}}});
    try{
     if(request.method==='GET'){const input=Object.fromEntries(new URL(request.url).searchParams);return json(await read(engine,new InspectMemberAcquisition({actor:{kind:'owner',owner:id},input})),200,privateHeaders);}
     if(request.headers.get('Origin')!==env.APP_ORIGIN)return json({error:'invalid_origin'},403,privateHeaders);

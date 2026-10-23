@@ -9,6 +9,13 @@
 //   orgsInitialize(owner, input)                    system: the creation sequence's organization step
 //   orgsConfirm(owner, input)                       system: the creation sequence's final step (creator's account)
 //   orgsAlarm()                                     account alarm hook: steps a scheduled deletion
+//   orgsActingAuthority(org, {actor, power, widen})  ORG-5: the organization-context power check, run in THIS writer
+//                                                   (orgs.acting-authority); the federation shard calls it before it
+//                                                   reads or writes the organization's preferences
+//   orgsConnections(org, {operation, actor, input})  ORG-5: the organization's app connections, acting as the
+//                                                   organization. The admin power is resolved here, in the same gate
+//                                                   turn as the connections operation; only list, suspend, resume,
+//                                                   disconnect and approve exist for organizations (no built-ins, slots)
 // Ports from config: ORGANIZATION_PLANS ({check}) or the fail-closed ORGANIZATIONS_PAID_ALLOWLIST port, and
 // ORGANIZATION_PURGE ((org) -> {handedOff}) for the deletion executor hand-off (absent: a due deletion holds).
 import {createAppEngine,perform,read,AppQuery} from '../../app/engine.mjs';
@@ -55,4 +62,18 @@ export const methods={
   catch{/* The next alarm retries; a failed step never advances the deletion. */}
  },
 };
-export const rpc={orgsSigningProvenance:{},orgsMemberSnapshot:{},orgsDispatch:{lifecycle:'suspended'},orgsInitialize:{lifecycle:'suspended'},orgsConfirm:{}};
+// ORG-5 organization context for the existing connections operations. Reducing operations (list, suspend, disconnect)
+// stay available during a ramp-down or pending deletion; resume and approve can add authority (`widen`).
+export const ORG_CONNECTION_OPERATIONS=Object.freeze({list:'connections.list',suspend:'connections.suspend',resume:'connections.resume',disconnect:'connections.disconnect',approve:'connections.approve'});
+const WIDENING=new Set(['resume','approve']);
+Object.assign(methods,{
+ async orgsActingAuthority(owner,{actor,power='admin',widen=false}={}){return this.orgsDispatch(owner,{operation:'orgs.acting-authority',actor,input:{power,widen:widen===true}});},
+ async orgsConnections(owner,{operation,actor,input}={}){
+  const target=typeof operation==='string'&&Object.hasOwn(ORG_CONNECTION_OPERATIONS,operation)?ORG_CONNECTION_OPERATIONS[operation]:null;if(!target)throw new StorageError('not_found','Not found.',404);
+  if(input!==undefined&&(input===null||typeof input!=='object'||Array.isArray(input)||Object.keys(input).some(k=>!['connection','expectedGeneration','stagedRevision'].includes(k))))throw new StorageError('invalid_request','Unsupported connections request.',400);
+  const authority=await this.orgsActingAuthority(owner,{actor,power:'admin',widen:WIDENING.has(operation)});
+  const result=await this.connectionsOwner(owner,{operation:target,...input===undefined?{}:{input}},{authTime:authority.authTime??undefined});
+  return operation==='list'?{connections:result.connections??[]}:result;
+ },
+});
+export const rpc={orgsActingAuthority:{lifecycle:'suspended'},orgsConnections:{},orgsSigningProvenance:{},orgsMemberSnapshot:{},orgsDispatch:{lifecycle:'suspended'},orgsInitialize:{lifecycle:'suspended'},orgsConfirm:{}};

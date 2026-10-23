@@ -2,7 +2,7 @@
 // The app keeps the non-extractable holder key and uses it for DPoP at the organization's token endpoint.
 import {createKey} from './dpop.mjs';
 const encode=bytes=>btoa(String.fromCharCode(...new Uint8Array(bytes))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
-const text=new TextEncoder(),ACCESS='https://spec.bindle.example/purposes/member-access/v1';
+const MAX_REQUESTS=4,text=new TextEncoder(),ACCESS='https://spec.bindle.example/purposes/member-access/v1';
 const failure=code=>Object.assign(new Error(code),{code});
 function origin(value,allowLoopback){let u;try{u=new URL(value);}catch{throw failure('invalid_request');}if(u.origin!==value||u.username||u.password||u.protocol!=='https:'&&!(allowLoopback&&u.protocol==='http:'&&['localhost','127.0.0.1','[::1]'].includes(u.hostname)))throw failure('invalid_request');return u;}
 /** Proof for the home provider's member-certificate profile; this is deliberately distinct from a DPoP JWS. */
@@ -23,14 +23,17 @@ export function acquireMemberCertificate({issuer,aud,clientId,redirectUri,window
   for(const [k,v]of Object.entries({member_certify:'1',client_id:clientId,redirect_uri:redirectUri,aud,state}))url.searchParams.set(k,v);
   const popup=win.open(url.href,'_blank','popup,width=540,height=760');if(!popup)throw failure('popup_blocked');
   return new Promise((resolve,reject)=>{
-   let finished=false,busy=false,subject=null,holder;const pending=createKey(crypto);pending.catch(()=>{});
+   let finished=false,busy=false,subject=null,holder,requests=0;const pending=createKey(crypto);pending.catch(()=>{});
    const finish=(error,value)=>{if(finished)return;finished=true;win.removeEventListener('message',receive);timers.clearTimeout(deadline);timers.clearInterval(closed);try{popup.close();}catch{}error?reject(error):resolve(value);};
    const receive=async event=>{
     const data=event.data;if(finished||event.source!==popup||event.origin!==issuer||!data||data.state!==state)return;
     if(data.type==='bindle:member-error'){finish(failure(data.code==='canceled'?'canceled':'acquisition_failed'));return;}
     if(data.type==='bindle:member-ready'){
-     if(busy||subject!==null)return;
-     if(data.issuer!==issuer||data.aud!==aud||data.client?.client_id!==clientId||data.client?.origin!==redirect.origin||typeof data.subject!=='string'||!/^[0-9a-f-]{36}$/.test(data.subject)){finish(failure('invalid_response'));return;}
+     // The page sends `ready` only after the member confirms, and again when it needs a fresh proof (review M1): each
+     // request is signed now, with the same holder key and subject. Re-requests are bounded.
+     if(busy)return;
+     if(data.issuer!==issuer||data.aud!==aud||data.client?.client_id!==clientId||data.client?.origin!==redirect.origin||typeof data.subject!=='string'||!/^[0-9a-f-]{36}$/.test(data.subject)||subject!==null&&data.subject!==subject){finish(failure('invalid_response'));return;}
+     if(++requests>MAX_REQUESTS){finish(failure('acquisition_failed'));return;}
      busy=true;try{holder=await pending;const proof=await createMemberProof(holder,{aud,clientId,issuer,subject:data.subject,crypto,clock});if(finished)return;subject=data.subject;popup.postMessage({type:'bindle:member-key',state,delegate:holder.jwk,proof},issuer);}catch{finish(failure('acquisition_failed'));}finally{busy=false;}
     }else if(data.type==='bindle:member-result'){
      const result=data.result??data,body=claims(result.certificate);

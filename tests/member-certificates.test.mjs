@@ -9,7 +9,7 @@ import { createAppEngine, perform, read } from '../packages/app/engine.mjs';
 import { memoryAudit } from '../packages/app/providers.mjs';
 import { IdentityKeyRegistry } from '../packages/identity/keys.mjs';
 import { authorityEpoch, raiseAuthorityEpoch, AUTHORITY_EPOCH_FIELD } from '../packages/identity/authority-epoch.mjs';
-import { MemberCertificateIssuer, memberCertificatesProvider, certificationSigner, certificationKeyList, parseMemberCertificate, verifyMemberSignature, memberHolderKey, signMemberPop, memberCertificateLifetime, memberStatusCacheControl, GrantMemberConsent, IssueMemberCertificate, RevokeMemberConsent, RevokeMemberKey, MemberCertificateList, MemberCertificateStatus, MEMBER_PURPOSES, MEMBER_CERTIFICATE_TYP, MEMBER_CERTIFICATE_MEMBERS, MEMBER_KEYS_PER_CONSENT, MEMBER_POP_DOMAIN } from '../packages/identity/member-certificates.mjs';
+import { MemberCertificateIssuer, memberCertificatesProvider, certificationSigner, certificationKeyList, parseMemberCertificate, verifyMemberSignature, memberHolderKey, signMemberPop, memberCertificateLifetime, memberStatusCacheControl, GrantMemberConsent, AcquireMemberConsentCertificate, IssueMemberCertificate, RevokeMemberConsent, RevokeMemberKey, MemberCertificateList, MemberCertificateStatus, MEMBER_PURPOSES, MEMBER_CERTIFICATE_TYP, MEMBER_CERTIFICATE_MEMBERS, MEMBER_KEYS_PER_CONSENT, MEMBER_POP_DOMAIN } from '../packages/identity/member-certificates.mjs';
 import { DELEGATION_TYP, POP_DOMAIN } from '../packages/identity/delegation.mjs';
 import { fakeClock, forEachSeed, concurrently } from './helpers/chaos.mjs';
 import { holder, sealing, registryStore } from './helpers/member-certificates.mjs';
@@ -204,5 +204,55 @@ test('seeded races: issuance against consent revocation and authority resets nev
       if (s.status === 'active') { assert.equal(consent.state, 'active', `seed=${random.seed}`); assert.equal(parseMemberCertificate(issued.get(key.jkt).certificate).payload.aep, f.state.aep, `seed=${random.seed} active key from another epoch`); }
     }
     for (const row of view.consents) if (row.state === 'revoked') for (const k of row.keys) assert.equal(k.state, 'revoked', `seed=${random.seed}`);
+  });
+});
+
+// ---- ORG-6a review M1: consent and first issuance commit together ----
+const acquireWith = (f, key, { proof, client = ERP, actor } = {}) => (async () => perform(f.engine, new AcquireMemberConsentCertificate({ actor: actor ?? f.session(client), input: { aud: AUD, purposes: ACCESS, delegate: key.jwk, proof: proof ?? await f.pop(key, { client }) } })))();
+
+test('M1: a stale or refused proof at acquisition leaves no active consent behind, and a fresh proof then succeeds', async () => {
+  const f = await fixture(), key = await holder(), stale = await f.pop(key, { iat: Math.floor(f.clock.now() / 1000) - 121 });
+  await assert.rejects(acquireWith(f, key, { proof: stale }), code('invalid_request'));
+  await assert.rejects(acquireWith(f, key, { proof: { ...await f.pop(key), signature: 'A'.repeat(86) } }), code('invalid_request'));
+  assert.deepEqual((await f.list()).consents, [], 'no consent survives a failed acquisition');
+  const issued = await acquireWith(f, key);
+  assert.equal(parseMemberCertificate(issued.certificate).payload.cnf.jkt, key.jkt);
+  const [consent] = (await f.list()).consents;
+  assert.equal(consent.state, 'active'); assert.deepEqual(consent.keys.map(k => k.jkt), [key.jkt]);
+  assert.equal((await f.status(key.jkt)).status, 'active');
+});
+
+test('M1: a failed re-acquisition never revives a revoked consent nor changes an active one', async () => {
+  const f = await fixture(), first = await holder(), second = await holder();
+  await acquireWith(f, first); await f.revokeConsent({ aud: AUD, clientId: ERP.client_id });
+  const stale = await f.pop(second, { iat: Math.floor(f.clock.now() / 1000) - 600 });
+  await assert.rejects(acquireWith(f, second, { proof: stale }), code('invalid_request'));
+  let [consent] = (await f.list()).consents; assert.equal(consent.state, 'revoked');
+  await acquireWith(f, second); [consent] = (await f.list()).consents;
+  assert.equal(consent.state, 'active'); assert.deepEqual(consent.keys.map(k => [k.jkt, k.state]), [[first.jkt, 'revoked'], [second.jkt, 'active']]);
+  const before = JSON.stringify((await f.list()).consents);
+  await assert.rejects(acquireWith(f, await holder(), { proof: { iat: 1, signature: 'A'.repeat(86) } }), code('invalid_request'));
+  assert.equal(JSON.stringify((await f.list()).consents), before);
+});
+
+test('M1: acquisition is owner-session only with the observed client', async () => {
+  const f = await fixture(), key = await holder();
+  await assert.rejects(acquireWith(f, key, { actor: f.app(ERP) }), code('forbidden'));
+  await assert.rejects(acquireWith(f, key, { actor: f.owner }), code('invalid_request'));
+  assert.deepEqual((await f.list()).consents, []);
+});
+
+test('M1: seeded concurrent first acquisitions and revocations never leave a key active under a revoked consent', async () => {
+  await forEachSeed(10, async random => {
+    const f = await fixture(), keys = await Promise.all([holder(), holder(), holder()]);
+    const tasks = random.shuffle([...keys.map(key => () => acquireWith(f, key)), () => f.revokeConsent({ all: true })]);
+    await Promise.allSettled(tasks.map(task => task()));
+    const consents = (await f.list()).consents;
+    assert.ok(consents.length <= 1);
+    for (const key of keys) {
+      const status = (await f.status(key.jkt)).status;
+      if (status === 'active') assert.equal(consents[0]?.state, 'active');
+    }
+    if (consents[0]?.state === 'revoked') assert.ok(consents[0].keys.every(k => k.state === 'revoked'));
   });
 });

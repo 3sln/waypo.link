@@ -237,26 +237,47 @@ export class MemberCertificateIssuer {
     if (!await this.#active(owner)) forbidden();
     const aep = await this.#aep(owner), cid = await consentId({ aud: input.aud, client }, this.crypto);
     return this.metadata.transaction(async tx => {
-      const meta = await this.#meta(tx), prior = await tx.get(CONSENT + cid), now = this.clock();
-      if (prior?.state === 'active' && prior.aep === aep) {
-        if (prior.purposes.length === purposes.length && prior.purposes.every((p, i) => p === purposes[i])) return consentView(prior, await this.#keys(tx));
-        for (const record of await this.#keys(tx)) if (record.cid === cid && record.state === 'active' && !record.purposes.every(p => purposes.includes(p))) await this.#revokeKey(tx, meta, record, 'consent-narrowed', 'owner');
-        const next = { ...prior, purposes, org: org ?? prior.org ?? null, updatedAt: now }; await tx.put(CONSENT + cid, next); await this.#audit(tx, meta, { event: 'consent-changed', consent: cid, purposes }); await tx.put(META, meta);
-        return consentView(next, await this.#keys(tx));
-      }
-      if (prior?.state === 'active') await this.#revokeConsent(tx, meta, prior, 'authority-reset', 'system');
-      if (!prior && (await this.#consents(tx)).filter(row => row.state === 'active').length >= MEMBER_CONSENT_LIMIT) fault('rate_limited', 'Too many organization and app consents.', 429);
-      const next = { cid, owner, aud: input.aud, org, client, purposes, state: 'active', generation: (prior?.generation ?? 0) + 1, aep, via: 'session', grantedAt: now };
-      await tx.put(CONSENT + cid, next); await this.#audit(tx, meta, { event: 'consent-granted', consent: cid, aud: input.aud, clientId: client.client_id, origin: client.origin, purposes }); await tx.put(META, meta);
-      return consentView(next, await this.#keys(tx));
+      const meta = await this.#meta(tx), granted = await this.#grant(tx, meta, { cid, owner, aud: input.aud, org, client, purposes, aep });
+      if (granted.changed) await tx.put(META, meta);
+      return consentView(granted.consent, await this.#keys(tx));
     });
+  }
+  // The consent a grant would leave behind, without writing (the acquire plan): same generation when an active consent
+  // of the current epoch exists, the next generation otherwise.
+  static #expected(prior, aep) { return prior?.state === 'active' && prior.aep === aep ? prior.generation : (prior?.generation ?? 0) + 1; }
+  // Writes the member's consent for (aud, client) inside `tx`. Idempotent; narrowing revokes keys holding a dropped
+  // purpose; an active consent of an earlier authority epoch is revoked and replaced by the next generation.
+  async #grant(tx, meta, { cid, owner, aud, org, client, purposes, aep }) {
+    const prior = await tx.get(CONSENT + cid), now = this.clock();
+    if (prior?.state === 'active' && prior.aep === aep) {
+      if (prior.purposes.length === purposes.length && prior.purposes.every((p, i) => p === purposes[i])) return { consent: prior, changed: false };
+      for (const record of await this.#keys(tx)) if (record.cid === cid && record.state === 'active' && !record.purposes.every(p => purposes.includes(p))) await this.#revokeKey(tx, meta, record, 'consent-narrowed', 'owner');
+      const next = { ...prior, purposes, org: org ?? prior.org ?? null, updatedAt: now }; await tx.put(CONSENT + cid, next); await this.#audit(tx, meta, { event: 'consent-changed', consent: cid, purposes });
+      return { consent: next, changed: true };
+    }
+    if (prior?.state === 'active') await this.#revokeConsent(tx, meta, prior, 'authority-reset', 'system');
+    if (!prior && (await this.#consents(tx)).filter(row => row.state === 'active').length >= MEMBER_CONSENT_LIMIT) fault('rate_limited', 'Too many organization and app consents.', 429);
+    const next = { cid, owner, aud, org, client, purposes, state: 'active', generation: (prior?.generation ?? 0) + 1, aep, via: 'session', grantedAt: now };
+    await tx.put(CONSENT + cid, next); await this.#audit(tx, meta, { event: 'consent-granted', consent: cid, aud, clientId: client.client_id, origin: client.origin, purposes });
+    return { consent: next, changed: true };
+  }
+
+  /** ORG-6a: the member's consent and the first certificate in ONE committing transaction (review M1), so a stale or
+   * refused proof never leaves an active consent behind. `actor`: {kind:'owner', owner, client} with the client the
+   * adapter observed. `input`: {aud, purposes, delegate, proof:{iat, signature}}. Returns issue()'s result. */
+  async acquire(owner, actor, input) {
+    if (actor?.kind !== 'owner' || actor.owner !== owner) forbidden();
+    const client = clientOf(actor.client, this.allowLoopback); if (!client) invalid('The client origin could not be verified.');
+    if (!only(input, ['aud', 'purposes', 'delegate', 'proof'])) invalid();
+    return this.#issue(owner, { kind: 'owner', owner }, { ...input, client }, true);
   }
 
   /** Issues one certificate. `actor`: {kind:'owner', owner} (the member's session; `input.client` names the consent's
    * client) or {kind:'app', owner, client:{client_id, origin}} (the client the adapter observed). `input`: {aud,
    * purposes, delegate, proof:{iat, signature}, lifetime?, client? (owner only)}. Returns {certificate, jkt, jti, iat,
    * exp, aep, status}. */
-  async issue(owner, actor, input) {
+  async issue(owner, actor, input) { return this.#issue(owner, actor, input, false); }
+  async #issue(owner, actor, input, grant) {
     if (!['owner', 'app'].includes(actor?.kind) || actor.owner !== owner) forbidden();
     if (!only(input, ['aud', 'purposes', 'delegate', 'proof', 'lifetime', ...actor.kind === 'owner' ? ['client'] : []]) || !only(input.proof, ['iat', 'signature'])) invalid();
     const client = clientOf(actor.kind === 'app' ? actor.client : input.client, this.allowLoopback); if (!client) actor.kind === 'app' ? forbidden() : invalid('Name the app this certificate is for.');
@@ -277,7 +298,10 @@ export class MemberCertificateIssuer {
     const identity = await this.identityURI?.(owner); if (!memberURL(identity, this.allowLoopback) || new URL(identity).origin !== this.issuer) unavailable();
 
     const plan = await this.metadata.transaction(async tx => {
-      const consent = await tx.get(CONSENT + cid), record = await tx.get(KEY + jkt), meta = await this.#meta(tx);
+      const prior = await tx.get(CONSENT + cid), record = await tx.get(KEY + jkt), meta = await this.#meta(tx);
+      // A grant plans against the consent it would write; nothing is written until the final commit.
+      const consent = grant ? { state: 'active', aep, purposes, generation: MemberCertificateIssuer.#expected(prior, aep) } : prior;
+      if (grant && !prior && (await this.#consents(tx)).filter(row => row.state === 'active').length >= MEMBER_CONSENT_LIMIT) return { refuse: 'consents' };
       if (!consent || consent.state !== 'active' || consent.aep !== aep || !purposes.every(p => consent.purposes.includes(p))) return { refuse: 'consent' };
       if ((await this.#aliases(tx, owner)).has(jkt)) return { refuse: 'alias' };
       if (await tx.get(PRUNED + jkt) || record?.state === 'revoked') return { refuse: 'revoked' };
@@ -285,6 +309,7 @@ export class MemberCertificateIssuer {
       if (!record && meta.newKeys.filter(at => at > nowMs - DAY).length >= this.newKeysPerDay) return { refuse: 'rate' };
       return { generation: consent.generation, epoch: meta.epoch, fresh: !record };
     });
+    if (plan.refuse === 'consents') fault('rate_limited', 'Too many organization and app consents.', 429);
     if (plan.refuse === 'consent') fault('consent_required', 'Approve this app for this organization first.', 403);
     if (plan.refuse === 'alias') invalid('An identity key cannot be a holder key.');
     if (plan.refuse === 'revoked') fault('delegation_revoked', 'This holder key was revoked. Generate a new key.', 409);
@@ -301,7 +326,10 @@ export class MemberCertificateIssuer {
     // Everything may have moved while signing: the account, the epoch, the consent, a revocation fence.
     if (!await this.#active(owner) || await this.#aep(owner) !== aep) forbidden();
     return this.metadata.transaction(async tx => {
-      const consent = await tx.get(CONSENT + cid), record = await tx.get(KEY + jkt), meta = await this.#meta(tx);
+      const meta = await this.#meta(tx);
+      // A grant commits only onto the consent generation it planned against (a concurrent identical grant is fine).
+      if (grant && MemberCertificateIssuer.#expected(await tx.get(CONSENT + cid), aep) !== plan.generation) fault('delegation_conflict', 'The consent changed meanwhile. Try again.', 409);
+      const consent = grant ? (await this.#grant(tx, meta, { cid, owner, aud: input.aud, org: null, client, purposes, aep })).consent : await tx.get(CONSENT + cid), record = await tx.get(KEY + jkt);
       if (!consent || consent.state !== 'active' || consent.generation !== plan.generation || consent.aep !== aep || meta.epoch !== plan.epoch || await tx.get(PRUNED + jkt) || record?.state === 'revoked' || (record ? record.cid !== cid : !plan.fresh)) fault('delegation_conflict', 'The consent changed meanwhile. Try again.', 409);
       const fresh = !record;
       if (fresh) meta.newKeys = [...meta.newKeys.filter(at => at > nowMs - DAY), nowMs].slice(-this.newKeysPerDay);
@@ -375,7 +403,7 @@ export class MemberCertificateIssuer {
 
 // ---- engine operations ------------------------------------------------------------------------------------------
 // Actors are built by trusted adapters only (packages/runtime/account/member-certificates.mjs), never from a body:
-//   {kind:'owner', owner, client?}        consent (client = the observed client), issue (session), list, revoke
+//   {kind:'owner', owner, client?}        consent and acquire (client = the observed client), issue (session), list, revoke
 //   {kind:'app', owner, client}           issue and revoke its own keys; `client` is the observed client
 //   {kind:'system', owner}                revoke (suspension, recovery, deletion, client breach)
 //   {kind:'public', owner}                status only
@@ -385,10 +413,12 @@ class MemberAction extends AppAction { static deps = ['memberCertificates']; sta
 class MemberQuery extends AppQuery { static deps = ['memberCertificates']; static refreshOn = ['member-certificates-changed']; }
 const ownerOfActor = actor => typeof actor?.owner === 'string' && UUID.test(actor.owner) ? actor.owner : fault('unauthorized', 'Sign in to continue.', 401);
 export class GrantMemberConsent extends MemberAction { static operation = 'member-certificates.consent'; run({ memberCertificates }) { return memberCertificates.consent(ownerOfActor(this.actor), this.actor, this.input); } }
+/** ORG-6a: consent and first issuance as one committing transaction (actor {kind:'owner', owner, client}). */
+export class AcquireMemberConsentCertificate extends MemberAction { static operation = 'member-certificates.acquire'; run({ memberCertificates }) { return memberCertificates.acquire(ownerOfActor(this.actor), this.actor, this.input); } }
 export class IssueMemberCertificate extends MemberAction { static operation = 'member-certificates.issue'; run({ memberCertificates }) { return memberCertificates.issue(ownerOfActor(this.actor), this.actor, this.input); } }
 export class RevokeMemberConsent extends MemberAction { static operation = 'member-certificates.revoke-consent'; static lifecycle = 'suspended'; run({ memberCertificates }) { return memberCertificates.revokeConsent(ownerOfActor(this.actor), this.actor, this.input); } }
 export class RevokeMemberKey extends MemberAction { static operation = 'member-certificates.revoke-key'; static lifecycle = 'suspended'; run({ memberCertificates }) { return memberCertificates.revokeKey(ownerOfActor(this.actor), this.actor, this.input); } }
 export class MemberCertificateList extends MemberQuery { static operation = 'member-certificates.list'; static lifecycle = 'suspended'; fetch({ memberCertificates }) { return memberCertificates.list(ownerOfActor(this.actor), this.actor); } }
 /** Public; runs outside the account gate. `input`: {jkt}. */
 export class MemberCertificateStatus extends MemberQuery { static operation = 'member-certificates.status'; static lifecycle = 'purging'; static gate = 'none'; fetch({ memberCertificates }) { return only(this.input, ['jkt']) ? memberCertificates.status(ownerOfActor(this.actor), this.input.jkt) : invalid(); } }
-export const MEMBER_CERTIFICATE_OPERATIONS = Object.freeze([GrantMemberConsent, IssueMemberCertificate, RevokeMemberConsent, RevokeMemberKey, MemberCertificateList, MemberCertificateStatus]);
+export const MEMBER_CERTIFICATE_OPERATIONS = Object.freeze([GrantMemberConsent, AcquireMemberConsentCertificate, IssueMemberCertificate, RevokeMemberConsent, RevokeMemberKey, MemberCertificateList, MemberCertificateStatus]);

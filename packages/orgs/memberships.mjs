@@ -41,7 +41,7 @@ export class MembershipService extends OrganizationService{
   });
  }
  notice(r,type,detail,now){const recipients=type==='member-grant-consent'?[detail.membership_id]:Object.values(r.memberships).filter(m=>m.state==='live'&&hasAdmin(m)).map(m=>m.id);r.memberOutbox.push({id:this.random.uuid(),type,at:now,...type==='member-removed'?{}:{recipients},...structuredClone(detail)});}
- operator(r,now){const members=Object.values(r.memberships);if(!members.some(m=>memberPowers(m,now).includes('admin'))||!members.some(m=>m.state==='live'&&!m.hold&&m.expires_at===undefined&&m.grants.some(g=>g.power==='admin'&&g.expires_at===undefined&&(g.notBefore??0)<=now)))fail('last_admin','The organization needs an active admin without an expiry.',409);}
+ operator(r,now){if(!hasOperator(Object.values(r.memberships),now))fail('last_admin','The organization needs an active admin without an expiry.',409);}
  async end(r,m,actor,reason,now,tx){
   if(m.state!=='live')return;
   if(samePrincipal(m.principal,r.ownerOfRecord))fail('owner_must_be_member','Transfer ownership before leaving.',409);
@@ -181,4 +181,71 @@ export class MembershipService extends OrganizationService{
  /** ORG-4 adapter port: validate generation live, and durably remember recipients for removal delivery. */
  context(actor,input){return this.frame(actor,input,['client','generation'],async(r,v,now,m)=>{if(!m||m.state!=='live'||m.expires_at!==undefined&&m.expires_at<=now/1000||v.generation!==undefined&&m.generation!==v.generation)fail('not_found','Not found.',404);if(typeof v.client!=='string'||v.client.length>2048)fail('invalid_request','Invalid client.',400);m.contextClients??=[];if(!m.contextClients.includes(v.client)){if(m.contextClients.length>=256)fail('context_limit','Too many contexts.',429);m.contextClients.push(v.client);}return {membership_id:m.id,generation:m.generation,aep:m.aep};});}
  authority(actor,input){return this.frame(actor,input,['membership','generation','application','resource','connections','imported','descriptor'],async(r,v,now)=>{const m=Object.values(r.memberships).find(m=>m.id===v.membership);if(m&&!samePrincipal(m.principal,actor.principal)&&!organizationPowers(r,actor.principal,{now}).includes('admin'))fail('not_found','Not found.',404);if(v.generation!==undefined&&m?.generation!==v.generation)return v.descriptor?null:{};const args={member:m,application:v.application,resource:v.resource,connections:v.connections,imported:v.imported,now};return v.descriptor?memberResourceProjection(args,v.descriptor):effectiveAuthority(args);});}
+
+ // ORG-5 discovery reads (2026-10-23, provisional coordinator work). Both answer only about the acting principal's own
+ // live membership; a non-member, an ended or expired member and an unknown organization all get the same not_found
+ // (ORG-D9: membership is never publicly checkable). They are exit paths, so they stay open while deletion is pending.
+ /** The acting member's own view: the organization's public facts, their grants (without other members' provenance)
+  * and powers. */
+ membership(actor,input={}){return this.frame(actor,input,[],async(r,v,now,m)=>{
+  if(!liveMember(m,now))fail('not_found','Not found.',404);
+  return {organization:{id:r.id,name:r.name,label:r.label,handle:r.handle??null,state:r.state,deletion:r.deletion?{notBefore:r.deletion.notBefore}:null,ownerOfRecord:samePrincipal(m.principal,r.ownerOfRecord)},
+   membership:{id:m.id,generation:m.generation,grants:publicGrants(m.grants),hold:m.hold?{aep:m.hold.aep,noticeAt:m.hold.noticeAt??null}:null,...m.expires_at!==undefined?{expires_at:m.expires_at}:{},createdAt:m.createdAt},
+   powers:organizationPowers(r,actor.principal,{now}).sort()};
+ },{exit:true});}
+ /** Pending grant-management requests where the acting member is the subject, the requester, or the owner of record
+  * of an elevated request; each carries the decisions `decide` would accept from this member now. Not flag-gated,
+  * like `decide`, so a subject can always answer. Admins still see every request through `members`. */
+ requests(actor,input={}){return this.frame(actor,input,[],async(r,v,now,m)=>{
+  if(!liveMember(m,now))fail('not_found','Not found.',404);
+  const out=[];
+  for(const q of Object.values(r.grantRequests)){
+   if(!['subject','elevated'].includes(q.state))continue;
+   const target=Object.values(r.memberships).find(x=>x.id===q.target),roles=[];
+   if(q.target===m.id)roles.push('subject');
+   if(samePrincipal(q.requester,actor.principal))roles.push('requester');
+   if(q.state==='elevated'&&samePrincipal(r.ownerOfRecord,actor.principal)&&!(target&&samePrincipal(target.principal,r.ownerOfRecord)))roles.push('owner');
+   if(!roles.length)continue;
+   out.push({id:q.id,state:q.state,target:q.target,subject:target?party(target.principal):null,requester:party(q.requester),grants:publicGrants(q.grants),remove:q.remove===true,reason:q.reason,createdAt:q.createdAt,elevateAt:q.elevateAt,subjectRejected:q.subjectRejected===true,roles,decisions:requestDecisions(r,q,actor.principal,now)});
+  }
+  out.sort((a,b)=>a.createdAt-b.createdAt||a.id.localeCompare(b.id));
+  return {requests:out};
+ },{exposure:false,exit:true});}
+ /** The single-writer power check for organization-context adapters (connections, preferences). `widen` marks an
+  * operation that can add authority: it needs ORGANIZATIONS_ENABLED and an active organization. Reducing operations
+  * (list, suspend, disconnect) stay available during a ramp-down or a pending deletion. A missing power is not_found. */
+ actingAuthority(actor,input){return this.frame(actor,input,['power','widen'],async(r,v,now)=>{
+  if(!['admin','owner-of-record'].includes(v.power)||v.widen!==undefined&&typeof v.widen!=='boolean')fail('invalid_request','Unsupported membership request.',400);
+  const powers=organizationPowers(r,actor.principal,{now});if(!powers.includes(v.power))fail('not_found','Not found.',404);
+  if(v.widen&&!this.enabled(actor.owner))fail('not_found','Not found.',404);
+  if(v.widen&&r.state!=='active')fail('organization_deletion_pending','This organization is scheduled for deletion.',409);
+  return {organization:r.id,powers:[...powers].sort(),state:r.state,authTime:actor.authTime??null};
+ },{exposure:false,exit:true});}
+}
+/** The never-without-an-operator guard (§12c.3) as a pure check over membership rows. */
+function hasOperator(members,now){return members.some(m=>memberPowers(m,now).includes('admin'))&&members.some(m=>m.state==='live'&&!m.hold&&m.expires_at===undefined&&m.grants.some(g=>g.power==='admin'&&g.expires_at===undefined&&(g.notBefore??0)<=now));}
+/** Whether accepting `q` would pass the guards `decide` applies when it commits: the owner of record cannot be removed
+ * (they must transfer ownership first), and no change may leave the organization without a permanent active admin. */
+function acceptable(r,q,m,now){
+ if(q.remove)return !samePrincipal(m.principal,r.ownerOfRecord)&&(!memberPowers(m,now).includes('admin')||hasOperator(Object.values(r.memberships).filter(x=>x!==m),now));
+ const changed={...m,grants:q.grants.map(g=>({...g,...g.power&&m.grants.find(old=>old.power===g.power)?.notBefore?{notBefore:m.grants.find(old=>old.power===g.power).notBefore}:{}}))};
+ return hasOperator(Object.values(r.memberships).map(x=>x===m?changed:x),now);
+}
+const liveMember=(m,now)=>m?.state==='live'&&(m.expires_at===undefined||m.expires_at>now/1000);
+/** Grants as a member may see them: no grantor principal (that would disclose other members to non-admins). */
+const publicGrants=grants=>(grants??[]).map(g=>Object.fromEntries(Object.entries(g).filter(([k])=>k!=='grantedBy')));
+/**
+ * The decisions `MembershipService#decide` accepts from `principal` for request `q` right now, assuming a fresh
+ * authentication (and, for an owner's acceptance, tight verification). Mirrors decide's rules exactly; a request that
+ * no longer applies offers nothing (decide would close it).
+ */
+export function requestDecisions(r,q,principal,now){
+ const m=Object.values(r.memberships??{}).find(x=>x.id===q?.target);
+ if(!q||!['subject','elevated'].includes(q.state)||!m||m.state!=='live'||m.generation!==q.generation||!equal(m.grants,q.base))return [];
+ const self=r.memberships[principalKey(principal)],held=Boolean(self?.hold),subject=samePrincipal(m.principal,principal),requester=samePrincipal(q.requester,principal),owner=samePrincipal(r.ownerOfRecord,principal),ownerSubject=samePrincipal(m.principal,r.ownerOfRecord),powers=organizationPowers(r,principal,{now}),out=[];
+ if(!held&&(subject||owner&&q.state==='elevated'&&!ownerSubject&&powers.includes('owner-of-record'))&&acceptable(r,q,m,now))out.push('accept');
+ if(subject&&(ownerSubject||!q.subjectRejected)||!subject&&owner&&q.state==='elevated'&&!held)out.push('reject');
+ if(requester&&q.state==='subject'&&!ownerSubject&&(q.subjectRejected||now>=q.elevateAt)&&(powers.includes('admin')||powers.includes('owner-of-record')))out.push('elevate');
+ if(requester)out.push('retract');
+ return out;
 }

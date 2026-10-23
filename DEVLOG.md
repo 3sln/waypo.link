@@ -3283,3 +3283,31 @@ Missing server APIs: organization connections and preferences adapters, discover
 **Gates (combined tree):** core 2817, Worker 87, UI-state 314, org browser matrix 50, e2e 214 with 4 WebKit skips, asset build and Worker dry run.
 
 Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-23 — Org discovery, request discovery, org-context apps and preferences; ORG-6a review fixes
+
+**ORG-6a review** (independent; no High findings):
+- **Clean:** CSRF, framing, auto-submit, redirects, Referer, holder-key binding, message fencing, the SDK key and ORG-D9 all held.
+- **Fixed, each with a regression test:**
+  - **M1, a stale proof stranded a consent:** consent and first issuance now commit in one transaction (`memberCertificateAcquire`). The page requests a fresh proof after the click, retries once, then posts `bindle:member-error`.
+  - **M2, the consent screen didn't name the organization or app:** inspect returns the organization's name and handle, its host and whether it's verified, plus the app's registered name and origin. Unverified ones get a warning.
+  - **L1, the subject was disclosed before consent:** nothing reaches the app before the click.
+- **Open question:** any signed-in user can see a local organization's display name by its identity URI. Organization identity documents are public anyway; this is a provisional judgement.
+
+**Org engine and console** (behind `ORGANIZATIONS_ENABLED`):
+- **Discovery:** a person's account lists the organizations they joined (up to 256), and `GET /api/orgs` reads each one as that person. A non-member, an ended member, another organization's member and an unknown ID all get the identical 404 (ORG-D9).
+- **Requests:** `GET /api/orgs/{id}/requests` shows the subject, requester or owner only their own requests, with the decisions the server would accept. Seeded chaos found offered accepts the server would reject; that's fixed.
+- **Organization context:** connections and preferences act for the organization, with the admin check in the organization's writer.
+  - **Residual:** the preferences session check and the write sit in different writers, so a concurrent demotion can race one write.
+- **Console:** the org switcher, member view, request decisions, apps and preferences panels, and the paused state with "cancel deletion" for the M3 fence.
+- **Existing bug fixed:** invitation links sent only the `jti`, so acceptance from a link always failed.
+
+**Gates (combined tree):**
+- core 2838, Worker 89, UI-state 328 (rerun by the coordinator);
+- org browser suites 128 and certify suites 24 (Chromium/Firefox);
+- e2e 214;
+- asset build and Worker dry run.
+
+`tests/e2e/org-console.test.mjs` runs under `test:organizations`, not the full e2e.
+
+Reviewer: ___ Date: ___ Outcome: ___

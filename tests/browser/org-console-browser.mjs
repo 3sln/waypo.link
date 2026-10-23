@@ -1,10 +1,33 @@
 // Loopback-only ORG-5 fixture: production dodo UI, ngin Actions and HTTP port; no production service claims.
 import test from 'node:test';import assert from 'node:assert/strict';import {createServer} from 'node:http';import {readFile} from 'node:fs/promises';import {resolve,extname} from 'node:path';import {chromium,firefox} from 'playwright';
-const project=resolve('.'),org='11111111-1111-4111-8111-111111111111',outsider='22222222-2222-4222-8222-222222222222';let server,origin,options={};const browsers={};
+const project=resolve('.'),org='11111111-1111-4111-8111-111111111111',outsider='22222222-2222-4222-8222-222222222222',memberOrg='33333333-3333-4333-8333-333333333333';let server,origin,options={};const browsers={};
 const boot=`import {Engine,Provider,dodo} from '/apps/web/src/shared/stack.mjs';import State from '/apps/web/src/providers/browser-state.mjs';import OrganizationsProvider from '/apps/web/src/providers/organizations.mjs';import {OrganizationsIntent} from '/apps/web/src/bl/organizations.mjs';import organizations,{organizationsAction} from '/apps/web/src/ui/org-console.mjs';
-const options=await fetch('/fixture').then(r=>r.json()),id='${org}',privateId='${outsider}',secrets=new Map();window.calls=[];window.downloads=[];let organization={id,name:'Team <img src=x onerror=alert(1)>',label:'team',handle:'team.example',powers:['admin'],revision:1,ownerOfRecord:{iss:'https://provider.example',sub:'owner'}};
-const members=[{id:'member-1',principal:{iss:'https://provider.example',sub:'owner'},grants:[]}],requests=[{id:'request-1',state:'subject',target:'member-1',requester:{iss:'https://provider.example',sub:'owner'},grants:[],elevateAt:0}];
-const api={captureContext:()=>({owner:'owner',sessionContext:'ctx'}),get(path){return this.request(path,undefined,'GET');},async request(path,body,method='POST'){window.calls.push({path,body,method});if(path==='/api/orgs'&&method==='GET')return {organizations:[organization,{id:privateId,handle:'unavailable.example'}]};if(path.startsWith('/api/orgs/'+privateId))throw Object.assign(Error('not_found'),{status:404,code:'not_found'});if(path==='/api/orgs'&&method==='POST')return {organization,recoveryFile:{fileName:'organization-recovery.json',content:JSON.stringify({privateKey:'fixture-private-key',recoveryToken:'token'}),recoveryToken:'token'}};if(path.endsWith('/members'))return {members,requests};if(path.endsWith('/audit'))return {entries:[{action:'rename',reason:'Audit <script>alert(1)</script>'}]};if(path.endsWith('/name')){organization={...organization,name:body.name,revision:organization.revision+1};return {};}if(path.endsWith('/label')){organization={...organization,label:body.label,revision:organization.revision+1};return {};}if(path.endsWith('/invitations'))return {invitation:'invite-1'};if(path==='/api/orgs/'+id)return organization;return {};}};
+const options=await fetch('/fixture').then(r=>r.json()),id='${org}',privateId='${outsider}',secrets=new Map();window.calls=[];window.downloads=[];let organization={id,name:'Team <img src=x onerror=alert(1)>',label:'team',handle:'team.example',powers:['admin','owner-of-record'],revision:1,state:'active',deletion:null,ownerOfRecord:{iss:'https://provider.example',sub:'owner'}};
+const memberId='${memberOrg}',fixture=window.fixture={deleting:false};
+const members=[{id:'member-1',principal:{iss:'https://provider.example',sub:'owner'},grants:[]}],requests=[{id:'request-1',state:'subject',target:'member-1',subject:{iss:'https://provider.example',sub:'owner'},requester:{iss:'https://provider.example',sub:'admin-2'},grants:[],reason:'Rotate <b>duties</b>',roles:['subject'],decisions:['accept','reject'],elevateAt:0}];
+const memberRequests=[{id:'request-2',state:'subject',target:'member-2',subject:{iss:'https://provider.example',sub:'owner'},requester:{iss:'https://provider.example',sub:'club-admin'},grants:[],reason:'Reduce <i>access</i>',roles:['subject'],decisions:['accept','reject'],elevateAt:0}];
+const connections=[{id:'cx-1',name:'Ledger <b>app</b>',clientId:'https://ledger.example/client',state:'active',generation:1,integration:{staged:{name:'Ledger v2'},stagedRevision:'rev-2'}}];
+const preferences=[{fragment:'https://schema.example/org/v1',revision:'r1',schema:{title:'Shared <u>settings</u>',description:'Settings the organization shares with its apps.',fields:{displayName:{type:'string',title:'Display name',maxLength:100},seats:{type:'integer',title:'Seats',cardinality:{min:0,max:1}},files:{type:'resource',title:'Files'}}},values:{displayName:'Team',seats:5,files:'https://provider.example/r/1'},affectedApps:[{name:'Ledger'}]}];
+const view=org=>org===memberId?{organization:{id:memberId,name:'Member club',label:'club',handle:'club.example',state:'active',deletion:null,ownerOfRecord:false},membership:{id:'member-2',grants:[{resource:'https://provider.example/r/9',methods:{'https://contract.example/v1':['get']}}],hold:{aep:2,noticeAt:null}},powers:[]}:{organization:{...organization,state:fixture.deleting?'deletion-scheduled':'active',deletion:fixture.deleting?{notBefore:Date.UTC(2026,10,20)}:null,ownerOfRecord:true},membership:{id:'member-1',grants:[{power:'admin',grantedAt:1}]},powers:['admin','owner-of-record']};
+const api={captureContext:()=>({owner:'owner',sessionContext:'ctx'}),get(path){return this.request(path,undefined,'GET');},async request(path,body,method='POST'){window.calls.push({path,body,method});
+ if(path==='/api/orgs'&&method==='GET')return {organizations:[{...organization,role:'owner-of-record',available:true},{id:memberId,name:'Member club',handle:'club.example',role:'member',powers:[],available:true},{id:privateId,handle:'unavailable.example',role:'member',available:false}]};
+ if(path.startsWith('/api/orgs/'+privateId))throw Object.assign(Error('not_found'),{status:404,code:'not_found'});
+ if(path==='/api/orgs'&&method==='POST')return {organization,recoveryFile:{fileName:'organization-recovery.json',content:JSON.stringify({privateKey:'fixture-private-key',recoveryToken:'token'}),recoveryToken:'token'}};
+ const org=path.split('/')[3],suffix=path.split('/')[4]??'';
+ if(org===memberId&&!['membership','requests','grant-decision','leave','accept'].includes(suffix))throw Object.assign(Error('not_found'),{status:404,code:'not_found'});
+ if(suffix==='membership')return view(org);
+ if(suffix==='requests')return {requests:structuredClone(org===memberId?memberRequests:requests)};
+ if(suffix==='members'){if(fixture.deleting)throw Object.assign(Error('This organization is scheduled for deletion.'),{status:409,code:'organization_deletion_pending'});return {members,requests};}
+ if(suffix==='audit')return {entries:[{action:'rename',reason:'Audit <script>alert(1)</script>'}]};
+ if(suffix==='name'){organization={...organization,name:body.name,revision:organization.revision+1};return {};}
+ if(suffix==='label'){organization={...organization,label:body.label,revision:organization.revision+1};return {};}
+ if(suffix==='invitations')return {invitation:'invite-1'};
+ if(suffix==='deletion'&&method==='DELETE'){fixture.deleting=false;return {...organization,state:'active'};}
+ if(suffix==='connections'&&method==='GET')return {connections:structuredClone(connections)};
+ if(suffix==='connections'){const c=connections.find(x=>x.id===body.input.connection);if(!c||c.generation!==body.input.expectedGeneration)throw Object.assign(Error('stale'),{status:409,code:'connection_changed'});if(body.operation==='approve')delete c.integration.staged;else c.state={suspend:'suspended',resume:'active',disconnect:'disconnected'}[body.operation];c.generation++;return {};}
+ if(suffix==='preferences'&&method==='GET')return {preferences:structuredClone(preferences)};
+ if(suffix==='preferences'){const p=preferences.find(x=>x.fragment===body.fragment);if(!p||p.revision!==body.expectedRevision)throw Object.assign(Error('stale'),{status:409,code:'stale_consent'});p.values=structuredClone(body.values);p.revision='r'+(Number(p.revision.slice(1))+1);return {fragment:p.fragment,revision:p.revision};}
+ if(path==='/api/orgs/'+id)return {...organization,state:fixture.deleting?'deletion-scheduled':'active',deletion:fixture.deleting?{notBefore:Date.UTC(2026,10,20)}:null};return {};}};
 const browser={secret:key=>secrets.get(key),storeSecret:(key,value)=>value===null?secrets.delete(key):secrets.set(key,value),download:(name,content)=>window.downloads.push({name,content}),focus:selector=>requestAnimationFrame(()=>document.querySelector(selector)?.focus())};const engine=new Engine({providers:{state:State,api:Provider.fromSingleton(api),browser:Provider.fromSingleton(browser),organizationsConsole:OrganizationsProvider,recoveryFile:Provider.fromSingleton({encrypt:async payload=>({encrypted:true,payload}),decrypt:async value=>JSON.parse(value).payload})}});
 await engine.container.use({state:{write:true}},({state})=>state.transition(s=>Object.assign(s,{loading:false,locale:options.locale,session:{account:{id:'owner'},sessionContext:'ctx'},config:{origin:'https://provider.example',organizationsEnabled:options.enabled},beamGeneration:1})));
 const root=document.getElementById('app'),paint=async()=>{const s=await engine.container.use(['state'],({state})=>state.snapshot());dodo.reconcile(root,[organizations(s)]);};engine.feed.addEventListener('browser-state-updated',()=>{window.painting=(window.painting??Promise.resolve()).then(paint);});root.addEventListener('3sln-intent',e=>{if(e.detail.kind==='organizations')window.pending=engine.dispatch(organizationsAction(e.detail)).next('complete');});window.act=(action,detail={})=>window.pending=engine.dispatch(new OrganizationsIntent({action,...detail})).next('complete');await paint();document.documentElement.lang=options.locale;window.ready=true;`;
@@ -29,3 +52,53 @@ for(const name of ['chromium','firefox'])for(const locale of ['en','es'])for(con
  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);assert.deepEqual(await page.locator('.org-console input,.org-console textarea,.org-console select').evaluateAll(els=>els.filter(e=>!e.labels?.length).map(e=>e.outerHTML)),[]);assert.deepEqual(await page.locator('.org-console section').evaluateAll(els=>els.filter(e=>!document.getElementById(e.getAttribute('aria-labelledby'))).map(e=>e.outerHTML)),[]);assert.deepEqual(page.errors,[]);
  }finally{await page.close();}});
 for(const name of ['chromium','firefox'])test('ORG-5 '+name+' disabled has no surface or API traffic',async()=>{const page=await open(name,{enabled:false});try{await page.evaluate(()=>window.act('reload'));assert.equal(await page.locator('.org-console').count(),0);assert.deepEqual(await calls(page),[]);}finally{await page.close();}});
+// ORG-5 discovery and organization context: a plain member's own view, server-advertised decisions operated from the
+// keyboard, the organization's apps and preferences acting for the organization, and the M3 deletion-pending state.
+const tabTo=async(page,selector,limit=120)=>{for(let i=0;i<limit;i++){await page.keyboard.press('Tab');if(await page.evaluate(s=>document.activeElement?.matches(s),selector))return true;}return false;};
+const a11y=async page=>{
+ assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,'no horizontal overflow');
+ assert.deepEqual(await page.locator('.org-console input,.org-console textarea,.org-console select').evaluateAll(els=>els.filter(e=>!e.labels?.length).map(e=>e.outerHTML)),[],'every control has a label');
+ assert.deepEqual(await page.locator('.org-console section').evaluateAll(els=>els.filter(e=>!document.getElementById(e.getAttribute('aria-labelledby'))).map(e=>e.outerHTML)),[],'every section is named by its heading');
+ assert.deepEqual(await page.locator('.org-console button,.org-console input:not([type=checkbox]),.org-console select').evaluateAll(els=>els.filter(e=>e.getBoundingClientRect().height<44).map(e=>e.outerHTML)),[],'touch targets');
+ assert.equal(await page.locator('.org-console h1').count(),1);
+ assert.equal(await page.locator('.org-console img,.org-console script,.org-console b,.org-console i,.org-console u').count(),0,'untrusted text never becomes markup');
+};
+for(const name of ['chromium','firefox'])for(const locale of ['en','es'])for(const colorScheme of ['light','dark'])for(const width of [320,390,1440])test('ORG-5 context '+[name,locale,colorScheme,width].join(' '),async()=>{const page=await open(name,{locale,colorScheme,width});try{
+ const es=locale==='es';await page.evaluate(()=>window.act('reload'));await settle(page);
+ // Discovery: the switcher offers owned and member organizations, each labelled with the person's role.
+ const options=await page.locator('nav select option').allTextContents();assert.ok(options.some(o=>o.includes('Member club')&&o.includes(es?'miembro':'member')),options.join('|'));assert.ok(options.some(o=>o.includes(es?'propietario':'owner')));
+ // A plain member: only their own view and requests; admin surfaces are neither rendered nor requested.
+ await page.evaluate(()=>{window.calls=[];});await page.locator('nav select').selectOption(memberOrg);await settle(page);
+ const own=page.locator('#org-membership').locator('..');assert.match(await own.textContent(),/https:\/\/provider\.example\/r\/9/);assert.match(await own.textContent(),es?/en pausa/:/on hold/);
+ for(const panel of ['#org-members','#org-connections','#org-preferences','#org-audit'])assert.equal(await page.locator(panel).count(),0,panel);
+ const memberCalls=(await calls(page)).map(c=>c.path);assert.deepEqual(memberCalls,['/api/orgs/'+memberOrg+'/membership','/api/orgs/'+memberOrg+'/requests']);
+ const pending=page.locator('#org-requests').locator('..').locator('article');assert.match(await pending.textContent(),/Reduce <i>access<\/i>/);assert.match(await pending.textContent(),es?/afecta a tu acceso/:/to your access/);
+ // Keyboard: reach the server-advertised Reject button with Tab and activate it with Enter.
+ await page.locator('#org-title').focus();assert.ok(await tabTo(page,'[data-org-action="decide-reject"]'),'decision reachable by keyboard');await page.keyboard.press('Enter');await settle(page);
+ assert.ok((await calls(page)).some(c=>c.path==='/api/orgs/'+memberOrg+'/grant-decision'&&c.body.request==='request-2'&&c.body.decision==='reject'));
+ await a11y(page);
+ // An admin acting for the organization: apps.
+ await page.locator('nav select').selectOption(org);await settle(page);
+ const apps=page.locator('#org-connections').locator('..');assert.match(await apps.textContent(),/Ledger <b>app<\/b>/);assert.match(await apps.textContent(),es?/no a ti/:/not to you/);
+ await submit(page,'connection-suspend');assert.deepEqual((await calls(page)).find(c=>c.path.endsWith('/connections')&&c.method==='POST').body,{operation:'suspend',input:{connection:'cx-1',expectedGeneration:1}});
+ assert.match(await apps.textContent(),es?/Suspendida/:/Suspended/);await submit(page,'connection-resume');assert.equal((await calls(page)).filter(c=>c.path.endsWith('/connections')&&c.method==='POST').at(-1).body.operation,'resume');
+ // Approving a staged change needs the review box; operate it from the keyboard (Space, then Enter on submit).
+ await submit(page,'connection-approve');assert.equal((await calls(page)).filter(c=>c.body?.operation==='approve').length,0,'native validity requires review');
+ const approve=apps.locator('form').filter({has:page.locator('[data-org-action="connection-approve"]')});await approve.locator('input[name="confirm"]').focus();await page.keyboard.press('Space');await approve.locator('button[type=submit]').focus();await page.keyboard.press('Enter');await settle(page);
+ assert.deepEqual((await calls(page)).find(c=>c.body?.operation==='approve').body.input,{connection:'cx-1',expectedGeneration:3,stagedRevision:'rev-2'});
+ const disconnect=apps.locator('form').filter({has:page.locator('[data-org-action="connection-disconnect"]')});await disconnect.locator('input[name="confirm"]').check();await submit(page,'connection-disconnect');assert.match(await apps.textContent(),es?/Desconectada/:/Disconnected/);
+ // Preferences: scalar fields are edited; the resource assignment is kept as stored and shown read-only.
+ const prefs=page.locator('#org-preferences').locator('..');assert.match(await prefs.textContent(),/Shared <u>settings<\/u>/);assert.match(await prefs.textContent(),/Ledger/);
+ await prefs.locator('input[name="field:displayName"]').fill('Shared team name');await prefs.locator('input[name="field:seats"]').fill('');await prefs.locator('input[name="confirm"]').check();await submit(page,'preference');
+ assert.deepEqual((await calls(page)).find(c=>c.path.endsWith('/preferences')&&c.method==='POST').body,{fragment:'https://schema.example/org/v1',values:{displayName:'Shared team name',files:'https://provider.example/r/1'},expectedRevision:'r1'});
+ assert.equal(await prefs.locator('input[name="field:displayName"]').inputValue(),'Shared team name');
+ await a11y(page);
+ // M3: while deletion is scheduled the member listing is fenced; the console says so, hides governance edits, and offers cancellation.
+ await page.evaluate(()=>{window.fixture.deleting=true;});await page.evaluate(()=>window.act('reload'));await settle(page);
+ const members=page.locator('#org-members').locator('..');assert.match(await members.textContent(),es?/en pausa/:/paused/);assert.equal(await members.locator('[role=status]').count(),1);assert.equal(await members.locator('form').count(),0);
+ const details=page.locator('#org-details').locator('..');assert.match(await details.textContent(),es?/eliminación está programada/:/Deletion is scheduled/);assert.equal(await details.locator('input[name="name"]').count(),0);
+ assert.equal(await page.locator('.org-console [role=alert]').count(),0,'the fence is a state, not an error');
+ await details.locator('form').first().locator('input[name="confirm"]').check();await submit(page,'cancel-deletion');assert.ok((await calls(page)).some(c=>c.method==='DELETE'&&c.path==='/api/orgs/'+org+'/deletion'));
+ assert.equal(await members.locator('form').count()>0,true,'member management returns after cancelling');
+ await a11y(page);assert.deepEqual(page.errors,[]);
+ }finally{await page.close();}});

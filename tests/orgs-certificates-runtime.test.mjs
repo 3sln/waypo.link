@@ -130,3 +130,21 @@ test('runtime: member-token DPoP RPC is not mounted with the member flags off', 
   const response = await f.app.fetch(new Request(`${ORIGIN}/bindle/rpc`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `DPoP ${token}`, DPoP: await dpop(key, { htu: `${ORIGIN}/bindle/rpc`, nowMs: Date.now(), ath: token }) }, body: JSON.stringify({ version: '0', tx: crypto.randomUUID(), resource: '@profile', contract: 'x', method: 'read', args: {} }) }));
   const body = await response.json(); assert.equal(response.status, 401); assert.equal(body.message, 'Bearer token required.', 'the DPoP provider path is not reached');
 });
+
+test('runtime ORG-6a review: inspection names the local organization and the app; a stale proof leaves no consent (M1, M2)', async t => {
+  const s = await setup(t), key = await holder(), env = { ...s.env, LOCAL_DEVELOPMENT: 'true', FEDERATION_AUTHORITY: { clients: [{ id: ERP.client_id, name: 'ERP', origin: ERP.origin, redirectUris: ['https://erp.example/callback'] }] } }, redirect = 'https://erp.example/callback', path = '/api/member-certificates/acquire';
+  const query = aud => '?' + new URLSearchParams({ client_id: ERP.client_id, redirect_uri: redirect, aud });
+  const inspect = async aud => { const r = await memberRoutes.owner({ request: new Request(ORIGIN + path + query(aud)), env, path, id: s.alice, object: accountHandle(s.env, s.alice) }); assert.equal(r.status, 200); return r.json(); };
+  const view = await inspect(s.aud);
+  assert.deepEqual(view.organization, { name: 'Acme Ltd', handle: view.organization.handle, host: new URL(ORIGIN).host, verified: true, source: 'local' });
+  assert.deepEqual(view.app, { name: 'ERP', claimedName: null, reviewed: true }); assert.deepEqual(view.client, ERP);
+  const unknown = await inspect(`${ORIGIN}/identity/99999999-9999-4999-8999-999999999999`);
+  assert.equal(unknown.organization.verified, false); assert.equal(unknown.organization.name, null);
+  const post = async proof => memberRoutes.owner({ request: new Request(ORIGIN + path, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: ORIGIN }, body: JSON.stringify({ client_id: ERP.client_id, redirect_uri: redirect, aud: s.aud, consent: true, delegate: key.jwk, proof }) }), env, path, id: s.alice, object: accountHandle(s.env, s.alice) });
+  const sign = iat => signMemberPop({ privateKey: key.privateKey, aud: s.aud, clientId: ERP.client_id, iat, issuer: ORIGIN, jkt: key.jkt, subject: s.alice });
+  await assert.rejects(post(await sign(Math.floor(Date.now() / 1000) - 121)), { code: 'invalid_request' });
+  assert.deepEqual((await s.invoke(s.alice, 'memberCertificatesList', [s.alice])).consents, []);
+  const ok = await post(await sign(Math.floor(Date.now() / 1000))); assert.equal(ok.status, 200); assert.ok((await ok.json()).certificate);
+  const [consent] = (await s.invoke(s.alice, 'memberCertificatesList', [s.alice])).consents;
+  assert.equal(consent.state, 'active'); assert.deepEqual(consent.keys.map(k => k.jkt), [key.jkt]);
+});

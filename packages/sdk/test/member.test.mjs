@@ -33,3 +33,19 @@ test('popup denial, forged results and invalid origin configuration reject and c
  const canceled=fixture(),request=canceled.request();await canceled.emit({type:'bindle:member-error',code:'canceled'});await assert.rejects(request,{code:'canceled'});
  await assert.rejects(acquireMemberCertificate({issuer:ISSUER,aud:AUD,clientId:CLIENT,redirectUri:'https://evil.example/callback',window:fixture().win}),{code:'invalid_request'});
 });
+test('review M1: every ready (sent after member confirmation) is answered with a freshly signed proof for the same holder',async()=>{
+ let now=1800000000000;let listener,opened;const messages=[];
+ const popup={closed:false,close(){},postMessage(data){messages.push(data);}},win={location:{origin:'https://app.example'},open(url){opened=new URL(url);return popup;},addEventListener(n,fn){listener=fn;},removeEventListener(){listener=null;}};
+ const pending=acquireMemberCertificate({issuer:ISSUER,aud:AUD,clientId:CLIENT,redirectUri:REDIRECT,window:win,clock:()=>now});pending.catch(()=>{});
+ const ready={type:'bindle:member-ready',state:opened.searchParams.get('state'),subject:SUBJECT,issuer:ISSUER,aud:AUD,client:{client_id:CLIENT,origin:'https://app.example'}},emit=data=>listener?.({source:popup,origin:ISSUER,data});
+ await emit(ready);now+=300000;await emit(ready);
+ assert.equal(messages.length,2);assert.equal(messages[0].delegate.x,messages[1].delegate.x,'same holder key');assert.equal(messages[1].proof.iat-messages[0].proof.iat,300,'the re-request is signed now');
+ const publicKey=await crypto.subtle.importKey('jwk',messages[1].delegate,{name:'ECDSA',namedCurve:'P-256'},false,['verify']),jkt=Buffer.from(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify({crv:'P-256',kty:'EC',x:messages[1].delegate.x,y:messages[1].delegate.y})))).toString('base64url');
+ assert.equal(await crypto.subtle.verify({name:'ECDSA',hash:'SHA-256'},publicKey,Buffer.from(messages[1].proof.signature,'base64url'),memberPopInput({aud:AUD,clientId:CLIENT,issuer:ISSUER,subject:SUBJECT,iat:messages[1].proof.iat,jkt})),true);
+ await emit({...ready,subject:'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'});await assert.rejects(pending,{code:'invalid_response'});assert.equal(messages.length,2);
+});
+test('review M1: re-requests are bounded and a page failure reaches the app',async()=>{
+ const f=fixture(),pending=f.request();const ready={type:'bindle:member-ready',subject:SUBJECT,issuer:ISSUER,aud:AUD,client:{client_id:CLIENT,origin:'https://app.example'}};
+ for(let i=0;i<5;i++)await f.emit(ready);await assert.rejects(pending,{code:'acquisition_failed'});assert.equal(f.messages.length,4);assert.equal(f.popup.closed,true);
+ const g=fixture(),failed=g.request();await g.emit(ready);await g.emit({type:'bindle:member-error',code:'acquisition_failed'});await assert.rejects(failed,{code:'acquisition_failed'});assert.equal(g.listening,false);
+});

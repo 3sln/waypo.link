@@ -4,13 +4,17 @@
 // Home placement (a person's account):
 //   memberCertificateConsent(owner, {client, input})   trusted adapter only: `client` is the OBSERVED client (R2-M3)
 //   memberCertificateIssue(owner, {actor, input})      trusted adapter only: actor {kind:'owner'} or {kind:'app', client}
+//   memberCertificateAcquire(owner, {client, input})   trusted adapter only: consent + first issuance, one transaction
 //   memberCertificatesList / memberCertificatesRevoke  the member's own view and revocation (never flag-gated)
 //   memberCertificateStatus(subject, jkt)              public status (gate none)
 //   memberCertificateKeys(subject)                     local read for organizations on this host (gate none)
+//   memberCertificateOrganization(owner, aud)          ORG-6a consent screen: who `aud` is (review M2); never consults
+//                                                      membership (ORG-D9), and its answer goes only to the member
 // Organization placement (an organization's account):
 //   memberToken / memberDirect / memberAuthenticate    the wire forms; every failure is the uniform fault
 //   memberContextEnd(org, input)                       ORG-2 hook: end tokens for a membership or principal
 //   memberCertificateLifetime(org)                     the organization's lifetime, read by home issuers (gate none)
+//   memberCertificateOrganizationName(org)             display name and handle of an active organization (gate none)
 //   memberCertificateSettingsDispatch(org, request)    admin settings, actor resolved by ORG-0 `accountActor`
 // Foreign issuers: the ORG-7 directory from ./foreign-directory.mjs (adapter-injected SSRF-screened egress) is the
 // `foreign` port only while DIRECTORY_ENABLED and ORG_FOREIGN_MEMBERS_ENABLED are on; the engine is rebuilt when that
@@ -21,7 +25,7 @@ import {StorageError} from '../../storage/policy.mjs';
 import {encryptSecret,decryptSecret} from '../secrets.mjs';
 import {flagsFor} from './flags.mjs';
 import {authorityEpoch} from '../../identity/authority-epoch.mjs';
-import {MemberCertificateIssuer,memberCertificatesProvider,certificationSigner,certificationKeyList,memberCertificateLifetime,GrantMemberConsent,IssueMemberCertificate,RevokeMemberConsent,RevokeMemberKey,MemberCertificateList,MemberCertificateStatus,MEMBER_CERTIFICATES_FLAG,MEMBER_CERTIFICATE_DEFAULT_SECONDS} from '../../identity/member-certificates.mjs';
+import {MemberCertificateIssuer,memberCertificatesProvider,certificationSigner,certificationKeyList,memberCertificateLifetime,GrantMemberConsent,AcquireMemberConsentCertificate,IssueMemberCertificate,RevokeMemberConsent,RevokeMemberKey,MemberCertificateList,MemberCertificateStatus,MEMBER_CERTIFICATES_FLAG,MEMBER_CERTIFICATE_DEFAULT_SECONDS} from '../../identity/member-certificates.mjs';
 import {MemberContextService,memberContextProvider,cachedIssuerKeys,directoryIssuerKeys,memberPrincipalKey,MemberToken,MemberTokenAdmit,MemberDirect,MemberAuthenticate,EndMemberTokens,MemberKeyRefresh,MEMBER_CONTEXT_OWNER_OPERATIONS,ORG_FOREIGN_MEMBERS_FLAG} from '../../orgs/certificates.mjs';
 import {ORG_RECORD,ORG_EPOCH,ORGANIZATIONS_FLAG} from '../../orgs/organizations.mjs';
 import {accountActor} from '../../orgs/authority.mjs';
@@ -95,6 +99,7 @@ const plain=value=>value!==null&&typeof value==='object'&&!Array.isArray(value);
 export const methods={
  // ---- home placement ----
  async memberCertificateConsent(owner,{client,input}={}){await this.warm(owner);return perform(issuerEngine(this),new GrantMemberConsent({actor:{kind:'owner',owner,client:plain(client)?{client_id:client.client_id,origin:client.origin}:null},input:structuredClone(input??{})}));},
+ async memberCertificateAcquire(owner,{client,input}={}){await this.warm(owner);return perform(issuerEngine(this),new AcquireMemberConsentCertificate({actor:{kind:'owner',owner,client:plain(client)?{client_id:client.client_id,origin:client.origin}:null},input:structuredClone(input??{})}));},
  async memberCertificateIssue(owner,{actor,input}={}){await this.warm(owner);const resolved=actor?.kind==='app'&&plain(actor.client)?{kind:'app',owner,client:{client_id:actor.client.client_id,origin:actor.client.origin}}:{kind:'owner',owner};return perform(issuerEngine(this),new IssueMemberCertificate({actor:resolved,input:structuredClone(input??{})}));},
  async memberCertificatesList(owner){await this.warm(owner);return read(issuerEngine(this),new MemberCertificateList({actor:{kind:'owner',owner}}));},
  async memberCertificatesRevoke(owner,input){await this.warm(owner);if(!plain(input))throw new StorageError('invalid_request','Unsupported member certificate request.');const value=structuredClone(input);return perform(issuerEngine(this),value.jkt!==undefined?new RevokeMemberKey({actor:{kind:'owner',owner},input:value}):new RevokeMemberConsent({actor:{kind:'owner',owner},input:value}));},
@@ -104,7 +109,21 @@ export const methods={
   if(a?.status!=='active'||a.kind==='organization')return null;const signing=(await this.identityKeyHistory(subject,{purpose:'signing'})).find(k=>k.current);
   return {identity:a.identityUri??identityURI(this.config,subject),signing:signing?{kid:signing.kid,publicJwk:{kty:'EC',crv:'P-256',x:signing.publicJwk.x,y:signing.publicJwk.y}}:null,keys:await certificationKeyList(this.metadata,subject)};
  },
+ /** Names the organization a consent screen is about: the local record on this host, or the ORG-7 directory document
+  * for a foreign one (only while the gated directory exists). Anything unresolvable answers {verified:false}, and the
+  * page warns. Membership is never read, so the answer does not depend on whether the member belongs (ORG-D9). */
+ async memberCertificateOrganization(owner,aud){
+  const unverified=source=>({name:null,handle:null,verified:false,source});
+  const org=localAudience(this.config,aud);
+  if(org){const r=await peer(this.config,org,'memberCertificateOrganizationName',[org]).catch(()=>null);return typeof r?.name==='string'?{name:r.name,handle:typeof r.handle==='string'?r.handle:null,verified:true,source:'local'}:unverified('local');}
+  let issuer,subject;try{const u=new URL(aud);issuer=u.origin;subject=/^\/identity\/([0-9a-f-]{36})$/.exec(u.pathname)?.[1];}catch{return unverified('directory');}
+  if(!subject||!UUID.test(subject))return unverified('directory');
+  try{const directory=foreignDirectory(this.config,{store:this.metadata,owner});if(!directory)return unverified('directory');const d=await directory.refresh({issuer,subject});
+   return d?.kind==='organization'&&d.iss===issuer&&d.sub===subject?{name:null,handle:typeof d.handle==='string'?d.handle:null,verified:true,source:'directory'}:unverified('directory');}
+  catch{return unverified('directory');}
+ },
  // ---- organization placement ----
+ async memberCertificateOrganizationName(org){const r=await this.metadata.get(ORG_RECORD);if(r?.kind!=='organization'||r.id!==org||r.state!=='active'||typeof r.name!=='string')return null;return {name:r.name,handle:typeof r.handle==='string'?r.handle:null};},
  async memberCertificateLifetime(org){const r=await this.metadata.get(ORG_RECORD);if(r?.kind!=='organization'||r.id!==org)return null;const s=await this.metadata.get('org/cert/settings');return {certificateSeconds:memberCertificateLifetime(s?.certificateSeconds)??MEMBER_CERTIFICATE_DEFAULT_SECONDS};},
  async memberToken(org,input){return wire(this,org,MemberToken,input,true);},
  /** The runtime token form, step 1: verification and the member context; the route then mints the federation token
@@ -124,7 +143,7 @@ export const methods={
  },
 };
 export const rpc={
- memberCertificateConsent:{warm:true},memberCertificateIssue:{warm:true},memberCertificatesList:{lifecycle:'suspended'},memberCertificatesRevoke:{lifecycle:'suspended'},
- memberCertificateStatus:{gate:'none',lifecycle:'purging'},memberCertificateKeys:{gate:'none'},memberCertificateLifetime:{gate:'none'},
+ memberCertificateConsent:{warm:true},memberCertificateAcquire:{warm:true},memberCertificateIssue:{warm:true},memberCertificatesList:{lifecycle:'suspended'},memberCertificatesRevoke:{lifecycle:'suspended'},
+ memberCertificateStatus:{gate:'none',lifecycle:'purging'},memberCertificateKeys:{gate:'none'},memberCertificateOrganization:{},memberCertificateLifetime:{gate:'none'},memberCertificateOrganizationName:{gate:'none'},
  memberToken:{},memberTokenAdmit:{},memberDirect:{},memberAuthenticate:{},memberContextEnd:{lifecycle:'suspended'},memberCertificateSettingsDispatch:{},
 };
