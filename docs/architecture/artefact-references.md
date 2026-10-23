@@ -230,8 +230,8 @@ Each existing body becomes version 1 of its line, unchanged, so its legacy diges
 | Slice | Owns | Depends on |
 | --- | --- | --- |
 | **ART-1** Core library | `packages/core/strict-json.mjs`, `packages/core/artefacts.mjs`, `tests/artefacts/core.test.mjs`, `docs/architecture/artefacts/artefact-envelope.vectors.json` | Spec sign-off on §3–§6 |
-| **ART-2** Publication | `docs/artefacts/artefacts.lock.json`, `packages/core/public-contracts.mjs`, `scripts/build-docs.mjs`, `tests/contract-registry.test.mjs` | ART-1 |
-| **ART-3** Store and resolver | `packages/federation/artefact-store.mjs`, `packages/runtime/artefacts.mjs`, `packages/flags/registry.mjs` (one row, after FF-5 lands), `tests/artefacts/store.test.mjs`, `tests/artefacts/chaos.test.mjs` | ART-1; FF-5 registry edits merged |
+| **ART-2** Publication — local build implemented 2026-10-22; HTTP envelope/record route hunk pending (outside slice ownership), review unsigned | `docs/artefacts/artefacts.lock.json`, `packages/core/public-contracts.mjs`, `scripts/build-docs.mjs`, `tests/contract-registry.test.mjs` | ART-1 |
+| **ART-3** Store and resolver — engine implementation and seeded tests 2026-10-22; adapter wiring remains ART-4, review unsigned | `packages/federation/artefact-store.mjs`, `packages/runtime/artefacts.mjs`, `packages/flags/registry.mjs` (one row, after FF-5 lands), `tests/artefacts/store.test.mjs`, `tests/artefacts/chaos.test.mjs` | ART-1; FF-5 registry edits merged |
 | **ART-4** Pin call sites | `packages/federation/{schema,extensions,event-buses}.mjs`, `packages/events/store.mjs`, `packages/runtime/{federation,incremental-authorization}.mjs` (fetcher wiring hunks only) | ART-3; FF-5 merged (it owns the two runtime files and has uncommitted edits in `extensions.mjs` and `event-buses.mjs`); before ORG-10's `schema.mjs` hunk |
 | **ART-5** Grants and consent | `packages/federation/{service,incremental}.mjs`, consent views, `packages/sdk` request members | ART-4 |
 | **ART-6** Contracts and brokered | `packages/federation/{introspection,brokered,integrations}.mjs` | ART-4 |

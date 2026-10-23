@@ -1,0 +1,79 @@
+[
+  {
+    "id": "https://3sln.me/artefacts/contracts/object-storage/v1",
+    "kind": "rpc-contract",
+    "versions": [
+      "sha256-LMuzkMNAEQ4kdHzZ8ZrbEpN1He-GS3Ip3pKakUZN86o"
+    ]
+  },
+  {
+    "id": "https://3sln.me/artefacts/contracts/preferences/v1",
+    "kind": "rpc-contract",
+    "versions": [
+      "sha256-iR16DGNTCnjqj7WDyEtkZgbWlpsK88gS84yCPBIUTtA"
+    ]
+  },
+  {
+    "id": "https://3sln.me/artefacts/contracts/profile/v1",
+    "kind": "rpc-contract",
+    "versions": [
+      "sha256-F9lFjcNnnzjoqHwvRB2cdgbOurHB_uZZjqE29ZN30Fc"
+    ]
+  },
+  {
+    "id": "https://3sln.me/artefacts/contracts/app-messages/v1",
+    "kind": "rpc-contract",
+    "versions": [
+      "sha256-8MskUR6_zORJmKzhMhV5qFstcyJETejRyPyflw8um8U"
+    ]
+  },
+  {
+    "id": "https://3sln.me/artefacts/contracts/resource-descriptor/v1",
+    "kind": "rpc-contract",
+    "versions": [
+      "sha256-J2y4MfPwdzccZnqLQ0ULbihba6S70aIL0-uzVNCo3Y0"
+    ]
+  },
+  {
+    "id": "https://3sln.me/artefacts/contracts/resource-scoping/v1",
+    "kind": "rpc-contract",
+    "versions": [
+      "sha256-E1H-Lu6ovOyqGRpFQRg6D-btsTjRPoh1XPoGsSUBIDo"
+    ]
+  },
+  {
+    "id": "https://3sln.me/artefacts/contracts/preferences/v2",
+    "kind": "rpc-contract",
+    "versions": [
+      "sha256-tnovv_AUZVEPaPLSYRwGT3JoHl1iOZgwT-maBLVJ6Eg"
+    ]
+  },
+  {
+    "id": "https://3sln.me/artefacts/conversation-v1.json",
+    "kind": "submission-schema",
+    "versions": [
+      "sha256-4e1k3tDy1YR_Ir4HN3beP079vxndcbbRMXphlJKZlp0"
+    ]
+  },
+  {
+    "id": "https://3sln.me/artefacts/preferences/app-messages/v1",
+    "kind": "fragment",
+    "versions": [
+      "sha256-LloIImEYXKCJI_7dADkwoVds3nHbWlOkTOl2PXdQj7E"
+    ]
+  },
+  {
+    "id": "https://3sln.me/artefacts/profiles/components/v1",
+    "kind": "manifest-profile",
+    "versions": [
+      "sha256--udu0QCvYvOk75SW3Dh8Cr-aLPdsWvbr7b9V9yvxbJU"
+    ]
+  },
+  {
+    "id": "https://3sln.me/artefacts/slots/item-classifier/v1",
+    "kind": "slot",
+    "versions": [
+      "sha256-IVhINUsHlqxzcwI2LSq3IK99lKaclCXOH4Eb2MEW6vE"
+    ]
+  }
+]

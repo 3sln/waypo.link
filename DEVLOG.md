@@ -2959,3 +2959,14 @@ The integration status for each backlog item is in [account deletion and export]
 - **Gates:** Worker 78, UI-state 291, e2e 214 with 4 WebKit skips, asset build and Worker dry run. Core passes except for two flag-count assertions that change with the concurrent ART-3 flag row.
 
 Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-22 — ART-2 and ART-3: artefact publication, store and resolver
+
+Following [artefact references](docs/architecture/artefact-references.md) ART-D12–D15:
+- **Publication:** the docs build emits envelopes and version records, and canonical URLs keep their legacy bodies during the transition. Records are tracked in a lock file (`docs/artefacts/artefacts.lock.json`).
+- **Store and resolver:** engine operations, behind the new default-off `ARTEFACT_VERSIONS_ENABLED` (class a, critical). Existing pins survive turning the flag off, and version records are never deleted. Tests include 24 seeded chaos schedules.
+- **Deviation:** the conversation artefact uses a separate backing body file to avoid a `.json` file/directory collision. Its canonical response is unchanged.
+- **Not yet:** serving `<id>/envelope` and `<id>/versions/<n>` needs a `routes/site.mjs` hunk. Adapter wiring is ART-4 and mirror serving is ART-7.
+- **Gates:** focused 75, Worker 78, UI-state 291, asset build and Worker dry run. The flag-registry test is updated for the 43rd flag.
+
+Reviewer: ___ Date: ___ Outcome: ___

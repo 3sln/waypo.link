@@ -15,6 +15,7 @@ export const GATE_REVISION='da57c7b1a49b7b2878ac8c329915ea0be4925cc3edad9e51bd42
 const common=['cloudflareTurnstileProductionConfigured','cloudflareBotProtectionVerified','realBrowserFlowsPassing','durableStorageAndArchiveRecoveryVerified','notificationTransportsVerified','emailLifecycleVerified','storageProviderConformanceVerified','federatedOAuthConformanceVerified','generalPreferenceConsentComplete','webArchiveRenderingComplete','lifecycleNoticesAndDeletionVerified','securityRedTeamFindingsResolved','termsAndPrivacyApproved'];
 export const RELEASE_GATES=Object.freeze(common);
 const rows=[
+ ['ARTEFACT_VERSIONS_ENABLED','a','G',{risk:'crit',stateful:true,retainExisting:false,retentionReason:'Pins and records live in the provider-wide artefact store; no account-local predicate.',envParse:'boolean'}],
  ['ACTIVITY_V2_ENABLED','a','G A S P C V',{stateful:true,client:true,experiment:{metrics:['activity_opened']},envParse:'boolean'}],
  ['EVENT_BUSES_ENABLED','a','G A S P',{stateful:true,envParse:'boolean'}],
  ['INTEGRATIONS_ENABLED','a','G A S P C',{risk:'crit',stateful:true,envParse:'boolean'}],
