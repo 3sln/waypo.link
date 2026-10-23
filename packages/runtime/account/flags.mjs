@@ -24,6 +24,8 @@ export class AccountFeatureState extends AppQuery{
   state.EXTENSIONS_ENABLED=await any('connections/slot/',r=>r?.occupants?.length>0);
   state.BINDLEBOX_ENABLED=await any('link/',r=>live(r,owner))||await any(key('key-delegation',owner),r=>live(r,owner));
   state.BEAM_ENABLED=await any('beam/offer/',r=>r.sender===owner&&['offered','accepted'].includes(r.state)&&r.expiresAt>clock.now());
+  // ORG-1: an organization's own account, and a person who is owner of record of one, stay serviceable.
+  state.ORGANIZATIONS_ENABLED=(await store.get('org/record-v1'))?.kind==='organization'||await any('orgs/owned/',r=>typeof r?.org==='string');
   // Incremental grants and linked-device lineages live on the federation/identity
   // placements, not in this store; they cannot be inferred from account settings.
   return state;

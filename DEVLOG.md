@@ -3171,3 +3171,47 @@ Reviewer: ___ Date: ___ Outcome: ___
 The intent agent's final Worker and browser reruns were blocked by its sandbox; the combined-tree gates cover them.
 
 Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-23 — Organizations phase A: ORG-0 (power resolver), ORG-1 (organization entity), ORG-7 (directory.v1)
+
+Following the [organizations design](docs/architecture/organizations-design.md) rev 5.4, §13.
+
+**ORG-7 `directory.v1`**, behind the default-off `DIRECTORY_ENABLED`:
+- publisher routes for handle lookup and identity documents;
+- an engine-backed `resolveIdentityKey` hook;
+- a bounded verifier with SSRF-safe fetch, budgets, caching and continuity pins;
+- conditional `portability.v1` advertisement;
+- unknown, deleted and suspended identities answer the uniform 404.
+
+Foreign issuers default to an empty allowlist. Production egress and independent-provider conformance are unverified. The verifier lives in `packages/federation`, and an account adapter enforces lifecycle fences.
+
+**ORG-0, the power resolver seam:**
+- the router builds `{actor}`, and the single writer re-resolves powers, ignoring any powers the caller supplied;
+- operations declare `static entities`, defaulting to person only;
+- existing tests are unchanged.
+
+**ORG-1, the organization entity**, behind the default-off `ORGANIZATIONS_ENABLED`:
+- **Identity:** `kind:'organization'`, with its own handle and keys and a v2 recovery file issued at creation.
+- **Refusals:** every session and recovery path refuses an organization, and organization moves stay refused.
+- **Creation:** resumable and idempotent. The paid check is a port, which in production is an operator allowlist that fails closed. The creator becomes owner of record and the initial admin.
+- **Management:** rename (display name), the kind label, and a 30-day delayed deletion.
+
+**Provisional deviations:**
+- named account methods still take the owner id;
+- a due deletion holds at `deletion-due` until a purge hand-off exists;
+- handles aren't renamable;
+- at most 10 organizations per creator;
+- the audit isn't hash-chained;
+- Node needs `ORGANIZATIONS_PAID_ALLOWLIST` in its config.
+
+**Spec defect:** ORG-0's `epoch` is undefined. The person's `security.epoch` is used, which is broader than `aep`. The same-host `aep` source for the §12c.3 hold is unspecified, and ORG-2 needs it.
+
+**Unresolved:**
+- R4-M5 passphrase encryption and the console (ORG-5);
+- organization recovery-file reissue;
+- `orgs.forget` wiring;
+- flag targeting for organization accounts.
+
+**Gates (combined tree):** core 2748 and e2e 214 with 4 WebKit skips (both rerun by the coordinator), Worker 83, UI-state 292, asset build and Worker dry run.
+
+Reviewer: ___ Date: ___ Outcome: ___

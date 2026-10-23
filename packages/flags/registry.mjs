@@ -43,6 +43,10 @@ const rows=[
  // committed redirects are a commitment that no flag gates. Cancellation and disputes are never gated.
  ['IDENTITY_TRANSFER_OUT_ENABLED','a','G A S P',{risk:'crit',stateful:true,retainExisting:false,retentionReason:'Pending transfers continue under the env kill switch (background), not the evaluated flag; committed redirects are never flag-gated.',envParse:'boolean',
   gates:['termsAndPrivacyApproved','realBrowserFlowsPassing','securityRedTeamFindingsResolved','lifecycleNoticesAndDeletionVerified','notificationTransportsVerified']}],
+ // Organizations phase A (organizations design §13.1, ORG-0/ORG-1). Gates creation and exposure; an existing
+ // organization's own account (and its owner of record's index) is retained, and cancelling a scheduled deletion is never
+ // gated. The subject is the organization's account, or the creating person for creation.
+ ['ORGANIZATIONS_ENABLED','a','G A',{risk:'crit',stateful:true,envParse:'boolean'}],
  ['SIGNUP_ENABLED','c','G R',{risk:'crit',outage:'last-known'}],
  ['PAID_SIGNUP_ENABLED','c','G R',{risk:'crit',outage:'last-known',capabilities:['billing-configuration']}],
  ['WAITLIST_ENABLED','c','G R',{outage:'last-known'}],
@@ -50,6 +54,7 @@ const rows=[
  ['BROKERING_ENABLED','c','G C',{risk:'crit',outage:'last-known',requires:['INTEGRATIONS_ENABLED'],dependencyMode:'global',envParse:'boolean'}],
  ['MCP_ENABLED','c','G C',{risk:'crit',outage:'last-known'}],
  ['CLIENT_METADATA_ENABLED','c','G',{risk:'crit'}],
+ ['DIRECTORY_ENABLED','c','G',{risk:'crit',envParse:'boolean'}],
  // Identity portability PORT-4/PORT-5 (identity-portability design §10.2). Transfer-in gates new intakes and begins
  // only: polling, activation and cancellation of an existing transfer-in follow the env kill switch (background), so a
  // ramp-down never strands an identity whose source already committed. Adoption off: verifiers adopt no move.

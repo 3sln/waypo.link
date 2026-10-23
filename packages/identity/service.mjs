@@ -6,6 +6,7 @@ import {normalizeHandle,validatePaidHandle,isReservedHandle} from './handles.mjs
 import { IdentityCrypto, secureEqual } from './crypto.mjs';
 import { DeviceLogin } from './device-login.mjs';
 import { LinkedApproval, MemoryLinkedLimits, pruneLineage, revokeLineage, revokeAllLineage } from './linked-approval.mjs';
+import { interactiveIdentity } from './organizations.mjs';
 
 /**
  * DX-6 identity security state (docs/architecture/account-deletion-export.md §2.1, §3, §6, R1-H1).
@@ -165,7 +166,7 @@ export class IdentityService {
   }
   async pending(value, context) {
     const [id] = tokenParts(value); const account = await this.repository.get(id);
-    if (!account || !['pending', 'recovering'].includes(account.status) || account.pendingExpiresAt <= this.clock() || !secureEqual(account.pendingHash, await this.crypto.hash('pending', value))) fail('unauthorized', 'This setup session has expired.');
+    if (!account || !interactiveIdentity(account) || !['pending', 'recovering'].includes(account.status) || account.pendingExpiresAt <= this.clock() || !secureEqual(account.pendingHash, await this.crypto.hash('pending', value))) fail('unauthorized', 'This setup session has expired.');
     if(account.setupBindingHash&&(!context?.setupBinding||!secureEqual(account.setupBindingHash,await this.crypto.hash('setup-binding',context.setupBinding))))fail('unauthorized','Continue account setup in the browser that started it.');return account;
   }
   async newPending(account,context) {
@@ -176,6 +177,8 @@ export class IdentityService {
     return value;
   }
   async session(account, { label, credentialId, source = 'credential', activationCredentialAt, parentSessionId, expiresAt: cap = Infinity, scope } = {}) {
+    // ORG-1: nobody signs in as an organization (spec organizations §3); every session path ends here.
+    if (!interactiveIdentity(account)) fail('unauthorized', 'Authentication failed.');
     const sessionToken = `${account.id}.${this.crypto.random()}`; const csrfToken = this.crypto.random();
     const expiresAt = Math.min(this.clock() + this.config.sessionTtlMs, cap);
     await this.pruneSessions(account, s => s.expiresAt <= this.clock(), { natural: true });
@@ -197,7 +200,7 @@ export class IdentityService {
     const [id] = tokenParts(context?.sessionToken); const account = await this.repository.get(id);
     const hash = await this.crypto.hash('session', context.sessionToken);
     const session = account?.sessions.find(s => secureEqual(s.hash, hash) && s.expiresAt > this.clock());
-    if (!account || !session) fail('unauthorized', 'Sign in to continue.');
+    if (!account || !session || !interactiveIdentity(account)) fail('unauthorized', 'Sign in to continue.');
     // DX-7: a closure-export session is accepted only where the caller opted in (export, status, step-up and
     // sign-out), only for a suspended account whose applied closure still offers an export window.
     if (session.scope === 'closure-export') { if (!closure || !['suspended', 'moved'].includes(account.status) || !await this.closureWindow(account)) fail('unauthorized', 'Sign in to continue.'); }
@@ -530,7 +533,8 @@ export class IdentityService {
     const account = await this.repository.get(id);
     const proofHash = await this.crypto.hash('recovery', input.recoveryToken);
     const resumed = account?.status === 'recovering' && secureEqual(account.recoveryResumeHash, proofHash);
-    if (!account || (!resumed && (!['active','pending'].includes(account.status) || !secureEqual(account.recoveryHash, proofHash)))) fail('unauthorized', 'Recovery failed.');
+    // Organization recovery (break-glass, design §5.11) is phase B (ORG-12): until then an organization file recovers nothing.
+    if (!account || !interactiveIdentity(account) || (!resumed && (!['active','pending'].includes(account.status) || !secureEqual(account.recoveryHash, proofHash)))) fail('unauthorized', 'Recovery failed.');
     if((resumed?account.recoveryResumeBackupVersion:account.recoveryBackupVersion)===2){
       if(!this.identityBackup||!input.identityBackup)fail('unauthorized','Provide the signed identity recovery file.');
       const expectedKid=resumed?account.recoveryResumeKeyKid:account.recoveryKeyKid;
@@ -563,7 +567,8 @@ export class IdentityService {
       account.revision = revision + 1;
       await this.repository.compareAndSwap(account.id, revision, account);
     }
-    return { account: await this.projectAccount(account), csrfToken: session.csrfToken, expiresAt: session.expiresAt,authTime:Number.isFinite(this.authAt(session))?this.authAt(session):null,sessionContext:await this.sessionID(session),signOutImpact:await this.signOutImpact(account,session),
+    // `securityEpoch` feeds the ORG-0 actor (packages/orgs/authority.mjs); the HTTP router strips it from /api/session.
+    return { account: await this.projectAccount(account), csrfToken: session.csrfToken, expiresAt: session.expiresAt,authTime:Number.isFinite(this.authAt(session))?this.authAt(session):null,securityEpoch:securityState(account).epoch,sessionContext:await this.sessionID(session),signOutImpact:await this.signOutImpact(account,session),
       credentials: publicCredentials(account),
       devices: await Promise.all(account.sessions.filter(s => s.expiresAt > this.clock()).map(async s => ({
         id: await this.sessionID(s), label: s.label || 'Browser session', createdAt: s.createdAt, ...s.parentSessionId?{approvedFrom:s.parentSessionId}:{},

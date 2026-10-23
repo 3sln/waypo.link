@@ -9,6 +9,8 @@ import {ActivePopulationStorage,recordOwnerPopulation} from './active-population
 import {createAppEngine,operate,operationPolicy} from '../app/engine.mjs';
 import {systemClock,cryptoRandom,nullAudit} from '../app/providers.mjs';
 import {ACCOUNT_OPERATIONS} from '../app/operations.mjs';
+import {accountActor} from '../orgs/authority.mjs';
+import {ORG_RECORD} from '../orgs/organizations.mjs';
 import {accountProviders} from '../app/account.mjs';
 import {SavedViews} from '../app/domains/views.mjs';
 import {TagRules,TagLabels} from '../app/domains/tags.mjs';
@@ -221,9 +223,12 @@ export class AccountController {
    * boundary (cloned, so a Node caller's object is never shared); the actor is the authenticated owner this
    * account belongs to. The account gate around `invoke` still serializes it with every other method. */
   async dispatch(owner,request){
-    const {operation,id,input}=structuredClone(request??{}),Operation=typeof operation==='string'&&Object.hasOwn(ACCOUNT_OPERATIONS,operation)?ACCOUNT_OPERATIONS[operation]:null;
+    const {operation,id,input,actor:requested}=structuredClone(request??{}),Operation=typeof operation==='string'&&Object.hasOwn(ACCOUNT_OPERATIONS,operation)?ACCOUNT_OPERATIONS[operation]:null;
     if(!Operation)throw new StorageError('unsupported_method','Unsupported account operation.',400);
-    await this.warm(owner);if(['activity.list','activity.pending'].includes(operation))recordFlag(this,owner,'ACTIVITY_V2_ENABLED','exposure');const result=await operate(this.engine,new Operation({actor:{kind:'owner',owner},id,input}));if(operation==='activity.get')recordFlag(this,owner,'ACTIVITY_V2_ENABLED','activity_opened');return result;
+    // ORG-0: the trusted adapter's actor is resolved here, inside the gate; powers never come from the caller. No
+    // registered operation supports an organization entity yet, so only a person acting as itself gets through.
+    const actor=await accountActor({owner,requested,Operation,issuer:this.config.APP_ORIGIN,organization:()=>this.metadata.get(ORG_RECORD)});
+    await this.warm(owner);if(['activity.list','activity.pending'].includes(operation))recordFlag(this,owner,'ACTIVITY_V2_ENABLED','exposure');const result=await operate(this.engine,new Operation({actor,id,input}));if(operation==='activity.get')recordFlag(this,owner,'ACTIVITY_V2_ENABLED','activity_opened');return result;
   }
   async invoke({method,args}){
     if(typeof method!=='string'||!Object.hasOwn(ACCOUNT_RPC,method))return {$fault:{code:'unsupported_method',message:'Unsupported account operation.',status:400}};
@@ -293,6 +298,7 @@ export class AccountController {
     // inside every generation transaction). It never runs while fenced, so E6 owns cleanup from the fence on.
     await this.exportAlarm();
     await this.appRemovalAlarm();
+    if(typeof this.orgsAlarm==='function')await this.orgsAlarm();
     await this.alarmMaintenance();
     }finally{if(Number.isSafeInteger(deletionWake))await armAlarm(this.metadata,deletionWake);if(Number.isSafeInteger(transferWake))await armAlarm(this.metadata,transferWake);}
   }

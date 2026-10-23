@@ -5,6 +5,7 @@ import {accountRoutePaths} from './account-session-http.mjs';
 import {accountCookiesEnabled,selectedAccountMember,parseAccountCookies,hasAccountVault,installedAccountCookies,accountFault} from './account-cookies.mjs';
 import {FlagsRuntime} from './flags.mjs';
 import {OwnerQuery,ClosureOwnerQuery,IdentityFault} from '../identity/index.mjs';
+import {personActor} from '../orgs/authority.mjs';
 import * as deletionRoutes from './routes/deletion.mjs';
 import * as exportRoutes from './routes/exports.mjs';
 // DX-7 closure-export sessions reach only these routes: session, deletion status and the owner's export.
@@ -61,13 +62,18 @@ export default {
      const restricted=await deletionRoutes.stages.beforeActivity(route)??await exportRoutes.stages.beforeActivity(route);if(restricted)return restricted.passthrough??restricted;
      return json({error:'closure_restricted',message:'Only export and deletion status are available for this account.'},403);
     }
-    if(path==='/api/session'){if(vault&&!accountMember&&!vaultPresent&&context.sessionToken){const headers=new Headers({'Cache-Control':'private, no-store'});for(const value of await installedAccountCookies(env,{owner:owner.account.id,token:context.sessionToken,expiresAt:owner.expiresAt,sessionContext:owner.sessionContext},local))headers.append('Set-Cookie',value);headers.append('Set-Cookie',cookie('',local,0));return json({authenticated:true,...owner,features:sessionFeatures(env,owner.account.id)},200,headers);}return json({authenticated:true,...owner,features:sessionFeatures(env,owner.account.id)},200,{'Cache-Control':'private, no-store'});}
+    // ORG-0: the security epoch travels in the actor only; the session view is unchanged.
+    const {securityEpoch,...session}=owner;
+    if(path==='/api/session'){if(vault&&!accountMember&&!vaultPresent&&context.sessionToken){const headers=new Headers({'Cache-Control':'private, no-store'});for(const value of await installedAccountCookies(env,{owner:owner.account.id,token:context.sessionToken,expiresAt:owner.expiresAt,sessionContext:owner.sessionContext},local))headers.append('Set-Cookie',value);headers.append('Set-Cookie',cookie('',local,0));return json({authenticated:true,...session,features:sessionFeatures(env,owner.account.id)},200,headers);}return json({authenticated:true,...session,features:sessionFeatures(env,owner.account.id)},200,{'Cache-Control':'private, no-store'});}
     const id=owner.account.id;const object=accountHandle(env,id);
-    // Engine-first routes (docs/architecture/app-engine.md §7): parse, dispatch one account operation as this owner, serialize.
-    const dispatch=(Operation,params={})=>object.dispatch(id,{operation:Operation.operation,...params});
+    // ORG-0 power resolver seam (packages/orgs/authority.mjs): routes act through an explicit actor, never an implicit
+    // owner. A person acting as themselves resolves to exactly the former owner; the account writer re-resolves powers.
+    const actor=personActor({owner:id,iss:env.APP_ORIGIN,authTime:owner.authTime,epoch:securityEpoch});
+    // Engine-first routes (docs/architecture/app-engine.md §7): parse, dispatch one account operation as this actor, serialize.
+    const dispatch=(Operation,params={})=>object.dispatch(id,{operation:Operation.operation,...params,actor:{principal:actor.principal,entity:actor.entity,authTime:actor.authTime,epoch:actor.epoch}});
     // Owner mutations independently require session CSRF, even when not an identity action.
     if(mutation&&context.csrfToken!==owner.csrfToken)return json({error:'csrf',message:'Reload the account page before continuing.'},403);
-    Object.assign(route,{owner,id,object,dispatch});
+    Object.assign(route,{owner,id,object,dispatch,actor});
     response=await stage('beforeActivity',route);if(response)return response.passthrough??response;
     // Capacity admission: protective changes and exempt paths (declared by their route modules) are never refused.
     let protective=false;const protectiveRule=mutation&&admission.protective.find(rule=>rule.match(path,request.method));

@@ -76,6 +76,8 @@ const OWNER = /^[a-f0-9-]{36}$/;
 /** The authenticated owner an actor speaks for, or an `unauthorized` fault. */
 export function ownerOf(actor) {
   if (actor?.kind !== 'owner' || typeof actor.owner !== 'string' || !OWNER.test(actor.owner)) fault('unauthorized', 'Sign in to continue.', 401);
+  // ORG-0 (packages/orgs/authority.mjs): a resolved actor's entity is always the owner it speaks for.
+  if (actor.entity !== undefined && actor.entity?.id !== actor.owner) fault('forbidden', 'Account owner mismatch.', 403);
   return actor.owner;
 }
 
