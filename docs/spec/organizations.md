@@ -1,6 +1,6 @@
 # Organizations, membership and relations — normative draft (skeleton)
 
-Status: **skeleton, 2026-10-22, revision 4.2.** Revision 4.2 applies the user's decision of 2026-10-22 that membership, member grants and governance are internal to the organization (design §12c): this document now keeps only what crosses a party boundary, and the internal rules it used to state (holds after authority resets, bound invitations for governance, membership expiry and removal, partial-governance and no-operator guards) moved to the 3sln.me design as provider policy. It is unreviewed. Revision 4.1 applies AMD-P4 from [identity portability](identity-portability.md) and AMD-I5 from [intents](intents.md), and answers R4-H2. It is unreviewed. Revision 4 (with the resolved findings of [Review round 4](../architecture/organizations-design.md#review-round-4) applied, marked R4-…; its open items are not resolved). Revision 4 applies the user's decisions of 2026-10-22: organization identities are ordinary identities with a recovery file (§3); certificate lifetime is the issuer's choice (§5.2, §9.5); "relation slot" is the term where ambiguous; and portability is referenced, not designed here. It is not independently reviewed. Revision 3.3: Revision 3.3 makes governance explicitly provider policy (§6.3). Revision 3.2: Revision 3.2 registers the `relation` artefact kind's growth points (§9.2, artefact-references review R1-L2). Revision 3.1: Revision 3.1 applies the user's admission decision of 2026-10-21: membership in an instance is per edge, and partial membership is a normal state (§9.3, §9.4). It is not independently reviewed. Revision 3: Revision 3 replaces inter-entity offers with **relations** (§9), following the user's proposal of 2026-10-21 ([design §8a](../architecture/organizations-design.md#8a-relations-proposal-assessment)). It was reviewed in [Review round 3](../architecture/organizations-design.md#review-round-3), whose resolved findings are applied (marked R3-…); its open items are not resolved. Nothing here is implemented, published or production-verified. Revision 1 applied the resolved findings of the first independent review ([design, Review round 1](../architecture/organizations-design.md#review-round-1)); items that review left open are not resolved here. Revision 2 applies the user's clarification of 2026-10-21 ([design §1a](../architecture/organizations-design.md#1a-user-clarification-2026-10-21)). Members from any provider are core. Their requests are signed by a key their home provider certified, and the organization verifies that through a directory profile (§3a). There is no separate sign-in at the organization. This replaces the federated login of revision 1. Revision 2 was reviewed in [Review round 2](../architecture/organizations-design.md#review-round-2), and the resolved findings of that round are applied here (marked R2-…); its open items are not resolved. Identifiers under `https://spec.bindle.example/` and hosts under `.example` are placeholders. MUST, SHOULD and MAY express draft requirements. Sections marked **TBD** are reserved and carry no requirements yet. §15 lists the core amendments this draft needs; they are **proposed and unsigned**.
+Status: **skeleton, 2026-10-22, revision 4.3.** Revision 4.3 records decisions that are Provisional (coordinator), not signed off by the user (design §1d); implementation proceeds on them, and they stay revisable. It restores two cross-provider security floors as minimum requirements, because they protect members homed at other providers: governance powers are held after an authority reset (§5.2a), and unbound invitations never confer governance powers (§5.1). It adds a standard effective-methods output for applications (§7.5, phase B) and a portable export of memberships and grants for organization moves (§13.1). Member grant records stay internal. It is unreviewed. Revision 4.2 applies the user's decision of 2026-10-22 that membership, member grants and governance are internal to the organization (design §12c): this document now keeps only what crosses a party boundary, and the internal rules it used to state (holds after authority resets, bound invitations for governance, membership expiry and removal, partial-governance and no-operator guards) moved to the 3sln.me design as provider policy. It is unreviewed. Revision 4.1 applies AMD-P4 from [identity portability](identity-portability.md) and AMD-I5 from [intents](intents.md), and answers R4-H2. It is unreviewed. Revision 4 (with the resolved findings of [Review round 4](../architecture/organizations-design.md#review-round-4) applied, marked R4-…; its open items are not resolved). Revision 4 applies the user's decisions of 2026-10-22: organization identities are ordinary identities with a recovery file (§3); certificate lifetime is the issuer's choice (§5.2, §9.5); "relation slot" is the term where ambiguous; and portability is referenced, not designed here. It is not independently reviewed. Revision 3.3: Revision 3.3 makes governance explicitly provider policy (§6.3). Revision 3.2: Revision 3.2 registers the `relation` artefact kind's growth points (§9.2, artefact-references review R1-L2). Revision 3.1: Revision 3.1 applies the user's admission decision of 2026-10-21: membership in an instance is per edge, and partial membership is a normal state (§9.3, §9.4). It is not independently reviewed. Revision 3: Revision 3 replaces inter-entity offers with **relations** (§9), following the user's proposal of 2026-10-21 ([design §8a](../architecture/organizations-design.md#8a-relations-proposal-assessment)). It was reviewed in [Review round 3](../architecture/organizations-design.md#review-round-3), whose resolved findings are applied (marked R3-…); its open items are not resolved. Nothing here is implemented, published or production-verified. Revision 1 applied the resolved findings of the first independent review ([design, Review round 1](../architecture/organizations-design.md#review-round-1)); items that review left open are not resolved here. Revision 2 applies the user's clarification of 2026-10-21 ([design §1a](../architecture/organizations-design.md#1a-user-clarification-2026-10-21)). Members from any provider are core. Their requests are signed by a key their home provider certified, and the organization verifies that through a directory profile (§3a). There is no separate sign-in at the organization. This replaces the federated login of revision 1. Revision 2 was reviewed in [Review round 2](../architecture/organizations-design.md#review-round-2), and the resolved findings of that round are applied here (marked R2-…); its open items are not resolved. Identifiers under `https://spec.bindle.example/` and hosts under `.example` are placeholders. MUST, SHOULD and MAY express draft requirements. Sections marked **TBD** are reserved and carry no requirements yet. §15 lists the core amendments this draft needs; they are **proposed and unsigned**.
 
 Protocol/security/interop sign-off: reviewer ___ / date ___ / outcome ___.
 
@@ -11,9 +11,10 @@ This document extends [protocol](protocol.md), [auth](auth.md), [links](links.md
 - organization identities and identity documents (§3, §3a);
 - member certificates, issued by a member's home provider and verified by the organization's provider (§5.2), and the authority-epoch signal between them (§5.2a);
 - the invitation a person from any provider opens (§5.1), the membership ID and the observable end of a membership (§5.3, §5.4);
-- the effective-authority intersection as applications and counterparts receive it (§6.2), member context and `bindle_member` (§7), and uniform failure (§5.2, §7.3);
+- two minimum security floors that protect members homed at other providers (§5.1, §5.2a; revision 4.3);
+- the effective-authority intersection as applications and counterparts receive it (§6.2), member context, `bindle_member` and the effective-methods output (§7), and uniform failure (§5.2, §7.3);
 - relations between organizations (§9–§11);
-- privacy, audit outputs and feature declarations that a counterparty or application must interoperate with (§12–§14).
+- privacy, audit outputs, the portable membership export and feature declarations that a counterparty, application or destination provider must interoperate with (§12–§14).
 
 ## 1. Model
 
@@ -201,7 +202,7 @@ The type-specific meta members are:
 - **`invitee`** (optional): the invitee principal `{iss, sub}`, resolved by the issuing provider at issue time from a handle through the invitee's directory (§3a.2), or locally on the same host. When present, only that principal can accept.
 - **`grants_digest`** (optional): a digest of the proposed grants, in a form the issuing provider defines, so a changed proposal invalidates the link. It is opaque to every other party.
 
-What an accepted invitation confers is decided by the organization provider's membership and grant policy. *Security consideration (non-normative):* an unbound invitation is a bearer capability, so a provider should not let one confer governance powers. 3sln.me requires a bound invitation for them (design §12c.3, review R1-H4).
+What an accepted invitation confers is decided by the organization provider's membership and grant policy, subject to one floor (revision 4.3; Provisional (coordinator), not signed off by the user): an unbound invitation is a bearer capability, so an organization provider **MUST NOT** let an invitation without `invitee` confer governance powers (any part of owner-interface authority, §6.3). Governance powers may be offered only in an invitation bound to the invitee's principal. A provider MAY add further conditions, such as a delay after acceptance; 3sln.me's are in design §12c.3 (review R1-H4).
 
 The link carries no free-text title or inviter-supplied description, as in links §7.1. Display text comes from the owner host's page and is attributed to its origin.
 
@@ -290,7 +291,13 @@ A recovered home account keeps its `(iss, sub)`, so whoever completed the recove
 
 - **Detection.** The organization records the highest `aep` it has accepted for each membership. A higher `aep`, a key reset without continuity (§3a.4), or a `connection-revoked` event from the home provider (whose reason is not disclosed), or the adoption of a move record (identity portability §8.3, §8.5; AMD-P4) each count as an authority reset. Certificates with a lower `aep` fail, so once the new epoch is seen, certificates issued before the recovery stop working at once, and replaying them cannot re-trigger a reset (R2-M1).
 - **Missing `aep`.** A home provider that cannot supply a meaningful `aep` MUST NOT issue member certificates. The member is then unable to authenticate. It is never treated as an epoch that cannot change.
-- **Effect.** What the organization holds after an authority reset, and how it is re-confirmed, is decided by the organization provider's own membership and grant policy (§6.3). *Security consideration (non-normative):* without a hold, whoever recovers or takes over a member's home account inherits that member's governance powers in every organization. 3sln.me holds them until re-confirmed (design §12c.3).
+- **Effect: minimum hold** (revision 4.3; Provisional (coordinator), not signed off by the user). Without a hold, whoever recovers or takes over a member's home account inherits that member's governance powers in every organization. Therefore, after an authority reset the organization's provider:
+  - **MUST** hold the member's governance powers (owner-interface authority, §6.3) until a re-confirmation under its membership and grant policy;
+  - **MUST** bind each re-confirmation to the `aep` (or the reset event) it confirms, so a later reset needs a new one;
+  - **MUST NOT** let the held member re-confirm themselves through the reset account alone;
+  - **MAY** let member grants resume with the next valid certificate.
+
+  Who re-confirms, any delay and how the hold is shown are provider policy. 3sln.me's are in design §12c.3.
 
 ### 5.3 Membership identifier
 
@@ -335,7 +342,7 @@ For every call, the provider hosting the resource MUST authorize the intersectio
 2. The state and generation of every connection along the chain.
 3. The resource's implemented contracts and the requested method.
 
-**Interoperable outputs** (revision 4.2). Applications and counterparts never see member grant records. They see only results derived from this intersection: the member-context projection and tokens (§7.2), brokered tokens for integration-hosted resources (integrations §5.3), the `methods` of entity certificates (§9.5) and, in phase B, member-scoped field values (§8). A provider MUST derive each of them from the intersection above.
+**Interoperable outputs** (revision 4.2). Applications and counterparts never see member grant records. They see only results derived from this intersection: the member-context projection and tokens (§7.2), brokered tokens for integration-hosted resources (integrations §5.3), the `methods` of entity certificates (§9.5) and, in phase B, member-scoped field values (§8) and the effective-methods output (§7.5). A provider MUST derive each of them from the intersection above.
 
 Rules:
 
@@ -350,12 +357,13 @@ Rules:
 
 ### 6.3 Owner interface
 
-- **Internal to the organization** (decided by the user, 2026-10-22). Who operates an organization's owner interface, what each member may do inside the organization, and how either changes are the organization provider's own **membership and grant policy**. It covers member records, member grants, templates, governance powers, owner and admin rules, consent, approval and delay rules, holds after authority resets (§5.2a), organization recovery and moves (identity portability §6.1 item 4). This specification defines none of it.
+- **Internal to the organization** (decided by the user, 2026-10-22). Who operates an organization's owner interface, what each member may do inside the organization, and how either changes are the organization provider's own **membership and grant policy**. It covers member records, member grants, templates, governance powers, owner and admin rules, consent, approval and delay rules, holds after authority resets above the §5.2a floor, organization recovery, ownership and moves (identity portability §6.1 item 4). Beyond the security floors below, this specification defines none of it.
 - The interoperable constraints are only these:
   - **Disclosure.** The policy is disclosed to a person before they accept an invitation (§5.1).
   - **Authentication.** Owner-interface requests by members are authenticated under §5.2, including the status check of step 4. The provider's own console is a client like any other: its certificates name the console's client. A provider MAY authenticate a member whose home issuer is local by its ordinary session instead, if that session is bound to the same `(iss, sub)` and the §5.2a epoch rules still apply.
   - **The protocol's "owner".** Everything protocol §3, extensions §5.1 and integrations §3 reserve to "the owner" is exercised through the owner interface, with the same disclosures. That includes assigning preference values and occupants, approving integrations and disconnecting them.
   - **Never outward.** Owner-interface authority never reaches applications or other entities, and never crosses a relation edge (§6.2 rule 3).
+  - **Security floors** (revision 4.3; Provisional (coordinator), not signed off by the user). Governance powers are held after an authority reset (§5.2a), and never conferred by an unbound invitation (§5.1). These protect members whose home is another provider, so they are minimum requirements, not policy choices.
 - *Non-normative example:* the 3sln.me membership model and grant-management policy ([design §12b](../architecture/organizations-design.md#12b-3slnme-grant-management-policy-app-feature-not-spec), [§12c](../architecture/organizations-design.md#12c-3slnme-membership-model-provider-policy-not-spec)). Revision 4.2 moved the former requirements on partial owner-interface grants (R1-L6), on never leaving an organization without an operator, and on auditing owner-interface actions there.
 
 ## 7. Member context for applications
@@ -417,6 +425,16 @@ Integrations §6.2 gains (AMD-O4):
 | Event identifier (placeholder) | Payload beyond `connection`, `generation`, `seq` | Integration obligation |
 | --- | --- | --- |
 | `…/events/member-removed/v1` | `member` (membership ID) | Discard caches and sessions for that member. The event carries no reason. |
+
+### 7.5 Effective methods (phase B)
+
+Revision 4.3; Provisional (coordinator), not signed off by the user (design Q15). An application that keeps its own data, or hosts integration-hosted resources, must enforce the member's authority itself. It gets a standard **output** for that, never the grant records.
+
+- In member context, the preferences projection MAY include, for each resource field value the application can reach, an `effective_methods` member: an array of method names the acting member may invoke on that resource through this application, derived from the §6.2 intersection at the time of the read. A provider that declares `organizations.v1` with `effective_methods: true` (§14) MUST include it.
+- It MUST NOT include grant records, grant sources, governance powers, templates, other members' authority, or a grant's `expires_at`. It is a point-in-time statement, not a credential.
+- It is advisory. Authorization stays live per call (§6.2); a call outside the listed methods still gets the ordinary refusal, and a listed method can still be refused if authority changed since the read.
+- It MUST be absent in organization context (§6.2 rule 5) and for fields the projection omits.
+- An application that enforces authority over its own data SHOULD re-read the projection, or rely on `member-removed` and its own short cache, rather than trust an old value.
 
 ## 8. Member-scoped fragment fields (phase B; TBD)
 
@@ -719,12 +737,29 @@ This also interacts with protocol §3's rule that a fragment URL identifies an i
 - Audit history MUST survive the end of the connection it refers to, for the provider's documented retention.
 - An organization's export MUST include its memberships (as principals and membership IDs), the grants it issued, its connections, its relation participations (with relation pins and counterparts' statements), its imported-resource references and its audit, in documented formats. **TBD:** formats and a grantable `audit-log/v1` contract.
 
+### 13.1 Portable membership export (interop requirement)
+
+Revision 4.3; Provisional (coordinator), not signed off by the user (design §12c.4 item 2). Member grants are internal (§6.3), but an organization that moves to another provider ([identity portability](identity-portability.md)) must not lose them. This is the one place internal grants cross a party boundary, and only to the organization's own destination provider.
+
+- An organization provider MUST be able to export, and a destination provider that accepts organization moves MUST be able to import, a **membership export** containing, per membership:
+  - the origin principal (§5.3) and current `(iss, sub)`;
+  - the membership ID;
+  - state (live or ended) and any membership `expires_at`;
+  - the member's resource authority as a list of entries `{resource, methods, expires_at?}`, where `resource` is a resource reference in the exporting organization's pool or a scope, and `methods` are contract method names;
+  - governance powers as provider-namespaced identifiers (URIs) with a human-readable label.
+- The export MUST NOT contain certificates, holder keys, tokens, consent records or audit payloads.
+- A destination MUST NOT confer more resource authority than an entry states. It MAY map governance powers to its own policy or drop them, and MUST NOT confer broader governance than the export lists. Imported governance powers count as an authority reset for the §5.2a floor: they are held until re-confirmed under the destination's policy.
+- Membership IDs SHOULD be preserved, so the organization's applications keep recognising members. If the destination cannot preserve them, it MUST send `member-removed` for each old ID to integrations that obtained member context.
+- **TBD:** the serialization, its media type and signature. Until then a provider documents its format.
+
+
+
 ## 14. Feature declarations
 
 | Feature | Members | Meaning | When absent |
 | --- | --- | --- | --- |
 | `directory.v1` | `directory_url` (issuer origin) | Handle lookup and identity documents (§3a). Required of any provider whose identities act in organizations hosted elsewhere, and of any provider that hosts organizations. | Its identities cannot be verified by other hosts. Verifiers fail with no fetch beyond the manifest. |
-| `organizations.v1` | none | The provider hosts organizations. It verifies member certificates and serves the member-context token form and `bindle_member` (§5.2, §7). | No organizations at this provider. |
+| `organizations.v1` | `effective_methods` (optional boolean, phase B) | The provider hosts organizations. It verifies member certificates and serves the member-context token form and `bindle_member` (§5.2, §7). With `effective_methods: true` it includes the §7.5 output. | No organizations at this provider. |
 | `key-delegation.v1` (with the AMD-O12 purposes) | `max_certificate_seconds`, `revocation_bound_seconds` | As an issuer, it issues member and entity certificates (§5.2, §9.5) and serves their delegation status. The members disclose its longest certificate lifetime and the bound within which a revocation it commits is reflected in its status responses. | Its identities cannot act as members of organizations. |
 | `relations.v1` | `accept_endpoint`, `join_endpoint` (issuer origin) | The provider's entities can be relation parties. It accepts relation invitations (§9.4), issues and verifies entity certificates (§9.5), and serves the §10 projection. | Its entities cannot join relations. |
 
@@ -772,6 +807,7 @@ The common contract between organization providers is §3a plus §9. Between an 
   - owner-interface actions fail closed when delegation status is unavailable, and fail within 60 s of a home-side revocation;
   - a membership ended for any reason is effective on the next call, ends member-context tokens and emits `member-removed`.
   - *(Revision 4.2: tests of holds, re-confirmation, bound governance invitations and the last-admin race moved to the 3sln.me design, §12c.3.)*
+  - *(Revision 4.3, floors restored:)* an unbound invitation never confers governance powers; after each kind of authority reset governance powers are held, member grants may resume, and a re-confirmation bound to one `aep` does not cover a later reset.
 - **Effective authority:**
   - randomized grant sets satisfy effective ⊆ every ceiling (property test);
   - a member-only resource is invisible to the application, and an application-only resource is omitted in member context;
@@ -781,6 +817,7 @@ The common contract between organization providers is §3a plus §9. Between an 
   - not a member, suspended, client not connected, and a certificate that fails after step 1 are indistinguishable to the application (body and status; timing within tolerance);
   - member-context tokens are DPoP-bound to the certificate's key, never outlive the certificate, come with no refresh token, and Bearer is refused;
   - a certificate naming a different client, or a client not connected to O, gets the uniform result.
+  - *(phase B)* `effective_methods` equals the §6.2 intersection for random grant sets, is absent in organization context, and never contains grant records or expiry.
 - **Directory and certificates:**
   - a member or entity certificate signed by the identity signing key (the key in recovery files) fails; only an `active` certification key verifies, and recovery files and exports never contain one (R4-H1);
   - an entity certificate with a lower `aep` than recorded fails (R4-M1);
@@ -810,6 +847,7 @@ The common contract between organization providers is §3a plus §9. Between an 
   - two acting entities using one `client_id` and one `tx` neither collide nor replay each other's results;
   - a bus without `entity` cannot be granted through an edge;
   - a relation document that has disappeared does not break a live instance whose pinned version is cached.
+- **Membership export (§13.1):** a round trip preserves origin principals, membership IDs and resource entries; an import never widens an entry; imported governance powers are held until re-confirmed; the export contains no certificates, keys or tokens.
 - **Races:**
   - a removal racing token minting;
   - a relation invitation redeemed twice;
@@ -823,5 +861,6 @@ The common contract between organization providers is §3a plus §9. Between an 
 - [ ] **O2 — Members:** home-certified holder keys and signed requests; revocation bounds; membership IDs; uniform member context.
 - [ ] **O3 — Relations:** relation documents, consent per edge, instances without a central host, entity certificates, lifecycle; dependency on artefact references.
 - [ ] **O4 — Privacy and audit:** no enumeration; pairwise identifiers; actor-chain audit.
+- [ ] **O5 — Floors and portable outputs (rev 4.3; Provisional (coordinator), not signed off by the user):** governance hold after authority resets; bound governance invitations; effective-methods output; portable membership export.
 
 Reviewer / date / notes: _pending; these checkpoints do not block drafting._

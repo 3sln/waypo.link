@@ -1,6 +1,6 @@
 # Intent links: app-agnostic links routed by the viewer's provider (design)
 
-Status: **provisional design, 2026-10-22, revision 2** (Review round 1 appended and applied to the text). Design only: nothing here is implemented, routed, published or production-verified, and no code changed. Normative draft: [spec/intents.md](../spec/intents.md). Companion: [identity portability](identity-portability.md). Review round 1 (adversarial security and UX, 2026-10-22) is at the end; it is a review, not a sign-off. Every decision below is unsigned until it has a reviewer, a date and an outcome; the coordinator records them in DEVLOG.md.
+Status: **provisional design, 2026-10-22, revision 3.** Revision 3 records the coordinator's answers to the open questions, which the user delegated ("go with what makes sense"). Each is **Provisional (coordinator), not signed off by the user**; implementation proceeds on them, and they stay revisable. They are: the fragment form is required for capability kinds (Q1, §3.3); "always" means no interstitial (Q2, §6.2); no signed intents in v1 (Q3, §3.4, §6.6); the handle-entry landing rewritten with its anti-phishing rules (§6.1); and organization-installed handlers offered only in member context (§6.7). Revision 2 (Review round 1 appended and applied to the text). Design only: nothing here is implemented, routed, published or production-verified, and no code changed. Normative draft: [spec/intents.md](../spec/intents.md). Companion: [identity portability](identity-portability.md). Review round 1 (adversarial security and UX, 2026-10-22) is at the end; it is a review, not a sign-off. Every decision below is unsigned until it has a reviewer, a date and an outcome; the coordinator records them in DEVLOG.md.
 
 Sign-off: reviewer ___ / date ___ / outcome ___.
 
@@ -16,6 +16,10 @@ Sign-off: reviewer ___ / date ___ / outcome ___.
 | I6 | Unsigned links are the norm and are always shown as from an unknown sender. Signed links use a provider-held **certification key**, never the identity key that recovery files contain. | spec §3.2–§3.3 |
 | I7 | The two `web+bindle` contact intents and `bindle_intent` become the registered kinds `send-message` and `add-contact`. `intents.v1` is deprecated. | spec §11 |
 | I8 | 3sln.me: `/i` is both its intent endpoint and a generic link host; its console contact flows become built-in handlers; the chooser, consent and settings follow the consent experience's risk tiers. | §6 |
+| I9 | Capability kinds (contact links) MUST use the fragment form. *Provisional (coordinator), not signed off by the user*. | spec §3.4, §9.3 |
+| I10 | "Always" means no provider page on a viewer-activated open; the handler still confirms. Signed intents are not in v1. *Provisional (coordinator), not signed off by the user*. | §6.2, §6.6 |
+| I11 | A viewer not signed in at 3sln.me is asked where their account is (a handle only), sees the destination domain before anything is sent, and capability kinds are never forwarded without the disclosure. *Provisional (coordinator), not signed off by the user*. | §6.1, spec §10 |
+| I12 | Apps an organization installed are offered to a member only when the member has chosen to act as that organization, never in their personal list. *Provisional (coordinator), not signed off by the user*. | §6.7, spec §6 |
 
 ## 1. The user's words
 
@@ -68,11 +72,11 @@ The user asked for a query parameter, which stays the canonical placement: it su
 
 - the handoff from the link host to the viewer's provider is a **form POST**, so the viewer's provider never logs the data;
 - the handoff from the provider to the handler is a **fragment**, so the handler's server never sees it;
-- **capability intents** (contact links) are minted in the fragment form, so no server sees them at all; Q1 asks whether to make that a requirement rather than a recommendation.
+- **capability intents** (contact links) MUST be in the fragment form, so no server sees them at all (*Provisional (coordinator), not signed off by the user*, Q1; spec §3.4). A query-form capability intent is malformed. The cost is a generic preview card, which capability kinds already get.
 
 ### 3.4 Signed links
 
-Signing is optional and adds only attribution: "this link was made by `alice@3sln.example`". The signature uses a **certification key**, never the identity signing key, because every recovery file (including a former organization owner's old copy) contains the signing key ([organizations R4-H1, R4-L2](organizations-design.md#review-round-4)). A failed signature removes attribution instead of failing the link, because stripping a signature is free anyway. 3sln.me signs only through a links-contract method (`signIntent`, §6.6), never on raw caller bytes.
+Signing is optional and adds only attribution: "this link was made by `alice@3sln.example`". The signature uses a **certification key**, never the identity signing key, because every recovery file (including a former organization owner's old copy) contains the signing key ([organizations R4-H1, R4-L2](organizations-design.md#review-round-4)). A failed signature removes attribution instead of failing the link, because stripping a signature is free anyway. 3sln.me signs only through a links-contract method (`signIntent`, §6.6), never on raw caller bytes. **Not in v1** (*Provisional (coordinator), not signed off by the user*, Q3): the first release ships unsigned links only, and treats any signed intent as unsigned (no attribution). Signing follows once certification keys exist for persons (organizations phase A).
 
 ## 4. Intent kinds
 
@@ -146,11 +150,32 @@ Candidates are connected apps plus built-ins. Discovering an unconnected app tha
 ### 6.1 Endpoint and link host
 
 - `https://3sln.me/i` serves `GET ?bintent=`, `GET #bintent=` (read by the page script) and the form `POST`. It is declared as `intent-links.v1.endpoint`.
-- The same path is 3sln.me's **generic link host**. Apps minting links for 3sln.me users use `<endpoint>?bintent=…` (or `#bintent=` for capability kinds). The path carries no account identifier, so links keep working when the minter moves away (§8.3).
-- For a viewer who is not signed in at 3sln.me, `/i` is a landing page with three ways on:
-  1. **"Open with my provider"**: enter a handle; discovery; if the provider declares `intent-links.v1`, a top-level form POST of the value after the disclosure "This link will be sent to `alt.example`". The chosen provider is remembered in this browser's local storage, so next time the page offers a single "Continue with `alt.example`" control beside "different provider". It never auto-submits: the click gives the provider a user-activated navigation, which is what lets an "always" default skip the provider page (spec §7.3, R1-H5).
-  2. **"Open with an installed Bindle app"**: a `web+bindle://intent?bintent=…` anchor.
-  3. **"Sign in or sign up with 3sln.me"**: returns to the same intent after sign-in, carrying it in session storage, never in a query.
+- The same path is 3sln.me's **generic link host**. Apps minting links for 3sln.me users use `<endpoint>?bintent=…` (or `#bintent=`, required for capability kinds). The path carries no account identifier, so links keep working when the minter moves away (§8.3).
+
+**Signed in at 3sln.me: the viewer's own apps.** This is the main case and the one the user asked for. The viewer opens the link and sees the list of **their own connected apps that handle this kind**, with "Just once" and "Always" (§6.2, §6.3). No handle is asked for and nothing leaves 3sln.me except the handoff to the app they pick. With a default, a viewer-activated open goes straight to that app (§6.2).
+
+**Not signed in at 3sln.me: "Where's your account?"** (*Provisional (coordinator), not signed off by the user*, revision 3.) A link minted on 3sln.me can reach someone whose account is at another provider, or who has no account. 3sln.me cannot know which, so `/i` shows a landing page that asks:
+
+> **Where's your account?** Enter your handle, like `you@example.org`. We'll send this link to your provider so it can offer your apps.
+
+with two other ways on: **"Sign in or sign up with 3sln.me"** (returns to the same intent after sign-in, carrying it in session storage, never in a query) and **"Open with an installed Bindle app"** (a `web+bindle://intent?bintent=…` anchor).
+
+What happens with a handle:
+
+1. 3sln.me discovers the handle's provider ([protocol §2](../spec/protocol.md#2-discovery-and-login)). If it declares `intent-links.v1`, the page shows the destination; otherwise it says the provider can't open these links, and sends nothing.
+2. **The destination domain is shown prominently before anything is sent**: "This link will be sent to **alt.example**", with the registrable domain highlighted, the A-label form for confusable or mixed-script names (spec §7.1), and a "Not your provider?" control that returns to the handle field.
+3. Only after the viewer clicks **Send to alt.example** does the page form-POST the value, top-level, to that provider's endpoint. It never auto-submits, which also gives the provider the user-activated navigation an "always" default needs (spec §7.3, R1-H5).
+
+**Why this needs care (the phishing concern).** "Type your handle, then get sent to your provider" is a pattern phishers can copy: a fake page asks for a handle and forwards the viewer to a look-alike "provider" that then asks for a password. And a mistyped or malicious handle domain receives the link's data. The mitigations:
+
+- **Only a handle, ever.** The landing collects the handle and nothing else: no password, passkey, code or email. Its copy says so ("3sln.me never asks for your password here"). Sign-in happens only on the provider's own origin, after the navigation, where the browser shows that origin.
+- **The destination is shown before sending** (step 2), as the domain the viewer will see in the address bar.
+- **The choice is remembered** in this browser's local storage only. Next time the page offers a single **Continue with alt.example** control beside "Different provider", so a returning viewer is not trained to type a handle on every link, and a page that suddenly asks again stands out.
+- **Capability kinds are never forwarded without the disclosure.** For a capability kind (a contact link) the step-2 screen adds that the link contains a contact capability that alt.example will receive, and the send control is armed after the consent experience's delay. This applies to a remembered provider too: "Continue with alt.example" for a capability kind shows the same line before it submits.
+- Discovery failures never redirect, and nothing is sent to a provider the viewer has not chosen on this browser (spec §10).
+
+The residual: a viewer who types a look-alike handle and then ignores the destination shown sends the link's data to that host. For unsigned, non-capability kinds that data is what the link already showed; for capability kinds the extra disclosure is the guard.
+
 - The landing shows the kind's title (after verifying the kind reference), quoted and attributed to the line URL's host unless 3sln.me reviewed the kind, and the link host, never data or a minter. Preview cards (Open Graph, oEmbed `link`) show a kind title only for reviewed kinds resolved from the store, and otherwise a generic card; capability kinds always get the generic card (R1-H2).
 
 ### 6.2 Processing for a signed-in viewer
@@ -159,7 +184,7 @@ Engine-first: `ReceiveIntent` (steps 1–2 of spec §6, pure, stateless and fetc
 
 - **no handler**: "None of your apps can do this yet", with a link to the catalogue (later) and the kind's summary;
 - **ignored kind**: a neutral page with **Undo**;
-- **valid default and no widening**: direct handoff when the delivering navigation was user-activated or came from outside the browser (spec §7.3 fetch-metadata rule, Q2), otherwise a one-control "Continue to Parley" interstitial;
+- **valid default and no widening**: direct handoff, with no 3sln.me page, whenever the delivering navigation was user-activated or came from outside the browser (spec §7.3 fetch-metadata rule). "Always" means no interstitial (*Provisional (coordinator), not signed off by the user*, Q2); the handler still confirms any action (spec §8). The one-control "Continue to Parley" interstitial remains only as the spec §7.3 anti-bounce guard, for navigations the viewer did not activate (a script-submitted cross-site POST, no fetch metadata, framed or prefetch) and past the direct-handoff rate limit;
 - otherwise the **chooser and consent** page.
 
 ### 6.3 The chooser and consent page
@@ -171,7 +196,7 @@ Built with the 3sln stack, using the [consent experience](consent-experience.md)
 - **Risk chip** from `effect`, raised by categories, using the existing tiers: `view` low, `save` and `join` medium, `send` high; `money`, `identity` and `send-as-you` raise one tier, as in the consent experience.
 - **"This link includes"**: one row per present field, under its `display` rule ("Contact link from `3sln.example`", "Started by someone at `3sln.example` (according to the link)" — a handle only when 3sln.me already holds a verified binding, never by fetching — and "Conversation: included"). Hosts use the A-label form when mixed-script or confusable.
 - **Handler list:** radio rows with the app name (reviewed) or the verified origin as primary label (unreviewed), plus "Parley will receive the details above." Nothing is preselected without a default, and the order is 3sln.me's (reviewed first, then recently used), never a manifest's claim.
-- **Account:** with several signed-in accounts, the chosen account is named on the page; organizations never appear as the viewer (spec §6).
+- **Account:** with several signed-in accounts, the chosen account is named on the page; organizations never appear as the viewer (spec §6). An "Acting as" control appears only for a member of an organization with installed handlers for this kind, and switching it replaces the handler list (§6.7).
 - **Actions:** primary **Just once**, secondary **Always use Parley for links like this**. Both are armed after the consent experience's standard delay, so a click-through from a hostile page cannot land on them.
 - **Overflow:** "Don't offer Parley for these links" (handler exclusion), and "Ignore links like this" (ignored kind).
 
@@ -189,7 +214,17 @@ Under account settings: one row per kind line the viewer has met, with the defau
 ### 6.6 Minting API
 
 - **Unsigned:** an SDK helper `intentLink({endpoint, kind, data, placement})` that validates against the pinned kind and encodes canonically. No provider call is needed.
-- **Signed:** a links-contract method `signIntent({kind, data, exp?})` on the provider-hosted links resource, granted by fragment like `links.issue`. The provider validates data against the kind, rate-limits per app and user, and signs with the minter's certification key. Behind `SIGNED_INTENTS_ENABLED`; not needed for the first release (Q3).
+- **Signed:** a links-contract method `signIntent({kind, data, exp?})` on the provider-hosted links resource, granted by fragment like `links.issue`. The provider validates data against the kind, rate-limits per app and user, and signs with the minter's certification key. Behind `SIGNED_INTENTS_ENABLED`, which stays off in v1 (*Provisional (coordinator), not signed off by the user*, Q3).
+
+### 6.7 Organization-installed handlers
+
+*Provisional (coordinator), not signed off by the user*; implementation proceeds on it, and it stays revisable. Answers R1-M7's open item.
+
+- The viewer is always a person (spec §6). By default the candidates are the person's own built-ins and connected apps.
+- Apps an organization installed are offered to a member **only in member context**: when the member has chosen, on the chooser, to act as that organization ("Acting as: Personal ▾ / Acme Ltd"). Then the list shows only Acme's installed apps that handle the kind and that the member's grants let them use. They are never mixed into the personal list, so a link cannot quietly route personal data into an organization's app, or the reverse.
+- The chooser names the acting entity, and the handler's own confirmation names it again (spec §8 item 4). The app acts for the organization only through member context ([organizations §7](../spec/organizations.md#7-member-context-for-applications)).
+- Defaults are per (person, acting entity). A personal "always" never applies in an organization's context, or the reverse. Organization-level defaults set by admins are not in v1.
+- Organization context for intents arrives with the entity switcher (organizations phase B); until then only personal candidates are offered.
 
 ## 7. Contact links and app-minted links
 
@@ -236,7 +271,7 @@ Existing contact links are unchanged: they are links, not intents, and keep `bin
 | T8 | **Kind publisher compromise** | Pinned digests; additive-only growth; retraction refuses new handling but never silently reroutes | A retraction can stop a kind from working everywhere (artefacts §9.2 residual) |
 | T9 | **Default hijack** by a newly connected app | New apps never replace defaults; manifest changes cannot add authority | — |
 | T10 | **Exclusion probing** by a handler or minter | Nothing is reported to minters; handlers cannot distinguish exclusion from non-choice | — |
-| T11 | **Provider-choice tampering** on a link host | The remembered provider lives only in the viewer's browser; first use always needs an explicit handle entry; discovery failures never redirect | A compromised link host page, which could send the viewer anywhere, as any compromised page can |
+| T11 | **Provider-choice tampering** and handle-entry phishing on a link host | The remembered provider lives only in the viewer's browser; first use always needs an explicit handle entry; the destination domain is shown before sending; only a handle is ever collected; capability kinds always get the disclosure; discovery failures never redirect (§6.1) | A compromised link host page, which could send the viewer anywhere, as any compromised page can |
 | T12 | **Version confusion** (a handler receiving members it does not understand) | Projection to the handler's declared version after verified additivity, unsigned (spec §5) | Loss of attribution on projected links |
 
 ## 9. Spec versus 3sln.me
@@ -283,6 +318,8 @@ Gates before production: `realBrowserFlowsPassing`, `securityRedTeamFindingsReso
 - a candidate matrix over {built-in, connected, disconnected, undeclared, excluded, sibling-domain excluded} × {kind version below, equal to and above the handler's};
 - first use, once, always, widening, a default kept during re-ask, and clearing on disconnect;
 - ignored kinds;
+- a query-form capability intent refused; a signed intent processed as unsigned while `SIGNED_INTENTS_ENABLED` is off;
+- organization-installed handlers absent from the personal list and present only in that organization's member context; defaults kept per acting entity;
 - exclusions identical to non-choice in every handoff observable;
 - legacy mapping.
 
@@ -297,17 +334,21 @@ Gates before production: `realBrowserFlowsPassing`, `securityRedTeamFindingsReso
 
 **Fuzzing:** byte-level mutation of `bintent` values and JWS segments. No exception escapes, time stays bounded, and the only outcome is `intent_malformed`.
 
-**Browser:** the fragment strip on the handler test page, the landing's form POST and remembered provider, armed buttons, the PWA protocol handler fragment template on each supported browser, and the absence of `bintent` from network logs of the handoff.
+**Browser:** the fragment strip on the handler test page, the landing's handle-only form, destination display before sending, capability disclosure on both the first and the remembered-provider path, form POST and remembered provider, armed buttons, the PWA protocol handler fragment template on each supported browser, and the absence of `bintent` from network logs of the handoff.
 
 ## 11. Open questions for the user
 
-1. **Capability intents in the fragment.** Make the fragment form *required* for kinds that carry a capability (contact links), keeping the query form for everything else? **Recommendation: yes.** It keeps contact capabilities out of every server log, at the cost of no rich preview card for those links, which the design already reduces to a generic card.
-2. **"Always" means no page at all.** With a valid default, should 3sln.me hand off directly, with no interstitial? **Recommendation: yes**, as the user's "or in the future as well" implies, since the handler must still confirm any action.
-3. **Signed intents in the first release?** **Recommendation: no.** Ship unsigned links first (they deliver app-agnostic stability), and add `signIntent` once certification keys exist for persons (organizations phase A).
+Revision 3: all answered as *Provisional (coordinator), not signed off by the user*. Implementation proceeds on them; they stay revisable.
+
+1. **Capability intents in the fragment.** Make the fragment form *required* for kinds that carry a capability (contact links), keeping the query form for everything else? **Recommendation: yes. Adopted provisionally (§3.3, spec §3.4).** It keeps contact capabilities out of every server log, at the cost of no rich preview card for those links, which the design already reduces to a generic card.
+2. **"Always" means no page at all.** With a valid default, should 3sln.me hand off directly, with no interstitial? **Recommendation: yes**, as the user's "or in the future as well" implies, since the handler must still confirm any action. **Adopted provisionally (§6.2),** keeping the spec §7.3 anti-bounce interstitial for navigations the viewer did not activate.
+3. **Signed intents in the first release?** **Recommendation: no.** Ship unsigned links first (they deliver app-agnostic stability), and add `signIntent` once certification keys exist for persons (organizations phase A). **Adopted provisionally (§3.4, §6.6).**
+4. **Handle entry (what it is about, and the phishing risk).** The user asked what this is about. It is the not-signed-in landing at `/i`: "Where's your account?" (§6.1). **Adopted provisionally:** only a handle, the destination shown before sending, the choice remembered, and capability kinds never forwarded without the disclosure.
+5. **Organization-installed handlers.** **Adopted provisionally:** offered only in member context, never in the personal list (§6.7).
 
 ## 12. Reconciliation notes for DEVLOG (coordinator)
 
-- Record I1–I8 as provisional decisions with empty reviewer, date and outcome.
+- Record I1–I8 as provisional decisions with empty reviewer, date and outcome. Record I9–I12 (revision 3) as Provisional (coordinator), not signed off by the user, with empty reviewer, date and outcome.
 - AMD-I2 changes links §6.4 (links owner); AMD-I3 registers the `intent` kind (artefacts owner); AMD-I4 adds the `intents` manifest member (federation owner); AMD-I5 gives certification keys a second use (organizations author).
 - `bindle_intent` log redaction, still pending for production, extends to `bintent`.
 - messaging-app.md §6.1 lists the landing page and intents under core. M2 changes the 3sln.me contact page, so the BindleBox owner should confirm the split still holds.
@@ -342,7 +383,7 @@ Independent adversarial security and UX review, 2026-10-22, against spec revisio
 
 **R1-M6. Homoglyph hosts.** Kind line hosts, handler origins and `origin`-display values were shown with no IDN rule. *Fix (spec §7.1, §9.2):* use the A-label whenever the Unicode form mixes scripts or is confusable, and highlight the registrable domain. Fixed.
 
-**R1-M7. Account and organization confusion.** The handoff does not bind an account. The viewer consents as their personal account, and the handler may act as whatever account (or organization, through member context) it has signed in. Revision 1 also implied an organization entity could be the viewer, but organizations allow no interactive login. *Fix (spec §6, §7.1, §8):* the viewer is always a person; organization action goes only through member context after confirmation in the handler. The consent page names the account, and the handler confirmation names the acting identity. Fixed. *Open (provider policy):* whether organization-installed apps are candidates for members, and organization-level defaults. Organization-signed intents are attributable to the organization through any app holding a `signIntent` grant, so organization policy should restrict that grant (INT-8).
+**R1-M7. Account and organization confusion.** The handoff does not bind an account. The viewer consents as their personal account, and the handler may act as whatever account (or organization, through member context) it has signed in. Revision 1 also implied an organization entity could be the viewer, but organizations allow no interactive login. *Fix (spec §6, §7.1, §8):* the viewer is always a person; organization action goes only through member context after confirmation in the handler. The consent page names the account, and the handler confirmation names the acting identity. Fixed. *Open (provider policy):* whether organization-installed apps are candidates for members, and organization-level defaults. *Revision 3 (Provisional (coordinator), not signed off by the user):* candidates only in member context; organization-level defaults not in v1 (§6.7). Organization-signed intents are attributable to the organization through any app holding a `signIntent` grant, so organization policy should restrict that grant (INT-8).
 
 **R1-M8. Link hosts train viewers to type their handle on arbitrary origins.** *Scenario:* `evil.example/i?bintent=…` asks "Open with my provider", then fakes the discovery result and shows a look-alike provider sign-in page. This is inherent to any web page, but the flow makes it routine. *Not fixed in spec (residual):* 3sln.me should promote passkeys, the installed `web+bindle` handler and the remembered provider, so that viewers rarely type a handle on a link host. Users should be told that their provider never asks for a password after a link.
 
@@ -366,7 +407,7 @@ Independent adversarial security and UX review, 2026-10-22, against spec revisio
 
 **R1-L6. Removal pending.** Under app-removal UD-1, a handler stays fully functional while its removal is pending. *Fix (spec §7.1 item 4):* the consent page discloses the pending removal. Fixed.
 
-**R1-L7. Q1 reinforced.** Every query-form capability intent puts a contact capability into a link host's logs and into every copy of the URL. The reviewer recommends making the fragment form a MUST for `capability: true` kinds. This is the user's decision, so the text is unchanged.
+**R1-L7. Q1 reinforced.** Every query-form capability intent puts a contact capability into a link host's logs and into every copy of the URL. The reviewer recommends making the fragment form a MUST for `capability: true` kinds. This is the user's decision, so the text is unchanged. *Revision 3:* adopted as Provisional (coordinator), not signed off by the user (spec §3.4, §9.3).
 
 ### Checked and sound
 

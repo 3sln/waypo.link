@@ -2890,3 +2890,52 @@ Reviewer: ___ Date: ___ Outcome: ___
   - Decision open.
 
 Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-22 — Refunds, ownership transfer, delegated portability decisions, provisional intent/removal calls
+
+**Legal (user):**
+- **Refunds:** none as of right. A refund may be requested and is granted or refused at our discretion; mandatory consumer law is unaffected.
+- **Disputes:** the courts of South Dakota.
+- **Placeholders:** none remain. Counsel review is still required.
+
+**Organizations** (design rev 5.4, spec rev 4.3):
+- **Ownership transfer (user):** the recipient sets up billing first, and the transfer takes effect on verified payment. A fresh billing period starts, and the previous owner's payment confers nothing. The old subscription is cancelled. The offering owner passes tight verification and admins are notified. On transfer:
+  - the recovery file is reissued and the 30-day move cooling starts;
+  - pending elevations pass to the new owner;
+  - the old owner stays a member.
+- **Agent-added figures, for the user's review:** a 24 h transfer minimum, a 14-day offer lapse, and a full refund if a transfer fails after payment.
+- **Provisional (coordinator, delegated by the user, not signed off):**
+  - two 72 h break-glass exceptions to "no timeout decides";
+  - accepting after rejecting;
+  - a held owner can't cancel a recovery;
+  - a 7-day response period;
+  - Q14: tight verification for grant-change escalations;
+  - Q15: a standard effective-methods output for apps;
+  - a portable membership export in the spec;
+  - the cross-provider member security floors restored to the spec as MUSTs.
+
+**Identity portability** (design rev 5, spec rev 3.2). The user delegated these to a security design agent; they are not signed off by the user:
+- **P14:** "original" means the current recovery file, at least 7 days old.
+- **P15:** pre-rotation is deferred. Every recovery-file issuance rotates the signing key. The future shape is one file holding the next key.
+- **P16, v1 fork detection:** chained provider attestation keys with verifier pinning, the 3sln.me root shipped in the SDK, and an `attestation_first_use` flag. The upgrade path is shared pins, then a move log with at least two independent operators.
+- **P17:** disputes resolve through a proof ladder: a known channel, then elevated proof, then support. The winning proof removes the disputing devices and restarts a 72 h delay. Holds expire after 30 days.
+- **P18:** the owner's tight verification requires an aged credential; a recovery file does not substitute.
+- **P19:** the timing figures are confirmed, plus a 30-day held-move expiry and a 30-day contest window.
+- **Follow-ups:**
+  - the recovery-identity spec gains rotation on issuance and the credential age;
+  - the SDK ships the attestation root;
+  - PORT-9 and PORT-10 code changes (contact-delivery bearers minted with the original key; key-history pruning).
+
+**Intent links** (rev 3). Provisional (coordinator, delegated, not signed off):
+- **Signed-in viewers:** see their own connected apps that handle the kind, which comes first.
+- **Viewers whose account is elsewhere:** "Where's your account?" handle entry, with the destination shown, handle only, the choice remembered, and a disclosure for capability kinds.
+- **Org-installed handlers:** offered only in member context.
+- **Also adopted:** the fragment form for capability kinds, "always" skipping the interstitial (except anti-bounce), and no signed intents in v1.
+
+**App removal** (rev 3). Provisional (coordinator, delegated, not signed off):
+- an organization's clean removal follows a 24 h admin-notified delay;
+- consent pages show a pending removal with ⟦Remove now⟧.
+
+None of the provisional items blocks implementation.
+
+Reviewer: ___ Date: ___ Outcome: ___

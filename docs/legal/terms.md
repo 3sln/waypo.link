@@ -2,7 +2,7 @@
 
 Draft for review. Version: 2026-10-21 (draft). Not yet in effect.
 
-<!-- Placeholders: [REFUND POLICY]. Venue is a coordinator default pending confirmation. -->
+<!-- No placeholders remain; counsel review still required. -->
 
 These terms are an agreement between you and **Stubbs Software Solutions LLC**, doing business as **3sln**, 41 West Highway 14 #1645, Spearfish, SD 57783, United States ("we", "us"). They cover your use of the hosted service at **3sln.me** (the "Service"). Please read them together with our [Privacy Policy](privacy.md).
 
@@ -80,7 +80,7 @@ If you build an app that uses 3sln.me sign-in or resources, describe your app ac
   - Upgrades take effect right away, with a prorated charge.
   - Downgrades take effect at your next renewal.
 - **Prices and taxes.** Taxes are calculated at checkout. We'll tell you about price changes before they apply to your next renewal.
-- **Refunds.** [REFUND POLICY.] Nothing in these terms limits refund or withdrawal rights you have under consumer law where you live.
+- **Refunds.** Payments are not refundable as of right. You can ask for a refund at contact@3sln.com, and we decide each request at our discretion. Nothing in these terms limits refund or withdrawal rights you have under consumer law where you live.
 - **When a plan ends or exceeds its limits.**
   - Adding new data may pause.
   - You can still read, export and delete what you have.
