@@ -9,7 +9,8 @@
 // is *Provisional (coordinator), not signed off by the user* (§1d), and the figures in OWNERSHIP are revisable.
 //
 // Record fields (all lazily created on the organization record):
-//   billing   {v, subscriptions:{[id]: verified snapshot + paidThrough}, handled:{[id]: role}, unpaidSince, reconciledAt,
+//   billing   {v, subscriptions:{[id]: verified snapshot + paidThrough (+ hold:{reason, since} while Polar cannot confirm
+//              it)}, handled:{[id]: role}, unpaidSince, reconciledAt,
 //              claim:null|{id, by, plan, state:'awaiting-payment'|'pending'|'effective'|'closed', ...}, renewal}
 //   transfer  null|{id, state, from, to, toHandle, admin, plan, offeredAt, notBefore, expiresAt, blockableUntil,
 //              objections, acceptance, payment, closedAt, closedReason, effectiveAt}
@@ -23,6 +24,7 @@
 //             (packages/billing/organizations.mjs OrganizationBilling; SANDBOX ONLY)
 //   accounts  {get(sub) -> {status, handle, kind}|null}  this provider's identity records (recipient checks)
 //   effects   {rotateRecovery(org) -> {rotated:true}, index(person, {org, role, handle}) -> true}
+//   alert     (entry) -> void   operator alert sink (a held subscription needs reconciliation); best effort, never blocks
 //   plans     the paid-check port; `check({creator, org, override:true})` answers the operator allowlist override.
 import {MembershipService,membershipState,ORG_ADMIN_DELAY_MS} from './memberships.mjs';
 import {ORG_RECORD,ORG_OWNED,ORG_JOINED,ORG_CREATION,ORG_DELETION_DELAY_MS} from './organizations.mjs';
@@ -44,6 +46,8 @@ export const OWNERSHIP=Object.freeze({
  SECURITY_COOLING_MS:30*DAY,       // P18: no security change in the last 30 days, else the admins' block returns
  CHECKOUT_POLL_MS:15*MINUTE,       // a lost webhook is caught by polling while a checkout is open
  CLAIM_CHECKOUT_MS:DAY,            // an unpaid claim checkout may be replaced by another admin after a day
+ FRESH_MS:5*MINUTE,                // a transfer or claim takes effect only on a provider snapshot at most this old
+ PAYMENT_SETTLE_MS:2*DAY,          // an owner payment begun before a claim's deadline holds the claim this long to settle
  RETRY_MS:MINUTE
 });
 const PLANS=['org-team','org-business','org-scale'];
@@ -57,6 +61,11 @@ const hex=async text=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-
 
 /** Whether a verified subscription is paid through `now` (its stored paidThrough never extends on a failed renewal). */
 const paidNow=(s,now)=>Number.isSafeInteger(s?.paidThrough)&&s.paidThrough>now&&!s.refunded;
+/** Whether the stored snapshot could still matter: not refunded or revoked by us, and not ended at the provider. */
+const live=(r,s,now)=>!['revoke','refund'].includes(r.billing?.handled?.[s.id])&&!(Number.isSafeInteger(s.endedAt)&&s.endedAt<=now);
+/** Subscriptions Polar could not confirm at the last reconcile (gone or failing verification): held for an operator.
+ * A hold never counts as unpaid: it blocks the unpaid clock, claims and claim effects until reconciled. */
+export const heldSubscriptions=r=>Object.values(r?.billing?.subscriptions??{}).filter(s=>s?.hold);
 /** The owner of record's own paid subscription (§12b.1 item 1), the latest-paid if several. */
 export function ownerSubscription(r,now){
  const owner=r?.ownerOfRecord?.sub;let best=null;
@@ -73,7 +82,7 @@ export function ownerSubscription(r,now){
  */
 export function billingStanding(r,now,{override=false,configured=false}={}){
  const s=ownerSubscription(r,now),b=r?.billing,plan=s?.plan??(PLANS.includes(r?.plan?.plan)?r.plan.plan:null);
- const base={plan,paidUntil:s?.paidThrough??null,pastDue:s?.status==='past_due',source:override?'override':s?'polar':null,unpaidSince:null,readOnlyAt:null,claimableAt:null};
+ const base={plan,paidUntil:s?.paidThrough??null,pastDue:s?.status==='past_due',source:override?'override':s?'polar':null,unpaidSince:null,readOnlyAt:null,claimableAt:null,held:heldSubscriptions(r).length>0};
  if(override||s)return {standing:'paid',...base};
  const t=r?.transfer,tp=t?.state==='paid'?r.billing?.subscriptions?.[t.payment?.subscriptionId]:null;
  if(tp&&paidNow(tp,now))return {standing:'paid',...base,plan:tp.plan,paidUntil:tp.paidThrough,source:'transfer'};
@@ -85,7 +94,7 @@ export function billingStanding(r,now,{override=false,configured=false}={}){
 export async function transferDisclosureDigest(r,t,{plan,currency,amount}){return hex(JSON.stringify(['bindle-org-transfer-disclosure-v1',r.id,t.id,party(t.from),party(t.to),t.admin===true,plan,currency,amount,'fresh-period','previous-payment-confers-nothing']));}
 
 export class OwnershipService extends MembershipService{
- constructor(options){super(options);this.billing=options.billing??null;this.accounts=options.accounts??null;this.effects=options.effects??null;}
+ constructor(options){super(options);this.billing=options.billing??null;this.accounts=options.accounts??null;this.effects=options.effects??null;this.alert=typeof options.alert==='function'?options.alert:null;}
  billingConfigured(){try{return this.billing?.configured?.()===true;}catch{return false;}}
  /** The operator override (ORGANIZATIONS_PAID_ALLOWLIST): the organization or its owner of record is listed. */
  async override(r){
@@ -161,7 +170,6 @@ export class OwnershipService extends MembershipService{
   return proof.securityChangedAt>now-OWNERSHIP.SECURITY_COOLING_MS?proof.securityChangedAt+OWNERSHIP.SECURITY_COOLING_MS:null;
  }
  freshStepUp(actor,now){const at=actor?.verification?.stepUpAt;if(Number.isSafeInteger(at)&&at<=now&&at+OWNERSHIP.STEP_UP_MS>now)return;requireFresh(actor,now,OWNERSHIP.STEP_UP_MS);}
- frozen(r){return r.recoveryClaim?.state==='pending';}
  async archive(r,t){r.transferHistory=[...r.transferHistory,structuredClone(t)].slice(-16);}
 
  // ---- views -------------------------------------------------------------------------------------------------
@@ -184,12 +192,12 @@ export class OwnershipService extends MembershipService{
    out.recovery=r.recovery?{state:r.recovery.state,since:r.recovery.since,owner:party(r.recovery.owner)}:null;out.moveCoolingUntil=r.moveCoolingUntil??null;
    out.ownerOfRecord=party(r.ownerOfRecord);out.history=r.transferHistory.slice(-5).map(x=>this.transferView(x));
    const decisions=[],configured=this.billingConfigured(),openT=t&&OPEN.includes(t.state);
-   if(owner&&configured&&!held&&!openT&&r.state==='active'&&claim?.state!=='pending'&&!this.frozen(r))decisions.push('offer');
+   if(owner&&configured&&!held&&!openT&&r.state==='active'&&claim?.state!=='pending')decisions.push('offer');
    if(owner&&t?.state==='offered')decisions.push('withdraw');
    if(admin&&!owner&&openT)decisions.push('object');
    if(admin&&!owner&&openT&&Number.isSafeInteger(t.blockableUntil)&&now<t.blockableUntil)decisions.push('block');
    if(owner&&configured&&standing.standing!=='paid'&&!ownerSubscription(r,now))decisions.push('renew');
-   if(admin&&!owner&&configured&&standing.standing==='read-only'&&now>=standing.claimableAt&&claim?.state!=='pending'&&t?.state!=='paid')decisions.push('claim');
+   if(admin&&!owner&&configured&&standing.standing==='read-only'&&now>=standing.claimableAt&&!standing.held&&claim?.state!=='pending'&&t?.state!=='paid')decisions.push('claim');
    if(owner&&r.recovery&&r.recovery.state!=='issued')decisions.push('reissue-recovery');
    out.decisions=decisions;return out;
   });
@@ -218,7 +226,6 @@ export class OwnershipService extends MembershipService{
    const to={iss:actor.principal.iss??null,sub:v.recipient};if(samePrincipal(to,r.ownerOfRecord))fail('recipient_unavailable','You already own this organization.',409);
    if(r.transfer&&OPEN.includes(r.transfer.state))fail('transfer_pending','An ownership offer is already open.',409);
    if(r.billing.claim?.state==='pending')fail('claim_pending','A billing-lapse claim is pending.',409);
-   if(this.frozen(r))fail('recovery_pending','An organization recovery is pending.',409);
    if(r.transfer)await this.archive(r,r.transfer);
    const t={id:this.random.uuid(),state:'offered',from:party(r.ownerOfRecord),to,toHandle:account.handle,admin:v.admin===true,plan:ownerSubscription(r,now)?.plan??null,offeredAt:now,notBefore:now+OWNERSHIP.TRANSFER_MIN_DELAY_MS,expiresAt:now+OWNERSHIP.OFFER_LAPSE_MS,blockableUntil,objections:[],acceptance:null,payment:null};
    r.transfer=t;this.ownershipNotice(r,'ownership-offered',{transfer:t.id,recipient:to,recipientHandle:t.toHandle,admin:t.admin,notBefore:t.notBefore,expiresAt:t.expiresAt,blockableUntil},now,{principals:[to]});
@@ -326,11 +333,11 @@ export class OwnershipService extends MembershipService{
  claimable(r,standing,actor,now){
   if(samePrincipal(actor.principal,r.ownerOfRecord))fail('invalid_decision','The owner keeps the organization by paying.',409);
   if(r.memberships[principalKey(actor.principal)]?.hold)fail('authority_held','Governance authority is held after a security change.',403);
-  if(standing.standing!=='read-only'||now<standing.claimableAt)fail('claim_unavailable','A claim is possible only after 30 days of read-only status.',409);
+  if(standing.standing!=='read-only'||now<standing.claimableAt||standing.held)fail('claim_unavailable','A claim is possible only after 30 days of read-only status.',409);
   if(r.billing.claim?.state==='pending')fail('claim_pending','A claim is already pending.',409);
   if(r.billing.claim?.state==='awaiting-payment'&&!samePrincipal(r.billing.claim.by,actor.principal)&&r.billing.claim.createdAt+OWNERSHIP.CLAIM_CHECKOUT_MS>now)fail('claim_in_progress','Another admin’s claim checkout is open.',409);
   if(r.transfer?.state==='paid')fail('transfer_pending','A verified ownership transfer is pending.',409);
-  if(this.frozen(r))fail('recovery_pending','An organization recovery is pending.',409);
+  if(heldSubscriptions(r).length)fail('billing_held','Billing needs operator reconciliation before a claim is possible.',409);
  }
  /** Person placement: a creation checkout for a reserved, unpaid organization (§12a: always paid; checkout at creation). */
  async creationCheckout(actor,input){
@@ -381,7 +388,8 @@ export class OwnershipService extends MembershipService{
   if(actor?.kind!=='system')fail('forbidden','System only.',403);
   const r0=await this.metadata.get(ORG_RECORD);if(r0?.kind!=='organization'||r0.id!==actor.owner)return {wakeAt:null};
   if(!this.billingConfigured())return this.tick(actor);
-  const snapshot=await this.billing.state(r0.id,{known:Object.keys(r0.billing?.subscriptions??{})});
+  const known=Object.fromEntries(Object.entries(r0.billing?.subscriptions??{}).map(([id,s])=>[id,{amount:s.amount,currency:s.currency}]));
+  const snapshot=await this.billing.state(r0.id,{known});
   return this.step(actor,r0,snapshot);
  }
  async tick(actor){if(actor?.kind!=='system')fail('forbidden','System only.',403);const r0=await this.metadata.get(ORG_RECORD);if(r0?.kind!=='organization'||r0.id!==actor.owner)return {wakeAt:null};return this.step(actor,r0,null);}
@@ -390,7 +398,9 @@ export class OwnershipService extends MembershipService{
   const status=async sub=>{try{const a=await this.accounts?.get(sub);return a?a.kind==='person'&&a.status==='active':this.accounts?false:null;}catch{return null;}};
   if(r0.transfer&&OPEN.includes(r0.transfer.state))recipient=await status(r0.transfer.to.sub);
   if(r0.billing?.claim?.state==='pending')claimant=await status(r0.billing.claim.by.sub);
-  return this.commit(actor,async(r,now,tx)=>{if(snapshot)await this.applySnapshot(r,snapshot,now,tx);return this.advance(r,now,tx,{override,configured,recipient,claimant});});
+  const alerts=[],result=await this.commit(actor,async(r,now,tx)=>{if(snapshot)await this.applySnapshot(r,snapshot,now,tx,alerts);return this.advance(r,now,tx,{override,configured,recipient,claimant});});
+  for(const entry of alerts){try{await this.alert?.(entry);}catch{/* the hold and its audit row are durable; the alert is best effort */}}
+  return result;
  }
  /** A signature-verified Polar event: deduplicated by id (a reused id with another body is refused), then reconciled. */
  async billingWebhook(actor,verified){
@@ -404,8 +414,13 @@ export class OwnershipService extends MembershipService{
   await this.metadata.transaction(async tx=>{for(const k of expired)await tx.delete(k);if(!await tx.get(key))await tx.put(key,{bodyHash:verified.bodyHash,type:String(verified.type??''),receivedAt:this.clock.now()});});
   return {duplicate:false,...result};
  }
- /** Stores the verified snapshot and settles payments against open offers and claims. Unbound payments are refunded. */
- async applySnapshot(r,snapshot,now,tx){
+ /**
+  * Stores the verified snapshot and settles payments against open offers and claims. Unbound payments are refunded.
+  * A tracked subscription Polar no longer returns, or that fails verification against the terms of its first
+  * verification, is never read as unpaid: its stored snapshot is kept, it is held (`hold`) and an operator is alerted
+  * (§12b.3: a missing or unverifiable provider result must not start the unpaid clock or advance a claim).
+  */
+ async applySnapshot(r,snapshot,now,tx,alerts=[]){
   const b=r.billing,seen=new Set();
   for(const s of snapshot.subscriptions??[]){
    seen.add(s.id);const prev=b.subscriptions[s.id];let paidThrough=prev?.paidThrough??0;
@@ -413,53 +428,77 @@ export class OwnershipService extends MembershipService{
    else if(s.paid&&(s.status==='active'||s.status==='canceled'&&s.cancelAtPeriodEnd))paidThrough=Math.max(paidThrough,s.validUntil);
    if(s.endedAt!==null&&s.endedAt!==undefined)paidThrough=Math.min(paidThrough,s.endedAt);
    if(['revoked','canceled'].includes(s.status)&&!s.cancelAtPeriodEnd)paidThrough=Math.min(paidThrough,s.endedAt??now);
-   b.subscriptions[s.id]={...structuredClone(s),paidThrough,firstSeenAt:prev?.firstSeenAt??now};
+   // The price it was bought at: amount and currency stay those of the first verification.
+   b.subscriptions[s.id]={...structuredClone(s),amount:prev?.amount??s.amount,currency:prev?.currency??s.currency,paidThrough,firstSeenAt:prev?.firstSeenAt??now};
+   if(prev?.hold)await this.audit(tx,r,'organization-billing-hold-cleared',{kind:'system',principal:null},{subscription:s.id,reason:prev.hold.reason,since:prev.hold.since});
   }
-  for(const [id,s] of Object.entries(b.subscriptions))if(!seen.has(id)){s.paidThrough=Math.min(s.paidThrough??0,now);s.status='missing';}
-  for(const [id,s] of Object.entries(b.subscriptions))if((s.paidThrough??0)<now-400*DAY&&b.handled[id]!=='refund'&&Object.keys(b.subscriptions).length>16)delete b.subscriptions[id];
-  b.reconciledAt=now;
-  for(const s of Object.values(b.subscriptions)){
-   if(!s.paid||s.refunded||b.handled[s.id])continue;
+  const unverified=new Map((snapshot.unverified??[]).map(u=>[u.id,u.reason==='missing'?'missing':'unverifiable']));
+  for(const [id,s] of Object.entries(b.subscriptions)){
+   if(seen.has(id))continue;
+   if(!live(r,s,now)){if(s.hold)delete s.hold;continue;} // refunded, revoked or ended: nothing left to protect
+   const reason=unverified.get(id)??'missing';
+   if(s.hold?.reason===reason)continue;
+   s.hold={reason,since:s.hold?.since??now};
+   await this.audit(tx,r,'organization-billing-held',{kind:'system',principal:null},{subscription:id,reason,owner:s.owner,purpose:s.purpose});
+   alerts.push({kind:'organization-billing',action:'operator-alert',reason:'subscription-'+reason,org:r.id,subscription:id,owner:s.owner,purpose:s.purpose,since:s.hold.since});
+  }
+  for(const [id,s] of Object.entries(b.subscriptions))if((s.paidThrough??0)<now-400*DAY&&!s.hold&&b.handled[id]!=='refund'&&Object.keys(b.subscriptions).length>16)delete b.subscriptions[id];
+  b.reconciledAt=Number.isSafeInteger(snapshot.reconciledAt)?Math.min(now,snapshot.reconciledAt):now;
+  // The current renewal binding settles first, then the oldest: the first owner payment is kept, later ones refunded.
+  const order=Object.values(b.subscriptions).sort((x,y)=>(y.binding===b.renewal?.binding)-(x.binding===b.renewal?.binding)||(x.periodStart??0)-(y.periodStart??0)||x.id.localeCompare(y.id));
+  for(const s of order){
+   if(!s.paid||s.refunded||s.hold||b.handled[s.id])continue;
    const payment={subscriptionId:s.id,orderId:s.orderId,verifiedAt:now},t=r.transfer,c=b.claim;
-   if(s.purpose==='transfer'&&t?.id===s.binding&&t.state==='offered'&&s.owner===t.to.sub&&!this.frozen(r)){
+   if(s.purpose==='transfer'&&t?.id===s.binding&&t.state==='offered'&&s.owner===t.to.sub){
     t.state='paid';t.payment=payment;b.handled[s.id]='transfer';
     // §12b.3: a transfer verified during a lapse claim closes the claim, since the organization is paid again.
     if(c&&['awaiting-payment','pending'].includes(c.state))await this.closeClaim(r,c,'transfer-paid',now,tx);
     this.ownershipNotice(r,'ownership-transfer-paid',{transfer:t.id,notBefore:t.notBefore},now,{principals:[t.to],members:[r.memberships[principalKey(r.ownerOfRecord)]?.id]});
     await this.audit(tx,r,'organization-ownership-payment-verified',{kind:'system',principal:null},{transfer:t.id,subscription:s.id});continue;
    }
-   if(s.purpose==='transfer'&&t?.id===s.binding&&t.state==='offered'&&this.frozen(r))continue; // a recovery freezes the offer; the payment waits
    if(s.purpose==='claim'&&c?.id===s.binding&&c.state==='awaiting-payment'&&s.owner===c.by.sub&&r.transfer?.state!=='paid'){
     c.state='pending';c.payment=payment;c.notBefore=now+OWNERSHIP.CLAIM_NOTICE_MS;b.handled[s.id]='claim';
     this.ownershipNotice(r,'ownership-claim-pending',{claim:c.id,by:c.by,notBefore:c.notBefore},now,{members:[r.memberships[principalKey(r.ownerOfRecord)]?.id]});
     await this.audit(tx,r,'organization-lapse-claim-pending',{kind:'system',principal:null},{claim:c.id,subscription:s.id,notBefore:c.notBefore});continue;
    }
-   if(['create','renew'].includes(s.purpose)&&s.owner===r.ownerOfRecord.sub&&(s.purpose==='renew'||s.binding===r.request)){b.handled[s.id]='owner';continue;}
+   const ownerPayment=['create','renew'].includes(s.purpose)&&s.owner===r.ownerOfRecord.sub&&(s.purpose==='renew'||s.binding===r.request);
+   const duplicate=ownerPayment&&Object.values(b.subscriptions).some(x=>x.id!==s.id&&b.handled[x.id]==='owner'&&x.owner===s.owner&&paidNow(x,now));
+   if(ownerPayment&&!duplicate){b.handled[s.id]='owner';continue;}
    // Paid, but bound to nothing open (a withdrawn, lapsed, blocked or closed offer or claim; a renewal by a former
-   // owner; a duplicate): the payer received nothing, so it is revoked and refunded in full.
-   this.refundPayment(r,payment,'unbound-'+s.purpose,now);
+   // owner; a second owner payment while one is already paid): the payer received nothing, so it is revoked and
+   // refunded in full.
+   this.refundPayment(r,payment,(duplicate?'duplicate-':'unbound-')+s.purpose,now);
    await this.audit(tx,r,'organization-payment-refunded',{kind:'system',principal:null},{subscription:s.id,purpose:s.purpose});
   }
  }
  /** Every time-based rule: unpaid tracking, offer lapse, the 24 h transfer effect, the 72 h claim effect. */
  async advance(r,now,tx,{override,configured,recipient,claimant}){
   const b=r.billing;b.observedAt=now;let wakeAt=null;const wake=t=>{if(Number.isSafeInteger(t))wakeAt=Math.min(wakeAt??Infinity,Math.max(t,now+1000));};
-  const t=r.transfer,c=b.claim;
+  const t=r.transfer,c=b.claim,held=heldSubscriptions(r).length>0;
+  // An ownership change happens only on a fresh provider snapshot (H2): a step that could not reconcile (Polar
+  // unreachable, the time rules alone) never changes the owner on stale data; it wakes and retries.
+  const fresh=configured&&Number.isSafeInteger(b.reconciledAt)&&b.reconciledAt<=now&&now-b.reconciledAt<=OWNERSHIP.FRESH_MS;
   if(t?.state==='offered'&&now>=t.expiresAt)await this.closeTransfer(r,t,'lapsed',now,tx);
-  if(t?.state==='paid'&&now>=t.notBefore&&!this.frozen(r)){
+  if(t?.state==='paid'&&now>=t.notBefore){
    if(r.state!=='active')await this.closeTransfer(r,t,'organization-unavailable',now,tx);
    else if(recipient===false)await this.closeTransfer(r,t,'recipient-unavailable',now,tx);
-   else if(recipient===true)await this.transferEffect(r,t,now,tx);
+   else if(recipient===true&&fresh)await this.transferEffect(r,t,now,tx);
    else wake(now+OWNERSHIP.RETRY_MS);
   }
   if(c?.state==='pending'){
    if(ownerSubscription(r,now))await this.closeClaim(r,c,'owner-paid',now,tx);
-   else if(now>=c.notBefore){const m=r.memberships[principalKey(c.by)];if(r.state!=='active'||claimant===false||m?.state!=='live'||!m.grants.some(g=>g.power==='admin'))await this.closeClaim(r,c,'claimant-unavailable',now,tx);else if(claimant===true)await this.claimEffect(r,c,now,tx);else wake(now+OWNERSHIP.RETRY_MS);}
+   else if(now>=c.notBefore){const m=r.memberships[principalKey(c.by)];
+    if(r.state!=='active'||claimant===false||m?.state!=='live'||!m.grants.some(g=>g.power==='admin'))await this.closeClaim(r,c,'claimant-unavailable',now,tx);
+    // Held: Polar could not confirm a subscription, or the snapshot is stale, or an owner payment begun before the
+    // deadline is not settled yet. An owner payment made before notBefore always defeats the claim, however late
+    // it is confirmed, so the claim waits rather than taking effect.
+    else if(claimant===true&&fresh&&!held&&!this.ownerPaymentSettling(r,c,now))await this.claimEffect(r,c,now,tx);
+    else wake(now+OWNERSHIP.RETRY_MS);}
   }
   if(c?.state==='awaiting-payment'&&c.createdAt+7*DAY<=now){c.state='closed';c.closedReason='unpaid';c.closedAt=now;}
   const standing=billingStanding(r,now,{override,configured});
   if(standing.standing==='paid')b.unpaidSince=null;
-  else if(!Number.isSafeInteger(b.unpaidSince)&&(!configured||Number.isSafeInteger(b.reconciledAt))){
+  else if(!Number.isSafeInteger(b.unpaidSince)&&!held&&(!configured||Number.isSafeInteger(b.reconciledAt))){
    const owner=r.ownerOfRecord.sub,last=Math.max(0,...Object.values(b.subscriptions).filter(s=>s.owner===owner).map(s=>s.paidThrough??0));
    b.unpaidSince=last>0&&last<=now?last:now;await this.audit(tx,r,'organization-billing-unpaid',{kind:'system',principal:null},{since:b.unpaidSince});
    this.ownershipNotice(r,'organization-billing-unpaid',{since:b.unpaidSince,readOnlyAt:b.unpaidSince+OWNERSHIP.GRACE_MS},now,{members:[r.memberships[principalKey(r.ownerOfRecord)]?.id]});
@@ -475,6 +514,12 @@ export class OwnershipService extends MembershipService{
   const pending=r.ownershipOutbox.filter(e=>!e.doneAt);if(pending.length)wake(Math.min(...pending.map(e=>e.nextAt??now)));
   return {wakeAt,standing:after.standing,transfer:nt?.state??null,claim:nc?.state??null};
  }
+ /** Whether the owner of record began a payment before the claim's deadline that Polar has not settled yet (the order
+  * is not captured and not refunded or ended). Bounded by PAYMENT_SETTLE_MS so an abandoned order cannot hold forever. */
+ ownerPaymentSettling(r,c,now){
+  if(now>=c.notBefore+OWNERSHIP.PAYMENT_SETTLE_MS)return false;
+  return Object.values(r.billing.subscriptions).some(s=>s.owner===r.ownerOfRecord.sub&&['create','renew'].includes(s.purpose)&&!s.paid&&!s.refunded&&Number.isSafeInteger(s.periodStart)&&s.periodStart<c.notBefore&&live(r,s,now)&&!['canceled','revoked'].includes(s.status));
+ }
  /** Shared by a transfer and a lapse claim taking effect: one commit changes the owner of record (§12b.3a "Effect"). */
  async changeOwner(r,to,payment,now,tx,{cause,id,admin=false,addedUnder=null}){
   const prev=party(r.ownerOfRecord),key=principalKey(to);let m=r.memberships[key];
@@ -485,8 +530,9 @@ export class OwnershipService extends MembershipService{
   if(admin&&!m.grants.some(g=>g.power==='admin'))m.grants.push({power:'admin',grantedBy:prev,grantedAt:now,notBefore:now+ORG_ADMIN_DELAY_MS});
   r.ownerOfRecord=party(to);
   // The previous owner's subscriptions are cancelled at once, not at period end, with no automatic refund (§12b.3a;
-  // refunds are discretionary on request under the terms). Revocation is idempotent at the provider.
-  for(const s of Object.values(r.billing.subscriptions))if(s.id!==payment.subscriptionId&&s.owner===prev.sub&&!['refund','revoke'].includes(r.billing.handled[s.id])&&s.status!=='missing'&&!(s.endedAt!==null&&s.endedAt!==undefined&&s.endedAt<=now)){r.billing.handled[s.id]='revoke';this.outbox(r,'revoke',{subscriptionId:s.id,reason:cause},now);}
+  // refunds are discretionary on request under the terms). Revocation is idempotent at the provider (a subscription it
+  // no longer knows counts as revoked), so one the last reconcile could not see is cancelled too.
+  for(const s of Object.values(r.billing.subscriptions))if(s.id!==payment.subscriptionId&&s.owner===prev.sub&&!['refund','revoke'].includes(r.billing.handled[s.id])&&!(s.endedAt!==null&&s.endedAt!==undefined&&s.endedAt<=now)){r.billing.handled[s.id]='revoke';this.outbox(r,'revoke',{subscriptionId:s.id,reason:cause},now);}
   r.billing.handled[payment.subscriptionId]='owner';r.billing.unpaidSince=null;r.billing.renewal=null;
   r.recovery={state:'rotation-pending',owner:party(to),since:now,cause,ref:id};this.outbox(r,'recovery-rotate',{cause,ref:id},now);
   r.moveCoolingUntil=now+OWNERSHIP.MOVE_COOLING_MS;

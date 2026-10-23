@@ -25,11 +25,13 @@
 //   orgsBillingSync(org)                reconcile now (creation adapter, best effort)
 //   orgsOwnershipIndexApply(person, i)  system, person placement: owner/member/offer discovery hints after a change
 // The account alarm reconciles, applies the time rules and drains the ownership outbox (revoke, refund, recovery
-// rotation, peer index). ORGANIZATION_BILLING_CLIENT may inject a Polar client object (tests; never a string setting).
+// rotation, peer index). A transfer or claim takes effect only in a step that reconciled within OWNERSHIP.FRESH_MS; the
+// tick fallback below (Polar unreachable) never changes the owner, it reschedules. A subscription Polar cannot confirm
+// is held and reported through the lifecycle log as an operator alert (kind 'organization-billing'). ORGANIZATION_BILLING_CLIENT may inject a Polar client object (tests; never a string setting).
 import {createAppEngine,perform,read,AppQuery} from '../../app/engine.mjs';
 import {cryptoRandom,nullAudit} from '../../app/providers.mjs';
 import {flagsFor} from './flags.mjs';
-import {lifecycleBlocked} from '../lifecycle-runner.mjs';
+import {lifecycleBlocked,lifecycleLog} from '../lifecycle-runner.mjs';
 import {accountActor} from '../../orgs/authority.mjs';
 import {ORG_RECORD} from '../../orgs/organizations.mjs';
 import {OwnershipService,organizationEntitlementPort} from '../../orgs/ownership.mjs';
@@ -44,7 +46,7 @@ export function orgsEngine(c){
   const clock={now:()=>clockOf(c)()},injected=c.config.ORGANIZATION_BILLING_CLIENT,billing=new OrganizationBilling({config:c.config,client:injected&&typeof injected==='object'?injected:undefined,now:clock.now});
   const plans=typeof c.config.ORGANIZATION_PLANS?.check==='function'?c.config.ORGANIZATION_PLANS:organizationEntitlementPort({allowlist:c.config.ORGANIZATIONS_PAID_ALLOWLIST,billing});
   const service=new OwnershipService({metadata:c.metadata,clock,random:cryptoRandom,flags:{for:ctx=>flagsFor(c.config,ctx)},plans,issuer:c.config.APP_ORIGIN??null,invitationSigner:owner=>c.signingKey(owner),memberEvents:c.config.ORGANIZATION_MEMBER_EVENTS,
-   billing,accounts:{get:sub=>typeof c.config.IDENTITY_ACCOUNT==='function'?c.config.IDENTITY_ACCOUNT(sub):null},
+   billing,alert:entry=>lifecycleLog(c.config,entry),accounts:{get:sub=>typeof c.config.IDENTITY_ACCOUNT==='function'?c.config.IDENTITY_ACCOUNT(sub):null},
    effects:{
     // Invalidates the previous owner's recovery file at an ownership change: an ordinary signing rotation (not the
     // issuance rotation, which keeps the outgoing kid bound for P15 races) clears the recovery binding, so the old file

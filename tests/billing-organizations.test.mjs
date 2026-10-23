@@ -62,8 +62,31 @@ test('state trusts only verified subscriptions: metadata, organization, product,
  const cheap=polar.subscribe({org:ORG,owner:A,purpose:'create',binding:'request-4'});polar.subscriptions.get(cheap.subscription).amount=1;
  const unpaid=polar.subscribe({org:ORG,owner:B,purpose:'transfer',binding:'t'});polar.orders.get(unpaid.order).status='pending';polar.orders.get(unpaid.order).paid=false;
  const state=await billing.state(ORG);assert.deepEqual(state.subscriptions.map(s=>[s.id,s.owner,s.paid]).sort(),[[good.subscription,A,true],[unpaid.subscription,B,false]].sort());
- polar.orders.get(good.order).refunded_amount=10;polar.orders.get(good.order).status='partially_refunded';const after=(await billing.state(ORG)).subscriptions.find(s=>s.id===good.subscription);assert.equal(after.paid,false);assert.equal(after.refunded,true);
+ // A partial (goodwill) refund leaves the order paid; only a full refund, or one of at least the net amount, does not.
+ polar.orders.get(good.order).refunded_amount=10;polar.orders.get(good.order).status='partially_refunded';let after=(await billing.state(ORG)).subscriptions.find(s=>s.id===good.subscription);assert.equal(after.paid,true);assert.equal(after.refunded,false);
+ polar.orders.get(good.order).refunded_amount=polar.orders.get(good.order).net_amount;after=(await billing.state(ORG)).subscriptions.find(s=>s.id===good.subscription);assert.equal(after.paid,false);assert.equal(after.refunded,true);
+ polar.orders.get(good.order).refunded_amount=0;polar.orders.get(good.order).status='paid';
  polar.lapse(good.subscription);const known=await billing.state(ORG,{known:[good.subscription]});assert.equal(known.subscriptions.find(s=>s.id===good.subscription).status,'canceled');
+});
+
+test('a known subscription is verified against the terms it was bought at; a gone or changed one is reported unverified',async()=>{
+ const {billing,polar,clock}=setup(),s=polar.subscribe({org:ORG,owner:A,purpose:'create',binding:'request-1',currency:'eur'}),gone=polar.subscribe({org:ORG,owner:A,purpose:'renew',binding:'renew-1'});
+ const terms={[s.subscription]:{amount:ORGANIZATION_PLANS['org-team'].annualAmount,currency:'eur'},[gone.subscription]:{amount:ORGANIZATION_PLANS['org-team'].annualAmount,currency:'usd'}};
+ // The operator archives the EUR price and adds a dearer one: the existing subscription still verifies at its own price.
+ const product=polar.products['org-team-product'];product.prices.find(x=>x.price_currency==='eur').is_archived=true;product.prices.push({id:'org-team-product-eur2',product_id:'org-team-product',source:'catalog',is_archived:false,amount_type:'fixed',price_currency:'eur',price_amount:130000});clock.advance(10*60000);
+ let state=await billing.state(ORG,{known:terms});assert.deepEqual(state.subscriptions.map(x=>[x.id,x.currency,x.paid]).sort(),[[s.subscription,'eur',true],[gone.subscription,'usd',true]].sort());assert.deepEqual(state.unverified,[]);
+ // Without pinned terms (a new subscription) today's catalog decides, and the archived price no longer verifies.
+ assert.deepEqual((await billing.state(ORG)).subscriptions.map(x=>x.id),[gone.subscription]);
+ // Changed terms or a vanished subscription are reported, never silently dropped.
+ polar.subscriptions.get(s.subscription).amount=1;polar.subscriptions.delete(gone.subscription);state=await billing.state(ORG,{known:terms});
+ assert.deepEqual(state.subscriptions,[]);assert.deepEqual(state.unverified,[{id:s.subscription,reason:'unverifiable'},{id:gone.subscription,reason:'missing'}].sort((x,y)=>x.id.localeCompare(y.id)));
+ const empty=setup();assert.deepEqual((await empty.billing.state(ORG,{known:{sub_x:{amount:1,currency:'usd'}}})).unverified,[{id:'sub_x',reason:'missing'}]);
+});
+
+test('a refund after a partial refund returns the remainder of the net amount, once',async()=>{
+ const {billing,polar}=setup(),s=polar.subscribe({org:ORG,owner:B,purpose:'transfer',binding:'t'}),o=polar.orders.get(s.order);o.refunded_amount=100;o.status='partially_refunded';
+ assert.equal((await billing.refund(ORG,{subscriptionId:s.subscription,orderId:s.order})).amount,o.net_amount-100);assert.equal(o.refunded_amount,o.net_amount);assert.equal(o.status,'refunded');
+ assert.equal((await billing.refund(ORG,{subscriptionId:s.subscription,orderId:s.order})).already,true);assert.equal(polar.effects.refunds.length,1);
 });
 
 test('revoke and refund are idempotent at the provider and refuse another customer’s objects',async()=>{

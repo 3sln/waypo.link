@@ -3349,3 +3349,23 @@ Reviewer: ___ Date: ___ Outcome: ___
 **Gates (combined tree):** core 2887, Worker 89 and e2e 264 with 4 WebKit skips (both rerun by the coordinator; e2e now includes the portability suites), UI-state 337, test:organizations, asset build and Worker dry run.
 
 Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-23 — Review fixes for f7eda06 (organization billing, ownership transfer, redirect extension)
+
+An independent review found 2 High, 1 Medium and 2 Low. Each is fixed, with a regression test and chaos coverage that fails if the fix is disabled:
+- **H1, a lapse claim could seize an organization whose owner was paying.** Archiving a catalog price dropped an active subscription, and any partial refund counted as unpaid.
+  - Subscriptions now verify against their first-verified amount and currency.
+  - Only a full refund, or one at least the order's net, counts as unpaid.
+  - A subscription the provider can't confirm is held, raises an operator alert and freezes the unpaid clock and any claim.
+  - Former owners' subscriptions are revoked even when `missing`.
+- **H2, a claim could take effect on stale data during a provider outage.** Transfers and claims now apply only on a provider snapshot under 5 minutes old, otherwise they retry. An owner payment begun before `notBefore` always defeats the claim, and an uncaptured one holds it for up to 2 days (provisional).
+- **M1:** a refunded redirect extension can be bought again.
+- **L1:** a losing paid redirect order is refunded. If the refund fails, the webhook returns 503 and Polar retries.
+- **L2:** only the current renewal (otherwise the first paid) is kept, and duplicates are refunded.
+- **Cleanup:** the dead `recoveryClaim` freeze path is removed (break-glass is phase B), with a design note. One redundant check leaves the `billing_held` branch unreachable. The behaviour is safe, because the claim is refused earlier; it's left as is for now.
+
+Sandbox only, with no live payment.
+
+**Gates:** core 2900, Worker 89, UI-state 337, test:organizations, e2e 264 with 4 WebKit skips, asset build and Worker dry run.
+
+Reviewer: ___ Date: ___ Outcome: ___

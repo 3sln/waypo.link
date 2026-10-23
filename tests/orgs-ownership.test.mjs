@@ -19,14 +19,14 @@ const ISS='https://3sln.example',ORG='dddddddd-dddd-4ddd-8ddd-dddddddddddd',A='a
 const p=sub=>({iss:ISS,sub}),OPS=Object.fromEntries([...ORG_OPERATIONS,...ORG_SYSTEM_OPERATIONS].map(O=>[O.operation,O]));
 const rejects=(promise,code)=>assert.rejects(promise,e=>e.code===code||assert.fail(`expected ${code}, got ${e.code}: ${e.message}`));
 
-async function world(seed=1,{allowlist='',configured=true,owner=A}={}){
+async function world(seed=1,{allowlist='',configured=true,owner=A,currency='usd'}={}){
  const metadata=new SqliteMetadata(':memory:'),clock=fakeClock(400*DAY),random=seededRandom(createRandom(seed)),flag={on:true};await metadata.put('owner',ORG);
  const polar=fakeOrgPolar({clock}),config=configured?ORG_POLAR_CONFIG:{...ORG_POLAR_CONFIG,POLAR_SERVER:'production'};
  const billing=new OrganizationBilling({config,client:polar.client,now:clock.now});
  const people=new Map([[A,{kind:'person',status:'active',handle:'alice'}],[B,{kind:'person',status:'active',handle:'bob'}],[C,{kind:'person',status:'active',handle:'carol'}],[E,{kind:'person',status:'active',handle:'erin'}]]);
- const indexed=[],rotations=[];
+ const indexed=[],rotations=[],alerts=[];
  const effects={rotateRecovery:async org=>{rotations.push(org);return {rotated:true};},index:async(person,input)=>{indexed.push({person,...input});return true;}};
- const service=new OwnershipService({metadata,clock,random,issuer:ISS,flags:{for:()=>({enabled:()=>flag.on})},plans:organizationEntitlementPort({allowlist,billing}),billing,accounts:{get:async sub=>people.get(sub)??null},effects});
+ const service=new OwnershipService({metadata,clock,random,issuer:ISS,flags:{for:()=>({enabled:()=>flag.on})},plans:organizationEntitlementPort({allowlist,billing}),billing,accounts:{get:async sub=>people.get(sub)??null},effects,alert:entry=>alerts.push(entry)});
  const engine=createAppEngine({providers:{clock,random,audit:memoryAudit({clock}),organizations:organizationsProvider(service)}});
  await perform(engine,new OPS['orgs.initialize']({actor:{kind:'system',owner:ORG},input:{request:REQUEST,creator:p(owner),name:'Acme',plan:{source:'polar',plan:'org-team'}}}));
  const verification=(extra={})=>({stepUpAt:clock.now(),enrolledAt:clock.now()-30*DAY,securityChangedAt:clock.now()-60*DAY,...extra});
@@ -36,13 +36,13 @@ async function world(seed=1,{allowlist='',configured=true,owner=A}={}){
  const join=async(sub,grants=[])=>{const invite=await run('orgs.invite',owner,{invitee:p(sub),grants});await run('orgs.accept',sub,{invitation:invite.invitation});return member(sub);};
  const sync=()=>run('orgs.billing-sync','system'),tick=()=>run('orgs.ownership-tick','system'),drain=()=>run('orgs.ownership-drain','system');
  let events=0;const webhook=(id='auto_'+(++events),bodyHash='a'.repeat(64))=>run('orgs.billing-webhook','system',{id,bodyHash,type:'subscription.updated'});
- const ownerSub=configured?polar.subscribe({org:ORG,owner,purpose:'create',binding:REQUEST}):null;
+ const ownerSub=configured?polar.subscribe({org:ORG,owner,purpose:'create',binding:REQUEST,currency}):null;
  if(configured)await sync();
  /** Offer (owner), accept (recipient, with the digest the view discloses) and pay. Returns the transfer id. */
  const offer=async(to=B,handle=people.get(to).handle,input={})=>(await run('orgs.transfer-offer',(await record()).ownerOfRecord.sub,{recipient:to,handle,confirm:true,...input})).transfer.id;
  const accept=async(to=B)=>{const view=await run('orgs.ownership',to);const plan=view.offer.plans[0];const result=await run('orgs.transfer-accept',to,{transfer:view.offer.id,disclosure:plan.digest,confirm:true,...view.offer.choosePlan?{plan:plan.plan}:{}});return result;};
  const payLatest=(purpose='transfer')=>polar.pay(polar.checkoutBy(k=>k.metadata?.['3sln_me_org_purpose']===purpose).id);
- return {metadata,service,engine,clock,flag,polar,billing,people,indexed,rotations,act,run,record,member,join,sync,tick,drain,webhook,offer,accept,payLatest,ownerSub,verification,close:async()=>{await engine.dispose();metadata.close();}};
+ return {metadata,service,engine,clock,flag,polar,billing,people,indexed,rotations,alerts,act,run,record,member,join,sync,tick,drain,webhook,offer,accept,payLatest,ownerSub,verification,close:async()=>{await engine.dispose();metadata.close();}};
 }
 
 test('offer needs the owner of record, P18 tight verification, an active named person account and billing',async()=>{const w=await world();try{
@@ -96,7 +96,9 @@ test('transfer takes effect only on a verified payment, no earlier than 24 h, in
  let r=await w.record();assert.equal(r.transfer.state,'paid');assert.equal(r.transfer.payment.subscriptionId,pending.subscription);
  await rejects(w.run('orgs.transfer-withdraw',A,{transfer:id}),'transfer_not_withdrawable');
  await w.tick();assert.equal((await w.record()).ownerOfRecord.sub,A);
- w.clock.advance(DAY);await w.tick();r=await w.record();
+ // A step without a fresh provider snapshot (the tick fallback when Polar is unreachable) never changes the owner.
+ w.clock.advance(DAY);assert.ok((await w.tick()).wakeAt<=w.clock.now()+OWNERSHIP.RETRY_MS);assert.equal((await w.record()).ownerOfRecord.sub,A);
+ await w.sync();r=await w.record();
  assert.equal(r.ownerOfRecord.sub,B);assert.equal(r.transfer.state,'effective');
  const b=r.memberships[principalKey(p(B))];assert.equal(b.state,'live');assert.deepEqual(memberPowers(b,w.clock.now()),[]);assert.equal(b.grants[0].notBefore,w.clock.now()+3*DAY);assert.equal(b.addedUnder.kid,'identity-key-bbbb');
  assert.equal(r.memberships[principalKey(p(A))].state,'live');assert.ok(r.memberships[principalKey(p(A))].grants.some(g=>g.power==='admin'));
@@ -165,6 +167,7 @@ test('an unanswered claim takes effect after 72 h; a transfer verified during th
  const w=await world();try{
   await w.join(C,[{power:'admin'}]);w.clock.advance(3*DAY);w.polar.lapse(w.ownerSub.subscription);await w.webhook();w.clock.advance(OWNERSHIP.GRACE_MS+OWNERSHIP.CLAIM_AFTER_READ_ONLY_MS);await w.tick();
   await w.run('orgs.claim-start',C,{plan:'org-team',confirm:true});w.payLatest('claim');await w.webhook();w.clock.advance(3*DAY);await w.tick();
+  assert.equal((await w.record()).ownerOfRecord.sub,A,'a stale step never applies the claim');await w.sync();
   const r=await w.record();assert.equal(r.ownerOfRecord.sub,C);assert.equal(r.billing.claim.state,'effective');assert.equal(r.recovery.state,'rotation-pending');assert.equal(r.moveCoolingUntil,w.clock.now()+30*DAY);assert.equal(billingStanding(r,w.clock.now()).standing,'paid');
   await w.drain();assert.deepEqual(w.rotations,[ORG]);assert.equal(w.polar.effects.refunds.length,0);
  }finally{await w.close();}
@@ -173,7 +176,7 @@ test('an unanswered claim takes effect after 72 h; a transfer verified during th
   assert.equal((await t.record()).transfer.state,'lapsed');const second=await t.offer();assert.notEqual(second,id);
   await t.run('orgs.claim-start',C,{plan:'org-team',confirm:true});t.payLatest('claim');await t.webhook();assert.equal((await t.record()).billing.claim.state,'pending');
   await t.accept();t.payLatest('transfer');await t.webhook();let r=await t.record();assert.equal(r.billing.claim.state,'closed');assert.equal(r.billing.claim.closedReason,'transfer-paid');assert.equal(billingStanding(r,t.clock.now()).standing,'paid');
-  t.clock.advance(3*DAY);await t.tick();r=await t.record();assert.equal(r.ownerOfRecord.sub,B);await t.drain();assert.equal(t.polar.effects.refunds.length,1);
+  t.clock.advance(3*DAY);await t.sync();r=await t.record();assert.equal(r.ownerOfRecord.sub,B);await t.drain();assert.equal(t.polar.effects.refunds.length,1);
  }finally{await t.close();}
 });
 
@@ -265,4 +268,112 @@ test('seeded chaos: a refund or revoke that applies but reports failure is retri
  for(let i=0;i<12;i++){w.clock.advance(OWNERSHIP.RETRY_MS*2**Math.min(i,9));await w.drain();}
  w.billing.clientOverride=w.polar.client;for(let i=0;i<3;i++){w.clock.advance(7*3600000);await w.drain();}
  assert.equal(w.polar.effects.refunds.length,1);const r=await w.record();assert.equal(r.ownershipOutbox.filter(e=>!e.doneAt).length,0);
+ }finally{await w.close();}}));
+
+// ---- review regressions (commit f7eda06): the lapse claim must never seize an organization whose owner is paying -----
+/** Thirty days read-only after the owner's lapse (the claim window opens). */
+const lapsed=async w=>{w.polar.lapse(w.ownerSub.subscription);await w.sync();w.clock.advance(45*DAY);await w.sync();};
+test('H1: archiving or repricing a catalog price never makes a still-paying owner unpaid; the claim is refused',async()=>{const w=await world(1,{currency:'eur'});try{
+ await w.join(C,[{power:'admin'}]);w.clock.advance(4*DAY);await w.sync();assert.equal((await w.run('orgs.ownership',A)).billing.standing,'paid');
+ const product=w.polar.products['org-team-product'];product.prices.find(x=>x.price_currency==='eur').is_archived=true;
+ product.prices.push({id:'org-team-product-eur2',product_id:'org-team-product',source:'catalog',is_archived:false,amount_type:'fixed',price_currency:'eur',price_amount:130000});
+ w.clock.advance(10*60000);await w.sync();w.clock.advance(45*DAY);await w.sync();
+ const r=await w.record(),s=r.billing.subscriptions[w.ownerSub.subscription];
+ assert.equal(s.status,'active');assert.equal(s.currency,'eur');assert.equal(s.amount,120000);assert.equal(s.hold,undefined);assert.ok(s.paidThrough>w.clock.now());
+ const view=await w.run('orgs.ownership',C);assert.equal(view.billing.standing,'paid');assert.equal(view.billing.held,false);assert.equal(r.billing.unpaidSince,null);
+ await rejects(w.run('orgs.claim-start',C,{plan:'org-team',confirm:true}),'claim_unavailable');assert.equal((await w.record()).ownerOfRecord.sub,A);assert.deepEqual(w.alerts,[]);
+}finally{await w.close();}});
+
+test('H1: a partial (goodwill) refund keeps the owner paid; only a full refund counts as unpaid',async()=>{const w=await world();try{
+ await w.join(C,[{power:'admin'}]);w.clock.advance(4*DAY);
+ const o=w.polar.orders.get(w.ownerSub.order);o.refunded_amount=1;o.status='partially_refunded';await w.sync();
+ assert.equal((await w.run('orgs.ownership',C)).billing.standing,'paid');w.clock.advance(45*DAY);await w.sync();
+ await rejects(w.run('orgs.claim-start',C,{plan:'org-team',confirm:true}),'claim_unavailable');assert.equal((await w.record()).ownerOfRecord.sub,A);
+ // A refund of the net amount is a full refund: the owner is unpaid from then on.
+ o.refunded_amount=o.net_amount;o.status='refunded';await w.sync();const r=await w.record();assert.equal(r.billing.subscriptions[w.ownerSub.subscription].refunded,true);assert.equal(r.billing.unpaidSince,w.clock.now());
+}finally{await w.close();}});
+
+test('H1: a subscription Polar cannot confirm is held with an operator alert; it never starts the unpaid clock or advances a claim',async()=>{
+ // Changed terms after the first verification (unverifiable), then a vanished subscription (missing).
+ const w=await world();try{
+  await w.join(C,[{power:'admin'}]);w.clock.advance(4*DAY);w.polar.subscriptions.get(w.ownerSub.subscription).currency='eur';w.polar.orders.get(w.ownerSub.order).currency='eur';await w.sync();
+  let r=await w.record(),s=r.billing.subscriptions[w.ownerSub.subscription];assert.equal(s.hold.reason,'unverifiable');assert.equal(s.currency,'usd');assert.ok(s.paidThrough>w.clock.now());
+  assert.deepEqual(w.alerts.map(a=>[a.action,a.reason,a.subscription]),[['operator-alert','subscription-unverifiable',w.ownerSub.subscription]]);
+  await w.sync();assert.equal(w.alerts.length,1,'one alert per hold, not per reconcile');
+  w.polar.subscriptions.delete(w.ownerSub.subscription);await w.sync();r=await w.record();assert.equal(r.billing.subscriptions[w.ownerSub.subscription].hold.reason,'missing');assert.equal(w.alerts.at(-1).reason,'subscription-missing');
+  // Past the stored paid-through time the hold still keeps the unpaid clock stopped: no read-only, no claim.
+  w.clock.advance(420*DAY);await w.sync();r=await w.record();assert.equal(r.billing.unpaidSince,null);const view=await w.run('orgs.ownership',C);assert.equal(view.billing.held,true);assert.notEqual(view.billing.standing,'read-only');assert.ok(!view.decisions.includes('claim'));
+  await rejects(w.run('orgs.claim-start',C,{plan:'org-team',confirm:true}),'claim_unavailable');assert.equal(r.ownerOfRecord.sub,A);
+  assert.ok([...(await w.metadata.list({prefix:'org/audit/'})).values()].some(e=>e.action==='organization-billing-held'));
+ }finally{await w.close();}
+ // A hold arising while a claim is pending stops the claim at its deadline; reconciling clears the hold.
+ const h=await world();try{
+  await h.join(C,[{power:'admin'}]);h.clock.advance(4*DAY);await lapsed(h);
+  await h.run('orgs.claim-start',C,{plan:'org-team',confirm:true});h.payLatest('claim');await h.webhook();
+  const old=h.polar.subscriptions.get(h.ownerSub.subscription);h.polar.subscriptions.delete(old.id);h.clock.advance(DAY);await h.sync();
+  let r=await h.record();assert.equal(r.billing.subscriptions[old.id].hold,undefined,'an ended subscription is not held');
+  h.polar.subscriptions.get(r.billing.claim.payment.subscriptionId).amount=1;h.clock.advance(2*DAY+60000);await h.sync();r=await h.record();
+  assert.equal(r.billing.claim.state,'pending','an unverifiable claim payment holds the claim past its deadline');assert.equal(r.ownerOfRecord.sub,A);assert.equal(h.alerts.at(-1).reason,'subscription-unverifiable');
+  h.polar.subscriptions.get(r.billing.claim.payment.subscriptionId).amount=120000;await h.sync();r=await h.record();assert.equal(r.ownerOfRecord.sub,C,'reconciled: the claim takes effect');
+  assert.ok([...(await h.metadata.list({prefix:'org/audit/'})).values()].some(e=>e.action==='organization-billing-hold-cleared'));
+ }finally{await h.close();}
+});
+
+test('H1: an ownership change revokes every live subscription of the former owner, including one marked missing',async()=>{const w=await world();try{
+ const r=await w.record();w.service.ensure(r);const legacy=r.billing.subscriptions[w.ownerSub.subscription];legacy.status='missing';
+ await w.service.changeOwner(r,p(C),{subscriptionId:'sub_claim'},w.clock.now(),null,{cause:'lapse-claim',id:'claim-1'});
+ assert.equal(r.billing.handled[legacy.id],'revoke');assert.ok(r.ownershipOutbox.some(e=>e.kind==='revoke'&&e.subscriptionId===legacy.id));
+}finally{await w.close();}});
+
+test('H2: a claim never takes effect on stale data; an owner payment made before the deadline defeats it when Polar recovers',async()=>{const w=await world();try{
+ await w.join(C,[{power:'admin'}]);w.clock.advance(4*DAY);await lapsed(w);
+ await w.run('orgs.claim-start',C,{plan:'org-team',confirm:true});w.payLatest('claim');await w.webhook();const claim=(await w.record()).billing.claim;assert.equal(claim.state,'pending');
+ w.clock.advance(DAY);await w.run('orgs.billing-checkout',A,{plan:'org-team'});w.payLatest('renew'); // its webhook is lost
+ w.clock.advance(2*DAY+60000);const real=w.polar.client.customers.getStateExternal;w.polar.client.customers.getStateExternal=async()=>{throw Object.assign(Error('down'),{statusCode:503});};
+ await rejects(w.sync(),'billing_provider_unavailable');const step=await w.tick(); // ownershipFollowUp's fallback
+ assert.equal((await w.record()).ownerOfRecord.sub,A);assert.ok(step.wakeAt<=w.clock.now()+OWNERSHIP.RETRY_MS,'the stale step wakes to retry');
+ w.polar.client.customers.getStateExternal=real;await w.sync();await w.drain();const r=await w.record();
+ assert.equal(r.ownerOfRecord.sub,A);assert.equal(r.billing.claim.state,'closed');assert.equal(r.billing.claim.closedReason,'owner-paid');
+ assert.deepEqual(w.polar.effects.refunds.map(x=>x.subscription),[claim.payment.subscriptionId],'only the claimant is refunded; the owner’s renewal stands');
+}finally{await w.close();}});
+
+test('H2: an owner order begun before the deadline but not yet captured holds the claim until it settles',async()=>{
+ for(const outcome of ['captured','abandoned']){const w=await world();try{
+  await w.join(C,[{power:'admin'}]);w.clock.advance(4*DAY);await lapsed(w);
+  await w.run('orgs.claim-start',C,{plan:'org-team',confirm:true});w.payLatest('claim');await w.webhook();
+  w.clock.advance(2*DAY);await w.run('orgs.billing-checkout',A,{plan:'org-team'});const renewal=w.polar.pay(w.polar.checkoutBy(k=>k.metadata['3sln_me_org_purpose']==='renew').id,{paid:false});
+  w.clock.advance(DAY+60000);await w.sync();assert.equal((await w.record()).billing.claim.state,'pending');assert.equal((await w.record()).ownerOfRecord.sub,A);
+  if(outcome==='captured'){const o=w.polar.orders.get(renewal.order);o.status='paid';o.paid=true;w.clock.advance(DAY);await w.sync();const r=await w.record();assert.equal(r.ownerOfRecord.sub,A);assert.equal(r.billing.claim.closedReason,'owner-paid');}
+  else{w.clock.advance(OWNERSHIP.PAYMENT_SETTLE_MS);await w.sync();assert.equal((await w.record()).ownerOfRecord.sub,C,'an abandoned order holds the claim only for a bounded time');}
+ }finally{await w.close();}}
+});
+
+test('L2: of two paid owner renewals the current binding is kept and the other refunded in full',async()=>{const w=await world();try{
+ w.polar.lapse(w.ownerSub.subscription);await w.sync();w.clock.advance(20*DAY);await w.sync();
+ await w.run('orgs.billing-checkout',A,{plan:'org-team'});const k1=w.polar.checkoutBy(k=>k.metadata['3sln_me_org_purpose']==='renew');
+ await w.run('orgs.billing-checkout',A,{plan:'org-scale'});const k2=w.polar.checkoutBy(k=>k.metadata['3sln_me_org_purpose']==='renew');
+ const first=w.polar.pay(k1.id),second=w.polar.pay(k2.id);await w.webhook();await w.drain();await w.webhook();await w.drain();
+ const r=await w.record();assert.equal(r.billing.handled[second.subscription],'owner');assert.equal(r.billing.handled[first.subscription],'refund');
+ assert.deepEqual(w.polar.effects.refunds.map(x=>x.subscription),[first.subscription]);assert.equal(billingStanding(r,w.clock.now()).plan,'org-scale');
+}finally{await w.close();}});
+
+test('seeded chaos: claim deadline vs. owner payment vs. webhooks, alarms and Polar outages',async()=>forEachSeed(24,async random=>{const w=await world(random.seed);try{
+ await w.join(C,[{power:'admin'}]);w.clock.advance(4*DAY);await lapsed(w);
+ await w.run('orgs.claim-start',C,{plan:'org-team',confirm:true});w.payLatest('claim');await w.webhook();const claim=(await w.record()).billing.claim;
+ const ownerPays=random.chance(0.6),payAt=random.int(3*DAY-2*60000)+60000;let renewal=null;
+ if(ownerPays){w.clock.advance(payAt);await w.run('orgs.billing-checkout',A,{plan:'org-team'});renewal=w.polar.pay(w.polar.checkoutBy(k=>k.metadata['3sln_me_org_purpose']==='renew').id);}
+ w.clock.set(claim.notBefore+random.int(10*60000));
+ const scheduler=createScheduler(random),original=w.service.metadata;w.service.metadata=scheduler.wrap(original,'org-store');
+ w.billing.clientOverride=faulty(w.polar.client,{customers:[{method:'getStateExternal',when:random.pick([0.5,0.8,'always']),mode:'throw',error:Object.assign(Error('down'),{statusCode:503})}],orders:[{method:'list',when:0.2,mode:'timeout'}],refunds:[{method:'create',when:0.3,mode:random.pick(['after','duplicate'])}]},random);
+ const alarm=()=>w.sync().catch(()=>w.tick()).then(()=>w.drain());
+ await scheduler.run([()=>w.webhook('evt_a'),alarm,alarm,()=>w.tick(),()=>w.webhook('evt_b'),()=>w.drain(),()=>{w.clock.advance(random.int(5*60000));return alarm();}]);
+ w.service.metadata=original;
+ if(ownerPays)assert.equal((await w.record()).ownerOfRecord.sub,A,'an owner payment made before the deadline is never overtaken during an outage');
+ w.billing.clientOverride=w.polar.client;
+ for(const step of [0,10*60000,DAY]){w.clock.advance(step);await w.sync();for(let i=0;i<3;i++){w.clock.advance(7*3600000);await w.drain();}}
+ await w.sync();const r=await w.record(),refunds=w.polar.effects.refunds.map(x=>x.order);
+ assert.equal(new Set(refunds).size,refunds.length,'no order is refunded twice');
+ if(ownerPays){assert.equal(r.ownerOfRecord.sub,A);assert.equal(r.billing.claim.closedReason,'owner-paid');assert.deepEqual(w.polar.effects.refunds.map(x=>x.subscription),[claim.payment.subscriptionId]);assert.equal(r.billing.handled[renewal.subscription],'owner');}
+ else{assert.equal(r.ownerOfRecord.sub,C);assert.equal(r.billing.claim.state,'effective');assert.ok(r.billing.claim.effectiveAt>=claim.notBefore);assert.equal(w.polar.effects.refunds.length,0);}
+ assert.equal(r.ownershipOutbox.filter(e=>!e.doneAt).length,0,'every effect completed');
  }finally{await w.close();}}));
