@@ -1,3 +1,4 @@
+import {AGE_POLICY} from '../identity/age-policy.mjs';
 import {rememberPaidHistory} from '../identity/lifecycle-protection.mjs';
 import {PlanChanges} from './changes.mjs';
 import {POLAR_CURRENCIES,priceExponent,countryCurrency} from './currencies.mjs';
@@ -69,7 +70,7 @@ export class BillingService {
     }
     this.catalogCache={fingerprint,organizationId,entries,expiresAt:this.now()+300000};return this.catalogCache;
   }
-  selection(catalog,{country,currency}={}){const currencies=Object.keys(catalog.entries.paid.prices).filter(code=>Object.values(catalog.entries).every(entry=>Object.hasOwn(entry.prices,code))).sort();if(currency!==undefined&&(typeof currency!=='string'||!currencies.includes(currency)))throw new BillingError('invalid_currency','Choose an available billing currency.');const regional=countryCurrency(country);return {catalog,currencies,currency:currency??(currencies.includes(regional)?regional:'usd')};}
+  selection(catalog,{country,currency}={}){const blocked=AGE_POLICY.representativeBlocked.includes(typeof country==='string'?country.toUpperCase():country),currencies=Object.keys(catalog.entries.paid.prices).filter(code=>(!blocked||code==='usd')&&Object.values(catalog.entries).every(entry=>Object.hasOwn(entry.prices,code))).sort();if(currency!==undefined&&(typeof currency!=='string'||!currencies.includes(currency)))throw new BillingError('invalid_currency','Choose an available billing currency.');const regional=countryCurrency(country);return {catalog,currencies,currency:currency??(currencies.includes(regional)?regional:'usd')};}
   checkoutHints({customerIpAddress,locale}={}){const result={};if(typeof customerIpAddress==='string'&&customerIpAddress.length<=45&&(/^(?:\d{1,3}\.){3}\d{1,3}$/.test(customerIpAddress)&&customerIpAddress.split('.').every(part=>Number(part)<=255)||/^[a-fA-F0-9:]+$/.test(customerIpAddress)&&customerIpAddress.includes(':'))&&!['127.0.0.1','::1','0.0.0.0'].includes(customerIpAddress))result.customer_ip_address=customerIpAddress;if(locale!==undefined){try{if(typeof locale!=='string'||locale.length>100)throw Error();result.locale=Intl.getCanonicalLocales(locale)[0];if(!result.locale)throw Error();}catch{throw new BillingError('invalid_locale','Choose a valid checkout language.');}}return result;}
   async entitlement(owner){assertOwner(owner);const state=await this.metadata.get(BILLING_STATE_KEY);return entitlementFromState(state?.owner===owner?state:null,this.now(),this.config);}
   async paidHandleEligibility(owner){

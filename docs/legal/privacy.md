@@ -63,7 +63,7 @@ If you buy a paid plan, checkout and payment are handled by **Polar**.
 - **How we use them.** We use this to:
   - enforce rate limits and sign-up limits;
   - apply the age rules for your country;
-  - show prices in your local currency.
+  - show prices in a supported local currency; EU, EEA and UK locations receive USD-only pricing at launch.
 - **Rate-limit counters.** We do not store raw IP addresses for this. Counters use keyed one-way hashes of your IP address, network range and country, and they expire within 24 hours.
 - **Cloudflare Turnstile.** Sign-up, sign-in, recovery and some other actions are protected by Cloudflare Turnstile. It runs in your browser and receives information from your device and browser to tell people from bots. We send Cloudflare the challenge result and your IP address to verify it.
 
@@ -203,7 +203,7 @@ Depending on where you live, you may have the right to:
 3sln.me is not intended for children under the minimum age for their country.
 - **The age that applies.** This is the age at which a person can use an online service like ours without a parent's consent. It ranges from 13 to 20 depending on the country; where we have not set a specific age, it is 18.
 - **At sign-up.** You confirm that you are over that age. Paid plans require you to be an adult where you live.
-- **Where we can't offer accounts.** We don't offer sign-up in some countries and regions where local law requires identity or age verification beyond that confirmation.
+- **Where we offer accounts.** Sign-up is available in supported countries and regions, subject to our age and legal eligibility rules. At launch, we do not offer sign-up in the European Union, the European Economic Area (including Iceland, Liechtenstein and Norway), or the United Kingdom while representative arrangements are pending. We also exclude countries and regions where local law requires identity or age verification beyond that confirmation. People in these regions may still contact us and exercise applicable privacy rights.
 - **Accounts created underage.** If we learn that an account belongs to someone under the minimum age, we will delete it. If you believe a child has given us personal data, contact us.
 
 ## 11. Cookies and storage on your device

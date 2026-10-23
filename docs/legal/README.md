@@ -11,7 +11,7 @@ The drafts describe the as-built system as of commit f6d3820 plus features behin
 
 ## Placeholders to fill
 
-Operator filled 2026-10-22: Stubbs Software Solutions LLC, doing business as 3sln, 41 West Highway 14 #1645, Spearfish, SD 57783, United States. Remaining: `[STATE]` (governing law), `[VENUE]`, `[REFUND POLICY]`, `[EU REPRESENTATIVE]`, `[UK REPRESENTATIVE]` (GDPR Art. 27 / UK GDPR Art. 27 representatives are required if the company has no EU/UK establishment and offers the service there).
+Operator filled 2026-10-22: Stubbs Software Solutions LLC, doing business as 3sln, 41 West Highway 14 #1645, Spearfish, SD 57783, United States. Governing law: South Dakota (user, 2026-10-22); venue defaults to South Dakota state or federal courts (coordinator, pending confirmation). Remaining: `[REFUND POLICY]`, `[EU REPRESENTATIVE]`, `[UK REPRESENTATIVE]` (GDPR Art. 27 / UK GDPR Art. 27 representatives are required if the company has no EU/UK establishment and offers the service there).
 
 ## Commitments the drafts make that the system does not meet yet
 
@@ -22,7 +22,7 @@ Publication is blocked until each is built, handled manually with a documented p
 | Account deletion on request | Privacy §8–9, Terms §10 | Implemented behind `ACCOUNT_DELETION_ENABLED` (off): self-serve with 14/30-day grace and admin-assisted. Enabling is blocked on R1-M12 (BindleBox data on deletion) and the Polar sandbox check. |
 | Data export on request; export before closure and over-quota removal | Privacy §9, Terms §7, §10 | Implemented behind `ACCOUNT_EXPORT_ENABLED` (off), including closure-window export sessions. The over-quota hook (DX-9) is pending. Device grants and S3/WebDAV mappings are not exported yet. |
 | Removing a confirmed email (erasure) | Privacy §9 | Implemented behind `EMAIL_REMOVAL_ENABLED` (off). A waiver is required when no other notice channel remains. |
-| Age confirmation by country, region blocking | Privacy §3, §10; Terms §2 | Not implemented. Research: [age research](../release/age-requirements.md). |
+| Age confirmation by country, region blocking | Privacy §3, §10; Terms §2 | Implemented locally with trusted-location age attestation and separate, reversible EU/EEA/UK launch blocks for representative obligations; blocked locations receive USD-only billing selection. Production verification and counsel approval remain pending. Research: [age research](../release/age-requirements.md), [representative spike](../release/eu-uk-representative-spike.md). |
 | Re-acceptance of new terms at next sign-in | Terms §12 | `termsVersion` is recorded at signup only; no re-acceptance flow. |
 | Policies linked from signup, landing and console footers, OAuth/client metadata | — | Only an in-app summary dialog at signup (`apps/web/src/ui/release-dialogs.mjs`). No `/privacy` or `/terms` pages, no `policy_uri`/`tos_uri`. |
 | 30-day notice before removing over-quota data | Terms §7 | Design only (D092); live behaviour never removes data. Consistent, but must stay true. |

@@ -2,7 +2,7 @@
 
 Draft for review. Version: 2026-10-21 (draft). Not yet in effect.
 
-<!-- Placeholders: [STATE], [VENUE], [REFUND POLICY]. -->
+<!-- Placeholders: [REFUND POLICY]. Venue is a coordinator default pending confirmation. -->
 
 These terms are an agreement between you and **Stubbs Software Solutions LLC**, doing business as **3sln**, 41 West Highway 14 #1645, Spearfish, SD 57783, United States ("we", "us"). They cover your use of the hosted service at **3sln.me** (the "Service"). Please read them together with our [Privacy Policy](privacy.md).
 
@@ -13,6 +13,8 @@ The Bindle software that 3sln.me runs on is open source. Its license governs you
 You accept these terms when you create an account or use the Service. If you use the Service for an organization, you confirm you're authorized to accept the terms for it.
 
 ## 2. Who can use the Service
+
+Sign-up is available in supported countries and regions, subject to the requirements below. At launch, sign-up is not offered in the European Union, the European Economic Area (including Iceland, Liechtenstein and Norway), or the United Kingdom while representative arrangements are pending.
 
 To use the Service, you must:
 - be at least the minimum age for your country, which you confirm at sign-up (see the Privacy Policy, section 10);
@@ -130,8 +132,8 @@ We may delete free accounts that have never been used, or that haven't been used
 
 ## 13. Governing law and disputes
 
-- **Governing law.** These terms are governed by the laws of the State of [STATE], United States, without regard to conflict-of-law rules.
-- **Courts.** Disputes go to the courts of [VENUE].
+- **Governing law.** These terms are governed by the laws of the State of South Dakota, United States, without regard to conflict-of-law rules.
+- **Courts.** Disputes go to the state or federal courts located in South Dakota.
 - **Consumers.** If you're a consumer, you also keep the protection of the mandatory laws of your country of residence, and you may bring claims in your local courts.
 - **Resolving disputes informally.** Before bringing a claim, please contact us at contact@3sln.com so we can try to resolve it informally.
 

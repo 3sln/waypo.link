@@ -1,6 +1,6 @@
 # Organizations: design spike
 
-Status: **provisional design, 2026-10-22, revision 5.2.** Revision 5.2 applies the user's 2026-10-22 decisions: Q3 (no roles) is accepted, and the grant-management elevation rule is refined (§12b.2a). The refinement supersedes the R4-M4 recommendation; see [Revision 5.2 reconciliation](#revision-52-reconciliation). Q13 stays open. It is unreviewed. Revision 5.1 applies AMD-P4 ([identity portability](identity-portability.md)) and AMD-I5 ([intent links](intent-links.md)), answers R4-H2, and records a *recommendation* on R4-M4 that awaits the user. It is unreviewed. Revision 5 (reviewed in [Review round 4](#review-round-4); resolved findings applied as R4-…, open items remain open). Revision 5 applies the user's decisions of 2026-10-22 (§1c): organization identity is the same as user identity, with a recovery file; Q7, Q10 and Q11 are resolved; and messaging apps get no special treatment. It is not independently reviewed. Revision 4.3: Revision 4.3 adds the user's 3sln.me grant-management policy (§12b) and makes governance explicitly provider policy in the spec (§6.3). Revision 4.2: Revision 4.2 defines the additive growth points of the `relation` artefact kind (spec §9.2) and how each maps to widening. Revision 4.1: Revision 4.1 applies the user's decision on relation admission (§8a.9): membership in an instance is per edge, and partial membership is first-class. Revision 4: Revision 4 adopts the user's relations proposal (§1b, §8a), separates provider roles and adds 3sln.me product rules (§12a). Its effect on the review findings is in [Revision 4 reconciliation](#revision-4-reconciliation), and it was reviewed in [Review round 3](#review-round-3), whose resolved findings are applied (R3-…); its open items remain open. Earlier, revision 2 applied the resolved findings of [Review round 1](#review-round-1); open items there remain open. Revision 3 applies the user's clarification (§1a) and is reconciled with the review in [Revision 3 reconciliation](#revision-3-reconciliation). Revision 3 was reviewed in [Review round 2](#review-round-2), whose resolved findings are applied (R2-…); its open items remain open. Design only: nothing here is implemented, routed or production-verified, and no code changed. The coordinator records decisions in DEVLOG.md. Every decision below is unsigned until it gets a reviewer, a date and an outcome. Terminology: [organizations terminology](organizations-terminology.md). Draft normative skeleton: [spec/organizations.md](../spec/organizations.md).
+Status: **provisional design, 2026-10-22, revision 5.3.** Revision 5.3 applies the user's 2026-10-22 decisions that membership, member grants and governance are internal to the organization (Q13 resolved; new §12c, with the rules moved out of the spec), and that admins can block an admin-requested organization move but never the owner's (§12b.5). See [Revision 5.3 reconciliation](#revision-53-reconciliation). It is unreviewed. Revision 5.2 applies the user's 2026-10-22 decisions: Q3 (no roles) is accepted, and the grant-management elevation rule is refined (§12b.2a). The refinement supersedes the R4-M4 recommendation; see [Revision 5.2 reconciliation](#revision-52-reconciliation). Q13 stays open. It is unreviewed. Revision 5.1 applies AMD-P4 ([identity portability](identity-portability.md)) and AMD-I5 ([intent links](intent-links.md)), answers R4-H2, and records a *recommendation* on R4-M4 that awaits the user. It is unreviewed. Revision 5 (reviewed in [Review round 4](#review-round-4); resolved findings applied as R4-…, open items remain open). Revision 5 applies the user's decisions of 2026-10-22 (§1c): organization identity is the same as user identity, with a recovery file; Q7, Q10 and Q11 are resolved; and messaging apps get no special treatment. It is not independently reviewed. Revision 4.3: Revision 4.3 adds the user's 3sln.me grant-management policy (§12b) and makes governance explicitly provider policy in the spec (§6.3). Revision 4.2: Revision 4.2 defines the additive growth points of the `relation` artefact kind (spec §9.2) and how each maps to widening. Revision 4.1: Revision 4.1 applies the user's decision on relation admission (§8a.9): membership in an instance is per edge, and partial membership is first-class. Revision 4: Revision 4 adopts the user's relations proposal (§1b, §8a), separates provider roles and adds 3sln.me product rules (§12a). Its effect on the review findings is in [Revision 4 reconciliation](#revision-4-reconciliation), and it was reviewed in [Review round 3](#review-round-3), whose resolved findings are applied (R3-…); its open items remain open. Earlier, revision 2 applied the resolved findings of [Review round 1](#review-round-1); open items there remain open. Revision 3 applies the user's clarification (§1a) and is reconciled with the review in [Revision 3 reconciliation](#revision-3-reconciliation). Revision 3 was reviewed in [Review round 2](#review-round-2), whose resolved findings are applied (R2-…); its open items remain open. Design only: nothing here is implemented, routed or production-verified, and no code changed. The coordinator records decisions in DEVLOG.md. Every decision below is unsigned until it gets a reviewer, a date and an outcome. Terminology: [organizations terminology](organizations-terminology.md). Draft normative skeleton: [spec/organizations.md](../spec/organizations.md).
 
 Protocol/security/architecture sign-off: reviewer ___ / date ___ / outcome ___.
 
@@ -49,6 +49,8 @@ The user had not read this design. They proposed the points below, relayed close
 5. **Parley,** the messaging app, is a regular app. It stores its data in the user's configured object-storage resource. Nothing in this design gives operator-run apps special treatment.
 6. **No roles (Q3)** is accepted as recommended: per-member grants, copy-on-apply templates and app-published member-scoped fields, with live groups deferred.
 7. **Elevation goes to the subject first (refines §12b).** The user's words: "the elevation sits with them until either rejected, accepted, retracted, or the one who's grants are changing accepts. Initially only the subject is given the option to accept the change; but the requester can elevate if the subject rejects the change or takes too long." Applied in §12b.2a. No timeout resolves a request in anyone's favour. This supersedes the R4-M4 recommendation (§5.11).
+8. **Membership is internal; relations are between organizations (resolves Q13).** Decided by the user, 2026-10-22: "membership of an org is separate from relations; relations are relationships between orgs. Membership within an org, and access, grants, etc; are internal org matters and probably don't need to be exposed/specced in bindle … For 3sln.me, membership is simply governed by a grants list, associated with the user's identity (and the PK the user was added under)." Applied in §12c and spec rev 4.2. Places where the split may need the user's second look are listed in §12c.4.
+9. **Organization moves and admin blocking (M10, final).** Decided by the user, 2026-10-22: other admins can block an org move, but not one the owner requested; the owner is more privileged; and "these elevations need tight verification because they're quite dangerous." Applied in §12b.5 and [portability §6.2](identity-portability.md#62-organizations).
 
 ## 2. Decisions
 
@@ -65,7 +67,7 @@ All decisions are provisional. Each is reversible until the spec is published.
 | ORG-D7 | **Member context for apps.** An app gets "member M in organization O" only by presenting a certificate that M's home provider issued for O and for that app, either at O's token endpoint (giving a DPoP-bound token that never outlives the certificate, with no refresh token) or directly on each request. The result binds an opaque **membership ID**. Not a member, not connected and failed verification all look the same to the app. | §9, spec §7 |
 | ORG-D8 | ~~Offers and grantor-minted cross-entity tokens.~~ **Superseded by ORG-D15 and ORG-D16** (rev 4). | §8a |
 | ORG-D9 | **Membership is never publicly checkable.** Membership IDs are pairwise per organization, actor chains are pairwise per grantor, and no endpoint answers "is X a member of Y". | §9.1 |
-| ORG-D10 | **Governance is a provider feature.** 3sln.me v1 has a single `admin` power and recommends at least two admins. Critical actions are delayed and notified, and break-glass recovery uses the existing recovery-file format. None of this is spec. Rev 4.3: changing or removing another member's grant-management grant needs that member's consent or the owner's (billing owner's) elevation (§12b). Rev 5.2: the request goes to that member first; the requester may elevate to the owner only after a rejection or a response period, and an elevation stays pending until someone acts (§12b.2a). The spec only requires each provider to define and disclose its policy. | §7, §10, §12b |
+| ORG-D10 | **Governance is a provider feature.** 3sln.me v1 has a single `admin` power and recommends at least two admins. Critical actions are delayed and notified, and break-glass recovery uses the existing recovery-file format. None of this is spec. Rev 4.3: changing or removing another member's grant-management grant needs that member's consent or the owner's (billing owner's) elevation (§12b). Rev 5.2: the request goes to that member first; the requester may elevate to the owner only after a rejection or a response period, and an elevation stays pending until someone acts (§12b.2a). The spec only requires each provider to define and disclose its policy. Rev 5.3: the membership model itself is provider policy too (ORG-D20). | §7, §10, §12b |
 | ORG-D11 | **Resources belong to exactly one entity.** Membership never confers ownership, and leaving transfers nothing. The organization is the controller of its pool, and 3sln.me is its processor. A DPA is needed. | §12 |
 | ORG-D12 | **The directory/identity-document profile is specified in [spec §3a](../spec/organizations.md#3a-identity-documents-and-key-discovery-directoryv1)** (`directory.v1`) and is a phase A prerequisite (rev 3). It is shared with BindleBox, links and contact delivery, and may move to a companion document later. | §6.1, §13 |
 | ORG-D13 | **Acquiring certificates is out of spec.** The spec fixes the artifact and its verification. Mechanisms are named only as non-normative examples: the home provider's embedded elements with a non-extractable key, a general Bindle authorization flow as a fallback, and native or CLI device grants. 3sln.me's element-based acquisition is an app feature. | §6.2 |
@@ -75,6 +77,7 @@ All decisions are provisional. Each is reversible until the spec is published.
 | ORG-D17 | **Provider roles.** Identity hosting (`directory.v1`, member certificates) and organization hosting (`organizations.v1`, `directory.v1` for its organizations, `relations.v1`) are separate roles; 3sln.me plays both. The common contract needs no registration between providers. | spec §14 |
 | ORG-D18 | **3sln.me product rules** (user decisions): creating an organization needs a 3sln.me account; organizations are always paid; tiers first, metered later. App feature, not spec. | §12a |
 | ORG-D19 | **Integrity references are a dependency.** Relations need references to fragments as URL plus `version` plus `digest` (ART-D5), instance pins to a relation version, and provider caching, from the [artefact references](artefact-references.md) design. Until it lands: immutable URLs plus a digest. | spec §9.8 |
+| ORG-D20 | **Membership is internal to the organization** (rev 5.3, decided by the user, 2026-10-22). Bindle specifies only what crosses a party boundary: member certificates, the authority-epoch signal, the invitation link, the membership ID, the observable end of a membership, member context and the effective-authority outputs. Member records, member grants, templates, governance powers and the grant-management policy are provider policy. On 3sln.me a membership is a grants list keyed by origin principal, recording the keys the member was added under. | §12c, spec §5, §6.3 |
 
 Reviewer ___ / date ___ / outcome ___ (for each row).
 
@@ -103,7 +106,7 @@ The wargames in §5 derived this set. Revision 4 folds in the user's relations (
 0. **Identity document and certificates.** A read-only public key discovery per identity (`directory.v1`), plus short-lived certificates in which an entity's own provider binds a holder key to that entity, an audience and a client. **Member certificates** come from a person's home provider (rev 3). **Entity certificates** come from an organization's provider, for relations (rev 4). Every request is signed with the certified key (this generalizes `key-delegation.v1`).
 1. **Organization entity** (rev 5). An identity like a person's (stable UUID, aliases, provider-custodied keys, recovery file at creation) of kind `organization`. It has no interactive login, and members operate its owner interface (generalizes the entity).
 2. **Directional connection with counterparty kinds.** The counterparty is an integration, a person or an entity relation party. It has a state, a generation and severance. It is mechanics: users see memberships, integrations and relations (generalizes the integration connection).
-3. **Membership.** An organization→person connection, plus an opaque membership ID, per-member grants, governance powers and an optional `expires_at` (§8a.6: not a relation).
+3. **Membership.** An organization→person connection, plus an opaque membership ID, per-member grants, governance powers and an optional `expires_at` (§8a.6: not a relation). Rev 5.3: only its lifecycle, membership ID and member certificates are spec; its contents are provider policy (§12c).
 4. **Grant with caveats.** A fragment grant, as for apps, or a member resource grant, with `expires_at`. Relation edges add `reshare` (refused for now) and `actor_disclosure`, taken from the access entry.
 5. **Effective-authority rule.** Live intersection along the chain: organization→app, organization→member and grantor→organization (the edge). There is no implicit inheritance.
 6. **Member context.** A member certificate exchanged at the organization's token endpoint or presented directly, plus `bindle_member` and uniform failure.
@@ -482,7 +485,7 @@ An optional `connection-revoked` SET to the organization shortens this. Same-hos
 | **Per-member grants plus copy-on-apply templates** (chosen) | "What can Alice do" is simply her grants. Removing Alice removes everything. Auditing and revocation are trivial. | A bulk change means re-applying the template. The console shows a drift diff ("3 members differ from Bookkeeper"). |
 | Member sets (live groups) | Bulk changes with visible indirection | Deferred. They can be added as a 3sln.me feature without any spec change, because the spec sees only effective authority. |
 
-**The spec sees only effective authority.** Another provider never evaluates Acme's internal grants. Apps see effective grants in their projection and tokens. Whether a provider uses roles, groups or templates is therefore **its own business**, and the spec defines none.
+**The spec sees only effective authority.** Another provider never evaluates Acme's internal grants. Apps see effective grants in their projection and tokens. Whether a provider uses roles, groups or templates is therefore **its own business**, and the spec defines none. Rev 5.3 (user decision, ORG-D20) extends this to the member records themselves (§12c).
 
 **App-specific permissions** ("can approve purchase orders up to €10k") are app semantics. The Bindle-native way to manage them centrally is a **member-scoped fragment** that the app publishes. For example, `https://erp.example/fragments/member-access/v1` has `role: enum[viewer, clerk, approver, admin]` and `approval_limit: integer`, each marked `"scope":"member"`. Acme's admins set the values per member in the console, and templates can set them too. The member can see their own values. The ERP reads them in member context and enforces them. The app defines the vocabulary as a public URI document, which is the user's hunch in a precise form, and Bindle stores the values without interpreting them. This is phase B. Until then, the ERP keeps its own role table keyed by membership ID.
 
@@ -542,14 +545,17 @@ The audit never contains payloads, tokens or preference values ([security](../sp
 | Item | Bindle spec | Components profile (3sln.me) | 3sln.me feature |
 | --- | --- | --- | --- |
 | Organization kind; identity-document `kind` | ✓ | | |
-| Connection counterparty kinds; membership as a connection | ✓ | | |
+| Connection counterparty kinds; a membership's observable lifecycle (live, ended, `member-removed`) and membership ID | ✓ | | |
 | Organization-invitation and relation-invitation link types | ✓ | | |
 | `directory.v1`; member and entity certificates | ✓ | | |
 | Relation documents (artefact class), instances, edges, lifecycle | ✓ | | |
 | Provider roles (identity hosting, organization hosting) | ✓ | | |
 | Member context (certificate token form, `bindle_member`, uniform failure) | ✓ | | |
-| Effective-authority intersection; no inheritance; deputy rule | ✓ | | |
-| Grant caveats `expires_at`, `reshare`, `actor_disclosure` | ✓ | | |
+| Effective-authority intersection and its outputs to apps and counterparts; no inheritance; deputy rule | ✓ | | |
+| Authority-epoch signal from home providers (`aep`, resets) | ✓ | | |
+| Grant caveats `expires_at`, `reshare`, `actor_disclosure` (integration grants and relation edges) | ✓ | | |
+| Membership records: grants list keyed by origin principal, added-under keys (§12c) | | | ✓ |
+| Member grants, holds and re-confirmation after authority resets, bound invitations for governance, last-admin and no-operator guards (§12c.3) | | | ✓ |
 | Actor chain in entity certificates | ✓ | | |
 | Imported-resource projection (preferences v2 `broker`) | ✓ (amendment) | | |
 | Bus `entity` consumer kind; `member-removed` event | ✓ (amendment) | | |
@@ -693,7 +699,9 @@ An "employment" relation was considered as a way to subsume membership, and reje
 - Members get **per-person** grants and governance powers, while slots give **uniform** access to every holder by design. Encoding per-member differences would need a relation per member, or member-scoped values, which brings roles back under another name.
 - Membership is internal to one organization, so a public document adds nothing.
 
-The person→organization side of membership, such as a profile share, can use the same fragment-grant mechanics. The console may *list* memberships next to relations for a uniform view. This is Q13.
+The person→organization side of membership, such as a profile share, can use the same fragment-grant mechanics. The console may *list* memberships next to relations for a uniform view.
+
+**Resolved (Q13, decided by the user, 2026-10-22):** "membership of an org is separate from relations; relations are relationships between orgs." Membership stays distinct, and is now also out of the spec except where it crosses a party boundary (ORG-D20, §12c).
 
 ### 8a.7 Provider roles
 
@@ -929,7 +937,7 @@ This is 3sln.me policy. The spec says only that the provider's grant-management 
 - **Billing lapse.** After the grace period ends without payment, the organization becomes read-only (§12a). Thirty days later, any admin may start a new subscription and propose itself as owner. This takes effect after a **72 h** notice to the old owner and all admins, and the old owner cancels it by paying. The rule stops an absent owner from blocking forever, and paying is the only way to claim the role.
 - **Owner unreachable.** Elevated requests stay pending with the owner; none lapse (§12b.2a). Until the owner returns, a GM change happens only if the subject accepts. Everything else works.
 - **Owner lost** (home account recovered or compromised):
-  - The owner's admin power and elevation authority are **held** after an authority reset (spec §5.2a, R1-H3). Re-confirmation for the owner is a 72 h notice to all admins; any admin may object, which moves the organization to break-glass.
+  - The owner's admin power and elevation authority are **held** after an authority reset (§12c.3, signalled under spec §5.2a, R1-H3). Re-confirmation for the owner is a 72 h notice to all admins; any admin may object, which moves the organization to break-glass.
   - **Break-glass** is organization recovery with the owner's recovery file (§5.11, rev 5). After recovery the recovering person becomes candidate owner and admin under the 72 h rule, and only the current owner can cancel. It never removes admins by itself; any removals afterwards follow §12b.2.
 - **Owner also the admin being changed.** Only the owner's own consent changes it (table above).
 - **Relation edges.** GM grants, like all owner-interface authority, never cross an edge (spec §6.2 rule 3). An external organization can never manage another organization's grants, and relation documents cannot express it.
@@ -944,6 +952,66 @@ This is 3sln.me policy. The spec says only that the provider's grant-management 
 - If the owner is absent, elevated requests stay pending indefinitely, because no timeout resolves them (rev 5.2). A feud then ends only by the subject's consent, a retraction, the billing-lapse rule or break-glass. Neither feuding admin can remove the other, so the organization keeps operating with both, which is the same visible stalemate Q8's position B accepted.
 - The rule creates no race: neither party gains anything by acting first, and a subject who rejects only unlocks elevation sooner.
 - 3sln.me still adjudicates nothing beyond these rules.
+
+### 12b.5 Organization moves (M10, decided by the user, 2026-10-22)
+
+The user's words: admins can block "from other admins, no from org owner, original requester can elevate"; the owner is more privileged; and "these elevations need tight verification because they're quite dangerous." The full rules are in [portability §6.2](identity-portability.md#62-organizations). They follow the shape of §12b.2a:
+
+- An admin may request a move. Any other admin may block it, and the owner may cancel it.
+- The requester may elevate a blocked request to the owner. It stays pending until the owner accepts or rejects it, the requester retracts it, or every blocking admin withdraws their block (the counterpart of the subject's consent). No timeout decides.
+- Admins cannot block a move the owner requests. They can object, with notices to everyone, and the 72 h delay and the 30-day cooling still apply.
+- **Tight verification** (*the coordinator's proposal, unsigned*) applies to the owner's decision on an elevated move and to every owner-requested move (portability §6.2). If the owner's account had a security change in the last 30 days, the admins' block power returns.
+- Tight verification covers moves only. A GM elevation under §12b.2 still takes effect immediately on acceptance. Whether GM elevations should get tight verification too is open (§15 Q14).
+
+## 12c. 3sln.me membership model (provider policy, not spec)
+
+Decided by the user, 2026-10-22 (§1c item 8). Bindle sees a membership only through the outputs of spec §5–§7. Everything here is 3sln.me's choice, and another organization provider may model membership differently.
+
+### 12c.1 The record
+
+A membership is a **grants list keyed by the member's origin principal `(iss₀, sub)`**:
+
+| Field | Meaning |
+| --- | --- |
+| Key | The origin principal (spec §5.3). Never a handle, a local account ID or the current `iss`. |
+| Membership ID | Spec §5.3. Stable for this key across leaving and rejoining. |
+| Grants list | The only source of the member's authority inside the organization: per-member entries (resource or scope, methods, optional `expires_at`, granted by, when) and governance powers (`admin` in v1). Templates copy entries in (§6.3). Nothing refers back to a template, a role or a group. |
+| Added under | The member's identity signing key (`kid` and public key), pinned when the invitation was accepted, and the certification `kid` that signed the acceptance certificate. |
+| Current pins | The signing-key pin and seen-kid sets of spec §3a.4, the highest accepted `aep`, and the successor pin (shared with the successor index, portability spec §8.2). |
+| State | Live or ended, an optional membership `expires_at`, and any hold (§12c.3). |
+
+### 12c.2 Member key rotation and moves
+
+The added-under keys are **provenance, not a lock**. Certificates are checked against the member's live identity document (spec §5.2), never against the recorded key, so the record never needs rekeying.
+
+- **Rotation with continuity at the home provider.** The new key links to the pinned key by continuity statements, so it is accepted silently. The pin advances and the grants list is untouched. The chain from the added-under key to today's key stays walkable.
+- **Certification-key rotation.** No effect. The recorded certification `kid` is audit provenance only.
+- **Key reset without continuity, a higher `aep`, or `connection-revoked`.** An authority reset (spec §5.2a). The grants list stays, governance powers are held (§12c.3), and the record notes where the provenance chain restarted.
+- **The member moves.** Adoption through the successor index (portability spec §8.3) maps the new `(iss, sub)` to the same origin principal, so the membership, its ID and its grants list are unchanged. The chain stays unbroken: added-under key → continuity statements → the key that signed the move statement → the destination's activation rotation (portability P11, the chained provenance of Q1). Adoption is an authority reset, so governance powers are held until re-confirmed.
+- **Broken chain** (an unattested move adopted by hand, or a key reset). The record keeps the break, who adopted it and when. Provenance restarts from the new key, and the console marks the member "continuity broken on <date>".
+- **The organization moves.** Memberships travel with its data import (portability §8). They are keyed by origin principals, so nothing rekeys.
+
+### 12c.3 Rules moved from the spec (rev 5.3)
+
+These were spec requirements until spec rev 4.2. They are now 3sln.me policy, unchanged in substance:
+
+- **Hold after an authority reset** (was spec §5.2a, R1-H3). Governance powers are held until a re-confirmation that names the `aep` it confirms; a later reset needs a new one. Re-confirmation is another admin's approval, or a 72 h notice to every other admin, any of whom can cancel; for the owner, §12b.3. Member grants resume with the next valid certificate. The hold is audited and shown to the member.
+- **No escalation through one's own account recovery** (was spec §3). A person never gains governance powers through their home-account recovery beyond what they already held.
+- **Bound invitations for governance** (was spec §5.1, R1-H4). An invitation that offers `admin` names its invitee. An unbound invitation confers member grants only. A new admin grant also waits 72 h after acceptance (§12b.2).
+- **Partial governance** (was spec §6.3, R1-L6). A member holding part of the owner interface cannot confer authority it could not confer itself. Granting an app a resource is conferring it.
+- **Never without an operator** (was spec §6.3). The last-admin guard (§12b.2), with organization recovery as the only way back.
+- **Ending a membership** (was spec §5.4). Admins remove members, membership `expires_at` is swept, and the member can always leave. The spec keeps only the commit's effects.
+- **Owner-interface audit** (was spec §6.3, §13). Every owner-interface action records the acting member in the hash-chained audit.
+- **Tests moved with them:** an unbound invitation cannot confer `admin`; an `aep` change, key reset, `connection-revoked` or move adoption holds `admin` until re-confirmation; re-confirmation names its `aep`; the last admin cannot be removed under races.
+
+### 12c.4 Where the split may need a second look
+
+The coordinator was asked to list, not decide, the cases where the user's split might be wrong:
+
+1. **Apps enforcing the intersection.** For resources the provider hosts, the provider enforces the intersection, so apps need no grant format. An app that keeps its own data (the ERP's records), or hosts integration-hosted resources, must enforce the member's authority itself. Today it gets only a filtered projection, brokered tokens and, in phase B, member-scoped fields. Whether the member-context projection should state the effective methods per resource is open (§15 Q15). That would be a standard *output* shape, not the grant records.
+2. **Organization moves between providers.** A destination must import the organization's memberships and grants. Without a portable format, a move to another provider re-creates member grants by hand. Spec §13 already reserves export formats as TBD. A portable membership export would be the one place internal grants touch the spec.
+3. **Security floors for foreign members.** The hold after a home-account recovery and bound governance invitations protect members whose home is another provider. As non-normative security considerations, a careless provider can omit them. Whether to keep them as spec SHOULDs is a judgment call.
+4. **Kept in the spec on purpose:** `member-removed`, the membership ID and member-scoped fields. Apps rely on them, so they are interop, not internal mechanics.
 
 ## 13. Implementation slices (later)
 
@@ -1030,7 +1098,7 @@ Engine-first: every operation is an ngin Action or Query in a domain module, dis
 
 ## 15. Open questions for the user
 
-Rev 3 status: Q1 is accepted. Q2 and Q6 are superseded by the 2026-10-21 clarification (§1a). Q7–Q9 were added at the coordinator's request. **Rev 4:** Q4 is decided by the user (paid, §12a), Q5 is superseded by relations, and Q11–Q13 are new. **Rev 5.2:** Q3 is decided by the user (accepted); Q13 stays open pending more explanation.
+Rev 3 status: Q1 is accepted. Q2 and Q6 are superseded by the 2026-10-21 clarification (§1a). Q7–Q9 were added at the coordinator's request. **Rev 4:** Q4 is decided by the user (paid, §12a), Q5 is superseded by relations, and Q11–Q13 are new. **Rev 5.2:** Q3 is decided by the user (accepted); Q13 stays open pending more explanation. **Rev 5.3:** Q13 is decided by the user (membership is internal, §12c); Q14 and Q15 are new.
 
 | Q1 | ~~Use "Organization" as the term?~~ | **Accepted** 2026-10-21 (record in DEVLOG) |
 | Q2 | ~~Federated login plus DPoP tokens as "signed requests"?~~ | **Superseded.** Home-certified holder keys sign requests (ORG-D5). |
@@ -1044,7 +1112,9 @@ Rev 3 status: Q1 is accepted. Q2 and Q6 are superseded by the 2026-10-21 clarifi
 | Q10 | ~~**Certificate lifetime**~~ **Resolved (user, 2026-10-22):** the issuer's choice, disclosed with its revocation bound. 3sln.me defaults to about 11 minutes, configurable per organization. Original question: 300 s default and 600 s maximum? | Yes. It bounds revocation at about 6 minutes (10 at most). Owner-interface actions also check status, within 60 s. Entity certificates are capped at 300 s. |
 | Q11 | ~~**Name for relations**~~ **Resolved (user, 2026-10-22):** Relation, Relationship, and "relation slot" where ambiguous. Original question: "Relation" in the spec and "Relationship" in the UI, or one of the user's suggestions ("bond", "coven")? | **Relation / Relationship.** "Bond" clashes with finance vocabulary in an ERP-first product (bonds payable, surety bonds). "Coven" reads as a joke. The full check is in [terminology §6](organizations-terminology.md#6-relation-naming-check). |
 | Q12 | ~~**Admission to many-party instances.**~~ **Resolved by the user, 2026-10-21 (§8a.9):** every grantor consents per edge, and partial membership is normal. Any party may propose. Original question: Must every grantor consent to each joiner (chosen), or may a relation document name a slot whose holder admits others on everyone's behalf? | Every grantor, for now. Delegated admission is a real convenience for groups with many subsidiaries, but it is authority by proxy. Add it later as an explicit, per-party opt-in ("I accept whoever the parent admits") with a cap. |
-| Q13 | **Membership as a relation?** Open: on 2026-10-22 the user asked for more explanation. In plain terms: a relation gives every holder of a slot the same access, defined in a public document; membership gives each person their own grants plus governance powers (admin, ownership), kept private inside the organization. Modelling membership as a relation would mean either one relation per member or per-member values on top of a relation, which is roles again under another name, and the public document would add nothing for an internal arrangement. What stays possible either way: the person→organization direction (for example a profile share) uses the same fragment-grant mechanics, and the console can list memberships and relations side by side. | No (§8a.6). Keep membership distinct, because grants are per person and governance is involved. The console may list memberships and relations together. |
+| Q13 | ~~**Membership as a relation?**~~ **Decided by the user, 2026-10-22:** "membership of an org is separate from relations; relations are relationships between orgs." Membership is internal to the organization and is specified only where it crosses a party boundary (ORG-D20, §12c). Earlier explanation, kept for the record: on 2026-10-22 the user asked for more explanation. In plain terms: a relation gives every holder of a slot the same access, defined in a public document; membership gives each person their own grants plus governance powers (admin, ownership), kept private inside the organization. Modelling membership as a relation would mean either one relation per member or per-member values on top of a relation, which is roles again under another name, and the public document would add nothing for an internal arrangement. What stays possible either way: the person→organization direction (for example a profile share) uses the same fragment-grant mechanics, and the console can list memberships and relations side by side. | No (§8a.6). Keep membership distinct, because grants are per person and governance is involved. The console may list memberships and relations together. **Accepted.** |
+| Q14 | **Tight verification for GM elevations?** §12b.5 applies tight verification (an aged credential, no recent security change, notices, a short notified delay) to the owner's move decisions only. GM elevations under §12b.2 still take effect immediately, which is deliberate against a rogue admin. Should owner GM elevations also need an aged credential and no recent security change, without the delay? | Yes to the aged credential and the security-change check, no to the delay: the delay would let a rogue admin keep acting for its length. *Coordinator's recommendation.* |
+| Q15 | **Effective methods in member context?** An app that enforces member authority over its own data sees only a filtered projection (§12c.4 item 1). Should the member-context projection state the effective methods per resource, as a standard output shape (never the grant records)? | Yes, as an additive projection member in phase B, alongside member-scoped fields. Until then apps keep their own tables keyed by membership ID. |
 
 ## Review round 1
 
@@ -1299,6 +1369,15 @@ Counts: **2 High, 7 Medium, 4 Low.** Resolved in text: 2 High, 4 Medium (M1 part
 | **R4-M4** (owner absent during organization recovery) | Recommendation awaiting the user | **Recommendation superseded** by the user's rule. The 14-day extension, 30-day cool-off and held-owner clause are withdrawn. The purge scenario is narrowed: a recovery-derived owner can no longer remove admins instantly (§5.11). **Open:** (1) the post-recovery rule takes effect 72 h after notice unless the current owner cancels, and the billing-lapse rule takes effect 72 h after notice unless the old owner pays; both are ownership claims settled by time. They are not grant-management changes in §12b.1's sense, but the recovery rule also confers the admin power. Whether "no timeout decides" extends to them is for the user; applying it literally would leave break-glass unable to work when the owner is gone, which is the case it exists for. (2) Whether a held owner (spec §5.2a) may cancel a recovery. (3) Whether a pending elevation follows the owner role to a new owner after a transfer, lapse or recovery. |
 | Q8 / §12b.4 (two-admin deadlock) | Resolved (rev 4.3) | **Still resolved.** Residuals updated: the owner prevails but not instantly; an absent owner leaves elevations pending, never lapsing. |
 | Q13 (membership as a relation) | Open | **Still open.** The user asked for more explanation (2026-10-22); a plainer explanation is in §15. |
+
+## Revision 5.3 reconciliation
+
+| Finding or rule | Earlier status | Revision 5.3 |
+| --- | --- | --- |
+| Q13 (membership as a relation) | Open | **Decided by the user, 2026-10-22.** Membership is internal; relations are between organizations (§8a.6, ORG-D20). |
+| Spec scope | Membership, holds and governance floors in spec §3, §5, §6.3 | **Narrowed** (spec rev 4.2) to party boundaries. Moved to §12c.3: the hold after authority resets (R1-H3), no escalation through own recovery, bound governance invitations (R1-H4), partial governance (R1-L6), the no-operator guard, membership expiry and removal, and owner-interface audit. The R1-H3 and R1-H4 *signals* stay in the spec (`aep`, the bound-invitation mechanism); their *effects* are 3sln.me policy. Findings resolved by those rules stay resolved, now as provider policy. |
+| M10 (admin blocking of organization moves) | Applied under the coordinator's reading | **Decided by the user, 2026-10-22** (§12b.5, portability §6.2). Tight verification is the coordinator's proposal. |
+| Places the split may be wrong | — | Listed in §12c.4 for the user; Q15 is the one with a concrete proposal. |
 
 ## Review round 4
 

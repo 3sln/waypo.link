@@ -2855,3 +2855,38 @@ Reviewer: ___ Date: ___ Outcome: ___
 The design docs are being updated to match.
 
 Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-22 — EU/EEA/UK sign-ups blocked for launch; membership out of Bindle; move delays
+
+**Legal:**
+- **Governing law:** South Dakota (user).
+- **Venue:** the state or federal courts in South Dakota. This is the coordinator's default, pending confirmation.
+
+**EU/EEA/UK** ([spike](docs/release/eu-uk-representative-spike.md)):
+- **The rules:** a service that targets people there must appoint a representative under GDPR Art. 27, UK GDPR Art. 27 and DSA Art. 13. No exemption fits a core account service. Neither regime bans non-resident services outright.
+- **The decision:** per the user's instruction, sign-ups are blocked for launch.
+  - `AGE_POLICY.representativeBlocked` holds EU27 + IS/NO/LI + GB, and `ageRequirement` reports `blockedReason:'representative'`. The per-country age rules are kept for when the block is lifted.
+  - Billing offers only USD in those locations.
+  - The privacy policy, the terms and age-requirements.md say where the service is available.
+- **Later:** entering the EU and UK means appointing representatives, with GDPR quotes at about €420–850 a year per regime, plus a DSA legal representative.
+- **Gates:** core 2419, Worker 78, UI-state 291, legal 47, signup e2e 6, asset build and Worker dry run.
+
+**Organizations** (spec rev 4.2, design rev 5.3):
+- **Membership is internal (user):** grants, templates, governance and the elevation rule are 3sln.me provider policy (design §12c). The Bindle spec keeps only what crosses a party boundary: member certificates, the token exchange, member context and the interoperable outputs apps rely on, organization identities, and relations.
+- **3sln.me membership:** a grants list keyed by the member's origin principal, recording the key the member was added under.
+- **Q13:** closed.
+- **Where the split may need care** (design §12c.4):
+  - Q15: apps need a standard effective-methods output;
+  - org moves need a portable export of memberships;
+  - security floors for cross-provider members.
+- **Still open:** Q14 (tight verification for grant elevations).
+
+**Identity portability** (design rev 4, spec rev 3.1):
+- **Person moves:** a 24 h notified delay (user). A dispute from a known device or a confirmed email holds the move or aborts it, and a held move never auto-commits. The elevated-resolution procedure is the coordinator's proposal (§6.1a).
+- **Org moves:** admins can block a non-owner's move, and the requester can escalate to the owner. An owner's move can't be blocked, only objected to. Owner decisions need tight verification (coordinator's proposal: a step-up with a credential older than 7 days, no security change in 30 days, notices, and a short delay).
+- **Pre-rotation, corrected:**
+  - What it buys: the provider-held signing key is separated from an owner-held next key, so a signing-key leak cannot rotate or move the identity.
+  - What it doesn't: it doesn't detect forks from an old recovery file; only witnesses, an append-only log or verifier pins do. The earlier "only pre-rotation closes" wording is removed.
+  - Decision open.
+
+Reviewer: ___ Date: ___ Outcome: ___
