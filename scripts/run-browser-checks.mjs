@@ -30,6 +30,7 @@ Object.assign(config.vars,{SIGNUP_SUBNET_DAILY_LIMIT:'500',SIGNUP_REGION_HOURLY_
 // Only the app document is a fixture; OAuth, consent, token and RPC requests
 // use real browser networking against the local Worker.
 config.vars.FEDERATION_ENABLED='true';
+if(process.env.E2E_PORTABILITY==='1')Object.assign(config.vars,{SIGNUP_ENABLED:'true',IDENTITY_TRANSFER_OUT_ENABLED:'true',IDENTITY_TRANSFER_IN_ENABLED:'true',IDENTITY_SUCCESSOR_ADOPTION_ENABLED:'true',DIRECTORY_ENABLED:'true'});
 // The authorization-entry suite runs in its own Worker with the entry store and a dedicated loopback embed origin.
 if(process.env.E2E_AUTHORIZATION_ENTRIES==='1')Object.assign(config.vars,{FEDERATION_ENTRY_ENABLED:'true',EMBED_ORIGIN:`http://127.0.0.1:${port}`});
 config.vars.FEDERATION_CLIENTS=JSON.stringify([{id:'https://bindle-client.example/client',name:'Independent fixture app',origin:'https://bindle-client.example',redirectUris:['https://bindle-client.example/callback']}]);
@@ -71,7 +72,7 @@ try{
 
 // Federation and the authorization-entry slice each get their own fresh Worker and durable state.
 if(process.argv.length===2){
- for(const [suite,extra] of [['tests/e2e/federation.test.mjs',{}],['tests/e2e/authorization-entry.test.mjs',{E2E_AUTHORIZATION_ENTRIES:'1'}],['tests/e2e/authorization-entry-ui.test.mjs',{E2E_AUTHORIZATION_ENTRIES:'1'}]]){
+ for(const [suite,extra] of [['tests/e2e/federation.test.mjs',{}],['tests/e2e/authorization-entry.test.mjs',{E2E_AUTHORIZATION_ENTRIES:'1'}],['tests/e2e/authorization-entry-ui.test.mjs',{E2E_AUTHORIZATION_ENTRIES:'1'}],['tests/e2e/portability.test.mjs',{E2E_PORTABILITY:'1'}]]){
   const child=spawn(process.execPath,[process.argv[1],suite],{stdio:'inherit',env:{...process.env,...extra}});
   const code=await new Promise((resolve,reject)=>{child.once('error',reject);child.once('exit',resolve);});
   if(code!==0)process.exitCode=process.exitCode||code||1;
@@ -79,7 +80,7 @@ if(process.argv.length===2){
  // The islands suites start their own Worker (embed origin, dedicated client; islands-sw adds real HTTPS through a test
  // proxy), so they run once, directly, after the shared Worker has stopped. The embeddable-element and provider-matrix
  // suites need no Worker: they serve the SDK from this checkout against testing.mjs mock providers behind page.route.
- for(const suite of ['tests/browser/islands-embed.mjs','tests/browser/islands-sw.mjs','tests/browser/islands-chaos.mjs','tests/browser/embed-elements.mjs','tests/browser/provider-matrix.mjs','tests/browser/connections-browser.mjs','tests/browser/access-browser.mjs']){
+ for(const suite of ['tests/browser/islands-embed.mjs','tests/browser/islands-sw.mjs','tests/browser/islands-chaos.mjs','tests/browser/embed-elements.mjs','tests/browser/provider-matrix.mjs','tests/browser/connections-browser.mjs','tests/browser/access-browser.mjs','tests/browser/transfer-browser.mjs']){
   const child=spawn(process.execPath,['--test',suite],{stdio:'inherit',env:{...process.env,E2E_ARTIFACTS:'artifacts/browser'}});
   const code=await new Promise((resolve,reject)=>{child.once('error',reject);child.once('exit',resolve);});
   if(code!==0)process.exitCode=process.exitCode||code||1;

@@ -26,8 +26,10 @@
 // answers per-identity paths of a moved identity (308 during the redirect period) before any per-identity route,
 // and falls through for every other identity. Append-only otherwise: one import and one entry per slice; a slice
 // adds routes to its own module.
+import * as transferIn from './transfer-in.mjs';
 import * as intents from './intents.mjs';
 import * as moved from './moved.mjs';
+import * as transferPages from './transfer-pages.mjs';
 import * as directory from './directory.mjs';
 import * as site from './site.mjs';
 import * as admin from './admin.mjs';
@@ -59,7 +61,7 @@ import * as appRemoval from './app-removal.mjs';
 import * as orgs from './orgs.mjs';
 import * as memberCertificates from './member-certificates.mjs';
 
-export const ROUTES=Object.freeze([moved,directory,intents,site,admin,identity,lifecycle,deletion,automation,conversations,beams,contacts,delivery,messages,views,storage,billing,search,notifications,memberCertificates,federation,links,delegation,incremental,events,appSessions,integrations,connections,emailBridge,exports,appRemoval,orgs]);
+export const ROUTES=Object.freeze([moved,transferPages,directory,intents,site,admin,identity,lifecycle,deletion,automation,conversations,beams,contacts,delivery,messages,views,storage,billing,search,notifications,memberCertificates,federation,links,delegation,incremental,events,appSessions,integrations,connections,emailBridge,exports,appRemoval,orgs,transferIn]);
 export const STAGES=Object.freeze(['edge','public','anonymous','unauthenticated','api','session','beforeActivity','owner','pages']);
 for(const module of ROUTES)for(const name of Object.keys(module.stages??{}))if(!STAGES.includes(name))throw new TypeError(`Unknown route stage ${name}`);
 

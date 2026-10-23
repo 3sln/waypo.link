@@ -33,13 +33,15 @@ export class OrganizationDiscovery{
  }
  as(request,org){if(typeof org!=='string'||!UUID.test(org))fail('invalid_request','Unsupported organization request.',400);return actingAs(request,{kind:'organization',id:org});}
  async discover(actor){
-  const request=this.self(actor),{owned=[],joined=[],pending=[]}=await this.person.candidates(request)??{};
+  const request=this.self(actor),{owned=[],joined=[],pending=[],offers:offerHints=[]}=await this.person.candidates(request)??{};
   const rows=[...owned.map(row=>({...row,owned:true})),...joined.map(row=>({id:row.id,owned:false}))].filter(row=>UUID.test(row.id??''));
   const out=new Array(rows.length);let next=0;
   const worker=async()=>{for(let i=next++;i<rows.length;i=next++){const row=rows[i];
    try{const view=await this.org.membership(row.id,this.as(request,row.id));
     out[i]={id:row.id,handle:view.organization?.handle??row.handle??null,name:view.organization?.name??null,label:view.organization?.label??null,state:view.organization?.state??null,
-     role:row.owned||view.organization?.ownerOfRecord?'owner-of-record':'member',powers:[...view.powers??[]],membership:{id:view.membership?.id,hold:view.membership?.hold??null},available:true};}
+     // The organization's live answer decides the role: a former owner's index row (before its index update lands)
+     // must not present them as owner after a transfer (§12b.3a).
+     role:view.organization?.ownerOfRecord?'owner-of-record':'member',powers:[...view.powers??[]],membership:{id:view.membership?.id,hold:view.membership?.hold??null},available:true};}
    catch(error){
     // A joined hint the organization does not confirm is not shown (removed, expired, disabled or never a member).
     if(uniform(error)&&!row.owned){out[i]=null;continue;}
@@ -48,7 +50,11 @@ export class OrganizationDiscovery{
   }};
   await Promise.all(Array.from({length:Math.min(this.concurrency,rows.length)},worker));
   const organizations=out.filter(Boolean).sort((a,b)=>String(a.name??a.handle??'').localeCompare(String(b.name??b.handle??''))||a.id.localeCompare(b.id));
-  return {organizations,pending:pending.map(row=>({request:row.request,id:row.id,name:row.name}))};
+  // Ownership offers addressed to this person (§12b.3a). A hint is shown only when the organization itself confirms an
+  // open offer naming this principal; anything else answers the uniform not_found and is dropped.
+  const offers=[];
+  if(typeof this.org.ownership==='function')for(const row of offerHints.slice(0,16)){if(!UUID.test(row.id??''))continue;try{const view=await this.org.ownership(row.id,this.as(request,row.id));if(view?.offer)offers.push({id:row.id,name:view.organization?.name??null,handle:view.organization?.handle??null,offer:view.offer});}catch(error){if(!uniform(error))offers.push({id:row.id,available:false});}}
+  return {organizations,pending:pending.map(row=>({request:row.request,id:row.id,name:row.name,...row.payment?{payment:row.payment,plan:row.plan??null}:{}})),...offers.length?{offers}:{}};
  }
  /** Accept an invitation at the organization, then remember the hint. The hint is best effort: membership is real once
   * the organization committed it, and the hint can be restored by accepting a later invitation. */

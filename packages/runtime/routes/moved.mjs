@@ -30,6 +30,7 @@
 // dispute,elevate,restart-choice}. Credentialless API (no session; notice links and the isolated recovery page):
 // POST …/link (dispute token), …/waiting (path (b)), …/withdraw (path (b) withdrawal with the same file). The isolated
 // pages themselves and the support console are PORT-6 and the admin slice.
+import {redirectCapability} from '../redirect-extension.mjs';
 import {Query} from '../../../vendor/ngin/index.js';
 import {isUUID} from '../../core/primitives.mjs';
 import {normalizeHandle} from '../../identity/handles.mjs';
@@ -167,7 +168,7 @@ async function publicAction({request,env,url,local},action){
 }
 async function ownerAction({request,env,path,url,engine,context,id,object,owner}){
  if(url.search)return json({error:'invalid_request',message:'Unsupported transfer request.'},400);
- if(path===ROOT){if(request.method!=='GET')return json({error:'method_not_allowed'},405,{Allow:'GET'});const status=await object.transferOutStatus(id);if(status?.state==='none'&&!routeFlags(env,{subject:{kind:'account',owner:id}}).enabled(TRANSFER_FLAG))return json({error:'not_found'},404);return json(status);}
+ if(path===ROOT){if(request.method!=='GET')return json({error:'method_not_allowed'},405,{Allow:'GET'});const status=await object.transferOutStatus(id);if(status?.state==='none'&&!routeFlags(env,{subject:{kind:'account',owner:id}}).enabled(TRANSFER_FLAG))return json({error:'not_found'},404);if(status?.state==='committed'){const cap=await redirectCapability(env,await env.IDENTITY_REPOSITORY.get(id));return json({...status,redirectPage:cap?'/moved/'+cap:null});}return json(status);}
  if(request.method!=='POST')return json({error:'method_not_allowed'},405,{Allow:'POST'});
  if(typeof context.csrfToken!=='string'||context.csrfToken!==owner.csrfToken)return json({error:'csrf'},403);
  const action=path.slice(ROOT.length+1),input=await body(request,8192),evidence=await engine.query(new TransferEvidence(context)).peek();

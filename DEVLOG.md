@@ -3311,3 +3311,41 @@ Reviewer: ___ Date: ___ Outcome: ___
 `tests/e2e/org-console.test.mjs` runs under `test:organizations`, not the full e2e.
 
 Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-23 — Portability UI and redirect extension (PORT-6, PORT-7); organization billing and ownership transfer
+
+**PORT-6 and PORT-7** ([identity portability](docs/architecture/identity-portability.md) §10.1), behind the portability flags:
+- **PORT-6:**
+  - isolated transfer-out and transfer-in documents and the moved-account console with its read-only export;
+  - the redirect page and pending-successor review;
+  - dispute and hold UI;
+  - the intake route PORT-4 left out.
+- **PORT-7:** the US$10 ten-year redirect extension as a Polar one-time purchase. Sandbox only.
+- **Limits:**
+  - intake supports password and free-plan enrollment only;
+  - Node intake keeps its transport gap;
+  - not built yet: ending or retargeting redirects, expiry reminders, and support adjudication;
+  - external-provider conformance and payments are unverified.
+
+**Organization billing** (`packages/billing/organizations.mjs`), behind `ORGANIZATIONS_ENABLED`, Polar sandbox only:
+- **Tiers (provisional product data, prices unsigned):** Team 1 TB at US$1,200 a year, Business 10 TB at US$6,000, Scale 100 TB at US$36,000, each with AI credits.
+- **Billing model:** the organization is the Polar customer, and checkout metadata names the paying person, who becomes owner of record.
+- **Creation:** reserved unpaid, completing on verified payment. `organizationEntitlementPort` replaces the allowlist, which remains an operator override.
+- **Lapse:** a 14-day grace (provisional), then read-only, with leaving, removals, decisions and export open. Then an admin claim takes effect 72 h after its payment unless the owner pays.
+
+**Ownership transfer** (`packages/orgs/ownership.mjs`) follows ORG-D21 and §12b.3a:
+- the recipient's checkout gives a fresh period, and the old subscription is cancelled;
+- the recovery file is reissued, the 30-day move cooling starts, elevations pass to the new owner, and the old owner stays a member;
+- effects go through a durable outbox, so a replay never refunds twice;
+- a console panel covers offer, accept and cancel.
+
+**Provisional and open:**
+- a full refund of a closed paid claim;
+- deletion is refused once a transfer is paid;
+- the 72 h lapse claim uses a 5-minute step-up; whether it needs P18 tight verification is open;
+- the encryption key isn't rotated at transfer;
+- break-glass recovery is only a hook.
+
+**Gates (combined tree):** core 2887, Worker 89 and e2e 264 with 4 WebKit skips (both rerun by the coordinator; e2e now includes the portability suites), UI-state 337, test:organizations, asset build and Worker dry run.
+
+Reviewer: ___ Date: ___ Outcome: ___

@@ -1,4 +1,5 @@
 import {devicesEnabled} from '../bl/devices.mjs';
+import {transferConsoleLinks} from './transfer-console-links.mjs';
 import {devicesPanel,devicesApps,devicesDialog} from './devices.mjs';
 import { h,icon,badge,date,field,checkbox,pageHeader,helpers,interfaceText } from './release-primitives.mjs';
 import {recoveryFilePanel,recoveryReissueDialog,recoveryReissueView} from './recovery-reissue.mjs';
@@ -12,7 +13,7 @@ export default function securityView(state){
       h('p','Your recovery file protects your UUID and keys. Name certificates are separate public files.').classes('field-help'),
       btn('Download canonical name certificate',{kind:'download-name-certificate',handle:a.handle},'button secondary'),
       a.paidHandle?btn('Download custom name certificate',{kind:'download-name-certificate',handle:a.paidHandle},'button secondary'):null).classes('panel'),
-    recoveryFilePanel(state),
+    recoveryFilePanel(state),transferConsoleLinks(state),
     h('section',h('h2','Your permanent custom handle'),
       h('p','If you have ever had a verified paid subscription, you can claim one custom handle—even after cancellation.').classes('muted'),
       h('p','This choice is permanent. Your custom handle cannot be changed, transferred or reassigned, even after cancellation or account deletion.').classes('security-note'),

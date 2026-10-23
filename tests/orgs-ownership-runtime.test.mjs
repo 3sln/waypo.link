@@ -1,0 +1,74 @@
+// Organization billing and ownership transfer over the durable Node runtime: real account single writers, routes,
+// identity repository, key registry and identity-backup port; Polar is the offline model (sandbox only). The owner
+// stage is driven with the actor the HTTP router builds (packages/runtime/http.mjs), including step-up evidence.
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {mkdtemp,readFile,rm} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {createNodeServer} from '../apps/node/server.mjs';
+import {IdentityService} from '../packages/identity/service.mjs';
+import {identityBackupPort} from '../packages/runtime/identity-backup.mjs';
+import {accountHandle} from '../packages/runtime/routes/shared.mjs';
+import {stages} from '../packages/runtime/routes/orgs.mjs';
+import {personActor} from '../packages/orgs/authority.mjs';
+import {fakeHasher} from './helpers/identity-engine.mjs';
+import {fakeClock} from '../packages/app/memory-providers.mjs';
+import {fakeOrgPolar,ORG_POLAR_CONFIG} from './helpers/org-polar.mjs';
+
+const ORIGIN='http://localhost:8788',PASSWORD='Organizations ownership runtime password!',DAY=86400000;
+test('runtime: checkout at creation, verified webhook delegation, transfer effect, key rotation and recovery reissue',async t=>{
+ const directory=await mkdtemp(join(tmpdir(),'orgs-ownership-')),clock=fakeClock(Date.now()),polar=fakeOrgPolar({clock});
+ const app=await createNodeServer({directory,config:{...ORG_POLAR_CONFIG,APP_ORIGIN:ORIGIN,LOCAL_DEVELOPMENT:'true',ORGANIZATIONS_ENABLED:'true',ORGANIZATION_BILLING_CLIENT:polar.client,LIFECYCLE_CLOCK:clock.now}});
+ t.after(async()=>{await app.close();await rm(directory,{recursive:true,force:true});});
+ const RECOVERY_SIGNING_KEY=await readFile(join(directory,'recovery-signing-key'),'utf8'),repository=app.resources.repository,accounts=app.resources.accounts;
+ const backup=identityBackupPort({config:{APP_ORIGIN:ORIGIN,RECOVERY_SIGNING_KEY},accounts});
+ const identity=new IdentityService({repository,identityBackup:backup,turnstile:{verify:async()=>true},rateLimiter:{check:async()=>true},webauthn:{},passwordHasher:fakeHasher,config:{origin:ORIGIN,rpID:'localhost',termsVersion:'2026-10-11',allowInsecureLocalhost:true}});
+ const base={origin:ORIGIN,remoteIP:'127.0.0.1'};
+ const person=async()=>{const pending=await identity.signup({method:'password',password:PASSWORD,ageConfirmed:18,termsAccepted:true,termsVersion:'2026-10-11',turnstileToken:'ok'},base);const downloaded=await identity.downloadRecovery({pendingToken:pending.pendingToken},base);await identity.confirmRecovery({pendingToken:pending.pendingToken,recoveryToken:downloaded.recoveryToken,downloadConfirmed:true},base);return pending.account.id;};
+ const A=await person(),B=await person(),env={...ORG_POLAR_CONFIG,APP_ORIGIN:ORIGIN,LOCAL_DEVELOPMENT:'true',RECOVERY_SIGNING_KEY,IDENTITY_REPOSITORY:repository,ACCOUNTS:accounts,ORGANIZATIONS_ENABLED:'true',ORGANIZATION_BILLING_CLIENT:polar.client};
+ const verification=()=>({stepUpAt:clock.now(),enrolledAt:clock.now()-30*DAY,securityChangedAt:clock.now()-60*DAY});
+ const call=async(id,method,path,input)=>{
+  const request=new Request(ORIGIN+path,{method,headers:input?{'Content-Type':'application/json'}:{},...input?{body:JSON.stringify(input)}:{}});
+  const response=await stages.owner({request,env,url:new URL(request.url),path:new URL(request.url).pathname,id,object:accountHandle(env,id),actor:personActor({owner:id,iss:ORIGIN,authTime:clock.now(),verification:verification()}),context:{remoteIP:'127.0.0.1'}}).catch(error=>new Response(JSON.stringify({error:error.code,message:error.message}),{status:error.status??500}));
+  return {status:response.status,body:await response.json()};
+ };
+ // Plans: the provisional sandbox catalog.
+ const plans=await call(A,'GET','/api/orgs/plans');assert.equal(plans.body.configured,true);assert.equal(plans.body.server,'sandbox');assert.deepEqual(plans.body.plans.map(p=>p.id),['org-team','org-business','org-scale']);
+ // Creation needs a verified payment bound to the request; a checkout alone does nothing.
+ const request='runtime-request-00001',input={request,name:'Acme',plan:'org-team'};
+ let created=await call(A,'POST','/api/orgs',input);assert.equal(created.status,200,JSON.stringify(created.body));assert.equal(created.body.payment.required,true);assert.equal(created.body.organization,null);
+ const checkout=await call(A,'POST','/api/orgs/checkout',{request,plan:'org-team'});assert.match(checkout.body.checkout.url,/sandbox\.polar\.sh/);
+ created=await call(A,'POST','/api/orgs',input);assert.equal(created.body.payment.required,true);
+ polar.pay(polar.checkoutBy(()=>true).id);created=await call(A,'POST','/api/orgs',input);assert.equal(created.status,200,JSON.stringify(created.body));
+ const org=created.body.organization.id,oldFile=created.body.recoveryFile;assert.ok(oldFile);
+ let view=await call(A,'GET',`/api/orgs/${org}/ownership`);assert.equal(view.body.billing.standing,'paid');assert.equal(view.body.billing.plan,'org-team');assert.ok(view.body.decisions.includes('offer'));
+ // A verified webhook for the organization's customer reaches its writer through the person billing slice's delegation.
+ const hook=await accountHandle(env,org).billingWebhookVerified(org,{owner:org,id:'evt_runtime_1',bodyHash:'c'.repeat(64),type:'subscription.updated',customerId:'x'});assert.equal(hook.accepted,true);assert.equal(hook.duplicate,false);
+ assert.equal((await accountHandle(env,org).billingWebhookVerified(org,{owner:org,id:'evt_runtime_1',bodyHash:'c'.repeat(64),type:'subscription.updated'})).duplicate,true);
+ // Offer: resolve the handle, then offer to the resolved account.
+ const handle=(await repository.get(B)).handle;assert.equal((await call(A,'POST',`/api/orgs/${org}/transfer-recipient`,{handle:'no-such-handle'})).status,404);
+ const resolved=await call(A,'POST',`/api/orgs/${org}/transfer-recipient`,{handle});assert.equal(resolved.body.recipient.id,B);
+ assert.equal((await call(B,'POST',`/api/orgs/${org}/transfer-recipient`,{handle})).status,404);
+ const offered=await call(A,'POST',`/api/orgs/${org}/transfer`,{operation:'offer',recipient:B,handle,confirm:true});assert.equal(offered.status,200,JSON.stringify(offered.body));
+ // The recipient discovers the offer (the index hint is confirmed by the organization) and accepts with the digest.
+ const listed=await call(B,'GET','/api/orgs');assert.equal(listed.body.offers.length,1,JSON.stringify(listed.body));const offer=listed.body.offers[0].offer;assert.equal(offer.decisions.join(),'accept,decline');
+ const accepted=await call(B,'POST',`/api/orgs/${org}/transfer`,{operation:'accept',transfer:offer.id,disclosure:offer.plans[0].digest,confirm:true});assert.equal(accepted.status,200,JSON.stringify(accepted.body));
+ polar.pay(polar.checkoutBy(k=>k.metadata['3sln_me_org_purpose']==='transfer').id);
+ await accountHandle(env,org).billingWebhookVerified(org,{owner:org,id:'evt_runtime_2',bodyHash:'d'.repeat(64),type:'order.paid'});
+ view=await call(A,'GET',`/api/orgs/${org}/ownership`);assert.equal(view.body.transfer.state,'paid');assert.equal(view.body.ownerOfRecord.sub,A);
+ const keyBefore=(await accountHandle(env,org).orgsSigningProvenance(org)).kid;
+ clock.advance(DAY+1000);await accounts.get(org).alarm();
+ view=await call(B,'GET',`/api/orgs/${org}/ownership`);assert.equal(view.body.ownerOfRecord.sub,B,JSON.stringify(view.body));assert.equal(view.body.recovery.state,'reissue-required');assert.ok(view.body.decisions.includes('reissue-recovery'));
+ assert.notEqual((await accountHandle(env,org).orgsSigningProvenance(org)).kid,keyBefore,'the organization signing key rotated at the ownership change');
+ assert.ok(polar.effects.revoked.length===1&&polar.effects.refunds.length===0,'the previous subscription is cancelled at once, without a refund');
+ // Discovery follows the organization's answer: B owns it, A remains a member.
+ assert.equal((await call(B,'GET','/api/orgs')).body.organizations.find(o=>o.id===org)?.role,'owner-of-record');assert.equal((await call(A,'GET','/api/orgs')).body.organizations.find(o=>o.id===org)?.role,'member');
+ assert.equal((await call(A,'GET',`/api/orgs/${org}/membership`)).body.organization.ownerOfRecord,false);
+ // The previous owner's file no longer matches the organization's keys; the new owner's reissue does.
+ const record=await repository.get(org);await assert.rejects(backup.verify(JSON.parse(oldFile.content),record,oldFile.recoveryToken));
+ {const denied=await call(A,"POST",`/api/orgs/${org}/recovery-file`);assert.equal(denied.status,404,JSON.stringify(denied.body));}
+ const reissued=await call(B,'POST',`/api/orgs/${org}/recovery-file`);assert.equal(reissued.status,200,JSON.stringify(reissued.body));
+ const fresh=await repository.get(org);await backup.verify(JSON.parse(reissued.body.recoveryFile.content),fresh,reissued.body.recoveryFile.recoveryToken,{expectedKid:fresh.recoveryKeyKid});
+ assert.equal((await call(B,'GET',`/api/orgs/${org}/ownership`)).body.recovery.state,'issued');
+});

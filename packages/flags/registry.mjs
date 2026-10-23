@@ -70,6 +70,7 @@ const rows=[
  ['LIFECYCLE_ENABLED','b','',{envParse:'boolean'}],['LIFECYCLE_PURGE_ENABLED','b','',{}],
  ['WORK_LIMITS_ENABLED','b','',{safe:true,envParse:'work-authority',envDefaults:{node:'true'}}],
  ['STORAGE_WRITE_ENABLED','b','',{safe:true,envParse:'boolean',envDefaults:{node:'true'}}],
+ ['REDIRECT_EXTENSION_ENABLED','b','',{requires:['BILLING_ENABLED'],envParse:'boolean'}],
  ['BILLING_ENABLED','b','',{}],['MAIL_ENABLED','b','',{}],['PUSH_ENABLED','b','',{}],['BEAM_TURN_ENABLED','b','',{}],
  ['BEAM_STUN_ENABLED','b','',{envDefaults:{node:'true'}}],
  ['FEDERATION_REFRESH_ENABLED','b','',{safe:true,envDefault:true,envParse:'not-false'}],

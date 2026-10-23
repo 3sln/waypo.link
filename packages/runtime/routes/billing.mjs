@@ -1,6 +1,7 @@
 // HTTP routes of slice 7, Billing (docs/architecture/app-engine.md §12): the verified Polar webhook, billing status, checkout, plan changes and the portal.
 // Stage handlers and route-module shape: packages/runtime/routes/index.mjs.
 import {everPaidEvent} from '../../identity/lifecycle-protection.mjs';
+import {redirectWebhook} from './transfer-pages.mjs';
 import {verifyPolarWebhook} from '../../billing/index.mjs';
 import {revokeDeletedOwner,paidEvents} from '../../billing/closure.mjs';
 import {siteGlobal,flagsFor} from '../../flags/read.mjs';
@@ -18,7 +19,7 @@ export const stages={
  async public({request,env,path}){
    if(path==='/api/billing/webhook'){
     if(request.method!=='POST')return json({error:'method_not_allowed'},405,{Allow:'POST'});
-    const verified=await verifyPolarWebhook(request,env);if(verified.ignored)return json({accepted:true,ignored:true});if(verified.catalog){if(!env.BILLING_CATALOG)throw Object.assign(new Error('Catalog registry is unavailable.'),{code:'billing_unconfigured',status:503});if(!await env.BILLING_CATALOG.relevant(verified))return json({accepted:true,ignored:true});return json(await env.BILLING_CATALOG.applyWebhook(verified));}if(verified.refund){if(!env.BILLING_CATALOG)throw Object.assign(new Error('Catalog registry is unavailable.'),{code:'billing_unconfigured',status:503});Object.assign(verified,await env.BILLING_CATALOG.resolveRefund(verified));}
+    const verified=await verifyPolarWebhook(request,env);if(verified.ignored)return json({accepted:true,ignored:true});if(verified.redirectExtension)return json(await redirectWebhook(env,verified));if(verified.catalog){if(!env.BILLING_CATALOG)throw Object.assign(new Error('Catalog registry is unavailable.'),{code:'billing_unconfigured',status:503});if(!await env.BILLING_CATALOG.relevant(verified))return json({accepted:true,ignored:true});return json(await env.BILLING_CATALOG.applyWebhook(verified));}if(verified.refund){if(!env.BILLING_CATALOG)throw Object.assign(new Error('Catalog registry is unavailable.'),{code:'billing_unconfigured',status:503});Object.assign(verified,await env.BILLING_CATALOG.resolveRefund(verified));}
     if(!verified.owner||!uuidPattern.test(verified.owner))return json({accepted:true,ignored:true});
     verified.relevant=env.BILLING_CATALOG?await env.BILLING_CATALOG.relevant(verified):Object.values({paid:env.POLAR_PRODUCT_ID_PAID,plus:env.POLAR_PRODUCT_ID_PLUS,ultra:env.POLAR_PRODUCT_ID_ULTRA}).some(id=>id&&(id===verified.productId||verified.productIds?.includes(id)));
     const account=await env.IDENTITY_REPOSITORY.get(verified.owner);

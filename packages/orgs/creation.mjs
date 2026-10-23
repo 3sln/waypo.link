@@ -31,25 +31,56 @@ export class OrganizationCreation{
   if(!this.person||!this.org||!this.identity||typeof this.backup?.issue!=='function')unavailable();
   const creatorId=actor.owner,request={principal:{iss:actor.principal?.iss??null,sub:creatorId},entity:{kind:'person',id:creatorId},authTime:actor.authTime??null,epoch:actor.epoch??0};
   const reservation=await this.person.reserve(request,input),org=reservation.org,creator={iss:reservation.creator?.iss??this.issuer,sub:creatorId};
+  // Checkout at creation (ORG-D18): an unpaid reservation proceeds only on a verified payment bound to this request.
+  if(reservation.state!=='confirmed'&&reservation.payment?.state==='required'){
+   if(typeof this.person.payment!=='function')unavailable();
+   const paid=await this.person.payment(request,{request:reservation.request});
+   if(paid?.payment!=='verified')return {organization:null,recoveryFile:null,existing:false,payment:{required:true,request:reservation.request,org,name:reservation.name,plan:reservation.payment.plan??null,checkout:paid?.checkout??null,server:'sandbox'}};
+   if(paid.plan)reservation.plan=paid.plan;
+  }
   if(reservation.state==='confirmed'){const identity=await this.identity.get(org);return {organization:{id:org,kind:'organization',name:reservation.name,label:reservation.label,handle:identity?.handle??null},recoveryFile:null,existing:true};}
   const created=await this.identity.create(org,{request:reservation.request,creator});
   if(!created?.ok)unavailable();
   const view=await this.org.initialize(org,{request:reservation.request,creator,name:reservation.name,label:reservation.label,plan:reservation.plan,handle:created.handle});
-  let file;
-  for(let attempt=0;attempt<3&&!file;attempt++){
-   const record=await this.identity.record(org);if(!record)unavailable();
-   const previous=typeof record.recoveryHash==='string'&&record.recoveryHash?record.recoveryHash:null,recoveryToken=`${org}.${this.crypto.random()}`;
-   const issued=await this.backup.issue(record,recoveryToken,{rotation:previous?{always:true}:null,keep:[]}),backup=issued?.backup??issued;
-   const kid=backup?.keychain?.signing?.kid;if(typeof kid!=='string')unavailable();
-   const bound=await this.identity.bindRecovery(org,{request:reservation.request,expected:previous,recoveryHash:await this.crypto.hash('recovery',recoveryToken),keyKid:kid,rotated:issued?.rotation?.rotated===true});
-   if(bound?.ok)file={fileName:`3sln-organization-recovery-${org}.json`,content:JSON.stringify(backup),recoveryToken};
-   else if(bound?.status!=='superseded')unavailable();
-  }
-  if(!file)unavailable();
+  const {kid,...file}=await issueOrganizationRecoveryFile({identity:this.identity,backup:this.backup,crypto:this.crypto,org,request:reservation.request});
   await this.person.confirm(creatorId,{request:reservation.request,org,handle:created.handle});
+  // Seeds the organization's billing snapshot (best effort; webhooks and the account alarm reconcile later).
+  try{await this.org.sync?.(org);}catch{}
   return {organization:view,recoveryFile:file,existing:false};
  }
 }
+/**
+ * Issues an organization recovery file and binds its credential (P15): a file already bound is replaced only after
+ * rotating the signing key, and only if nobody bound another meanwhile, so at most one issued file holds the current key
+ * and token. Used at creation and for the owner's reissue after an ownership change (§12b.3a). The file is returned once.
+ */
+export async function issueOrganizationRecoveryFile({identity,backup,crypto=new IdentityCrypto(),org,request}){
+ for(let attempt=0;attempt<3;attempt++){
+  const record=await identity.record(org);if(!record)unavailable();
+  const previous=typeof record.recoveryHash==='string'&&record.recoveryHash?record.recoveryHash:null,recoveryToken=`${org}.${crypto.random()}`;
+  const issued=await backup.issue(record,recoveryToken,{rotation:previous?{always:true}:null,keep:[]}),file=issued?.backup??issued;
+  const kid=file?.keychain?.signing?.kid;if(typeof kid!=='string')unavailable();
+  const bound=await identity.bindRecovery(org,{request,expected:previous,recoveryHash:await crypto.hash('recovery',recoveryToken),keyKid:kid,rotated:issued?.rotation?.rotated===true});
+  if(bound?.ok)return {fileName:`3sln-organization-recovery-${org}.json`,content:JSON.stringify(file),recoveryToken,kid};
+  if(bound?.status!=='superseded')unavailable();
+ }
+ unavailable();
+}
+/** The owner of record's recovery-file reissue (after a transfer or lapse claim, or any time): the organization writer
+ * authorizes it (owner of record, fresh step-up) and names the creation request; the file is issued here, at the edge,
+ * because issuing rotates keys through the organization's own writer. Ports: {org:{begin, done}, identity, backup}. */
+export class OrganizationRecoveryReissue{
+ constructor({org,identity,backup,crypto=new IdentityCrypto()}){Object.assign(this,{org,identity,backup,crypto});}
+ async reissue(request,orgId){
+  if(!this.org||!this.identity||typeof this.backup?.issue!=='function')unavailable();
+  const {request:creation}=await this.org.begin(orgId,request);
+  const file=await issueOrganizationRecoveryFile({identity:this.identity,backup:this.backup,crypto:this.crypto,org:orgId,request:creation});
+  try{await this.org.done(orgId,request,{kid:file.kid});}catch{/* the file is bound; the record catches up on the next reissue */}
+  const {kid,...out}=file;return {recoveryFile:out};
+ }
+}
+export function organizationRecoveryReissueProvider(service){return class extends Provider{static deps=[];obtain(){return service;}release(){}};}
+export class ReissueOrganizationRecovery extends AppAction{static operation='orgs.recovery-reissue';static deps=['organizationRecoveryReissue'];static changes='organization-changed';run({organizationRecoveryReissue}){return organizationRecoveryReissue.reissue(this.input.request,this.input.org);}}
 export function organizationCreationProvider(creation){return class extends Provider{static deps=[];obtain(){return creation;}release(){}};}
 /** Edge operation: the whole creation sequence as one Action (the route only parses and serializes). */
 export class CreateOrganization extends AppAction{static operation='orgs.create';static deps=['organizationCreation'];static changes='organization-changed';run({organizationCreation}){return organizationCreation.create(this.actor,this.input);}}

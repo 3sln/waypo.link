@@ -18,8 +18,8 @@
 //
 // Hooks for later slices (not implemented here):
 //   ORG-2 membership: `organizationPowers(..., {membership})` in packages/orgs/authority.mjs replaces `initialAdmin`.
-//   Ownership transfer (ORG-D21, §12b.3a): `ownerOfRecord` changes only through a transfer commit that does not exist
-//   yet; nothing in this slice writes it after creation.
+//   Ownership transfer (ORG-D21, §12b.3a): `ownerOfRecord` changes only through the transfer or lapse-claim commit in
+//   packages/orgs/ownership.mjs (OwnershipService#changeOwner); nothing in this slice writes it after creation.
 //   Purge: a due deletion is handed to `purge(org)` when the adapter provides one; otherwise it holds at
 //   'deletion-due' (never purges by guessing).
 import {AppFault} from '../app/faults.mjs';
@@ -34,6 +34,9 @@ export const ORGANIZATIONS_FLAG='ORGANIZATIONS_ENABLED';
 export const ORG_LABELS=Object.freeze(['organization','company','team','club','household','project']);
 /** Provisional (coordinator) figures for phase A; revisable. */
 export const ORG_DELETION_DELAY_MS=30*86400000,ORG_CREATION_LIMIT=10,ORG_FRESH_AUTH_MS=900000;
+/** Organization plan ids (packages/billing/organizations.mjs, provisional product data) and the provisional period after
+ * which an unpaid reservation stops counting toward the creation limit (it can still be resumed). */
+export const ORG_PAID_PLANS=Object.freeze(['org-team','org-business','org-scale']),ORG_UNPAID_RESERVATION_MS=7*86400000;
 const UUID=/^[a-f0-9-]{36}$/,REQUEST=/^[A-Za-z0-9_-]{16,128}$/;
 const fail=(code,message,status=409)=>{throw new AppFault(code,message,status);};
 const plain=value=>value!==null&&typeof value==='object'&&!Array.isArray(value);
@@ -102,8 +105,9 @@ export class OrganizationService{
  /** Step 1 of creation (ORG-D18): needs the flag, a fresh authentication, the paid check and the per-person limit.
   * Idempotent per `request`: the same key returns the same reservation and UUID. */
  async reserve(actor,input){
-  const value=exact(input,['request','name','label']);
+  const value=exact(input,['request','name','label','plan']);
   if(typeof value.request!=='string'||!REQUEST.test(value.request))fail('invalid_request','A creation request key is required.',400);
+  if(value.plan!==undefined&&!ORG_PAID_PLANS.includes(value.plan))fail('invalid_plan','Choose an organization plan.',400);
   const name=organizationName(value.name),label=organizationLabel(value.label);
   if(!this.enabled(actor?.owner))fail('not_found','Not found.',404);
   const now=this.clock.now();requireFresh(actor,now,ORG_FRESH_AUTH_MS);
@@ -112,14 +116,19 @@ export class OrganizationService{
   if(prior){if(prior.name!==name||prior.label!==label)fail('idempotency_conflict','This request was already used for another organization.',409);return structuredClone(prior);}
   // The paid check runs outside the transaction (it may be a remote port) and fails closed on any error.
   let plan;try{plan=await this.plans?.check({creator,now});}catch{plan=null;}
-  if(plan?.paid!==true)fail('organization_payment_required','Organizations need a paid plan, which is not available for this account yet.',402);
+  // Checkout at creation (ORG-D18, packages/orgs/ownership.mjs): with organization billing configured (sandbox only),
+  // a creator outside the operator allowlist reserves the UUID unpaid; the sequence resumes once a verified payment
+  // for this request exists. Without billing, the allowlist alone decides, failing closed.
+  const unpaid=plan?.paid!==true&&this.plans?.payable===true;
+  if(plan?.paid!==true&&!unpaid)fail('organization_payment_required','Organizations need a paid plan, which is not available for this account yet.',402);
+  if(unpaid)plan={source:'polar',plan:value.plan??'org-team'};
   return this.metadata.transaction(async tx=>{
    await this.person(tx,actor);
    const again=await tx.get(ORG_CREATION+value.request);if(again){if(again.name!==name||again.label!==label)fail('idempotency_conflict','This request was already used for another organization.',409);return structuredClone(again);}
-   let open=0;for(const row of (await tx.list({prefix:ORG_CREATION})).values())if(row?.state==='reserved')open++;
+   let open=0;for(const row of (await tx.list({prefix:ORG_CREATION})).values())if(row?.state==='reserved'&&!(row.payment?.state==='required'&&row.reservedAt<now-ORG_UNPAID_RESERVATION_MS))open++;
    const owned=(await tx.list({prefix:ORG_OWNED})).size;
    if(open+owned>=ORG_CREATION_LIMIT)fail('organization_limit','You have reached the organization limit for now.',409);
-   const row={v:1,request:value.request,org:this.random.uuid(),name,label,creator,plan:{source:String(plan.source),plan:String(plan.plan)},state:'reserved',reservedAt:now};
+   const row={v:1,request:value.request,org:this.random.uuid(),name,label,creator,plan:{source:String(plan.source),plan:String(plan.plan)},state:'reserved',reservedAt:now,...unpaid?{payment:{state:'required',plan:plan.plan}}:{}};
    await tx.put(ORG_CREATION+value.request,row);return structuredClone(row);
   });
  }
@@ -138,7 +147,7 @@ export class OrganizationService{
  }
  /** The organizations a person is owner of record of (an index; each organization's own record is authoritative). */
  async list(actor){
-  return this.metadata.transaction(async tx=>{await this.person(tx,actor);return {organizations:[...(await tx.list({prefix:ORG_OWNED})).values()].map(row=>({id:row.org,handle:row.handle,role:row.role,createdAt:row.createdAt})),pending:[...(await tx.list({prefix:ORG_CREATION})).values()].filter(row=>row.state==='reserved').map(row=>({request:row.request,id:row.org,name:row.name}))};});
+  return this.metadata.transaction(async tx=>{await this.person(tx,actor);return {organizations:[...(await tx.list({prefix:ORG_OWNED})).values()].map(row=>({id:row.org,handle:row.handle,role:row.role,createdAt:row.createdAt})),pending:[...(await tx.list({prefix:ORG_CREATION})).values()].filter(row=>row.state==='reserved').map(row=>({request:row.request,id:row.org,name:row.name,...row.payment?{payment:row.payment.state,plan:row.payment.plan??null}:{}}))};});
  }
  // ORG-5 discovery hints (provisional coordinator work). `orgs/joined/<org>` records, in the PERSON's own account, that
  // this person joined an organization. A hint is never evidence: discovery shows an organization only when that
@@ -147,7 +156,7 @@ export class OrganizationService{
  /** The organizations to ask about: owner-of-record index rows and membership hints. */
  async candidates(actor){
   return this.metadata.transaction(async tx=>{await this.person(tx,actor);const owned=[...(await tx.list({prefix:ORG_OWNED})).values()],joined=[...(await tx.list({prefix:ORG_JOINED})).values()];
-   return {owned:owned.map(row=>({id:row.org,handle:row.handle??null,role:row.role,createdAt:row.createdAt})),joined:joined.filter(row=>!owned.some(o=>o.org===row.org)).map(row=>({id:row.org,joinedAt:row.joinedAt})),pending:[...(await tx.list({prefix:ORG_CREATION})).values()].filter(row=>row.state==='reserved').map(row=>({request:row.request,id:row.org,name:row.name}))};});
+   return {owned:owned.map(row=>({id:row.org,handle:row.handle??null,role:row.role,createdAt:row.createdAt})),joined:joined.filter(row=>!owned.some(o=>o.org===row.org)).map(row=>({id:row.org,joinedAt:row.joinedAt})),pending:[...(await tx.list({prefix:ORG_CREATION})).values()].filter(row=>row.state==='reserved').map(row=>({request:row.request,id:row.org,name:row.name,...row.payment?{payment:row.payment.state,plan:row.payment.plan??null}:{}})),offers:[...(await tx.list({prefix:'orgs/offers/'})).values()].map(row=>({id:row.org,at:row.at}))};});
  }
  /** Records a hint after the organization accepted this person (called by the acceptance adapter, never from input). */
  async remember(actor,input){

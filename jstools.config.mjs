@@ -33,6 +33,8 @@ export const publicSources = [
 ];
 
 export const pages = [
+  {source:'apps/web/transfer-security.html',output:'transfer-security.html',entry:'transferSecurity',module:'/src/transfer-security.mjs'},
+  ...['out','in','moved','redirect','successor','dispute'].map(kind=>({source:'apps/web/transfer-'+kind+'.html',output:'transfer-'+kind+'.html',entry:'transfer',module:'/src/transfer-page.mjs'})),
   {source:'apps/web/intent.html',output:'intent.html',entry:'intent',module:'/src/intent.mjs'},
   {source:'apps/web/console.html',output:'console.html',entry:'app',module:'/src/main.mjs'},
   {source:'apps/web/authorize.html',output:'authorize.html',entry:'authorize',module:'/src/authorize.mjs'},
@@ -50,6 +52,8 @@ export default defineConfig({
   // Standalone workers bundle crypto/sanitizer dependencies without an import map.
   dependencies: ['hash-wasm'],
   entries: {
+    transferSecurity: {module:'apps/web/src/transfer-security.mjs',css:'apps/web/styles.css'},
+    transfer: {module:'apps/web/src/transfer-page.mjs',css:'apps/web/styles.css'},
     intent: {module:'apps/web/src/intent.mjs',css:'apps/web/styles.css'},
     app: {module:'apps/web/src/main.mjs',css:'apps/web/styles.css'},
     authorize: {module:'apps/web/src/authorize.mjs',css:'apps/web/styles.css'},

@@ -8,8 +8,9 @@ import {OwnerQuery,ClosureOwnerQuery,IdentityFault} from '../identity/index.mjs'
 import {personActor} from '../orgs/authority.mjs';
 import * as deletionRoutes from './routes/deletion.mjs';
 import * as exportRoutes from './routes/exports.mjs';
+import * as transferPages from './routes/transfer-pages.mjs';
 // DX-7 closure-export sessions reach only these routes: session, deletion status and the owner's export.
-const CLOSURE_ROUTES=[[/^\/api\/session$/,['GET']],[/^\/api\/account\/deletion$/,['GET']],[/^\/api\/exports$/,['GET','POST']],[/^\/api\/exports\/[a-f0-9-]{36}$/,['GET']],[/^\/api\/exports\/[a-f0-9-]{36}\/cancel$/,['POST']],[/^\/api\/exports\/[a-f0-9-]{36}\/volumes\/[1-9][0-9]{0,8}\.tar$/,['GET','HEAD']]];
+const CLOSURE_ROUTES=[[/^\/api\/account\/transfer-out$/,['GET']],[/^\/api\/session$/,['GET']],[/^\/api\/account\/deletion$/,['GET']],[/^\/api\/exports$/,['GET','POST']],[/^\/api\/exports\/[a-f0-9-]{36}$/,['GET']],[/^\/api\/exports\/[a-f0-9-]{36}\/cancel$/,['POST']],[/^\/api\/exports\/[a-f0-9-]{36}\/volumes\/[1-9][0-9]{0,8}\.tar$/,['GET','HEAD']]];
 const closureRoute=(path,method)=>CLOSURE_ROUTES.some(([pattern,methods])=>pattern.test(path)&&methods.includes(method));
 import {MessagingFault} from '../messaging/index.mjs';
 import {StorageError} from '../storage/policy.mjs';
@@ -59,7 +60,7 @@ export default {
      const id=closure.account.id;if(path==='/api/session')return json({authenticated:true,...closure,features:sessionFeatures(env,id)},200,{'Cache-Control':'private, no-store'});
      if(mutation&&context.csrfToken!==closure.csrfToken)return json({error:'csrf',message:'Reload the account page before continuing.'},403);
      Object.assign(route,{owner:closure,id,object:accountHandle(env,id),dispatch:null});route.context={...context,allowClosure:true};
-     const restricted=await deletionRoutes.stages.beforeActivity(route)??await exportRoutes.stages.beforeActivity(route);if(restricted)return restricted.passthrough??restricted;
+     const restricted=await transferPages.stages.beforeActivity(route)??await deletionRoutes.stages.beforeActivity(route)??await exportRoutes.stages.beforeActivity(route);if(restricted)return restricted.passthrough??restricted;
      return json({error:'closure_restricted',message:'Only export and deletion status are available for this account.'},403);
     }
     // ORG-0: the security epoch travels in the actor only; the session view is unchanged.

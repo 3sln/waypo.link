@@ -25,6 +25,7 @@ export const stages={async public(ctx){
   if(flagGlobal(env,'MEMBER_CERTIFICATES_ENABLED'))features['key-delegation.v1']={...value.features?.['key-delegation.v1'],max_certificate_seconds:memberCertificateLifetime(env.MEMBER_CERTIFICATE_SECONDS)??MEMBER_CERTIFICATE_DEFAULT_SECONDS,revocation_bound_seconds:MEMBER_REVOCATION_BOUND_SECONDS};
   if(flagGlobal(env,'ORGANIZATIONS_ENABLED')){features['organizations.v1']={};value.grant_types_supported=[...new Set([...(Array.isArray(value.grant_types_supported)?value.grant_types_supported:[]),JWT_BEARER])];}
   if(flagGlobal(env,'IDENTITY_TRANSFER_OUT_ENABLED')&&keys?.keys.length)features['portability.v1']={move_endpoint:env.APP_ORIGIN+MOVE_PATH,attestation_jwks_uri:env.APP_ORIGIN+ATTESTATION_KEYS_PATH};
+  if(flagGlobal(env,'IDENTITY_TRANSFER_IN_ENABLED')&&env.TRANSFER_IN_INTAKE)features['portability.v1']={...features['portability.v1'],transfer_in_endpoint:env.APP_ORIGIN+'/bindle/portability/transfer-in'};
   return json({...value,features},200,{'Access-Control-Allow-Origin':'*','Referrer-Policy':'no-referrer'});
  }
  if(request.method==='OPTIONS')return new Response(null,{status:204,headers:{...headers,'Access-Control-Allow-Methods':'GET, HEAD, OPTIONS'}});

@@ -19,20 +19,33 @@
 //   POST   /api/orgs/{id}/connections     {operation, input}          suspend | disconnect | resume | approve (admin)
 //   GET    /api/orgs/{id}/preferences                                 ORG-5: the organization's preference fragments (admin)
 //   POST   /api/orgs/{id}/preferences     {fragment, values, expectedRevision}   (admin)
+// Organization billing and ownership transfer (ORG-D18, ORG-D21, §12b.3a; packages/orgs/ownership.mjs; SANDBOX ONLY):
+//   GET    /api/orgs/plans?currency=                                  the provisional organization plans (sandbox catalog)
+//   POST   /api/orgs/checkout             {request, plan, currency?}  creation checkout for an unpaid reservation
+//   GET    /api/orgs/{id}/ownership                                   billing standing, offer, claim (role-filtered)
+//   POST   /api/orgs/{id}/billing-checkout {plan, currency?}          owner of record: subscribe again (lapsed/legacy)
+//   POST   /api/orgs/{id}/transfer-recipient {handle}                 owner of record: resolve a handle before offering
+//   POST   /api/orgs/{id}/transfer        {operation, ...}            offer | withdraw | object | block | accept | decline
+//   POST   /api/orgs/{id}/claim           {plan, currency?, confirm}  admin: billing-lapse claim (§12b.3)
+//   POST   /api/orgs/{id}/recovery-file                               owner of record: reissue the organization file
 import {json,body,accountHandle,flagEnabled,privateHeaders} from './shared.mjs';
 import {createAppEngine,perform,read} from '../../app/engine.mjs';
 import {systemClock,cryptoRandom,nullAudit} from '../../app/providers.mjs';
 import {actingAs} from '../../orgs/authority.mjs';
-import {OrganizationCreation,organizationCreationProvider,CreateOrganization} from '../../orgs/creation.mjs';
+import {OrganizationCreation,organizationCreationProvider,CreateOrganization,OrganizationRecoveryReissue,organizationRecoveryReissueProvider,ReissueOrganizationRecovery} from '../../orgs/creation.mjs';
+import {OrganizationBilling} from '../../billing/organizations.mjs';
+import {normalizeHandle} from '../../identity/handles.mjs';
 import {OrganizationDiscovery,organizationDiscoveryProvider,DiscoverOrganizations,AcceptOrganizationInvitation,LeaveOrganizationEverywhere} from '../../orgs/discovery.mjs';
 import {organizationIdentityPort} from '../../identity/organizations.mjs';
 import {identityBackupPort} from '../identity-backup.mjs';
 
-const ROOT='/api/orgs',ORG=/^\/api\/orgs\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:\/(audit|name|label|deletion|members|invitations|accept|leave|remove-member|member-grants|grant-decision|membership-policy|reconfirm|mute-requests|membership|requests|connections|preferences))?$/;
+const ROOT='/api/orgs',ROOT_EXTRA=/^\/api\/orgs\/(plans|checkout)$/,ORG=/^\/api\/orgs\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:\/(audit|name|label|deletion|members|invitations|accept|leave|remove-member|member-grants|grant-decision|membership-policy|reconfirm|mute-requests|membership|requests|connections|preferences|ownership|billing-checkout|transfer-recipient|transfer|claim|recovery-file))?$/;
+const TRANSFER_OPERATIONS={offer:'orgs.transfer-offer',withdraw:'orgs.transfer-withdraw',object:'orgs.transfer-object',block:'orgs.transfer-block',accept:'orgs.transfer-accept',decline:'orgs.transfer-decline'};
+const organizationBilling=env=>{const injected=env.ORGANIZATION_BILLING_CLIENT;return new OrganizationBilling({config:env,client:injected&&typeof injected==='object'?injected:undefined});};
 const POST_ACTIONS={name:'orgs.rename',label:'orgs.set-label',deletion:'orgs.schedule-deletion',invitations:'orgs.invite',accept:'orgs.accept',leave:'orgs.leave','remove-member':'orgs.remove-member','member-grants':'orgs.member-grants','grant-decision':'orgs.decide-grants','membership-policy':'orgs.membership-policy',reconfirm:'orgs.reconfirm','mute-requests':'orgs.mute-requests'};
 export function allowedMethods(path){
- if(path===ROOT)return ['GET','POST'];const match=ORG.exec(path);if(!match)return null;
- return !match[2]?['GET']:['audit','members','membership','requests'].includes(match[2])?['GET']:['connections','preferences'].includes(match[2])?['GET','POST']:match[2]==='deletion'?['POST','DELETE']:['POST'];
+ if(path===ROOT)return ['GET','POST'];const extra=ROOT_EXTRA.exec(path);if(extra)return extra[1]==='plans'?['GET']:['POST'];const match=ORG.exec(path);if(!match)return null;
+ return !match[2]?['GET']:['audit','members','membership','requests','ownership'].includes(match[2])?['GET']:['connections','preferences'].includes(match[2])?['GET','POST']:match[2]==='deletion'?['POST','DELETE']:['POST'];
 }
 const call=async(object,owner,request)=>object.orgsDispatch(owner,request);
 // Federation errors carry a code only; give them the statuses the federation HTTP adapter uses (packages/federation/http.mjs)
@@ -44,26 +57,30 @@ function creation(env){
  if(!env.IDENTITY_REPOSITORY||!env.ACCOUNTS)return null;
  const invoke=async(owner,method,args)=>{const result=await env.ACCOUNTS.get(owner).invoke({method,args:[owner,...args]});if(result?.$fault)throw Object.assign(new Error(result.$fault.message),{code:result.$fault.code,status:result.$fault.status});return result;};
  return new OrganizationCreation({issuer:env.APP_ORIGIN,identity:organizationIdentityPort(env.IDENTITY_REPOSITORY),backup:identityBackupPort({config:env,accounts:env.ACCOUNTS}),
-  person:{reserve:(actor,input)=>invoke(actor.entity.id,'orgsDispatch',[{operation:'orgs.reserve',actor,input}]),confirm:(owner,input)=>invoke(owner,'orgsConfirm',[input])},
-  org:{initialize:async(org,input)=>invoke(org,'orgsInitialize',[{...input,addedUnder:await accountHandle(env,input.creator.sub).orgsSigningProvenance(input.creator.sub)}])}});
+  person:{reserve:(actor,input)=>invoke(actor.entity.id,'orgsDispatch',[{operation:'orgs.reserve',actor,input}]),payment:(actor,input)=>invoke(actor.entity.id,'orgsDispatch',[{operation:'orgs.creation-payment',actor,input}]),confirm:(owner,input)=>invoke(owner,'orgsConfirm',[input])},
+  org:{initialize:async(org,input)=>invoke(org,'orgsInitialize',[{...input,addedUnder:await accountHandle(env,input.creator.sub).orgsSigningProvenance(input.creator.sub)}]),sync:org=>invoke(org,'orgsBillingSync',[])}});
 }
 /** ORG-5 discovery ports: the person's own writer for hints, each organization's writer for the person's own view. */
 function discovery(env,{id,object}){
  return new OrganizationDiscovery({
   person:{candidates:request=>object.orgsDispatch(id,{operation:'orgs.candidates',actor:request}),remember:(request,input)=>object.orgsDispatch(id,{operation:'orgs.remember-membership',actor:request,input}),forget:(request,input)=>object.orgsDispatch(id,{operation:'orgs.forget-membership',actor:request,input})},
-  org:{membership:(org,request)=>accountHandle(env,org).orgsDispatch(org,{operation:'orgs.membership',actor:request}),
+  org:{membership:(org,request)=>accountHandle(env,org).orgsDispatch(org,{operation:'orgs.membership',actor:request}),ownership:(org,request)=>accountHandle(env,org).orgsDispatch(org,{operation:'orgs.ownership',actor:request}),
    accept:async(org,request,input)=>accountHandle(env,org).orgsDispatch(org,{operation:'orgs.accept',actor:{...request,addedUnder:await object.orgsSigningProvenance(id)},input}),
    leave:(org,request,input)=>accountHandle(env,org).orgsDispatch(org,{operation:'orgs.leave',actor:request,input})}});
 }
 const discoveryEngine=route=>createAppEngine({providers:{clock:systemClock,random:cryptoRandom,audit:nullAudit,organizationDiscovery:organizationDiscoveryProvider(discovery(route.env,route))}});
 export const stages={
- async owner({request,env,path,id,object,actor,context}){
+ async owner({request,env,url,path,id,object,actor,context}){
   const allow=allowedMethods(path);if(!allow)return;
-  const match=ORG.exec(path),cancel=match?.[2]==='deletion'&&request.method==='DELETE';
+  const match=ORG.exec(path),extra=ROOT_EXTRA.exec(path),cancel=match?.[2]==='deletion'&&request.method==='DELETE';
   // Exit and reducing paths stay reachable during a ramp-down: leave, decisions (and the requests that drive them),
   // re-confirmation, mutes, and the organization's connections (resume and approve check the flag in the writer).
-  if(!cancel&&!['leave','grant-decision','reconfirm','mute-requests','requests','connections'].includes(match?.[2])&&!flagEnabled(env,'ORGANIZATIONS_ENABLED',{subject:{kind:'account',owner:match?.[1]??id}},true))return json({error:'not_found'},404);
+  // Withdrawing, objecting to, blocking or declining an offer, and reading the ownership view, stay reachable too (the
+  // writer checks the flag for offers, acceptance and checkouts).
+  if(!cancel&&!['leave','grant-decision','reconfirm','mute-requests','requests','connections','transfer','ownership'].includes(match?.[2])&&!flagEnabled(env,'ORGANIZATIONS_ENABLED',{subject:{kind:'account',owner:match?.[1]??id}},true))return json({error:'not_found'},404);
   const self={principal:actor.principal,entity:actor.entity,authTime:actor.authTime,epoch:actor.epoch,aep:actor.aep??0,...actor.verification?{verification:actor.verification}:{}};
+  if(extra?.[1]==='plans'){const billing=organizationBilling(env);if(!billing.configured())return json({configured:false,server:null,plans:[]},200,privateHeaders);const currency=url?.searchParams?.get('currency')??'usd';if(!/^[a-z]{3}$/.test(currency))return json({error:'invalid_currency'},400);return json({configured:true,...await billing.plans(currency)},200,privateHeaders);}
+  if(extra?.[1]==='checkout')return json(await object.orgsDispatch(id,{operation:'orgs.creation-checkout',actor:self,input:await body(request,4096)}),200,privateHeaders);
   if(path===ROOT){
    if(request.method==='GET'){const engine=discoveryEngine({env,id,object});try{return json(await read(engine,new DiscoverOrganizations({actor})),200,privateHeaders);}finally{await engine.dispose();}}
    const input=await body(request,8192),ports=creation(env);if(!ports)return json({error:'organization_unavailable',message:'Organizations are not available on this host.'},503);
@@ -75,6 +92,28 @@ export const stages={
    const input=await body(request,8192),engine=discoveryEngine({env,id,object});
    try{return json(await perform(engine,match[2]==='accept'?new AcceptOrganizationInvitation({actor,input:{org,invitation:input?.invitation}}):new LeaveOrganizationEverywhere({actor,input:{org}})),200,privateHeaders);}finally{await engine.dispose();}
   }
+  if(match[2]==='ownership'){const currency=url?.searchParams?.get('currency');return json(await call(orgObject,org,{operation:'orgs.ownership',actor:as,input:currency&&/^[a-z]{3}$/.test(currency)?{currency}:{}}),200,privateHeaders);}
+  if(match[2]==='transfer'){
+   const input=await body(request,8192);if(!input||typeof input!=='object'||Array.isArray(input)||!Object.hasOwn(TRANSFER_OPERATIONS,input.operation))return json({error:'invalid_request',message:'Unsupported ownership request.'},400);
+   const {operation,...rest}=input,acting=operation==='accept'?{...as,addedUnder:await object.orgsSigningProvenance(id)}:as;
+   return json(await call(orgObject,org,{operation:TRANSFER_OPERATIONS[operation],actor:acting,input:rest}),200,privateHeaders);
+  }
+  if(match[2]==='transfer-recipient'){
+   // Handles are public (directory.v1). Resolution is still offered only to an owner who may offer now.
+   const input=await body(request,2048),view=await call(orgObject,org,{operation:'orgs.ownership',actor:as,input:{}});if(!view?.decisions?.includes('offer'))return json({error:'not_found'},404);
+   let handle;try{handle=normalizeHandle(String(input?.handle??'').trim().replace(/^@/,''));}catch{return json({error:'invalid_handle',message:'Enter a complete 3sln.me handle.'},400);}
+   const account=await env.IDENTITY_REPOSITORY?.findByHandle?.(handle);
+   if(!account||account.kind==='organization'||account.status!=='active'||account.id===actor.principal.sub)return json({error:'recipient_unavailable',message:'No active 3sln.me person account has that handle.'},404);
+   return json({recipient:{id:account.id,handle:account.handle,kind:'person'}},200,privateHeaders);
+  }
+  if(match[2]==='recovery-file'){
+   if(!env.IDENTITY_REPOSITORY||!env.ACCOUNTS)return json({error:'organization_unavailable'},503);
+   const service=new OrganizationRecoveryReissue({identity:organizationIdentityPort(env.IDENTITY_REPOSITORY),backup:identityBackupPort({config:env,accounts:env.ACCOUNTS}),
+    org:{begin:(target,actorRequest)=>call(orgObject,target,{operation:'orgs.recovery-reissue-begin',actor:actorRequest,input:{}}),done:(target,actorRequest,input)=>call(orgObject,target,{operation:'orgs.recovery-reissue-done',actor:actorRequest,input})}});
+   const engine=createAppEngine({providers:{clock:systemClock,random:cryptoRandom,audit:nullAudit,organizationRecoveryReissue:organizationRecoveryReissueProvider(service)}});
+   try{return json(await perform(engine,new ReissueOrganizationRecovery({actor,input:{org,request:as}})),200,privateHeaders);}finally{await engine.dispose();}
+  }
+  if(match[2]==='claim'||match[2]==='billing-checkout')return json(await call(orgObject,org,{operation:match[2]==='claim'?'orgs.claim-start':'orgs.billing-checkout',actor:as,input:await body(request,4096)}),200,privateHeaders);
   if(match[2]==='connections'){
    if(request.method==='GET')return json(await orgObject.orgsConnections(org,{operation:'list',actor:as}),200,privateHeaders);
    const input=await body(request,8192);if(!input||typeof input!=='object'||Array.isArray(input)||Object.keys(input).some(k=>!['operation','input'].includes(k))||typeof input.operation!=='string')return json({error:'invalid_request',message:'Unsupported connections request.'},400);

@@ -46,7 +46,9 @@ import {attachAppSessions} from '../../packages/federation/device-authorization.
 import {UUID_V4} from '../../packages/core/primitives.mjs';
 export {LifecycleScheduler} from './lifecycle.mjs';
 export {EventBusWaiter} from './event-bus-waiter.mjs';
-import {LIFECYCLE_SCHEDULER_NAME} from './lifecycle.mjs';
+import {LIFECYCLE_SCHEDULER_NAME,workerTransferOutConfig} from './lifecycle.mjs';
+import {transferIntakeConfig} from '../../packages/runtime/transfer-intake.mjs';
+import {transferDocument} from '../../packages/runtime/routes/transfer-pages.mjs';
 import {lifecycleMode} from '../../packages/runtime/lifecycle-runner.mjs';
 import {entryStoreName} from './federation.mjs';
 // BRIDGE (Wave 7): the Email Routing `email` handler and its object; refused generically unless EMAIL_BRIDGE_ENABLED,
@@ -88,6 +90,10 @@ function resources(bindings,resolveIdentityBadges,flags){
  const linkedLimits={consume:(key,window)=>env.ABUSE.get(env.ABUSE.idFromName('linked-v1:'+key)).consume(window)};
  const mailer=mailTransport(env);
  const value={...env,EVENT_BUS_WAITS_MOUNTED:siteGlobal(env,'EVENT_BUSES_ENABLED',true)&&!!env.EVENT_BUS_WAITS,DEVELOPER_CONTACT_POPULATION:workerActivePopulation(env),BILLING_CATALOG:workerCatalogPort(env),ASSETS:assetResource(env.ASSETS),EMAIL_AVAILABLE:Boolean(mailer),WAITLIST_MAIL_AVAILABLE:typeof mailer?.sendWaitlistConfirmation==='function',WAITLIST_MAILER:mailer,IDENTITY_REPOSITORY:repository,ACCOUNTS:flags?flagAccounts({get:id=>env.ACCOUNTS.get(env.ACCOUNTS.idFromName(id))},flags):{get:id=>env.ACCOUNTS.get(env.ACCOUNTS.idFromName(id))},SIGNUP_STATUS_CACHE_KEY:env.ABUSE,ABUSE:{waitlist:(method,input)=>env.ABUSE.get(env.ABUSE.idFromName('signup:waitlist:v1')).waitlistAction(method,input),consume:(key,limits)=>env.ABUSE.get(env.ABUSE.idFromName(key)).consume(limits),consumeSignup:(key,limits)=>env.ABUSE.get(env.ABUSE.idFromName(key)).consumeSignup(limits),signupStatus:(key,limits)=>env.ABUSE.get(env.ABUSE.idFromName(key)).signupStatus(limits)}};
+ const transferConfig=workerTransferOutConfig(env);value.TRANSFER_IN_PORTS=transferConfig.TRANSFER_IN_PORTS;
+ value.TRANSFER_IN_INTAKE=transferIntakeConfig({env:value,repository,accounts:value.ACCOUNTS});
+ value.TRANSFER_IN_DOCUMENT=({request,packageJSON})=>transferDocument({request,env:value,url:new URL(request.url)},'in',packageJSON);
+ if(env.LIFECYCLE_SCHEDULER)value.REDIRECT_EXTENSION_DUE={put:(owner,at,kind)=>env.LIFECYCLE_SCHEDULER.get(env.LIFECYCLE_SCHEDULER.idFromName(LIFECYCLE_SCHEDULER_NAME)).transferDuePut(owner,at,kind)};
  Object.assign(value,workerIntegrationPorts(env,{describe:async query=>{const response=await value.ACCOUNTS.get(query.owner).invoke({method:'integrationsMessagingDescribe',args:[query]});if(response?.$fault)throw Object.assign(new Error(response.$fault.message),response.$fault);return response;}}));
  const delivery=createPushTransport(env),pushTransport=delivery?{...delivery,async register({owner,subscription}){const result=await value.ACCOUNTS.get(owner).invoke({method:'registerSignupPush',args:[owner,{subscription}]});if(result?.$fault)throw Object.assign(new Error(result.$fault.message),result.$fault);return result;}}:null;
  // Island avatar sources on operator-approved origins (EMBED_AVATAR_ORIGINS) use the global fetch, which
