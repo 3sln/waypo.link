@@ -11,9 +11,9 @@
 //   active   exactly the pointer's key: signs new artifacts, and same-host lookups report it `active`.
 //   retired  replaced by rotation. The record keeps `active: true`, so provider-stored artifacts it signed earlier
 //            (contact grants, link metas, whose exact claims the provider holds) stay verifiable, but nothing can be
-//            minted under them any more (no private key): pre-C0 endpoints re-sign with their grant's kid, so rotation
-//            stays internal (no route) until those consumers move to the current key (review finding 4). Fresh-signature
-//            verifiers (link responses, author proofs, delegation certificates) accept the current key only.
+//            minted under them any more (no private key). Bearers minted from such a parent are new issuance and are
+//            signed with the current key (PORT-9; packages/messaging/contact-endpoints.mjs). Fresh-signature verifiers
+//            (link responses, author proofs, delegation certificates, bearers) accept the current key only.
 //   revoked  `active: false`: everything signed by it stops verifying. Revoking the current key clears its pointer;
 //            the next ensure creates an unrelated key with no continuity, because a revoked key cannot vouch.
 // Rotation continuity: the old signing key signs the new signing key; the current signing key signs a new
@@ -22,8 +22,25 @@
 // Custody is unchanged: private keys exist only as `seal`ed (KEY_ENCRYPTION_KEY) records and non-extractable
 // imports; retired/revoked signing private keys are dropped, and encryption private keys are retained sealed
 // (`identity-key-retained/<owner>/<kid>/`), because old content may still need them. Never log key material.
-// History is bounded per owner and purpose: signing prunes its oldest revoked, then oldest retired, record (whose
-// stored artifacts then stop verifying); encryption never prunes and refuses rotation with `key_history_full`.
+// History is bounded per owner and purpose: signing prunes its oldest revoked record, then its oldest retired record
+// that nothing still needs; encryption never prunes and refuses rotation with `key_history_full`.
+//
+// Old-key honouring (identity portability P11, PORT-9; docs/spec/identity-portability.md §7.1). A retired signing key
+// is never pruned while it is *referenced*: named by a live stored record whose exact header the provider re-serves
+// (`contact-grant/<jti>/` parents, active and unexpired, by `header.kid` or `endpoint.header.kid`; `link/<jti>/`
+// records, unrevoked and unexpired, by `header.kid`), or bound to an issued recovery file (below). When every
+// non-current record is referenced, a signing rotation refuses with `key_history_full` and changes nothing.
+// Descriptors carry `created` and `retired` in Unix seconds (spec §7.1, AMD-P10) beside the millisecond fields.
+//
+// Rotation at recovery-file issuance (P15, PORT-10). `rotateForRecovery` rotates the signing key (ordinary continuity,
+// the new record tagged `rotation: 'recovery-issuance'`) when the current key is in a file that may still be used:
+// one of `rotateIf` (the kids the identity record binds to its current and resume credentials), or `always` for a
+// legacy identity that never recorded one. It then records the recovery binding `identity-key-recovery/<owner>/`:
+// `keep` plus the resulting current kid. A bound retired key still restores its file (`recoveryMatch`), because the
+// identity commit that binds a credential to a key runs after this account commit and may lose its race; a bound key
+// is never pruned. Any other signing rotation clears the binding (a rotation outside issuance makes older files
+// unusable), and revoking a key removes it. A full history of referenced keys skips the rotation and reports
+// `skipped: 'key_history_full'` (design §2.5: a known edge, audited by the caller).
 import { Engine, Provider, Action, Query } from '../../vendor/ngin/index.js';
 import { fail, key, canonical, base64url, fromBase64url, textEncoder, strictText, boundedString } from '../core/records.mjs';
 
@@ -31,7 +48,8 @@ export const KEY_PURPOSES = Object.freeze(['signing', 'encryption']);
 export const KEY_HISTORY_LIMIT = 16;
 export const REVOCATION_REASONS = Object.freeze(['unspecified', 'compromise', 'owner', 'superseded']);
 export const CONTINUITY_DOMAIN = '3sln-identity-key-continuity-v1';
-const PREFIX = { signing: 'contact-key', encryption: 'identity-encryption-key' }, POINTER = { signing: 'signing-key', encryption: 'encryption-key' }, RETAINED = 'identity-key-retained', TOMBSTONE = 'identity-key-pruned';
+const PREFIX = { signing: 'contact-key', encryption: 'identity-encryption-key' }, POINTER = { signing: 'signing-key', encryption: 'encryption-key' }, RETAINED = 'identity-key-retained', TOMBSTONE = 'identity-key-pruned', BINDING = 'identity-key-recovery';
+export const RECOVERY_ISSUANCE_ROTATION = 'recovery-issuance';
 export const IDENTITY_ALGORITHMS = Object.freeze(Object.assign(Object.create(null), { EdDSA: { name: 'Ed25519' }, ES256: { name: 'ECDSA', hash: 'SHA-256' } }));
 export const importAlgorithm = alg => alg === 'ES256' ? { name: 'ECDSA', namedCurve: 'P-256' } : IDENTITY_ALGORITHMS[alg];
 const ECDSA = { name: 'ECDSA', namedCurve: 'P-256' }, ECDH = { name: 'ECDH', namedCurve: 'P-256' };
@@ -45,7 +63,19 @@ export const keyState = record => record?.state ?? (record?.active === true ? 'a
 /** The public descriptor a lookup returns; `current` only for the pointer's key in state active. */
 function describe(record, purpose, pointer) {
   const state = keyState(record);
-  return { kid: record.kid, purpose, alg: record.alg, publicJwk: publicOf(record.publicJwk), state, current: state === 'active' && pointer?.kid === record.kid, verifiable: state !== 'revoked', createdAt: record.createdAt ?? null, retiredAt: record.retiredAt ?? null, revokedAt: record.revokedAt ?? null, predecessor: record.predecessor ?? null, successor: record.successor ?? null, continuity: record.continuity ?? null };
+  return { kid: record.kid, purpose, alg: record.alg, publicJwk: publicOf(record.publicJwk), state, current: state === 'active' && pointer?.kid === record.kid, verifiable: state !== 'revoked', createdAt: record.createdAt ?? null, retiredAt: record.retiredAt ?? null, revokedAt: record.revokedAt ?? null, created: seconds(record.createdAt), retired: seconds(record.retiredAt), predecessor: record.predecessor ?? null, successor: record.successor ?? null, continuity: record.continuity ?? null, rotation: record.rotation ?? null };
+}
+/** Unix seconds of a millisecond record time, or null (published `created`/`retired`, spec §7.1). */
+export const seconds = ms => Number.isSafeInteger(ms) && ms >= 0 ? Math.floor(ms / 1000) : null;
+const kidList = (value, max = 8) => Array.isArray(value) && value.length <= max && value.every(kid => boundedString(kid)) ? [...new Set(value)] : fail('invalid_key');
+/** Signing kids `owner` still needs at `now` (ms): kids named by live stored records the provider re-serves, plus the
+ * recovery binding. Records of other owners and expired, revoked or inactive records do not count (see header). */
+export async function referencedSigningKids(tx, owner, now) {
+  const kids = new Set(), live = exp => Number.isSafeInteger(exp) && exp * 1000 > now, add = kid => { if (boundedString(kid)) kids.add(kid); };
+  for (const { value: grant } of await tx.list(key('contact-grant'))) if (grant?.owner === owner && grant.active === true && live(grant.claims?.exp)) { add(grant.header?.kid); add(grant.endpoint?.header?.kid); }
+  for (const { value: link } of await tx.list(key('link'))) if (link?.owner === owner && link.revoked !== true && live(link.claims?.exp)) add(link.header?.kid);
+  for (const kid of (await tx.get(key(BINDING, owner)))?.kids ?? []) add(kid);
+  return kids;
 }
 /** Same-host signing record still usable for provider-stored artifacts (contact grants, link metas): active or retired. */
 export async function verifiableSigningKey(tx, owner, kid) { const record = await tx.get(publicPath('signing', owner, kid)); return record?.active === true && keyState(record) !== 'revoked' ? record : null; }
@@ -85,11 +115,14 @@ export class IdentityKeyRegistry {
   // Records carry a per-owner, per-purpose sequence, so history order and pruning never depend on clock resolution.
   async #next(tx, owner, purpose) { return (await this.#records(tx, owner, purpose)).reduce((max, record) => Math.max(max, record.seq ?? 0), 0) + 1; }
   // Makes room for one more record within the bounded history (see the header).
-  async #admit(tx, owner, purpose, keep) {
+  async #admit(tx, owner, purpose, keep, protect = []) {
     const records = await this.#records(tx, owner, purpose); if (records.length < this.historyLimit) return;
     // Encryption prunes only revoked public records (their private keys stay in `identity-key-retained/`), so a
     // revocation can always be followed by a replacement (review finding 1); retired encryption keys are never pruned.
-    const prunable = records.filter(record => record.kid !== keep && keyState(record) !== 'active'), victim = prunable.find(record => keyState(record) === 'revoked') ?? (purpose === 'signing' ? prunable[0] : undefined);
+    // Signing then prunes the oldest retired record nothing references (P11): a referenced one is never dropped.
+    const prunable = records.filter(record => record.kid !== keep && keyState(record) !== 'active');
+    let victim = prunable.find(record => keyState(record) === 'revoked');
+    if (!victim && purpose === 'signing') { const referenced = await referencedSigningKids(tx, owner, this.clock()); for (const kid of protect) referenced.add(kid); victim = prunable.find(record => !referenced.has(record.kid)); }
     if (!victim || records.length - 1 >= this.historyLimit) fail('key_history_full');
     // A pruned kid is tombstoned for good, so it can never be registered again (review finding 3).
     await tx.set(key(TOMBSTONE, owner, victim.kid), { kid: victim.kid, purpose, prunedAt: this.clock() });
@@ -148,8 +181,16 @@ export class IdentityKeyRegistry {
       return { kid: fresh.kid, created: true };
     });
   }
-  /** Replaces the current key of `purpose` (compare-and-set on `expectedKid`) and records signed continuity. */
-  async rotate(owner, { purpose, expectedKid } = {}) {
+  // The recovery binding (see the header): only kids still present and not revoked are kept; an empty binding is removed.
+  async #bind(tx, owner, kids) {
+    const kept = [];
+    for (const kid of new Set(kids)) { const record = boundedString(kid) && await tx.get(publicPath('signing', owner, kid)); if (record?.owner === owner && keyState(record) !== 'revoked') kept.push(kid); }
+    if (kept.length) await tx.set(key(BINDING, owner), { owner, kids: kept, at: this.clock() }); else await tx.delete(key(BINDING, owner));
+  }
+  /** Replaces the current key of `purpose` (compare-and-set on `expectedKid`) and records signed continuity. A signing
+   * rotation here clears the recovery binding: files issued before it no longer restore. */
+  async rotate(owner, { purpose, expectedKid } = {}) { return this.#rotate(owner, { purpose, expectedKid }); }
+  async #rotate(owner, { purpose, expectedKid, issuance } = {}) {
     ownerOf(owner); purposeOf(purpose); this.#sealing(); if (!boundedString(expectedKid)) fail('invalid_key');
     const [current, signing] = await this.store.transaction(async tx => [await this.#pointer(tx, owner, purpose), await this.#pointer(tx, owner, 'signing')]);
     if (!current) fail('not_found'); if (current.kid !== expectedKid) fail('key_conflict'); if (!signing) fail('identity_keys_unavailable');
@@ -160,12 +201,13 @@ export class IdentityKeyRegistry {
       const pointer = await this.#pointer(tx, owner, purpose), signingNow = await this.#pointer(tx, owner, 'signing'), old = await tx.get(publicPath(purpose, owner, expectedKid));
       // Anything that moved since the reads above (a concurrent rotation or revocation) invalidates this statement.
       if (pointer?.kid !== expectedKid || signingNow?.kid !== signer || !old || keyState(old) !== 'active' || keyState(await tx.get(publicPath('signing', owner, signer))) !== 'active') fail('key_conflict');
-      await this.#admit(tx, owner, purpose, expectedKid);
+      await this.#admit(tx, owner, purpose, expectedKid, issuance?.keep);
       const now = this.clock();
       await tx.set(publicPath(purpose, owner, expectedKid), { ...old, state: 'retired', retiredAt: now, successor: fresh.kid });
       if (purpose === 'encryption') await tx.set(key(RETAINED, owner, expectedKid), { kid: expectedKid, owner, purpose, encrypted: pointer.encrypted, retiredAt: now });
-      await tx.set(publicPath(purpose, owner, fresh.kid), { owner, kid: fresh.kid, alg: fresh.alg, publicJwk: fresh.publicJwk, active: true, purpose, state: 'active', createdAt: now, seq: await this.#next(tx, owner, purpose), predecessor: expectedKid, continuity: { alg: 'ES256', kid: signer, payload, signature } });
+      await tx.set(publicPath(purpose, owner, fresh.kid), { owner, kid: fresh.kid, alg: fresh.alg, publicJwk: fresh.publicJwk, active: true, purpose, state: 'active', createdAt: now, seq: await this.#next(tx, owner, purpose), predecessor: expectedKid, continuity: { alg: 'ES256', kid: signer, payload, signature }, ...issuance ? { rotation: RECOVERY_ISSUANCE_ROTATION } : {} });
       await tx.set(POINTER[purpose], { kid: fresh.kid, owner, purpose, encrypted: fresh.encrypted });
+      if (purpose === 'signing') await this.#bind(tx, owner, issuance ? [...issuance.keep, fresh.kid] : []);
       return { kid: fresh.kid, previous: expectedKid, purpose };
     });
   }
@@ -183,8 +225,39 @@ export class IdentityKeyRegistry {
         if (purpose === 'encryption') await tx.set(key(RETAINED, owner, kid), { kid, owner, purpose, encrypted: pointer.encrypted, retiredAt: record.revokedAt });
         await tx.delete(POINTER[purpose]);
       }
+      if (purpose === 'signing') { const binding = await tx.get(key(BINDING, owner)); if (binding?.kids?.includes(kid)) await this.#bind(tx, owner, binding.kids.filter(other => other !== kid)); }
       return describe(record, purpose, null);
     });
+  }
+  /** Rotation at recovery-file issuance (P15; see the header). Rotates the current signing key when it is one of
+   * `rotateIf` or `always`, then binds `keep` plus the resulting current kid. Returns
+   * {rotated, kid, previous, skipped}: `skipped` is 'key_history_full' when a full history of referenced keys refused it. */
+  async rotateForRecovery(owner, { rotateIf = [], always = false, keep = [] } = {}) {
+    ownerOf(owner); this.#sealing(); rotateIf = kidList(rotateIf); keep = kidList(keep); if (typeof always !== 'boolean') fail('invalid_key');
+    const current = await this.store.transaction(tx => this.#pointer(tx, owner, 'signing'));
+    if (!current) fail('identity_keys_unavailable');
+    if (always || rotateIf.includes(current.kid)) {
+      try { const rotated = await this.#rotate(owner, { purpose: 'signing', expectedKid: current.kid, issuance: { keep } }); return { rotated: true, kid: rotated.kid, previous: rotated.previous, skipped: null }; }
+      catch (error) { if (error?.code !== 'key_history_full') throw error; }
+      await this.store.transaction(tx => this.#bind(tx, owner, [...keep, current.kid]));
+      return { rotated: false, kid: current.kid, previous: null, skipped: 'key_history_full' };
+    }
+    await this.store.transaction(async tx => { if ((await this.#pointer(tx, owner, 'signing'))?.kid !== current.kid) fail('key_conflict'); await this.#bind(tx, owner, [...keep, current.kid]); });
+    return { rotated: false, kid: current.kid, previous: null, skipped: null };
+  }
+  /** Whether a decrypted recovery keychain `{signing:{kid,privateJWK}, encryption:{kid,privateJWK}}` matches this
+   * owner's keys: the current encryption key exactly, and either the current signing key exactly or a retired signing
+   * key bound to an issued recovery file with the same public point (see the header). Never writes. */
+  async recoveryMatch(owner, keychain) {
+    ownerOf(owner); this.#sealing();
+    const signing = keychain?.signing, encryption = keychain?.encryption, fields = ['kty', 'crv', 'x', 'y'];
+    if (!boundedString(signing?.kid) || !boundedString(encryption?.kid) || !signing.privateJWK || !encryption.privateJWK) return false;
+    const state = await this.store.transaction(async tx => ({ signing: await this.#pointer(tx, owner, 'signing'), encryption: await this.#pointer(tx, owner, 'encryption'), signingRecord: await tx.get(publicPath('signing', owner, signing.kid)), encryptionRecord: await tx.get(publicPath('encryption', owner, encryption.kid)), binding: await tx.get(key(BINDING, owner)) }));
+    const same = (a, b, names) => names.every(name => typeof a?.[name] === 'string' && a[name] === b?.[name]);
+    if (state.encryption?.kid !== encryption.kid || state.encryptionRecord?.owner !== owner || keyState(state.encryptionRecord) === 'revoked' || state.signingRecord?.owner !== owner || keyState(state.signingRecord) === 'revoked') return false;
+    if (!same(await this.open(state.encryption.encrypted), encryption.privateJWK, [...fields, 'd'])) return false;
+    if (state.signing?.kid === signing.kid) return same(await this.open(state.signing.encrypted), signing.privateJWK, [...fields, 'd']);
+    return keyState(state.signingRecord) === 'retired' && state.signingRecord.active === true && state.binding?.owner === owner && state.binding.kids.includes(signing.kid) && same(publicOf(state.signingRecord.publicJwk), signing.privateJWK, fields);
   }
   /** Public descriptor of `kid` under `purpose`, or null. */
   async lookup(owner, { purpose, kid } = {}) {
@@ -232,6 +305,8 @@ export class RotateIdentityKey extends KeyAction { run(keys) { return keys.rotat
 export class RevokeIdentityKey extends KeyAction { run(keys) { return keys.revoke(this.owner, this.input); } }
 /** `input`: {kid, alg, publicJwk}; legacy public-only signing registration. */
 export class RegisterIdentityKey extends KeyAction { run(keys) { return keys.register(this.owner, this.input); } }
+/** `input`: {rotateIf?, always?, keep?}; rotation at recovery-file issuance (P15). Purpose is always signing. */
+export class RotateSigningKeyForRecovery extends KeyAction { run(keys) { return keys.rotateForRecovery(this.owner, this.input); } }
 class KeyQuery extends Query {
   static deps = ['identityKeys'];
   constructor({ owner, input } = {}) { super(); this.owner = owner; this.input = input ?? {}; }
@@ -242,6 +317,8 @@ export class IdentityKeyByKid extends KeyQuery { fetch({ identityKeys }) { retur
 export class CurrentIdentityKey extends KeyQuery { fetch({ identityKeys }) { return identityKeys.current(this.owner, this.input); } }
 /** `input`: {purpose}. */
 export class IdentityKeyHistory extends KeyQuery { fetch({ identityKeys }) { return identityKeys.history(this.owner, this.input); } }
+/** `input`: {keychain}; the recovery restore check (one-shot; nothing is retained). */
+export class RecoveryKeychainMatches extends KeyQuery { fetch({ identityKeys }) { return identityKeys.recoveryMatch(this.owner, this.input.keychain); } }
 
 /** An engine over one registry (or the resources to build one); `engine.identityKeys` is that registry. */
 export function createIdentityKeyEngine(resources) {

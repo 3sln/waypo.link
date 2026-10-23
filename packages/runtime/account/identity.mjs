@@ -3,7 +3,7 @@ import {ownerFlags} from './flags.mjs';
 // `methods` are installed on AccountController.prototype (`this` is the controller); `rpc` lists the methods
 // `invoke` accepts and the placement policy it applies to each (packages/runtime/account/index.mjs).
 import {UNPAID_LIFECYCLE_ORIGIN} from '../../identity/lifecycle-protection.mjs';
-import {IdentityKeyRegistry,createIdentityKeyEngine,performKeyAction,readKeyQuery,EnsureIdentityKey,RotateIdentityKey,RevokeIdentityKey,IdentityKeyByKid,IdentityKeyHistory} from '../../identity/keys.mjs';
+import {IdentityKeyRegistry,createIdentityKeyEngine,performKeyAction,readKeyQuery,EnsureIdentityKey,RotateIdentityKey,RevokeIdentityKey,IdentityKeyByKid,IdentityKeyHistory,RotateSigningKeyForRecovery,RecoveryKeychainMatches} from '../../identity/keys.mjs';
 import {encryptSecret,decryptSecret} from '../secrets.mjs';
 import {StorageError} from '../../storage/policy.mjs';
 import {createAppEngine,perform,read,operations,AppQuery} from '../../app/engine.mjs';
@@ -50,6 +50,18 @@ export const methods={
     if(!signing||!encryption)throw unavailable();
     return {version:1,signing,encryption};
   },
+  // Internal identity-backup port only (PORT-10, P15): ensures both keys, rotates the signing key with continuity when
+  // `rotation` asks for it ({rotateIf, always}; RotateSigningKeyForRecovery), binds `keep` plus the resulting key, and
+  // returns the keychain the new file carries with the rotation outcome. One gated call, so one account commit order.
+  async recoveryKeychain(owner,{rotation=null,keep=[]}={}){
+    const engine=keyEngine(this);await this.warm(owner);for(const purpose of ['signing','encryption'])await performKeyAction(engine,new EnsureIdentityKey({owner,input:{purpose}}));
+    const outcome=await performKeyAction(engine,new RotateSigningKeyForRecovery({owner,input:{rotateIf:rotation?.rotateIf??[],always:rotation?.always===true,keep}}));
+    const signing=await engine.identityKeys.exportPrivate(owner,'signing'),encryption=await engine.identityKeys.exportPrivate(owner,'encryption');
+    if(!signing||!encryption||signing.kid!==outcome.kid)throw unavailable();
+    return {keychain:{version:1,signing,encryption},rotation:{...outcome,requested:Boolean(rotation)}};
+  },
+  // Internal identity-backup port only: whether a verified file's keychain still restores (RecoveryKeychainMatches). Never writes.
+  async recoveryKeysMatch(owner,keychain){return readKeyQuery(keyEngine(this),new RecoveryKeychainMatches({owner,input:{keychain}}));},
   // Internal key management (no `rpc` entry, so never reachable through `invoke`). Rotation and revocation change
   // what old recovery files restore: verification compares against the current keys and rejects older files.
   async rotateIdentityKey(owner,{purpose,expectedKid}={}){await this.warm(owner);return performKeyAction(keyEngine(this),new RotateIdentityKey({owner,input:{purpose,expectedKid}}));},
@@ -57,7 +69,7 @@ export const methods={
   async identityKeyHistory(owner,{purpose}={}){return readKeyQuery(keyEngine(this),new IdentityKeyHistory({owner,input:{purpose}}));},
   // Public identity port: this account's signing key `kid`; runs outside the gate. Only the current key is `active`;
   // a retired or revoked key is reported inactive with its state, an unknown kid is null.
-  async identitySigningKey(owner,kid){if(await this.metadata.get('owner')!==owner||typeof kid!=='string')return null;const record=await readKeyQuery(keyEngine(this),new IdentityKeyByKid({owner,input:{purpose:'signing',kid}}));if(!record||record.alg!=='ES256')return null;const {kty,crv,x,y}=record.publicJwk;return {kid,alg:'ES256',publicJwk:{kty,crv,x,y},active:record.current===true,purpose:'signing',state:record.state};},
+  async identitySigningKey(owner,kid){if(await this.metadata.get('owner')!==owner||typeof kid!=='string')return null;const record=await readKeyQuery(keyEngine(this),new IdentityKeyByKid({owner,input:{purpose:'signing',kid}}));if(!record||record.alg!=='ES256')return null;const {kty,crv,x,y}=record.publicJwk;return {kid,alg:'ES256',publicJwk:{kty,crv,x,y},active:record.current===true,purpose:'signing',state:record.state,created:record.created,...record.retired!==null&&record.state==='retired'?{retired:record.retired}:{}};},
   // Same-host principal lookup: identity directory status/handle plus that account's signing key.
   async identityRecord(subject,kid){if(!/^[a-f0-9-]{36}$/.test(subject)||typeof kid!=='string'||typeof this.config.IDENTITY_ACCOUNT!=='function')return null;const account=await this.config.IDENTITY_ACCOUNT(subject);if(!account)return null;const local=await this.metadata.get('owner')===subject,record=local?await this.identitySigningKey(subject,kid):await this.config.CONVERSATION_ACCOUNT?.(subject)?.invoke({method:'identitySigningKey',args:[subject,kid]});return record&&!record.$fault?{...record,accountActive:account.status==='active',handle:account.handle}:null;},
   async identityKey(subject,kid){const record=await this.identityRecord(subject,kid);return record&&{alg:record.alg,publicJwk:record.publicJwk,active:record.active,purpose:record.purpose,accountActive:record.accountActive};},
@@ -84,6 +96,8 @@ export const methods={
 export const rpc={
  identitySigningKey:{lifecycle:'purging',gate:'none'},
  identityKeychain:{lifecycle:'suspended'},
+ recoveryKeychain:{lifecycle:'suspended'},
+ recoveryKeysMatch:{lifecycle:'suspended'},
  rememberSignupOrigin:{},
  registerSignupPush:{},
  listDelegations:{},

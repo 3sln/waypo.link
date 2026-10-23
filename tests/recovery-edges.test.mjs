@@ -91,9 +91,16 @@ test('signed identity backup fuzz: no single-field mutation verifies, and expect
 
 test('identity backup port: recovery requires the same token and unrotated keys of the same account',async()=>{
  const key=await crypto.subtle.exportKey('jwk',authorityKeys.privateKey),config={APP_ORIGIN:'https://identity.example',RECOVERY_SIGNING_KEY:JSON.stringify({kid:'port-edge',privateJWK:key})};
- const chains=new Map(),accounts={get:owner=>({invoke:async({args:[id,{create}]})=>{if(!chains.has(id)&&create)chains.set(id,await generateIdentityKeychain());return structuredClone(chains.get(id));}})};
+ // PORT-10 account contract: recoveryKeychain(owner,{rotation,keep}) -> {keychain,rotation}; recoveryKeysMatch(owner,keychain) -> boolean.
+ const chains=new Map(),same=(a,b)=>['signing','encryption'].every(p=>a[p].kid===b[p].kid&&['kty','crv','x','y','d'].every(f=>a[p].privateJWK[f]===b[p].privateJWK[f]));
+ const accounts={get:owner=>({invoke:async({method,args:[id,input]})=>{
+  if(method==='recoveryKeychain'){if(!chains.has(id))chains.set(id,await generateIdentityKeychain());return {keychain:structuredClone(chains.get(id)),rotation:{rotated:false,kid:chains.get(id).signing.kid,previous:null,skipped:null,requested:Boolean(input.rotation)}};}
+  if(method==='recoveryKeysMatch')return chains.has(id)&&same(chains.get(id),input);
+  return {$fault:{code:'unsupported_method',message:'Unsupported account operation.'}};
+ }})};
  const port=identityBackupPort({config,accounts}),alice={id:crypto.randomUUID()},bob={id:crypto.randomUUID()};
- const file=await port.issue(alice,'alice.token');await port.issue(bob,'bob.token');
+ const {backup:file,rotation}=await port.issue(alice,'alice.token');await port.issue(bob,'bob.token');
+ assert.equal(rotation.requested,false,'a first issuance asks for no rotation');
  assert.equal((await port.verify(file,alice,'alice.token')).entity,alice.id);
  await assert.rejects(port.verify(file,alice,'alice.other'),/does not match/);
  await assert.rejects(port.verify(file,bob,'alice.token'),/another identity/);

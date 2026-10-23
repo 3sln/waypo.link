@@ -447,6 +447,21 @@ Engine-first: every operation is an ngin Action or Query in a domain module, dis
 | PORT-7 | Redirect extension billing | `packages/billing/redirect-extension.mjs`, `tests/billing-redirect-extension.test.mjs` | PORT-2, billing |
 | PORT-8 | Legal text | `docs/legal/*` (legal owner) | PORT-2 behaviour |
 
+**Slice status (2026-10-22; local implementation only, not reviewed, not signed off, nothing routed or flagged on).**
+
+- **PORT-1: implemented locally.** It includes the vectors and seeded property tests. Spec §8.3 items 4 and 5 need fetches, so they stay with the callers (PORT-5).
+- **PORT-9: implemented locally.**
+  - Contact-delivery and legacy inbox bearers are signed and verified with the current key.
+  - Retired signing keys are never pruned while a live `contact-grant` or `link` record, or a recovery binding, references them. A full history of such keys refuses rotation.
+  - Key descriptors and `identitySigningKey` carry `created` and `retired` in Unix seconds.
+  - The bearer change needed no hunk in `packages/runtime/accounts.mjs`. The existing signer already requires the current kid.
+- **PORT-10: implemented locally.**
+  - `downloadRecovery` rotates whenever an earlier file may hold the current key. That covers a re-download during setup and the replacement file after a recovery. A new identity's first file adopts the signer.
+  - `recoveryIssuedAt` and a new `recoveryKeyKid` / `recoveryResumeKeyKid` binding are written in the credential's own CAS.
+  - The rotation is an account commit that precedes the identity CAS. A retired key therefore keeps restoring its file while it is bound (`identity-key-recovery/<owner>/`). A rotation outside issuance clears that binding.
+  - The account RPCs live in `packages/runtime/account/identity.mjs` (`recoveryKeychain`, `recoveryKeysMatch`). The port lives in `packages/runtime/identity-backup.mjs`. `packages/recovery/identity-backup.mjs` needed no change.
+- **Gap:** no active-account reissue path exists today. `downloadRecovery` accepts only a setup session, not the "signed-in session" that §1.1 assumes, so P15 covers the reissue paths that do exist.
+
 ### 10.2 Flags (proposed rows for `packages/flags/registry.mjs`, all default off; the flags owner adds them)
 
 | Flag | Class | Notes |

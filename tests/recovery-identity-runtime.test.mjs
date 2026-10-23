@@ -108,9 +108,13 @@ test('durable signed recovery adopts the existing signer and preserves valid and
   const pendingToken = recovered.value.pendingToken;
   assert.equal((await f.request('/api/auth/password/pending', { pendingToken, password })).status, 200);
   const replacement = await f.download(pendingToken);
-  assert.equal(digest(replacement.backup.keychain), digest(backup.keychain));
+  // P15 (PORT-10): the replacement file rotates the signing key with continuity; the encryption key is unchanged.
+  assert.notEqual(replacement.backup.keychain.signing.kid, backup.keychain.signing.kid);
+  assert.equal(digest(replacement.backup.keychain.encryption), digest(backup.keychain.encryption));
   assert.equal(replacement.backup.handle, undefined);
-  assert.equal(digest(await f.app.resources.accounts.get(accountId).identityKeychain(accountId, { create: false })), beforeKeys);
+  assert.notEqual(digest(await f.app.resources.accounts.get(accountId).identityKeychain(accountId, { create: false })), beforeKeys);
+  const replacedKeys = await f.app.resources.accounts.get(accountId).identityKeychain(accountId, { create: false });
+  assert.deepEqual([replacedKeys.signing.kid, replacedKeys.encryption.kid], [replacement.backup.keychain.signing.kid, replacement.backup.keychain.encryption.kid]);
   // An interrupted recovery can resume from the original signed file even after replacement issuance.
   const resumed = await f.recover(file);
   assert.equal(resumed.status, 200, resumed.value.error);

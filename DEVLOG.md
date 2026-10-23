@@ -2984,3 +2984,23 @@ Reviewer: ___ Date: ___ Outcome: ___
 - **Gates:** core 2471, Worker 80, UI-state 291, e2e 214 with 4 WebKit skips, asset build and Worker dry run.
 
 Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-22 — PORT-1, PORT-9, PORT-10: succession codec, old-key honouring, rotation at recovery issuance
+
+Following [identity portability](docs/architecture/identity-portability.md) rev 5, P11, P15 and P16:
+- **PORT-1:** `packages/identity/succession.mjs` holds the pure codec and verification for statements, attestations, chains, packages, redirect targets and attestation-key continuity, with conformance vectors and property tests.
+- **PORT-10:** issuing a recovery file rotates the signing key with continuity. A new identity's first file adopts the existing signer.
+  - Rotation commits before the identity record's compare-and-swap, so a per-owner `identity-key-recovery/<owner>/` record lists the key IDs that issued files depend on. Those keys are never pruned.
+  - Any other rotation clears the record.
+  - `recoveryCredential()` exposes the issue time for P14; records without it have no provable age.
+- **PORT-9:** contact-delivery bearers, including legacy inbox `?sig=` bearers, are signed by the current key, so links survive rotation. Retired keys that stored records reference are never pruned, and published keys carry `retired`. A bearer in flight during a rotation is refused, and the client mints a new one.
+- **Spec defects found:**
+  - §1.1 assumes a signed-in reissue path that doesn't exist; only setup sessions call `downloadRecovery`.
+  - The codec settles three underspecified points: it keeps `?` on an empty query; a first fetch where no key qualifies counts as an attestation reset; and it refuses a later move signed by an earlier key (§8.6).
+- **Unresolved:**
+  - a recovery already in progress before deploy can't resume with its original file after downloading the replacement;
+  - the fetch-based checks (§8.3 items 4–5) belong to PORT-5;
+  - P11, P15 and AMD-P11 are unsigned.
+- **Gates:** core 2468, Worker 80, UI-state 291, e2e 214 with 4 WebKit skips, asset build and Worker dry run.
+
+Reviewer: ___ Date: ___ Outcome: ___

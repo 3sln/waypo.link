@@ -39,12 +39,31 @@ import { LinkedApproval, MemoryLinkedLimits, pruneLineage, revokeLineage, revoke
  *   Consumers: deletion grace (30 days when now - changedAt < 72 h; deadline >= changedAt + 14 d during grace),
  *   the export ready-delay (notBefore = changedAt + 72 h) and the export download binding (job epoch === epoch).
  *
+ * Recovery credential and key binding (identity portability P14, P15; PORT-10):
+ *   recoveryIssuedAt       identity clock (ms) at which the CURRENT reset credential (`recoveryHash`) was issued,
+ *                          written in the same CAS as the hash. P14's 7-day age rule reads it through
+ *                          `recoveryCredential(account)`; a record without it has no provable age (fails closed).
+ *   recoveryKeyKid         the signing kid the current v2 file carries; `recoveryResumeKeyKid` the kid of the file
+ *                          whose credential resumes an in-progress recovery. Both are bound in the same CAS as the
+ *                          credential they describe and removed with it.
+ *   downloadRecovery       rotates the signing key with keys.mjs continuity before issuing whenever an earlier file
+ *                          may hold the current key (a re-download during setup, the replacement file after a
+ *                          recovery, a future active-account reissue), so a superseded file holds a retired key that
+ *                          signs nothing honoured. The first file of a new identity adopts the existing signer. A full
+ *                          history of referenced keys issues without rotating; the audit records which happened.
+ *
  * Email removal resources (constructor, both optional, both fail closed):
  *   flags            flags port {for(ctx)} or a thunk returning the current one; EMAIL_REMOVAL_ENABLED is read with
  *                    for({subject:{kind:'account', owner}}).enabled(). Missing port or unknown flag ⇒ disabled.
  *   accountChannels  {state(owner) → {ready:boolean, count:number, revision:string}, notify?(owner, event)}; see
  *                    packages/runtime/account-channels.mjs. Missing ⇒ no other notice channel.
  */
+/** The current recovery credential's issuance facts for P14, or null when there is none that could start a recovery
+ * now (not active, no credential, or a legacy record without a recorded issuance time). Pure. */
+export function recoveryCredential(account){
+  if(account?.status!=='active'||typeof account.recoveryHash!=='string'||!account.recoveryHash||!nonNegative(account.recoveryIssuedAt))return null;
+  return Object.freeze({issuedAt:account.recoveryIssuedAt,version:account.recoveryBackupVersion===2?2:1,keyKid:typeof account.recoveryKeyKid==='string'?account.recoveryKeyKid:null});
+}
 export const SECURITY_EVENTS = Object.freeze(['setup-email-verified','email-linked','email-removed','email-login-enabled','passkey-registered','passkey-added','passkey-removed','password-configured','recovery-file-issued','account-recovery-started','recovery-setup-resumed']);
 export class IdentityFault extends Error {
   constructor(code, message = 'The account request could not be completed.') { super(message); this.code = code; }
@@ -302,12 +321,18 @@ export class IdentityService {
     this.origin(context); const account = await this.pending(input.pendingToken,context); const revision = account.revision;
     if (!account.passwordHash && !account.credentials.length) fail('credential_required', 'Set up your passkey or password first.');
     const recoveryToken = `${account.id}.${this.crypto.random()}`;
+    // P15: any earlier file may hold the current signing key, so this issuance rotates first. `bound` are the kids the
+    // record still binds to a credential; a legacy record with an earlier file but no bound kid always rotates.
+    const bound=[account.recoveryKeyKid,account.recoveryResumeKeyKid].filter(kid=>typeof kid==='string'&&kid),earlier=Boolean(account.recoveryHash||account.recoveryResumeHash||nonNegative(account.recoveryIssuedAt));
     account.recoveryHash = await this.crypto.hash('recovery', recoveryToken); account.recoveryIssuedAt = this.clock();
     let backup;
     if(this.identityBackup){
       account.nameAssignmentId ||= this.crypto.id();
-      backup=await this.identityBackup.issue(account,recoveryToken);
-      account.recoveryBackupVersion=2;
+      const issued=await this.identityBackup.issue(account,recoveryToken,{rotation:earlier?bound.length?{rotateIf:[...new Set(bound)]}:{always:true}:null,keep:[...new Set(bound)]});
+      // A port that predates PORT-10 resolves the bare file and cannot rotate.
+      const rotation=issued?.backup?issued.rotation:null;backup=issued?.backup??issued;
+      account.recoveryBackupVersion=2;account.recoveryKeyKid=backup.keychain.signing.kid;
+      if(rotation?.rotated)this.audit(account,'recovery-key-rotated');else if(rotation?.skipped)this.audit(account,'recovery-key-rotation-skipped');else if(earlier&&!rotation?.requested)this.audit(account,'recovery-key-rotation-unavailable');
     }
     this.audit(account, 'recovery-file-issued'); this.securityChanged(account); await this.save(account, revision);
     if(backup)return {fileName:`3sln-recovery-${account.id}.json`,content:JSON.stringify(backup),handle:account.handle,recoveryToken};
@@ -354,7 +379,7 @@ export class IdentityService {
     if(account.systemIdentity)account.admission={...account.admission,initialSystemActivationRequired:false};
     const source=account.status==='recovering'?'recovery':'activation',activationCredentialAt=account.pendingCredentialAt;delete account.pendingCredentialAt;
     account.status = 'active'; account.pendingHash = null; account.pendingExpiresAt = null; account.challenges = [];delete account.setupBindingHash;delete account.setupEmailChallenge;delete account.setupPushChallenge;delete account.setupEmailSends;delete account.setupEmailSentAt;delete account.setupPushSends;delete account.setupPushSentAt;delete account.setupEmailWindowAt;delete account.setupPushWindowAt;
-    delete account.recoveryResumeHash; delete account.recoveryResumeBackupVersion;
+    delete account.recoveryResumeHash; delete account.recoveryResumeBackupVersion; delete account.recoveryResumeKeyKid;
     this.audit(account, 'account-activated'); const result = await this.session(account,{source,activationCredentialAt});if(activationDeadline<=this.clock())fail('unauthorized','This setup session expired.');
     await this.save(account, revision); return result;
   }
@@ -410,12 +435,14 @@ export class IdentityService {
     if (!account || (!resumed && (!['active','pending'].includes(account.status) || !secureEqual(account.recoveryHash, proofHash)))) fail('unauthorized', 'Recovery failed.');
     if((resumed?account.recoveryResumeBackupVersion:account.recoveryBackupVersion)===2){
       if(!this.identityBackup||!input.identityBackup)fail('unauthorized','Provide the signed identity recovery file.');
-      try{await this.identityBackup.verify(input.identityBackup,account,input.recoveryToken);}catch{fail('unauthorized','Recovery failed.');}
+      const expectedKid=resumed?account.recoveryResumeKeyKid:account.recoveryKeyKid;
+      try{await this.identityBackup.verify(input.identityBackup,account,input.recoveryToken,typeof expectedKid==='string'?{expectedKid}:{});}catch{fail('unauthorized','Recovery failed.');}
     }
     const revision = account.revision;
     if (!resumed) {
       account.recoveryResumeHash = account.recoveryHash;
       account.recoveryResumeBackupVersion=account.recoveryBackupVersion||1;
+      if(typeof account.recoveryKeyKid==='string')account.recoveryResumeKeyKid=account.recoveryKeyKid;else delete account.recoveryResumeKeyKid;delete account.recoveryKeyKid;
       account.status = 'recovering'; account.recoveryHash = null; account.credentials = []; account.passwordHash = null; account.sessions = []; revokeAllLineage(account, this.clock()); account.emailChallenges = [];
     }
     // Resumption only rotates the limited setup authority; completed replacement

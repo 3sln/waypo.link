@@ -3,6 +3,7 @@ import { signContactToken } from './contact-tokens.mjs';
 import { parseLinkQuery, parseLinkMeta, exactMembers, httpsURI, randomToken, base64urlRandom, LINK_META_TYP, CONTACT_LINK_TYPE } from '../links/envelope.mjs';
 // Issuance half (slice C1a): new-form metas are minted with the owner's current registry key (packages/links/issuance.mjs).
 import { currentLinkKey, mintableSigningKey, signLinkMeta } from '../links/issuance.mjs';
+import { keyState } from '../identity/keys.mjs';
 import { CONTACT_DELIVERY_CONTRACT } from './contact-delivery.mjs';
 import { contactIntake, validateIntake } from './tag-policy.mjs';
 
@@ -200,17 +201,36 @@ export class ContactEndpointService {
       kinds: form === 'link' ? claims.kinds : ['one-off'], mimeTypes: claims.mimeTypes, maxMessageBytes: claims.maxMessageBytes, maxMessages: claims.maxMessages, maxBytes: claims.maxBytes,
       quotaScope: claims.audience ? 'principal-day' : 'parent', expiresAt: claims.exp * 1000, conditional: Boolean(claims.audience), ...(claims.audience?.policy ? { policy: claims.audience.policy } : {}) };
   }
+  // Bearers are new issuance (identity portability §7.1 "Fresh tokens", P11, AMD-P11): whatever kid the parent was
+  // recorded under, a bearer minted now is signed with the owner's CURRENT key, so links recorded before a rotation keep
+  // minting. Verification accepts only a key that is still current (state active, same alg), never a retired one: a
+  // bare old-key signature on a bearer is never honoured, whatever its iat. A rotation between key selection and commit
+  // retries once with the new key. `fallback` (the parent's own kid) applies only without a registry-held current key.
+  async mintBearer(owner, fallback, build) {
+    for (let attempt = 0; ; attempt++) {
+      const signing = await currentLinkKey(this.tokens.keys, owner, fallback), alg = signing?.alg ?? fallback.alg;
+      if (!signing?.kid) fail('unauthorized');
+      const privateKey = await this.signer({ owner, kid: signing.kid, alg });
+      const minted = await this.store.transaction(async tx => (await mintableSigningKey(tx, owner, signing.kid)) ? build(tx, { alg, kid: signing.kid }, privateKey) : null);
+      if (minted) return minted;
+      if (attempt) fail('unauthorized');
+    }
+  }
+  // The bearer's own header: exactly {alg, kid, typ}, naming a key of `owner` that is current now.
+  async currentBearerKey(tx, owner, header, typ) {
+    const record = exactMembers(header, ['alg', 'kid', 'typ']) && header.typ === typ && boundedString(header.kid) ? await tx.get(key('contact-key', owner, header.kid)) : null;
+    if (!record || record.owner !== undefined && record.owner !== owner || record.active !== true || keyState(record) !== 'active' || record.alg !== header.alg) fail('unauthorized');
+  }
   // Legacy inbox bearers carry no author proof, so new-form links never mint
   // them (links §6.1: a legacy inbox-bearer request is 406).
   async mint(url) {
     const inspected = await this.inspect(url);
     if (inspected.form === 'link') fail('not_acceptable');
     const { grant, verified } = inspected;
-    const privateKey = await this.signer({ owner: grant.owner, kid: grant.header.kid, alg: grant.header.alg });
-    return this.store.transaction(async tx => {
+    return this.mintBearer(grant.owner, { kid: grant.header.kid, alg: grant.header.alg }, async (tx, signing, privateKey) => {
       const current = await this.endpointLive(tx, verified);
       const iat = Math.floor(this.clock()/1000); const exp = Math.min(iat + 300, current.claims.exp);
-      const header = { ...current.header, typ: INBOX_TYPE };
+      const header = { ...signing, typ: INBOX_TYPE };
       const claims = { ...current.claims, jti: this.crypto.randomUUID(), parent: current.id, endpoint: current.endpoint.url, iat, exp };
       const token = await signContactToken({ header, claims, privateKey, crypto: this.crypto });
       return { token, tokenType: 'Bearer', expiresAt: exp*1000, contentType: CONTACT_TOKEN_MIME };
@@ -244,11 +264,9 @@ export class ContactEndpointService {
   }
   async mintDelivery(url) {
     const { grant, verified } = await this.inspect(url);
-    const header = { alg: grant.endpoint.header.alg, kid: grant.endpoint.header.kid, typ: DELIVERY_TYPE };
-    const privateKey = await this.signer({ owner: grant.owner, kid: header.kid, alg: header.alg });
-    return this.store.transaction(async tx => {
+    return this.mintBearer(grant.owner, { kid: grant.endpoint.header.kid, alg: grant.endpoint.header.alg }, async (tx, signing, privateKey) => {
       const current = await this.endpointLive(tx, verified), iat = Math.floor(this.clock()/1000), exp = Math.min(iat + 300, current.claims.exp);
-      const token = await signContactToken({ header, claims: this.deliveryClaims(current, { jti: this.crypto.randomUUID(), iat, exp }), privateKey, crypto: this.crypto });
+      const token = await signContactToken({ header: { ...signing, typ: DELIVERY_TYPE }, claims: this.deliveryClaims(current, { jti: this.crypto.randomUUID(), iat, exp }), privateKey, crypto: this.crypto });
       return { token, tokenType: 'Bearer', expiresAt: exp * 1000, contentType: CONTACT_DELIVERY_TOKEN_MIME };
     });
   }
@@ -256,8 +274,8 @@ export class ContactEndpointService {
     if (header?.typ !== DELIVERY_TYPE || !boundedString(claims?.parent) || !boundedString(claims?.jti)) fail('unauthorized');
     const grant = await tx.get(key('contact-grant', claims.parent)), now = Math.floor(this.clock()/1000);
     if (!grant?.active || !grant.endpoint || claims.sub !== grant.owner || !Number.isSafeInteger(claims.iat) || !Number.isSafeInteger(claims.exp) || claims.iat > now || claims.iat < grant.claims.iat || claims.exp <= now || claims.exp <= claims.iat || claims.exp > claims.iat + 300 || claims.exp > grant.claims.exp) fail('unauthorized');
-    if (canonical(this.deliveryClaims(grant, claims)) !== canonical(claims) || canonical({ alg: grant.endpoint.header.alg, kid: grant.endpoint.header.kid, typ: DELIVERY_TYPE }) !== canonical(header)) fail('unauthorized');
-    if (!(await tx.get(key('contact-key', grant.owner, header.kid)))?.active) fail('unauthorized');
+    if (canonical(this.deliveryClaims(grant, claims)) !== canonical(claims)) fail('unauthorized');
+    await this.currentBearerKey(tx, grant.owner, header, DELIVERY_TYPE);
     return grant;
   }
   async verifyDelivery(token) {
@@ -278,9 +296,8 @@ export class ContactEndpointService {
     const now = Math.floor(this.clock()/1000);
     if (!grant?.active || !grant.endpoint || claims.sub !== grant.owner || claims.iss !== this.issuer || !Number.isSafeInteger(claims.iat) || !Number.isSafeInteger(claims.exp) || claims.iat > now || claims.iat < grant.claims.iat || claims.exp <= now || claims.exp <= claims.iat || claims.exp > claims.iat+300 || claims.exp > grant.claims.exp || grant.claims.exp <= now) fail('unauthorized');
     const expected = { ...grant.claims, jti: claims.jti, parent: grant.id, endpoint: grant.endpoint.url, iat: claims.iat, exp: claims.exp };
-    if (canonical(expected) !== canonical(claims) || canonical({ ...grant.header, typ: INBOX_TYPE }) !== canonical(header)) fail('unauthorized');
-    const signingKey = await tx.get(key('contact-key', grant.owner, header.kid));
-    if (!signingKey?.active) fail('unauthorized');
+    if (canonical(expected) !== canonical(claims)) fail('unauthorized');
+    await this.currentBearerKey(tx, grant.owner, header, INBOX_TYPE);
     return grant;
   }
   async verify(token) {
