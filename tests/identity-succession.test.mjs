@@ -10,7 +10,7 @@ import {
   MOVE_TYP, ATTESTATION_TYP, ATTESTATION_KEY_CONTINUITY_DOMAIN, MAX_MOVES, MAX_PACKAGE_BYTES, SuccessionError,
   statementDigest, signMoveStatement, parseMoveStatement, verifyMoveStatement, signMoveAttestation, parseMoveAttestation, verifyMoveAttestation,
   verifyMoveRecordLink, verifyChain, attestationKeyThumbprint, signAttestationKeyContinuity, verifyAttestationKeyContinuity, evaluateAttestationKeys,
-  validatePackage, verifyPackage, validateRedirectBase, redirectablePath, redirectTarget, originalURL,
+  validatePackage, verifyPackage, validateRedirectBase, redirectablePath, redirectTarget, originalURL, lowS,
 } from '../packages/identity/succession.mjs';
 
 const SUB = '6f1c2b8e-3d4a-4c5b-9e7f-0a1b2c3d4e5f', A = 'https://a.example', B = 'https://b.example', C = 'https://c.example';
@@ -18,11 +18,16 @@ const ES = { name: 'ECDSA', hash: 'SHA-256' }, P = { name: 'ECDSA', namedCurve: 
 const code = c => error => error instanceof SuccessionError && error.code === c;
 const pair = async () => { const keys = await crypto.subtle.generateKey(P, true, ['sign', 'verify']); const { kty, crv, x, y } = await crypto.subtle.exportKey('jwk', keys.publicKey); return { ...keys, publicJwk: { kty, crv, x, y } }; };
 const ident = (iss, n = 1) => ({ iss, identity: `${iss}/entities/${SUB}/v${n}` });
+// ECDSA malleability helpers (review L1): (r, s) -> (r, n-s).
+const N = 0xffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551n;
+const negS = sig => { const s = BigInt('0x' + Buffer.from(sig.slice(32)).toString('hex')); return new Uint8Array([...sig.slice(0, 32), ...Buffer.from((N - s).toString(16).padStart(64, '0'), 'hex')]); };
+const toLow = sig => lowS(sig) ? sig : negS(sig);
+const flipJWS = jws => { const [h, p, s] = jws.split('.'); return `${h}.${p}.${base64url(negS(fromBase64url(s)))}`; };
 const decode = segment => JSON.parse(new TextDecoder().decode(fromBase64url(segment)));
 // Unchecked JWS signer for forged/invalid inputs (canonical encoding, raw ES256).
 async function rawJWS(header, payload, privateKey) {
   const input = `${base64url(textEncoder.encode(canonical(header)))}.${base64url(textEncoder.encode(canonical(payload)))}`;
-  return `${input}.${base64url(new Uint8Array(await crypto.subtle.sign(ES, privateKey, textEncoder.encode(input))))}`;
+  return `${input}.${base64url(toLow(new Uint8Array(await crypto.subtle.sign(ES, privateKey, textEncoder.encode(input)))))}`;
 }
 // packages/identity/keys.mjs continuity statement (signer = predecessor).
 async function continuity(signerKid, signer, next, at = 1800000000000) {
@@ -293,4 +298,21 @@ test('seeded properties: tampering any byte, reordering, gaps and equal hosts fa
     assert.equal(originalURL({ fromIss: A, redirectBase: base, target }), `${A}${path}?${query}`);
     assert.equal(new URL(target).search, query ? `?${query}` : '');
   });
+});
+
+test('review L1: high-s re-encodings of a statement, attestation or continuity signature are refused; signers emit low-s', async () => {
+  const k1 = await pair(), a1 = await pair(), a2 = await pair();
+  const s1 = await signMoveStatement({ kid: 'k1', payload: { bindle: 'identity-move', v: 1, sub: SUB, kind: 'person', seq: 1, prev: null, from: ident(A), to: ident(B), iat: 1800000000 } }, k1.privateKey);
+  const at1 = await signMoveAttestation({ kid: 'a1', payload: { bindle: 'move-attestation', v: 1, iss: A, sub: SUB, seq: 1, statement: await statementDigest(parseMoveStatement(s1).input), to: ident(B), aep: 1, at: 1800000100 } }, a1.privateKey);
+  for (const jws of [s1, at1]) assert.equal(lowS(fromBase64url(jws.split('.')[2])), true, 'signers emit the canonical low-s form');
+  const keys = [{ kid: 'k1', alg: 'ES256', jwk: k1.publicJwk, state: 'active' }], jwks = { keys: [{ ...a1.publicJwk, kid: 'a1', use: 'sig', alg: 'ES256' }] };
+  const run = moves => verifyChain({ moves, keys, iss: B, identity: ident(B).identity, attestationKeys: () => jwks });
+  assert.ok((await run([{ statement: s1, attestation: at1 }])).head);
+  assert.throws(() => parseMoveStatement(flipJWS(s1)), code('statement_invalid'));
+  assert.throws(() => parseMoveAttestation(flipJWS(at1)), code('attestation_invalid'));
+  for (const moves of [[{ statement: flipJWS(s1), attestation: at1 }], [{ statement: s1, attestation: flipJWS(at1) }], [{ statement: flipJWS(s1), attestation: flipJWS(at1) }]]) await assert.rejects(run(moves), error => error instanceof SuccessionError);
+  const next = { ...a2.publicJwk, kid: 'a2', use: 'sig', alg: 'ES256' }, continuity = await signAttestationKeyContinuity({ kid: 'a1', privateKey: a1.privateKey, next });
+  const signer = { ...a1.publicJwk, kid: 'a1', use: 'sig', alg: 'ES256' };
+  assert.equal(await verifyAttestationKeyContinuity({ signer, next: { ...next, continuity } }), true);
+  assert.equal(await verifyAttestationKeyContinuity({ signer, next: { ...next, continuity: { kid: 'a1', sig: base64url(negS(fromBase64url(continuity.sig))) } } }), false);
 });

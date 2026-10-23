@@ -390,6 +390,12 @@ The user's words: "we need to chain provenance, and remember the key so messages
 | Messages record the parent `jti` (`grantId`), the intake revision and the sender's author proof (with the sender's `keyId`). | The sender's proof uses the sender's key, so a recipient's rotation never affects acceptance. | None. |
 | `rotateChallenge` re-signs a conditional link with the current key. | An owner-initiated reissue moves that link to the new key. | None. |
 
+**Bearers in flight across a rotation** (review L2, 2026-10-22). Spec §7.1 checks a bearer against the current key only. A contact-delivery or inbox bearer minted before a rotation is therefore refused for the rest of its ≤ 300 s life, with the uniform `401 unauthorized`. 3sln.me keeps that behaviour.
+
+A sender that gets a 401 from a bearer it minted itself mints a fresh bearer from the same link once (the `contact-delivery-v1` token representation), then retries the same operation with the same `operationId`. Admission is idempotent per operation, so the retry produces at most one delivery. A second 401 is final.
+
+This costs at most one extra request per rotation, and rotations are rare (recovery-file issuance, transfer-in). `tests/recovery-rotation.test.mjs` ("review L2") pins it.
+
 **Imported records.** Records arrive through the owner's authenticated import of the source's export (a later slice). They are accepted only for `kid`s in the key history that were active at the source before the move. A source signs nothing after its commit, so every record it exported was issued before the move and therefore before the rotation. Only the identity's owner can import, so a third party holding an old file cannot add records this way.
 
 **Other verifiers.** BindleBox peers, organizations and counterparts keep what they already stored (messages, author proofs, participation statements received before the rotation); those stay valid under spec §7.1 case 2. Anything fresh from the identity must be signed by the current key.

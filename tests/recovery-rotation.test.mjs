@@ -15,6 +15,8 @@ import { identityBackupPort } from '../packages/runtime/identity-backup.mjs';
 import { verifyKeyContinuity, KEY_HISTORY_LIMIT } from '../packages/identity/keys.mjs';
 import { key } from '../packages/core/records.mjs';
 import { signContactToken } from '../packages/messaging/contact-tokens.mjs';
+import { CONTACT_DELIVERY_STATUS } from '../packages/messaging/contact-delivery-service.mjs';
+import { authored } from './link-helpers.mjs';
 import { forEachSeed, createScheduler } from './helpers/chaos.mjs';
 
 const origin = 'http://localhost:8788', password = 'Portable recovery rotation test password!', challenge = 'local-browser-test-token';
@@ -167,4 +169,61 @@ test('seeded chaos: concurrent issuance, resumption, bearer minting and inspecti
     assert.notEqual((await c.signingKey(id)).kid, undefined); assert.ok(current);
     assert.equal((await f.recover(finalFile)).status, 200, 'the final current file recovers');
   });
+});
+
+// Review regressions (independent review of c15aa37).
+test('review M1: a legacy v2 record (no bound kid) can resume its recovery after the replacement download rotates', async t => {
+  const f = await fixture(t), pending = await f.signup(), id = pending.account.id, repo = f.app.resources.repository;
+  const file = await f.download(pending.pendingToken); await f.activate(pending.pendingToken, file.recoveryToken);
+  const record = await repo.get(id), legacy = structuredClone(record); delete legacy.recoveryKeyKid; legacy.revision = record.revision + 1;
+  assert.equal(await repo.compareAndSwap(id, record.revision, legacy), true, 'model a record issued before PORT-10');
+  const started = await f.recover(file); assert.equal(started.status, 200, started.value.error);
+  assert.equal((await f.request('/api/auth/password/pending', { pendingToken: started.value.pendingToken, password })).status, 200);
+  const replacement = await f.download(started.value.pendingToken);
+  assert.notEqual(replacement.backup.keychain.signing.kid, file.backup.keychain.signing.kid, 'the legacy branch always rotates');
+  const resumed = await f.recover(file); assert.equal(resumed.status, 200, 'the file that started the recovery still resumes it');
+  await f.activate(resumed.value.pendingToken, replacement.recoveryToken);
+  assert.equal((await f.recover(replacement)).status, 200);
+});
+
+test('review M2: a stale concurrent issuance never unbinds the key the current file depends on', async t => {
+  const f = await fixture(t), authority = await readFile(join(f.directory, 'recovery-signing-key'), 'utf8');
+  const pending = await f.signup(), id = pending.account.id;
+  await f.download(pending.pendingToken);
+  let release = null, hold = false, failNext = false;
+  const accounts = { get: owner => { const real = f.app.resources.accounts.get(owner); return { invoke: async call => { if (hold && call.method === 'recoveryKeychain') { hold = false; await new Promise(resolve => { release = resolve; }); } return real.invoke(call); } }; } };
+  const repository = Object.create(f.app.resources.repository);
+  repository.get = (...args) => f.app.resources.repository.get(...args);
+  repository.compareAndSwap = async (...args) => { if (failNext) { failNext = false; return false; } return f.app.resources.repository.compareAndSwap(...args); };
+  const service = new IdentityService({ repository, identityBackup: identityBackupPort({ config: { APP_ORIGIN: origin, RECOVERY_SIGNING_KEY: authority }, accounts }),
+    turnstile: { verify: async () => true }, rateLimiter: { check: async () => true }, webauthn: {}, passwordHasher: {},
+    config: { origin, rpID: 'localhost', termsVersion: '2026-10-11', allowInsecureLocalhost: true } });
+  const context = { origin, remoteIP: '127.0.0.1' }, download = () => service.downloadRecovery({ pendingToken: pending.pendingToken }, context);
+  hold = true; const stale = download().then(value => ({ value }), error => ({ error: error.code }));   // reads the K0-era record, then pauses
+  while (!release) await new Promise(resolve => setImmediate(resolve));
+  const current = await download(), currentFile = { recoveryToken: current.recoveryToken, backup: JSON.parse(current.content) };   // K0 -> K1, committed
+  failNext = true; await assert.rejects(download(), { code: 'conflict' });   // K1 -> K2, identity commit lost
+  release(); assert.equal((await stale).error, 'conflict', 'the stale issuance loses its identity commit');
+  assert.equal((await f.identity(id)).recoveryKeyKid, currentFile.backup.keychain.signing.kid);
+  await f.activate(pending.pendingToken, currentFile.recoveryToken);
+  assert.equal((await f.recover(currentFile)).status, 200, 'the current file still recovers');
+});
+
+test('review L2: a bearer in flight across an issuance rotation is refused; the sender re-mints and retries the same operation', async t => {
+  const f = await fixture(t), pending = await f.signup(), id = pending.account.id, c = f.controller(id);
+  const file = await f.download(pending.pendingToken); await f.activate(pending.pendingToken, file.recoveryToken);
+  const link = await c.createContactLink(id, pending.account.handle, linkInput);
+  const bearer = await c.endpoints.mintDelivery(link.url); assert.ok(await c.endpoints.verifyDelivery(bearer.token));
+  const started = await f.recover(file); await f.request('/api/auth/password/pending', { pendingToken: started.value.pendingToken, password });
+  const replacement = await f.download(started.value.pendingToken);
+  assert.ok(bearer.expiresAt > Date.now(), 'still inside its 300 s life');
+  await assert.rejects(c.endpoints.verifyDelivery(bearer.token), { code: 'unauthorized' }, 'spec §7.1: verified against the current key only');
+  const resumed = await f.recover(file); await f.activate(resumed.value.pendingToken, replacement.recoveryToken);
+  const message = await authored(input => c.authorLinkEnvelope(id, input), link.url);
+  const send = token => c.invoke({ method: 'deliverLink', args: [id, { token }, { envelope: message.envelope, body: [...message.body] }] });
+  const refused = await send(bearer.token); assert.equal(refused.$fault?.code, 'unauthorized'); assert.equal(CONTACT_DELIVERY_STATUS[refused.$fault.code], 401, 'uniform 401 for the stale bearer');
+  const fresh = await c.invoke({ method: 'mintDeliveryToken', args: [id, link.url] }); assert.equal(fresh.$fault, undefined);
+  assert.equal(headerOf(fresh.token).kid, replacement.backup.keychain.signing.kid);
+  const first = await send(fresh.token), again = await send(fresh.token);
+  assert.equal(first.$fault, undefined, 'the retried operation is accepted'); assert.equal(again.$fault, undefined); assert.equal(again.receipt.payload.messageId, first.receipt.payload.messageId, 'and is idempotent: one delivery');
 });

@@ -63,12 +63,21 @@ export async function statementDigest(input, { crypto = globalThis.crypto } = {}
   return `sha256-${base64url(new Uint8Array(await crypto.subtle.digest('SHA-256', textEncoder.encode(input))))}`;
 }
 
+// Canonical ES256 signatures (review L1): ECDSA (r, s) and (r, n−s) both verify, so anyone could re-encode a published
+// record into a byte-different one with the same digest, which §8.4 would read as equivocation. Signers here always emit
+// low-s (s ≤ n/2) and parsers and verifiers refuse high-s, so each signed record has exactly one accepted encoding.
+const N = 0xffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551n, HALF_N = N >> 1n;
+const sOf = signature => BigInt('0x' + [...signature.slice(32)].map(b => b.toString(16).padStart(2, '0')).join(''));
+/** True for a 64-byte raw ES256 signature whose s is in [1, n/2] (the canonical low-s form). */
+export const lowS = signature => signature?.length === 64 && (s => s >= 1n && s <= HALF_N)(sOf(signature));
+const toLowS = signature => { const s = sOf(signature); if (s <= HALF_N) return signature; const flipped = (N - s).toString(16).padStart(64, '0'), out = new Uint8Array(64); out.set(signature.slice(0, 32)); for (let i = 0; i < 32; i++) out[32 + i] = parseInt(flipped.slice(2 * i, 2 * i + 2), 16); return out; };
+const canonicalSign = async (privateKey, bytes, crypto) => toLowS(new Uint8Array(await crypto.subtle.sign(ES256, privateKey, bytes)));
 function parseJWS(value, typ, code) {
   try {
     if (typeof value !== 'string' || value.length > MAX_JWS || !SEGMENTS.test(value)) fail(code);
     const [h, p, s] = value.split('.');
     const header = strictJSON(utf8(fromBase64url(h))), payload = strictJSON(utf8(fromBase64url(p))), signature = fromBase64url(s);
-    if (!exactMembers(header, ['alg', 'kid', 'typ']) || header.alg !== 'ES256' || header.typ !== typ || !boundedString(header.kid, 128) || /[\u0080-\u009f]/.test(header.kid) || signature.length !== 64 || !plainObject(payload)) fail(code);
+    if (!exactMembers(header, ['alg', 'kid', 'typ']) || header.alg !== 'ES256' || header.typ !== typ || !boundedString(header.kid, 128) || /[\u0080-\u009f]/.test(header.kid) || !lowS(signature) || !plainObject(payload)) fail(code);
     return { header, payload, input: `${h}.${p}`, signature, value };
   } catch (error) { if (error instanceof SuccessionError) throw error; fail(code); }
 }
@@ -76,7 +85,7 @@ async function importPublic(publicJwk, crypto) { if (!publicP256(publicJwk)) ret
 async function verifyBytes(publicJwk, signature, bytes, crypto) { const key = await importPublic(publicJwk, crypto); if (!key) return false; try { return await crypto.subtle.verify(ES256, key, signature, bytes); } catch { return false; } }
 async function signJWS(header, payload, privateKey, crypto) {
   const input = `${encodeSegment(header)}.${encodeSegment(payload)}`;
-  return `${input}.${base64url(new Uint8Array(await crypto.subtle.sign(ES256, privateKey, textEncoder.encode(input))))}`;
+  return `${input}.${base64url(await canonicalSign(privateKey, textEncoder.encode(input), crypto))}`;
 }
 
 // ---- move statement (§4) ----------------------------------------------------------------------------------------
@@ -145,7 +154,7 @@ export async function attestationKeyThumbprint(publicJwk, { crypto = globalThis.
 const continuityBytes = thumbprint => textEncoder.encode(`${ATTESTATION_KEY_CONTINUITY_DOMAIN}.${thumbprint}`);
 export async function signAttestationKeyContinuity({ kid, privateKey, next }, { crypto = globalThis.crypto } = {}) {
   if (!boundedString(kid, 128)) fail('attestation_invalid');
-  const signature = new Uint8Array(await crypto.subtle.sign(ES256, privateKey, continuityBytes(await attestationKeyThumbprint(next, { crypto }))));
+  const signature = await canonicalSign(privateKey, continuityBytes(await attestationKeyThumbprint(next, { crypto })), crypto);
   return { kid, sig: base64url(signature) };
 }
 /** True when `next.continuity` is a valid signature by `signer` (a listed key, with its kid) over next's thumbprint. */
@@ -153,7 +162,7 @@ export async function verifyAttestationKeyContinuity({ signer, next }, { crypto 
   const proof = next?.continuity;
   if (!exactMembers(proof, ['kid', 'sig']) || typeof signer?.kid !== 'string' || proof.kid !== signer.kid || signer.kid === next.kid) return false;
   let signature; try { signature = fromBase64url(proof.sig); } catch { return false; }
-  if (signature.length !== 64) return false;
+  if (!lowS(signature)) return false;
   let thumbprint; try { thumbprint = await attestationKeyThumbprint(next, { crypto }); } catch { return false; }
   return verifyBytes(signer, signature, continuityBytes(thumbprint), crypto);
 }

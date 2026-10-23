@@ -3021,3 +3021,14 @@ Reviewer: ___ Date: ___ Outcome: ___
 - **Gates:** core 2485, Worker 80, UI-state 291, consent 51 each in Chromium and Firefox, e2e 214 with 4 WebKit skips, asset build and Worker dry run.
 
 Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-22 — PORT review round: fixes for c15aa37
+
+An independent adversarial review found no High issues: old files can't get signatures honoured after rotation, and current-key bearers add no new minting power. Its findings are fixed, each with a regression test:
+- **M1, legacy resume lockout:** an issuance rotation also binds the key it retires, so the still-current file can restore or resume after a lost identity commit or a legacy always-rotate.
+- **M2, stale issuance unbinding the current key:** issuance merges into the binding instead of replacing it. Only a rotation outside issuance clears it, and revocation removes a kid. `RECOVERY_BINDING_LIMIT = 8` trims the oldest entries first, never the ones just named. This is a provisional coordinator decision, made because without it rotation would eventually be skipped for good.
+- **L1, ECDSA malleability in move records:** the succession codec signs and accepts low-s only. The vectors are re-encoded, with signing inputs unchanged.
+- **L2, bearer in flight across a rotation:** refusal is kept per spec. The design §7.1 now documents the sender re-minting once on 401 and retrying the same `operationId`, and a test covers it.
+- **Gates:** core 2484, Worker 80, UI-state 291, e2e 214 with 4 WebKit skips (a first run timed out during concurrent consent edits; the rerun was clean), asset build and Worker dry run.
+
+Reviewer: ___ Date: ___ Outcome: ___

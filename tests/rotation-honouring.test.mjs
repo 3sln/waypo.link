@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 import {AccountController} from '../packages/runtime/accounts.mjs';
 import {SqliteMetadata,SerialGate} from '../apps/node/resources.mjs';
 import {MemoryMessagingStore,key,base64url,textEncoder,canonical} from '../packages/core/records.mjs';
-import {IdentityKeyRegistry,createIdentityKeyEngine,performKeyAction,readKeyQuery,EnsureIdentityKey,RotateIdentityKey,RevokeIdentityKey,RotateSigningKeyForRecovery,IdentityKeyHistory,IdentityKeyByKid,KEY_HISTORY_LIMIT,RECOVERY_ISSUANCE_ROTATION,referencedSigningKids} from '../packages/identity/keys.mjs';
+import {IdentityKeyRegistry,createIdentityKeyEngine,performKeyAction,readKeyQuery,EnsureIdentityKey,RotateIdentityKey,RevokeIdentityKey,RotateSigningKeyForRecovery,IdentityKeyHistory,IdentityKeyByKid,KEY_HISTORY_LIMIT,RECOVERY_ISSUANCE_ROTATION,RECOVERY_BINDING_LIMIT,referencedSigningKids} from '../packages/identity/keys.mjs';
 import {localAuthorResolver} from '../packages/messaging/contact-delivery.mjs';
 import {signContactToken} from '../packages/messaging/contact-tokens.mjs';
 import {encryptSecret,decryptSecret} from '../packages/runtime/secrets.mjs';
@@ -155,4 +155,15 @@ test('seeded chaos: rotations racing bearer minting, delivery and inspection nev
    if(kid===current)assert.ok(await c.endpoints.verifyDelivery(token));else await assert.rejects(c.endpoints.verifyDelivery(token),code('unauthorized'));}
   const fresh=await c.endpoints.mintDelivery(link.url);assert.equal(headerOf(fresh.token).kid,current);assert.ok(await c.endpoints.verifyDelivery(fresh.token));
  });
+});
+
+test('review M1/M2: issuance merges the binding (outgoing and stale keep included) and trims only the oldest beyond the limit', async () => {
+ const f=registry(),binding=async()=>(await f.store.transaction(tx=>tx.get(key('identity-key-recovery',owner))))?.kids??[];
+ const k0=(await f.act(EnsureIdentityKey,{purpose:'signing'})).kid;
+ const legacy=await f.act(RotateSigningKeyForRecovery,{always:true});assert.deepEqual(await binding(),[k0,legacy.kid],'the legacy branch binds the key it rotated out');
+ const k2=(await f.act(RotateSigningKeyForRecovery,{rotateIf:[legacy.kid],keep:[legacy.kid]})).kid;
+ await f.act(RotateSigningKeyForRecovery,{keep:[k0]});
+ assert.deepEqual(new Set(await binding()),new Set([k0,legacy.kid,k2]),'a stale keep never drops a kid already bound');
+ let kid=k2;const issued=[k0,legacy.kid,k2];for(let i=0;i<RECOVERY_BINDING_LIMIT+2;i++){({kid}=await f.act(RotateSigningKeyForRecovery,{always:true}));issued.push(kid);}
+ const now=await binding();assert.equal(now.length,RECOVERY_BINDING_LIMIT);assert.deepEqual(now,issued.slice(-RECOVERY_BINDING_LIMIT),'oldest trimmed first, newest kept');
 });

@@ -35,8 +35,9 @@
 // Rotation at recovery-file issuance (P15, PORT-10). `rotateForRecovery` rotates the signing key (ordinary continuity,
 // the new record tagged `rotation: 'recovery-issuance'`) when the current key is in a file that may still be used:
 // one of `rotateIf` (the kids the identity record binds to its current and resume credentials), or `always` for a
-// legacy identity that never recorded one. It then records the recovery binding `identity-key-recovery/<owner>/`:
-// `keep` plus the resulting current kid. A bound retired key still restores its file (`recoveryMatch`), because the
+// legacy identity that never recorded one. It then merges into the recovery binding `identity-key-recovery/<owner>/`:
+// `keep`, the outgoing kid (a lost identity CAS leaves its file current, review M1) and the resulting current kid,
+// keeping at most RECOVERY_BINDING_LIMIT kids (oldest trimmed first, never the ones just named; review M2). A bound retired key still restores its file (`recoveryMatch`), because the
 // identity commit that binds a credential to a key runs after this account commit and may lose its race; a bound key
 // is never pruned. Any other signing rotation clears the binding (a rotation outside issuance makes older files
 // unusable), and revoking a key removes it. A full history of referenced keys skips the rotation and reports
@@ -50,6 +51,8 @@ export const REVOCATION_REASONS = Object.freeze(['unspecified', 'compromise', 'o
 export const CONTINUITY_DOMAIN = '3sln-identity-key-continuity-v1';
 const PREFIX = { signing: 'contact-key', encryption: 'identity-encryption-key' }, POINTER = { signing: 'signing-key', encryption: 'encryption-key' }, RETAINED = 'identity-key-retained', TOMBSTONE = 'identity-key-pruned', BINDING = 'identity-key-recovery';
 export const RECOVERY_ISSUANCE_ROTATION = 'recovery-issuance';
+/** Most kids an issuance keeps bound (merge, oldest trimmed first); half the history, so referenced keys still fit. */
+export const RECOVERY_BINDING_LIMIT = 8;
 export const IDENTITY_ALGORITHMS = Object.freeze(Object.assign(Object.create(null), { EdDSA: { name: 'Ed25519' }, ES256: { name: 'ECDSA', hash: 'SHA-256' } }));
 export const importAlgorithm = alg => alg === 'ES256' ? { name: 'ECDSA', namedCurve: 'P-256' } : IDENTITY_ALGORITHMS[alg];
 const ECDSA = { name: 'ECDSA', namedCurve: 'P-256' }, ECDH = { name: 'ECDH', namedCurve: 'P-256' };
@@ -182,7 +185,11 @@ export class IdentityKeyRegistry {
     });
   }
   // The recovery binding (see the header): only kids still present and not revoked are kept; an empty binding is removed.
-  async #bind(tx, owner, kids) {
+  // Issuance MERGES (`merge`): existing ∪ kids, newest last, trimmed from the oldest end to RECOVERY_BINDING_LIMIT but never
+  // dropping `kids`. A stale concurrent issuance (its identity CAS about to lose) therefore never unbinds the key the
+  // committed credential depends on (review M2). Only a rotation outside issuance clears the binding; revocation removes.
+  async #bind(tx, owner, kids, { merge = false } = {}) {
+    if (merge) { const existing = (await tx.get(key(BINDING, owner)))?.kids ?? [], fresh = new Set(kids); const older = existing.filter(kid => !fresh.has(kid)); kids = [...older.slice(Math.max(0, older.length - Math.max(0, RECOVERY_BINDING_LIMIT - fresh.size))), ...fresh]; }
     const kept = [];
     for (const kid of new Set(kids)) { const record = boundedString(kid) && await tx.get(publicPath('signing', owner, kid)); if (record?.owner === owner && keyState(record) !== 'revoked') kept.push(kid); }
     if (kept.length) await tx.set(key(BINDING, owner), { owner, kids: kept, at: this.clock() }); else await tx.delete(key(BINDING, owner));
@@ -207,7 +214,7 @@ export class IdentityKeyRegistry {
       if (purpose === 'encryption') await tx.set(key(RETAINED, owner, expectedKid), { kid: expectedKid, owner, purpose, encrypted: pointer.encrypted, retiredAt: now });
       await tx.set(publicPath(purpose, owner, fresh.kid), { owner, kid: fresh.kid, alg: fresh.alg, publicJwk: fresh.publicJwk, active: true, purpose, state: 'active', createdAt: now, seq: await this.#next(tx, owner, purpose), predecessor: expectedKid, continuity: { alg: 'ES256', kid: signer, payload, signature }, ...issuance ? { rotation: RECOVERY_ISSUANCE_ROTATION } : {} });
       await tx.set(POINTER[purpose], { kid: fresh.kid, owner, purpose, encrypted: fresh.encrypted });
-      if (purpose === 'signing') await this.#bind(tx, owner, issuance ? [...issuance.keep, fresh.kid] : []);
+      if (purpose === 'signing') await this.#bind(tx, owner, issuance ? [...issuance.keep, expectedKid, fresh.kid] : [], { merge: Boolean(issuance) });
       return { kid: fresh.kid, previous: expectedKid, purpose };
     });
   }
@@ -239,10 +246,10 @@ export class IdentityKeyRegistry {
     if (always || rotateIf.includes(current.kid)) {
       try { const rotated = await this.#rotate(owner, { purpose: 'signing', expectedKid: current.kid, issuance: { keep } }); return { rotated: true, kid: rotated.kid, previous: rotated.previous, skipped: null }; }
       catch (error) { if (error?.code !== 'key_history_full') throw error; }
-      await this.store.transaction(tx => this.#bind(tx, owner, [...keep, current.kid]));
+      await this.store.transaction(tx => this.#bind(tx, owner, [...keep, current.kid], { merge: true }));
       return { rotated: false, kid: current.kid, previous: null, skipped: 'key_history_full' };
     }
-    await this.store.transaction(async tx => { if ((await this.#pointer(tx, owner, 'signing'))?.kid !== current.kid) fail('key_conflict'); await this.#bind(tx, owner, [...keep, current.kid]); });
+    await this.store.transaction(async tx => { if ((await this.#pointer(tx, owner, 'signing'))?.kid !== current.kid) fail('key_conflict'); await this.#bind(tx, owner, [...keep, current.kid], { merge: true }); });
     return { rotated: false, kid: current.kid, previous: null, skipped: null };
   }
   /** Whether a decrypted recovery keychain `{signing:{kid,privateJWK}, encryption:{kid,privateJWK}}` matches this
