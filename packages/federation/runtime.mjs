@@ -1,3 +1,7 @@
+import {DeleteRemovalSettings} from '../storage/producer-summary.mjs';
+import {createAppEngine,perform} from '../app/engine.mjs';
+import {systemClock,cryptoRandom,nullAudit} from '../app/providers.mjs';
+import {revokeRemovalFederation} from '../runtime/app-removal-federation.mjs';
 import {lifecycleUnknown} from '../runtime/public-unknown.mjs';
 import {siteGlobal,capability} from '../flags/read.mjs';
 import {eventDoorbellGrant} from './event-readers.mjs';
@@ -76,6 +80,11 @@ export class FederationController {
      Object.defineProperty(this.service,'brokering',{get:()=>capability(flagConfig,'BROKERED_INTROSPECTION_MOUNTED')?brokering:null});
     }
   }
+  removalRevoke(input){return revokeRemovalFederation(this.service,input);}
+  // AU-S4: durable assertion replay fence shared across restarts and Worker isolates. Revocation stays callable
+  // when a feature is disabled; only a verified assertion reaches this internal port.
+  async removalNonce({clientId,jti,until}={}){const now=this.clock();if(typeof clientId!=='string'||!clientId||clientId.length>2048||typeof jti!=='string'||!/^[\x21-\x7e]{16,128}$/.test(jti)||!Number.isSafeInteger(until)||until<=now||until>now+120000)return false;return this.metadata.transaction(async tx=>{const prefix='federation/removal-nonce/',name=prefix+encodeURIComponent(clientId)+'/'+encodeURIComponent(jti),rows=await tx.list(prefix);let live=0;for(const row of rows)if(row.value.until<=now)await tx.delete(row.key);else live++;if((await tx.get(name))?.until>now||live>=256)return false;await tx.set(name,{until});return true;});}
+
   integrationClientAuth(clientId){this.requireReady();return this.clientAuth?.(clientId)??null;}
   integrationSnapshot(input){this.requireReady();return this.service.integrationSnapshot(input);}
   brokeredGrantLive(input){this.requireReady();return this.service.brokeredGrantLive(input);}
@@ -103,7 +112,7 @@ export class FederationController {
   embedEventsTick(input){this.requireReady();return this.service.embedEventsTick(input);}
   embedEnd(input){this.requireReady();return this.service.embedEnd(input);}
   async dpopNonce(purpose){this.requireReady();if(!['token','embed'].includes(purpose)||!this.service.dpopNonces)fail('temporarily_unavailable');return this.service.dpopNonces.issue(purpose);}
-  async configure(context,input){this.requireReady();const out=await this.service.configure(this.authority(context,true,true),input);await this.service.drainBrokeredEvents();return out;}
+  async configure(context,input){this.requireReady();if(input?.removeSettings===true){const engine=createAppEngine({providers:{clock:systemClock,random:cryptoRandom,audit:nullAudit,federation:this.service}});try{return await perform(engine,new DeleteRemovalSettings({authority:this.authority(context,true),input}));}finally{await engine.dispose();}}const out=await this.service.configure(this.authority(context,true,true),input);await this.service.drainBrokeredEvents();return out;}
   registerResource(context,input){this.requireReady();return this.service.registerResource(this.authority(context,true,true),input);}
   async cleanup(input){const events=await this.service.drainBrokeredEvents(),out=await this.service.cleanup(input);return events.pending?{...out,remaining:true,nextAlarmAt:this.clock()+60000}:out;}
   /** DX-3 E3 (account-deletion-export.md §2.3): this store is one owner's federation shard, so erasing the subject
@@ -146,4 +155,4 @@ export class FederationController {
 export function federationMetadata(storage){return {transaction:operation=>storage.transaction(async native=>operation({get:key=>native.get(key),set:(key,value)=>native.put(key,value),delete:key=>native.delete(key),list:async prefix=>[...await native.list({prefix})].map(([key,value])=>({key,value}))}))};}
 
 /** Preserve typed faults across runtimes whose RPC serialization drops Error properties. */
-export function federationRemote(stub){const facade={};for(const method of ['ready','manifest','beginAuthorization','inspect','approve','configure','registerResource','revoke','exchange','rpc','tokenClient','grants','preferences','refresh','cleanup','inspectObjectURL','objectURL','entryIdentity','beginEntryAuthorization','revokeToken','redeemClaim','embedSession','embedState','embedForget','embedAvatar','embedEvents','embedEventsTick','embedEnd','dpopNonce','incrementalPort','appSessions','eventDoorbellGrant','integrationSnapshot','brokeredGrantLive','integrationClientAuth'])facade[method]=async(...args)=>{const envelope=await stub.invoke(method,args);if(!envelope.ok)throw Object.assign(new Error(envelope.error.message),envelope.error);return envelope.result;};return facade;}
+export function federationRemote(stub){const facade={};for(const method of ['ready','manifest','beginAuthorization','inspect','approve','configure','registerResource','revoke','exchange','rpc','tokenClient','grants','preferences','refresh','cleanup','inspectObjectURL','objectURL','entryIdentity','beginEntryAuthorization','revokeToken','redeemClaim','embedSession','embedState','embedForget','embedAvatar','embedEvents','embedEventsTick','embedEnd','dpopNonce','incrementalPort','appSessions','eventDoorbellGrant','integrationSnapshot','brokeredGrantLive','integrationClientAuth','removalRevoke','removalNonce'])facade[method]=async(...args)=>{const envelope=await stub.invoke(method,args);if(!envelope.ok)throw Object.assign(new Error(envelope.error.message),envelope.error);return envelope.result;};return facade;}

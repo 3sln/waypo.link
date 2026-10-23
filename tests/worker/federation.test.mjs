@@ -51,7 +51,7 @@ test('actual Worker brokering keys are provider-wide, persistent and absent with
   const h=await createHarness({bindings:{FEDERATION_ENABLED:'true',FEDERATION_CLIENTS:clients,BROKERING_ENABLED:flag}});try{
    const response=await h.request('/oauth/brokering/jwks');assert.equal(response.status,flag==='true'?200:404);const manifest=await(await h.request('/.well-known/bindle/manifest.json')).json();
    if(flag==='false'){assert.equal(manifest.brokering_jwks_uri,undefined);continue;}
-   const jwks=await response.json();assert.equal(jwks.keys.length,8);assert.ok(jwks.keys.every(k=>!k.d));assert.equal(manifest.brokering_jwks_uri,h.origin+'/oauth/brokering/jwks');assert.deepEqual(await(await h.request('/oauth/brokering/jwks')).json(),jwks);
+   const jwks=await response.json();assert.equal(jwks.keys.length,10);assert.ok(jwks.keys.every(k=>!k.d));assert.equal(manifest.brokering_jwks_uri,h.origin+'/oauth/brokering/jwks');assert.deepEqual(await(await h.request('/oauth/brokering/jwks')).json(),jwks);
   }finally{await h.close();}
  }
 });

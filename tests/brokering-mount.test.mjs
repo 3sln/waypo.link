@@ -10,7 +10,7 @@ test('Node mounts provider brokering JWKS only with its flag and preserves its p
  const fetch=path=>app.fetch(new Request(origin+path));
  try{
   app=await createNodeServer({directory,config});assert.equal((await fetch('/oauth/brokering/jwks')).status,404);assert.equal((await(await fetch('/.well-known/bindle/manifest.json')).json()).brokering_jwks_uri,undefined);await app.close();
-  app=await createNodeServer({directory,config:{...config,BROKERING_ENABLED:'true'}});const response=await fetch('/oauth/brokering/jwks');assert.equal(response.status,200);assert.equal(response.headers.get('Access-Control-Allow-Origin'),'*');const jwks=await response.json();assert.equal(jwks.keys.length,8);assert.ok(jwks.keys.every(k=>k.d===undefined));assert.equal((await(await fetch('/.well-known/bindle/manifest.json')).json()).brokering_jwks_uri,origin+'/oauth/brokering/jwks');await app.close();
+  app=await createNodeServer({directory,config:{...config,BROKERING_ENABLED:'true'}});const response=await fetch('/oauth/brokering/jwks');assert.equal(response.status,200);assert.equal(response.headers.get('Access-Control-Allow-Origin'),'*');const jwks=await response.json();assert.equal(jwks.keys.length,10);assert.ok(jwks.keys.every(k=>k.d===undefined));assert.equal((await(await fetch('/.well-known/bindle/manifest.json')).json()).brokering_jwks_uri,origin+'/oauth/brokering/jwks');await app.close();
   app=await createNodeServer({directory,config:{...config,BROKERING_ENABLED:'true'}});assert.deepEqual(await(await fetch('/oauth/brokering/jwks')).json(),jwks);
  }finally{await app?.close();await rm(directory,{recursive:true,force:true});}
 });

@@ -226,6 +226,10 @@ async function lineage({ byKid, active, subject }) {
   }
   return order;
 }
+/** The continuity lineage of an identity document's signing keys, oldest first, ending at its single `active` key
+ * (PORT-5 adoption and PORT-4 intake reuse the PORT-1 walk). Each entry is a normalized descriptor with `publicJwk`.
+ * Throws `chain_invalid` for a malformed key list or one without exactly one active key. */
+export async function documentLineage(keys, subject) { return lineage(keySet(keys, subject)); }
 /** First-contact verification of a successor chain (§8.6) with §8.3 items 1–3 per record. Items 4 and 5 (destination
  * directory and "the source has let go") need fetches and stay with the caller. `attestationKeys(issuer)` returns
  * that issuer's attestation JWKS (fetched or cached under §5.1) or undefined. */

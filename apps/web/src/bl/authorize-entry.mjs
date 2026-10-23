@@ -190,14 +190,14 @@ export class EntryAction extends Action {
    if(completed){await this.deliver(deps,ctx,completed,'completed');return;}
    if(typeof requestId!=='string'||!REQUEST.test(requestId)||!requestId.startsWith(owner+'.'))fail('request_failed','The request could not be completed.');
    secrets.member=member;model.selected={id:owner,handle:account.handle};model.reauth=null;model.notice='';
-   const view=incremental?{...incremental,requestId,requests:incremental.requests??[]}:await this.inspect(deps,requestId);if(view.superseded)view.armAt=deps.browser.now()+1500;if(additions&&!incremental)view.additions=additions;model.consent=view;model.selection.clear();model.drafts.clear();model.dirty.clear();
+   const view=incremental?{...incremental,requestId,requests:incremental.requests??[]}:await this.inspect(deps,requestId);if(view.superseded)view.armAt=deps.browser.now()+1500;if(additions&&!incremental)view.additions=additions;try{const rows=await api.get('/api/apps/removal',{member:secrets.member});view.pendingRemoval=rows.removals?.find(r=>r.client_id===entry.client.id&&['pending','in-progress'].includes(r.state))??null;}catch{}model.consent=view;model.selection.clear();model.drafts.clear();model.dirty.clear();
    if(consent.experienceEnabled&&INCREMENTAL_INTENTS.includes(entry.intent)){model.walkthrough=await consent.openWalkthrough({entry,view});if(model.walkthrough.returning){await this.deliver(deps,ctx,model.walkthrough.result,'completed');return;}phase(model,'consent');return;}
    // Identity-only sign-in: "Continue as …" (with the disclosure next to it) is the decision click.
-   if(!view.requests.length){await this.decide(deps,ctx,[]);return;}
+   if(!view.pendingRemoval&&!view.requests.length){await this.decide(deps,ctx,[]);return;}
    // Access this account already granted this app: the same click resubmits it (R1). A refusal (the grant or its
    // preferences changed since) falls back to the consent review for this account.
    const prior=priorApproval(approved,entry.requests);
-   if(prior){try{await this.decide(deps,ctx,prior);return;}catch(error){if(!['invalid_grant','stale_consent','consent_stale','consent_required','invalid_preferences'].includes(error.code))throw error;model.consent=await this.inspect(deps,requestId);}}
+   if(prior&&!view.pendingRemoval){try{await this.decide(deps,ctx,prior);return;}catch(error){if(!['invalid_grant','stale_consent','consent_stale','consent_required','invalid_preferences'].includes(error.code))throw error;model.consent=await this.inspect(deps,requestId);}}
    phase(model,'consent');
   }catch(error){
    if(error.code==='reauthentication_required'){model.reauth={id:owner,handle:account.handle};phase(model,'reauth');model.surface++;return;}
@@ -210,6 +210,7 @@ export class EntryAction extends Action {
   if(view.authenticated!==true||view.client?.id!==model.entry.client.id||view.client?.origin!==model.entry.client.origin||!Array.isArray(view.requests))fail('request_failed','The request could not be completed.');
   return {...view,requestId};
  }
+ async 'remove-pending'({model,secrets,api}){const row=model.consent?.pendingRemoval;if(model.phase!=='consent'||!row)return;await api.post('/api/apps/removal/force',{removal:row.removal},{member:secrets.member,csrf:secrets.member?.csrf});model.consent.pendingRemoval=null;model.walkthrough=null;phase(model,'choose');model.notice='App removed.';}
  async configure(deps,ctx,detail){
   const {model,secrets,api}=deps;if(model.walkthrough||model.phase!=='consent')return;
   await api.post('/api/preferences',{fragment:detail.fragment,values:detail.values,expectedRevision:detail.expectedRevision,reviewedConsumerDigest:detail.reviewedConsumerDigest,...detail.updateShared?{updateShared:true}:{}},{member:secrets.member,csrf:secrets.member?.csrf});

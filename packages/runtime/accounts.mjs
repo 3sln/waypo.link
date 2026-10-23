@@ -292,6 +292,7 @@ export class AccountController {
     // DX-2: export generation and expiry only when no deletion fence or purge job exists (checked above and again
     // inside every generation transaction). It never runs while fenced, so E6 owns cleanup from the fence on.
     await this.exportAlarm();
+    await this.appRemovalAlarm();
     await this.alarmMaintenance();
     }finally{if(Number.isSafeInteger(deletionWake))await armAlarm(this.metadata,deletionWake);if(Number.isSafeInteger(transferWake))await armAlarm(this.metadata,transferWake);}
   }

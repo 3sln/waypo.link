@@ -42,6 +42,14 @@
 // is never pruned. Any other signing rotation clears the binding (a rotation outside issuance makes older files
 // unusable), and revoking a key removes it. A full history of referenced keys skips the rotation and reports
 // `skipped: 'key_history_full'` (design §2.5: a known edge, audited by the caller).
+//
+// Custody fence (identity portability PORT-2/PORT-4). Nothing mints, exports or signs with a key for an owner whose
+// identity moved away (`transfer-out/v1` committed, or `transfer-out/custody-ended-v1`), and nothing mints a key for an
+// identity arriving by transfer-in before it is active (`transfer-in/v1` in any state but `active`): its keys come from
+// the portable package (`importTransfer`), its only pre-activation signature is the move statement
+// (`privateKey(..., {transferStatement: true})`), and its activation rotation is `rotateAtActivation`. Refusals are
+// `identity_moved` and `transfer_in_pending`. Imported keys and their published history are `pinned`: never pruned,
+// because the identity document must keep listing every key that signed a statement in `moves` (spec §7, §7.1).
 import { Engine, Provider, Action, Query } from '../../vendor/ngin/index.js';
 import { fail, key, canonical, base64url, fromBase64url, textEncoder, strictText, boundedString } from '../core/records.mjs';
 
@@ -51,6 +59,18 @@ export const REVOCATION_REASONS = Object.freeze(['unspecified', 'compromise', 'o
 export const CONTINUITY_DOMAIN = '3sln-identity-key-continuity-v1';
 const PREFIX = { signing: 'contact-key', encryption: 'identity-encryption-key' }, POINTER = { signing: 'signing-key', encryption: 'encryption-key' }, RETAINED = 'identity-key-retained', TOMBSTONE = 'identity-key-pruned', BINDING = 'identity-key-recovery';
 export const RECOVERY_ISSUANCE_ROTATION = 'recovery-issuance';
+export const TRANSFER_IN_ROTATION = 'transfer-in-activation';
+const TRANSFER_OUT_RECORD = 'transfer-out/v1', CUSTODY_ENDED = 'transfer-out/custody-ended-v1', TRANSFER_IN_RECORD = 'transfer-in/v1';
+const STATEMENT_STATES = new Set(['posting', 'pending', 'decided']);
+/** The custody fence (see the header): null when key operations may proceed, otherwise the refusal code. `statement`
+ * admits the pre-activation statement signer; `activating` admits the activation rotation. */
+export async function custodyFence(tx, { statement = false, activating = false } = {}) {
+  if (await tx.get(CUSTODY_ENDED) !== undefined || (await tx.get(TRANSFER_OUT_RECORD))?.state === 'committed') return 'identity_moved';
+  const incoming = await tx.get(TRANSFER_IN_RECORD);
+  if (incoming && incoming.state !== 'active') { if (statement && STATEMENT_STATES.has(incoming.state) || activating && incoming.state === 'activating') return null; return 'transfer_in_pending'; }
+  return null;
+}
+const fenced = async (tx, options) => { const code = await custodyFence(tx, options); if (code) fail(code, code === 'identity_moved' ? 'This identity moved to another provider.' : 'This identity is still arriving from another provider.'); };
 /** Most kids an issuance keeps bound (merge, oldest trimmed first); half the history, so referenced keys still fit. */
 export const RECOVERY_BINDING_LIMIT = 8;
 export const IDENTITY_ALGORITHMS = Object.freeze(Object.assign(Object.create(null), { EdDSA: { name: 'Ed25519' }, ES256: { name: 'ECDSA', hash: 'SHA-256' } }));
@@ -123,7 +143,7 @@ export class IdentityKeyRegistry {
     // Encryption prunes only revoked public records (their private keys stay in `identity-key-retained/`), so a
     // revocation can always be followed by a replacement (review finding 1); retired encryption keys are never pruned.
     // Signing then prunes the oldest retired record nothing references (P11): a referenced one is never dropped.
-    const prunable = records.filter(record => record.kid !== keep && keyState(record) !== 'active');
+    const prunable = records.filter(record => record.kid !== keep && keyState(record) !== 'active' && record.pinned !== true);
     let victim = prunable.find(record => keyState(record) === 'revoked');
     if (!victim && purpose === 'signing') { const referenced = await referencedSigningKids(tx, owner, this.clock()); for (const kid of protect) referenced.add(kid); victim = prunable.find(record => !referenced.has(record.kid)); }
     if (!victim || records.length - 1 >= this.historyLimit) fail('key_history_full');
@@ -145,6 +165,7 @@ export class IdentityKeyRegistry {
     try { await this.crypto.subtle.importKey('jwk', clean, importAlgorithm(alg), false, ['verify']); } catch { fail('invalid_key'); }
     return this.store.transaction(async tx => {
       const path = publicPath('signing', owner, kid);
+      await fenced(tx);
       if (await tx.get(path) || await tx.get(publicPath('encryption', owner, kid)) || await tx.get(key(TOMBSTONE, owner, kid))) fail('key_exists');
       await this.#admit(tx, owner, 'signing', (await this.#pointer(tx, owner, 'signing'))?.kid);
       await tx.set(path, { owner, kid, alg, publicJwk: clean, active: true, purpose: 'signing', state: 'active', custody: 'external', createdAt: this.clock(), seq: await this.#next(tx, owner, 'signing') });
@@ -155,6 +176,7 @@ export class IdentityKeyRegistry {
   async ensure(owner, purpose) {
     ownerOf(owner); purposeOf(purpose); this.#sealing();
     const [existing, published] = await this.store.transaction(async tx => {
+      await fenced(tx);
       let pointer = await this.#pointer(tx, owner, purpose); const record = pointer && await tx.get(publicPath(purpose, owner, pointer.kid));
       // A pointer left on a revoked record (the pre-C0 revokeKey kept it) is dropped, never signed with (review finding 6).
       if (record && keyState(record) === 'revoked') { if (purpose === 'encryption') await tx.set(key(RETAINED, owner, pointer.kid), { kid: pointer.kid, owner, purpose, encrypted: pointer.encrypted, retiredAt: record.revokedAt ?? this.clock() }); await tx.delete(POINTER[purpose]); pointer = undefined; }
@@ -173,6 +195,7 @@ export class IdentityKeyRegistry {
     // Generated outside the transaction; a concurrent winner's key is kept and this one is discarded unstored.
     const fresh = await this.#generate(purpose);
     return this.store.transaction(async tx => {
+      await fenced(tx);
       const pointer = await this.#pointer(tx, owner, purpose); if (pointer) return { kid: pointer.kid, created: false };
       const now = this.clock();
       // A registry-held record left active without its pointer has no private key any more: it is retired, without a
@@ -197,7 +220,16 @@ export class IdentityKeyRegistry {
   /** Replaces the current key of `purpose` (compare-and-set on `expectedKid`) and records signed continuity. A signing
    * rotation here clears the recovery binding: files issued before it no longer restore. */
   async rotate(owner, { purpose, expectedKid } = {}) { return this.#rotate(owner, { purpose, expectedKid }); }
-  async #rotate(owner, { purpose, expectedKid, issuance } = {}) {
+  /** PORT-4 (P11, spec §7.1): the destination's rotation at activation, in the activating state only. The imported key
+   * signs the continuity statement naming a fresh key and becomes `retired` (never `revoked` because of the move) and
+   * stays pinned in the published history. Idempotent: an already-rotated owner whose current key's predecessor is
+   * `expectedKid` gets the existing result. */
+  async rotateAtActivation(owner, { expectedKid } = {}) {
+    ownerOf(owner); if (!boundedString(expectedKid)) fail('invalid_key');
+    const done = await this.store.transaction(async tx => { const pointer = await this.#pointer(tx, owner, 'signing'), record = pointer && await tx.get(publicPath('signing', owner, pointer.kid)); return pointer && pointer.kid !== expectedKid && record?.predecessor === expectedKid ? { kid: pointer.kid, previous: expectedKid, purpose: 'signing' } : null; });
+    return done ?? this.#rotate(owner, { purpose: 'signing', expectedKid, activation: true });
+  }
+  async #rotate(owner, { purpose, expectedKid, issuance, activation = false } = {}) {
     ownerOf(owner); purposeOf(purpose); this.#sealing(); if (!boundedString(expectedKid)) fail('invalid_key');
     const [current, signing] = await this.store.transaction(async tx => [await this.#pointer(tx, owner, purpose), await this.#pointer(tx, owner, 'signing')]);
     if (!current) fail('not_found'); if (current.kid !== expectedKid) fail('key_conflict'); if (!signing) fail('identity_keys_unavailable');
@@ -208,11 +240,12 @@ export class IdentityKeyRegistry {
       const pointer = await this.#pointer(tx, owner, purpose), signingNow = await this.#pointer(tx, owner, 'signing'), old = await tx.get(publicPath(purpose, owner, expectedKid));
       // Anything that moved since the reads above (a concurrent rotation or revocation) invalidates this statement.
       if (pointer?.kid !== expectedKid || signingNow?.kid !== signer || !old || keyState(old) !== 'active' || keyState(await tx.get(publicPath('signing', owner, signer))) !== 'active') fail('key_conflict');
+      await fenced(tx, { activating: activation });
       await this.#admit(tx, owner, purpose, expectedKid, issuance?.keep);
       const now = this.clock();
-      await tx.set(publicPath(purpose, owner, expectedKid), { ...old, state: 'retired', retiredAt: now, successor: fresh.kid });
+      await tx.set(publicPath(purpose, owner, expectedKid), { ...old, state: 'retired', retiredAt: now, successor: fresh.kid, ...activation ? { pinned: true } : {} });
       if (purpose === 'encryption') await tx.set(key(RETAINED, owner, expectedKid), { kid: expectedKid, owner, purpose, encrypted: pointer.encrypted, retiredAt: now });
-      await tx.set(publicPath(purpose, owner, fresh.kid), { owner, kid: fresh.kid, alg: fresh.alg, publicJwk: fresh.publicJwk, active: true, purpose, state: 'active', createdAt: now, seq: await this.#next(tx, owner, purpose), predecessor: expectedKid, continuity: { alg: 'ES256', kid: signer, payload, signature }, ...issuance ? { rotation: RECOVERY_ISSUANCE_ROTATION } : {} });
+      await tx.set(publicPath(purpose, owner, fresh.kid), { owner, kid: fresh.kid, alg: fresh.alg, publicJwk: fresh.publicJwk, active: true, purpose, state: 'active', createdAt: now, seq: await this.#next(tx, owner, purpose), predecessor: expectedKid, continuity: { alg: 'ES256', kid: signer, payload, signature }, ...issuance ? { rotation: RECOVERY_ISSUANCE_ROTATION } : activation ? { rotation: TRANSFER_IN_ROTATION } : {} });
       await tx.set(POINTER[purpose], { kid: fresh.kid, owner, purpose, encrypted: fresh.encrypted });
       if (purpose === 'signing') await this.#bind(tx, owner, issuance ? [...issuance.keep, expectedKid, fresh.kid] : [], { merge: Boolean(issuance) });
       return { kid: fresh.kid, previous: expectedKid, purpose };
@@ -241,7 +274,7 @@ export class IdentityKeyRegistry {
    * {rotated, kid, previous, skipped}: `skipped` is 'key_history_full' when a full history of referenced keys refused it. */
   async rotateForRecovery(owner, { rotateIf = [], always = false, keep = [] } = {}) {
     ownerOf(owner); this.#sealing(); rotateIf = kidList(rotateIf); keep = kidList(keep); if (typeof always !== 'boolean') fail('invalid_key');
-    const current = await this.store.transaction(tx => this.#pointer(tx, owner, 'signing'));
+    const current = await this.store.transaction(async tx => { await fenced(tx); return this.#pointer(tx, owner, 'signing'); });
     if (!current) fail('identity_keys_unavailable');
     if (always || rotateIf.includes(current.kid)) {
       try { const rotated = await this.#rotate(owner, { purpose: 'signing', expectedKid: current.kid, issuance: { keep } }); return { rotated: true, kid: rotated.kid, previous: rotated.previous, skipped: null }; }
@@ -266,6 +299,52 @@ export class IdentityKeyRegistry {
     if (state.signing?.kid === signing.kid) return same(await this.open(state.signing.encrypted), signing.privateJWK, [...fields, 'd']);
     return keyState(state.signingRecord) === 'retired' && state.signingRecord.active === true && state.binding?.owner === owner && state.binding.kids.includes(signing.kid) && same(publicOf(state.signingRecord.publicJwk), signing.privateJWK, fields);
   }
+  /** PORT-4 intake: stores a portable package's private keys under this provider's custody, with the source's published
+   * signing-key history (public only). Only while `transfer-in/v1` exists and is not active. `input`:
+   * {signing:{kid, jwk, predecessor?, continuity?, created?}, encryption?:{kid, jwk}, history:[{kid, publicJwk, state,
+   * created?, retired?, revoked?, predecessor?, continuity?}]}; times in Unix seconds as published. Idempotent for the
+   * same keys; anything else already present is `key_conflict`. Never logs or returns key material. */
+  async importTransfer(owner, input = {}) {
+    ownerOf(owner); this.#sealing();
+    const signing = input.signing, encryption = input.encryption ?? null, history = input.history ?? [];
+    const point = jwk => ({ kty: 'EC', crv: 'P-256', x: jwk?.x, y: jwk?.y });
+    const ok = (entry, d) => entry && boundedString(entry.kid) && typeof entry.jwk?.x === 'string' && typeof entry.jwk?.y === 'string' && (!d || typeof entry.jwk.d === 'string');
+    if (!ok(signing, true) || (encryption && !ok(encryption, true)) || !Array.isArray(history) || history.length >= this.historyLimit) fail('invalid_key');
+    for (const entry of history) if (!boundedString(entry?.kid) || typeof entry.publicJwk?.x !== 'string' || !['retired', 'revoked'].includes(entry.state) || entry.kid === signing.kid) fail('invalid_key');
+    if (new Set([signing.kid, ...history.map(entry => entry.kid), ...encryption ? [encryption.kid] : []]).size !== history.length + 1 + (encryption ? 1 : 0)) fail('invalid_key');
+    const ms = value => Number.isSafeInteger(value) && value >= 0 ? value * 1000 : undefined;
+    const sealedSigning = await this.seal({ kty: 'EC', crv: 'P-256', x: signing.jwk.x, y: signing.jwk.y, d: signing.jwk.d }), sealedEncryption = encryption ? await this.seal({ kty: 'EC', crv: 'P-256', x: encryption.jwk.x, y: encryption.jwk.y, d: encryption.jwk.d }) : null;
+    return this.store.transaction(async tx => {
+      const incoming = await tx.get(TRANSFER_IN_RECORD);
+      if (!incoming || incoming.state === 'active') fail('transfer_in_pending', 'Keys arrive only with a pending transfer.');
+      if (await custodyFence(tx) === 'identity_moved') fail('identity_moved', 'This identity moved to another provider.');
+      const pointer = await this.#pointer(tx, owner, 'signing'), stored = pointer && await tx.get(publicPath('signing', owner, pointer.kid));
+      if (pointer) { if (pointer.kid === signing.kid && stored?.publicJwk?.x === signing.jwk.x && stored.publicJwk.y === signing.jwk.y) return { kid: pointer.kid, imported: false }; fail('key_conflict'); }
+      const existing = await this.#records(tx, owner, 'signing');
+      if (existing.some(record => record.kid !== signing.kid && !history.some(entry => entry.kid === record.kid))) fail('key_conflict');
+      for (const kid of [signing.kid, ...history.map(entry => entry.kid)]) if (await tx.get(key(TOMBSTONE, owner, kid))) fail('key_exists');
+      let seq = await this.#next(tx, owner, 'signing');
+      for (const entry of history) await tx.set(publicPath('signing', owner, entry.kid), { owner, kid: entry.kid, alg: 'ES256', publicJwk: point(entry.publicJwk), active: entry.state !== 'revoked', purpose: 'signing', state: entry.state, createdAt: ms(entry.created), ...entry.state === 'retired' ? { retiredAt: ms(entry.retired) } : { revokedAt: ms(entry.revoked) }, seq: seq++, predecessor: entry.predecessor ?? null, ...entry.continuity ? { continuity: structuredClone(entry.continuity) } : {}, custody: 'history', pinned: true });
+      await tx.set(publicPath('signing', owner, signing.kid), { owner, kid: signing.kid, alg: 'ES256', publicJwk: point(signing.jwk), active: true, purpose: 'signing', state: 'active', createdAt: ms(signing.created) ?? this.clock(), seq: seq++, predecessor: signing.predecessor ?? null, ...signing.continuity ? { continuity: structuredClone(signing.continuity) } : {}, custody: 'imported', pinned: true });
+      await tx.set(POINTER.signing, { kid: signing.kid, owner, purpose: 'signing', encrypted: sealedSigning });
+      if (encryption) {
+        const current = await this.#pointer(tx, owner, 'encryption'); if (current && current.kid !== encryption.kid) fail('key_conflict');
+        if (!current) { await tx.set(publicPath('encryption', owner, encryption.kid), { owner, kid: encryption.kid, alg: 'ECDH-ES', publicJwk: point(encryption.jwk), active: true, purpose: 'encryption', state: 'active', createdAt: this.clock(), seq: await this.#next(tx, owner, 'encryption'), custody: 'imported' }); await tx.set(POINTER.encryption, { kid: encryption.kid, owner, purpose: 'encryption', encrypted: sealedEncryption }); }
+      }
+      return { kid: signing.kid, imported: true };
+    });
+  }
+  /** PORT-4: custody ends for a transfer-in that will never activate (refused, cancelled, failed). Public records stay
+   * for audit; pointers, retained private keys and the recovery binding are deleted. */
+  async destroyCustody(owner) {
+    ownerOf(owner);
+    return this.store.transaction(async tx => {
+      for (const purpose of KEY_PURPOSES) { const pointer = await this.#pointer(tx, owner, purpose); if (pointer) await tx.delete(POINTER[purpose]); }
+      for (const { key: path } of await tx.list(key(RETAINED, owner))) await tx.delete(path);
+      await tx.delete(key(BINDING, owner));
+      return { destroyed: true };
+    });
+  }
   /** Public descriptor of `kid` under `purpose`, or null. */
   async lookup(owner, { purpose, kid } = {}) {
     purposeOf(purpose); if (!boundedString(owner) || !boundedString(kid)) return null;
@@ -281,15 +360,15 @@ export class IdentityKeyRegistry {
     return this.store.transaction(async tx => { const pointer = await this.#pointer(tx, owner, purpose); return (await this.#records(tx, owner, purpose)).map(record => describe(record, purpose, pointer)); });
   }
   /** The current private key, imported non-extractable for its purpose only (sign, or ECDH deriveBits), or null. */
-  async privateKey(owner, purpose) {
+  async privateKey(owner, purpose, { transferStatement = false } = {}) {
     ownerOf(owner); purposeOf(purpose); this.#sealing();
-    const pointer = await this.store.transaction(async tx => { const found = await this.#pointer(tx, owner, purpose); return found && keyState(await tx.get(publicPath(purpose, owner, found.kid)) ?? { active: true }) !== 'revoked' ? found : null; });
+    const pointer = await this.store.transaction(async tx => { await fenced(tx, { statement: transferStatement === true && purpose === 'signing' }); const found = await this.#pointer(tx, owner, purpose); return found && keyState(await tx.get(publicPath(purpose, owner, found.kid)) ?? { active: true }) !== 'revoked' ? found : null; });
     return pointer ? { kid: pointer.kid, privateKey: await this.#importPrivate(purpose, await this.open(pointer.encrypted)) } : null;
   }
   /** Internal identity-backup port only: the current private JWK of `purpose`, or null. Never expose through a route. */
   async exportPrivate(owner, purpose) {
     ownerOf(owner); purposeOf(purpose); this.#sealing();
-    const pointer = await this.store.transaction(tx => this.#pointer(tx, owner, purpose));
+    const pointer = await this.store.transaction(async tx => { await fenced(tx); return this.#pointer(tx, owner, purpose); });
     return pointer ? { kid: pointer.kid, privateJWK: await this.open(pointer.encrypted) } : null;
   }
 }

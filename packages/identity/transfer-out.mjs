@@ -21,7 +21,7 @@
 //   identity  transferIdentityPort(repository) below: get, verifyRecovery, markMoved, removeDisputers, invalidateRecovery
 //   keys      {current(owner) -> {kid, publicJwk}|null, matches(owner, keychain) -> boolean, destroy(owner)}
 //   notices   {deliver(notice) -> {accepted}}   createTransferNotices below. Acceptance is not delivery.
-//   attestor  {kid, sign(payload) -> JWS} | null   attestorFromJwk below. Null: commits hold.
+//   attestor  {kid, sign(payload) -> JWS} | null   attestorFromJwk below (the P16 key set). Null: commits hold.
 //   hold      owner -> {held}                   explicit administrator (legal) hold
 //   effects   {revokeDelegations, severConnections, eraseGrants, purge(owner) -> {done, wakeAt?, halted?}}
 //   due       {put(owner, at, kind), delete(owner, at, kind)}   transferDueIndex below (scheduler backstop)
@@ -30,11 +30,12 @@ import { AppAction, AppQuery } from '../app/engine.mjs';
 import { AppFault } from '../app/faults.mjs';
 import { isUUID } from '../core/primitives.mjs';
 import { base64url } from '../core/records.mjs';
-import { parseMoveStatement, verifyMoveStatement, statementDigest, validateRedirectBase, signMoveAttestation, httpsOrigin, SuccessionError } from './succession.mjs';
+import { parseMoveStatement, verifyMoveStatement, statementDigest, validateRedirectBase, httpsOrigin, SuccessionError } from './succession.mjs';
 import { IdentityCrypto, secureEqual } from './crypto.mjs';
 import { recoveryCredential, securityState } from './service.mjs';
 import { revokeAllLineage, revokeLineage, pruneLineage } from './linked-approval.mjs';
 import { movedWindow, MOVED_AUDIT } from './lifecycle-tombstone.mjs';
+import { attestorFromConfig } from './attestation-keys.mjs';
 
 export const TRANSFER_FLAG = 'IDENTITY_TRANSFER_OUT_ENABLED';
 export const TRANSFER_KEY = 'transfer-out/v1', LOCK_KEY = 'transfer-out/lock-v1';
@@ -795,16 +796,12 @@ export function transferIdentityPort(repository, { clock = () => Date.now(), cry
 
 // ---- attestor -------------------------------------------------------------------------------------------------
 
-/** An attestation signer over one ES256 private JWK (`{kid, jwk}`), or null when unconfigured. The attestation key set
- * and its continuity chain (P16) belong to PORT-4 (packages/identity/attestation-keys.mjs). */
+/** The attestation signer (PORT-4, P16): `IDENTITY_ATTESTATION_KEYS` (a continuity-chained key set) or the legacy
+ * single `{kid, jwk}` of `IDENTITY_ATTESTATION_KEY`, read as a one-key root set. Null when unconfigured or invalid;
+ * see packages/identity/attestation-keys.mjs. Kept under this name for PORT-2 callers. */
 export function attestorFromJwk(config, { crypto: webCrypto = globalThis.crypto } = {}) {
   if (!config) return null;
-  let value = config; if (typeof value === 'string') { try { value = JSON.parse(value); } catch { return null; } }
-  if (!plain(value) || typeof value.kid !== 'string' || !value.kid || value.kid.length > 128 || !plain(value.jwk) || value.jwk.kty !== 'EC' || value.jwk.crv !== 'P-256' || typeof value.jwk.d !== 'string') return null;
-  const { kty, crv, x, y, d } = value.jwk; let key;
-  // Imported on first use (adapters build their configuration synchronously); a bad key fails the commit, which holds.
-  const imported = () => key ??= webCrypto.subtle.importKey('jwk', { kty, crv, x, y, d }, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign']);
-  return Object.freeze({ kid: value.kid, async sign(payload) { return signMoveAttestation({ kid: value.kid, payload }, await imported(), { crypto: webCrypto }); } });
+  return attestorFromConfig(config, { crypto: webCrypto });
 }
 
 // ---- notices --------------------------------------------------------------------------------------------------

@@ -107,6 +107,7 @@ function createBrowser(){
     copy:text=>navigator.clipboard.writeText(text),
     copyWaitlistWithdrawal(){const token=secret.waitlistWithdrawal;if(typeof token!=='string')throw new Error('This waitlist link is incomplete. Request a new confirmation link.');return navigator.clipboard.writeText(location.origin+'/waitlist/leave#token='+encodeURIComponent(token));},
     navigate:url=>location.assign(url),
+    clearRemovalRoute({returned=false}={}){const u=new URL(location.href);if(returned)u.searchParams.delete('removal_return');if(u.searchParams.get('view')==='connections')u.searchParams.delete('view');history.replaceState(null,'',u.pathname+u.search+u.hash);},
     // Sign-in/sign-up from a contact page carries {link,intent} in this tab's session storage only (never the server-visible query).
     saveContactHandoff({link,intent=null}){if(!contactReturn(link)||intent!==null&&!intents.includes(intent))throw new Error('This contact link is incomplete.');try{sessionStorage.setItem(handoffKey,JSON.stringify({link,intent,expiresAt:Date.now()+7200000}));}catch{throw new Error('This browser could not remember the contact link. Open it again after signing in.');}},
     peekContactHandoff(){if(capturedHandoff||handoffLost)return true;try{return sessionStorage.getItem(handoffKey)!==null;}catch{return false;}},

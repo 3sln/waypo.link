@@ -53,7 +53,7 @@ test('verification enforces issuer, exact audience, purpose, kid purpose and tim
 });
 
 test('rotation publishes the next key before use and keeps the retired key for the overlap window only',async()=>{
- const f=fixture(),first=await f.mint(),initial=await f.keys.jwks();assert.equal(initial.keys.length,8,'one active key and one published standby per purpose');assert.deepEqual(initial.keys.map(k=>k.kid.split('.')[0]).sort(),['describe','describe','discover','discover','event','event','invoke','invoke']);
+ const f=fixture(),first=await f.mint(),initial=await f.keys.jwks();assert.equal(initial.keys.length,10,'one active key and one published standby per purpose');assert.deepEqual(initial.keys.map(k=>k.kid.split('.')[0]).sort(),['describe','describe','discover','discover','event','event','invoke','invoke','removal','removal']);
  const [staged]=await f.keys.rotate(['invoke']);assert.equal(staged.activatesAt,f.clock.now+DEFAULT_LEAD);assert.deepEqual(await f.keys.rotate('invoke'),[staged],'rotation is idempotent');
  assert.ok((await f.keys.jwks()).keys.some(k=>k.kid===staged.kid),'next key is published before use');
  f.clock.now+=DEFAULT_LEAD-1000;const last=await f.mint();assert.equal(last.kid,first.kid,'next key does not sign before its lead time');
@@ -122,9 +122,9 @@ test('the JWKS route and manifest member exist only with brokering enabled, with
  const f=fixture(),brokering={enabled:true,jwks:()=>f.keys.jwks()};
  const response=await handleFederation(get(BROKERING_JWKS_PATH),{controller,issuer,brokering});assert.equal(response.status,200);
  assert.equal(response.headers.get('Content-Type'),'application/jwk-set+json');assert.equal(response.headers.get('Cache-Control'),'public, max-age=300, must-revalidate');assert.equal(response.headers.get('Access-Control-Allow-Origin'),'*');assert.equal(response.headers.get('X-Content-Type-Options'),'nosniff');assert.equal(response.headers.get('Set-Cookie'),null);
- const etag=response.headers.get('ETag'),body=await response.json();assert.match(etag,/^"[A-Za-z0-9_-]{43}"$/);assert.deepEqual(Object.keys(body),['keys']);assert.equal(body.keys.length,8);
+ const etag=response.headers.get('ETag'),body=await response.json();assert.match(etag,/^"[A-Za-z0-9_-]{43}"$/);assert.deepEqual(Object.keys(body),['keys']);assert.equal(body.keys.length,10);
  for(const key of body.keys){assert.deepEqual(Object.keys(key),['kty','crv','x','y','kid','alg','use']);assert.equal(key.alg,'ES256');assert.equal(key.use,'sig');}
- assert.equal(new Set(body.keys.map(k=>k.kid)).size,8);
+ assert.equal(new Set(body.keys.map(k=>k.kid)).size,10);
  const cached=await handleFederation(get(BROKERING_JWKS_PATH,{'If-None-Match':etag}),{controller,issuer,brokering});assert.equal(cached.status,304);assert.equal(await cached.text(),'');
  assert.equal((await handleFederation(new Request(issuer+BROKERING_JWKS_PATH,{method:'POST'}),{controller,issuer,brokering})).status,405);
  assert.equal((await handleFederation(new Request('https://evil.example'+BROKERING_JWKS_PATH),{controller,issuer,brokering})).status,403);

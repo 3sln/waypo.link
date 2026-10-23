@@ -12,7 +12,7 @@ import {ENTRY_SHARDS} from '../../packages/federation/authorization-entries.mjs'
 import {federationRemote} from '../../packages/federation/runtime.mjs';
 import {UUID_V4} from '../../packages/core/primitives.mjs';
 export {federationMetadata,federationRemote} from '../../packages/federation/runtime.mjs';
-const METHODS=['ready','manifest','beginAuthorization','inspect','approve','configure','registerResource','revoke','exchange','rpc','tokenClient','grants','preferences','refresh','cleanup','inspectObjectURL','objectURL','entryIdentity','beginEntryAuthorization','revokeToken','redeemClaim','embedSession','embedState','embedForget','embedAvatar','embedEvents','embedEventsTick','embedEnd','dpopNonce','incrementalPort','appSessions','eventDoorbellGrant','integrationSnapshot','brokeredGrantLive','integrationClientAuth'];
+const METHODS=['ready','manifest','beginAuthorization','inspect','approve','configure','registerResource','revoke','exchange','rpc','tokenClient','grants','preferences','refresh','cleanup','inspectObjectURL','objectURL','entryIdentity','beginEntryAuthorization','revokeToken','redeemClaim','embedSession','embedState','embedForget','embedAvatar','embedEvents','embedEventsTick','embedEnd','dpopNonce','incrementalPort','appSessions','eventDoorbellGrant','integrationSnapshot','brokeredGrantLive','integrationClientAuth','removalRevoke','removalNonce'];
 /** Each UUID addresses independent permanent preferences, grants and journals.
  * The UUID is a locator, never an authorization credential. Further instances, named entryStoreName(shard), hold
  * the pre-owner authorization-entry store, sharded by entry ID (review M5); the two roles never share an instance.
@@ -57,7 +57,7 @@ export class FederationObject extends DurableObject {
  async brokeringJwks(...args){return this.withFlags(()=>this.brokeringJwksPinned(...args));}
  async brokeringJwksPinned(){return (await this.brokeringStore()).jwks();}
  async brokeringSign(...args){return this.withFlags(()=>this.brokeringSignPinned(...args));}
- async brokeringSignPinned(purpose,claims){if(purpose!=='event')throw new TypeError('Unsupported signing purpose.');return (await this.brokeringStore(true)).sign(purpose,claims);}
+ async brokeringSignPinned(purpose,claims){if(!['event','removal'].includes(purpose))throw new TypeError('Unsupported signing purpose.');return (await this.brokeringStore(true)).sign(purpose,claims);}
  async brokeringMint(...args){return this.withFlags(()=>this.brokeringMintPinned(...args));}
  async brokeringMintPinned(claims){return mintAccessToken(await this.brokeringStore(),claims);}
  async brokeringStore(background=false){

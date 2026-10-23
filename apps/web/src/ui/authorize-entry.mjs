@@ -72,9 +72,9 @@ export function entryView(model,ctx){
    body=[origin,h('p',t('For your security, sign in again as {account}. {app} needs a sign-in from less than {duration} ago.',{account:account(handle),app,duration:duration(entry.maxAge,t)})),...status,
     signIn(t('Sign in again'),t('In the new tab, choose Add account and sign in again as {account}. Then return to this window.',{account:account(handle)})),
     h('div',current?approve(t('I’ve signed in again, continue'),()=>dispatch('continue',{owner:current.id})):null,cancel).classes('buttons')];break;}
-  case 'consent':{const view=model.consent;
-   if(model.walkthrough){body=[consentWalkthroughView(model.walkthrough,{dispatch:ctx.dispatchConsent,guard,armed,busy,error:model.error,account:model.selected?.handle+'@'+host})];break;}
-   body=[origin,h('p',t('Account: '),h('strong',account(model.selected.handle)).attrs({translate:'no'})),...status,
+  case 'consent':{const view=model.consent,pending=view?.pendingRemoval?h('section',h('p',(ctx.locale==='es'?'Pediste quitar ':'You asked to remove '),h('bdi',entry.client.name)),plain(ctx.locale==='es'?'Quitar ahora':'Remove now',()=>dispatch('remove-pending'))).classes('security-note'):null;
+   if(model.walkthrough){body=[pending,consentWalkthroughView(model.walkthrough,{dispatch:ctx.dispatchConsent,guard,armed,busy,error:model.error,account:model.selected?.handle+'@'+host})];break;}
+   body=[pending,origin,h('p',t('Account: '),h('strong',account(model.selected.handle)).attrs({translate:'no'})),...status,
     h('p',t('Choose the values, resources and methods this app may access. You can revoke access later.')),view.additions?.length?h('p',t('{app} is asking for more access than you already granted. New items are marked below.',{app})).classes('alert').attrs({role:'status'}):null,...view.requests.map(request=>kit.requestCard(request,view.additions?{additions:view.additions,app:entry.client.name}:undefined)),
     h('div',approve(t('Allow selected access'),()=>dispatch('approve'),{disabled:kit.approvalBlocked(view),detail:'true'}),cancel).classes('buttons'),
     h('p',t('To use another account, cancel and start again from the application.')).classes('muted')];break;}

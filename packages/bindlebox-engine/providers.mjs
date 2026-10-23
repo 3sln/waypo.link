@@ -1,6 +1,7 @@
 // Independent catalogue (messaging-extraction.md §7). Planned rows are not implementations.
 const row=(placement,kind,status,summary,extra={})=>Object.freeze({placement,kind,status,summary,...extra});
 export const PROVIDERS=Object.freeze({
+ mailboxCleanup:row('mailbox','platform','local','Live-grant archive deletion and downloadable export; unavailable ports stay hidden.'),
  mailboxStore:row('mailbox','platform','local','Transactional mailbox metadata; the single-writer commit boundary.'),
  itemIndex:row('mailbox','platform','planned','Mailbox item index on the same handle as mailboxStore.'),
  userStorage:row('mailbox','platform','planned','Ordinary object-storage resource client.'),

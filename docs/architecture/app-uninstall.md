@@ -282,6 +282,42 @@ While a removal is open the app's logins are ordinary (UD-1); only a second conn
 
 All slices run `npm test`. UI slices add DOM and browser verification. Owners are roles; the coordinator assigns them after sign-off.
 
+**Local implementation status, 2026-10-22 (AU workstream; unsigned).** AU-S1–AU-S5 now have wire codecs,
+engine Actions/Queries, the transactional revocation and durable federation cascade, owner/front/back-channel
+API routes, purpose-separated signing and durable assertion replay protection, and subject-deletion enqueue/delivery.
+The account alarm records the three reminder notices without changing authority. Parley's AU-S9 obligations 1–5
+have local purge/cleanup operations and a removal page; archive delete/export choices require configured live-grant
+service ports and are hidden otherwise. No external cleanup service or production conformance is claimed.
+
+**AU-2 follow-up, 2026-10-22 (unsigned):** AU-S7 now has ngin console intents and dodo views for clean navigation,
+force removal, pending/reissue/cancel controls, unbound-return confirmation, attributed result claims and What's left.
+Human returns hand off to the console; authenticated JSON returns preserve terminal summaries. Recent terminal
+results (including back-channel completions) can be reopened. Console projections remove revoked connections and
+role occupants only through the removal's generation, preserving reinstalled generations. Return parameters are scrubbed after a recognized result.
+AU-14 disclosures and Remove now controls exist on legacy and entry consent pages; pending entry consent bypasses
+client-side prior-approval/identity-only shortcuts. A server-completed entry still has no consent page to render.
+Settings remain intact by default. The owner settings page offers revision-checked deletion through an engine Action;
+it refuses deletion while any active consumer remains, rather than silently deleting another app's shared values.
+The three durable reminder rows have console presentation and one best-effort attempt each through the configured
+push notice port, with reserved/accepted/failed/unavailable/unknown evidence, never a delivery claim. No email template
+or activity-centre item is added by this slice: those presentations remain unresolved. A crash after reservation leaves
+unknown evidence; the subsequent scheduled reminders and pending console row remain available.
+AU-S6 producer attribution, prefix aggregates/deletion and export inclusion remain **unimplemented**. The new
+producer-summary module currently owns only the remaining-settings engine Action; its presence is not a data ledger.
+What's left explicitly discloses the service's inability to verify external cleanup and that owner files/bus/app copies
+may remain; it links to the owner settings review without inventing object counts or evidence of deletion.
+Validation is recorded with the AU-2 handoff; the prior pass's counts below are historical, not follow-up results.
+The clean-removal flag does not retain enrollment: pending records, reminders and reversal operations explicitly
+ignore it, including an env kill. Organization entities are refused; the tested policy hook describes the 24 h delay.
+Local validation: core 2,605 passed; Worker 80 passed; UI-state 292 passed; DOM smoke passed; asset build and
+Worker dry run passed; full e2e 214 passed with 4 WebKit skips; Parley removal page Chromium/Firefox 2 passed.
+Focused coverage includes wire/route admission, durable nonce replay, commit rollback, flags-off revocation,
+removal/completion/force/reconnect/deletion schedules and Parley terminal-purge/reconnect schedules. Initial gate
+failures from an incomplete concurrent asset snapshot, an in-flight Parley provider/binding edit and a concurrent
+identity-file syntax edit were resolved or rerun; no portability source was edited by this workstream.
+These are implementation notes, not reviewer or user sign-off. Reviewer ___ / date ___ / outcome ___.
+
+
 | Slice | Scope | Files (new unless noted) | Depends on |
 | --- | --- | --- | --- |
 | AU-S1 | Pure functions: `removal` member validation, request claim build and verify (including `actor`), return and result parsing, back-channel assertion check | `packages/federation/removal.mjs`, `tests/app-removal-wire.test.mjs`; one call site in `packages/federation/integrations.mjs` `validateIntegrationManifest`. **Conflict:** the intents work adds an `intents` member at the same call site and shares the public-client minimal `bindle_integration` rule (AR-1, AR-10). One owner (the integrations owner) lands both member hooks; AU-S1 supplies only `removal.mjs` | — |

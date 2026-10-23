@@ -59,6 +59,8 @@ export const PROVIDERS = Object.freeze({
   lifecycle: row('account', 'domain', 'pilot', 'Account lifecycle runner and retention protection. DX-3: the DeletionService behind deletion.* (packages/runtime/account-deletion.mjs); ACCOUNT_DELETION_ENABLED required for new requests.'),
   notifications: row('account', 'domain', 'planned', 'NotificationService and app notifications.'),
   beams: row('account', 'domain', 'planned', 'BeamService and beam contacts.'),
+  appRemoval: row('account','domain','pilot','AU-S2: clean/force removal records, reminder-only scheduling and co-transactional revocation over account metadata.'),
+  successors: row('both', 'domain', 'pilot', 'PORT-5: verifier successor pins, the successor index, per-issuer attestation-key pins and pending successors (packages/identity/successors.mjs); system/operator actors, public presentation intake; IDENTITY_SUCCESSOR_ADOPTION_ENABLED required for adoption.'),
   apps: row('account', 'domain', 'planned', 'App connections and MCP account operations.'),
   automation: row('account', 'domain', 'planned', 'Browser automation records.'),
   federation: row('edge', 'domain', 'planned', 'Federation authority, client directory and entries.'),

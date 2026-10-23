@@ -88,3 +88,40 @@ test('BB-B8 integration HTTP never accepts a body-supplied verifier, and transla
  assert.equal((await http(new Request('https://messages.example/bindle/events',{method:'POST',headers:{'Content-Type':'application/secevent+jwt'},body:'signed-test-token'}))).status,202);assert.equal(calls.at(-1)[1],'shell.integration-event');
  const closed=createHTTP({BINDLEBOX_ENABLED:true});assert.equal((await closed(new Request('https://messages.example/bindle/rpc',{method:'POST',headers,body:JSON.stringify(request)}))).status,503);
 });
+
+test('AU-S5 verified subject-deleted clears every hot key, pending obligation and alarm silently',async t=>{
+ const h=engine(t);for(const key of ['bb:send:task/pending','shell:delegate','shell:renewal','shell:alarm','body/held','receipt/one','conv/work/pending'])await h.store.put(key,{state:'pending',at:NOW+1});
+ const deletion=event('subject-deleted',{});await h.run('shell.integration-event',{input:{event:deletion}});assert.equal((await h.store.list({prefix:''})).size,0);
+ await h.run('shell.integration-event',{input:{event:deletion}});assert.equal((await h.store.list({prefix:''})).size,0);
+});
+test('AU-S5 subject-deleted cannot purge another issuer or subject',async t=>{
+ const h=engine(t);for(const patch of [{issuer:'https://foreign.example'},{subject:'foreign'}])await assert.rejects(h.run('shell.integration-event',{input:{event:event('subject-deleted',{},patch)}}),e=>e.code==='not_authorized');assert.ok(await h.store.get('config'));
+});
+test('AU-S5 terminal removal retains the principal mapping for 30 days, then purges unless reconnected',async t=>{
+ for(const reconnect of [false,true]){const h=engine(t);await h.run('shell.integration-event',{input:{event:event('connection-revoked',{generation_floor:4,terminal:true})}});const pending=await h.store.get('shell:purge');assert.equal(pending.at,h.clock.now()+30*86400000);assert.ok(await h.store.get('config'));
+ if(reconnect)await h.store.put('shell:authorization',{...grant,generation:4});h.clock.advance(30*86400000);const result=await h.run('shell.purge-expired');assert.equal(result.purged,!reconnect);assert.equal((await h.store.list({prefix:''})).size===0,!reconnect);}
+});
+
+test('AU-S5 clean cleanup requires a verified matching request, keeps archive by default and purges only after successful work',async t=>{
+ const {REMOVAL_OPERATIONS}=await import('../../apps/bindlebox/worker/removal.mjs'),h=engine(t),run=createTestEngine({owner,store:h.store,clock:h.clock,registry:REMOVAL_OPERATIONS,providers:{mailboxCleanup:{}}});t.after(()=>run.dispose());
+ const claims={iss:alice.principal.issuer,sub:config.principal.subject,exp:Math.floor(h.clock.now()/1000)+300,jti:'request-one',bindle:{removal:'removal-one',connection:grant.connection,generation:grant.generation,return_uri:alice.principal.issuer+'/remove/return'}};
+ await assert.rejects(run.run('shell.removal-prepare',{input:{claims:{...claims,sub:'other'}}}),e=>e.code==='not_authorized');await run.run('shell.removal-prepare',{input:{claims}});
+ await run.run('shell.removal-prepare',{input:{claims:{...claims,jti:'fresh-reissue'}}});assert.equal((await h.store.get('shell:removal')).jti,'fresh-reissue');
+ assert.deepEqual(await run.run('shell.removal-options'),{delete:false,export:false});await assert.rejects(run.run('shell.removal-complete',{input:{choice:'delete'}}),e=>e.code==='recipient_unavailable');assert.ok(await h.store.get('config'));
+ const result=await run.run('shell.removal-complete',{input:{choice:'keep'}});assert.equal(new URL(result.returnUri).searchParams.get('outcome'),'completed');const {parseRemovalResult}=await import('../../packages/federation/removal.mjs');assert.equal(parseRemovalResult(new URL(result.returnUri).searchParams.get('result')).items[0].disposition,'kept');assert.equal((await h.store.list({prefix:''})).size,0);
+});
+test('AU-S5 clean archive ports execute before purge and failed external work leaves authority intact',async t=>{
+ const {REMOVAL_OPERATIONS}=await import('../../apps/bindlebox/worker/removal.mjs');for(const fail of [false,true]){const h=engine(t),calls=[],run=createTestEngine({owner,store:h.store,clock:h.clock,registry:REMOVAL_OPERATIONS,providers:{mailboxCleanup:{deleteArchive:async input=>{calls.push(input);assert.ok(await h.store.get('config'));if(fail)throw new Error('offline');}}}});t.after(()=>run.dispose());
+ await run.run('shell.removal-prepare',{input:{claims:{iss:alice.principal.issuer,sub:config.principal.subject,exp:Math.floor(h.clock.now()/1000)+300,jti:'request-one',bindle:{removal:'one',connection:grant.connection,generation:grant.generation,return_uri:alice.principal.issuer+'/remove/return'}}}});
+ const result=run.run('shell.removal-complete',{input:{choice:'delete'}});if(fail){await assert.rejects(result,/offline/);assert.ok(await h.store.get('config'));}else{await result;assert.equal((await h.store.list({prefix:''})).size,0);}assert.deepEqual(calls,[{owner,prefix:'bindlebox/v1/'}]);}
+});
+test('AU-S5 seeded terminal expiry and reconnect race keeps a new generation or clears every obligation',async t=>{
+ const {forEachSeed,createScheduler}=await import('../helpers/chaos.mjs');await forEachSeed(20,async random=>{const h=engine(t);await h.run('shell.integration-event',{input:{event:event('connection-revoked',{generation_floor:4,terminal:true})}});h.clock.advance(30*86400000);
+ const scheduler=createScheduler(random),operations=scheduler.wrap({purge:()=>h.run('shell.purge-expired'),reconnect:()=>h.store.transaction(async tx=>{if(await tx.get('owner'))await tx.put('shell:authorization',{...grant,generation:4});})});const results=await scheduler.run([()=>operations.purge(),()=>operations.reconnect()]);assert.ok(results.every(r=>r.status==='fulfilled'));
+ const keys=await h.store.list({prefix:''});if(keys.size)assert.equal((await h.store.get('shell:authorization')).generation,4);else assert.equal(await h.store.get('bb:send:task/pending'),undefined);
+ });
+});
+
+test('AU-S5 unknown subject SET responds 202 without waking a mailbox or consulting archive ports',async()=>{
+ let opened=0;const http=createHTTP({BINDLEBOX_ENABLED:true,services:{verifyEvent:async()=>({unknown:true})},mailbox:async()=>{opened++;throw new Error('must not fetch');}}),response=await http(new Request('https://messages.example/bindle/events',{method:'POST',headers:{'Content-Type':'application/secevent+jwt'},body:'verified-by-test-port'}));assert.equal(response.status,202);assert.equal(opened,0);
+});

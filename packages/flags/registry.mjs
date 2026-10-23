@@ -19,6 +19,8 @@ const rows=[
  ['ACTIVITY_V2_ENABLED','a','G A S P C V',{stateful:true,client:true,experiment:{metrics:['activity_opened']},envParse:'boolean'}],
  ['EVENT_BUSES_ENABLED','a','G A S P',{stateful:true,envParse:'boolean'}],
  ['INTEGRATIONS_ENABLED','a','G A S P C',{risk:'crit',stateful:true,envParse:'boolean'}],
+ ['APP_CLEAN_REMOVAL_ENABLED','a','G A S P C',{risk:'crit',stateful:true,retainExisting:false,retentionReason:'Open removals always conclude and remind regardless of flag state.',requires:['INTEGRATIONS_ENABLED'],envParse:'boolean'}],
+ ['SUBJECT_DELETED_EVENTS_ENABLED','a','G',{risk:'crit',requires:['INTEGRATIONS_ENABLED'],envParse:'boolean'}],
  ['INCREMENTAL_AUTH_ENABLED','a','G A S P C',{risk:'crit',requires:['FEDERATION_ENABLED'],stateful:true,retainExisting:false,retentionReason:'Pending requests and grants live in federation stores; no account-local predicate.',envParse:'boolean'}],
  ['EXTENSIONS_ENABLED','a','G A C',{stateful:true,envParse:'boolean'}],
  ['BINDLEBOX_ENABLED','a','G A S P',{stateful:true,envParse:'boolean'}],
@@ -45,6 +47,11 @@ const rows=[
  ['BROKERING_ENABLED','c','G C',{risk:'crit',outage:'last-known',requires:['INTEGRATIONS_ENABLED'],dependencyMode:'global',envParse:'boolean'}],
  ['MCP_ENABLED','c','G C',{risk:'crit',outage:'last-known'}],
  ['CLIENT_METADATA_ENABLED','c','G',{risk:'crit'}],
+ // Identity portability PORT-4/PORT-5 (identity-portability design §10.2). Transfer-in gates new intakes and begins
+ // only: polling, activation and cancellation of an existing transfer-in follow the env kill switch (background), so a
+ // ramp-down never strands an identity whose source already committed. Adoption off: verifiers adopt no move.
+ ['IDENTITY_TRANSFER_IN_ENABLED','c','G',{risk:'crit',requires:['SIGNUP_ENABLED'],envParse:'boolean'}],
+ ['IDENTITY_SUCCESSOR_ADOPTION_ENABLED','c','G',{risk:'crit',envParse:'boolean'}],
  ['LIFECYCLE_DRY_RUN','c','G',{safe:true,onValue:true,narrowOnly:true,risk:'crit',envDefault:true,envParse:'not-false-boolean'}],
  ['LIFECYCLE_ENABLED','b','',{envParse:'boolean'}],['LIFECYCLE_PURGE_ENABLED','b','',{}],
  ['WORK_LIMITS_ENABLED','b','',{safe:true,envParse:'work-authority',envDefaults:{node:'true'}}],

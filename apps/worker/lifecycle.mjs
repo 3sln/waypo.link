@@ -17,6 +17,9 @@ import {flagsFor} from '../../packages/flags/read.mjs';
 import {mailTransport} from './email.mjs';
 import {createPushTransport} from '../../packages/messaging/web-push.mjs';
 import {transferIdentityPort,createTransferNotices,attestorFromJwk,transferDueIndex,sweepTransferDue} from '../../packages/identity/transfer-out.mjs';
+import {transferInIdentityPort} from '../../packages/identity/transfer-in.mjs';
+import {createPortabilityFetch} from '../../packages/identity/successors.mjs';
+import {createDohResolver} from '../../packages/federation/resource-discovery.mjs';
 
 export const LIFECYCLE_SCHEDULER_NAME='lifecycle-sweep-v1';
 const repositoryOf=env=>new ShardedIdentityRepository({shard:name=>env.IDENTITIES.get(env.IDENTITIES.idFromName(name)),layout:env.IDENTITY_LAYOUT,config:env});
@@ -63,14 +66,16 @@ export function workerDeletionConfig(env){
 /** PORT-2 identity transfer-out ports (identity-portability design §6, packages/identity/transfer-out.mjs). Built for
  * every account object; new transfers still need IDENTITY_TRANSFER_OUT_ENABLED. Notices use the existing accounts mail
  * (`sendTransferNotice`) and Web Push transports; acceptance is recorded, never delivery. Without
- * IDENTITY_ATTESTATION_KEY ({kid, jwk}, a secret) commits hold. The scheduler's transfer-due index is the backstop
+ * IDENTITY_ATTESTATION_KEYS (the PORT-4 chained set; the legacy IDENTITY_ATTESTATION_KEY {kid, jwk} still reads) commits hold.
+ * PORT-4 transfer-in: the identity port and strictly-public egress with a DoH screen (as client-id-metadata.v1). The scheduler's transfer-due index is the backstop
  * for steps and for ending moved records after the purge. Keys and account effects are composed per account
  * (packages/runtime/account/transfer-out.mjs). */
 export function workerTransferOutConfig(env){
  const repository=repositoryOf(env),scheduler=env.LIFECYCLE_SCHEDULER?()=>env.LIFECYCLE_SCHEDULER.get(env.LIFECYCLE_SCHEDULER.idFromName(LIFECYCLE_SCHEDULER_NAME)):null;
  let notices;try{notices=createTransferNotices({origin:env.APP_ORIGIN,mail:mailTransport(env),push:createPushTransport(env)});}catch{notices=undefined;}
- return {TRANSFER_OUT_PORTS:{identity:transferIdentityPort(repository),...notices?{notices}:{},attestor:attestorFromJwk(env.IDENTITY_ATTESTATION_KEY),issuer:env.APP_ORIGIN,
-  ...scheduler?{due:{put:(owner,at,kind)=>scheduler().transferDuePut(owner,at,kind),delete:(owner,at,kind)=>scheduler().transferDueDelete(owner,at,kind)}}:{}}};
+ return {TRANSFER_OUT_PORTS:{identity:transferIdentityPort(repository),...notices?{notices}:{},attestor:attestorFromJwk(env.IDENTITY_ATTESTATION_KEYS??env.IDENTITY_ATTESTATION_KEY),issuer:env.APP_ORIGIN,
+  ...scheduler?{due:{put:(owner,at,kind)=>scheduler().transferDuePut(owner,at,kind),delete:(owner,at,kind)=>scheduler().transferDueDelete(owner,at,kind)}}:{}},
+  TRANSFER_IN_PORTS:{identity:transferInIdentityPort(repository),fetch:createPortabilityFetch({resolve:createDohResolver(),publicRouting:true})}};
 }
 /** The cron trigger and this object's own alarm drive one bounded sweep at a time. This object also holds the
  * deletion-due index, swept on every run independent of LIFECYCLE_ENABLED (DX-3 §2.2), and the PORT-2 transfer-due

@@ -1,6 +1,8 @@
 // EXT-X11 unified Apps & integrations console (docs/architecture/extensibility-design.md X11). Render-only: every rule
 // (flags, fencing, review, selection policy, step-up, discovery) lives in bl/connections.mjs. Untrusted names, labels
 // and hosts are isolated text nodes. "Who has access" views are CX-3's (ui/access); this console only links to them.
+import {AppRemovalIntent} from '../../bl/app-removal.mjs';
+import {removalPanels} from './removal.mjs';
 import {h,fire} from '../release-primitives.mjs';
 import {ConnectionsIntent,connectionsEnabled,connectionsModel} from '../../bl/connections.mjs';
 import {connectionManifest,connectionHost,connectionLink} from '../../bl/connections-port.mjs';
@@ -10,7 +12,7 @@ import {connectionsCSS} from './style.mjs';
 const plain=text=>h('bdi',String(text??'')).attrs({dir:'auto',translate:'no'});
 const SERVING=['active','degraded'];
 // Shell intent adapter: deserialize only native form controls. No authorization or selection rules live here.
-export function connectionsAction(detail){const values={fields:{}};if(detail.form)for(const control of detail.form.elements){if(!control.name||control.disabled)continue;const value=control.type==='checkbox'?control.checked:control.value;if(control.name.startsWith('fields.'))values.fields[control.name.slice(7)]=value;else values[control.name]=value;}const {kind,form,...rest}=detail;return new ConnectionsIntent({...rest,values:detail.values??values});}
+export function connectionsAction(detail){const values={fields:{}};if(detail.form)for(const control of detail.form.elements){if(!control.name||control.disabled)continue;const value=control.type==='checkbox'?control.checked:control.value;if(control.name.startsWith('fields.'))values.fields[control.name.slice(7)]=value;else values[control.name]=value;}const {kind,form,...rest}=detail;return new (detail.action?.startsWith('removal-')?AppRemovalIntent:ConnectionsIntent)({...rest,values:detail.values??values});}
 // CX-3 deep links (`/#access/<kind>/<id>`): the app view is keyed by client ID, the settings view by fragment.
 export const connectionsAccessHref=m=>({connection,fragment})=>{if(fragment)return accessLink('fragment',fragment);const c=m?.connections.find(c=>c.id===connection);return c?.clientId?accessLink('app',c.clientId):null;};
 export default function connections(state,{accessHref}={}){
@@ -66,7 +68,7 @@ export default function connections(state,{accessHref}={}){
  const list=h('section',h('h2',t.connected),m&&!m.connections.length?h('p',t.empty):null,h('ul',...(m?.connections??[]).map(c=>{const host=connectionHost(c),s=stateOf(c);return h('li',h('article',
   h('h3',plain(c.name??host)),h('dl',h('div',h('dt',t.state),h('dd',badge(c))),h('div',h('dt',t.kind),h('dd',c.integration?.kind==='built-in'?t.builtin:t.external)),h('div',h('dt',host?t.host:t.unknown),h('dd',plain(host)))),
   h('div',link(t.access,href({connection:c.id})),s!=='disconnected'?manage(c,t.manage):null).classes('connections-links'),
-  h('div',c.integration?.staged?btn(state.locale==='es'?'Revisar cambios':'Review changes','review-manifest',{id:c.id},busy):null,s!=='disconnected'&&c.integration?btn(t.setup,'setup',{id:c.id},busy):null,s==='suspended'?btn(t.resume,'resume',{id:c.id},busy):[...SERVING,'configuring'].includes(s)&&c.integration?btn(t.suspend,'suspend',{id:c.id},busy):null,s!=='disconnected'?btn(t.disconnect,'disconnect',{id:c.id},busy).classes('connections-danger'):null).classes('connections-actions')
+  h('div',c.integration?.staged?btn(state.locale==='es'?'Revisar cambios':'Review changes','review-manifest',{id:c.id},busy):null,s!=='disconnected'&&c.integration?btn(t.setup,'setup',{id:c.id},busy):null,s==='suspended'?btn(t.resume,'resume',{id:c.id},busy):[...SERVING,'configuring'].includes(s)&&c.integration?btn(t.suspend,'suspend',{id:c.id},busy):null,s!=='disconnected'?btn(state.locale==='es'?'Quitar app…':'Remove app…','removal-review',{id:c.id},busy):null,s!=='disconnected'?btn(t.disconnect,'disconnect',{id:c.id},busy).classes('connections-danger'):null).classes('connections-actions')
  ).data({connection:c.id})).key(c.id);})).classes('connections-grid'));
 
  const slots=h('section',h('h2',t.slots),h('p',t.rolesIntro),h('ul',...(m?.slots??[]).map(slot=>{
@@ -79,6 +81,6 @@ export default function connections(state,{accessHref}={}){
  return h('section',h('style',connectionsCSS),h('header',h('h1',t.title).props({id:'connections-title',tabIndex:-1}),h('p',t.intro),btn(t.reload,'reload')),
   h('p',t.external_site).props({id:'connections-external-site',hidden:true}),
   m?.error?h('p',t[m.error]??t.error).attrs({role:'alert'}):null,m?.notice&&!m.error?h('p',t[m.notice]??t.saved).attrs({role:'status'}):null,!m?h('p',t.loading):null,
-  confirmation,setup,picker,external,m?list:null,m?slots:null,m?connect:null)
+  removalPanels(state,{btn,form,confirm,panel,plain}),confirmation,setup,picker,external,m?list:null,m?slots:null,m?connect:null)
  .classes('connections-console').attrs({lang:state.locale==='es'?'es':'en','aria-labelledby':'connections-title','aria-busy':state.busy?'true':'false'});
 }

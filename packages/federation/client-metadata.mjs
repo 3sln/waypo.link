@@ -58,7 +58,7 @@ export function validateClientMetadata(document,clientId,{integrations=false,art
  const claimedName=presentation(document.client_name,100),clientUri=sameOrigin(document.client_uri),logoUri=sameOrigin(document.logo_uri);
  const initiateLoginUri=integrations&&prefixedURL(document.initiate_login_uri,clientId);
  let integration;
- if(integrations===true&&Object.hasOwn(document,'bindle_integration'))integration=sharedHost?{status:'invalid',reason:'shared_host'}:validateIntegrationManifest(document.bindle_integration,{artefactVersions,clientId,confidential,redirectUris:uris,...confidential?{jwksUri:document.jwks_uri}:{},reserved});
+ if(integrations===true&&Object.hasOwn(document,'bindle_integration'))integration=sharedHost?{status:'invalid',reason:'shared_host'}:validateIntegrationManifest(document.bindle_integration,{artefactVersions,clientId,confidential,redirectUris:uris,initiateLoginUri,...confidential?{jwksUri:document.jwks_uri}:{},reserved});
  return {id:clientId,name:url.host,origin,redirectUris:[...uris],reviewed:false,...claimedName?{claimedName}:{},...clientUri?{clientUri}:{},...logoUri?{logoUri}:{},...clientPolicyLinks({origin,policy_uri:document.policy_uri,tos_uri:document.tos_uri}),...initiateLoginUri?{initiateLoginUri}:{},
   ...confidential?{authMethod:'private_key_jwt',jwksUri:document.jwks_uri}:{},...integration&&integration.status!=='absent'?{integration}:{}};
 }
@@ -115,7 +115,7 @@ export class ClientDirectory {
   const confidential=authMethod==='private_key_jwt'&&!!metadataClientURL(jwksUri)&&!!prefixedURL(jwksUri,client.id)&&jwksUri!==client.id;
   if(declared&&(!this.integrations||!confidential))throw new TypeError(`Reviewed client ${client.id} declares client authentication that this provider cannot honor (integrations.v1 and a path-prefixed jwksUri are required).`);
   if(!this.integrations)return rest;
-  const integration=manifest===undefined?undefined:validateIntegrationManifest(manifest,{artefactVersions:this.artefactVersions,clientId:client.id,confidential,redirectUris:client.redirectUris??[],...confidential?{jwksUri}:{},reserved:this.reservedHosts});
+  const integration=manifest===undefined?undefined:validateIntegrationManifest(manifest,{artefactVersions:this.artefactVersions,clientId:client.id,confidential,redirectUris:client.redirectUris??[],initiateLoginUri:client.initiateLoginUri,...confidential?{jwksUri}:{},reserved:this.reservedHosts});
   return {...rest,...confidential?{authMethod,jwksUri}:{},...integration?{integration}:{}};
  }
  sharedHost(host){return this.sharedHosts.some(name=>host===name||host.endsWith('.'+name));}

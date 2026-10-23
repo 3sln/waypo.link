@@ -3084,3 +3084,51 @@ Optional publisher provenance signatures remain unimplemented. The slice table n
 **Gates (combined tree):** core 2562, Worker 80, UI-state 292, consent 53 each in Chromium and Firefox, e2e 214 with 4 WebKit skips, asset build and Worker dry run.
 
 Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-23 — App removal (AU-S1 to AU-S5, AU-S7, AU-14) and portability PORT-4/PORT-5
+
+**App removal** ([app uninstall](docs/architecture/app-uninstall.md) rev 3), behind its default-off flag:
+- **Built:**
+  - removal wire validation and signed requests;
+  - the engine state machine with no hard deadline (UD-1);
+  - an atomic revocation commit, with force removal at any moment;
+  - routes and the back channel;
+  - `subject-deleted` delivery that skips already-removed apps (UD-3);
+  - the console removal flows, return confirmation and history, and pending controls;
+  - the consent-page pending line (AU-14);
+  - guarded settings deletion (UD-2);
+  - best-effort push reminders, with no delivery claim.
+- **Parley:** purges MailboxObject state on `subject-deleted` and on terminal revocation, and has a removal page. Archive delete and export stay hidden until their service ports are configured.
+- **Organizations:** refused behind the tested AU-13 24 h policy hook.
+- **Remaining:**
+  - AU-S6's producer ledger (only settings deletion exists);
+  - email and activity-centre reminders;
+  - intercepting server-completed entries;
+  - shared-settings deletion, which first needs other consumers revoked.
+
+**Portability PORT-4 and PORT-5** ([identity portability](docs/architecture/identity-portability.md) §10.1), behind the default-off `IDENTITY_TRANSFER_IN_ENABLED` and `IDENTITY_SUCCESSOR_ADOPTION_ENABLED`:
+- **Destination engine:**
+  - intake, checks and activation;
+  - rotation at activation with chained provenance;
+  - the attestation key set as one continuity chain;
+  - labelled unattested intake;
+  - a custody fence in `keys.mjs`, so moved owners can't mint keys.
+- **Verifier adoption:**
+  - successor pins, per-issuer attestation pins and first-use tracking;
+  - pending successors and the fetch-based checks.
+- **Deviations (provisional):**
+  - returning to 3sln.me and displacing an unattested identity are recognised but refused, because the repository can't replace a terminal record;
+  - Node transfer-in egress isn't wired, pending a DNS-pinned transport;
+  - verifiers pin attestation keys from first contact, which narrows the P16 residual.
+- **Spec defects found:**
+  - §8.3 item 4 can't hold for intermediate hosts when a verifier is several moves behind, so it's checked against the final destination;
+  - §8.3 item 5 is ambiguous on a return, so identity URIs are compared;
+  - §8.5 pending successors for unattested intermediate hops can never be adopted.
+- **Unresolved:**
+  - no active-account recovery issuance path, so activation reports `recoveryRequired`;
+  - the 3sln.me attestation root isn't minted, so the shipped list is empty and attestations fail closed;
+  - the intake route (PORT-6), `directory.v1` mounting, and the organizations and Parley callers.
+
+**Gates (combined tree):** core 2651, Worker 80, UI-state 292, e2e 214 with 4 WebKit skips, removal browser matrix 24/24, asset build and Worker dry run.
+
+Reviewer: ___ Date: ___ Outcome: ___

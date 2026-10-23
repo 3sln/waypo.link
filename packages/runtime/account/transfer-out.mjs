@@ -105,10 +105,12 @@ export const methods={
   * alarm's min-merge. Never throws. */
  async transferOutAlarm(){
   try{
+   // PORT-4: a live transfer-in (polling or activation) steps here too; its wake is min-merged with this one.
+   const incoming=typeof this.transferInAlarm==='function'?await this.transferInAlarm():{wakeAt:null},merge=at=>[at,incoming.wakeAt].filter(Number.isSafeInteger).reduce((a,b)=>a===null?b:Math.min(a,b),null);
    const owner=await this.metadata.get('owner'),record=owner?await this.metadata.get(TRANSFER_KEY):undefined;
-   if(!record||['cancelled','expired','aborted'].includes(record.state))return {stop:false,moved:false,wakeAt:null};
+   if(!record||['cancelled','expired','aborted'].includes(record.state))return {stop:false,moved:false,wakeAt:merge(null)};
    const result=await perform(transferOutEngine(this).engine,new StepTransferOut({actor:{kind:'system',owner,reason:'alarm'}}));
-   return {stop:result?.stop===true,moved:result?.moved===true||record.state==='committed',wakeAt:Number.isSafeInteger(result?.wakeAt)?result.wakeAt:null};
+   return {stop:result?.stop===true,moved:result?.moved===true||record.state==='committed',wakeAt:merge(Number.isSafeInteger(result?.wakeAt)?result.wakeAt:null)};
   }catch(error){lifecycleLog(this.config,{kind:'transfer-out',action:'alarm-error',code:error?.code||'unavailable'});return {stop:false,moved:(await this.metadata.get(TRANSFER_KEY).catch(()=>null))?.state==='committed',wakeAt:clockOf(this)()+3600000};}
  },
 };

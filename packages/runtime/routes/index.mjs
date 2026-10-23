@@ -52,8 +52,9 @@ import * as integrations from './integrations.mjs';
 import * as connections from './connections.mjs';
 import * as emailBridge from './email-bridge.mjs';
 import * as exports from './exports.mjs';
+import * as appRemoval from './app-removal.mjs';
 
-export const ROUTES=Object.freeze([moved,site,admin,identity,lifecycle,deletion,automation,conversations,beams,contacts,delivery,messages,views,storage,billing,search,notifications,federation,links,delegation,incremental,events,appSessions,integrations,connections,emailBridge,exports]);
+export const ROUTES=Object.freeze([moved,site,admin,identity,lifecycle,deletion,automation,conversations,beams,contacts,delivery,messages,views,storage,billing,search,notifications,federation,links,delegation,incremental,events,appSessions,integrations,connections,emailBridge,exports,appRemoval]);
 export const STAGES=Object.freeze(['edge','public','anonymous','unauthenticated','api','session','beforeActivity','owner','pages']);
 for(const module of ROUTES)for(const name of Object.keys(module.stages??{}))if(!STAGES.includes(name))throw new TypeError(`Unknown route stage ${name}`);
 

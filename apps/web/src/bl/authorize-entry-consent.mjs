@@ -59,7 +59,7 @@ export function createConsentExperience({config={},prepare,describe,transport={}
    const fields=entry.target.fields??Object.keys(state.configuration.schema.fields);if(Object.keys(state.configuration.schema.fields).some(name=>!fields.includes(name)))fault('consent_adapter_invalid');
    for(const name of Object.keys(entry.suggestion?.values??{}))if(!own(state.configuration.schema.fields,name)||state.configuration.schema.fields[name].type==='resource')fault('consent_adapter_invalid');
   }
-  if(state.intent==='grant-more'&&!state.items.length&&!state.setup.length&&!state.blocked){state.result=await requireTransport('decision')({entry:state.entry,view:state.view,approved:[],noDelta:true});state.returning=true;state.step='recap';}
+  if(state.intent==='grant-more'&&!state.items.length&&!state.setup.length&&!state.blocked&&!state.view?.pendingRemoval){state.result=await requireTransport('decision')({entry:state.entry,view:state.view,approved:[],noDelta:true});state.returning=true;state.step='recap';}
   return state;
  }
  async function transition(state,kind,detail={}){

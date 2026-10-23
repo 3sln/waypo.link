@@ -67,7 +67,7 @@ export class AppConnections{
  /** `slots`: provider-recognized slot manifests by exact URL (trusted pins). `builtins`: provider-authored built-in
   * integrations by id -> {name, manifest}. `severed(owner)`: optional hook run after a legacy disconnect that wrote
   * cascade rows (the account controller drains them); its failure never undoes the committed disconnect. */
- constructor({metadata,origin,config,clock=()=>Date.now(),slots=RECOGNIZED_SLOTS,builtins={},severed,uuid=()=>crypto.randomUUID()}){Object.assign(this,{metadata,origin,config,clock,slotPins:slots,builtins,severed,uuid});}
+ constructor({metadata,origin,config,clock=()=>Date.now(),slots=RECOGNIZED_SLOTS,builtins={},severed,subjectDeleted,uuid=()=>crypto.randomUUID()}){Object.assign(this,{metadata,origin,config,clock,slotPins:slots,builtins,severed,subjectDeleted,uuid});}
  async id(owner,clientId){const encoded=await digest(globalThis.crypto,`app-connection/v1\0${owner}\0${clientId}`);const hex=[...atob(encoded.replace(/-/g,'+').replace(/_/g,'/'))].slice(0,16).map(c=>c.charCodeAt(0).toString(16).padStart(2,'0')).join('');return `${hex.slice(0,8)}-${hex.slice(8,12)}-8${hex.slice(13,16)}-a${hex.slice(17,20)}-${hex.slice(20,32)}`;}
  async binding(owner,clientId){const id=await this.id(owner,clientId);const r=await this.metadata.get(prefix+id);if(r&&!valid(r))fail('unavailable','Invalid connection record.',503);return {id,generation:r?.generation??0,notificationGeneration:r?.notifications?.generation??1};}
  async registerBrowser(owner){return this.register(owner,{id:`${this.origin}/automation/browser`,name:'Browser automation'},undefined,{transport:'browser',provenance:{kind:'owner-browser-consent'}});}
@@ -121,7 +121,7 @@ export class AppConnections{
    let cascaded=false;
    if(r.status!=='disconnected'){
     if(r.generation>=Number.MAX_SAFE_INTEGER)fail('unavailable','Connection generation unavailable.',503);
-    const migrated=r.state!==undefined;r.status='disconnected';r.generation++;r.disconnectedAt=this.clock();
+    const migrated=r.state!==undefined;r.severanceReason=reason;r.status='disconnected';r.generation++;r.disconnectedAt=this.clock();
     if(migrated){r.state='disconnected';r.stateChangedAt=r.disconnectedAt;}
     await tx.put(prefix+id,r);
     const removed=await this.#vacateConnection(tx,id);
@@ -130,6 +130,7 @@ export class AppConnections{
      await this.#cascade(tx,[{kind:'delegations',clientId:r.clientId,reason:['deleted','system'].includes(reason)?reason:'uninstalled'}]);cascaded=true;
     }
    }
+   if(reason==='uninstalled'&&r.severanceReason!==reason){r.severanceReason=reason;await tx.put(prefix+id,r);}
    return {result:{disconnected:true,app:this.view(r)},cascaded};
   });
   if(out.cascaded&&typeof this.severed==='function')try{await this.severed(owner);}catch{/* Durable cascade rows are retried. */}
@@ -198,7 +199,7 @@ export class AppConnections{
    if(from==='disconnected')fail('connection_disconnected','This connection was disconnected. Connect again with fresh consent.',409);
    if(op==='suspend'){
     this.#fenced(r,input.expectedGeneration,false);if(from==='suspended')return this.view(r);
-    bump(r);set('suspended');events.push({type:'connection-revoked',connection:id,clientId:r.clientId,generation:r.generation,terminal:false,reason:'suspended'});
+    bump(r);set('suspended');r.suspensionReason='owner';events.push({type:'connection-revoked',connection:id,clientId:r.clientId,generation:r.generation,terminal:false,reason:'suspended'});
     await this.#cascade(tx,this.#delegationRows(await this.#affected(tx,id),'system'));
    }else if(op==='resume'){
     this.#fenced(r,input.expectedGeneration,true);if(from!=='suspended')fail('invalid_state','Only a paused connection can be resumed.',409);
@@ -272,9 +273,15 @@ export class AppConnections{
   let severed=0,after='';const now=this.clock(),lifecycle=await tx.get(LIFECYCLE_STATE),mark=`${lifecycle?.generation??0}:${epochOf(lifecycle)}:${lifecycle?.phase??'none'}`;
   for(;;){
    const rows=[...(await tx.list({prefix,startAfter:after,limit:200})).entries()];
-   for(const [key,r] of rows)if(r?.kind==='app-connection'&&valid(r)&&r.owner===owner&&r.status!=='disconnected'){
-    bump(r);r.status='disconnected';r.state='disconnected';r.disconnectedAt=now;r.stateChangedAt=now;await tx.put(key,r);severed++;
-    await this.#vacateConnection(tx,r.id);await this.#emit(tx,[{type:'connection-revoked',connection:r.id,clientId:r.clientId,generation:r.generation,terminal:true,reason:'account-'+reason}]);
+   for(const [key,r] of rows)if(r?.kind==='app-connection'&&valid(r)&&r.owner===owner){
+    const eligible=connectionState(r)!=='manifest-invalid'&&(r.status!=='disconnected'||r.severanceReason==='account-suspended');
+    if(r.status!=='disconnected'){
+     bump(r);r.status='disconnected';r.state='disconnected';r.disconnectedAt=now;r.stateChangedAt=now;r.severanceReason=eligible?'account-'+reason:'manifest-invalid';
+     await this.#vacateConnection(tx,r.id);await this.#emit(tx,[{type:'connection-revoked',connection:r.id,clientId:r.clientId,generation:r.generation,terminal:true,reason:'account-'+reason}]);severed++;
+    }
+    // The trusted host hook appends directly to the durable SET outbox in this same severance transaction.
+    if(reason==='deleted'&&eligible&&r.subjectDeletedAt===undefined&&typeof this.subjectDeleted==='function'&&await this.subjectDeleted(tx,r,now))r.subjectDeletedAt=now;
+    await tx.put(key,r);
    }
    if(rows.length<200)break;const next=rows.at(-1)[0];if(next<=after)break;after=next;
   }

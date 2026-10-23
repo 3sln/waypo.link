@@ -1,4 +1,4 @@
-import {ownerFlags,existingFeature,flagsFor} from './flags.mjs';
+import {ownerFlags,existingFeature,flagsFor,siteGlobal} from './flags.mjs';
 // AccountController slice EXT-X4, connections (docs/architecture/extensibility-design.md §10 X4; docs/spec/integrations.md
 // §3, §7; docs/spec/extensions.md §3, §5). `methods` are installed on AccountController.prototype (`this` is the
 // controller); `rpc` lists what `invoke` accepts (packages/runtime/account/index.mjs).
@@ -37,7 +37,7 @@ const engines=new WeakMap();
 function connectionsEngine(c){
  let engine=engines.get(c);
  if(!engine){
-  const connections=new AppConnections({metadata:c.metadata,origin:c.config.APP_ORIGIN,builtins:c.config.BUILT_IN_INTEGRATIONS??BUILT_IN_INTEGRATIONS,slots:c.config.CONNECTION_SLOTS??recognizedSlots(c.config)});
+  const connections=new AppConnections({subjectDeleted:async(tx,r,now)=>{for(const [path,pending]of await tx.list({prefix:'app-removal/record/'}))if(pending.entity===r.owner&&pending.client_id===r.clientId&&['pending','in-progress'].includes(pending.state)){await tx.put(path,{...pending,state:'forced',outcome:'forced',committed_at:now,access_ends_by:now+360000});await tx.delete('app-removal/open/'+encodeURIComponent(pending.client_id));}if(!siteGlobal(c.config,'SUBJECT_DELETED_EVENTS_ENABLED')||!r.integration?.snapshot?.manifest?.events_endpoint)return false;const {enqueueIntegrationEvent}=await import('../integration-events.mjs');await enqueueIntegrationEvent(tx,{type:'subject-deleted',connection:r.id,generation:r.generation,notBefore:now+360000},{now});return true;},metadata:c.metadata,origin:c.config.APP_ORIGIN,builtins:c.config.BUILT_IN_INTEGRATIONS??BUILT_IN_INTEGRATIONS,slots:c.config.CONNECTION_SLOTS??recognizedSlots(c.config)});
   Object.defineProperty(connections,'slotPins',{get:()=>c.config.CONNECTION_SLOTS??recognizedSlots(c.config)});
   engine=createAppEngine({providers:{clock:systemClock,random:cryptoRandom,audit:nullAudit,connections:connectionsProvider({connections,enabled:true,config:c.config,flags:{for:ctx=>ownerFlags(c.config,ctx?.subject?.owner??ctx?.owner,ctx?.client?.clientId??ctx?.clientId)},account:typeof c.config.IDENTITY_ACCOUNT==='function'?owner=>c.config.IDENTITY_ACCOUNT(owner):undefined})}});
   engines.set(c,engine);

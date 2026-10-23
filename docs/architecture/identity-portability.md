@@ -480,13 +480,29 @@ Engine-first: every operation is an ngin Action or Query in a domain module, dis
   - The authorization request answers `identity_moved` with `{to}` (hook in `packages/runtime/routes/federation.mjs`).
   - The move endpoint is `POST /bindle/portability/move`. Hooks for directory.v1 and identity documents are exported, but those surfaces are not mounted, so `portability.v1` is not advertised.
   - Tests: `tests/moved-routes.test.mjs`.
+- **PORT-4: implemented locally, persons only, behind `IDENTITY_TRANSFER_IN_ENABLED` (class c, requires `SIGNUP_ENABLED`, default off).**
+  - Engine: `packages/identity/transfer-in.mjs`. The provider-level half (`assessTransferIn`, `TransferInIntake.check`/`reserve`) verifies the package and its key correspondence and applies §9.3 against the source's live manifest, directory and identity document. It decides `attested` or `unattested` and reserves a `pending-transfer` identity record bound to the package key. The account half (`TransferInService`, `transfer-in.*`, dispatched by `packages/runtime/account/transfer-in.mjs`) imports the keys with the source's published history, signs the statement with `seq`/`prev` continuing the source's `moves`, polls the move endpoint with a per-source `redirect_base`, verifies the attestation under PORT-5's attestation-key pins and activates in idempotent stages. The stages are: rotation by a continuity statement from the imported key (P11), a fresh certification key, the identity record `active` with `moves`, its identity URI, its origin principal and an epoch above the attested `aep`, then the recovery-file port.
+  - Unattested transfer-in: from a 3sln-format file only, refused while the source declares `portability.v1` or serves the identity, re-checked before activation, labelled, and keyed by this host's own `(iss, sub)`.
+  - A destination cancel is refused once the source has bound the statement (the owner cancels at the source). An attestation that does not verify holds activation (`held`) and never drops the identity.
+  - `packages/identity/attestation-keys.mjs`: the attestation key set as one continuity chain (P16), `IDENTITY_ATTESTATION_KEYS`, with the legacy single `IDENTITY_ATTESTATION_KEY` read as a one-key root. It also publishes the set at `GET /bindle/portability/attestation-keys` (in `packages/runtime/routes/moved.mjs`) and carries `SHIPPED_ATTESTATION_ROOTS`; the 3sln.me list is empty until a root is minted, so 3sln.me attestations fail closed rather than trust on first use.
+  - `keys.mjs` custody fence (the guard PORT-2 flagged): nothing mints, exports or signs for a moved owner, nor for an arriving identity before activation. The only exceptions are `importTransfer`, the statement signer and `rotateAtActivation`. Imported keys and their history are pinned (never pruned).
+  - `moves`, the key history (`created`/`retired`) and `use:"cert"` keys are published by `identityDocument`/`directoryAnswer`, exported as hooks; directory.v1 is still not mounted.
+  - Deliberately refused, though classified as the spec decides: returns to this provider (`return_unsupported`) and displacement of an unattested identity (`displacement_unsupported`). Both need a terminal-record replacement primitive in the identity repository, and a return also needs reuse of the account's lifecycle tombstone.
+  - Adapters: the Worker wires the identity port and strictly-public egress with a DoH screen. Node keeps transfer-in unconfigured (it refuses) until a DNS-pinned GET/POST transport exists. No recovery-issuance port exists yet, so activation reports `recoveryRequired`.
+  - Tests: `tests/transfer-in.test.mjs` (against the real PORT-2 source and PORT-3 hooks), `tests/transfer-in-runtime.test.mjs` and the seeded `tests/transfer-in-chaos.test.mjs`.
+- **PORT-5: implemented locally, behind `IDENTITY_SUCCESSOR_ADOPTION_ENABLED` (class c, default off).**
+  - `packages/identity/successors.mjs`: successor pins and index, per-issuer attestation-key pins with preconfigured roots, attestation resets (alerted), `attestation_first_use`, automatic adoption with the fetch-based §8.3 items 4 and 5, equivocation and replay, pending successors with explicit local adoption, first contact with the IP-R1-M8 budget rule, the background-refresh hook (redirect hints, at most 3 hops, cycles refused) and presentation intake (queued, verified in the background).
+  - The portability fetch client applies the client-metadata fetch policy, and its budgets are spent before egress.
+  - Clarifications it settles (for the spec owner): item 4 is checked once against the final destination when catching up several moves; a `200` naming a different identity URI at an earlier host is a return and counts as "let go"; P16 pinning starts with the relationship (track, adoption, first contact) rather than only the first fetch.
+  - No caller is wired yet: organizations and BindleBox call its port.
+  - Tests: `tests/successors.test.mjs` and the seeded network chaos `tests/successors-chaos.test.mjs`.
 - **Open after PORT-2/3 (unsigned, for owners):**
   - The identity record keeps no history of removed or replaced emails, so path (b) notices reach only those detached by elevated proof.
   - An elevated-proof abort invalidates the current file, but there is no active-account reissue path.
   - The step-up credential is not recorded, so the contest window is keyed by the session's passkey or session.
   - No certification keys exist to revoke, and open app removals are not concluded explicitly.
-  - `keys.mjs` `ensure` would mint a fresh key if any path called it for a moved owner. Every current caller needs an active identity.
-  - The attestation key is a single configured JWK until PORT-4's chained set exists.
+  - ~~`keys.mjs` `ensure` would mint a fresh key for a moved owner~~: closed by the PORT-4 custody fence.
+  - ~~The attestation key is a single configured JWK~~: closed by the PORT-4 chained key set (`IDENTITY_ATTESTATION_KEYS`).
   - Notices need a transport that implements `sendTransferNotice` (Worker mail) or Web Push. Commits hold until a notice is accepted.
 
 ### 10.2 Flags (proposed rows for `packages/flags/registry.mjs`, all default off; the flags owner adds them)

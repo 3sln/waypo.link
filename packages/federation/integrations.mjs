@@ -1,3 +1,4 @@
+import {validateRemoval} from './removal.mjs';
 import {contractMethods} from '../core/contract-methods.mjs';
 import {siteGlobal} from '../flags/read.mjs';
 // EXT-X3: the integration manifest (docs/spec/integrations.md §2) is the `bindle_integration` member of a client's OAuth
@@ -54,7 +55,7 @@ function setupFragment(entry,{artefactVersions=false}={}){
  * the provider's hosts. `slots`/`contracts` are trusted pins for claim validation; without them extension entries stay
  * syntax-checked (`unknown`) so the snapshot never depends on fetch timing. Returns
  * {status:'absent'|'valid'|'unrecognized'|'invalid', manifest?, v?, reason?}; never throws for hostile input. */
-export function validateIntegrationManifest(value,{clientId,confidential=false,redirectUris=[],jwksUri,reserved=[],slots,contracts={},artefactVersions=false}={}){
+export function validateIntegrationManifest(value,{clientId,confidential=false,redirectUris=[],jwksUri,initiateLoginUri,reserved=[],slots,contracts={},artefactVersions=false}={}){
  if(value===undefined)return {status:'absent'};
  const invalid=reason=>({status:'invalid',reason});
  const prefix=clientPrefix(clientId);if(!prefix)return invalid('invalid_client');
@@ -77,6 +78,7 @@ export function validateIntegrationManifest(value,{clientId,confidential=false,r
   const rpc=prefixedURL(r.rpc_endpoint,clientId),discovery=prefixedURL(r.discovery_endpoint,clientId),list=idList(r.contracts,INTEGRATION_LIMITS.contracts),dpop=r.dpop===undefined?'none':DPOP.includes(r.dpop)?r.dpop:undefined;
   if(rpc&&discovery&&list&&dpop)manifest.resources={rpc_endpoint:rpc,discovery_endpoint:discovery,contracts:list,dpop,...cv?{cv}:{}};
  }
+ const removal=validateRemoval(value.removal,{clientId,confidential,redirectUris,initiateLoginUri,managementUrl:manifest.management_url,eventsEndpoint:manifest.events_endpoint,rpcEndpoint:manifest.resources?.rpc_endpoint,discoveryEndpoint:manifest.resources?.discovery_endpoint});if(removal)manifest.removal=removal;
  // Each audience names exactly one purpose; a collision is a security-relevant defect, never silently repaired.
  const endpoints=[manifest.events_endpoint,manifest.resources?.rpc_endpoint,manifest.resources?.discovery_endpoint].filter(Boolean);
  if(new Set(endpoints).size!==endpoints.length||endpoints.includes(manifest.management_url))return invalid('endpoint_collision');

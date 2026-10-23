@@ -41,11 +41,11 @@ import {busKeys} from '../events/cursor.mjs';
 // ==== end EV-3 doorbell hunk ====
 
 const EVENT=name=>`https://spec.bindle.example/events/${name}/v1`;
-export const INTEGRATION_EVENT_TYPES=Object.freeze({'preferences-updated':PREFERENCES_UPDATED_EVENT,...Object.fromEntries(['credential-revoked','connection-revoked','connection-resumed','resource-detached'].map(name=>[name,EVENT(name)])),'bus-advanced':BUS_ADVANCED_EVENT/* EV-3 */});
+export const INTEGRATION_EVENT_TYPES=Object.freeze({'preferences-updated':PREFERENCES_UPDATED_EVENT,...Object.fromEntries(['credential-revoked','connection-revoked','subject-deleted','connection-resumed','resource-detached'].map(name=>[name,EVENT(name)])),'bus-advanced':BUS_ADVANCED_EVENT/* EV-3 */});
 export const SET_TYP='secevent+jwt',SET_MEDIA_TYPE='application/secevent+jwt';
-const REVOCATION=new Set(['connection-revoked','credential-revoked']),CONTROL=new Set([...REVOCATION,'connection-resumed']),LIVE=['configuring','active','degraded'];
-const PRIORITY=Object.freeze({'connection-revoked':0,'credential-revoked':0,'connection-resumed':1,'preferences-updated':2,'resource-detached':2,'bus-advanced':3/* EV-3: lowest */});
-const FIELDS=Object.freeze({'preferences-updated':['fragment'],'credential-revoked':['grants','until'],'connection-revoked':['floor','terminal'],'connection-resumed':['generation'],'resource-detached':['resource'],'bus-advanced':['bus','resource']/* EV-3 */});
+const REVOCATION=new Set(['connection-revoked','credential-revoked','subject-deleted']),CONTROL=new Set([...REVOCATION,'connection-resumed']),LIVE=['configuring','active','degraded'];
+const PRIORITY=Object.freeze({'subject-deleted':0.5,'connection-revoked':0,'credential-revoked':0,'connection-resumed':1,'preferences-updated':2,'resource-detached':2,'bus-advanced':3/* EV-3: lowest */});
+const FIELDS=Object.freeze({'subject-deleted':['generation','notBefore'],'preferences-updated':['fragment'],'credential-revoked':['grants','until'],'connection-revoked':['floor','terminal'],'connection-resumed':['generation'],'resource-detached':['resource'],'bus-advanced':['bus','resource']/* EV-3 */});
 /** Spec bounds (§6.4, §11.6, §11.10). `window` ≥ 72 h; `firstRetry` ≤ 10 s; `maxRetry` ≤ 1 h; events responses ≤ 4 KiB. */
 export const INTEGRATION_EVENT_LIMITS=Object.freeze({rows:512,perConnection:64,window:72*3600000,firstRetry:10000,maxRetry:3600000,timeoutMs:5000,responseBytes:4096,setBytes:32768,sends:8,perConnectionSends:2,deadlineMs:20000,ingest:200,log:128,unacked:64,doorbellRows:64,doorbellsPerConnection:32/* EV-3: a separate doorbell row budget */});
 const L=INTEGRATION_EVENT_LIMITS;
@@ -62,7 +62,8 @@ const token16=random=>b64u(random.bytes(16));
 function eventInput(e){
  if(!plain(e)||!Object.hasOwn(FIELDS,e.type)||typeof e.connection!=='string'||!CONNECTION.test(e.connection)||Object.keys(e).some(k=>!['type','connection',...FIELDS[e.type]].includes(k)))fault('invalid_request','Unsupported integration event.');
  const out={type:e.type,connection:e.connection},ok=(test)=>{if(!test)fault('invalid_request','Unsupported integration event.');};
- if(e.type==='preferences-updated'){ok(httpsId(e.fragment));out.fragment=e.fragment;}
+ if(e.type==='subject-deleted'){ok(Number.isSafeInteger(e.generation)&&e.generation>=1&&Number.isSafeInteger(e.notBefore)&&e.notBefore>=0);Object.assign(out,{generation:e.generation,notBefore:e.notBefore});}
+ else if(e.type==='preferences-updated'){ok(httpsId(e.fragment));out.fragment=e.fragment;}
  else if(e.type==='resource-detached'){ok(httpsId(e.resource,512));out.resource=e.resource;}
  else if(e.type==='connection-revoked'){ok(Number.isSafeInteger(e.floor)&&e.floor>=1&&typeof e.terminal==='boolean');Object.assign(out,{floor:e.floor,terminal:e.terminal});}
  else if(e.type==='connection-resumed'){ok(Number.isSafeInteger(e.generation)&&e.generation>=1);out.generation=e.generation;}
@@ -74,10 +75,11 @@ async function meta(tx){const m=await tx.get(META);return m?.v===1?{bells:0,...m
 async function conn(tx,id){const k=await tx.get(CONN+id);return k?.v===1?k:{v:1,seq:0,generation:0};}
 async function remove(tx,m,key){await tx.delete(key);if(bell(key))m.bells=Math.max(0,m.bells-1);/* EV-3 */else m.rows=Math.max(0,m.rows-1);}
 async function log(tx,m,entry,limits){m.log++;await tx.put(LOG+pad(m.log),entry);if(m.log>limits.log)await tx.delete(LOG+pad(m.log-limits.log));}
-async function unacked(tx,m,entry,limits){m.unacked++;await tx.put(UNACKED+pad(m.unacked),entry);if(m.unacked>limits.unacked)await tx.delete(UNACKED+pad(m.unacked-limits.unacked));}
+async function unacked(tx,m,entry,limits){if(entry.type==='subject-deleted')m.subjectDeletedUndelivered=(m.subjectDeletedUndelivered??0)+1;m.unacked++;await tx.put(UNACKED+pad(m.unacked),entry);if(m.unacked>limits.unacked)await tx.delete(UNACKED+pad(m.unacked-limits.unacked));}
 // Appends (or coalesces) one validated event, mutating `m`; the caller writes META. Fails visibly when bounds are full.
 async function put(tx,m,e,now,limits){
  // EV-3: doorbells take their own budget and never count against (or get evicted by) the rows below.
+ if(e.type==='subject-deleted'){const key=ROW+e.connection+'/subject-deleted';if(await tx.get(key))return {coalesced:true};m.order++;m.rows++;await tx.put(key,{...e,key,order:m.order,priority:PRIORITY[e.type],createdAt:now,nextAt:Math.max(now,e.notBefore),attempts:0});return {coalesced:false};}
  if(e.type==='bus-advanced')return putDoorbell(tx,m,e,now,limits);
  const prefix=ROW+e.connection+'/',rows=[...(await tx.list({prefix,limit:limits.perConnection+limits.doorbellsPerConnection+1/* EV-3 */})).entries()].filter(([k])=>!bell(k)),drop=new Set();let key,carry;
  const supersede=k=>{const old=rows.find(([x])=>x===k)?.[1];if(old){drop.add(k);carry=old.firstAttemptAt;}};
@@ -263,7 +265,7 @@ function classify(response){
 function payloadOf(r,c,snap,target){
  if(r.type==='preferences-updated')return {generation:c.generation,body:{fragment:r.fragment,revision:snap.revision??null,values:snap.values===null?null:minimize(snap.values)}};
  if(r.type==='connection-revoked')return {generation:r.floor,body:{generation_floor:r.floor,terminal:r.terminal}};
- if(r.type==='connection-resumed')return {generation:r.generation,body:{}};
+ if(r.type==='connection-resumed'||r.type==='subject-deleted')return {generation:r.generation,body:{}};
  if(r.type==='credential-revoked')return {generation:c.generation,body:{grants:r.grants,until:r.until}};
  if(r.type==='bus-advanced')return {generation:c.generation,body:{bus:target.bus,head:target.head}};/* EV-3: data-free */
  return {generation:c.generation,body:{resource:r.resource}};
@@ -271,7 +273,7 @@ function payloadOf(r,c,snap,target){
 async function drop(x,r,code){
  const now=x.clock.now();
  await x.store.transaction(async tx=>{const cur=await tx.get(r.key);if(!cur||cur.order!==r.order)return;const m=await meta(tx);await remove(tx,m,r.key);
-  const entry={at:now,connection:r.connection,type:r.type,outcome:'dropped',code};await log(tx,m,entry,x.limits);if(REVOCATION.has(r.type)&&code==='unknown_connection')await unacked(tx,m,{...entry,reason:code},x.limits);await tx.put(META,m);});
+  const entry={at:now,connection:r.connection,type:r.type,outcome:'dropped',code};await log(tx,m,entry,x.limits);if(REVOCATION.has(r.type)&&(code==='unknown_connection'||r.type==='subject-deleted'))await unacked(tx,m,{...entry,reason:code},x.limits);await tx.put(META,m);});
  return 'dropped';
 }
 async function attempt(x,owner,port,r,c){
@@ -320,7 +322,7 @@ async function settle(x,owner,port,r,c,lease,outcome){
   else if(now-cur.firstAttemptAt>=x.limits.window){
    // X6-S2: the endpoint failed for the whole window, so the connection's backlog expires with this row instead of
    // starting its own 72 h one row at a time; revocations among it are recorded as unacknowledged.
-   result='expired';for(const [key,row] of await tx.list({prefix:ROW+c.id+'/',limit:x.limits.perConnection*2+x.limits.doorbellsPerConnection+1/* EV-3 */})){await remove(tx,m,key);
+   result='expired';for(const [key,row] of await tx.list({prefix:ROW+c.id+'/',limit:x.limits.perConnection*2+x.limits.doorbellsPerConnection+1/* EV-3 */})){if(row.type==='subject-deleted'&&now-(row.firstAttemptAt??row.nextAt)<x.limits.window)continue;await remove(tx,m,key);
     if(REVOCATION.has(row.type))await unacked(tx,m,{...entry,type:row.type,seq:row.seq??null,reason:'expired'},x.limits);else if(!k.degraded){k.degraded=true;health=true;}
     if(key!==r.key)await log(tx,m,{at:now,connection:c.id,type:row.type,outcome:'expired',code:'backlog'},x.limits);}}
   else{cur.lastError=outcome.code;await tx.put(r.key,cur);result='retrying';}

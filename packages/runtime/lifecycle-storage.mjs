@@ -150,7 +150,7 @@ export async function purgeBatch(c,owner,{identity,fence,budget=64,log=()=>{},re
    await c.archives.delete(`accounts/${owner}.json`);
    // A rerun after a crash between the tombstone write and the wipe keeps the first tombstone.
    const prior=await c.metadata.get(TOMBSTONE_KEY);
-   const tombstone=prior?.owner===owner?prior:{version:1,owner,deletedAt:clock(),reason:tombstoneReason(reason),...reason==='inactive'?{}:{basis,requestedAt},deletedBlobs:job.deleted,foreignReferences:job.foreign,vectorIndexUnavailable:job.vectorIndexUnavailable===true};
+   const tombstone=prior?.owner===owner?prior:{version:1,owner,deletedAt:clock(),reason:tombstoneReason(reason),...reason==='inactive'?{}:{basis,requestedAt},deletedBlobs:job.deleted,foreignReferences:job.foreign,vectorIndexUnavailable:job.vectorIndexUnavailable===true,counts:{subjectDeletedUndelivered:[...(await c.metadata.list({prefix:'integration-events/row/'})).values()].filter(r=>r.type==='subject-deleted').length+((await c.metadata.get('integration-events/meta'))?.subjectDeletedUndelivered??0)}};
    // The tombstone is written before the wipe and survives it, so a crash never leaves a rebuildable empty account.
    await c.metadata.put(TOMBSTONE_KEY,tombstone);
    if(typeof c.metadata.purgeAll==='function')await c.metadata.purgeAll({keep:['owner',TOMBSTONE_KEY]});

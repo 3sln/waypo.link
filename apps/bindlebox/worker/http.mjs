@@ -15,14 +15,25 @@ export async function bodyBytes(request,limit=LIMITS.maxRequestBytes){
 export function httpError(error){const known=error instanceof MailboxFault||error instanceof ProtocolFault,status=known&&Number.isSafeInteger(error.status)?error.status:500;return Response.json({error:known?error.code:'internal_error'},{status,headers:{...headers,...status===503?{'Retry-After':'60'}:{}}});}
 // Authentication is a configured, live verifier (ordinary app credentials). Never accept owner/actor from JSON,
 // query parameters or untrusted forwarding headers. Ingress routes only after the capability edge check.
-export function createHTTP({BINDLEBOX_ENABLED=false,authenticate,mailbox,edge,conversationEdge,metadata,services,assets,archiveEnabled=typeof services?.objectStorage==='function'&&typeof services?.archiveKeys==='function'}={}){
+export function createHTTP({BINDLEBOX_ENABLED=false,APP_CLEAN_REMOVAL_ENABLED=false,authenticate,mailbox,edge,conversationEdge,metadata,services,assets,archiveEnabled=typeof services?.objectStorage==='function'&&typeof services?.archiveKeys==='function'}={}){
  const web=createWebHTTP({BINDLEBOX_ENABLED:enabled(BINDLEBOX_ENABLED),archiveEnabled,authenticate,mailbox});
  return async request=>{
   if(!enabled(BINDLEBOX_ENABLED))return Response.json({error:'not_found'},{status:404,headers});
   const url=new URL(request.url),path=url.pathname;
-  if(request.method==='GET'&&path==='/')return webShell();
+  if(request.method==='GET'&&(path==='/'||path==='/bindle/remove'&&enabled(APP_CLEAN_REMOVAL_ENABLED)&&typeof services?.verifyRemoval==='function'))return webShell();
   if(request.method==='GET'&&['/app.mjs','/styles.css'].includes(path)&&assets)return assets(request);
   const client=await web(request);if(client)return client;
+  if(request.method==='POST'&&['/api/removal/prepare','/api/removal/complete'].includes(path))try{
+   if(!enabled(APP_CLEAN_REMOVAL_ENABLED)||typeof services?.verifyRemoval!=='function')fault('not_found','Not found.',404);
+   if(request.headers.get('Origin')!==url.origin)fault('not_authorized','Not authorized.',403);
+   if(typeof authenticate!=='function')fault('recipient_unavailable','Authentication unavailable.',503);
+   if(request.headers.get('Content-Type')?.split(';')[0]!=='application/json')fault('invalid_input','Use application/json.',415);
+   const actor=await authenticate(request);if(actor?.kind!=='owner')fault('not_authorized','Not authorized.',403);
+   const input=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(await bodyBytes(request,16384))),box=await mailbox(actor.owner);
+   if(path.endsWith('/prepare')){const claims=await services.verifyRemoval({token:input.removal_request,owner:actor.owner,url:request.url});await box.run(actor.owner,'shell.removal-prepare',{input:{claims}});return Response.json(await box.run(actor.owner,'shell.removal-options'),{headers});}
+   return Response.json(await box.run(actor.owner,'shell.removal-complete',{input:{choice:input.choice}}),{headers});
+  }catch(error){return httpError(error);}
+
   if((path==='/bindle/ingress'||/^\/bindle\/ingress\/return\/[A-Za-z0-9_-]{32}$/.test(path))&&request.method==='POST')try{
    if(!edge)fault('recipient_unavailable','Ingress index unavailable.',503);
    const wire={url:request.url,method:'POST',headers:Object.fromEntries(request.headers),body:await bodyBytes(request)},deliver=(name)=>async(owner,input)=>(await mailbox(owner)).run(owner,name,{input});
@@ -36,6 +47,7 @@ export function createHTTP({BINDLEBOX_ENABLED=false,authenticate,mailbox,edge,co
      if(contentType!=='application/secevent+jwt')fault('invalid_input','Use application/secevent+jwt.',415);
      if(typeof services?.verifyEvent!=='function')fault('recipient_unavailable','Event verifier unavailable.',503);
      const event=await services.verifyEvent({url:request.url,token:new TextDecoder('utf-8',{fatal:true}).decode(await bodyBytes(request,65536))});
+     if(event?.unknown===true)return new Response(null,{status:202,headers});
      if(!event?.owner)fault('not_authorized','Not authorized.',403);const box=await mailbox(event.owner);await box.run(event.owner,'shell.integration-event',{input:{event}});return new Response(null,{status:202,headers});
     }
     if(contentType!=='application/json')fault('invalid_input','Use application/json.',415);

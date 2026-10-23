@@ -5,13 +5,13 @@ import {siteGlobal} from '../flags/read.mjs';
 // issuer, kid, purpose and public point, published before use and retained after retirement until every token they
 // signed has expired. Consumer-facing minting routes and SET minting are later slices (EXT-X8, EXT-X6).
 import {FederationFault} from './schema.mjs';
-export const ACCESS_TOKEN_TYP='at+jwt',BROKERING_ALG='ES256',BROKERING_JWKS_PATH='/oauth/brokering/jwks',BROKERING_PURPOSES=Object.freeze(['invoke','describe','discover','event']);
+export const ACCESS_TOKEN_TYP='at+jwt',BROKERING_ALG='ES256',BROKERING_JWKS_PATH='/oauth/brokering/jwks',BROKERING_PURPOSES=Object.freeze(['invoke','describe','discover','event','removal']);
 /** exp − iat bounds in seconds (integrations §5.3); the verifier leeway bound is §5.5 step 5. */
 export const ACCESS_LIFETIMES=Object.freeze({invoke:300,describe:60,discover:60}),MAX_ACCESS_LIFETIME=300,MAX_LEEWAY=30;
 /** JWKS response max-age. Lead time ≥ verifier cache (≤ 1 h, §5.5 step 2) + this; overlap ≥ lifetime + leeway. */
 /** Overlap covers the SET acceptance window (600 s + 30 s, §6.1), which exceeds lifetime + leeway + clock error (360 s, §7.2). */
 export const JWKS_MAX_AGE=300,MIN_OVERLAP=(600+MAX_LEEWAY)*1000,DEFAULT_LEAD=(3600+JWKS_MAX_AGE+60)*1000;
-const TYPES=Object.freeze({invoke:'at+jwt',describe:'at+jwt',discover:'at+jwt',event:'secevent+jwt'});
+const TYPES=Object.freeze({invoke:'at+jwt',describe:'at+jwt',discover:'at+jwt',event:'secevent+jwt',removal:'bindle-removal+jwt'});
 /** P-256 order; signatures are normalized to low-s and high-s is refused, so a token has one byte encoding. */
 const N=0xffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551n,HALF=N>>1n;
 const big=bytes=>BigInt('0x'+Array.from(bytes,b=>b.toString(16).padStart(2,'0')).join(''));
@@ -32,7 +32,7 @@ const segment=(value,reason)=>{let raw,parsed;try{raw=new TextDecoder('utf-8',{f
 const exactKeys=(value,keys)=>Object.keys(value).every(k=>keys.includes(k));
 const safe=(value,max)=>typeof value==='string'&&value.length>0&&value.length<=max&&!/[\u0000-\u001f\u007f]/.test(value);
 const httpsURL=(value,max=2048)=>{if(!safe(value,max))return null;try{const u=new URL(value);return u.protocol==='https:'&&!u.username&&!u.password&&!u.search&&!u.hash&&u.href===value?u:null;}catch{return null;}};
-const KID=/^(invoke|describe|discover|event)\.[A-Za-z0-9_-]{22}$/,JTI=/^[A-Za-z0-9_-]{22,128}$/,CONNECTION=/^[A-Za-z0-9._~-]{1,128}$/,GRANT=/^[A-Za-z0-9._~-]{1,128}$/,METHOD=/^[A-Za-z][A-Za-z0-9_]{0,63}$/;
+const KID=/^(invoke|describe|discover|event|removal)\.[A-Za-z0-9_-]{22}$/,JTI=/^[A-Za-z0-9_-]{22,128}$/,CONNECTION=/^[A-Za-z0-9._~-]{1,128}$/,GRANT=/^[A-Za-z0-9._~-]{1,128}$/,METHOD=/^[A-Za-z][A-Za-z0-9_]{0,63}$/;
 /** Public members only; anything private, foreign or ambiguous is refused rather than filtered. */
 function publicJwk(jwk){
  if(!plain(jwk)||!exactKeys(jwk,['kty','crv','x','y','kid','alg','use'])||jwk.kty!=='EC'||jwk.crv!=='P-256'||jwk.alg!==undefined&&jwk.alg!==BROKERING_ALG||jwk.use!==undefined&&jwk.use!=='sig'||!KID.test(jwk.kid??'')||![jwk.x,jwk.y].every(v=>typeof v==='string'&&/^[A-Za-z0-9_-]{43}$/.test(v)))return null;
@@ -152,7 +152,7 @@ export async function mintAccessToken(keys,{subject,audience,clientId,purpose='i
 export function peekAccessToken(token){
  if(typeof token!=='string'||token.length>8192)invalid('malformed');const parts=token.split('.');if(parts.length!==3)invalid('malformed');
  const header=segment(parts[0],'header'),claims=segment(parts[1],'claims');
- if(!exactKeys(header,['alg','typ','kid'])||Object.keys(header).length!==3)invalid('header');if(header.alg!==BROKERING_ALG)invalid('alg');if(header.typ!==ACCESS_TOKEN_TYP)invalid('typ');if(!KID.test(header.kid)||header.kid.startsWith('event.'))invalid('kid');
+ if(!exactKeys(header,['alg','typ','kid'])||Object.keys(header).length!==3)invalid('header');if(header.alg!==BROKERING_ALG)invalid('alg');if(header.typ!==ACCESS_TOKEN_TYP)invalid('typ');if(!KID.test(header.kid)||(header.kid.startsWith('event.')||header.kid.startsWith('removal.')))invalid('kid');
  return {header,claims,iss:claims.iss,connection:plain(claims.bindle)?claims.bindle.connection:undefined,parts};
 }
 /** Verifies a brokered access token in the integrations §5.5 order. `keys` is the issuer's brokering JWKS (object) or

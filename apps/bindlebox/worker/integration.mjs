@@ -52,12 +52,16 @@ export class MailboxPublicIntake extends BridgeReceive {
 export class MailboxIntegrationEvent extends MailboxAction {
  static operation='shell.integration-event';static deps=['mailboxStore','clock'];
  run({mailboxStore:store,clock}){return store.transaction(async tx=>{
-  const owner=ownerOf(this.actor),event=this.input?.event,config=await readConfig(tx),grant=await tx.get('shell:authorization');
-  if(await tx.get('owner')!==owner||!event||event.owner!==owner||event.issuer!==config.principal.issuer||!grant?.connection||event.connection!==grant.connection||typeof event.jti!=='string'||!event.jti||event.jti.length>128||!Number.isSafeInteger(event.seq)||event.seq<0)denied();
+  const owner=ownerOf(this.actor),event=this.input?.event,config=await tx.get(KEYS.config),grant=await tx.get('shell:authorization');
+  // The verifier resolved (iss, sub) before key fetching; a purged/unknown subject is silent and does no work.
+  if(event?.type==='subject-deleted'&&!config)return {accepted:true};
+  if(await tx.get('owner')!==owner||!event||event.owner!==owner||event.issuer!==config?.principal?.issuer||!grant?.connection||event.connection!==grant.connection||typeof event.jti!=='string'||!event.jti||event.jti.length>128||!Number.isSafeInteger(event.seq)||event.seq<0)denied();
+  if(event.type==='subject-deleted'){if(event.subject!==undefined&&event.subject!==config.principal.subject)denied();await purge(tx);return {accepted:true};}
   const log=await tx.get('shell:set-jtis')??[];if(log.includes(event.jti))return {accepted:true};
   const p=event.payload??{},type=event.type;
   if(type==='connection-revoked'){
    if(!Number.isSafeInteger(p.generation_floor)||p.generation_floor<0)invalid();const floor=Math.max(await tx.get('shell:generation-floor')??0,p.generation_floor);await tx.put('shell:generation-floor',floor);
+   if(p.terminal===true&&grant.generation<floor)await tx.put('shell:purge',{at:clock.now()+30*86400000,floor});
    if(grant.generation<floor){await tx.put('shell:authorization',{...grant,active:false});await tx.delete('shell:renewal');}
   }else if(type==='credential-revoked'){
    if(!Array.isArray(p.grants)||p.grants.length>1024||p.grants.some(id=>typeof id!=='string'||!id||id.length>256)||!Number.isSafeInteger(p.until))invalid();
@@ -69,4 +73,9 @@ export class MailboxIntegrationEvent extends MailboxAction {
   log.push(event.jti);if(log.length>1000)log.shift();await tx.put('shell:set-jtis',log);return {accepted:true};
  });}
 }
-export const INTEGRATION_OPERATIONS=operations(MailboxDescribe,MailboxDiscover,MailboxLinkRevoked,MailboxPublicIntake,MailboxIntegrationEvent);
+async function purge(tx){if(typeof tx.deleteAll==='function')await tx.deleteAll();else for(const [key]of await tx.list({prefix:''}))await tx.delete(key);}
+export class MailboxPurgeExpired extends MailboxAction {
+ static operation='shell.purge-expired';static deps=['mailboxStore','clock'];
+ run({mailboxStore:store,clock}){return store.transaction(async tx=>{const pending=await tx.get('shell:purge');if(!pending)return {purged:false};const grant=await tx.get('shell:authorization');if(grant?.generation>=pending.floor){await tx.delete('shell:purge');return {purged:false};}if(pending.at>clock.now())return {purged:false};await purge(tx);return {purged:true};});}
+}
+export const INTEGRATION_OPERATIONS=operations(MailboxPurgeExpired,MailboxDescribe,MailboxDiscover,MailboxLinkRevoked,MailboxPublicIntake,MailboxIntegrationEvent);

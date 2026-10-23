@@ -21,6 +21,11 @@
 // on, and for idempotent replies about committed moves whatever the flag says. 200 attested, 202 pending, 409 refused
 // (uniform), 429/503 retryable. `portability.v1` is not advertised: it requires `directory.v1`, which is not mounted.
 //
+// Attestation keys `GET /bindle/portability/attestation-keys` (spec §5.1, PORT-4 P16): the published key set of
+// IDENTITY_ATTESTATION_KEYS (or the legacy IDENTITY_ATTESTATION_KEY), public members and continuity only, credentialless
+// CORS. Not flag-gated: keys that signed attestations stay published for as long as the provider operates. Without a
+// configured set it answers the uniform 404.
+//
 // Owner API (session, CSRF; engine-checked step-up): GET /api/account/transfer-out and POST …/{begin,authorize,cancel,
 // dispute,elevate,restart-choice}. Credentialless API (no session; notice links and the isolated recovery page):
 // POST …/link (dispute token), …/waiting (path (b)), …/withdraw (path (b) withdrawal with the same file). The isolated
@@ -32,6 +37,7 @@ import {redirectablePath,redirectTarget,parseMoveStatement} from '../../identity
 import {movedWindow} from '../../identity/lifecycle-tombstone.mjs';
 import {statusCacheControl,isJkt} from '../../identity/delegation.mjs';
 import {TRANSFER_FLAG} from '../../identity/transfer-out.mjs';
+import {ATTESTATION_KEYS_PATH,parseAttestationKeySet,publishedAttestationJwks} from '../../identity/attestation-keys.mjs';
 import {json,body,privateHeaders,routeFlags,flagGlobal,accountHandle,pseudonym,subnet} from './shared.mjs';
 
 export const MOVE_PATH='/bindle/portability/move';
@@ -170,15 +176,24 @@ async function ownerAction({request,env,path,url,engine,context,id,object,owner}
  return json(await object[call](id,input,{kind:'owner',...evidence}));
 }
 
+let parsedKeys={source:undefined,set:null};
+function attestationKeysRoute({request,env}){
+ if(!['GET','HEAD'].includes(request.method))return json({error:'method_not_allowed'},405,{Allow:'GET, HEAD'});
+ const source=env.IDENTITY_ATTESTATION_KEYS??env.IDENTITY_ATTESTATION_KEY;
+ if(parsedKeys.source!==source)parsedKeys={source,set:parseAttestationKeySet(source)};
+ const jwks=publishedAttestationJwks(parsedKeys.set);
+ if(!jwks)return json({error:'not_found'},404,{'Cache-Control':'no-store'});
+ return new Response(request.method==='HEAD'?null:JSON.stringify(jwks),{headers:{'Content-Type':'application/json','Cache-Control':'public, max-age=300','Access-Control-Allow-Origin':'*','Referrer-Policy':'no-referrer','X-Content-Type-Options':'nosniff'}});
+}
 export function allowedMethods(path){
- if(path===MOVE_PATH)return ['POST'];if(path===ROOT)return ['GET'];
+ if(path===MOVE_PATH)return ['POST'];if(path===ATTESTATION_KEYS_PATH)return ['GET','HEAD'];if(path===ROOT)return ['GET'];
  if(path.startsWith(ROOT+'/')&&[...OWNER_ACTIONS,...PUBLIC_ACTIONS].includes(path.slice(ROOT.length+1)))return ['POST'];
  return null;
 }
 export const admission={exempt:path=>path===ROOT||path.startsWith(ROOT+'/')};
 export const stages={
  edge:redirectRoute,
- async public(route){if(route.path===MOVE_PATH)return moveRoute(route);},
+ async public(route){if(route.path===MOVE_PATH)return moveRoute(route);if(route.path===ATTESTATION_KEYS_PATH)return attestationKeysRoute(route);},
  async unauthenticated(route){const action=route.path.startsWith(ROOT+'/')?route.path.slice(ROOT.length+1):null;if(PUBLIC_ACTIONS.includes(action))return publicAction(route,action);},
  async beforeActivity(route){const {path}=route;if(path===ROOT||path.startsWith(ROOT+'/')&&OWNER_ACTIONS.includes(path.slice(ROOT.length+1)))return ownerAction(route);},
 };
