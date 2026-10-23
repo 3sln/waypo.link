@@ -4,6 +4,7 @@
 import { readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { BILLING_PLANS } from '../packages/billing/catalog.mjs';
+import { ORGANIZATION_PLANS } from '../packages/billing/organizations.mjs';
 
 export const rates = Object.freeze({
   r2GB: .015, r2A: 4.5 / 1e6, r2B: .36 / 1e6,
@@ -107,6 +108,20 @@ export function launchPolicy() {
     globalMonthlyMarginalSemanticEstimateAtOneMillionStored: 5 + 1000000*384*rates.vectorQueriedDimensions + 1000000*384*rates.vectorStoredDimensions,
     globalMonthlyMarginalSemanticEstimateAtTwoMillionStored: 5 + 2000000*384*rates.vectorQueriedDimensions + 2000000*384*rates.vectorStoredDimensions };
 }
+// Organization tiers, worst case: full occupancy, every AI credit spent, every card international, support allowance.
+// One AI credit is defined as at most US$0.0001 of modelled provider spend (provisional). Member traffic (certificates,
+// DPoP, directory) is a generous per-member allowance; org-context writes are bounded by the org account's own work budget.
+export const organizationAssumptions = Object.freeze({ occupancy: 1, physicalMultiplier: 1.1, creditUSD: .0001, memberUSDYear: .1,
+  activityUSDYear: 60, supportUSDYear: { 'org-team': 100, 'org-business': 300, 'org-scale': 1000 }, feeRate: .05 + .015 + .005, feeFixed: .5 });
+export function organizationEconomics(a = organizationAssumptions) {
+  return Object.values(ORGANIZATION_PLANS).map(p => {
+    const price = p.annualAmount/100, storage = p.storageBytes/1e9*a.occupancy*a.physicalMultiplier*rates.r2GB*12;
+    const ai = p.aiCreditsMonthly*12*a.creditUSD, members = p.members*a.memberUSDYear, support = a.supportUSDYear[p.id] ?? 0;
+    const fee = price*a.feeRate + a.feeFixed, costs = storage + ai + members + a.activityUSDYear + support + fee;
+    return { plan: p.id, price, storage, ai, members, activity: a.activityUSDYear, support, fee, costs, contribution: price-costs, margin: (price-costs)/price,
+      marginWithBackupCopy: (price-costs-storage)/price };
+  });
+}
 export function report() {
   const accounts = Object.keys(plans).flatMap(p=>Object.keys(profiles).map(s=>account(p,s)));
   const ratios = ['typical','heavy'].map(profile=>{
@@ -114,7 +129,7 @@ export function report() {
     return { profile, freeAnnualCost:free, paidPlans:Object.fromEntries(['paid','plus','ultra'].map(plan=>{const contribution=positive(account(plan,profile).annualContribution);return [plan,{freeAccountsAtZeroMargin:contribution/free,freeAccountsAtHalfContribution:contribution/free/2}];})) };
   });
   const cohorts = [{plan:'free',profile:'typical',count:1000},{plan:'paid',profile:'typical',count:100},{plan:'plus',profile:'typical',count:20},{plan:'ultra',profile:'typical',count:2}];
-  return { pricingDate:'2026-10-12', currency:'USD', launchPolicy: launchPolicy(), rates, included, rounding, accounts, fullOccupancyTypical: Object.keys(plans).map(p=>account(p,'typical',{occupancy:1})), ratios,
+  return { pricingDate:'2026-10-12', currency:'USD', launchPolicy: launchPolicy(), rates, included, rounding, accounts, fullOccupancyTypical: Object.keys(plans).map(p=>account(p,'typical',{occupancy:1})), ratios, organizations: organizationEconomics(),
     fleets: [fleet(cohorts),fleet(cohorts,{supportPerAccountYear:.25,otherAnnual:120}),
       fleet(cohorts.map(c=>({...c,profile:'heavy'}))), fleet([{plan:'free',profile:'heavy',count:10000}])] };
 }

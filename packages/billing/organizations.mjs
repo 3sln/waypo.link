@@ -16,14 +16,15 @@ import {POLAR_CURRENCIES,priceExponent} from './currencies.mjs';
 /**
  * PROVISIONAL PRODUCT DATA (coordinator, 2026-10-23; not signed off by the user, not reviewed pricing). Tiers first,
  * metering later (ORG-D18). Storage runs up to 100 TB at the top tier (§12a). Raw R2 Standard storage alone is about
- * $180, $1,800 and $18,000 a year for these three sizes (unit-economics.md), before backup, egress, AI spend and Polar's
- * fee. `aiCreditsMonthly` are units of the semantic-spend work budget; `members` counts members, foreign members included.
+ * $180, $1,800 and $18,000 a year for these three sizes. Prices keep a contribution margin of at least 50% in the
+ * worst case (full occupancy, every AI credit spent, international cards, support): `organizationEconomics` in
+ * scripts/cost-model.mjs and unit-economics.md. A second stored copy (backup) is not covered by these prices. `aiCreditsMonthly` are units of the semantic-spend work budget; `members` counts members, foreign members included.
  * Amounts are USD cents a year. Every figure is a placeholder for the sandbox and stays revisable.
  */
 export const ORGANIZATION_PLANS=Object.freeze({
  'org-team':Object.freeze({id:'org-team',name:'Team',storageBytes:1_000_000_000_000,aiCreditsMonthly:20_000,members:50,annualAmount:120_000,currency:'usd',provisional:true}),
- 'org-business':Object.freeze({id:'org-business',name:'Business',storageBytes:10_000_000_000_000,aiCreditsMonthly:200_000,members:500,annualAmount:600_000,currency:'usd',provisional:true}),
- 'org-scale':Object.freeze({id:'org-scale',name:'Scale',storageBytes:100_000_000_000_000,aiCreditsMonthly:2_000_000,members:5_000,annualAmount:3_600_000,currency:'usd',provisional:true})
+ 'org-business':Object.freeze({id:'org-business',name:'Business',storageBytes:10_000_000_000_000,aiCreditsMonthly:200_000,members:500,annualAmount:720_000,currency:'usd',provisional:true}),
+ 'org-scale':Object.freeze({id:'org-scale',name:'Scale',storageBytes:100_000_000_000_000,aiCreditsMonthly:2_000_000,members:5_000,annualAmount:6_000_000,currency:'usd',provisional:true})
 });
 export const ORGANIZATION_PLAN_IDS=Object.freeze(Object.keys(ORGANIZATION_PLANS));
 export const ORGANIZATION_PURPOSES=Object.freeze(['create','transfer','claim','renew']);

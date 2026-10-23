@@ -3369,3 +3369,22 @@ Sandbox only, with no live payment.
 **Gates:** core 2900, Worker 89, UI-state 337, test:organizations, e2e 264 with 4 WebKit skips, asset build and Worker dry run.
 
 Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-23 — Organization tier pricing checked against unit economics
+
+The placeholder organization prices were tested against a worst-case cost model: full occupancy, every AI credit spent, all-international Polar fees and a support allowance (`organizationEconomics` in scripts/cost-model.mjs, documented in unit-economics.md).
+- **Team stays at $1,200/yr** (60.7% worst-case margin).
+- **Business rises from $6,000 to $7,200/yr** (50.2% → 56.5%).
+- **Scale rises from $36,000 to $60,000/yr** (27% → 53.4%).
+
+A new guard test (tests/cost-model-organizations.test.mjs) requires at least 50% on every tier.
+
+**Provisional:**
+- one AI credit is at most US$0.0001 of modelled provider spend;
+- backups as a second copy aren't priced in (they would bring Scale to 20%);
+- whether Polar accepts $60,000 card charges is unverified;
+- AI credit enforcement is not wired.
+
+Individual Ultra (1 TB, $250, user-set) keeps the thin margin already recorded in unit-economics.md. That's unchanged and noted for review.
+
+Reviewer: ___ Date: ___ Outcome: ___

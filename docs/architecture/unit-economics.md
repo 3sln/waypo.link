@@ -47,3 +47,22 @@ These counters do not cover every billed request, row, read, semantic operation 
 The portal's visible idle file-offer polling can produce 86,400 requests per 30-day month for a continuously open device, more than the illustrative typical account profile. Multiple devices multiply this. Activity writes are coalesced, but permission/authentication reads remain. Measure real request fan-out, active duration, rows, FTS churn, restoration, physical retention and payload downloads before treating a scenario as representative.
 
 Production evidence remains pending: provider billing reconciliation, measured workloads, actual payments/payouts, abuse controls, backup/restore at meaningful size and a funded free-service reserve. The implementation's 1 TB quota is not a claim of a tested 1 TB restoration or a one-blob upload; object and message size/count limits remain separate. Economics/operations reviewer ___ / Date ___ / Outcome ___.
+
+## Organization tiers (provisional)
+
+Provisional coordinator pricing, 2026-10-23, not signed off. Run `organizationEconomics()` in `scripts/cost-model.mjs`; `tests/cost-model-organizations.test.mjs` fails if any tier drops under a 50% worst-case margin.
+
+The worst case assumes full occupancy with a 1.10 physical multiplier, every AI credit spent, every card international (Polar 5% + 1.5% international + 0.5% subscription + $0.50), US$0.10 per member a year for certificate, DPoP and directory traffic, US$60 a year for organization-account activity at its work-budget ceiling, and a support allowance of $100, $300 or $1,000. One AI credit is defined as at most US$0.0001 of modelled provider spend. That definition carries weight: at ten times that value, the margin falls under 50%.
+
+| Tier | Price/year | Storage | AI | Fee | Worst-case cost | Margin | Margin with a second copy |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Team, 1 TB | $1,200 | $198 | $24 | $84.50 | $472 | 60.7% | 44.2% |
+| Business, 10 TB | $7,200 | $1,980 | $240 | $504.50 | $3,135 | 56.5% | 29.0% |
+| Scale, 100 TB | $60,000 | $19,800 | $2,400 | $4,200.50 | $27,961 | 53.4% | 20.4% |
+
+The earlier placeholders, $6,000 and $36,000, gave 50.2% and 27% under the same assumptions, so Business and Scale were raised. Typical occupancy, which the person model takes as 20%, puts every tier above 75%. These open points remain:
+- whether backups are a separate copy (consider R2 Infrequent Access at $0.01/GB-month) or an add-on;
+- whether Polar accepts card payments of $60,000, or Scale needs invoicing;
+- per-tier enforcement of AI credits, which is not wired yet.
+
+Economics reviewer ___ / Date ___ / Outcome ___.

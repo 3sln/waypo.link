@@ -187,13 +187,13 @@ A separate durable spent-grace record prevents extending the window by repeating
 
 Organization billing is implemented locally in `packages/billing/organizations.mjs` and `packages/orgs/ownership.mjs`, behind `ORGANIZATIONS_ENABLED`. It runs **only** when `POLAR_SERVER=sandbox`; every other server leaves it unconfigured, so no live organization payment can be taken. Offline tests use a Polar model (`tests/helpers/org-polar.mjs`). They do not establish sandbox or provider conformance, webhook delivery, or tax and refund behaviour at Polar.
 
-The tiers are **provisional product data** (coordinator, 2026-10-23, not reviewed pricing). They are placeholders until unit economics covers organization storage at this scale, including backup and restore.
+The tiers are **provisional product data** (coordinator, 2026-10-23, not reviewed pricing). They are sized to keep a contribution margin of at least 50% in the worst case ([unit economics](../architecture/unit-economics.md#organization-tiers-provisional)). A second stored copy for backup is not covered by these prices.
 
 | Plan | Storage | Members | AI credits a month | Annual USD |
 | --- | ---: | ---: | ---: | ---: |
 | Team (`org-team`) | 1 TB | 50 | 20,000 | US $1,200 |
-| Business (`org-business`) | 10 TB | 500 | 200,000 | US $6,000 |
-| Scale (`org-scale`) | 100 TB | 5,000 | 2,000,000 | US $36,000 |
+| Business (`org-business`) | 10 TB | 500 | 200,000 | US $7,200 |
+| Scale (`org-scale`) | 100 TB | 5,000 | 2,000,000 | US $60,000 |
 
 The catalog is configured like the person catalog:
 
