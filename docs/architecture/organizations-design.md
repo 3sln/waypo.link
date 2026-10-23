@@ -1,6 +1,6 @@
 # Organizations: design spike
 
-Status: **provisional design, 2026-10-22, revision 5.1.** Revision 5.1 applies AMD-P4 ([identity portability](identity-portability.md)) and AMD-I5 ([intent links](intent-links.md)), answers R4-H2, and records a *recommendation* on R4-M4 that awaits the user. It is unreviewed. Revision 5 (reviewed in [Review round 4](#review-round-4); resolved findings applied as R4-…, open items remain open). Revision 5 applies the user's decisions of 2026-10-22 (§1c): organization identity is the same as user identity, with a recovery file; Q7, Q10 and Q11 are resolved; and messaging apps get no special treatment. It is not independently reviewed. Revision 4.3: Revision 4.3 adds the user's 3sln.me grant-management policy (§12b) and makes governance explicitly provider policy in the spec (§6.3). Revision 4.2: Revision 4.2 defines the additive growth points of the `relation` artefact kind (spec §9.2) and how each maps to widening. Revision 4.1: Revision 4.1 applies the user's decision on relation admission (§8a.9): membership in an instance is per edge, and partial membership is first-class. Revision 4: Revision 4 adopts the user's relations proposal (§1b, §8a), separates provider roles and adds 3sln.me product rules (§12a). Its effect on the review findings is in [Revision 4 reconciliation](#revision-4-reconciliation), and it was reviewed in [Review round 3](#review-round-3), whose resolved findings are applied (R3-…); its open items remain open. Earlier, revision 2 applied the resolved findings of [Review round 1](#review-round-1); open items there remain open. Revision 3 applies the user's clarification (§1a) and is reconciled with the review in [Revision 3 reconciliation](#revision-3-reconciliation). Revision 3 was reviewed in [Review round 2](#review-round-2), whose resolved findings are applied (R2-…); its open items remain open. Design only: nothing here is implemented, routed or production-verified, and no code changed. The coordinator records decisions in DEVLOG.md. Every decision below is unsigned until it gets a reviewer, a date and an outcome. Terminology: [organizations terminology](organizations-terminology.md). Draft normative skeleton: [spec/organizations.md](../spec/organizations.md).
+Status: **provisional design, 2026-10-22, revision 5.2.** Revision 5.2 applies the user's 2026-10-22 decisions: Q3 (no roles) is accepted, and the grant-management elevation rule is refined (§12b.2a). The refinement supersedes the R4-M4 recommendation; see [Revision 5.2 reconciliation](#revision-52-reconciliation). Q13 stays open. It is unreviewed. Revision 5.1 applies AMD-P4 ([identity portability](identity-portability.md)) and AMD-I5 ([intent links](intent-links.md)), answers R4-H2, and records a *recommendation* on R4-M4 that awaits the user. It is unreviewed. Revision 5 (reviewed in [Review round 4](#review-round-4); resolved findings applied as R4-…, open items remain open). Revision 5 applies the user's decisions of 2026-10-22 (§1c): organization identity is the same as user identity, with a recovery file; Q7, Q10 and Q11 are resolved; and messaging apps get no special treatment. It is not independently reviewed. Revision 4.3: Revision 4.3 adds the user's 3sln.me grant-management policy (§12b) and makes governance explicitly provider policy in the spec (§6.3). Revision 4.2: Revision 4.2 defines the additive growth points of the `relation` artefact kind (spec §9.2) and how each maps to widening. Revision 4.1: Revision 4.1 applies the user's decision on relation admission (§8a.9): membership in an instance is per edge, and partial membership is first-class. Revision 4: Revision 4 adopts the user's relations proposal (§1b, §8a), separates provider roles and adds 3sln.me product rules (§12a). Its effect on the review findings is in [Revision 4 reconciliation](#revision-4-reconciliation), and it was reviewed in [Review round 3](#review-round-3), whose resolved findings are applied (R3-…); its open items remain open. Earlier, revision 2 applied the resolved findings of [Review round 1](#review-round-1); open items there remain open. Revision 3 applies the user's clarification (§1a) and is reconciled with the review in [Revision 3 reconciliation](#revision-3-reconciliation). Revision 3 was reviewed in [Review round 2](#review-round-2), whose resolved findings are applied (R2-…); its open items remain open. Design only: nothing here is implemented, routed or production-verified, and no code changed. The coordinator records decisions in DEVLOG.md. Every decision below is unsigned until it gets a reviewer, a date and an outcome. Terminology: [organizations terminology](organizations-terminology.md). Draft normative skeleton: [spec/organizations.md](../spec/organizations.md).
 
 Protocol/security/architecture sign-off: reviewer ___ / date ___ / outcome ___.
 
@@ -47,6 +47,8 @@ The user had not read this design. They proposed the points below, relayed close
 3. **Certificate lifetime (Q10)** is outside Bindle. The issuer decides, verifiers read it from the certificate, and issuers disclose their revocation bound. 3sln.me defaults to about 11 minutes, configurable per organization.
 4. **Naming (Q11):** Relation, Relationship, and "relation slot" where "slot" alone is ambiguous.
 5. **Parley,** the messaging app, is a regular app. It stores its data in the user's configured object-storage resource. Nothing in this design gives operator-run apps special treatment.
+6. **No roles (Q3)** is accepted as recommended: per-member grants, copy-on-apply templates and app-published member-scoped fields, with live groups deferred.
+7. **Elevation goes to the subject first (refines §12b).** The user's words: "the elevation sits with them until either rejected, accepted, retracted, or the one who's grants are changing accepts. Initially only the subject is given the option to accept the change; but the requester can elevate if the subject rejects the change or takes too long." Applied in §12b.2a. No timeout resolves a request in anyone's favour. This supersedes the R4-M4 recommendation (§5.11).
 
 ## 2. Decisions
 
@@ -63,7 +65,7 @@ All decisions are provisional. Each is reversible until the spec is published.
 | ORG-D7 | **Member context for apps.** An app gets "member M in organization O" only by presenting a certificate that M's home provider issued for O and for that app, either at O's token endpoint (giving a DPoP-bound token that never outlives the certificate, with no refresh token) or directly on each request. The result binds an opaque **membership ID**. Not a member, not connected and failed verification all look the same to the app. | §9, spec §7 |
 | ORG-D8 | ~~Offers and grantor-minted cross-entity tokens.~~ **Superseded by ORG-D15 and ORG-D16** (rev 4). | §8a |
 | ORG-D9 | **Membership is never publicly checkable.** Membership IDs are pairwise per organization, actor chains are pairwise per grantor, and no endpoint answers "is X a member of Y". | §9.1 |
-| ORG-D10 | **Governance is a provider feature.** 3sln.me v1 has a single `admin` power and recommends at least two admins. Critical actions are delayed and notified, and break-glass recovery uses the existing recovery-file format. None of this is spec. Rev 4.3: changing or removing another member's grant-management grant needs that member's consent or the owner's (billing owner's) elevation (§12b). The spec only requires each provider to define and disclose its policy. | §7, §10, §12b |
+| ORG-D10 | **Governance is a provider feature.** 3sln.me v1 has a single `admin` power and recommends at least two admins. Critical actions are delayed and notified, and break-glass recovery uses the existing recovery-file format. None of this is spec. Rev 4.3: changing or removing another member's grant-management grant needs that member's consent or the owner's (billing owner's) elevation (§12b). Rev 5.2: the request goes to that member first; the requester may elevate to the owner only after a rejection or a response period, and an elevation stays pending until someone acts (§12b.2a). The spec only requires each provider to define and disclose its policy. | §7, §10, §12b |
 | ORG-D11 | **Resources belong to exactly one entity.** Membership never confers ownership, and leaving transfers nothing. The organization is the controller of its pool, and 3sln.me is its processor. A DPA is needed. | §12 |
 | ORG-D12 | **The directory/identity-document profile is specified in [spec §3a](../spec/organizations.md#3a-identity-documents-and-key-discovery-directoryv1)** (`directory.v1`) and is a phase A prerequisite (rev 3). It is shared with BindleBox, links and contact delivery, and may move to a companion document later. | §6.1, §13 |
 | ORG-D13 | **Acquiring certificates is out of spec.** The spec fixes the artifact and its verification. Mechanisms are named only as non-normative examples: the home provider's embedded elements with a non-extractable key, a general Bindle authorization flow as a fallback, and native or CLI device grants. 3sln.me's element-based acquisition is an app feature. | §6.2 |
@@ -269,7 +271,7 @@ Alice's home is `alt.example`. Acme and the ERP connection live on 3sln.me. If A
 **Sale of U to Buyer B:**
 
 1. U's current admins (H staff) invite B's staff as U admins, with invitations bound to each invitee. Each admin addition is a critical action: notified to every admin, and effective 72 h after the invitee accepts, unless another admin cancels. The invitee's acceptance never shortens the delay (R1-H4). An organization with a single admin has no one to object, so the delay applies only as notice.
-2. At closing, ownership of U transfers to B's nominee (§12b.3: new subscription, atomic switch). H's staff resign their admin power (self-narrowing is immediate). Otherwise B's owner removes them by elevation (§12b.2), with notice and audit.
+2. At closing, ownership of U transfers to B's nominee (§12b.3: new subscription, atomic switch). H's staff resign their admin power (self-narrowing is immediate). Otherwise B's owner asks each of them to step down and, if they reject or do not answer within the response period, decides the elevation (§12b.2a), with notice and audit. Closing documents should therefore require the resignations, since the platform will not remove holdouts instantly.
 3. U leaves the `group` instance, which ends all of U's edges. H and S end theirs to U.
 4. A transition services agreement becomes a new two-party instance of a `transition-services` relation, with `expires_at` 90 days.
 5. U's integrations are U's own connections, so nothing moves. This only works if each subsidiary connected its own integrations rather than sharing H's. The design rule: **shared services are the same app connected to each organization separately.**
@@ -334,19 +336,14 @@ See §9. In short, an app learns that a user is a member only when the organizat
 ### 5.11 Lost admin (bus factor)
 
 - **Admin lost their device.** Home-provider recovery restores the same `(iss, sub)`, so the membership returns with the next certificate. Recovery changes `aep`, so the admin power resumes after re-confirmation (§5.2a). Nothing organization-specific is needed. This is the common case.
-- **Admin gone for good** (left the company, unreachable, died), and another admin exists. Rev 4.3 (§12b): removing a departed admin's GM grant needs that admin's consent, which they cannot give, or an **owner-approved elevation**. If the owner is the one who is gone, see §12b.3.
+- **Admin gone for good** (left the company, unreachable, died), and another admin exists. Rev 4.3 (§12b): removing a departed admin's GM grant needs that admin's consent, which they cannot give, or an **owner-approved elevation**. Under rev 5.2 (§12b.2a), the removal request goes to the departed admin first; once the response period passes without an answer, the requester elevates it to the owner, who decides. If the owner is the one who is gone, see §12b.3.
 - **No admin left, or the owner gone.** Break-glass is now ordinary **organization recovery** (rev 5). It is the same flow as person recovery, applied to the organization's identity, followed by the grant-management policy:
   - **The file.** At creation, the owner of record (§12b.1) receives the organization's recovery file. It is the same format as a person's ([recovery identity](../spec/recovery-identity.md)), containing the organization UUID and private keys, and it is issued through the same encrypted, save-confirmed flow.
   - **Reissue.** The file is reissued, and the previous reset credential invalidated, on every **ownership** change (transfer or lapse, §12b.3), so a former owner's copy stops working. Admin changes do not trigger a reissue, because the file belongs to the owner role. A copy reissued after a transfer still contains the same keys, because rotation is deferred. The old reset credential cannot start a recovery, but the old owner did hold the private keys, and that is a stated residual until rotation exists (spec §3). Since review round 4, certificates are signed by provider-held certification keys that no file contains, so the old keys cannot mint working certificates (R4-H1). What remains is limited to non-authorizing signatures (links, participation statements) and whatever identity portability accepts (R4-H2).
   - **Passphrase.** An organization file guards durable private keys of a high-value identity against offline guessing, so 3sln.me requires a generated high-entropy passphrase for it, never personal-knowledge answers (R4-M5).
   - **Recovery.** Completing it requires a person authenticated with their own identity. It increases the organization's authority epoch (spec §3) and confers no owner-interface authority by itself.
   - **After recovery (3sln.me policy).** The recovering person becomes a candidate owner and admin. This takes effect 72 h after notice to the current owner and every admin, and only the **current owner of record**, freshly authenticated, can cancel it. Admins cannot, because the file is the owner's instrument (§12b.2). If the recovering person *is* the current owner, it takes effect at once.
-  - **Proposed amendment (R4-M4 position B): a recommendation awaiting the user's confirmation, not a decision.** The coordinator recommends accepting it (2026-10-22). It has three parts:
-    1. Any admin's objection extends the 72 h window to **14 days**. The owner-only cancel stays.
-    2. A recovery-derived owner cannot use elevation (§12b.2) against existing admins for **30 days**. They gain billing and admin, but cannot purge.
-    3. An owner whose own authority is held under spec §5.2a **cannot cancel** until re-confirmed.
-
-    It bounds a thief's damage when the owner is absent, without letting admins block a legitimate successor (an estate, a liquidator) forever.
+  - **~~Proposed amendment (R4-M4 position B)~~ — superseded by the user's elevation rule (2026-10-22, §12b.2a).** The 14-day extension on admin objection, the 30-day ban on elevation by a recovery-derived owner, and the "held owner cannot cancel" clause are withdrawn. What the new rule changes here: an owner, including one derived from recovery, can no longer remove admins instantly. Each removal goes to the admin first, and the owner can decide it only after that admin rejects or the response period passes (§12b.2a). Admins therefore get at least that period's notice before any purge, and every step is audited. **Still open** (see the Revision 5.2 reconciliation): whether the 72 h auto-effect above is itself a timeout resolving in the recovering person's favour, and whether a held owner may cancel.
   - 3sln.me does no KYC and adjudicates no dispute beyond this.
   - **Provisional parameters** for the user to confirm.
 - **Domain-anchored organizations** (§6.1) can later add DNS-proof recovery.
@@ -893,25 +890,44 @@ The user's words: "for entities, when it comes to removing or changing grants th
 
 **Mechanics:**
 
-- **Consent request.** Single pending request per (target, change), with a reason (plain text, ≤ 280 characters). It expires after **7 days**, and expiry counts as a decline. The target sees it in the activity center, approves with fresh authentication, and may decline silently.
-- **Elevation.** The requesting admin asks the owner. The owner approves with a fresh passkey step-up (a status-checked certificate, spec §5.2 step 4). The change takes effect immediately. The affected member is notified immediately with the requester, the owner and the reason, and the change is written to the hash-chained audit. Immediate effect is deliberate: elevation exists mainly to stop a rogue admin.
+- **Consent request.** Single pending request per (target, change), with a reason (plain text, ≤ 280 characters). It goes to the target (the subject) only; see §12b.2a for how it may be elevated. It never expires and never resolves by time. The target sees it in the activity center, approves with fresh authentication, or declines. A decline is no longer silent: the requester learns of it, because it unlocks elevation.
+- **Elevation.** Available only under §12b.2a. The owner decides with a fresh passkey step-up (a status-checked certificate, spec §5.2 step 4). An accepted change takes effect immediately. The affected member is notified immediately with the requester, the owner and the reason, and the change is written to the hash-chained audit. Immediate effect on acceptance is deliberate: elevation exists mainly to stop a rogue admin.
 - **Flood and harassment controls.**
   - At most 3 consent or elevation requests per (requester, target) per 30 days.
   - Identical pending requests are deduplicated.
-  - The owner and the target can mute a requester: muted requests auto-decline and are logged.
+  - The owner and the target can mute a requester: muted requests are declined at once and logged. Muting is the muting person's own action, not a timeout. A target's mute counts as the target's rejection, so the requester may elevate; an owner's mute counts as the owner's rejection of that requester's elevations.
   - Repeated requests are visible in the audit.
-- **Owner abuse.** The owner can remove any admin through elevation, because the owner pays and is accountable. The mitigations are transparency, not prevention:
+- **Owner abuse.** The owner can remove any admin through elevation, because the owner pays and is accountable. Since rev 5.2 the owner must also ask the admin first, and can decide only after a rejection or the response period (§12b.2a), so an owner cannot purge admins instantly. The mitigations are otherwise transparency, not prevention:
   - immediate notice to the affected member;
   - the audit entry, visible to every admin;
   - the member's freedom to leave.
 
   This is stated to members at joining.
 
+### 12b.2a Who decides, and when (user decision, 2026-10-22)
+
+This refines the consent and elevation mechanics above. The user's words: "the elevation sits with them until either rejected, accepted, retracted, or the one who's grants are changing accepts. Initially only the subject is given the option to accept the change; but the requester can elevate if the subject rejects the change or takes too long."
+
+1. **Subject first.** A grant-management change that needs consent goes first to the subject (the member whose GM grant is changing) only. The owner is not asked at this stage.
+2. **When the requester may elevate.** The requester may elevate the request to the owner once the subject **rejects** it, or once the **response period** has passed without an answer. The response period is **7 days by default, configurable per organization**. *The 7-day figure is the coordinator's proposal, not the user's; it awaits confirmation.* Elevation is the requester's choice; nothing elevates automatically.
+3. **What ends an elevation.** An elevated request stays pending with the owner until exactly one of these happens:
+   - the owner accepts it (the change takes effect);
+   - the owner rejects it (the request closes);
+   - the requester retracts it (the request closes);
+   - the subject accepts it (the change takes effect, as a consent).
+4. **No timeout decides.** No period, before or after elevation, ever resolves a request in anyone's favour. The response period only *unlocks* elevation. A pending request is never auto-approved, auto-declined or expired.
+5. **Before elevation,** the request is likewise open until the subject accepts, the requester retracts it, or the requester elevates it. A subject's rejection does not close it by itself; it unlocks elevation, and the requester then elevates or retracts.
+6. **The owner as requester.** The rule applies to every requester. When the owner is the requester, the request still goes to the subject first, and the owner can decide it only after a rejection or the response period.
+7. **The owner as subject.** Nothing ranks above the owner, so a request to change the owner's own GM grant cannot be elevated. It stays open until the owner accepts or rejects it, or the requester retracts it.
+8. **Requests that no longer apply** (the subject resigned or left, or the grant changed by another route) close, and the closure is audited.
+
+This is 3sln.me policy. The spec says only that the provider's grant-management policy applies (spec §6.3).
+
 ### 12b.3 Ownership changes and edge cases
 
 - **Transfer.** The owner nominates a member. The nominee accepts with fresh authentication and starts a new subscription. Ownership switches atomically when that subscription activates, and the old subscription is cancelled. All admins are notified.
 - **Billing lapse.** After the grace period ends without payment, the organization becomes read-only (§12a). Thirty days later, any admin may start a new subscription and propose itself as owner. This takes effect after a **72 h** notice to the old owner and all admins, and the old owner cancels it by paying. The rule stops an absent owner from blocking forever, and paying is the only way to claim the role.
-- **Owner unreachable.** Elevations are unavailable, so GM changes need the target's consent. Everything else works.
+- **Owner unreachable.** Elevated requests stay pending with the owner; none lapse (§12b.2a). Until the owner returns, a GM change happens only if the subject accepts. Everything else works.
 - **Owner lost** (home account recovered or compromised):
   - The owner's admin power and elevation authority are **held** after an authority reset (spec §5.2a, R1-H3). Re-confirmation for the owner is a 72 h notice to all admins; any admin may object, which moves the organization to break-glass.
   - **Break-glass** is organization recovery with the owner's recovery file (§5.11, rev 5). After recovery the recovering person becomes candidate owner and admin under the 72 h rule, and only the current owner can cancel. It never removes admins by itself; any removals afterwards follow §12b.2.
@@ -924,8 +940,9 @@ The user's words: "for entities, when it comes to removing or changing grants th
 
 **Residuals:**
 
-- If the owner is one of two feuding admins, the owner wins. That is intended: the owner pays.
-- If the owner is absent, a feud ends only by consent, the billing-lapse rule or break-glass.
+- If the owner is one of two feuding admins, the owner wins, but not instantly: the owner must ask the other admin first and can decide only after a rejection or the response period (§12b.2a). That is intended: the owner pays.
+- If the owner is absent, elevated requests stay pending indefinitely, because no timeout resolves them (rev 5.2). A feud then ends only by the subject's consent, a retraction, the billing-lapse rule or break-glass. Neither feuding admin can remove the other, so the organization keeps operating with both, which is the same visible stalemate Q8's position B accepted.
+- The rule creates no race: neither party gains anything by acting first, and a subject who rejects only unlocks elevation sooner.
 - 3sln.me still adjudicates nothing beyond these rules.
 
 ## 13. Implementation slices (later)
@@ -982,8 +999,8 @@ Engine-first: every operation is an ngin Action or Query in a domain module, dis
   - **The grant-management policy (rev 4.3, §12b):**
     - the owner of record, which in phase A is the creator, designated while billing is disabled;
     - `admin` as the GM grant;
-    - consent requests with 7-day expiry;
-    - owner elevation with step-up, immediate notice and audit;
+    - consent requests to the subject first, with no expiry;
+    - elevation by the requester after a rejection or the response period (7-day default, configurable per organization), pending until the owner accepts or rejects, the requester retracts or the subject accepts (§12b.2a); owner step-up, immediate notice and audit;
     - self-resignation, the last-admin guard and request rate limits;
     - the owner's own admin power changeable only with the owner's consent.
 
@@ -1013,11 +1030,11 @@ Engine-first: every operation is an ngin Action or Query in a domain module, dis
 
 ## 15. Open questions for the user
 
-Rev 3 status: Q1 is accepted. Q2 and Q6 are superseded by the 2026-10-21 clarification (§1a). Q7–Q9 were added at the coordinator's request. **Rev 4:** Q4 is decided by the user (paid, §12a), Q5 is superseded by relations, and Q11–Q13 are new.
+Rev 3 status: Q1 is accepted. Q2 and Q6 are superseded by the 2026-10-21 clarification (§1a). Q7–Q9 were added at the coordinator's request. **Rev 4:** Q4 is decided by the user (paid, §12a), Q5 is superseded by relations, and Q11–Q13 are new. **Rev 5.2:** Q3 is decided by the user (accepted); Q13 stays open pending more explanation.
 
 | Q1 | ~~Use "Organization" as the term?~~ | **Accepted** 2026-10-21 (record in DEVLOG) |
 | Q2 | ~~Federated login plus DPoP tokens as "signed requests"?~~ | **Superseded.** Home-certified holder keys sign requests (ORG-D5). |
-| Q3 | **No roles**: per-member grants, copy-on-apply templates and app-published member-scoped fields, with live groups deferred? | Yes |
+| Q3 | ~~**No roles**~~ **Decided by the user, 2026-10-22: accepted as recommended.** Per-member grants, copy-on-apply templates and app-published member-scoped fields, with live groups deferred. | Yes (accepted) |
 | Q4 | ~~Organizations paid-only at launch?~~ | **Decided by the user:** always paid; creation needs a 3sln.me account (§12a) |
 | Q5 | ~~Grantor-initiated offers only?~~ | **Superseded** by relations (§8a). There is still no access-request queue in v1. |
 | Q6 | ~~Phase A same provider only?~~ | **Superseded.** Phase A includes members from any provider (§13.3). |
@@ -1027,7 +1044,7 @@ Rev 3 status: Q1 is accepted. Q2 and Q6 are superseded by the 2026-10-21 clarifi
 | Q10 | ~~**Certificate lifetime**~~ **Resolved (user, 2026-10-22):** the issuer's choice, disclosed with its revocation bound. 3sln.me defaults to about 11 minutes, configurable per organization. Original question: 300 s default and 600 s maximum? | Yes. It bounds revocation at about 6 minutes (10 at most). Owner-interface actions also check status, within 60 s. Entity certificates are capped at 300 s. |
 | Q11 | ~~**Name for relations**~~ **Resolved (user, 2026-10-22):** Relation, Relationship, and "relation slot" where ambiguous. Original question: "Relation" in the spec and "Relationship" in the UI, or one of the user's suggestions ("bond", "coven")? | **Relation / Relationship.** "Bond" clashes with finance vocabulary in an ERP-first product (bonds payable, surety bonds). "Coven" reads as a joke. The full check is in [terminology §6](organizations-terminology.md#6-relation-naming-check). |
 | Q12 | ~~**Admission to many-party instances.**~~ **Resolved by the user, 2026-10-21 (§8a.9):** every grantor consents per edge, and partial membership is normal. Any party may propose. Original question: Must every grantor consent to each joiner (chosen), or may a relation document name a slot whose holder admits others on everyone's behalf? | Every grantor, for now. Delegated admission is a real convenience for groups with many subsidiaries, but it is authority by proxy. Add it later as an explicit, per-party opt-in ("I accept whoever the parent admits") with a cap. |
-| Q13 | **Membership as a relation?** | No (§8a.6). Keep membership distinct, because grants are per person and governance is involved. The console may list memberships and relations together. |
+| Q13 | **Membership as a relation?** Open: on 2026-10-22 the user asked for more explanation. In plain terms: a relation gives every holder of a slot the same access, defined in a public document; membership gives each person their own grants plus governance powers (admin, ownership), kept private inside the organization. Modelling membership as a relation would mean either one relation per member or per-member values on top of a relation, which is roles again under another name, and the public document would add nothing for an internal arrangement. What stays possible either way: the person→organization direction (for example a profile share) uses the same fragment-grant mechanics, and the console can list memberships and relations side by side. | No (§8a.6). Keep membership distinct, because grants are per person and governance is involved. The console may list memberships and relations together. |
 
 ## Review round 1
 
@@ -1269,14 +1286,25 @@ Counts: **2 High, 7 Medium, 4 Low.** Resolved in text: 2 High, 4 Medium (M1 part
 | --- | --- | --- |
 | **R4-H2** (portability may turn old files into hijack tools) | Open (dependency) | **Answered, resolved pending review.** [Identity portability spec](../spec/identity-portability.md) §6.1: a move needs the *current* recovery credential plus current control (a fresh session not derived from a recent authority reset, or a public 7-day waiting period). Key possession and superseded files never qualify. For an organization, it also needs transfer authority under the grant-management policy, and recovery-derived authority counts only once that recovery has taken effect. Under §6.3 the source destroys its key copies and revokes its certification keys at commit. Verifiers follow attested successor statements, never redirects (§8, §10), and key everything by **origin principal** (§8.1). Applied in spec §3 (portability, origin principal), §3a.1 (identity URIs from adopted moves), §3a.3 (`moves`, the 32 KiB bound, cross-host no-rollback, fresh certification keys, the redirect hint), §5.2 step 1 and §9.5 (successor index), §5.2a (move adoption is an authority reset) and §5.3 (members stored by origin principal). |
 | AMD-I5 (certification keys sign intents) | — | **Confirmed.** Spec §3a.3: certification keys also sign `bindle-intent+jwt`, separated from certificates by `typ`. |
-| R4-M4 (owner absent during organization recovery) | Open | **Recommendation recorded, awaiting the user** (§5.11): the 14-day extension on admin objection, no elevation against admins for 30 days, and no cancel by a held owner. Not a decision. |
+| R4-M4 (owner absent during organization recovery) | Open | **Recommendation recorded, awaiting the user** (§5.11): the 14-day extension on admin objection, no elevation against admins for 30 days, and no cancel by a held owner. Not a decision. *Superseded in rev 5.2.* |
 | Phase A (R4 "conditionally sound") | Depended on R4-H2 | Phase A member records must use origin principals from day one. For identities that never moved this equals `(iss, sub)`, so nothing changes now. Organization moves themselves stay out of phase A. |
+
+## Revision 5.2 reconciliation
+
+| Finding or rule | Earlier status | Revision 5.2 |
+| --- | --- | --- |
+| Q3 (no roles) | Recommended | **Decided by the user, 2026-10-22: accepted.** |
+| §12b.2 consent expiry ("expiry counts as a decline") | Rev 4.3 rule | **Replaced** (§12b.2a): requests never expire. The response period only unlocks elevation. |
+| §12b.2 immediate owner elevation | Rev 4.3 rule | **Refined** (§12b.2a): subject first; the requester elevates after a rejection or the response period (7-day default, coordinator's proposal, configurable per organization); the elevation is pending until the owner accepts or rejects, the requester retracts or the subject accepts. Applies to the owner as requester too. |
+| **R4-M4** (owner absent during organization recovery) | Recommendation awaiting the user | **Recommendation superseded** by the user's rule. The 14-day extension, 30-day cool-off and held-owner clause are withdrawn. The purge scenario is narrowed: a recovery-derived owner can no longer remove admins instantly (§5.11). **Open:** (1) the post-recovery rule takes effect 72 h after notice unless the current owner cancels, and the billing-lapse rule takes effect 72 h after notice unless the old owner pays; both are ownership claims settled by time. They are not grant-management changes in §12b.1's sense, but the recovery rule also confers the admin power. Whether "no timeout decides" extends to them is for the user; applying it literally would leave break-glass unable to work when the owner is gone, which is the case it exists for. (2) Whether a held owner (spec §5.2a) may cancel a recovery. (3) Whether a pending elevation follows the owner role to a new owner after a transfer, lapse or recovery. |
+| Q8 / §12b.4 (two-admin deadlock) | Resolved (rev 4.3) | **Still resolved.** Residuals updated: the owner prevails but not instantly; an absent owner leaves elevations pending, never lapsing. |
+| Q13 (membership as a relation) | Open | **Still open.** The user asked for more explanation (2026-10-22); a plainer explanation is in §15. |
 
 ## Review round 4
 
 Independent adversarial review of design revision 5 and spec revision 4 (organization identities with recovery files, recovery as break-glass, issuer-chosen certificate lifetimes, rev 4.1 per-edge admission, rev 4.3 grant-management policy), 2026-10-22. Checked against [recovery identity](../spec/recovery-identity.md), which confirms that recovery files contain the original **signing and encryption private keys**, for persons and organizations alike. Reviewer sign-off on this round: reviewer ___ / date ___ / outcome ___. Resolutions are **provisional**.
 
-Counts: **2 High, 5 Medium, 2 Low.** Resolved in text: 1 High, 4 Medium, 1 Low. Open: R4-H2 (dependency), R4-M4, R4-L2. *Rev 5.1 update:* R4-H2 is answered (resolved pending review; see [Revision 5.1 reconciliation](#revision-51-reconciliation)). R4-M4 has a recommendation awaiting the user.
+Counts: **2 High, 5 Medium, 2 Low.** Resolved in text: 1 High, 4 Medium, 1 Low. Open: R4-H2 (dependency), R4-M4, R4-L2. *Rev 5.1 update:* R4-H2 is answered (resolved pending review; see [Revision 5.1 reconciliation](#revision-51-reconciliation)). R4-M4's recommendation is superseded by the user's elevation rule (rev 5.2); parts remain open.
 
 ### High
 
@@ -1298,7 +1326,7 @@ Non-write reads are not status-checked, and writes accept a fresh certificate in
 
 **R4-M3. Verifiers could not bound issuer-chosen lifetimes** (resolved, spec §5.2). Refusing long certificates breaks interop silently, and the disclosed `revocation_bound_seconds` is an unverifiable claim. Verifiers now SHOULD cap the effective lifetime at `iat` plus their own maximum and answer with the uniform error, so clients renew. With status checks for governance and the 60 s write rule, verifiers bound their own exposure whatever the issuer picks. The 3sln.me default of 660 s is fine.
 
-**R4-M4. The 72 h owner-only cancel fails exactly when break-glass is needed (open; position B recommended and awaiting the user, §5.11).** *Scenarios:*
+**R4-M4. The 72 h owner-only cancel fails exactly when break-glass is needed (open; position B superseded in rev 5.2 by the user's elevation rule, §12b.2a; remaining questions in the [Revision 5.2 reconciliation](#revision-52-reconciliation)).** *Scenarios:*
 
 - **The owner is absent** (the case break-glass exists for), and a thief, or an ex-partner who kept a copy, presents the file. Admins are notified but cannot cancel, so after 72 h the thief is owner and admin. As owner, they can then remove every admin immediately through elevation (§12b.2).
 - **The owner is the attacker.** Recovery adds nothing to powers they already have, so the 72 h rule is irrelevant.

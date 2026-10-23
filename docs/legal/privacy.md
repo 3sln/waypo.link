@@ -2,13 +2,13 @@
 
 Draft for review. Version: 2026-10-21 (draft). Not yet in effect.
 
-<!-- Placeholders: [COMPANY], [REGISTERED ADDRESS], [COUNTRY], [EU REPRESENTATIVE], [UK REPRESENTATIVE]. Every factual statement below is tied to the as-built system in docs/legal/README.md; update both together. -->
+<!-- Placeholders: [EU REPRESENTATIVE], [UK REPRESENTATIVE] (pending the Art. 27 decision). Every factual statement below is tied to the as-built system in docs/legal/README.md; update both together. -->
 
 This policy explains what personal data the hosted service at **3sln.me** collects, why, who receives it, how long it is kept, and what you can do about it. It covers only the service we operate at 3sln.me. If you run the open-source Bindle software yourself, or use another Bindle provider, that operator is responsible for your data.
 
 ## 1. Who we are
 
-3sln.me is operated by **[COMPANY]**, [REGISTERED ADDRESS], [COUNTRY] ("we", "us"). We are the controller of the personal data described here.
+3sln.me is operated by **Stubbs Software Solutions LLC**, doing business as **3sln**, 41 West Highway 14 #1645, Spearfish, SD 57783, United States ("we", "us"). We are the controller of the personal data described here.
 
 Contact for privacy questions and requests: **contact@3sln.com**.
 
@@ -232,4 +232,4 @@ We use strong hashing for passwords, support passkeys, and require a recovery fi
 
 ## 14. Contact
 
-[COMPANY], [REGISTERED ADDRESS], [COUNTRY] · contact@3sln.com
+Stubbs Software Solutions LLC (3sln), 41 West Highway 14 #1645, Spearfish, SD 57783, United States · contact@3sln.com

@@ -2,9 +2,9 @@
 
 Draft for review. Version: 2026-10-21 (draft). Not yet in effect.
 
-<!-- Placeholders: [COMPANY], [REGISTERED ADDRESS], [COUNTRY], [GOVERNING LAW], [VENUE]. -->
+<!-- Placeholders: [STATE], [VENUE], [REFUND POLICY]. -->
 
-These terms are an agreement between you and **[COMPANY]**, [REGISTERED ADDRESS], [COUNTRY] ("we", "us"). They cover your use of the hosted service at **3sln.me** (the "Service"). Please read them together with our [Privacy Policy](privacy.md).
+These terms are an agreement between you and **Stubbs Software Solutions LLC**, doing business as **3sln**, 41 West Highway 14 #1645, Spearfish, SD 57783, United States ("we", "us"). They cover your use of the hosted service at **3sln.me** (the "Service"). Please read them together with our [Privacy Policy](privacy.md).
 
 The Bindle software that 3sln.me runs on is open source. Its license governs your use of the code. These terms govern only the Service we operate.
 
@@ -130,7 +130,7 @@ We may delete free accounts that have never been used, or that haven't been used
 
 ## 13. Governing law and disputes
 
-- **Governing law.** These terms are governed by the laws of [GOVERNING LAW], without regard to conflict-of-law rules.
+- **Governing law.** These terms are governed by the laws of the State of [STATE], United States, without regard to conflict-of-law rules.
 - **Courts.** Disputes go to the courts of [VENUE].
 - **Consumers.** If you're a consumer, you also keep the protection of the mandatory laws of your country of residence, and you may bring claims in your local courts.
 - **Resolving disputes informally.** Before bringing a claim, please contact us at contact@3sln.com so we can try to resolve it informally.
@@ -145,4 +145,4 @@ We may delete free accounts that have never been used, or that haven't been used
 
 ## 15. Contact
 
-[COMPANY], [REGISTERED ADDRESS], [COUNTRY] · contact@3sln.com
+Stubbs Software Solutions LLC (3sln), 41 West Highway 14 #1645, Spearfish, SD 57783, United States · contact@3sln.com

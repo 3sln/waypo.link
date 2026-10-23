@@ -1,6 +1,6 @@
 # Public artefacts: additive versions and integrity references — normative draft
 
-Status: **provisional draft, 2026-10-21, revision 2** (review round 1 applied; see the design's "Review round 1"). Design only. Nothing here is implemented, reviewed or production-verified. Rationale, alternatives, migration and tests: [artefact references](../architecture/artefact-references.md). Human sign-off: reviewer ___ / date ___ / outcome ___.
+Status: **provisional draft, 2026-10-22, revision 3** (review round 1 applied; the user's 2026-10-22 decisions on design §13 Q1–Q4 applied in §2, §6.3, §9.2 and §11). Design only. Nothing here is implemented, reviewed or production-verified. Rationale, alternatives, migration and tests: [artefact references](../architecture/artefact-references.md). Human sign-off: reviewer ___ / date ___ / outcome ___.
 
 This document extends [protocol §3, §4 and §6](protocol.md), [extensions §2, §4 and §7](extensions.md), [events §2](events.md), [contracts](contracts.md), [integrations §2.3](integrations.md) and [incremental authorization](incremental-authorization.md). It changes the rule "a public artefact is immutable at its URL" into "a public artefact is **append-only** at its URL". MUST/SHOULD/MAY express draft requirements. Identifiers under `https://spec.bindle.example/` are placeholders. §14 lists the core amendments this draft needs; they are **proposed and unsigned**.
 
@@ -21,7 +21,7 @@ A **public artefact** is a public JSON document identified by an absolute HTTPS 
 
 ## 2. The envelope
 
-The document served at an artefact URL is an **envelope**:
+The document served at an artefact URL is an **envelope**. While a migrated line still has legacy dependents, the envelope is served at `<line URL>/envelope` instead (§11, "Publication order"):
 
 ```json
 {
@@ -48,7 +48,7 @@ The document served at an artefact URL is an **envelope**:
 
 Each version entry has **exactly** the members `version` (integer), `prev` (`null` for version 1, otherwise the version digest of the previous entry) and `body` (an object). Any other member, a missing member or a wrong type makes that entry and every later entry invalid. Unknown top-level envelope members are ignored and carry no meaning.
 
-An **elided** entry has exactly `version` and `prev`, and no `body`. Its version digest is the `prev` of the entry after it, so the chain stays complete. Its version record is served at `<line URL>/versions/<n>` (for example `…/calendars/v1/versions/3`) as `application/json`, and by mirrors under §8.4. A validator that needs an elided body fetches the record, recomputes its digest and compares it with the successor's `prev`; the record is untrusted until that check passes. The per-version URL is part of the line: it is fetched only under §8.3, and an unreachable per-version URL is the same outcome as an unreachable envelope (§7.4).
+An **elided** entry has exactly `version` and `prev`, and no `body`. Its version digest is the `prev` of the entry after it, so the chain stays complete. Its version record is served at `<line URL>/versions/<n>` (for example `…/calendars/v1/versions/3`) as `application/json`, and by mirrors under §8.4. A publisher MUST serve the record of every elided entry there and MAY serve any other version's record there. A validator that needs an elided body fetches the record, recomputes its digest and compares it with the successor's `prev`; the record is untrusted until that check passes. The per-version URL is part of the line: it is fetched only under §8.3, and an unreachable per-version URL is the same outcome as an unreachable envelope (§7.4).
 
 Bounds, checked before parsing where possible: envelope at most 256 KiB of UTF-8 (publishers elide old bodies to stay under it); each body at most 64 KiB in canonical form (the existing fragment bound); nesting depth at most 32; at most 4,096 object members and array elements in total per body. A kind may set lower bounds (for example 16 KiB for slot manifests under extensions §4.3).
 
@@ -156,6 +156,8 @@ The consequence is deliberate: titles, descriptions, `publisher`, existing enum 
 Other specifications MAY register a kind with its own growth table (organizations §9.8 registers `relation`). Until a kind's table is registered and signed, it is processed as unknown (§6.4).
 
 No other path may grow. In particular, these are never additive: changing `required`, `const`, `pattern`, numeric or length bounds, `additionalProperties`, an existing `$defs` entry other than through a growth point above, any `effect` or `introspect` value, `crit`, slot selection, bus `publishers`, `readers`, `history`, `retention` or `categories`, adding a contract to a `contracts` list, and adding a new top-level member.
+
+**Open results in new lines.** A line first published after this document SHOULD leave every result object, and every bus payload object, open (`additionalProperties` absent or `true`), so that results can grow at the growth point above. A reader of an open object MUST ignore members its pinned version does not name. Closing an object at version 1 is permanent for the line. Existing legacy bodies are never reopened: they migrate unchanged as version 1 (§11), so their closed results stay closed.
 
 A new enum value is safe for old readers only where the enum was declared extensible from the start. A fragment field with `"extensible": true` tells every consumer, from its first version, to handle unknown values. Without it, appending is a publication fault.
 
@@ -271,7 +273,8 @@ A provider accepts a notice when `head` is the version digest of some entry of t
 - MUST keep existing pins verifiable and their records stored. A retraction never invalidates a digest and never deletes a record;
 - MUST notify each owner whose grants or enablements pin an affected version, in the provider's own fixed wording, naming the artefact's line URL host and the affected apps or features. The notification links to the provider's own page for the artefact, where the `reason` may be shown under §9.1; it never carries the `reason` or `successor` itself. An unsigned notice is publisher-controlled text sent to every dependent owner, and must not become a phishing channel;
 - MUST NOT silently revoke a grant because of a notice;
-- MAY suspend new invocations under affected pins under its own policy. When the notice carries a valid signature by a key pinned for the line (§9.3), the provider SHOULD suspend them until the owner decides, and the owner MAY resume each one after a warning.
+- MUST NOT suspend existing grants, enablements or invocations under affected pins unless the notice carries a valid signature by a key pinned for the line (§9.3). An unsigned retraction only blocks new pins and notifies, so whoever controls the domain, including a buyer of a lapsed one, cannot switch off dependents with an unsigned edit;
+- when the notice carries such a signature, SHOULD suspend new invocations under affected pins until the owner decides, and the owner MAY resume each one after a warning.
 
 Versions below `from` are unaffected. A signed retraction is also the most powerful tool a stolen publisher key gives: it can suspend invocations everywhere. Owners therefore keep the right to resume, and a provider SHOULD stage a key rotation that accompanies a signed retraction for operator review rather than adopt it automatically.
 
@@ -281,7 +284,7 @@ Signatures are optional. They add provenance, never integrity: a reference's dig
 
 - **Keys.** A publisher MAY serve a JWKS of Ed25519 (`OKP`, `EdDSA`) or P-256 (`ES256`) public keys at `https://<line origin>/.well-known/bindle/artefact-keys`. A provider pins the JWK thumbprints ([RFC 7638](https://www.rfc-editor.org/rfc/rfc7638)) on its first pin of any line from that origin. Rotation follows the integrations §2.3 continuity rule: a new set is adopted when at least one pinned key is still present; otherwise it is staged for operator review. A provider that found no key set at its first pin records "no keys"; a key set that appears later is staged for operator review, never adopted on first sight, because by then the domain may have changed hands.
 - **Entries.** Each `signatures` entry is `{"kid", "alg", "covers", "sig"}`. `covers` is a version digest, or the notice digest `sha256-` over the canonical form of `{"t":"bindle.artefact-notice.v1","id":<line URL>,"notice":<notice>}`. The signing input is the canonical form of `{"t":"bindle.artefact-signature.v1","id":<line URL>,"covers":<covers>}`. `sig` is unpadded base64url.
-- **Meaning.** A valid signature shows that the holder of a pinned key endorsed that version or notice. Providers MAY display "signed by the publisher's pinned key". A missing or invalid signature changes nothing, except that a retraction without one cannot trigger the SHOULD in §9.2.
+- **Meaning.** A valid signature shows that the holder of a pinned key endorsed that version or notice. Providers MAY display "signed by the publisher's pinned key". A missing or invalid signature changes nothing, except that a retraction without one cannot suspend existing use (§9.2).
 
 ## 10. Grants, consent and upgrades
 
@@ -311,7 +314,7 @@ A **legacy artefact** is a document served at an artefact URL without `bindle_ar
 - Existing pins holding a legacy digest stay valid. A provider upgrades such a pin to a version reference only after verifying the legacy digest against the stored document and version 1's body.
 - Legacy digests MAY be stored or sent without the `sha256-` prefix (bare 43-character base64url). A legacy reference compares after adding the prefix; a version reference MUST carry it.
 - A legacy document is hashed as it always was (a permissive parse, then canonical form). It migrates to version 1 only if it also passes §3; a legacy line whose document fails §3 (for example a non-integer number) stays legacy, and its existing pins stay valid.
-- **Publication order.** Serving an envelope at a URL that providers pinned as a legacy document breaks every provider that does not yet declare `artefact-versions.v1`: to them the document changed. A publisher MUST keep serving the legacy body at the URL until its known dependents declare the feature, and MAY serve the envelope at `<line URL>/envelope` meanwhile. A provider that declares the feature MUST try `<line URL>/envelope` when the URL serves a legacy document whose digest matches a stored legacy pin.
+- **Publication order.** Serving an envelope at a URL that providers pinned as a legacy document breaks every provider that does not yet declare `artefact-versions.v1`: to them the document changed. A publisher migrating a legacy line MUST keep serving the legacy body at the URL until its known dependents declare the feature, and MUST serve the envelope at `<line URL>/envelope` meanwhile. Once its known dependents declare the feature, the publisher SHOULD serve the envelope at the line URL itself, which is the end state (§2), and MUST keep `<line URL>/envelope` serving the same envelope. A provider that declares the feature MUST try `<line URL>/envelope` when the URL serves a legacy document whose digest matches a stored legacy pin.
 
 The existing 3sln.me canonical JSON function (sorted keys by UTF-16 code unit, `JSON.stringify` scalars) produces the JCS form for every value that passes §3, so existing legacy digests of such documents are already JCS digests. It does not refuse out-of-profile values (it encodes an absent member as `undefined`), so version records use a refusing serializer (§3).
 

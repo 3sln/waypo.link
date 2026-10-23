@@ -1,6 +1,6 @@
 # Identity portability: moving identities between providers (design)
 
-Status: **provisional design, 2026-10-22, revision 2.** Revision 2 applies the confident fixes of [review round 1](#review-round-1) (IP-R1-…); its open items remain open. Design only: nothing here is implemented, routed, published or production-verified, and no code changed. Normative draft: [spec/identity-portability.md](../spec/identity-portability.md). Companion: [intent links](intent-links.md). It incorporates the constraints that organizations [review round 4](organizations-design.md#review-round-4) placed on this design (R4-H1 certification keys, R4-H2 transfer authority and stable identifiers), as relayed by the coordinator on 2026-10-22. It has not been independently reviewed. Every decision below is unsigned until it has a reviewer, a date and an outcome; the coordinator records them in DEVLOG.md.
+Status: **provisional design, 2026-10-22, revision 3.** Revision 3 applies the user's 2026-10-22 decisions: Q1 accepted with conditions (§7.1), Q2–Q4 accepted, and M10 applied under the coordinator's reading (§6.2). The 24 h person-move delay (M1), pre-rotation and the meaning of "original recovery file" stay open. Revision 2 applies the confident fixes of [review round 1](#review-round-1) (IP-R1-…); its open items remain open. Design only: nothing here is implemented, routed, published or production-verified, and no code changed. Normative draft: [spec/identity-portability.md](../spec/identity-portability.md). Companion: [intent links](intent-links.md). It incorporates the constraints that organizations [review round 4](organizations-design.md#review-round-4) placed on this design (R4-H1 certification keys, R4-H2 transfer authority and stable identifiers), as relayed by the coordinator on 2026-10-22. It has not been independently reviewed. Every decision below is unsigned until it has a reviewer, a date and an outcome; the coordinator records them in DEVLOG.md.
 
 Sign-off: reviewer ___ / date ___ / outcome ___.
 
@@ -8,7 +8,7 @@ Sign-off: reviewer ___ / date ___ / outcome ___.
 
 | ID | Decision | Where |
 | --- | --- | --- |
-| P1 | A move keeps the UUID `sub` and the signing key and changes the host. Handles never move. | spec §1, §4 |
+| P1 | A move keeps the UUID `sub` and changes the host. The signing key arrives unchanged and signs the move statement; the destination then rotates it (P11). Handles never move. | spec §1, §4 |
 | P2 | Verifiers key every relationship by the **origin principal** `(iss₀, sub)` and keep a **successor pin** to the current host. Records of identities that never moved need no migration. | spec §8.1–§8.2 |
 | P3 | Automatic adoption needs **two signatures**: a move statement by the identity's signing key, and an attestation by the old provider. Neither alone is authority. | spec §4, §5, §8.3 |
 | P4 | The old provider attests only after **transfer authority**: the current recovery credential **plus** either a fresh step-up session (not within 7 days of a recovery) or a public 7-day waiting period with notices, cancellable by the current holder. Organizations additionally need current transfer authority under the provider's grant-management policy. Key possession or a superseded file never works. | spec §6.1 |
@@ -18,6 +18,7 @@ Sign-off: reviewer ___ / date ___ / outcome ___.
 | P8 | The interoperable key carrier is a **portable identity package**, not the recovery file format, which stays provider policy. | spec §9 |
 | P9 | 3sln.me product: transfer-out with the current recovery file; 90 days of free redirects; a one-time 10-year redirect extension through Polar; a minimal moved tombstone. | §6 |
 | P10 | 3sln.me accepts transfer-in from packages and from its own recovery-file format. | §7 |
+| P11 | **Rotation at transfer-in, with provenance chained.** The destination rotates the signing key at activation by a continuity statement from the old key; 3sln.me always does. The key history stays published. A retired key is honoured only for artefacts recorded, or otherwise anchored, before the rotation, so pre-move contact links and messages through them keep working while old recovery files mint nothing new. Decided by the user, 2026-10-22 (Q1). | §7.1, spec §7.1 |
 
 ## 1. The user's words, and the constraints
 
@@ -30,7 +31,7 @@ Review round 4 constraints, as the coordinator relayed them:
 3. Verifiers keep the original `(iss, sub)` as the stable identifier and pin a signed successor statement. Redirects are a discovery hint only.
 4. Define how certification keys are re-established at the new provider, and how verifiers learn of them.
 
-How this design reads "the original recovery file": the file whose recovery credential is **current** at 3sln.me. Every file 3sln.me ever issued for an identity contains the same keys, because rotation is deferred, so "original" cannot mean "first": a superseded copy held by a former organization owner must not work. This interpretation needs the user's confirmation (open question Q1 records it alongside rotation).
+How this design reads "the original recovery file": the file whose recovery credential is **current** at 3sln.me. Every file 3sln.me ever issued for an identity contains the same keys, because rotation is deferred, so "original" cannot mean "first": a superseded copy held by a former organization owner must not work. This interpretation needs the user's confirmation; it is still open (Q1 records it). Rotation itself is decided (P11).
 
 ## 2. Model
 
@@ -39,14 +40,14 @@ How this design reads "the original recovery file": the file whose recovery cred
 | Thing | After a move |
 | --- | --- |
 | `sub` (UUID) | Unchanged. It is the identity. |
-| Signing and encryption keys | Unchanged (the destination may rotate them with continuity afterwards; Q1). |
+| Signing and encryption keys | Arrive unchanged; the signing key signs the move statement. The destination then rotates the signing key with continuity (P11; 3sln.me always). The old key stays published as `retired` and honours only artefacts recorded before the rotation (§7.1). |
 | Origin principal `(iss₀, sub)` | Unchanged. Every verifier's stable key. |
 | Issuer, identity URI | New, at the destination. |
 | Handles | Do not move. Old handles stay claimed forever at the source (names are never reassigned) and resolve to a redirect only during the redirect period. The destination assigns handles in its own namespace. |
 | Certification keys | New, minted by the destination. The source's are revoked at commit. |
 | OAuth grants, tokens, sessions | Do not move (protocol §1). Applications reauthorize at the destination. |
 | Memberships and edges others hold for the identity | Survive, because they are keyed by origin principal. Adoption is an authority reset, so owner-interface authority is held until re-confirmed (organizations §5.2a). |
-| Issued capabilities (contact links) | Survive only if the destination imported their exact stored records. Redirects bring requests to the destination, which verifies them against the reconstructed original URL. |
+| Issued capabilities (contact links) | Survive only if the destination imported their exact stored records. Redirects bring requests to the destination, which verifies them against the reconstructed original URL, under the retired key when the record predates the rotation (§7.1). |
 | Data, resources, resource URLs | Move only through export and import, outside the move protocol. Resource URLs change, so counterparts re-consent. |
 
 ### 2.2 Why two signatures, and why redirects are not authority
@@ -70,7 +71,7 @@ Organizations keep memberships, ERP records and relation edges keyed by `(iss, s
 | Key-signed successor statements only | R4-H2: superseded files and former owners. |
 | Custom-domain issuers (the domain owner repoints DNS) | Works for organizations with domains, and remains possible: such an identity never needs a move. It does not help the `n.…@3sln.me` users who are the common case, and a domain lapse is itself a takeover vector. |
 | DID-style self-certifying identifiers | A new identifier scheme for every relationship, and still needs a revocation and recovery story equal to this one. |
-| Pre-rotation (a committed next key, as in KERI) | The right long-term fix for key compromise, and it would make key-signed moves safe without the old provider. It depends on key rotation, which the user deferred. Recorded as the upgrade path (§12, Q1). |
+| Pre-rotation (a committed next key, as in KERI) | **Open; the user has a different picture of it (2026-10-22).** The attack it is meant to stop, in plain terms: someone keeps an old recovery file (so they have the identity key) and later also gets either the old provider's attestation key or its domain after the provider shuts down. With both they can write a complete, valid-looking fake history of moves to a host they control. A verifier that already knows the identity spots the fork, but one meeting the identity for the first time cannot. Pre-rotation, as proposed here, means each key publicly commits in advance to the next one, so a history signed only with an old key cannot introduce a new key the real owner never committed to. Rotation at transfer-in (Q1, accepted) does not stop this attack, because the fake history branches off before the move. |
 | Moving the recovery file format into Bindle | Freezes answer normalization, Argon2 parameters and question types into the protocol. The portable package (spec §9) is enough: the source's own page decrypts its own format and hands the package to the destination. |
 
 ## 3. Flows
@@ -151,6 +152,11 @@ On top of spec §6.1 item 4, 3sln.me applies its [grant-management policy](organ
 
 - Only the **owner of record** (§12b.1), freshly authenticated with a passkey step-up, can start a transfer, using the organization's current recovery file (its generated passphrase, R4-M5).
 - **72 h notified delay** after confirmation, with notices to every admin and member. Only the owner of record can cancel. An admin objection is recorded, notifies the owner again and extends the delay to 14 days; it does not block, since admins never outrank the owner (§12b.2).
+- **Admin blocking (M10).** The user's words (2026-10-22): "sure from other admins, no from org owner, original requester can elevate". *Coordinator's reading, awaiting the user's confirmation:*
+  - An admin other than the owner may **request** a move. Any other admin may **block** it. A blocked move does not proceed.
+  - A block can never be used against the owner: not against a move the owner of record starts (admins can only object, as above), and not against the owner's decision on an elevated request.
+  - The admin who requested a blocked move may **elevate** it to the owner, who decides under the organization elevation rule ([organizations §12b.2a](organizations-design.md#12b2a-who-decides-and-when-user-decision-2026-10-22)): the request stays pending until the owner accepts or rejects it or the requester retracts it, and no timeout decides it. Accepting means the owner completes the transfer authority steps itself (step-up and the organization's current recovery file, spec §6.1), after which the 72 h delay applies as for an owner-started move.
+  - The 30-day cooling below applies to every move, however it was started.
 - **Cooling:** no transfer within 30 days after an ownership transfer, a billing-lapse ownership change, an organization recovery taking effect, or an authority reset of the owner of record's **own person account** (IP-R1-M10). A recovery-derived owner therefore cannot move the organization away at once (R4-M4), and neither can someone who took over the owner's personal account with a stolen personal file.
 - The organization's billing is cancelled at commit, with no automatic refund.
 - Members are told that their memberships continue under the new host and that their apps will need new certificates.
@@ -162,7 +168,7 @@ In one account-writer commit (the account's single writer, as for deletion), 3sl
 ### 6.4 Redirect periods and the 10-year extension
 
 - **Free: 90 days** from commit ("at least 3 months"). The owner may decline the redirect at transfer-out, or end it later, because the redirect discloses the new host to anyone holding an old link.
-- **Extension: one-time purchase of 10 years** from the purchase date, through a Polar one-time product (`POLAR_PRODUCT_ID_REDIRECT_10Y`), with `order.paid` handled by the existing webhook (it already receives `order.paid` and `order.refunded`). The product's metadata binds the order to the moved tombstone's ID. A refund within Polar's window ends the extension at the later of 90 days after commit or the refund date. Provisional price: **US$10** (Q2). At Polar's modelled 5% + $0.50 the net is about $9, against a storage and request cost per tombstone measured in cents per decade.
+- **Extension: one-time purchase of 10 years** from the purchase date, through a Polar one-time product (`POLAR_PRODUCT_ID_REDIRECT_10Y`), with `order.paid` handled by the existing webhook (it already receives `order.paid` and `order.refunded`). The product's metadata binds the order to the moved tombstone's ID. A refund within Polar's window ends the extension at the later of 90 days after commit or the refund date. Price: **US$10** (Q2, decided by the user, 2026-10-22). At Polar's modelled 5% + $0.50 the net is about $9, against a storage and request cost per tombstone measured in cents per decade.
 - **Who can buy:** at transfer-out time, the account owner. Afterwards, anyone holding the redirect page link (`/moved/<opaque id>`), because paying can only extend a redirect to its already-attested target. The page shows the redirect status, never the target's identity URI beyond what the redirect itself discloses.
 - **Changing or ending a redirect:** the moved identity signs in at 3sln.me *as an app user of its new provider* (3sln.me acts as a Bindle client; the token response's `bindle_origin`/`bindle_moves` show it is the moved identity). From there it can end the redirect early (erasure) or buy an extension. A later move (B→C) that 3sln.me verifies under spec §8.3 may retarget the redirect to C, using a `redirect_base` on C's origin that the identity supplies through this signed-in management page, never one from an unauthenticated notice (spec §10, IP-R1-L3). An extension purchase never overrides an owner's request to end the redirect. 3sln.me ends the redirect when the target identity URI has answered 404 for 30 days.
 - **Expiry reminder:** opt-in at transfer-out. If chosen, 3sln.me keeps one verified email on the tombstone until the redirect ends, solely to send a reminder 30 days before expiry. Otherwise no channel is kept.
@@ -170,10 +176,10 @@ In one account-writer commit (the account's single writer, as for deletion), 3sl
 
 ### 6.5 Moved-account lifecycle and retention
 
-1. **Export window: 30 days** after commit (Q3). The owner can still sign in to 3sln.me's console with existing credentials, read-only, to download exports. Nothing signs and no app works.
+1. **Export window: 30 days** after commit (Q3, decided by the user, 2026-10-22). The owner can still sign in to 3sln.me's console with existing credentials, read-only, to download exports. Nothing signs and no app works.
 2. **Purge:** the existing deletion executor runs with reason `moved` (a new `TOMBSTONE_REASONS` value), erasing content, credentials, recovery hash, email claim and keys, exactly as for deletion ([account deletion](account-deletion-export.md#23-execution-order-and-crash-safety)).
 3. **Moved tombstone:** `RETAINED` plus a `moved` record: `{to:{iss,identity}, redirectBase, statement, attestation, committedAt, redirectUntil, extensionOrder?, reminderEmail?}`. The names stay in the permanent claim ledger as for deletion.
-4. **After `redirectUntil`:** 3sln.me deletes `moved.to`, `redirectBase`, `reminderEmail` and the order reference, and the identity answers exactly as a deleted one. It keeps `statement` and `attestation` only if Q3's answer is to keep them; both contain `to.identity`, so keeping them keeps the new address, and the privacy text in §6.6 would then have to say so. It keeps publishing its attestation keys (spec §5.1). Redirected requests are not logged per request; only the existing hashed rate-limit counters apply (privacy §3), so the privacy policy needs no new log row.
+4. **After `redirectUntil`:** 3sln.me deletes `moved.to`, `redirectBase`, `reminderEmail` and the order reference, and the identity answers exactly as a deleted one. It also deletes `statement` and `attestation` (Q3, decided by the user, 2026-10-22), because both contain `to.identity`. It keeps publishing its attestation keys (spec §5.1). Redirected requests are not logged per request; only the existing hashed rate-limit counters apply (privacy §3), so the privacy policy needs no new log row.
 
 ### 6.6 Privacy policy and terms (for the legal owner)
 
@@ -190,10 +196,34 @@ Terms: a new subsection under §3 ("Your account") stating the transfer requirem
 - Entry: `/transfer-in`, an isolated first-party document like the recovery pages, behind `IDENTITY_TRANSFER_IN_ENABLED`. It accepts the package POST (§3.1 step 4) or a 3sln-format recovery file (§3.2).
 - **Admission:** a transfer-in is a signup. It consumes an admission slot under the free-account cap or the paid waitlist, and runs Turnstile. Organizations need an existing 3sln.me person account as owner of record and a paid tier (or the internal allowlist), as for creation.
 - **Checks:** the `sub` is a lowercase UUIDv4 (3sln.me policy); it is not hosted here and not in the claim ledger as another identity's, unless the chain shows it moved out of 3sln.me (§3.5); the keys correspond and match the source's current identity document.
-- **Setup:** a free `n.…` handle is allocated; the owner enrols a passkey or password; 3sln.me issues a **new recovery file** in its own format, signed by its own authority, with a new reset credential. The source's file is useless here.
+- **Setup:** a free `n.…` handle is allocated; the owner enrols a passkey or password; at activation 3sln.me rotates the signing key (§7.1) and issues a **new recovery file** in its own format, signed by its own authority, with a new reset credential and the new key. The source's file is useless here, and its key signs nothing new that anyone honours.
 - **Statement, attestation, activation:** as spec §7. Until attestation, the account is `pending-transfer`: it can sign in but signs nothing and issues no certificate.
-- **Unattested transfer-in** from a source without `portability.v1`: allowed only from a 3sln-format file, shown everywhere as "moved without confirmation from `<source>`" (Q4). Refused while the source declares `portability.v1`, or while the source's directory still serves the identity as active (checked at intake and again before activation), because then a legitimate owner can get an attestation and an unattested request is most likely a superseded-file fork (IP-R1-M7). Such an identity is keyed by its own `(3sln.me, sub)`, never presented as the origin principal, and is displaced by a later attested move of the same identity (spec §9.3).
+- **Unattested transfer-in** from a source without `portability.v1`: allowed only from a 3sln-format file, shown everywhere as "moved without confirmation from `<source>`" (Q4, decided by the user, 2026-10-22). Refused while the source declares `portability.v1`, or while the source's directory still serves the identity as active (checked at intake and again before activation), because then a legitimate owner can get an attestation and an unattested request is most likely a superseded-file fork (IP-R1-M7). Such an identity is keyed by its own `(3sln.me, sub)`, never presented as the origin principal, and is displaced by a later attested move of the same identity (spec §9.3).
 - **Data:** imports through `bindle-export/1` are a separate later slice. Without them, the identity arrives with no content and its contact links do not resolve here.
+
+### 7.1 Rotation at transfer-in and old contact links (P11, decided by the user, 2026-10-22)
+
+The user's words: "we need to chain provenance, and remember the key so messages, etc sent via an old contact link can be honored."
+
+**The rule.** At activation, in the same account-writer commit, 3sln.me rotates the identity's signing key with the existing `keys.mjs` continuity statement: the old key signs `{version, subject, purpose, previous, signer, next{kid,alg,publicJwk}, at}` under domain `3sln-identity-key-continuity-v1`, naming the new key. The old key becomes `retired` (never `revoked` because of the move), stays in the published key history with `created` and `retired`, and verifies only artefacts recorded, or otherwise anchored, before `retired` (spec §7.1). A bare old-key signature on something new is never enough, whatever `iat` it claims.
+
+**What 3sln.me records today, and what the rule needs from it** (code read 2026-10-22):
+
+| Today | Effect under the rule | Change needed |
+| --- | --- | --- |
+| Each contact parent is stored at `contact-grant/<jti>` with the exact protected header (including `kid`) and claims; `bindle_meta` links also store the signing input. The signature is not stored. (`packages/messaging/contact-endpoints.mjs`, `packages/links/issuance.mjs`) | This is the recorded issuance. A holder of an old recovery file cannot add a record, so cannot mint a link the host will honour. | None for the record. Imported records must keep the source's exact header and claims. |
+| Verification compares the stored header and claims first, then checks the signature against `contact-key/<owner>/<kid>`, requiring the key to be usable (`active:true`). | A rotation sets `state:'retired'` and keeps `active:true` (`packages/identity/keys.mjs`), so links with a recorded old `kid` already keep verifying. Revoked keys fail. | None, provided the move never revokes the old key. |
+| Key history holds at most 16 keys; older keys are pruned. | Pruning a retired key would silently break its recorded links. | Never prune a retired key that a live stored record references. |
+| Nothing checks a signature's time against `retiredAt`. | Not needed for links, because only stored records verify. | Retired keys must never verify anything that lacks a record (spec §7.1); new verifiers must not accept retired keys by default. |
+| Contact-delivery bearers (≤ 300 s, not stored) are minted with the parent link's `kid`, and the signer requires that `kid` to be current. | After any rotation, minting a bearer from a pre-rotation link fails. That breaks machine delivery through old links. | Sign bearers with the current key and verify them against the current key (spec §7.1, "Fresh tokens"; AMD-P11). |
+| Messages record the parent `jti` (`grantId`), the intake revision and the sender's author proof (with the sender's `keyId`). | The sender's proof uses the sender's key, so a recipient's rotation never affects acceptance. | None. |
+| `rotateChallenge` re-signs a conditional link with the current key. | An owner-initiated reissue moves that link to the new key. | None. |
+
+**Imported records.** Records arrive through the owner's authenticated import of the source's export (a later slice). They are accepted only for `kid`s in the key history that were active at the source before the move. A source signs nothing after its commit, so every record it exported was issued before the move and therefore before the rotation. Only the identity's owner can import, so a third party holding an old file cannot add records this way.
+
+**Other verifiers.** BindleBox peers, organizations and counterparts keep what they already stored (messages, author proofs, participation statements received before the rotation); those stay valid under spec §7.1 case 2. Anything fresh from the identity must be signed by the current key.
+
+**What it closes.** T2's residual for moved identities: an old or superseded recovery file can no longer produce any signature that is honoured. It does not close T5 or the IP-R1-H2 residual, because a forged chain branches off before the move (§2.4, pre-rotation).
 
 ## 8. Organizations
 
@@ -202,17 +232,17 @@ An organization moves exactly like a person (the user's decision that organizati
 - Its members' records (keyed by their origin principals) move with the organization's data import. The members' own identities are untouched.
 - Its identity URI changes, so member certificates must name the new `aud`. Members' clients learn the new URI from the moved record and re-acquire certificates.
 - Relation counterparts adopt the move (with an authority reset and edge holds where their policy says so) and keep edges keyed by origin principal.
-- The 72 h delay and the 30-day cooling (§6.2) are 3sln.me policy. Another provider may choose differently, within spec §6.1.
+- The 72 h delay, the admin block and elevation, and the 30-day cooling (§6.2) are 3sln.me policy. Another provider may choose differently, within spec §6.1.
 
 ## 9. Threat model
 
 | # | Threat | Mitigation | Residual |
 | --- | --- | --- | --- |
 | T1 | A thief cracks a stolen **current** recovery file and moves the identity | Path (a) also needs a session with step-up; recovering first and then using (a) is closed by the 7-day rule; path (b) is a 7-day public wait with notices on every channel, and any sign-in cancels | An owner who has no reachable channel and does not sign in for 7 days |
-| T2 | A former organization owner, or anyone with a **superseded** file | The reset credential is no longer current, so the source refuses; their key-only statement is unattested and never adopted automatically | They can still forge identity-key signatures on non-authorizing artifacts (R4-L2) until rotation exists (Q1) |
+| T2 | A former organization owner, or anyone with a **superseded** file | The reset credential is no longer current, so the source refuses; their key-only statement is unattested and never adopted automatically | Before a move, they can still forge identity-key signatures on non-authorizing artifacts (R4-L2). After a move to a host that rotates (P11), nothing they sign is honoured (§7.1) |
 | T3 | A hostile old provider **refuses** to attest | Cannot be mandated. The unattested path plus per-verifier human adoption; the source must still honour exports (legal) | Each counterpart must decide by hand |
 | T4 | A malicious old provider **forges** a move to a destination it controls | It must also hold the identity key, which it custodies. Same trust as today's custody; notices from the destination's activation reach only new channels | Inherent custody trust |
-| T5 | A **domain takeover** of the old provider (expired domain), or a leaked attestation key | Alone, the attacker cannot sign statements. Combined with any old recovery file (which holds the unchanged identity key), it can forge an alternative chain. Pinned verifiers detect it (broken `from`, equivocation); live sources are protected by the spec §8.3 item 5 check (IP-R1-H2) | First-contact verifiers after the source is gone; closed only by pre-rotation (Q1). A takeover before any move is the existing custody risk |
+| T5 | A **domain takeover** of the old provider (expired domain), or a leaked attestation key | Alone, the attacker cannot sign statements. Combined with any old recovery file (which holds the unchanged identity key), it can forge an alternative chain. Pinned verifiers detect it (broken `from`, equivocation); live sources are protected by the spec §8.3 item 5 check (IP-R1-H2) | First-contact verifiers after the source is gone; closed only by pre-rotation (§2.4, still open); rotation at transfer-in (P11) does not close it. A takeover before any move is the existing custody risk |
 | T6 | A **hostile destination** | It holds the key, as any host does; the next move needs its attestation, so a captive identity falls back to T3 | Choosing a provider is a trust decision |
 | T7 | **Rollback or replay** of an old statement | `seq` and `prev` pins; lower `seq` ignored; the source never attests twice | None known |
 | T8 | **Equivocation**: two attested destinations | Verifiers fail closed and keep the pin; operators alerted | A contested identity until humans resolve it |
@@ -235,7 +265,8 @@ Engine-first: every operation is an ngin Action or Query in a domain module, dis
 | PORT-1 | Codec and verification: statements, attestations, chains, packages, redirect targets; vectors | `packages/identity/succession.mjs`, `docs/architecture/artefacts/identity-portability.vectors.json`, `tests/identity-succession.test.mjs` | — |
 | PORT-2 | Source engine: begin, authorize (both paths), receive statement, cancel, expire, commit; waiting-period scheduler; moved tombstone and `moved` reason | `packages/identity/transfer-out.mjs`, a `moved` addition to `packages/identity/lifecycle-tombstone.mjs`, `tests/transfer-out*.test.mjs` | PORT-1, DX-5 deletion executor |
 | PORT-3 | Moved responses and redirect router; `identity_moved` at the authorization request; directory and identity-document hooks | `packages/runtime/routes/moved.mjs`, `tests/moved-routes.test.mjs` | PORT-2 |
-| PORT-4 | Destination engine: package intake, checks, statement, polling, activation, fresh certification keys, `moves` in the identity document; attestation key set | `packages/identity/transfer-in.mjs`, `packages/identity/attestation-keys.mjs`, `tests/transfer-in*.test.mjs` | PORT-1, ORG directory slice |
+| PORT-4 | Destination engine: package intake, checks, statement, polling, activation, signing-key rotation at activation (P11), fresh certification keys, `moves` and the published key history in the identity document; attestation key set | `packages/identity/transfer-in.mjs`, `packages/identity/attestation-keys.mjs`, `tests/transfer-in*.test.mjs` | PORT-1, ORG directory slice |
+| PORT-9 | Old-key honouring (P11): bearers signed by the current key; no pruning of retired keys that stored records reference; `retired` timestamp in published keys | Hunks in `packages/messaging/contact-endpoints.mjs`, `packages/runtime/accounts.mjs` (bearer signer) and `packages/identity/keys.mjs`, owned by the messaging and identity owners; `tests/rotation-honouring.test.mjs` | PORT-1; AMD-P10, AMD-P11 sign-off |
 | PORT-5 | Verifier adoption: successor pins and index, automatic adoption, pending successors, background-refresh hook, presentation intake | `packages/identity/successors.mjs`, `tests/successors*.test.mjs`. Organizations and BindleBox call its port; their owners wire it. | PORT-1 |
 | PORT-6 | UI: transfer-out and transfer-in isolated documents, moved-account console, redirect page, pending-successor review | `apps/web/src/bl/transfer-*.mjs`, `apps/web/src/ui/transfer-*` and browser tests | PORT-2, PORT-4 |
 | PORT-7 | Redirect extension billing | `packages/billing/redirect-extension.mjs`, `tests/billing-redirect-extension.test.mjs` | PORT-2, billing |
@@ -274,7 +305,7 @@ Committed redirects are **not** flag-gated: they are a commitment made to the us
 | Normative (spec) | 3sln.me (provider choice) |
 | --- | --- |
 | Move statement, attestation, `move_endpoint`, attestation keys | Screens, wording, the isolated pages |
-| The minimum transfer authority (current credential plus a session or a 7-day public wait; organization transfer authority) | Owner of record only, 72 h delay, 14-day objection extension, 30-day cooling |
+| The minimum transfer authority (current credential plus a session or a 7-day public wait; organization transfer authority) | Owner of record decides; admin requests, blocks and elevation; 72 h delay, 14-day objection extension, 30-day cooling |
 | Commit effects at the source; activation at the destination | Export window (30 days), purge via the deletion executor, tombstone contents |
 | `moves` in identity documents; verifier adoption, equivocation, unattested rules | Pending-successor review UI and copy |
 | Redirect semantics *if* a provider redirects | That 3sln.me redirects, for 90 days free, 10 years for US$10 |
@@ -283,10 +314,12 @@ Committed redirects are **not** flag-gated: they are a commitment made to the us
 
 ## 12. Open questions for the user
 
-1. **Key rotation at transfer-in, and "original".** Should the destination rotate the signing key with continuity at activation (and 3sln.me always do so on transfer-in)? **Recommendation: yes.** It reuses existing `keys.mjs` continuity, makes every pre-move recovery file unable to sign as the identity, and closes T2's residual for moved identities. It is a narrow first use of the rotation the user deferred. Please also confirm that "the original recovery file" means the current one.
-2. **Extension price and buyers.** **Recommendation: US$10 one-time for 10 years from purchase, purchasable by anyone holding the redirect page**, non-refundable outside Polar's normal window.
-3. **Moved-account export window and retained proof.** **Recommendation: 30 days of read-only console access for export, then purge. After the redirect ends, delete the statement and attestation too**, since verifiers that matter already pinned them, and the destination keeps publishing them in `moves`.
-4. **Unattested transfer-in to 3sln.me.** **Recommendation: allow it, only from 3sln-format files, clearly labelled.** It is the only exit for users of a provider that has disappeared.
+1. **Key rotation at transfer-in, and "original".**
+   - *Rotation:* **decided by the user, 2026-10-22: accepted, with conditions.** The user's words: "we need to chain provenance, and remember the key so messages, etc sent via an old contact link can be honored." Applied as P11 (§7.1, spec §7.1): a continuity statement from the old key, a published key history, and old-key signatures honoured only for artefacts recorded or anchored before the rotation.
+   - *"Original recovery file":* **still open.** Please confirm that it means the file whose credential is current (§1).
+2. ~~**Extension price and buyers.**~~ **Decided by the user, 2026-10-22: accepted as recommended.** US$10 one-time for 10 years from purchase, purchasable by anyone holding the redirect page, non-refundable outside Polar's normal window.
+3. ~~**Moved-account export window and retained proof.**~~ **Decided by the user, 2026-10-22: accepted as recommended.** 30 days of read-only console access for export, then purge. After the redirect ends, the statement and attestation are deleted too, since verifiers that matter already pinned them and the destination keeps publishing them in `moves`. §6.5 item 4 and the §6.6 privacy text follow this: nothing that names the new address is kept after the redirect ends.
+4. ~~**Unattested transfer-in to 3sln.me.**~~ **Decided by the user, 2026-10-22: accepted as recommended.** Allowed only from 3sln-format files, clearly labelled. It is the only exit for users of a provider that has disappeared.
 
 ## 13. Reconciliation notes for DEVLOG (coordinator)
 
@@ -312,7 +345,7 @@ Independent adversarial security review, 2026-10-22, of spec revision 1 and this
 
 ### Medium
 
-- **IP-R1-M1. Path (a) is instant and silent (fixed in part).** Malware with a step-up session plus the current file could move an identity with no notice before commit. Fixed: notice to every channel at confirmation, before commit; no step-up with a credential enrolled within 7 days; no path (a) within 7 days of a channel change. **Open:** recommend a 24 h notified delay before a person's commit at 3sln.me (provider policy; the user decides).
+- **IP-R1-M1. Path (a) is instant and silent (fixed in part).** Malware with a step-up session plus the current file could move an identity with no notice before commit. Fixed: notice to every channel at confirmation, before commit; no step-up with a credential enrolled within 7 days; no path (a) within 7 days of a channel change. **Open:** recommend a 24 h notified delay before a person's commit at 3sln.me (provider policy; the user decides). *Why (the user asked, 2026-10-22):* it stops an attacker who has the owner's unlocked device or a hijacked signed-in session, plus the current recovery file (often saved on that same device), from moving the identity away in one sitting. Today the notice goes out at confirmation, but the commit can follow seconds later, and after commit 3sln.me has destroyed its key copies and cannot undo the move. A 24 h delay gives the owner one day to see the notice on another channel and cancel; the cost is that every honest move waits a day. Still undecided.
 - **IP-R1-M2. Restart loop after cancellation (fixed).** The person who started the move still holds the current credential and can start again at once, flooding notices. The cancel page must offer to reissue the recovery file, and restarts with the same credential are held (spec §6.2).
 - **IP-R1-M3. Attestation key caching contradiction (fixed).** See H2.
 - **IP-R1-M4. `to.identity` is a claim (fixed).** Pending successors and first-contact chains made verifiers fetch a statement-chosen path on the destination origin (R2-H2 class). The destination's `?sub=` directory lookup must return exactly `to.identity` (spec §8.3 item 4).
@@ -321,7 +354,7 @@ Independent adversarial security review, 2026-10-22, of spec revision 1 and this
 - **IP-R1-M7. Unattested forks while the source is alive (fixed).** A superseded-file holder could create an unattested fork at 3sln.me, or at any destination, and socially engineer counterparts. No pending successor is offered, and 3sln.me refuses unattested transfer-in, while the source declares `portability.v1` or still serves the identity as active. **Verdict on "unattested transfer-in, labelled":** safe only with that refusal, with keying by the new `(iss, sub)` (never the claimed origin), with displacement by a later attested move, and with the T9 warning copy. The fork still signs with a key that the live source also uses; the label and separate keying are what keep it from merging.
 - **IP-R1-M8. Verifier fetch amplification (fixed).** A presented 16-hop chain costs about 48 cross-issuer fetches. A role with request-path fetches (BindleBox) becomes an amplifier. Fix: offline checks first, chains verified only for an existing relationship or for origin linking, background only, under §3a.5 budgets (spec §8.6). Pins and indexes are bounded (spec §8.2).
 - **IP-R1-M9. The destination sees the current reset credential (fixed).** In design §3.2 the destination decrypted the source's file, which hands it transfer and recovery authority at 3sln.me; "discard" cannot be verified. The destination-start flow now sends the user to the source, which delivers the package (spec §9.2; design §3.2).
-- **IP-R1-M10. Organization moves through the owner's personal account (fixed in design; spec ambiguity fixed).** Spec path (a) and (b) spoke of "the identity's session", and organizations have none. They are now defined for organizations (spec §6.1 item 3). At 3sln.me, someone who takes over the owner of record's person account (stolen personal file, wait 7 days, enrol a passkey) became the only person able to cancel the 72 h organization move. Admins could object but not block. The 30-day cooling now includes authority resets of the owner's own account. **Open:** whether an admin objection should block rather than extend when the owner's account had any security change in the last 30 days (grant-management policy owner).
+- **IP-R1-M10. Organization moves through the owner's personal account (fixed in design; spec ambiguity fixed; blocking applied 2026-10-22 under the coordinator's reading, §6.2).** Spec path (a) and (b) spoke of "the identity's session", and organizations have none. They are now defined for organizations (spec §6.1 item 3). At 3sln.me, someone who takes over the owner of record's person account (stolen personal file, wait 7 days, enrol a passkey) became the only person able to cancel the 72 h organization move. Admins could object but not block. The 30-day cooling now includes authority resets of the owner's own account. **Open:** whether an admin objection should block rather than extend when the owner's account had any security change in the last 30 days (grant-management policy owner). *2026-10-22:* the user answered "sure from other admins, no from org owner, original requester can elevate". Applied in §6.2 under the coordinator's reading (other admins can block an admin-requested move; nobody can block the owner's own move or decision; the requester can elevate to the owner), keeping the 30-day cooling. The reading awaits the user's confirmation.
 
 ### Low
 
@@ -342,7 +375,7 @@ Statement and attestation `typ` separation from links and certificates; `seq`/`p
 
 ### Open items for the user or owners
 
-1. The 24 h notified delay for person moves at 3sln.me (M1).
-2. Admin blocking power in suspicious organization moves (M10).
-3. Pre-rotation as the long-term fix for the H2 residual; Q1 rotation remains recommended but does not close it.
+1. The 24 h notified delay for person moves at 3sln.me (M1). Still open; the plain-language reason is under M1.
+2. ~~Admin blocking power in suspicious organization moves (M10).~~ Applied under the coordinator's reading of the user's answer (§6.2); the reading awaits confirmation.
+3. Pre-rotation as the long-term fix for the H2 residual. Still open: the user has a different picture of pre-rotation, so §2.4 now states only the attack it is meant to stop. Q1 rotation (accepted) does not close it.
 4. The account-deletion design's contact-link 410 (L6), owned by the DX owner.

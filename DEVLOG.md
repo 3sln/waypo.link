@@ -2815,3 +2815,43 @@ Implements the app-uninstall §7.5a rule ([inventory](docs/release/uniform-unkno
 - **Gates:** core 2417, Worker 77, UI-state 291, e2e 214 passed with 4 WebKit skips (browser not installed), asset build and Worker dry run.
 
 Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-22 — User decisions: legal operator, artefacts, organizations, portability
+
+**Legal** ([README](docs/legal/README.md)):
+- **Operator:** Stubbs Software Solutions LLC, doing business as 3sln, 41 West Highway 14 #1645, Spearfish, SD 57783, United States. This is filled into the privacy policy and terms.
+- **Governing law:** the user said "United States". Contract law is set per state, so the clause now reads "the State of [STATE], United States", pending the user's choice of state.
+- **Still open:**
+  - the refund policy;
+  - the venue;
+  - EU/UK representatives. The user has none and asked whether Polar acting as merchant of record removes the need. Coordinator's view: it doesn't, because Polar's role covers the payment, not the account data 3sln controls. Counsel should confirm.
+
+**Artefacts:** the four recommendations in artefact references §13 (Q1–Q4) are accepted:
+- the envelope goes at the canonical URL after a transition at `<id>/envelope`;
+- unsigned retractions only block new pins and notify;
+- new lines use open result objects;
+- version records are not garbage-collected in v1.
+
+**Organizations:**
+- **Q3 accepted:** no roles. Per-member grants, copy-on-apply templates and app-published member-scoped fields; live groups deferred.
+- **Grant-change elevation (3sln.me policy):** the change goes to the subject first. The requester may elevate to the owner if the subject rejects it or doesn't answer in time. The elevation then stays with the owner until the owner accepts or rejects, the requester retracts, or the subject accepts. No timeout resolves a request in anyone's favour. This supersedes the R4-M4 owner-absent proposal. The 7-day response period is the coordinator's provisional default.
+- **Still open:** Q13 (membership separate from relations); the user asked for more explanation.
+
+**Identity portability:**
+- **Q1 accepted with conditions:** the destination rotates the key at transfer-in.
+  - Provenance is chained: the old key signs the new one, and the key history stays published.
+  - Old-key artefacts issued before rotation, such as existing contact links, stay valid, and messages sent through them are honoured.
+  - A holder of an old recovery file can't mint new old-key artefacts.
+- **Q2–Q4 accepted:**
+  - a US$10 ten-year extension that anyone can buy;
+  - a 30-day read-only export window, then purge, deleting the proof once redirects end;
+  - labelled unattested transfer-in from 3sln-format files.
+- **M10:** other admins can block an org move, but not the owner, and a blocked requester can elevate to the owner. This is the coordinator's reading of the user's answer.
+- **Still open:**
+  - the 24 h person-move delay; the user asked for its rationale;
+  - pre-rotation;
+  - whether "original recovery file" means the current one.
+
+The design docs are being updated to match.
+
+Reviewer: ___ Date: ___ Outcome: ___

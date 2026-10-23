@@ -1,6 +1,6 @@
 # Artefact references: additive versions, integrity and caching
 
-Provisional design, 2026-10-21. Design only: no code has changed. Reviewer ___ Date ___ Outcome ___. Normative draft: [spec/artefacts.md](../spec/artefacts.md). Every decision below is **provisional and unsigned**.
+Provisional design, 2026-10-21. Design only: no code has changed. Reviewer ___ Date ___ Outcome ___. Normative draft: [spec/artefacts.md](../spec/artefacts.md). Every decision below is **provisional and unsigned**. On 2026-10-22 the user accepted all four §13 recommendations; they are now ART-D12 to ART-D15. Those choices are the user's; the design as a whole still awaits review sign-off.
 
 User direction (verbatim): "Another things I think we should make sure of is that our references between public artefacts must have integrity hashes; but there's a catch. These files can change, but addatively. So we need a way for references to specify version + hash for that particular version; then validators to extract that version from the public artefact, check the hash and confirm validity. Providers that depend on public artefacts should cache the versions they depend on so if one disappears or is inaccessible temporarily nothing breaks."
 
@@ -19,6 +19,10 @@ User direction (verbatim): "Another things I think we should make sure of is tha
 | ART-D9 | **Notices are sticky and bound to the chain. Retraction closes the line from version N on**, never breaks a digest and never silently revokes. Signatures are optional provenance. | §9 |
 | ART-D10 | **Grants pin (URL, version, digest)**; upgrade without asking only when nothing widens; an existing method whose request schema changed counts as widening. | §10 |
 | ART-D11 | **Legacy artefacts stay valid** as single-version lines; migrated version 1 bodies equal the legacy document, so legacy digests keep matching. | §11 |
+| ART-D12 | **Envelope at the canonical URL eventually**, version records at `<id>/versions/<n>`. During the transition the legacy body stays at the URL and the envelope is served at `<id>/envelope` until dependents declare `artefact-versions.v1`. Decided by the user, 2026-10-22 (former Q1). | §3, §11 |
+| ART-D13 | **An unsigned retraction only blocks new pins and notifies.** Suspending existing grants needs a signature by a key pinned for the line. Decided by the user, 2026-10-22 (former Q2). | §9 |
+| ART-D14 | **New lines use open result objects**; existing v1/v2 bodies stay frozen as version 1. Decided by the user, 2026-10-22 (former Q3). | §6.2 |
+| ART-D15 | **No garbage collection of version records** in the first implementation. Decided by the user, 2026-10-22 (former Q4). | §8 |
 
 ## 1. What exists today (grounding)
 
@@ -60,7 +64,9 @@ Why a log at all, rather than only the latest body plus the digests of earlier v
 
 Entries have exactly `{version, prev, body}`. Changelog prose was left out deliberately: anything in an entry is hashed and frozen, and unhashed prose next to hashed content invites display of unverified text. Changelogs live in documentation.
 
-**Envelope at the canonical URL.** The canonical identifier serves the envelope, not a bare body. The registry review's criterion ("canonical identifiers return the actual machine definitions") is met, because the envelope *is* the definition. Serving the latest bare body at the URL would reintroduce a mutable document at the identifier, which is the problem being solved. As a convenience, 3sln.me can also serve `<id>/<n>.json` with body *n*. That is non-authoritative and is verified by digest like any other copy. This is open question Q1.
+**Envelope at the canonical URL.** The canonical identifier serves the envelope, not a bare body. The registry review's criterion ("canonical identifiers return the actual machine definitions") is met, because the envelope *is* the definition. Serving the latest bare body at the URL would reintroduce a mutable document at the identifier, which is the problem being solved. Version records are served at `<id>/versions/<n>` (spec §2). As a convenience, 3sln.me can also serve `<id>/<n>.json` with body *n*. That is non-authoritative and is verified by digest like any other copy.
+
+**Transition (ART-D12, decided by the user, 2026-10-22).** The envelope reaches the canonical URL only once dependents can read it. Until then the legacy body stays at the URL and the envelope is at `<id>/envelope` (spec §11; R1-M6). 3sln.me's own pin code refetches on every pin, so flipping the URL first would break its own legacy pins.
 
 ## 4. Canonical hashing (ART-D3, ART-D4)
 
@@ -136,7 +142,7 @@ Embedding alone is not enough. Appending to `required` or adding `additionalProp
 
 **Is a new enum value safe for old consumers?** On the *request* side (a value an implementer receives), yes, because an old caller never sends it. On the *receive* side (preference values, results, bus records), only if every consumer was told from the start to tolerate unknown values. So the spec adds `extensible: true` for fragment enum fields (AMD-R6) and `types_extensible` for buses (AMD-R5). Appending to a non-extensible enum is a publication fault. The publisher must declare extensibility when the enum first appears.
 
-**Consequence for today's contracts.** Every current result schema has `additionalProperties: false`, so none can grow results. That is the honest outcome: an old client that validates strictly would reject new members. New lines should open their result objects and say "ignore unknown members" if they expect to grow (Q3).
+**Consequence for today's contracts.** Every current result schema has `additionalProperties: false`, so none can grow results. That is the honest outcome: an old client that validates strictly would reject new members. **ART-D14 (decided by the user, 2026-10-22):** new lines open their result objects (`additionalProperties` absent or `true`) and tell readers to ignore unknown members. 3sln.me publishes every new line that way. Existing v1/v2 bodies are not touched; they become frozen version 1s with closed results, and growing their results needs a new line.
 
 Titles and descriptions are frozen because they are what owners consent to. A typo fix is a new line. This is strict, but anything looser needs a judgement about "meaning", and validators cannot make it.
 
@@ -162,7 +168,7 @@ The embedding check visits each node of the old body once; growth-point matching
 | --- | --- |
 | Key | Version digest → immutable version record. Plus per line: head, digests 1 … *H*, accepted notices, faults, pinned publisher key thumbprints, `fetchedAt`, negative-cache expiry. |
 | Write ordering | The record is stored durably **before** the pin that depends on it commits, in the same transaction where the store allows (Node adapter; the Worker's metadata Durable Object). |
-| Retention | While any pin references the version or a later version of the line (the chain anchors earlier ones), including revoked grants kept for audit or export. Then a documented grace period (3sln.me: 90 days) before deletion. Artefacts are small; the first implementation may simply never delete (Q4). |
+| Retention | While any pin references the version or a later version of the line (the chain anchors earlier ones), including revoked grants kept for audit or export. **ART-D15 (decided by the user, 2026-10-22): the first implementation never deletes version records.** Artefacts are small. If store size ever matters, garbage collection can be added later with a documented grace period (90 days was proposed); that would be a new decision. |
 | Freshness | Records never expire. Referenced lines are refreshed at least daily and at most hourly, to learn of notices; refreshes never advance heads (R1-M3). |
 | Mirrors | `GET /.well-known/bindle/artefacts/<digest>` serves records from the mirror's own store; it never fetches for a requester (no SSRF, no amplification). The digest makes the mirror untrusted by construction. Fetchers use operator-configured mirrors or the issuer that sent them the reference. Notices only come from the origin, so a mirror cannot hide or forge a retraction, but it can serve a retracted version: mirror-only records create new pins only after an origin notice fetch in the last 24 hours (R1-M2). |
 | Fetch limits | The security spec's SSRF boundary, plus: no redirects, no credentials, 256 KiB decompressed, media type check, per-origin and global budgets, 60 s negative cache, and fetches triggered only by references, requests or operators. URLs inside bodies, notices (`successor`) and mirror responses never trigger fetches. |
@@ -174,7 +180,7 @@ The embedding check visits each node of the old body once; growth-point matching
 
 **Deprecation** is a sticky notice and a warning; it changes no behaviour.
 
-**Retraction.** In an additive line, whatever made version *N* harmful is still in every later version. So a retraction says "from *N* on" and closes the line; the fix is a new line, named in `successor`. Honouring a retraction without breaking pins means: refuse new pins at ≥ *N*; keep every stored record and every digest valid; tell affected owners; never silently revoke. Suspending existing use is provider policy, and SHOULD happen only when the notice is signed by a key pinned for the line. That way an expired-domain buyer cannot switch off every dependent provider's grants with one unsigned edit (Q2).
+**Retraction.** In an additive line, whatever made version *N* harmful is still in every later version. So a retraction says "from *N* on" and closes the line; the fix is a new line, named in `successor`. Honouring a retraction without breaking pins means: refuse new pins at ≥ *N*; keep every stored record and every digest valid; tell affected owners; never silently revoke. **ART-D13 (decided by the user, 2026-10-22): an unsigned retraction only blocks new pins and notifies.** Suspending existing grants requires a valid signature by a key pinned for the line (spec §9.2 makes this a MUST NOT otherwise). That way an expired-domain buyer cannot switch off every dependent provider's grants with one unsigned edit. With a valid signature, suspension remains provider policy, and owners can always resume.
 
 **Signatures.** These are optional detached Ed25519 or ES256 signatures over version or notice digests, with keys at `/.well-known/bindle/artefact-keys` on the line origin. Thumbprints are pinned at first use and rotate under the integrations §2.3 continuity rule. They add provenance for copies obtained from mirrors or caches and survive domain loss. They never substitute for a digest. Digest = "is this the version I depend on"; signature = "did the publisher's key endorse it".
 
@@ -296,8 +302,8 @@ Mostly at engine level, through `AppAction`/`AppQuery` operations (`artefacts.pi
 
 | Normative for every provider (spec) | 3sln.me only (this document) |
 | --- | --- |
-| Envelope, strict parsing, JCS, record digest, chain | Source layout, lock file, CI checks, convenience per-version paths |
-| Reference members and legacy mapping | Storage keys, transaction placement, 90-day grace |
+| Envelope, strict parsing, JCS, record digest, chain | Source layout, lock file, CI checks, convenience `<n>.json` paths |
+| Reference members and legacy mapping | Storage keys, transaction placement, no deletion in the first implementation (ART-D15) |
 | Growth points and reader safety | Fetch budgets below the spec maxima; allowlist-only fetch until the egress gate |
 | Failure outcomes (fail closed) and rewritten-history handling | Operator fault review UI |
 | MUST store before pin; retain while referenced | The flag and its rollout |
@@ -305,14 +311,16 @@ Mostly at engine level, through `AppAction`/`AppQuery` operations (`artefacts.pi
 | Grant binding, upgrade and widening rule; `bindle.cv` | Consent copy for "updated method" and version display |
 | Feature identifiers | — |
 
-## 13. Open questions
+## 13. Questions decided by the user
 
-| # | Question | Recommendation |
-| --- | --- | --- |
-| Q1 | Should the canonical artefact URL serve the **envelope** (breaking anyone who fetches `$id` expecting a bare JSON Schema), or keep a bare latest body there with the envelope at a sibling URL? | **Envelope at the canonical URL eventually**, version records at `<id>/versions/<n>` (normative since R1-H5). During transition the legacy body stays at the URL and the envelope is at `<id>/envelope` until dependents declare `artefact-versions.v1` (spec §11; R1-M6). 3sln.me's own pin code refetches on every pin, so flipping the URL first would break its own legacy pins. |
-| Q2 | May an **unsigned** retraction suspend existing grants, or only block new pins and notify? | **Only block and notify.** Suspension SHOULD require a signature by a key pinned for the line, so a lapsed domain cannot switch off dependents. |
-| Q3 | Should new lines publish with **open result objects** (`additionalProperties` allowed, readers ignore unknown) so results can grow additively? | **Yes for new lines.** Leave existing v1/v2 bodies untouched; they become frozen version 1s. |
-| Q4 | Should version records be **garbage-collected** at all? | **Not in the first implementation.** Retain indefinitely and add GC with a 90-day grace only if store size ever matters. |
+The user accepted all four recommendations on 2026-10-22. They are recorded as ART-D12 to ART-D15 and carried into the spec. No product questions remain open in this document; the review items R1-M1 and R1-L2 below are still open.
+
+| # | Question | Decision (by the user, 2026-10-22) | Spec |
+| --- | --- | --- | --- |
+| Q1 → ART-D12 | Should the canonical artefact URL serve the **envelope** (breaking anyone who fetches `$id` expecting a bare JSON Schema), or keep a bare latest body there with the envelope at a sibling URL? | **Envelope at the canonical URL eventually**, version records at `<id>/versions/<n>`. During the transition the legacy body stays at the URL and the envelope is at `<id>/envelope` until dependents declare `artefact-versions.v1`. | §2, §11 (now MUST) |
+| Q2 → ART-D13 | May an **unsigned** retraction suspend existing grants, or only block new pins and notify? | **Only block and notify.** Suspending existing grants needs a signature by a key pinned for the line. | §9.2 (now MUST NOT without one) |
+| Q3 → ART-D14 | Should new lines publish with **open result objects** (`additionalProperties` allowed, readers ignore unknown) so results can grow additively? | **Yes for new lines.** Existing v1/v2 bodies stay frozen as version 1. | §6.3 |
+| Q4 → ART-D15 | Should version records be **garbage-collected** at all? | **Not in the first implementation.** | §8.2 permits deletion; 3sln.me does not delete |
 
 ## Reviews
 

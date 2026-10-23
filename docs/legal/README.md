@@ -11,7 +11,7 @@ The drafts describe the as-built system as of commit f6d3820 plus features behin
 
 ## Placeholders to fill
 
-`[COMPANY]`, `[REGISTERED ADDRESS]`, `[COUNTRY]`, `[GOVERNING LAW]`, `[VENUE]`, `[REFUND POLICY]`, `[EU REPRESENTATIVE]`, `[UK REPRESENTATIVE]` (GDPR Art. 27 / UK GDPR Art. 27 representatives are required if the company has no EU/UK establishment and offers the service there).
+Operator filled 2026-10-22: Stubbs Software Solutions LLC, doing business as 3sln, 41 West Highway 14 #1645, Spearfish, SD 57783, United States. Remaining: `[STATE]` (governing law), `[VENUE]`, `[REFUND POLICY]`, `[EU REPRESENTATIVE]`, `[UK REPRESENTATIVE]` (GDPR Art. 27 / UK GDPR Art. 27 representatives are required if the company has no EU/UK establishment and offers the service there).
 
 ## Commitments the drafts make that the system does not meet yet
 
