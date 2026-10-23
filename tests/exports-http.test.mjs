@@ -136,3 +136,11 @@ test('failed create notices and transient alarm errors retain a durable retry wa
  f.ports.notice=async()=>{};for(let i=0;i<20;i++){await f.controller.exportAlarm();if((await f.controller.exportList(OWNER)).jobs[0].state==='ready')break;}assert.equal((await f.controller.exportList(OWNER)).jobs[0].state,'ready');
  const id=(await f.controller.exportList(OWNER)).jobs[0].id,original=f.archives.delete;f.archives.delete=async()=>{throw Object.assign(new Error('bucket'),{code:'bucket_unavailable'});};const count=wakes.length;await assert.rejects(f.controller.exportCancel(OWNER,id),{code:'bucket_unavailable'});assert(wakes.length>count);f.archives.delete=original;await f.controller.exportAlarm();assert.equal(await f.metadata.get('export/active'),undefined);assert.equal(f.archives.rows.size,0);
 });
+
+test('account adapter consumes the over-quota allowance once and retains owner-only creation',async t=>{
+ const f=await fixture(t),episodeId='00000000-0000-4000-8000-000000000099',now=f.clock.now();
+ await f.metadata.put('retention/episode-v1',{v:1,id:episodeId,owner:OWNER,revision:1,state:'grace',effectiveAt:now,deadlineAt:now+30*86400000,quotaBytes:10,usageBytes:20});assert(!('exportOfferOverQuota' in rpc));await f.controller.exportOfferOverQuota(OWNER,{episodeId,expectedRevision:1});
+ const input={operationId:OP,purpose:'over-quota',episodeId},response=await f.http('/api/exports',{method:'POST',input});assert.equal(response.status,200,await response.clone().text());const job=await response.json();assert.equal(job.purpose,'over-quota');assert.equal((await f.controller.exportOverQuotaEvidence(OWNER)).episode.exportOffered.jobId,job.id);
+ await f.controller.exportCancel(OWNER,job.id);await assert.rejects(f.controller.exportCreate(OWNER,{...input,operationId:'00000000-0000-4000-8000-000000000098'},f.actor),{code:'export_episode_used'});
+ assert.equal((await f.http('/api/exports',{method:'POST',headers:{Authorization:'Bearer fake'},input})).status,401);assert.equal((await f.controller.exportOverQuotaEvidence(OWNER)).removalEnabled,false);
+});

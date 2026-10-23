@@ -115,7 +115,8 @@ export async function nodeResources({directory,config,formTransport,mailer}){
  let integrationConfig={};const deletionPorts={},deletionConfig={ACCOUNT_DELETION_PORTS:deletionPorts,
   // DX-1/DX-2 export ports. Grants read only shard files that already exist (MCP fan-out never creates stores).
   exportPorts:createExportAdapterPorts({repository,notice:exportNoticePort({repository,mailer}),contributorPorts:{grants:exportGrantsPort({
-   federation:async owner=>existsSync(join(directory,'federation',`${FEDERATION_LAYOUT}-${owner}.sqlite`))?federationShard(owner).exportGrants():[],
+   devices:async owner=>{if(!existsSync(join(directory,'federation',`${FEDERATION_LAYOUT}-${owner}.sqlite`)))return [];federationShard(owner);return [...(await federationMap.get(owner).metadata.list({prefix:'federation/family/'})).values()].filter(row=>row.subject===`${config.APP_ORIGIN}/entities/${owner}`);},
+   federation:async owner=>{if(!existsSync(join(directory,'federation',`${FEDERATION_LAYOUT}-${owner}.sqlite`)))return [];federationShard(owner);return [...(await federationMap.get(owner).metadata.list({prefix:'federation/grant/',limit:1000})).values()];},
    mcp:async owner=>{const rows=[];for(let n=0;n<MCP_SHARDS;n++){const shard=String(n).padStart(2,'0');if(!existsSync(join(directory,'mcp',`mcp-auth-v1-64-${shard}.sqlite`)))continue;const result=await mcpShard(shard).invoke('grants',[owner]);if(!result.ok)throw Object.assign(new Error(result.error.message),result.error);rows.push(...result.result);}return rows;}})}})};// filled once the shards exist (below)
  const accounts={get:id=>{
    if(!/^[a-f0-9-]{36}$/.test(id))throw new Error('Invalid account identifier');

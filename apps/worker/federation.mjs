@@ -33,6 +33,7 @@ export class FederationObject extends DurableObject {
  }
  /** DX-1 export: this owner shard's grant rows (projected and redacted by the export contributor). */
  async exportGrants(owner){if(!UUID_V4.test(owner))throw new Error('Invalid federation account locator.');const bound=await this.storage.get('@federation-owner');if(bound===undefined)return [];if(bound!==owner)throw new Error('Invalid federation account locator.');return [...(await this.storage.list({prefix:'federation/grant/',limit:1000})).values()];}
+ async exportDeviceGrants(owner){if(!UUID_V4.test(owner))throw new Error('Invalid federation account locator.');const bound=await this.storage.get('@federation-owner');if(bound===undefined)return [];if(bound!==owner)throw new Error('Invalid federation account locator.');return [...(await this.storage.list({prefix:'federation/family/'})).values()].filter(row=>row.subject===`${this.env.APP_ORIGIN}/entities/${owner}`);}
  /** DX-3 E3: erase one owner's federation shard over storage alone (composing the controller needs the
   * federation configuration, which erasure must not depend on). A store never bound to this owner holds nothing. */
  async eraseSubject(owner){

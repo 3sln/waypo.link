@@ -30,6 +30,9 @@ export function federationGrantRows(rows){return rows.filter(row=>row&&typeof ro
 /** MCP grants (approved collections and tools), as DX-1 grant rows. */
 export function mcpGrantRows(rows){return rows.filter(row=>row&&typeof row.clientId==='string').map(row=>({id:row.id,client:row.clientId,clientId:row.clientId,label:row.clientName,resources:(row.permissions??[]).map(p=>({collectionId:p.collectionId,tools:p.tools})),created:row.approvedAt??null,expires:row.expiresAt??null,state:row.active?'active':'revoked',kind:'mcp'}));}
 /** One bounded page: an owner's federation and MCP grants are each capped by their stores. */
-export function exportGrantsPort({federation,mcp}){
- return Object.freeze({async page({owner,cursor}){if(cursor)return {rows:[],done:true,cursor:null};const rows=[...federationGrantRows(federation?await federation(owner):[]),...mcpGrantRows(mcp?await mcp(owner):[])];return {rows,done:true,cursor:null};}});
+export function exportGrantsPort({federation,mcp,devices}){
+ return Object.freeze({async page({owner,cursor,limit=500}){if(cursor&&!Number.isSafeInteger(cursor.offset))return {rows:[],done:true,cursor:null};const rows=[...federationGrantRows(federation?await federation(owner):[]),...mcpGrantRows(mcp?await mcp(owner):[]),...deviceGrantRows(devices?await devices(owner):[])];const offset=cursor?.offset??0,next=offset+limit;return {rows:rows.slice(offset,next),done:next>=rows.length,cursor:next<rows.length?{offset:next}:null};}});
 }
+
+/** Device authorization families, without bearer material, family IDs or lineage capabilities. */
+export function deviceGrantRows(rows){return rows.filter(row=>row?.grantType==='urn:ietf:params:oauth:grant-type:device_code').map(row=>({client:row.clientId,clientId:row.clientId,device:true,grantIds:(row.grants??[]).filter(id=>typeof id==='string'),kind:'device',grantType:row.grantType,created:row.createdAt,expires:row.expiresAt,lastUsedAt:row.lastUsedAt,state:row.status}));}

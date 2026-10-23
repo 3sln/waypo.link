@@ -57,11 +57,10 @@ export class OverQuotaExportEvidence extends AppQuery {
   return accountStore.transaction(async tx=>{await bound(tx,owner);const episode=await tx.get(OVER_QUOTA_EPISODE);if(!episode)return {episode:null,removalEnabled:false};if(episode.owner!==owner)unavailable();return {episode:structuredClone(episode),removalEnabled:false,offerWindowElapsed:int(episode.exportOffered?.at)&&clock.now()>=Math.max(episode.deadlineAt,episode.exportOffered.at+OVER_QUOTA_NOTICE_MS)};});
  }
 }
-// Coordinator integration: import this class as CreateExport in account/exports
-// and replace the exports.create registry entry. It keeps the DX-1 generation,
-// download, cleanup and security ports; only creation gains episode admission.
-// Creation is kept here to respect DX-9's exclusive file ownership. Until that
-// import is applied, the existing HTTP operation remains owner-purpose only.
+// Account export adapters register this as exports.create. It keeps the DX-1
+// generation, download, cleanup and security ports; only creation gains episode
+// admission. HTTP still requires an owner session and fresh step-up. The D092
+// verified episode producer remains separate; no hook infers a downgrade.
 export class CreateExportWithHooks extends CreateExport {
  async run(r){
   const owner=authority(this.actor,['owner']),input=this.input,s=new AccountExport({...r,...r.config.exportPorts}),now=r.clock.now();

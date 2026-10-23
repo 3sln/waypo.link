@@ -84,7 +84,7 @@ export function createExportContributors({accountStore,identity,keys,grants,exte
  const result=[
   port('identity',identity&&(async({owner})=>({rows:[await identity(owner)],done:true})),identityExportRow),
   port('keys',keys&&(async({owner})=>({rows:[await keys(owner)],done:true})),row=>projection(row,'publicKeys keyIds certificates backupWorkflow')),
-  port('grants',grants?.page?.bind(grants),row=>projection(row,'client clientId fragments fields resources methods created expires device label'))
+  port('grants',grants?.page?.bind(grants),row=>projection(row,'client clientId fragments fields resources methods created expires device label kind grantType lastUsedAt grantIds'))
  ];
  for(const [name,prefixes,names]of definitions){
   if(name==='external-storage'){result.push(port(name,externalStorage?.page?.bind(externalStorage),row=>projection(row,names)));continue;}

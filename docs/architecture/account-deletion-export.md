@@ -1,6 +1,6 @@
 # Self-serve account deletion, data export and email removal
 
-Status: proposed design, 2026-10-21. Nothing here is implemented, and nothing here changes a production gate in [security.md](../spec/security.md). Reviewer ___ / Date ___ / Outcome ___. Decisions below are provisional until signed off in [DEVLOG.md](../../DEVLOG.md). Local reversible implementation may proceed behind the default-off flags in §8, under the user's standing authorization.
+Status: design with local implementation, updated 2026-10-22 (DX-10 status below). This document does not change a production gate in [security.md](../spec/security.md). Reviewer ___ / Date ___ / Outcome ___. Decisions below are provisional until signed off in [DEVLOG.md](../../DEVLOG.md). Local reversible implementation may proceed behind the default-off flags in §8, under the user's standing authorization.
 
 **Why.** The legal drafts promise things owners cannot do today:
 - account deletion on request ([privacy §8–9](../legal/privacy.md), [terms §10](../legal/terms.md));
@@ -795,3 +795,31 @@ Yes, in this order and scope:
 2. **First, agree** the §6 interfaces (`identitySecurity`, `deletionHold`, `deletionTick`, the erase ports and `FileBucket` range) and the FF-5a/FF-5b carve-outs.
 3. **Wait for FF-4, FF-5a and FF-5b:** DX-2 wiring, DX-3's coordinator hunks, DX-5 and DX-8.
 4. **Before any deletion flag is enabled, even locally:** decide R1-M12.
+
+## DX-10 integration status — 2026-10-22
+
+Local implementation only; no deployment, secrets, publication or production verification. Reviewer ___ / Date ___ / Outcome ___. No approval is inferred. DEVLOG.md was read but left unchanged under this workstream's explicit instruction.
+
+| Backlog item | Status | Evidence / remaining dependency |
+|---|---|---|
+| DX-9 `CreateExportWithHooks`, offer/evidence registration | done-now | Account export facade and registry use the hook Action; offer remains system-only, creation owner-only. Account evidence RPC always reports `removalEnabled:false`. Existing seeded hook contention/lost-reply tests remain applicable. |
+| DX-9 D092 verified episode producer and notices | deferred | There is no D092 producer in the current code. Billing reconciliation commits state but no durable effective-downgrade event/before-image. Safely composing an episode requires that billing-owned transaction contract, replay/anti-abuse policy and persistent warning/reminder projection; inferring an episode from a Free snapshot or a cancellation would violate D092. No removal path was added. `exportOffered` remains availability evidence, never delivery. |
+| DX-6 item 6 notification budgets/unsubscribe tokens | deferred | Identity `emailRemove` commits in `packages/identity/service.mjs`, which is outside DX-10's write scope. Its post-commit push is conditional/best-effort and cannot be a reliable invalidation hook. This needs an identity-owned durable cleanup intent plus an idempotent account-side consumer, including retry after a committed removal loses its reply. |
+| DX-6 lifecycle notice waiver | deferred | Q4 explicitly retains destructive holds until privacy/terms text is approved. No approval was found or invented. Email-removal waiver recording already exists. |
+| Device grants in exports | done-now | Worker/Node owner-shard family readers feed an explicit device projection into the grants contributor. No tokens, hashes, family IDs, rotation keys or lineage capabilities leave the projection. |
+| S3/WebDAV in exports | done-now, metadata-only deviation | Read-only connectors persist encrypted configuration, not host-held per-object/version mappings. Export decrypted allowlisted bucket/prefix/resource metadata only; omit endpoints (which may contain authority), credentials and external bytes. Preserve Drive object/version mappings and add folder metadata paging. Manifest states these limits. |
+| DX-6 route + mutation allowlist | done-before | Existing CSRF/step-up route is `/api/auth/email/remove` (accepted DX-6 deviation), not a second `/api/identity/email/remove` alias. `emailRemove` is in the identity mutation allowlist. |
+| DX-6 adapter flags/accountChannels ports | done-before | Both adapters compose flags and account RPC channel ports. |
+| DX-6 account channel/security RPCs and push choice | done-before | `account/notifications.mjs` uses owner checks, `accountChannelState`, `accountSecurityNotice` and lifecycle/default configured Web Push. |
+| DX-6 email template / Node parity | done-before with configured-service limitation | Worker has `email-removed`; Node uses an injected `sendSecurityAlert` mailer. A configured method is not evidence of delivery. |
+| DX-8 service-worker security notices | done-before | Existing `bindle-security-notice` handler; no frontend change here. |
+| DX-1 export ports/registration/Node streaming | done-before | Both adapters compose notice/contributor/security ports; Node ranged FileBucket reads and HTTP streaming already exist. |
+| DX-3 injected exports.cancelAll | done-before | `account/deletion.mjs` injects real `AccountExport.cancelAll`, covering write intents/temporary objects. |
+| DX-4 registration/runtime guards | done-before | Billing account facade guards purchases and handles fenced paid events through BillingClosure. |
+| DX-4 operator alert transport | deferred | Existing structured-log alert remains; no operator destination/transport is configured. |
+| DX-4 Q3 Polar sandbox verification | deferred | Requires external service verification; no secrets or live actions authorized in DX-10. |
+| R1-M12 | done-before (decision) | DEVLOG 2026-10-22 resolves Parley as a regular storage app; operatorApps remains a no-op. BindleBox hot-state erasure is a separate app-enablement dependency. |
+
+Previously recorded deviations remain provisional: 72-hour new-account security delay, recovery epoch bumps, same-email reverify semantics, expectedEmail, current-terms waiver, sharded write crash recovery and non-atomic channel/identity checks; durable export intents/alternating buffers/lease epochs; conservative ambiguous billing cancellation handling and broader renewable-status revocation. Existing worker deletion parity tests now run under workerd; this does not establish production provider conformance.
+
+DX-10 validation (local shared tree, 2026-10-22): targeted export/adapter/CLI/seeded-chaos run 26/26; final adapter/projection run 15/15; Worker 78/78; UI-state 291/291; DOM, asset build and Worker dry run pass; full e2e 214 pass / 4 WebKit skips / 0 failures. Final `npm test`: 2,434 pass / 2 failures in the unowned `tests/flags-registry.test.mjs` (expects 42 flags; concurrent registry now has 43 and adds `ARTEFACT_VERSIONS_ENABLED`). No fixes were made to that workstream. An earlier unowned docs-builder collision subsequently resolved and its isolated suite passes. An initial e2e run with an incomplete asset snapshot was discarded; the reported full run used a complete snapshot.

@@ -5,7 +5,9 @@ import {cryptoRandom,nullAudit} from '../../app/providers.mjs';
 import {fault} from '../../app/faults.mjs';
 import {UUID} from '../../core/primitives.mjs';
 import {AccountExport,createExportDigest} from '../export-generation.mjs';
-import {ACCOUNT_EXPORT_OPERATIONS,CreateExport,ExportList,ExportStatus,CancelExport,StepExport,ExpireExports} from '../../app/domains/account-export.mjs';
+import {ACCOUNT_EXPORT_OPERATIONS,ExportList,ExportStatus,CancelExport,StepExport,ExpireExports} from '../../app/domains/account-export.mjs';
+import {CreateExportWithHooks as CreateExport,OfferOverQuotaExport,OverQuotaExportEvidence} from '../export-hooks.mjs';
+import {decryptSecret} from '../secrets.mjs';
 import {flagsFor} from './flags.mjs';
 import {storageState} from '../storage-quota.mjs';
 import {identitySecurityPort} from '../../identity/service.mjs';
@@ -55,7 +57,7 @@ export class DownloadExport extends AppQuery {
 }
 // Privileged evidence is obtained through the identity engine, never from JSON.
 export class ExportStepUp extends Query {static deps=['identity'];constructor(context){super();this.context=context;}async fetch({identity}){const {account,session,sessionId}=await identity.privileged(this.context,300000);return {owner:account.id,sessionId,stepUpAt:session.stepUpAt};}}
-export const EXPORT_OPERATIONS=operations(...ACCOUNT_EXPORT_OPERATIONS,MintExportGrant,RevokeExportGrant,DownloadExport);
+export const EXPORT_OPERATIONS=operations(...ACCOUNT_EXPORT_OPERATIONS.filter(op=>op.operation!=='exports.create'),CreateExport,OfferOverQuotaExport,OverQuotaExportEvidence,MintExportGrant,RevokeExportGrant,DownloadExport);
 /** Adapter composition contract. Identity is read through its repository port;
  * domain-owned public-key, federation and external-mapping projections and the
  * idempotent audit/confirmed-channel notice port must be supplied explicitly.
@@ -71,7 +73,15 @@ async function exportKeys(c,owner){
  return {publicKeys:history.map(k=>({kid:k.kid,purpose:k.purpose,alg:k.alg,publicJwk:k.publicJwk,state:k.state,current:k.current,createdAt:k.createdAt,retiredAt:k.retiredAt,revokedAt:k.revokedAt})),keyIds:history.map(k=>k.kid),certificates:[],backupWorkflow:'Private keys leave only through the separately protected identity backup in your security settings.'};
 }
 /** The host-held logical-key to provider-object mapping (§1.5): references only, never external bytes or tokens. */
-function externalStorageMapping(c){return {async page({cursor,limit}){const rows=await c.metadata.list({prefix:'drive/object/',startAfter:cursor??'',limit});return {rows:[...rows].map(([path,row])=>{const resourceId=path.split('/')[2];return {provider:'google-drive',resource:resourceId,resourceId,key:row.key,fileId:row.fileId,version:row.version,size:row.size,contentType:row.contentType};}),cursor:rows.size===limit?[...rows.keys()].at(-1):null,done:rows.size<limit};}};}
+export function externalStorageMapping(c){return {async page({owner,cursor,limit}){
+ const prefixes=['drive/object/','drive/folder/','resource/'],index=cursor?.index??0,rows=await c.metadata.list({prefix:prefixes[index],startAfter:typeof cursor==='string'?cursor:cursor?.after??'',limit}),out=[];
+ for(const [path,row]of rows){if(row.owner!==undefined&&row.owner!==owner)continue;
+  if(index===2){if(!['s3','webdav'].includes(row.provider))continue;const config=await decryptSecret(row.secret,c.config.KEY_ENCRYPTION_KEY);out.push({provider:row.provider,resourceId:row.id,resource:row.id,...row.provider==='s3'?{bucket:config.bucket,prefix:config.prefix??''}:{prefix:config.prefix??''}});}
+  else {const resourceId=path.split('/')[2];out.push({provider:'google-drive',resource:resourceId,resourceId,key:row.key,fileId:row.fileId,folderId:row.folderId,version:row.version,size:row.size,contentType:row.contentType});}
+ }
+ const more=rows.size===limit,next=more?{index,after:[...rows.keys()].at(-1)}:index+1<prefixes.length?{index:index+1}:null;return {rows:out,cursor:next,done:next===null};
+}};}
+
 export function exportEngine(c){
  let engine=engines.get(c);if(!engine){const clock={now:()=>typeof c.config.LIFECYCLE_CLOCK==='function'?c.config.LIFECYCLE_CLOCK():Date.now()},flags={for:ctx=>flagsFor(c.config,ctx)};
   // Port properties are read per operation, preserving request-pinned flags and
@@ -91,6 +101,9 @@ const downloadLayout=promise=>promise.catch(error=>{if(error.status===416)return
 const wake=async(c,result)=>{if(Number.isSafeInteger(result?.wakeAt))await c.scheduleAlarm?.(result.wakeAt);};
 export const methods={
  async exportCreate(owner,input,evidence){try{return await perform(exportEngine(this),new CreateExport({actor:actor(owner,evidence),input}));}finally{if(await this.metadata.get('export/active'))await this.scheduleAlarm?.(Date.now()+2000);}},
+ // Internal D092 hook; no owner RPC may forge an availability offer.
+ async exportOfferOverQuota(owner,input){return perform(exportEngine(this),new OfferOverQuotaExport({actor:{kind:'system',owner},input}));},
+ async exportOverQuotaEvidence(owner){return read(exportEngine(this),new OverQuotaExportEvidence({actor:actor(owner)}));},
  async exportList(owner){return read(exportEngine(this),new ExportList({actor:actor(owner)}));},
  async exportStatus(owner,id){return read(exportEngine(this),new ExportStatus({actor:actor(owner),id}));},
  async exportCancel(owner,id){try{return await perform(exportEngine(this),new CancelExport({actor:actor(owner),id}));}finally{if(await this.metadata.get('export/active'))await this.scheduleAlarm?.(Date.now()+2000);}},
@@ -101,4 +114,4 @@ export const methods={
  // Internal alarm hook: no RPC exposes generation to an owner or a CLI grant.
  async exportAlarm(){const owner=await this.metadata.get('owner');if(!owner||!await this.metadata.get('export/active')||await this.metadata.get('deletion/fence-v1')||await this.metadata.get('lifecycle/purge-v1')||!flagsFor(this.config).background('ACCOUNT_EXPORT_ENABLED'))return {busy:false};const engine=exportEngine(this),actor={kind:'system',owner};try{if(this.gate)await this.gate.run(()=>this.warm(owner));else await this.warm(owner);const expired=await perform(engine,new ExpireExports({actor}));await wake(this,expired);const result=await perform(engine,new StepExport({actor}));await wake(this,result);return result;}catch(error){const result={busy:true,wakeAt:Date.now()+60000,error:error?.code??'export_unavailable'};await wake(this,result);return result;}},
 };
-export const rpc={exportCreate:{lifecycle:'suspended',warm:true},exportList:{lifecycle:'suspended'},exportStatus:{lifecycle:'suspended'},exportCancel:{lifecycle:'purging'},exportGrant:{lifecycle:'suspended'},exportRevokeGrant:{lifecycle:'purging'},exportDownload:{lifecycle:'suspended'},exportGrantDownload:{lifecycle:'suspended'}};
+export const rpc={exportCreate:{lifecycle:'suspended',warm:true},exportOverQuotaEvidence:{lifecycle:'suspended'},exportList:{lifecycle:'suspended'},exportStatus:{lifecycle:'suspended'},exportCancel:{lifecycle:'purging'},exportGrant:{lifecycle:'suspended'},exportRevokeGrant:{lifecycle:'purging'},exportDownload:{lifecycle:'suspended'},exportGrantDownload:{lifecycle:'suspended'}};

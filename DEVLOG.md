@@ -2939,3 +2939,23 @@ Reviewer: ___ Date: ___ Outcome: ___
 None of the provisional items blocks implementation.
 
 Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-22 — DX-10: account export integration
+
+The integration status for each backlog item is in [account deletion and export](docs/architecture/account-deletion-export.md).
+- **Done:**
+  - export hooks are wired in the Worker and Node;
+  - internal over-quota offer and owner evidence methods, where `exportOffered` records availability, not delivery;
+  - exports include device grants;
+  - Node grant-store wiring is fixed;
+  - paging and integration tests.
+- **Deviation (provisional):** S3/WebDAV exports carry namespace metadata only, because those connectors persist no object or version mappings. Credentials and endpoints are omitted, and the manifest states the limitation.
+- **Deferred:**
+  - the D092 over-quota episode producer and its notices, which need a durable billing-transition contract;
+  - invalidating notification budgets and unsubscribe tokens on email removal, which needs an identity hook;
+  - Q4 keeps its approval hold;
+  - the operator-alert transport and the Polar sandbox verification remain open.
+- **Not added:** over-quota removal.
+- **Gates:** Worker 78, UI-state 291, e2e 214 with 4 WebKit skips, asset build and Worker dry run. Core passes except for two flag-count assertions that change with the concurrent ART-3 flag row.
+
+Reviewer: ___ Date: ___ Outcome: ___

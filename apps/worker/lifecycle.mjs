@@ -44,6 +44,7 @@ export function workerDeletionConfig(env){
  // grants projection over the owner's federation shard and MCP shards. Keys and the external-storage mapping are
  // account-local (packages/runtime/account/exports.mjs).
  const exportPorts=createExportAdapterPorts({repository,notice:exportNoticePort({repository,mailer:mailTransport(env)}),contributorPorts:{grants:exportGrantsPort({
+  devices:env.FEDERATION?owner=>env.FEDERATION.get(env.FEDERATION.idFromName(`${FEDERATION_LAYOUT}/${owner}`)).exportDeviceGrants(owner):null,
   federation:env.FEDERATION?owner=>env.FEDERATION.get(env.FEDERATION.idFromName(`${FEDERATION_LAYOUT}/${owner}`)).exportGrants(owner):null,
   mcp:mcp?owner=>mcp.grants(owner):null})}});
  return {exportPorts,ACCOUNT_DELETION_PORTS:{
