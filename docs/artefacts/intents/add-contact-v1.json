@@ -1,0 +1,52 @@
+{
+  "bindle_artefact": 1,
+  "id": "https://spec.bindle.example/intents/add-contact/v1",
+  "kind": "intent",
+  "versions": [
+    {
+      "version": 1,
+      "prev": null,
+      "body": {
+        "id": "https://spec.bindle.example/intents/add-contact/v1",
+        "title": {
+          "en": "Save a contact"
+        },
+        "summary": {
+          "en": "Saves this contact link to your contacts in the app you choose."
+        },
+        "publisher": "https://spec.bindle.example",
+        "effect": "save",
+        "capability": true,
+        "data": {
+          "type": "object",
+          "properties": {
+            "contact": {
+              "type": "string",
+              "maxLength": 4352,
+              "format": "contact-link"
+            }
+          },
+          "required": [
+            "contact"
+          ]
+        },
+        "disclosure": {
+          "categories": [
+            "personal-data"
+          ],
+          "fields": {
+            "contact": {
+              "title": {
+                "en": "Contact link"
+              },
+              "categories": [
+                "personal-data"
+              ],
+              "display": "origin"
+            }
+          }
+        }
+      }
+    }
+  ]
+}

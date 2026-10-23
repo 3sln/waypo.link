@@ -1,5 +1,6 @@
 // HTTP routes of slice 3, Contacts and intake (docs/architecture/app-engine.md §12): link previews, signed contact links, contact links and intake, opener operations, developer contact.
 // Stage handlers and route-module shape: packages/runtime/routes/index.mjs.
+import {flagsFor} from '../../flags/read.mjs';
 import {developerContactRoutes} from '../developer-contact.mjs';
 import {CONTACT_PROFILE_MIME,CONTACT_INTAKE_MIME,CONTACT_DELIVERY_TOKEN,selectContactRepresentation} from '../../beaming/profile.mjs';
 import {parseLinkQuery,parseLinkMeta} from '../../messaging/bindle-links.mjs';
@@ -35,9 +36,9 @@ export const stages={
    if(path==='/oembed'||avatarPath){
     const previewHeaders={...privateHeaders,'Access-Control-Allow-Origin':'*','X-Robots-Tag':'noindex, nofollow'};
     if(!['GET','HEAD'].includes(request.method))return json({error:'method_not_allowed'},405,{...previewHeaders,Allow:'GET, HEAD'});
-    if(avatarPath){const preview=await contactPreview({env,target:env.APP_ORIGIN+avatarPath[1]+url.search,profile:previewProfile(env,request,local)});if(!preview.verified)return publicUnknown(previewHeaders,request);return new Response(null,{status:302,headers:{...previewHeaders,Location:preview.avatarURL??preview.image}});}
+    if(avatarPath){const preview=await contactPreview({env,intentLinksEnabled:flagsFor(env).enabled('INTENT_LINKS_ENABLED'),target:env.APP_ORIGIN+avatarPath[1]+url.search,profile:previewProfile(env,request,local)});if(!preview.verified)return publicUnknown(previewHeaders,request);return new Response(null,{status:302,headers:{...previewHeaders,Location:preview.avatarURL??preview.image}});}
     const targets=url.searchParams.getAll('url');if(targets.length!==1||targets[0].length>18000||url.searchParams.getAll('format').some(f=>f!=='json'))return json({error:url.searchParams.has('format')&&url.searchParams.get('format')!=='json'?'not_implemented':'invalid_request'},url.searchParams.get('format')&&url.searchParams.get('format')!=='json'?501:400,previewHeaders);
-    const preview=await contactPreview({env,target:targets[0],profile:previewProfile(env,request,local)}),value=oembed(preview);return new Response(request.method==='HEAD'?null:JSON.stringify(value),{status:preview.verified?200:404,headers:{...previewHeaders,'Content-Type':'application/json'}});
+    const preview=await contactPreview({env,intentLinksEnabled:flagsFor(env).enabled('INTENT_LINKS_ENABLED'),target:targets[0],profile:previewProfile(env,request,local)}),value=oembed(preview);return new Response(request.method==='HEAD'?null:JSON.stringify(value),{status:preview.verified?200:404,headers:{...previewHeaders,'Content-Type':'application/json'}});
    }
    const signedContact=signedContactPath.exec(path);
    if(signedContact||path==='/api/messages'&&request.method==='OPTIONS'){
@@ -54,7 +55,7 @@ export const stages={
      // The composer page is identical for every link and evaluates nothing; its own calls verify.
      if(request.method==='GET'&&representation==='text/html'){const page=await securePage(await brandPage(await env.ASSETS.fetch(new Request(new URL('/console.html',url),request)),env));const headers=new Headers(page.headers);for(const [key,value]of Object.entries(publicHeaders))headers.set(key,value);
       // Only this page may fetch other providers' public manifests (handle discovery, links §6.4); still no credentials.
-      headers.set('Content-Security-Policy',headers.get('Content-Security-Policy').replace("connect-src 'self'",`connect-src 'self' https:${local?' http://localhost:*':''}`));if(!page.ok||!headers.get('Content-Type')?.includes('text/html'))return new Response(page.body,{status:page.status,headers});const preview=await contactPreview({env,target:request.url,profile:previewProfile(env,request,local)});return new Response(injectPreview(await page.text(),preview),{status:preview.verified?page.status:404,headers});}
+      headers.set('Content-Security-Policy',headers.get('Content-Security-Policy').replace("connect-src 'self'",`connect-src 'self' https:${local?' http://localhost:*':''}`).replace("form-action 'self'",flagsFor(env).enabled('INTENT_LINKS_ENABLED')?`form-action https:${local?' http://localhost:*':''}`:"form-action 'self'"));if(!page.ok||!headers.get('Content-Type')?.includes('text/html'))return new Response(page.body,{status:page.status,headers});const preview=await contactPreview({env,intentLinksEnabled:flagsFor(env).enabled('INTENT_LINKS_ENABLED'),target:request.url,profile:previewProfile(env,request,local)});return new Response(injectPreview(await page.text(),preview),{status:preview.verified?page.status:404,headers});}
      let sub;if(linkForm){try{const claims=parseLinkMeta(query.meta).claims;if(claims.aud===env.APP_ORIGIN+path)sub=claims.sub;}catch{}}else if(query.form==='legacy'){const sig=url.searchParams.get('sig');if(sig&&sig.length<=16384)sub=jwsPart(sig,1)?.sub;}
      if(typeof sub!=='string'||!uuidPattern.test(sub))return refused();
      const recipient=await env.IDENTITY_REPOSITORY.get(sub);if(!recipient||recipient.status!=='active'||recipient.handle!==signedContact[1])return refused();

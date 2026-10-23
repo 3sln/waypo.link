@@ -1,8 +1,10 @@
 import {devicesEnabled} from '../bl/devices.mjs';
 import {devicesPanel,devicesApps,devicesDialog} from './devices.mjs';
 import { h,icon,badge,date,field,checkbox,pageHeader,helpers,interfaceText } from './release-primitives.mjs';
+import {recoveryFilePanel,recoveryReissueDialog,recoveryReissueView} from './recovery-reissue.mjs';
 export default function securityView(state){
   const {btn,date,form}=helpers(state),a=state.data?.account??state.session?.account??{},credentials=state.data?.credentials??[],devices=state.data?.devices??[];
+  const reissue=recoveryReissueView(state);if(reissue)return h('div',pageHeader('Replace your recovery file.','Create, save and test a new recovery file on this device.'),reissue);
   return h('div',pageHeader('A home worth protecting.','Manage your identity and how you access your account.',btn([icon('logout'),'Sign out'],{kind:'signout'},'button secondary')),
     h('div',h('section',h('div',icon('shield')).classes('section-icon'),h('h2','Your identity'),
       ...((Array.isArray(a.badges)?a.badges:[]).slice(0,4).filter(id=>typeof id==='string'&&/^[a-z][a-z0-9-]{0,47}$/.test(id)).map(id=>/^\/api\/badges\/sprite\.svg(?:\?v=[a-f0-9]{64})?$/.test(state.config.badgePolicy?.path??'')&&Array.isArray(state.config.badgePolicy.definitions)?state.config.badgePolicy.definitions.find(value=>value.id===id&&typeof value.name==='string'&&Array.from(value.name).length<=48&&typeof value.description==='string'&&Array.from(value.description).length<=240):null).filter(Boolean).map(value=>h('div',h('svg',h('title',value.name),h('desc',value.description),h('use').attrs({href:state.config.badgePolicy.path+'#'+value.id})).attrs({role:'img','aria-label':value.name,viewBox:'0 0 24 24'}).classes('icon'),h('span',value.name).attrs({translate:'no'}).classes('badge','subtle'),h('p',value.description).attrs({translate:'no'}).classes('field-help')).classes('local-account-badge'))),
@@ -10,6 +12,7 @@ export default function securityView(state){
       h('p','Your recovery file protects your UUID and keys. Name certificates are separate public files.').classes('field-help'),
       btn('Download canonical name certificate',{kind:'download-name-certificate',handle:a.handle},'button secondary'),
       a.paidHandle?btn('Download custom name certificate',{kind:'download-name-certificate',handle:a.paidHandle},'button secondary'):null).classes('panel'),
+    recoveryFilePanel(state),
     h('section',h('h2','Your permanent custom handle'),
       h('p','If you have ever had a verified paid subscription, you can claim one custom handle—even after cancellation.').classes('muted'),
       h('p','This choice is permanent. Your custom handle cannot be changed, transferred or reassigned, even after cancellation or account deletion.').classes('security-note'),
@@ -32,6 +35,7 @@ export default function securityView(state){
 export function securityDialog(state){
   const m=state.modal,{btn,form}=helpers(state);
   if(devicesEnabled(state)){const dialog=devicesDialog(state);if(dialog)return dialog;}
+  if(m.kind==='reissue-recovery')return recoveryReissueDialog(state);
   if(m.kind==='rename-device')return {title:'Give this device a name.',body:form([field('label','Device name','text',{required:true,maxLength:80,value:m.device.label??'',placeholder:'e.g. Living room tablet'})],{kind:'rename-device',sessionId:m.device.id},'Save device name')};
   if(m.kind==='add-passkey')return {title:'Add a key for this device.',body:form([field('label','Passkey name','text',{required:true,maxLength:80,placeholder:'e.g. Personal phone'}),h('p','Your browser will ask you to create a passkey. Give it a name you will recognize later.').classes('muted')],{kind:'add-passkey'},'Create passkey')};
   if(m.kind==='remove-passkey')return {title:'Remove this passkey?',body:h('div',h('p',`Remove “${m.credential.label??'Passkey'}” and revoke its signed-in sessions? You must keep at least one way to sign in.`),btn('Remove passkey',{kind:'remove-passkey',credentialId:m.credential.id},'button danger-button'))};

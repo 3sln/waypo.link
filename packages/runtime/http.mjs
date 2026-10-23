@@ -75,7 +75,7 @@ export default {
     const capacityExempt=protective||request.method==='DELETE'||admission.exempt(path);
     if(mutation&&!capacityExempt&&allowedMethods(path))await object.admitWork(id,{initialize:true});
     await object.touch(id);
-    if(path==='/api/account'&&request.method==='GET')return json({...await object.snapshot(id),account:owner.account,credentials:owner.credentials,devices:owner.devices,audit:owner.audit,grants:[],features:sessionFeatures(env,id),...flagReadable(env,'DEVICE_AUTHORIZATION_ENABLED')&&env.FEDERATION_AUTHORITY?.ready()?{appSessions:(await env.FEDERATION_AUTHORITY.appSessions(context)).sessions}:{}},200,{'Cache-Control':'private, no-store'});
+    if(path==='/api/account'&&request.method==='GET')return json({...await object.snapshot(id),account:owner.account,credentials:owner.credentials,devices:owner.devices,audit:owner.audit,recovery:owner.recovery,grants:[],features:sessionFeatures(env,id),...flagReadable(env,'DEVICE_AUTHORIZATION_ENABLED')&&env.FEDERATION_AUTHORITY?.ready()?{appSessions:(await env.FEDERATION_AUTHORITY.appSessions(context)).sessions}:{}},200,{'Cache-Control':'private, no-store'});
     response=await stage('owner',route);if(response)return response.passthrough??response;
     return json({error:'not_found'},404);
    }

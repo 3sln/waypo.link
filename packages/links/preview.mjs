@@ -2,6 +2,7 @@
 // Contact-link previews and the add-contact intent (docs/architecture/contact-link-previews.md).
 // Only the link owner's grant-permitted profile is ever shown; nothing about any audience,
 // nothing from unrelated query parameters, and nothing that delivers or consumes state.
+import {encodeIntent} from '../intents/format.mjs';
 import {parseLinkQuery,parseLinkMeta} from './envelope.mjs';
 // User decision (2026-10-14): one registrable scheme for web and native handlers (links §6.4).
 export const BINDLE_INTENT_SCHEME='web+bindle',CONTACT_INTENTS=Object.freeze(['send-message','add-contact']);
@@ -11,6 +12,10 @@ const plain=(value,max)=>typeof value==='string'?value.replace(/[\p{Cc}\u2028\u2
 // The avatar redirect only ever points at an HTTPS image path, so the route is not a general redirect.
 const imageURL=value=>{try{const url=new URL(value);return url.protocol==='https:'&&!url.username&&!url.password&&/\.(?:png|jpe?g|webp|gif|avif)$/i.test(url.pathname);}catch{return false;}};
 export const contactIntent=(intent,link)=>`${BINDLE_INTENT_SCHEME}://${intent}?contact-url=${encodeURIComponent(link)}`;
+export const CONTACT_INTENT_DIGESTS=Object.freeze({'send-message':'sha256-lWZkE2SQRlCcsCRMZ2ven529CrbjGNAsgxHWSyIF4MU','add-contact':'sha256-Nu6S97f-t26Tk_KCTwaHtaWgxUGSOJ3JUIn4gdBeaZs'});
+// Registered capability kinds always travel in fragments. Oversized legacy links retain their old path.
+export function contactIntentValue(intent,link){if(!CONTACT_INTENTS.includes(intent)||typeof link!=='string'||[...link].length>4352)throw new TypeError('Contact link cannot be carried in an intent');const url=new URL(link),canonical=canonicalContactLink(url.origin,link);if(canonical?.link!==link)throw new TypeError('Invalid contact link');return encodeIntent({bintent:1,kind:{artefact:`https://spec.bindle.example/intents/${intent}/v1`,version:1,digest:CONTACT_INTENT_DIGESTS[intent]},data:{contact:link}});}
+export const contactIntentURL=(intent,link)=>`web+bindle://intent?bintent=${contactIntentValue(intent,link)}`;
 // Canonical capability URL from the shared raw-query parser only (never unrelated parameters).
 export function canonicalContactLink(origin,target){
  let url;try{url=new URL(target);}catch{return null;}const match=CONTACT_PATH.exec(url.pathname);if(url.origin!==origin||!match)return null;
@@ -22,20 +27,21 @@ export function canonicalContactLink(origin,target){
  return typeof sub==='string'&&/^[a-f0-9-]{36}$/.test(sub)?{link:`${origin}${url.pathname}?sig=${sig}`,path:url.pathname,search:`?sig=${sig}`,handle:match[1],sub}:null;
 }
 // Resolves the owner-permitted profile; every failure (revoked, expired, quarantined, unknown) is the generic card.
-export async function contactPreview({env,target,profile}){
+export async function contactPreview({env,target,profile,intentLinksEnabled=false}){
  const origin=env.APP_ORIGIN,brand=env.BRAND_NAME||'3sln.me',generic={brand,origin,verified:false,title:`Send a private message on ${brand}`,description:'A private contact link. Messages come from verified identities and the recipient decides what is accepted.',image:`${origin}${brand==='3sln.me'?'/branding/3sln-avatar.png':'/generic-icon.svg'}`,imageSize:512};
  const canonical=canonicalContactLink(origin,target);if(!canonical)return generic;
  let shared;try{shared=await profile(canonical);}catch{return generic;}
  const name=plain(shared?.profile?.displayName,100),avatar=typeof shared?.profile?.avatar==='string'&&imageURL(shared.profile.avatar);
- return {...generic,verified:true,link:canonical.link,intents:Object.fromEntries(CONTACT_INTENTS.map(intent=>[intent,contactIntent(intent,canonical.link)])),...name?{name,title:`Send a private message to ${name}`}:{},...avatar?{image:`${origin}${canonical.path}/avatar${canonical.search}`,avatarURL:shared.profile.avatar}:{}};
+ return {...generic,verified:true,link:canonical.link,...intentLinksEnabled?{intentLinks:Object.fromEntries(CONTACT_INTENTS.flatMap(intent=>{try{return [[intent,contactIntentURL(intent,canonical.link)]];}catch{return [];}}))}:{},intents:Object.fromEntries(CONTACT_INTENTS.map(intent=>[intent,contactIntent(intent,canonical.link)])),...name?{name,title:`Send a private message to ${name}`}:{},...avatar?{image:`${origin}${canonical.path}/avatar${canonical.search}`,avatarURL:shared.profile.avatar}:{}};
 }
 // Default HTML representation: Open Graph, Twitter card, oEmbed discovery, robots and the intent link.
 export function injectPreview(html,preview){
  const meta=[`<meta name="robots" content="noindex, nofollow">`,`<meta name="referrer" content="no-referrer">`,`<meta property="og:type" content="website">`,`<meta property="og:site_name" content="${esc(preview.brand)}">`,`<meta property="og:title" content="${esc(preview.title)}">`,`<meta property="og:description" content="${esc(preview.description)}">`,`<meta property="og:url" content="${esc(preview.link??preview.origin)}">`,`<meta property="og:image" content="${esc(preview.image)}">`,`<meta name="twitter:card" content="summary">`,`<meta name="twitter:title" content="${esc(preview.title)}">`,`<meta name="twitter:description" content="${esc(preview.description)}">`,`<meta name="twitter:image" content="${esc(preview.image)}">`,
   ...preview.link?[`<link rel="alternate" type="application/json+oembed" href="${esc(`${preview.origin}/oembed?format=json&url=${encodeURIComponent(preview.link)}`)}" title="${esc(preview.title)}">`]:[]].join('');
+ const modern=preview.intentLinks?`<nav hidden data-bintent-links>${Object.entries(preview.intentLinks).map(([kind,url])=>`<a data-bintent-kind="${esc(kind)}" href="${esc(url)}">Open with your app</a>`).join('')}</nav>`:'';
  const intent=preview.intents?`<nav hidden data-bindle-intents><a data-bindle-intent="send-message" href="${esc(preview.intents['send-message'])}">Send a message with a Bindle app</a><a data-bindle-intent="add-contact" href="${esc(preview.intents['add-contact'])}">Add this contact in a Bindle app</a></nav>`:'';
  const head=`<title>${esc(preview.title)}</title><meta name="description" content="${esc(preview.description)}">${meta}`,base=html.replace(/<meta name="description" content="[^"]*">/,'');
- return (/<title>[^<]*<\/title>/.test(base)?base.replace(/<title>[^<]*<\/title>/,()=>head):base.replace('</head>',()=>head+'</head>')).replace(/<\/body>|$/,match=>intent+match);
+ return (/<title>[^<]*<\/title>/.test(base)?base.replace(/<title>[^<]*<\/title>/,()=>head):base.replace('</head>',()=>head+'</head>')).replace(/<\/body>|$/,match=>intent+modern+match);
 }
 // oEmbed (https://oembed.com) `link` type only; never `rich`/`video` HTML.
 // A shared avatar has unknown dimensions, so only the fixed generic card is offered as a thumbnail.

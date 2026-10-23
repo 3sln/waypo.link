@@ -36,7 +36,9 @@ const SECURITY_ALERTS = Object.freeze({
   'email-removed': ['{brand} email removed', 'This email address was removed from a {brand} account. If you did not do this, sign in and secure your account.'],
   // DX-1 export notices (§1.4): sent on creation and on the first download from each session or CLI grant.
   'export-created': ['{brand} data export requested', 'An export of your account data was requested. Not you? Sign in, cancel the export and secure your account.'],
-  'export-downloaded': ['{brand} data export downloaded', 'Your account data export was downloaded from a new session or device. Not you? Sign in, cancel the export and secure your account.']
+  'export-downloaded': ['{brand} data export downloaded', 'Your account data export was downloaded from a new session or device. Not you? Sign in, cancel the export and secure your account.'],
+  // Active-account recovery reissue: the previous recovery file no longer works.
+  'recovery-reissued': ['{brand} recovery file replaced', 'A new recovery file was created for your account, and the previous one no longer works. Not you? Sign in and secure your account.']
 });
 
 function safeHeader(value, max = 2048) {

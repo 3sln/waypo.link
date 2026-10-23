@@ -546,7 +546,8 @@ export class TransferOutService {
         const marked = await this.patch(record.id, r => { if (!LIVE.has(r.state)) return null; r.elevated = { side: 'disputer', at: now, credentialId: actor.credentialId ?? null }; return r; }) ?? record;
         const ended = await this.end(marked, 'aborted', 'elevated-dispute');
         // The requester's copy stops being current in the same action (mandatory reissue).
-        let reissue = false; try { reissue = (await this.port('identity').invalidateRecovery(owner))?.ok === true; } catch { reissue = false; }
+        // It also arms the forced reissue for the owner (recovery-identity spec "Active-account reissue").
+        let reissue = false; try { reissue = (await this.port('identity').invalidateRecovery(owner, { reason: 'elevated-abort' }))?.ok === true; } catch { reissue = false; }
         await this.setLock(l => ({ ...l, elevatedAbort: { at: now, credentialId: actor.credentialId ?? null, sessionId: actor.sessionId ?? null }, restart: undefined }));
         return { ...transferView(ended), recoveryReissueRequired: true, recoveryInvalidated: reissue };
       }
@@ -626,6 +627,30 @@ export class TransferOutService {
     let invalidated = false; if (v.choice === 'reissue') { try { invalidated = (await this.port('identity').invalidateRecovery(owner))?.ok === true; } catch { invalidated = false; } if (!invalidated) unavailable(); }
     await this.setLock(l => ({ ...l, restart: undefined }));
     return { restartBlocked: false, recoveryReissueRequired: v.choice === 'reissue' };
+  }
+
+  /** The recovery-file reissue gate (recovery-identity spec "Active-account reissue"; P14, P17), called by the account
+   * single writer before a reissue rotates (`commit` false) and before its identity commit (`commit` true). Refuses a
+   * committed move, a contested transfer and the support lock: support's allow needs the requester to still hold the
+   * current file, so a reissue there would be the second self-resolution P17 forbids. Within 30 days after an
+   * elevated-proof abort, a reissue by another credential is contested (P17) and refused. At commit, a pending or held
+   * transfer is CANCELLED, never left to commit: it was authorized by the file being replaced, the new file is not
+   * 7 days old (P14) and its security bump trips the 7-day look-back, so nothing is dodged; abort is the safe direction. */
+  async recoveryReissue(actor, { commit = false } = {}) {
+    return this.serial(async () => {
+      const owner = ownerActor(actor), now = this.now(); await this.bound(owner);
+      const record = await this.metadata.get(TRANSFER_KEY);
+      if (record?.state === 'committed') fail('identity_moved', 'This identity moved to another provider.', 409);
+      if (record?.state === 'contested') fail('transfer_contested', 'Your recovery file cannot be replaced while support reviews a move.', 423);
+      const lock = await this.lock();
+      if (lock.contested && (lock.contested.until === null || lock.contested.until > now)) fail('transfer_locked', 'Your recovery file cannot be replaced while support reviews a move.', 423);
+      if (lock.elevatedAbort && now - lock.elevatedAbort.at < TIMING.contestWindow && !sameCredential(lock.elevatedAbort, actor)) { await this.contest(null, 'recovery-reissue-after-elevated-abort', now); fail('transfer_contested', 'Support must review this account before the recovery file is replaced.', 423); }
+      const live = Boolean(record && LIVE.has(record.state));
+      if (!commit) return { transferPending: live };
+      if (!live) return { transferCancelled: false };
+      const ended = await this.end(record, 'cancelled', 'recovery-reissued');
+      return { transferCancelled: ended?.state === 'cancelled' };
+    });
   }
 
   // ---- background ----
@@ -749,7 +774,7 @@ export function transferIdentityPort(repository, { clock = () => Date.now(), cry
         if (account.status !== 'active') return { ok: false, status: account.status };
         const now = clock(); revokeAllLineage(account, now);
         Object.assign(account, { status: 'moved', moved: structuredClone(moved), sessions: [], challenges: [], emailChallenges: [], emailLoginEnabled: false, recoveryHash: null, pendingHash: null, pendingExpiresAt: null });
-        for (const name of ['recoveryResumeHash', 'recoveryResumeBackupVersion', 'recoveryResumeKeyKid', 'recoveryIssuedAt', 'recoveryKeyKid']) delete account[name];
+        for (const name of ['recoveryResumeHash', 'recoveryResumeBackupVersion', 'recoveryResumeKeyKid', 'recoveryIssuedAt', 'recoveryKeyKid', 'recoveryStaged', 'recoveryReissue']) delete account[name];
         audit(account, MOVED_AUDIT); return { ok: true, write: true };
       });
     },
@@ -769,11 +794,17 @@ export function transferIdentityPort(repository, { clock = () => Date.now(), cry
         audit(account, 'transfer-disputers-removed'); return { ok: true, write: true, value: { security: { ...bump(account) } } };
       });
     },
-    /** Elevated-proof abort and the owner's "reissue" choice: the current credential stops being current at once. */
-    async invalidateRecovery(owner) {
+    /** Elevated-proof abort and the owner's "reissue" choice: the current credential stops being current at once.
+     * `reason: 'elevated-abort'` also arms the forced reissue (`recoveryReissue`, recovery-identity spec), keeping the
+     * invalidated file's kid so the reissue rotates it away (P15). A staged reissue is discarded. */
+    async invalidateRecovery(owner, { reason } = {}) {
       return cas(owner, (account) => {
         if (account.status !== 'active') return { ok: false, status: account.status };
-        if (!account.recoveryHash) return { ok: true };
+        const arm = reason === 'elevated-abort';
+        if (!account.recoveryHash && !arm && !account.recoveryStaged) return { ok: true };
+        if (arm) account.recoveryReissue = { reason, at: clock(), kid: typeof account.recoveryKeyKid === 'string' ? account.recoveryKeyKid : account.recoveryReissue?.kid ?? null };
+        delete account.recoveryStaged;
+        if (!account.recoveryHash) { audit(account, 'recovery-reissue-required'); return { ok: true, write: true }; }
         account.recoveryHash = null; delete account.recoveryIssuedAt; delete account.recoveryKeyKid;
         audit(account, 'recovery-file-invalidated'); bump(account); return { ok: true, write: true };
       });

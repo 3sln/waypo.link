@@ -8,6 +8,8 @@ import {encryptSecret,decryptSecret} from '../secrets.mjs';
 import {StorageError} from '../../storage/policy.mjs';
 import {createAppEngine,perform,read,operations,AppQuery} from '../../app/engine.mjs';
 import {systemClock,cryptoRandom,nullAudit} from '../../app/providers.mjs';
+import {RecoveryReissueService,PrepareRecoveryReissue,CommitRecoveryReissue} from '../../identity/recovery-reissue.mjs';
+import {transferOutEngine} from './transfer-out.mjs';
 import {DelegationRegistry,delegationsProvider,DELEGATION_OPERATIONS,DelegationList,DelegationStatus,RevokeDelegation,ReconcileDelegations} from '../../identity/delegation.mjs';
 
 // One identity key engine per controller, over the controller's transactional account store (packages/identity/keys.mjs).
@@ -33,6 +35,19 @@ function delegationEngine(c){
  }
  return engine;
 }
+// Active-account recovery reissue (packages/identity/recovery-reissue.mjs): one engine per controller, composing the
+// controller's transfer-out service and the recovery-issuance rotation above, so the gate and the rotation are one
+// gated invocation in the single writer.
+const reissueEngines=new WeakMap();
+function reissueEngine(c){
+ let engine=reissueEngines.get(c);
+ if(!engine){
+  const recoveryReissue=new RecoveryReissueService({metadata:c.metadata,transfer:()=>transferOutEngine(c).service,keychain:(owner,options)=>methods.recoveryKeychain.call(c,owner,options),restorable:(owner,kids)=>keyEngine(c).identityKeys.recoveryKidsRestorable(owner,kids)});
+  engine=createAppEngine({providers:{clock:systemClock,random:cryptoRandom,audit:nullAudit,lifecycle:recoveryReissue}});reissueEngines.set(c,engine);
+ }
+ return engine;
+}
+const reissueActor=(owner,actor)=>({kind:'owner',owner,...typeof actor?.credentialId==='string'?{credentialId:actor.credentialId}:{},...typeof actor?.sessionId==='string'?{sessionId:actor.sessionId}:{}});
 const delegate=(c,Operation,params)=>{if(['delegations.issue','delegations.renew'].includes(Operation.operation)&&!ownerFlags(c.config,params.actor?.owner,params.actor?.clientId).enabled('BINDLEBOX_ENABLED'))throw new StorageError('not_found','Not found.',404);const operation=new Operation(params);return operation instanceof AppQuery?read(delegationEngine(c),operation):perform(delegationEngine(c),operation);};
 const delegationInput=input=>{if(input===null||typeof input!=='object'||Array.isArray(input))throw new StorageError('invalid_request','Unsupported delegation request.');return structuredClone(input);};
 
@@ -60,6 +75,10 @@ export const methods={
     if(!signing||!encryption||signing.kid!==outcome.kid)throw unavailable();
     return {keychain:{version:1,signing,encryption},rotation:{...outcome,requested:Boolean(rotation)}};
   },
+  // Internal identity-backup port only (active-account reissue, phase 1): the reissue gate, then the rotation above.
+  async recoveryReissuePrepare(owner,{rotation=null,keep=[],actor}={}){await this.warm(owner);return perform(reissueEngine(this),new PrepareRecoveryReissue({actor:reissueActor(owner,actor),input:{rotation,keep}}));},
+  // Internal identity-backup port only (phase 2): the reissue gate again; cancels a live transfer-out. No key change.
+  async recoveryReissueCommit(owner,{actor,kids}={}){await this.warm(owner);return perform(reissueEngine(this),new CommitRecoveryReissue({actor:reissueActor(owner,actor),input:kids}));},
   // Internal identity-backup port only: whether a verified file's keychain still restores (RecoveryKeychainMatches). Never writes.
   async recoveryKeysMatch(owner,keychain){return readKeyQuery(keyEngine(this),new RecoveryKeychainMatches({owner,input:{keychain}}));},
   // Internal key management (no `rpc` entry, so never reachable through `invoke`). Rotation and revocation change
@@ -98,6 +117,8 @@ export const rpc={
  identityKeychain:{lifecycle:'suspended'},
  recoveryKeychain:{lifecycle:'suspended'},
  recoveryKeysMatch:{lifecycle:'suspended'},
+ recoveryReissuePrepare:{},
+ recoveryReissueCommit:{},
  rememberSignupOrigin:{},
  registerSignupPush:{},
  listDelegations:{},

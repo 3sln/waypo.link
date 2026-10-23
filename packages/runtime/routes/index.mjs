@@ -25,6 +25,7 @@
 // answers per-identity paths of a moved identity (308 during the redirect period) before any per-identity route,
 // and falls through for every other identity. Append-only otherwise: one import and one entry per slice; a slice
 // adds routes to its own module.
+import * as intents from './intents.mjs';
 import * as moved from './moved.mjs';
 import * as site from './site.mjs';
 import * as admin from './admin.mjs';
@@ -54,7 +55,7 @@ import * as emailBridge from './email-bridge.mjs';
 import * as exports from './exports.mjs';
 import * as appRemoval from './app-removal.mjs';
 
-export const ROUTES=Object.freeze([moved,site,admin,identity,lifecycle,deletion,automation,conversations,beams,contacts,delivery,messages,views,storage,billing,search,notifications,federation,links,delegation,incremental,events,appSessions,integrations,connections,emailBridge,exports,appRemoval]);
+export const ROUTES=Object.freeze([moved,intents,site,admin,identity,lifecycle,deletion,automation,conversations,beams,contacts,delivery,messages,views,storage,billing,search,notifications,federation,links,delegation,incremental,events,appSessions,integrations,connections,emailBridge,exports,appRemoval]);
 export const STAGES=Object.freeze(['edge','public','anonymous','unauthenticated','api','session','beforeActivity','owner','pages']);
 for(const module of ROUTES)for(const name of Object.keys(module.stages??{}))if(!STAGES.includes(name))throw new TypeError(`Unknown route stage ${name}`);
 

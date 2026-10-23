@@ -25,8 +25,8 @@
 //   4. Activation (idempotent stages, before which nothing signs: the custody fence of keys.mjs): signing-key rotation
 //      by a continuity statement from the imported key (P11; 3sln.me always rotates), a fresh certification key (never
 //      one of an earlier host), the identity record `active` with `moves`, its identity URI, its origin principal and
-//      `security.epoch` above the attested `aep`, then a new 3sln.me recovery file (a port; until the identity owner
-//      wires an active-account issuance path the owner is told one is required).
+//      `security.epoch` above the attested `aep`, then a new 3sln.me recovery file (a port; 3sln.me's arms the owner's
+//      forced active-account reissue, packages/identity/recovery-reissue.mjs, and the owner is told one is required).
 //
 // Deliberately refused in this slice (spec §9.3 and design §3.5 decide them; they need repository primitives the
 // identity owner has not built): returns to 3sln.me (`return_unsupported`) and displacement of an unattested identity
@@ -196,7 +196,7 @@ export function transferInView(record) {
     ...record.mode === 'unattested' ? { label: `moved without confirmation from ${new URL(record.from.iss).host}` } : {},
     ...LIVE.has(record.state) ? { nextAt: record.nextAt ?? null, authorizeUrl: record.authorizeUrl ?? null, sourceBound: record.sourceBound === true } : {},
     ...record.state === 'held' ? { reason: record.reason } : {},
-    ...record.state === 'active' ? { activatedAt: record.activatedAt, recoveryRequired: record.recoveryRequired === true, attestationFirstUse: record.attestationFirstUse === true } : {},
+    ...record.state === 'active' ? { activatedAt: record.activatedAt, recoveryRequired: record.recoveryRequired === true, recoveryReissueArmed: record.stages?.recovery?.armed === true, attestationFirstUse: record.attestationFirstUse === true } : {},
     ...TERMINAL.has(record.state) ? { reason: record.reason ?? null, endedAt: record.endedAt ?? null } : {} };
 }
 
@@ -373,8 +373,10 @@ export class TransferInService {
     // 3. The identity record: active, with `moves`, its identity URI and origin, and an epoch above the attested aep.
     const moves = [...current.sourceMoves, { statement: current.statement.jws, attestation: current.mode === 'attested' ? current.attestation : null }];
     if (!await run('identity', async () => { const result = await this.port('identity').activate(owner, { reservation: current.reservation, mode: current.mode, origin: current.origin, moves, identityUri: current.to.identity, aepFloor: (current.aep ?? 0) + 1, label: current.mode === 'unattested' ? `moved without confirmation from ${new URL(current.from.iss).host}` : null }); if (result?.ok !== true) throw Object.assign(new Error('identity not activated'), { code: result?.status ?? 'identity_unavailable' }); return { status: 'active' }; })) return current;
-    // 4. A new recovery file in this provider's format, holding the rotated key (design §7 "Setup").
-    await run('recovery', async () => { const recovery = ports.recovery; if (typeof recovery?.issue !== 'function') return { required: true }; const issued = await recovery.issue(owner); return { issued: issued?.ok === true, required: issued?.ok !== true }; });
+    // 4. A new recovery file in this provider's format, holding the rotated key (design §7 "Setup"). The browser encrypts
+    // it, so 3sln.me's port (recovery-reissue.mjs `transferInRecoveryPort`) arms the owner's forced reissue instead:
+    // {ok:false, armed:true}, and `recoveryRequired` stays true until the owner downloads.
+    await run('recovery', async () => { const recovery = ports.recovery; if (typeof recovery?.issue !== 'function') return { required: true }; const issued = await recovery.issue(owner); return { issued: issued?.ok === true, required: issued?.ok !== true, ...issued?.armed === true ? { armed: true } : {} }; });
     const now = this.now();
     current = await this.patch(current.id, r => { if (r.state !== 'activating' || ACTIVATION_STAGES.some(stage => !r.stages[stage])) return null; Object.assign(r, { state: 'active', activatedAt: now, recoveryRequired: r.stages.recovery?.required === true, nextAt: null }); return r; }) ?? current;
     if (current.state === 'active') this.log({ action: 'transfer-in-activated', owner, mode: current.mode });

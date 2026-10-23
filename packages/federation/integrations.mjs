@@ -1,4 +1,5 @@
 import {validateRemoval} from './removal.mjs';
+import {intentIntegrationHooks} from '../intents/declarations.mjs';
 import {contractMethods} from '../core/contract-methods.mjs';
 import {siteGlobal} from '../flags/read.mjs';
 // EXT-X3: the integration manifest (docs/spec/integrations.md §2) is the `bindle_integration` member of a client's OAuth
@@ -55,7 +56,7 @@ function setupFragment(entry,{artefactVersions=false}={}){
  * the provider's hosts. `slots`/`contracts` are trusted pins for claim validation; without them extension entries stay
  * syntax-checked (`unknown`) so the snapshot never depends on fetch timing. Returns
  * {status:'absent'|'valid'|'unrecognized'|'invalid', manifest?, v?, reason?}; never throws for hostile input. */
-export function validateIntegrationManifest(value,{clientId,confidential=false,redirectUris=[],jwksUri,initiateLoginUri,reserved=[],slots,contracts={},artefactVersions=false}={}){
+function validateIntegrationManifestBase(value,{clientId,confidential=false,redirectUris=[],jwksUri,initiateLoginUri,reserved=[],slots,contracts={},artefactVersions=false}={}){
  if(value===undefined)return {status:'absent'};
  const invalid=reason=>({status:'invalid',reason});
  const prefix=clientPrefix(clientId);if(!prefix)return invalid('invalid_client');
@@ -147,7 +148,7 @@ const sorted=list=>[...list??[]].sort();
  * `keySet` is the validated current key set, null when the set was invalid, or undefined when its fetch failed
  * transiently. Returns {decision:'unchanged'|'adopt'|'review'|'invalid', changes, next, staged?}: `next` is the pin to
  * keep now (only narrowing or audited same-prefix endpoint moves are adopted); `staged` awaits owner review. */
-export function classifyIntegrationChange(pinned,observed,keySet,{artefactVersions=false}={}){
+function classifyIntegrationChangeBase(pinned,observed,keySet,{artefactVersions=false}={}){
  const out=(decision,changes,next=pinned,staged)=>({decision,changes,next:structuredClone(next),...staged?{staged}:{}});
  if(observed?.transient||!observed?.gone&&!observed?.invalid&&!observed?.client)return out('unchanged',['transient']);
  if(observed.gone)return out('invalid',['client_gone']);
@@ -302,3 +303,6 @@ export function compileContractVersion(root){
  };
  return {validate:request=>check(root,request),shape(method,result){const schema=Object.hasOwn(contractMethods(root),method)?contractMethods(root)[method].result:undefined;if(schema===undefined)fail('artefact_unverifiable');const out=shapeContractResult(root,method,result);if(!check(typeof schema==='string'?reference(schema):schema,out))fail('invalid_result');return out;}};
 }
+
+// INT-3: one hook extends inert declaration parsing and safe, audited snapshot adoption.
+export const [validateIntegrationManifest,classifyIntegrationChange]=intentIntegrationHooks(validateIntegrationManifestBase,classifyIntegrationChangeBase);

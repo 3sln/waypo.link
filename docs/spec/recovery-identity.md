@@ -54,7 +54,7 @@ Provider rotation requires retained trusted verification history and an explicit
 
 ## Export and retained-account recovery
 
-1. Require the existing limited setup authority or a separately authorized recent owner session. Warm AccountObject state before export. Idempotently adopt the existing signer and persist a distinct encryption key once under the account gate.
+1. Require the existing limited setup authority, or an owner session under the rules of [active-account reissue](#active-account-reissue-provisional). Warm AccountObject state before export. Idempotently adopt the existing signer and persist a distinct encryption key once under the account gate.
 2. Validate signing authority before key creation. Issue a signed UUID/keychain/reset package and commit its random-token hash under identity revision/CAS checks. Do not return a usable package after a failed commit. Cross-object partial work must remain retryable without changing identity keys.
 3. Encrypt the package in the isolated first-party recovery document. Retain every-answer local decrypt verification and explicit save acknowledgement before activation. Neither a download click nor an in-memory round trip proves a durable filesystem write.
 4. On restore, decrypt and verify exact schema, issuer, trusted provider signature and key correspondence. The server independently checks the full signed v2 package, current UUID and original keys, plus the current reset credential or its active transaction resume credential. Name state is not a verification input to recovery.
@@ -64,6 +64,48 @@ Provider rotation requires retained trusted verification history and an explicit
 Persist a v2-required marker on upgraded accounts. Omitting the proof or presenting a stripped v2 reset token must not invoke the legacy path. An original v1 transaction remains resumable as v1 while its replacement v2 file is prepared; activation enforces v2 for future recoveries. Explicitly recognized legacy v1 files contain a handle and random token, but no portable keys. That old format remains supported only where live account policy permits it; malformed v2 files never downgrade. The unreleased earlier name-bearing v2 candidate is rejected by the current strict schema.
 
 Keep private keys, answers, tokens and decoded recovery payloads out of logs, public UI state, telemetry, URLs and browser persistence. A public handle may be returned beside the recovery content for setup display; it is not part of the downloaded encrypted recovery payload. The provider's stored private-key copy remains encrypted under `KEY_ENCRYPTION_KEY`; losing that key does not prevent offline file decryption, but the current retained-account flow does not repair unreadable provider records automatically.
+
+## Active-account reissue (provisional)
+
+Status: **provisional, implemented locally 2026-10-23, not reviewed, not signed off.** Reviewer ___ / Date ___ / Outcome ___. It closes the gap recorded in [identity portability](../architecture/identity-portability.md) §10.1: P15 (rotate at every issuance), P14 (a current file at least 7 days old), the mandatory fresh file after an elevated-proof abort (§6.1a, P17) and PORT-4's `recoveryRequired`. No new flag: it is available wherever v2 recovery files are (a configured recovery authority). Code: `IdentityService#reissueRecoveryBegin` / `#reissueRecoveryConfirm` (`packages/identity/service.mjs`), the account gate `packages/identity/recovery-reissue.mjs`, `TransferOutService#recoveryReissue`; routes `POST /api/auth/recovery/reissue/begin` and `/confirm`; tests `tests/recovery-reissue.test.mjs` and the seeded `tests/recovery-reissue-chaos.test.mjs`.
+
+**Who may reissue.**
+
+- A signed-in owner of an active account, with a step-up in the last 5 minutes made with a passkey or password enrolled at least 7 days earlier (consistent with P18 and P19). The step-up records which credential confirmed it; a password's enrolment time is `passwordSetAt`, and a record without one fails closed. When an aged credential exists but a newer one was used, the console asks again.
+- A forced path, armed on the identity record, waives the credential age, but only for a credential enrolled no later than the moment it was armed. A credential added afterwards still waits 7 days. A fresh step-up is still required. The forced paths are:
+  - after an elevated-proof abort, which invalidates the current file and arms the reissue in the same action;
+  - at PORT-4 activation, where the destination's recovery port arms it. The file is encrypted in the owner's browser, so activation keeps reporting `recoveryRequired` until the owner downloads.
+- Within 30 days after an elevated-proof abort, a reissue by any credential other than the one that aborted is contested and refused (P17). Support then decides.
+
+**What it does.** It runs in two phases, so an interrupted reissue never leaves the owner without a working file.
+
+1. **Begin.** The account single writer applies the refusals below. It then rotates the signing key with a continuity statement (P15). The kids rotated away are those of the current file, of an abandoned staged file and of an invalidated file. With none recorded it always rotates, except for a transfer-in arrival, whose key was already rotated at activation (P11). The outgoing and the new kid are merged into the recovery binding (`keys.mjs`). So the current file, now holding a retired key, keeps restoring until phase 2. The new file is **staged**: bound to the requesting session for 30 minutes, not yet current. A new begin replaces an earlier staged file, which never becomes current.
+2. **Confirm.** This runs after the browser has encrypted, saved and test-unlocked the file. The account gate runs again. It also checks that the staged kids still restore: an ordinary rotation since phase 1 clears the binding, so the owner must start again. A pending or held transfer-out is cancelled (below). Then one identity CAS makes the staged credential current. It writes `recoveryIssuedAt = now`, so P14's 7 days start again, binds the file's kid, clears any forced marker and bumps `security`. **The previous file stops working at that moment**; no rule keeps it.
+3. After the commit, notices go to the verified email and to every push subscription. Acceptance is not delivery. The audit entry is visible on every signed-in session.
+
+**Where it cannot run.**
+
+- **Deletion.** It is refused while a deletion is scheduled or executing, after the purge has started, and after the tombstone. A deletion requested after a reissue's gate is ordered after that reissue.
+- **A pending transfer-out is cancelled, not refused.** The move was authorized by the file the reissue replaces. The new file is under 7 days old (P14). A move begun in the window between the gate and the identity commit is still cancelled by the transfer-out engine's own check: the epoch and the credential reference changed (`cancelReason`). A new move then also hits the 7-day security look-back at request time. So a reissue can never be used to start or speed up a move, and P14 cannot be dodged. Cancelling is the safe direction. It is consistent with the spec §6.1 rule that recovery and credential changes cancel a move. Refusing would instead stop an owner from retiring a file that someone else is using to move the identity. Someone with a hijacked, aged session gains no new power from this: enrolling a passkey already cancels a move.
+- **A contested transfer or the support lock: refused.** Support's "allow" needs the requester to still hold the current file, so a reissue here would be the second self-resolution that P17 forbids.
+- **Moved or arriving identities: refused** by the custody fence.
+
+**Concurrency.** Both phases are linearized in the account single writer against transfer-out steps and commits, deletion, and ordinary rotations. The identity CAS trails them.
+
+- An identity CAS that loses returns no file. The rotation that preceded it is harmless, because the binding merge keeps the current file restoring (review M1).
+- There is one staged slot per account.
+- A recovery started with the current file discards the staged file and any forced marker. Its sessions end, so no confirmation follows.
+
+**Known residuals (unsigned).**
+
+- An abandoned staged file holds the current signing key until the next issuance rotates it away. It was only ever delivered to the stepped-up owner session.
+- A transfer cancelled by a confirmation whose identity CAS then lost stays cancelled. That is the safe direction.
+- The owner's "reissue" choice after a dispute (spec §6.2) invalidates the file without arming the forced path. An owner without an aged credential therefore has no current file until one ages.
+- Notices do not reach emails removed in the last 30 days, because the record keeps no history of them.
+- The restorability check runs in the account gate, not atomically with the identity commit. An internal, admin-only rotation or revocation landing between the two could commit a file that does not restore. It is not reachable through any route.
+- When the key history is full of referenced keys, issuance skips the rotation (the known P15 edge). That is audited but not shown to the owner.
+- A begin during a pending move rotates the signing key. If that reissue is abandoned, the move's statement may no longer verify against the current key, so the move fails. That is the safe direction.
+- The encryption key is never rotated, so superseded files keep the current encryption private key. P15 covers signing keys only; this needs its own decision.
 
 ## Return, compromise and missing state
 
@@ -82,3 +124,4 @@ Required tests cover signed recovery without names even in encoded proof, separa
 | UUID recovery | Stable UUIDv4 and private keychain; names excluded from signed recovery contents. | User direction, 2026-10-12; reviewer ___ / Date ___ / Outcome ___ |
 | Public assignment | Separate downloadable provider-signed UUID/name certificate; no private recovery material. | User direction, 2026-10-12; reviewer ___ / Date ___ / Outcome ___ |
 | Retained-state boundary | Current live state controls recovery/permissions; no automatic missing-account/key reconstruction. | Reviewer ___ / Date ___ / Outcome ___ |
+| Active-account reissue | Two-phase reissue; aged credential or forced path; rotation (P15); a pending transfer-out is cancelled; refused during deletion and contest. Provisional. | Reviewer ___ / Date ___ / Outcome ___ |

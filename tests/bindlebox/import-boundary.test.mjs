@@ -7,7 +7,7 @@ import {fileURLToPath} from 'node:url';
 import {build} from 'esbuild';
 const root=fileURLToPath(new URL('../../',import.meta.url));
 const box=path=>/^packages\/bindlebox-[^/]+\//.test(path)||path.startsWith('apps/bindlebox/')||path==='scripts/bindlebox.mjs';
-const shared=path=>path==='packages/core/primitives.mjs'||/^(packages\/(content|sdk)\/|vendor\/(ngin|dodo)\/)/.test(path);
+const shared=path=>path==='packages/core/primitives.mjs'||['packages/intents/format.mjs','packages/intents/schema.mjs'].includes(path)||/^(packages\/(content|sdk)\/|vendor\/(ngin|dodo)\/)/.test(path);
 const normalize=path=>relative(root,path).replaceAll('\\','/');
 function violation(importer,specifier){
  // Bare npm and node imports are external. Internal import-map aliases need explicit review.

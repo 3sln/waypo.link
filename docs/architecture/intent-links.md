@@ -301,6 +301,16 @@ Existing contact links are unchanged: they are links, not intents, and keep `bin
 | INT-8 | `signIntent` in the links contract (later) | The links-contract module (links owner) | INT-1, ORG certification keys |
 | INT-9 | Parley declarations, route and handler confirmations | Parley's app files (Parley owner) | INT-3 |
 
+### 10.1.1 Local slice status (2026-10-23)
+
+INT-1–INT-7 and INT-9 have local implementations and dedicated codec, engine, seeded-chaos, HTTP/Worker and browser suites. INT-8 remains deferred. This is implementation status, not reviewer sign-off or production verification; the decisions and sign-off blanks above remain provisional. All three flags are registered default off. Registered identifiers remain under reserved `.example` domains.
+
+The integration file has one INT-3 hook wrapping declaration validation and safe snapshot adoption. Intent records use the existing account metadata provider and an INT account RPC adapter; a separate provider catalogue entry is unnecessary. Disconnect/undeclare invalidates candidates immediately, and the account adapter reconciles the stored default before every intent operation, including settings reads. Cleanup does not depend on flag targeting. Flow receipts contain a digest and deadlines, never the intent value or data, and are bounded to 64 per account; browser payloads expire after one hour.
+
+Oversized legacy contact links use a migration-only fragment and built-in-only consent path, without becoming a new-format intent or reaching app handlers. The static PWA registration stays legacy; its served manifest switches to `/i#%s` only while the intent flag is globally enabled. Parley uses the existing `apps/bindlebox` application. Its handler confirms independently, and the provider built-in refuses foreign-host contact actions until verification is available.
+
+Kind resolution uses the existing operator-configured artefact store and its bounded fetch port, with no ambient network fetch of arbitrary publisher URLs. External publisher discovery, deployed log-redaction verification, actual OS/PWA installation behaviour and production release gates remain unverified. Browser suites exercise protocol substitutions and handler confirmations locally; they do not certify third-party handlers. DEVLOG reconciliation is left to the coordinator because this workstream was instructed not to edit DEVLOG.md. Final local verification: 71 focused codec/engine/flag/boundary checks, 12 intent client-engine checks, 12 contact/transport checks, the 292-test UI-state gate, DOM smoke, asset build and Worker dry run passed. The resumed sandbox refuses loopback listeners (`listen EPERM`), so its full core run finished with 2,695 passes, nine listener failures and a native Node assertion in the export-hooks suite; Worker/browser/e2e reruns are blocked by that environment. Before the sandbox changed, Worker (80 tests), intent browser matrices and the full e2e (214 passes, four skips) passed; those earlier runs do not verify every final resumed edit.
+
 ### 10.2 Flags (proposed rows, default off; the flags owner adds them)
 
 | Flag | Class | Notes |

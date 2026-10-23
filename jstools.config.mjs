@@ -10,6 +10,9 @@ export const publicSources = [
   'vendor/ngin',
   'vendor/tldts/index.js',
   'packages/sdk/src',
+  'packages/intents/legacy.mjs','packages/intents/registered.mjs','packages/intents/format.mjs','packages/intents/schema.mjs','packages/intents/project.mjs',
+  'packages/core/strict-json.mjs','packages/core/artefacts.mjs',
+  'packages/links/preview.mjs','packages/links/envelope.mjs','packages/links/types.mjs',
   'packages/i18n',
   'packages/consent/model.mjs','packages/consent/localization.mjs','packages/consent/reviewed-contracts.mjs',
   'packages/portal',
@@ -30,6 +33,7 @@ export const publicSources = [
 ];
 
 export const pages = [
+  {source:'apps/web/intent.html',output:'intent.html',entry:'intent',module:'/src/intent.mjs'},
   {source:'apps/web/console.html',output:'console.html',entry:'app',module:'/src/main.mjs'},
   {source:'apps/web/authorize.html',output:'authorize.html',entry:'authorize',module:'/src/authorize.mjs'},
 ];
@@ -46,6 +50,7 @@ export default defineConfig({
   // Standalone workers bundle crypto/sanitizer dependencies without an import map.
   dependencies: ['hash-wasm'],
   entries: {
+    intent: {module:'apps/web/src/intent.mjs',css:'apps/web/styles.css'},
     app: {module:'apps/web/src/main.mjs',css:'apps/web/styles.css'},
     authorize: {module:'apps/web/src/authorize.mjs',css:'apps/web/styles.css'},
     // Islands shell runtime for the dedicated embed origin. build-assets re-roots its graph under /embed/assets/,

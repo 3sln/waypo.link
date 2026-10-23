@@ -1,4 +1,5 @@
 // BB-B9: presentation-independent client operations. Providers own I/O; Actions own decisions.
+import {ReceiveAppIntent,ConfirmAppIntent,DiscardAppIntent} from './intents.mjs';
 import {Engine,Action,Query,Provider} from '../../../../vendor/ngin/index.js';
 import {perform} from '../../../../packages/bindlebox-engine/engine.mjs';
 export const PAGE_SIZE=40;
@@ -133,9 +134,9 @@ export class ArchiveAction extends ClientAction {
 }
 export class Locale extends ClientAction {static needsOnline=false;run({state}){state.value.locale=this.input.locale==='es'?'es':'en';}}
 export class AcceptRequest extends ClientAction {async run({state,mailbox}){const result=await call(mailbox,'conversations.accept',this.input);await snapshot(mailbox,state.value);return result;}}
-export const CLIENT_OPERATIONS=Object.freeze({body:ReadRequestBody,start:StartConversation,load:LoadClient,navigate:Navigate,draft:SaveDraft,submit:SubmitMessage,retry:RetryMissing,delivery:DeliveryDetail,sync:SyncProgress,connectivity:Connectivity,rescue:Rescue,contact:ContactAction,view:ViewAction,access:RequestAccess,archive:ArchiveAction,locale:Locale,accept:AcceptRequest});
-export function createClientEngine({BINDLEBOX_ENABLED=false,mailbox,browser,permissions={},locale='en',online=true}={}){
- const state={enabled:BINDLEBOX_ENABLED===true,value:initialState({locale,online}),syncing:false};
+export const CLIENT_OPERATIONS=Object.freeze({discardIntent:DiscardAppIntent,intent:ReceiveAppIntent,confirmIntent:ConfirmAppIntent,body:ReadRequestBody,start:StartConversation,load:LoadClient,navigate:Navigate,draft:SaveDraft,submit:SubmitMessage,retry:RetryMissing,delivery:DeliveryDetail,sync:SyncProgress,connectivity:Connectivity,rescue:Rescue,contact:ContactAction,view:ViewAction,access:RequestAccess,archive:ArchiveAction,locale:Locale,accept:AcceptRequest});
+export function createClientEngine({BINDLEBOX_ENABLED=false,INTENT_LINKS_ENABLED=false,mailbox,browser,permissions={},locale='en',online=true}={}){
+ const state={enabled:BINDLEBOX_ENABLED===true,intentLinksEnabled:INTENT_LINKS_ENABLED===true,value:initialState({locale,online}),syncing:false};
  const engine=new Engine({providers:Object.fromEntries(Object.entries({state,mailbox,browser,permissions}).map(([name,value])=>[name,Provider.fromSingleton(value)]))});
  return {engine,state,run(name,input){const Operation=CLIENT_OPERATIONS[name];if(!Operation)throw new TypeError('Unknown client operation');return perform(engine,new Operation(input));},read:()=>engine.query(new ClientState()).peek(),dispose:()=>engine.dispose()};
 }

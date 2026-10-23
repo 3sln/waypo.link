@@ -51,6 +51,15 @@ import { LinkedApproval, MemoryLinkedLimits, pruneLineage, revokeLineage, revoke
  *                          recovery, a future active-account reissue), so a superseded file holds a retired key that
  *                          signs nothing honoured. The first file of a new identity adopts the existing signer. A full
  *                          history of referenced keys issues without rotating; the audit records which happened.
+ *   reissueRecoveryBegin / reissueRecoveryConfirm   the active-account reissue (recovery-identity spec "Active-account
+ *                          reissue", provisional). Begin needs a fresh step-up with a credential enrolled >= 7 days
+ *                          earlier (`session.stepUpCredential`, `passwordSetAt`), or an armed forced marker
+ *                          `recoveryReissue` = {reason:'elevated-abort'|'transfer-in', at, kid?}; it rotates through the
+ *                          account single writer (identityBackup.reissue) and stages `recoveryStaged` = {hash, kid,
+ *                          encryptionKid, sessionId, preparedAt, expiresAt, base, forced?}. Confirm runs the account
+ *                          gate (identityBackup.reissueCommit: refuses deletion/moved/contested and a staged file whose
+ *                          keys no longer restore, cancels a live transfer-out)
+ *                          and then makes the staged credential current in one CAS with a `security` bump.
  *
  * Email removal resources (constructor, both optional, both fail closed):
  *   flags            flags port {for(ctx)} or a thunk returning the current one; EMAIL_REMOVAL_ENABLED is read with
@@ -64,7 +73,16 @@ export function recoveryCredential(account){
   if(account?.status!=='active'||typeof account.recoveryHash!=='string'||!account.recoveryHash||!nonNegative(account.recoveryIssuedAt))return null;
   return Object.freeze({issuedAt:account.recoveryIssuedAt,version:account.recoveryBackupVersion===2?2:1,keyKid:typeof account.recoveryKeyKid==='string'?account.recoveryKeyKid:null});
 }
-export const SECURITY_EVENTS = Object.freeze(['setup-email-verified','email-linked','email-removed','email-login-enabled','passkey-registered','passkey-added','passkey-removed','password-configured','recovery-file-issued','account-recovery-started','recovery-setup-resumed']);
+/** Recovery-credential age for P14, and the reissue-authority credential age (P18, P19): 7 days. */
+export const RECOVERY_CREDENTIAL_AGE_MS = 7 * 86400000;
+/** How long a staged reissue waits for its confirmation (phase 2). */
+export const RECOVERY_REISSUE_TTL_MS = 30 * 60000;
+/** Forced-reissue reasons (recovery-identity spec "Active-account reissue"). */
+export const RECOVERY_REISSUE_REASONS = Object.freeze(['elevated-abort', 'transfer-in']);
+/** The armed forced-reissue marker `account.recoveryReissue` = {reason, at, kid?}, or null. Pure. */
+export function reissueMarker(account){const marker=account?.recoveryReissue;return marker&&typeof marker==='object'&&RECOVERY_REISSUE_REASONS.includes(marker.reason)&&Number.isSafeInteger(marker.at)&&marker.at>=0?marker:null;}
+const stagedReissue=value=>value&&typeof value==='object'&&typeof value.hash==='string'&&typeof value.kid==='string'&&typeof value.encryptionKid==='string'&&typeof value.sessionId==='string'&&Number.isSafeInteger(value.expiresAt)&&(value.base===null||typeof value.base==='string')?value:null;
+export const SECURITY_EVENTS = Object.freeze(['setup-email-verified','email-linked','email-removed','email-login-enabled','passkey-registered','passkey-added','passkey-removed','password-configured','recovery-file-issued','recovery-file-reissued','account-recovery-started','recovery-setup-resumed']);
 export class IdentityFault extends Error {
   constructor(code, message = 'The account request could not be completed.') { super(message); this.code = code; }
 }
@@ -221,10 +239,12 @@ export class IdentityService {
   async stepUpBegin(input,context){const {account,session}=await this.authorized(context,true,{closure:true}),revision=account.revision;if(!account.credentials.length)return {password:Boolean(account.passwordHash),passkey:false};const authenticationOptions=await this.webauthn.authenticationOptions({config:this.config});account.challenges=[...account.challenges.filter(c=>c.expiresAt>this.clock()&&c.purpose!=='step-up').slice(-4),{purpose:'step-up',value:authenticationOptions.challenge,sessionHash:session.hash,expiresAt:this.clock()+this.config.challengeTtlMs}];await this.save(account,revision);return {password:Boolean(account.passwordHash),passkey:true,authenticationOptions};}
   async stepUp(input,context){
     const {account,session}=await this.authorized(context,true,{closure:true}),revision=account.revision;if(!await this.rateLimiter.check({operation:'step-up',remoteIP:context.remoteIP,handle:account.handle}))fail('rate_limited','Please wait before trying again.');
-    if(input.method==='password'){password(input.password);if(!account.passwordHash||!await this.passwordHasher.verify(input.password,account.passwordHash))fail('unauthorized','Authentication failed.');}
-    else if(input.method==='passkey'){const challenge=account.challenges.find(c=>c.purpose==='step-up'&&secureEqual(c.sessionHash,session.hash)&&c.expiresAt>this.clock()),credential=account.credentials.find(c=>c.id===input.response?.id);if(!challenge||!credential)fail('unauthorized','Authentication failed.');let verified;try{verified=await this.webauthn.verifyAuthentication({response:input.response,challenge:challenge.value,credential,account,config:this.config});}catch{fail('unauthorized','Authentication failed.');}credential.counter=verified.counter;credential.backedUp=verified.backedUp;account.challenges=account.challenges.filter(c=>c!==challenge);}
+    let used;
+    if(input.method==='password'){password(input.password);if(!account.passwordHash||!await this.passwordHasher.verify(input.password,account.passwordHash))fail('unauthorized','Authentication failed.');used={kind:'password'};}
+    else if(input.method==='passkey'){const challenge=account.challenges.find(c=>c.purpose==='step-up'&&secureEqual(c.sessionHash,session.hash)&&c.expiresAt>this.clock()),credential=account.credentials.find(c=>c.id===input.response?.id);if(!challenge||!credential)fail('unauthorized','Authentication failed.');let verified;try{verified=await this.webauthn.verifyAuthentication({response:input.response,challenge:challenge.value,credential,account,config:this.config});}catch{fail('unauthorized','Authentication failed.');}credential.counter=verified.counter;credential.backedUp=verified.backedUp;account.challenges=account.challenges.filter(c=>c!==challenge);used={kind:'passkey',id:credential.id};}
     else fail('invalid_method');
-    session.stepUpAt=this.clock();this.audit(account,'step-up');await this.save(account,revision);return {stepUpUntil:session.stepUpAt+300000};
+    // Which credential confirmed it (reissue authority: a credential enrolled >= 7 days earlier, P18).
+    session.stepUpAt=this.clock();session.stepUpCredential=used;this.audit(account,'step-up');await this.save(account,revision);return {stepUpUntil:session.stepUpAt+300000};
   }
   ageAttestation(input,context,{paid=false,bootstrap=false}={}){const location=trustedAgeLocation({country:context?.ageLocation?.country,regionCode:context?.ageLocation?.region}),requirement=ageRequirement(location),minimum=paid?requirement.paidMinimumAge:requirement.minimumAge;if(requirement.blocked&&!bootstrap)throw Object.assign(new IdentityFault('signup_region_blocked',"Sign-up isn't available in your region."),{status:403});if(input.ageConfirmed===undefined)fail('age_confirmation_required','Confirm the minimum signup age.');if(!Number.isSafeInteger(input.ageConfirmed)||input.ageConfirmed<minimum||input.ageConfirmed>150)fail('age_confirmation_insufficient','Confirm the required signup age.');return {ageConfirmedAt:this.clock(),ageMinimum:minimum,ageCountry:location.country};}
   async acceptTerms(input,context){
@@ -254,7 +274,7 @@ export class IdentityService {
       admission:{version:1,kind:signupPlan==='free'?'free':'paid',plan:signupPlan,...signupPlan==='free'?{}:{incarnation:this.crypto.id(),checkoutStartUntil:this.clock()+86400000,initialPaymentRequired:true}},
       createdAt: this.clock(), lastActiveAt: this.clock(), termsVersion: this.config.termsVersion,
       termsAcceptedAt: this.clock(), ...age, security: { epoch: 0, changedAt: this.clock() }, credentials: [], sessions: [], challenges: [], audit: [], recoveryHash: null, emailLoginEnabled: false,
-      passwordHash: selectedPassword ? await this.passwordHasher.hash(selectedPassword) : null };
+      passwordHash: selectedPassword ? await this.passwordHasher.hash(selectedPassword) : null, ...selectedPassword ? { passwordSetAt: this.clock() } : {} };
     if(this.config.requireReachability===true){if(!context.setupBinding)fail('unauthorized','Start setup in the account browser.');account.setupBindingHash=await this.crypto.hash('setup-binding',context.setupBinding);}
     const pendingToken = await this.newPending(account,context);if(selectedPassword)await this.verifyPendingPassword(account,selectedPassword);
     let registrationOptions;
@@ -315,7 +335,7 @@ export class IdentityService {
   async verifyPendingPassword(account,value){if(!await this.passwordHasher.verify(value,account.passwordHash))fail('unauthorized','Password verification failed.');account.pendingCredentialAt=this.clock();}
   async setPendingPassword(input, context) {
     this.origin(context); const account = await this.pending(input.pendingToken,context); const revision = account.revision;
-    account.passwordHash = await this.passwordHasher.hash(password(input.password));await this.verifyPendingPassword(account,input.password);
+    account.passwordHash = await this.passwordHasher.hash(password(input.password));account.passwordSetAt=this.clock();await this.verifyPendingPassword(account,input.password);
     this.audit(account, 'password-configured'); this.securityChanged(account); await this.save(account, revision); return { readyForRecovery: true };
   }
   async downloadRecovery(input, context) {
@@ -340,6 +360,83 @@ export class IdentityService {
     return { fileName: `3sln-recovery-${account.handle}.json`, content: JSON.stringify({ version: 1,
       issuer: this.config.origin, handle: account.handle, recoveryToken,
       warning: 'Keep this file private and backed up. It is the only way to recover this account without a verified email or phone. It starts one recovery transaction and can resume that transaction until replacement setup is confirmed.' }, null, 2), recoveryToken };
+  }
+  /** The owner's recovery-file status for the console. Hashes, kids and tokens never leave the record. */
+  recoveryView(account){
+    const credential=recoveryCredential(account),marker=reissueMarker(account);
+    return {issuedAt:credential?.issuedAt??null,version:credential?.version??null,transferEligibleAt:credential?.version===2?credential.issuedAt+RECOVERY_CREDENTIAL_AGE_MS:null,reissueRequired:marker?.reason??null,reissueAvailable:typeof this.identityBackup?.reissue==='function'&&typeof this.identityBackup?.reissueCommit==='function'};
+  }
+  /** Who may reissue (recovery-identity spec "Active-account reissue"): a step-up within 5 minutes, made with a passkey
+   * or password enrolled at least 7 days earlier (P18), or any fresh step-up while a forced path is armed (an elevated
+   * abort, PORT-4 activation). `reauthentication_required` makes the console prompt again; `credential_too_new` means
+   * no credential is old enough yet. */
+  reissueAuthority(account,session){
+    const now=this.clock();
+    if(!Number.isSafeInteger(session.stepUpAt)||session.stepUpAt>now||session.stepUpAt+300000<=now)fail('reauthentication_required','Confirm your password or passkey to replace your recovery file.');
+    const aged=at=>nonNegative(at)&&at<=now&&now-at>=RECOVERY_CREDENTIAL_AGE_MS,used=session.stepUpCredential;
+    const enrolled=used?.kind==='passkey'?account.credentials.find(c=>c.id===used.id)?.createdAt:used?.kind==='password'&&account.passwordHash?account.passwordSetAt:undefined;
+    // A forced marker waives the age only for a credential enrolled no later than the marker was armed, so a
+    // credential added afterwards (perhaps by whoever took over the session) still waits 7 days (P18).
+    const marker=reissueMarker(account);if(marker&&nonNegative(enrolled)&&enrolled<=marker.at)return {forced:marker.reason,credential:used};
+    if(aged(enrolled))return {forced:null,credential:used};
+    if(account.credentials.some(c=>aged(c.createdAt))||account.passwordHash&&aged(account.passwordSetAt))fail('reauthentication_required','Confirm with a passkey or password you have had for at least 7 days.');
+    fail('credential_too_new','Replacing your recovery file needs a passkey or password you have had for at least 7 days.',409);
+  }
+  /** Active-account reissue, phase 1 (recovery-identity spec "Active-account reissue"; identity portability P14, P15,
+   * P17). Authority as `reissueAuthority`. The account single writer refuses during a deletion, a move or a contest and
+   * rotates the signing key with continuity first (P15); the new file is then STAGED, bound to this session for 30
+   * minutes. The current file keeps working until phase 2 commits, so an interrupted reissue never leaves the owner
+   * without a file. A new begin replaces an older staged file, which then never becomes current. */
+  async reissueRecoveryBegin(input,context){
+    const {account,session}=await this.authorized(context,true);const revision=account.revision;
+    if(!input||typeof input!=='object'||Array.isArray(input)||Object.keys(input).some(name=>name!=='acknowledged'))fail('invalid_request','Unsupported recovery request.',400);
+    if(input.acknowledged!==true)fail('confirmation_required','Confirm that your current recovery file will stop working.',400);
+    if(typeof this.identityBackup?.reissue!=='function'||typeof this.identityBackup?.reissueCommit!=='function')fail('recovery_unavailable','Recovery files cannot be replaced right now.',503);
+    const authority=this.reissueAuthority(account,session);
+    if(!await this.rateLimiter.check({operation:'recovery-reissue',remoteIP:context.remoteIP,handle:account.handle}))fail('rate_limited','Please wait before trying again.');
+    const sessionId=await this.sessionID(session),marker=reissueMarker(account),staged=stagedReissue(account.recoveryStaged);
+    // P15: every kid an issued file may hold (the current file, an abandoned staged file, an invalidated file) is
+    // rotated away. A transfer-in arrival's key was already rotated at activation, so its first file adopts it.
+    const bound=[...new Set([account.recoveryKeyKid,staged?.kid,marker?.kid].filter(kid=>typeof kid==='string'&&kid))];
+    const rotation=bound.length?{rotateIf:bound}:marker?.reason==='transfer-in'?null:{always:true};
+    const keep=account.recoveryHash&&typeof account.recoveryKeyKid==='string'?[account.recoveryKeyKid]:[];
+    const recoveryToken=`${account.id}.${this.crypto.random()}`;
+    const issued=await this.identityBackup.reissue(account,recoveryToken,{rotation,keep,actor:{credentialId:session.credentialId??null,sessionId}});
+    const backup=issued?.backup,outcome=issued?.rotation;if(!backup?.keychain?.signing?.kid)fail('recovery_unavailable','Recovery files cannot be replaced right now.',503);
+    const now=this.clock();
+    account.recoveryStaged={hash:await this.crypto.hash('recovery',recoveryToken),kid:backup.keychain.signing.kid,encryptionKid:backup.keychain.encryption.kid,sessionId,preparedAt:now,expiresAt:now+RECOVERY_REISSUE_TTL_MS,base:account.recoveryHash||null,credential:authority.credential,...authority.forced?{forced:authority.forced}:{}};
+    if(outcome?.rotated)this.audit(account,'recovery-key-rotated');else if(outcome?.skipped)this.audit(account,'recovery-key-rotation-skipped');
+    this.audit(account,'recovery-reissue-prepared');await this.save(account,revision);
+    return {fileName:`3sln-recovery-${account.id}.json`,content:JSON.stringify(backup),recoveryToken,expiresAt:account.recoveryStaged.expiresAt,transferPending:issued.transferPending===true,forced:authority.forced};
+  }
+  /** Active-account reissue, phase 2: after the browser encrypted, saved and test-unlocked the staged file. The account
+   * single writer re-checks deletion, custody and contest, and CANCELS a pending or held transfer-out (spec rationale:
+   * the move was authorized by the file this replaces; abort is the safe direction). Then one identity CAS makes the
+   * staged credential current with `recoveryIssuedAt = now` (so P14 waits 7 days again), clears any forced marker and
+   * bumps `security`. Notices go to the verified email and every push subscription after commit. */
+  async reissueRecoveryConfirm(input,context){
+    let {account,session}=await this.authorized(context,true);
+    if(!input||typeof input!=='object'||Array.isArray(input)||Object.keys(input).some(name=>!['recoveryToken','downloadConfirmed'].includes(name)))fail('invalid_request','Unsupported recovery request.',400);
+    if(input.downloadConfirmed!==true||typeof input.recoveryToken!=='string'||input.recoveryToken.length>150)fail('recovery_confirmation_required','Download and test your new recovery file before continuing.',400);
+    if(typeof this.identityBackup?.reissueCommit!=='function')fail('recovery_unavailable','Recovery files cannot be replaced right now.',503);
+    const hash=await this.crypto.hash('recovery',input.recoveryToken),sessionId=await this.sessionID(session);
+    const check=a=>{const staged=stagedReissue(a.recoveryStaged);if(!staged||staged.sessionId!==sessionId||!secureEqual(staged.hash,hash)||staged.expiresAt<=this.clock())fail('recovery_reissue_expired','Start replacing your recovery file again.',409);if((a.recoveryHash||null)!==staged.base)fail('recovery_changed','Your recovery file changed. Start again.',409);
+      // The credential that authorized phase 1 must still exist (removing it revokes its sessions, but a password can be reset by recovery only).
+      const used=staged.credential;if(used?.kind==='passkey'?!a.credentials.some(c=>c.id===used.id):used?.kind==='password'?!a.passwordHash:true)fail('recovery_reissue_expired','Start replacing your recovery file again.',409);return staged;};
+    const first=check(account);
+    const gate=await this.identityBackup.reissueCommit(account.id,{actor:{credentialId:session.credentialId??null,sessionId},kids:{signing:first.kid,encryption:first.encryptionKid}});
+    for(let attempt=0;attempt<4;attempt++){
+      if(attempt)({account,session}=await this.authorized(context,true));
+      const staged=check(account),revision=account.revision,now=this.clock();
+      account.recoveryHash=staged.hash;account.recoveryIssuedAt=now;account.recoveryKeyKid=staged.kid;account.recoveryBackupVersion=2;delete account.recoveryStaged;delete account.recoveryReissue;
+      this.audit(account,'recovery-file-reissued');this.securityChanged(account);account.revision=revision+1;
+      if(!await this.repository.compareAndSwap(account.id,revision,account))continue;
+      const notified={email:false,push:false};
+      try{if(typeof account.verifiedEmail==='string'&&nonNegative(account.emailVerifiedAt)&&typeof this.mailer?.sendSecurityAlert==='function'){await this.mailer.sendSecurityAlert({email:account.verifiedEmail,type:'recovery-reissued',owner:account.id});notified.email=true;}}catch{}
+      try{if(typeof this.accountChannels?.notify==='function')notified.push=(await this.accountChannels.notify(account.id,'recovery-reissued'))?.accepted>0;}catch{}
+      return {reissued:true,issuedAt:now,transferCancelled:gate?.transferCancelled===true,notified,recovery:this.recoveryView(account),account:await this.projectAccount(account)};
+    }
+    fail('conflict','The account changed; start this step again.');
   }
   async claimHandle(input,context){
     const {account}=await this.recent(context);
@@ -444,7 +541,9 @@ export class IdentityService {
       account.recoveryResumeHash = account.recoveryHash;
       account.recoveryResumeBackupVersion=account.recoveryBackupVersion||1;
       if(typeof account.recoveryKeyKid==='string')account.recoveryResumeKeyKid=account.recoveryKeyKid;else delete account.recoveryResumeKeyKid;delete account.recoveryKeyKid;
-      account.status = 'recovering'; account.recoveryHash = null; account.credentials = []; account.passwordHash = null; account.sessions = []; revokeAllLineage(account, this.clock()); account.emailChallenges = [];
+      account.status = 'recovering'; account.recoveryHash = null; account.credentials = []; account.passwordHash = null; delete account.passwordSetAt; account.sessions = []; revokeAllLineage(account, this.clock()); account.emailChallenges = [];
+      // The replacement file of the recovery supersedes any staged reissue and any forced-reissue marker.
+      delete account.recoveryStaged; delete account.recoveryReissue;
     }
     // Resumption only rotates the limited setup authority; completed replacement
     // credentials and the replacement recovery file remain intact.
@@ -469,7 +568,7 @@ export class IdentityService {
       devices: await Promise.all(account.sessions.filter(s => s.expiresAt > this.clock()).map(async s => ({
         id: await this.sessionID(s), label: s.label || 'Browser session', createdAt: s.createdAt, ...s.parentSessionId?{approvedFrom:s.parentSessionId}:{},
         lastUsedAt: s === session ? this.clock() : s.lastUsedAt || s.createdAt, expiresAt: s.expiresAt, current: s === session }))),
-      audit: account.audit.slice(-20) };
+      audit: account.audit.slice(-20), recovery: this.recoveryView(account) };
   }
   async credentialBegin(input, context) {
     const { account, session } = await this.recent(context); const revision = account.revision;

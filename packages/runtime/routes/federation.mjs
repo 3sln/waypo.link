@@ -1,3 +1,4 @@
+import {intentFeature} from './intents.mjs';
 import {createAppEngine,read} from '../../app/engine.mjs';
 import {systemClock,cryptoRandom,nullAudit} from '../../app/providers.mjs';
 import {PublicIdentityAvailable} from '../../app/domains/public-identity.mjs';
@@ -59,7 +60,7 @@ export const stages={
     if(movedTarget&&response?.status===400){const headers=new Headers(response.headers);headers.set('Cache-Control','no-store');return json({error:'identity_moved',message:'This identity moved to another provider.',to:movedTarget},400,headers);}
     // Contact intents (links §6.4, core feature `intents.v1`): this host accepts `bindle_intent` on its console entry.
     // Entry routes and the components profile are advertised only while this adapter mounts them (review F8).
-    if(response&&path==='/.well-known/bindle/manifest.json'&&request.method==='GET'&&response.ok){const manifest=await response.json(),entries=env.FEDERATION_ENTRIES?env.FEDERATION_ENTRIES.manifest({components:await embedShellMounted(env)}):{};return json({...manifest,features:{...manifest.features,...entries.features,'intents.v1':{intents:[...CONTACT_INTENTS],login_endpoint:`${env.APP_ORIGIN}/console`}},...entries.profiles?{profiles:{...manifest.profiles,...entries.profiles}}:{}},200,{'Access-Control-Allow-Origin':'*'});}
+    if(response&&path==='/.well-known/bindle/manifest.json'&&request.method==='GET'&&response.ok){const manifest=await response.json(),entries=env.FEDERATION_ENTRIES?env.FEDERATION_ENTRIES.manifest({components:await embedShellMounted(env)}):{};return json({...manifest,features:{...manifest.features,...entries.features,...intentFeature(env),'intents.v1':{intents:[...CONTACT_INTENTS],login_endpoint:`${env.APP_ORIGIN}/console`}},...entries.profiles?{profiles:{...manifest.profiles,...entries.profiles}}:{}},200,{'Access-Control-Allow-Origin':'*'});}
     if(response)return path==='/oauth/authorize'&&response.headers.get('Content-Type')?.includes('text/html')?passthrough(securePage(await brandPage(response,env))):response;
     return json({error:'not_found'},404);
    }

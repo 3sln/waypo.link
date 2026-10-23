@@ -18,6 +18,7 @@ import {mailTransport} from './email.mjs';
 import {createPushTransport} from '../../packages/messaging/web-push.mjs';
 import {transferIdentityPort,createTransferNotices,attestorFromJwk,transferDueIndex,sweepTransferDue} from '../../packages/identity/transfer-out.mjs';
 import {transferInIdentityPort} from '../../packages/identity/transfer-in.mjs';
+import {transferInRecoveryPort} from '../../packages/identity/recovery-reissue.mjs';
 import {createPortabilityFetch} from '../../packages/identity/successors.mjs';
 import {createDohResolver} from '../../packages/federation/resource-discovery.mjs';
 
@@ -75,7 +76,7 @@ export function workerTransferOutConfig(env){
  let notices;try{notices=createTransferNotices({origin:env.APP_ORIGIN,mail:mailTransport(env),push:createPushTransport(env)});}catch{notices=undefined;}
  return {TRANSFER_OUT_PORTS:{identity:transferIdentityPort(repository),...notices?{notices}:{},attestor:attestorFromJwk(env.IDENTITY_ATTESTATION_KEYS??env.IDENTITY_ATTESTATION_KEY),issuer:env.APP_ORIGIN,
   ...scheduler?{due:{put:(owner,at,kind)=>scheduler().transferDuePut(owner,at,kind),delete:(owner,at,kind)=>scheduler().transferDueDelete(owner,at,kind)}}:{}},
-  TRANSFER_IN_PORTS:{identity:transferInIdentityPort(repository),fetch:createPortabilityFetch({resolve:createDohResolver(),publicRouting:true})}};
+  TRANSFER_IN_PORTS:{identity:transferInIdentityPort(repository),recovery:transferInRecoveryPort(repository),fetch:createPortabilityFetch({resolve:createDohResolver(),publicRouting:true})}};
 }
 /** The cron trigger and this object's own alarm drive one bounded sweep at a time. This object also holds the
  * deletion-due index, swept on every run independent of LIFECYCLE_ENABLED (DX-3 §2.2), and the PORT-2 transfer-due

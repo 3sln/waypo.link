@@ -285,6 +285,17 @@ export class IdentityKeyRegistry {
     await this.store.transaction(async tx => { if ((await this.#pointer(tx, owner, 'signing'))?.kid !== current.kid) fail('key_conflict'); await this.#bind(tx, owner, [...keep, current.kid], { merge: true }); });
     return { rotated: false, kid: current.kid, previous: null, skipped: null };
   }
+  /** Whether a file holding these kids would still restore (`recoveryMatch` without the private material): the current
+   * encryption key, and the current signing key or a retired, unrevoked signing key bound to an issued file. The
+   * active-account reissue checks it before committing a staged file (recovery-reissue.mjs). Never writes. */
+  async recoveryKidsRestorable(owner, { signing, encryption } = {}) {
+    ownerOf(owner); if (!boundedString(signing) || !boundedString(encryption)) return false;
+    return this.store.transaction(async tx => {
+      const pointer = await this.#pointer(tx, owner, 'signing'), enc = await this.#pointer(tx, owner, 'encryption'), record = await tx.get(publicPath('signing', owner, signing)), binding = await tx.get(key(BINDING, owner));
+      if (enc?.kid !== encryption || record?.owner !== owner || keyState(record) === 'revoked') return false;
+      return pointer?.kid === signing || keyState(record) === 'retired' && record.active === true && binding?.owner === owner && Array.isArray(binding.kids) && binding.kids.includes(signing);
+    });
+  }
   /** Whether a decrypted recovery keychain `{signing:{kid,privateJWK}, encryption:{kid,privateJWK}}` matches this
    * owner's keys: the current encryption key exactly, and either the current signing key exactly or a retired signing
    * key bound to an issued recovery file with the same public point (see the header). Never writes. */

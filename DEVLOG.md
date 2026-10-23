@@ -3132,3 +3132,42 @@ Reviewer: ___ Date: ___ Outcome: ___
 **Gates (combined tree):** core 2651, Worker 80, UI-state 292, e2e 214 with 4 WebKit skips, removal browser matrix 24/24, asset build and Worker dry run.
 
 Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-23 — Intent links (INT-1 to INT-7, INT-9) and active-account recovery reissue
+
+**Intent links** ([intent links](docs/architecture/intent-links.md) rev 3, behind default-off flags; INT-8 `signIntent` deferred):
+- **Built:**
+  - the `bintent` codec, validation and projection, plus the `intent` kind's growth table and the three registered kinds;
+  - handler declarations, with a one-call hook in integrations;
+  - the router engine with consent memory, defaults, exclusions and ignored kinds;
+  - `/i` GET and POST with the landing page: signed-in viewers see their own connected handlers first, and "Where's your account?" handle entry carries the provisional mitigations;
+  - the chooser, consent and settings UI;
+  - contact-page migration M2–M3, with the legacy `web+bindle` and `bindle_intent` paths kept;
+  - `bintent` log redaction;
+  - Parley's handlers and confirmations.
+- **Deviations:** stored defaults reconcile before intent operations, and publisher resolution uses configured artefacts.
+- **Unverified:** deployed redaction, OS and PWA protocol installation, and production gates.
+
+**Active-account recovery reissue** ([recovery identity](docs/spec/recovery-identity.md) "Active-account reissue", provisional and unsigned):
+- **Who:** a step-up within 5 minutes with a passkey or password enrolled at least 7 days earlier. The step-up now records the credential used, and passwords record `passwordSetAt`. Forced paths (after an elevated abort, and after PORT-4 activation) skip the age rule, but only for credentials enrolled before the marker was armed.
+- **Two phases:**
+  - Begin rotates the signing key (P15) and stages the new file for 30 minutes; the old file keeps working.
+  - Confirm commits the new file, restarts `recoveryIssuedAt` (P14), records a security change and sends notices.
+- **Pending transfer-out:** cancelled at confirm, so an owner can retire a stolen file. P14 can't be dodged, because the new file is under 7 days old.
+- **Refused:** during a deletion, a contested move or the support lock, and for moved or arriving identities. Within 30 days of an elevated abort, a reissue by a different credential escalates to support.
+- **UI:** a recovery-file panel in Account & security (en and es), with a browser suite (`test:recovery-reissue`).
+- **Residuals in the spec:**
+  - the restorability check isn't atomic with the identity commit (only admin rotations could hit it);
+  - a full key history skips rotation silently;
+  - the encryption key is never rotated;
+  - the dispute "reissue" choice doesn't arm the forced path.
+
+**Gates (combined tree):**
+- core 2713 and Worker 81, both rerun independently by the coordinator;
+- UI-state 292;
+- full e2e passed;
+- asset build and Worker dry run.
+
+The intent agent's final Worker and browser reruns were blocked by its sandbox; the combined-tree gates cover them.
+
+Reviewer: ___ Date: ___ Outcome: ___

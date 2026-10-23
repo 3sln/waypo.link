@@ -2,6 +2,7 @@
 // Raw documents enter through strictJSON; object inputs must still pass the refusing serializer.
 import {strictJSON,jcs,plain,scalarString,textEncoder} from './strict-json.mjs';
 import {canonical} from './primitives.mjs';
+import {validateIntentKind} from '../intents/schema.mjs';
 
 export const ARTEFACT_LIMITS=Object.freeze({envelopeBytes:262144,bodyBytes:65536,bodyDepth:32,bodyMembers:4096,versions:1024});
 export const DIGEST_PATTERN=/^sha256-[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$/;
@@ -151,7 +152,14 @@ function schemaGraph(root,base=[]){
 const rule=(pattern,operation,allow)=>Object.freeze({pattern,operation,allow});
 const optionRules=['occupant','consumer'].map(k=>rule(`/slot/options/${k}`,'add-member',c=>Object.keys(c.nextParent).length<=32&&fieldName(c.key)&&field(c.value,{optional:true,title:false})));
 const fragmentRules=[rule('/fields','add-member',c=>Object.keys(c.nextParent).length<=32&&fieldName(c.key)&&field(c.value,{optional:true})),rule('/fields/*/values','append',c=>at(c.old,c.segments.slice(0,-1))?.type==='enum'&&at(c.old,c.segments.slice(0,-1))?.extensible===true&&text(c.value,2048)&&!c.parent.includes(c.value)&&!c.added.slice(0,c.index).includes(c.value)&&c.parent.length+c.added.length<=32)];
+const intentRules=[
+ rule('/data/properties','add-member',c=>!c.next.data.required.includes(c.key)&&!Object.hasOwn(c.old.disclosure.fields,c.key)&&Object.hasOwn(c.next.disclosure.fields,c.key)),
+ rule('/disclosure/fields','add-member',c=>!Object.hasOwn(c.old.data.properties,c.key)&&Object.hasOwn(c.next.data.properties,c.key)),
+ ...['/title','/summary','/disclosure/fields/*/title'].map(path=>rule(path,'add-member',c=>languageTag(c.key)&&!Object.keys(c.parent).some(k=>k.toLowerCase()===c.key.toLowerCase()))),
+ rule('/data/properties/*/values','append',c=>at(c.old,c.segments.slice(0,-1))?.type==='enum'&&at(c.old,c.segments.slice(0,-1))?.extensible===true&&!c.parent.includes(c.value)&&!c.added.slice(0,c.index).includes(c.value))
+];
 export const DEFAULT_KINDS=Object.freeze({
+ intent:Object.freeze({rules:Object.freeze(intentRules),validate:body=>{validateIntentKind(body);return true;}}),
  fragment:Object.freeze({rules:Object.freeze(fragmentRules)}),slot:Object.freeze({rules:Object.freeze(optionRules)}),
  bus:Object.freeze({rules:Object.freeze([...optionRules,rule('/slot/bus/types','append',c=>c.old.slot?.bus?.types_extensible===true&&typeof c.value==='string'&&/^[a-z][a-z0-9.-]{0,47}$/.test(c.value)&&!c.parent.includes(c.value)&&!c.added.slice(0,c.index).includes(c.value))]),schema:'bus'}),
  'rpc-contract':Object.freeze({rules:Object.freeze([]),schema:'rpc'}),

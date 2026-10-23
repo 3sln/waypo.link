@@ -1,3 +1,4 @@
+import {redactIntentLog} from '../packages/intents/redaction.mjs';
 import { spawn } from 'node:child_process';
 import { mkdir, writeFile, readFile, mkdtemp, rm, cp } from 'node:fs/promises';
 import { createServer } from 'node:net';
@@ -66,7 +67,7 @@ try{
   const defaultTests=['tests/e2e/admin-console.test.mjs','tests/e2e/multi-account.test.mjs','tests/e2e/multi-account-source.test.mjs','tests/e2e/host-badges-source.test.mjs','tests/e2e/token-onboarding-source.test.mjs','tests/e2e/message-frame.test.mjs','tests/e2e/message-submissions.test.mjs','tests/e2e/signup-views.test.mjs','tests/e2e/static-landing.test.mjs','tests/e2e/build-model.test.mjs','tests/e2e/identity-names.test.mjs','tests/e2e/recovery-crypto.test.mjs','tests/e2e/recovery-security.test.mjs','tests/e2e/worker-flow.test.mjs','tests/e2e/setup-contact-native.test.mjs','tests/e2e/ui-adversarial.test.mjs','tests/e2e/ui-chaos.test.mjs','tests/e2e/ui-chaos-scale.test.mjs','tests/e2e/ui-chaos-contention.test.mjs','tests/e2e/plans-search.test.mjs','tests/e2e/beaming.test.mjs','tests/e2e/mcp-conversations.test.mjs','tests/e2e/app-connections.test.mjs','tests/e2e/browser-automation.test.mjs','tests/e2e/browser-automation-native.test.mjs','tests/e2e/resource-verification.test.mjs','tests/e2e/google-drive.test.mjs','tests/e2e/branding.test.mjs','tests/e2e/links-worker.test.mjs','tests/e2e/links-conditional.test.mjs','tests/e2e/incremental.test.mjs','tests/e2e/wave5-console.test.mjs','tests/browser/recovery-layout.mjs'];
   const suite=spawn(process.execPath,['--test','--test-concurrency=1',...(process.argv.length>2?process.argv.slice(2):defaultTests)],{stdio:'inherit',env:{...process.env,E2E_BASE_URL:origin,E2E_ARTIFACTS:'artifacts/browser',E2E_BOOT_TOKEN:bootToken}});
   const code=await new Promise(resolve=>suite.once('exit',resolve));if(code!==0)process.exitCode=code||1;
-}finally{worker.kill('SIGTERM');await new Promise(resolve=>{if(worker.exitCode!==null)return resolve();worker.once('exit',resolve);setTimeout(resolve,5000).unref();});await writeFile('artifacts/browser/wrangler.log',logs.replace(/([?&]sig=)[^\s]*/g,'$1[redacted]'));await rm(persistence,{recursive:true,force:true});await rm(configDirectory,{recursive:true,force:true});}
+}finally{worker.kill('SIGTERM');await new Promise(resolve=>{if(worker.exitCode!==null)return resolve();worker.once('exit',resolve);setTimeout(resolve,5000).unref();});await writeFile('artifacts/browser/wrangler.log',redactIntentLog(logs));await rm(persistence,{recursive:true,force:true});await rm(configDirectory,{recursive:true,force:true});}
 
 // Federation and the authorization-entry slice each get their own fresh Worker and durable state.
 if(process.argv.length===2){

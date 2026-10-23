@@ -466,7 +466,7 @@ Engine-first: every operation is an ngin Action or Query in a domain module, dis
   - `recoveryIssuedAt` and a new `recoveryKeyKid` / `recoveryResumeKeyKid` binding are written in the credential's own CAS.
   - The rotation is an account commit that precedes the identity CAS. A retired key therefore keeps restoring its file while it is bound (`identity-key-recovery/<owner>/`). A rotation outside issuance clears that binding.
   - The account RPCs live in `packages/runtime/account/identity.mjs` (`recoveryKeychain`, `recoveryKeysMatch`). The port lives in `packages/runtime/identity-backup.mjs`. `packages/recovery/identity-backup.mjs` needed no change.
-- **Gap:** no active-account reissue path exists today. `downloadRecovery` accepts only a setup session, not the "signed-in session" that §1.1 assumes, so P15 covers the reissue paths that do exist.
+- ~~**Gap:** no active-account reissue path exists today.~~ **Closed locally, 2026-10-23 (provisional, unsigned):** [active-account reissue](../spec/recovery-identity.md#active-account-reissue-provisional). It needs an aged credential (P18) or an armed forced path (an elevated abort, PORT-4 activation). It runs in two phases with P15 rotation. A pending transfer-out is cancelled, and the reissue is refused during a deletion or a contest.
 - **PORT-2: implemented locally, persons only, behind `IDENTITY_TRANSFER_OUT_ENABLED` (default off).**
   - Engine: `packages/identity/transfer-out.mjs` (`TransferOutService` and `transfer.*` Actions/Queries), dispatched in the account single writer by `packages/runtime/account/transfer-out.mjs`.
   - Covered: begin; authorize on path (a) and path (b); statement binding (IP-R1-H3); cancel and withdrawal; expiry; the 24 h person delay and the 7-day waiting period; tier-0 hold and abort; holds that abort after 30 days; tier-1 elevated proof on either side; contest and the support decision; the restart block; commit.
@@ -488,7 +488,7 @@ Engine-first: every operation is an ngin Action or Query in a domain module, dis
   - `keys.mjs` custody fence (the guard PORT-2 flagged): nothing mints, exports or signs for a moved owner, nor for an arriving identity before activation. The only exceptions are `importTransfer`, the statement signer and `rotateAtActivation`. Imported keys and their history are pinned (never pruned).
   - `moves`, the key history (`created`/`retired`) and `use:"cert"` keys are published by `identityDocument`/`directoryAnswer`, exported as hooks; directory.v1 is still not mounted.
   - Deliberately refused, though classified as the spec decides: returns to this provider (`return_unsupported`) and displacement of an unattested identity (`displacement_unsupported`). Both need a terminal-record replacement primitive in the identity repository, and a return also needs reuse of the account's lifecycle tombstone.
-  - Adapters: the Worker wires the identity port and strictly-public egress with a DoH screen. Node keeps transfer-in unconfigured (it refuses) until a DNS-pinned GET/POST transport exists. No recovery-issuance port exists yet, so activation reports `recoveryRequired`.
+  - Adapters: the Worker wires the identity port and strictly-public egress with a DoH screen. Node keeps transfer-in unconfigured (it refuses) until a DNS-pinned GET/POST transport exists. The Worker's recovery port (`transferInRecoveryPort`) arms the owner's forced active-account reissue. Activation still reports `recoveryRequired`, with `recoveryReissueArmed`, until the owner downloads.
   - Tests: `tests/transfer-in.test.mjs` (against the real PORT-2 source and PORT-3 hooks), `tests/transfer-in-runtime.test.mjs` and the seeded `tests/transfer-in-chaos.test.mjs`.
 - **PORT-5: implemented locally, behind `IDENTITY_SUCCESSOR_ADOPTION_ENABLED` (class c, default off).**
   - `packages/identity/successors.mjs`: successor pins and index, per-issuer attestation-key pins with preconfigured roots, attestation resets (alerted), `attestation_first_use`, automatic adoption with the fetch-based §8.3 items 4 and 5, equivocation and replay, pending successors with explicit local adoption, first contact with the IP-R1-M8 budget rule, the background-refresh hook (redirect hints, at most 3 hops, cycles refused) and presentation intake (queued, verified in the background).
@@ -498,7 +498,7 @@ Engine-first: every operation is an ngin Action or Query in a domain module, dis
   - Tests: `tests/successors.test.mjs` and the seeded network chaos `tests/successors-chaos.test.mjs`.
 - **Open after PORT-2/3 (unsigned, for owners):**
   - The identity record keeps no history of removed or replaced emails, so path (b) notices reach only those detached by elevated proof.
-  - An elevated-proof abort invalidates the current file, but there is no active-account reissue path.
+  - ~~An elevated-proof abort invalidates the current file, but there is no active-account reissue path.~~ It now also arms the forced reissue (recovery-identity spec, provisional).
   - The step-up credential is not recorded, so the contest window is keyed by the session's passkey or session.
   - No certification keys exist to revoke, and open app removals are not concluded explicitly.
   - ~~`keys.mjs` `ensure` would mint a fresh key for a moved owner~~: closed by the PORT-4 custody fence.

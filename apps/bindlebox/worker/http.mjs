@@ -15,12 +15,12 @@ export async function bodyBytes(request,limit=LIMITS.maxRequestBytes){
 export function httpError(error){const known=error instanceof MailboxFault||error instanceof ProtocolFault,status=known&&Number.isSafeInteger(error.status)?error.status:500;return Response.json({error:known?error.code:'internal_error'},{status,headers:{...headers,...status===503?{'Retry-After':'60'}:{}}});}
 // Authentication is a configured, live verifier (ordinary app credentials). Never accept owner/actor from JSON,
 // query parameters or untrusted forwarding headers. Ingress routes only after the capability edge check.
-export function createHTTP({BINDLEBOX_ENABLED=false,APP_CLEAN_REMOVAL_ENABLED=false,authenticate,mailbox,edge,conversationEdge,metadata,services,assets,archiveEnabled=typeof services?.objectStorage==='function'&&typeof services?.archiveKeys==='function'}={}){
- const web=createWebHTTP({BINDLEBOX_ENABLED:enabled(BINDLEBOX_ENABLED),archiveEnabled,authenticate,mailbox});
+export function createHTTP({BINDLEBOX_ENABLED=false,INTENT_LINKS_ENABLED=false,APP_CLEAN_REMOVAL_ENABLED=false,authenticate,mailbox,edge,conversationEdge,metadata,services,assets,archiveEnabled=typeof services?.objectStorage==='function'&&typeof services?.archiveKeys==='function'}={}){
+ const web=createWebHTTP({BINDLEBOX_ENABLED:enabled(BINDLEBOX_ENABLED),INTENT_LINKS_ENABLED:enabled(INTENT_LINKS_ENABLED),archiveEnabled,authenticate,mailbox});
  return async request=>{
   if(!enabled(BINDLEBOX_ENABLED))return Response.json({error:'not_found'},{status:404,headers});
   const url=new URL(request.url),path=url.pathname;
-  if(request.method==='GET'&&(path==='/'||path==='/bindle/remove'&&enabled(APP_CLEAN_REMOVAL_ENABLED)&&typeof services?.verifyRemoval==='function'))return webShell();
+  if(request.method==='GET'&&(path==='/'||path==='/bindle/intent'&&enabled(INTENT_LINKS_ENABLED)||path==='/bindle/remove'&&enabled(APP_CLEAN_REMOVAL_ENABLED)&&typeof services?.verifyRemoval==='function'))return webShell();
   if(request.method==='GET'&&['/app.mjs','/styles.css'].includes(path)&&assets)return assets(request);
   const client=await web(request);if(client)return client;
   if(request.method==='POST'&&['/api/removal/prepare','/api/removal/complete'].includes(path))try{

@@ -18,6 +18,7 @@ import * as contactLinkActions from './bl/contact-link.mjs';
 import * as contactLinksActions from './bl/contact-links.mjs';
 import * as googleDriveActions from './bl/google-drive.mjs';
 import * as identityActions from './bl/identity.mjs';
+import {RECOVERY_REISSUE_INTENTS} from './bl/recovery-reissue.mjs';
 import * as conversationActions from './bl/conversations.mjs';
 import * as mcpActions from './bl/mcp.mjs';
 import * as automationActions from './bl/automation.mjs';
@@ -62,7 +63,7 @@ const constructors={
  'message-submission-unknown':messageActions.MessageSubmissionUnknown,'review-message-action':messageActions.ReviewMessageAction,'submit-message-action':messageActions.SubmitMessageAction,'load-message-revision':messageActions.LoadMessageRevision,
  'load-developer-contact':incomingActions.LoadDeveloperContact,'contact-auth':contactLinkActions.ContactAuth,'contact-handoff':contactLinkActions.ContactHandoff,'discover-provider':contactLinkActions.DiscoverProvider,'continue-with-provider':contactLinkActions.ContinueWithProvider,'choose-handoff':contactLinkActions.ChooseHandoff,'proceed-handoff':contactLinkActions.ProceedHandoff,'cancel-handoff':contactLinkActions.CancelHandoff,'write-another':contactLinkActions.WriteAnother,'reload-contact':contactLinkActions.ReloadContact,'reload-contact-page':contactLinkActions.ReloadContactPage,'continue-as-audience':contactLinkActions.ContinueAsAudience,'send-authored-message':contactLinkActions.SendAuthoredMessage,'open-intake':contactLinksActions.OpenIntake,'save-intake':contactLinksActions.SaveIntake,'rotate-challenge':contactLinksActions.RotateChallenge,'restore-default-rule':contactLinksActions.RestoreDefaultRule,'save-tag-label':contactLinksActions.SaveTagLabel,'create-contact':contactLinksActions.CreateContactLink,'open-developer-contact':incomingActions.OpenDeveloperContact,'copy-developer-contact':incomingActions.CopyDeveloperContact,
  'select-view':incomingActions.SelectView,'load-incoming':incomingActions.LoadIncoming,'save-view':incomingActions.SaveView,'delete-view':incomingActions.DeleteView,'organize-incoming':incomingActions.OrganizeIncoming,'update-incoming':incomingActions.UpdateIncoming,
- 'claim-handle':identityActions.ClaimHandle,'download-name-certificate':identityActions.DownloadNameCertificate,
+ 'claim-handle':identityActions.ClaimHandle,'download-name-certificate':identityActions.DownloadNameCertificate,...RECOVERY_REISSUE_INTENTS,
  'start-google-drive':googleDriveActions.StartGoogleDrive,
  'clear-automation-review':automationActions.ClearAutomationReview,'load-automation':automationActions.LoadAutomation,'enable-automation':automationActions.EnableAutomation,'disable-automation':automationActions.DisableAutomation,'confirm-automation':automationActions.ConfirmAutomation,
  'load-mcp-request':mcpActions.LoadMCPRequest,'decide-mcp':mcpActions.DecideMCP,'load-mcp-grants':mcpActions.LoadMCPGrants,'revoke-bindle-grant':mcpActions.RevokeBindleGrant,'revoke-mcp-grant':mcpActions.RevokeMCPGrant,'disconnect-app':mcpActions.DisconnectApp,'set-app-notifications':mcpActions.SetAppNotifications,

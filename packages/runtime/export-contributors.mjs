@@ -12,6 +12,7 @@ const PRIVATE=/^(?:blobRef|secret|sharedSecret|returnCapability|bootstrap|bootst
 function publicValue(value){if(value?.kty)return pick(value,fields('kty crv x y n e alg kid use key_ops'));if(Array.isArray(value))return value.map(publicValue);if(value&&typeof value==='object')return Object.fromEntries(Object.entries(value).filter(([key])=>!PRIVATE.test(key.replace(/[-_]/g,''))&&!/hash|secret|token|bootstrap|password|private|vault|csrf|recovery/i.test(key)).map(([key,v])=>[key,publicValue(v)]));return value;}
 const projection=(row,names)=>Array.isArray(row)?row.map(v=>projection(v,names)):row&&typeof row==='object'?publicValue(pick(row,[...COMMON,...fields(names)])):row;
 const definitions=[
+ ['intent-choices',['intent-memory/'],'kind default excluded ignored'],
  ['messages',['message/'],'collection mimeType size receivedAt readAt tags classification quarantined senderMetadata conversation grantId revision presentation'],
  ['collections',['collection/'],'active'],['tags',['tag-labels/'],'labels'],['rules',['rules/','rule-defaults/'],'actions filter conditions enabled origin automatic updatedAt'],
  ['views',['message-views/'],'filter sort'],['activity',['activity-item/'],'app item activity source content occurredAt readAt tags collection'],
@@ -30,6 +31,8 @@ const definitions=[
 ];
 export const EXPORT_CLAIMED_PREFIXES=Object.freeze(Object.fromEntries(definitions.flatMap(([name,prefixes])=>prefixes.map(prefix=>[prefix,name]))));
 const excluded={
+ 'intent-flow/':'Transient: intent routing receipts contain no link data.',
+ 'intent-meter/':'Derived: direct intent handoff anti-bounce budget.',
  'owner':'Identity subject is projected through the identity port.',
  'signing-key':'Secret: private keys leave only through the protected identity backup.',
  'identity-keys/':'Secret: private identity key material; public keys use the keys port.',

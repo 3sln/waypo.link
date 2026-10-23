@@ -2,6 +2,7 @@ import {createIdentityBackup,verifyIdentityBackup,createNameAssignment} from '..
 
 /** Provider authority is an injected, independent key; never derive it from
  * the credential-encryption key or trust an authority embedded in a file. */
+const WARNING='Keep this encrypted identity backup private. It contains your signing and encryption keys. Recovery replaces login credentials; revoked permissions stay revoked. A name assignment does not override a newer assignment or recreate deleted data.';
 export function identityBackupPort({config,accounts}){
   let authority;
   const load=()=>{
@@ -21,7 +22,14 @@ export function identityBackupPort({config,accounts}){
     /** Issues a v2 file (PORT-10, P15). `rotation` ({rotateIf} | {always:true} | null) asks the account to rotate the
      * signing key with continuity first, and `keep` names the kids the identity still binds to a credential. Resolves
      * {backup, rotation}; the authority is loaded before any account write, so a missing authority changes nothing. */
-    async issue(account,recoveryToken,{rotation=null,keep=[]}={}){const authority=load();const issued=await call(account.id,'recoveryKeychain',[{rotation,keep}]);return {backup:await createIdentityBackup({issuer:config.APP_ORIGIN,entity:account.id,keychain:issued.keychain,recoveryToken,warning:'Keep this encrypted identity backup private. It contains your signing and encryption keys. Recovery replaces login credentials; revoked permissions stay revoked. A name assignment does not override a newer assignment or recreate deleted data.'},authority),rotation:issued.rotation};},
+    async issue(account,recoveryToken,{rotation=null,keep=[]}={}){const authority=load();const issued=await call(account.id,'recoveryKeychain',[{rotation,keep}]);return {backup:await createIdentityBackup({issuer:config.APP_ORIGIN,entity:account.id,keychain:issued.keychain,recoveryToken,warning:WARNING},authority),rotation:issued.rotation};},
+    /** Active-account reissue, phase 1 (recovery-identity spec "Active-account reissue"): the account single writer
+     * refuses during a deletion, a move or a transfer-out contest, then rotates exactly as `issue`. `actor`
+     * {credentialId, sessionId} is the requesting session (P17 contest window). Resolves {backup, rotation,
+     * transferPending}; the authority is loaded first, so a missing authority changes nothing. */
+    async reissue(account,recoveryToken,{rotation=null,keep=[],actor}={}){const authority=load();const issued=await call(account.id,'recoveryReissuePrepare',[{rotation,keep,actor}]);return {backup:await createIdentityBackup({issuer:config.APP_ORIGIN,entity:account.id,keychain:issued.keychain,recoveryToken,warning:WARNING},authority),rotation:issued.rotation,transferPending:issued.transferPending===true};},
+    /** Phase 2's account gate, just before the identity commit: re-checks and cancels a live transfer-out. */
+    async reissueCommit(owner,{actor,kids}={}){load();return call(owner,'recoveryReissueCommit',[{actor,kids}]);},
     async certificate(account,handle,issuedAt){return createNameAssignment({issuer:config.APP_ORIGIN,entity:account.id,handle,assignmentId:account.assignmentId||account.nameAssignmentId,issuedAt},load());},
     /** `expectedKid`: the signing kid the identity record bound to this credential at issuance, when it recorded one.
      * The file must hold the current keys, or a retired signing key still bound to an issued file (P15: the identity

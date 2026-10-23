@@ -1,0 +1,37 @@
+{
+  "revision": 3,
+  "note": "Codec vectors; reserved example line and illustrative digest, not a verified published kind.",
+  "valid": [
+    {
+      "intent": {
+        "bintent": 1,
+        "kind": {
+          "artefact": "https://spec.bindle.example/intents/test/v1",
+          "version": 1,
+          "digest": "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        },
+        "data": {
+          "name": "hello"
+        }
+      },
+      "value": "eyJiaW50ZW50IjoxLCJkYXRhIjp7Im5hbWUiOiJoZWxsbyJ9LCJraW5kIjp7ImFydGVmYWN0IjoiaHR0cHM6Ly9zcGVjLmJpbmRsZS5leGFtcGxlL2ludGVudHMvdGVzdC92MSIsImRpZ2VzdCI6InNoYTI1Ni1BQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBIiwidmVyc2lvbiI6MX19",
+      "query": "https://host.example/i?bintent=eyJiaW50ZW50IjoxLCJkYXRhIjp7Im5hbWUiOiJoZWxsbyJ9LCJraW5kIjp7ImFydGVmYWN0IjoiaHR0cHM6Ly9zcGVjLmJpbmRsZS5leGFtcGxlL2ludGVudHMvdGVzdC92MSIsImRpZ2VzdCI6InNoYTI1Ni1BQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBIiwidmVyc2lvbiI6MX19",
+      "fragment": "https://host.example/i#bintent=eyJiaW50ZW50IjoxLCJkYXRhIjp7Im5hbWUiOiJoZWxsbyJ9LCJraW5kIjp7ImFydGVmYWN0IjoiaHR0cHM6Ly9zcGVjLmJpbmRsZS5leGFtcGxlL2ludGVudHMvdGVzdC92MSIsImRpZ2VzdCI6InNoYTI1Ni1BQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBIiwidmVyc2lvbiI6MX19",
+      "protocolSubstitution": "web%2Bbindle%3A%2F%2Fintent%3Fbintent%3DeyJiaW50ZW50IjoxLCJkYXRhIjp7Im5hbWUiOiJoZWxsbyJ9LCJraW5kIjp7ImFydGVmYWN0IjoiaHR0cHM6Ly9zcGVjLmJpbmRsZS5leGFtcGxlL2ludGVudHMvdGVzdC92MSIsImRpZ2VzdCI6InNoYTI1Ni1BQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBIiwidmVyc2lvbiI6MX19"
+    }
+  ],
+  "invalid": [
+    {
+      "value": "eyJiaW50ZW50IjoxLCJkYXRhIjp7Im5hbWUiOiJoZWxsbyJ9LCJraW5kIjp7ImFydGVmYWN0IjoiaHR0cHM6Ly9zcGVjLmJpbmRsZS5leGFtcGxlL2ludGVudHMvdGVzdC92MSIsImRpZ2VzdCI6InNoYTI1Ni1BQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBIiwidmVyc2lvbiI6MX19=",
+      "code": "intent_malformed"
+    },
+    {
+      "value": "IHsiYmludGVudCI6MSwiZGF0YSI6eyJuYW1lIjoiaGVsbG8ifSwia2luZCI6eyJhcnRlZmFjdCI6Imh0dHBzOi8vc3BlYy5iaW5kbGUuZXhhbXBsZS9pbnRlbnRzL3Rlc3QvdjEiLCJkaWdlc3QiOiJzaGEyNTYtQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQSIsInZlcnNpb24iOjF9fQ",
+      "code": "intent_malformed"
+    },
+    {
+      "value": "eyJiaW50ZW50IjoxLCJiaW50ZW50IjoxfQ",
+      "code": "intent_malformed"
+    }
+  ]
+}

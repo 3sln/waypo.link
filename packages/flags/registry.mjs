@@ -16,6 +16,9 @@ const common=['cloudflareTurnstileProductionConfigured','cloudflareBotProtection
 export const RELEASE_GATES=Object.freeze(common);
 const rows=[
  ['ARTEFACT_VERSIONS_ENABLED','a','G',{risk:'crit',stateful:true,retainExisting:false,retentionReason:'Pins and records live in the provider-wide artefact store; no account-local predicate.',envParse:'boolean'}],
+ ['INTENT_LINKS_ENABLED','a','G A S P C',{risk:'crit',requires:['ARTEFACT_VERSIONS_ENABLED'],stateful:true,client:true,envParse:'boolean'}],
+ ['INTENT_APP_HANDLERS_ENABLED','a','G A S P C',{risk:'crit',requires:['INTENT_LINKS_ENABLED','CLIENT_METADATA_ENABLED'],envParse:'boolean'}],
+ ['SIGNED_INTENTS_ENABLED','c','G',{risk:'crit',requires:['INTENT_LINKS_ENABLED'],envParse:'boolean'}],
  ['ACTIVITY_V2_ENABLED','a','G A S P C V',{stateful:true,client:true,experiment:{metrics:['activity_opened']},envParse:'boolean'}],
  ['EVENT_BUSES_ENABLED','a','G A S P',{stateful:true,envParse:'boolean'}],
  ['INTEGRATIONS_ENABLED','a','G A S P C',{risk:'crit',stateful:true,envParse:'boolean'}],

@@ -1,3 +1,7 @@
+import sendMessageIntent from '../../docs/artefacts/intents/send-message-v1.json' with {type:'json'};
+import addContactIntent from '../../docs/artefacts/intents/add-contact-v1.json' with {type:'json'};
+import openConversationIntent from '../../docs/artefacts/intents/open-conversation-v1.json' with {type:'json'};
+import {validateIntentKind} from '../intents/schema.mjs';
 import {contractMethods} from '../core/contract-methods.mjs';
 import preferencesV2 from '../../docs/artefacts/preferences-v2.json' with {type:'json'};
 import {createAppEngine,read} from '../app/engine.mjs';
@@ -15,6 +19,7 @@ export const ARTEFACT_STORE='bindle-artefacts-v1';
 export function configuredArtefacts({config,store,clock=systemClock}){
  const documents=new Proxy({}, {get:(_,key)=>configuredArtefactDocuments(config)[key],getOwnPropertyDescriptor:(_,key)=>Object.hasOwn(configuredArtefactDocuments(config),key)?{configurable:true,enumerable:true,value:configuredArtefactDocuments(config)[key]}:undefined});
  const runtime=artefactRuntime({store,documents,flags:{for:ctx=>flagsFor(config,ctx)},clock,random:cryptoRandom,audit:nullAudit,validateBody:(body,{id,kind})=>{
+  if(kind==='intent')return validateIntentKind(body).id===id;
   if(kind==='slot')return validateSlotManifest(body,id).status==='valid';
   if(kind==='bus')return validateBusManifest(body,id).status==='valid';
   if(kind==='rpc-contract')return body?.$id===id&&Object.keys(contractMethods(body)).length>0;
@@ -32,6 +37,7 @@ export function remoteArtefacts(config,invoke){return {get enabled(){return site
 export function configuredArtefactDocuments(config){
  const contracts=typeof config.FEDERATION_CONTRACTS==='string'?JSON.parse(config.FEDERATION_CONTRACTS):config.FEDERATION_CONTRACTS??{},documents={};
  for(const body of [...CONSENT_CONTRACT_SCHEMAS,preferencesV2]){documents[body.$id]=body;documents[body.$id+'/envelope']={bindle_artefact:1,id:body.$id,kind:'rpc-contract',versions:[{version:1,prev:null,body}]};}
+ for(const envelope of [sendMessageIntent,addContactIntent,openConversationIntent]){documents[envelope.id]=envelope;documents[envelope.id+'/envelope']=envelope;}
  return Object.assign(documents,contracts,federationSchemas(config));
 }
 export async function pinConfiguredContract(config,target){

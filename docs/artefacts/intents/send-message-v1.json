@@ -1,0 +1,50 @@
+{
+  "bindle_artefact": 1,
+  "id": "https://spec.bindle.example/intents/send-message/v1",
+  "kind": "intent",
+  "versions": [
+    {
+      "version": 1,
+      "prev": null,
+      "body": {
+        "id": "https://spec.bindle.example/intents/send-message/v1",
+        "title": {
+          "en": "Message a contact"
+        },
+        "summary": {
+          "en": "Opens a new message to this contact in the app you choose. Nothing is sent until you send it."
+        },
+        "publisher": "https://spec.bindle.example",
+        "effect": "send",
+        "capability": true,
+        "data": {
+          "type": "object",
+          "properties": {
+            "contact": {
+              "type": "string",
+              "maxLength": 4352,
+              "format": "contact-link"
+            }
+          },
+          "required": [
+            "contact"
+          ]
+        },
+        "disclosure": {
+          "categories": [
+            "send-as-you"
+          ],
+          "fields": {
+            "contact": {
+              "title": {
+                "en": "Contact link"
+              },
+              "categories": [],
+              "display": "origin"
+            }
+          }
+        }
+      }
+    }
+  ]
+}

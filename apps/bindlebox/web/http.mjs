@@ -1,7 +1,7 @@
 // Mount before the B8 fallback. No provider identity or demo bypass: use B8's live authenticate/mailbox ports.
 import {WEB_OPERATIONS,ARCHIVE_WEB_OPERATIONS} from './providers/mailbox.mjs';
 const headers={'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer'};
-export function createWebHTTP({BINDLEBOX_ENABLED=false,archiveEnabled=false,authenticate,mailbox}={}){
+export function createWebHTTP({BINDLEBOX_ENABLED=false,INTENT_LINKS_ENABLED=false,archiveEnabled=false,authenticate,mailbox}={}){
  return async request=>{
   if(BINDLEBOX_ENABLED!==true||!['/api/web/operation','/api/web/session'].includes(new URL(request.url).pathname))return null;
   try{
@@ -10,7 +10,7 @@ export function createWebHTTP({BINDLEBOX_ENABLED=false,archiveEnabled=false,auth
    if(request.headers.get('Origin')&&request.headers.get('Origin')!==new URL(request.url).origin)return Response.json({error:'forbidden'},{status:403,headers});
    if(!/^Bearer [^\s]{1,8192}$/.test(request.headers.get('Authorization')??''))return Response.json({error:'unauthorized'},{status:401,headers});
    const actor=await authenticate(request);if(actor?.kind!=='owner'||!/^[a-f0-9-]{36}$/.test(actor.owner??''))return Response.json({error:'unauthorized'},{status:401,headers});
-   if(session)return Response.json({owner:actor.owner,archiveEnabled:archiveEnabled===true},{headers});
+   if(session)return Response.json({owner:actor.owner,intentLinksEnabled:INTENT_LINKS_ENABLED===true,archiveEnabled:archiveEnabled===true},{headers});
    if(request.headers.get('Content-Type')?.split(';')[0]!=='application/json')return Response.json({error:'invalid_input'},{status:415,headers});
    const reader=request.body?.getReader(),chunks=[];let size=0;
    if(reader)try{for(;;){const part=await reader.read();if(part.done)break;size+=part.value.byteLength;if(size>131072){await reader.cancel();return Response.json({error:'too_large'},{status:413,headers});}chunks.push(part.value);}}finally{reader.releaseLock();}
