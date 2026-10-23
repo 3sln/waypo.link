@@ -21,7 +21,7 @@ export function consentWalkthroughView(state,ctx){
  const claim=value=>value?h('blockquote',h('p',t('claim',{host:value.host??appHost})),quoted(value.text)).data({consentClaim:'true'}):null;
  function tier(risk){return h('p',h('span',risk.tier>=3?'⚠':risk.privateInfo?'◉':risk.tier===2?'✎':'◉').attrs({'aria-hidden':'true'}),t('tier',{n:risk.tier,label:risk.label})).classes('consent-tier');}
  function card(item){const c=item.card,s=state.selections[item.id],facts=item.disclosure??{};
-  return h('article',h('h3',literal(item.title??c.label?.text??item.id)),h('p',t('publisher',{host:host(item.fragment)})).classes('consent-muted'),tier(c.risk),h('p',c.summary),h('div',...c.risk.chips.map(chip=>h('span',chip.label))).classes('consent-chips'),
+  return h('article',h('h3',literal(item.title??c.label?.text??item.id)),h('p',t('publisher',{host:host(item.fragment)}),item.version?` · v${item.version}`:null).classes('consent-muted'),tier(c.risk),h('p',c.summary),h('div',...c.risk.chips.map(chip=>h('span',chip.label))).classes('consent-chips'),
    check(t('include',{item:item.title??c.label?.text??item.id}),s.included,'include',{id:item.id},{role:'switch',disabled:item.needsSetup}),item.needsSetup?button(t('setup'),'setup-again',{fragment:item.fragment}):null,
    h('p',t('fields',{fields:''}),literal(item.fields.map(name=>item.fieldTitles?.[name]??name).join(', '))),facts.recipients?.length?h('p',t('recipients',{apps:facts.recipients.join(', ')})):null,
    facts.current?h('p',t('current',{value:facts.current})):null,facts.asking?h('p',t('asking',{value:facts.asking})):null,
@@ -34,7 +34,7 @@ export function consentWalkthroughView(state,ctx){
     row.risk.confirmationRequired&&!needsConfirmation(state)?check(t('confirmRow',{effect:row.text.text}),s.confirmed[index],'confirm',{id:item.id,index}):null,row.risk.tier===3?h('p',t('deleteWarning')):null).classes('consent-capability')),
     ...item.fields.map(name=>h('div',check(item.fieldTitles?.[name]??name,s.fields[name]!==false,'field',{id:item.id,name}),...(item.resources?.[name]??[]).map(resource=>check(item.resourceLabels?.[resource]??resource,s.resources[name]?.[resource]!==false,'resource',{id:item.id,name,resource})))),
     c.broker?h('p',c.broker.text):facts.host?h('p',t('stored',{host:facts.host})):null,claim(c.purpose),
-    h('details',h('summary',t('technical')),h('pre',JSON.stringify({fragment:item.fragment,contracts:[...new Set(c.rows.map(row=>row.contract).filter(Boolean))],digest:item.digest,scope:item.scope,methods:item.methods,resources:item.resources,client_id:state.entry.client.id},null,2))))
+    h('details',h('summary',t('technical')),h('pre',JSON.stringify({fragment:item.fragment,...item.version?{version:item.version}:{},contracts:[...new Set(c.rows.map(row=>row.contract).filter(Boolean))],digest:item.digest,scope:item.scope,methods:item.methods,resources:item.resources,client_id:state.entry.client.id},null,2))))
     .props({open:c.expanded}).key('details:'+item.id),item.required?h('p',t('required')):null).classes('consent-card').attrs({'data-tier':c.risk.tier,'data-consent-item':item.id}).key(item.id);
  }
  function editor(name,field,value,onChange){

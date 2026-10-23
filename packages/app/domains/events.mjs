@@ -32,8 +32,8 @@ const input=(value,names)=>{if(value===undefined)return {};if(!plain(value)||Obj
  *   config/flags  request-pinned flags port. Gates new authority/app exposure for the bus owner; owner reverse
  *                 paths ignore targeting and sweep follows only background() (the env kill).
  */
-export function eventBusProvider({enabled=false,keys,issuer,plan,grants,notifier,waits=false,limits,config,flags}={}){
- return class extends EventBusProvider{static deps=['accountStore','clock','random'];constructor(deps){super(deps);Object.assign(this,{enabled:enabled===true,keys,issuer,plan,grants,notifier,waits,limits,config,flags});}};
+export function eventBusProvider({enabled=false,keys,issuer,plan,grants,notifier,waits=false,limits,config,flags,artefacts}={}){
+ return class extends EventBusProvider{static deps=['accountStore','clock','random'];constructor(deps){super(deps);Object.assign(this,{enabled:enabled===true,keys,issuer,plan,grants,notifier,waits,limits,config,flags,artefacts});}};
 }
 export class EventBusProvider extends Provider{
  #deps;#held=new WeakMap();
@@ -50,7 +50,7 @@ export class EventBusProvider extends Provider{
    const admit=(background=false)=>{if(flags&&!(background?flags.background('EVENT_BUSES_ENABLED'):flags.enabled('EVENT_BUSES_ENABLED')))throw new AppFault('not_found','Not found.',404);if(!background)ready();};
    const plan=typeof this.plan==='function'?await this.plan(resources.accountStore):this.plan;
    const grants=callGrants??(typeof this.grants==='function'?this.grants(actor):this.grants);
-   const store=new BusStore({accountStore:resources.accountStore,clock:resources.clock,random:resources.random,keys,owner:actor.owner,issuer:this.issuer,plan,grants,notifier:this.notifier,waits:typeof this.waits==='function'?this.waits():this.waits,readRate:this.readRate,...this.limits?{limits:this.limits}:{}});
+   const store=new BusStore({artefacts:this.artefacts,accountStore:resources.accountStore,clock:resources.clock,random:resources.random,keys,owner:actor.owner,issuer:this.issuer,plan,grants,notifier:this.notifier,waits:typeof this.waits==='function'?this.waits():this.waits,readRate:this.readRate,...this.limits?{limits:this.limits}:{}});
    const frozen=Object.freeze(structuredClone(actor));let handle;
    if(actor.kind==='owner')handle={list:()=>store.list(),get:id=>store.get(id),create:value=>{admit();return store.create(value);},setRetention:value=>store.setRetention(value),purge:value=>store.purge(value),remove:value=>store.remove(value),allowHistory:value=>{admit();return store.allowHistory(value);},setFeature:value=>{if(value?.read||value?.publish)admit();else ready();return store.setFeature(value);}};
    else if(actor.kind==='system')handle={readerApproved:value=>{admit();return store.readerApproved(value);},readerRevoked:value=>{ready();return store.readerRevoked(value);},sweep:value=>{admit(true);return store.sweep(value);},descriptors:()=>store.descriptors(),limits:id=>store.limits(id)};
@@ -66,7 +66,7 @@ const role=(handle,method)=>{if(typeof handle[method]!=='function')throw new App
 export class EventBuses extends AppQuery{static operation='events.buses';static deps=['eventBus'];static refreshOn=['event-buses-changed'];fetch({eventBus}){return role(eventBus,'list').list();}}
 export class EventBusDetail extends AppQuery{static operation='events.bus';static deps=['eventBus'];static refreshOn=['event-buses-changed'];fetch({eventBus}){return role(eventBus,'get').get(this.id);}}
 /** `input`: {url, manifest} — the adapter resolves `manifest` from the reviewed registry; EV-1 re-validates it. */
-export class CreateEventBus extends AppAction{static operation='events.create';static deps=['eventBus'];static changes='event-buses-changed';run({eventBus}){const {url,manifest}=input(this.input,['url','manifest']);return role(eventBus,'create').create({url,manifest});}}
+export class CreateEventBus extends AppAction{static operation='events.create';static deps=['eventBus'];static changes='event-buses-changed';run({eventBus}){const {url,manifest,version,digest}=input(this.input,['url','manifest','version','digest']);return role(eventBus,'create').create({url,manifest,...version!==undefined?{version}:{},...digest!==undefined?{digest}:{}});}}
 export class SetEventBusRetention extends AppAction{static operation='events.retention';static deps=['eventBus'];static changes='event-buses-changed';run({eventBus}){const {seconds}=input(this.input,['seconds']);return role(eventBus,'setRetention').setRetention({bus:this.id,seconds});}}
 export class PurgeEventBus extends AppAction{static operation='events.purge';static deps=['eventBus'];static changes='event-buses-changed';run({eventBus}){input(this.input,[]);return role(eventBus,'purge').purge({bus:this.id});}}
 export class DeleteEventBus extends AppAction{static operation='events.delete';static deps=['eventBus'];static changes='event-buses-changed';run({eventBus}){input(this.input,[]);return role(eventBus,'remove').remove({bus:this.id});}}

@@ -38,7 +38,7 @@ function eventBusEngine(c){
  let engine=engines.get(c);
  if(!engine){
   let keys;const waits=eventBusWaits(c.config),notifier=withDoorbellKick(waits,owner=>c.integrationEventsKick(owner),{store:c.metadata});
-  engine=createAppEngine({providers:{clock:systemClock,random:cryptoRandom,audit:nullAudit,accountStore:c.metadata,eventBus:eventBusProvider({enabled:true,config:c.config,keys:()=>keys??=busKeys(c.config),issuer:c.config.APP_ORIGIN,
+  engine=createAppEngine({providers:{clock:systemClock,random:cryptoRandom,audit:nullAudit,accountStore:c.metadata,eventBus:eventBusProvider({enabled:true,config:c.config,artefacts:c.config.ARTEFACTS,keys:()=>keys??=busKeys(c.config),issuer:c.config.APP_ORIGIN,
    plan:async store=>{const state=await store.get(BILLING_STATE_KEY);return entitlementFromState(state,Date.now(),c.config).plan==='free'?'free':'paid';},notifier,waits:()=>!!waits&&capability(c.config,'EVENT_BUS_WAITS_MOUNTED')})}});
   engines.set(c,engine);
  }
@@ -65,7 +65,7 @@ export const methods={
    if(!existingFeature(this.config,'EVENT_BUSES_ENABLED',owner)||typeof operation!=='string'||![...EVENT_BUS_OWNER_OPERATIONS,'events.push','events.subscriptions'].includes(operation))notFound();
    if(operation==='events.create'&&!ownerFlags(this.config,owner).enabled('EVENT_BUSES_ENABLED'))notFound();
    await this.warm(owner);if(['events.push','events.subscriptions'].includes(operation))return this.eventDoorbellOwner(owner,{operation,id,input});let value=shape(input);
-   if(operation==='events.create'){if(!plain(value)||Object.keys(value).some(key=>key!=='url')||typeof value.url!=='string')throw new StorageError('invalid_request','Choose a registered feed manifest.');value={url:value.url,manifest:reviewedManifest(this,value.url)};}
+   if(operation==='events.create'){if(!plain(value)||Object.keys(value).some(key=>!['url',...ownerFlags(this.config,owner).enabled('ARTEFACT_VERSIONS_ENABLED')?['version','digest']:[]].includes(key))||typeof value.url!=='string')throw new StorageError('invalid_request','Choose a registered feed manifest.');value={url:value.url,manifest:reviewedManifest(this,value.url),...value.version!==undefined?{version:value.version}:{},...value.digest!==undefined?{digest:value.digest}:{}};}
    await this.scheduleAlarm(Date.now()+600000);
    const result=await run(this,new byName[operation]({actor:{kind:'owner',owner},...id!==undefined?{id}:{},...value!==undefined?{input:value}:{}}));
    if(operation==='events.delete')await this.eventDoorbellCancel(owner,{id});

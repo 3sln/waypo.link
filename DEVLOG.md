@@ -3004,3 +3004,20 @@ Following [identity portability](docs/architecture/identity-portability.md) rev 
 - **Gates:** core 2468, Worker 80, UI-state 291, e2e 214 with 4 WebKit skips, asset build and Worker dry run.
 
 Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-22 — ART-5 (partial): versioned grants and consent; bus version forwarding
+
+- **Done** (behind `ARTEFACT_VERSIONS_ENABLED`):
+  - fragment version pins and legacy grant matching (R1-H4);
+  - silent re-grant only for scalar additive changes, with history;
+  - consumer visibility follows the pinned version;
+  - the consent views show versions, and SDK incremental requests validate them;
+  - bus versions are forwarded through the events domain (the ART-4 remainder).
+- **Remaining, moved to ART-5b with ART-6:**
+  - persisting incremental-authorization versions (`incremental-ports.mjs`, `authorization-entries.mjs`);
+  - contract upgrade deltas;
+  - the `bindle.cv` contract version map (R1-H1).
+- **Until then:** resource upgrades conservatively require review.
+- **Gates:** core 2485, Worker 80, UI-state 291, consent 51 each in Chromium and Firefox, e2e 214 with 4 WebKit skips, asset build and Worker dry run.
+
+Reviewer: ___ Date: ___ Outcome: ___

@@ -42,7 +42,7 @@ function validate(intent,input){
  if(intent==='grant-more'){
   if(input.target!==undefined||input.suggestion!==undefined||!Array.isArray(input.requests)||!input.requests.length||input.requests.length>4||new Set(input.requests.map(item=>item?.fragment)).size!==input.requests.length)throw coded('invalid_request');
   for(const request of input.requests){
-   if(!object(request)||!url(request.fragment)||request.required!==undefined&&request.required!==false||request.digest!==undefined&&!/^sha256-[A-Za-z0-9_-]{43}$/.test(request.digest)||request.fields!==undefined&&!names(request.fields)||request.methods!==undefined&&!object(request.methods))throw coded('invalid_request');
+   if(!object(request)||!url(request.fragment)||request.required!==undefined&&request.required!==false||request.version!==undefined&&(!Number.isSafeInteger(request.version)||request.version<1||request.digest===undefined)||request.digest!==undefined&&!/^sha256-[A-Za-z0-9_-]{43}$/.test(request.digest)||request.fields!==undefined&&!names(request.fields)||request.methods!==undefined&&!object(request.methods))throw coded('invalid_request');
    for(const [field,contracts]of Object.entries(request.methods??{})){
     if(!field||request.fields&&!request.fields.includes(field)||!object(contracts))throw coded('invalid_request');
     for(const [contract,methods]of Object.entries(contracts))if(!url(contract)||!names(methods))throw coded('invalid_request');
@@ -50,7 +50,7 @@ function validate(intent,input){
   }
  }else{
   const target=input.target;
-  if(input.requests!==undefined||!object(target)||Object.keys(target).some(key=>!['fragment','digest','fields'].includes(key))||!url(target.fragment)||target.digest!==undefined&&!/^sha256-[A-Za-z0-9_-]{43}$/.test(target.digest)||target.fields!==undefined&&(!names(target.fields)||target.fields.length>8))throw coded('invalid_request');
+  if(input.requests!==undefined||!object(target)||Object.keys(target).some(key=>!['fragment','version','digest','fields'].includes(key))||!url(target.fragment)||target.version!==undefined&&(!Number.isSafeInteger(target.version)||target.version<1||target.digest===undefined)||target.digest!==undefined&&!/^sha256-[A-Za-z0-9_-]{43}$/.test(target.digest)||target.fields!==undefined&&(!names(target.fields)||target.fields.length>8))throw coded('invalid_request');
   if(input.suggestion!==undefined){
    const suggestion=input.suggestion;
    if(!object(suggestion)||Object.keys(suggestion).join()!=='values'||!object(suggestion.values)||bytes(suggestion)>2048)throw coded('invalid_request');

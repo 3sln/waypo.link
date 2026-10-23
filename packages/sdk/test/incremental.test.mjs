@@ -196,3 +196,8 @@ test('a late error from a canceled exchange cannot contaminate a newer request r
  const old=h.helper.grantMore(request);await entered.promise;await h.helper.cancel();assert.equal((await old).outcome,'dismissed');
  const next=h.helper.configure({target:{fragment}});await reading.promise;held.resolve();await new Promise(setImmediate);resume.resolve();assert.equal((await next).outcome,'configured');
 });
+test('ART-5 SDK carries version/digest request pins and refuses incomplete or invalid version references',async()=>{
+ const h=await harness(),versioned={requests:request.requests.map(r=>({...r,version:2}))};await h.helper.grantMore(versioned);assert.equal(JSON.parse(h.calls[0].body).requests[0].version,2);
+ for(const version of [0,-1,1.5,'2',Number.MAX_SAFE_INTEGER+1]){const bad=await harness(),result=await bad.helper.grantMore({requests:request.requests.map(r=>({...r,version}))});assert.equal(result.code,'invalid_request');assert.equal(bad.calls.length,0);}
+ const missing=await harness(),result=await missing.helper.configure({target:{fragment,version:2}});assert.equal(result.code,'invalid_request');assert.equal(missing.calls.length,0);
+});
