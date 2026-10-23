@@ -1,3 +1,4 @@
+import {artefactURL} from '../core/artefacts.mjs';
 import {objectKey} from '../storage/policy.mjs';
 import { canonical, digest, boundedString } from '../messaging/store.mjs';
 export class FederationFault extends Error { constructor(code,message=code){super(message);this.name='FederationFault';this.code=code;} }
@@ -38,7 +39,22 @@ export function validateValue(field,value,validateURL=https){
   if(typeResource(field)&&new Set(values.map(value=>object(value)?value.resource:value)).size!==values.length)fail('invalid_preferences');return values;
 }
 const typeResource=field=>field.type==='resource';
-export async function pinSchema({store,crypto,schemaFetcher,schemaHosts},url){
+// The fetcher carries the adapter-owned engine port; existing service constructors keep their API.
+export async function pinVersioned({store,schemaFetcher,schemaHosts,crypto=globalThis.crypto},target,kind,validate,expectedDigest){
+  const explicit=object(target),url=explicit?(target.artefact??target.fragment??target.slot??target.manifest??target.url):target,port=schemaFetcher?.artefacts;
+  if(!port?.enabled){if(explicit)fail('unsupported_artefact_version');return null;}
+  const host=https(url).host;if(!schemaHosts?.includes(host))fail('untrusted_schema_host');
+  try{artefactURL(url);}catch(error){if(!explicit)return null;throw error;}
+  const old=!explicit&&expectedDigest===undefined?await store.transaction(tx=>tx.get(`federation/schema/${url}`)):null;
+  if(old&&await digest(crypto,canonical(old.schema))!==(old.digest?.startsWith('sha256-')?old.digest.slice(7):old.digest))fail('artefact_digest_mismatch');
+  const reference={artefact:url,...explicit&&target.version!==undefined?{version:target.version}:{},...explicit&&target.digest!==undefined?{digest:target.digest}:expectedDigest!==undefined?{digest:expectedDigest}:old?{digest:old.digest}:{}};
+  const pin=await port.pin({...reference,kind});validate(pin.body,url);
+  if(pin.legacy)await store.transaction(async tx=>{const key=`federation/schema/${url}`,prior=await tx.get(key),bare=pin.reference.digest.slice(7);if(prior&&(prior.digest?.startsWith('sha256-')?prior.digest.slice(7):prior.digest)!==bare)fail('schema_changed','Immutable fragment changed; use a new URL.');if(!prior)await tx.set(key,{schema:pin.body,digest:bare});});
+  return {schema:pin.body,digest:pin.legacy?pin.reference.digest.slice(7):pin.reference.digest,...pin.reference.version?{version:pin.reference.version}:{},reference:pin.reference};
+}
+export async function pinSchema(options,url){
+  const versioned=await pinVersioned(options,url,undefined,validateSchema);if(versioned)return versioned;
+  const {store,crypto,schemaFetcher,schemaHosts}=options;
   const host=https(url).host;if(!schemaHosts.includes(host)||typeof schemaFetcher!=='function')fail('untrusted_schema_host');
   // The fetcher is a trusted runtime capability: it must reject redirects and
   // private-address DNS results before making a request. No ambient fetch here.

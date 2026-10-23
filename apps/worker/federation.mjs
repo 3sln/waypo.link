@@ -1,3 +1,4 @@
+import {configuredArtefacts,remoteArtefacts,ARTEFACT_STORE} from '../../packages/runtime/artefact-pins.mjs';
 import {flagsFor} from '../../packages/flags/read.mjs';
 import {workerFlags} from '../../packages/runtime/flags.mjs';
 import {workerIntegrationPorts} from './integration-ports.mjs';
@@ -22,12 +23,20 @@ const SHARD=/^\d{2}$/;
 export class FederationObject extends DurableObject {
  constructor(ctx,env){super(ctx,env);this.bindings=env;this.flagsRuntime=workerFlags(env);this.env=this.flagsRuntime.bind(env);this.storage=ctx.storage;}
  withFlags(operation,alarm=false){if(this.flagsRuntime.scope.getStore())return operation();return this.flagsRuntime.pin({alarm}).then(flags=>this.flagsRuntime.run(flags,operation));}
+ // Provider-wide records have a dedicated single writer, independent of owner shards.
+ async artefacts(method,input){return this.withFlags(async()=>{
+  if(!['pin','resolve','refresh','record'].includes(method))return {ok:false,error:{code:'unsupported_method'}};
+  try{if(this.owner||this.entriesPromise||this.brokering||await this.storage.get('@federation-owner')||await this.storage.get('@federation-entries')!==undefined||await this.storage.get('@federation-brokering')||await this.storage.get('@incremental'))throw Object.assign(Error(),{code:'forbidden'});
+   await this.storage.put('@artefacts',true);this.artefactRuntime??=configuredArtefacts({config:this.env,store:this.storage});return {ok:true,result:await this.artefactRuntime[method](input)};
+  }catch(error){return {ok:false,error:{code:error.code??'artefact_unavailable'}};}
+ });}
+ artefactPort(){return remoteArtefacts(this.env,(method,input)=>this.env.FEDERATION.get(this.env.FEDERATION.idFromName(ARTEFACT_STORE)).artefacts(method,input));}
  async invoke(...args){return this.withFlags(()=>this.invokePinned(...args));}
  async invokePinned(method,args=[],owner){
   if(!METHODS.includes(method))return {ok:false,error:{code:'unsupported_method',message:'Unsupported federation operation.'}};
   try{
    if(!UUID_V4.test(owner)||this.owner&&this.owner!==owner||this.entriesPromise||this.brokering)throw Object.assign(new Error('Invalid federation account locator.'),{code:'forbidden'});
-   if(!this.controllerPromise){const persisted=await this.storage.get('@federation-owner');if(persisted&&persisted!==owner||await this.storage.get('@federation-entries')||await this.storage.get('@federation-brokering'))throw Object.assign(new Error('Invalid federation account locator.'),{code:'forbidden'});this.owner=owner;if(!persisted)await this.storage.put('@federation-owner',owner);this.controllerPromise=this.compose(owner);}
+   if(!this.controllerPromise){const persisted=await this.storage.get('@federation-owner');if(persisted&&persisted!==owner||await this.storage.get('@federation-entries')||await this.storage.get('@federation-brokering')||await this.storage.get('@artefacts'))throw Object.assign(new Error('Invalid federation account locator.'),{code:'forbidden'});this.owner=owner;if(!persisted)await this.storage.put('@federation-owner',owner);this.controllerPromise=this.compose(owner);}
    const result=await(await this.controllerPromise)[method](...args);if(method!=='cleanup'&&!['ready','manifest'].includes(method)&&await this.storage.getAlarm()===null)await this.storage.setAlarm(Date.now()+600000);return {ok:true,result};
   }catch(error){return {ok:false,error:{code:error.code??'temporarily_unavailable',message:error.code?error.message:'Federation operation could not be completed.',status:error.status,retryAfter:error.retryAfter,ownerReviewUri:error.ownerReviewUri}};}
  }
@@ -52,7 +61,7 @@ export class FederationObject extends DurableObject {
  async brokeringMint(...args){return this.withFlags(()=>this.brokeringMintPinned(...args));}
  async brokeringMintPinned(claims){return mintAccessToken(await this.brokeringStore(),claims);}
  async brokeringStore(background=false){
-  if(!(background?flagsFor(this.env).background('BROKERING_ENABLED')&&flagsFor(this.env).background('INTEGRATIONS_ENABLED'):brokeringEnabled(this.env))||this.owner||this.entriesPromise||this.incrementalRunner||await this.storage.get('@incremental')||await this.storage.get('@federation-owner')||await this.storage.get('@federation-entries')!==undefined)throw new Error('Brokering keys unavailable.');
+  if(!(background?flagsFor(this.env).background('BROKERING_ENABLED')&&flagsFor(this.env).background('INTEGRATIONS_ENABLED'):brokeringEnabled(this.env))||this.owner||this.entriesPromise||this.incrementalRunner||await this.storage.get('@incremental')||await this.storage.get('@federation-owner')||await this.storage.get('@federation-entries')!==undefined||await this.storage.get('@artefacts'))throw new Error('Brokering keys unavailable.');
   if(!await this.storage.get('@federation-brokering'))await this.storage.put('@federation-brokering',true);this.brokering??=brokeringKeys({issuer:this.env.APP_ORIGIN,secret:this.env.KEY_ENCRYPTION_KEY,metadata:federationMetadata(this.storage)});return this.brokering;
  }
  /** Pre-owner entry operations for one shard; serialized by this instance's transactional storage. */
@@ -60,7 +69,7 @@ export class FederationObject extends DurableObject {
  async entriesPinned(method,args=[],shard){
   if(!ENTRY_METHODS.includes(method))return {ok:false,error:{code:'unsupported_method',message:'Unsupported authorization entry operation.'}};
   try{
-   if(typeof shard!=='string'||!SHARD.test(shard)||Number(shard)>=ENTRY_SHARDS||this.owner||this.brokering||await this.storage.get('@federation-owner')||await this.storage.get('@federation-brokering'))throw Object.assign(new Error('Invalid authorization entry store.'),{code:'forbidden'});
+   if(typeof shard!=='string'||!SHARD.test(shard)||Number(shard)>=ENTRY_SHARDS||this.owner||this.brokering||await this.storage.get('@federation-owner')||await this.storage.get('@federation-brokering')||await this.storage.get('@artefacts'))throw Object.assign(new Error('Invalid authorization entry store.'),{code:'forbidden'});
    const marker=await this.storage.get('@federation-entries');if(marker!==undefined&&marker!==shard)throw Object.assign(new Error('Invalid authorization entry store.'),{code:'forbidden'});
    if(!this.entriesPromise){if(marker===undefined)await this.storage.put('@federation-entries',shard);this.entriesPromise=Promise.resolve(this.composeEntries(shard));}
    const entries=await this.entriesPromise;if(!entries)throw Object.assign(new Error('Application sign-in is not available.'),{code:'temporarily_unavailable'});
@@ -78,8 +87,8 @@ export class FederationObject extends DurableObject {
  async incremental(...args){return this.withFlags(()=>this.incrementalPinned(...args));}
  async incrementalPinned(method,args=[]){
   if(!incrementalMountable(this.env)||!INCREMENTAL_METHODS.includes(method)||this.owner||this.entriesPromise||this.brokering)return {ok:false,error:{code:'not_found',message:'Not found.'}};
-  try{if(await this.storage.get('@federation-owner')||await this.storage.get('@federation-entries')!==undefined||await this.storage.get('@federation-brokering'))throw new Error();
-   await this.storage.put('@incremental',true);const env=this.env;this.incrementalRunner??=federationIncremental({config:this.flagsRuntime.bind(env),store:federationMetadata(this.storage),shard:owner=>federationRemote({invoke:(method,args)=>env.FEDERATION.get(env.FEDERATION.idFromName(`${FEDERATION_LAYOUT}/${owner}`)).invoke(method,args,owner)})});
+  try{if(await this.storage.get('@federation-owner')||await this.storage.get('@federation-entries')!==undefined||await this.storage.get('@federation-brokering')||await this.storage.get('@artefacts'))throw new Error();
+   await this.storage.put('@incremental',true);const env=this.env;this.incrementalRunner??=federationIncremental({config:this.flagsRuntime.bind({...env,ARTEFACTS:this.artefactPort()}),store:federationMetadata(this.storage),shard:owner=>federationRemote({invoke:(method,args)=>env.FEDERATION.get(env.FEDERATION.idFromName(`${FEDERATION_LAYOUT}/${owner}`)).invoke(method,args,owner)})});
    const result=await this.incrementalRunner[method](...args);if(await this.storage.getAlarm()===null)await this.storage.setAlarm(Date.now()+600000);return {ok:true,result};
   }catch(error){return {ok:false,error:{code:error.code??'temporarily_unavailable',message:error.code?error.message:'Request unavailable.',status:error.status,retryAfter:error.retryAfter,ownerReviewUri:error.ownerReviewUri}};}
  }
@@ -92,7 +101,7 @@ export class FederationObject extends DurableObject {
   const result=await(await this.controllerPromise).cleanup();if(result.remaining)await this.storage.setAlarm(result.nextAlarmAt);
  }
  async compose(owner){
-  const env=this.env,config=this.flagsRuntime.bind({...env,...workerIntegrationPorts(env)}),repository=new ShardedIdentityRepository({shard:name=>env.IDENTITIES.get(env.IDENTITIES.idFromName(name)),layout:env.IDENTITY_LAYOUT});
+  const env=this.env,config=this.flagsRuntime.bind({...env,...workerIntegrationPorts(env),ARTEFACTS:this.artefactPort()}),repository=new ShardedIdentityRepository({shard:name=>env.IDENTITIES.get(env.IDENTITIES.idFromName(name)),layout:env.IDENTITY_LAYOUT});
   const accounts={get:id=>env.ACCOUNTS.get(env.ACCOUNTS.idFromName(id))};
   return new FederationController({...await federationControllerOptions({config,repository,accounts,owner,incremental:env.FEDERATION?incrementalRemote((method,args)=>env.FEDERATION.get(env.FEDERATION.idFromName(INCREMENTAL_STORE)).incremental(method,args)):undefined,manifestMounts:{messagingAddress:messagingAddressMounted(config)}}),metadata:federationMetadata(this.storage),routingKey:owner});
  }

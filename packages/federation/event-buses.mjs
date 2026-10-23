@@ -1,7 +1,7 @@
 import {siteGlobal} from '../flags/read.mjs';
 import {AppAction,AppQuery} from '../app/engine.mjs';
 import {canonical} from '../messaging/store.mjs';
-import {fail,object,strings,pinSchema} from './schema.mjs';
+import {fail,object,strings,pinSchema,pinVersioned} from './schema.mjs';
 import {validateSlotManifest,validateExtensionDigest,slotDigest} from './extensions.mjs';
 
 export const EVENT_BUS_CONTRACT='https://spec.bindle.example/contracts/event-bus/v1';
@@ -68,6 +68,7 @@ export function validateBusManifest(schema,url=schema?.id,{contracts={}}={}){
 // Same immutable ordinary-fragment namespace and trusted fetch boundary as slots.
 // No bus, occupant, grant, route or capability declaration is created by a pin.
 export async function pinBusManifest(options,url,expectedDigest){
+ const versioned=await pinVersioned(options,url,'bus',(schema,id)=>{if(validateBusManifest(schema,id,{contracts:options.contracts}).status!=='valid')fail('unsupported_fragment');},expectedDigest);if(versioned)return {...versioned,digest:versioned.digest.startsWith('sha256-')?versioned.digest:'sha256-'+versioned.digest};
  if(expectedDigest!==undefined)validateExtensionDigest(expectedDigest);
  const pin=await pinSchema({...options,schemaFetcher:typeof options.schemaFetcher==='function'?async target=>{
   const schema=structuredClone(await options.schemaFetcher(target));if(validateBusManifest(schema,target,{contracts:options.contracts}).status!=='valid')fail('unsupported_fragment');
@@ -75,7 +76,7 @@ export async function pinBusManifest(options,url,expectedDigest){
  }:undefined},url);
  return {...pin,digest:'sha256-'+pin.digest};
 }
-export function createEventBusesProvider(options={}){return Object.freeze({validate:input=>validateBusManifest(input.schema,input.url??input.schema?.id,{contracts:options.contracts}),pin:input=>pinBusManifest(options,input.url,input.digest)});}
+export function createEventBusesProvider(options={}){return Object.freeze({validate:input=>validateBusManifest(input.schema,input.url??input.schema?.id,{contracts:options.contracts}),pin:input=>pinBusManifest(options,input.version===undefined?input.url:{artefact:input.url,version:input.version,digest:input.digest},input.digest)});}
 function enabled(config){if(!siteGlobal(config,'EVENT_BUSES_ENABLED'))fail('event_buses_disabled');}
 export class BusManifest extends AppQuery {static operation='events.manifest';static deps=['config','eventBuses'];fetch({config,eventBuses}){enabled(config);return eventBuses.validate(this.input);}}
 export class PinBusManifest extends AppAction {static operation='events.pin';static deps=['config','eventBuses'];run({config,eventBuses}){enabled(config);return eventBuses.pin(this.input);}}

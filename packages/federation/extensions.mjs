@@ -1,7 +1,7 @@
 import {siteGlobal} from '../flags/read.mjs';
 import {AppAction,AppQuery} from '../app/engine.mjs';
 import {canonical,digest,boundedString} from '../messaging/store.mjs';
-import {fail,object,https,strings,validateSchema,validateFields,validateValue} from './schema.mjs';
+import {fail,object,https,strings,pinVersioned,validateSchema,validateFields,validateValue} from './schema.mjs';
 
 const SLOT_KEYS=['v','crit','field','selection','failover','consumers','options','supersedes'],POLICIES=['exclusive','ordered','broadcast','consumer-choice'];
 const own=(value,key)=>object(value)&&Object.hasOwn(value,key),bytes=value=>new TextEncoder().encode(JSON.stringify(value)).length;
@@ -69,7 +69,9 @@ export function validateExtensions(entries,{kind='provider',slots=new Map(),cont
 
 // Approval/enablement capability only. The fetcher must enforce SSRF/redirect/time/size budgets.
 // Shares the ordinary fragment pin namespace and raw digest format; no grant or occupancy is created.
-export async function pinSlotManifest({store,crypto,schemaFetcher,schemaHosts,contracts={}},url,expectedDigest){
+export async function pinSlotManifest(options,url,expectedDigest){
+ const {store,crypto,schemaFetcher,schemaHosts,contracts={}}=options;
+ const versioned=await pinVersioned(options,url,'slot',(schema,id)=>{if(validateSlotManifest(schema,id,{contracts}).status!=='valid')fail('unsupported_fragment');},expectedDigest);if(versioned)return {...versioned,digest:versioned.digest.startsWith('sha256-')?versioned.digest:'sha256-'+versioned.digest};
  https(url);if(expectedDigest!==undefined)validateExtensionDigest(expectedDigest);
  if(!schemaHosts?.includes(new URL(url).host)||typeof schemaFetcher!=='function')fail('untrusted_schema_host');
  const schema=structuredClone(await schemaFetcher(url)),result=validateSlotManifest(schema,url,{contracts});if(result.status!=='valid')fail('unsupported_fragment');
@@ -115,7 +117,7 @@ export function slotOperationResult(state){
 }
 
 // Unmounted edge operations. Future adapters bind this provider explicitly; config alone never advertises support.
-export function createExtensionsProvider(options={}){return Object.freeze({validateSlot:input=>validateSlotManifest(input.schema,input.url??input.schema?.id,{contracts:options.contracts}),declarations:input=>validateExtensions(input.entries,{kind:input.kind,slots:options.slots,contracts:options.contracts}),selection:input=>createSlotOperation(input.schema,input.occupants,{contracts:options.contracts,consumer:input.consumer,featureEnabled:input.featureEnabled}),pin:input=>pinSlotManifest(options,input.url,input.digest)});}
+export function createExtensionsProvider(options={}){return Object.freeze({validateSlot:input=>validateSlotManifest(input.schema,input.url??input.schema?.id,{contracts:options.contracts}),declarations:input=>validateExtensions(input.entries,{kind:input.kind,slots:options.slots,contracts:options.contracts}),selection:input=>createSlotOperation(input.schema,input.occupants,{contracts:options.contracts,consumer:input.consumer,featureEnabled:input.featureEnabled}),pin:input=>pinSlotManifest(options,input.version===undefined?input.url:{artefact:input.url,version:input.version,digest:input.digest},input.digest)});}
 function enabled(config){if(!siteGlobal(config,'EXTENSIONS_ENABLED'))fail('extensions_disabled');}
 export class SlotManifest extends AppQuery {static operation='extensions.slot';static deps=['config','extensions'];fetch({config,extensions}){enabled(config);return extensions.validateSlot(this.input);}}
 export class ExtensionDeclarations extends AppQuery {static operation='extensions.declarations';static deps=['config','extensions'];fetch({config,extensions}){enabled(config);return extensions.declarations(this.input);}}

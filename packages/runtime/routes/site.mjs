@@ -4,7 +4,7 @@ import {callerAgeRequirement} from '../../identity/age-policy.mjs';
 // the router's final stage. Stage handlers and route-module shape: packages/runtime/routes/index.mjs.
 import {onboardingEnabled,onboardingOnly} from '../../identity/onboarding.mjs';
 import {publicBadgePolicy,compileBadgeSprite} from '../../identity/badge-policy.mjs';
-import {publicArtifact} from '../../core/public-contracts.mjs';
+import {publicArtifact,publicArtifacts} from '../../core/public-contracts.mjs';
 import {flagGlobal,flagEnabled,capability,json,privateHeaders,signupEnabled,securePage,brandPage,passthrough} from './shared.mjs';
 
 async function badgePresentation(env){
@@ -38,6 +38,16 @@ export const stages={
    if(path==='/privacy'||path==='/terms'){
     if(!['GET','HEAD'].includes(request.method))return json({error:'method_not_allowed'},405,{Allow:'GET, HEAD'});
     const spanish=url.searchParams.get('lang')==='es',canonical=path+(spanish?'.es':'');let asset=await env.ASSETS.fetch(new Request(new URL(canonical+'.html',url),request));if([301,302,307,308].includes(asset.status)){const target=new URL(asset.headers.get('Location')??'',url);if(target.origin===url.origin&&target.pathname===canonical&&!target.search&&!target.hash)asset=await env.ASSETS.fetch(new Request(target,request));}const headers=new Headers(asset.headers);headers.set('Content-Security-Policy',"default-src 'none'; style-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'");headers.set('Content-Language',spanish?'es':'en');headers.set('X-Content-Type-Options','nosniff');headers.set('Referrer-Policy','no-referrer');headers.set('Cache-Control','public, max-age=0, must-revalidate');return new Response(request.method==='HEAD'?null:asset.body,{status:asset.status,headers});
+   }
+   const transition=publicArtifacts.find(entry=>{const base=new URL(entry.id).pathname;return path===base+'/envelope'||path.startsWith(base+'/versions/');});
+   if(transition){
+    const base=new URL(transition.id).pathname,envelope=path===base+'/envelope',number=path.slice((base+'/versions/').length),valid=envelope||/^[1-9][0-9]{0,3}$/.test(number)&&Number(number)<=1024;
+    const headers={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Methods':'GET, HEAD, OPTIONS','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','Cache-Control':envelope?'public, max-age=300':'public, max-age=31536000, immutable','Content-Type':'application/json','Content-Location':path};
+    if(!valid)return json({error:'not_found'},404,{'Access-Control-Allow-Origin':'*'});
+    if(request.method==='OPTIONS')return new Response(null,{status:204,headers});
+    if(!['GET','HEAD'].includes(request.method))return json({error:'method_not_allowed'},405,{...headers,'Cache-Control':'no-store',Allow:'GET, HEAD, OPTIONS'});
+    const asset=await env.ASSETS.fetch(new Request(new URL(path,url),request));if(!asset.ok&&asset.status!==304)return json({error:'not_found'},asset.status===404?404:502,{'Access-Control-Allow-Origin':'*'});
+    const merged=new Headers(asset.headers);for(const [key,value]of Object.entries(headers))merged.set(key,value);return new Response(request.method==='HEAD'||asset.status===304?null:asset.body,{status:asset.status,headers:merged});
    }
    const artifact=publicArtifact(path),registry=['/artefacts/contracts','/artefacts/contracts/','/artefacts/contracts/index.html','/artefacts/contracts/index.json'].includes(path);
    if(artifact||registry){

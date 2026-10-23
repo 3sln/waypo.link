@@ -1,3 +1,4 @@
+import {reviewedSchemaFetcher} from './artefact-pins.mjs';
 import {ownerFlags,capability,siteGlobal,siteEnabled,featureConfig,surfaceConfig} from './account/flags.mjs';
 import {subjectTermsAllowed} from '../identity/age-policy.mjs';
 import {bridgeConfig} from '../email-bridge/engine.mjs';
@@ -109,7 +110,7 @@ export function federationControllerOptions({config,repository,accounts,owner,ma
   incrementalIdentity:async candidate=>{if(candidate!==subject)return null;const current=await repository.get(owner);return current?.status==='active'?{epoch:await federationEpoch(current)}:null;},
   eventBusReader:input=>account.eventBusReader(owner,input),
   embedView:async candidate=>{if(candidate!==subject)fail('unauthorized','The embedded session is unavailable.');const current=await repository.get(owner),profile=await account.beamProfile(owner);if(!current||current.status!=='active')fail('unauthorized','The embedded session is unavailable.');return {handle:current.handle,name:profile.displayName||undefined,avatar:profile.avatar||null};},
-  schemaHosts:Object.keys(schemas).map(url=>new URL(url).host),schemaFetcher:async url=>{const schemas=federationSchemas(config);if(!Object.hasOwn(schemas,url))fail('untrusted_schema_host','This fragment has not been registered with this provider.');return structuredClone(schemas[url]);},
+  schemaHosts:Object.keys(schemas).map(url=>new URL(url).host),schemaFetcher:reviewedSchemaFetcher(config),
   termsAllowed:candidate=>{if(candidate!==subject)fail('unauthorized');return subjectTermsAllowed(repository,identity.config.termsVersion,owner);},
   auth:{owner:async(context,{mutation})=>{const {account:current,session}=await identity.authorized(context,mutation);if(current.id!==owner)fail('forbidden','Sign in to the identity requested by this application.');return {subject,epoch:await federationEpoch(current),authTime:sessionAuthTime(session),sessionId:await identity.sessionID(session),approvalChain:(()=>{const chain=[session.id];for(let parent=session.parentSessionId;parent&&!chain.includes(parent)&&chain.length<16;parent=current.sessions.find(s=>s.id===parent)?.parentSessionId)chain.push(parent);return chain;})()};}},validateSubject,
   resourceProvider:async()=>{

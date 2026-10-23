@@ -35,7 +35,7 @@ const K={bus:id=>`evbus/bus/${id}`,index:hash=>`evbus/index/${hash}`,rec:(id,seq
 const rows=async(tx,prefix,options={})=>[...(await tx.list({prefix,...options})).entries()];
 const dayOf=now=>Math.floor(now/86400000),toNextDay=now=>Math.max(1,Math.ceil(((dayOf(now)+1)*86400000-now)/1000));
 const exact=(value,allowed)=>plain(value)&&Object.keys(value).every(name=>allowed.includes(name));
-const summary=bus=>({id:bus.id,manifest:bus.manifest,digest:bus.digest,title:bus.title,host:bus.host,types:[...bus.spec.types],publishers:[...bus.spec.publishers],readers:[...bus.spec.readers],history:bus.spec.history??'never',
+const summary=bus=>({id:bus.id,manifest:bus.manifest,...bus.version?{version:bus.version}:{},digest:bus.digest,title:bus.title,host:bus.host,types:[...bus.spec.types],publishers:[...bus.spec.publishers],readers:[...bus.spec.readers],history:bus.spec.history??'never',
  retention:{seconds:bus.retentionSeconds,min:bus.spec.retention.min_seconds,max:bus.spec.retention.max_seconds},records:bus.count,bytes:bus.bytes,head:bus.head,createdAt:bus.createdAt,features:structuredClone(bus.features??{})});
 
 /** Validate an actor built by trusted adapter code (never a request body). */
@@ -56,8 +56,8 @@ export function busActor(actor){
  * failures are swallowed (a missed doorbell only delays a waiter until its timeout).
  */
 export class BusStore{
- constructor({accountStore,clock,random,keys,owner,issuer,plan='free',grants,notifier,crypto=globalThis.crypto,waits=false,limits=L,readRate=new Map()}){
-  Object.assign(this,{store:accountStore,clock,random,keys,owner,issuer,plan:planOf(plan),grants,notifier,crypto,waits:waits===true,L:limits});
+ constructor({accountStore,clock,random,keys,owner,issuer,plan='free',grants,notifier,crypto=globalThis.crypto,waits=false,limits=L,readRate=new Map(),artefacts}){
+  Object.assign(this,{artefacts,store:accountStore,clock,random,keys,owner,issuer,plan:planOf(plan),grants,notifier,crypto,waits:waits===true,L:limits});
   // Per-grant read rate (2/s) lives with the long-lived provider, not this per-operation handle; it is not durable.
   this.readRate=readRate;
  }
@@ -70,7 +70,12 @@ export class BusStore{
  async get(id){return summary(await this.busRow(this.store,id));}
  /** Create the built-in occupant for a pinned manifest snapshot, once per (account, manifest URL). The snapshot is
   * re-validated with EV-1 here and its digest recomputed; nothing the caller says about it is trusted. */
- async create({manifest,url}={}){
+ async create({manifest,url,version,digest:expectedDigest}={}){
+  let reference;if(version!==undefined){
+   if(!this.artefacts?.enabled)fail('unsupported_artefact_version');
+   const pin=await this.artefacts.pin({artefact:url,version,digest:expectedDigest,kind:'bus'}),resolved=await this.artefacts.resolve(pin.reference);
+   manifest=resolved.body;reference=resolved.reference;
+  }
   if(!plain(manifest)||typeof url!=='string'||url.length>2048)fail('invalid_request','A pinned feed manifest is required.');
   let checked;try{checked=validateBusManifest(structuredClone(manifest),url);}catch(error){if(!error?.code)throw error;checked={status:'invalid'};}if(checked.status!=='valid')fail('invalid_bus',`The feed manifest is ${checked.status}.`,400);
   const spec=checked.bus,cap=this.retentionCap(),seconds=Math.min(spec.retention.max_seconds,cap);
@@ -83,7 +88,7 @@ export class BusStore{
    const listed=await rows(tx,'evbus/bus/',{limit:BUS_ROWS});if(listed.length>=BUS_ROWS-1)fail('temporarily_unavailable','Deleted feeds are still being cleaned up. Try again later.',503,60);
    const active=listed.filter(([,bus])=>bus?.state==='active').length;
    if(active>=this.L.buses[this.plan])fail('bus_limit','This account has reached its feed limit.',409);
-   const bus={v:1,id,owner:this.owner,state:'active',manifest:url,digest:'sha256-'+manifestDigest,title:typeof manifest.title==='string'?manifest.title.slice(0,200):url,host:new URL(url).host,spec,retentionSeconds:seconds,
+   const bus={v:1,id,owner:this.owner,state:'active',manifest:url,...reference?{version:reference.version}:{},digest:reference?.digest??'sha256-'+manifestDigest,title:typeof manifest.title==='string'?manifest.title.slice(0,200):url,host:new URL(url).host,spec,retentionSeconds:seconds,
     head:0,dropped:0,count:0,bytes:0,lastAt:0,incarnation,createdAt:now,features:{}};
    await tx.put(K.bus(id),bus);await tx.put(K.index(hash),id);return {created:true,bus:summary(bus)};
   });
@@ -147,7 +152,7 @@ export class BusStore{
   const who=busActor(actor),bus=await this.busRow(this.store,id);
   if(who.kind==='provider'){const feature=bus.features?.[who.stamp.feature];if(!(method==='read'?feature?.read:feature?.publish))forbidden();return {who,bus,grant:{allowed:true,epoch:`feature:${bus.incarnation}`}};}
   if(!(method==='read'?bus.spec.readers:bus.spec.publishers).includes('application'))forbidden();
-  let grant;try{grant=await this.grants?.check({actor,bus:{id:bus.id,manifest:bus.manifest,digest:bus.digest,incarnation:bus.incarnation},method});}catch(error){if(['forbidden','unauthorized','invalid_token'].includes(error?.code))forbidden();throw error;}
+  let grant;try{grant=await this.grants?.check({actor,bus:{id:bus.id,manifest:bus.manifest,...bus.version?{version:bus.version}:{},digest:bus.digest,incarnation:bus.incarnation},method});}catch(error){if(['forbidden','unauthorized','invalid_token'].includes(error?.code))forbidden();throw error;}
   if(grant?.allowed!==true||typeof grant.epoch!=='string'||!grant.epoch||grant.epoch.length>256)forbidden();
   return {who,bus,grant};
  }
@@ -300,7 +305,7 @@ export class BusStore{
   return {more:left<=0};
  }
  /** Resource descriptors for the federation resource provider (integration hunk; §4.4 limits). */
- async descriptors(){return Promise.all((await this.list()).map(async bus=>({id:`${this.issuer}/entities/${this.owner}/buses/${bus.id}`,label:bus.title,provider:'bindle',contracts:{[EVENT_BUS_CONTRACT]:['publish','read']},generation:bus.id,manifest:bus.manifest,digest:bus.digest,limits:busLimits(await this.busRow(this.store,bus.id),{waits:this.waits})})));}
+ async descriptors(){return Promise.all((await this.list()).map(async bus=>({id:`${this.issuer}/entities/${this.owner}/buses/${bus.id}`,label:bus.title,provider:'bindle',contracts:{[EVENT_BUS_CONTRACT]:['publish','read']},generation:bus.id,manifest:bus.manifest,...bus.version?{version:bus.version}:{},digest:bus.digest,limits:busLimits(await this.busRow(this.store,bus.id),{waits:this.waits})})));}
  async limits(id){const bus=await this.busRow(this.store,id);return busLimits(bus,{waits:this.waits});}
  /** Bind the handle's app operations to one bus (the resource the federation grant named). */
  at(id){const scoped=Object.create(this);scoped.busId=id;return scoped;}

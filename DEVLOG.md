@@ -2970,3 +2970,17 @@ Following [artefact references](docs/architecture/artefact-references.md) ART-D1
 - **Gates:** focused 75, Worker 78, UI-state 291, asset build and Worker dry run. The flag-registry test is updated for the 43rd flag.
 
 Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-22 — ART-4: artefact pin call sites and transition serving (partial)
+
+- **Done:**
+  - Schema, extension, event-bus and event-store pins go through the engine-backed resolver (`packages/runtime/artefact-pins.mjs`), with durable Worker and Node wiring.
+  - Legacy pins keep working with the flag on or off.
+  - `<id>/envelope` and `<id>/versions/<n>` are served, and canonical URLs are unchanged.
+  - Tests cover concurrent pin/publish schedules and adapter persistence.
+- **Remaining, moved to ART-5:**
+  - the R1-H4 grant-matching migration in `federation/service.mjs` and `incremental.mjs`;
+  - passing bus versions through `app/domains/events.mjs` and `runtime/account/events.mjs`.
+- **Gates:** core 2471, Worker 80, UI-state 291, e2e 214 with 4 WebKit skips, asset build and Worker dry run.
+
+Reviewer: ___ Date: ___ Outcome: ___
