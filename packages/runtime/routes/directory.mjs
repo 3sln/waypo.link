@@ -6,6 +6,8 @@ import {movedDirectoryResponse,MOVE_PATH} from './moved.mjs';
 import {ATTESTATION_KEYS_PATH,parseAttestationKeySet} from '../../identity/attestation-keys.mjs';
 import {stages as federation} from './federation.mjs';
 import {flagGlobal,json,pseudonym,subnet} from './shared.mjs';
+import {memberCertificateLifetime,MEMBER_CERTIFICATE_DEFAULT_SECONDS,MEMBER_REVOCATION_BOUND_SECONDS} from '../../identity/member-certificates.mjs';
+import {JWT_BEARER} from '../../orgs/certificates.mjs';
 const DOCUMENT=/^\/identity\/([a-f0-9-]{36})\/identity\.json$/;
 const headers={'Access-Control-Allow-Origin':'*','Referrer-Policy':'no-referrer','Cache-Control':'no-store','X-Content-Type-Options':'nosniff','X-Robots-Tag':'noindex, nofollow'};
 const unknown=()=>json({error:'not_found'},404,headers);
@@ -19,6 +21,9 @@ export const stages={async public(ctx){
   const response=await federation.public(ctx);if(!response?.ok||request.method!=='GET')return response;
   const value=await response.json(),features={...value.features,'directory.v1':{directory_url:env.APP_ORIGIN+DIRECTORY_PATH}};
   const keys=parseAttestationKeySet(env.IDENTITY_ATTESTATION_KEYS??env.IDENTITY_ATTESTATION_KEY);
+  // ORG-4 (organizations §14): member certificates as a home provider, and organization hosting with the jwt-bearer member grant.
+  if(flagGlobal(env,'MEMBER_CERTIFICATES_ENABLED'))features['key-delegation.v1']={...value.features?.['key-delegation.v1'],max_certificate_seconds:memberCertificateLifetime(env.MEMBER_CERTIFICATE_SECONDS)??MEMBER_CERTIFICATE_DEFAULT_SECONDS,revocation_bound_seconds:MEMBER_REVOCATION_BOUND_SECONDS};
+  if(flagGlobal(env,'ORGANIZATIONS_ENABLED')){features['organizations.v1']={};value.grant_types_supported=[...new Set([...(Array.isArray(value.grant_types_supported)?value.grant_types_supported:[]),JWT_BEARER])];}
   if(flagGlobal(env,'IDENTITY_TRANSFER_OUT_ENABLED')&&keys?.keys.length)features['portability.v1']={move_endpoint:env.APP_ORIGIN+MOVE_PATH,attestation_jwks_uri:env.APP_ORIGIN+ATTESTATION_KEYS_PATH};
   return json({...value,features},200,{'Access-Control-Allow-Origin':'*','Referrer-Policy':'no-referrer'});
  }

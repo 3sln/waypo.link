@@ -46,6 +46,7 @@ import { verifyPackage, signMoveStatement, parseMoveStatement, statementDigest, 
 import { PortabilityUnavailable, signingKeysOf } from './successors.mjs';
 import { identityURI } from './transfer-out.mjs';
 import { securityState } from './service.mjs';
+import { raiseAuthorityEpoch } from './authority-epoch.mjs';
 
 export const TRANSFER_IN_FLAG = 'IDENTITY_TRANSFER_IN_ENABLED';
 export const TRANSFER_IN_KEY = 'transfer-in/v1';
@@ -526,6 +527,8 @@ export function transferInIdentityPort(repository, { clock = () => Date.now(), c
         if (account.status !== 'pending-transfer' || account.transferIn?.reservation !== reservation) return { ok: false, status: account.status };
         const now = clock(), security = securityState(account);
         Object.assign(account, { status: 'active', moves: structuredClone(moves), identityUri, origin: structuredClone(origin), security: { epoch: Math.max(security.epoch, aepFloor), changedAt: Math.max(security.changedAt, now) } });
+        // ORG-4: the same-host authority epoch (packages/identity/authority-epoch.mjs) starts above the attested aep.
+        raiseAuthorityEpoch(account, { reason: 'transfer-in', floor: aepFloor });
         account.transferIn = { ...account.transferIn, mode, activatedAt: now, ...label ? { label } : {} };
         audit(account, 'transfer-in-activated'); return { ok: true, write: true };
       });

@@ -20,7 +20,8 @@
 // is skipped for exempt paths and for protective changes, whose JSON body is read only when a rule matches.
 //
 // Routes of different modules in one stage must not overlap. Where they do, this order decides: `delivery`
-// answers contact-delivery bearer RPC on /bindle/rpc before `federation`, and `beams` answers the methods of
+// answers contact-delivery bearer RPC on /bindle/rpc before `federation`, `memberCertificates` (ORG-4) answers only
+// the jwt-bearer member grant on /oauth/token before `federation` and member holder-key status before `delegation`, and `beams` answers the methods of
 // /api/contacts/{redeem,directory} before `contacts`. `moved` (PORT-3) is first on purpose: its edge-stage router
 // answers per-identity paths of a moved identity (308 during the redirect period) before any per-identity route,
 // and falls through for every other identity. Append-only otherwise: one import and one entry per slice; a slice
@@ -56,8 +57,9 @@ import * as emailBridge from './email-bridge.mjs';
 import * as exports from './exports.mjs';
 import * as appRemoval from './app-removal.mjs';
 import * as orgs from './orgs.mjs';
+import * as memberCertificates from './member-certificates.mjs';
 
-export const ROUTES=Object.freeze([moved,directory,intents,site,admin,identity,lifecycle,deletion,automation,conversations,beams,contacts,delivery,messages,views,storage,billing,search,notifications,federation,links,delegation,incremental,events,appSessions,integrations,connections,emailBridge,exports,appRemoval,orgs]);
+export const ROUTES=Object.freeze([moved,directory,intents,site,admin,identity,lifecycle,deletion,automation,conversations,beams,contacts,delivery,messages,views,storage,billing,search,notifications,memberCertificates,federation,links,delegation,incremental,events,appSessions,integrations,connections,emailBridge,exports,appRemoval,orgs]);
 export const STAGES=Object.freeze(['edge','public','anonymous','unauthenticated','api','session','beforeActivity','owner','pages']);
 for(const module of ROUTES)for(const name of Object.keys(module.stages??{}))if(!STAGES.includes(name))throw new TypeError(`Unknown route stage ${name}`);
 

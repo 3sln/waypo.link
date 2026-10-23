@@ -40,6 +40,8 @@ export class FederationService {
     Object.assign(this,{store,crypto,clock,issuer,schemaFetcher,schemaHosts,authenticateOwner,dispatchCapability,termsAllowed});this.audience=`${issuer}/bindle/rpc`;this.clients=new Map();
     for(const client of clients){this.url(client.id);const origin=this.url(client.origin).origin;if(origin!==client.origin||!boundedString(client.name,100)||!boundedString(client.id,200))fail('invalid_config');strings(client.redirectUris,16);if(!client.redirectUris.length)fail('invalid_config');for(const uri of client.redirectUris){if(this.url(uri).origin!==origin)fail('invalid_config');}if(this.clients.has(client.id))fail('invalid_config');this.clients.set(client.id,copy(withClientPolicies(client)));}
     this.staticClients=new Set(this.clients.keys());
+    // ORG-3: optional engine-backed live authority port, composed by ORG-4 for member contexts only.
+    if(arguments[0].organizations)arguments[0].organizations.attach(this);else{const load=this.tokenRecord.bind(this);this.tokenRecord=(tx,record)=>{if(record?.member)fail('forbidden');return load(tx,record);};}
   }
   /** Metadata-document clients (client-id-metadata.v1). The resolving adapter attaches a validated snapshot to the
    * pending request; only the owner's approval persists it (bounded per owner), so codes, refresh and RPC keep

@@ -3215,3 +3215,39 @@ Foreign issuers default to an empty allowlist. Production egress and independent
 **Gates (combined tree):** core 2748 and e2e 214 with 4 WebKit skips (both rerun by the coordinator), Worker 83, UI-state 292, asset build and Worker dry run.
 
 Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-23 — Organizations phase A: ORG-2 (membership), ORG-3 (member grants), ORG-4 (member certificates)
+
+Following the [organizations design](docs/architecture/organizations-design.md) rev 5.4, behind the default-off `ORGANIZATIONS_ENABLED`, `MEMBER_CERTIFICATES_ENABLED` and `ORG_FOREIGN_MEMBERS_ENABLED`.
+
+**ORG-2, membership:**
+- invitations (bound to the invitee for governance powers), accept, leave, remove and the expiry sweep;
+- the admin power, with the last-admin, no-operator and non-expiring-admin guards (provisional);
+- the §12b.2a elevation rule: subject first, then the owner after a rejection or 7 days, configurable per organization, with no timeout deciding;
+- the `member-removed` outbox;
+- the §12c.3 hold after an authority reset.
+
+**Same-host `aep`** (provisional coordinator decision, filling the spec defect ORG-0 found): `packages/identity/authority-epoch.mjs`, an authority epoch bumped only on authority resets (recovery completion, elevated abort, transfer-in). It is narrower than `security.epoch`.
+
+**ORG-3, member grants:**
+- the effective-authority evaluator as a pure function;
+- the RPC authorization and preferences-projection hook;
+- the standard effective-methods output for apps (spec §7.5).
+
+**ORG-4, member certificates:**
+- **Home issuer:** the `key-delegation.v1` member profile, signed only by certification keys; consent per (organization, client); multiple keys per consent; `aep`, status and revocation; 660 s default lifetime or the organization's own setting.
+- **Verifier:** uniform `invalid_grant` with equal work for members, non-members and forged certificates, and no fetch on the request path. Also DPoP replay protection, the lifetime cap, `aep` checks and the direct form.
+- **Token form:** mints DPoP-bound member access in the organization's federation shard, carrying `member` provenance, with no refresh token and expiry no later than the certificate's.
+- A test-only second issuer gives self-consistency evidence only.
+
+**Needs reconciling:**
+1. foreign issuers aren't usable at runtime (no ORG-7 directory instance is wired to the foreign key port);
+2. RPC with member tokens rides the DPoP path, which is mounted only with the device grant;
+3. not built yet: confidential member clients (uniform refusal), a direct-form HTTP route, and ORG-6a acquisition;
+4. purpose URIs are placeholders;
+5. transfer-out still attests `security.epoch` as `aep`;
+6. outbound `member-removed` delivery needs the configured event adapter.
+
+**Gates (combined tree):** core 2792, Worker 83, UI-state 292, e2e 214 with 4 WebKit skips, asset build and Worker dry run.
+
+Reviewer: ___ Date: ___ Outcome: ___

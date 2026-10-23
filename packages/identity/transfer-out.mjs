@@ -33,6 +33,7 @@ import { base64url } from '../core/records.mjs';
 import { parseMoveStatement, verifyMoveStatement, statementDigest, validateRedirectBase, httpsOrigin, SuccessionError } from './succession.mjs';
 import { IdentityCrypto, secureEqual } from './crypto.mjs';
 import { recoveryCredential, securityState } from './service.mjs';
+import {raiseAuthorityEpoch} from './authority-epoch.mjs';
 import { revokeAllLineage, revokeLineage, pruneLineage } from './linked-approval.mjs';
 import { movedWindow, MOVED_AUDIT } from './lifecycle-tombstone.mjs';
 import { attestorFromConfig } from './attestation-keys.mjs';
@@ -802,6 +803,7 @@ export function transferIdentityPort(repository, { clock = () => Date.now(), cry
         if (account.status !== 'active') return { ok: false, status: account.status };
         const arm = reason === 'elevated-abort';
         if (!account.recoveryHash && !arm && !account.recoveryStaged) return { ok: true };
+        if(arm&&account.recoveryReissue?.reason!=='elevated-abort')raiseAuthorityEpoch(account,{reason:'elevated-abort'});
         if (arm) account.recoveryReissue = { reason, at: clock(), kid: typeof account.recoveryKeyKid === 'string' ? account.recoveryKeyKid : account.recoveryReissue?.kid ?? null };
         delete account.recoveryStaged;
         if (!account.recoveryHash) { audit(account, 'recovery-reissue-required'); return { ok: true, write: true }; }

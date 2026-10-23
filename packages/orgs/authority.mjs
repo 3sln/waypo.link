@@ -19,6 +19,7 @@
 // A person acting as themselves resolves to powers ['owner'] (the whole owner interface of their own account), which
 // is exactly what the implicit owner meant before. Organization entities resolve powers from the organization record
 // (phase A: the owner of record and the initial admin; ORG-2 replaces the initial admin with membership grants).
+import {principalKey,memberPowers} from './grants.mjs';
 import {AppFault} from '../app/faults.mjs';
 
 const UUID=/^[a-f0-9-]{36}$/;
@@ -31,19 +32,19 @@ export const POWERS=Object.freeze(['owner','owner-of-record','admin']);
 const nonNegative=value=>Number.isSafeInteger(value)&&value>=0;
 const issuerOf=value=>value===null||value===undefined?null:typeof value==='string'&&/^https?:\/\/[^/\s]+$/.test(value)?value:fail('forbidden','Unsupported actor.',403);
 
-function freezeActor({owner,principal,entity,powers,authTime,epoch}){
- return Object.freeze({kind:'owner',owner,principal:Object.freeze({iss:principal.iss,sub:principal.sub}),entity:Object.freeze({kind:entity.kind,id:entity.id}),powers:Object.freeze([...new Set(powers)].sort()),authTime,epoch});
+function freezeActor({owner,principal,entity,powers,authTime,epoch,aep=0,verification,addedUnder}){
+ return Object.freeze({kind:'owner',owner,principal:Object.freeze({iss:principal.iss,sub:principal.sub}),entity:Object.freeze({kind:entity.kind,id:entity.id}),powers:Object.freeze([...new Set(powers)].sort()),authTime,epoch,aep,...verification?{verification:Object.freeze({...verification})}:{},...addedUnder?{addedUnder:structuredClone(addedUnder)}:{}});
 }
 /** The actor of a person acting as themselves: the former implicit owner. */
-export function personActor({owner,iss=null,authTime=null,epoch=0}={}){
+export function personActor({owner,iss=null,authTime=null,epoch=0,aep=0,verification}={}){
  if(typeof owner!=='string'||!UUID.test(owner))fail('unauthorized','Sign in to continue.',401);
- return freezeActor({owner,principal:{iss:issuerOf(iss),sub:owner},entity:{kind:'person',id:owner},powers:['owner'],authTime:nonNegative(authTime)?authTime:null,epoch:nonNegative(epoch)?epoch:0});
+ return freezeActor({owner,principal:{iss:issuerOf(iss),sub:owner},entity:{kind:'person',id:owner},powers:['owner'],authTime:nonNegative(authTime)?authTime:null,epoch:nonNegative(epoch)?epoch:0,aep:nonNegative(aep)?aep:0,verification});
 }
 /** A request by `actor`'s principal to act for another entity. Carries no powers: the entity's writer resolves them. */
 export function actingAs(actor,entity){
  if(!plain(actor?.principal)||!UUID.test(actor.principal.sub??''))fail('unauthorized','Sign in to continue.',401);
  if(!plain(entity)||!ENTITY_KINDS.includes(entity.kind)||typeof entity.id!=='string'||!UUID.test(entity.id))fail('invalid_request','Unsupported entity.',400);
- return {principal:{iss:actor.principal.iss??null,sub:actor.principal.sub},entity:{kind:entity.kind,id:entity.id},authTime:actor.authTime??null,epoch:actor.epoch??0};
+ return {principal:{iss:actor.principal.iss??null,sub:actor.principal.sub},entity:{kind:entity.kind,id:entity.id},authTime:actor.authTime??null,epoch:actor.epoch??0,aep:actor.aep??0,...actor.verification?{verification:actor.verification}:{},...actor.addedUnder?{addedUnder:actor.addedUnder}:{}};
 }
 /** The acting entity of an actor; a legacy {kind:'owner', owner} actor is the person `owner`. */
 export function entityOf(actor){return plain(actor?.entity)?actor.entity:{kind:'person',id:actor?.owner};}
@@ -59,10 +60,11 @@ export function requireFresh(actor,now,windowMs=900000){if(!nonNegative(actor?.a
  * (ORG-2 hook) may return {powers:[...]} for the principal; it replaces the initial-admin fallback once present.
  * Ownership itself never implies 'admin' (§12b.1 item 5). A record that is not an organization grants nothing.
  */
-export function organizationPowers(record,principal,{membership}={}){
+export function organizationPowers(record,principal,{membership,now=Date.now()}={}){
  if(record?.kind!=='organization'||!plain(principal))return [];
  const same=party=>plain(party)&&party.sub===principal.sub&&(party.iss??null)===(principal.iss??null);
- const powers=[];if(same(record.ownerOfRecord))powers.push('owner-of-record');
+ const stored=record.memberships?.[principalKey(principal)],powers=[];if(same(record.ownerOfRecord)&&(!record.memberships||stored?.state==='live'&&(stored.expires_at===undefined||stored.expires_at>now/1000)&&!stored.hold))powers.push('owner-of-record');
+ if(record.memberships){powers.push(...memberPowers(stored,now));return powers;}
  const member=typeof membership==='function'?membership(principal):undefined;
  if(member!==undefined&&member!==null){for(const power of Array.isArray(member.powers)?member.powers:[])if(power==='admin')powers.push('admin');}
  else if(same(record.initialAdmin))powers.push('admin');
@@ -89,12 +91,12 @@ export async function accountActor({owner,requested,Operation,issuer,organizatio
  if(entity.kind==='person'){
   if(principal.sub!==owner)fail('forbidden','Account owner mismatch.',403);
   if(!supported.includes('person'))fail('not_found','Not found.',404);
-  return personActor({owner,iss,authTime,epoch});
+  return personActor({owner,iss,authTime,epoch,aep:requested.aep,verification:requested.verification});
  }
  if(!supported.includes('organization'))fail('not_found','Not found.',404);
  const record=typeof organization==='function'?await organization():undefined;
  if(record?.kind!=='organization'||record.id!==owner)fail('not_found','Not found.',404);
  const powers=organizationPowers(record,{iss,sub:principal.sub},{membership});
- if(!powers.length)fail('not_found','Not found.',404);
- return freezeActor({owner,principal:{iss,sub:principal.sub},entity:{kind:'organization',id:owner},powers,authTime,epoch});
+ if(!powers.length&&!Operation?.membershipEntry)fail('not_found','Not found.',404);
+ return freezeActor({owner,principal:{iss,sub:principal.sub},entity:{kind:'organization',id:owner},powers,authTime,epoch,aep:nonNegative(requested.aep)?requested.aep:0,verification:requested.verification,addedUnder:requested.addedUnder});
 }

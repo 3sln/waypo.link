@@ -23,7 +23,7 @@
 //   Purge: a due deletion is handed to `purge(org)` when the adapter provides one; otherwise it holds at
 //   'deletion-due' (never purges by guessing).
 import {AppFault} from '../app/faults.mjs';
-import {entityOf,hasPower,requirePower,requireFresh} from './authority.mjs';
+import {entityOf,hasPower,requirePower,requireFresh,organizationPowers} from './authority.mjs';
 
 export const ORG_RECORD='org/record-v1',ORG_ENTITY='identity/entity',ORG_AUDIT='org/audit/',ORG_EPOCH='org/principal-epoch/';
 export const ORG_CREATION='orgs/creation/',ORG_OWNED='orgs/owned/';
@@ -148,7 +148,7 @@ export class OrganizationService{
  /** System, from the creation adapter after the identity record exists: writes the organization record. Idempotent
   * for the same creation request; any other existing state refuses (one account, one entity). */
  async initialize(actor,input){
-  const value=exact(input,['request','creator','name','label','plan','handle']);
+  const value=exact(input,['request','creator','name','label','plan','handle','addedUnder']);
   if(actor?.kind!=='system'||!UUID.test(actor.owner??''))fail('forbidden','System only.',403);
   if(typeof value.request!=='string'||!REQUEST.test(value.request)||!plain(value.creator)||!UUID.test(value.creator.sub??'')||value.creator.sub===actor.owner)fail('invalid_request','Unsupported organization request.',400);
   const name=organizationName(value.name),label=organizationLabel(value.label),creator=party(value.creator);
@@ -162,6 +162,7 @@ export class OrganizationService{
    const now=this.clock.now();
    const record={v:1,kind:'organization',id:actor.owner,name,label,handle:typeof value.handle==='string'?value.handle:null,ownerOfRecord:creator,initialAdmin:creator,createdBy:creator,
     plan:plain(value.plan)?{source:String(value.plan.source),plan:String(value.plan.plan)}:null,request:value.request,createdAt:now,updatedAt:now,state:'active',deletion:null,revision:1,auditSeq:0};
+   this.initializeMembership?.(record,now,value.addedUnder);
    await this.audit(tx,record,'organization-created',{kind:'system',principal:creator},{name,label});
    await tx.put(ORG_ENTITY,{v:1,kind:'organization'});await tx.put(ORG_RECORD,record);
    return organizationView(record);
@@ -175,7 +176,7 @@ export class OrganizationService{
   if(exposure&&!this.enabled(actor?.owner))fail('not_found','Not found.',404);
   const now=this.clock.now();
   return this.metadata.transaction(async tx=>{
-   const record=await this.organization(tx,actor,{write:true});requirePower(actor,...powers);
+   const record=await this.organization(tx,actor,{write:true});requirePower(record.memberships?{...actor,powers:organizationPowers(record,actor.principal,{now})}:actor,...powers);
    if(fresh)requireFresh(actor,now,ORG_FRESH_AUTH_MS);
    if(value.expectedRevision!==undefined&&value.expectedRevision!==record.revision)fail('organization_stale','This organization changed. Reload and try again.',409);
    if(!states.includes(record.state))fail(record.state==='active'?'organization_not_pending':'organization_deletion_pending',record.state==='active'?'No deletion is pending.':'This organization is scheduled for deletion.',409);

@@ -63,12 +63,12 @@ export default {
      return json({error:'closure_restricted',message:'Only export and deletion status are available for this account.'},403);
     }
     // ORG-0: the security epoch travels in the actor only; the session view is unchanged.
-    const {securityEpoch,...session}=owner;
+    const {securityEpoch,authorityEpoch,organizationVerification,...session}=owner;
     if(path==='/api/session'){if(vault&&!accountMember&&!vaultPresent&&context.sessionToken){const headers=new Headers({'Cache-Control':'private, no-store'});for(const value of await installedAccountCookies(env,{owner:owner.account.id,token:context.sessionToken,expiresAt:owner.expiresAt,sessionContext:owner.sessionContext},local))headers.append('Set-Cookie',value);headers.append('Set-Cookie',cookie('',local,0));return json({authenticated:true,...session,features:sessionFeatures(env,owner.account.id)},200,headers);}return json({authenticated:true,...session,features:sessionFeatures(env,owner.account.id)},200,{'Cache-Control':'private, no-store'});}
     const id=owner.account.id;const object=accountHandle(env,id);
     // ORG-0 power resolver seam (packages/orgs/authority.mjs): routes act through an explicit actor, never an implicit
     // owner. A person acting as themselves resolves to exactly the former owner; the account writer re-resolves powers.
-    const actor=personActor({owner:id,iss:env.APP_ORIGIN,authTime:owner.authTime,epoch:securityEpoch});
+    const actor=personActor({owner:id,iss:env.APP_ORIGIN,authTime:owner.authTime,epoch:securityEpoch,aep:authorityEpoch,verification:organizationVerification});
     // Engine-first routes (docs/architecture/app-engine.md §7): parse, dispatch one account operation as this actor, serialize.
     const dispatch=(Operation,params={})=>object.dispatch(id,{operation:Operation.operation,...params,actor:{principal:actor.principal,entity:actor.entity,authTime:actor.authTime,epoch:actor.epoch}});
     // Owner mutations independently require session CSRF, even when not an identity action.

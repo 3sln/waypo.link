@@ -47,6 +47,12 @@ const rows=[
  // organization's own account (and its owner of record's index) is retained, and cancelling a scheduled deletion is never
  // gated. The subject is the organization's account, or the creating person for creation.
  ['ORGANIZATIONS_ENABLED','a','G A',{risk:'crit',stateful:true,envParse:'boolean'}],
+ // ORG-4 (organizations design §13.1). 3sln.me as a HOME provider issuing member certificates: gates consent and
+ // issuance only; listing, revocation and status are never gated. Subject: the member's account.
+ ['MEMBER_CERTIFICATES_ENABLED','a','G A',{risk:'crit',requires:['DIRECTORY_ENABLED'],stateful:true,retainExisting:false,retentionReason:'Consents and keys persist and stay listable, revocable and status-checked; narrowing stops new consent and issuance, and outstanding certificates expire within the issuer lifetime.',envParse:'boolean'}],
+ // ORG-4. Verifying certificates from OTHER issuers (outbound directory fetches): the kill switch for that SSRF surface,
+ // also behind an issuer allowlist that is empty by default (R2-M6). Same-host members keep working. Subject: the organization.
+ ['ORG_FOREIGN_MEMBERS_ENABLED','a','G A',{risk:'crit',requires:['ORGANIZATIONS_ENABLED'],stateful:true,retainExisting:false,retentionReason:'A kill switch: foreign issuers stop being verified at once; same-host members are unaffected.',envParse:'boolean'}],
  ['SIGNUP_ENABLED','c','G R',{risk:'crit',outage:'last-known'}],
  ['PAID_SIGNUP_ENABLED','c','G R',{risk:'crit',outage:'last-known',capabilities:['billing-configuration']}],
  ['WAITLIST_ENABLED','c','G R',{outage:'last-known'}],

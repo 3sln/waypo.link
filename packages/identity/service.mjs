@@ -7,6 +7,7 @@ import { IdentityCrypto, secureEqual } from './crypto.mjs';
 import { DeviceLogin } from './device-login.mjs';
 import { LinkedApproval, MemoryLinkedLimits, pruneLineage, revokeLineage, revokeAllLineage } from './linked-approval.mjs';
 import { interactiveIdentity } from './organizations.mjs';
+import {raiseAuthorityEpoch,authorityEpoch,organizationVerification} from './authority-epoch.mjs';
 
 /**
  * DX-6 identity security state (docs/architecture/account-deletion-export.md §2.1, §3, §6, R1-H1).
@@ -478,7 +479,7 @@ export class IdentityService {
     await this.requireSetupChannel(account);
     if(account.admission?.kind==='paid'&&account.admission.initialPaymentRequired!==false){if(!this.setupBilling)fail('payment_required','Verify your paid subscription before activating this account.');const payment=await this.setupBilling.status(account.id,account.admission);if(payment?.paymentVerified!==true||payment.signupPlan!==account.admission.plan||payment.validUntil<=this.clock())fail('payment_required','Payment is still being verified. Recheck before activating your account.');account.admission.initialPaymentRequired=false;}
     if(account.systemIdentity)account.admission={...account.admission,initialSystemActivationRequired:false};
-    const source=account.status==='recovering'?'recovery':'activation',activationCredentialAt=account.pendingCredentialAt;delete account.pendingCredentialAt;
+    const source=account.status==='recovering'?'recovery':'activation',activationCredentialAt=account.pendingCredentialAt;if(source==='recovery')raiseAuthorityEpoch(account,{reason:'recovery'});delete account.pendingCredentialAt;
     account.status = 'active'; account.pendingHash = null; account.pendingExpiresAt = null; account.challenges = [];delete account.setupBindingHash;delete account.setupEmailChallenge;delete account.setupPushChallenge;delete account.setupEmailSends;delete account.setupEmailSentAt;delete account.setupPushSends;delete account.setupPushSentAt;delete account.setupEmailWindowAt;delete account.setupPushWindowAt;
     delete account.recoveryResumeHash; delete account.recoveryResumeBackupVersion; delete account.recoveryResumeKeyKid;
     this.audit(account, 'account-activated'); const result = await this.session(account,{source,activationCredentialAt});if(activationDeadline<=this.clock())fail('unauthorized','This setup session expired.');
@@ -568,7 +569,7 @@ export class IdentityService {
       await this.repository.compareAndSwap(account.id, revision, account);
     }
     // `securityEpoch` feeds the ORG-0 actor (packages/orgs/authority.mjs); the HTTP router strips it from /api/session.
-    return { account: await this.projectAccount(account), csrfToken: session.csrfToken, expiresAt: session.expiresAt,authTime:Number.isFinite(this.authAt(session))?this.authAt(session):null,securityEpoch:securityState(account).epoch,sessionContext:await this.sessionID(session),signOutImpact:await this.signOutImpact(account,session),
+    return { account: await this.projectAccount(account), csrfToken: session.csrfToken, expiresAt: session.expiresAt,authTime:Number.isFinite(this.authAt(session))?this.authAt(session):null,securityEpoch:securityState(account).epoch,authorityEpoch:authorityEpoch(account),organizationVerification:organizationVerification(account,session),sessionContext:await this.sessionID(session),signOutImpact:await this.signOutImpact(account,session),
       credentials: publicCredentials(account),
       devices: await Promise.all(account.sessions.filter(s => s.expiresAt > this.clock()).map(async s => ({
         id: await this.sessionID(s), label: s.label || 'Browser session', createdAt: s.createdAt, ...s.parentSessionId?{approvedFrom:s.parentSessionId}:{},
