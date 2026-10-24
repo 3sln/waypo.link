@@ -30,7 +30,10 @@ test('chaos: concurrent redemption of one authorization code issues exactly one 
   const scheduler=createScheduler(random),f=await serviceFixture({store:scheduler.wrap(new MemoryFederationStore(),'store')}),code=await f.connect();
   const results=await scheduler.run(Array.from({length:2+random.int(4)},()=>()=>f.exchange(code)));
   assert.equal(fulfilled(results).length,1);for(const r of results)if(r.status==='rejected')assert.equal(r.reason.code,'invalid_grant');
-  assert.equal(await f.rows('federation/token/'),1);assert.equal(await f.rows('federation/family/'),1);assert.equal(await f.rows('federation/code/'),0);
+  // Every losing attempt is a replay of a redeemed code, which revokes the winner's session (RFC 9700 §4.5; wargame
+  // 2026-10-23): nothing stays live, and only the code's replay tombstone remains.
+  assert.equal(await f.rows('federation/token/'),0);const families=(await f.store.transaction(tx=>tx.list('federation/family/'))).map(r=>r.value);assert.ok(families.length===1&&families[0].status==='revoked');
+  const codes=(await f.store.transaction(tx=>tx.list('federation/code/'))).map(r=>r.value);assert.ok(codes.length===1&&codes[0].used===true&&codes[0].revoked===true);
  });
 });
 

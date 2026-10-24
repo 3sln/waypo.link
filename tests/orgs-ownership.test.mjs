@@ -107,7 +107,7 @@ test('transfer takes effect only on a verified payment, no earlier than 24 h, in
  assert.equal(r.billing.handled[w.ownerSub.subscription],'revoke');assert.ok(r.memberOutbox.some(e=>e.type==='ownership-changed'));
  const audit=[...(await w.metadata.list({prefix:'org/audit/'})).values()].map(e=>e.action);assert.ok(audit.includes('organization-ownership-transferred'));
  await w.drain();assert.deepEqual(w.polar.effects.revoked,[w.ownerSub.subscription]);assert.equal(w.polar.effects.refunds.length,0);assert.deepEqual(w.rotations,[ORG]);
- assert.equal((await w.record()).recovery.state,'reissue-required');assert.ok(w.indexed.some(x=>x.person===A&&x.role==='member')&&w.indexed.some(x=>x.person===B&&x.role==='owned'));
+ assert.equal((await w.record()).recovery.state,'missing');assert.ok(w.indexed.some(x=>x.person===A&&x.role==='member')&&w.indexed.some(x=>x.person===B&&x.role==='owned'));
  // The previous owner's subscription is gone and the new period stands alone (billing starts fresh).
  await w.sync();const standing=billingStanding(await w.record(),w.clock.now());assert.equal(standing.standing,'paid');assert.equal(standing.paidUntil,Date.parse(w.polar.subscriptions.get(pending.subscription).current_period_end));
  // The elevated request passed: the old owner can no longer decide it, the new owner can (tight verification).
@@ -258,7 +258,7 @@ test('seeded chaos: transfer vs. removal vs. deletion vs. billing lapse vs. webh
  for(const step of [0,DAY,DAY,3*DAY,15*DAY]){w.clock.advance(step);await w.webhook('evt_pay');await w.webhook('evt_settle_'+step);await w.tick();for(let i=0;i<4;i++)await w.drain();await invariants(w,'settle +'+step);}
  const {r}=await invariants(w,'final');
  const t=[r.transfer,...r.transferHistory].find(x=>x?.id===id);if(process.env.CHAOS_TRACE)console.log(JSON.stringify({seed:random.seed,transfer:t.state,reason:t.closedReason??null,state:r.state,refunds:w.polar.effects.refunds.length,standing:billingStanding(r,w.clock.now()).standing}));
- if(t.state==='effective'){assert.equal(r.ownerOfRecord.sub,B);assert.ok(w.polar.effects.revoked.includes(w.ownerSub.subscription)||w.polar.subscriptions.get(w.ownerSub.subscription).status==='canceled');assert.equal(r.recovery.state,'reissue-required');}
+ if(t.state==='effective'){assert.equal(r.ownerOfRecord.sub,B);assert.ok(w.polar.effects.revoked.includes(w.ownerSub.subscription)||w.polar.subscriptions.get(w.ownerSub.subscription).status==='canceled');assert.equal(r.recovery.state,'missing');}
  else{assert.equal(r.ownerOfRecord.sub,A);if(t.payment)assert.ok(w.polar.effects.refunds.some(x=>x.subscription===t.payment.subscriptionId),'a closed paid transfer is refunded');}
  assert.equal(r.ownershipOutbox.filter(e=>!e.doneAt).length,0,'every effect completed');
  }finally{await w.close();}}));
@@ -322,7 +322,10 @@ test('H1: a subscription Polar cannot confirm is held with an operator alert; it
 
 test('H1: an ownership change revokes every live subscription of the former owner, including one marked missing',async()=>{const w=await world();try{
  await w.metadata.transaction(async tx=>{const r=w.service.ensure(await w.service.open(tx));const legacy=r.billing.subscriptions[w.ownerSub.subscription];legacy.status='missing';
-  await w.service.changeOwner(r,p(C),{subscriptionId:'sub_claim'},w.clock.now(),tx,{cause:'lapse-claim',id:'claim-1'});
+  // The shared commit's guards (ORG-12a): a verified, paid subscription of the new owner, a fresh snapshot, and the
+  // owner of record the process recorded when it began.
+  const now=w.clock.now();r.billing.subscriptions.sub_claim={id:'sub_claim',owner:C,purpose:'claim',paid:true,paidThrough:now+365*DAY};r.billing.reconciledAt=now;
+  await w.service.changeOwner(r,p(C),{subscriptionId:'sub_claim'},now,tx,{cause:'lapse-claim',id:'claim-1',expect:p(A)});
   assert.equal(r.billing.handled[legacy.id],'revoke');assert.ok(r.ownershipOutbox.some(e=>e.kind==='revoke'&&e.subscriptionId===legacy.id));});
 }finally{await w.close();}});
 

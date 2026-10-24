@@ -3,7 +3,7 @@ import {validateHostAlias,configuredReservedName,projectAccountBadges,defaultBad
 import {onboardingAlias,sameOnboardingIdentity} from './onboarding.mjs';
 import {systemMarker,systemBadge,sameSystemIdentity} from './system-bootstrap.mjs';
 import {normalizeHandle,validatePaidHandle,isReservedHandle} from './handles.mjs';
-import { IdentityCrypto, secureEqual } from './crypto.mjs';
+import { IdentityCrypto, secureEqual, encode, decode } from './crypto.mjs';
 import { DeviceLogin } from './device-login.mjs';
 import { LinkedApproval, MemoryLinkedLimits, pruneLineage, revokeLineage, revokeAllLineage } from './linked-approval.mjs';
 import { interactiveIdentity } from './organizations.mjs';
@@ -27,7 +27,9 @@ import {raiseAuthorityEpoch,authorityEpoch,organizationVerification} from './aut
  *   verified email removed and the email-notice waiver (emailRemove), email sign-in enabled (configureEmailLogin
  *   false→true), credential added (registerPasskey, credentialFinish) or removed (removePasskey), password set
  *   (setPendingPassword; there is no other password-change path), recovery-file recovery (recover: start and resume)
- *   and recovery-file rotation (downloadRecovery, which every setup and recovery completion requires).
+ *   and recovery-file rotation (downloadRecovery, which every setup and recovery completion requires), an active-account
+ *   reissue commit (reissueRecoveryConfirm) and its cancellation (reissueRecoveryCancel*, which also raises
+ *   `federationGeneration` so no OAuth grant survives the restored credential).
  * Never bumped by: sessions (create, use, close, revoke), step-up, terms acceptance, renames, passkey counter
  *   updates, email-link or email-login requests, disabling email sign-in, handle claims. These are the cheap,
  *   repeatable events that would otherwise let an attacker flush the change out of a rolling window.
@@ -61,7 +63,12 @@ import {raiseAuthorityEpoch,authorityEpoch,organizationVerification} from './aut
  *                          encryptionKid, sessionId, preparedAt, expiresAt, base, forced?}. Confirm runs the account
  *                          gate (identityBackup.reissueCommit: refuses deletion/moved/contested and a staged file whose
  *                          keys no longer restore, cancels a live transfer-out)
- *                          and then makes the staged credential current in one CAS with a `security` bump.
+ *                          and then makes the staged credential current in one CAS with a `security` bump, opening the
+ *                          7-day cooling-off window `recoveryPrevious` (wargame 2026-10-23 #1, provisional): the new file
+ *                          cannot start a recovery and the previous one can only cancel (`pendingReissue`). Begin needs a
+ *                          passkey step-up whenever the account has a passkey.
+ *   reissueRecoveryCancel / ...CancelEmail / ...CancelFile   cancel the window from a session created before the reissue
+ *                          began, the emailed link, or the previous file (cancelReissue).
  *
  * Email removal resources (constructor, both optional, both fail closed):
  *   flags            flags port {for(ctx)} or a thunk returning the current one; EMAIL_REMOVAL_ENABLED is read with
@@ -81,10 +88,30 @@ export const RECOVERY_CREDENTIAL_AGE_MS = 7 * 86400000;
 export const RECOVERY_REISSUE_TTL_MS = 30 * 60000;
 /** Forced-reissue reasons (recovery-identity spec "Active-account reissue"). */
 export const RECOVERY_REISSUE_REASONS = Object.freeze(['elevated-abort', 'transfer-in']);
+/** The reissue cooling-off window (recovery-identity spec "Active-account reissue", wargame 2026-10-23 #1, provisional):
+ * after a reissue commits, the new file cannot start a recovery and the previous file can only cancel the reissue
+ * until it ends. Mirrors P14. */
+export const RECOVERY_REISSUE_WINDOW_MS = RECOVERY_CREDENTIAL_AGE_MS;
+/** How long replaced emails stay notice channels and how far back email changes and other-session revocations count
+ * against a passkey's reissue authority (review 2026-10-23 R1, provisional): 30 days. */
+export const SECURITY_LOOKBACK_MS = 30 * 86400000;
+/** Replaced emails and authority events are retained this much longer than the lookback, so a reissue whose begin
+ * falls inside the lookback still finds them at confirmation (up to the 30-minute staging TTL later). */
+const SECURITY_RETENTION_MS = SECURITY_LOOKBACK_MS + 3600000;
+/** One account security notice per account and type per 10 minutes; later ones are coalesced into the next. */
+export const SECURITY_NOTICE_COALESCE_MS = 600000;
+/** The live cooling-off record `account.recoveryPrevious` = {hash, issuedAt, kid, version, marker, reissuedAt,
+ * preparedAt, until, newKid, cancelHash, credential}, or null when no reissue is pending at `now`. Pure. */
+export function pendingReissue(account, now){const p=account?.recoveryPrevious;return p&&typeof p==='object'&&Number.isSafeInteger(p.until)&&p.until>now&&Number.isSafeInteger(p.reissuedAt)&&Number.isSafeInteger(p.preparedAt)&&typeof p.newKid==='string'?p:null;}
+/** The step-up credential as the P17 contest window compares it: a passkey id, 'password', or null. */
+export const stepUpCredentialId = session => session?.stepUpCredential?.kind==='passkey'&&typeof session.stepUpCredential.id==='string'?session.stepUpCredential.id:session?.stepUpCredential?.kind==='password'?'password':null;
+const LOGIN_TOKEN=/^pl1\.([A-Za-z0-9_-]{1,800})\.([A-Za-z0-9_-]{43})$/;
 /** The armed forced-reissue marker `account.recoveryReissue` = {reason, at, kid?}, or null. Pure. */
 export function reissueMarker(account){const marker=account?.recoveryReissue;return marker&&typeof marker==='object'&&RECOVERY_REISSUE_REASONS.includes(marker.reason)&&Number.isSafeInteger(marker.at)&&marker.at>=0?marker:null;}
 const stagedReissue=value=>value&&typeof value==='object'&&typeof value.hash==='string'&&typeof value.kid==='string'&&typeof value.encryptionKid==='string'&&typeof value.sessionId==='string'&&Number.isSafeInteger(value.expiresAt)&&(value.base===null||typeof value.base==='string')?value:null;
-export const SECURITY_EVENTS = Object.freeze(['setup-email-verified','email-linked','email-removed','email-login-enabled','passkey-registered','passkey-added','passkey-removed','password-configured','recovery-file-issued','recovery-file-reissued','account-recovery-started','recovery-setup-resumed']);
+/** Account security notices sent to every channel (review 2026-10-23 R1(ii)). */
+export const ACCOUNT_SECURITY_NOTICES = Object.freeze(['passkey-added','passkey-removed','email-changed','sessions-revoked','sessions-evicted','password-changed']);
+export const SECURITY_EVENTS = Object.freeze(['setup-email-verified','email-linked','email-removed','email-login-enabled','passkey-registered','passkey-added','passkey-removed','password-configured','recovery-file-issued','recovery-file-reissued','recovery-reissue-cancelled','account-recovery-started','recovery-setup-resumed']);
 export class IdentityFault extends Error {
   constructor(code, message = 'The account request could not be completed.') { super(message); this.code = code; }
 }
@@ -131,7 +158,7 @@ const publicCredentials = account => account.credentials.map(({ id, label, devic
 /** Platform-independent account policy. Repository must implement linearizable
  * create and compareAndSwap; an in-memory repository is only a test resource. */
 export class IdentityService {
-  constructor({ repository, deviceRequests, linkedApprovals = deviceRequests, linkedLimits, linkedPollLimits, approvalNotices, crypto, clock = () => Date.now(), turnstile, rateLimiter, webauthn, passwordHasher, mailer, identityBackup, paidHandleEligibility, setupBilling, systemBootstrap, onboarding, resolveIdentityBadges, pushTransport, reservedHandle, flags, accountChannels, closure, config }) {
+  constructor({ repository, deviceRequests, linkedApprovals = deviceRequests, linkedLimits, linkedPollLimits, approvalNotices, crypto, clock = () => Date.now(), turnstile, rateLimiter, webauthn, passwordHasher, mailer, identityBackup, paidHandleEligibility, setupBilling, systemBootstrap, onboarding, resolveIdentityBadges, pushTransport, reservedHandle, flags, accountChannels, closure, severConnections, config }) {
     if (!repository || !turnstile || !rateLimiter || !webauthn || !passwordHasher || !config?.termsVersion) throw new TypeError('Identity resources and terms version are required');
     const origin = new URL(config.origin);
     if (origin.origin !== config.origin || origin.hostname !== config.rpID || (origin.protocol !== 'https:' && !(config.allowInsecureLocalhost && origin.protocol === 'http:' && origin.hostname === 'localhost'))) throw new TypeError('Exact RP origin is required');
@@ -141,7 +168,7 @@ export class IdentityService {
     // `linkedApprovals` is the renamed `deviceRequests` repository (create/get/findByUserCode/compareAndSwap).
     // `linkedLimits` is the durable window port for budgets; `linkedPollLimits` the non-durable poll limiter.
     this.deviceRequests = this.linkedApprovals = linkedApprovals; this.linkedLimits = linkedLimits ?? new MemoryLinkedLimits(clock); this.linkedPollLimits = linkedPollLimits ?? new MemoryLinkedLimits(clock); this.approvalNotices = approvalNotices;
-    this.setupBilling = setupBilling;this.systemBootstrap=systemBootstrap;this.onboarding=onboarding;this.resolveIdentityBadges=resolveIdentityBadges??defaultBadgeResolver;this.reservedHandle=reservedHandle;this.flags=flags;this.accountChannels=accountChannels;this.closure=closure;
+    this.setupBilling = setupBilling;this.systemBootstrap=systemBootstrap;this.onboarding=onboarding;this.resolveIdentityBadges=resolveIdentityBadges??defaultBadgeResolver;this.reservedHandle=reservedHandle;this.flags=flags;this.accountChannels=accountChannels;this.closure=closure;this.severConnections=severConnections;
     this.config = { rpName: '3sln.me', sessionTtlMs: 86400000, pendingTtlMs: 1800000, challengeTtlMs: 300000, ...config };
     if (!(this.config.sessionTtlMs > 0 && this.config.sessionTtlMs <= 86400000)) throw new TypeError('Sessions must expire within 24 hours');
   }
@@ -153,18 +180,53 @@ export class IdentityService {
   }
   async guard(operation, input, context) {
     this.origin(context);
-    if (!await this.rateLimiter.check({ phase: 'attempt', operation, remoteIP: context.remoteIP, region:context.region, handle: input.handle })) fail('rate_limited', 'Please wait before trying again.');
+    // Wargame 2026-10-23 #3: only per-network windows run before Turnstile. Handle-keyed windows never see CAPTCHA-less
+    // traffic; sign-in consults them after this check (loginPassword) and charges only completed, failed checks.
+    if (!await this.rateLimiter.check({ phase: 'attempt', operation, remoteIP: context.remoteIP, region:context.region })) fail('rate_limited', 'Please wait before trying again.');
     if (typeof input.turnstileToken !== 'string' || input.turnstileToken.length > 4096 || !await this.turnstile.verify({ token: input.turnstileToken, remoteIP: context.remoteIP, action: operation, hostname: new URL(this.config.origin).hostname })) fail('challenge_failed', 'Complete the security check and try again.');
   }
   audit(account, type) { account.audit = [...(account.audit || []).slice(-99), { id: this.crypto.id(), type, at: this.clock() }]; }
+  /** HMAC under a key derived from `config.loginTokenKey` or `config.linkedCodeKey` (never used directly). Without one
+   * (tests, single-process embeddings) a per-instance random key is used: tokens then verify only in this instance,
+   * so a multi-isolate deployment without a key fails closed. */
+  async mac(purpose,value){
+    this.macKey ??= (async()=>{const webcrypto=this.crypto.crypto,raw=this.config.loginTokenKey??this.config.linkedCodeKey;if(raw!==undefined&&raw!==null&&(typeof raw!=='string'||raw.length<16))throw new TypeError('The identity token key must be at least 16 characters.');if((raw===undefined||raw===null)&&this.config.allowInsecureLocalhost!==true&&this.config.linkedEphemeralKey!==true)throw new TypeError('An identity token key (LINKED_CODE_KEY or KEY_ENCRYPTION_KEY) is required outside local development.');const material=typeof raw==='string'?new TextEncoder().encode(raw):webcrypto.getRandomValues(new Uint8Array(32));const root=await webcrypto.subtle.importKey('raw',material,{name:'HMAC',hash:'SHA-256'},false,['sign']);const derived=await webcrypto.subtle.sign('HMAC',root,new TextEncoder().encode('bindle-identity-token-key-v1'));return webcrypto.subtle.importKey('raw',derived,{name:'HMAC',hash:'SHA-256'},false,['sign']);})();
+    const signature=await this.crypto.crypto.subtle.sign('HMAC',await this.macKey,new TextEncoder().encode(`${purpose}\0${value}`));return encode(new Uint8Array(signature));
+  }
+  /** Work that must not delay the response (mail provider calls): the platform's waitUntil when the adapter supplies
+   * one, otherwise detached. Failures are swallowed: callers never surface provider errors. `settleBackground()` lets
+   * tests wait for it. */
+  background(context,work){const promise=Promise.resolve().then(work).catch(()=>{});(this.pendingWork??=new Set()).add(promise);promise.finally(()=>this.pendingWork.delete(promise));if(typeof context?.waitUntil==='function')try{context.waitUntil(promise);}catch{}return promise;}
+  async settleBackground(){while(this.pendingWork?.size)await Promise.all([...this.pendingWork]);}
   /** Bumps `security` on the record about to be CAS-written; call once per security-sensitive CAS (header JSDoc). */
   securityChanged(account) { const { epoch, changedAt } = securityState(account); account.security = { epoch: epoch + 1, changedAt: Math.max(changedAt, this.clock()) }; }
   /** Trusted read-only port (DX-6); see the header JSDoc for the contract. Never routed. */
   async identitySecurity(owner) { return identitySecurityPort(this.repository)(owner); }
   async save(account, revision) {
+    this.collectDueNotices(account);
     account.revision = revision + 1;
-    if (!await this.repository.compareAndSwap(account.id, revision, account)) fail('conflict', 'The account changed; start this step again.');
+    if (!await this.repository.compareAndSwap(account.id, revision, account)) { this.queuedNotices?.delete(account); fail('conflict', 'The account changed; start this step again.'); }
+    await this.flushNotices(account);
   }
+  /** Queues an account security notice for after this record's next successful save (`save` flushes), coalescing per
+   * type: at most one per SECURITY_NOTICE_COALESCE_MS, carrying the count of changes since the last one sent
+   * (`account.noticeLog`, written in the same CAS). Review 2026-10-23 V1/item 6, provisional. */
+  queueNotice(account,type,actor='unknown'){
+    const now=this.clock(),log=account.noticeLog&&typeof account.noticeLog==='object'?account.noticeLog:{},entry=log[type];
+    // Review 2026-10-23 N1: only repeats by the SAME acting session or credential within the window are coalesced; a
+    // different actor is always notified at once (carrying any count it supersedes).
+    if(entry&&nonNegative(entry.sentAt)&&entry.sentAt<=now&&now-entry.sentAt<SECURITY_NOTICE_COALESCE_MS&&entry.actor===actor){log[type]={sentAt:entry.sentAt,pending:(nonNegative(entry.pending)?entry.pending:0)+1,actor};account.noticeLog=log;return;}
+    const count=(nonNegative(entry?.pending)?entry.pending:0)+1;log[type]={sentAt:now,pending:0,actor};account.noticeLog=log;
+    (this.queuedNotices??=new WeakMap()).set(account,[...(this.queuedNotices.get(account)??[]),{type,count}]);
+  }
+  /** Trailing notices for coalesced events whose window has passed (review N1): queued for after the write that carries
+   * the reset `noticeLog`. Called by `save` and by the owner view's last-use write, so a pending count is delivered at
+   * the account's next write or owner view after the window. */
+  collectDueNotices(account){
+    const now=this.clock(),log=account.noticeLog;if(!log||typeof log!=='object')return;
+    for(const [type,entry]of Object.entries(log))if(nonNegative(entry?.pending)&&entry.pending>0&&nonNegative(entry.sentAt)&&now-entry.sentAt>=SECURITY_NOTICE_COALESCE_MS){log[type]={sentAt:now,pending:0,actor:entry.actor};(this.queuedNotices??=new WeakMap()).set(account,[...(this.queuedNotices.get(account)??[]),{type,count:entry.pending,trailing:true}]);}
+  }
+  async flushNotices(account){const queued=this.queuedNotices?.get(account);if(!queued)return;this.queuedNotices.delete(account);for(const {type,count,trailing}of queued)await this.reissueNotice(account,type,trailing?{count,trailing:true}:count>1?{count}:{});}
   async pending(value, context) {
     const [id] = tokenParts(value); const account = await this.repository.get(id);
     if (!account || !interactiveIdentity(account) || !['pending', 'recovering'].includes(account.status) || account.pendingExpiresAt <= this.clock() || !secureEqual(account.pendingHash, await this.crypto.hash('pending', value))) fail('unauthorized', 'This setup session has expired.');
@@ -172,7 +234,7 @@ export class IdentityService {
   }
   async newPending(account,context) {
     if((this.config.requireReachability===true||account.systemIdentity||account.onboardingIdentity)&&context){if(!context.setupBinding)fail('unauthorized');account.setupBindingHash=await this.crypto.hash('setup-binding',context.setupBinding);}
-    delete account.setupEmailChallenge;delete account.setupPushChallenge;delete account.setupPushVerified;delete account.pendingCredentialAt;
+    delete account.setupEmailChallenge;delete account.setupPushChallenge;delete account.setupPushVerified;delete account.pendingCredentialAt;delete account.pendingPasswordSets;delete account.recoveryDownloads;
     const value = `${account.id}.${this.crypto.random()}`;
     account.pendingHash = await this.crypto.hash('pending', value); account.pendingExpiresAt = this.clock() + this.config.pendingTtlMs;
     return value;
@@ -187,7 +249,9 @@ export class IdentityService {
     // cascades like any explicit termination (architecture §7.4).
     const protectedIds=new Set();for(let id=parentSessionId;id&&!protectedIds.has(id);id=account.sessions.find(s=>s.id===id)?.parentSessionId)protectedIds.add(id);
     const busy=s=>account.sessions.some(child=>child.parentSessionId===s.id)||(account.linkedLineage??[]).some(entry=>entry.sessions.includes(s.id));
-    while(account.sessions.length>=10){const target=account.sessions.find(s=>!protectedIds.has(s.id)&&!busy(s))??account.sessions.find(s=>!protectedIds.has(s.id));if(!target)fail('conflict');await this.pruneSessions(account,s=>s===target);}
+    let evicted=false;while(account.sessions.length>=10){const target=account.sessions.find(s=>!protectedIds.has(s.id)&&!busy(s))??account.sessions.find(s=>!protectedIds.has(s.id));if(!target)fail('conflict');if(target.expiresAt>this.clock())evicted=true;await this.pruneSessions(account,s=>s===target);}
+    // Review 2026-10-23 V1: evicting a live session at the cap removes an owner channel, so it is an authority event with a notice.
+    if(evicted){this.authorityEvent(account,'sessions-evicted');this.queueNotice(account,'sessions-evicted',`credential:${credentialId??source}`);}
     account.sessions = [...account.sessions, {
       id: this.crypto.id(), label: safeLabel(label), credentialId, source, parentSessionId, ...source==='activation'&&Number.isSafeInteger(activationCredentialAt)?{activationCredentialAt}:{},
       // DX-7 closure-export: the credential was verified just now, so the session starts stepped up.
@@ -336,15 +400,27 @@ export class IdentityService {
     account.pendingCredentialAt=this.clock();account.credentials.push({ ...credential, label: safeLabel(input.label, 'Passkey'), createdAt: this.clock() }); account.challenges = []; this.audit(account, 'passkey-registered'); this.securityChanged(account);
     await this.save(account, revision); return { readyForRecovery: true };
   }
-  async verifyPendingPassword(account,value){if(!await this.passwordHasher.verify(value,account.passwordHash))fail('unauthorized','Password verification failed.');account.pendingCredentialAt=this.clock();}
+  // The hash was computed from this very value a moment earlier; re-verifying it bought only KDF work (wargame #11).
+  async verifyPendingPassword(account){account.pendingCredentialAt=this.clock();}
   async setPendingPassword(input, context) {
-    this.origin(context); const account = await this.pending(input.pendingToken,context); const revision = account.revision;
-    account.passwordHash = await this.passwordHasher.hash(password(input.password));account.passwordSetAt=this.clock();await this.verifyPendingPassword(account,input.password);
-    this.audit(account, 'password-configured'); this.securityChanged(account); await this.save(account, revision); return { readyForRecovery: true };
+    this.origin(context); const account = await this.pending(input.pendingToken,context); const revision = account.revision; password(input.password);
+    // Wargame 2026-10-23 #11: a pending token buys at most 5 password sets, each behind the network and per-account
+    // windows, all checked before the KDF runs.
+    if(!Number.isSafeInteger(account.pendingPasswordSets??0)||(account.pendingPasswordSets??0)>=5)fail('rate_limited','Please wait before trying again.');
+    if(!await this.rateLimiter.check({operation:'pending-password',remoteIP:context.remoteIP,region:context.region,handle:account.id}))fail('rate_limited','Please wait before trying again.');
+    account.pendingPasswordSets=(account.pendingPasswordSets??0)+1;
+    account.passwordHash = await this.passwordHasher.hash(input.password);account.passwordSetAt=this.clock();await this.verifyPendingPassword(account);
+    this.audit(account, 'password-configured'); this.securityChanged(account); if (account.status === 'recovering') this.queueNotice(account, 'password-changed', 'recovery'); await this.save(account, revision);
+    return { readyForRecovery: true };
   }
   async downloadRecovery(input, context) {
     this.origin(context); const account = await this.pending(input.pendingToken,context); const revision = account.revision;
     if (!account.passwordHash && !account.credentials.length) fail('credential_required', 'Set up your passkey or password first.');
+    // Each issuance after the first rotates the signing key (P15), so downloads are budgeted: at most 5 per setup token
+    // and the network/per-account windows (wargame 2026-10-23: unbounded rotation churn).
+    if(!Number.isSafeInteger(account.recoveryDownloads??0)||(account.recoveryDownloads??0)>=5)fail('rate_limited','Please wait before trying again.');
+    if(!await this.rateLimiter.check({operation:'recovery-download',remoteIP:context.remoteIP,region:context.region,handle:account.id}))fail('rate_limited','Please wait before trying again.');
+    account.recoveryDownloads=(account.recoveryDownloads??0)+1;
     const recoveryToken = `${account.id}.${this.crypto.random()}`;
     // P15: any earlier file may hold the current signing key, so this issuance rotates first. `bound` are the kids the
     // record still binds to a credential; a legacy record with an earlier file but no bound kid always rotates.
@@ -366,9 +442,57 @@ export class IdentityService {
       warning: 'Keep this file private and backed up. It is the only way to recover this account without a verified email or phone. It starts one recovery transaction and can resume that transaction until replacement setup is confirmed.' }, null, 2), recoveryToken };
   }
   /** The owner's recovery-file status for the console. Hashes, kids and tokens never leave the record. */
-  recoveryView(account){
-    const credential=recoveryCredential(account),marker=reissueMarker(account);
-    return {issuedAt:credential?.issuedAt??null,version:credential?.version??null,transferEligibleAt:credential?.version===2?credential.issuedAt+RECOVERY_CREDENTIAL_AGE_MS:null,reissueRequired:marker?.reason??null,reissueAvailable:typeof this.identityBackup?.reissue==='function'&&typeof this.identityBackup?.reissueCommit==='function'};
+  recoveryView(account,session){
+    const credential=recoveryCredential(account),marker=reissueMarker(account),pending=pendingReissue(account,this.clock());
+    return {issuedAt:credential?.issuedAt??null,version:credential?.version??null,transferEligibleAt:credential?.version===2?credential.issuedAt+RECOVERY_CREDENTIAL_AGE_MS:null,reissueRequired:marker?.reason??null,reissueAvailable:typeof this.identityBackup?.reissue==='function'&&typeof this.identityBackup?.reissueCommit==='function',
+      // The cooling-off window of a committed reissue: the new file restores from `usableAt`; until then a session,
+      // device or email that predates the reissue (or the previous file) can cancel it.
+      pendingReissue:pending?{reissuedAt:pending.reissuedAt,usableAt:pending.until,previousRestorable:typeof pending.hash==='string'&&pending.hash.length>0,previousFileCanCancel:typeof pending.hash==='string'&&pending.hash.length>0&&pending.fileLocked!==true,cancellable:Boolean(session)&&Number.isSafeInteger(session.createdAt)&&session.createdAt<pending.preparedAt}:null};
+  }
+  /** Remembers a verified email that is being replaced or removed (`account.previousEmails`, up to 8 within retention;
+   * further changes are refused rather than dropping one), so a reissue begun shortly after an email swap still notifies, and can be cancelled from, the
+   * address the owner had before (coordinator decision 2026-10-23, provisional). Call before overwriting. */
+  /** Records an email change or another-session revocation (`account.authorityEvents`, last 30 days, at most 16, the
+   * newest kept, for display) and raises the uncapped `lastChannelRemovalAt` the file-proof check reads (V2). */
+  authorityEvent(account,kind){const now=this.clock(),kept=(Array.isArray(account.authorityEvents)?account.authorityEvents:[]).filter(entry=>nonNegative(entry?.at)&&entry.at>now-SECURITY_RETENTION_MS);kept.push({kind,at:now});account.authorityEvents=kept.slice(-16);
+    // Review 2026-10-23 V2: the file-proof decision reads this uncapped monotonic maximum, never the (display) list.
+    account.lastChannelRemovalAt=Math.max(nonNegative(account.lastChannelRemovalAt)?account.lastChannelRemovalAt:0,now);}
+  /** Account security notice to every channel: the current email, emails replaced in the last 30 days, and push.
+   * Best effort after commit; acceptance is not delivery. */
+  /** Whether a reissue authorized by `credential` is file-proof (review 2026-10-23 R1(i), V1, provisional): a passkey
+   * step-up whose passkey was enrolled before the previous file was issued, with no channel-removing authority event in
+   * the 30 days before the begin. Otherwise the password branch applies and the previous file can cancel. */
+  fileProofReissue(account,credential,at=this.clock()){
+    if(credential?.kind!=='passkey'||typeof account.recoveryHash!=='string'||!account.recoveryHash)return false;
+    const passkey=account.credentials.find(c=>c.id===credential.id);
+    if(!passkey||!nonNegative(passkey.createdAt)||!nonNegative(account.recoveryIssuedAt)||passkey.createdAt>=account.recoveryIssuedAt)return false;
+    // Review 2026-10-23 V1: ANY channel-removing event (email change or removal, other-session revocation, session-cap
+    // eviction, passkey removal) in the lookback before `at` (the begin) disqualifies, whatever its order.
+    const latest=Math.max(nonNegative(account.lastChannelRemovalAt)?account.lastChannelRemovalAt:0,...(Array.isArray(account.authorityEvents)?account.authorityEvents:[]).map(entry=>nonNegative(entry?.at)?entry.at:0));
+    return !(latest>at-SECURITY_LOOKBACK_MS);
+  }
+  rememberPreviousEmail(account){
+    const now=this.clock(),kept=(Array.isArray(account.previousEmails)?account.previousEmails:[]).filter(entry=>typeof entry?.email==='string'&&nonNegative(entry.verifiedAt)&&nonNegative(entry.replacedAt)&&entry.replacedAt>now-SECURITY_RETENTION_MS);
+    // V2 audit: never drop a retained channel to make room (earliest- or newest-wins could both be gamed); refuse more
+    // email changes instead until one ages out.
+    if(typeof account.verifiedEmail==='string'&&nonNegative(account.emailVerifiedAt)&&!kept.some(entry=>entry.email===account.verifiedEmail)){if(kept.length>=8)throw Object.assign(new IdentityFault('email_change_limited','This account changed its email too many times recently. Try again later.'),{status:429});kept.push({email:account.verifiedEmail,verifiedAt:account.emailVerifiedAt,replacedAt:now});}
+    if(kept.length)account.previousEmails=kept;else delete account.previousEmails;
+  }
+  /** Email recipients for reissue notices: the current verified email and any replaced in the last 7 days. */
+  reissueRecipients(account,at=this.clock()){
+    const now=at,list=[];
+    if(typeof account.verifiedEmail==='string'&&nonNegative(account.emailVerifiedAt))list.push({email:account.verifiedEmail,verifiedAt:account.emailVerifiedAt,current:true});
+    for(const entry of Array.isArray(account.previousEmails)?account.previousEmails:[])if(typeof entry?.email==='string'&&nonNegative(entry.verifiedAt)&&nonNegative(entry.replacedAt)&&entry.replacedAt>now-SECURITY_LOOKBACK_MS&&!list.some(item=>item.email===entry.email))list.push({email:entry.email,verifiedAt:entry.verifiedAt});
+    return list;
+  }
+  /** Security notices to every channel (email, including recently replaced emails, and push); best effort, acceptance is
+   * not delivery. `cancel` {token, before}: the cancel link goes only to emails verified before `before`. */
+  async reissueNotice(account,type,extra={},cancel=null,at=this.clock()){
+    const notified={email:false,push:false};
+    // R2: after a file-proof (passkey) reissue the cancel link goes only to the current email; replaced ones get the notice.
+    for(const recipient of this.reissueRecipients(account,at))try{if(typeof this.mailer?.sendSecurityAlert==='function'){await this.mailer.sendSecurityAlert({email:recipient.email,type,owner:account.id,...extra,...cancel&&recipient.verifiedAt<cancel.before&&(recipient.current||!cancel.currentOnly)?{cancelToken:cancel.token}:{}});notified.email=true;}}catch{}
+    try{if(typeof this.accountChannels?.notify==='function')notified.push=(await this.accountChannels.notify(account.id,type))?.accepted>0;}catch{}
+    return notified;
   }
   /** Who may reissue (recovery-identity spec "Active-account reissue"): a step-up within 5 minutes, made with a passkey
    * or password enrolled at least 7 days earlier (P18), or any fresh step-up while a forced path is armed (an elevated
@@ -378,12 +502,15 @@ export class IdentityService {
     const now=this.clock();
     if(!Number.isSafeInteger(session.stepUpAt)||session.stepUpAt>now||session.stepUpAt+300000<=now)fail('reauthentication_required','Confirm your password or passkey to replace your recovery file.');
     const aged=at=>nonNegative(at)&&at<=now&&now-at>=RECOVERY_CREDENTIAL_AGE_MS,used=session.stepUpCredential;
+    // Wargame 2026-10-23 #1(a): an account with a passkey reissues only after a passkey step-up. A password alone (the
+    // credential most often stolen) never replaces the recovery file of an account that has a passkey.
+    if(account.credentials.length&&used?.kind!=='passkey')fail('reauthentication_required','Confirm with one of your passkeys to replace your recovery file.');
     const enrolled=used?.kind==='passkey'?account.credentials.find(c=>c.id===used.id)?.createdAt:used?.kind==='password'&&account.passwordHash?account.passwordSetAt:undefined;
     // A forced marker waives the age only for a credential enrolled no later than the marker was armed, so a
     // credential added afterwards (perhaps by whoever took over the session) still waits 7 days (P18).
     const marker=reissueMarker(account);if(marker&&nonNegative(enrolled)&&enrolled<=marker.at)return {forced:marker.reason,credential:used};
     if(aged(enrolled))return {forced:null,credential:used};
-    if(account.credentials.some(c=>aged(c.createdAt))||account.passwordHash&&aged(account.passwordSetAt))fail('reauthentication_required','Confirm with a passkey or password you have had for at least 7 days.');
+    if(account.credentials.length?account.credentials.some(c=>aged(c.createdAt)):account.passwordHash&&aged(account.passwordSetAt))fail('reauthentication_required',account.credentials.length?'Confirm with a passkey you have had for at least 7 days.':'Confirm with a password you have had for at least 7 days.');
     fail('credential_too_new','Replacing your recovery file needs a passkey or password you have had for at least 7 days.',409);
   }
   /** Active-account reissue, phase 1 (recovery-identity spec "Active-account reissue"; identity portability P14, P15,
@@ -396,6 +523,8 @@ export class IdentityService {
     if(!input||typeof input!=='object'||Array.isArray(input)||Object.keys(input).some(name=>name!=='acknowledged'))fail('invalid_request','Unsupported recovery request.',400);
     if(input.acknowledged!==true)fail('confirmation_required','Confirm that your current recovery file will stop working.',400);
     if(typeof this.identityBackup?.reissue!=='function'||typeof this.identityBackup?.reissueCommit!=='function')fail('recovery_unavailable','Recovery files cannot be replaced right now.',503);
+    // One cooling-off window at a time: a second reissue would push the trusted previous file out of the window.
+    const open=pendingReissue(account,this.clock());if(open)throw Object.assign(new IdentityFault('recovery_reissue_pending','A recovery file replacement is still in its 7-day waiting period. Cancel it first, or wait until it ends.'),{status:409,usableAt:open.until});
     const authority=this.reissueAuthority(account,session);
     if(!await this.rateLimiter.check({operation:'recovery-reissue',remoteIP:context.remoteIP,handle:account.handle}))fail('rate_limited','Please wait before trying again.');
     const sessionId=await this.sessionID(session),marker=reissueMarker(account),staged=stagedReissue(account.recoveryStaged);
@@ -405,15 +534,19 @@ export class IdentityService {
     const rotation=bound.length?{rotateIf:bound}:marker?.reason==='transfer-in'?null:{always:true};
     const keep=account.recoveryHash&&typeof account.recoveryKeyKid==='string'?[account.recoveryKeyKid]:[];
     const recoveryToken=`${account.id}.${this.crypto.random()}`;
-    const issued=await this.identityBackup.reissue(account,recoveryToken,{rotation,keep,actor:{credentialId:session.credentialId??null,sessionId}});
+    // P17 compares the credential that confirmed the step-up, not the one the session signed in with.
+    const issued=await this.identityBackup.reissue(account,recoveryToken,{rotation,keep,actor:{credentialId:session.credentialId??null,stepUpCredentialId:stepUpCredentialId(session),sessionId}});
     const backup=issued?.backup,outcome=issued?.rotation;if(!backup?.keychain?.signing?.kid)fail('recovery_unavailable','Recovery files cannot be replaced right now.',503);
     // Review 2026-10-23 item 3 (provisional): a reissue that had to rotate but could not (keys.mjs `key_history_full`, e.g. a
     // moved identity whose published document has no headroom) never stages a file holding the same signing key.
     if(rotation&&outcome?.skipped)fail('rotation_unavailable','Your identity key cannot be replaced right now, so a new recovery file would not protect you. Your current file keeps working.',409);
     const now=this.clock();
-    account.recoveryStaged={hash:await this.crypto.hash('recovery',recoveryToken),kid:backup.keychain.signing.kid,encryptionKid:backup.keychain.encryption.kid,sessionId,preparedAt:now,expiresAt:now+RECOVERY_REISSUE_TTL_MS,base:account.recoveryHash||null,credential:authority.credential,...authority.forced?{forced:authority.forced}:{}};
+    account.recoveryStaged={hash:await this.crypto.hash('recovery',recoveryToken),kid:backup.keychain.signing.kid,encryptionKid:backup.keychain.encryption.kid,sessionId,preparedAt:now,expiresAt:now+RECOVERY_REISSUE_TTL_MS,base:account.recoveryHash||null,credential:authority.credential,fileLocked:this.fileProofReissue(account,authority.credential,now),...authority.forced?{forced:authority.forced}:{}};
     if(outcome?.rotated)this.audit(account,'recovery-key-rotated');else if(outcome?.skipped)this.audit(account,'recovery-key-rotation-skipped');
+    if(account.recoveryPrevious&&!pendingReissue(account,now))delete account.recoveryPrevious;
     this.audit(account,'recovery-reissue-prepared');await this.save(account,revision);
+    // Wargame #1(c): every channel hears about the reissue when it begins, as well as when it commits.
+    await this.reissueNotice(account,'recovery-reissue-started');
     return {fileName:`3sln-recovery-${account.id}.json`,content:JSON.stringify(backup),recoveryToken,expiresAt:account.recoveryStaged.expiresAt,transferPending:issued.transferPending===true,forced:authority.forced};
   }
   /** Active-account reissue, phase 2: after the browser encrypted, saved and test-unlocked the staged file. The account
@@ -431,19 +564,108 @@ export class IdentityService {
       // The credential that authorized phase 1 must still exist (removing it revokes its sessions, but a password can be reset by recovery only).
       const used=staged.credential;if(used?.kind==='passkey'?!a.credentials.some(c=>c.id===used.id):used?.kind==='password'?!a.passwordHash:true)fail('recovery_reissue_expired','Start replacing your recovery file again.',409);return staged;};
     const first=check(account);
-    const gate=await this.identityBackup.reissueCommit(account.id,{actor:{credentialId:session.credentialId??null,sessionId},kids:{signing:first.kid,encryption:first.encryptionKid}});
+    const gate=await this.identityBackup.reissueCommit(account.id,{actor:{credentialId:session.credentialId??null,stepUpCredentialId:stepUpCredentialId(session),sessionId},kids:{signing:first.kid,encryption:first.encryptionKid}});
     for(let attempt=0;attempt<4;attempt++){
       if(attempt)({account,session}=await this.authorized(context,true));
       const staged=check(account),revision=account.revision,now=this.clock();
+      if(pendingReissue(account,now))fail('recovery_reissue_pending','A recovery file replacement is still in its 7-day waiting period.',409);
+      // Wargame 2026-10-23 #1(b)-(d), provisional: the staged file becomes current but cannot start a recovery until the
+      // window ends; the previous credential is kept, able only to cancel this reissue, and becomes current again if
+      // the reissue is cancelled. The cancel link goes only to an email verified before the reissue began.
+      const preparedAt=Number.isSafeInteger(staged.preparedAt)?staged.preparedAt:now,fileLocked=staged.fileLocked===true&&this.fileProofReissue(account,staged.credential,preparedAt),emailCancel=this.reissueRecipients(account,preparedAt).some(recipient=>recipient.verifiedAt<preparedAt&&(recipient.current||!fileLocked)),cancelToken=emailCancel?`${account.id}.${this.crypto.random()}`:null;
+      account.recoveryPrevious={hash:account.recoveryHash||null,issuedAt:nonNegative(account.recoveryIssuedAt)?account.recoveryIssuedAt:null,kid:typeof account.recoveryKeyKid==='string'?account.recoveryKeyKid:null,version:account.recoveryBackupVersion===2?2:account.recoveryHash?1:null,marker:reissueMarker(account),reissuedAt:now,preparedAt:Number.isSafeInteger(staged.preparedAt)?staged.preparedAt:now,until:now+RECOVERY_REISSUE_WINDOW_MS,newKid:staged.kid,cancelHash:cancelToken?await this.crypto.hash('reissue-cancel',cancelToken):null,credential:staged.credential??null,fileLocked,stagedSessionId:staged.sessionId,confirmedSessionId:sessionId};
       account.recoveryHash=staged.hash;account.recoveryIssuedAt=now;account.recoveryKeyKid=staged.kid;account.recoveryBackupVersion=2;delete account.recoveryStaged;delete account.recoveryReissue;
       this.audit(account,'recovery-file-reissued');this.securityChanged(account);account.revision=revision+1;
       if(!await this.repository.compareAndSwap(account.id,revision,account))continue;
-      const notified={email:false,push:false};
-      try{if(typeof account.verifiedEmail==='string'&&nonNegative(account.emailVerifiedAt)&&typeof this.mailer?.sendSecurityAlert==='function'){await this.mailer.sendSecurityAlert({email:account.verifiedEmail,type:'recovery-reissued',owner:account.id});notified.email=true;}}catch{}
-      try{if(typeof this.accountChannels?.notify==='function')notified.push=(await this.accountChannels.notify(account.id,'recovery-reissued'))?.accepted>0;}catch{}
-      return {reissued:true,issuedAt:now,transferCancelled:gate?.transferCancelled===true,notified,recovery:this.recoveryView(account),account:await this.projectAccount(account)};
+      const notified=await this.reissueNotice(account,'recovery-reissued',{usableAt:account.recoveryPrevious.until},cancelToken?{token:cancelToken,before:preparedAt,currentOnly:fileLocked}:null,preparedAt);
+      return {reissued:true,issuedAt:now,usableAt:account.recoveryPrevious.until,transferCancelled:gate?.transferCancelled===true,notified,recovery:this.recoveryView(account,session),account:await this.projectAccount(account)};
     }
     fail('conflict','The account changed; start this step again.');
+  }
+  /** Cancels a committed reissue during its cooling-off window (wargame 2026-10-23 #1(c), provisional). `how`: 'session'
+   * (a session created before the reissue began), 'email' (the cancel link sent to an email verified before it began)
+   * or 'file' (the previous recovery file). The account single writer first rotates the signing key away from the
+   * voided file and keeps the restored file's key bound (P15), then one identity CAS restores the previous credential
+   * (and any forced marker it replaced), raises `federationGeneration` so no grant from before or during the window
+   * survives, and bumps `security` (which also re-arms the 7-day transfer look-back). Notices go to every channel. */
+  async cancelReissue(id,how,matches){
+    let account=await this.repository.get(id);const first=pendingReissue(account,this.clock());
+    if(!account||account.status!=='active'||!first||!await matches(account,first))fail('recovery_reissue_not_pending','There is no recovery file replacement to cancel.',409);
+    let rotation=null;
+    if(typeof this.identityBackup?.reissueCancel==='function')rotation=(await this.identityBackup.reissueCancel(account.id,{voided:first.newKid,restored:typeof first.kid==='string'?first.kid:null}))?.rotation??null;
+    for(let attempt=0;attempt<4;attempt++){
+      if(attempt)account=await this.repository.get(id);
+      const previous=pendingReissue(account,this.clock());
+      if(!account||account.status!=='active'||!previous||previous.reissuedAt!==first.reissuedAt)fail('recovery_reissue_not_pending','There is no recovery file replacement to cancel.',409);
+      const revision=account.revision;
+      if(typeof previous.hash==='string'&&previous.hash){account.recoveryHash=previous.hash;if(nonNegative(previous.issuedAt))account.recoveryIssuedAt=previous.issuedAt;else delete account.recoveryIssuedAt;if(typeof previous.kid==='string')account.recoveryKeyKid=previous.kid;else delete account.recoveryKeyKid;if(previous.version===2)account.recoveryBackupVersion=2;else delete account.recoveryBackupVersion;}
+      else{account.recoveryHash=null;delete account.recoveryIssuedAt;delete account.recoveryKeyKid;}
+      if(previous.marker&&RECOVERY_REISSUE_REASONS.includes(previous.marker.reason))account.recoveryReissue=previous.marker;
+      delete account.recoveryPrevious;delete account.recoveryStaged;
+      // Sessions created at or after the begin, and the sessions that staged and confirmed the reissue (perhaps the
+      // minter's, created earlier), end with it (review 2026-10-23 item 3 and follow-up).
+      const ended=new Set([previous.stagedSessionId,previous.confirmedSessionId].filter(id=>typeof id==='string'));
+      await this.pruneSessions(account,s=>Number.isSafeInteger(s.createdAt)&&s.createdAt>=previous.preparedAt||ended.has(s.id));
+      account.pendingSever={reason:'recovery',at:this.clock()};
+      account.federationGeneration=(nonNegative(account.federationGeneration)?account.federationGeneration:0)+1;
+      if(rotation?.rotated)this.audit(account,'recovery-key-rotated');else if(rotation?.skipped)this.audit(account,'recovery-key-rotation-skipped');
+      this.audit(account,'recovery-reissue-cancelled');this.securityChanged(account);account.revision=revision+1;
+      if(!await this.repository.compareAndSwap(account.id,revision,account))continue;
+      const notified=await this.reissueNotice(account,'recovery-reissue-cancelled');
+      await this.flushSever(account.id);
+      return {cancelled:true,restored:Boolean(account.recoveryHash),notified};
+    }
+    fail('conflict','The account changed; try again.');
+  }
+  /** Runs the durable connection-severing row `account.pendingSever` (written in the recovery-start or reissue-cancel CAS)
+   * and clears it once the port succeeded. A failure leaves the row, so the next attempt (recovery activation, the
+   * owner view, a later cancel) retries. Without a port configured the row is cleared (nothing to sever). */
+  async flushSever(id){
+    for(let attempt=0;attempt<4;attempt++){
+      const account=await this.repository.get(id);if(!account?.pendingSever)return true;const ran=account.pendingSever.at;
+      if(typeof this.severConnections==='function')try{await this.severConnections(id,{reason:account.pendingSever.reason??'recovery'});}catch{return false;}
+      // Clear only the row that was run; a newer row (a later recovery or cancel) waits for its own run.
+      const current=await this.repository.get(id);if(!current?.pendingSever)return true;if(current.pendingSever.at!==ran)continue;const revision=current.revision;delete current.pendingSever;current.revision=revision+1;
+      if(await this.repository.compareAndSwap(id,revision,current))return true;
+    }
+    return false;
+  }
+  /** Cancel from a signed-in session that existed before the reissue began (any of the owner's earlier devices). */
+  async reissueRecoveryCancel(input,context){
+    const {account,session}=await this.authorized(context,true);
+    if(!input||typeof input!=='object'||Array.isArray(input)||Object.keys(input).some(name=>name!=='confirmed')||input.confirmed!==true)fail('confirmation_required','Confirm that you want to cancel the recovery file replacement.',400);
+    if(!await this.rateLimiter.check({operation:'recovery-reissue-cancel',remoteIP:context.remoteIP,region:context.region,handle:account.id}))fail('rate_limited','Please wait before trying again.');
+    const hash=session.hash;
+    const result=await this.cancelReissue(account.id,'session',async(current,previous)=>{const live=current.sessions.find(s=>secureEqual(s.hash,hash)&&s.expiresAt>this.clock());if(!live)fail('unauthorized','Sign in to continue.');if(!(Number.isSafeInteger(live.createdAt)&&live.createdAt<previous.preparedAt))throw Object.assign(new IdentityFault('reissue_cancel_not_allowed','Cancel from a device that was signed in before the replacement started, from the link in the email notice, or with your previous recovery file.'),{status:403});return true;});
+    return {...result,account:await this.projectAccount(await this.repository.get(account.id))};
+  }
+  /** Cancel with the link mailed to an email verified before the reissue began. Mailbox proof only cancels; it never
+   * signs in. GET of the page changes nothing; this is the explicit POST. */
+  async reissueRecoveryCancelEmail(input,context){
+    this.origin(context);
+    if(!input||typeof input!=='object'||Array.isArray(input)||Object.keys(input).some(name=>!['token','confirmed'].includes(name))||input.confirmed!==true)fail('confirmation_required','Confirm that you want to cancel the recovery file replacement.',400);
+    if(!await this.rateLimiter.check({operation:'recovery-reissue-cancel',remoteIP:context.remoteIP,region:context.region}))fail('rate_limited','Please wait before trying again.');
+    const [id]=tokenParts(input.token),hash=await this.crypto.hash('reissue-cancel',input.token);
+    const result=await this.cancelReissue(id,'email',async(current,previous)=>typeof previous.cancelHash==='string'&&secureEqual(previous.cancelHash,hash));
+    return {cancelled:result.cancelled,restored:result.restored};
+  }
+  /** Cancel with the previous recovery file: during the window that is the only thing it can do (wargame #1(d)). The
+   * proof is a 256-bit token plus the provider-signed file, so no CAPTCHA is asked (the one the owner solved for the
+   * refused recovery attempt is already spent); the network windows still apply. */
+  async reissueRecoveryCancelFile(input,context){
+    this.origin(context);
+    if(!input||typeof input!=='object'||Array.isArray(input)||Object.keys(input).some(name=>!['recoveryToken','identityBackup','turnstileToken'].includes(name)))fail('invalid_request','Unsupported recovery request.',400);
+    if(!await this.rateLimiter.check({phase:'attempt',operation:'recovery-reissue-cancel',remoteIP:context.remoteIP,region:context.region}))fail('rate_limited','Please wait before trying again.');
+    const [id]=tokenParts(input.recoveryToken),proof=await this.crypto.hash('recovery',input.recoveryToken);
+    const result=await this.cancelReissue(id,'file',async(current,previous)=>{
+      if(typeof previous.hash!=='string'||!secureEqual(previous.hash,proof))return false;
+      if(previous.version===2){if(!this.identityBackup||!input.identityBackup)return false;try{await this.identityBackup.verify(input.identityBackup,current,input.recoveryToken,typeof previous.kid==='string'?{expectedKid:previous.kid}:{});}catch{return false;}}
+      // Coordinator decision 2026-10-23 (provisional): a passkey-authorized reissue may be retiring a leaked file, so that
+      // file cannot undo it; only earlier sessions and the pre-reissue email can. A password-authorized one (no passkey
+      // on the account) stays cancellable by the file, or a password thief could lock a password-only owner out.
+      if(previous.fileLocked===true)throw Object.assign(new IdentityFault('reissue_cancel_not_allowed','This replacement was confirmed with a passkey, so your previous recovery file cannot cancel it. Cancel it from a device that was signed in before it started, or from the link in the email notice.'),{status:403});
+      return true;});
+    return {cancelled:result.cancelled,restored:result.restored};
   }
   async claimHandle(input,context){
     const {account}=await this.recent(context);
@@ -486,48 +708,65 @@ export class IdentityService {
     account.status = 'active'; account.pendingHash = null; account.pendingExpiresAt = null; account.challenges = [];delete account.setupBindingHash;delete account.setupEmailChallenge;delete account.setupPushChallenge;delete account.setupEmailSends;delete account.setupEmailSentAt;delete account.setupPushSends;delete account.setupPushSentAt;delete account.setupEmailWindowAt;delete account.setupPushWindowAt;
     delete account.recoveryResumeHash; delete account.recoveryResumeBackupVersion; delete account.recoveryResumeKeyKid;
     this.audit(account, 'account-activated'); const result = await this.session(account,{source,activationCredentialAt});if(activationDeadline<=this.clock())fail('unauthorized','This setup session expired.');
-    await this.save(account, revision); return result;
+    await this.save(account, revision); if (account.pendingSever) await this.flushSever(account.id); return result;
   }
   async resumeSetupCredential(account,context,revision=account.revision){const pendingToken=await this.newPending(account,context);account.pendingCredentialAt=this.clock();account.challenges=[];this.audit(account,'setup-credential-resumed');await this.save(account,revision);return {pendingToken,account:await this.projectAccount(account),readyForRecovery:Boolean(account.passwordHash||account.credentials.length),credentialRequired:false,resumed:true,signupPlan:account.admission?.plan??'free',paymentRequired:account.admission?.kind==='paid'&&account.admission.initialPaymentRequired!==false,setup:this.setupProjection(account)};}
   async loginPassword(input, context) {
     this.origin(context);input={...input,handle:handle(input.handle)};await this.guard('login', input, context); password(input.password);
+    // Wargame 2026-10-23 #3: the per-handle window is only consulted here (after Turnstile, before the KDF) and is
+    // charged below only by a completed check that failed, so neither CAPTCHA-less traffic nor the owner's successful
+    // sign-ins consume it.
+    const budget=phase=>this.rateLimiter.check({phase,operation:'login',remoteIP:context.remoteIP,region:context.region,handle:input.handle});
+    if(!await budget('credential'))fail('rate_limited','Please wait before trying again.');
     const account = await this.repository.findByHandle(input.handle);
     // The dummy hash performs equivalent KDF work for unknown accounts.
     this.dummyPasswordHash ??= this.passwordHasher.dummyHash || this.passwordHasher.hash(this.crypto.random());
     const dummyHash = await this.dummyPasswordHash;
     const hash = account?.passwordHash || dummyHash;
     const verified = await this.passwordHasher.verify(input.password, hash);
+    if(!verified){try{await budget('failure');}catch{}fail('unauthorized','Authentication failed.');}
     if (['suspended','moved'].includes(account?.status) && account.passwordHash && verified && await this.closureWindow(account)) return this.closureSession(account, account.revision, { label: input.label });
     if (!account || !['active',...(this.config.requireReachability===true||account?.systemIdentity||account?.onboardingIdentity)?['pending','recovering']:[]].includes(account.status) || !account.passwordHash || !verified) fail('unauthorized', 'Authentication failed.');
     if(account.status!=='active')return this.resumeSetupCredential(account,context);
     const revision = account.revision; const result = await this.session(account, { label: input.label }); await this.save(account, revision); return result;
   }
+  /** Passkey sign-in, phase 1 (wargame 2026-10-23 #3, #9 and challenge eviction). The challenge is not stored: the
+   * token is `pl1.<payload>.<mac>`, a keyed MAC over {handle, challenge, nonce, expiry}. Begin therefore reads no
+   * account and writes nothing, so it cannot reveal whether or in what state a handle exists, cannot evict another
+   * caller's challenge and never bumps the account revision. It passes only the per-network windows and Turnstile;
+   * the per-handle window is not charged. Finish verifies the MAC, then the assertion, and records the nonce as used
+   * in the session's own write (single use). */
   async beginPasskeyLogin(input, context) {
     this.origin(context);input={...input,handle:handle(input.handle)};await this.guard('login', input, context);
-    const account = await this.repository.findByHandle(input.handle);
     const authenticationOptions = await this.webauthn.authenticationOptions({ config: this.config });
-    const challengeToken = `${account?.id || this.crypto.id()}.${this.crypto.random()}`;
-    if (account?.status === 'active'||(this.config.requireReachability===true||account?.systemIdentity||account?.onboardingIdentity)&&['pending','recovering'].includes(account?.status)||await this.closureWindow(account)) {
-      const revision = account.revision;
-      account.challenges = [...account.challenges.filter(c => c.expiresAt > this.clock() && c.purpose !== 'register').slice(-4),
-        { purpose: 'login', value: authenticationOptions.challenge, hash: await this.crypto.hash('challenge', challengeToken), expiresAt: this.clock() + this.config.challengeTtlMs }];
-      await this.save(account, revision);
-    }
-    return { authenticationOptions, challengeToken };
+    if(typeof authenticationOptions?.challenge!=='string'||authenticationOptions.challenge.length>256)fail('unavailable','Passkey sign-in is unavailable.',503);
+    const payload=encode(new TextEncoder().encode(JSON.stringify({v:1,h:input.handle,c:authenticationOptions.challenge,n:this.crypto.random(16),e:this.clock()+this.config.challengeTtlMs})));
+    return { authenticationOptions, challengeToken: `pl1.${payload}.${await this.mac('passkey-login',payload)}` };
+  }
+  /** The verified claim of a passkey sign-in token, or `unauthorized`. */
+  async loginClaim(token){
+    const match=typeof token==='string'?LOGIN_TOKEN.exec(token):null;if(!match||!secureEqual(match[2],await this.mac('passkey-login',match[1])))fail('unauthorized','Authentication failed.');
+    let claim;try{claim=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(decode(match[1])));}catch{fail('unauthorized','Authentication failed.');}
+    if(claim?.v!==1||typeof claim.h!=='string'||typeof claim.c!=='string'||typeof claim.n!=='string'||!Number.isSafeInteger(claim.e)||claim.e<=this.clock())fail('unauthorized','Authentication failed.');
+    return claim;
   }
   async finishPasskeyLogin(input, context) {
     this.origin(context);
     if (!await this.rateLimiter.check({ operation: 'assertion', remoteIP: context.remoteIP })) fail('rate_limited');
-    const [id] = tokenParts(input.challengeToken); const account = await this.repository.get(id);
-    const hash = await this.crypto.hash('challenge', input.challengeToken);
-    const challenge = account?.challenges.find(c => c.purpose === 'login' && secureEqual(c.hash, hash) && c.expiresAt > this.clock());
+    const claim = await this.loginClaim(input.challengeToken); const account = await this.repository.findByHandle(claim.h);
+    const nonce = await this.crypto.hash('passkey-login-nonce', claim.n), now = this.clock();
+    const replayed = (account?.loginNonces ?? []).some(entry => entry?.expiresAt > now && secureEqual(entry.hash, nonce));
     const credential = account?.credentials.find(c => c.id === input.response?.id);
     const closed = ['suspended','moved'].includes(account?.status) && Boolean(await this.closureWindow(account));
-    if (!account || !(closed||['active',...(this.config.requireReachability===true||account?.systemIdentity||account?.onboardingIdentity)?['pending','recovering']:[]].includes(account.status)) || !challenge || !credential) fail('unauthorized', 'Authentication failed.');
+    if (!account || !(closed||['active',...(this.config.requireReachability===true||account?.systemIdentity||account?.onboardingIdentity)?['pending','recovering']:[]].includes(account.status)) || replayed || !credential) fail('unauthorized', 'Authentication failed.');
     const revision = account.revision; let verified;
-    try { verified = await this.webauthn.verifyAuthentication({ response: input.response, challenge: challenge.value, credential, account, config: this.config }); } catch { fail('unauthorized', 'Authentication failed.'); }
+    try { verified = await this.webauthn.verifyAuthentication({ response: input.response, challenge: claim.c, credential, account, config: this.config }); } catch { fail('unauthorized', 'Authentication failed.'); }
     credential.counter = verified.counter; credential.backedUp = verified.backedUp;
-    account.challenges = account.challenges.filter(c => c !== challenge);
+    // Only verified assertions add an entry, so this list cannot be filled without the passkey.
+    // V2 audit: never evict a live nonce (an evicted one could be replayed); at 32 live nonces sign-in waits.
+    const liveNonces = (account.loginNonces ?? []).filter(entry => entry?.expiresAt > now); if (liveNonces.length >= 32) fail('rate_limited', 'Please wait before trying again.');
+    account.loginNonces = [...liveNonces, { hash: nonce, expiresAt: claim.e }];
+    account.challenges = account.challenges.filter(c => c.purpose !== 'login');
     if(closed)return this.closureSession(account,revision,{ label: input.label, credentialId: credential.id });
     if(account.status!=='active')return this.resumeSetupCredential(account,context,revision);
     const result = await this.session(account, { label: input.label, credentialId: credential.id }); await this.save(account, revision); return result;
@@ -537,6 +776,20 @@ export class IdentityService {
     const account = await this.repository.get(id);
     const proofHash = await this.crypto.hash('recovery', input.recoveryToken);
     const resumed = account?.status === 'recovering' && secureEqual(account.recoveryResumeHash, proofHash);
+    // Wargame 2026-10-23 #1(b), (d): during a reissue's cooling-off window neither file starts a recovery. The new file
+    // waits until the window ends; the previous one can only cancel the reissue. Both answers come after full file
+    // verification, so they reveal the window only to a holder of a genuine file.
+    const pending = account?.status === 'active' ? pendingReissue(account, this.clock()) : null;
+    if (pending && !resumed) {
+      const previous = typeof pending.hash === 'string' && secureEqual(pending.hash, proofHash), current = secureEqual(account.recoveryHash, proofHash);
+      if (previous || current) {
+        const version = previous ? pending.version : account.recoveryBackupVersion, kid = previous ? pending.kid : account.recoveryKeyKid;
+        if (version === 2) { if (!this.identityBackup || !input.identityBackup) fail('unauthorized', 'Provide the signed identity recovery file.'); try { await this.identityBackup.verify(input.identityBackup, account, input.recoveryToken, typeof kid === 'string' ? { expectedKid: kid } : {}); } catch { fail('unauthorized', 'Recovery failed.'); } }
+        if (previous && pending.fileLocked === true) throw Object.assign(new IdentityFault('recovery_reissue_locked', 'This recovery file was replaced recently with a passkey confirmation. It cannot recover the account or cancel the replacement. Cancel it from a device that was signed in before it started, or from the link in the email notice.'), { status: 409, usableAt: pending.until, cancellable: false });
+        if (previous) throw Object.assign(new IdentityFault('recovery_reissue_pending', 'This recovery file was replaced recently. During the 7-day waiting period you can use it only to cancel that replacement; once cancelled it works again.'), { status: 409, usableAt: pending.until, cancellable: true });
+        throw Object.assign(new IdentityFault('recovery_not_ready', 'This recovery file is new. It can start a recovery once its 7-day waiting period ends.'), { status: 409, usableAt: pending.until });
+      }
+    }
     // Organization recovery (break-glass, design §5.11) is phase B (ORG-12): until then an organization file recovers nothing.
     if (!account || !interactiveIdentity(account) || (!resumed && (!['active','pending'].includes(account.status) || !secureEqual(account.recoveryHash, proofHash)))) fail('unauthorized', 'Recovery failed.');
     if((resumed?account.recoveryResumeBackupVersion:account.recoveryBackupVersion)===2){
@@ -551,25 +804,30 @@ export class IdentityService {
       if(typeof account.recoveryKeyKid==='string')account.recoveryResumeKeyKid=account.recoveryKeyKid;else delete account.recoveryResumeKeyKid;delete account.recoveryKeyKid;
       account.status = 'recovering'; account.recoveryHash = null; account.credentials = []; account.passwordHash = null; delete account.passwordSetAt; account.sessions = []; revokeAllLineage(account, this.clock()); account.emailChallenges = [];
       // The replacement file of the recovery supersedes any staged reissue and any forced-reissue marker.
-      delete account.recoveryStaged; delete account.recoveryReissue;
+      delete account.recoveryStaged; delete account.recoveryReissue; delete account.recoveryPrevious;
+      account.pendingSever = { reason: 'recovery', at: this.clock() };
     }
     // Resumption only rotates the limited setup authority; completed replacement
     // credentials and the replacement recovery file remain intact.
     account.challenges = [];
     const pendingToken = await this.newPending(account,context); this.audit(account, resumed ? 'recovery-setup-resumed' : 'account-recovery-started'); this.securityChanged(account);
     await this.save(account, revision);
+    // OAuth app authorizations do not survive a recovery (recovery-identity spec): connections end too. The durable
+    // `pendingSever` row written in the same CAS makes a transient failure retry (flushSever).
+    if (!resumed) await this.flushSever(account.id);
     const credentialRequired = !account.passwordHash && !account.credentials.length;
     return { pendingToken, account: await this.projectAccount(account), credentialRequired, readyForRecovery: !credentialRequired, resumed };
   }
   async owner(input, context) {
     const { account, session } = await this.authorized(context);
+    if(account.pendingSever&&await this.flushSever(account.id)){const fresh=await this.repository.get(account.id);if(fresh){for(const key of Object.keys(account))if(!(key in fresh))delete account[key];Object.assign(account,fresh);}}
     if(!account.paidHandle&&this.repository.paidHandleForOwner)account.paidHandle=await this.repository.paidHandleForOwner(account.id)||undefined;
     // Throttle last-use persistence; telemetry must not cause a read to fail
     // if another authenticated mutation won the account revision race.
     if ((session.lastUsedAt || session.createdAt) + 60000 <= this.clock()) {
-      const revision = account.revision; session.lastUsedAt = this.clock();
+      const revision = account.revision; session.lastUsedAt = this.clock(); this.collectDueNotices(account);
       account.revision = revision + 1;
-      await this.repository.compareAndSwap(account.id, revision, account);
+      if (await this.repository.compareAndSwap(account.id, revision, account)) await this.flushNotices(account); else this.queuedNotices?.delete(account);
     }
     // `securityEpoch` feeds the ORG-0 actor (packages/orgs/authority.mjs); the HTTP router strips it from /api/session.
     return { account: await this.projectAccount(account), csrfToken: session.csrfToken, expiresAt: session.expiresAt,authTime:Number.isFinite(this.authAt(session))?this.authAt(session):null,securityEpoch:securityState(account).epoch,authorityEpoch:authorityEpoch(account),organizationVerification:organizationVerification(account,session),sessionContext:await this.sessionID(session),signOutImpact:await this.signOutImpact(account,session),
@@ -577,11 +835,12 @@ export class IdentityService {
       devices: await Promise.all(account.sessions.filter(s => s.expiresAt > this.clock()).map(async s => ({
         id: await this.sessionID(s), label: s.label || 'Browser session', createdAt: s.createdAt, ...s.parentSessionId?{approvedFrom:s.parentSessionId}:{},
         lastUsedAt: s === session ? this.clock() : s.lastUsedAt || s.createdAt, expiresAt: s.expiresAt, current: s === session }))),
-      audit: account.audit.slice(-20), recovery: this.recoveryView(account) };
+      audit: account.audit.slice(-20), recovery: this.recoveryView(account,session) };
   }
   async credentialBegin(input, context) {
     const { account, session } = await this.recent(context); const revision = account.revision;
     if (account.credentials.length >= 5) fail('credential_limit', 'You can register up to five passkeys.');
+    if (!await this.rateLimiter.check({ operation: 'credential-begin', remoteIP: context.remoteIP, region: context.region, handle: account.id })) fail('rate_limited', 'Please wait before trying again.');
     const registrationOptions = await this.webauthn.registrationOptions({ account, config: this.config });
     const challengeId = this.crypto.id();
     account.challenges = [...account.challenges.filter(c => c.expiresAt > this.clock() && c.purpose !== 'credential').slice(-4), {
@@ -598,7 +857,7 @@ export class IdentityService {
     if (!credential?.id || !credential.publicKey || account.credentials.length >= 5 || account.credentials.some(c => c.id === credential.id)) fail('invalid_passkey');
     account.credentials.push({ ...credential, label: challenge.label, createdAt: this.clock() });
     account.challenges = account.challenges.filter(c => c !== challenge); this.audit(account, 'passkey-added'); this.securityChanged(account);
-    await this.save(account, revision); return { credentials: publicCredentials(account) };
+    this.queueNotice(account, 'passkey-added', await this.sessionID(session)); await this.save(account, revision); return { credentials: publicCredentials(account) };
   }
   async renamePasskey(input, context) {
     const { account } = await this.recent(context); const revision = account.revision;
@@ -614,6 +873,7 @@ export class IdentityService {
     account.credentials = account.credentials.filter(c => c.id !== input.credentialId);
     await this.pruneSessions(account,s=>s.credentialId===input.credentialId);
     account.challenges = account.challenges.filter(c => c.purpose !== 'credential'); this.audit(account, 'passkey-removed'); this.securityChanged(account);
+    this.authorityEvent(account, 'passkey-removed'); this.queueNotice(account, 'passkey-removed', await this.sessionID(session));
     await this.save(account, revision); return { removed: true, currentSessionRevoked: !account.sessions.includes(session), credentials: publicCredentials(account) };
   }
   async renameSession(input, context) {
@@ -626,12 +886,12 @@ export class IdentityService {
     const { account, session } = await this.recent(context); const revision = account.revision;
     const target = (await Promise.all(account.sessions.map(async s => ({ session: s, id: await this.sessionID(s) })))).find(s => s.id === input.sessionId)?.session;
     if (!target) fail('not_found', 'Device session not found.');
-    await this.pruneSessions(account,s=>s===target); this.audit(account, 'device-session-revoked');
+    const other = target !== session; await this.pruneSessions(account,s=>s===target); this.audit(account, 'device-session-revoked'); if (other) { this.authorityEvent(account, 'sessions-revoked'); this.queueNotice(account, 'sessions-revoked', await this.sessionID(session)); }
     await this.save(account, revision); return { revoked: true, currentSessionRevoked: !account.sessions.includes(session) };
   }
   async revokeOtherSessions(input, context) {
     const { account, session } = await this.recent(context); const revision = account.revision;
-    const keep=new Set([await this.sessionID(session)]);let parent=session.parentSessionId;while(parent&&!keep.has(parent)){keep.add(parent);parent=account.sessions.find(s=>s.id===parent)?.parentSessionId;}const before=account.sessions.filter(s=>s.expiresAt>this.clock()).length;const ids=new Map(await Promise.all(account.sessions.map(async s=>[s,await this.sessionID(s)])));await this.pruneSessions(account,s=>!keep.has(ids.get(s)));const count=before-account.sessions.filter(s=>s.expiresAt>this.clock()).length; this.audit(account, 'other-device-sessions-revoked');
+    const keep=new Set([await this.sessionID(session)]);let parent=session.parentSessionId;while(parent&&!keep.has(parent)){keep.add(parent);parent=account.sessions.find(s=>s.id===parent)?.parentSessionId;}const before=account.sessions.filter(s=>s.expiresAt>this.clock()).length;const ids=new Map(await Promise.all(account.sessions.map(async s=>[s,await this.sessionID(s)])));await this.pruneSessions(account,s=>!keep.has(ids.get(s)));const count=before-account.sessions.filter(s=>s.expiresAt>this.clock()).length; this.audit(account, 'other-device-sessions-revoked'); if (count > 0) { this.authorityEvent(account, 'sessions-revoked'); this.queueNotice(account, 'sessions-revoked', await this.sessionID(session)); }
     await this.save(account, revision); return { revoked: count };
   }
   /** What ordinary sign-out of `session` also ends, for the sign-out warning (architecture §7.4). */
@@ -679,22 +939,31 @@ export class IdentityService {
     const hash = await this.crypto.hash('email', input.token);
     const challenge = account.emailChallenges?.find(c => c.purpose === 'link' && secureEqual(c.hash, hash) && secureEqual(c.sessionHash, session.hash) && c.expiresAt > this.clock());
     if (!challenge) fail('invalid_challenge', 'This email confirmation is expired or belongs to another browser session.');
-    if (account.verifiedEmail !== challenge.email) { account.emailLoginEnabled = false; this.securityChanged(account); delete account.noticeWaiver; }
+    const changed = account.verifiedEmail !== challenge.email, replaced = changed && typeof account.verifiedEmail === 'string';
+    if (changed) { this.rememberPreviousEmail(account); account.emailLoginEnabled = false; this.securityChanged(account); delete account.noticeWaiver; if (replaced) { this.authorityEvent(account, 'email-changed'); this.queueNotice(account, 'email-changed', await this.sessionID(session)); } }
     account.verifiedEmail = challenge.email; account.emailVerifiedAt = this.clock(); account.emailChallenges = [];
     this.audit(account, 'email-linked'); await this.save(account, revision); return { linked: true, account: await this.projectAccount(account) };
   }
+  /** Email sign-in, phase 1. The answer is `{sent:true}` for every address (wargame 2026-10-23 #7, #8): after Turnstile a
+   * pseudonymized mailbox window and a global window are charged whether or not an account exists; both branches do
+   * the same token work; the challenge write and the provider call run in the background on a hit, so latency does not
+   * depend on the address, and provider errors never reach the caller. */
   async emailLoginStart(input, context) {
     if (!this.mailer || typeof this.repository.findByEmail !== 'function') fail('email_unavailable', 'Email delivery is not configured.');
     await this.guard('email', input, context); const email = emailAddress(input.email);
+    if (!await this.rateLimiter.check({ phase: 'mailbox', operation: 'email-login', remoteIP: context.remoteIP, region: context.region, handle: `mailbox\0${email}` })) fail('rate_limited', 'Please wait before trying again.');
     const account = await this.repository.findByEmail(email);
-    if (account?.status === 'active' && account.emailLoginEnabled === true) {
-      const revision = account.revision; const token = `${account.id}.${this.crypto.random()}`;
-      account.emailChallenges = [...(account.emailChallenges || []).filter(c => c.expiresAt > this.clock()).slice(-3), {
-        purpose: 'login', email, emailRevision: account.emailVerifiedAt,
-        hash: await this.crypto.hash('email', token), expiresAt: this.clock() + 600000 }];
-      await this.save(account, revision);
-      await this.mailer.sendVerification({ email, token, purpose: 'login', issuer: this.config.origin });
-    }
+    const eligible = candidate => candidate?.status === 'active' && candidate.emailLoginEnabled === true && candidate.verifiedEmail === email;
+    const token = `${account?.id ?? this.crypto.id()}.${this.crypto.random()}`, hash = await this.crypto.hash('email', token), expiresAt = this.clock() + 600000;
+    if (eligible(account)) this.background(context, async () => {
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const current = attempt ? await this.repository.get(account.id) : account; if (!eligible(current)) return;
+        const revision = current.revision;
+        current.emailChallenges = [...(current.emailChallenges || []).filter(c => c.expiresAt > this.clock()).slice(-3), { purpose: 'login', email, emailRevision: current.emailVerifiedAt, hash, expiresAt }];
+        current.revision = revision + 1;
+        if (await this.repository.compareAndSwap(current.id, revision, current)) { await this.mailer.sendVerification({ email, token, purpose: 'login', issuer: this.config.origin }); return; }
+      }
+    });
     return { sent: true };
   }
   async emailLoginConfirm(input, context) {
@@ -742,7 +1011,7 @@ export class IdentityService {
     if (waived && input.waiveNotice !== true) fail('last_notice_channel', 'Email is your only notice channel. Enable notifications on a device first, or confirm that you accept in-app notices only.', 409);
     // The waiver is consent under the current terms; it is recorded only when no other channel exists.
     if (waived) { this.requireCurrentTerms(account); account.noticeWaiver = { at: this.clock(), termsVersion: this.config.termsVersion }; }
-    account.verifiedEmail = null; account.emailVerifiedAt = null; account.emailLoginEnabled = false; account.emailChallenges = [];
+    this.rememberPreviousEmail(account); this.authorityEvent(account, 'email-changed'); account.verifiedEmail = null; account.emailVerifiedAt = null; account.emailLoginEnabled = false; account.emailChallenges = [];
     this.audit(account, 'email-removed'); this.securityChanged(account);
     await this.save(account, revision);
     // Notices are best effort after commit; acceptance is not delivery.

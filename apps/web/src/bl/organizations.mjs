@@ -20,6 +20,12 @@ const put=(r,ctx,p)=>publish(r,ctx,{organizationsConsole:{...base(snapshot(r)),.
 const privateFields={organization:null,membership:null,members:[],membersNext:null,requests:[],adminRequests:[],requestsNext:null,audit:[],invitation:null,membersUnavailable:false,connections:[],connectionsUnavailable:false,preferences:[],preferencesUnavailable:false,ownership:null,offerDraft:null,inviteeDraft:null};
 const UUID=/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/,TOKEN=/^[A-Za-z0-9_.-]{1,8192}$/;
 const refused=error=>error?.status===403||error?.status===404||error?.code==='not_found';
+// A definite refusal: the server answered and did not apply the change (validation, conflict, authority, rate limit).
+// A timeout, network failure or 5xx leaves the outcome uncertain.
+const definite=error=>Number.isInteger(error?.status)&&error.status>=400&&error.status<500&&error.status!==408;
+// Organization changes whose outcome must be known before another one is sent. Reads, lookups, local actions,
+// idempotent creation (keyed by its request) and the recovery steps are never blocked by an uncertain change.
+const GUARDED=new Set(['rename','label','invite','leave','cancel-deletion','remove','grants','decide','connection','preference','revoke-invitation','offer','withdraw','object','block','renew','claim','reissue-recovery','accept-offer','decline-offer']);
 const unavailable=error=>refused(error)||error?.status===503||['feature_unavailable','preferences_unavailable','connections_unavailable'].includes(error?.code);
 /** The claims of a signed invitation token, decoded only as untrusted display and routing hints (never authority; the
  * server validates the whole signed token on accept). The organization comes from `aud` (`<issuer>/identity/<org>`). */
@@ -86,26 +92,31 @@ export class OrganizationsIntent extends OwnerFlow{
   return super.execute({...r,api},ctx);
  }
  async perform(resources,ctx,d){
-  const initial=snapshot(resources),session=initial.session.sessionContext,r={...resources,current:()=>resources.current()&&snapshot(resources).session?.sessionContext===session&&organizationsEnabled(snapshot(resources))},port=r.organizationsConsole,m=base(initial),v=d.values??{},a=d.action,org=d.org??v.org??m.context;
+  const initial=snapshot(resources),session=initial.session.sessionContext,r={...resources,current:()=>resources.current()&&snapshot(resources).session?.sessionContext===session&&organizationsEnabled(snapshot(resources))},port=r.organizationsConsole,m=base(initial),v=d.values??{},age=v.ageConfirmed===true?{ageConfirmed:initial.config?.ageRequirement?.paidMinimumAge??18}:{},a=d.action,org=d.org??v.org??m.context;
   const checked=async fn=>{if(!r.current())fail('organization_changed');const result=await fn();if(!r.current())fail('organization_changed');return result;},call=(action,input,id=org)=>checked(()=>port.call(action,input,{api:r.api,...id?{org:id}:{}}));
-  const unsaved=port.unsaved,markers=()=>unsaved?.list(m.owner)??[];
-  const reload=async()=>{const list=await call('list',undefined,null);put(r,ctx,{organizations:list.organizations??[],pending:list.pending??[],offers:list.offers??[],unsavedRecovery:markers(),stale:false,error:null});};
+  const unsaved=port.unsaved,markers=()=>unsaved?.list(m.owner)??[],tabs=port.recoveryTabs;
+  // M3: organizations whose recovery file another tab of this browser is saving right now (fresh heartbeat), so this
+  // tab neither offers nor issues a replacement that would invalidate that copy.
+  const elsewhere=()=>{try{return tabs?.active(m.owner)??[];}catch{return [];}},recoveryMarkers=()=>({unsavedRecovery:markers(),recoveryElsewhere:elsewhere()});
+  const reload=async()=>{const list=await call('list',undefined,null);put(r,ctx,{organizations:list.organizations??[],pending:list.pending??[],offers:list.offers??[],...recoveryMarkers(),stale:false,error:null});};
   // `creation` (additive on GET /api/orgs/plans): 'allowlisted' | 'checkout' | 'unavailable', for this person only.
   const plans=async()=>{try{const result=await call('plans',undefined,null);put(r,ctx,{plans:result.configured?result:{configured:false,plans:[],creation:result.creation??null}});}catch{put(r,ctx,{plans:{configured:false,plans:[],creation:null}});}};
   const leave=url=>{r.browser.navigate(organizationCheckoutURL(url));};
   // The organization recovery file (creation or reissue after an ownership change): kept only in this session's secret
   // store, encrypted in the browser with a generated passphrase, then downloaded and verified (R4-M5).
-  const keepRecovery=async(file,id)=>{unsaved?.add(m.owner,id);put(r,ctx,{unsavedRecovery:markers()});const passphrase=port.passphrase(),answers=[passphrase],questions=[{id:'organization-passphrase',type:'passphrase',prompt:'Organization recovery passphrase',hint:''}];r.browser.storeSecret('organizationRecovery:'+m.owner+':'+m.session,{file});put(r,ctx,{recovery:{fileName:file.fileName,passphrase,stage:'encrypt'},context:id,...privateFields});let encrypted;try{encrypted=await checked(()=>r.recoveryFile.encrypt(JSON.parse(file.content),questions,answers,initial.config.origin));}finally{answers.fill('');}r.browser.storeSecret('organizationRecovery:'+m.owner+':'+m.session,{encrypted:JSON.stringify(encrypted,null,2),token:file.recoveryToken});put(r,ctx,{recovery:{fileName:file.fileName,passphrase,stage:'download'}});};
+  const keepRecovery=async(file,id)=>{unsaved?.add(m.owner,id);const issue=port.id();try{tabs?.claim(m.owner,id,issue);}catch{}put(r,ctx,{...recoveryMarkers()});const passphrase=port.passphrase(),answers=[passphrase],questions=[{id:'organization-passphrase',type:'passphrase',prompt:'Organization recovery passphrase',hint:''}];r.browser.storeSecret('organizationRecovery:'+m.owner+':'+m.session,{file});put(r,ctx,{recovery:{fileName:file.fileName,passphrase,stage:'encrypt',issue},context:id,...privateFields});let encrypted;try{encrypted=await checked(()=>r.recoveryFile.encrypt(JSON.parse(file.content),questions,answers,initial.config.origin));}finally{answers.fill('');}r.browser.storeSecret('organizationRecovery:'+m.owner+':'+m.session,{encrypted:JSON.stringify(encrypted,null,2),token:file.recoveryToken});put(r,ctx,{recovery:{fileName:file.fileName,passphrase,stage:'download',issue}});};
   const creationKey='organizationCreation:'+m.owner+':'+m.session;
   const created=async result=>{
    if(result.payment?.required){put(r,ctx,{stale:false,creation:{request:result.payment.request,org:result.payment.org,name:result.payment.name??null,plan:result.payment.plan??null,checkout:result.payment.checkout?.url??null}});await plans();return;}
-   put(r,ctx,{creation:null});if(result.recoveryFile)await keepRecovery(result.recoveryFile,result.organization.id);r.browser.storeSecret(creationKey,null);await reload();await details(result.organization.id);
+   // L3: the new organization is named in the context bar at once (no "Acting for …" placeholder before the list reloads).
+   const listed=base(snapshot(r)).organizations.filter(o=>o.id!==result.organization.id);put(r,ctx,{creation:null,organizations:[...listed,{...result.organization,role:'owner-of-record',powers:['admin','owner-of-record'],available:true}]});if(result.recoveryFile)await keepRecovery(result.recoveryFile,result.organization.id);r.browser.storeSecret(creationKey,null);await reload();await details(result.organization.id);
   };
   // A context loads the person's own membership first (any member may read it); admin surfaces follow only when the
   // organization itself reports the admin power. Each admin surface fails closed on its own without hiding the rest.
   const details=async id=>{
    put(r,ctx,{...privateFields,context:id,error:null});
-   let membership;try{membership=await call('membership',undefined,id);}catch(error){if(refused(error)){put(r,ctx,{error:'not_found'});return;}throw error;}
+   // L3: an organization that does not confirm the membership leaves no "Acting for" context behind.
+   let membership;try{membership=await call('membership',undefined,id);}catch(error){if(refused(error)){put(r,ctx,{...privateFields,context:null,error:'not_found'});return;}throw error;}
    const powers=membership.powers??[],admin=powers.includes('admin'),privileged=admin||powers.includes('owner-of-record');
    const organization=privileged?await call('get',undefined,id):{...membership.organization,powers};
    put(r,ctx,{membership:{...membership.membership,powers},organization:{...organization,powers},stale:false});
@@ -121,7 +132,13 @@ export class OrganizationsIntent extends OwnerFlow{
 
    await ownership();
   };
-  const change=async(action,input)=>{if(!org)fail('organization_required');put(r,ctx,{stale:true,error:null});const result=await call(action,input);put(r,ctx,{notice:result.invitation?'invitation_created':'saved',...result.invitation?{invitation:result}:{}});try{if(action==='leave'){put(r,ctx,{...privateFields,context:null});await reload();}else await details(org);}catch{put(r,ctx,{error:'saved_stale'});}if(result.invitation)put(r,ctx,{invitation:result});return result;};
+  // H4: a change marks the view stale until the server's answer is known. A definite refusal applied nothing, so the
+  // view is refreshed from the server and the forms are rebuilt from it (formEpoch); an uncertain failure refreshes too,
+  // and only stays stale (blocking further changes, never reads) when that refresh also fails.
+  const change=async(action,input)=>{if(!org)fail('organization_required');put(r,ctx,{stale:true,error:null,notice:null});let result;
+   try{result=await call(action,input);}catch(error){if(error?.code==='organization_changed')throw error;const sure=definite(error);let fresh=false;try{await details(org);fresh=true;}catch{}
+    if(sure||fresh)put(r,ctx,{stale:false,formEpoch:(base(snapshot(r)).formEpoch??0)+1});
+    if(!sure&&fresh)fail('change_uncertain');throw error;}put(r,ctx,{notice:result.invitation?'invitation_created':'saved',...result.invitation?{invitation:result}:{}});try{if(action==='leave'){put(r,ctx,{...privateFields,context:null});await reload();}else await details(org);}catch{put(r,ctx,{error:'saved_stale'});}if(result.invitation){put(r,ctx,{invitation:result});r.browser.focus?.('#org-invitation');}return result;};
   try{
    // Returning from a Polar sandbox checkout. The redirect proves nothing: each path reloads server state, and creation
    // resumes only when the server verified the payment bound to the stored request.
@@ -134,37 +151,45 @@ export class OrganizationsIntent extends OwnerFlow{
    if(a==='entry'){if(!UUID.test(d.org??'')||typeof d.invitation!=='string'||!TOKEN.test(d.invitation))fail('invalid_request');if(m.recovery)fail('recovery_required');const hint=invitationClaims(d.invitation);if(hint?.org&&hint.org!==d.org)fail('invalid_request');const entry={org:d.org,invitation:d.invitation,...hint?.expiresAt?{expiresAt:hint.expiresAt}:{},...hint?.invitee?{invitee:hint.invitee}:{}};put(r,ctx,{...privateFields,context:null,entry,error:null});publish(r,ctx,{view:'organizations'});
     // The organization's own name and kind, from its record, for an invitation this account could accept now. Any
     // refusal is the same uniform answer, shown as "can't be used"; a transient failure just leaves the preview out.
-    let preview=null;try{const out=await call('invitation-preview',{invitation:d.invitation},d.org);preview={name:typeof out?.organization?.name==='string'?out.organization.name:null,label:out?.organization?.label??null,handle:out?.organization?.handle??null};}catch(error){if(refused(error))preview={invalid:true};}
+    let preview=null;try{const out=await call('invitation-preview',{invitation:d.invitation},d.org);preview={name:typeof out?.organization?.name==='string'?out.organization.name:null,label:out?.organization?.label??null,handle:out?.organization?.handle??null,...out?.member===true?{member:true}:{}};}catch(error){if(refused(error))preview={invalid:true};}
+    // L4: the person's own organizations, so an invitation reopened after joining says so (a failure leaves it out).
+    try{await reload();}catch{}
     if(preview&&base(snapshot(r)).entry?.invitation===d.invitation)put(r,ctx,{entry:{...base(snapshot(r)).entry,preview}});return;}
    if(a==='dismiss-entry'){port.invitation?.set(null);put(r,ctx,{entry:null,error:null});publish(r,ctx,{organizationInvitationPending:false});return;}
    // F-2: the console's own address (/console?view=organizations[&org=]): opens the view in the shell and the context
    // the address names. The address is a routing hint; the organization confirms the membership as for any selection.
-   if(a==='open'){publish(r,ctx,{view:'organizations'});await reload();await plans();if(m.recovery)return;if(d.org&&!UUID.test(d.org))fail('not_found');if(!d.org){put(r,ctx,{...privateFields,context:null,error:null});return;}await details(d.org);return;}
+   if(a==='open'){publish(r,ctx,{view:'organizations'});put(r,ctx,{notice:null});await reload();await plans();if(m.recovery)return;if(d.org&&!UUID.test(d.org))fail('not_found');if(!d.org){put(r,ctx,{...privateFields,context:null,error:null});return;}await details(d.org);return;}
    // F-1 leave guard: the in-memory recovery step is the only copy of the new file. Leaving keeps the persisted
    // "not saved" marker, so the organization shows the unsaved state and offers a fresh file afterwards.
    if(a==='guard'){if(!m.recovery)return;const p=d.pending&&typeof d.pending==='object'?d.pending:{},pending=Object.fromEntries(Object.entries(p).filter(([k,value])=>/^[A-Za-z][A-Za-z0-9]{0,40}$/.test(k)&&k!=='force'&&(['number','boolean'].includes(typeof value)||typeof value==='string'&&value.length<=512)).slice(0,16));put(r,ctx,{leaveGuard:{...pending,kind:typeof p.kind==='string'?p.kind:'navigate'}});return;}
    if(a==='guard-cancel'){put(r,ctx,{leaveGuard:null});return;}
-   if(a==='abandon-recovery'){r.browser.storeSecret('organizationRecovery:'+m.owner+':'+m.session,null);put(r,ctx,{recovery:null,leaveGuard:null,unsavedRecovery:markers()});return;}
-   if(a==='dismiss-recovery'){const id=d.org??v.org;if(!UUID.test(id??'')||v.confirm!==true)fail('review_required');unsaved?.remove(m.owner,id);put(r,ctx,{unsavedRecovery:markers(),notice:'recovery_dismissed',error:null});return;}
+   if(a==='abandon-recovery'){r.browser.storeSecret('organizationRecovery:'+m.owner+':'+m.session,null);try{if(m.recovery&&m.context)tabs?.release(m.owner,m.context,m.recovery.issue);}catch{}put(r,ctx,{recovery:null,leaveGuard:null,...recoveryMarkers()});return;}
+   if(a==='dismiss-recovery'){const id=d.org??v.org;if(!UUID.test(id??'')||v.confirm!==true)fail('review_required');unsaved?.remove(m.owner,id);put(r,ctx,{...recoveryMarkers(),notice:'recovery_dismissed',error:null});return;}
    // A fresh file for an organization whose file was not saved: the owner of record's reissue (fresh step-up), which
    // rotates the signing key first, so the lost copy stops working (packages/orgs/creation.mjs P15). The server decides.
-   if(a==='regenerate-recovery'){const id=d.org??v.org;if(m.recovery)fail('recovery_required');if(!UUID.test(id??'')||!markers().includes(id))fail('review_required');put(r,ctx,{error:null});let result;try{result=await call('recovery-file',undefined,id);}catch(error){if(refused(error))fail('recovery_reissue_unavailable');throw error;}await keepRecovery(result.recoveryFile,id);return;}
+   if(a==='regenerate-recovery'){const id=d.org??v.org;if(m.recovery)fail('recovery_required');if(!UUID.test(id??'')||!markers().includes(id))fail('review_required');if(elsewhere().includes(id)){put(r,ctx,recoveryMarkers());fail('recovery_saving_elsewhere');}put(r,ctx,{error:null,notice:null});let result;try{result=await call('recovery-file',undefined,id);}catch(error){if(refused(error))fail('recovery_reissue_unavailable');throw error;}await keepRecovery(result.recoveryFile,id);return;}
    if(a==='reload'){await reload();await plans();if(m.context)await details(m.context);return;}
-   if(a==='select'){if(m.recovery)fail('recovery_required');if(!d.org){put(r,ctx,{...privateFields,context:null,error:null});return;}await details(d.org);return;}
+   if(a==='select'){if(m.recovery)fail('recovery_required');put(r,ctx,{notice:null});if(d.closeEntry===true&&m.entry){port.invitation?.set(null);put(r,ctx,{entry:null});publish(r,ctx,{organizationInvitationPending:false});}if(!d.org){put(r,ctx,{...privateFields,context:null,error:null});return;}await details(d.org);return;}
    if(a==='encrypt-recovery'||a==='download-recovery'||a==='verify-recovery'||a==='confirm-recovery'){
     const key='organizationRecovery:'+m.owner+':'+m.session,secret=r.browser.secret(key);if(!m.recovery||!secret)fail('recovery_required');
     if(a==='encrypt-recovery'){if(!secret.file)fail('recovery_required');const answers=[m.recovery.passphrase];let encrypted;try{encrypted=await checked(()=>r.recoveryFile.encrypt(JSON.parse(secret.file.content),[{id:'organization-passphrase',type:'passphrase',prompt:'Organization recovery passphrase',hint:''}],answers,initial.config.origin));}finally{answers.fill('');}r.browser.storeSecret(key,{encrypted:JSON.stringify(encrypted,null,2),token:secret.file.recoveryToken});put(r,ctx,{recovery:{...m.recovery,stage:'download'},stale:false,error:null});return;}
-    if(a==='download-recovery'){if(!secret.encrypted)fail('recovery_required');r.browser.download(m.recovery.fileName,secret.encrypted);put(r,ctx,{recovery:{...m.recovery,stage:'verify'}});return;}
-    if(a==='verify-recovery'){if(m.recovery.stage!=='verify')fail('recovery_required');const answers=[String(v.passphrase??'')];let payload;try{payload=await checked(()=>r.recoveryFile.decrypt(secret.encrypted,answers,initial.config.origin));}finally{answers.fill('');}if(payload.recoveryToken!==secret.token)fail('recovery_mismatch');put(r,ctx,{recovery:{...m.recovery,stage:'confirm'}});return;}
-    if(m.recovery.stage!=='confirm'||v.confirm!==true)fail('review_required');r.browser.storeSecret(key,null);if(m.context)unsaved?.remove(m.owner,m.context);put(r,ctx,{recovery:null,leaveGuard:null,unsavedRecovery:markers(),notice:'recovery_saved'});if(m.context){try{await reload();await details(m.context);}catch{}}return;
+    if(a==='download-recovery'){if(!secret.encrypted)fail('recovery_required');r.browser.download(m.recovery.fileName,secret.encrypted);put(r,ctx,{recovery:{...m.recovery,stage:m.recovery.stage==='confirm'?'confirm':'verify'},error:null});return;}
+    // M2: a passphrase that does not open the file is a mismatch, not a generic failure; checking before downloading
+    // asks for the download.
+    if(a==='verify-recovery'){if(!['verify','confirm'].includes(m.recovery.stage))fail('recovery_download_first');const answers=[String(v.passphrase??'')];let payload;try{payload=await checked(()=>r.recoveryFile.decrypt(secret.encrypted,answers,initial.config.origin));}catch(error){if(error?.code==='organization_changed')throw error;fail('recovery_mismatch');}finally{answers.fill('');}if(payload?.recoveryToken!==secret.token)fail('recovery_mismatch');put(r,ctx,{recovery:{...m.recovery,stage:'confirm'},error:null});return;}
+    if(m.recovery.stage!=='confirm'||v.confirm!==true)fail('review_required');
+    // M3: another tab issued a newer file for this organization (rotating its key), so this copy no longer works.
+    let latest=null;try{latest=m.context?tabs?.latest(m.owner,m.context)??null:null;}catch{}
+    if(latest&&m.recovery.issue&&latest!==m.recovery.issue){r.browser.storeSecret(key,null);put(r,ctx,{recovery:null,leaveGuard:null,...recoveryMarkers()});fail('recovery_superseded');}
+    r.browser.storeSecret(key,null);if(m.context){unsaved?.remove(m.owner,m.context);try{tabs?.release(m.owner,m.context,m.recovery.issue);}catch{}}put(r,ctx,{recovery:null,leaveGuard:null,...recoveryMarkers(),notice:'recovery_saved',error:null});if(m.context){try{await reload();await details(m.context);}catch{}}r.browser.focus?.(base(snapshot(r)).organization?'#org-details':'#org-title');return;
    }
-   if(m.recovery)fail('recovery_required');if(m.stale&&a!=='accept')fail('reload_required');
+   if(m.recovery)fail('recovery_required');if(m.stale&&GUARDED.has(a))fail('reload_required');
    if(a==='create'){
     const prior=r.browser.secret(creationKey),input={name:String(v.name??''),label:String(v.label??'organization'),...v.plan?{plan:String(v.plan)}:{}},attempt=prior??{request:port.id(),...input};if(prior&&(prior.name!==input.name||prior.label!==input.label))fail('reload_required');r.browser.storeSecret(creationKey,attempt);put(r,ctx,{stale:true});
     await created(await call('create',attempt,null));return;
    }
    // Checkout at creation: the reservation exists unpaid; the checkout is created by this person's account.
-   if(a==='creation-checkout'){if(!m.creation?.request||!['org-team','org-business','org-scale'].includes(v.plan))fail('review_required');const result=await call('creation-checkout',{request:m.creation.request,plan:v.plan},null);leave(result.checkout.url);return;}
+   if(a==='creation-checkout'){if(!m.creation?.request||!['org-team','org-business','org-scale'].includes(v.plan))fail('review_required');const result=await call('creation-checkout',{request:m.creation.request,plan:v.plan,...age},null);leave(result.checkout.url);return;}
    if(a==='creation-recheck'){const attempt=r.browser.secret(creationKey);if(!attempt||attempt.request!==m.creation?.request)fail('reload_required');put(r,ctx,{stale:true});await created(await call('create',attempt,null));return;}
    if(a==='creation-forget'){r.browser.storeSecret(creationKey,null);put(r,ctx,{creation:null});return;}
    // Ownership offers addressed to this person (§12b.3a): accept by paying for a fresh period, or decline.
@@ -172,17 +197,19 @@ export class OrganizationsIntent extends OwnerFlow{
     const row=m.offers.find(o=>o.id===d.org),offer=row?.offer;if(!offer||!offer.decisions?.includes(a==='accept-offer'?'accept':'decline')||v.confirm!==true)fail('review_required');
     if(a==='decline-offer'){await call('transfer',{operation:'decline',transfer:offer.id},row.id);put(r,ctx,{notice:'offer_declined'});await reload();return;}
     const plan=offer.plans.find(p=>p.plan===(v.plan??offer.currentPlan??offer.plans[0]?.plan));if(!plan)fail('review_required');
-    const result=await call('transfer',{operation:'accept',transfer:offer.id,disclosure:plan.digest,confirm:true,...offer.choosePlan?{plan:plan.plan}:{}},row.id);leave(result.checkout.url);return;
+    const result=await call('transfer',{operation:'accept',transfer:offer.id,disclosure:plan.digest,confirm:true,...offer.choosePlan?{plan:plan.plan}:{},...age},row.id);leave(result.checkout.url);return;
    }
    if(a==='accept'){if(v.confirm!==true)fail('review_required');const target=invitationInput(v.invitation??m.entry?.invitation,d.org??v.org??m.entry?.org??m.context);if(!UUID.test(target.org??''))fail('invitation_unrecognized');await call('accept',{invitation:target.invitation},target.org);port.invitation?.set(null);publish(r,ctx,{organizationInvitationPending:false});put(r,ctx,{notice:'joined',entry:null,...privateFields,context:target.org});await reload();await details(target.org);return;}
    // Invitee resolution: a handle through the organization's admin-only lookup; an identity URL is used as given.
    if(a==='invitee-resolve'){if(!org)fail('organization_required');const input=inviteeInput(v.invitee);if(input.identity){put(r,ctx,{inviteeDraft:{...input.identity,handle:null,foreign:input.identity.iss!==initial.config?.origin},error:null});return;}const result=await call('invitee',{handle:input.handle});const i=result?.invitee;if(!i||typeof i.iss!=='string'||!UUID.test(i.sub??''))fail('invitee_unavailable');put(r,ctx,{inviteeDraft:{iss:i.iss,sub:i.sub,handle:typeof i.handle==='string'?i.handle:null,foreign:false},error:null});return;}
+   // M1: the admin power reaches an existing member only through an invitation bound to their account.
+   if(a==='invitee-member'){const member=m.members.find(x=>x.id===d.id),p=member?.principal;if(!p||typeof p.iss!=='string'||typeof p.sub!=='string')fail('review_required');put(r,ctx,{inviteeDraft:{iss:p.iss,sub:p.sub,handle:typeof(member.handle??p.handle)==='string'?member.handle??p.handle:null,foreign:p.iss!==initial.config?.origin},error:null});r.browser.focus?.('#org-invite');return;}
    if(a==='invitee-clear'){put(r,ctx,{inviteeDraft:null,error:null});return;}
    if(a==='copy-invitation'){const link=m.invitation?.url??m.invitation?.invitation;if(!link)fail('review_required');try{await port.copy(link);}catch{fail('copy_failed');}put(r,ctx,{notice:'copied',error:null});return;}
    if(a==='dismiss-invitation'){put(r,ctx,{invitation:null,notice:null});return;}
    // Paged admin listing: follow the server's cursors; rows are appended once each (by id).
    if(a==='more-members'){if(!org||!m.membersNext&&!m.requestsNext)return;const result=await call('members',{...m.membersNext?{after:m.membersNext}:{},...m.requestsNext?{requestsAfter:m.requestsNext}:{}});const merge=(old,add)=>[...old,...(add??[]).filter(x=>!old.some(o=>o.id===x.id))];const now=base(snapshot(r));if(now.context!==org)return;
-    put(r,ctx,{members:m.membersNext?merge(now.members,result.members):now.members,membersNext:m.membersNext&&typeof result.next==='string'?result.next:null,adminRequests:m.requestsNext?merge(now.adminRequests,result.requests):now.adminRequests,requestsNext:m.requestsNext&&typeof result.requestsNext==='string'?result.requestsNext:null});return;}
+    const first=now.members.length,members=m.membersNext?merge(now.members,result.members):now.members;put(r,ctx,{members,membersNext:m.membersNext&&typeof result.next==='string'?result.next:null,adminRequests:m.requestsNext?merge(now.adminRequests,result.requests):now.adminRequests,requestsNext:m.requestsNext&&typeof result.requestsNext==='string'?result.requestsNext:null});r.browser.focus?.(members.length>first?'#org-member-'+first:'#org-members-heading');return;}
    if(a==='revoke-invitation'){const id=m.invitation?.invitation;if(!id)fail('review_required');await call('invitation-revoke',{invitation:id});put(r,ctx,{invitation:null,notice:'invitation_revoked',error:null});return;}
    // Ownership and billing for the current organization; the server advertises which decisions this member may take.
    if(['offer-resolve','offer','withdraw','object','block','renew','claim','reissue-recovery'].includes(a)){
@@ -190,7 +217,7 @@ export class OrganizationsIntent extends OwnerFlow{
     if(a==='offer-resolve'){if(!decisions.includes('offer'))fail('review_required');const result=await call('transfer-recipient',{handle:String(v.handle??'').trim()});put(r,ctx,{offerDraft:{recipient:result.recipient.id,handle:result.recipient.handle},error:null});return;}
     if(a==='offer'){if(!decisions.includes('offer')||!m.offerDraft||v.confirm!==true)fail('review_required');await change('transfer',{operation:'offer',recipient:m.offerDraft.recipient,handle:m.offerDraft.handle,admin:v.admin===true,confirm:true});return;}
     if(['withdraw','object','block'].includes(a)){if(!decisions.includes(a)||!transfer||v.confirm!==true)fail('review_required');await change('transfer',{operation:a,transfer:transfer.id,...v.reason?{reason:String(v.reason)}:{}});return;}
-    if(a==='renew'||a==='claim'){if(!decisions.includes(a)||!['org-team','org-business','org-scale'].includes(v.plan)||a==='claim'&&v.confirm!==true)fail('review_required');const result=await call(a==='renew'?'billing-checkout':'claim',{plan:v.plan,...a==='claim'?{confirm:true}:{}});leave(result.checkout.url);return;}
+    if(a==='renew'||a==='claim'){if(!decisions.includes(a)||!['org-team','org-business','org-scale'].includes(v.plan)||a==='claim'&&v.confirm!==true)fail('review_required');const result=await call(a==='renew'?'billing-checkout':'claim',{plan:v.plan,...a==='claim'?{confirm:true}:{},...age});leave(result.checkout.url);return;}
     if(!decisions.includes('reissue-recovery')||v.confirm!==true)fail('review_required');const result=await call('recovery-file');await keepRecovery(result.recoveryFile,org);return;
    }
    if(a==='audit'){if(!org)fail('organization_required');const result=await call('audit');put(r,ctx,{audit:result.entries??[],error:null});return;}
@@ -220,6 +247,11 @@ export class OrganizationsIntent extends OwnerFlow{
     await change('preference',{fragment:p.fragment,values:preferenceValues(p,fields),expectedRevision:p.revision??null});return;
    }
    fail('invalid_request');
-  }catch(error){put(r,ctx,{error:error.code??'unavailable'});}
+  }catch(error){
+   // A definite refusal of creation applied nothing: it never leaves the view stale, and a refused name or kind
+   // releases the stored attempt so a corrected form can be sent.
+   if(definite(error)&&base(snapshot(r)).stale)put(r,ctx,{stale:false});
+   if(a==='create'&&definite(error)&&['invalid_name','invalid_label','invalid_plan','invalid_request'].includes(error.code))r.browser.storeSecret(creationKey,null);
+   put(r,ctx,{error:error.code??'unavailable'});}
  }
 }

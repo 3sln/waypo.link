@@ -5,10 +5,10 @@ import {UUID,canonical} from '../core/primitives.mjs';
 import {key} from '../core/records.mjs';
 import {storageState} from './storage-quota.mjs';
 import {OVER_QUOTA_EPISODE,OVER_QUOTA_NOTICE_MS,recordOverQuotaExportOffer} from './export-hooks.mjs';
-import {assertBillingConfiguration,entitlementFromState} from '../billing/catalog.mjs';
+import {assertBillingConfiguration,entitlementFromState,BILLING_PLANS} from '../billing/catalog.mjs';
 import {BILLING_TRANSITION_PREFIX} from '../billing/service.mjs';
 export const RETENTION_POLICY='D092-2026-10-23',RETENTION_LEDGER='retention/ledger-v1',RETENTION_WARNING='retention/warning-v1',CATALOG_PENDING_PREFIX='retention/catalog-pending/';
-const MINUTE=60000,HOUR=3600000,DAY=86400000,int=n=>Number.isSafeInteger(n)&&n>=0;
+const MINUTE=60000,HOUR=3600000,DAY=86400000,int=n=>Number.isSafeInteger(n)&&n>=0,FREE_BYTES=BILLING_PLANS.free.storageBytes;
 /** Review follow-up bounds (provisional, DEVLOG D092 review follow-ups). */
 export const RETENTION_BOUNDS=Object.freeze({
  observedStepMs:DAY,          // L5: one clock reading advances the persisted observation by at most this much
@@ -20,6 +20,7 @@ export const RETENTION_BOUNDS=Object.freeze({
  sustainedPaidMs:30*DAY,      // M4: continuous adequate paid entitlement that releases an anchor
  inventoryRowLimit:5000,      // L1: owner inventory rows scanned per request
  priorEpisodes:8,             // L7: replaced episodes kept as bounded evidence history
+ billingPauseMs:72*HOUR,      // B1 (wargame 2026-10-23): a billing pause lasts at most this long, then the last authoritative state applies
  history:32,
 });
 const ACTIVE=['within-quota','grace','cleanup-eligible','paused-safety'],SENT=['accepted','delivered','bounced'];
@@ -55,7 +56,7 @@ export async function retentionInventory(tx,owner,{rowLimit=RETENTION_BOUNDS.inv
  return {units:list(),truncated:false,bytesKnown:true,source:'scan'};
 }
 const inventoryOptions=r=>({rowLimit:int(r.config.retentionInventoryRowLimit)?r.config.retentionInventoryRowLimit:RETENTION_BOUNDS.inventoryRowLimit,unitBytes:r.config.retentionUnitBytes});
-function validTransition(t){return t&&int(t.revision)&&t.revision>0&&typeof t.causalEventId==='string'&&t.causalEventId.length>0&&int(t.effectiveAt)&&int(t.effectiveAt+OVER_QUOTA_NOTICE_MS)&&['lapse','downgrade','refund','catalog'].includes(t.reason)&&int(t.before?.storageBytes)&&int(t.after?.storageBytes)&&t.after.storageBytes<t.before.storageBytes&&['free','paid','plus','ultra'].includes(t.before.plan)&&['free','paid','plus','ultra'].includes(t.after.plan);}
+function validTransition(t){return t&&int(t.revision)&&t.revision>0&&typeof t.causalEventId==='string'&&t.causalEventId.length>0&&int(t.effectiveAt)&&int(t.effectiveAt+OVER_QUOTA_NOTICE_MS)&&['lapse','downgrade','refund','catalog','upgrade-unpaid'].includes(t.reason)&&int(t.before?.storageBytes)&&int(t.after?.storageBytes)&&t.after.storageBytes<t.before.storageBytes&&['free','paid','plus','ultra'].includes(t.before.plan)&&['free','paid','plus','ultra'].includes(t.after.plan);}
 function validEpisode(e,owner){return e.owner===owner&&e.policyVersion===RETENTION_POLICY&&UUID.test(e.id??'')&&int(e.revision)&&e.revision!==Number.MAX_SAFE_INTEGER&&int(e.effectiveAt)&&int(e.deadlineAt)&&e.deadlineAt>=e.effectiveAt+OVER_QUOTA_NOTICE_MS&&Array.isArray(e.noticeSchedule)&&e.noticeSchedule.length===3;}
 function offer(e,r,owner,now){if(!e.exportOffered&&exportEnabled(r,owner))recordOverQuotaExportOffer(e,{owner,now});}
 export const warningOf=e=>({v:1,episodeId:e.id,revision:e.revision,state:e.state,active:e.state!=='resolved',deadlineAt:e.deadlineAt,usageBytes:e.usageBytes,quotaBytes:e.quotaBytes,exportHref:e.exportOffered?.href??null,noticeSchedule:e.noticeSchedule,viewedAt:e.viewedAt??null,removalEnabled:false});
@@ -153,15 +154,25 @@ export class ProduceRetention extends RetentionAction {
    const flush=async()=>{await commit(tx,e,loaded);if(deferred||ledgerSemantic(ledger)!==ledgerSemantic(loadedLedger)||advanced(ledger,loadedLedger,'observedAt')||advanced(ledger,loadedLedger,'readAt'))await tx.put(RETENTION_LEDGER,ledger);};
    let usage;try{usage=await storageState(tx,owner,now,r.config);}catch(error){if(!e)throw error;pause(e,'accounting');await flush();return {paused:true,episodeId:e.id,alerts};}
    const billing=await tx.get('billing/state'),sync=await tx.get('billing/sync');
-   let billingSafe=true;try{assertBillingConfiguration(r.config);const projected=entitlementFromState(billing,now,r.config);if(billing?.owner!==owner||billing.source!=='polar'||billing.retentionAuthoritative!==true||!int(billing.billingRevision)||billing.plan!=='free'&&(projected.plan==='free'||projected.provisional)||sync?.checked===false&&sync.error&&sync.checkedAt>=billing.reconciledAt)billingSafe=false;}catch{billingSafe=false;}
-   if(!billingSafe){if(e)pause(e,'billing');await flush();return {paused:true,episodeId:e?.id,alerts};}
+   let billingSafe=true,projected,anchorBilling=billing;try{assertBillingConfiguration(r.config);projected=entitlementFromState(billing,now,r.config);if(billing?.owner!==owner||billing.source!=='polar'||billing.retentionAuthoritative!==true||!int(billing.billingRevision)||billing.plan!=='free'&&(projected.plan==='free'||projected.provisional)||sync?.checked===false&&sync.error&&sync.checkedAt>=billing.reconciledAt)billingSafe=false;}catch{billingSafe=false;}
+   // B1: remember the last authoritative entitlement; a billing pause is bounded, after which the episode proceeds on it.
+   if(billingSafe){const last={plan:projected.plan,storageBytes:projected.storageBytes,validUntil:projected.validUntil??null,billingRevision:billing.billingRevision};if(canonical(last)!==canonical(ledger.lastAuthoritative??null))ledger.lastAuthoritative=last;delete ledger.billingPausedSince;delete ledger.billingPauseBounded;}
+   else {
+    if(!int(ledger.billingPausedSince)||ledger.billingPausedSince>observed)ledger.billingPausedSince=observed;
+    const last=ledger.lastAuthoritative,bounded=observed-ledger.billingPausedSince>=RETENTION_BOUNDS.billingPauseMs&&int(last?.storageBytes)&&['free','paid','plus','ultra'].includes(last.plan);
+    if(!bounded){if(e)pause(e,'billing');await flush();return {paused:true,episodeId:e?.id,alerts};}
+    const lapsed=last.plan!=='free'&&!(int(last.validUntil)&&last.validUntil>now);
+    usage={...usage,plan:lapsed?'free':last.plan,storageBytes:lapsed?FREE_BYTES:last.storageBytes};anchorBilling={billingRevision:last.billingRevision};
+    if(!ledger.billingPauseBounded)alerts.push({kind:'over-quota-retention',action:'operator-alert',reason:'billing-pause-bound',owner,pausedSince:ledger.billingPausedSince});
+    ledger.billingPauseBounded=true;
+   }
    const rows=await tx.list({prefix:BILLING_TRANSITION_PREFIX,...ledger.cursor?{startAfter:ledger.cursor}:{},limit:32});
    const catalogPending=await tx.list({prefix:CATALOG_PENDING_PREFIX,limit:32});
    // N3/N6: whether a funded anchor may be reused is decided on a corroborated observation; a reduction arriving
    // after a long gap waits one corroborating reading (a minute) instead of reusing a cutoff on a lagging clock.
    // The deferred run leaves the anchor's fit/paid trackers untouched.
    deferred=!!ledger.anchor&&lagging&&(rows.size+catalogPending.size)>0;
-   if(!deferred)releaseAnchor(ledger,{usage,billing,now:observed,e});
+   if(!deferred)releaseAnchor(ledger,{usage,billing:anchorBilling,now:observed,e});
    for(const [path,t]of deferred?[]:[...rows,...catalogPending]){
     const fromBilling=path.startsWith(BILLING_TRANSITION_PREFIX),advance=async()=>{if(fromBilling)ledger.cursor=path;else await tx.delete(path);};
     if(!validTransition(t)){

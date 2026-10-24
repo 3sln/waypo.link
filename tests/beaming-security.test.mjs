@@ -87,6 +87,7 @@ test('public profile reads return only link-scoped fields and do not create rela
  const service=new BeamContacts({metadata:{get:async id=>rows.get(id),put:async()=>assert.fail('public GET must not create a contact')},endpoints:{inspect:async url=>{assert.equal(url,signed);inspections++;return {grant,endpoint};}}});
  assert.deepEqual(await service.publicProfile(recipient,signed),{identityURI:'https://portal.example/users/receiver',beamEnabled:false,profile:{displayName:'Chosen name'}});
  assert.equal(inspections,1);
+ // Quarantine is silent (DEVLOG 2026-10-23 wargame M2): the representation does not change.
  grant.quarantined=true;
- await assert.rejects(service.publicProfile(recipient,signed),{code:'contact_quarantined'});
+ assert.deepEqual(await service.publicProfile(recipient,signed),{identityURI:'https://portal.example/users/receiver',beamEnabled:false,profile:{displayName:'Chosen name'}});
 });

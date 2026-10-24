@@ -87,7 +87,7 @@ export async function purgeBatch(c,owner,{identity,fence,budget=64,log=()=>{},re
  if(!job.plan.every(stage=>KNOWN_STAGES.has(stage))||!job.plan.includes(job.stage))throw Object.assign(new Error('Purge job requires review'),{code:'lifecycle_unavailable'});
  const save=async()=>c.metadata.put(PURGE_KEY,job);
  const advance=async()=>{job.stage=job.plan[job.plan.indexOf(job.stage)+1];await save();};
- let work=0;const remove=async ref=>{if(!ownedBlobRef(owner,ref)){job.foreign++;return;}await c.blobs.delete(ref);job.deleted++;work++;};
+ let work=0;const remove=async ref=>{const final=job.stage==='blobs'&&job.blobsFinal===true;if(!ownedBlobRef(owner,ref)){if(!final)job.foreign++;return;}await c.blobs.delete(ref);if(final)job.rechecked=(job.rechecked??0)+1;else job.deleted++;work++;};
  for(let guard=0;guard<job.plan.length+2;guard++){
   const stage=job.stage;
   // A fresh fence before every destructive stage (§2.3).
@@ -136,9 +136,13 @@ export async function purgeBatch(c,owner,{identity,fence,budget=64,log=()=>{},re
     for(const [path,value]of rows)for(const ref of rowRefs(path,value))await remove(ref);
     if(rows.size)job.cursor=[...rows.keys()].at(-1);await save();
     if(rows.size<32){
+     // Defence in depth (wargame D1): one final pass from the beginning catches any blob-bearing row written behind
+     // the cursor by an operation admitted before the fence. The fence re-checks make that a should-never-happen.
+     // Its idempotent re-deletes are counted in `rechecked`, so the tombstone's deletedBlobs/foreign evidence is unchanged.
+     if(job.blobsFinal!==true){job.blobsFinal=true;job.cursor=null;await save();continue;}
      // Final guard (R1-H2): rows shelved after E7 are not live, so E8 never saw them. Back to E7.
      const envelope=await c.metadata.get('shelved')?await archiveEnvelope(c,owner):null;
-     if(archiveIdentity(envelope)!==job.archiveDigest){job.stage='archive';job.archiveIndex=0;await save();log({action:'purge-archive-recheck'});return {done:false,stage:'archive'};}
+     if(archiveIdentity(envelope)!==job.archiveDigest){job.stage='archive';job.archiveIndex=0;job.blobsFinal=false;await save();log({action:'purge-archive-recheck'});return {done:false,stage:'archive'};}
      await advance();break;
     }
    }

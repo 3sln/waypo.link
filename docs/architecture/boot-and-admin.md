@@ -51,6 +51,7 @@ Every failure returns the same `invalid_boot_token`.
 - **Boot** uses its own `__Host-bindle_boot` cookie (`bindle_boot` on localhost): HttpOnly, SameSite=Strict, Path=/, plus a JSON-returned CSRF token. It shares nothing with account sessions or the multi-account vault.
 - **Administrators** use their normal account session and CSRF. `IdentityService.stepUpBegin`/`stepUp` re-verifies the password or a session-bound passkey assertion and sets `session.stepUpAt`.
 - `IdentityService.privileged(context, windowMs)` requires that stamp: 5 minutes for mutations, 15 minutes for reads. Boot step-up works the same way, and boot login counts as a step-up.
+- **Administrators confirm with a passkey** (wargame fix 2026-10-23, provisional; reviewer ___ / date ___ / outcome ___). `AdminService.actor()` accepts an administrator only when the session's step-up stamp records `stepUpCredential.kind === 'passkey'` for a passkey the account still holds. The general `/api/auth/step-up` accepts a password for ordinary owner actions, so a password step-up taken there no longer unlocks the console. An administrator without a passkey cannot use the console until one is enrolled. Boot may still use its password.
 - **Explicit actor.** Every console request carries `X-Bindle-Admin-Actor: boot|admin`. The server checks only that credential. There is never an ambient fallback from one to the other, so a page holding both cookies cannot confuse them.
 
 ## Roles, capabilities and badge classes
@@ -131,13 +132,17 @@ All are POST, step-up gated, rate-limited per actor (60 mutations or 300 reads p
 - An entry is appended only inside the same store transaction as the change it describes. There is no write or delete API for audit keys, and `verifyAudit` re-walks the chain.
 - Cross-store edits (badges, suspension) commit their store writes (such as the suspension hold), the target revisions they decided on, and an `intent` entry in one transaction. The identity compare-and-swap follows, then an `applied`/`failed` entry together with any compensating writes.
 - Audit reads verify the returned page against the previous entry's hash. `{verify:true}` re-walks the whole chain. Entries are JSON-normalized before hashing.
-- Both boot and administrators can read the log. Boot step-up, login and logout are also audited. The only unaudited write is the unauthenticated boot login-challenge housekeeping.
+- Both boot and administrators can read the log. Boot step-up, login and logout are also audited. The only unaudited writes are the unauthenticated boot login-challenge rows and their sweep.
+
+**Boot passkey challenges** (wargame fix 2026-10-23, provisional; reviewer ___ / date ___ / outcome ___). `boot/login/begin` writes one row `boot-challenge/<hash of a random 256-bit challenge id>` holding the principal generation, the WebAuthn challenge, a 5-minute expiry and a hash of the caller's nonce. The HTTP adapter issues that nonce as a `__Host-bindle_boot_login` cookie (`bindle_boot_login` on localhost; HttpOnly, SameSite=Strict, Path=/, 15 minutes) when the browser has none. `boot/login` and `boot/step-up` look up only the row named by the presented challenge id and require the same nonce; the row is deleted in the commit that uses it. Another caller's begin therefore cannot evict a pending challenge, and a leaked challenge id is useless without the cookie. Each begin sweeps up to 20 expired or previous-generation rows. Begin is limited (`boot-login-begin`): 10/min and 50/h per IP pseudonym, and a high principal backstop of 600 per 5 minutes (review 2026-10-23, provisional; raised from 60, which about a dozen addresses could exhaust). The per-address windows do the work; holding off the operator now takes a flood from well over 60 addresses, and even then it can only delay a new begin, never cancel a challenge already issued. Exempting holders of a nonce cookie was not chosen: the nonce is caller-minted on first begin, so it proves nothing about the operator.
+
+**Boot password ceilings** (wargame fix 2026-10-23, provisional). Every boot password attempt (`boot/login` and `boot/step-up`) consumes `boot-password` before the password check: 20 per 5 minutes for the principal and 200 per hour for the host, in addition to the per-IP `boot-login` and `boot-step-up` windows. Passkey attempts and begins are counted apart, so password guessing cannot lock out passkey sign-in. Turnstile is not added: boot is a short-lived, deploy-token principal whose password is at least 15 characters, the ceilings bound online guessing to 4,800 attempts a day, and a CAPTCHA dependency on the recovery path of last resort would itself be an availability risk. A distributed password flood can delay a password operator by up to 5 minutes at a time; a passkey boot credential is unaffected.
 
 The chain shows tampering by anyone who edits storage without rewriting every later entry. It cannot stop a storage administrator who recomputes the whole chain. Anchoring the head externally is an open option.
 
 ## Durable state
 
-There is one linearizable authority: a SQLite file on Node, or one Durable Object (proposed `ADMIN_AUTHORITY`, name `admin-v1`) on Workers. Keys: `boot/principal`, `boot/sessions`, `boot-token/<digest>`, `catalog`, `reservation/<name>`, `claim/<nonce>`, `claim-name/<name>`, `principal/<owner>`, `audit/<seq>`, `audit-head`, `rate/<actor>`. `AdminStorage.commit({expect, writes, audit, rate})` is the only write. It checks every expected revision, enforces the token and audit invariants, and assigns revisions.
+There is one linearizable authority: a SQLite file on Node, or one Durable Object (proposed `ADMIN_AUTHORITY`, name `admin-v1`) on Workers. Keys: `boot/principal`, `boot/sessions`, `boot-token/<digest>`, `catalog`, `reservation/<name>`, `claim/<nonce>`, `claim-name/<name>`, `principal/<owner>`, `boot-challenge/<hash>`, `audit/<seq>`, `audit-head`, `rate/<actor>`. `AdminStorage.commit({expect, writes, audit, rate})` is the only write. It checks every expected revision, enforces the token and audit invariants, and assigns revisions.
 
 The service always includes the actor's own record and the target's role and claim records in `expect`: the administrator's `principal/<owner>` and the catalog, or boot's `boot/principal`. So revoking an administrator, editing the catalog or restoring boot makes in-flight decisions fail with `conflict` instead of applying them.
 
@@ -153,7 +158,7 @@ All endpoints are `POST /api/admin/...` with the exact `Origin`, `X-CSRF-Token` 
    - `boot/complete` sets the boot cookie.
    - Clear errors for consumed tokens, expired setup and wrong origin.
 2. **Boot sign-in / step-up:** `boot/login/begin`, `boot/login`, `boot/step-up`, `boot/logout`. A persistent countdown banner shows the time to `bootExpiresAt` and, at expiry, explains the redeploy path.
-3. **Administrator step-up:** `step-up/begin` and `step-up` (password or passkey) using the normal account session. A modal opens whenever an operation returns `step_up_required`.
+3. **Administrator step-up:** `step-up/begin` and `step-up` (passkey only) using the normal account session. A modal opens whenever an operation returns `step_up_required`.
 4. **Overview** (`overview`): actor, boot status (active, expires at, last restored, token digest prefix), catalog and revision, badge classes, static and runtime reservations, recent claims, audit head. Administrators see a prominent notice when boot is active or was restored recently. That notice is how they spot an unexpected restore.
 5. **Reservations:** `reservations/set {name, roles?, badgeIds?}`, `reservations/remove {name}`.
 6. **Claims:** `claims/mint {name, roles?, badgeIds?, hours?}` returns `{link, expiresAt, nonce}`. Show the link once, with copy, and a reminder that it is a bearer capability. Also `claims/link {nonce}` and `claims/revoke {nonce}`.
@@ -194,7 +199,7 @@ The console is implemented in `apps/web/src/admin-entry.mjs` (loaded only on `/c
 - **Social engineering of restore:** restore requires changing deployment configuration to a digest. Operators must mint their own token and never deploy a digest someone else supplied. Restores are audited and shown prominently to administrators.
 - **Confused deputy:** the explicit actor header, separate cookies, and boot not being an account mean neither credential can act as the other.
 - **Malicious administrator:** an administrator can create runtime-reserved internal accounts, but can give them only user-class roles, delegable internal roles and non-internal badges. Boot should mark a role or badge delegable only when it would trust any administrator to hand it out. Administrator creation, static-name claims and everything else internal stay boot-only.
-- **Known limits:** boot password guessing is limited per IP only. `boot/status` publicly shows whether a live digest is unused. Boot cannot end its own access early. Restore does not undo administrators created by a compromised boot; boot must revoke them explicitly. Claims minted by boot stay usable until their own expiry, even after boot expires.
+- **Known limits:** boot password guessing is bounded per IP, per principal (20 per 5 minutes) and per host (200 per hour); a distributed flood can therefore delay a password-only boot operator. `boot/status` publicly shows whether a live digest is unused. Boot cannot end its own access early. Restore does not undo administrators created by a compromised boot; boot must revoke them explicitly. Claims minted by boot stay usable until their own expiry, even after boot expires.
 
 ## Open questions
 
@@ -202,5 +207,5 @@ The console is implemented in `apps/web/src/admin-entry.mjs` (loaded only on `/c
 2. Should badge *definitions* become runtime-editable? Today they stay `BADGE_DEFINITIONS` configuration, and only classification and assignment are runtime state.
 3. Should the audit head be anchored externally (for example, periodically emailed to the operator)?
 4. ~~Admin suspension lifecycle freeze~~: decided (coordinator, provisional). See **Lifecycle freeze**. Production wiring waits for the lifecycle executor.
-5. Should administrators need a passkey, rather than allowing password-only step-up?
+5. ~~Should administrators need a passkey?~~ Yes (coordinator decision 2026-10-14; enforced in `actor()` since the 2026-10-23 wargame).
 6. Should boot be able to end its own access early, and should outstanding claims minted by boot be revoked when boot expires?

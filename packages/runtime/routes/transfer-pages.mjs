@@ -4,6 +4,7 @@ import {systemClock,cryptoRandom,nullAudit} from '../../app/providers.mjs';
 import {RedirectExtensionStatus,CreateRedirectExtensionCheckout,ApplyRedirectExtensionWebhook} from '../../billing/redirect-extension.mjs';
 import {redirectCapability,resolveRedirect,redirectExtensionService} from '../redirect-extension.mjs';
 import {movedWindow} from '../../identity/lifecycle-tombstone.mjs';
+import {ageRequirement,requestAgeLocation} from '../../identity/age-policy.mjs';
 import {json,body,privateHeaders,flagGlobal,pseudonym,subnet,securePage} from './shared.mjs';
 const ROOT='/api/portability/redirect',SUCCESSORS='/api/account/successors';
 const pages=new Map([['/transfer-security','security'],['/transfer-out','out'],['/account/transfer-out','out'],['/transfer-in','in'],['/transfer-moved','moved'],['/transfer-redirect','redirect'],['/transfer-successor','successor'],['/transfer-dispute','dispute'],['/account/transfer-out/dispute','dispute']]);
@@ -47,7 +48,10 @@ export const stages={
   const denied=await budget(route);if(denied)return denied;
   const checkout=path.endsWith('/checkout');if(request.method!==(checkout?'POST':'GET'))return json({error:'method_not_allowed'},405,{Allow:checkout?'POST':'GET'});
   if(checkout&&(request.headers.get('Origin')!==env.APP_ORIGIN||request.headers.get('X-Bindle-Transfer')!=='1'||url.search))return json({error:'csrf'},403);
-  const input=checkout?await body(request,2048):Object.fromEntries(url.searchParams);if(Object.keys(input).some(k=>k!=='id')||!checkout&&url.searchParams.getAll('id').length!==1)return unknown();
+  const input=checkout?await body(request,2048):Object.fromEntries(url.searchParams);if(Object.keys(input).some(k=>k!=='id'&&!(checkout&&k==='ageConfirmed'))||!checkout&&url.searchParams.getAll('id').length!==1)return unknown();
+  // Review 2026-10-23 (M3): the anonymous redirect purchase is a paid checkout: the region policy and a fresh paid-age
+  // attestation apply exactly as for an account checkout (no account exists, so the runtime location decides).
+  if(checkout){const requirement=ageRequirement(requestAgeLocation(request,env));if(requirement.blocked)return json({error:'signup_region_blocked',message:"Purchases aren't available in your region."},403);if(input.ageConfirmed===undefined)return json({error:'age_confirmation_required',message:'Confirm the minimum purchase age.'},400);if(!Number.isSafeInteger(input.ageConfirmed)||input.ageConfirmed<requirement.paidMinimumAge||input.ageConfirmed>150)return json({error:'age_confirmation_insufficient',message:'Confirm the required purchase age.'},400);delete input.ageConfirmed;}
   const engine=engineFor(env);try{return json(checkout?await perform(engine,new CreateRedirectExtensionCheckout(input.id)):await read(engine,new RedirectExtensionStatus(input.id)));}catch(error){if(error.status===404)return unknown();throw error;}finally{engine.dispose();}
  },
  async beforeActivity({path,request,env,url,id,object}){

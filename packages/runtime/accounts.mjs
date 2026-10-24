@@ -29,7 +29,7 @@ import {GoogleDriveService} from '../storage/google-drive.mjs';
 import {AppConnections} from '../apps/connections.mjs';
 import {retryReady,retryTime,retryFailure} from './cleanup-retry.mjs';
 import {lifecycleMethods,lifecycleBlocked,lifecycleActivity,lifecycleTick} from './lifecycle-runner.mjs';
-import {armAlarm,alarmFenced} from './account-deletion.mjs';
+import {armAlarm,alarmFenced,assertLifecycleOpen,assertDeletionFenceOpen} from './account-deletion.mjs';
 import {collectGarbageRef} from './export-pins.mjs';
 import {BeamService} from '../beaming/index.mjs';
 import {BeamContacts} from '../beaming/contacts.mjs';
@@ -211,7 +211,7 @@ export class AccountController {
     this.store=store;this.tokens=new ContactTokenService({store,issuer:config.APP_ORIGIN,allowInsecureLocalhost:config.LOCAL_DEVELOPMENT==='true'});
     this.endpoints=new ContactEndpointService({tokens:this.tokens,linkPolicies:linkPolicyRegistry(config),signer:async({owner,kid})=>{const signer=await this.signingKey(owner);if(signer.kid!==kid)throw new Error('Signing key unavailable');return signer.privateKey;}});
     // Identity-authored link delivery (links §6.1). Cross-account identity lookups run outside the account gate.
-    this.delivery=new ContactDeliveryService({store,issuer:config.APP_ORIGIN,allowInsecureLocalhost:config.LOCAL_DEVELOPMENT==='true',maxStoredBytes:1_000_000_000_000,maxStoredMessages:1_000_000,parents:{verify:credential=>this.endpoints.verifyCredential(credential),live:(tx,verified)=>this.endpoints.liveCredential(tx,verified)},intake:(id,tx)=>this.endpoints.intakeOf(id,tx),resolve:localAuthorResolver({issuer:config.APP_ORIGIN,lookup:(subject,kid)=>this.identityKey(subject,kid)}),admissionKey:async()=>{const owner=await this.metadata.get('owner');return this.signingKey(owner);},audience:{admit:(tx,input)=>admitLinkAudience(tx,input)}});
+    this.delivery=new ContactDeliveryService({store,issuer:config.APP_ORIGIN,allowInsecureLocalhost:config.LOCAL_DEVELOPMENT==='true',maxStoredBytes:1_000_000_000_000,maxStoredMessages:1_000_000,parents:{verify:credential=>this.endpoints.verifyCredential(credential),live:async(tx,verified)=>{await assertLifecycleOpen(tx);return this.endpoints.liveCredential(tx,verified);}},intake:(id,tx)=>this.endpoints.intakeOf(id,tx),resolve:localAuthorResolver({issuer:config.APP_ORIGIN,lookup:(subject,kid)=>this.identityKey(subject,kid)}),admissionKey:async()=>{const owner=await this.metadata.get('owner');return this.signingKey(owner);},audience:{admit:(tx,input)=>admitLinkAudience(tx,input)}});
     this.messages=new MessagingService({store,tokens:this.endpoints,clock:systemClock.now,crypto:{randomUUID:cryptoRandom.uuid,subtle:crypto.subtle,getRandomValues:array=>crypto.getRandomValues(array)},maxStoredBytes:1_000_000_000_000,maxStoredMessages:1_000_000,...this.itemIndex?{indexedList:async(owner,options)=>{await this.warm(owner);if(!await this.metadata.get('item-index-ready')||!this.itemIndex.filterIndexesReady())throw new StorageError('temporarily_unavailable','Your inbox index is being upgraded. Try again shortly.',503);return this.itemIndex.page(owner,options,{legacy:true}).items;}}:{}});
     this.notifications=new NotificationService({store,messageAllowed:appNotificationAllowed});
     this.beams=new BeamService({metadata,config,entitlement:owner=>this.billing.entitlement(owner)});this.beamContacts=new BeamContacts({metadata,endpoints:this.endpoints});
@@ -220,7 +220,7 @@ export class AccountController {
     // wrapped as providers slice by slice. One engine per controller, so per DO instance / Node account.
     // `messaging` is still the pre-built instance over the side-effecting store above (search, item index, blobs);
     // the harness builds it lazily over accountStore without those effects until slice 2 owns them.
-    this.engine=createAppEngine({providers:{flags:{for:ctx=>flagsFor(this.config,ctx)},config:this.config,...accountProviders({accountStore:metadata,itemIndex:this.itemIndex,messaging:this.messages,clock:systemClock,random:cryptoRandom,audit:nullAudit})}});
+    this.engine=createAppEngine({providers:{flags:{for:ctx=>flagsFor(this.config,ctx)},config:this.config,billing:this.billing,...accountProviders({accountStore:metadata,itemIndex:this.itemIndex,messaging:this.messages,clock:systemClock,random:cryptoRandom,audit:nullAudit})}});
   }
   /** Runs one registered account operation as the given owner. Only {operation, id, input} cross the RPC
    * boundary (cloned, so a Node caller's object is never shared); the actor is the authenticated owner this
@@ -245,7 +245,7 @@ export class AccountController {
     // to this source while its own account gate is held. Receiver writes retain
     // their own serialization, including the source's local inbox.
     if(policy.gate==='none'||method==='conversationPublicIdentity'&&await this.metadata.get('signing-key')){try{return await withWriterFlags(this,this.flagConfig,()=>this[method](...args));}catch(error){return {$fault:{code:error.code||'invalid_request',message:error.code?error.message:method.startsWith('conversation')?'Conversation delivery could not be completed.':'The account operation could not be completed.',status:error.status,...Number.isSafeInteger(error.retryAfter)&&error.retryAfter>0?{retryAfter:error.retryAfter}:{}}};}}
-    const result=await this.gate.run(async()=>{try{if(policy.warm===true)await this.warm(args[0]);return await withWriterFlags(this,this.flagConfig,()=>this[method](...args));}catch(error){return {$fault:{code:error.code||'invalid_request',message:error.code?error.message:'The account operation could not be completed.',status:error.status,...Number.isSafeInteger(error.retryAfter)&&error.retryAfter>0?{retryAfter:error.retryAfter}:{}}};}});
+    const result=await this.gate.run(async()=>{try{if(policy.lifecycle!=='purging')await assertDeletionFenceOpen(this.metadata);if(policy.warm===true)await this.warm(args[0]);return await withWriterFlags(this,this.flagConfig,()=>this[method](...args));}catch(error){return {$fault:{code:error.code||'invalid_request',message:error.code?error.message:'The account operation could not be completed.',status:error.status,...Number.isSafeInteger(error.retryAfter)&&error.retryAfter>0?{retryAfter:error.retryAfter}:{}}};}});
     // Qualifying owner/app activity resets the inactivity clock outside the account gate.
     if(!result?.$fault)await lifecycleActivity(this,method,args,policy);
     return result;
@@ -282,8 +282,9 @@ export class AccountController {
   async owned(owner){const actor={kind:'owner',owner};return {views:(await operate(this.engine,new SavedViews({actor}))).views,rules:await operate(this.engine,new TagRules({actor})),tagLabels:await operate(this.engine,new TagLabels({actor}))};}
   async messageSnapshot(owner){const page=await this.messagePage(owner,{limit:100});return {messages:page.items,messageCursor:page.cursor};}
   // Runs inside the account gate without letting a fault escape it (a Durable Object resets when
-  // a blockConcurrencyWhile callback throws); the fault is rethrown outside.
-  async gated(operation){const outcome=await this.gate.run(async()=>{try{return {value:await operation()};}catch(error){return {error};}});if(outcome.error)throw outcome.error;return outcome.value;}
+  // a blockConcurrencyWhile callback throws); the fault is rethrown outside. Callers are ungated orchestrations,
+  // so the deletion fence, purge job and tombstone are re-checked inside the gate (D1).
+  async gated(operation){const outcome=await this.gate.run(async()=>{try{await assertLifecycleOpen(this.metadata);return {value:await operation()};}catch(error){return {error};}});if(outcome.error)throw outcome.error;return outcome.value;}
   async alarm(){return withWriterFlags(this,this.flagConfig,()=>this.alarmPinned(),{background:true});}
   async alarmPinned(){
     // Deletion runs first (DX-3), then lifecycle, both outside the account gate. While a deletion fence or any purge

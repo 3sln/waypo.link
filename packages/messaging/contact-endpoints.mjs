@@ -147,6 +147,8 @@ export class ContactEndpointService {
     } catch { fail('unauthorized'); }
   }
   async endpointLive(tx, parsed) {
+    // A reclaimed parent's ID is tombstoned and never verifies again (wargame M3).
+    if (await tx.get(key('contact-grant-tombstone', parsed.claims.jti))) fail('unauthorized');
     const grant = await tx.get(key('contact-grant', parsed.claims.jti));
     if (!grant?.endpoint || !grant.active || grant.owner !== parsed.claims.sub || grant.claims.exp <= Math.floor(this.clock()/1000) || canonical(grant.endpoint.header) !== canonical(parsed.header) || canonical(grant.endpoint.claims) !== canonical(parsed.claims) || (grant.endpoint.form === 'link') !== (parsed.form === 'link') || (grant.endpoint.form === 'link' && grant.endpoint.input !== parsed.input)) fail('unauthorized');
     const signingKey = await tx.get(key('contact-key', grant.owner, parsed.header.kid));
@@ -272,6 +274,7 @@ export class ContactEndpointService {
   }
   async deliveryLive(tx, { header, claims }) {
     if (header?.typ !== DELIVERY_TYPE || !boundedString(claims?.parent) || !boundedString(claims?.jti)) fail('unauthorized');
+    if (await tx.get(key('contact-grant-tombstone', claims.parent))) fail('unauthorized');
     const grant = await tx.get(key('contact-grant', claims.parent)), now = Math.floor(this.clock()/1000);
     if (!grant?.active || !grant.endpoint || claims.sub !== grant.owner || !Number.isSafeInteger(claims.iat) || !Number.isSafeInteger(claims.exp) || claims.iat > now || claims.iat < grant.claims.iat || claims.exp <= now || claims.exp <= claims.iat || claims.exp > claims.iat + 300 || claims.exp > grant.claims.exp) fail('unauthorized');
     if (canonical(this.deliveryClaims(grant, claims)) !== canonical(claims)) fail('unauthorized');
@@ -291,6 +294,7 @@ export class ContactEndpointService {
   async live(tx, verified) {
     const { header, claims } = verified;
     if (header?.typ !== INBOX_TYPE || !boundedString(claims?.parent) || !boundedString(claims?.jti)) fail('unauthorized');
+    if (await tx.get(key('contact-grant-tombstone', claims.parent))) fail('unauthorized');
     const grant = await tx.get(key('contact-grant', claims.parent));
     if (grant?.endpoint?.form === 'link') fail('unauthorized');
     const now = Math.floor(this.clock()/1000);

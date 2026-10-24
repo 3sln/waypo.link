@@ -26,7 +26,8 @@ export function canonicalContactLink(origin,target){
  let sub;try{sub=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(Uint8Array.from(atob(sig.split('.')[1].replaceAll('-','+').replaceAll('_','/')),c=>c.charCodeAt(0)))).sub;}catch{}
  return typeof sub==='string'&&/^[a-f0-9-]{36}$/.test(sub)?{link:`${origin}${url.pathname}?sig=${sig}`,path:url.pathname,search:`?sig=${sig}`,handle:match[1],sub}:null;
 }
-// Resolves the owner-permitted profile; every failure (revoked, expired, quarantined, unknown) is the generic card.
+// Resolves the owner-permitted profile; every failure (revoked, expired, unknown) is the generic card. A quarantined
+// link is not a failure: quarantine is silent, so it previews exactly as when active (links §6.4).
 export async function contactPreview({env,target,profile,intentLinksEnabled=false}){
  const origin=env.APP_ORIGIN,brand=env.BRAND_NAME||'3sln.me',generic={brand,origin,verified:false,title:`Send a private message on ${brand}`,description:'A private contact link. Messages come from verified identities and the recipient decides what is accepted.',image:`${origin}${brand==='3sln.me'?'/branding/3sln-avatar.png':'/generic-icon.svg'}`,imageSize:512};
  const canonical=canonicalContactLink(origin,target);if(!canonical)return generic;

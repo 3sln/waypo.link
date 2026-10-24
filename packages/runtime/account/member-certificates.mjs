@@ -36,6 +36,7 @@ import {ORGANIZATION_PLANS} from '../../billing/organizations.mjs';
 import {memberAccessCapacity} from '../../federation/member-access.mjs';
 import {connectionState} from '../../apps/connections.mjs';
 import {foreignDirectory,foreignDirectoryEnabled,foreignIssuers} from './foreign-directory.mjs';
+import {assertLifecycleOpen} from '../account-deletion.mjs';
 
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const identityURI=(config,id)=>`${config.APP_ORIGIN}/identity/${id}`;
@@ -156,7 +157,7 @@ export const methods={
  /** F-07: a same-host home's hint that `subject`'s certification keys may have changed (gate none, like the key read).
   * Enqueues a refresh for a live member only and answers the same either way. */
  async memberKeysChanged(org,subject){
-  try{const r=await this.metadata.get(ORG_RECORD);if(!UUID.test(org??'')||!UUID.test(subject??'')||await this.metadata.get('owner')!==org||r?.kind!=='organization'||r.id!==org)return {accepted:true};await perform(contextEngine(this,org),new MemberKeysChanged({actor:{kind:'system',owner:org},input:{subject}}));}catch{/* best effort */}
+  try{const r=await this.metadata.get(ORG_RECORD);if(!UUID.test(org??'')||!UUID.test(subject??'')||await this.metadata.get('owner')!==org||r?.kind!=='organization'||r.id!==org)return {accepted:true};/* Ungated metadata write: skipped once a deletion fence, purge job or tombstone exists (review #3). */await assertLifecycleOpen(this.metadata);await perform(contextEngine(this,org),new MemberKeysChanged({actor:{kind:'system',owner:org},input:{subject}}));}catch{/* best effort */}
   return {accepted:true};
  },
  async memberDirect(org,input){return wire(this,org,MemberDirect,input,false);},

@@ -1,7 +1,7 @@
 // Remove the capability before importing the UI or making any request.
 let rawURL=location.href,rawHash=location.hash.slice(1),query=new URLSearchParams(location.search),fragment=new URLSearchParams(location.hash.slice(1)),hidden=document.querySelector('input[name="bintent"],input[name="legacy"]');
 let expiresAt=Date.now()+3600000,legacy=null,hiddenLegacy=hidden?.name==='legacy'?hidden.value:null,value=hidden?.name==='legacy'?null:hidden?.value??fragment.get('bintent')??query.get('bintent'),placement=hidden?(hidden.dataset.placement??'post'):fragment.has('bintent')?'fragment':'query';
-let invalid=query.getAll('bintent').length>1||fragment.getAll('bintent').length>1||query.has('bintent')&&fragment.has('bintent');
+let invalid=!!document.querySelector('meta[name="intent-error"]')||query.getAll('bintent').length>1||fragment.getAll('bintent').length>1||query.has('bintent')&&fragment.has('bintent');
 if(hidden){hidden.value='';hidden.remove();}history.replaceState(null,'',location.pathname+(query.get('lang')==='es'?'?lang=es':''));
 if(hiddenLegacy||!hidden&&(query.has('bintent')||rawHash))try{
  const codec=await import('../../../packages/intents/format.mjs');

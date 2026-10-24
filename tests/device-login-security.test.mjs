@@ -14,7 +14,7 @@ test('device, email and recovery sessions need their own credential step-up befo
  const f=identityEngine();try{
   const {owner,file,ownerContext}=await activate(f.act),child=await derive(f,owner);
   await refused(f,child);await step(f,child);await f.service.recent(sessionContext(child));
-  await f.act('emailStart',{email:'owner@mail.example'},ownerContext);await f.act('emailConfirm',{token:f.mail.at(-1).token,confirmed:true},ownerContext);await f.act('configureEmailLogin',{enabled:true},ownerContext);await f.act('emailLoginStart',{email:'owner@mail.example',turnstileToken:'verified'});
+  await f.act('emailStart',{email:'owner@mail.example'},ownerContext);await f.act('emailConfirm',{token:f.mail.at(-1).token,confirmed:true},ownerContext);await f.act('configureEmailLogin',{enabled:true},ownerContext);await f.act('emailLoginStart',{email:'owner@mail.example',turnstileToken:'verified'});await f.service.settleBackground();
   const email=await f.act('emailLoginConfirm',{token:f.mail.at(-1).token,confirmed:true});assert.equal((await f.service.authorized(sessionContext(email))).session.source,'email');await refused(f,email);await step(f,email);await f.service.recent(sessionContext(email));
   const recovering=await f.act('recover',{recoveryToken:file.recoveryToken,turnstileToken:'verified'});await f.act('setPendingPassword',{...recovering,password:PASSWORD});const replacement=await f.act('downloadRecovery',recovering),recovery=await f.act('confirmRecovery',{...recovering,recoveryToken:replacement.recoveryToken,downloadConfirmed:true});assert.equal((await f.service.authorized(sessionContext(recovery))).session.source,'recovery');await refused(f,recovery);await step(f,recovery);await f.service.recent(sessionContext(recovery));
 

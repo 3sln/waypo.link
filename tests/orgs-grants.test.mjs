@@ -42,5 +42,5 @@ test('ORG-2 identity authority epoch changes at recovery completion, not setup o
 });
 test('ORG-2 epoch validation and credential-bound tight-verification evidence fail closed',()=>{
  for(const aep of[-1,null,NaN,'1',Number.MAX_SAFE_INTEGER])assert.throws(()=>authorityEpoch({aep}));const record={};assert.equal(raiseAuthorityEpoch(record,{reason:'credential-reset'}),1);assert.equal(raiseAuthorityEpoch(record,{reason:'key-reset',floor:5}),5);assert.throws(()=>raiseAuthorityEpoch(record,{reason:'passkey-added'}));
- const account={security:{epoch:100,changedAt:10},credentials:[{id:'p',createdAt:20}]};assert.deepEqual(organizationVerification(account,{stepUpAt:30,stepUpCredential:{kind:'passkey',id:'p'}}),{enrolledAt:20,securityChangedAt:10,stepUpAt:30});assert.equal(organizationVerification(account,{stepUpAt:30,stepUpCredential:{kind:'passkey',id:'attacker'}}),null);
+ const account={security:{epoch:100,changedAt:10},credentials:[{id:'p',createdAt:20}]};assert.deepEqual(organizationVerification(account,{stepUpAt:30,stepUpCredential:{kind:'passkey',id:'p'}}),{enrolledAt:20,securityChangedAt:10,stepUpAt:30,hasPasskey:true,method:'passkey'});assert.equal(organizationVerification(account,{stepUpAt:30,stepUpCredential:{kind:'passkey',id:'attacker'}}),null);
 });

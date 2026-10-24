@@ -30,6 +30,7 @@ import {key,base64url} from '../core/records.mjs';
 import {canonical,isUUID} from '../core/primitives.mjs';
 import {PURGE_KEY,TOMBSTONE_KEY,purgeBatch} from './lifecycle-storage.mjs';
 
+const DUE_CURSOR_KEY='deletion-due-cursor';
 export const REQUEST_KEY='deletion/request-v1',FENCE_KEY='deletion/fence-v1',RECEIPT_PREFIX='deletion/receipt/',DELETION_FLAG='ACCOUNT_DELETION_ENABLED';
 export const DELETION_BASES=Object.freeze(['owner','admin-email','admin-underage','admin-closure']);
 const MINUTE=60000,HOUR=3600000,DAY=86400000;
@@ -93,6 +94,19 @@ export async function deletionBlocksMaintenance(reader){
 /** The alarm must return right after the deletion tick while a fence or purge job exists, or after deletion. */
 export async function alarmFenced(reader){return await reader.get(FENCE_KEY)!==undefined||await reader.get(PURGE_KEY)!==undefined||await reader.get(TOMBSTONE_KEY)!==undefined;}
 
+/** D1: an ungated orchestration admitted before the deletion fence must not write after it. Re-checked inside the
+ * account gate (`gated`) and inside the writing transaction (contact delivery, conversation inbox). `reader` is the
+ * metadata store or a transaction. */
+export async function assertLifecycleOpen(reader){
+ if(await reader.get(TOMBSTONE_KEY)!==undefined)fail('account_deleted','This account was deleted.',410);
+ if(await reader.get(FENCE_KEY)!==undefined||await reader.get(PURGE_KEY)!==undefined)fail('account_deleting','Account deletion has begun.',410);
+}
+/** Review #3: the entry fence (`lifecycleBlocked`) re-checked inside invoke's account gate for every policy not
+ * declared 'purging': a call admitted before the deletion fence or the tombstone committed does not run after it. */
+export async function assertDeletionFenceOpen(reader){
+ if(await reader.get(TOMBSTONE_KEY)!==undefined)fail('account_deleted','This account was deleted after its final notice period.',410);
+ if(await reader.get(FENCE_KEY)!==undefined)fail('account_deleting','Account deletion has begun.',410);
+}
 /** The `deletion-due/<executeAfter>/<owner>` index (§2.2) over any key/value metadata store. The adapter
  * chooses the store (the identity directory or the scheduler object); the sweep calls `deletionTick(owner)`
  * for due rows independent of LIFECYCLE_ENABLED. */
@@ -102,15 +116,27 @@ export function deletionDueIndex(metadata){
   put:(owner,at)=>metadata.put(name(owner,at),{owner,executeAfter:at}),
   delete:(owner,at)=>metadata.delete(name(owner,at)),
   async due({now=Date.now(),limit=64}={}){const rows=await metadata.list({prefix:'deletion-due/',limit});return [...rows.values()].filter(row=>isUUID(row?.owner)&&Number.isSafeInteger(row.executeAfter)&&row.executeAfter<=now);},
+  /** Wargame D3: one page of due rows after the persisted cursor. Rows are ordered by executeAfter, so the page ends
+   * at the first row that is not yet due; `wrapped` means the next page starts again from the beginning. */
+  async page({now=Date.now(),limit=64}={}){
+   const cursor=await metadata.get(DUE_CURSOR_KEY),rows=await metadata.list({prefix:'deletion-due/',...typeof cursor==='string'&&cursor.startsWith('deletion-due/')?{startAfter:cursor}:{},limit});
+   const due=[];let wrapped=rows.size<limit;
+   for(const [name,row] of rows){if(!(Number.isSafeInteger(row?.executeAfter)&&row.executeAfter<=now)){wrapped=true;break;}if(isUUID(row?.owner))due.push({...row,key:name});}
+   return {rows:due,wrapped,last:[...rows.keys()].at(-1)??null};
+  },
+  advance:async(last,wrapped)=>wrapped||!last?metadata.delete(DUE_CURSOR_KEY):metadata.put(DUE_CURSOR_KEY,last),
  });
 }
 /** One bounded sweep over due rows: invokes `deletionTick` on each owner's account. Failures are counted and
- * retried at the next sweep; the row is removed only by cancel or E11. */
+ * retried at the next sweep; the row is removed only by cancel or E11. A persisted cursor that wraps (wargame D3)
+ * means held rows at the head of the index cannot starve later due accounts. */
 export async function sweepDeletionDue({index,accounts,now=Date.now(),limit=64}){
  let ticked=0,failed=0;
- for(const row of await index.due({now,limit})){
+ const page=typeof index.page==='function'?await index.page({now,limit}):{rows:await index.due({now,limit})};
+ for(const row of page.rows){
   try{const result=await accounts.get(row.owner).invoke({method:'deletionTick',args:[row.owner,{source:'sweep'}]});if(result?.$fault)failed++;else ticked++;}catch{failed++;}
  }
+ if(typeof index.advance==='function')await index.advance(page.last,page.wrapped||!page.rows.length);
  return {ticked,failed};
 }
 

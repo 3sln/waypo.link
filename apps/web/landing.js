@@ -1,3 +1,5 @@
+// Reuse the external landing module and the server's localized static document.
+try{const u=new URL(location.href),saved=JSON.parse(localStorage.getItem('personal-space-preferences')??'{}');if(!u.searchParams.has('lang')&&['en','es'].includes(saved?.locale)&&saved.locale!==document.documentElement.lang){u.searchParams.set('lang',saved.locale);location.replace(u.href);}}catch{}
 // A public, nonblocking availability hint. This document never boots the app.
 const messages=/*__LANDING_MESSAGES__*/null;
 const fragment=new URLSearchParams(location.hash.slice(1));

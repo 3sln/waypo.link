@@ -1,4 +1,4 @@
-import { validateDocument, normalizeQuery, accessible, matchesFilters, fail, bounded, DEFAULT_BUDGETS, planBudget } from './schema.mjs';
+import { validateDocument, normalizeQuery, accessible, matchesFilters, fail, bounded, DEFAULT_BUDGETS, planBudget, deterministicSearchFault } from './schema.mjs';
 
 export function reciprocalRankFusion(lists, limit = 200) {
   const combined = new Map();
@@ -10,8 +10,8 @@ export function reciprocalRankFusion(lists, limit = 200) {
 }
 const fingerprint = query => JSON.stringify(query);
 export class SearchService {
-  constructor({ index, authority, outbox, vectorIndex, embedder, semanticPolicy, onSemanticError, crypto = globalThis.crypto, clock = () => Date.now(), budgets = DEFAULT_BUDGETS, maxSessions = 1000, sessionTTL = 300000 }) {
-    Object.assign(this, { index, authority, outbox, vectorIndex, embedder, semanticPolicy, onSemanticError, crypto, clock, budgets: { ...DEFAULT_BUDGETS, ...budgets }, maxSessions, sessionTTL }); this.sessions = new Map();
+  constructor({ index, authority, outbox, vectorIndex, embedder, semanticPolicy, onSemanticError, onRejected, crypto = globalThis.crypto, clock = () => Date.now(), budgets = DEFAULT_BUDGETS, maxSessions = 1000, sessionTTL = 300000 }) {
+    Object.assign(this, { index, authority, outbox, vectorIndex, embedder, semanticPolicy, onSemanticError, onRejected, crypto, clock, budgets: { ...DEFAULT_BUDGETS, ...budgets }, maxSessions, sessionTTL }); this.sessions = new Map();
   }
   planBudget(plan, usage) { return planBudget(plan, usage); }
   async removeVector(event) {
@@ -50,9 +50,19 @@ export class SearchService {
   async drain(owner, { limit = 50 } = {}) {
     if (!bounded(owner) || !Number.isSafeInteger(limit) || limit < 1 || limit > 100) fail('invalid_search_batch');
     const events = await this.outbox.peek(owner, limit); if (!Array.isArray(events) || events.length > limit) fail('unbounded_search_outbox');
-    let processed = 0;
-    for (const event of events) { if (event.owner !== owner) fail('search_outbox_owner'); await this.ingest(event); await this.outbox.acknowledge(event); processed++; }
-    return { processed };
+    let processed = 0, rejected = 0;
+    for (const event of events) {
+      if (event.owner !== owner) fail('search_outbox_owner');
+      // Wargame Q1: an event whose document fails deterministic validation can never succeed. It is removed from the
+      // index, acknowledged and reported (onRejected) instead of blocking every later event behind it.
+      try { await this.ingest(event); } catch (error) {
+        if (!deterministicSearchFault(error)) throw error;
+        await this.index.tombstone(event); await this.removeVector(event); rejected++;
+        try { await this.onRejected?.(event, error); } catch { /* The signal is best effort; progress is not. */ }
+      }
+      await this.outbox.acknowledge(event); processed++;
+    }
+    return { processed, ...(rejected ? { rejected } : {}) };
   }
   async rebuild(owner, { limit = 50, cursor, reset = false } = {}) {
     if (!bounded(owner) || !Number.isSafeInteger(limit) || limit < 1 || limit > 100) fail('invalid_search_batch');

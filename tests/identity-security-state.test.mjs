@@ -121,7 +121,8 @@ for (const kind of REPOSITORIES) {
     await expectBump(h, id, 'emailConfirm (same address)', 0, () => h.act('emailConfirm', { token: mailToken(h, 'link'), confirmed: true }, ctx));
     tick(); await expectBump(h, id, 'configureEmailLogin enable', 1, () => h.act('configureEmailLogin', { enabled: true }, ctx));
     await expectBump(h, id, 'configureEmailLogin enable again', 0, () => h.act('configureEmailLogin', { enabled: true }, ctx));
-    tick(); await expectBump(h, id, 'emailLoginStart', 0, () => h.act('emailLoginStart', { email: 'second@mail.example', turnstileToken: 'verified' }));
+    // The challenge write and the mail run in the background (wargame 2026-10-23 #8); settle before reading.
+    tick(); await expectBump(h, id, 'emailLoginStart', 0, async () => { await h.act('emailLoginStart', { email: 'second@mail.example', turnstileToken: 'verified' }); await h.service.settleBackground(); });
     await expectBump(h, id, 'emailLoginConfirm', 0, () => h.act('emailLoginConfirm', { token: mailToken(h, 'login'), confirmed: true }));
     await expectBump(h, id, 'configureEmailLogin disable', 0, () => h.act('configureEmailLogin', { enabled: false }, ctx));
     tick(); const { challengeId } = await expectBump(h, id, 'credentialBegin', 0, () => h.act('credentialBegin', { label: 'Key' }, ctx));
@@ -146,11 +147,13 @@ for (const kind of REPOSITORIES) {
     tick(); const back = await expectBump(h, id, 'confirmRecovery (recovery completion)', 0, () => h.act('confirmRecovery', { pendingToken: resumed.pendingToken, recoveryToken: replacement.recoveryToken, downloadConfirmed: true }));
     ctx = sessionContext(back); await expectBump(h, id, 'owner read', 0, () => h.owner(ctx));
     // Active-account reissue (recovery-identity spec): staging the new file is not a security change; its commit bumps once.
-    await h.engine.container.use(['identity'], ({ identity }) => { identity.identityBackup = { reissue: async () => ({ backup: { keychain: { signing: { kid: 'k-reissued' }, encryption: { kid: 'e-1' } } }, rotation: { rotated: true } }), reissueCommit: async () => ({ committed: true, transferCancelled: false }) }; });
+    await h.engine.container.use(['identity'], ({ identity }) => { identity.identityBackup = { reissue: async () => ({ backup: { keychain: { signing: { kid: 'k-reissued' }, encryption: { kid: 'e-1' } } }, rotation: { rotated: true } }), reissueCommit: async () => ({ committed: true, transferCancelled: false }), reissueCancel: async () => ({ rotation: { rotated: true, skipped: null } }) }; });
     { const a = await h.record(id); assert.equal(await h.audit.repository.compareAndSwap(id, a.revision, { ...structuredClone(a), passwordSetAt: h.clock.now() - 8 * 24 * HOUR, revision: a.revision + 1 }), true); }
     tick(); await h.service.stepUp({ method: 'password', password: 'another long recovery password' }, ctx);
     const staged = await expectBump(h, id, 'reissueRecoveryBegin', 0, () => h.act('reissueRecoveryBegin', { acknowledged: true }, ctx));
     tick(); await expectBump(h, id, 'reissueRecoveryConfirm', 1, () => h.act('reissueRecoveryConfirm', { recoveryToken: staged.recoveryToken, downloadConfirmed: true }, ctx));
+    // Cancelling it in the cooling-off window (from this earlier session) restores the previous file: one bump.
+    tick(); await expectBump(h, id, 'reissueRecoveryCancel', 1, () => h.act('reissueRecoveryCancel', { confirmed: true }, ctx));
     // A passkey signup bumps once more when its credential registers.
     const bob = await h.act('signup', signupInput({ handle: 'bob', method: 'passkey', password: undefined }));
     await expectBump(h, bob.account.id, 'registerPasskey', 1, () => h.act('registerPasskey', { pendingToken: bob.pendingToken, response: { id: 'bob-key' } }));

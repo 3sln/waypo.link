@@ -89,7 +89,8 @@ test('ordinary non-beam contact import and signed profile representation disclos
  const named=await publicGet(namedLink.value.url);assert.deepEqual(named.value,{identityURI:`${origin}/users/${f.recipient.account.handle}`,beamEnabled:false,profile:{displayName:'Scoped name'}});assert.equal(JSON.stringify([...await controller.metadata.list()]),before);
  assert.equal((await f.post('/api/contacts/redeem',{url:namedLink.value.url},f.sender)).status,200);assert.deepEqual((await f.request('/api/contacts/directory',{headers:f.sender.headers})).value[0].profile,{displayName:'Scoped name'});
  const bad=new URL(namedLink.value.url),sig=bad.searchParams.get('sig');bad.searchParams.set('sig',sig.slice(0,-2)+(sig.at(-2)==='a'?'b':'a')+sig.at(-1));assert.equal((await publicGet(bad.href)).status,404);
- await f.post('/api/contacts/'+namedLink.value.id+'/quarantine',{quarantined:true},f.recipient);assert.equal((await publicGet(namedLink.value.url)).status,403);assert.equal((await f.post('/api/contacts/redeem',{url:namedLink.value.url},f.sender)).value.error,'contact_quarantined');
+ // Quarantine is silent to link holders (DEVLOG 2026-10-23 wargame M2): the profile and redemption answer as for an active link.
+ await f.post('/api/contacts/'+namedLink.value.id+'/quarantine',{quarantined:true},f.recipient);const paused=await publicGet(namedLink.value.url);assert.equal(paused.status,200);assert.deepEqual(paused.value,named.value);assert.equal((await f.post('/api/contacts/redeem',{url:namedLink.value.url},f.sender)).status,200);
  await f.request('/api/contacts/'+privateLink.value.id,{method:'DELETE',headers:f.recipient.headers});assert.equal((await publicGet(privateLink.value.url)).status,404);
  }finally{await f.close();}
 });

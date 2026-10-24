@@ -41,9 +41,9 @@ export function dpopNonces({secret,crypto=globalThis.crypto,clock=()=>Date.now()
    if(!(exp>now&&exp<=now+ttl)||!await crypto.subtle.verify('HMAC',await key,bytes(match[3]),text.encode(`${purpose}\0${match[1]}\0${match[2]}`)))fail('use_dpop_nonce','A fresh DPoP nonce is required.');return {hash:await digest(crypto,`dpop-nonce\0${value}`),expiresAt:exp};}};
 }
 /** Records nonce and jti once each, keyed by domain-separated hashes. */
-export async function consumeProof(tx,prefix,proof,crypto,clock,max=1024){
+export async function consumeProof(tx,prefix,proof,crypto,clock,max=1024,full='rate_limited'){
  const now=clock(),rows=await tx.list(prefix);let live=0;for(const row of rows){if(row.value.expiresAt<=now)await tx.delete(row.key);else live++;}
- if(live+2>max)fail('rate_limited','Too many recent proofs. Try again shortly.');
+ if(live+2>max)fail(full,'Too many recent proofs. Try again shortly.');
  const keys=[`${prefix}jti/${await digest(crypto,`dpop-jti\0${proof.jkt}\0${proof.jti}`)}`,...proof.nonceHash?[`${prefix}nonce/${proof.nonceHash}`]:[]];
  for(const name of keys)if(await tx.get(name))fail(name.includes('/nonce/')?'use_dpop_nonce':'invalid_dpop_proof','This proof was already used.');
  for(const name of keys)await tx.set(name,{expiresAt:Math.max(proof.expiresAt,now+1000)});

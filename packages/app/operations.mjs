@@ -7,4 +7,5 @@ import {VIEW_OPERATIONS} from './domains/views.mjs';
 import {TAG_OPERATIONS} from './domains/tags.mjs';
 import {RETENTION_OPERATIONS} from '../runtime/retention.mjs';
 import {ACTIVITY_OPERATIONS} from './domains/activity.mjs';
-export const ACCOUNT_OPERATIONS=operations(PublicAccountAvailable,...VIEW_OPERATIONS,...TAG_OPERATIONS,...ACTIVITY_OPERATIONS,...RETENTION_OPERATIONS);
+import {BILLING_OPERATIONS} from '../billing/changes.mjs';
+export const ACCOUNT_OPERATIONS=operations(PublicAccountAvailable,...VIEW_OPERATIONS,...TAG_OPERATIONS,...ACTIVITY_OPERATIONS,...RETENTION_OPERATIONS,...BILLING_OPERATIONS);

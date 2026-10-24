@@ -86,7 +86,7 @@ test('installed public shell reloads offline without cached account responses',a
   const context=await browser.newContext();t.after(()=>context.close());const page=await context.newPage();page.setDefaultTimeout(8000);
   await waitForApp(page);await page.waitForFunction(async()=>Boolean((await navigator.serviceWorker.getRegistration())?.active));await page.evaluate(()=>navigator.serviceWorker.ready);
   await page.reload();await page.waitForFunction(()=>Boolean(navigator.serviceWorker.controller));
-  const urls=await publicAssetCache(page);assert.ok(urls.some(url=>/^\/assets\/apps\/web\/src\/release\.[a-f0-9]+\.mjs$/.test(new URL(url).pathname)),'shell cached');
+  const urls=await publicAssetCache(page);assert.ok(urls.some(url=>/^\/assets\/console\.[a-f0-9]+\.mjs$/.test(new URL(url).pathname)),'shell cached');
   assert.ok(urls.every(url=>!new URL(url).pathname.startsWith('/api/')),'private APIs not cached');
   const imports=await page.evaluate(()=>JSON.parse(document.querySelector('script[type=importmap]').textContent).imports);
   for(const path of ['/src/bl/identity.mjs','/packages/recovery/identity-backup.mjs','/packages/identity/handles.mjs'])assert.ok(urls.some(url=>new URL(url).pathname===imports[path]),'hashed identity shell dependency cached');

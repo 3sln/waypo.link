@@ -35,7 +35,7 @@ const KID = /^[A-Za-z0-9_-]{1,128}$/;
 /** The requesting session as the P17 contest window compares it ({credentialId, sessionId}); built by trusted code. */
 function actorOf(actor) {
   if (actor?.kind !== 'owner' || !isUUID(actor.owner)) fail('unauthorized', 'Sign in to continue.', 401);
-  return { kind: 'owner', owner: actor.owner, credentialId: typeof actor.credentialId === 'string' ? actor.credentialId : null, sessionId: typeof actor.sessionId === 'string' ? actor.sessionId : null };
+  return { kind: 'owner', owner: actor.owner, credentialId: typeof actor.credentialId === 'string' ? actor.credentialId : null, stepUpCredentialId: typeof actor.stepUpCredentialId === 'string' ? actor.stepUpCredentialId : null, sessionId: typeof actor.sessionId === 'string' ? actor.sessionId : null };
 }
 function rotationInput(input) {
   const value = plain(input) ? input : {}, kids = list => Array.isArray(list) && list.length <= 8 && list.every(kid => typeof kid === 'string' && KID.test(kid)) ? [...new Set(list)] : fail('invalid_request', 'Unsupported recovery request.');
@@ -77,6 +77,21 @@ export class RecoveryReissueService {
     const { transferCancelled } = await this.transfer().recoveryReissue(who, { commit: true });
     return { committed: true, transferCancelled: transferCancelled === true };
   }
+  /** Cancelling a committed reissue during its cooling-off window (wargame 2026-10-23 #1, provisional). `input`
+   * {voided, restored}: the voided file's signing kid, rotated away when it is still current (P15: whoever minted the
+   * voided file must not hold the current signing key), and the restored file's kid (or null), kept bound so that
+   * file restores again. Cancelling is the safe direction, so only a deleted or purging account refuses; a fenced
+   * (moved or arriving) identity has nothing to rotate. */
+  async cancel(actor, input) {
+    const who = actorOf(actor), value = plain(input) ? input : {};
+    if (typeof value.voided !== 'string' || !KID.test(value.voided) || !(value.restored === null || value.restored === undefined || typeof value.restored === 'string' && KID.test(value.restored))) fail('invalid_request', 'Unsupported recovery request.');
+    const stored = await this.metadata.get('owner');
+    if (stored !== who.owner) fail(stored === undefined ? 'account_unavailable' : 'forbidden', stored === undefined ? 'Account unavailable.' : 'Account owner mismatch.', stored === undefined ? 409 : 403);
+    if (await this.metadata.get(TOMBSTONE) !== undefined || await this.metadata.get(PURGE) !== undefined) fail('account_deleted', 'This account was deleted.', 410);
+    if (await custodyFence(this.metadata)) return { rotation: null };
+    const issued = await this.keychain(who.owner, { rotation: { rotateIf: [value.voided] }, keep: typeof value.restored === 'string' ? [value.restored] : [] });
+    return { rotation: issued?.rotation ? { rotated: issued.rotation.rotated === true, skipped: issued.rotation.skipped ?? null } : null };
+  }
 }
 
 // ---- engine operations ----------------------------------------------------------------------------------------
@@ -86,7 +101,8 @@ export class RecoveryReissueService {
 class ReissueAction extends AppAction { static deps = ['lifecycle']; static changes = 'recovery-reissue-changed'; static termsGate = 'exempt'; }
 export class PrepareRecoveryReissue extends ReissueAction { static operation = 'recovery.reissue-prepare'; run({ lifecycle }) { return lifecycle.prepare(this.actor, this.input); } }
 export class CommitRecoveryReissue extends ReissueAction { static operation = 'recovery.reissue-commit'; run({ lifecycle }) { return lifecycle.commit(this.actor, this.input); } }
-export const RECOVERY_REISSUE_OPERATIONS = Object.freeze([PrepareRecoveryReissue, CommitRecoveryReissue]);
+export class CancelRecoveryReissue extends ReissueAction { static operation = 'recovery.reissue-cancel'; run({ lifecycle }) { return lifecycle.cancel(this.actor, this.input); } }
+export const RECOVERY_REISSUE_OPERATIONS = Object.freeze([PrepareRecoveryReissue, CommitRecoveryReissue, CancelRecoveryReissue]);
 
 // ---- PORT-4 recovery port over the identity repository --------------------------------------------------------
 

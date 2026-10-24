@@ -85,7 +85,7 @@ export function transferOutEngine(c){
  return entry;
 }
 const ownerActor=(owner,evidence={})=>({kind:'owner',owner,...Number.isSafeInteger(evidence?.stepUpAt)?{stepUpAt:evidence.stepUpAt}:{},...typeof evidence?.sessionId==='string'?{sessionId:evidence.sessionId}:{},
- ...Number.isSafeInteger(evidence?.sessionCreatedAt)?{sessionCreatedAt:evidence.sessionCreatedAt}:{},...typeof evidence?.credentialId==='string'?{credentialId:evidence.credentialId}:{},...Number.isSafeInteger(evidence?.credentialCreatedAt)?{credentialCreatedAt:evidence.credentialCreatedAt}:{}});
+ ...Number.isSafeInteger(evidence?.sessionCreatedAt)?{sessionCreatedAt:evidence.sessionCreatedAt}:{},...typeof evidence?.credentialId==='string'?{credentialId:evidence.credentialId}:{},...typeof evidence?.stepUpCredentialId==='string'?{stepUpCredentialId:evidence.stepUpCredentialId}:{},...Number.isSafeInteger(evidence?.credentialCreatedAt)?{credentialCreatedAt:evidence.credentialCreatedAt}:{}});
 const run=(c,Operation,params)=>perform(transferOutEngine(c).engine,new Operation(params));
 
 export const methods={

@@ -38,9 +38,22 @@ export const methods={
     if(!status.relayEnabled)return {iceServers:capability(this.config,'BEAM_STUN_ENABLED')?[{urls:['stun:stun.cloudflare.com:3478']}]:[],relayEnabled:false};
     await this.metadata.transaction(async tx=>{const current=await tx.get('beam/offer/'+id);if(!current)throw new BeamError('beam_expired','This transfer has expired.',410);this.beams.authorize(current,actor);if(current.state!=='accepted')throw new BeamError('beam_not_accepted','This transfer is no longer accepted.',409);if(current.iceIssued[role])throw new BeamError('beam_turn_already_issued','TURN credentials were already issued for this participant.',409);current.iceIssued[role]='issuing';await tx.put('beam/offer/'+id,current);});
     const bytes=r.files.filter(f=>r.selected.includes(f.id)).reduce((n,f)=>n+f.size,0)*2;
-    const reservation=await this.config.BEAM_RELAY_BUDGET.reserve({owner,transfer:id,role,maxBytes:bytes,ttl:300});if(!reservation?.enforced)throw new BeamError('beam_turn_unfunded','An enforceable relay allowance is required.',503);
-    const adapter=new CloudflareTurnAdapter({keyId:this.config.CLOUDFLARE_TURN_KEY_ID,apiToken:this.config.CLOUDFLARE_TURN_API_TOKEN}),issued=await adapter.issue({ttl:300});
-    try{await this.config.BEAM_RELAY_BUDGET.commit(reservation);await this.metadata.transaction(async tx=>{const current=await tx.get('beam/offer/'+id);if(!current)throw new BeamError('beam_expired','This transfer has expired.',410);this.beams.authorize(current,actor);if(current.state!=='accepted')throw new BeamError('beam_not_accepted','This transfer is no longer accepted.',409);current.iceIssued[role]=true;await tx.put('beam/offer/'+id,current);});}catch(error){for(const username of new Set(issued.iceServers.map(s=>s.username).filter(Boolean)))try{await adapter.revoke(username);}catch{}throw error;}return {...issued,relayEnabled:true};
+    // Wargame Q3: any failure before the credentials are recorded releases the relay reservation (when the budget
+    // supports it) and moves this participant's 'issuing' marker back to unset, so a transient provider failure
+    // cannot lock the participant out of relay credentials for the life of the transfer.
+    const budget=this.config.BEAM_RELAY_BUDGET;let reservation=null,committed=false,issued=null,adapter=null;
+    try{
+     reservation=await budget.reserve({owner,transfer:id,role,maxBytes:bytes,ttl:300});if(!reservation?.enforced)throw new BeamError('beam_turn_unfunded','An enforceable relay allowance is required.',503);
+     adapter=new CloudflareTurnAdapter({keyId:this.config.CLOUDFLARE_TURN_KEY_ID,apiToken:this.config.CLOUDFLARE_TURN_API_TOKEN});issued=await adapter.issue({ttl:300});
+     await budget.commit(reservation);committed=true;
+     await this.metadata.transaction(async tx=>{const current=await tx.get('beam/offer/'+id);if(!current)throw new BeamError('beam_expired','This transfer has expired.',410);this.beams.authorize(current,actor);if(current.state!=='accepted')throw new BeamError('beam_not_accepted','This transfer is no longer accepted.',409);current.iceIssued[role]=true;await tx.put('beam/offer/'+id,current);});
+    }catch(error){
+     if(issued)for(const username of new Set(issued.iceServers.map(s=>s.username).filter(Boolean)))try{await adapter.revoke(username);}catch{}
+     if(reservation&&!committed&&typeof budget.release==='function')try{await budget.release(reservation);}catch{}
+     try{await this.metadata.transaction(async tx=>{const current=await tx.get('beam/offer/'+id);if(current?.iceIssued?.[role]==='issuing'){delete current.iceIssued[role];await tx.put('beam/offer/'+id,current);}});}catch{}
+     throw error;
+    }
+    return {...issued,relayEnabled:true};
   },
 };
 

@@ -21,10 +21,12 @@ function fixture(worker=false){
  async function claimBoot(token,binding='boot-browser',password=PASSWORD){await admin.bootStart({bootToken:token},ctx({setupBinding:binding}));const result=await admin.bootComplete({bootToken:token,method:'password',password,acknowledgeExpiry:true},ctx({setupBinding:binding}));return {...result,context:ctx({actor:'boot',bootSession:result.sessionToken,csrfToken:result.csrfToken})};}
  async function activate(link,name,password='long internal account password'){const onboardingToken=decodeURIComponent(link.split('#token=')[1]),c=ctx({setupBinding:'claim-'+name}),pending=await identity.claimOnboarding({onboardingToken,name,method:'password',password,ageConfirmed:18,termsAccepted:true,termsVersion:'v1',turnstileToken:'ok'},c),file=await identity.downloadRecovery(pending,c),active=await identity.confirmRecovery({...pending,...file,downloadConfirmed:true},c);const context=ctx({actor:'admin',sessionToken:active.sessionToken,csrfToken:active.csrfToken});return {id:active.account.id,context,password,stepUp:()=>identity.stepUp({method:'password',password},context)};}
  async function user(extra={}){const id=crypto.randomUUID(),assignmentId=crypto.randomUUID(),handle=await repository.allocateFreeHandle(undefined,id,assignmentId),{verifiedEmail,...rest}=extra,account={id,assignmentId,handle,revision:0,status:'active',createdAt:now,lastActiveAt:now,credentials:[],sessions:[],challenges:[],audit:[],badgeIds:[],passwordHash:'hash:secret user password',recoveryHash:'recovery-secret-hash',...rest};assert(await repository.create(account));if(verifiedEmail)assert(await repository.compareAndSwap(id,0,{...account,revision:1,verifiedEmail}));return repository.get(id);}
- async function makeAdmin(boot,name){await admin.reserve({name},boot.context);const minted=await admin.mintClaim({name,roles:['admin']},boot.context),member=await activate(minted.link,name);await member.stepUp();return member;}
+ // Administrators confirm with a passkey (wargame 2026-10-23 #2): enrol one, then step up with it.
+ async function enrolPasskey(member,id='passkey-'+member.id){const {challengeId}=await identity.credentialBegin({label:'Admin key'},member.context);await identity.credentialFinish({challengeId,response:{id,ok:true}},member.context);return {...member,passkeyId:id,passwordStepUp:member.stepUp,stepUp:async()=>{await identity.stepUpBegin({},member.context);return identity.stepUp({method:'passkey',response:{id,ok:true}},member.context);}};}
+ async function makeAdmin(boot,name){await admin.reserve({name},boot.context);const minted=await admin.mintClaim({name,roles:['admin']},boot.context),member=await enrolPasskey(await activate(minted.link,name));await member.stepUp();return member;}
  // Runs the identity storage alarm sweep on every namespace store at an explicit time.
  async function sweep(at=now){if(!worker)return (await repository.shardOnboardingSweep({now:at})).released;const released=[];for(const [shardName,shardStorage]of shards)if(shardName.startsWith('identity-v1/namespace/'))released.push(...(await shardStorage.onboardingSweep({now:at})).released);return released.sort();}
- return {config,repository,store,storage,identity,admin,ctx,deploy,claimBoot,activate,user,makeAdmin,sweep,advance:ms=>now+=ms,now:()=>now,close:()=>stores.forEach(s=>s.close())};
+ return {config,repository,store,storage,identity,admin,ctx,deploy,claimBoot,activate,enrolPasskey,user,makeAdmin,sweep,advance:ms=>now+=ms,now:()=>now,close:()=>stores.forEach(s=>s.close())};
 }
 const both=(title,body)=>{for(const worker of [false,true])test(`${worker?'Worker-style':'Node SQLite'}: ${title}`,async()=>{const f=fixture(worker);try{await body(f);}finally{f.close();}});};
 
@@ -261,7 +263,7 @@ both('boot can end its own access early; only a new token restores it',async f=>
 });
 both('console access reports only the caller\'s own administrator authority',async f=>{
  const boot=await f.claimBoot(await f.deploy()),member=await f.makeAdmin(boot,'ops'),plain=await f.user();
- assert.deepEqual(await f.admin.access({},member.context),{admin:true,handle:'ops',passkey:false});
+ assert.deepEqual(await f.admin.access({},member.context),{admin:true,handle:'ops',passkey:true});
  await assert.rejects(f.admin.access({},{...member.context,actor:'boot'}),{code:'actor_required'});await assert.rejects(f.admin.access({},{...member.context,csrfToken:'wrong'}),{code:'csrf'});
  const session=await f.identity.loginPassword({handle:plain.handle,password:'secret user password',turnstileToken:'ok'},f.ctx());assert.ok(session.sessionToken);
  assert.deepEqual(await f.admin.access({},f.ctx({actor:'admin',sessionToken:session.sessionToken,csrfToken:session.csrfToken})),{admin:false});
@@ -302,10 +304,79 @@ test('console boot logout always clears the cookie; administrator step-up can be
   await f.admin.overview({},member.context);assert.deepEqual(await f.admin.endStepUp({},member.context),{ended:true});await assert.rejects(f.admin.overview({},member.context),{code:'step_up_required'});
  }finally{f.close();}
 });
-test('IdentityService.stepUp has a single caller: the passkey-only admin route',async()=>{
- const {readFile}=await import('node:fs/promises');const {execFileSync}=await import('node:child_process');
- const hits=execFileSync('grep',['-rln','identity.stepUp(\\|\\.stepUp(','packages','apps'],{encoding:'utf8'}).trim().split('\n').filter(f=>!f.includes('node_modules')&&f!=='packages/identity/service.mjs');
- assert.deepEqual(hits,['packages/runtime/admin-http.mjs']);assert.match(await readFile('packages/runtime/admin-http.mjs','utf8'),/input\?\.method!=='passkey'/);
+// Wargame 2026-10-23 #2 (replaces a grep for callers of IdentityService.stepUp): the general identity step-up
+// (/api/auth/step-up) accepts a password, so the administrator console itself must demand a passkey stamp.
+both('a password step-up, from any route, never grants administrator authority',async f=>{
+ const {IdentityAction}=await import('../packages/identity/index.mjs');
+ const boot=await f.claimBoot(await f.deploy()),member=await f.makeAdmin(boot,'ops'),plain=await f.makeAdmin(boot,'ops-plain').catch(()=>null);void plain;
+ // The general identity route maps to IdentityAction('stepUp') and accepts a password.
+ await new IdentityAction('stepUp',{method:'password',password:member.password},member.context).execute({identity:f.identity},{dispatchFeed:new EventTarget(),engineFeed:new EventTarget()});
+ await assert.rejects(f.admin.blockClient({host:'victim-app.example',blocked:true,reason:'pwned'},member.context),{code:'step_up_required'});
+ await assert.rejects(f.admin.overview({},member.context),{code:'step_up_required'});
+ // A passkey step-up restores it; removing that passkey withdraws it again even inside the window.
+ await member.stepUp();await f.admin.blockClient({host:'victim-app.example',blocked:true,reason:'test'},member.context);
+ // An administrator without any passkey cannot reach the console with a password step-up.
+ await f.admin.reserve({name:'nokey'},boot.context);const minted=await f.admin.mintClaim({name:'nokey',roles:['admin']},boot.context),bare=await f.activate(minted.link,'nokey');
+ await bare.stepUp();await assert.rejects(f.admin.overview({},bare.context),{code:'step_up_required'});
+ // The HTTP admin step-up route still refuses passwords outright.
+ const env={APP_ORIGIN:origin,ADMIN_SERVICE:async()=>f.admin},json=(data,status=200,headers)=>new Response(JSON.stringify(data),{status,headers});
+ const response=await adminRoutes({path:'/api/admin/step-up',request:new Request(origin+'/api/admin/step-up',{method:'POST',headers:{Origin:origin,'X-Bindle-Admin-Actor':'admin'}}),env,local:true,context:member.context,body:async()=>({method:'password',password:member.password}),json});assert.equal(response.status,403);
+});
+
+// Wargame 2026-10-23 #6: an unauthenticated begin never evicts another caller's pending challenge, and a challenge is
+// redeemable only with the caller nonce it was issued to.
+async function passkeyBoot(f){const token=await f.deploy();await f.admin.bootStart({bootToken:token},f.ctx({setupBinding:'op'}));return f.admin.bootComplete({bootToken:token,acknowledgeExpiry:true,method:'passkey',response:{id:'boot-key',ok:true}},f.ctx({setupBinding:'op'}));}
+both('boot passkey begin is per caller: other begins cannot evict, and a challenge needs its own nonce',async f=>{
+ await passkeyBoot(f);const nonce=n=>String(n).repeat(43).slice(0,43),mine=await f.admin.bootLoginBegin({},f.ctx({remoteIP:'198.51.100.1',bootLoginNonce:nonce('a')}));
+ for(let i=0;i<12;i++)await f.admin.bootLoginBegin({},f.ctx({remoteIP:'2001:db8::'+i,bootLoginNonce:i%2?undefined:nonce(i%10)}));
+ // A thief holding the challenge id but not the caller's nonce cookie (or no cookie at all) cannot redeem it.
+ await assert.rejects(f.admin.bootLogin({method:'passkey',challengeId:mine.challengeId,response:{id:'boot-key',ok:true}},f.ctx({bootLoginNonce:nonce('b')})),{code:'unauthorized'});
+ await assert.rejects(f.admin.bootLogin({method:'passkey',challengeId:mine.challengeId,response:{id:'boot-key',ok:true}},f.ctx()),{code:'unauthorized'});
+ const login=await f.admin.bootLogin({method:'passkey',challengeId:mine.challengeId,response:{id:'boot-key',ok:true}},f.ctx({remoteIP:'198.51.100.1',bootLoginNonce:nonce('a')}));assert(login.sessionToken);
+ // Single use.
+ await assert.rejects(f.admin.bootLogin({method:'passkey',challengeId:mine.challengeId,response:{id:'boot-key',ok:true}},f.ctx({bootLoginNonce:nonce('a')})),{code:'unauthorized'});
+ // Expired rows are swept by later begins.
+ f.advance(300001);await f.admin.bootLoginBegin({},f.ctx({bootLoginNonce:nonce('c')}));assert.equal((await f.storage.list('boot-challenge/')).length,1);
+});
+test('boot passkey begin: the HTTP adapter issues and reads the caller nonce cookie',async()=>{
+ const f=fixture();try{await passkeyBoot(f);const env={APP_ORIGIN:origin,ADMIN_SERVICE:async()=>f.admin},json=(data,status=200,headers)=>new Response(JSON.stringify(data),{status,headers}),body=async request=>request.json();
+  const call=(path,input,cookie)=>adminRoutes({path,request:new Request(origin+path,{method:'POST',headers:{Origin:origin,'Content-Type':'application/json',...cookie?{Cookie:cookie}:{}},body:JSON.stringify(input)}),env,local:false,context:{remoteIP:'192.0.2.1'},body,json});
+  const begun=await call('/api/admin/boot/login/begin',{}),set=begun.headers.get('Set-Cookie'),{challengeId}=await begun.json();
+  assert.match(set,/^__Host-bindle_boot_login=[A-Za-z0-9_-]{43}; Path=\/; HttpOnly; SameSite=Strict; Max-Age=900; Secure$/);const cookie=set.split(';')[0];
+  await assert.rejects(call('/api/admin/boot/login',{method:'passkey',challengeId,response:{id:'boot-key',ok:true}}),{code:'unauthorized'});
+  const again=await call('/api/admin/boot/login/begin',{},cookie);assert.equal(again.headers.get('Set-Cookie'),null,'an existing nonce is reused');
+  const ok=await call('/api/admin/boot/login',{method:'passkey',challengeId,response:{id:'boot-key',ok:true}},cookie);assert.equal(ok.status,200);
+ }finally{f.close();}
+});
+// Wargame 2026-10-23 #10: password guessing against the single boot principal has ceilings independent of the address,
+// under the production abuse policy, and does not consume the passkey path.
+test('boot password login has principal and global ceilings across many source addresses',async()=>{
+ const {enforceAbusePolicy}=await import('../packages/core/abuse-policy.mjs');
+ const f=fixture();try{await f.claimBoot(await f.deploy());let verifies=0;const verify=f.admin.passwordHasher.verify;f.admin.passwordHasher={...f.admin.passwordHasher,verify:async(...a)=>{verifies++;return verify(...a);}};
+  const counts=new Map(),windows=new Map(),resource={consume:async w=>{counts.set(w.key,(counts.get(w.key)??0)+1);const at=f.now(),old=windows.get(w.key),next=!old||old.start+w.windowMs<=at?{start:at,n:1}:{start:old.start,n:old.n+1};windows.set(w.key,next);return next.n<=w.limit;}};f.admin.rateLimiter={check:async({operation,remoteIP})=>enforceAbusePolicy(resource,{operation,ipHash:remoteIP,subnetHash:remoteIP})};
+  let limited=0;for(let i=0;i<300;i++)await f.admin.bootLogin({method:'password',password:'guess-'+i+'-xxxxxxxxxxxx'},f.ctx({remoteIP:'2001:db8::'+i.toString(16)})).catch(e=>{if(e.code==='rate_limited')limited++;});
+  assert.equal(verifies,20,'20 password checks per 5 minutes for the principal');assert.equal(limited,280);
+  f.advance(300001);await f.admin.bootLogin({method:'password',password:PASSWORD},f.ctx({remoteIP:'203.0.113.5'}));
+  for(let period=0;period<10;period++){f.advance(300001);for(let i=0;i<20;i++)await f.admin.bootLogin({method:'password',password:'g'.repeat(20)},f.ctx({remoteIP:'2001:db8:1::'+(period*20+i).toString(16)})).catch(()=>{});}
+  assert.equal(verifies,200,'200 password checks per hour for the host, though every 5-minute window was respected');
+  // Passkey begin is counted apart: password guessing never exhausts it.
+  assert.equal(counts.get('boot-login-begin:principal'),undefined);
+ }finally{f.close();}
+});
+
+// Review 2026-10-23 (provisional): the principal window on boot passkey begin is high (600 per 5 minutes) and the
+// per-address windows do the work, so a flood from about 100 addresses cannot hold off the operator's begin.
+test('boot passkey begin: a distributed begin flood does not exhaust the principal window before the operator begins',async()=>{
+ const {enforceAbusePolicy}=await import('../packages/core/abuse-policy.mjs');
+ const f=fixture();try{await passkeyBoot(f);
+  const windows=new Map(),resource={consume:async w=>{const at=f.now(),old=windows.get(w.key),next=!old||old.start+w.windowMs<=at?{start:at,n:1}:{start:old.start,n:old.n+1};windows.set(w.key,next);return next.n<=w.limit;}};
+  f.admin.rateLimiter={check:async({operation,remoteIP})=>enforceAbusePolicy(resource,{operation,ipHash:remoteIP,subnetHash:remoteIP})};
+  for(let i=0;i<100;i++)for(let k=0;k<5;k++)await f.admin.bootLoginBegin({},f.ctx({remoteIP:'2001:db8:2::'+i.toString(16)}));
+  const mine=await f.admin.bootLoginBegin({},f.ctx({remoteIP:'198.51.100.77',bootLoginNonce:'n'.repeat(43)}));assert.ok(mine.challengeId,'the operator can still begin');
+  // Per-address windows still apply.
+  for(let k=0;k<10;k++)await f.admin.bootLoginBegin({},f.ctx({remoteIP:'203.0.113.9'}));
+  await assert.rejects(f.admin.bootLoginBegin({},f.ctx({remoteIP:'203.0.113.9'})),{code:'rate_limited'});
+ }finally{f.close();}
 });
 
 both('expired unredeemed claims release their name; redeemed, mid-redemption, static and boot names never do',async f=>{

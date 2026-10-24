@@ -14,7 +14,9 @@ export async function enqueueSearchEvent(tx, { owner, id, operation = 'upsert', 
   if (!Number.isSafeInteger(revision) || revision < 1 || revision <= (prior?.revision || 0)) fail('invalid_search_revision');
   const eventKey = searchEventKey(owner, id), usageKey = recordKey('search-queue-usage', owner);
   const pending = await get(eventKey), usage = await get(usageKey) || { count: 0 };
-  if (!pending && usage.count >= maxQueue) fail('search_queue_full');
+  // Tombstones are always admitted (wargame Q2): a full or wedged queue must never block deletion. A tombstone
+  // replaces any pending upsert for the same item, so it adds at most one row per deleted item.
+  if (!pending && operation !== 'tombstone' && usage.count >= maxQueue) fail('search_queue_full');
   const event = { owner, id, operation, source: { kind: source.kind, id: source.id }, revision };
   await put(searchRevisionKey(owner, id), { revision, operation });
   await put(eventKey, event);

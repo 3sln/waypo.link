@@ -4,7 +4,8 @@
 //
 // The organization is the Polar customer (`external_customer_id` = the organization's account UUID). Each checkout is
 // created by one 3sln.me person account. Its metadata names that person (`<prefix>org_owner`), the purpose
-// (`create` | `transfer` | `claim` | `renew`) and a binding (the creation request, transfer or claim id). Polar copies
+// (`create` | `transfer` | `claim` | `renew` | `break-glass`) and a binding (the creation request, transfer, lapse claim or
+// break-glass claim id; design §12d.6). Polar copies
 // checkout metadata onto the subscription and its orders (pinned @polar-sh/sdk 1.0.2, CheckoutCreate). The owner of
 // record (§12b.1 item 1) is therefore read from the verified subscription, never from the customer email or the card.
 //
@@ -27,7 +28,18 @@ export const ORGANIZATION_PLANS=Object.freeze({
  'org-scale':Object.freeze({id:'org-scale',name:'Scale',storageBytes:100_000_000_000_000,aiCreditsMonthly:2_000_000,members:5_000,annualAmount:6_000_000,currency:'usd',provisional:true})
 });
 export const ORGANIZATION_PLAN_IDS=Object.freeze(Object.keys(ORGANIZATION_PLANS));
-export const ORGANIZATION_PURPOSES=Object.freeze(['create','transfer','claim','renew']);
+export const ORGANIZATION_PURPOSES=Object.freeze(['create','transfer','claim','renew','break-glass']);
+/**
+ * PROVISIONAL (coordinator, 2026-10-23; design §12d.6, BG-17): the processing fee a VOLUNTARY break-glass withdrawal keeps
+ * from its refund, at the modelled Polar rate (about 5% + US$0.50). The fixed part is 0.50 of the major unit in the order's
+ * currency. Every other unsuccessful claim is refunded in full and the fee is absorbed. Not reviewed pricing.
+ */
+export const ORGANIZATION_PROCESSING_FEE=Object.freeze({bps:500,fixedMajor:0.5});
+/** The processing fee kept from a refund of an order of `net` minor units in `currency`; never more than `net`. */
+export function organizationProcessingFee(net,currency){
+ if(!Number.isSafeInteger(net)||net<=0)return 0;let exponent=2;try{exponent=priceExponent(currency);}catch{exponent=2;}
+ return Math.min(net,Math.ceil(net*ORGANIZATION_PROCESSING_FEE.bps/10000)+Math.round(ORGANIZATION_PROCESSING_FEE.fixedMajor*10**exponent));
+}
 /** Product metadata value marking an organization product in metadata catalog mode. The person catalog skips these. */
 export const ORGANIZATION_CATALOG_MARK='organization';
 const MAX_STORAGE=100_000_000_000_000,BOUNDED=/^[A-Za-z0-9_-]{1,200}$/,UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -194,18 +206,22 @@ export class OrganizationBilling{
  }
  /** A full refund of EVERY order of a subscription (review follow-up 6: a claim or transfer refund covers every order
   * bound to it, renewals included, not only the first). Idempotent: each order is refunded only for what is not yet
-  * refunded, re-read from the provider. */
- async refundAll(org,{subscriptionId,reason='other',comment}={}){
+  * refunded, re-read from the provider. `retainProcessingFee` (a voluntary break-glass withdrawal, §12d.6) keeps the
+  * processing fee of the FIRST order, once: that order is refunded up to its net amount less the fee, so a retried
+  * drain never refunds the fee. */
+ async refundAll(org,{subscriptionId,reason='other',comment,retainProcessingFee=false}={}){
   if(!bounded(subscriptionId))throw new BillingError('invalid_request','Unsupported refund.',400);
   const catalog=await this.catalog(),client=await this.client();let result;
   try{result=await client.orders.list({organization_id:catalog.organizationId,subscription_id:subscriptionId,limit:20,page:1,sorting:['created_at']});}catch{throw unavailable();}
   if(!Array.isArray(result?.items)||result.items.length>20)throw unavailable();
-  let amount=0;
+  let amount=0,retained=0;const at=o=>{const t=timestamp(o?.created_at);return Number.isFinite(t)?t:Infinity;};
+  const first=retainProcessingFee?[...result.items].filter(o=>bounded(o?.id)&&o.subscription_id===subscriptionId&&o.paid===true).sort((a,b)=>at(a)-at(b)||String(a.id).localeCompare(String(b.id)))[0]:null;
   for(const listed of result.items){
    if(!bounded(listed?.id)||listed.subscription_id!==subscriptionId||listed.paid!==true||['refunded','void'].includes(listed.status))continue;
-   const out=await this.refund(org,{subscriptionId,orderId:listed.id,reason,comment});amount+=out.already?0:out.amount??0;
+   const retain=first&&listed.id===first.id?organizationProcessingFee(listed.net_amount,listed.currency):0;
+   const out=await this.refund(org,{subscriptionId,orderId:listed.id,reason,comment,retain});amount+=out.already?0:out.amount??0;retained+=retain;
   }
-  return {refunded:true,amount};
+  return {refunded:true,amount,...retainProcessingFee?{retained}:{}};
  }
  /** Cancels a subscription at once (not at period end). Idempotent: an already ended subscription is left alone. */
  async revoke(org,subscriptionId){
@@ -217,13 +233,14 @@ export class OrganizationBilling{
   if(r?.id!==subscriptionId||r.customer?.external_id!==org)throw unavailable();return {revoked:true};
  }
  /** A full refund of a subscription's first order (the failed-transfer rule, §12b.3a): whatever of the net amount is not
-  * yet refunded. Idempotent by re-reading the order. */
- async refund(org,{subscriptionId,orderId,reason='other',comment}={}){
+  * yet refunded. Idempotent by re-reading the order. `retain` (minor units) is kept: the target is net less `retain`. */
+ async refund(org,{subscriptionId,orderId,reason='other',comment,retain=0}={}){
   if(!bounded(orderId)||!bounded(subscriptionId))throw new BillingError('invalid_request','Unsupported refund.',400);
   const client=await this.client();let o;try{o=await client.orders.get(orderId);}catch{throw unavailable();}
   if(o?.id!==orderId||o.subscription_id!==subscriptionId||o.customer?.external_id!==org||!Number.isSafeInteger(o.net_amount)||!Number.isSafeInteger(o.refunded_amount))throw unavailable();
-  if(o.status==='refunded'||o.refunded_amount>=o.net_amount)return {refunded:true,already:true,amount:o.refunded_amount};
-  const amount=o.net_amount-Math.max(0,o.refunded_amount);
+  const target=o.net_amount-(Number.isSafeInteger(retain)&&retain>0?Math.min(retain,o.net_amount):0);
+  if(o.status==='refunded'||o.refunded_amount>=target)return {refunded:true,already:true,amount:o.refunded_amount};
+  const amount=target-Math.max(0,o.refunded_amount);
   let r;try{r=await client.refunds.create({order_id:orderId,reason,amount,...comment?{comment:String(comment).slice(0,400)}:{}});}catch{throw unavailable();}
   if(r?.order_id!==orderId)throw unavailable();return {refunded:true,amount};
  }

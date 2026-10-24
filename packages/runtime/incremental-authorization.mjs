@@ -2,7 +2,7 @@ import {pinConfiguredContract,reviewedSchemaFetcher} from './artefact-pins.mjs';
 import {lifecycleUnknown} from './public-unknown.mjs';
 import {flagsFor,capability,siteGlobal,siteEnabled,featureConfig,existingFeature} from './account/flags.mjs';
 import {federationSchemas} from './federation.mjs';
-import {verifyProof,dpopNonces,consumeProof,DPOP_TYP} from '../federation/dpop.mjs';
+import {verifyProof,dpopNonces,DPOP_TYP} from '../federation/dpop.mjs';
 import {consentContracts} from '../consent/contracts.mjs';
 // IA-1/IA-2 composition (docs/spec/incremental-authorization.md). Shared by the Worker and Node adapters. Nothing is
 // reachable unless INCREMENTAL_AUTH_ENABLED is on AND the adapter builds `INCREMENTAL_AUTHORIZATION` from an
@@ -48,10 +48,13 @@ export async function handleIncrementalToken(request,{port,issuer,proofs,origins
  const origin=request.headers.get('Origin'),cors=origin&&await origins(origin,params.get('client_id'))?{'Access-Control-Allow-Origin':origin,Vary:'Origin'}:{};
  const names=[...params.keys()];if(new Set(names).size!==names.length||names.some(name=>!['grant_type','code','redirect_uri','client_id','code_verifier'].includes(name)))return oauth({error:'invalid_request'},400,cors);
  try{await authorizeClient(params.get('client_id'));}catch{return oauth({error:'invalid_client'},400,cors);}
- let dpopJkt;const proof=request.headers.get('DPoP'),nonceHeaders=async()=>proof!==null&&proofs.nonce?{'DPoP-Nonce':await proofs.nonce(),'Access-Control-Expose-Headers':'DPoP-Nonce'}:{};
- if(proof!==null){try{dpopJkt=await proofs.verify(proof,{htm:'POST',htu:`${issuer}/oauth/token`});}catch(error){return oauth({error:error?.code==='use_dpop_nonce'?'use_dpop_nonce':'invalid_dpop_proof'},400,{...cors,...await nonceHeaders()});}if(typeof dpopJkt!=='string')return oauth({error:'invalid_dpop_proof'},400,cors);}
- try{return oauth(await port.exchange({clientId:params.get('client_id'),code:params.get('code'),redirectUri:params.get('redirect_uri'),codeVerifier:params.get('code_verifier'),...dpopJkt?{dpopJkt}:{}}),200,{...cors,...await nonceHeaders()});}
+ // Wargame 2026-10-23 #5: `proofs.verify` only verifies (signature, htu, iat, nonce MAC) and returns the proof facts
+ // {jkt,jti,nonceHash,expiresAt}; nothing is recorded until the exchange has found the code bound to that key.
+ let dpopJkt,dpopProof;const proof=request.headers.get('DPoP'),nonceHeaders=async()=>proof!==null&&proofs.nonce?{'DPoP-Nonce':await proofs.nonce(),'Access-Control-Expose-Headers':'DPoP-Nonce'}:{};
+ if(proof!==null){let facts;try{facts=await proofs.verify(proof,{htm:'POST',htu:`${issuer}/oauth/token`});}catch(error){return oauth({error:error?.code==='use_dpop_nonce'?'use_dpop_nonce':'invalid_dpop_proof'},400,{...cors,...await nonceHeaders()});}dpopJkt=typeof facts==='string'?facts:facts?.jkt;if(typeof dpopJkt!=='string')return oauth({error:'invalid_dpop_proof'},400,cors);if(facts&&typeof facts==='object')dpopProof={jti:facts.jti,nonceHash:facts.nonceHash??null,expiresAt:facts.expiresAt};}
+ try{return oauth(await port.exchange({clientId:params.get('client_id'),code:params.get('code'),redirectUri:params.get('redirect_uri'),codeVerifier:params.get('code_verifier'),...dpopJkt?{dpopJkt}:{},...dpopProof?{dpopProof}:{}}),200,{...cors,...await nonceHeaders()});}
  catch(error){if(error?.code==='temporarily_unavailable')return oauth({error:'temporarily_unavailable'},503,{...cors,'Retry-After':'5'});
+  if(['invalid_dpop_proof','use_dpop_nonce'].includes(error?.code))return oauth({error:error.code},400,{...cors,...await nonceHeaders()});
   // U404: a code whose own subject is deleted/deleting/moved is an invalid grant (RFC 6749), never 404/410.
   return oauth({error:['invalid_grant','not_found'].includes(error?.code)||lifecycleUnknown(error)?'invalid_grant':'invalid_request'},400,cors);}
 }
@@ -69,7 +72,7 @@ export function federationIncremental({config,store,shard,provision=false}){
   pinSchema:url=>{const schemas=federationSchemas(config);return pinSchema({store,crypto,schemaHosts:Object.keys(schemas).map(url=>new URL(url).host),schemaFetcher:reviewedSchemaFetcher(config,'unsupported_fragment')},url);},
   grants:Object.fromEntries(['connection','siteConnection','current','commit'].map(n=>[n,call(n)])),preferences:Object.fromEntries(['read','receivers','candidates','save'].map(n=>[n,call(n)])),sessions:Object.fromEntries(['newest','issue','revoke'].map(n=>[n,call(n)]))});
  const provider=Object.fromEntries(Object.keys(providerFor()).map(method=>[method,(...args)=>providerFor()[method](...args)])),runner=incrementalRunner({config,incremental:provider,provision}),nonces=dpopNonces({secret:config.DPOP_NONCE_KEY||config.KEY_ENCRYPTION_KEY});
- return Object.freeze({...runner,get mounted(){return incrementalMountable(config);},tokenNonce:()=>nonces.issue('token'),async tokenProof(proof){const verified=await verifyProof(crypto,proof,{typ:DPOP_TYP,htm:'POST',htu:`${config.APP_ORIGIN}/oauth/token`,now:Date.now(),nonce:value=>nonces.check('token',value)});await store.transaction(tx=>consumeProof(tx,'incremental-dpop/',verified,crypto,Date.now));return verified.jkt;},async cleanup(input){const result=await runner.cleanup(input);await store.transaction(async tx=>{for(const row of await tx.list('incremental-dpop/'))if(row.value.expiresAt<=Date.now())await tx.delete(row.key);});return result;}});
+ return Object.freeze({...runner,get mounted(){return incrementalMountable(config);},tokenNonce:()=>nonces.issue('token'),async tokenProof(proof){const verified=await verifyProof(crypto,proof,{typ:DPOP_TYP,htm:'POST',htu:`${config.APP_ORIGIN}/oauth/token`,now:Date.now(),nonce:value=>nonces.check('token',value)});return {jkt:verified.jkt,jti:verified.jti,nonceHash:verified.nonceHash,expiresAt:verified.expiresAt};},async cleanup(input){const result=await runner.cleanup(input);await store.transaction(async tx=>{for(const row of await tx.list('incremental-dpop/'))if(row.value.expiresAt<=Date.now())await tx.delete(row.key);});return result;}});
 }
 export const INCREMENTAL_STORE='bindle-incremental-v1';
 export const INCREMENTAL_METHODS=['admit','begin','decide','abandon','exchange','cleanup','loginDelta','loginOutcome','tokenProof','tokenNonce','suppressionList','suppressionAdd','suppressionRemove','suppressionExport','suppressionErase','ownerActed'];

@@ -8,6 +8,7 @@ import {key} from '../../messaging/store.mjs';
 import {StorageError} from '../../storage/policy.mjs';
 import {storageState} from '../storage-quota.mjs';
 import {vectorBinding} from '../semantic-routing.mjs';
+import {lifecycleLog} from '../lifecycle-runner.mjs';
 import {enqueueSearchEvent,searchRevisionKey,messageSearchDocument,planBudget,WorkersAIEmbeddingAdapter,VectorizeSearchIndex,SEMANTIC_MODEL,SEMANTIC_DIMENSIONS} from '../../search/index.mjs';
 
 export const methods={
@@ -80,6 +81,8 @@ export const methods={
   async scanSearchDocuments(owner,{limit=50,cursor}={}){const page=await this.messagePage(owner,{limit,cursor});return {items:page.items.map(message=>({id:`message:${message.id}`,owner,revision:message.revision||1,deleted:false})),cursor:page.cursor};},
   async searchDrain(owner,{limit=10}={}){
     if(!this.search)return {processed:0};const retry=await this.metadata.get('search/extraction-retry');if(!retryReady(retry))return {processed:0,paused:Boolean(retry?.paused)};await this.configureSemanticSearch(owner);const entitlement=await this.billing.entitlement(owner),budgets=planBudget(entitlement.plan==='free'?'free':'paid').limits;this.search.budgets=budgets;this.searchIndex.budgets=budgets;
+    // Wargame Q1: a deterministically invalid document is acknowledged and tombstoned by drain; record an operator signal.
+    this.search.onRejected=async(event,error)=>{const prior=await this.metadata.get('search/rejected');await this.metadata.put('search/rejected',{count:(Number.isSafeInteger(prior?.count)?prior.count:0)+1,last:{id:event.id,revision:event.revision,code:error.code,at:Date.now()}});lifecycleLog(this.config,{kind:'search',action:'operator-alert',reason:'document-rejected',owner,id:event.id,revision:event.revision,error:error.code});};
     try{const result=await this.search.drain(owner,{limit});await this.metadata.delete('search-index-error');await this.metadata.delete('search/extraction-retry');return result;}catch(error){await retryFailure(this.metadata,'search/extraction-retry',error);await this.metadata.put('search-index-error',{code:error.code||'index_unavailable',at:Date.now()});throw error;}
   },
   async searchRebuild(owner,options={}){await this.warm(owner);if(!this.search)throw new StorageError('temporarily_unavailable','Search is unavailable.',503);await this.configureSemanticSearch(owner);return this.search.rebuild(owner,{...options,limit:Math.min(options.limit||50,50)});},

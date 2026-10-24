@@ -1,7 +1,7 @@
 // HTTP router (docs/architecture/app-engine.md §7, §12). It keeps the cross-cutting steps (origin, method
 // allowlist, CSRF, session, owner resolution, capacity admission, activity) and runs the per-slice route stages
 // of packages/runtime/routes/index.mjs between them. Shared helpers live in packages/runtime/routes/shared.mjs.
-import {recoveryReissueEligibility} from './recovery-eligibility.mjs';
+import {recoveryReissueEligibility,organizationReissueEligibility} from './recovery-eligibility.mjs';
 import {accountRoutePaths} from './account-session-http.mjs';
 import {accountCookiesEnabled,selectedAccountMember,parseAccountCookies,hasAccountVault,installedAccountCookies,accountFault} from './account-cookies.mjs';
 import {FlagsRuntime} from './flags.mjs';
@@ -46,7 +46,7 @@ export default {
     response=await stage('api',route);if(response)return response.passthrough??response;
     // Member cookies are authenticated and the tab selector matched before any owner actor is routed.
     const vault=accountCookiesEnabled(env),accountCookies=vault?parseAccountCookies(request,local):new Map(),vaultPresent=vault&&hasAccountVault(accountCookies,local),accountPath=vault&&accountRoutePaths.includes(path);let accountMember=null;if(vault&&!accountPath&&!(mutation&&request.headers.get('X-Bindle-Account')===null))accountMember=await selectedAccountMember(request,env,local,accountCookies);
-    engine=await identity(env);const context={origin:request.headers.get('Origin')||env.APP_ORIGIN,sessionToken:accountMember?.token||(vaultPresent?undefined:sessionToken(request,local)),expectedOwner:accountMember?.owner||request.headers.get('X-Bindle-Account')||undefined,sessionContext:accountMember?.sessionContext||request.headers.get('X-Bindle-Session-Context')||undefined,csrfToken:request.headers.get('X-CSRF-Token'),remoteIP:request.headers.get('CF-Connecting-IP')||(local?'127.0.0.1':'unknown'),region:/^[A-Z]{2}$/.test(request.cf?.country||'')?request.cf.country:'unknown',deviceBinding:deviceCookie(request,local),setupBinding:setupCookie(request,local)};
+    engine=await identity(env);const context={origin:request.headers.get('Origin')||env.APP_ORIGIN,sessionToken:accountMember?.token||(vaultPresent?undefined:sessionToken(request,local)),expectedOwner:accountMember?.owner||request.headers.get('X-Bindle-Account')||undefined,sessionContext:accountMember?.sessionContext||request.headers.get('X-Bindle-Session-Context')||undefined,csrfToken:request.headers.get('X-CSRF-Token'),remoteIP:request.headers.get('CF-Connecting-IP')||(local?'127.0.0.1':'unknown'),region:/^[A-Z]{2}$/.test(request.cf?.country||'')?request.cf.country:'unknown',deviceBinding:deviceCookie(request,local),setupBinding:setupCookie(request,local),...typeof execution?.waitUntil==='function'?{waitUntil:promise=>execution.waitUntil(promise)}:{}};
     Object.assign(route,{engine,context,vault,accountCookies,vaultPresent,accountPath,accountMember});
     response=await stage('session',route);if(response)return response.passthrough??response;
     // Header-less private writes would follow a mutable default; tabs must name their member.
@@ -83,7 +83,7 @@ export default {
     const capacityExempt=protective||request.method==='DELETE'||admission.exempt(path);
     if(mutation&&!capacityExempt&&allowedMethods(path))await object.admitWork(id,{initialize:true});
     await object.touch(id);
-    if(path==='/api/account'&&request.method==='GET')return json({...await object.snapshot(id),account:owner.account,credentials:owner.credentials,devices:owner.devices,audit:owner.audit,recovery:{...owner.recovery,...recoveryReissueEligibility(await env.IDENTITY_REPOSITORY.get(id))},grants:[],features:sessionFeatures(env,id),...flagReadable(env,'DEVICE_AUTHORIZATION_ENABLED')&&env.FEDERATION_AUTHORITY?.ready()?{appSessions:(await env.FEDERATION_AUTHORITY.appSessions(context)).sessions}:{}},200,{'Cache-Control':'private, no-store'});
+    if(path==='/api/account'&&request.method==='GET')return json({...await object.snapshot(id),account:owner.account,credentials:owner.credentials,devices:owner.devices,audit:owner.audit,recovery:await (async()=>{const identity=await env.IDENTITY_REPOSITORY.get(id);return {...owner.recovery,...recoveryReissueEligibility(identity),...organizationReissueEligibility(identity)};})(),grants:[],features:sessionFeatures(env,id),...flagReadable(env,'DEVICE_AUTHORIZATION_ENABLED')&&env.FEDERATION_AUTHORITY?.ready()?{appSessions:(await env.FEDERATION_AUTHORITY.appSessions(context)).sessions}:{}},200,{'Cache-Control':'private, no-store'});
     response=await stage('owner',route);if(response)return response.passthrough??response;
     return json({error:'not_found'},404);
    }

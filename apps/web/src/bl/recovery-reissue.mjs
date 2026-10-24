@@ -3,7 +3,9 @@
 //   begin   POST /api/auth/recovery/reissue/begin {acknowledged:true}: needs a fresh step-up (the OwnerFlow's freshAPI
 //           prompts on `reauthentication_required`); the server rotates the signing key and STAGES the new file.
 //   ...     encrypt with the owner's questions, download, test-unlock: all on this device, as during setup.
-//   confirm POST /api/auth/recovery/reissue/confirm {recoveryToken, downloadConfirmed:true}: the old file stops working.
+//   confirm POST /api/auth/recovery/reissue/confirm {recoveryToken, downloadConfirmed:true}: a 7-day window opens in which
+//           the new file cannot recover yet and the old one can only cancel (POST .../reissue/cancel from an earlier
+//           device, the emailed link, or the old file on the recovery page).
 // The plaintext file and the encrypted copy stay in the in-memory browser secrets, never in the UI projection, storage
 // or a URL. Cancelling before confirmation keeps the current file working.
 import {OwnerFlow,snapshot,publish} from './owner-flow.mjs';
@@ -73,6 +75,15 @@ export class ConfirmRecoveryReissue extends ReissueFlow {
   r.browser.focus?.('.recovery-reissue h2');
  }
 }
+/** Cancels a committed replacement during its 7-day window from this (earlier) device: the previous file works again and
+ * the new one never will. The server accepts it only from a session that existed before the replacement began. */
+export class CancelPendingRecoveryReissue extends ReissueFlow {
+ async perform(r,ctx){
+  await r.api.request('/api/auth/recovery/reissue/cancel',{confirmed:true});
+  publish(r,ctx,{error:'',notice:'Replacement cancelled. Your previous recovery file works again and the new one never will.'});
+  try{const data=await r.api.get('/api/account');publish(r,ctx,{data,session:{...snapshot(r).session,account:data.account}});}catch{}
+ }
+}
 /** Leaves the flow. Before confirmation the current file keeps working; nothing is sent. */
 export class CloseRecoveryReissue extends Action {
  static deps={state:{write:true},browser:{}};
@@ -80,4 +91,4 @@ export class CloseRecoveryReissue extends Action {
  execute(r,ctx){const s=snapshot(r);if(!reissueState(s)||s.busy)return;const done=s.reissue.stage==='done';forget(r.browser);
   publish(r,ctx,{...cleared,error:'',notice:done?'':'Replacement cancelled. Nothing changed.'});}
 }
-export const RECOVERY_REISSUE_INTENTS=Object.freeze({'begin-recovery-reissue':BeginRecoveryReissue,'encrypt-recovery-reissue':EncryptRecoveryReissue,'download-recovery-reissue':DownloadRecoveryReissue,'verify-recovery-reissue':VerifyRecoveryReissue,'confirm-recovery-reissue':ConfirmRecoveryReissue,'close-recovery-reissue':CloseRecoveryReissue});
+export const RECOVERY_REISSUE_INTENTS=Object.freeze({'begin-recovery-reissue':BeginRecoveryReissue,'encrypt-recovery-reissue':EncryptRecoveryReissue,'download-recovery-reissue':DownloadRecoveryReissue,'verify-recovery-reissue':VerifyRecoveryReissue,'confirm-recovery-reissue':ConfirmRecoveryReissue,'close-recovery-reissue':CloseRecoveryReissue,'cancel-pending-recovery-reissue':CancelPendingRecoveryReissue});

@@ -91,13 +91,14 @@ test('out-of-order, delayed and duplicated webhooks across a subscription timeli
   }, { base: BASE });
 });
 
-test('webhook history stays bounded: rows expire after 35 days and capacity is exact', async () => {
+test('webhook history stays bounded: capacity is exact, and at capacity receipts past the 3-day redelivery horizon are pruned', async () => {
   const f = fixture(); f.customer.active_subscriptions = [{ id: f.subscription.id }]; await f.metadata.put('owner', OWNER);
   for (let i = 0; i < 4095; i++) await f.metadata.put('billing/event/old_' + String(i).padStart(4, '0'), { bodyHash: '0'.repeat(64), receivedAt: f.now });
   assert.equal((await f.account.webhook(event('evt_last_slot', f.now))).duplicate, false, 'the 4096th row is admitted');
   await assert.rejects(f.account.webhook(event('evt_over', f.now)), { code: 'billing_event_capacity' });
-  f.clock.set(f.now + 35 * DAY - 1); await assert.rejects(f.account.webhook(event('evt_over', f.now)), { code: 'billing_event_capacity' });
-  f.clock.set(f.now + 35 * DAY); assert.equal((await f.account.webhook(event('evt_over', f.now))).duplicate, false);
+  f.clock.set(f.now + 3 * DAY - 1); await assert.rejects(f.account.webhook(event('evt_over', f.now)), { code: 'billing_event_capacity' });
+  f.clock.set(f.now + 3 * DAY); assert.equal((await f.account.webhook(event('evt_over', f.now))).duplicate, false);
+  assert.notEqual(await f.metadata.get('billing/event/evt_over'), undefined, 'the admitted event is recorded after a bounded prune');
   assert.ok((await f.metadata.list({ prefix: 'billing/event/' })).size <= 4096);
 });
 

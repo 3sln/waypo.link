@@ -48,42 +48,53 @@ export class ContactDeliveryService {
     if (!signer?.privateKey || !boundedString(signer.kid, 128)) fail('admission_unavailable');
     return { verified, envelope, body, bodyDigest, fingerprint, author, signer };
   }
-  async commit({ verified, envelope, body, bodyDigest, fingerprint, author, signer, fence }) {
-    const { crypto } = this, p = envelope.payload;
+  // Read-only admission checks, run by precheck() before any budget debit, reservation or blob write
+  // (messaging.md "Reference-service receipt limits") and again, authoritatively, inside commit().
+  async #admissible(tx, { verified, envelope, body, fingerprint, author, fence }) {
+    const p = envelope.payload, grant = await this.parents.live(tx, verified), d = grant?.delivery, now = this.clock();
+    if (!grant || !d || typeof d.resource !== 'string' || !Array.isArray(d.kinds) || !boundedString(d.collection)) fail('unauthorized');
+    // Revocation fence: the key and account must still be active at admission.
+    let current = fence; if (current === undefined) try { current = await this.resolve({ issuer: this.issuer, subject: author.principal.subject, keyId: author.keyId }); } catch { fail('author_unverifiable'); }
+    if (current?.active !== true || current.purpose !== 'signing' || current.publicJwk?.x !== author.publicJwk.x || current.publicJwk?.y !== author.publicJwk.y) fail('author_unverifiable');
+    const r = p.recipient;
+    if (r.issuer !== this.issuer || r.owner !== grant.owner || r.contactId !== grant.id || r.resource !== d.resource) fail('recipient_mismatch');
+    if (!d.kinds.includes(p.kind)) fail('kind_forbidden');
+    // conversation-init is fully validated and signature-checked above, but
+    // pending-bootstrap custody/acceptance is conversation-v2 runtime work.
+    if (p.kind !== 'one-off') fail('kind_unsupported');
+    // Replay namespace (owner, parent, author principal, operationId): one author can never squat or probe
+    // another author's operation ID. An exact replay returns its receipt before any policy re-evaluation.
+    const receiptKey = key('contact-delivery-receipt', grant.owner, grant.id, author.principal.issuer, author.principal.subject, p.operationId), prior = await tx.get(receiptKey);
+    if (prior) { if (prior.fingerprint !== fingerprint) fail('operation_conflict'); return { replay: prior }; }
+    // Conditional parents: host policy on the verified author, in this admission step (links §7.5).
+    let policy = null;
+    if (d.conditional) { if (!this.audience) fail('audience_unavailable'); policy = await this.audience.admit(tx, { grant, principal: author.principal, now }); }
+    if (!grant.claims.mimeTypes.includes(p.content.mimeType)) fail('unsupported_media');
+    if (p.content.byteLength > grant.claims.maxMessageBytes) fail('too_large');
+    if (!grant.claims.collections.includes(d.collection) || !(await tx.get(key('collection', grant.owner, d.collection)))?.active) fail('forbidden');
+    let intake; try { intake = await this.intake(grant.id, tx) ?? { revision: 0, autoTags: [], optionalTags: [] }; } catch { fail('admission_unavailable'); }
+    if (!Number.isSafeInteger(intake.revision) || !validIntakeTagIds(intake.autoTags) || !validIntakeTagIds(intake.optionalTags)) fail('admission_unavailable');
+    if (p.optionalTags.some(tag => !intake.optionalTags.includes(tag))) fail('forbidden_tags');
+    const policyTags = Array.isArray(policy?.tags) ? policy.tags : [], deliveryTags = [...new Set([...intake.autoTags, ...p.optionalTags, ...policyTags])];
+    if (!validIntakeTagIds(policyTags) || !validTagIds(deliveryTags)) fail('forbidden_tags');
+    if (p.createdAt < now - DELIVERY_LIMITS.maxOperationAgeMs || p.createdAt > now + DELIVERY_LIMITS.maxFutureSkewMs) fail('operation_expired');
+    // Conditional links: signed limits apply per verified author principal per UTC day (links §7.1).
+    const day = Math.floor(now / 86400000), dayKey = key('contact-author-day', grant.owner, grant.quotaFamily ?? grant.id, author.principal.issuer, author.principal.subject, day), daily = d.conditional ? await tx.get(dayKey) ?? { messagesUsed: 0, bytesUsed: 0, expiresAt: (day + 3) * 86400000 } : null;
+    const used = daily ?? grant;
+    if (used.messagesUsed + 1 > grant.claims.maxMessages || used.bytesUsed + body.byteLength > grant.claims.maxBytes) fail('quota_exceeded');
+    const usage = await tx.get(key('message-usage', grant.owner)) || { bytes: 0, messages: 0 };
+    if (usage.bytes + body.byteLength > this.maxStoredBytes || usage.messages + 1 > this.maxStoredMessages) fail('account_quota_exceeded');
+    return { grant, d, now, r, receiptKey, intake, policyTags, deliveryTags, daily, dayKey, usage };
+  }
+  /** Read-only pre-admission check: every refusal commit() would give for this delivery, without writes. Adapters
+   * call it before debiting receipt or work budgets, reserving storage or writing the blob. */
+  async precheck(prepared) { return this.store.transaction(async tx => ({ replayed: Boolean((await this.#admissible(tx, prepared)).replay) })); }
+  async commit(prepared) {
+    const { envelope, body, bodyDigest, fingerprint, signer } = prepared, { crypto } = this, p = envelope.payload;
     return this.store.transaction(async tx => {
-      const grant = await this.parents.live(tx, verified), d = grant?.delivery, now = this.clock();
-      if (!grant || !d || typeof d.resource !== 'string' || !Array.isArray(d.kinds) || !boundedString(d.collection)) fail('unauthorized');
-      // Revocation fence: the key and account must still be active at admission.
-      let current = fence; if (current === undefined) try { current = await this.resolve({ issuer: this.issuer, subject: author.principal.subject, keyId: author.keyId }); } catch { fail('author_unverifiable'); }
-      if (current?.active !== true || current.purpose !== 'signing' || current.publicJwk?.x !== author.publicJwk.x || current.publicJwk?.y !== author.publicJwk.y) fail('author_unverifiable');
-      const r = p.recipient;
-      if (r.issuer !== this.issuer || r.owner !== grant.owner || r.contactId !== grant.id || r.resource !== d.resource) fail('recipient_mismatch');
-      if (!d.kinds.includes(p.kind)) fail('kind_forbidden');
-      // conversation-init is fully validated and signature-checked above, but
-      // pending-bootstrap custody/acceptance is conversation-v2 runtime work.
-      if (p.kind !== 'one-off') fail('kind_unsupported');
-      // Replay namespace (owner, parent, author principal, operationId): one author can never squat or probe
-      // another author's operation ID. An exact replay returns its receipt before any policy re-evaluation.
-      const receiptKey = key('contact-delivery-receipt', grant.owner, grant.id, author.principal.issuer, author.principal.subject, p.operationId), prior = await tx.get(receiptKey);
-      if (prior) { if (prior.fingerprint !== fingerprint) fail('operation_conflict'); return { receipt: prior.receipt, replayed: true }; }
-      // Conditional parents: host policy on the verified author, in this admission step (links §7.5).
-      let policy = null;
-      if (d.conditional) { if (!this.audience) fail('audience_unavailable'); policy = await this.audience.admit(tx, { grant, principal: author.principal, now }); }
-      if (!grant.claims.mimeTypes.includes(p.content.mimeType)) fail('unsupported_media');
-      if (p.content.byteLength > grant.claims.maxMessageBytes) fail('too_large');
-      if (!grant.claims.collections.includes(d.collection) || !(await tx.get(key('collection', grant.owner, d.collection)))?.active) fail('forbidden');
-      let intake; try { intake = await this.intake(grant.id, tx) ?? { revision: 0, autoTags: [], optionalTags: [] }; } catch { fail('admission_unavailable'); }
-      if (!Number.isSafeInteger(intake.revision) || !validIntakeTagIds(intake.autoTags) || !validIntakeTagIds(intake.optionalTags)) fail('admission_unavailable');
-      if (p.optionalTags.some(tag => !intake.optionalTags.includes(tag))) fail('forbidden_tags');
-      const policyTags = Array.isArray(policy?.tags) ? policy.tags : [], deliveryTags = [...new Set([...intake.autoTags, ...p.optionalTags, ...policyTags])];
-      if (!validIntakeTagIds(policyTags) || !validTagIds(deliveryTags)) fail('forbidden_tags');
-      if (p.createdAt < now - DELIVERY_LIMITS.maxOperationAgeMs || p.createdAt > now + DELIVERY_LIMITS.maxFutureSkewMs) fail('operation_expired');
-      // Conditional links: signed limits apply per verified author principal per UTC day (links §7.1).
-      const day = Math.floor(now / 86400000), dayKey = key('contact-author-day', grant.owner, grant.quotaFamily ?? grant.id, author.principal.issuer, author.principal.subject, day), daily = d.conditional ? await tx.get(dayKey) ?? { messagesUsed: 0, bytesUsed: 0, expiresAt: (day + 3) * 86400000 } : null;
-      const used = daily ?? grant;
-      if (used.messagesUsed + 1 > grant.claims.maxMessages || used.bytesUsed + body.byteLength > grant.claims.maxBytes) fail('quota_exceeded');
-      const usage = await tx.get(key('message-usage', grant.owner)) || { bytes: 0, messages: 0 };
-      if (usage.bytes + body.byteLength > this.maxStoredBytes || usage.messages + 1 > this.maxStoredMessages) fail('account_quota_exceeded');
+      const state = await this.#admissible(tx, prepared);
+      if (state.replay) return { receipt: state.replay.receipt, replayed: true };
+      const { grant, d, now, r, receiptKey, intake, policyTags, deliveryTags, daily, dayKey, usage } = state;
       const message = initialTags({ id: crypto.randomUUID(), owner: grant.owner, collection: d.collection, mimeType: p.content.mimeType, size: body.byteLength, bytes: body, deliveryCollection: d.collection, receivedAt: now, readAt: null, deliveryTags, quarantined: Boolean(grant.quarantined), grantId: grant.id, senderMetadata: { subject: p.subject, tags: [...p.optionalTags] }, intakeRevision: intake.revision,
         delivery: { profile: 'contact-delivery/v1', kind: p.kind, noReply: p.noReply, operationId: p.operationId, createdAt: p.createdAt, payloadDigest: fingerprint, bodyDigest, authorship: 'identity', author: p.author, intakeRevision: intake.revision } }, [...new Set([...intake.autoTags, ...p.optionalTags])], { source: 'intake', intakeRevision: intake.revision }, now);
       // Policy-derived tags are authorized delivery tags with provenance `policy` (links §7.5).

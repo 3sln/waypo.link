@@ -22,6 +22,10 @@ import {AppAction,operations} from '../app/engine.mjs';
 import {digest,base64url,boundedString,canonical} from '../messaging/store.mjs';
 import {fail,object,https,validateValue} from './schema.mjs';
 import {EVENT_BUS_CONTRACT} from './event-buses.mjs';
+import {consumeProof} from './dpop.mjs';
+/** Wargame 2026-10-23 #5 (provisional): a token-endpoint DPoP proof is recorded only after its code exists and is bound
+ * to the proof's key, in a per-key partition of at most this many rows (jti + nonce per proof); full → temporarily_unavailable. */
+export const INCREMENTAL_PROOF_ROWS_PER_KEY=16;
 import {RequestSuppressions,appSite,ladderTarget,suppresses,suppressionKey as key,REQUEST_LIMITS,SuppressionList,SuppressionAdd,SuppressionRemove,SuppressionExport,SuppressionErase,RequestOwnerActed} from './suppression.mjs';
 export const INCREMENTAL_INTENTS=Object.freeze(['grant-more','configure']);
 export const FRAGMENT_OUTCOMES=Object.freeze(['granted','partial','declined','unsupported','unavailable']);
@@ -367,11 +371,15 @@ export function createIncrementalProvider({store,issuer,crypto=globalThis.crypto
  /** Page cancel without a decision (no owner needed): declined / unchanged, counted by caps only (§10). */
  async function abandon({entryHash}={}){const record=await load(entryHash);if(record.status==='completed')expired();const s=await state(record);return finish(record,{result:declinedResult(record,s)});}
  async function exchange(input={}){
-  const {clientId,code,redirectUri,codeVerifier,dpopJkt}=input,refuse=()=>fail('invalid_grant','The authorization code is invalid or expired.');
+  const {clientId,code,redirectUri,codeVerifier,dpopJkt,dpopProof}=input,refuse=()=>fail('invalid_grant','The authorization code is invalid or expired.');
   if(typeof code!=='string'||!CODE.test(code)||typeof codeVerifier!=='string'||!/^[A-Za-z0-9._~-]{43,128}$/.test(codeVerifier))refuse();const name=key('k',await digest(crypto,`incremental-code\0${code}`));
   // Single redemption: a replay burns the code and revokes whatever it issued (RFC 6749 §4.1.2).
   const status=await store.transaction(async tx=>{const record=await tx.get(name);if(!record||record.expiresAt<=now()&&!record.used)return {};if(record.used){record.reused=true;const revoke=!!record.family&&!record.revoked;if(revoke)record.revoked=true;await tx.set(name,record);return {replayed:revoke?record:null};}
-   if(record.clientId!==clientId||record.binding.redirectUri!==redirectUri||await digest(crypto,codeVerifier)!==record.binding.challenge||record.binding.dpopJkt!==undefined&&record.binding.dpopJkt!==dpopJkt)return {};record.used=true;record.expiresAt=now()+L.codeTtl;await tx.set(name,record);return {record};});
+   if(record.clientId!==clientId||record.binding.redirectUri!==redirectUri||await digest(crypto,codeVerifier)!==record.binding.challenge||record.binding.dpopJkt!==undefined&&record.binding.dpopJkt!==dpopJkt)return {};
+   // The proof is consumed only now that the code exists and is bound to its key, in that key's own partition; a
+   // replayed proof aborts this transaction, so the code stays unredeemed.
+   if(record.binding.dpopJkt!==undefined){if(!object(dpopProof)||typeof dpopProof.jti!=='string'||!Number.isSafeInteger(dpopProof.expiresAt))fail('invalid_dpop_proof','A DPoP proof is required.');await consumeProof(tx,`incremental-dpop/${dpopJkt}/`,{jkt:dpopJkt,jti:dpopProof.jti,nonceHash:typeof dpopProof.nonceHash==='string'?dpopProof.nonceHash:null,expiresAt:dpopProof.expiresAt},crypto,now,INCREMENTAL_PROOF_ROWS_PER_KEY,'temporarily_unavailable');}
+   record.used=true;record.expiresAt=now()+L.codeTtl;await tx.set(name,record);return {record};});
   if(status.replayed?.family)await sessions.revoke({subject:status.replayed.subject,clientId:status.replayed.clientId,family:status.replayed.family}).catch(()=>{});if(!status.record)refuse();const record=status.record;
   if(!featureAllowed(record))refuse();const response={fragment_outcomes:copy(record.outcomes)};if(!record.added)return response;
   // The new session never outlives the connection's newest session (expiry and auth_time); none live → outcomes only.

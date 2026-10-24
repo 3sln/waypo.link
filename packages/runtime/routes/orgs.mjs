@@ -47,6 +47,9 @@ import {organizationEntitlementPort} from '../../orgs/ownership.mjs';
 import {OrganizationDiscovery,organizationDiscoveryProvider,DiscoverOrganizations,AcceptOrganizationInvitation,LeaveOrganizationEverywhere} from '../../orgs/discovery.mjs';
 import {organizationIdentityPort} from '../../identity/organizations.mjs';
 import {identityBackupPort} from '../identity-backup.mjs';
+// Review 2026-10-23 (M3): organization checkouts and claims pass the person paid-checkout gate in the identity
+// beforeActivity stage (routes/identity.mjs); its `ageConfirmed` is removed here before the writer sees the input.
+const paidInput=input=>{if(!input||typeof input!=='object'||Array.isArray(input))return input;const {ageConfirmed:_,...rest}=input;return rest;};
 
 const ROOT='/api/orgs',ROOT_EXTRA=/^\/api\/orgs\/(plans|checkout)$/,ORG=/^\/api\/orgs\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:\/(audit|name|label|deletion|members|invitations|accept|leave|remove-member|member-grants|grant-decision|membership-policy|reconfirm|mute-requests|invitation-preview|invitation-revoke|membership|requests|connections|preferences|ownership|billing-checkout|transfer-recipient|transfer|claim|recovery-file|invitee))?$/;
 const TRANSFER_OPERATIONS={offer:'orgs.transfer-offer',withdraw:'orgs.transfer-withdraw',object:'orgs.transfer-object',block:'orgs.transfer-block',accept:'orgs.transfer-accept',decline:'orgs.transfer-decline'};
@@ -107,7 +110,7 @@ export const stages={
   if(!cancel&&!['leave','grant-decision','reconfirm','requests','connections','transfer','ownership','invitation-revoke'].includes(match?.[2])&&!flagEnabled(env,'ORGANIZATIONS_ENABLED',{subject:{kind:'account',owner:match?.[1]??id}},true))return json({error:'not_found'},404);
   const self={principal:actor.principal,entity:actor.entity,authTime:actor.authTime,epoch:actor.epoch,aep:actor.aep??0,...actor.verification?{verification:actor.verification}:{}};
   if(extra?.[1]==='plans'){const billing=organizationBilling(env),creation=await creationEligibility(env,billing,actor);if(!billing.configured())return json({configured:false,server:null,plans:[],creation},200,privateHeaders);const currency=url?.searchParams?.get('currency')??'usd';if(!/^[a-z]{3}$/.test(currency))return json({error:'invalid_currency'},400);return json({configured:true,...await billing.plans(currency),creation},200,privateHeaders);}
-  if(extra?.[1]==='checkout')return json(await object.orgsDispatch(id,{operation:'orgs.creation-checkout',actor:self,input:await body(request,4096)}),200,privateHeaders);
+  if(extra?.[1]==='checkout')return json(await object.orgsDispatch(id,{operation:'orgs.creation-checkout',actor:self,input:paidInput(await body(request,4096))}),200,privateHeaders);
   if(path===ROOT){
    if(request.method==='GET'){const engine=discoveryEngine({env,id,object});try{return json(await read(engine,new DiscoverOrganizations({actor})),200,privateHeaders);}finally{await engine.dispose();}}
    const input=await body(request,8192),ports=creation(env);if(!ports)return json({error:'organization_unavailable',message:'Organizations are not available on this host.'},503);
@@ -122,7 +125,7 @@ export const stages={
   if(match[2]==='ownership'){const currency=url?.searchParams?.get('currency');return json(await call(orgObject,org,{operation:'orgs.ownership',actor:as,input:currency&&/^[a-z]{3}$/.test(currency)?{currency}:{}}),200,privateHeaders);}
   if(match[2]==='transfer'){
    const input=await body(request,8192);if(!input||typeof input!=='object'||Array.isArray(input)||!Object.hasOwn(TRANSFER_OPERATIONS,input.operation))return json({error:'invalid_request',message:'Unsupported ownership request.'},400);
-   const {operation,...rest}=input,acting=operation==='accept'?{...as,addedUnder:await object.orgsSigningProvenance(id)}:as;
+   const {operation,...requested}=input,rest=operation==='accept'?paidInput(requested):requested,acting=operation==='accept'?{...as,addedUnder:await object.orgsSigningProvenance(id)}:as;
    return json(await call(orgObject,org,{operation:TRANSFER_OPERATIONS[operation],actor:acting,input:rest}),200,privateHeaders);
   }
   if(match[2]==='transfer-recipient'){
@@ -149,7 +152,7 @@ export const stages={
    const engine=createAppEngine({providers:{clock:systemClock,random:cryptoRandom,audit:nullAudit,organizationRecoveryReissue:organizationRecoveryReissueProvider(service)}});
    try{return json(await perform(engine,new ReissueOrganizationRecovery({actor,input:{org,request:as}})),200,privateHeaders);}finally{await engine.dispose();}
   }
-  if(match[2]==='claim'||match[2]==='billing-checkout')return json(await call(orgObject,org,{operation:match[2]==='claim'?'orgs.claim-start':'orgs.billing-checkout',actor:as,input:await body(request,4096)}),200,privateHeaders);
+  if(match[2]==='claim'||match[2]==='billing-checkout')return json(await call(orgObject,org,{operation:match[2]==='claim'?'orgs.claim-start':'orgs.billing-checkout',actor:as,input:paidInput(await body(request,4096))}),200,privateHeaders);
   if(match[2]==='connections'){
    if(request.method==='GET')return json(await orgObject.orgsConnections(org,{operation:'list',actor:as}),200,privateHeaders);
    const input=await body(request,8192);if(!input||typeof input!=='object'||Array.isArray(input)||Object.keys(input).some(k=>!['operation','input'].includes(k))||typeof input.operation!=='string')return json({error:'invalid_request',message:'Unsupported connections request.'},400);

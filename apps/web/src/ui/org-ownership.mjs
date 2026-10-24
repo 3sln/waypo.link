@@ -3,6 +3,8 @@
 // here claims a live payment. Plan figures are provisional product data.
 import {ownershipDecisions} from '../bl/organizations.mjs';
 const PLAN_IDS=['org-team','org-business','org-scale'];
+// Review 2026-10-23 (M3): every organization checkout carries a fresh paid-age attestation, as person checkout does.
+const paidAge=ctx=>ctx.s?.config?.ageRequirement?.paidMinimumAge??18,ageCheck=ctx=>ctx.check('ageConfirmed',ctx.t(`I am ${paidAge(ctx)} or older`,`Tengo ${paidAge(ctx)} años o más`));
 const bytes=(n,locale)=>new Intl.NumberFormat(locale,{maximumFractionDigits:0}).format(n/1e12)+' TB';
 export function price(p,locale){if(!p||!Number.isSafeInteger(p.amount))return '';try{return new Intl.NumberFormat(locale,{style:'currency',currency:p.currency.toUpperCase()}).format(p.amount/10**(p.exponent??2));}catch{return `${p.amount} ${p.currency}`;}}
 /** Shared pieces. `ctx`: {s, t, h, form, input, check, panel, plain, when} from the organization console. */
@@ -24,14 +26,14 @@ export function offersPanel(m,ctx){
    h('li',t('The offer lapses on ','La oferta caduca el '),when(o.expiresAt),'.'),
    o.admin?h('li',t('The offer includes the admin power, active 72 hours after the transfer.','La oferta incluye el poder de administración, activo 72 horas después de la transferencia.')):null),
   plans.length?h('ul',...plans.map(p=>h('li',...planLine({...p,id:p.plan})).key(p.plan))):h('p',t('The plan price is unavailable right now.','El precio del plan no está disponible ahora.')).attrs({role:'status'}),
-  o.decisions?.includes('accept')&&plans.length?form([o.choosePlan?h('label',h('span',t('Plan','Plan')),h('select',...plans.map(p=>h('option',p.name).props({value:p.plan}))).props({name:'plan'})):null,check('confirm',t('I reviewed this disclosure and want to pay for a fresh period','Revisé esta información y quiero pagar un periodo nuevo'))],'accept-offer',t('Accept and continue to checkout','Aceptar y continuar al pago'),{org:row.id},'accept-offer'):null,
+  o.decisions?.includes('accept')&&plans.length?form([o.choosePlan?h('label',h('span',t('Plan','Plan')),h('select',...plans.map(p=>h('option',p.name).props({value:p.plan}))).props({name:'plan'})):null,check('confirm',t('I reviewed this disclosure and want to pay for a fresh period','Revisé esta información y quiero pagar un periodo nuevo')),ageCheck(ctx)],'accept-offer',t('Accept and continue to checkout','Aceptar y continuar al pago'),{org:row.id},'accept-offer'):null,
   o.decisions?.includes('decline')?form([check('confirm',t('Decline this offer','Rechazar esta oferta'))],'decline-offer',t('Decline','Rechazar'),{org:row.id},'decline-offer'):null).key(row.id);}));
 }
 export function creationPaymentPanel(m,ctx){
  const {t,form,panel,plain,h}=ctx;if(!m?.creation)return null;const {sandbox}=ownershipPanels(m,ctx),plans=m.plans?.plans??[];
  return panel('org-creation-payment',t('Pay for the new organization','Paga la nueva organización'),
   h('p',t('Organizations are always paid. ','Las organizaciones siempre son de pago. '),m.creation.name?plain(m.creation.name):null,t(' is reserved; it is created after the payment is verified.',' está reservada; se crea cuando se verifica el pago.')),sandbox(h),
-  plans.length?form([h('label',h('span',t('Plan','Plan')),h('select',...plans.map(p=>h('option',`${p.name} · ${bytes(p.storageBytes,s(ctx))} · ${price(p.price,s(ctx))}`).props({value:p.id,selected:p.id===m.creation.plan}))).props({name:'plan'}))],'creation-checkout',t('Continue to checkout','Continuar al pago'),{},'creation-checkout'):h('p',t('Organization billing is not available on this host.','La facturación de organizaciones no está disponible en este servidor.')).attrs({role:'status'}),
+  plans.length?form([h('label',h('span',t('Plan','Plan')),h('select',...plans.map(p=>h('option',`${p.name} · ${bytes(p.storageBytes,s(ctx))} · ${price(p.price,s(ctx))}`).props({value:p.id,selected:p.id===m.creation.plan}))).props({name:'plan'})),ageCheck(ctx)],'creation-checkout',t('Continue to checkout','Continuar al pago'),{},'creation-checkout'):h('p',t('Organization billing is not available on this host.','La facturación de organizaciones no está disponible en este servidor.')).attrs({role:'status'}),
   form([],'creation-recheck',t('I paid; check again','Ya pagué; comprobar de nuevo'),{},'creation-recheck'),
   form([],'creation-forget',t('Cancel','Cancelar'),{},'creation-forget'));
 }
@@ -50,8 +52,8 @@ export function ownershipPanel(m,ctx){
   b.standing==='read-only'?h('p',t('Changes are paused until the organization is paid again. Leaving, removing members, decisions and export stay available. From ','Los cambios están en pausa hasta que se vuelva a pagar. Salir, eliminar miembros, las decisiones y exportar siguen disponibles. Desde el '),when(b.claimableAt),t(', an admin may claim ownership by paying; the claim takes effect 72 hours after notice unless the owner pays.',', un administrador puede reclamar la propiedad pagando; la reclamación surte efecto 72 horas después del aviso salvo que el propietario pague.')).attrs({role:'alert'}):null,
   b.configured?sandbox(h):null,
   own.claim&&['awaiting-payment','pending'].includes(own.claim.state)?h('p',own.claim.state==='pending'?[t('A billing-lapse claim by ','Una reclamación por impago de '),plain(own.claim.by?.sub),t(' takes effect on ',' surte efecto el '),when(own.claim.notBefore),t(' unless the owner pays.',' salvo que el propietario pague.')]:t('An admin started a billing-lapse claim checkout.','Un administrador inició el pago de una reclamación por impago.')).attrs({role:'status'}):null,
-  decisions.includes('renew')&&plans.length?form([select(b.plan)],'renew',t('Pay for the organization','Pagar la organización'),{},'renew'):null,
-  decisions.includes('claim')&&plans.length?form([select('org-team'),check('confirm',t('Start a subscription and propose myself as owner (takes effect after 72 hours unless the owner pays)','Iniciar una suscripción y proponerme como propietario (surte efecto en 72 horas salvo que el propietario pague)'))],'claim',t('Claim ownership','Reclamar la propiedad'),{},'claim'):null,
+  decisions.includes('renew')&&plans.length?form([select(b.plan),ageCheck(ctx)],'renew',t('Pay for the organization','Pagar la organización'),{},'renew'):null,
+  decisions.includes('claim')&&plans.length?form([select('org-team'),check('confirm',t('Start a subscription and propose myself as owner (takes effect after 72 hours unless the owner pays)','Iniciar una suscripción y proponerme como propietario (surte efecto en 72 horas salvo que el propietario pague)')),ageCheck(ctx)],'claim',t('Claim ownership','Reclamar la propiedad'),{},'claim'):null,
   x?h('article',h('h3',t('Ownership transfer','Transferencia de propiedad')),
    h('p',t('To ','A '),plain(x.toHandle??x.to?.sub),' · ',tt(TRANSFER[x.state]??['Status unavailable','Estado no disponible'])),
    open?h('p',t('Takes effect no earlier than ','Surte efecto no antes del '),when(x.notBefore),t(' and only after the recipient’s payment is verified. Lapses on ',' y solo tras verificar el pago del destinatario. Caduca el '),when(x.expiresAt),'.'):null,

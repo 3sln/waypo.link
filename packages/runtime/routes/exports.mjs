@@ -1,7 +1,7 @@
 // DX-2: all owner paths run before admission/touch, including suspended owners.
 // Only a header-borne CLI grant can bypass the session stage, and only for GET
 // of its own job volume. No bearer is accepted in a URL or a mutation body.
-import {json,body,accountHandle,privateHeaders,routeFlags} from './shared.mjs';
+import {json,body,accountHandle,privateHeaders,routeFlags,lifecycleUnknown} from './shared.mjs';
 import {ExportStepUp,parseExportGrant} from '../account/exports.mjs';
 import {streamExport} from '../export-tar.mjs';
 const ID='([a-f0-9-]{36})',job=new RegExp('^/api/exports/'+ID+'$'),cancel=new RegExp('^/api/exports/'+ID+'/cancel$'),grants=new RegExp('^/api/exports/'+ID+'/grants$'),revoke=new RegExp('^/api/exports/'+ID+'/grants/'+ID+'$'),volume=new RegExp('^/api/exports/'+ID+'/volumes/([1-9][0-9]{0,8})\\.tar$');
@@ -27,7 +27,9 @@ export const stages={
   const header=request.headers.get('Authorization');if(!header)return;
   const match=volume.exec(path),token=header.startsWith('Bearer ')?header.slice(7):'',parsed=parseExportGrant(token);
   if(!match||request.method!=='GET'||!parsed||parsed.jobId!==match[1])return json({error:'unauthorized'},401);
-  return download(request,accountHandle(env,parsed.owner),parsed.owner,match[1],env,execution,undefined,token);
+  // D2: a grant bearer is a credential, so a lifecycle fault on its account is an invalid credential (401), never
+  // a 410 that would reveal deletion state to a forged bearer (public-unknown.mjs boundary; object-http.mjs).
+  try{return await download(request,accountHandle(env,parsed.owner),parsed.owner,match[1],env,execution,undefined,token);}catch(error){if(lifecycleUnknown(error)||error?.code==='lifecycle_unavailable')return json({error:'unauthorized',message:'Invalid export grant.'},401);throw error;}
  },
  async beforeActivity({request,env,path,engine,context,owner,id,object,execution}){
   if(!allowedMethods(path))return;

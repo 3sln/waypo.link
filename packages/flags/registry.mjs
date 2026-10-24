@@ -54,6 +54,10 @@ const rows=[
  // ORG-4. Verifying certificates from OTHER issuers (outbound directory fetches): the kill switch for that SSRF surface,
  // also behind an issuer allowlist that is empty by default (R2-M6). Same-host members keep working. Subject: the organization.
  ['ORG_FOREIGN_MEMBERS_ENABLED','a','G A',{risk:'crit',requires:['ORGANIZATIONS_ENABLED'],stateful:true,retainExisting:false,retentionReason:'A kill switch: foreign issuers stop being verified at once; same-host members are unaffected.',envParse:'boolean'}],
+ // ORG-12 break-glass (organizations design §12d.12). Gates STARTING a claim and its EFFECT only: with it off, pending
+ // claims stay pending and cannot take effect; aborts, withdrawals, objections, support holds and aborts, and refunds are
+ // never gated (abort is the safe direction). Subject: the organization's account.
+ ['ORG_BREAK_GLASS_ENABLED','a','G A',{risk:'crit',requires:['ORGANIZATIONS_ENABLED'],stateful:true,retainExisting:false,retentionReason:'Pending claims stay pending and can never take effect while it is off; aborts, withdrawals, objections, support holds and refunds are never gated.',envParse:'boolean'}],
  ['SIGNUP_ENABLED','c','G R',{risk:'crit',outage:'last-known'}],
  ['PAID_SIGNUP_ENABLED','c','G R',{risk:'crit',outage:'last-known',capabilities:['billing-configuration']}],
  ['WAITLIST_ENABLED','c','G R',{outage:'last-known'}],

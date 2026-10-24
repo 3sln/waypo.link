@@ -88,7 +88,7 @@ test('authority: origin, CSRF, a fresh step-up, explicit confirmation and an exa
 test('last notice channel: refused without a waiver; the waiver is recorded, email sign-in and every email link die, a notice goes to the removed address', async t => {
   const h = harness(t, 'memory', { accountChannels: undefined }), { id, ctx } = await withEmail(h);
   await h.act('configureEmailLogin', { enabled: true }, ctx);
-  await h.act('emailLoginStart', { email: OLD, turnstileToken: 'verified' }); const loginLink = mailToken(h, 'login');
+  await h.act('emailLoginStart', { email: OLD, turnstileToken: 'verified' }); await h.service.settleBackground(); const loginLink = mailToken(h, 'login');
   await h.act('emailStart', { email: NEW }, ctx); const pendingLink = mailToken(h, 'link');
   const before = await h.record(id);
   await assert.rejects(remove(h, { confirmed: true }, ctx), { code: 'last_notice_channel', status: 409 });

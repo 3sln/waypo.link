@@ -9,6 +9,10 @@ export const RETENTION_CLOCK_SKEW_MS=300000;
 const EVENT_PREFIX='billing/event/';
 const EVENT_RETENTION_MS=35*86400000;
 const MAX_EVENTS=4096;
+// Wargame 2026-10-23 (provisional): receipts dedupe provider redeliveries; the SDK verifier already rejects a delivery
+// outside its five-minute window. At capacity, receipts older than this redelivery horizon are pruned oldest-first
+// (a bounded batch per event) instead of refusing every later event for up to 35 days.
+export const EVENT_MIN_RETENTION_MS=3*86400000;const EVENT_PRUNE_BATCH=64;
 export const PAID_HANDLE_MARKER_PREFIX='billing/ever-paid/';
 const paidMarkerKey=(server,owner)=>`${PAID_HANDLE_MARKER_PREFIX}${server}/${owner}`;
 const boundedId=value=>typeof value==='string'&&/^[A-Za-z0-9_-]{1,200}$/.test(value);
@@ -18,6 +22,9 @@ function validPaidMarker(marker,owner,config){
 }
 const fail=()=>new BillingError('billing_provider_unavailable','Billing could not be verified. Please retry later.',503);
 const timestamp=value=>typeof value==='string'?Date.parse(value):NaN;
+const rank=state=>state.verifiedPlan?.storageBytes??BILLING_PLANS[state.plan]?.storageBytes??0;
+/** Re-review M2 (provisional): an in-flight checkout reservation blocks a concurrent second session for this long. */
+export const CHECKOUT_INFLIGHT_MS=120000;
 function portalURL(value,server){
   let url;try{url=new URL(value);}catch{throw fail();}
   const permitted=server==='sandbox'?['sandbox.polar.sh','sandbox-api.polar.sh']:['polar.sh','api.polar.sh'];
@@ -126,9 +133,15 @@ export class BillingService {
     // Reject duplicate purchases; upgrades and cancellation use the portal.
     const current=await this.reconcile(owner);
     if(current.plan!=='free')throw new BillingError('subscription_exists','Manage your current subscription in the billing portal.',409);
+    // Review 2026-10-23 (H1): one open checkout session at a time from Free, so a customer cannot hold two subscriptions.
+    // The same plan and currency reopens the open session; anything else waits for it to expire or be paid.
+    // Re-review M2: the session is reserved in a metadata transaction before the provider call (an in-flight marker with a
+    // short timeout), so concurrent requests cannot both create one.
+    const reservation=crypto.randomUUID(),reused=await this.metadata.transaction(async tx=>{const open=await tx.get('billing/pending');if(open?.owner===owner&&Number.isFinite(open.expiresAt)&&open.expiresAt>this.now()){if(!setup&&open.status!=='creating'&&open.productId===catalog.entries[plan].id&&open.currency===selection.currency&&typeof open.url==='string')return open.url;throw new BillingError('checkout_open','Finish the open checkout or wait for it to expire before starting another.',409);}await tx.put('billing/pending',{owner,productId:catalog.entries[plan].id,currency:selection.currency,status:'creating',reservation,createdAt:this.now(),expiresAt:this.now()+CHECKOUT_INFLIGHT_MS});return null;});
+    if(reused)return {url:portalURL(reused,this.config.POLAR_SERVER)};
     let session;try{session=await client.checkouts.create({products:[catalog.entries[plan].id],external_customer_id:owner,success_url:url,return_url:url,currency:selection.currency,...hints,...setup?{metadata:setupMetadata}:{},allow_trial:false,allow_discount_codes:true});}catch{throw fail();}
     if(setup&&Object.entries(setupMetadata).some(([key,value])=>session?.metadata?.[key]!==value))throw new BillingError('billing_checkout_mismatch','Checkout setup binding could not be verified.',503);
-    const chosen=catalog.entries[plan].prices[selection.currency];if(session?.currency!==chosen.currency||session.amount!==chosen.amount||session.product_id!==catalog.entries[plan].id||session.organization_id!==catalog.organizationId||session.external_customer_id!==owner||session.allow_discount_codes!==true||!['discount_amount','net_amount','total_amount'].every(key=>Number.isSafeInteger(session[key])&&session[key]>=0)||session.discount_amount>session.amount||session.tax_amount!==null&&(!Number.isSafeInteger(session.tax_amount)||session.tax_amount<0)||![null,'inclusive','exclusive'].includes(session.tax_behavior)||session.total_amount!==session.net_amount+(session.tax_amount??0)||(session.tax_behavior==='inclusive'?session.total_amount:session.net_amount)!==session.amount-session.discount_amount)throw new BillingError('billing_checkout_mismatch','Checkout does not match the displayed price. Please refresh and try again.',503);await this.metadata.put('billing/pending',{owner,productId:catalog.entries[plan].id,currency:selection.currency,createdAt:this.now(),expiresAt:Math.min(Number.isFinite(Date.parse(session.expires_at))?Date.parse(session.expires_at):this.now()+86400000,this.now()+7*86400000)});return {url:portalURL(session.url,this.config.POLAR_SERVER)};
+    const chosen=catalog.entries[plan].prices[selection.currency];if(session?.currency!==chosen.currency||session.amount!==chosen.amount||session.product_id!==catalog.entries[plan].id||session.organization_id!==catalog.organizationId||session.external_customer_id!==owner||session.allow_discount_codes!==true||!['discount_amount','net_amount','total_amount'].every(key=>Number.isSafeInteger(session[key])&&session[key]>=0)||session.discount_amount>session.amount||session.tax_amount!==null&&(!Number.isSafeInteger(session.tax_amount)||session.tax_amount<0)||![null,'inclusive','exclusive'].includes(session.tax_behavior)||session.total_amount!==session.net_amount+(session.tax_amount??0)||(session.tax_behavior==='inclusive'?session.total_amount:session.net_amount)!==session.amount-session.discount_amount)throw new BillingError('billing_checkout_mismatch','Checkout does not match the displayed price. Please refresh and try again.',503);const opened={owner,productId:catalog.entries[plan].id,currency:selection.currency,status:'open',url:portalURL(session.url,this.config.POLAR_SERVER),createdAt:this.now(),expiresAt:Math.min(Number.isFinite(Date.parse(session.expires_at))?Date.parse(session.expires_at):this.now()+86400000,this.now()+7*86400000)};await this.metadata.transaction(async tx=>{const current=await tx.get('billing/pending');if(current===undefined||current.reservation===reservation)await tx.put('billing/pending',opened);});return {url:portalURL(session.url,this.config.POLAR_SERVER)};
   }
   async portal(owner){
     assertOwner(owner);const catalog=await this.catalog(),client=await this.client();
@@ -158,7 +171,12 @@ export class BillingService {
     for(const subscription of subscriptions){
       if(!subscription)continue;
       const id=subscription.id;if(!ids.has(id))throw fail();
-      if(subscription.customer_id!==customer.id||subscription.customer?.external_id!==owner||subscription.customer?.organization_id!==organizationId)throw fail();const fenced=await this.changes.fence(subscription,organizationId);if(fenced?.held){best={...fenced.held,retentionAuthoritative:false,reconciledAt:this.now()};continue;}if(fenced?.confirmed)previous=fenced.confirmed;
+      if(subscription.customer_id!==customer.id||subscription.customer?.external_id!==owner||subscription.customer?.organization_id!==organizationId)throw fail();const guarded=await this.changes.guard(subscription);let fenced=guarded?.held?guarded:await this.changes.fence(subscription,organizationId)??guarded;
+      // Re-review gap: an upward product change the app did not start (for example in the provider portal) is guarded too.
+      if(!fenced&&!catalogError)fenced=await this.changes.external(subscription,previous,catalog,organizationId);
+      // L4 / re-review M1: a held source plan is an ordinary candidate under the same ranking. Once lapsed at its own
+      // paid-through time it only supplies lapse evidence, used when no paid candidate remains.
+      if(fenced?.held){const held=fenced.held;if(Number.isFinite(held.validUntil)&&held.validUntil>this.now()){const candidate={...held,retentionAuthoritative:!catalogError&&fenced.authoritative===true,reconciledAt:this.now()};if(best.plan==='free'||rank(candidate)>rank(best)||(candidate.plan===best.plan&&candidate.validUntil>best.validUntil))best=candidate;}else if(Number.isFinite(held.validUntil)&&!catalogError&&!base.retentionEvidence){base.retentionEvidence={effectiveAt:held.validUntil,reason:'lapse'};base.retentionAuthoritative=true;}continue;}if(fenced?.confirmed)previous=fenced.confirmed;
       let plan=catalog?Object.keys(catalog.entries).find(name=>catalog.entries[name].id===subscription.product_id):undefined,legacy=false,retained=false;
       const legacyPlan=previous?.catalogVersion===undefined?({plus:'paid',pro:'plus'})[previous?.plan]:[2,3].includes(previous?.catalogVersion)&&previous.legacyCatalogVersion===1&&['paid','plus'].includes(previous.plan)?previous.plan:undefined;
       const legacyAmount=legacyPlan==='paid'?500:legacyPlan==='plus'?3000:undefined;
@@ -183,7 +201,7 @@ export class BillingService {
         continue;
       }
       const candidate={...base,catalogVersion:3,origin:this.config.APP_ORIGIN,server:this.config.POLAR_SERVER,metadataPrefix:metadataPrefix(this.config),catalogMode:this.config.POLAR_CATALOG_MODE??'static',organizationId,verifiedPlan:legacy?{id:plan,name:BILLING_PLANS[plan].name,storageBytes:BILLING_PLANS[plan].storageBytes,activityHour:2000,activityDay:10000}:retained?(catalog?.entries[plan]?.id===subscription.product_id?catalog.entries[plan].parameters:previous.verifiedPlan??{id:plan,name:BILLING_PLANS[plan].name,storageBytes:BILLING_PLANS[plan].storageBytes,activityHour:2000,activityDay:10000}):catalog?.entries[plan]?.parameters??previous.verifiedPlan,plan,validUntil,currency:expected.currency,annualAmount:expected.amount,productId:subscription.product_id,...legacy?{legacyCatalogVersion:1,legacyProductId:subscription.product_id,legacyAnnualAmount:legacyAmount,legacyPaidUntil:previous.legacyPaidUntil??previous.validUntil}:{},subscriptionId:id,...subscription.pending_update?.product_id&&Number.isFinite(Date.parse(subscription.pending_update.applies_at))?{pendingChange:{plan:Object.keys(catalog?.entries??{}).find(key=>catalog.entries[key].id===subscription.pending_update.product_id)??null,kind:'renewal-downgrade',effectiveAt:Date.parse(subscription.pending_update.applies_at)}}:{},retentionAuthoritative:!catalogError,retentionEvidence:!catalogError?{effectiveAt:Number.isFinite(timestamp(subscription.modified_at))?timestamp(subscription.modified_at):causal?.eventTimestamp,reason:previous?.plan===plan?'catalog':causal?.type?.includes('refund')?'refund':'downgrade'}:undefined,status:subscription.status,cancelAtPeriodEnd:subscription.cancel_at_period_end===true,periodStart:start,periodEnd:end};
-      if(best.plan==='free'||candidate.verifiedPlan.storageBytes>(best.verifiedPlan?.storageBytes??BILLING_PLANS[best.plan].storageBytes)||(plan===best.plan&&validUntil>best.validUntil))best=candidate;
+      if(best.plan==='free'||candidate.verifiedPlan.storageBytes>rank(best)||(plan===best.plan&&validUntil>best.validUntil))best=candidate;
     }
     if(catalogError&&best.plan==='free'&&!previous?.subscriptionId)throw catalogError;return best;
   }
@@ -196,13 +214,19 @@ export class BillingService {
       const beforeState=await tx.get(BILLING_STATE_KEY),evidence=state.retentionEvidence;
       // Evaluate the persisted prior paid-through entitlement before expiry;
       // today's Free fallback alone is never a causal before-image.
-      const beforeAt=Number.isFinite(beforeState?.validUntil)?Math.min(this.now(),beforeState.validUntil-1):this.now();
-      const before=entitlementFromState(beforeState?.owner===owner?beforeState:null,beforeAt,this.config),after=entitlementFromState(state,this.now(),this.config);
+      const beforeAt=Number.isFinite(beforeState?.validUntil)?Math.min(this.now(),beforeState.validUntil-1):this.now(),prior=beforeState?.owner===owner?beforeState:null;
+      let before=entitlementFromState(prior,beforeAt,this.config),provisional=null;const after=entitlementFromState(state,this.now(),this.config);
+      // B2/B6: bytes admitted under a bounded provisional upgrade window stay visible to retention. The window is judged
+      // at its own end (or now, if it is still open) and the paid-through source plan beneath it is the ordinary before-image.
+      if(before.provisional){provisional={plan:before.plan,storageBytes:before.storageBytes,endedAt:this.now()};before=entitlementFromState({...prior,upgrade:undefined},beforeAt,this.config);}
+      else if(Number.isSafeInteger(prior?.upgrade?.expiresAt)&&prior.upgrade.expiresAt<=this.now()){const window=entitlementFromState(prior,prior.upgrade.expiresAt-1,this.config);if(window.provisional)provisional={plan:window.plan,storageBytes:window.storageBytes,endedAt:prior.upgrade.expiresAt};}
+      const image=provisional&&provisional.storageBytes>before.storageBytes?provisional:before;
       // D092 L8: a provider timestamp slightly ahead of this clock is skew, recorded as now rather than dropped.
-      const recordedAt=this.now(),skewed=Number.isSafeInteger(evidence?.effectiveAt)&&evidence.effectiveAt>recordedAt;
-      if(!before.provisional&&before.plan!=='free'&&after.storageBytes<before.storageBytes&&Number.isSafeInteger(evidence?.effectiveAt)&&evidence.effectiveAt>=0&&evidence.effectiveAt<=recordedAt+RETENTION_CLOCK_SKEW_MS){
-        await tx.put(BILLING_TRANSITION_PREFIX+String(ticket).padStart(16,'0'),{revision:ticket,causalEventId:causal?.id??`reconcile:${ticket}`,before:{plan:before.plan,storageBytes:before.storageBytes},after:{plan:after.plan,storageBytes:after.storageBytes},effectiveAt:Math.min(evidence.effectiveAt,recordedAt),...skewed?{providerEffectiveAt:evidence.effectiveAt}:{},reason:evidence.reason});
-      }
+      const recordedAt=this.now(),skewed=Number.isSafeInteger(evidence?.effectiveAt)&&evidence.effectiveAt>recordedAt,row=(effectiveAt,reason,extra={})=>tx.put(BILLING_TRANSITION_PREFIX+String(ticket).padStart(16,'0'),{revision:ticket,causalEventId:causal?.id??`reconcile:${ticket}`,before:{plan:image.plan,storageBytes:image.storageBytes},after:{plan:after.plan,storageBytes:after.storageBytes},effectiveAt,...extra,reason});
+      if(image.plan!=='free'&&after.storageBytes<image.storageBytes&&!after.provisional&&!(image===provisional&&evidence?.reason==='catalog')&&Number.isSafeInteger(evidence?.effectiveAt)&&evidence.effectiveAt>=0&&evidence.effectiveAt<=recordedAt+RETENTION_CLOCK_SKEW_MS)await row(Math.min(evidence.effectiveAt,recordedAt),evidence.reason,skewed?{providerEffectiveAt:evidence.effectiveAt}:{});
+      // B6: an unpaid provisional window that closed is a reduction effective at its end, floored by retention (D092 M1).
+      // M2 (review): a provider revert inside or just after the window reads as `catalog`; it is recorded here instead.
+      else if(provisional&&after.storageBytes<provisional.storageBytes&&!after.provisional)await row(Math.min(provisional.endedAt,recordedAt),'upgrade-unpaid');
       await rememberPaidHistory(tx,owner,[beforeState,state],{config:this.config,now:this.now()});
       const {retentionEvidence,...committed}=state;await tx.put(BILLING_STATE_KEY,{...committed,billingRevision:ticket});
       if(state.plan!=='free')await tx.delete('billing/pending');
@@ -218,6 +242,7 @@ export class BillingService {
     // Bounded durable replay history is kept in the recipient account shard.
     const rows=await this.metadata.list({prefix:EVENT_PREFIX,limit:MAX_EVENTS+1}),expired=[];
     for(const [key,row]of rows)if(row.receivedAt+EVENT_RETENTION_MS<=this.now())expired.push(key);
+    if(rows.size-expired.length>=MAX_EVENTS){const stale=[...rows].filter(([key,row])=>!expired.includes(key)&&row.receivedAt+EVENT_MIN_RETENTION_MS<=this.now()).sort((a,b)=>a[1].receivedAt-b[1].receivedAt||(a[0]<b[0]?-1:1));for(const [key]of stale.slice(0,EVENT_PRUNE_BATCH))expired.push(key);}
     if(rows.size-expired.length>=MAX_EVENTS)throw new BillingError('billing_event_capacity','Billing events need reconciliation before retry.',503);
     const result=await this.reconcile(verified.owner,{...verified,expired});
     return {duplicate:false,...result};

@@ -61,8 +61,9 @@ import * as retention from './retention.mjs';
 import * as appRemoval from './app-removal.mjs';
 import * as orgs from './orgs.mjs';
 import * as memberCertificates from './member-certificates.mjs';
+import * as recoveryReissue from './recovery-reissue.mjs';
 
-export const ROUTES=Object.freeze([moved,transferPages,directory,intents,site,admin,identity,lifecycle,deletion,automation,conversations,beams,contacts,delivery,messages,views,storage,billing,search,notifications,memberCertificates,federation,links,delegation,incremental,events,appSessions,integrations,connections,emailBridge,exports,retention,appRemoval,orgs,transferIn]);
+export const ROUTES=Object.freeze([moved,transferPages,directory,intents,recoveryReissue,site,admin,identity,lifecycle,deletion,automation,conversations,beams,contacts,delivery,messages,views,storage,billing,search,notifications,memberCertificates,federation,links,delegation,incremental,events,appSessions,integrations,connections,emailBridge,exports,retention,appRemoval,orgs,transferIn]);
 export const STAGES=Object.freeze(['edge','public','anonymous','unauthenticated','api','session','beforeActivity','owner','pages']);
 for(const module of ROUTES)for(const name of Object.keys(module.stages??{}))if(!STAGES.includes(name))throw new TypeError(`Unknown route stage ${name}`);
 

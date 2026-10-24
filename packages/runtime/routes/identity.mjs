@@ -1,5 +1,5 @@
 import {verifyPreparedPostbackToken} from '../message-postbacks.mjs';
-import {AcceptTerms,PaidCheckoutAllowed,TermsCreationAllowed,TermsRequestAllowed,TermsSubjectAllowed,trustedAgeLocation} from '../../identity/age-policy.mjs';
+import {AcceptTerms,PaidCheckoutAllowed,TermsCreationAllowed,TermsRequestAllowed,TermsSubjectAllowed,requestAgeLocation} from '../../identity/age-policy.mjs';
 // HTTP routes of slice 13a, Edge engine and identity (docs/architecture/app-engine.md §12): recovery authority, the signup gate, account sessions, device login and identity actions.
 // Stage handlers and route-module shape: packages/runtime/routes/index.mjs.
 import {accountSessionRoutes,installAccountSession} from '../account-session-http.mjs';
@@ -16,7 +16,7 @@ const authMethods={
  '/api/auth/setup/billing/checkout':'setupBillingCheckout','/api/auth/setup/billing/status':'setupBillingStatus','/api/auth/setup/status':'setupStatus','/api/auth/setup/email/start':'setupEmailStart','/api/auth/setup/email/confirm':'setupEmailConfirm','/api/auth/setup/push/start':'setupPushStart','/api/auth/setup/push/confirm':'setupPushConfirm',
  '/api/auth/handles/claim':'claimHandle','/api/auth/handles/certificate':'handleCertificate',
  '/api/auth/signup':'signup','/api/auth/passkey/register/begin':'beginPasskeyRegistration','/api/auth/passkey/register':'registerPasskey','/api/auth/password/pending':'setPendingPassword',
- '/api/auth/recovery/download':'downloadRecovery','/api/auth/recovery/reissue/begin':'reissueRecoveryBegin','/api/auth/recovery/reissue/confirm':'reissueRecoveryConfirm','/api/auth/recovery/confirm':'confirmRecovery','/api/auth/login/password':'loginPassword','/api/auth/login/passkey/begin':'beginPasskeyLogin',
+ '/api/auth/recovery/download':'downloadRecovery','/api/auth/recovery/reissue/begin':'reissueRecoveryBegin','/api/auth/recovery/reissue/confirm':'reissueRecoveryConfirm','/api/auth/recovery/reissue/cancel':'reissueRecoveryCancel','/api/auth/recovery/reissue/cancel-email':'reissueRecoveryCancelEmail','/api/auth/recovery/reissue/cancel-file':'reissueRecoveryCancelFile','/api/auth/recovery/confirm':'confirmRecovery','/api/auth/login/password':'loginPassword','/api/auth/login/passkey/begin':'beginPasskeyLogin',
  '/api/auth/login/passkey/finish':'finishPasskeyLogin','/api/auth/recover':'recover','/api/auth/logout':'logout','/api/auth/email/start':'emailStart','/api/auth/email/confirm':'emailConfirm','/api/auth/email/login/start':'emailLoginStart','/api/auth/email/login/confirm':'emailLoginConfirm'
  ,'/api/auth/passkeys/begin':'credentialBegin','/api/auth/passkeys/finish':'credentialFinish','/api/auth/passkeys/remove':'removePasskey','/api/auth/passkeys/rename':'renamePasskey','/api/auth/devices/rename':'renameSession','/api/auth/devices/revoke':'revokeSession','/api/auth/devices/revoke-others':'revokeOtherSessions'
  ,'/api/auth/device/start':'createDeviceLogin','/api/auth/device/approve':'approveDeviceLogin','/api/auth/device/deny':'denyDeviceLogin','/api/auth/device/poll':'pollDeviceLogin','/api/auth/device/cancel':'cancelDeviceLogin'
@@ -93,6 +93,9 @@ export function allowedMethods(path){
 // uploads, app grants and authorization changes. GET/HEAD, export, deletion, revoke, cleanup,
 // security settings, billing cancellation and sign-out remain accessible.
 export {createsContentOrGrant} from '../../identity/age-policy.mjs';
+// Review 2026-10-23 (M3): person, organization creation/renewal/claim and ownership-transfer acceptance checkouts all need
+// a fresh paid-age attestation from a permitted region (PaidCheckoutAllowed); the orgs route strips `ageConfirmed`.
+const paidCheckout=async(path,request)=>path==='/api/billing/checkout'||path==='/api/orgs/checkout'||/^\/api\/orgs\/[0-9a-f-]{36}\/(?:billing-checkout|claim)$/.test(path)||/^\/api\/orgs\/[0-9a-f-]{36}\/transfer$/.test(path)&&(await body(request.clone(),8192))?.operation==='accept';
 export const stages={
  async public({request,env,path}){
   // Incoming contact-delivery capabilities authorize recipient ingress; their authors may belong to another
@@ -102,7 +105,7 @@ export const stages={
   const postback=/^\/api\/messages\/([a-f0-9-]{36})\/postbacks$/.exec(path);
   if(postback&&request.method==='POST'&&!request.headers.has('Cookie')&&request.headers.get('Origin')===env.APP_ORIGIN){const token=request.headers.get('Authorization')?.match(/^Bearer (.+)$/)?.[1];let owner;try{owner=await verifyPreparedPostbackToken(env,token,postback[1]);}catch{return;}const document=await body(request.clone(),128);if(Object.keys(document).length)return json({error:'invalid_request'},400);const engine=await identity(env);try{await engine.query(new TermsSubjectAllowed(owner)).peek();}catch(error){if(lifecycleUnknown(error)||error.code==='unauthorized')return json({error:'unauthorized',message:'This prepared submission is invalid or expired.'},401);throw error;}finally{engine.dispose();}}
  },
- async beforeActivity({request,path,engine,context}){if(path==='/api/billing/checkout'&&request.method==='POST')await engine.query(new PaidCheckoutAllowed(await body(request.clone()),context)).peek();if(['POST','PUT','PATCH'].includes(request.method)){const multiplexed=/^\/api\/(?:rules|connections\/(?:owner|setup)|automation\/(?:prepare|invoke)|profile|email-bridge|contacts\/[^/]+\/beam|conversations\/[^/]+\/[^/]+\/action|events\/buses\/[^/]+\/features)$/.test(path),document=multiplexed?await body(request.clone()):{};await engine.query(new TermsRequestAllowed(context,{path,method:request.method,document})).peek();}},
+ async beforeActivity({request,path,engine,context}){if(request.method==='POST'&&await paidCheckout(path,request))await engine.query(new PaidCheckoutAllowed(await body(request.clone()),context)).peek();if(['POST','PUT','PATCH'].includes(request.method)){const multiplexed=/^\/api\/(?:rules|connections\/(?:owner|setup)|automation\/(?:prepare|invoke)|profile|email-bridge|contacts\/[^/]+\/beam|conversations\/[^/]+\/[^/]+\/action|events\/buses\/[^/]+\/features)$/.test(path),document=multiplexed?await body(request.clone()):{};await engine.query(new TermsRequestAllowed(context,{path,method:request.method,document})).peek();}},
  async anonymous({request,env,path}){
    if(path==='/api/recovery/authority'){if(request.method!=='GET')return json({error:'method_not_allowed'},405,{Allow:'GET'});return json(recoveryAuthorityPublic(env));}
  },
@@ -110,7 +113,7 @@ export const stages={
     if(path==='/api/auth/signup'&&request.method==='POST'&&!signupEnabled(env,{request}))return json({error:'release_gated',message:'Account creation is not open yet.'},503);
  },
  async session({request,env,path,local,engine,context,vault,accountPath,accountMember}){
-    context.ageLocation=trustedAgeLocation(request.cf);
+    context.ageLocation=requestAgeLocation(request,env);
     if(path==='/api/auth/terms/accept'){if(request.method!=='POST')return json({error:'method_not_allowed'},405);return json((await engine.dispatch(new AcceptTerms(await body(request),context)).next('result')).detail);}
     if(accountPath)return await accountSessionRoutes({request,env,local,engine,context,body,json,legacyCleared:cookie('',local,0)});
     if(['/api/auth/signup','/api/auth/recover','/api/auth/login/password','/api/auth/login/passkey/finish'].includes(path))context.setupBinding=crypto.randomUUID()+crypto.randomUUID();

@@ -147,7 +147,9 @@ export class TransferEvidence extends Query{
  async fetch({identity}){
   const {account,session}=await identity.authorized({...this.context,requireCurrentTerms:false},true);
   const credential=account.credentials.find(entry=>entry.id===session.credentialId);
-  return {owner:account.id,stepUpAt:Number.isSafeInteger(session.stepUpAt)?session.stepUpAt:null,sessionId:await identity.sessionID(session),sessionCreatedAt:session.createdAt,...credential?{credentialId:credential.id,credentialCreatedAt:credential.createdAt}:{}};
+  // `stepUpCredentialId`: the credential that confirmed the step-up (P17 compares it), beside the sign-in credential.
+  const used=session.stepUpCredential,stepUpCredentialId=used?.kind==='passkey'&&typeof used.id==='string'?used.id:used?.kind==='password'?'password':null;
+  return {owner:account.id,stepUpAt:Number.isSafeInteger(session.stepUpAt)?session.stepUpAt:null,sessionId:await identity.sessionID(session),sessionCreatedAt:session.createdAt,...credential?{credentialId:credential.id,credentialCreatedAt:credential.createdAt}:{},...stepUpCredentialId?{stepUpCredentialId}:{}};
  }
 }
 function originGuard(request,env){if(new URL(request.url).origin!==env.APP_ORIGIN||request.headers.get('Origin')!==env.APP_ORIGIN||['cross-site','same-site'].includes(request.headers.get('Sec-Fetch-Site')))throw Object.assign(new Error('Reload the account page before continuing.'),{code:'csrf',status:403});}

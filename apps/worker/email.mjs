@@ -29,17 +29,24 @@ const ACCOUNT_NOTICES = Object.freeze({
 });
 const SECURITY_ALERTS = Object.freeze({
   'recovery-used': ['{brand} account recovery used', 'An account recovery file was used.'],
-  'passkey-added': ['{brand} passkey added', 'A passkey was added to your account.'],
-  'passkey-removed': ['{brand} passkey removed', 'A passkey was removed from your account.'],
-  'password-changed': ['{brand} password changed', 'Your account password was changed.'],
+  'passkey-added': ['{brand} passkey added', 'A passkey was added to your account. Not you? Sign in from a device you already use, remove the passkey and replace your recovery file, or recover the account with your recovery file.'],
+  'email-changed': ['{brand} account email changed', 'The email address of your account was changed. This address keeps receiving security notices for 30 days. Not you? Sign in from a device you already use and secure your account, or recover it with your recovery file.'],
+  'sessions-revoked': ['{brand} devices signed out', 'Other devices were signed out of your account. Not you? Recover the account with your recovery file, or sign in again and secure it.'],
+  'passkey-removed': ['{brand} passkey removed', 'A passkey was removed from your account. Not you? Recover the account with your recovery file, or sign in from a device you already use and secure it.'],
+  'sessions-evicted': ['{brand} devices signed out by new sign-ins', 'Many new sign-ins to your account signed out older devices. Not you? Recover the account with your recovery file, or sign in again and secure it.'],
+  'password-changed': ['{brand} password changed', 'Your account password was changed during account recovery. Not you? Use your recovery file now; if a recovery file replacement is pending, cancel it from a device you already use or from its email link.'],
   // DX-6: sent to the removed address. No other account detail is included.
   'email-removed': ['{brand} email removed', 'This email address was removed from a {brand} account. If you did not do this, sign in and secure your account.'],
   // DX-1 export notices (§1.4): sent on creation and on the first download from each session or CLI grant.
   'export-created': ['{brand} data export requested', 'An export of your account data was requested. Not you? Sign in, cancel the export and secure your account.'],
   'export-downloaded': ['{brand} data export downloaded', 'Your account data export was downloaded from a new session or device. Not you? Sign in, cancel the export and secure your account.'],
   // Active-account recovery reissue: the previous recovery file no longer works.
-  'recovery-reissued': ['{brand} recovery file replaced', 'A new recovery file was created for your account, and the previous one no longer works. Not you? Sign in and secure your account.']
+  'recovery-reissued': ['{brand} recovery file replaced', 'A new recovery file was created for your account. For the next 7 days it cannot be used to recover the account, and the replacement can be cancelled from a device that was signed in before it started, from the link below, or with your previous recovery file. Not you? Cancel it and secure your account.'],
+  'recovery-reissue-started': ['{brand} recovery file replacement started', 'Someone signed in to your account started replacing its recovery file. Not you? Sign in from a device you already use and secure your account.'],
+  'recovery-reissue-cancelled': ['{brand} recovery file replacement cancelled', 'The recovery file replacement was cancelled. Your previous recovery file works again and the new one never will.']
 });
+// The reissue cancel page (packages/runtime/routes/recovery-reissue.mjs); the capability stays in the fragment.
+const REISSUE_CANCEL_PATH = '/account/recovery/cancel';
 
 function safeHeader(value, max = 2048) {
   return typeof value === 'string' && value.length > 0 && value.length <= max && !/[\u0000-\u001f\u007f]/.test(value);
@@ -106,7 +113,10 @@ export function mailTransport(env = {}) {
       });
     }
   };
-  const notice = (templates, from, { email, type, days, owner }) => {
+  const notice = (templates, from, { email, type, days, owner, cancelToken, count, trailing }) => {
+    // Coalesced account notices carry how many changes they stand for (IdentityService#queueNotice); a trailing one
+    // reports changes made after the previous notice.
+    if (count !== undefined && (!Number.isSafeInteger(count) || count < (trailing === true ? 1 : 2) || count > 100000)) throw new Error('Invalid notice count.');
     if (!Object.hasOwn(templates, type)) throw new Error('Invalid mail notice type.');
     if (owner !== undefined && (typeof owner !== 'string' || !UUID.test(owner))) throw new Error('Invalid mail notice account.');
     const [subject, text] = templates[type];
@@ -114,7 +124,13 @@ export function mailTransport(env = {}) {
     const format = value => value.replaceAll('{brand}', () => brand).replaceAll('{days}', () => String(days));
     // Lifecycle notices link to the signed-in review prompt; the link carries no secret.
     if (templates === ACCOUNT_NOTICES && ['suspension-warning', 'deletion-warning', 'suspended-notice'].includes(type)) return send({ from, to: email, subject: format(subject), text: `${format(text)}\n\nKeep your account: ${origin}/console?${owner ? `account=${owner}&` : ''}lifecycle=review\n\nThis notice was sent to the email associated with your account.` });
-    return send({ from, to: email, subject: format(subject), text: `${format(text)}\n\nOpen ${origin}/console\n\nIf you did not request this change, review your account security in your personal space.` });
+    // A reissue notice may carry its cancel capability (an `<owner>.<random>` token) in a fragment: opening the link
+    // changes nothing until the page confirms with POST, and it never signs in.
+    if (templates === SECURITY_ALERTS && type === 'recovery-reissued' && cancelToken !== undefined) {
+      if (typeof cancelToken !== 'string' || !/^[0-9a-f-]{36}\.[A-Za-z0-9_-]{43}$/.test(cancelToken) || cancelToken.slice(0, 36) !== owner) throw new Error('Invalid reissue cancel link.');
+      return send({ from, to: email, subject: format(subject), text: `${format(text)}\n\nCancel the replacement: ${origin}${REISSUE_CANCEL_PATH}#token=${cancelToken}\n\nOpening this link does not cancel anything until you confirm on the page. It cannot sign you in.` });
+    }
+    return send({ from, to: email, subject: format(subject), text: `${format(text)}${count ? (trailing === true ? `\n\n${count} more such change(s) happened shortly after the previous notice.` : `\n\nThis notice covers ${count} such changes in the last few minutes.`) : ''}\n\nOpen ${origin}/console\n\nIf you did not request this change, review your account security in your personal space.` });
   };
   return {
     // DX-7: admin-assisted deletion confirmation, sent only to the account's own verified address. The capability

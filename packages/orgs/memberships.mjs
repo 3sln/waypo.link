@@ -85,6 +85,9 @@ export class MembershipService extends OrganizationService{
    const before=JSON.stringify(r),result=await apply(r,input,now,m,tx,roster);await this.finish(tx,r,before,actor,now);return structuredClone(result);
   });
  }
+ /** Hook (no-op here): an owner of record's decision on an elevated request, inside its commit. ORG-12a's break-glass
+  * service uses it for T14 (an owner decision aborts a pending claim) and the contest-window restriction. */
+ async ownerDecision(){}
  notice(r,type,detail,now){
   const row={id:this.random.uuid(),type,at:now,...structuredClone(detail)},roster=rosterOf(r);
   if(type==='member-grant-consent')roster.notice(row,{members:[detail.membership_id]});else if(type==='member-removed')roster.notice(row);else roster.notice(row,{admins:true});
@@ -185,9 +188,10 @@ export class MembershipService extends OrganizationService{
   if(v.decision==='retract'&&requester)q.state='retracted';
   else if(v.decision==='elevate'&&requester&&!ownerSubject&&(q.subjectRejected||now>=q.elevateAt)){
    if(!powers.includes('admin')&&!powers.includes('owner-of-record'))fail('not_found','Not found.',404);const ownerMember=r.memberships[principalKey(r.ownerOfRecord)];q.state=!ownerMember?.hold&&(ownerMember?.mutedRequesters??[]).some(p=>samePrincipal(p,q.requester))?'rejected':'elevated';this.notice(r,'member-grant-elevated',{request:q.id},now);
-  }else if(v.decision==='reject'&&(subject||owner&&q.state==='elevated')){requireFresh(actor,now);if(!subject&&self?.hold)fail('authority_held','Governance authority is held.',403);if(subject&&!ownerSubject)q.subjectRejected=true;else q.state='rejected';}
+  }else if(v.decision==='reject'&&(subject||owner&&q.state==='elevated')){requireFresh(actor,now);if(!subject)await this.ownerDecision(r,q,m,actor,'reject',now,tx);if(!subject&&self?.hold)fail('authority_held','Governance authority is held.',403);if(subject&&!ownerSubject)q.subjectRejected=true;else q.state='rejected';}
   else if(v.decision==='accept'&&(subject||owner&&q.state==='elevated'&&!ownerSubject)){
    requireFresh(actor,now);if(self?.hold)fail('authority_held','Governance authority is held.',403);
+   if(!subject)await this.ownerDecision(r,q,m,actor,'accept',now,tx);
    if(!subject){if(!powers.includes('owner-of-record'))fail('authority_held','Governance authority is held.',403);const proof=actor.verification;if(!proof||!Number.isSafeInteger(proof.stepUpAt)||proof.stepUpAt>now||proof.stepUpAt+300000<=now||!Number.isSafeInteger(proof.enrolledAt)||proof.enrolledAt<0||proof.enrolledAt>now-7*DAY||!Number.isSafeInteger(proof.securityChangedAt)||proof.securityChangedAt<0||proof.securityChangedAt>now-30*DAY)fail('tight_verification_required','Confirm with an established credential after the security cooling period.',401);}
    if(q.remove)await this.end(r,m,actor,'removed',now,tx);else{m.grants=stamp(q.grants,actor,now,m.grants).map(g=>({...g,...g.power&&m.grants.find(old=>old.power===g.power)?.notBefore?{notBefore:m.grants.find(old=>old.power===g.power).notBefore}:{}}));await this.operator(r,now);}q.state='accepted';this.notice(r,'member-grants-changed',{membership_id:m.id,request:q.id,requester:q.requester,owner:r.ownerOfRecord,reason:q.reason},now);
   }else fail('invalid_decision','This decision is not available.',409);

@@ -111,8 +111,13 @@ test('refresh reuse after rotation revokes the successor and every access token 
 });
 
 test('a pending request cap of 32 is enforced, and expiry frees capacity without unbounded growth',async()=>{
- const f=await serviceFixture(),begin=()=>f.service.beginAuthorization({clientId:app,redirectUri:callback,challenge:pkce('v'.repeat(43)),challengeMethod:'S256',state:'s',requests:[]});
- const results=await Promise.allSettled(Array.from({length:40},begin));
+ const f=await serviceFixture(),begin=(caller='one-network')=>f.service.beginAuthorization({clientId:app,redirectUri:callback,challenge:pkce('v'.repeat(43)),challengeMethod:'S256',state:'s',requests:[]},{caller});
+ // Anonymous (pre-owner) requests: 8 per caller and client (wargame 2026-10-23 #4).
+ const anonymous=await Promise.allSettled(Array.from({length:12},()=>begin()));
+ assert.equal(anonymous.filter(r=>r.status==='fulfilled').length,8);assert.ok(anonymous.filter(r=>r.status==='rejected').every(r=>r.reason.code==='rate_limited'));
+ // The owner step binds a request to the owner's own budget of 32.
+ const ids=[];for(let i=0;i<40;i++)ids.push((await begin(`network-${i}`)).requestId);
+ const results=await Promise.allSettled(ids.map(id=>f.service.inspect(id,owner)));
  assert.equal(results.filter(r=>r.status==='fulfilled').length,32);assert.ok(results.filter(r=>r.status==='rejected').every(r=>r.reason.code==='rate_limited'));
  f.clock.advance(600000);await begin();assert.equal(await f.rows('federation/request/'),1,'expired requests were pruned on admission');
  const swept=await f.service.cleanup();assert.equal(swept.remaining,true);

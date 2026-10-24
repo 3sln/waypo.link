@@ -21,12 +21,15 @@ async function activation(env,value,intent){try{if(typeof value!=='string'||valu
 export function intentFeature(env){return flagGlobal(env,'INTENT_LINKS_ENABLED')?{'intent-links.v1':{endpoint:env.APP_ORIGIN+'/i'}}:{};}
 export const allowedMethods=path=>path==='/i'||path==='/i/contact'?['GET','HEAD','POST']:path==='/api/intents/records'?['GET']: /^\/api\/intents\/(resolve|decide|exclude|ignore|remove)$/.test(path)?['POST']:null;
 async function receive(input){const engine=createAppEngine({providers:{clock:systemClock,random:cryptoRandom,audit:nullAudit}});try{return await read(engine,new ReceiveIntent({input}));}finally{await engine.dispose();}}
-async function page(request,env,url,{value='',placement='',legacy=''}={}){
+async function page(request,env,url,{value='',placement='',legacy='',status=200,error=false}={}){
  let source=await env.ASSETS.fetch(new Request(new URL('/intent.html',url),{method:'GET'}));if([307,308].includes(source.status)){const canonical=new URL(source.headers.get('Location')??'',url);if(canonical.origin!==url.origin||canonical.pathname!=='/intent'||canonical.search||canonical.hash)return json({error:'intent_page_unavailable'},503);source=await env.ASSETS.fetch(new Request(canonical,{method:'GET'}));}if(!source.ok)return json({error:'intent_page_unavailable'},503);
- const meta='<meta name="intent-navigation" content="'+escape(await ticket(env,request,legacy?'':value))+'"></head>',bootstrap=!value&&!legacy?'<body>':'<body><input type="hidden" id="intent-bootstrap" name="'+(legacy?'legacy':'bintent')+'" value="'+escape(legacy||value)+'" data-placement="'+escape(placement)+'" data-legacy="'+escape(legacy)+'">';
+ const meta=(error?'<meta name="intent-error" content="invalid_link">':'')+'<meta name="intent-navigation" content="'+escape(await ticket(env,request,legacy?'':value))+'"></head>',bootstrap=!value&&!legacy?'<body>':'<body><input type="hidden" id="intent-bootstrap" name="'+(legacy?'legacy':'bintent')+'" value="'+escape(legacy||value)+'" data-placement="'+escape(placement)+'" data-legacy="'+escape(legacy)+'">';
  const text=(await source.text()).replace('</head>',()=>meta).replace('<body>',()=>bootstrap);
- const response=await securePage(new Response(text,{headers:{'Content-Type':'text/html; charset=utf-8'}}),false,false,{keepPolicy:true}),headers=new Headers(response.headers);headers.set('Content-Security-Policy',(headers.get('Content-Security-Policy')??"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action https:").replace(/form-action[^;]*/g,()=>'form-action https:').replace(/connect-src[^;]*/g,()=>"connect-src 'self' https:"));headers.set('Cache-Control','no-store');headers.set('Referrer-Policy','no-referrer');headers.set('Cross-Origin-Opener-Policy','same-origin');headers.set('X-Robots-Tag','noindex, nofollow, nosnippet');return new Response(request.method==='HEAD'?null:response.body,{status:200,headers});
+ const response=await securePage(new Response(text,{headers:{'Content-Type':'text/html; charset=utf-8'}}),false,false,{keepPolicy:true}),headers=new Headers(response.headers);headers.set('Content-Security-Policy',(headers.get('Content-Security-Policy')??"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action https:").replace(/form-action[^;]*/g,()=>'form-action https:').replace(/connect-src[^;]*/g,()=>"connect-src 'self' https:"));headers.set('Cache-Control','no-store');headers.set('Referrer-Policy','no-referrer');headers.set('Cross-Origin-Opener-Policy','same-origin');headers.set('X-Robots-Tag','noindex, nofollow, nosnippet');return new Response(request.method==='HEAD'?null:response.body,{status,headers});
 }
+
+function prefersJSON(request){const ranges=(request.headers.get('Accept')??'').split(',').map(value=>{const [type,...parameters]=value.trim().toLowerCase().split(';');const q=parameters.find(p=>p.trim().startsWith('q='));return {type:type.trim(),q:q?Number(q.trim().slice(2)):1};});const quality=type=>{const matches=ranges.map(r=>({...r,specificity:r.type===type?2:r.type===type.split('/')[0]+'/*'?1:r.type==='*/*'?0:-1})).filter(r=>r.specificity>=0);const specificity=Math.max(-1,...matches.map(r=>r.specificity));return Math.max(0,...matches.filter(r=>r.specificity===specificity).map(r=>Number.isFinite(r.q)&&r.q>=0&&r.q<=1?r.q:0));};return quality('application/json')>quality('text/html');}
+const invalidPage=(request,env,url,code='intent_malformed',status=400)=>prefersJSON(request)?json({error:code},status):page(request,env,url,{status,error:true});
 export const stages={
  async public({request,env,url,path}){
   if(!flagGlobal(env,'INTENT_LINKS_ENABLED'))return;
@@ -41,15 +44,15 @@ export const stages={
   if(!['GET','HEAD','POST'].includes(request.method))return json({error:'method_not_allowed'},405,{Allow:'GET, HEAD, POST'});
   try{
    if(request.method==='POST'){
-    if(request.headers.get('Content-Type')?.split(';')[0]!=='application/x-www-form-urlencoded')return json({error:'intent_malformed'},400);
-    const raw=new TextDecoder('utf-8',{fatal:true}).decode(await bytesOf(request,7300));if(!/^bintent=[A-Za-z0-9_.-]+$/.test(raw))return json({error:'intent_malformed'},400);
+    if(request.headers.get('Content-Type')?.split(';')[0]!=='application/x-www-form-urlencoded')return invalidPage(request,env,url);
+    const raw=new TextDecoder('utf-8',{fatal:true}).decode(await bytesOf(request,7300));if(!/^bintent=[A-Za-z0-9_.-]+$/.test(raw))return invalidPage(request,env,url);
     const value=raw.slice(8);await receive({value,placement:'post'});return page(request,env,url,{value,placement:'post'});
    }
    if([...url.searchParams.keys()].some(k=>k.toLowerCase()==='bintent')){const parsed=await receive({url:request.url});return page(request,env,url,parsed);}
    // Fragment capabilities and protocol substitutions are consumed by the entry script.
-   if([...url.searchParams.keys()].some(k=>!['settings','lang'].includes(k)))return json({error:'intent_malformed'},400);
+   if([...url.searchParams.keys()].some(k=>!['settings','lang'].includes(k)))return invalidPage(request,env,url);
    return page(request,env,url);
-  }catch(e){return json({error:e.code??'intent_malformed'},e.code==='intent_expired'?410:400);}
+  }catch(e){return invalidPage(request,env,url,e.code??'intent_malformed',e.code==='intent_expired'?410:400);}
  },
  async beforeActivity({request,env,path,id,object}){
   if(!path.startsWith('/api/intents/'))return;

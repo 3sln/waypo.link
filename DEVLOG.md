@@ -3755,3 +3755,554 @@ The scalability probe found that rotating successor chains hit the flat 32 KiB d
 - `npm test`: 3,103/3,107. All 4 failures are in `tests/engine-retention.test.mjs`, untracked files of the concurrent over-quota retention work. That file passes 29/29 on a rerun alone, so the failures were mid-edit churn, not this change.
 
 Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-23 — Console first-load performance
+
+**Provisional build decision (not signed off):** reuse `@3sln/js-tools` staging, fingerprinting and wire-up, plus the existing esbuild browser/import-map resolver, to emit a minified, content-addressed ordinary-console composition bundle. Parser-visible modulepreloads cover each page's static entry closure and the console composition root, after the classic bootstrap installs the authorized import map. Transfer, intent, authorization, demo and administrator entry points retain their existing separate selection; organization views remain inside the ordinary composition bundle rather than introducing new runtime view boundaries. No `packages/*` business logic or vendored APIs were changed. The initial console HTML now offers sign-in/account-creation navigation while JS loads; credential forms still require JS.
+
+**Security/architecture reconciliation:** preserve shared entry-module identities across the bundle boundary. The first browser walkthrough caught a duplicate copy of `onboarding-entry.mjs`, which lost the one-use invitation captured before the dynamic import; the final resolver externalizes the entry's static closure to its existing immutable URLs. The real boot → claim → onboarding → administrator walkthrough and an explicit bundle/import identity assertion pass. This is implementation verification, not security approval. The complete public-source graph check remains in place, the import-map CSP digest is regenerated after aliases select the bundle, no CSP source is broadened, and the service worker still derives its integrity/cache generation from emitted bytes. Existing Brotli and one-year immutable headers were verified on the new bundle; no new compression/serving mechanism was needed. Two successive builds produce `eff4d4f4228373b310e6`. Production release remains disabled and the gates in `docs/spec/security.md` remain open; no external provider conformance is claimed.
+
+**Measurement:** `.output/perf/probe.mjs`, invoked through `scripts/run-browser-checks.mjs`, uses a fresh isolated local Worker/asset snapshot, cold contexts and immediate warm HTTP-cache navigations. Slow 4G is CDP 150 ms latency, 200,000 B/s down and 93,750 B/s up, with no CPU throttle. Signed-in API responses use the existing Wave 5 fixture shape through CDP Fetch (Playwright routing would disable HTTP caching); application assets use real Worker networking. Paired runs block service workers to isolate HTTP caching, with a separate service-worker-enabled smoke run passing. Requests include logical cache hits; bytes are CDP encoded transfer including headers, not decoded source. Landing paint is the server heading followed by two animation frames; signed-out readiness is the hydrated sign-in method control; signed-in readiness includes finished account loading and an actual navigation click. One sample per case, so local timing differences are noisy. The externally reported 20 s was not reproduced with these settings.
+
+| Network | Cache | State | Requests before → after | JS requests | Transfer B | Landing paint ms | Interactive ms |
+|---|---|---|---:|---:|---:|---:|---:|
+| local | cold | signed out | 150 → 11 | 144 → 5 | 713102 → 448499 | 62 → 102 | 864 → 197 |
+| local | warm | signed out | 150 → 11 | 144 → 5 | 4306 → 4430 | 133 → 129 | 147 → 143 |
+| local | cold | signed in | 152 → 13 | 144 → 5 | 712493 → 447812 | — | 883 → 213 |
+| local | warm | signed in | 151 → 12 | 144 → 5 | 3626 → 3808 | — | 167 → 168 |
+| slow4g | cold | signed out | 150 → 11 | 144 → 5 | 712971 → 448499 | 483 → 594 | 6313 → 3405 |
+| slow4g | warm | signed out | 150 → 11 | 144 → 5 | 4295 → 4430 | 566 → 572 | 589 → 586 |
+| slow4g | cold | signed in | 151 → 12 | 144 → 5 | 712312 → 447818 | — | 6332 → 2924 |
+| slow4g | warm | signed in | 155 → 13 | 144 → 5 | 4157 → 3092 | — | 345 → 331 |
+
+Preloads alone retained 144 JS requests and moved cold Slow 4G sign-in/console readiness only from 6,313/6,332 ms to 5,949/5,950 ms. The final bundle reduces startup JS requests to five, cold transfer about 37%, and cold Slow 4G signed-in readiness about 54%. Static signed-out paint regresses by 111 ms on Slow 4G because map installation now runs in the head; the shell offers account navigation during that interval. Warm-cache readiness is broadly unchanged. The existing broad offline background precache remains; this change does not claim to reduce its entire asset set. Raw paired JSON, preloads-only results, service-worker smoke data, headers, logs and methodology are in the gitignored `.output/perf/REPORT.md` directory companions.
+
+**Final validation:** `npm test -- --test-concurrency=4`: **3,115/3,115 passed**; `npm run test:ui-state`: **368/368 passed**; `npm run test:worker`: **90/90 passed**; `npm run test:e2e`: **273 passed, 4 skipped, zero failed** out of 277 tests across 13 subprocess summaries (exit 0). The four skips are unavailable WebKit binaries; Chromium and Firefox ran. `npm run build:assets` and `npm run check:worker` both passed (254 addressed source modules plus the generated console bundle; Worker dry-run completed). Focused build/browser regression checks: 3/3; real administrator/onboarding plus build checks: 4/4; paired performance and supplemental service-worker-enabled probes: 1/1 each. Successive final builds have the same build ID. All final core/UI-state/Worker runs were repeated after the shared-module correction.
+
+**Intermediate failures and limits:** the initial full core run was 3,113/3,115, with a generated-asset read racing a build in the deletion HTTP test and a timing-sensitive `egress_busy` discovery test under high concurrency; both pass in the focused 16/16 rerun and final full runs at concurrency four. A browser suite was restarted after an asset-snapshot/build race, and stale-snapshot runs were stopped when the bundle changed. The onboarding duplicate-module failure was an actual implementation bug and was corrected as described above. No remaining failure is attributed to another agent. Concurrent review files appeared under `docs/spec/organizations.md` and `tests/wg2-*.test.mjs` after the final core run started; they are outside this change and were left untouched. No commits were made.
+
+**Review follow-ups (2026-10-23; provisional, awaiting reviewer sign-off):**
+- Removed the superseded individual release asset after rewriting every alias, before collecting disk assets, manifest entries and service-worker precache. Browser regression checks reject its presence in the manifest and service worker.
+- Moved the console bundle hint from static HTML into external `main.mjs`, using the authorized import map and existing CSP. Only the ordinary release branch adds it, before importing the composition root; host administration, member certification, loopback demo, token onboarding, recovery and invitation routes have no bundle preload hint. This limits the hint; release screens still load their existing composition root. DOM/browser regression coverage checks nine route cases.
+- Replaced the signed-in-sounding heading with “Welcome to 3sln.me.” and removed static account navigation that discarded onboarding/invitation context. A `noscript` notice explicitly says JavaScript is required to sign in or create an account. The static console template has no i18n layer; this copy remains English. JavaScript-disabled browser coverage checks console sign-in, token onboarding and invitation shells.
+- Externalized `packages/recovery/index.mjs` from the console bundle at its existing immutable import-map URL, retaining the provider's lazy dynamic import. A bundle assertion checks that external URL remains present.
+- Added an always-on build assertion over both static and dynamic graph edges: only `main.mjs` may import the release composition root. Every staged public module is checked, including optional entries, preventing another independently shipped module from importing a second Engine composition.
+- Validation: two successive `build:assets` runs matched all **448 files byte-for-byte**, build ID `723a1ee6cd1fc5318122`; `check:worker` passed its rebuild and Worker deployment dry-run. `test:ui-state`: **368 passed, zero failed/skipped**. Focused build-model DOM/browser checks: **4/4 passed**. `test:e2e`: **274 passed, 4 skipped, zero failed/cancelled** out of **278 tests across 13 subprocess summaries**, exit 0. All four skips are unavailable WebKit binaries; Chromium and Firefox ran.
+- Test-development failures: the initial assertions raced the static shell, expected a relative DOM URL although `link.href` stores an absolute URL, and used a nonexistent recovery route. Corrected the assertions and covered the actual setup/restore routes; focused rerun passes. The existing offline-cache regression also expected the removed individual release asset; updated that serving assertion to require the console bundle, and its final full-run check passes. An initial broad run was stopped after its new assertions failed and its offline-worker test stalled; a subsequent full run retained the old cache assertion and failed it. The final complete run above passes. No production gates or external-service claims changed. Other agents' identity/federation/billing/messaging/organization edits were left untouched. No commits made.
+
+Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-23 — ORG-12 break-glass design
+
+**Design only** ([organizations design §12d](docs/architecture/organizations-design.md#12d-org-12-break-glass-an-organization-whose-owner-is-gone-3slnme-provider-policy), rev 5.5; spec rev 4.4). No code changed. Nothing is implemented, routed or production-verified. Every item is **provisional** (coordinator, not signed off by the user).
+
+**The problem:** an organization whose owner is gone (dead, unreachable, or without every credential and the organization recovery file) while the subscription keeps renewing. Elevations stay pending, and nobody can transfer, move, delete or reissue the file.
+
+**The design (3sln.me provider policy):**
+- **Who starts it.** A claim needs a quorum of two eligible 3sln.me-homed admins with 30 days' tenure. Foreign admins can only object in v1. The candidate is a 3sln.me admin under P18 tight verification.
+- **Payment first.** The candidate pays a fresh checkout before the wait starts (the user's transfer billing rule). Any claim that doesn't take effect is refunded in full; a voluntary withdrawal loses the processing fee.
+- **Track A** (self-running): a 30-day notified wait. Notices go to every owner channel and every admin. It is available only when the owner had no interactive sign-in for 30 days before the claim and has an out-of-band channel that is not on an admin-controlled domain. It takes effect by itself: a **third explicit exception** to "no timeout decides".
+- **Track S** (support-adjudicated): single-admin or member-initiated claims, an admin objection, owner liveness, a claim within 180 days after an owner abort, and contests. It needs a 60-day wait, a two-operator decision and a 7-day final notice.
+- **The owner's abort.** Any known device or email aborts with no proof, matching the person-move ladder. After a support decision, a dispute from any known channel still stops the effect and returns the claim to support. A channel support excluded needs a new operator pair to overcome, and support can never exclude the owner's last channel. The owner's tier-1 proof (an aged credential) always aborts, and support cannot override it.
+- **The effect commit.** The owner changes, the organization's `aep` rises by one and the recovery binding rotates. The former owner stays a member with governance held. A 90-day contest window follows: no transfer, deletion or move, the former owner can't be removed, and acceptances that narrow governance wait. An upheld contest is a reinstatement, not a transfer, with a 14-day billing grace.
+- **Recovery-file reissue:** a defined `missing` state; the reissue needs an aged credential, and is refused within 30 days of a security change unless the file is missing after a change of owner.
+- **Out of scope:** `orgs.forget` wiring (the deletion purge hand-off) and flag targeting for organization accounts (the existing account subject is enough).
+
+**Spec rev 4.4 (narrow):** a change of control without the recovery file is an authority reset at effect only (§3), the disclosure covers it (§6.3), plus one conformance check and checkpoint O6.
+
+**Review:** an independent adversarial review (BG-R1) found 3 High, 7 Medium and several Low items. All are applied before publication:
+- **H1:** support exclusion could take an organization from an email-only owner.
+- **H2:** Track A could take effect with no absence evidence, or with notices going to admin-run mailboxes.
+- **H3:** quota exhaustion and support expiry could block a legitimate recovery.
+- **Mediums:** reinstatement billing, liveness in `final`, privacy probes, reconciliation with "adjudicates nothing", billing disclosure, and spec over-reach.
+
+**For the user:** decisions BG-1 to BG-17 (design §12d.11, Q20), notably:
+- BG-1, the third timeout exception;
+- BG-16, support adjudicating held claims, which reverses "3sln.me adjudicates nothing" and makes the implemented `orgs.claim-resolve` "proceed" need two operators;
+- BG-13, reinstatement billing.
+
+**Implementation plan:**
+- **Slices:** ORG-12a (claim engine), 12b (owner channels, abort tokens, liveness), 12c (billing), 12d (support adjudication), 12e (UI), 12r (reissue hardening), and 12f later (file-based recovery).
+- **Flag:** `ORG_BREAK_GLASS_ENABLED`, default off.
+- **Tests:** engine tests and seeded chaos with ten invariants, plus named adversarial cases.
+- **Production gates:** a hash-chained organization audit, verified notification delivery, organization terms (ORG-13), and an independent security review.
+
+Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-23 — Messaging, search and deletion wargame fixes
+
+A red-team review of messaging, contact links, search, Beam and account deletion/export found five Medium, three Low–Medium and two Low findings. All are fixed. Each repro is ported to a permanent regression test that fails when its fix is reverted; that was checked revert by revert in a scratch copy of the tree. Everything is local loopback behaviour (SQLite metadata, in-memory buckets, Node server fixtures); nothing here is production-verified, and no production gate changes. Every decision below is **provisional** (coordinator, not signed off by the user).
+
+- **M1 (Medium), refused contact deliveries spent the owner's budgets.** `ContactDeliveryService.precheck` runs every check `commit` makes, read-only, in one transaction: parent liveness, recipient, kind, MIME, size, collection, intake tags, the createdAt window, link and author-day quota, and account quota. `deliverLink` calls it inside the gate before the receipt-budget debit, work admission, storage reservation and blob write. `commit` re-runs the same checks authoritatively (one shared private method). This brings the runtime in line with messaging.md "Reference-service receipt limits". Test: `tests/contact-delivery-precheck.test.mjs`.
+- **M2 (Low–Medium), link holders could see quarantine.** **Provisional decision:** quarantine is silent, as contact-tokens.md already says.
+  - A quarantined link's profile GET/HEAD and oEmbed/HTML preview answer exactly like an active link's. POST delivery stays 202 and lands quarantined and unnotified.
+  - Redemption succeeds, and redeemed peers keep seeing the disclosed profile.
+  - A conversation invitation through a quarantined parent is admitted as a quarantined, unnotified message, instead of `conversation_contact_denied`.
+  - A profile request for a link of another owner now answers `unauthorized`, which becomes the uniform unknown.
+  - **Remaining exception:** beam transfer permission is still refused while quarantined, with the same `beam_contact_required` as a contact without beaming. A redeemed peer who could beam before can still infer the pause by trying. Hiding that would mean accepting live transfers silently; that question is left for the user.
+  - Specs reconciled: links.md §6.4 no longer lists quarantine among non-verifying links, and contact-tokens.md states the silence rule and the beam exception. `tests/beaming-runtime.test.mjs` and `tests/beaming-security.test.mjs` are updated. Test: `tests/contact-quarantine-silence.test.mjs`.
+- **M3 (Medium), revoked or expired links counted toward the 1,000 cap forever.**
+  - `createGrant` counts only active, unexpired parents. `revoke` records `revokedAt`.
+  - `collectLinkState` (account alarm) gains a bounded `collectDeadParents` sweep with a persisted wrapping cursor (`link-gc-cursor/parents`). It reclaims a parent once the parent has been dead for 72 h (operation age plus minimum receipt retention), every `contact-delivery-receipt` has passed `retainUntil`, and audience replay rows have expired.
+  - Reclaiming deletes the parent, its `contact-name/`, `contact-url/`, `beam/grant/` and `beam/redeemed/` rows and its receipts, in 64-row batches. It writes `contact-grant-tombstone/<id>`, which every liveness check (`tokens.live`, `endpointLive`, `deliveryLive`, the endpoint `live`) refuses.
+  - The grant behind the `developer-contact/v2` pointer is never reclaimed, so a revoked developer link stays revoked.
+  - The new prefix is classified in the export inventory. contact-tokens.md is updated. Test: `tests/contact-grant-reclaim.test.mjs`.
+- **Q1 (Medium), more than 32 tags poisoned the search queue.** Both sides are fixed:
+  - The search tag bound is now `MAX_USER_TAGS` plus the registered `sys:` set (32 + 24), matching messaging.
+  - `messageSearchDocument` builds a deterministic tag set: unique bounded IDs, every system tag, then the first 32 user tags in stored order.
+  - `SearchService.drain` acknowledges and tombstones an event that fails deterministic validation (`deterministicSearchFault`) and calls `onRejected`. The account records `search/rejected` and emits a lifecycle-log `operator-alert` (`kind:'search'`). Transient errors still throw and keep the event queued.
+  - Test: `tests/search-outbox-poison.test.mjs`, including the 31-tag connected-app path.
+- **Q2 (Medium), a full search queue blocked deletion.** `enqueueSearchEvent` always admits tombstones. A tombstone replaces any pending upsert for the same item (same event key, no new queue row). Upserts stay bounded. Test: same file.
+- **Q3 (Low), a failed TURN issue locked the participant out.** Any failure before the credentials are recorded revokes the issued credentials, calls `BEAM_RELAY_BUDGET.release(reservation)` when the injected budget provides it (an optional port method, since no implementation is in the repo), and moves `iceIssued[role]` from `'issuing'` back to unset. An unfunded reservation also resets. Test: `tests/beam-ice-retry.test.mjs`.
+- **D1 (Medium), a delivery started before the deletion fence committed after it.**
+  - New `assertLifecycleOpen(reader)` in `account-deletion.mjs` checks the fence, the purge job and the tombstone.
+  - It runs inside `gated()`, so every ungated orchestration (deliverLink, developerContactLink) re-checks inside the gate. It also runs inside the delivery commit transaction, through the controller's `parents.live` port.
+  - **Root-cause audit of the other `gate:'none'` writers:**
+    - The conversation inbox is reached by the ungated `conversationDrain` self transport; it now checks before writing and inside its commit transaction.
+    - The link-audience decision cache writes in a checked transaction (a fault becomes `unavailable`), and audience replay consumption checks first.
+    - `exports.step` already fences itself.
+    - Corrected after review: not every other ungated method is read-only. `brokeredFederationEvent` (federation-owned file, left to that workstream) and `memberKeysChanged` write account metadata, though no blobs. `memberKeysChanged` now skips its write once a fence, purge job or tombstone exists. A late metadata-only write could still leave stray rows in a tombstoned object.
+  - **Defence in depth:** the purge blobs stage makes one final pass from the beginning. Its re-deletes are counted in `job.rechecked`, so tombstone evidence is unchanged.
+  - Test: `tests/deletion-delivery-race.test.mjs` (race, commit-transaction re-check, gate refusal, final pass). The conversation-inbox fence is in `tests/conversation-event-metadata.test.mjs`.
+- **D2 (Low–Medium), a forged export-grant bearer revealed deletion state.** The grant branch of `routes/exports.mjs` maps lifecycle faults (and `lifecycle_unavailable`) to the same `401 unauthorized` body as an invalid grant, matching object-http.mjs and public-unknown.mjs. Test: `tests/export-grant-lifecycle.test.mjs` (active, deleting and deleted targets).
+- **D3 (Low), 64 held accounts could starve the deletion-due sweep.** `deletionDueIndex` gains `page`/`advance` with a persisted cursor (`deletion-due-cursor`, outside the `deletion-due/` prefix). The cursor wraps at the first row not yet due or at the end. `sweepDeletionDue` uses it and falls back to `due` for an injected index without it. Test: `tests/deletion-due-sweep.test.mjs`.
+- **Cheap follow-ups:**
+  - Conversation `receive` now validates signed event metadata like contact deliveries: at most 16 unique bounded tags, a UUID or null `replyTo`, and a safe-integer `createdAt` no more than 60 s ahead. createdAt also names the history row key, so a string could have addressed other keys. Test: `tests/conversation-event-metadata.test.mjs`.
+  - The developer-contact renewal's `quotaFamily` write is now a read-modify-write transaction. It has no revert-failing test: the renewal already runs inside the account gate, so the race cannot be reproduced deterministically.
+- **Accepted TOCTOU windows (M1).** `precheck` and `commit` are separate transactions, so a delivery can pass `precheck`, have its budgets debited and its blob staged, and then be refused by `commit` because a concurrent change landed in between (revocation, quarantine-rule or intake edits, quota use by a parallel delivery). This is accepted: the gate serializes owner-account writes, `commit` stays authoritative, the staged blob is released, and the cost is at most one admission per such race.
+- **Not covered by a dedicated revert-failing test:** the link-audience decision-cache and replay-consumption fence checks (defensive, reached only through conditional links), and the quotaFamily transaction above.
+
+Verification: `npm test` 3,191 tests, 3,189 pass; the 2 failures are in `tests/engine-legal-identity.test.mjs` (age/region policy, another agent's in-flight edits). `test:worker` 91/91, `test:ui-state` 368/368, the 61 messaging/contact/link/search/beam/conversation/export/deletion test files 450/450, `test:deletion` 6/6 and `test:admin-deletion` 28 + 4 + 16 pass. Files owned by the identity/federation, billing/retention/age-policy and console agents were not edited. No commits made.
+
+**Review follow-ups (independent review, same day; all provisional):**
+1. **Medium–High: M2 let a quarantined link bypass quarantine.**
+   - An invitation through a quarantined parent saved an `invited` room. A source-pushed membership then activated it with no owner acceptance, and later events were stored unquarantined and notified.
+   - `acceptance()` now records `acceptedAt`. `receive('membership')` refuses (`conversation_acceptance_required`) a room that is not `active` unless it is `invited` with `acceptedAt`. The first version still let `removed` through; the second round below closes that, and only then is the flaw closed for active links too.
+   - Local-only fields (`collection`, `acceptedAt`, `quarantined`) are never taken from a source-signed payload.
+   - Rooms saved through a quarantined parent carry `quarantined:true`. Their events are stored quarantined and unnotified, and they are hidden from the default list (`GET /api/conversations?quarantined=1` lists them).
+   - The owner's explicit acceptance releases the room's quarantine.
+   - Test: `tests/conversation-quarantine-acceptance.test.mjs` (ported from the review repro).
+2. **Low–Medium: a leaked quarantined link could take the single redemption slot.** Redemption still answers 2xx while quarantined but persists nothing; a prior binding still answers 409 to another peer, as for an active link. Test: `tests/contact-quarantine-silence.test.mjs`.
+3. **Low: the fence re-check covered only `gated()`.**
+   - Inside invoke's gate, `assertDeletionFenceOpen` (tombstone and fence, the entry check's deletion part) runs for every policy not declared `purging`.
+   - The conversation self-invite transport, reached from the ungated drain, now runs through `gated()`.
+   - The audit text above is corrected.
+   - Tests: `tests/deletion-delivery-race.test.mjs`.
+4. **Low: M3 removed the hard row bound.**
+   - `createGrant` refuses at 2,000 stored parents, dead ones included (`MAX_STORED_GRANTS`). That cap also bounds `tokens.list` and `contacts()`, whose side listings now pass explicit limits.
+   - GC reclaims up to 64 parents a run (scanning 256) and re-arms in 10 minutes while a backlog remains.
+   - The audience replay purge and `cleanupDailyDeveloperGrants` use wrapping cursors instead of one 1,001-row read.
+   - Tests: `tests/contact-grant-reclaim.test.mjs`.
+5. **Info:** the TOCTOU sentence above.
+6. **Nit:** the stale quarantine comment in `packages/links/preview.mjs` is corrected.
+**Review follow-ups, round 2 (re-review, same day; provisional):**
+1. **Medium: the consent rule was bypassable through `removed`.** A source could push `removed` to an invited or declined room, deliver events with a snapshot it signed itself, then reactivate the room with a membership, all without the owner's acceptance.
+   - `removed` now applies only to an `active` room. For any other state it is a silent no-op. It records `removedEpoch`.
+   - A membership activates only an `active` room or an accepted `invited` one. The first activation records `joinedAt` and `joinedEpoch`. A removed or declined room needs a fresh accepted re-invite.
+   - Events in a `removed` room are accepted only from a room that was joined, with an epoch at or after `joinedEpoch` and before `removedEpoch`.
+   - All receiver-local room fields (`collection`, `acceptedAt`, `joinedAt`, `joinedEpoch`, `removedEpoch`, `quarantined`) are kept across source-signed payloads.
+2. **Low–Medium: quarantined invitations could fill the 100-room quota for good.**
+   - Invited and declined rooms past `expiresAt` are collected at the next invitation.
+   - The 100-room quota counts active, removed and live unquarantined invitations. Quarantined invitations have their own cap of 10. Declined rooms count toward neither and are collected at expiry.
+   - The scan is bounded at 512 rows.
+3. **Low: a removed member could not accept a re-invite.** A fresh invitation (new `invitationId`) over a `removed` or `declined` record, or over an expired invitation, resets it to `invited`. That drops `acceptedAt` and `joinedAt`, takes `quarantined` from the current parent, and requires a new acceptance.
+4. **Low: inference channels recorded.** contact-tokens.md and this entry now list the remaining ways to infer quarantine:
+   - beam refusal;
+   - an unrecorded quarantined redemption, which later shows no disclosed profile;
+   - a second holder answered 2xx where a recorded binding answers 409;
+   - hidden quarantined conversation rooms;
+   - the 10-room quarantined cap's `conversation_room_quota` (429), which an active parent would not hit.
+   - The optional pending binding (owned by the first redeemer, promoted on release) is not implemented: it would add owner-side state and a second way to infer quarantine, for little gain.
+- Tests: `tests/conversation-quarantine-acceptance.test.mjs`, ported from the `removed-bypass` and `reinvite` repros, plus a unit test of the room quota.
+**Review follow-ups, round 3 (provisional):**
+1. **Low: re-invite quota and declines.** A re-invite over a declined room, or over an expired invitation, now goes through `roomQuota`; only a reset of a removed room skips it, since a removed room already counts. A declined room refuses re-invites until its invitation expires (the room view is answered unchanged), so the owner's no stands for the life of that invitation.
+2. **Low: inference list and removal grace.** The quarantined cap's 429 is added to the inference list (here and in contact-tokens.md). A removal now records `removedAt`. Events in a removed room are accepted only within 10 minutes of it (`REMOVED_GRACE_MS`), and still only from before the removal epoch.
+- Tests: two more in `tests/conversation-quarantine-acceptance.test.mjs` (a decline that stands, then quota on replacing it; the grace expiry). Each fails when its fix is reverted (three revert cases, scratch copy).
+- Round 3 verification: the messaging/contact/link/search/beam/conversation/export/deletion files pass 464/464. `npm test` ran 3,319 tests and 3,318 passed. The 1 failure, `tests/resource-discovery.test.mjs` X7-R1, is unrelated to these changes and passes 9/9 on rerun.
+- Round 2 verification: `npm test` 3,278 tests, 3,277 pass. The 1 failure, `tests/orgs-wargame.test.mjs` follow-up 6 (operator verification), passes 31/31 on rerun and belongs to concurrent organization/admin work. `test:worker` 91/91, `test:ui-state` 432/432, and the messaging/contact/link/search/beam/conversation/export/deletion files 462/462. All 36 revert checks fail as expected.
+- Verification after the follow-ups: `npm test` 3,274 tests, 3,271 pass. The 3 failures are in `tests/billing.test.mjs` (2) and `tests/engine-legal-identity.test.mjs` (1), all in other agents' in-flight billing and age-policy work. `test:worker` 91/91, `test:ui-state` 431/431, `test:deletion` 6/6, and the 63 messaging/contact/link/search/beam/conversation/export/deletion files 458/458.
+- Every follow-up test fails when its fix is reverted (checked in a scratch copy). `memberKeysChanged`'s skip has no dedicated test: it is best-effort and needs an organization fixture.
+
+Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-23 — Billing, retention and region wargame fixes
+
+A red-team review of person billing, over-quota retention and the region block found one High, four Medium, one Low–Medium and three further issues (region block failing open, regional price arbitrage, billing state limits). The code findings are fixed. Each repro is now a permanent regression test that fails when its fix is reverted; this was checked one revert at a time in a scratch copy of the tree. Everything is local behaviour (SQLite or in-memory metadata, offline Polar fixtures, Miniflare and Node server fixtures). Nothing here is production-verified or provider-conformance evidence, and no production gate changes. Every decision below is **provisional** (coordinator, not signed off by the user).
+
+- **B1 (High), an unpaid upgrade froze a funded over-quota cutoff indefinitely.** Three fixes:
+  - `PlanChanges.fence` finishes the lock and falls through to provider-derived state, with lapse evidence, in two cases: the locked subscription has ended or been revoked, or the upgrade invoice is still past due 30 days after the change (`UPGRADE_PAST_DUE_MS`, provisional). The evidence-less Free hold is gone.
+  - A pending, unpaid upgrade is authoritative at the source plan. `fence` returns `authoritative`, and `fetchState` keeps `retentionAuthoritative` true unless the held state is inside the provisional window.
+  - A billing pause of retention is bounded at 72 hours (`RETENTION_BOUNDS.billingPauseMs`, provisional). The bound uses the step-capped observation. The ledger keeps `lastAuthoritative` (plan, bytes, paid-through time, billing revision). After the bound the episode proceeds on that state, which becomes Free once its paid-through time passes. One `billing-pause-bound` operator alert is raised per pause.
+  - Tests: `tests/retention-upgrade-wargame.test.mjs` (freeze, control, bound) and the past-due case in `tests/billing-upgrade-wargame.test.mjs`.
+- **B2 (Medium), revocation during a pending upgrade recorded no retention transition.** It now yields lapse evidence against the source plan (same root fix as B1). Reconcile also no longer drops a reduction when the stored before-image is provisional. The paid-through source plan is the before-image, and the provisional bytes are used when they are larger, so a revocation inside the 15-minute window is recorded too. Tests: `tests/billing-upgrade-wargame.test.mjs` (after and inside the window).
+- **B3 (Medium), a dead upgrade lock blocked plan changes forever.** The lock is finished when:
+  - the subscription has ended (B1);
+  - an accepted upgrade is reverted at the provider (`reverted`);
+  - an unconfirmed mutation is still not applied after 15 minutes (`not-applied`);
+  - a renewal-time downgrade's schedule disappears at the provider (`canceled` or `not-applied`);
+  - the invoice stays past due beyond the bound (`payment-failed`);
+  - a new verified paid subscription replaces the locked one (`superseded`, checked in `change()`).
+  - An active, unpaid upgrade still holds the lock until payment, revert, revocation, the past-due bound or renewal. That is deliberate: releasing it would grant the unpaid target product.
+  - Operator reconcile path: the system-only engine operation `billing.change-lock-reconcile` (`ReconcileBillingChangeLock`, actor `system` with a reason). It re-runs the fence and releases a superseded lock. It releases a lock without its journal row only with `force`. It is not mounted on any route.
+  - Tests: `tests/billing-upgrade-wargame.test.mjs`.
+- **B4 (Medium), a paying customer dropped to Free after a failed proration invoice.** `proof()` accepts a paid, unrefunded target-product order created after the change, with `billing_reason` either `subscription_update` or `subscription_cycle`. A void invoice is a failure only until a later paid invoice supersedes it, and refund evidence always wins. An active subscription whose `current_period_start` advanced past the source period also settles the change (`renewed`). Tests: same file (cycle after void, update after void, renewal without a visible invoice, refund still wins).
+- **B5 (Medium, compliance), the EU block missed outermost regions and Åland.** `representativeBlocked` adds GP, MQ, GF, RE, YT, MF and AX. Their retained ages follow France (15) and Finland (13). age-requirements.md and the representative spike are updated. `tests/engine-legal-identity.test.mjs` is updated for the new list. Test: `tests/region-policy.test.mjs`.
+- **B6 (Low–Medium), bytes admitted during an unpaid provisional upgrade escaped retention.** When a provisional window closes unpaid, reconcile records an `upgrade-unpaid` transition effective at the window's end. Retention accepts the new reason and floors the deadline at `max(effectiveAt, consumedAt) + 30 days` (D092 M1). A window confirmed by payment records nothing. Tests: same file.
+- **Region block failed open. Provisional decision:**
+  - On the Worker (3sln.me), an unknown country (`XX`), Tor (`T1`) or a missing country is blocked for signup and paid checkout (`REGION_POLICY=block-unknown`, the default). An invalid value also blocks.
+  - Local development (`LOCAL_DEVELOPMENT=true`) defaults to `allow-unknown`.
+  - On Node, the EU/UK representative block is the operator's own policy. `REGION_POLICY` defaults to `allow-unknown`, and an invalid value fails at startup.
+  - Node learns a country only from an operator-configured `TRUSTED_COUNTRY_HEADER`. The adapter forwards it through an internal header and drops any client copy, and an injected function port (`REGION_LOCATION_SOURCE`) reads it. A Worker string binding can never supply a location.
+  - `requestAgeLocation(request, env)` maps an unknown location to `XX`. `ageRequirement` blocks it with `blockedReason:'region-unknown'`, and the signup screen shows a distinct message ("your region couldn't be determined…", en/es). The API error stays `signup_region_blocked`; `packages/identity/service.mjs` is not edited.
+  - Signup, paid checkout, `/api/config` and transfer-in use the new helper.
+  - Tests: `tests/region-policy.test.mjs` (unit and Node adapter over real HTTP), `tests/worker/region-policy.test.mjs`, and a DOM case in `tests/browser/legal-engine.mjs`.
+- **Billing state limits:**
+  - **Receipt cap, assessed.** The SDK verifier already rejects deliveries outside five minutes, so receipts only dedupe redeliveries. At capacity, receipts older than a three-day redelivery horizon are pruned oldest-first, at most 64 per event (`EVENT_MIN_RETENTION_MS`, provisional). The service now returns 503 only for 4096 events within three days. The 4096 cap and the 35-day retention are kept. Each event still lists up to 4097 receipt rows; that cost is bounded, not optimized. `tests/engine-billing.test.mjs` is updated to the new policy.
+  - **`outcome_unknown` recheck.** A paid-signup checkout stuck at `creating`/`unknown` may be recreated after one hour (assumed provider session lifetime, unverified), at most three times per setup. Status reports `recheckAt` until then and `payment_required` after it. Test: `tests/paid-signup-recheck.test.mjs`.
+- **Open questions (provisional, open):**
+  - **Counsel, territorial scope of the representative block:** Jersey (JE), Guernsey (GG), Isle of Man (IM), Gibraltar (GI), Saint-Barthélemy (BL), Saint-Pierre-et-Miquelon (PM), New Caledonia (NC), French Polynesia (PF), Wallis and Futuna (WF) and the French Southern Territories (TF). They are not blocked now. Reviewer: ___ Date: ___ Outcome: ___
+  - **Operator pricing policy for per-currency Polar prices (regional arbitrage):** the currency is selectable and Polar charges the configured local amount, so a buyer can pick the cheapest configured currency. Decide whether per-currency prices must stay within a band of USD, or whether currency choice is restricted by country. No code change. Reviewer: ___ Date: ___ Outcome: ___
+- **Not fixed or not covered:**
+  - The transfer-in route's switch to `requestAgeLocation` has no dedicated revert-failing test.
+  - A paid-signup checkout that is `ready` but expired is not rechecked; only ambiguous creations are.
+  - A stored provisional state that is never reconciled after its window records its `upgrade-unpaid` transition only at the next reconcile (webhook, status view or plan change). Until then the retention pause bound applies.
+
+**Review follow-up (same day, independent review of the fixes above; provisional).** It supersedes the B1 past-due lapse and the B3 `superseded` rule stated above.
+- **H1 (High), a release without payment proof granted the unpaid target plan.** Three routes: one of two subscriptions was upgraded and then "superseded" by the other renewing; a single stale provider read finished the lock as `reverted`; and a provider applied an unconfirmed change after the 15-minute `not-applied` bound.
+  - Every release that is not payment-proven and not `ended` (`reverted`, `not-applied`, `superseded`, `payment-failed`) writes a per-subscription guard, `billing/upgrade-guard/<subscription>`, in the same transaction.
+  - `fetchState` consults the guard for each subscription. It refuses the target product and holds the paid-through source plan (authoritative) until `proof()` succeeds, an active renewal on the target product happens, or the subscription ends.
+  - `supersede` now requires the locked subscription to be gone at the provider (404). If the provider shows it ended, it is finished as `ended` instead. Being outranked by another live subscription is not enough.
+  - `reverted` needs two separate observations, both at least GRACE after acceptance (`acceptedAt`, `revertSeenAt`).
+  - A second checkout from Free is refused while one session is open (`checkout_open`). The same plan and currency reopen the stored session URL.
+  - Tests: `tests/billing-upgrade-wargame.test.mjs` (two subscriptions, stale read, two-observation revert with flip-back, late application, open checkout).
+  - `tests/billing.test.mjs` now clears `billing/pending` between its repeated checkout-validation calls.
+- **M2 (Medium), B6 bypass.** A revert inside or just after the provisional window was recorded as `catalog` with the provisional before-image, and retention waits on catalog notices. A provisional before-image never carries `catalog` now; it is recorded as `upgrade-unpaid` effective at `provisional.endedAt`. Test: same file.
+- **M3 (Medium, compliance), unguarded organization and redirect checkouts.**
+  - `routes/identity.mjs` `beforeActivity` runs `PaidCheckoutAllowed` (fresh paid-age attestation, `requestAgeLocation`) for organization creation checkout, `billing-checkout`, `claim`, and transfer `accept`, as it already did for person checkout.
+  - `routes/orgs.mjs` strips `ageConfirmed` before the writer's exact-key check. That is a route-layer-only edit; `packages/orgs/*` is untouched.
+  - The anonymous redirect-extension purchase (`routes/transfer-pages.mjs`) applies the region policy and requires `ageConfirmed` ≥ the paid minimum age.
+  - The organization ownership panels and the redirect page gain a required "I am N or older" checkbox. `bl/organizations.mjs` and `bl/transfer-flow.mjs` send the attestation.
+  - The break-glass checkout (`orgs.breakglass-checkout`) has no HTTP route yet. It must get the same gate when it is routed; recorded in age-requirements.md.
+  - Tests: `tests/worker/region-policy.test.mjs` (Tor and unattested organization checkouts refused before the writer; non-payment transfer steps not gated), a new case in `tests/redirect-extension-runtime.test.mjs` (that fixture now supplies a US location and attestation), `tests/browser/transfer-engine.mjs`, and `tests/browser/org-ownership-browser.mjs` (ticks the new box).
+  - `tests/orgs-ownership-runtime.test.mjs` sends `ageConfirmed` on creation and acceptance, which exercises the strip.
+- **L4 (Low).** Past due beyond 30 days releases only the lock. The guard holds the source plan until `row.source.validUntil`. A held source plan lapses with evidence at its paid-through time, or earlier when the provider revokes. Tests: same file.
+- **L5 (Low).** On Node with `TRUSTED_COUNTRY_HEADER`, a present but invalid value maps to `XX`. That is behaviourally the same as an absent value (both are unknown under either policy), so no test can fail on revert. age-requirements.md now says the proxy must overwrite the header, not append.
+- **L6 (Low).** `allow-unknown` is the default only for `LOCAL_DEVELOPMENT=true` on a loopback `http` `APP_ORIGIN` (`loopbackOrigin`). There was no existing guard against `LOCAL_DEVELOPMENT=true` on a deployed origin. A runtime assertion would break Worker fixtures that pair the flag with `.example` origins, so this is a security.md verification gate instead. `tests/engine-legal-identity.test.mjs` "HTTP config…" now sets `REGION_POLICY:'allow-unknown'`, since that test is about untrusted country fields. Test: `tests/region-policy.test.mjs`.
+- **I7 (Info).**
+  - In the pause-bound path, `releaseAnchor` judges `lastAuthoritative.billingRevision`. No test can fail on revert: the overridden usage quota already equals the anchor's reduced quota, so the verified-upgrade release cannot trigger.
+  - `ReconcileBillingChangeLock` is registered in `ACCOUNT_OPERATIONS` (exported as `BILLING_OPERATIONS`). The account engine gets the `billing` provider. Hosts run it through the new account RPC `billingReconcileChangeLock(owner, {reason, force})` with a system actor; owner dispatch is refused. Test: same file.
+  - **`renewed` assumption, unverified.** The `@polar-sh/sdk` 1.0.2 types describe `current_period_start` only as "the start timestamp of the current billing period". Polar's `subscription.past_due` docs say a failed payment moves the subscription to `past_due`. Nothing found says the period advances only after payment, so renewal settles only while the status is `active`. Sandbox verification is open.
+- **Correction:** `tests/browser/legal-engine.mjs` now passes 11/11 and is part of `test:ui-state`; the HEAD failure noted earlier no longer applies.
+- **Revert checks** (scratch tree copy, one at a time): every fix above fails at least one test when reverted, except L5 and the anchor revision (both explained above). The transfer-in route switch also still has no dedicated test.
+
+Verification (final): `npm test` 3,274/3,274; `test:worker` 91/91; `test:ui-state` 431/431. Billing, retention, region and redirect node suites (`tests/billing*`, `*retention*`, `engine-billing`, `paid-signup*`, `region-policy`, `engine-legal-identity`, `lifecycle-paid-protection`, `redirect-extension-runtime`, `orgs-ownership-runtime`): 232/232. `legal-engine` and browser `retention`: 17/17. `org-ownership-browser` 16/16, `transfer-browser` 24/24, `transfer-engine` 10/10. `packages/identity/service.mjs`, `packages/orgs/*`, messaging and console files were not edited. No commits made.
+
+**Re-review follow-up (same day; provisional).** The re-review confirmed the fixes above and found two issues and one gap:
+- **M1 (Medium), a lapsed held state could override a live paid subscription, depending on order.** `fetchState` now treats a held source plan as an ordinary candidate under the same storage and paid-through ranking. Once it has lapsed, it only supplies lapse evidence, used when no paid candidate remains. Test: `tests/billing-upgrade-wargame.test.mjs` (both subscription orders).
+- **M2 (Low–Medium), a check-then-act race on `checkout_open`.** `billing/pending` is reserved inside a metadata transaction before the provider call. The reservation is an in-flight marker, `status:'creating'`, valid for `CHECKOUT_INFLIGHT_MS` (two minutes, provisional). It is replaced by the session URL only if the reservation is still ours. Test: three concurrent checkouts create exactly one session.
+- **Gap, upgrades made outside the app (provider portal).**
+  - `PlanChanges.external` starts the upgrade guard for any upward product change on the verified subscription that has no lock or guard. It holds the previous plan, authoritatively, until a paid target invoice created after the last verified reconcile is proved, or the period renews on the target. Downward changes are not guarded.
+  - billing.md now tells the operator to disable plan changes in the Polar customer portal settings; the guard is the fallback.
+  - Two existing tests that modelled outside upgrades now supply the paid invoice: `tests/billing-changes.test.mjs` "stale quote…" and the `tests/retention-webhook-chaos.test.mjs` fixture (orders API for upward toggles).
+  - Test: same file.
+- **Revert checks** (scratch tree copy): each of the three fails its test when reverted.
+- One `npm test` run failed `tests/orgs-break-glass-chaos.test.mjs` on a state-coverage assertion. That is another agent's untracked in-flight file and imports none of this code. It passed alone and on the full rerun.
+
+Verification (final, re-review): `npm test` 3,319/3,319; `test:worker` 91/91; `test:ui-state` 432/432. Billing, retention, region and redirect node suites (same set as above): 235/235. No commits made.
+
+Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-23 — UI quality pass 2 (browser probe round 2)
+
+Status: implemented locally; review/sign-off provisional. Production release remains disabled. No commits or publication performed.
+
+- **H1–H3 / palette audit:** sidebar storage, billing availability and the Beam file picker now use shared surface/ink/line tokens. Audited all background/text color declarations in `apps/web/styles.css`, converting remaining light feature surfaces, gradients and text accents to theme tokens. Explicit dark palettes, decorative overlays/shadows and root token definitions remain intentional. Browser regressions compute WCAG contrast against alpha-composited ancestor backgrounds for these components, breadcrumbs and shell footer in both themes; minimum 4.5:1.
+- **M5:** linked-device entry now waits at “This device”, with the touch/narrow hint preselected. Selection can change before Continue; only Continue starts the challenge and linked-start request. Selection freezes once that entry begins. Architecture copy is reconciled in `docs/architecture/linked-approval.md`; engine and real-browser tests cover the boundary. Legacy device QR entry remains automatic.
+- **M6–M9:** paid checkout uses the configured inclusive age wording; corrected the stale legal assertion and included it in UI-state. Malformed `/i` query/POST transports render the existing human error surface with the original error status; explicitly preferred JSON clients retain structured errors, including weighted Accept negotiation. Failed export/retention loads no longer assume `jobs` exists; concurrent 429 combinations render an actionable alert. Transfer errors/reasons use the shared catalogue without exposing unknown provider codes, and transfer entry honors explicit `lang`, then saved preferences, then browser language.
+- **L8–L11:** retention deadlines show a localized UTC time with machine-readable datetime, decimal human byte sizes use Intl, and keep-unit labels are at least 14px. Shell views have validated `?view=` addresses with initial-load and Back/Forward restoration, coordinated with the existing organization URL owner/recovery guard. Mobile search, Activity actions, auth links, footer links, preferences search and Beam file inputs have 44px minimum targets. Organizations use the existing person icon, distinct from Apps; mobile breadcrumbs wrap fully. Generic 429 errors ask the person to wait and retry while preserving supplied human server explanations.
+- **L12:** the external landing module safely applies a saved locale by requesting the existing localized static document, with no inline script. Signup history now keeps `?signup` and a bounded, whitelisted tab-local draft of nonsecret wizard choices; reload resumes pre-account setup. Passwords, CAPTCHA proofs, invitation authority and email addresses are not persisted in that draft. Where an email contact is required, reload returns to the email question before later credential steps so the private in-memory address is entered again. Starting another auth mode removes the signup routing hint.
+- **Regression coverage:** `tests/e2e/ui-quality-round2.test.mjs` is included in the default e2e runner. Its Chromium/Firefox matrix covers 390×844 and 1280×900, light/dark, en/es, effective-background contrast, mobile target dimensions, shell Reload/Back, and simultaneous export/retention 429s. Each engine additionally checks linked-device selection before network start, signup reload at terms/credential steps, saved landing locale and explicit/saved transfer locale. Screenshots are under `artifacts/browser/round2-*` (local mock API fixtures against an ephemeral real Worker, not evidence of external provider delivery or production readiness).
+
+Route reconciliation: specialized `#access/...` deep links take priority over general shell restoration; navigating away clears that specialized hash. The existing Wave 5 browser tests caught and now cover this interaction. Transient capability handoffs retain their existing private continuation handling. Organization-owned UI/business files were not edited. Earlier organization, billing and region-policy test failures during concurrent development were resolved by their owners; the final runs below pass.
+
+Final verification: `npm test` **3,274/3,274**; `test:ui-state` **432/432**; full `test:e2e` **292 passed, 0 failed, 4 skipped (296 total across all runner stages)**. The four skips are unavailable WebKit cases; Chromium and Firefox ran successfully. The focused round-2 + Wave 5 + contact-handoff browser run passed **23/23**, including the **18/18** round-2 cases; standalone intent negotiation tests passed **3/3** and are also included in `npm test`. `build:assets` and `check:worker` passed (254 addressed app modules, 36 curated documents, Worker dry-run only). Final asset build: `df2dcba47d97418f2de5`. Screenshots were inspected in both requested engines; the requested matrix is 390×844 and 1280×900, light/dark, en/es. No production capability or external delivery is inferred from these local checks.
+
+Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-23 — Identity and federation wargame fixes
+
+Status: implemented locally; every decision below is provisional and unsigned. Production release remains disabled. No commits or publication. Source: the red-team review of identity core and federation (13 failing repros, now all passing). Engine-level regressions: `tests/identity-wargame2.test.mjs`, `tests/federation-wargame2.test.mjs`, `tests/boot-admin.test.mjs`; each new test was checked to fail with its fix reverted, in a scratch copy of the tree.
+
+Provisional decisions:
+
+- **#1 (High), stolen password → reissue → recover takeover.** User direction 2026-10-23, recorded in [recovery identity](docs/spec/recovery-identity.md#active-account-reissue-provisional) "Cooling-off window":
+  - (a) An account with a passkey reissues only after a passkey step-up.
+  - (b) A reissued file cannot start `recover()` for 7 days (`recovery_not_ready`).
+  - (c) During the window the reissue can be cancelled from any session created before the reissue began, from the link mailed to an email verified before it began, or with the previous file. Notices go to email and push at begin, confirm and cancel.
+  - (d) The previous file is cancel-only during the window (`recovery_reissue_pending`). It regains full authority only through cancellation.
+  - Cancellation rotates the signing key away from the voided file in the account single writer (P15), restores the previous credential and any forced marker, and raises `federationGeneration`, so no OAuth grant from before or during the window survives. Only one window at a time.
+  - The safer variants were weighed but not adopted; they are left to review in the spec. The leaked-file residual under (d) is recorded there.
+  - Routes: `/api/auth/recovery/reissue/cancel`, `/cancel-email`, `/cancel-file`. The server-rendered page `/account/recovery/cancel` keeps the capability in the fragment and needs no build entry. The console shows the window with a cancel button on earlier devices, and the recovery page offers a file cancel.
+  - Reviewer: ___ Date: ___ Outcome: ___
+- **Coordinator decisions on #1 (2026-10-23, provisional):**
+  - **Leaked old file.** When the reissue was authorized by a passkey step-up, the previous file can neither cancel it nor recover (`recovery_reissue_locked`, `reissue_cancel_not_allowed`). Only earlier sessions and devices and the pre-reissue email can cancel. When it was authorized by a password (no passkey), the previous file can still cancel. The spec records variant (1) as chosen.
+  - **Swapped email.** Replaced and removed verified emails are kept for 7 days (`previousEmails`, at most 5, the earliest kept). They receive the reissue notices, and the cancel link when they were verified before the reissue began.
+  - Tests: three new cases in `tests/identity-wargame2.test.mjs`, the passkey branch, the password branch and the swapped email. Each was revert-checked.
+  - Reviewer: ___ Date: ___ Outcome: ___
+- **Independent review follow-ups (2026-10-23, coordinator decisions, provisional):**
+  - **R1 (High).** A password thief could enrol their own passkey, swap the email, wait 8 days, revoke sessions and make a passkey reissue that no owner channel could cancel. Three changes close it:
+    - (i) A reissue is file-proof only when the step-up passkey was enrolled before the previous file was issued and before every email change, email removal and other-session revocation of the last 30 days (`authorityEvents`, `recoveryPrevious.fileLocked`). Otherwise the previous file can cancel.
+    - (ii) Adding a passkey, changing or removing the email, signing out other devices and setting a password during a recovery now notify email (including recently replaced addresses) and push, with guidance.
+    - (iii) Replaced emails stay channels for 30 days.
+  - **R2 (Medium).** After a file-proof reissue the cancel link goes only to the current pre-reissue email; replaced addresses get the notice only.
+  - **Item 3 (Medium).** MCP grants store the app-grant epoch (`packages/runtime/grant-epoch.mjs`, now also the body of `federationEpoch`) and are refused on verify, execute, exchange and refresh when it changes; legacy grants fail closed. Recovery start and reissue cancellation sever connections and revoke all key delegations (identity port `severConnections`, reason `recovery`), as integrations §7 already required. Key delegations are deliberately not epoch-bound. A cancel also ends sessions created at or after the reissue began, and the sessions that staged and confirmed it.
+  - **Item 4.** See the corrected #4 bullet.
+  - **Item 5.** Email sign-in windows are now 5 per 15 minutes and 12 per 6 hours per mailbox (no day-long block), 5,000 per hour per region, and 20,000 per hour overall.
+  - **Item 6.** The boot passkey begin principal window is raised to 600 per 5 minutes; the per-address windows (10 per minute, 50 per hour) do the work. A nonce-cookie exemption was not chosen because the nonce is caller-minted.
+  - **Item 7.** A cancel's rotation before the identity write is safe even if the write never lands: the outgoing kid is merged into the recovery binding, so the new file keeps restoring. There is a test; it is not made atomic, because that needs a cross-store transaction.
+  - **Item 8.** A configured identity token key shorter than 16 characters now throws. The `recovery-reissued` push text no longer promises that every device can cancel.
+  - Regression tests: `tests/identity-wargame2.test.mjs` (24), `tests/mcp-authority-epoch.test.mjs`, `tests/federation-wargame2.test.mjs` and `tests/boot-admin.test.mjs`. Each fix was revert-checked in a scratch tree.
+  - Reviewer: ___ Date: ___ Outcome: ___
+- **Re-verification follow-ups (2026-10-23, coordinator decisions, provisional):**
+  - **V1 (High).** The thief's passkey predated the owner's current file. They evicted the owner's sessions via the 10-session cap, swapped the email and made a file-proof reissue. Fixes:
+    - A reissue is file-proof only when the passkey predates the previous file **and** no channel-removing event (email change or removal, other-session revocation, session-cap eviction, passkey removal) happened in the 30 days before the begin, in any order.
+    - Session-cap eviction is now an authority event with a notice.
+    - Replaced emails and the lookback are both 30 days, stored one hour longer and evaluated at the begin, so both expire together; this boundary is tested.
+    - Recorded trade-off: an owner who changes the email and then reissues within 30 days gets the password branch, which revives R2's scenario for that owner.
+  - **Cancel sessions.** A cancel ends the staging and confirming sessions (`stagedSessionId`, `confirmedSessionId`).
+  - **Notices and limits.** `removePasskey` and session-cap eviction record authority events and notify. Notices are coalesced per type to one per 10 minutes, with a count. `credentialBegin` is rate limited.
+  - **Severing.** Connections are severed first, then delegations. A durable `pendingSever` row in the recovery-start or cancel CAS retries a failed port at activation, at the owner view and on a later cancel.
+  - **Anonymous authorization.** A bound of 64 per IPv6 /48 allocation was added, and IPv4-mapped IPv6 addresses now map to their IPv4 /24.
+  - **Token key.** Without a configured identity token key outside local development and tests, passkey begin throws instead of using a per-instance key.
+  - **Org reissue producer.** `organizationVerification` now sends `hasPasskey` and `method` for the organization recovery-file reissue check in `packages/orgs/ownership.mjs`.
+  - Tests: `tests/identity-wargame2.test.mjs`, `tests/federation-wargame2.test.mjs` and `tests/mcp-authority-epoch.test.mjs`, all revert-checked.
+  - Reviewer: ___ Date: ___ Outcome: ___
+- **Final-check follow-ups (2026-10-23, coordinator decisions, provisional):**
+  - **V2 (High).** Filler events could fill the 16-entry event list, which kept its earliest entries, so a later channel removal was dropped and a reissue became file-proof again. Fixes:
+    - The file-proof check now reads an uncapped monotonic `lastChannelRemovalAt`. The display list keeps the newest 16.
+    - I audited every other capped list used for security decisions in `service.mjs`. `previousEmails` now refuses a ninth email change within retention (`email_change_limited`) instead of dropping an entry. Live passkey sign-in nonces are never evicted; at 32, sign-in waits. Challenge and email-link lists keep the newest and are not authority decisions.
+  - **N1 (Medium).** Coalescing applies only to repeats by the same session or credential; a different actor is always notified at once. Pending counts go out as a trailing notice at the account's next write or owner view after the window. The identity service has no alarm, so if nothing touches the account the trailing count waits (recorded limit).
+  - **`flushSever`** clears only the row it ran, matched on `at`.
+  - Tests: `tests/identity-wargame2.test.mjs`, all revert-checked. The coordinator's V2 and N1 repros now fail (no bypass).
+  - Reviewer: ___ Date: ___ Outcome: ___
+- **`federationEpoch` drift (reconciled).** The epoch hashes the recovery credential, so any recovery start, reissue confirmation or cancellation revokes every app grant. The spec now says so; this is the safe direction. A monotonic `federationGeneration` joins the digest (records without it keep their epoch) and rises on reissue cancellation and on suspension.
+  - Reopened accounts did revive ordinary OAuth families. They no longer do: `AdminService.suspend` and the closure path now raise the generation.
+  - Reviewer: ___ Date: ___ Outcome: ___
+- **#2 admin console: passkey step-up only.** `AdminService.actor()` requires `stepUpCredential.kind==='passkey'` with the passkey still enrolled. The grep check is replaced by behavioural tests. See [boot and admin](docs/architecture/boot-and-admin.md). Reviewer: ___ Date: ___ Outcome: ___
+- **#3 sign-in abuse ordering.** Only per-network windows run before Turnstile. The per-handle window (20 per 5 minutes) is peeked after it and charged only by a completed, failed password check; passkey begin and finish never touch it. The window store gained `peek`. Reviewer: ___ Date: ___ Outcome: ___
+- **#4 anonymous authorization requests.** They have their own bounds and join the owner's 32 only at the owner step. Limits: 8 per caller network and client, 16 per caller network across all clients, and 512 per shard, with `temporarily_unavailable` when the shard is full. The caller network is the route's pseudonym of the IPv6 /64 or IPv4 /24 (IPv4-mapped IPv6 counts as its IPv4 /24), and a further 64 per IPv6 /48 allocation bounds requests across its networks (review 2026-10-23), so rotating addresses inside one allocation or cycling client IDs buys nothing. Residual: a flood from more than 32 distinct /64s or /24s can still fill one shard's 512 anonymous slots; owner-bound requests are never affected. Reviewer: ___ Date: ___ Outcome: ___
+- **#5 incremental DPoP.** The route only verifies the proof. It is recorded during the exchange, after the code is found and bound to that key, in per-key partitions of 16 (`temporarily_unavailable` when full). Reviewer: ___ Date: ___ Outcome: ___
+- **#6, #10 boot login.**
+  - Boot passkey challenges are per-caller rows bound to an HttpOnly nonce cookie, single use. Begin limits are 10 per minute and 50 per hour per IP, and 600 per 5 minutes per principal (raised from 60 in the review follow-ups).
+  - Boot password attempts are capped at 20 per 5 minutes per principal and 200 per hour globally, before the KDF.
+  - Turnstile was deliberately not added to the last-resort path.
+  - Reviewer: ___ Date: ___ Outcome: ___
+- **#7, #8 email sign-in start.** After Turnstile, a pseudonymized mailbox window (5 per 15 minutes, 12 per 6 hours) plus capacity ceilings of 5,000 per hour per region and 20,000 per hour overall are charged whether or not the address has an account. These are the review follow-up values; the first version had 20 per day per mailbox and 2,000 per hour overall. Both branches do the same token work. On a hit, the challenge write and the provider call run in the background (the platform's `waitUntil`, now passed in the identity context), so neither latency nor provider errors reveal existence. Reviewer: ___ Date: ___ Outcome: ___
+- **#9 and challenge eviction.**
+  - Passkey sign-in begin is stateless. The token is `pl1.<payload>.<mac>`, an HMAC over {handle, challenge, nonce, expiry}, keyed from `loginTokenKey`, else `linkedCodeKey`, else a per-instance key. Begin therefore reads and writes no account: no account id, no existence or status signal, no eviction and no revision bump.
+  - Finish records the nonce as used in its own write.
+  - Email sign-in links stay stored (last 4), but they can now be added only within the mailbox window.
+  - Reviewer: ___ Date: ___ Outcome: ___
+- **#11 and P15 churn.** A setup token buys at most 5 password sets and 5 recovery downloads, each behind the network and per-account windows, checked before any KDF or rotation. The redundant re-verify after hashing is gone. Reviewer: ___ Date: ___ Outcome: ___
+- **Authorization code replay** revokes what the first redemption issued (a 10-minute redeemed-code marker, RFC 9700). **Brokered introspection** assertion IDs are stored in the owner's federation shard when a port exists. Reviewer: ___ Date: ___ Outcome: ___
+- **P17** compares the credential that confirmed the step-up (a passkey id or `password`), for both the elevated abort and the reissue gate, not the sign-in credential. Reviewer: ___ Date: ___ Outcome: ___
+
+Not fixed or open:
+
+- After a password-authorized reissue (no passkey), a leaked previous file can still cancel it and recover. After a passkey-authorized one, an owner who lost the passkey device and has no earlier session or pre-reissue email cannot cancel. Both are by decision.
+- A voided reissue file still disclosed the never-rotated encryption key.
+- The organization recovery-file reissue (`packages/orgs/ownership.mjs`) still accepts a password step-up even when the owner has a passkey. That is the same class as #1; the coordinator is routing it to the organization agent.
+- The anonymous per-shard bound of 512 can be filled from more than 32 distinct networks.
+- Adapters without a federation port fall back to the per-isolate introspection cache.
+- A boot password flood can delay a password-only boot operator for up to 5 minutes.
+- An owner whose only passkey was enrolled after the current file was issued gets the password branch for a passkey reissue (the previous file can cancel it).
+- Key delegations are not epoch-bound; they end by explicit revocation on recovery and cancellation.
+- `tests/browser/recovery-reissue-browser.mjs` had a stale step that clicked a replace button the eligibility display disables; it now asserts the disabled button and the server refusal.
+
+Verification:
+
+- After the final-check follow-ups (final): identity, recovery, transfer-out, device-login, federation, MCP, boot, admin, org-grant and email-template suites 534/534; `npm test` 3,343/3,343; `test:worker` 91/91; `test:ui-state` 432/432.
+- After the re-verification follow-ups: identity, recovery, transfer-out, device-login, federation, incremental, brokered, MCP, boot, admin and org-grant suites 573/573; `npm test` 3,329/3,329; `test:worker` 91/91; `test:ui-state` 432/432. The V1 repro now fails (no takeover).
+- After the independent-review follow-ups: identity, recovery, transfer-out, device-login, federation, incremental, brokered, MCP, boot and admin suites 559/559; `npm test` 3,319/3,319; `test:worker` 91/91; `test:ui-state` 432/432.
+- After the coordinator decisions: identity, recovery, transfer-out, device-login, boot-admin and federation-wargame2 suites 314/314. `npm test` 3,271/3,274; the 3 failures are billing checkout (`tests/billing.test.mjs:131`, `:135`) and region (`tests/engine-legal-identity.test.mjs:20`), all in files other agents are editing. `test:worker` 90/91; the alarm timing test `tests/worker/linked-approval.test.mjs:6` passes alone (5/5). `test:ui-state` 431/431.
+- `npm test`: 3,248/3,248 on a quiet tree. The final run while other agents were editing gave 3,253/3,262. The 9 failures are billing checkout and upgrade (4), region policy (2) and organization runtime and console routes (3); they are outside this pass. The organization files pass in isolation.
+- `test:worker`: 91/91. The final run gave 90/91; the contact-link test that failed passes alone (10/10).
+- `test:ui-state`: 431/431.
+- `test:recovery-reissue` (Chromium and Firefox, real Node runtime, after `build:assets`): 6/6.
+- Worker e2e (`recovery-security`, `recovery-crypto`, `ui-chaos`, `signup-views`, `worker-flow`): 31/31.
+- `test:approve`: 14/14. `test:dom` passes.
+- Targeted suites (`identity-wargame2`, `federation-wargame2`, `boot-admin`, `recovery-reissue`, its chaos test and `transfer-out`): 110/110.
+- Original repros: 11/13. The two that still fail do so by design. C-3 expected the password-only begin to succeed, and it is now refused. B1 sends 32 anonymous begins from one caller, and the ninth is now refused. Adapted versions of both pass.
+
+Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-23 — ORG-12a/12c break-glass engine and billing
+
+**Implemented locally, engine level** ([organizations design §12d](docs/architecture/organizations-design.md#12d-org-12-break-glass-an-organization-whose-owner-is-gone-3slnme-provider-policy), slices ORG-12a, ORG-12c and most of ORG-12r). Behind the new `ORG_BREAK_GLASS_ENABLED` flag (class a, `G A`, requires `ORGANIZATIONS_ENABLED`, default off, not retained). Nothing is routed to HTTP or the UI. The identity owner-channels adapter (ORG-12b) does not exist yet, so outside tests no claim can start (`break_glass_unavailable`, 503). Tests run against loopback fixtures and the offline Polar model: they show local behaviour, not notification delivery or provider conformance. Every item is **provisional** (coordinator, not signed off by the user), and the design itself is still unsigned (BG-1 to BG-17).
+
+**What exists:**
+- **Claim engine** (`packages/orgs/break-glass.mjs`, `BreakGlassService extends OwnershipService`):
+  - A pure transition table and function (`BREAK_GLASS_TRANSITIONS`, `breakGlassTransition`) covering T1–T27. Each transition is one commit with exactly one `organization-break-glass-<event>` audit entry. Audit entries carry the statement's digest, never its text, channel addresses or Track S causes.
+  - Claim rows `org/claim/<id>`, with a summary `breakGlass` on the record. Eligibility: 30-day admin tenure, homed at 3sln.me, unheld, not expiring, past the 72 h wait; member-initiated claims only when no admin is effective (90-day tenure, always Track S).
+  - Quorum, both tracks and their triggers (single admin, member-initiated, no out-of-band channel, an email on the organization's, candidate's or a signer's domain, a recent interactive owner sign-in, a deleted owner, within 180 days of an owner abort, objection, liveness).
+  - Every timer in §12d.5, run from `orgs.ownership-tick`; the effect retries hourly on a transient failure.
+  - Locks and limits: one pending claim; 3 counted claims per organization a year; counting only once paid or owner-aborted; expired held claims uncounted and unlocked.
+  - The per-person ledger: one pending candidacy anywhere, 2 counted claims, 4 unpaid starts. It lives in each person's own account (`orgs.breakglass-ledger`, rows `orgs/break-glass/<org>/<claim>`), reached through a port (`claimLedger`).
+- **Owner proof tiers.** Tier 1 is a step-up with a credential enrolled at least 7 days before T1 and no authority reset since. Tier 0 is a known session or credential (from the session's `verification` evidence), or a single-use abort token.
+- **Abort tokens:** 256-bit random, stored as SHA-256 hashes on the claim, one per email or push notice, with fresh ones at every final notice. They leave only through the owner-channels port. *Correction (review L1): the first version of this entry said the raw token was erased from the outbox row once delivered; it was not (it stayed in `channels[].abort`). It is now erased when the row is delivered, and from undelivered rows when the claim ends.* Used, unknown, forged and malformed tokens get the identical `{received:true}`.
+- **The shared guarded owner-change commit** (`OwnershipService#changeOwner` with `ownerChangeGuard`). Transfer, lapse claim, break-glass effect and reinstatement all go through it. It re-checks in the commit that the organization is active, that the owner of record is still the one the process recorded when it began (`expect`; the lapse claim now records it), and that the payment is a verified, paid, unheld subscription of the new owner from a snapshot no older than 5 minutes. `authorityReset` raises the organization's new `authorityEpoch` (spec §3, rev 4.4); `moveCoolingMs` gives break-glass 90 days.
+- **Effect.** The owner changes, `aep` +1, `rotation-pending` then `missing`, the previous owner's subscriptions are revoked with no automatic refund, and the former owner stays a member with governance held (cause `break-glass`). A 90-day contest window follows: no transfer offer or deletion by the new owner, and the former owner's membership cannot be removed or expire.
+- **Contest and reinstatement:** a tier-1 contest; two operators uphold or reject. Upholding restores the former owner through the same commit (`aep` +1 again), revokes the break-glass owner's subscription, holds their governance and starts the ordinary 14-day grace.
+- **Operators** (`orgs.breakglass-resolve`, system):
+  - One operator can acknowledge, add a note or abort.
+  - Proceeding, upholding and rejecting each need a proposal and an approval by a **different** operator within 72 h.
+  - No operator may be the owner, candidate, initiator, a co-signer or any member.
+  - Exclusions may name only channels that disputed this or an earlier claim, never the last channel.
+  - After an excluded channel's dispute, the pair that excluded it is barred.
+- **Other system operations:** `orgs.breakglass-liveness` (refresh ignored), `-security-change`, `-abort-token`, `-file-recovery` (the ORG-12f seam: freeze, resume, supersede) and `-case`. Runtime RPC: `orgsBreakGlassSignal` and `orgsBreakGlassLedgerApply` (internal only).
+- **Ports and seams** (ORG-12b fills them; `packages/identity/*` was not edited):
+  - `ownerChannels`: `{snapshot(owner,{org,at})`, `domains({org,principals})`, `notify(owner,{org,claim,event,channel,kind,abort?})}`. Email domains are hashed on arrival, and addresses never cross the port. `ownerChannelsPort()` is the in-memory implementation.
+  - The runtime takes `ORGANIZATION_OWNER_CHANNELS`. The identity sign-in hook should call `orgsBreakGlassSignal(org,{operation:'liveness'})` for organizations the person owns.
+- **ORG-12c billing** (`packages/billing/organizations.mjs`):
+  - Checkout purpose `break-glass`, bound to the claim and created by the candidate after echoing a disclosure digest (fresh period, paid period runs from checkout, refund rule).
+  - Reconciliation settles it (T5); a break-glass payment bound to anything else is refunded in full as unbound. The claim's subscription confers nothing until the effect.
+  - Refunds go through the existing outbox and drain lease. They are full, except that a voluntary withdrawal keeps the processing fee: `ORGANIZATION_PROCESSING_FEE`, 5% + 0.50, provisional, on the first order only. A retried drain never refunds the fee.
+- **ORG-12r:**
+  - `recovery.state` is `issued | rotation-pending | missing` (`reissue-required` renamed).
+  - A reissue needs a fresh step-up with a credential enrolled at least 7 days earlier. Within 30 days of a security change, replacing an existing file is refused; reissuing from `missing` is immediate.
+  - Admins are notified of a reissue start and finish. A reissue aborts a pending claim (T14).
+- **BG-16:** `orgs.claim-resolve` now needs an `operator`; "proceed" needs a second, different operator within 72 h, and conflicted operators are refused.
+
+**Implementation readings and deviations (provisional, for review):**
+1. **Tier 0 after an owner abort is a dispute, not an abort.** In a claim started within 180 days of an owner abort (and in any claim that has had a support decision), a tier-0 stop holds the claim for support (Track S) instead of aborting it. Only tier 1 aborts. Read literally, T10 would let one stolen device abort every claim at T1 forever, and §12d.2 ("goes straight to support, which may proceed and exclude the channels") could never apply. The owner's protection is unchanged: no effect without a fresh two-operator decision, never against tier 1, never with every channel excluded.
+2. **"A different pair" means a pair sharing no operator with a barred pair** (review L6, the stricter reading; it replaces the first reading, "not the same unordered pair"). A barred operator cannot even propose.
+3. **Narrowing acceptances are refused, not queued.** During the contest window, an owner's acceptance that narrows or removes a GM grant is refused (`contest_window`) instead of being recorded and applied when the window closes. The request stays elevated, and the owner can accept it after the window.
+4. **Objections.** An objection in `gathering` makes the claim Track S. In `held` or `final` it is recorded only; it does not stop a `final` claim's effect.
+5. **Not done here:**
+   - Moves are not refused while a claim is pending: the portability guard that would read `breakGlass` is outside this slice. Move cooling (90 days) is set.
+   - Abort-link per-IP budgets, GET confirmation pages and headers are ORG-12e (the engine counts token failures per claim).
+   - The 20-decisions-per-operator-per-day limit belongs to the admin service (ORG-12d).
+   - The creation-time `missing` state (a creation file never confirmed) needs a creation-adapter hunk outside `packages/orgs`.
+   - Person-side `orgs.breakglass-notices` is ORG-12b/12e.
+6. **Claim storage.** Claims are their own rows, but the time rules run in `orgs.ownership-tick` (`advanceExtra`) instead of `org/due/…` entries: one open claim needs no index.
+
+**Review follow-ups** (independent adversarial review, 2026-10-23: 3 High, 4 Medium, 8 Low; all fixed, each with a regression test in `tests/orgs-break-glass-review.test.mjs` that fails when the fix is reverted, checked one revert at a time in a scratch copy of the tree):
+- **H1, a filled outbox blocked owner aborts while the claim still took effect.**
+  - Only pending ownership-outbox rows count toward the cap, and at most 128 done rows are kept.
+  - Critical effects are never refused for capacity: refunds, ledger updates, recovery rotations, and the owner notices of aborts, disputes, liveness, withdrawals, closures and deadlines.
+  - One objection per admin per claim. At most 24 non-critical owner notices per claim.
+  - The effect is refused while any owner notice for the claim is undelivered (`notices-pending`).
+- **H2, one chargeback wedged every billing sync.**
+  - New non-throwing `paymentState` (paid, owner, refund or revoke, hold) checked before every effect.
+  - A gone payment closes the process: break-glass `closed`/`payment-failed` (new event `unpaid`), transfer `failed`/`payment-failed`, lapse claim `closed`/`payment-failed`.
+  - The throwing commit guard is now a backstop that only reschedules.
+  - The chaos suite checks "a fresh sync never throws". The provider port's documented capacity refusal (F-05) is the one tolerated exception.
+- **H3, ownership could be laundered during the contest window.**
+  - While the window is active (or a contest is undecided), lapse-claim start and settlement and break-glass starts are refused (`contest_window`), and the `claim` decision is hidden.
+  - A reinstatement restores the former owner from whoever owns the organization now.
+- **M1, Track A could take effect with no notice delivered.**
+  - Per-channel provider acceptance is recorded on the claim, and retries re-send only unaccepted channels.
+  - At the end of the wait, Track A needs the T1, T5 and 72 h (`remind-72h`) notices each accepted on an out-of-band channel. Otherwise the claim is held for support (Track S, new event `undelivered`).
+  - Acceptance means the provider accepted the notice, never that it was delivered.
+- **M2, a recovery-file reissue could race an owner change.**
+  - Reissues are bound to `recoveryGeneration` (raised by every owner change) and to the owner who began them.
+  - A `done` for a superseded reissue queues a fresh rotation and answers `{issued:false}`; the edge (`creation.mjs`) then never hands out the file (`organization_owner_changed`). `orgs.recovery-reissue-done` is reachable by a former owner whose powers are held.
+  - An owner with a passkey must step up with it (`verification.hasPasskey`/`method`). **Gap:** the identity evidence producer (`organizationVerification`, identity stream) does not send these fields yet, so until it does the rule cannot bite. Not edited here.
+- **M3, operators were free UUID strings.**
+  - Operator decisions (`orgs.breakglass-resolve`, `orgs.claim-resolve`) need an assertion verified through the `operators` port. An assertion binds exactly one operator, the `support.org-break-glass` capability and one scope (organization, process, decision, exclusions). It lasts at most 5 minutes and is used once (nonce).
+  - `hmacOperatorAssertions` is the loopback and test implementation. With no port, decisions are refused.
+  - **Production gate: verified operator identity** (ORG-12d supplies the signer and registry; design §12d.12).
+- **M4, mail.acme.example evaded the admin-domain rule.** Domains are stored as hashes of the domain and every parent suffix of two or more labels. A public suffix such as co.uk can over-match, which only moves a claim to Track S.
+- **L1 to L8:**
+  - L1: token erasure (above).
+  - L2: unknown owner activity (`lastInteractiveAt:null`) means Track S.
+  - L3: owner liveness clears a pending proposal.
+  - L4: an owner decision about a held member still aborts the claim.
+  - L5: the candidate leaving, or a co-signer withdrawing after payment, counts as voluntary, so the processing fee is kept. Removal, authority resets, suspension and security changes stay full refunds (provisional policy).
+  - L6: the stricter operator pair (above).
+  - L7: 64 tokens are reserved for final notices.
+  - L8: every unusable candidate gets one answer, given only after the initiator is known to be eligible. Refused starts no longer count toward the per-person start limit. Admins and members see only `closed` (no `closedReason`), and audit entries show `owner` instead of the proof tier.
+- **Chaos additions:**
+  - New schedules: chargebacks, objection spam, notice delivery failing, a stuck outbox, lapse claims during the window, and operator assertions (some forged).
+  - New invariants: I11 a fresh sync never throws; I12 an owner stop is never refused for outbox capacity; I13 a Track A effect only after accepted out-of-band T1, T5 and 72 h notices; I14 inside a contest window the owner changes only by reinstatement.
+- **Equivalent mutants (removing them changes nothing):** the `state==='final'` term in the dispute check (implied by `decisionMade`), and the approval-time barred-pair check (implied by the proposal-time check).
+
+**Round-2 follow-ups** (second review, 2026-10-23: it confirmed every round-1 finding closed and found 2 Medium and 2 Low gaps; all fixed, with tests in `tests/orgs-break-glass-review2.test.mjs`, each checked one revert at a time in a scratch copy):
+- **R2-M1, one channel that never accepted held a claim forever.** The round-1 rule "no effect while any owner notice is pending" is replaced:
+  - Track A still needs each of the T1, T5 and 72 h notices accepted on an out-of-band channel. A final claim needs its final notice accepted on a channel support did not exclude; if that has not happened within 7 days of the earliest effect time, the claim goes back to support.
+  - A channel is marked `undeliverable` after 8 failed attempts over 7 days (provisional) and is no longer retried. An undeliverable out-of-band channel moves the claim to Track S, and a waiting or final claim to `held`.
+  - Support may exclude a channel that disputed or that is undeliverable. A dead owner's push subscription (410) is the expected case.
+- **R2-M2, a second concurrent reissue escaped M2.**
+  - Every begun reissue is remembered (`recoveryReissues`, up to 8; an overflow rotates the oldest away). Any unconfirmed `done` from a principal who began one queues a rotation and answers `{issued:false}`. A principal who began nothing gets `not_found` and causes no rotation.
+  - The edge fails closed: any error or non-confirmation of `done` withholds the file.
+- **R2-L1, start still wrote before checking eligibility.** `breakGlassStart` runs every eligibility check, including the uniform candidate answer, pending processes, limits and the outbox backlog, in a read before anything is written. Ledger reservations in other people's accounts happen only for an eligible initiator, and only an eligible initiator sees the ledger's specific refusal codes.
+- **R2-L2, pending rows could accumulate.**
+  - When a claim ends, its undelivered owner-notice rows are dropped; its closing notice gives up after 8 attempts.
+  - Outbox effects are now critical by default. Only a person's new request (an ownership offer, an ordinary break-glass notice) passes `critical:false`, and new claims are refused while 256 effects are pending. So a backlog can never throw inside a system effect commit (the transfer wedge in the repro).
+- **Hardenings:**
+  - The operator assertion scope names the process kind (`lapse-claim` or `break-glass`).
+  - Email domains are IDNA-normalized (URL host parser, to ASCII) before suffix hashing, on both sides.
+  - An undecided contest keeps its restrictions at most until the later of the window's end and 30 days after it opened. Then it is escalated to operators (an alert and an audit entry), and it stays decidable.
+- **Chaos additions:** schedules for a dead push channel and for reissues racing owner changes. New invariants: I15, an ended claim's owner notices complete or are dropped within days; I16, a reissue is confirmed only for the current owner in its generation, and an unconfirmed one leaves a rotation.
+
+**Tests:**
+- `tests/orgs-break-glass.test.mjs` (46 tests) `tests/orgs-break-glass-review.test.mjs` (20 tests) and `tests/orgs-break-glass-review2.test.mjs` (10 tests): every transition and timer at its boundaries, eligibility, tracks, limits, the effect commit, contests, views, the per-person ledger, ORG-12r, and the named adversarial cases. Those cases are: the coalition, the stolen device with a new operator pair, the email-only owner's last channel, operator misuse (single, member, party, self-approval), quota spam, held expiry, a session refresh, admin probing, an aged passkey, foreign co-signers, transfer and lapse races, token replay, harassment, a candidate taken over, an owner renewal, no channel, and a chargeback.
+- `tests/orgs-break-glass-chaos.test.mjs`: 24 seeds by default (`CHAOS_SEEDS`, `CHAOS_SEED`), I1–I16 checked after every step; 80 seeds passed once after the round-2 fixes. It covers service restarts, outages, webhook replay, flag flips and clock jumps. 150 seeds passed once locally.
+- **Guard removal.** A scratch mutation pass removed 35 security guards one at a time (two operators, last channel, barred pair, operator conflicts, exclusions, tier-1 finality and credential age, known sessions, flag, freshness and billing hold on the effect, freeze, Track S triggers, refresh, lock, limits, uncounted expiry, fee retention, token checks, eligibility, P18, quorum, settlement guards, contest restrictions, the shared commit's owner and freshness guards, lapse two-operator, reissue cooling, lapse/break-glass exclusion). 34 made the suite fail; the remaining one (`state==='final'` in the dispute-only test) is redundant with `decisionMade`, so removing it changes nothing.
+- Updated: `tests/orgs-wargame.test.mjs` (two operators), `tests/orgs-ownership.test.mjs`, `tests/orgs-ownership-runtime.test.mjs` (`missing`), and `tests/flags-registry.test.mjs` (58 flags, 25 class a, plus a pin test).
+
+**Before production:**
+- ORG-12b, real notification delivery, ORG-12d/12e, organization terms (ORG-13) and an independent security review of ORG-12a–d.
+- The organization audit is already hash-chained (`MembershipService#audit`), but no external anchor exists.
+
+Verification (after the round-2 fixes): `npm test` 3,343/3,343. Break-glass and organization node suites (the three break-glass files plus chaos, wargame, ownership and ownership-runtime): 130/130. `npm run test:organizations`: node stages 124/124, 57/57 and 114/114. The final e2e stage `tests/e2e/org-console.test.mjs` fails 2 of 6, unchanged (en and es: the shell URL is `?view=inbox` where `''` is expected; console routing under other agents' edits; no web or build file is touched here). `npm run test:worker` 91/91. No Worker parity test exists for claim rows yet. Not committed.
+
+Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-23 — Organization console UX pass 2
+
+Second-round browser QA findings in the organization console. Files: `apps/web/src/bl/organizations.mjs`, `apps/web/src/ui/org-console.mjs`, `apps/web/src/ui/org-messages.mjs`, `apps/web/src/providers/organizations.mjs`. There is one small backend display hunk in `packages/runtime/recovery-eligibility.mjs` and `packages/runtime/http.mjs`, plus five Spanish strings in `packages/i18n/catalogues.mjs`. Nothing under `packages/orgs/*` changed.
+
+All of these decisions are provisional:
+1. **H4: stale changes.** Only organization changes (`GUARDED`) wait for an uncertain change to settle. Reads, lookups, local actions, idempotent creation and the recovery steps never wait.
+   - A definite refusal (HTTP 4xx other than 408) clears the stale state. The view then refreshes from the server, and every form is rebuilt from that state through `formEpoch`, which keys `#org-main`.
+   - An uncertain failure also refreshes. If the refresh works, the person sees `change_uncertain`. If it fails, further changes answer `reload_required`.
+   - A refused creation never leaves the console stale. A refused name, kind or plan releases the stored attempt.
+2. **M1: admin for existing members.** The member access form no longer offers "Admin" to a non-admin member, because the server refuses it (`bound_invitation_required`). It explains that the power comes through an invitation, and "Prepare an admin invitation" (`invitee-member`) fills the bound invitee and moves focus to the invite form.
+   - An existing admin keeps a "Keep the admin power" box. Unticking it removes the power, which the server allows.
+   - Resource-grant edits in the same form are unaffected.
+3. **M2: recovery check.** A decrypt failure maps to `recovery_mismatch`. Checking before downloading gives `recovery_download_first`. Both download and a successful check clear the error.
+4. **M3: two tabs.** The provider's `recoveryTabs` keeps a localStorage claim per organization: `{tab, issue, at, saving}`, refreshed every 15 s, expiring after 60 s and released on `pagehide`. It never stores the file, the passphrase or key material, and storage failures disable coordination.
+   - Other tabs show "A recovery file is being saved in another tab" instead of offering a new file, and `regenerate-recovery` refuses with `recovery_saving_elsewhere`.
+   - If another tab issued a newer file anyway, Finish refuses with `recovery_superseded` and drops the stale copy. The organization stays marked "not saved".
+   - Limitation: a tab learns about another tab's claim only when it next loads or acts. There is no live cross-tab repaint, because wiring one needs shell code owned by another agent.
+5. **M4: reissue eligibility.** `GET /api/account` `recovery` now also carries `organizationReissueEligibleAt`: the earliest passkey or password enrolment plus 7 days, matching `tight()` in `packages/orgs/ownership.mjs` (null when the account has no credential). The unsaved banner shows that date, or the "add a credential" text, instead of the button. This is display metadata only. The 30-day security-change cooling period is not exposed; the server's `recovery_reissue_cooling` refusal now has a translated message.
+6. **L1–L7.**
+   - L1: focus moves to the organization heading after Finish, the share heading after an invitation is created, and the first new member after "Load more".
+   - L2: while the step-up card is open, the console is `inert` and says why.
+   - L3: notices clear on context switch and on `open` (history navigation). An organization that refuses the membership leaves no context ("Acting as yourself" plus the alert). A newly created organization is listed at once, so no "Acting for …" placeholder appears.
+   - L4: an entry also loads the person's own list, and the preview's `member` flag is honoured. An invitation already joined says "You're already a member" and offers "Open organization".
+   - L5: unusable invitations hide the token's expiry, the "For" row and "What joining means".
+   - L6: the audit log labels link withdrawal and other events. The joiner shows by handle once the member list has loaded it. The person's own actions say "by you" / "por ti".
+   - L7: context options include `(@handle)`, or the kind when there is no handle.
+7. **L10/L11.**
+   - `.org-check` labels are at least 44 px tall.
+   - `ol.org-steps` is a numbered, non-interactive text indicator; the current step is underlined.
+   - Also fixed: dodo writes a `null` attribute as the string "null", which marked every step `aria-current`. Absent attributes now omit the key.
+
+Tests:
+- `tests/browser/organizations-engine.mjs`: 12 new engine tests (H4 ×3, M1, M2, M3 ×2, M4, L1, L3, L4). One assertion now also allows the person's own `list` read at entry.
+- `tests/browser/org-console-browser.mjs`: a new "ORG UX pass 2" test runs in Chromium and Firefox, en and es, light and dark, at 390 and 1280 px (16 runs). It uses two tabs in one context for M3. The fixture gained `patch`, a passphrase-checking fake decrypt, a refusable rename and an invalid preview.
+- `tests/e2e/org-console.test.mjs`: a new real-shell test covers eligibility, the member admin path, audit wording, 44 px targets and the progress indicator, at 390 and 1280 px, light and dark, en and es, with screenshots in `artifacts/browser/org-ux2-*`.
+
+Verification:
+- `npm run test:ui-state`: 431/431.
+- `npm test`: 3,271/3,274. The 3 failures are `tests/billing.test.mjs` (2 checkout tests) and `tests/engine-legal-identity.test.mjs` (signup region versus age). The legal-identity failure reproduces with this pass's `http.mjs` hunk reverted, and none of the three touches files changed here.
+- `npm run test:organizations`: node stages 94/94 and 57/57, browser stage 97/114.
+  - 16 ORG-D21 failures in `org-ownership-browser.mjs` come from another agent's concurrent paid-age checkbox in `ui/org-ownership.mjs`: the test does not tick it.
+  - 1 ORG-5 Firefox run failed while the machine was under load ("checkbox did not change state"). It passed 13/13 twice when rerun alone.
+  - The chain stops at that stage.
+- E2E alone: 4/6. The 2 failures are the existing shell test expecting `''` where the shell now writes `?view=inbox`, from the concurrent shell-routing work in `apps/web/src/release.mjs`.
+- Not committed.
+
+Reviewer: ___ Date: ___ Outcome: ___

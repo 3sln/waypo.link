@@ -31,7 +31,10 @@ async function developerEvaluation(controller,principal){
 }
 // Expired legacy daily grants are reclaimed in bounded passes; messages and receipts stay.
 export async function cleanupDailyDeveloperGrants(controller,owner,now=Date.now()){
- let cleaned=0;for(const [path,grant]of await controller.metadata.list({prefix:key('contact-grant'),limit:1001})){if(cleaned>=50)break;if(grant.owner!==owner||grant.internalKind!=='developer-contact/v1'||grant.claims.exp*1000>now)continue;await controller.metadata.transaction(async tx=>{const current=await tx.get(path);if(current?.internalKind!=='developer-contact/v1'||current.owner!==owner||current.id!==grant.id||current.claims.exp*1000>now)return;await tx.delete(path);await tx.delete(`contact-name/${grant.id}`);await tx.delete(`contact-url/${grant.id}`);if(typeof current.internalPointer==='string'&&current.internalPointer.startsWith('developer-contact/v1/')){const pointer=await tx.get(current.internalPointer);if(pointer?.version===1&&pointer.owner===owner&&pointer.grantId===current.id)await tx.delete(current.internalPointer);}});cleaned++;}
+ // Review #4: a wrapping cursor over contact-grant/ (128 rows a call) instead of one 1,001-row read.
+ const cursorKey='link-gc-cursor/developer-daily',prefix=key('contact-grant'),cursor=await controller.metadata.get(cursorKey);let rows=await controller.metadata.list({prefix,...cursor?{startAfter:cursor}:{},limit:128});if(!rows.size&&cursor)rows=await controller.metadata.list({prefix,limit:128});
+ if(rows.size===128)await controller.metadata.put(cursorKey,[...rows.keys()].at(-1));else await controller.metadata.delete(cursorKey);
+ let cleaned=0;for(const [path,grant]of rows){if(cleaned>=50)break;if(grant.owner!==owner||grant.internalKind!=='developer-contact/v1'||grant.claims.exp*1000>now)continue;await controller.metadata.transaction(async tx=>{const current=await tx.get(path);if(current?.internalKind!=='developer-contact/v1'||current.owner!==owner||current.id!==grant.id||current.claims.exp*1000>now)return;await tx.delete(path);await tx.delete(`contact-name/${grant.id}`);await tx.delete(`contact-url/${grant.id}`);if(typeof current.internalPointer==='string'&&current.internalPointer.startsWith('developer-contact/v1/')){const pointer=await tx.get(current.internalPointer);if(pointer?.version===1&&pointer.owner===owner&&pointer.grantId===current.id)await tx.delete(current.internalPointer);}});cleaned++;}
  return cleaned;
 }
 // Runs on the developer account outside its gate; creation and renewal take the gate.
@@ -45,7 +48,7 @@ export async function developerContactLink(controller,owner,handle,now=Date.now(
   await cleanupDailyDeveloperGrants(controller,owner,now);const collection=(await controller.messages.collections(owner)).find(value=>value.active);if(!collection)return null;
   const issued=await controller.createSystemContactLink(owner,handle,{collections:[collection.id],mimeTypes:['text/plain','text/html'],expiresAt:now+365*86400000,maxMessages:5,maxBytes:65536,maxMessageBytes:16384,kinds:['one-off'],audience:{policy:developerPolicy(controller.config)},requiredTags:['contact:developer'],optionalTags:[...OPTIONAL],tagLabels:structuredClone(LABELS)},'Developer contact');
   // A renewed parent shares the per-author daily quota family of the link it replaces (no doubled allowance).
-  if(latest){const path=key('contact-grant',issued.id),fresh=await controller.metadata.get(path);await controller.metadata.put(path,{...fresh,quotaFamily:latest.quotaFamily??latest.id});}
+  if(latest){const path=key('contact-grant',issued.id);await controller.metadata.transaction(async tx=>{const fresh=await tx.get(path);if(fresh)await tx.put(path,{...fresh,quotaFamily:latest.quotaFamily??latest.id});});}
   await controller.metadata.put(pointer,{version:2,grantId:issued.id});return controller.metadata.get(key('contact-grant',issued.id));
  });
  if(!grant?.active)return {available:false,reason:'contact-unavailable'};

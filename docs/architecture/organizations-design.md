@@ -1,6 +1,6 @@
 # Organizations: design spike
 
-Status: **provisional design, 2026-10-22, revision 5.4.** Revision 5.4 applies the user's 2026-10-22 decision that an organization's ownership can be transferred, with the recipient's billing starting over (§1c item 10, §12b.3a), and records the coordinator's provisional answers to the remaining questions (§1d): break-glass exceptions to "no timeout decides", elevations passing to a new owner, held owners and recovery, tight verification for owner GM elevations (Q14), a standard effective-methods output (Q15), a portable membership export, and the cross-provider security floors restored to the spec as minimum requirements. See [Revision 5.4 reconciliation](#revision-54-reconciliation). It is unreviewed. Revision 5.3 applies the user's 2026-10-22 decisions that membership, member grants and governance are internal to the organization (Q13 resolved; new §12c, with the rules moved out of the spec), and that admins can block an admin-requested organization move but never the owner's (§12b.5). See [Revision 5.3 reconciliation](#revision-53-reconciliation). It is unreviewed. Revision 5.2 applies the user's 2026-10-22 decisions: Q3 (no roles) is accepted, and the grant-management elevation rule is refined (§12b.2a). The refinement supersedes the R4-M4 recommendation; see [Revision 5.2 reconciliation](#revision-52-reconciliation). Q13 stays open. It is unreviewed. Revision 5.1 applies AMD-P4 ([identity portability](identity-portability.md)) and AMD-I5 ([intent links](intent-links.md)), answers R4-H2, and records a *recommendation* on R4-M4 that awaits the user. It is unreviewed. Revision 5 (reviewed in [Review round 4](#review-round-4); resolved findings applied as R4-…, open items remain open). Revision 5 applies the user's decisions of 2026-10-22 (§1c): organization identity is the same as user identity, with a recovery file; Q7, Q10 and Q11 are resolved; and messaging apps get no special treatment. It is not independently reviewed. Revision 4.3: Revision 4.3 adds the user's 3sln.me grant-management policy (§12b) and makes governance explicitly provider policy in the spec (§6.3). Revision 4.2: Revision 4.2 defines the additive growth points of the `relation` artefact kind (spec §9.2) and how each maps to widening. Revision 4.1: Revision 4.1 applies the user's decision on relation admission (§8a.9): membership in an instance is per edge, and partial membership is first-class. Revision 4: Revision 4 adopts the user's relations proposal (§1b, §8a), separates provider roles and adds 3sln.me product rules (§12a). Its effect on the review findings is in [Revision 4 reconciliation](#revision-4-reconciliation), and it was reviewed in [Review round 3](#review-round-3), whose resolved findings are applied (R3-…); its open items remain open. Earlier, revision 2 applied the resolved findings of [Review round 1](#review-round-1); open items there remain open. Revision 3 applies the user's clarification (§1a) and is reconciled with the review in [Revision 3 reconciliation](#revision-3-reconciliation). Revision 3 was reviewed in [Review round 2](#review-round-2), whose resolved findings are applied (R2-…); its open items remain open. Design only: nothing here is implemented, routed or production-verified, and no code changed. The coordinator records decisions in DEVLOG.md. Every decision below is unsigned until it gets a reviewer, a date and an outcome. Terminology: [organizations terminology](organizations-terminology.md). Draft normative skeleton: [spec/organizations.md](../spec/organizations.md).
+Status: **provisional design, 2026-10-23, revision 5.5.** Revision 5.5 adds the ORG-12 break-glass design for an organization whose owner is gone (§12d): admin quorum, payment by the candidate, a 30-day notified wait, an owner abort from any known channel, support adjudication for contested claims, and recovery-file reissue where it is missing. Spec rev 4.4 gains one rule. It is design only, Provisional (coordinator), not signed off by the user, with one adversarial review round (BG-R1) applied. Revision 5.4: Revision 5.4 applies the user's 2026-10-22 decision that an organization's ownership can be transferred, with the recipient's billing starting over (§1c item 10, §12b.3a), and records the coordinator's provisional answers to the remaining questions (§1d): break-glass exceptions to "no timeout decides", elevations passing to a new owner, held owners and recovery, tight verification for owner GM elevations (Q14), a standard effective-methods output (Q15), a portable membership export, and the cross-provider security floors restored to the spec as minimum requirements. See [Revision 5.4 reconciliation](#revision-54-reconciliation). It is unreviewed. Revision 5.3 applies the user's 2026-10-22 decisions that membership, member grants and governance are internal to the organization (Q13 resolved; new §12c, with the rules moved out of the spec), and that admins can block an admin-requested organization move but never the owner's (§12b.5). See [Revision 5.3 reconciliation](#revision-53-reconciliation). It is unreviewed. Revision 5.2 applies the user's 2026-10-22 decisions: Q3 (no roles) is accepted, and the grant-management elevation rule is refined (§12b.2a). The refinement supersedes the R4-M4 recommendation; see [Revision 5.2 reconciliation](#revision-52-reconciliation). Q13 stays open. It is unreviewed. Revision 5.1 applies AMD-P4 ([identity portability](identity-portability.md)) and AMD-I5 ([intent links](intent-links.md)), answers R4-H2, and records a *recommendation* on R4-M4 that awaits the user. It is unreviewed. Revision 5 (reviewed in [Review round 4](#review-round-4); resolved findings applied as R4-…, open items remain open). Revision 5 applies the user's decisions of 2026-10-22 (§1c): organization identity is the same as user identity, with a recovery file; Q7, Q10 and Q11 are resolved; and messaging apps get no special treatment. It is not independently reviewed. Revision 4.3: Revision 4.3 adds the user's 3sln.me grant-management policy (§12b) and makes governance explicitly provider policy in the spec (§6.3). Revision 4.2: Revision 4.2 defines the additive growth points of the `relation` artefact kind (spec §9.2) and how each maps to widening. Revision 4.1: Revision 4.1 applies the user's decision on relation admission (§8a.9): membership in an instance is per edge, and partial membership is first-class. Revision 4: Revision 4 adopts the user's relations proposal (§1b, §8a), separates provider roles and adds 3sln.me product rules (§12a). Its effect on the review findings is in [Revision 4 reconciliation](#revision-4-reconciliation), and it was reviewed in [Review round 3](#review-round-3), whose resolved findings are applied (R3-…); its open items remain open. Earlier, revision 2 applied the resolved findings of [Review round 1](#review-round-1); open items there remain open. Revision 3 applies the user's clarification (§1a) and is reconciled with the review in [Revision 3 reconciliation](#revision-3-reconciliation). Revision 3 was reviewed in [Review round 2](#review-round-2), whose resolved findings are applied (R2-…); its open items remain open. Design only: nothing here is implemented, routed or production-verified, and no code changed. The coordinator records decisions in DEVLOG.md. Every decision below is unsigned until it gets a reviewer, a date and an outcome. Terminology: [organizations terminology](organizations-terminology.md). Draft normative skeleton: [spec/organizations.md](../spec/organizations.md).
 
 Protocol/security/architecture sign-off: reviewer ___ / date ___ / outcome ___.
 
@@ -364,7 +364,7 @@ See §9. In short, an app learns that a user is a member only when the organizat
   - **Recovery.** Completing it requires a person authenticated with their own identity. It increases the organization's authority epoch (spec §3) and confers no owner-interface authority by itself.
   - **After recovery (3sln.me policy).** The recovering person becomes a candidate owner and admin. This takes effect 72 h after notice to the current owner and every admin, and only the **current owner of record**, freshly authenticated, can cancel it. Admins cannot, because the file is the owner's instrument (§12b.2). A **held** owner (§12b.3) cannot cancel; once re-confirmed, they can (*Provisional (coordinator), not signed off by the user*; §1d item 4). If the recovering person *is* the current owner, it takes effect at once. The 72 h auto-effect is an explicit exception to "no timeout decides" (§12b.2a item 4, §1d item 1): it is break-glass for an absent owner. When it takes effect, pending elevations pass to the new owner (§12b.3a).
   - **~~Proposed amendment (R4-M4 position B)~~ — superseded by the user's elevation rule (2026-10-22, §12b.2a).** The 14-day extension on admin objection, the 30-day ban on elevation by a recovery-derived owner, and the "held owner cannot cancel" clause are withdrawn. What the new rule changes here: an owner, including one derived from recovery, can no longer remove admins instantly. Each removal goes to the admin first, and the owner can decide it only after that admin rejects or the response period passes (§12b.2a). Admins therefore get at least that period's notice before any purge, and every step is audited. ~~Still open: whether the 72 h auto-effect above is itself a timeout resolving in the recovering person's favour, and whether a held owner may cancel.~~ **Rev 5.4, Provisional (coordinator), not signed off by the user:** the 72 h auto-effect is an explicit break-glass exception, and a held owner cannot cancel (§1d items 1 and 4). Implementation proceeds on both; they stay revisable.
-  - 3sln.me does no KYC and adjudicates no dispute beyond this.
+  - 3sln.me does no KYC and adjudicates no dispute beyond this. *Rev 5.5 (provisional):* when the owner is gone **and** the file is lost, ORG-12 break-glass (§12d) applies. Its Track S lets support decide held claims within that state machine only (§12d.8, BG-16).
   - **Provisional parameters** for the user to confirm.
 - **Domain-anchored organizations** (§6.1) can later add DNS-proof recovery.
 
@@ -899,7 +899,7 @@ The user's words: "for entities, when it comes to removing or changing grants th
 - **Organization owner.** The **owner of record** is exactly one 3sln.me account, determined from billing state:
   1. While billing is enabled and the organization has a subscription that is active, in its grace period or past due, the owner is the 3sln.me account that **created that subscription's checkout**. That is the account recorded on the organization's billing record at checkout, not the Polar customer email or the card.
   2. Changing the payment method within Polar never changes the owner, even when someone else's card is entered.
-  3. A different account can become owner only through a **transfer** (§12b.3a), the **lapse rule** (§12b.3) or **organization recovery** taking effect (§5.11).
+  3. A different account can become owner only through a **transfer** (§12b.3a), the **lapse rule** (§12b.3), **organization recovery** taking effect (§5.11), or, rev 5.5 (provisional), a **break-glass claim** taking effect or a **reinstatement** after a contest (§12d).
   4. Before billing is enabled (phase A, internal allowlist), the owner is the account designated when the organization was created: its creator.
   5. The owner must be a member. Ownership by itself gives no GM grant. It gives only elevation approvals, transfer and billing.
 
@@ -941,7 +941,7 @@ This refines the consent and elevation mechanics above. The user's words: "the e
    - the owner rejects it (the request closes);
    - the requester retracts it (the request closes);
    - the subject accepts it (the change takes effect, as a consent).
-4. **No timeout decides.** No period, before or after elevation, ever resolves a request in anyone's favour. The response period only *unlocks* elevation. A pending request is never auto-approved, auto-declined or expired. **Explicit exceptions** (rev 5.4, *Provisional (coordinator), not signed off by the user*; §1d item 1): the post-recovery 72 h auto-effect (§5.11) and the billing-lapse 72 h rule (§12b.3). Both are break-glass for an absent owner and settle who holds the owner role, not a grant-management request. No other timeout decides anything.
+4. **No timeout decides.** No period, before or after elevation, ever resolves a request in anyone's favour. The response period only *unlocks* elevation. A pending request is never auto-approved, auto-declined or expired. **Explicit exceptions** (rev 5.4, *Provisional (coordinator), not signed off by the user*; §1d item 1): the post-recovery 72 h auto-effect (§5.11) and the billing-lapse 72 h rule (§12b.3). Both are break-glass for an absent owner and settle who holds the owner role, not a grant-management request. Rev 5.5 proposes a third, the Track A break-glass effect (§12d.4, BG-1; *Provisional (coordinator), not signed off by the user*). No other timeout decides anything.
 5. **Before elevation,** the request is likewise open until the subject accepts, the requester retracts it, or the requester elevates it. A subject's rejection does not close it by itself; it unlocks elevation, and the requester then elevates or retracts. **A subject may accept after rejecting**, before or after elevation, as long as the request is still open; the acceptance is a consent and the change takes effect (rev 5.4, *Provisional (coordinator), not signed off by the user*; §1d item 3).
 6. **The owner as requester.** The rule applies to every requester. When the owner is the requester, the request still goes to the subject first, and the owner can decide it only after a rejection or the response period.
 7. **The owner as subject.** Nothing ranks above the owner, so a request to change the owner's own GM grant cannot be elevated. It stays open until the owner accepts or rejects it, or the requester retracts it.
@@ -954,7 +954,7 @@ This is 3sln.me policy. The spec says only that the provider's grant-management 
 
 - **Transfer.** See §12b.3a (rev 5.4, replacing the rev 4.3 nomination rule).
 - **Billing lapse.** After the grace period ends without payment, the organization becomes read-only (§12a). Thirty days later, any admin may start a new subscription and propose itself as owner. This takes effect after a **72 h** notice to the old owner and all admins, and the old owner cancels it by paying. The rule stops an absent owner from blocking forever, and paying is the only way to claim the role. The 72 h auto-effect is an explicit break-glass exception to "no timeout decides" (§12b.2a item 4; *Provisional (coordinator), not signed off by the user*). A transfer whose payment is verified during the 72 h closes the claim, since the organization is paid again. When a claim takes effect, the claimant's new subscription starts a fresh period, elevated requests pass to the new owner, the recovery file is reissued and the 30-day move cooling starts.
-- **Owner unreachable.** Elevated requests stay pending with the owner; none lapse (§12b.2a). Until the owner returns, a GM change happens only if the subject accepts. Everything else works.
+- **Owner unreachable.** Elevated requests stay pending with the owner; none lapse (§12b.2a). Until the owner returns, a GM change happens only if the subject accepts. Everything else works. If the owner is gone for good and the file is lost, see ORG-12 break-glass (§12d).
 - **Owner lost** (home account recovered or compromised):
   - The owner's admin power and elevation authority are **held** after an authority reset (§12c.3, signalled under spec §5.2a, R1-H3). Re-confirmation for the owner is a 72 h notice to all admins; any admin may object, which moves the organization to break-glass.
   - **Break-glass** is organization recovery with the owner's recovery file (§5.11, rev 5). After recovery the recovering person becomes candidate owner and admin under the 72 h rule, and only the current owner can cancel. A held owner cannot cancel until re-confirmed (*Provisional (coordinator), not signed off by the user*, §1d item 4): the hold exists because the owner's account may be in someone else's hands, so it must not carry the power to stop break-glass. It never removes admins by itself; any removals afterwards follow §12b.2.
@@ -1057,7 +1057,7 @@ These were spec requirements until spec rev 4.2. They are now 3sln.me policy, un
 - **No escalation through one's own account recovery** (was spec §3). A person never gains governance powers through their home-account recovery beyond what they already held.
 - **Bound invitations for governance** (was spec §5.1, R1-H4). An invitation that offers `admin` names its invitee. An unbound invitation confers member grants only. A new admin grant also waits 72 h after acceptance (§12b.2).
 - **Partial governance** (was spec §6.3, R1-L6). A member holding part of the owner interface cannot confer authority it could not confer itself. Granting an app a resource is conferring it.
-- **Never without an operator** (was spec §6.3). The last-admin guard (§12b.2), with organization recovery as the only way back.
+- **Never without an operator** (was spec §6.3). The last-admin guard (§12b.2), with organization recovery as the only way back. Rev 5.5 (provisional): or a member-initiated break-glass claim, which support decides (§12d.3).
 - **Ending a membership** (was spec §5.4). Admins remove members, membership `expires_at` is swept, and the member can always leave. The spec keeps only the commit's effects.
 - **Owner-interface audit** (was spec §6.3, §13). Every owner-interface action records the acting member in the hash-chained audit.
 - **Tests moved with them:** an unbound invitation cannot confer `admin`; an `aep` change, key reset, `connection-revoked` or move adoption holds `admin` until re-confirmation; re-confirmation names its `aep`; the last admin cannot be removed under races.
@@ -1071,6 +1071,389 @@ The coordinator was asked to list, not decide, the cases where the user's split 
 3. **Security floors for foreign members.** The hold after a home-account recovery and bound governance invitations protect members whose home is another provider. As non-normative security considerations, a careless provider can omit them. **Rev 5.4:** restored as spec minimum requirements (MUST), with the specifics left to provider policy (spec §5.1, §5.2a; *Provisional (coordinator), not signed off by the user*).
 4. **Kept in the spec on purpose:** `member-removed`, the membership ID and member-scoped fields. Apps rely on them, so they are interop, not internal mechanics.
 
+## 12d. ORG-12 break-glass: an organization whose owner is gone (3sln.me provider policy)
+
+Status: **design 2026-10-23; ORG-12a, ORG-12c and ORG-12r implemented locally the same day (engine level, behind `ORG_BREAK_GLASS_ENABLED`, default off). Provisional (coordinator), not signed off by the user, and unreviewed.** What exists is engine operations, the runtime wiring and engine/chaos tests over loopback fixtures and an offline Polar model ([DEVLOG 2026-10-23 — ORG-12a/12c break-glass engine and billing](../../DEVLOG.md)). Nothing is routed to HTTP or the UI, the identity owner-channels adapter (ORG-12b) does not exist yet (so no claim can start outside tests), and nothing is production-verified. Implementation readings and deviations from this text are listed in that DEVLOG entry. It is 3sln.me provider policy. The spec gains only one rule, one disclosure item and two conformance checks (spec rev 4.4: §3, §6.3, §16). The decisions the user should review are in §12d.11. An independent adversarial review (2026-10-23, round BG-R1: 3 High, 7 Medium, Low items) was applied before publication. Its findings are marked BG-R1-… where they changed a rule. Reviewer: ___ Date: ___ Outcome: ___
+
+### 12d.1 The gap, and what this section covers
+
+The design already covers an owner who is present (transfer, §12b.3a), a recovery file that exists (organization recovery, §5.11), an owner who stops paying (the lapse claim, §12b.3), and an owner whose account was reset (the hold and re-confirmation, §12b.3). It does not cover an owner who is **gone**: dead, unreachable for good, or someone who lost every credential *and* the organization recovery file, while the subscription keeps renewing (an annual plan, a company card) or the organization cannot wait for a lapse.
+
+Without an owner, the organization keeps working, but these things stop:
+
+- elevated grant-management requests stay pending forever (§12b.2a item 4);
+- nobody can offer a transfer, reissue the recovery file or schedule deletion;
+- nobody can move the organization, because a move needs the current recovery file (portability §6.2);
+- if the last effective admin is also gone, nobody can govern at all.
+
+**ORG-12 break-glass** is a way for the organization's own admins to install a new owner of record without the file. It is built so that nothing happens silently, and so that an owner who answers always wins.
+
+**In scope:** the break-glass claim (§12d.3–§12d.8), and reissuing the organization recovery file where it is missing (§12d.9). File-based organization recovery (§5.11) is not redesigned, but it is implemented on the same state machine (§12d.12, ORG-12f), so the precedence rules live in one place.
+
+**Out of scope** (from the phase B backlog, DEVLOG 2026-10-23):
+
+- **`orgs.forget` wiring.** That system operation drops the owner-of-record index row once an organization is purged. It belongs to the deletion executor hand-off (ORG-1 note 2, `deletion-due`), not to break-glass. A break-glass change of owner moves the index row with the existing `orgs.ownership-index` operation, exactly as a transfer does.
+- **Flag targeting for organization accounts.** The new flag (§12d.12) uses the existing account subject, set to the organization's account, exactly as `ORGANIZATIONS_ENABLED` does. Cohort targeting by entity kind is not needed here.
+- Also out of scope: designated successors and social recovery (§12d.10, deferred), legal-process overrides (§12d.8), managed work identities (§11), and a person's own account recovery.
+
+**Principles.** Each rule below follows from one of these:
+
+1. **The owner outranks the admins** (user decision, §1c item 9). Nothing admins do can beat an owner who answers.
+2. **Aborting is cheap; proceeding is slow and costly.** An abort needs no proof and is never refused. Taking effect needs a quorum, payment, a long notified wait, and no answer from the owner.
+3. **Operators can stop a claim but never start or shortcut one.** No operator decision skips a notice, a delay or the payment, and none can override the owner's elevated proof.
+4. **The recipient pays first** (user decision, §1c item 10). The candidate owner completes checkout before the claim can take effect, and billing starts a fresh period.
+5. **Dangerous owner changes get tight verification** (user decision, §1c item 9). The candidate passes the P18 checks, and the new owner works under restrictions while the former owner can still contest.
+
+### 12d.2 Threat model
+
+| Threat | Attack | Mitigation | Residual |
+| --- | --- | --- | --- |
+| **Malicious admin coalition** | Every admin colludes to seize the organization from a live owner, perhaps timed to a holiday. | A quorum cannot shortcut anything. The claim takes at least 30 days after payment, and notices go to every owner channel when the wait starts, 7 and 21 days later, and 72 h before effect. Any known owner channel aborts, with no proof needed. Any interactive owner sign-in holds the claim for support. Track A is open only when the owner has not signed in interactively for 30 days before the claim, and an email on a domain the admins, the candidate or the organization control does not count as an out-of-band channel (BG-R1-H2). After effect, the former owner can contest for 90 days, during which the new owner cannot transfer, move or delete the organization, and the former owner's membership cannot be removed. | An owner out of contact on every channel for more than 30 days loses ownership until their contest succeeds. The coalition could already operate the organization (they are its admins); what they gain is the owner's elevation power, under notice. |
+| **One rogue admin** | Claims alone, or with a fake co-signer. | Two distinct admins with at least 30 days' tenure. A single-admin organization goes to support (Track S). Any other admin can object, which also sends the claim to support. | A rogue admin plus one careless co-signer still needs the owner to be silent for 30 days. |
+| **Social-engineered support** | An attacker convinces support that the owner is dead. | Support cannot start a claim, change the owner, skip a delay or waive payment. A decision to proceed needs two operators, recorded reasons and conflict checks. It is followed by a further 7-day notified period, in which any known owner channel stops the effect, even one support excluded (an excluded channel's dispute needs a new decision by a different pair of operators, BG-R1-H1), and the owner's elevated proof always aborts. Support cannot exclude the owner's last channel. | Two deceived operators plus an owner who never sees any notice. The contest window and the audit remain. |
+| **Owner on holiday** | Not an attack: the owner is offline for weeks. | The wait is 30 days, with push and email notices. A sign-in while a claim is pending holds it, so an owner who returns and does nothing loses nothing. After effect, a 90-day contest. | An owner offline for over 30 days with no email access. The contest is the remedy. |
+| **Owner's account taken over** | An attacker in the owner's person account aborts every legitimate claim. | The first abort ends the claim. A claim within 180 days of an owner abort goes straight to support, which may proceed and exclude the channels it finds are controlled by someone else. A dispute from an excluded channel still stops the effect, but each one needs a fresh decision by a different pair of operators, so the attacker's power ends at support's patience, never at a silent seizure. | An attacker holding the owner's aged passkey has the same proof as the owner. The claim then cannot proceed in the product; that is intended (abort is the safe direction). The lapse claim still applies: the attacker must keep paying the owner's subscription to block it. Otherwise the remedy is off-platform. |
+| **Compromised operator** | One operator, or two colluding, push a claim through. | One operator can only hold or abort. Proceeding needs two different operators, neither a member, the candidate or the owner, and each decision is written to the hash-chained admin audit and the organization's audit, which every admin and the former owner can see. Operators have no route to change an owner directly. | Two colluding operators with an owner who never answers. Insider risk at the provider is otherwise inherent (§10). |
+| **Candidate's account taken over** | An attacker in an admin's account names themselves candidate. | P18 tight verification for the candidate at the start and again at checkout: a credential at least 7 days old, and no security change in 30 days. Any authority reset or security change on the candidate's account during the claim closes it. | A takeover that waited 30 days quietly, plus a silent owner. |
+| **Notice suppression** | Admins try to stop the owner hearing about the claim. | Notices are sent by 3sln.me to the owner's own person-account channels, which admins cannot change. An email whose domain is the organization's, the candidate's or an initiating or co-signing admin's domain does not count as out of band, because the admins may run that mailbox (BG-R1-H2). An owner with no out-of-band channel sends the claim to Track S. | Delivery is not verified: acceptance by the mail provider is not delivery, and notices can land in spam. |
+| **Harassment of a live owner** | Repeated claims to wear the owner down. | Each owner abort locks the organization against new claims for 30 days and sends any claim in the next 180 days to support. Limits: 3 counted claims per organization and 2 per person a year, and one pending claim at a time. A claim counts only once it is paid or aborted by the owner, so unpaid claims cannot use up a legitimate recovery's quota (BG-R1-H3). Every claim costs the candidate a full checkout, refunded only after the claim ends, less the processing fee if the candidate withdraws voluntarily. | Each claim costs the owner one click. |
+| **Racing ownership processes** | A transfer, lapse claim, file recovery and break-glass claim are pending together, hoping two take effect. | Exactly one ownership process can be pending at a time, apart from file recovery, which freezes a claim (§12d.7). The effect re-checks the owner of record in the same commit. | — |
+| **Payment fraud** | The candidate pays, takes effect, then charges back. | Ownership stays. The organization's standing then follows the ordinary lapse rules, and a chargeback within the contest window counts as grounds in a contest. | The window before standing degrades. |
+| **Foreign co-signer forged by its home provider** | A colluding home provider certifies a fake admin co-signature. | In v1 only admins homed at 3sln.me count toward the quorum. Foreign admins can object, which sends the claim to support. | Organizations whose other admins are all foreign go to Track S. |
+| **Probing the owner's account** | Admins start claims to learn whether the owner signs in, deleted their account or changed security settings. | Admins see only "held for support", never the cause. Channel kinds and credential ages are shown to operators only (BG-R1-M4). | Admins learn that a claim went to support. |
+| **Evidence privacy** | Death certificates and medical details collected and leaked. | The product never accepts evidence uploads. Evidence goes to support out of band and is kept under support's retention. The claim stores only a category, a statement of up to 2,000 characters and case references. | Support's own handling. |
+
+### 12d.3 Actors and proofs
+
+| Actor | Who | What they can do |
+| --- | --- | --- |
+| **Owner of record** | The account in §12b.1 when the claim starts | Abort through any known channel; elevated proof (tier 1); after effect, contest |
+| **Initiator** | An eligible admin, or an eligible member when no admin is effective | Start the claim, withdraw it |
+| **Candidate** | The eligible person who would become owner (may be the initiator) | Accept the candidacy (it counts as a signature), pay, withdraw |
+| **Co-signers** | Other eligible admins | Co-sign, and withdraw a co-signature until effect |
+| **Other admins** | Any effective admin, including foreign admins | Object (sends the claim to support), see the claim |
+| **Members** | Everyone else | See that a claim is pending and its dates, in their member view |
+| **Support operators** | 3sln.me internal accounts with the `support.org-break-glass` capability (§12d.8) | Hold, abort, and, with two operators, proceed or exclude channels |
+| **System** | The organization's sweep | Deadlines, reminders, the effect commit, refunds |
+
+**Owner channels** are taken from the owner's 3sln.me person account when the claim starts, and recorded on the claim:
+
+- a **known session**: a session created before the claim began;
+- a **known credential**: a passkey or password enrolled before the claim began. A sign-in with it counts as a known session;
+- a **confirmed email**: verified before the claim began, including one removed or replaced in the 30 days before;
+- a **push subscription** registered before the claim began.
+
+Notices go to every confirmed email and push subscription, and appear as an interstitial on every known session. Channels added after the claim began can never abort it (the person-move rule, portability §6.1a item 2). The channel snapshot (kinds and enrollment ages, never addresses) is visible to operators and the owner, never to admins (BG-R1-M4).
+
+**Liveness** means an interactive sign-in or step-up on the owner's person account. Background session refreshes do not count, so a dead person's phone cannot hold every claim (BG-R1-M2).
+
+**Proof tiers** (matching the person-move ladder, portability §6.1a item 4):
+
+| Tier | Proof | What it can do |
+| --- | --- | --- |
+| 0, known channel | Any owner channel above. An email or push notice carries a single-use abort link that needs no sign-in. Abort while no support decision to proceed exists. After one, stop the effect and return the claim to support (§12d.5), including from a channel support excluded (BG-R1-H1). |
+| 1, owner elevated proof | A step-up now with a passkey or password enrolled at least 7 days before the claim began, and no authority reset on the owner's person account since the claim began. The person recovery file does not count (P18). | Abort at any point before effect, including after a support decision. Support cannot override it. After effect, contest. |
+| 2, support | Two operators, out of band: channel and credential ages, billing records, audit history, documents seen by support | Proceed, or exclude channels for one decision (§12d.8). Never overrides tier 1, and never excludes the owner's last channel. |
+
+**Eligibility.**
+
+- **Initiator and co-signers:** effective admins (not held, not expiring, not under the new-admin 72 h wait) who held `admin` for at least 30 days before the claim began, other than the owner, and homed at 3sln.me. Foreign admins cannot sign in v1 (they can object), which removes the forged-co-signature risk at the cost of sending some organizations to Track S (BG-R1 Low). Each origin principal counts once.
+- **Candidate:** a 3sln.me person account that is an effective admin with 30 days' tenure. Its account must be active, with no suspension, deletion or admin hold. It passes P18 items 1–2 (a step-up with a credential enrolled at least 7 days earlier, and no security change in the last 30 days) when it accepts and again at checkout. It may be candidate in only one pending claim anywhere. Foreign members cannot be candidates, because ownership is a 3sln.me billing role (§12b.3a).
+- **Member-initiated claims** exist only when the organization has **no effective admin**: then a member with 90 days' tenure, holding a 3sln.me account and passing the same checks, may be both initiator and candidate. The claim is always Track S.
+- **Quorum:** two distinct eligible admins among the initiator, the candidate and the co-signers. With only one eligible admin, the claim is Track S.
+
+### 12d.4 Tracks
+
+| | Track A (admin quorum) | Track S (support-adjudicated) |
+| --- | --- | --- |
+| When | A quorum of two; the owner has at least one out-of-band channel (a confirmed email not on the organization's, candidate's or signing admins' domain, or a push subscription); the owner's person account has had **no interactive sign-in for 30 days** before T1 (BG-R1-H2); no trigger for Track S | Any of: a single eligible admin; a member-initiated claim; the owner has no out-of-band channel, signed in interactively within 30 days before T1, or their person account is deleted; a claim started within 180 days after an owner abort; an admin objection; an interactive owner sign-in while it is pending; a contest |
+| Wait after payment | 30 days | 60 days, and support must decide to proceed |
+| Takes effect | Automatically at the end of the wait, if nothing stopped it. **This is a third explicit break-glass exception to "no timeout decides"** (§12b.2a item 4, which lists only two; §12d.11 BG-1). | Only after a two-operator decision to proceed, followed by a 7-day final notice, and not before the 60 days end |
+
+A claim can move from Track A to Track S, never back. Admins see only that a claim is "held for support", never which trigger applied (BG-R1-M4).
+
+### 12d.5 State machine
+
+**States.** `gathering` (quorum, candidacy and payment), `waiting`, `held` (support must act), `final` (after a support decision to proceed), `effective` (terminal), and the terminal closures `aborted`, `withdrawn` and `closed` (with a reason). A `frozen` mark can sit on `gathering`, `waiting`, `held` or `final` while a file-based recovery is pending (§12d.7).
+
+**Transitions.** Every transition is one commit in the organization's single writer, with an audit entry and notices.
+
+| # | From | Event | Guard | To | Effects |
+| --- | --- | --- | --- | --- | --- |
+| T1 | — | Initiator starts | Eligible initiator, valid candidate, reason category and statement. No other ownership process pending (transfer offer, lapse claim, break-glass, file recovery), no move pending, no deletion scheduled, no lock (§12d.8), within the limits. | `gathering` | Owner channels snapshot; notices to the owner and every admin; banner for members |
+| T2 | `gathering` | Candidate accepts | P18 items 1–2 | `gathering` | Counts as a signature |
+| T3 | `gathering` | Co-sign / withdraw co-signature | Eligible admin | `gathering` | — |
+| T4 | `gathering` | Candidate pays | Quorum met (or Track S) and candidacy accepted; P18 rechecked; checkout created by the candidate's account | `gathering` | Checkout with purpose `break-glass` (§12d.6) |
+| T5 | `gathering` | Payment verified | A captured first order, from a provider snapshot no older than 5 minutes | `waiting` (Track A) or `held` (Track S) | The wait starts; first scheduled notice |
+| T6 | `gathering` | 7 days without quorum and candidacy, or 7 days from quorum without verified payment | — | `closed` (`quorum-lapsed` / `unpaid`) | Refund if any order exists. Not counted toward the limits (BG-R1-H3). |
+| T7 | `waiting` | Reminder due: 7 and 21 days after the wait started, and 72 h before effect | — | `waiting` | Notices |
+| T8 | `waiting` | Any admin objects | Effective admin | `held` | Track S from now on; notices |
+| T9 | `gathering`, `waiting`, `final` | Owner liveness: an interactive sign-in or step-up (BG-R1-M2) | — | `gathering` stays, as Track S; `waiting` and `final` become `held` (a `final` decision is void) | An interstitial asks the owner to abort or contact support |
+| T10 | `gathering`, `waiting`, `held` | Owner abort, tier 0 or tier 1 | A known channel or an elevated proof | `aborted` | Refund; lock (§12d.8); notices to everyone. The owner is offered a recovery-file reissue and the member list. |
+| T11 | `final` | Owner tier-0 dispute from any known channel | — | `held` | The proceed decision is void; support decides again. After a dispute from an excluded channel, a new decision needs a pair of operators different from the pair that excluded it (BG-R1-H1). |
+| T12 | `final` | Owner tier-1 proof | — | `aborted` | As T10, and support cannot proceed with a new claim for 30 days |
+| T14 | any open state | Unheld owner of record takes any owner-interface action with fresh authentication (transfer offer, deletion, a decision, reissue) | — | `aborted` (`owner-active`) | As T10. Renewal payment is **not** such an action (§12d.6). |
+| T15 | any open state | Initiator or candidate withdraws | — | `withdrawn` | Refund |
+| T16 | any open state | Candidate becomes ineligible (left, removed, held, authority reset or security change, account suspended or deleting), or a withdrawn co-signature leaves the quorum short | — | `closed` (`ineligible` / `quorum-withdrawn`) | Refund |
+| T17 | any open state | A file recovery takes effect (§5.11) | — | `closed` (`superseded`) | Refund |
+| T18 | any open state | File-based recovery starts (§5.11) | — | same state, `frozen` | Deadlines keep running, but nothing takes effect while frozen |
+| T19 | `frozen` | That recovery is cancelled | — | unfrozen | If the wait ended while frozen, the effect check runs at once |
+| T20 | `held` | One operator acknowledges, or asks parties for more | — | `held` | Case notes (references only) |
+| T21 | `held` | One operator aborts | — | `aborted` (`support`) | As T10 |
+| T22 | `held` | Two operators decide to proceed, optionally excluding named owner channels | The §12d.8 checks; at least one owner channel stays unexcluded | `final` | 7-day final notice with **fresh abort links** to every owner channel (excluded ones too), every admin and members |
+| T23 | `held` | No operator acknowledgement within 30 days, or no decision within 60 days of entering `held` (the clock restarts at each return to `held`; at most 120 days held in total) | — | `closed` (`expired`) | Refund; an operator alert. **No lock and no charge to the limits**, so an understaffed queue never kills a legitimate claim (BG-R1-H3). A held claim never takes effect by itself. |
+| T24 | `waiting` (Track A) | The 30 days end | Effect preconditions | `effective` | Effect commit |
+| T25 | `final` | The 7 days end, and the 60-day Track S wait has passed | Effect preconditions | `effective` | Effect commit |
+| T26 | `waiting` or `final` | The wait ends but a precondition fails transiently (stale provider snapshot, billing hold) | — | same | Retry hourly; this never weakens a guard |
+| T27 | `effective` | Former owner contests within 90 days with tier-1 proof (membership not required) | — | `effective` (contested) | A support case; see "Contest" below |
+
+**Effect preconditions**, all re-checked in the effect commit: not frozen; no open hold; the owner of record is the one recorded at T1; the candidate is still eligible, with no security change on their account since T1; the quorum still stands; payment is verified from a snapshot no older than 5 minutes, and no billing hold exists; the organization is active (no deletion scheduled); `ORG_BREAK_GLASS_ENABLED` is on for the organization (§12d.12).
+
+**The effect commit**, in one account-writer transaction, like a transfer (§12b.3a):
+
+- the owner of record becomes the candidate; the candidate's `break-glass` subscription becomes the organization's subscription, and every subscription of the previous owner is revoked at once with no automatic refund;
+- the organization's authority epoch increases by one (spec §3, rev 4.4);
+- the recovery state becomes `rotation-pending`: an ordinary signing rotation clears the recovery binding, so every earlier file stops restoring, and the new owner is asked to save a fresh file (§12d.9);
+- the former owner stays a member, and their membership cannot be removed during the contest window (BG-R1-M3), but their governance powers are **held** with cause `break-glass` (the §12c.3 hold, re-confirmed by another admin's approval as usual). Their member grants are unchanged;
+- elevated requests pass to the new owner (§12b.2a item 9);
+- a **90-day contest window** opens, with the restrictions below;
+- the owner-of-record index moves (`orgs.ownership-index`); notices go to the former owner's channels, the new owner, every admin and members; the commit is written to the hash-chained audit.
+
+**During the 90-day contest window**, the new owner cannot offer a transfer, schedule deletion or move the organization (the move cooling is 90 days instead of 30, portability §6.2). They can reject elevations at once. An accepted elevation that **narrows or removes** someone's GM grant is recorded and notified to the former owner, but takes effect only when the window closes without an upheld contest, because a reinstatement cannot undo it (BG-R1-M3). Other acceptances take effect at once.
+
+**Contest.** Within 90 days of the effect, the former owner may contest with tier-1 proof, where "the claim began" in the tier-1 definition means T1 of the claim that took effect. A contest opens a support case. If two operators uphold it, the organization goes back to the former owner through a **reinstatement**. That is a restoration, not a transfer, so the transfer billing rule does not apply (BG-R1-M1). One commit restores them as owner of record, cancels the break-glass owner's subscription (any refund at support's discretion), raises the epoch again, rotates the recovery binding, holds the break-glass owner's governance powers and drops the queued elevation acceptances. The organization starts a **14-day grace period** in which the former owner sets up billing; their revoked subscription's unused time is refunded or credited. Without payment, the ordinary read-only and lapse rules follow. A rejected contest closes. After 90 days there is no in-product contest, and a transfer is the only way back.
+
+**Timeouts, in one place:**
+
+| Timer | Value | When it runs out |
+| --- | --- | --- |
+| Quorum and candidacy | 7 days from T1 | `closed` |
+| Payment | 7 days from quorum | `closed` |
+| Track A wait | 30 days from verified payment | effect (BG-1) |
+| Track S wait | 60 days from verified payment | Nothing by itself; effect needs a support decision to proceed |
+| Reminders | when the wait starts, 7 and 21 days later, and 72 h before effect | notices |
+| Support acknowledgement | 30 days from `held` | `closed` (`expired`), uncounted |
+| Support decision | 60 days from each entry to `held`, at most 120 days in total | `closed` (`expired`), uncounted |
+| Final notice | 7 days from a support decision to proceed | effect |
+| Contest window and restrictions | 90 days from effect | the window closes |
+| Lock after an owner or support abort | 30 days; any claim within 180 days of an owner abort is Track S | — |
+| Reinstatement grace | 14 days from reinstatement | ordinary read-only rules |
+
+### 12d.6 Billing
+
+- **Who pays: the candidate**, before the wait starts. The candidate completes checkout for the organization's current plan, with checkout purpose `break-glass` bound to the claim. Billing starts a fresh period, with no proration and no credit for the previous owner's payment (the transfer rule, §1c item 10). Paying first also makes every claim cost something until it ends. **The paid period runs from checkout, so the 30 to 127 days before effect are lost to the candidate**; the checkout disclosure says so (BG-R1-M6).
+- **The claim's subscription confers nothing** until the effect: it does not count toward the organization's standing, as for lapse-claim and transfer checkouts.
+- **At effect,** the previous owner's subscriptions are revoked at once. There is no automatic refund. The previous owner, or their estate, may ask for one, which 3sln.me decides at its discretion under the terms ("Refunds"), as for transfers.
+- **A claim that does not take effect** has every order on its subscription refunded in full, exactly once, through the ownership drain and its lease (§13.2 wargame fixes). Polar's fee on a refunded claim (about 5% + US$0.50 at the modelled rate, about US$1,800 on the Scale plan) is absorbed when the owner or support ends the claim or it expires. **When the candidate or initiator withdraws voluntarily, the processing fee is deducted** from the refund, and the disclosure says so (BG-R1-M6).
+- **The owner's renewal does not abort a claim.** A payment is not proof of presence: cards renew by themselves, and a held owner may renew (F-03). Only a tier-0 or tier-1 abort, or an owner-interface action, shows the owner is present.
+- **The lapse claim** (§12b.3) and break-glass exclude each other: neither can start while the other is pending. If the organization goes read-only during a break-glass wait, the wait continues; the claimants may withdraw (and are refunded) and use the lapse claim once it becomes available, which is faster because non-payment already shows absence.
+- **A billing hold** (a subscription the provider cannot confirm) freezes the effect, as it freezes a lapse claim (§13.2 review fixes).
+- **A chargeback after effect** leaves ownership as it is. The organization's standing follows the ordinary grace and read-only rules, and the chargeback counts as grounds in a contest.
+- **Support time is not billed.** It is bounded by the limits in §12d.8.
+
+### 12d.7 Interactions
+
+- **Authority epoch.** The organization's `aep` rises once, at the effect commit, and again only at a reinstatement. Claims that end any other way leave it unchanged (spec §3, rev 4.4, mirroring R4-M2). Counterparts may hold edges on the rise under their own policy (spec §9.5). The entity certificates the organization issues afterwards carry the new `aep`.
+- **Keys.** The effect rotates the identity signing key, through the `rotation-pending` path that transfers already use, so lost or stolen copies of the old file stop restoring. Copies of earlier private keys cannot be recalled (§5.11). Certification keys are untouched, because no file contains them (R4-H1).
+- **Holds.**
+  - A **held owner can abort** a break-glass claim with tier 0. This differs from file recovery, where a held owner cannot cancel (§1d item 4): there the claimant holds the owner's file, which is strong evidence, while here the claimants hold none. An attacker who aborts from a taken-over account only sends the next claim to support (BG-9).
+  - An authority reset of the candidate closes the claim (T16). An authority reset of a co-signer withdraws their co-signature, which may leave the quorum short and close it.
+  - When the owner's hold re-confirmation draws an admin objection, §12b.3 sends the organization to break-glass: with the file, that is §5.11; without it, an ORG-12 claim, which is Track S because of the objection.
+- **Ownership transfer.** A claim cannot start while an offer is open. An owner's offer during a claim is an owner-interface action, so it aborts the claim (T14), and the offer proceeds under §12b.3a. A held owner cannot offer. The new owner cannot offer during the contest window.
+- **File-based recovery** (§5.11) is stronger evidence. A claim cannot start while one is pending. One started during a claim freezes the claim (T18); if it takes effect, the claim closes as superseded and is refunded; if it is cancelled, the claim resumes (T19). File recovery itself is a separate, later slice (ORG-12f); until it exists, T17–T19 cannot fire.
+- **Moves.** A pending move means someone holds the current file, so a claim cannot start then, and no move can be requested while a claim is pending. After effect, the cooling is 90 days, and a move also needs the new file to be at least 7 days old (P14).
+- **Deletion.** A claim cannot start while deletion is scheduled. An owner who schedules deletion during a claim aborts it (T14). Admins may still cancel a scheduled deletion, as now.
+- **Elevations** pass to the new owner (§12b.2a item 9). During the contest window, each acceptance is also notified to the former owner.
+- **Foreign members** can object, which sends a claim to support, but cannot initiate, co-sign or be candidates in v1 (§12d.3). Their notices are in-console only, because the spec defines no outbound notice to a foreign home provider.
+- **Member certificates and member context** are unaffected: they rest on each member's home provider, not on the owner. The only membership change is the hold on the former owner's governance powers.
+- **Organization audit.** Break-glass depends on the organization audit being hash-chained, which ORG-1 deferred. That is a production gate (§12d.12).
+
+### 12d.8 Audit, notices, rate limits and what support can do
+
+**Audit.** Every transition writes an organization audit entry `organization-break-glass-<event>` with the actor chain, the claim id, the track and the timers. It never includes the statement's text beyond its digest, the evidence, channel addresses, or the cause of a move to Track S. Every admin and the owner of record can read these entries, and so can the former owner during the contest window. Channel kinds and ages, and Track S causes, are kept in the support case, readable by operators and the owner only (BG-R1-M4). Operator actions are written to both the admin audit (boot-and-admin) and the organization audit.
+
+**Notices** go to the owner's channels, every admin and the candidate at T1, T5, each reminder, T8–T12, T21–T25 and T27. Members see a banner with the start date and the earliest effect date. Each email or push notice carries its own abort link: 256-bit random, stored hashed, bound to the claim and the channel, usable once, valid until the claim ends. Every final notice (T22) issues fresh links. GET shows a confirmation page and never changes anything (mail scanners); POST aborts. Pages send `frame-ancestors 'none'` and no referrer.
+
+**Rate limits:**
+
+- one pending claim per organization, and at most 3 **counted** claims per organization in 365 days, where a claim counts once it is paid or aborted by the owner (BG-R1-H3);
+- at most 2 counted claims per person in 365 days, across organizations, as initiator or candidate; one pending candidacy; and at most 4 unpaid starts per person in 365 days;
+- a 30-day lock after any owner or support abort, and Track S for 180 days after an owner abort;
+- co-signature changes: 10 per admin per day;
+- abort-link POSTs: per-IP and per-claim budgets; used, unknown and expired tokens get identical responses;
+- support decisions: 20 per operator per day, inside the admin service's existing per-actor window.
+
+**Support operators** hold the internal capability `support.org-break-glass`. It is boot-assignable only, never delegable, and needs an internal account (boot-and-admin roles).
+
+| Support can | Support cannot |
+| --- | --- |
+| List held claims and read a case: states, timers, tracks, channel kinds and ages, billing standing, audit metadata and its own notes | Read organization resources, member grants beyond counts, preference values or the statement's text unless a party shares it |
+| Contact parties out of band, and keep evidence in the support system under its retention | Upload evidence into the organization, or show it to the claimants |
+| With **one** operator: acknowledge, hold longer within the 60-day bound, abort | Start a claim, name a candidate or change the owner of record directly |
+| With **two** operators: proceed (T22), name owner channels to exclude for that decision, uphold or reject a contest | Skip or shorten a notice, a wait or the final 7 days, or waive payment; exclude the owner's last channel |
+| | Override owner tier-1 proof, or proceed after one in the same claim or for 30 days after |
+| | Modify the owner's person account (sessions, passkeys, emails). Exclusion applies to this claim only. |
+| | Act on a claim in which the operator is a member, the candidate or the owner |
+
+A two-operator decision is two separate step-up-authorized actions by different internal accounts: the first proposes, with a reason category and a free-text reason, and the second approves within 72 h, or the proposal lapses. Each records its reasons. An exclusion names only channels that disputed this or an earlier claim, and records why support believes someone other than the owner controls them.
+
+**Legal process** (a court order or a liquidator's appointment) is not an in-product path in v1; counsel decides how 3sln.me responds (BG-8).
+
+**Reconciliation with earlier stances** (BG-R1-M5). §5.11 and §12b.4 say 3sln.me adjudicates nothing beyond the stated rules. Track S is a bounded exception: support decides only within this state machine, only in held claims, and never in the seizing direction against tier-1 proof. That reverses a recorded stance, so it needs the user's sign-off (BG-16). The implemented lapse-claim escalation lets one operator let a claim proceed (`orgs.claim-resolve`); under principle 3 its "proceed" should need two operators, and ORG-12d changes it.
+
+### 12d.9 Organization recovery-file reissue where it is missing
+
+The owner of record can already reissue the file (`POST /api/orgs/{id}/recovery-file`, a fresh step-up, rotating the signing key under P15). What is missing is a defined **missing** state, and stronger checks, because the file carries the organization's private keys.
+
+- **States.** `recovery.state` is `issued`, `rotation-pending` or `missing`. Any change of owner (transfer, lapse claim, break-glass, reinstatement or file recovery taking effect) moves it to `rotation-pending`, then to `missing` once the old binding is cleared, until the new owner reissues. An organization whose creation file was never confirmed is `missing` too (the UX pass F-1 banner).
+- **Who sees it.** The owner gets a persistent banner and an activity item until a file is saved. Admins see only "No current recovery file", never the file. Moves are impossible until a file exists and has aged 7 days (P14). So authority from a break-glass change, or a reinstatement, counts as move authority only after it has taken effect, the 90-day cooling has passed, and a new file issued under it has aged 7 days. The spec deliberately does not state this: it is internal ordering an outside verifier cannot observe (review BG-R1-M7).
+- **Who may reissue.** Only the unheld owner of record, with a fresh step-up **using a credential enrolled at least 7 days earlier** (P18 item 1, new here). Every admin is notified.
+- **After a recent security change.** If the owner's person account had a security change in the last 30 days (P18 item 2), a reissue that would replace an `issued` file is refused until 30 days after the change. When the state is `missing` after a change of owner, the new owner passed tight verification to get there, so the reissue is immediate. (BG-R1 Low cut the 72 h objection delay drafted here; the P18 checks cover it.)
+- **During a claim,** a reissue by the owner is an owner-interface action, so it aborts the claim (T14).
+- **A reissue is not an authority reset.** It does not raise the organization's `aep`, as for persons (§13.2 ORG-2/3 note).
+- **Admins and operators can never reissue.**
+
+### 12d.10 Alternatives considered
+
+| Alternative | Verdict |
+| --- | --- |
+| **Support decides everything** (a manual ownership change on request) | Rejected. It makes operators the single point of failure, invites social engineering, does not scale, and contradicts principle 3. |
+| **An admin majority takes effect at once or after a short delay** | Rejected. It is silent seizure against an owner on holiday, and it contradicts the owner outranking admins. |
+| **Lapse claim only** (wait until the owner stops paying) | Insufficient on its own. Cards renew, an annual plan lasts a year, and the organization degrades to read-only on the way. It stays, and is preferred when it applies. |
+| **Threshold escrow of the organization file** (Shamir shares among admins) | Deferred. The owner must opt in beforehand, so it does not help organizations that are already stuck. Share custody is new key material to protect, and any M admins could recover silently unless the same delays apply. |
+| **Designated successor** (the owner names one at a calm moment, plus an inactivity trigger, like an inactive-account manager) | Deferred, and recommended as the first follow-up. It is the owner's own pre-consent, so a later version could let a designated successor use Track A with no quorum. It does not help organizations without one (BG-12). |
+| **Accepting a file-less claim with the owner's person recovery file** | Rejected (P18). That file is what someone who took over the owner's account is most likely to hold. |
+| **DNS proof for domain-anchored organizations** | Later (§5.11). It needs custom-domain issuers first. |
+| **Legal process only** | Off-platform. It is slow and jurisdiction-bound, and it does not suit a sole proprietor's small company. Kept as the remedy of last resort (§12d.8). |
+| **Owner tier-0 abort always final, even after support** | Rejected. An attacker with one stolen device could block recovery forever. After a two-operator decision, a tier-0 dispute still stops the effect but returns the claim to support, and only tier-1 proof ends it outright. |
+| **Support excludes channels, which then cannot stop the effect** (the first draft, following portability §6.1a's removal of disputers) | Rejected after review BG-R1-H1. In the person-move model only the requester's own tier-1 proof removes disputers; here two operators would be enough to take an organization from an owner who has only email. An excluded channel's dispute still stops the effect; it only demands a fresh operator pair. |
+
+### 12d.11 Provisional decisions for the user
+
+Each is **Provisional (coordinator), not signed off by the user.** Implementation may proceed on them behind the default-off flag, and each stays revisable.
+
+| ID | Decision | Recommendation |
+| --- | --- | --- |
+| BG-1 | A third explicit exception to "no timeout decides": Track A takes effect by itself after 30 days if nothing stopped it. | **Adopt.** The alternative, support deciding every claim, makes operators the weak point and is slower for the common case of a departed owner. The 30 days, the multi-channel notices, the liveness hold and the 90-day contest bound the risk. |
+| BG-2 | Timers: 7 + 7 days to gather, a 30-day Track A wait, a 60-day Track S wait, a 7-day final notice, 30/60-day support bounds, a 90-day contest window and move cooling, a 30-day lock, and Track S for 180 days after an owner abort. | **Adopt.** 30 days exceeds most holidays and matches the security-change lookback. 90 days covers a long hospital stay. |
+| BG-3 | Quorum is two eligible 3sln.me-homed admins with 30 days' tenure; foreign admins can only object in v1. A single admin, or members when no admin is effective, go to Track S. Any objection sends the claim to Track S. | **Adopt.** A majority rule would let a coalition among many admins move faster than a lone objector could react; objection-to-support gives every admin a veto on the self-running track. |
+| BG-4 | The candidate pays before the wait starts. A claim that ends without effect is refunded in full; fees are absorbed. | **Adopt.** It applies the user's transfer rule and makes harassment cost something. |
+| BG-5 | Any interactive owner sign-in or step-up during the wait or the final notice holds the claim for support, even without an abort. Track A also needs 30 days without an interactive owner sign-in before the claim, and emails on admin-controlled domains do not count as channels. | **Adopt.** An owner who is present must never lose ownership by inattention. |
+| BG-6 | At effect, the former owner stays a member, with governance powers held (cause `break-glass`). | **Adopt.** It is safe if their account was compromised and recoverable if not. |
+| BG-7 | During the contest window the new owner cannot transfer, delete or move, and the former owner's membership cannot be removed. Acceptances that narrow or remove GM grants wait until the window closes; other decisions take effect at once. | **Adopt.** A departed admin's grant waits 90 more days, but a gone admin does no harm meanwhile, and a reinstatement could not undo a purge. |
+| BG-8 | Support: one operator can hold or abort; two can proceed or exclude channels; nobody overrides tier-1 proof; no operator-started claims or legal-process path in v1. | **Adopt.** Counsel should look at legal process before public organizations (ORG-13). |
+| BG-9 | A held owner may abort a break-glass claim with tier 0 (unlike file recovery, §1d item 4). | **Adopt.** The claimants hold no evidence, so the safe direction wins, and abuse is routed to support. |
+| BG-10 | No evidence is uploaded into the product. Support keeps it out of band. | **Adopt.** It keeps special-category data out of organization storage and audit. |
+| BG-11 | The owner's recovery-file reissue needs an aged credential and notifies admins. Within 30 days of a security change on the owner's account, a reissue that would replace an existing file is refused. A reissue from the `missing` state after a change of owner is immediate. | **Adopt.** The file holds the organization's private keys. |
+| BG-12 | Designated successors and threshold escrow are deferred. | **Defer**, with designated successor as the first follow-up. |
+| BG-13 | Contest within 90 days, without needing membership. An upheld contest is a reinstatement, not a transfer: no checkout first, a 14-day grace to set up billing, the former owner's unused time refunded or credited, and the break-glass owner's refund at support's discretion. | **Adopt.** The transfer billing rule is for voluntary hand-overs; making a wronged owner pay first would let a seizure stand. |
+| BG-14 | File-based recovery (§5.11) stays a separate, later slice (ORG-12f), which must implement the freeze and precedence rules of §12d.7 against this machine. | **Adopt.** Rebuilding it here was gold-plating (BG-R1 Low). |
+| BG-15 | Before any support decision, every tier-0 abort aborts. After a two-operator decision to proceed, any tier-0 dispute (including from an excluded channel) stops the effect and returns the claim to support; an excluded channel's dispute needs a new operator pair; support can never exclude the owner's last channel. Only tier-1 proof ends a claim outright after a decision. | **Adopt.** The owner can stop the effect from any known channel at any point, as required, while one stolen device can only cost support time. |
+| BG-16 | Track S makes support an adjudicator inside this machine, reversing "3sln.me adjudicates nothing" (§5.11, §12b.4). The lapse escalation's single-operator "proceed" becomes two-operator. | **Adopt.** Without it, organizations with one admin, no admins or a contested owner have no path at all. |
+| BG-17 | Counted limits: a claim counts toward the yearly limits only once paid or aborted by the owner; expired held claims never count or lock. Voluntary withdrawal deducts the processing fee from the refund. | **Adopt.** It stops rogue admins burning a legitimate recovery's quota, and stops support delays killing claims. |
+
+### 12d.12 Implementation plan
+
+Engine-first: every operation is an ngin Action or Query in `packages/app/domains/orgs.mjs`, dispatched in the organization's single writer. HTTP and UI are thin adapters. Everything sits behind a new default-off flag, and nothing widens an existing rule.
+
+**Flag** (a row for the flags owner to add to `packages/flags/registry.mjs`):
+
+| Flag | Class | Dimensions | Requires | Notes |
+| --- | --- | --- | --- | --- |
+| `ORG_BREAK_GLASS_ENABLED` | a | G A | `ORGANIZATIONS_ENABLED` | crit, stateful. The subject is the organization's account. It gates **starting** a claim and the **effect**. With it off, pending claims stay pending and cannot take effect; aborts, withdrawals, objections, support holds and aborts, and refunds are never gated (abort is the safe direction). Production gates: `termsAndPrivacyApproved` (organization terms disclose break-glass), `notificationTransportsVerified`, `securityRedTeamFindingsResolved`, `realBrowserFlowsPassing`, plus the hash-chained organization audit. |
+
+**Slices** (non-overlapping write ownership):
+
+| Slice | Scope | Files (proposed) |
+| --- | --- | --- |
+| ORG-12a [S] | **Implemented locally 2026-10-23 (provisional).** **Claim engine.** A pure transition function over the §12d.5 table, plus the service: rows `org/claim/<id>` and the existing `org/due/…` time index, eligibility, quorum, tracks, timers, locks and limits, and the effect commit. Extracts the shared owner-change commit from the transfer effect (one hunk in `ownership.mjs`), so transfer, lapse, break-glass, reinstatement and file recovery use the same commit. | new `packages/orgs/break-glass.mjs`; hunks in `packages/orgs/ownership.mjs` and `packages/orgs/roster.mjs`; operations in `packages/app/domains/orgs.mjs` |
+| ORG-12b [S] | **Owner channels, abort tokens and liveness.** A person-side port giving the channel snapshot (kinds and enrollment times, never addresses to the organization), abort-token issue and verify, and a fire-and-forget "owner authenticated" hint from sign-in to the organizations the person owns (like the key-refresh hint, revealing nothing). | new `packages/identity/owner-channels.mjs`; one sign-in hook hunk in `packages/identity/service.mjs` (identity stream owner); `packages/runtime/account/orgs.mjs` hunk |
+| ORG-12c [S] | **Implemented locally 2026-10-23 (provisional).** **Billing.** Checkout purpose `break-glass`, reconciliation, the effect's subscription switch, and refunds through the drain lease. | hunks in `packages/billing/organizations.mjs` and `packages/orgs/ownership.mjs` (after ORG-12a's hunk) |
+| ORG-12d [S] | **Support adjudication.** The `support.org-break-glass` capability, the case list, two-operator proposals and approvals, and the system operation that applies a decision in the organization's writer. Also makes `orgs.claim-resolve` "proceed" two-operator (BG-16). *2026-10-23: the engine side is done in ORG-12a (`orgs.breakglass-resolve` and `orgs.claim-resolve` enforce two distinct, unconflicted operators, each verified from a single-use, scope-bound operator assertion through the `operators` port); the capability, the admin service's assertion signer and registry, and the routes remain. Production gate: verified operator identity.* | admin service hunk (`packages/identity/roles.mjs` catalog, the admin service; boot-and-admin owner); new `packages/runtime/routes/admin-org-cases.mjs` |
+| ORG-12e [A] | **UI** (below). | new `apps/web/src/{bl,ui}/org-break-glass.mjs`, `apps/web/src/ui/org-claim-interstitial.mjs`, `apps/web/src/ui/org-claim-abort.mjs`, `apps/web/src/ui/admin-org-cases.mjs`; catalogue entries in `packages/i18n/catalogues.mjs` (en, es); routes in `packages/runtime/routes/orgs.mjs` |
+| ORG-12f [S], later | **File-based organization recovery** (§5.11), a separate slice: lifting the organization refusal in the identity recovery path to start the §5.11 72 h flow, never a person-style recovery, and implementing T17–T19 against this machine. | hunk in `packages/identity/service.mjs` recovery path (identity stream owner); its own `packages/orgs/file-recovery.mjs` |
+| ORG-12r [S] | **Implemented locally 2026-10-23 (provisional), except the creation-time `missing` state.** **Recovery-file reissue hardening** (§12d.9): the states, aged-credential check, admin notices, delay and objection. | hunks in `packages/orgs/ownership.mjs` (reissue begin/done) and `packages/orgs/creation.mjs` |
+
+Order: ORG-12a → 12b and 12c in parallel → 12d → 12e; 12r can go anytime; 12f after 12b.
+
+**Engine operations** (new):
+
+- Actions in the organization's writer:
+  - `orgs.breakglass-start` (`orgs.claim-start` is already the lapse claim's);
+  - `orgs.breakglass-accept` (the candidate);
+  - `orgs.breakglass-cosign` and `orgs.breakglass-uncosign`;
+  - `orgs.breakglass-checkout` (the candidate);
+  - `orgs.breakglass-withdraw`;
+  - `orgs.breakglass-object`;
+  - `orgs.breakglass-abort` (the owner, signed in; tier 0 or tier 1 from the session's step-up evidence);
+  - `orgs.breakglass-contest` (the former owner, tier 1).
+- System actions:
+  - `orgs.breakglass-abort-token` (from the public link route, after token verification);
+  - `orgs.breakglass-liveness` (the owner-authenticated hint);
+  - `orgs.breakglass-resolve` (an approved operator decision);
+  - the sweep extends `orgs.ownership-tick`, with each due entry in its own transaction.
+- Queries:
+  - `orgs.breakglass` (a role-filtered view: the owner, admins, the candidate, members, each seeing what §12d.8 allows, with the decisions the server would accept now);
+  - `orgs.breakglass-cases` (system, for operators, paged);
+  - person-side, `orgs.breakglass-notices` (claims where the person is owner, for the interstitial), from a hint row written through a port and confirmed by the organization, as for discovery.
+- Routes are thin: `/api/orgs/{id}/break-glass[/<action>]`, the public `/org-claim/abort` (GET confirm, POST abort), and admin `/admin/api/org-cases`.
+
+**Tests.** Mostly engine-level, under `npm test` and `npm run test:organizations`:
+
+- `tests/orgs-break-glass.test.mjs`: every row of the §12d.5 table and every timeout, including at the boundaries; eligibility (tenure, held, foreign candidate and co-signer refused, foreign objection accepted); Track A refused after a recent interactive owner sign-in or with only an admin-domain email; quorum; tracks and the one-way move to Track S; limits and locks; uniform `not_found` for non-members and with the flag off; the effect commit (owner, `aep` +1 exactly once, rotation-pending, former owner held, elevations passed, index moved, cooling 90 days, restrictions); reinstatement.
+- `tests/orgs-break-glass-chaos.test.mjs`, seeded chaos with schedules logged for replay. It interleaves claim actions, owner aborts from each channel kind, owner sign-ins, co-signature churn, candidate security changes and authority resets, transfer offers, lapse onset and lapse claims, file recovery start and cancel, deletion scheduling and cancellation, webhook replay, reordering and duplicates, provider outages and stale snapshots, member removal, flag flips, clock jumps and process restarts. Invariants:
+  - (I1) the owner of record changes only through an effect or reinstatement commit whose preconditions hold in that commit;
+  - (I2) no effect after any tier-0 abort or dispute without a later two-operator decision (by a new pair after an excluded channel's dispute), none ever after tier-1, and never with every owner channel excluded;
+  - (I3) the `aep` rises exactly once per effect or reinstatement, and never otherwise;
+  - (I4) every paid claim that did not take effect is refunded exactly once;
+  - (I5) at most one ownership process takes effect per owner of record;
+  - (I6) notices to every recorded owner channel are enqueued before the wait starts;
+  - (I7) every transition has exactly one audit entry;
+  - (I8) no single operator action reaches `final` or `effective`;
+  - (I9) a held claim never takes effect;
+  - (I10) the flag off never blocks an abort, withdrawal or refund.
+- Adversarial cases, each a named test:
+  - a full admin coalition against a live owner (abort, then a restart that goes to Track S);
+  - a stolen owner device aborting repeatedly, then support exclusion, a further dispute needing a new operator pair, then the real owner's tier 1;
+  - two operators excluding an email-only owner's only channel (refused);
+  - unpaid claim spam trying to exhaust the yearly limit (uncounted);
+  - a held claim expiring (no lock, no count);
+  - a session refresh from the owner's device (not liveness);
+  - an admin probing the owner's activity (no cause visible);
+  - an attacker holding the aged passkey (tier 1 ends the claim; no support override);
+  - a single operator trying to proceed;
+  - an operator who is a member;
+  - a proposal approved by the same operator;
+  - a co-signature from a foreign admin (refused; objection accepted);
+  - a claim racing a transfer payment;
+  - a lapse claim racing break-glass;
+  - abort-token replay, a scanner GET and an unknown token (identical responses);
+  - harassment beyond the limits;
+  - a candidate taken over during the wait;
+  - an owner who renews during the wait (no abort);
+  - an owner with no channel (Track S);
+  - a chargeback after effect.
+- Runtime and browser:
+  - `tests/orgs-break-glass-runtime.test.mjs`: Node routes, CSRF, the abort page and headers;
+  - `tests/browser/org-break-glass-browser.mjs`: Chromium and Firefox, en and es, light and dark, 320 and 1440 px, keyboard and accessibility;
+  - a Worker parity run for the claim rows under `npm run test:worker`.
+
+These are loopback fixtures and an offline Polar model. They show local behaviour, not notification delivery or provider conformance.
+
+**UI surfaces** (a one-question wizard style, the 3sln stack, light and dark):
+
+- **Organization console, ownership panel: "The owner is gone?"** It first offers the alternatives that apply (contact the owner; a transfer if they can act; the lapse claim if read-only; file recovery if someone holds the file). Then it asks one question per step: the candidate, the reason category, the statement, and a review that states the 30-day wait, notices to the owner, the owner's right to abort, the 90-day contest and the refund rule.
+- **Co-signature requests** appear in other admins' activity centres, with co-sign and object.
+- **Candidate checkout disclosure:** the transfer disclosure, plus the abort and contest terms and "refunded in full if this does not take effect".
+- **Claim timeline,** for everyone with access: state, track, the earliest effect date and who signed, without channel details.
+- **Owner:** email and push notices; a full-screen **interstitial** on sign-in ("Someone is claiming ownership of Acme. ⟦Stop this claim⟧ ⟦Contact support⟧"); an activity item; and a no-sign-in abort page (confirm, then done).
+- **Members:** a banner in the member view.
+- **Former owner after effect:** a notice with a contest entry, which needs sign-in and an aged credential.
+- **Admin console** (operators): a case queue, case detail, a proposal form and second-operator approval.
+- **Recovery-file banner** for the `missing` state (§12d.9).
+
+**Before production** (security.md and DEVLOG gates): **verified operator identity** for every support decision (the engine verifies an operator assertion from the admin service through the `operators` port since the 2026-10-23 review, M3; ORG-12d must supply the production signer and the operator registry); the hash-chained organization audit; verified email and push delivery; organization terms and privacy text for break-glass and support's evidence handling (ORG-13, counsel); an independent security review of ORG-12a–d; and real-browser verification. Until then the flag stays off outside loopback.
+
 ## 13. Implementation slices (later)
 
 Engine-first: every operation is an ngin Action or Query in a domain module, dispatched in the organization's account single writer (the same `createAppEngine` placement as persons). HTTP and UI are thin adapters. Tests are mostly engine-level, with seeded chaos for membership races, revocation fencing and intersection properties ("effective ⊆ every ceiling" for random grant sets).
@@ -1083,6 +1466,7 @@ Engine-first: every operation is an ngin Action or Query in a domain module, dis
 | `DIRECTORY_ENABLED` | c | G | — | crit. Publishes `directory.v1` (handle lookup and identity documents). Global protocol surface. |
 | `MEMBER_CERTIFICATES_ENABLED` | a | G A | `DIRECTORY_ENABLED` | crit, stateful. 3sln.me as a **home** provider issuing member certificates, with consent records and status. The subject is the member's account. Revocation and status stay available when it is off. |
 | `ORG_FOREIGN_MEMBERS_ENABLED` | a | G A | `ORGANIZATIONS_ENABLED` | crit, stateful. Verifying certificates from **other** issuers, which means outbound directory fetches. It is the kill switch for that SSRF surface; same-host members keep working. |
+| `ORG_BREAK_GLASS_ENABLED` | a | G A | `ORGANIZATIONS_ENABLED` | crit, stateful. Rev 5.5, §12d.12: gates starting a claim and its effect; aborts, withdrawals, objections, support holds and refunds are never gated. |
 | `ORG_RELATIONS_ENABLED` | a | G A | `ORGANIZATIONS_ENABLED`, `DIRECTORY_ENABLED` | crit, stateful. Relation documents, instances, entity certificates and imports. Cross-provider use is also behind the foreign-issuer allowlist (R2-M6). |
 
 ### 13.2 Slices and ownership (non-overlapping; IDs ORG-#)
@@ -1102,7 +1486,7 @@ Engine-first: every operation is an ngin Action or Query in a domain module, dis
 | ORG-9 [A] | **Templates and drift view.** | `packages/orgs/templates.mjs`, console | B |
 | ORG-10 [S] | **Same-provider relations.** Relation-document validation (artefact class), instances and participation, invitations and joins, edges as fragment grants, entity certificates, imported resources, upgrade and leave, bus `entity` kind, `audit-log/v1`, the generic `share` relation. | `packages/orgs/{relations,instances,certificates,imports}.mjs`, `packages/federation/schema.mjs` hunk (relation validator), events hunk | C |
 | ORG-11 [S] | **Cross-provider relations** (invitations, joins, entity certificates and SETs between providers, over ORG-7). Integrates the artefact-references cache. | `packages/orgs/{instances,certificates}.mjs` hunks | D |
-| ORG-12 [S] | **Export, break-glass, critical-action delays, change of control.** | `packages/orgs/{export,recovery}.mjs` | B/D |
+| ORG-12 [S] | **Export, break-glass, critical-action delays, change of control.** Rev 5.5: break-glass and recovery-file reissue are designed in §12d, split into ORG-12a–f and ORG-12r (§12d.12). Export and critical-action delays stay here, undesigned. | `packages/orgs/{export,recovery}.mjs`; break-glass files per §12d.12 | B/D |
 | ORG-13 | **Legal.** DPA, organization terms, privacy section (counsel). | `docs/legal/*` | before public organizations |
 
 *ORG-0/ORG-1 implementation notes (2026-10-23, Provisional (coordinator), not signed off by the user):* (1) the actor's `epoch` remains the person's `security.epoch` for the old monotonic fence. ORG-2 separately carries `aep`, with the narrower source defined below; routine credential changes do not trigger the governance hold. (2) Scheduling deletion needs the owner of record with a fresh (15 min) authentication; cancelling needs the owner of record or an admin and is never flag-gated. (3) At most 10 organizations per creator (open reservations included). (4) The organization file is returned once by the creation response; client-side passphrase encryption (R4-M5) and the console belong to ORG-5. (5) The organization account is excluded from the inactivity lifecycle (`review-required`).
@@ -1287,6 +1671,7 @@ Rev 3 status: Q1 is accepted. Q2 and Q6 are superseded by the 2026-10-21 clarifi
 | Q17 | ~~**Do "no timeout decides" exceptions exist?**~~ **Provisional (coordinator), not signed off by the user (rev 5.4):** the post-recovery and billing-lapse 72 h rules are explicit break-glass exceptions (§12b.2a item 4). | — |
 | Q18 | ~~**Pending elevations on a change of owner; accepting after rejecting; held owner cancelling a recovery?**~~ **Provisional (coordinator), not signed off by the user (rev 5.4):** elevations pass to the new owner; a subject may accept after rejecting; a held owner cannot cancel a recovery (§12b.2a items 5 and 9, §12b.3). | — |
 | Q19 | ~~**Portable membership export and spec security floors (§12c.4 items 2–3)?**~~ **Provisional (coordinator), not signed off by the user (rev 5.4):** both in the spec (spec §5.1, §5.2a, §13.1). | — |
+| Q20 | **ORG-12 break-glass** (rev 5.5): the provisional decisions BG-1 to BG-17 in §12d.11, notably a third timeout exception (BG-1), support adjudication (BG-16) and reinstatement billing (BG-13). | The coordinator's recommendations are in §12d.11; implementation may proceed behind the default-off flag. |
 
 ## Review round 1
 

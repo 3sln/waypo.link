@@ -1,6 +1,6 @@
-import { migrateTags } from '../messaging/tags.mjs';
+import { migrateTags, isSystemTag, MAX_USER_TAGS } from '../messaging/tags.mjs';
 import { inspectWebArchive, WEB_ARCHIVE_MIME, conversationText } from '../messaging/content.mjs';
-import { fail, DEFAULT_BUDGETS } from './schema.mjs';
+import { fail, bounded, DEFAULT_BUDGETS } from './schema.mjs';
 
 // Extraction is inert text only. It never executes HTML, follows links, fetches
 // remote media, expands recursive archives, or guesses OCR/transcription.
@@ -18,13 +18,24 @@ export function extractSearchText({ mimeType, bytes }, { maxInputBytes = 1048576
   return { text, supported: true, truncated };
 }
 
+// Deterministic document tag set (wargame Q1): unique bounded IDs, every registered system tag, and the first
+// MAX_USER_TAGS user tags in stored order. Legacy or corrupt rows therefore never exceed the search bound.
+export function searchTags(tags) {
+  const out = [], seen = new Set(); let user = 0;
+  for (const tag of Array.isArray(tags) ? tags : []) {
+    if (!bounded(tag, 64) || seen.has(tag)) continue;
+    if (!isSystemTag(tag)) { if (user >= MAX_USER_TAGS) continue; user++; }
+    seen.add(tag); out.push(tag);
+  }
+  return out;
+}
 export function messageSearchDocument(message, { revision = message.revision, extraction } = {}) {
   message = migrateTags(message);
   const content = extractSearchText(message, extraction);
   return {
     id: `message:${message.id}`, owner: message.owner, source: { kind: 'message', id: message.id }, revision,
     type: message.mimeType === 'message/rfc822' ? 'email' : 'message', title: message.senderMetadata?.subject || '', text: content.text,
-    tags: message.tags || [], classification: message.classification || 'unclassified', createdAt: message.receivedAt,
+    tags: searchTags(message.tags), classification: message.classification || 'unclassified', createdAt: message.receivedAt,
     acl: { readers: [message.owner] }, quarantined: Boolean(message.quarantined), deleted: false, embeddingAllowed: false,
   };
 }

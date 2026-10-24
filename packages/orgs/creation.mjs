@@ -73,9 +73,14 @@ export class OrganizationRecoveryReissue{
  constructor({org,identity,backup,crypto=new IdentityCrypto()}){Object.assign(this,{org,identity,backup,crypto});}
  async reissue(request,orgId){
   if(!this.org||!this.identity||typeof this.backup?.issue!=='function')unavailable();
-  const {request:creation}=await this.org.begin(orgId,request);
+  const {request:creation,generation}=await this.org.begin(orgId,request);
   const file=await issueOrganizationRecoveryFile({identity:this.identity,backup:this.backup,crypto:this.crypto,org:orgId,request:creation});
-  try{await this.org.done(orgId,request,{kid:file.kid});}catch{/* the file is bound; the record catches up on the next reissue */}
+  // Break-glass review M2/R2-M2: fail closed. The file is handed out only when the organization confirmed it for the
+  // current owner; any refusal or error withholds it (the organization rotates a superseded file away, and the owner can
+  // reissue again).
+  let done=null;try{done=await this.org.done(orgId,request,{kid:file.kid,...Number.isSafeInteger(generation)?{generation}:{}});}catch{done=null;}
+  if(done?.issued===false)fail('organization_owner_changed','Ownership of this organization changed while the file was being issued. That file was invalidated.',409);
+  if(done?.issued!==true)fail('organization_unavailable','The new recovery file could not be confirmed. Try again; no file was issued to you.',503);
   const {kid,...out}=file;return {recoveryFile:out};
  }
 }

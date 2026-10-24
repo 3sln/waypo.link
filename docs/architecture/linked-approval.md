@@ -418,3 +418,5 @@ These six questions are resolved by the user's accepted direction recorded in [D
 ## 16. Review reconciliation
 
 See [linked-approval-review](../release/linked-approval-review.md). Its findings are folded into the decisions above, and the findings that remain open are listed there.
+
+The web entry first shows “This device” after “Sign in with another device”. It preselects Phone or tablet for a touch device narrower than 768px, otherwise Computer. The person can change this choice; only Continue starts the browser security challenge and `/api/auth/linked/start`. No code request starts while the selector awaits confirmation.

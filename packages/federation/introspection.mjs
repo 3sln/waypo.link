@@ -314,7 +314,8 @@ async function boundedBody(request,max){const reader=request.body?.getReader();i
 /** RFC 7662 introspection for write-capable brokered contracts (§5.7, AMD-C8). Returns null for other paths.
  * Ports: `verifyToken(token, {audience, purposes, leeway})` (brokeringKeys.verify: published set + signed-while);
  * `account(owner)` -> {brokeredIntegrationAuth, brokeredIntrospect}; `federation(owner)` -> {brokeredGrantLive};
- * `clientKeys({clientId, jwksUri})` -> validated key set (ClientDirectory.resolveKeys); `replay`, `limiter`. */
+ * `clientKeys({clientId, jwksUri})` -> validated key set (ClientDirectory.resolveKeys); `replay`, `limiter`.
+ * `federation(owner).brokeredAssertionReplay` (when present and no explicit `replay`) holds assertion jtis durably. */
 export async function handleBrokeredIntrospection(request,{issuer,enabled=false,artefactVersions=false,verifyToken,account,federation,clientKeys,replay,limiter,clock=()=>Date.now(),crypto=globalThis.crypto}={}){
  const url=new URL(request.url);if(url.pathname!==INTROSPECTION_PATH||enabled!==true)return null;
  if(url.origin!==issuer)return reply({error:'invalid_request'},403);
@@ -324,7 +325,7 @@ export async function handleBrokeredIntrospection(request,{issuer,enabled=false,
  const params=new URLSearchParams(raw),names=[...params.keys()];
  if(new Set(names).size!==names.length||names.some(k=>!['token','token_type_hint','client_assertion_type','client_assertion','client_id'].includes(k))||!params.get('token'))return reply({error:'invalid_request'},400);
  const unauthorized=()=>reply({error:'invalid_client'},401,{'WWW-Authenticate':'Bearer realm="brokering-introspection"'}),inactive=()=>reply({active:false});
- replay??=sharedReplay;limiter??=sharedLimiter;
+ const explicitReplay=replay;limiter??=sharedLimiter;
  if(!limiter.admit('*'))return reply({error:'rate_limited'},429,{'Retry-After':'60'});
  if(params.get('client_assertion_type')!==CLIENT_ASSERTION_TYPE||!params.get('client_assertion'))return unauthorized();
  // §5.5 step 1 analogue: the token names the connection; it is looked up locally before any key is fetched.
@@ -334,7 +335,11 @@ export async function handleBrokeredIntrospection(request,{issuer,enabled=false,
  let auth;try{auth=await account(owner).brokeredIntegrationAuth({connection});}catch{auth=null;}
  if(!auth||params.has('client_id')&&params.get('client_id')!==auth.clientId)return unauthorized();
  let keys;try{keys=pinnedKeys(await clientKeys({clientId:auth.clientId,jwksUri:auth.jwksUri}),auth.thumbprints);}catch{keys=[];}if(!keys.length)return unauthorized();
- try{await verifyClientAssertion(params.get('client_assertion'),{clientId:auth.clientId,audience:`${issuer}${INTROSPECTION_PATH}`,keys,now:clock(),replay,crypto});}catch{return unauthorized();}
+ // Wargame 2026-10-23: the assertion jti is recorded durably in the owner's federation shard when the adapter's
+ // federation port offers it (Worker and Node do); the per-isolate memory cache remains only as a fallback.
+ let shard=null;try{shard=federation?.(owner);}catch{shard=null;}
+ const durable=typeof shard?.brokeredAssertionReplay==='function'?async(clientId,jti,until)=>{try{return await shard.brokeredAssertionReplay({clientId,jti,until})===true;}catch{return false;}}:null;
+ try{await verifyClientAssertion(params.get('client_assertion'),{clientId:auth.clientId,audience:`${issuer}${INTROSPECTION_PATH}`,keys,now:clock(),replay:explicitReplay??durable??sharedReplay,crypto});}catch{return unauthorized();}
  // X8-R4/W5-S5: the per-connection window is charged only after the integration authenticated, so forged tokens naming
  // a real connection cannot spend its budget and fail its writes closed. Unauthenticated work before this point is bounded
  // by the adapter's per-IP/subnet introspection class (packages/runtime/routes/federation.mjs) and the `*` ceiling.

@@ -1,5 +1,6 @@
 // PORT-6 destination intake. The cross-origin form is an interactive document handoff, never signup authority.
 import {TransferEnrollmentAction} from '../../identity/transfer-enrollment.mjs';
+import {requestAgeLocation} from '../../identity/age-policy.mjs';
 import {identity,json,body,bytesOf,flagGlobal,status,pseudonym,subnet,securePage} from './shared.mjs';
 const API=/^\/api\/transfer-in\/(check|start|status|cancel|retry|email-start|email-confirm)$/;
 export function allowedMethods(path){return API.test(path)?['POST']:null;}
@@ -28,7 +29,7 @@ export const stages={
   const origin=request.headers.get('Origin');if(origin!==env.APP_ORIGIN)return json({error:'invalid_origin'},403);
   const secret=env.ABUSE_HASH_KEY||env.KEY_ENCRYPTION_KEY,ip=request.headers.get('CF-Connecting-IP')||(local?'127.0.0.1':'unknown');
   if(!secret||typeof env.ABUSE?.consume!=='function'){if(!local)return json({error:'temporarily_unavailable'},503);}else for(const [kind,value,limit]of [['ip',ip,20],['network',subnet(ip),80]])if(!await env.ABUSE.consume('transfer-intake:'+kind+':'+await pseudonym(value,secret),{windowMs:60000,limit}))return json({error:'rate_limited'},429,{'Retry-After':'60'});
-  const input=await body(request,1048576),context={origin,remoteIP:local?'127.0.0.1':request.headers.get('CF-Connecting-IP')||'unknown',region:request.cf?.country||'unknown',ageLocation:request.cf?{country:request.cf.country,region:request.cf.regionCode}:undefined};
+  const input=await body(request,1048576),context={origin,remoteIP:local?'127.0.0.1':request.headers.get('CF-Connecting-IP')||'unknown',region:request.cf?.country||'unknown',ageLocation:requestAgeLocation(request,env)};
   const engine=await identity(env);try{const feed=engine.dispatch(new TransferEnrollmentAction(match[1],input,context,env.TRANSFER_IN_INTAKE));let result;feed.addEventListener('result',event=>{result=event.detail;},{once:true});await feed.next('complete');return json(result,200,{'Referrer-Policy':'no-referrer','Cache-Control':'private, no-store'});}catch(error){return json({error:error.code??'temporarily_unavailable',message:typeof error.code==='string'?error.message:'The move could not be completed.'},status(error));}finally{engine.dispose();}
  }
 };

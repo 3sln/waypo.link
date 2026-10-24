@@ -8,6 +8,8 @@ import {StorageError} from '../../storage/policy.mjs';
 import {BillingClosure,paidEvents} from '../../billing/closure.mjs';
 import {flagsFor} from './flags.mjs';
 import {lifecycleLog} from '../lifecycle-runner.mjs';
+import {operate} from '../../app/engine.mjs';
+import {ReconcileBillingChangeLock} from '../../billing/changes.mjs';
 // DX-4 guard: no new purchase or upgrade while an account deletion is scheduled or executing (§2.1).
 async function refuseWhileDeleting(c){if(['scheduled','executing'].includes((await c.metadata.get('deletion/request-v1'))?.state))throw new StorageError('deletion_scheduled','Account deletion is scheduled. Cancel it to change your plan.',409);}
 
@@ -21,6 +23,8 @@ export const methods={
   async setupBillingCheckout(owner,admission,input){await this.warm(owner);return new PaidSignupBilling(this.billing).checkout(owner,admission,input);},
   async setupBillingStatus(owner,admission){await this.warm(owner);return new PaidSignupBilling(this.billing).status(owner,admission);},
   async billingPortal(owner){return this.billing.portal(owner);},
+  // Operator reconcile path (review 2026-10-23): host-only RPC, never routed; runs the system-only engine operation.
+  async billingReconcileChangeLock(owner,{reason,force=false}={}){if(typeof owner!=='string'||await this.metadata.get('owner')!==owner)throw new StorageError('forbidden','Account owner mismatch.',403);if(typeof reason!=='string'||!reason||reason.length>200)throw new StorageError('invalid_request','An operator reason is required.',400);await this.warm(owner);return operate(this.engine,new ReconcileBillingChangeLock({actor:{kind:'system',owner,reason},input:{force:force===true}}));},
   async billingWebhookVerified(owner,event){if(event.owner!==owner)throw new StorageError('forbidden','Billing account mismatch.',403);if(await this.metadata.get('owner')!==owner)return {accepted:true,ignored:true};
     // An organization's account is the Polar customer for organization plans: its writer reconciles them (packages/orgs/ownership.mjs).
     if((await this.metadata.get('org/record-v1'))?.kind==='organization')return this.orgsBillingWebhook(owner,event);
@@ -38,5 +42,6 @@ export const rpc={
  setupBillingCheckout:{},
  setupBillingStatus:{lifecycle:'suspended'},
  billingPortal:{},
+ billingReconcileChangeLock:{lifecycle:'purging'},
  billingWebhookVerified:{lifecycle:'purging'},
 };

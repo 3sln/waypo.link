@@ -19,13 +19,15 @@ const api={captureContext:()=>({owner:'owner',sessionContext:'ctx'}),get(path){r
  if(suffix==='membership')return view(org);
  if(suffix==='requests')return {requests:structuredClone(org===memberId?memberRequests:requests)};
  // Paged listing: the first page has a cursor; the next page adds one member and ends.
- if(suffix.startsWith('members?')){return new URLSearchParams(suffix.slice(8)).get('after')==='page-2'?{members:[{id:'member-more',principal:{iss:'https://provider.example',sub:'more'},grants:[]}],next:null,requests:[],requestsNext:null}:{members:[],next:null,requests:[]};}
+ if(suffix.startsWith('members?')){return new URLSearchParams(suffix.slice(8)).get('after')==='page-2'?{members:[{id:'member-more',handle:'joiner',principal:{iss:'https://provider.example',sub:'more'},grants:[]}],next:null,requests:[],requestsNext:null}:{members:[],next:null,requests:[]};}
  if(suffix==='members'){if(fixture.deleting)throw Object.assign(Error('This organization is scheduled for deletion.'),{status:409,code:'organization_deletion_pending'});return {members,requests,next:fixture.paged===false?null:'page-2',requestsNext:null};}
- if(suffix==='audit')return {entries:[{action:'rename',reason:'Audit <script>alert(1)</script>'}]};
+ if(suffix==='audit')return {entries:[{action:'rename',reason:'Audit <script>alert(1)</script>'},{seq:2,action:'member-invitation-revoked',principal:{iss:'https://provider.example',sub:'owner'}},{seq:3,action:'member-accepted',principal:{iss:'https://provider.example',sub:'more'}}]};
+ if(suffix==='name'&&fixture.refuseRename)throw Object.assign(Error('conflict'),{status:409,code:'organization_conflict'});
  if(suffix==='name'){organization={...organization,name:body.name,revision:organization.revision+1};return {};}
  if(suffix==='label'){organization={...organization,label:body.label,revision:organization.revision+1};return {};}
  if(suffix==='recovery-file'){window.reissued=(window.reissued??0)+1;return {recoveryFile:{fileName:'organization-recovery-2.json',content:JSON.stringify({privateKey:'fixture-private-key-2',recoveryToken:'token-2'}),recoveryToken:'token-2'}};}
  if(suffix==='invitee')return {invitee:{iss:'https://person.example',sub:'44444444-4444-4444-8444-444444444444',handle:body.handle}};
+ if(suffix==='invitation-preview'&&fixture.previewInvalid)throw Object.assign(Error('not_found'),{status:404,code:'not_found'});
  if(suffix==='invitation-preview')return {organization:{name:'Join Target Ltd',label:'company',handle:null},expiresAt:Date.UTC(2026,10,1),bound:false,member:false};
  if(suffix==='invitation-revoke')return {revoked:true,invitation:body.invitation};
  if(suffix==='invitations')return {invitation:'invite-1',url:'https://provider.example/orgs/'+id+'/invitation?bindle_meta=e30.e30.sig',expiresAt:Date.UTC(2026,10,1),invitee:body.invitee??null,grants:body.grants};
@@ -35,9 +37,9 @@ const api={captureContext:()=>({owner:'owner',sessionContext:'ctx'}),get(path){r
  if(suffix==='preferences'&&method==='GET')return {preferences:structuredClone(preferences)};
  if(suffix==='preferences'){const p=preferences.find(x=>x.fragment===body.fragment);if(!p||p.revision!==body.expectedRevision)throw Object.assign(Error('stale'),{status:409,code:'stale_consent'});p.values=structuredClone(body.values);p.revision='r'+(Number(p.revision.slice(1))+1);return {fragment:p.fragment,revision:p.revision};}
  if(path==='/api/orgs/'+id)return {...organization,state:fixture.deleting?'deletion-scheduled':'active',deletion:fixture.deleting?{notBefore:Date.UTC(2026,10,20)}:null};return {};}};
-const browser={secret:key=>secrets.get(key),storeSecret:(key,value)=>value===null?secrets.delete(key):secrets.set(key,value),download:(name,content)=>window.downloads.push({name,content}),focus:selector=>requestAnimationFrame(()=>document.querySelector(selector)?.focus())};const engine=new Engine({providers:{state:State,api:Provider.fromSingleton(api),browser:Provider.fromSingleton(browser),organizationsConsole:OrganizationsProvider,recoveryFile:Provider.fromSingleton({encrypt:async payload=>({encrypted:true,payload}),decrypt:async value=>JSON.parse(value).payload})}});
+const browser={secret:key=>secrets.get(key),storeSecret:(key,value)=>value===null?secrets.delete(key):secrets.set(key,value),download:(name,content)=>window.downloads.push({name,content}),focus:selector=>requestAnimationFrame(()=>document.querySelector(selector)?.focus())};const engine=new Engine({providers:{state:State,api:Provider.fromSingleton(api),browser:Provider.fromSingleton(browser),organizationsConsole:OrganizationsProvider,recoveryFile:Provider.fromSingleton({encrypt:async(payload,questions,answers)=>({encrypted:true,payload,check:answers?.[0]}),decrypt:async(value,answers)=>{const file=JSON.parse(value);if(file.check!==undefined&&answers?.[0]!==file.check)throw Error('OperationError');return file.payload;}})}});
 await engine.container.use({state:{write:true}},({state})=>state.transition(s=>Object.assign(s,{loading:false,locale:options.locale,session:{account:{id:'owner'},sessionContext:'ctx'},config:{origin:'https://provider.example',organizationsEnabled:options.enabled},beamGeneration:1})));
-const root=document.getElementById('app'),paint=async()=>{const s=await engine.container.use(['state'],({state})=>state.snapshot());dodo.reconcile(root,[organizations(s)]);};engine.feed.addEventListener('browser-state-updated',()=>{window.painting=(window.painting??Promise.resolve()).then(paint);});root.addEventListener('3sln-intent',e=>{if(e.detail.kind==='organizations')window.pending=engine.dispatch(organizationsAction(e.detail)).next('complete');});window.act=(action,detail={})=>window.pending=engine.dispatch(new OrganizationsIntent({action,...detail})).next('complete');await paint();document.documentElement.lang=options.locale;window.ready=true;`;
+const root=document.getElementById('app'),paint=async()=>{const s=await engine.container.use(['state'],({state})=>state.snapshot());dodo.reconcile(root,[organizations(s)]);};engine.feed.addEventListener('browser-state-updated',()=>{window.painting=(window.painting??Promise.resolve()).then(paint);});root.addEventListener('3sln-intent',e=>{if(e.detail.kind==='organizations')window.pending=engine.dispatch(organizationsAction(e.detail)).next('complete');});window.patch=async p=>{await engine.container.use({state:{write:true}},({state})=>state.transition(s=>Object.assign(s,p)));engine.feed.dispatchEvent(new Event('browser-state-updated'));};window.act=(action,detail={})=>window.pending=engine.dispatch(new OrganizationsIntent({action,...detail})).next('complete');await paint();document.documentElement.lang=options.locale;window.ready=true;`;
 test.before(async()=>{server=createServer(async(req,res)=>{try{const path=new URL(req.url,'http://127.0.0.1').pathname;if(path==='/fixture'){res.setHeader('Content-Type','application/json');res.end(JSON.stringify(options));return;}if(path==='/'){res.setHeader('Content-Type','text/html');res.end('<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"></head><body style="margin:0"><div id="app"></div><script type="module" src="/boot.mjs"></script></body></html>');return;}if(path==='/boot.mjs'){res.setHeader('Content-Type','text/javascript');res.end(boot);return;}const file=resolve(project,'.'+path);if(!file.startsWith(project+'/')||!['/apps/web/','/packages/','/vendor/'].some(p=>path.startsWith(p))){res.writeHead(404);res.end();return;}res.setHeader('Content-Type',extname(file)==='.css'?'text/css':'text/javascript');res.end(await readFile(file));}catch(error){res.writeHead(500);res.end(error.message);}});await new Promise(r=>server.listen(0,'127.0.0.1',r));origin='http://127.0.0.1:'+server.address().port;for(const [name,type]of Object.entries({chromium,firefox}))browsers[name]=await type.launch({headless:true});});
 test.after(async()=>{await Promise.all(Object.values(browsers).map(b=>b.close()));await new Promise(r=>server?.close(r));});
 async function open(name,{locale='en',colorScheme='light',width=390,enabled=true}={}){options={locale,enabled};const page=await browsers[name].newPage({viewport:{width,height:900},colorScheme});page.setDefaultTimeout(5000);page.errors=[];page.on('pageerror',e=>page.errors.push(e.message));await page.goto(origin);await page.waitForFunction(()=>window.ready);return page;}
@@ -130,7 +132,8 @@ for(const name of ['chromium','firefox'])for(const locale of ['en','es'])for(con
  const create=page.locator('#org-create').locator('..');assert.equal(await create.locator('form').count(),0,'no dead-end form');assert.match(await create.textContent(),es?/aún no está disponible/:/isn’t available for your account/);
  await page.evaluate(()=>{window.fixture.creation='allowlisted';});await page.evaluate(()=>window.act('reload'));await settle(page);assert.match(await create.textContent(),es?/sin pago/:/without a payment/);assert.doesNotMatch(await create.textContent(),es?/lista de pago autorizada/:/paid allowlist/);
  await create.locator('input[name="name"]').fill('Fixture organization');await submit(page,'create');assert.equal(await page.locator('#org-recovery').count(),1);
- assert.deepEqual(await page.evaluate(()=>Object.entries(localStorage)),[['3sln-org-recovery-unsaved:owner',JSON.stringify(['11111111-1111-4111-8111-111111111111'])]],'only the organization id is stored');
+ assert.deepEqual(await page.evaluate(()=>Object.entries(localStorage).filter(([k])=>k!=='3sln-org-recovery-active:owner')),[['3sln-org-recovery-unsaved:owner',JSON.stringify(['11111111-1111-4111-8111-111111111111'])]],'only the organization id is stored');
+ assert.deepEqual(await page.evaluate(()=>Object.values(JSON.parse(localStorage.getItem('3sln-org-recovery-active:owner'))).map(row=>Object.keys(row).sort())),[['at','issue','saving','tab']],'the tab claim holds no file, passphrase or key material');
  // Leave guard: stay, then leave without saving.
  await page.evaluate(()=>window.act('guard',{pending:{kind:'navigate',view:'inbox'}}));await settle(page);const guard=page.locator('#org-leave-guard').locator('..');assert.equal(await guard.getAttribute('role'),'alert');await submit(page,'guard-cancel');assert.equal(await page.locator('#org-leave-guard').count(),0);
  await page.evaluate(()=>window.act('guard',{pending:{kind:'navigate',view:'inbox'}}));await settle(page);await submit(page,'abandon-recovery');assert.equal(await page.locator('#org-recovery').count(),0);
@@ -139,7 +142,7 @@ for(const name of ['chromium','firefox'])for(const locale of ['en','es'])for(con
  const banner=page.locator('[id^="org-unsaved-"]').first().locator('..');assert.match(await banner.textContent(),es?/sin guardar/:/not saved/);await submit(page,'regenerate-recovery');assert.equal(await page.evaluate(()=>window.reissued),1);assert.equal(await page.locator('#org-recovery').count(),1);
  const recovery=page.locator('#org-recovery').locator('..');await submit(page,'download-recovery');await recovery.locator('input[name="passphrase"]').fill(await recovery.locator('code').textContent());await submit(page,'verify-recovery');
  await submit(page,'confirm-recovery');assert.equal(await page.locator('#org-recovery').count(),1,'unticked confirmation does not finish');assert.equal(await recovery.locator('.org-check-error').isVisible(),true,'the unticked box explains itself');
- await recovery.locator('input[name="confirm"]').check();await submit(page,'confirm-recovery');assert.equal(await page.locator('#org-recovery').count(),0);assert.equal(await page.locator('[id^="org-unsaved-"]').count(),0);assert.deepEqual(await page.evaluate(()=>Object.keys(localStorage)),[]);
+ await recovery.locator('input[name="confirm"]').check();await submit(page,'confirm-recovery');assert.equal(await page.locator('#org-recovery').count(),0);assert.equal(await page.locator('[id^="org-unsaved-"]').count(),0);assert.deepEqual(await page.evaluate(()=>Object.keys(localStorage).filter(k=>k!=='3sln-org-recovery-active:owner')),[]);assert.equal(await page.evaluate(()=>Object.values(JSON.parse(localStorage.getItem('3sln-org-recovery-active:owner')??'{}')).some(row=>row.saving)),false,'no claim survives finishing');
  assert.match(await page.locator('.org-console [role=status]').first().textContent(),es?/guardado/:/saved/);
  // Join screen from an invitation link: what joining means, explicit consent, then the joined notice.
  await page.evaluate(()=>window.act('select',{org:null}));await settle(page);
@@ -156,3 +159,70 @@ for(const name of ['chromium','firefox'])for(const locale of ['en','es'])for(con
  assert.doesNotMatch(await page.locator('.org-console').innerText(),rawCode,'no raw codes are shown');
  await a11y(page);assert.deepEqual(page.errors,[]);
 }finally{await page.close();}});
+
+// 2026-10-23 organization console UX pass 2 (provisional): H4, M1–M4 and L1–L11 in the real browsers.
+const focusedId=page=>page.evaluate(()=>document.activeElement?.id??'');
+// Two tabs share one browser context (and so localStorage).
+async function openShared(name,{locale,colorScheme,width}){options={locale,enabled:true};const context=await browsers[name].newContext({viewport:{width,height:900},colorScheme}),tab=async()=>{const page=await context.newPage();page.setDefaultTimeout(5000);page.errors=[];page.on('pageerror',e=>page.errors.push(e.message));await page.goto(origin);await page.waitForFunction(()=>window.ready);return page;};const page=await tab();return {context,page,tab};}
+for(const name of ['chromium','firefox'])for(const locale of ['en','es'])for(const colorScheme of ['light','dark'])for(const width of [390,1280])test('ORG UX pass 2 '+[name,locale,colorScheme,width].join(' '),async()=>{const {context,page,tab}=await openShared(name,{locale,colorScheme,width});let other=null;try{
+ const es=locale==='es';await page.evaluate(()=>localStorage.clear());await page.evaluate(()=>window.act('reload'));await settle(page);
+ // L7: same-named organizations can be told apart by handle.
+ const options=await page.locator('nav select option').allTextContents();assert.ok(options.some(o=>o.includes('(@team.example)')),options.join('|'));assert.ok(options.some(o=>o.includes('(@club.example)')));
+ // L11: the recovery progress is a read-only indicator; M2: checking first asks for the download, a wrong passphrase is a mismatch.
+ await page.locator('#org-create').locator('..').locator('input[name="name"]').fill('Fixture organization');await submit(page,'create');
+ const recovery=page.locator('#org-recovery').locator('..'),steps=recovery.locator('ol.org-steps li');
+ assert.deepEqual(await steps.evaluateAll(els=>els.map(e=>{const c=getComputedStyle(e);return [c.borderTopWidth,c.borderLeftWidth,c.borderTopLeftRadius,c.cursor];})),[['0px','0px','0px','default'],['0px','0px','0px','default'],['0px','0px','0px','default']]);
+ assert.equal(await recovery.locator('ol.org-steps button,ol.org-steps a,ol.org-steps [tabindex]').count(),0);
+ // M3: a second tab of the same browser sees the save in progress and is not offered a replacement.
+ other=await tab();await other.evaluate(()=>window.act('reload'));await settle(other);
+ const banner=other.locator('[id^="org-unsaved-"]').first().locator('..');assert.match(await banner.textContent(),es?/otra pestaña/:/another tab/);assert.equal(await other.locator('[data-org-action="regenerate-recovery"]').count(),0);
+ await recovery.locator('input[name="passphrase"]').fill('not the passphrase');await submit(page,'verify-recovery');assert.match(await page.locator('.org-console [role=alert]').textContent(),es?/descarga el archivo cifrado/:/Download the encrypted file first/);
+ await submit(page,'download-recovery');assert.equal(await page.locator('.org-console [role=alert]').count(),0,'downloading clears the message');
+ await recovery.locator('input[name="passphrase"]').fill('not the passphrase');await submit(page,'verify-recovery');assert.match(await page.locator('.org-console [role=alert]').textContent(),es?/no abre el archivo/:/doesn’t open the downloaded file/);
+ await recovery.locator('input[name="passphrase"]').fill(await recovery.locator('code').textContent());await submit(page,'verify-recovery');assert.equal(await page.locator('.org-console [role=alert]').count(),0,'a correct check clears the mismatch');
+ // M3: if another tab rotated the file anyway, Finish refuses with a clear message.
+ await other.evaluate(()=>{const key='3sln-org-recovery-active:owner',all=JSON.parse(localStorage.getItem(key));for(const id of Object.keys(all))all[id]={issue:'rotated-elsewhere',at:Date.now()};localStorage.setItem(key,JSON.stringify(all));});
+ await recovery.locator('input[name="confirm"]').check();await submit(page,'confirm-recovery');assert.match(await page.locator('.org-console [role=alert]').textContent(),es?/otra pestaña/:/another tab/);assert.equal(await page.locator('#org-recovery').count(),0);
+ await other.close();other=null;
+ // M4: an owner whose credentials are under 7 days old sees when a new file becomes available instead of a dead button.
+ await page.evaluate(()=>window.patch({data:{recovery:{organizationReissueEligibleAt:Date.UTC(2099,0,15)}}}));await settle(page);
+ const unsaved=page.locator('[id^="org-unsaved-"]').first().locator('..');assert.match(await unsaved.textContent(),es?/a partir del .*2099/:/from .*2099/);assert.equal(await page.locator('[data-org-action="regenerate-recovery"]').count(),0);
+ await page.evaluate(()=>window.patch({data:null}));await settle(page);assert.equal(await page.locator('[data-org-action="regenerate-recovery"]').count(),1);
+ await unsaved.locator('summary').click();await unsaved.locator('details input[name="confirm"]').check();await submit(page,'dismiss-recovery');
+ // L1: Finish-like flows put focus somewhere sensible; here the invitation share heading and the first loaded member.
+ const members=page.locator('#org-members').locator('..');await submit(page,'invite');assert.equal(await focusedId(page),'org-invitation');
+ // L3: switching context clears notices.
+ assert.equal(await page.locator('.org-console .org-status[role=status]').count()>0,true);await page.locator('nav select').selectOption('');await settle(page);assert.equal(await page.locator('.org-console p.org-status[aria-live]').count(),0);
+ await page.locator('nav select').selectOption(org);await settle(page);
+ await submit(page,'more-members');assert.equal(await focusedId(page),'org-member-1');
+ // L6: audit wording: a proper label for link withdrawal, joiners by their handle once known, "by you" in lowercase.
+ await submit(page,'audit');{const text=await page.locator('#org-audit').locator('..').textContent();assert.match(text,es?/Enlace de invitación retirado · por ti/:/Invitation link withdrawn · by you/);assert.match(text,es?/Miembro unido · @joiner/:/Member joined · @joiner/);assert.doesNotMatch(text,/by You|por Tú/);}
+ // M1: no admin checkbox for an existing non-admin member; the invitation flow is offered instead and keeps resource edits possible.
+ const row=members.locator('article').filter({has:page.locator('details')}).first();await row.locator('summary').click();const grant=row.locator('details form').first();
+ assert.equal(await grant.locator('input[name="admin"]').count(),0);assert.match(await grant.textContent(),es?/invitación de administración/:/admin invitation/);assert.equal(await grant.locator('input[name="resource"]').count(),1);
+ await grant.locator('[data-org-action="invitee-member"]').click();await settle(page);assert.equal(await focusedId(page),'org-invite');assert.equal(await members.locator('input[name="audience"][value="bound"]').isChecked(),true);
+ // H4: a refused rename resets the form to the server's name, leaves reads working and later changes allowed.
+ await page.evaluate(()=>{window.fixture.refuseRename=true;});const details=page.locator('#org-details').locator('..');const before=await details.locator('input[name="name"]').inputValue();
+ await details.locator('input[name="name"]').fill('Rejected name');await submit(page,'rename');assert.match(await page.locator('.org-console [role=alert]').textContent(),es?/al mismo tiempo/:/at the same time/);
+ assert.equal(await page.locator('#org-details').locator('..').locator('input[name="name"]').inputValue(),before,'the rejected input is discarded');
+ await submit(page,'audit');const audit=page.locator('#org-audit').locator('..');assert.match(await audit.textContent(),/Audit <script>/,'reads are not blocked after a refusal');
+ await page.evaluate(()=>{window.fixture.refuseRename=false;});await page.locator('#org-details').locator('..').locator('input[name="name"]').fill('Accepted name');await submit(page,'rename');assert.equal(await page.locator('#org-details').textContent(),'Accepted name');
+ // L10: every checkbox or radio sits in a label at least 44px tall.
+ await page.locator('#org-details').locator('..').locator('details summary').first().click();
+ assert.deepEqual(await page.locator('.org-console input[type=checkbox],.org-console input[type=radio]').evaluateAll(els=>els.filter(e=>e.offsetParent&&(!e.closest('label')||e.closest('label').getBoundingClientRect().height<44)).map(e=>e.name)),[]);
+ // L2: while the step-up card is open the console is inert, and says why.
+ await page.evaluate(()=>window.patch({stepUp:{id:'s',password:true}}));await settle(page);assert.equal(await page.locator('.org-console [inert]').count(),1);assert.match(await page.locator('.org-modal-note').textContent(),es?/Confirma que eres tú/:/Confirm it’s you/);
+ assert.equal(await page.locator('nav select').evaluate(e=>!!e.closest('[inert]')),true);await page.evaluate(()=>window.patch({stepUp:null}));await settle(page);assert.equal(await page.locator('.org-console [inert]').count(),0);
+ // L3: an organization that does not confirm the membership leaves a clean not-found state, without "Acting for".
+ await page.evaluate(id=>window.act('open',{org:id}),outsider);await settle(page);assert.match(await page.locator('.org-acting').textContent(),es?/Actuando como/:/Acting as/);assert.match(await page.locator('.org-console [role=alert]').textContent(),es?/no está disponible/:/not available to you/);
+ // L4: reopening an invitation to a joined organization says so; L5: an unusable one shows no claims or terms.
+ const token=aud=>'e30.'+Buffer.from(JSON.stringify({aud:'https://provider.example/identity/'+aud,exp:2000000000,jti:'j'})).toString('base64url')+'.sig';
+ await page.evaluate(t=>window.act('entry',{org:'11111111-1111-4111-8111-111111111111',invitation:t}),token(org));await settle(page);const join=page.locator('#org-join').locator('..');
+ assert.match(await join.textContent(),es?/Ya eres miembro/:/You’re already a member/);assert.equal(await join.locator('[data-org-action="accept-entry"]').count(),0);assert.doesNotMatch(await join.textContent(),es?/Qué significa unirte/:/What joining means/);
+ await submit(page,'open-joined');assert.equal(await page.locator('#org-join').count(),0);assert.equal(await page.locator('#org-details').count(),1);
+ await page.evaluate(()=>{window.fixture.previewInvalid=true;});await page.evaluate(()=>window.act('select',{org:null}));await settle(page);
+ await page.evaluate(t=>window.act('entry',{org:'55555555-5555-4555-8555-555555555555',invitation:t}),token('55555555-5555-4555-8555-555555555555'));await settle(page);
+ const bad=await page.locator('#org-join').locator('..').textContent();assert.match(bad,es?/no se puede usar/:/can’t be used/);assert.doesNotMatch(bad,es?/El enlace caduca|Qué significa unirte/:/Link expires|What joining means/);
+ assert.doesNotMatch(await page.locator('.org-console').innerText(),rawCode,'no raw codes are shown');await a11y(page);assert.deepEqual(page.errors,[]);
+ await page.screenshot({path:'/private/tmp/claude-501/-Users-raystubbs-Projects--3sln-3sln-me/8f763b0e-277c-4c0c-b7f0-8c3d4fc70450/scratchpad/ux2/'+[name,width,colorScheme,locale].join('-')+'.png',fullPage:true}).catch(()=>{});
+}finally{await context.close();}});

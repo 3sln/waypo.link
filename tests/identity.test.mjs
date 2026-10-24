@@ -161,7 +161,7 @@ test('email linking binds owner session, tokens stay in mail only, confirmation 
   await service.emailLoginStart({ email: 'Alice@mail.example', turnstileToken: 'verified' }, context);
   assert.equal(messages.length, 1, 'verified contact alone cannot issue login mail');
   await service.configureEmailLogin({ enabled: true }, ownerContext);
-  await service.emailLoginStart({ email: 'Alice@mail.example', turnstileToken: 'verified' }, context);
+  await service.emailLoginStart({ email: 'Alice@mail.example', turnstileToken: 'verified' }, context); await service.settleBackground();
   const loginToken = messages.at(-1).token;
   await assert.rejects(service.emailLoginConfirm({ token: loginToken, confirmed: false }, context), { code: 'confirmation_required' });
   const login = await service.emailLoginConfirm({ token: loginToken, confirmed: true }, context); assert.equal(login.account.handle, 'alice');
@@ -358,7 +358,7 @@ test('verified contact requires explicit email-login opt-in; opt-out invalidates
   const start = { email: 'owner@mail.example', turnstileToken: 'verified' };
   await service.emailLoginStart(start, context); assert.equal(messages.length, 1);
   await assert.rejects(service.configureEmailLogin({ enabled: true }, { ...ownerContext, csrfToken: 'wrong' }), { code: 'csrf' });
-  await service.configureEmailLogin({ enabled: true }, ownerContext); await service.emailLoginStart(start, context); const pendingToken = messages.at(-1).token;
+  await service.configureEmailLogin({ enabled: true }, ownerContext); await service.emailLoginStart(start, context); await service.settleBackground(); const pendingToken = messages.at(-1).token;
   await service.configureEmailLogin({ enabled: false }, ownerContext);
   await assert.rejects(service.emailLoginConfirm({ token: pendingToken, confirmed: true }, context), { code: 'unauthorized' });
   await service.configureEmailLogin({ enabled: true }, ownerContext);

@@ -55,12 +55,13 @@ const bundledURLs=new Set([...result.vendor.urlFor.values(),...Object.values(res
 // absolute URLs and accidental server imports as well as unmapped packages.
 // Checking every shipped module also covers opt-in modules and lazy screens.
 // Returns the staged source files the graph actually reaches.
-async function verifyBrowserGraph({entryPoints,urlOf,sourceOf,imports,bundled=new Set(),label}){
+const staticImports=new Map(),moduleImports=new Map();
+async function verifyBrowserGraph({entryPoints,urlOf,sourceOf,imports,bundled=new Set(),label,emit=false,shared=new Set()}){
   const checked=await checkModules({
     absWorkingDir:root,
     entryPoints,
     bundle:true,write:false,format:'esm',platform:'browser',metafile:true,
-    outdir:join(root,'.output','graph-check'),logLevel:'silent',
+    outdir:join(root,'.output','graph-check'),logLevel:'silent',minify:emit,
     plugins:[{name:'verify-complete-browser-import-map',setup(builder){
       builder.onResolve({filter:/.*/},args=>{
         if(args.kind==='entry-point')return {path:args.path};
@@ -73,7 +74,7 @@ async function verifyBrowserGraph({entryPoints,urlOf,sourceOf,imports,bundled=ne
           key=url.pathname+url.search+url.hash;
         }
         const mapped=imports[key],source=sourceOf.get(mapped);
-        if(source)return {path:source};
+        if(source)return emit&&shared.has(source)?{path:mapped,external:true}:{path:source};
         // These exact outputs were already bundled with the browser platform by
         // js-tools, with dependency closure checked by its esbuild invocation.
         if(mapped&&bundled.has(mapped))return {path:mapped,external:true};
@@ -81,9 +82,38 @@ async function verifyBrowserGraph({entryPoints,urlOf,sourceOf,imports,bundled=ne
       });
     }}],
   });
+  if(emit)return checked.outputFiles[0].contents;
+  if(label==='app')for(const [file,input] of Object.entries(checked.metafile.inputs)){
+    moduleImports.set(resolve(root,file),input.imports.filter(item=>!item.external).map(item=>resolve(root,item.path)));
+    staticImports.set(resolve(root,file),input.imports.filter(item=>item.kind==='import-statement'&&!item.external).map(item=>resolve(root,item.path)));
+  }
   return Object.keys(checked.metafile.inputs).map(input=>resolve(root,input)).filter(file=>file.startsWith(sourceRoot+'/'));
 }
 await verifyBrowserGraph({entryPoints:[...urlForSource.keys()],urlOf:urlForSource,sourceOf:sourceForURL,imports:result.imports,bundled:bundledURLs,label:'app'});
+
+// Bundle the ordinary composition root using exactly the verified browser resolver.
+// Preserve the authored import-map aliases and standalone external worker/SDK identities.
+const releaseFile=resolve(sourceRoot,'apps/web/src/release.mjs');
+// Modules already evaluated by the entry must keep a single browser identity.
+// In particular, onboarding-entry holds a one-use capability captured before
+// the dynamic import; bundling a second copy would lose that capability.
+const sharedEntryModules=new Set();
+const retainEntry=file=>{if(sharedEntryModules.has(file))return;sharedEntryModules.add(file);for(const child of staticImports.get(file)??[])retainEntry(child);};
+retainEntry(resolve(sourceRoot,'apps/web/src/main.mjs'));
+// Keep the recovery provider's dynamic import split at its existing public URL.
+sharedEntryModules.add(resolve(sourceRoot,'packages/recovery/index.mjs'));
+const releaseBytes=await verifyBrowserGraph({entryPoints:[releaseFile],urlOf:urlForSource,sourceOf:sourceForURL,imports:result.imports,bundled:bundledURLs,label:'console bundle',emit:true,shared:sharedEntryModules});
+const releaseURL=assetURL(`console.${shortHash(Buffer.from(releaseBytes))}.mjs`),oldReleaseURL=urlForSource.get(releaseFile);
+await writeFile(join(outputRoot,releaseURL.slice(1)),releaseBytes);
+for(const [key,value] of Object.entries(result.imports))if(value===oldReleaseURL)result.imports[key]=releaseURL;
+await rm(join(outputRoot,oldReleaseURL.slice(1)),{force:true});
+// Every independently shipped module is a potential entry. Only main may
+// reach the release root; otherwise its standalone dependencies could create
+// a second Engine alongside the composition bundle in one document.
+for(const [file,dependencies] of moduleImports){
+  if(file!==resolve(sourceRoot,'apps/web/src/main.mjs')&&dependencies.includes(releaseFile))throw Error(`Only main.mjs may import release.mjs: ${posix(relative(sourceRoot,file))}`);
+}
+urlForSource.set(releaseFile,releaseURL);staticImports.set(releaseFile,[]);
 
 // ---- Islands shell for the dedicated embed origin (embed islands §3; components profile §3) ----
 // The shell is a cross-origin document with `script-src 'self'` and Trusted Types, so it cannot run the app's wire-up.
@@ -132,7 +162,7 @@ await writeFile(join(outputRoot,'embed','sw.js'),swSource.replace(generation,()=
 const {gzipSync}=await import('node:zlib');const shellBytes=gzipSync(probe).length;
 
 // Reuse js-tools' bootstrap generator with the completed map. No app/module
-// source is rewritten or bundled. Remove its superseded bootstrap files so the
+// source is rewritten. Remove its superseded bootstrap files so the
 // service worker cannot cache an incomplete graph alongside the final one.
 for(const [name,entry] of Object.entries(result.entries)){
   await rm(join(outputRoot,entry.wireup.slice(1)),{force:true});
@@ -141,6 +171,14 @@ for(const [name,entry] of Object.entries(result.entries)){
   await writeFile(join(outputRoot,entry.wireup.slice(1)),source);
 }
 
+// Explicit static closures avoid serial discovery; dynamic routes remain opt-in.
+// The ordinary composition root is warmed by main only on console routes.
+function modulePreloads(page){
+  const seen=new Set(),urls=new Set();
+  const visit=file=>{if(seen.has(file))return;seen.add(file);const url=urlForSource.get(file);if(url)urls.add(url);for(const child of staticImports.get(file)??[])visit(child);};
+  visit(resolve(sourceRoot,'apps/web'+page.module));
+  return [...urls].sort().map(url=>`<link rel="modulepreload" href="${url}">`).join('\n');
+}
 const importMap={imports:result.imports};
 const importMapCSP='sha256-'+createHash('sha256').update(JSON.stringify(importMap)).digest('base64');
 
@@ -153,7 +191,10 @@ for(const page of pages){
   let html=await readFile(page.source,'utf8');
   const oldScript=`<script type="module" src="${page.module}"></script>`;
   if(!html.includes(oldScript))throw Error(`Expected application entry script missing from ${page.source}`);
-  html=html.replace(oldScript,`<script src="${entry.wireup}"></script>`);
+  // The classic bootstrap installs the authorized map before modulepreload
+  // parses dependencies; it defers execution until the body is available.
+  html=html.replace(oldScript,'');
+  html=html.replace('</head>',`<script src="${entry.wireup}"></script>\n${modulePreloads(page)}\n</head>`);
   if(entry.css)html=html.replace('href="/styles.css"',`href="${entry.css}"`);
   html=html.replace('</head>',`<meta name="bindle-import-map-csp" content="${importMapCSP}"></head>`);
   if(/<script\b[^>]*type=["']module["']/i.test(html))throw Error(`Unmanaged module script in ${page.source}`);

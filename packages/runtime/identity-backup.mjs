@@ -30,6 +30,9 @@ export function identityBackupPort({config,accounts}){
     async reissue(account,recoveryToken,{rotation=null,keep=[],actor}={}){const authority=load();const issued=await call(account.id,'recoveryReissuePrepare',[{rotation,keep,actor}]);return {backup:await createIdentityBackup({issuer:config.APP_ORIGIN,entity:account.id,keychain:issued.keychain,recoveryToken,warning:WARNING},authority),rotation:issued.rotation,transferPending:issued.transferPending===true};},
     /** Phase 2's account gate, just before the identity commit: re-checks and cancels a live transfer-out. */
     async reissueCommit(owner,{actor,kids}={}){load();return call(owner,'recoveryReissueCommit',[{actor,kids}]);},
+    /** Cancelling a committed reissue (cooling-off window): the account single writer rotates the signing key away from
+     * the voided file's kid and keeps the restored file's kid bound (P15). Resolves {rotation}. */
+    async reissueCancel(owner,{voided,restored=null}={}){return call(owner,'recoveryReissueCancel',[{voided,restored}]);},
     async certificate(account,handle,issuedAt){return createNameAssignment({issuer:config.APP_ORIGIN,entity:account.id,handle,assignmentId:account.assignmentId||account.nameAssignmentId,issuedAt},load());},
     /** `expectedKid`: the signing kid the identity record bound to this credential at issuance, when it recorded one.
      * The file must hold the current keys, or a retired signing key still bound to an issued file (P15: the identity

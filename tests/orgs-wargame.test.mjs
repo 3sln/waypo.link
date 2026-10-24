@@ -234,14 +234,31 @@ test('follow-up 6: an escalated claim closes after its deadline and every order 
 }finally{await w.close();}});
 test('follow-up 6: an operator can close an escalated claim or let it proceed',async()=>{
  {const {w,claim}=await escalatedClaim();try{
-  await rejects(w.run('orgs.claim-resolve',C,{claim:claim.id,decision:'close'}),'forbidden');
-  await w.run('orgs.claim-resolve','system',{claim:claim.id,decision:'close',note:'Owner verified by support'});await w.drain();
+  await rejects(w.run('orgs.claim-resolve',C,{claim:claim.id,decision:'close',operator:'0f000000-0000-4000-8000-000000000001'}),'forbidden');
+  await w.run('orgs.claim-resolve','system',{claim:claim.id,decision:'close',note:'Owner verified by support',operator:'0f000000-0000-4000-8000-000000000001',assertion:await w.operatorAssertion('0f000000-0000-4000-8000-000000000001',{process:claim.id,decision:'close'})});await w.drain();
   const r=await w.summary();assert.equal(r.billing.claim.closedReason,'operator-closed');assert.ok(w.polar.effects.refunds.some(x=>x.subscription===claim.payment.subscriptionId));
  }finally{await w.close();}}
  {const {w,claim}=await escalatedClaim();try{
-  await w.run('orgs.claim-resolve','system',{claim:claim.id,decision:'proceed'});await w.sync();
-  assert.equal((await w.summary()).ownerOfRecord.sub,C,'an operator-approved claim takes effect on the next fresh step');
-  await rejects(w.run('orgs.claim-resolve','system',{claim:claim.id,decision:'close'}),'not_found');
+  // BG-16: proceeding needs two different operators; one operator's proposal alone changes nothing.
+  await rejects(w.run('orgs.claim-resolve','system',{claim:claim.id,decision:'proceed'}),'operator_required');
+  // Review M3: the operator is verified by the engine, not taken from the caller: no, forged, mis-scoped or replayed
+  // assertions are refused.
+  const OPA='0f000000-0000-4000-8000-000000000001';
+  await rejects(w.run('orgs.claim-resolve','system',{claim:claim.id,decision:'proceed',operator:OPA}),'operator_unverified');
+  await rejects(w.run('orgs.claim-resolve','system',{claim:claim.id,decision:'proceed',operator:OPA,assertion:(await w.operatorAssertion(OPA,{process:claim.id,decision:'proceed'})).slice(0,-2)+'AA'}),'operator_unverified');
+  await rejects(w.run('orgs.claim-resolve','system',{claim:claim.id,decision:'proceed',operator:OPA,assertion:await w.operatorAssertion(OPA,{process:claim.id,decision:'close'})}),'operator_unverified');
+  await rejects(w.run('orgs.claim-resolve','system',{claim:claim.id,decision:'proceed',operator:'0f000000-0000-4000-8000-000000000009',assertion:await w.operatorAssertion(OPA,{process:claim.id,decision:'proceed'})}),'operator_unverified');
+  w.operatorRegistry.allow=op=>op!==OPA;await rejects(w.run('orgs.claim-resolve','system',{claim:claim.id,decision:'proceed',operator:OPA,assertion:await w.operatorAssertion(OPA,{process:claim.id,decision:'proceed'})}),'operator_unverified');w.operatorRegistry.allow=()=>true;
+  const once=await w.operatorAssertion('0f000000-0000-4000-8000-000000000007',{process:claim.id,decision:'proceed'});await w.run('orgs.claim-resolve','system',{claim:claim.id,decision:'proceed',operator:'0f000000-0000-4000-8000-000000000007',assertion:once});
+  await rejects(w.run('orgs.claim-resolve','system',{claim:claim.id,decision:'proceed',operator:'0f000000-0000-4000-8000-000000000007',assertion:once}),'operator_unverified');
+  w.clock.advance(3*86400000+1000);await w.sync();
+  assert.equal((await w.run('orgs.claim-resolve','system',{claim:claim.id,decision:'proceed',operator:'0f000000-0000-4000-8000-000000000001',assertion:await w.operatorAssertion('0f000000-0000-4000-8000-000000000001',{process:claim.id,decision:'proceed'})})).decision,'proceed-proposed');await w.sync();
+  assert.equal((await w.summary()).ownerOfRecord.sub,A,'a single operator cannot let the claim proceed');
+  await rejects(w.run('orgs.claim-resolve','system',{claim:claim.id,decision:'proceed',operator:'0f000000-0000-4000-8000-000000000001',assertion:await w.operatorAssertion('0f000000-0000-4000-8000-000000000001',{process:claim.id,decision:'proceed'})}),'second_operator_required');
+  await rejects(w.run('orgs.claim-resolve','system',{claim:claim.id,decision:'proceed',operator:C,assertion:await w.operatorAssertion(C,{process:claim.id,decision:'proceed'})}),'operator_conflict');
+  assert.equal((await w.run('orgs.claim-resolve','system',{claim:claim.id,decision:'proceed',operator:'0f000000-0000-4000-8000-000000000002',assertion:await w.operatorAssertion('0f000000-0000-4000-8000-000000000002',{process:claim.id,decision:'proceed'})})).decision,'proceed-approved');await w.sync();
+  assert.equal((await w.summary()).ownerOfRecord.sub,C,'a two-operator-approved claim takes effect on the next fresh step');
+  await rejects(w.run('orgs.claim-resolve','system',{claim:claim.id,decision:'close',operator:'0f000000-0000-4000-8000-000000000001',assertion:await w.operatorAssertion('0f000000-0000-4000-8000-000000000001',{process:claim.id,decision:'close'})}),'not_found');
  }finally{await w.close();}}
 });
 test('follow-up 6: a held owner sees billing and the renew decision only',async()=>{const w=await heldOwner();try{

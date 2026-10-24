@@ -183,7 +183,7 @@ test('download fails closed with absent provider authority before persisting rec
   // Node normally provisions a durable authority. Inject the runtime port without
   // it to exercise the same absent-secret failure used by Worker deployments.
   const service = new IdentityService({ repository, identityBackup: identityBackupPort({ config: { APP_ORIGIN: origin }, accounts }),
-    turnstile: {}, rateLimiter: {}, webauthn: {}, passwordHasher: {},
+    turnstile: {}, rateLimiter: { check: async () => true }, webauthn: {}, passwordHasher: {},
     config: { origin, rpID: 'localhost', termsVersion: '2026-10-11', allowInsecureLocalhost: true } });
   await assert.rejects(service.downloadRecovery({ pendingToken: pending.pendingToken }, { origin }), { code: 'recovery_unavailable' });
   assert.equal(digest(await repository.get(pending.account.id)), identityBefore);
@@ -267,7 +267,8 @@ test('equivalent Crockford login spellings share the same handle abuse window', 
     await assert.rejects(service.loginPassword({ handle, password, turnstileToken: challenge }, { origin }), { code: 'unauthorized' });
     await service.beginPasskeyLogin({ handle, turnstileToken: challenge }, { origin });
   }
-  assert.equal(attempts.length, 4);
-  assert.deepEqual(attempts.map(input => input.handle), ['n.1', 'n.1', 'n.1', 'n.1']);
-  assert.deepEqual(lookups, ['n.1', 'n.1', 'n.1', 'n.1']);
+  // Wargame 2026-10-23 #3/#9: the pre-Turnstile window is per network only; the handle window is consulted and charged
+  // (a failed check) under the canonical spelling; passkey begin neither touches the handle window nor looks it up.
+  assert.deepEqual(attempts.map(input => [input.phase ?? null, input.handle ?? null]), [['attempt', null], ['credential', 'n.1'], ['failure', 'n.1'], ['attempt', null], ['attempt', null], ['credential', 'n.1'], ['failure', 'n.1'], ['attempt', null]]);
+  assert.deepEqual(lookups, ['n.1', 'n.1']);
 });

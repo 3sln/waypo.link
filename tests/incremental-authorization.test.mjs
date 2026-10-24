@@ -56,7 +56,9 @@ test('exchange binds client, callback, PKCE and the pinned DPoP key',async t=>{
  const f=fixture();withCalendar(f);const jkt='a'.repeat(43),admitted=grantMoreInput([calRequest()],{dpopJkt:jkt});
  const {e,completion}=await flow(t,f,admitted,{approved:[{fragment:CAL,fields:['calendar']}]});
  for(const extra of [{clientId:'https://other.example/client'},{redirectUri:'https://tasks.example/other'},{codeVerifier:'x'.repeat(43)},{dpopJkt:'b'.repeat(43)},{}])await assert.rejects(exchange(e,admitted,completion.code,{dpopJkt:jkt,...extra,...extra.dpopJkt===undefined&&Object.keys(extra).length===0?{dpopJkt:undefined}:{}}),{code:'invalid_grant'});
- const tokens=await exchange(e,admitted,completion.code,{dpopJkt:jkt});assert.equal(tokens.token_type,'DPoP');assert.equal(f.p.calls.lastIssue.dpopJkt,jkt);
+ // Wargame 2026-10-23 #5: the proof facts are consumed inside the exchange, so a bare key thumbprint is not enough.
+ await assert.rejects(exchange(e,admitted,completion.code,{dpopJkt:jkt}),{code:'invalid_dpop_proof'});
+ const tokens=await exchange(e,admitted,completion.code,{dpopJkt:jkt,dpopProof:{jti:'exchange-proof-jti-1',nonceHash:null,expiresAt:f.time()+60000}});assert.equal(tokens.token_type,'DPoP');assert.equal(f.p.calls.lastIssue.dpopJkt,jkt);
 });
 
 test('already-held items are never reduced and approvals outside the request are refused',async t=>{

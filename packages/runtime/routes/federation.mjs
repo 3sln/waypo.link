@@ -18,7 +18,7 @@ import {SHELL_TEMPLATE,SHELL_BUILD,shellBuild,shellConfig,fillShell,shellPolicy}
 import {AVATAR,avatarOrigins,readAvatarSource,reencodeAvatar} from '../../federation/embed-avatar.mjs';
 import {handleObjectURL} from '../../storage/object-http.mjs';
 import {UUID as uuidPattern} from '../../core/primitives.mjs';
-import {flagGlobal,capability,json,lifecycleUnknown,body,cookie,sessionToken,pseudonym,subnet,identity,securePage,brandPage,passthrough} from './shared.mjs';
+import {flagGlobal,capability,json,lifecycleUnknown,body,cookie,sessionToken,pseudonym,subnet,subnet64,identity,securePage,brandPage,passthrough} from './shared.mjs';
 
 const encoder=new TextEncoder();
 export const stages={
@@ -28,7 +28,7 @@ export const stages={
  },
  async public({request,env,path,local}){
    if(path==='/.well-known/bindle/manifest.json'||path.startsWith('/oauth/')||path==='/bindle/rpc'||path.startsWith('/bindle/objects/')||path.startsWith('/api/oauth/')||path==='/api/preferences'||path==='/api/grants'||path.startsWith('/api/grants/')){
-    let entryRemote;
+    let entryRemote,anonymousCaller;
     // Device-code polling has its own per-network and global poll bounds and RFC 8628 back-off (LA3-S2): it is
     // answered before the generic limiter, whose 429 would end a client's flow instead of slowing it.
     const deviceMounted=env.DEVICE_GRANT?.mounted===true&&flagGlobal(env,'DEVICE_AUTHORIZATION_ENABLED');
@@ -37,6 +37,11 @@ export const stages={
      const remote=request.headers.get('CF-Connecting-IP')||(local?'127.0.0.1':'unknown'),secret=env.ABUSE_HASH_KEY||env.KEY_ENCRYPTION_KEY;
      if(!secret)return json({error:'temporarily_unavailable',message:'Application connections are not configured.'},503);
      const ip=entryRemote=await pseudonym(remote,secret),network=await pseudonym(subnet(remote),secret),lane=parseInt(ip.slice(0,2),16)%16;
+     // Review 2026-10-23: anonymous authorization requests are budgeted per caller NETWORK (IPv6 /64, IPv4 /24), so
+     // rotating addresses inside one allocation buys nothing (packages/federation/service.mjs ANONYMOUS_REQUESTS_*).
+     // Re-verification 2026-10-23: the caller also names its wider allocation (IPv6 /48 via `subnet`, the same /24 for
+     // IPv4; IPv4-mapped IPv6 counts as IPv4), as `<network>.<allocation>`, so one /48 cannot spread over 65,536 /64s.
+     {const narrow=subnet64(remote),mapped=/^::ffff:(\d+\.\d+\.\d+\.\d+)$/i.exec(remote);anonymousCaller=(await pseudonym('anonymous-caller\0'+narrow,secret)).slice(0,32)+'.'+(await pseudonym('anonymous-allocation\0'+subnet(mapped?mapped[1]:remote),secret)).slice(0,32);}
      const readOnly=request.method==='GET'||request.method==='HEAD',rpc=path==='/bindle/rpc'||path.startsWith('/bindle/objects/');
      // X8-R4/R5: introspection is server-to-server on every brokered write, so it has its own per-IP/subnet class (not
      // the token endpoint's 30/min) ahead of the handler's per-connection window and its pre-authentication account call.
@@ -58,7 +63,7 @@ export const stages={
     // PORT-3 (identity portability spec §11): a request naming a moved identity answers `identity_moved` with `{to}`
     // while its redirect runs, and afterwards exactly as for a deleted identity (the probe's uniform 404).
     let movedTarget=null;
-    const authority=env.FEDERATION_AUTHORITY,controller=authority&&path==='/api/oauth/requests'&&request.method==='POST'?new Proxy(authority,{get:(target,method)=>method==='beginAuthorization'?async input=>{const moved=await movedAuthorization(env,input?.identity);if(moved){movedTarget=moved.to;throw Object.assign(new Error('This identity moved to another provider.'),{code:'identity_moved',status:400});}const parts=typeof input.identity==='string'?input.identity.split('@'):[];if(parts.length===2&&parts[1].toLowerCase()===new URL(env.APP_ORIGIN).host){const probe=createAppEngine({providers:{identityShards:env.IDENTITY_REPOSITORY,accounts:env.ACCOUNTS,clock:systemClock,random:cryptoRandom,audit:nullAudit}});try{await read(probe,new PublicIdentityAvailable({input:{handle:parts[0]}}));}finally{probe.dispose();}}return target.beginAuthorization(input);}:Reflect.get(target,method,target)}):authority;
+    const authority=env.FEDERATION_AUTHORITY,controller=authority&&path==='/api/oauth/requests'&&request.method==='POST'?new Proxy(authority,{get:(target,method)=>method==='beginAuthorization'?async input=>{const moved=await movedAuthorization(env,input?.identity);if(moved){movedTarget=moved.to;throw Object.assign(new Error('This identity moved to another provider.'),{code:'identity_moved',status:400});}const parts=typeof input.identity==='string'?input.identity.split('@'):[];if(parts.length===2&&parts[1].toLowerCase()===new URL(env.APP_ORIGIN).host){const probe=createAppEngine({providers:{identityShards:env.IDENTITY_REPOSITORY,accounts:env.ACCOUNTS,clock:systemClock,random:cryptoRandom,audit:nullAudit}});try{await read(probe,new PublicIdentityAvailable({input:{handle:parts[0]}}));}finally{probe.dispose();}}return target.beginAuthorization(input,{caller:anonymousCaller});}:Reflect.get(target,method,target)}):authority;
     const response=await handleFederation(request,{controller,issuer:env.APP_ORIGIN,allowInsecureLocalhost:local,assets:env.ASSETS,enabled:flagGlobal(env,'FEDERATION_ENABLED'),brokering:flagGlobal(env,'BROKERING_ENABLED')?env.FEDERATION_BROKERING:undefined,ownerContext:ownerRequest=>entryOwnerContext(ownerRequest,env,local)});
     if(movedTarget&&response?.status===400){const headers=new Headers(response.headers);headers.set('Cache-Control','no-store');return json({error:'identity_moved',message:'This identity moved to another provider.',to:movedTarget},400,headers);}
     // Contact intents (links §6.4, core feature `intents.v1`): this host accepts `bindle_intent` on its console entry.

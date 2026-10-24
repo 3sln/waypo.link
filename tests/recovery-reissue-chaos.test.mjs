@@ -8,7 +8,10 @@ import { reissueFixture, TRANSFER_KEY, REQUEST_KEY } from './helpers/recovery-re
 import { forEachSeed, createScheduler } from './helpers/chaos.mjs';
 import { transferIdentityPort } from '../packages/identity/transfer-out.mjs';
 
-const ALLOWED = new Set(['conflict', 'unauthorized', 'recovery_reissue_expired', 'recovery_changed', 'deletion_scheduled', 'identity_moved', 'key_conflict', 'reauthentication_required', 'account_not_active']);
+const ALLOWED = new Set(['conflict', 'unauthorized', 'recovery_reissue_expired', 'recovery_changed', 'deletion_scheduled', 'identity_moved', 'key_conflict', 'reauthentication_required', 'account_not_active',
+  // One cooling-off window at a time (wargame 2026-10-23 #1): a second reissue, or a recovery with a file that the
+  // committed reissue superseded, waits for the window.
+  'recovery_reissue_pending']);
 
 test('seeded chaos: reissue vs rotation vs recovery vs transfer commit vs deletion keeps one current file, never commits over a move or a deletion, and never commits an unrestorable file', async t => {
   await forEachSeed(16, async random => {

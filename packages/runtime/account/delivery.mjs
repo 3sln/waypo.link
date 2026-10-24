@@ -10,7 +10,8 @@ import {validateContent} from '../../messaging/content.mjs';
 export const methods={
   async verifyLinkCredential(owner,credential){let verified;try{verified=await this.endpoints.verifyCredential(credential);}catch(error){throw new StorageError(error?.code==='link_malformed'?'link_malformed':credential?.url&&/[?&]bindle_meta=/.test(credential.url)?'link_invalid':'unauthorized','This contact link is invalid or no longer active.',error?.code==='link_malformed'?400:401);}if(verified.owner!==owner)throw new StorageError('unauthorized','This contact link is invalid or no longer active.',401);return {verified:true};},
   // Ungated orchestration: credential, envelope and author checks plus policy and the
-  // revocation fence happen before the gate; budgets, staging and admission inside it.
+  // revocation fence happen before the gate; budgets, staging and admission inside it. `gated` and the commit
+  // transaction re-check the deletion fence, purge job and tombstone (D1).
   async deliverLink(owner,credential,{envelope,body,idempotencyKey}={}){
     const prepared=await this.delivery.prepare(credential,{envelope,body:body instanceof Uint8Array?body:Uint8Array.from(body??[]),idempotencyKey});if(prepared.verified.owner!==owner)throw new StorageError('unauthorized','This contact link is invalid or no longer active.',401);
     const parent=prepared.verified.parent,{principal,keyId}=prepared.author,grant=await this.metadata.get(key('contact-grant',parent));if(grant?.endpoint?.claims?.audience)await this.linkAudienceDecide(owner,parent,principal);
@@ -18,6 +19,9 @@ export const methods={
     return this.gated(async()=>{
       await this.warm(owner);const bytes=prepared.body.byteLength;
       if(await this.metadata.get(key('contact-delivery-receipt',owner,parent,principal.issuer,principal.subject,prepared.envelope.payload.operationId)))return this.delivery.commit(prepared);
+      // M1: every refusal commit() would give (parent, recipient, kind, MIME, size, collection, intake tags, createdAt
+      // window, link/author-day quota, account quota) runs read-only before any budget debit or blob write.
+      if((await this.delivery.precheck(prepared)).replayed)return this.delivery.commit(prepared);
       await this.quota.check(owner,{bytes});await this.messageReceiptBudget.admit(owner,{parent,bytes});await this.admitWork(owner,{clientId:'contact:'+parent});
       const id=crypto.randomUUID(),reservation=await this.quota.reserve(owner,{id,bytes,blobRef:`messages/${owner}/${id}`,kind:'message'});this.messageReservation=reservation;
       try{await this.blobs.put(reservation.blobRef,prepared.body,{httpMetadata:{contentType:'application/octet-stream'},storageAdmission:{clientId:'contact:'+parent}});const result=await this.delivery.commit(prepared);await this.scheduleAlarm(Date.now()+86400000);return result;}finally{this.messageReservation=null;await this.quota.release(id);}

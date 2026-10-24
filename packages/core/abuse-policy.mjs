@@ -6,7 +6,23 @@ export function abuseWindows({operation,ipHash,subnetHash,handleHash,regionHash,
  if(operation==='signup'&&phase==='attempt')return [{key:`signup:attempt:${ipHash}`,windowMs:60000,limit:5},{key:`signup:attempt-network:${subnetHash}`,windowMs:3600000,limit:100}];
  // Unauthenticated boot setup preparation: per-IP pseudonym windows plus a global ceiling.
  if(operation==='boot-begin')return [{key:`boot-begin:burst:${ipHash}`,windowMs:60000,limit:5},{key:`boot-begin:ip:${ipHash}`,windowMs:3600000,limit:20},{key:'boot-begin:global',windowMs:3600000,limit:200}];
+ // Wargame 2026-10-23 #6, #10 (provisional): boot sign-in has one principal, so its windows also bound the principal
+ // and the whole host, independent of the source address. Passkey begin and password attempts are counted apart, so
+ // guessing the password never exhausts the passkey path.
+ // Boot passkey begin (review 2026-10-23, provisional): per-address windows do the work; the principal window is a high
+ // backstop (600 per 5 minutes) so a distributed flood cannot hold off the operator's begin.
+ if(operation==='boot-login-begin')return [{key:`boot-login-begin:burst:${ipHash}`,windowMs:60000,limit:10},{key:`boot-login-begin:ip:${ipHash}`,windowMs:3600000,limit:50},{key:'boot-login-begin:principal',windowMs:300000,limit:600}];
+ if(operation==='boot-password')return [{key:'boot-password:principal',windowMs:300000,limit:20},{key:'boot-password:global',windowMs:3600000,limit:200}];
  if(operation==='device-poll')return [{key:`device-poll:burst:${ipHash}`,windowMs:60000,limit:30},{key:`device-poll:ip:${ipHash}`,windowMs:600000,limit:120}];
+ // Handle-keyed sign-in windows (wargame 2026-10-23 #3). They run only after the Turnstile check: `credential` peeks
+ // (never counts) before the password KDF, `failure` counts one completed, failed credential check. CAPTCHA-less
+ // traffic and passkey begin/finish never reach them, so nobody can lock a handle out without solving challenges and
+ // guessing wrong.
+ if(operation==='login'&&(phase==='credential'||phase==='failure'))return handleHash?[{key:`login:handle:${handleHash}`,windowMs:300000,limit:20,...phase==='credential'?{peek:true}:{}}]:[];
+ // Email sign-in start (wargame #7; review 2026-10-23 item 5): a pseudonymized mailbox window (5 per 15 minutes, 12 per
+ // 6 hours: a flood blocks one mailbox for hours, never a day) and capacity ceilings sharded by region (5,000 per hour)
+ // under a high global one (20,000 per hour), charged after Turnstile whether or not the address has an account.
+ if(operation==='email-login'&&phase==='mailbox')return [{key:`email-login:mailbox:${handleHash}`,windowMs:900000,limit:5},{key:`email-login:mailbox-6h:${handleHash}`,windowMs:21600000,limit:12},{key:`email-login:region:${regionHash||'unknown'}`,windowMs:3600000,limit:5000},{key:'email-login:global',windowMs:3600000,limit:20000}];
  const windows=[{key:`${operation}:burst:${ipHash}`,windowMs:60000,limit:operation==='signup'?3:10}];
  if(operation==='signup'){
   const setting=(name,fallback)=>positive(signupLimits[name],fallback),capacity=signupCapacityLimits(signupLimits);if(!['free','paid'].includes(signupKind))throw new TypeError('Invalid signup kind');

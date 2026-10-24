@@ -1,3 +1,5 @@
+import { MAX_USER_TAGS, SYSTEM_TAGS } from '../messaging/tags.mjs';
+
 export class SearchFault extends Error {
   constructor(code) { super(code); this.name = 'SearchFault'; this.code = code; }
 }
@@ -5,6 +7,11 @@ export const fail = code => { throw new SearchFault(code); };
 export const bounded = (value, max = 200) => typeof value === 'string' && value.length > 0 && value.length <= max && !/[\u0000-\u001f\u007f]/.test(value);
 export const recordKey = (...parts) => parts.map(part => encodeURIComponent(String(part))).join('/') + '/';
 export const tokens = text => text.normalize('NFC').toLocaleLowerCase('en').match(/[\p{L}\p{N}\p{M}]+/gu) || [];
+// Matches messaging (wargame Q1): 32 user tags plus the bounded registered `sys:` set, so an item messaging accepts
+// is always indexable.
+export const MAX_SEARCH_TAGS = MAX_USER_TAGS + Object.keys(SYSTEM_TAGS).length;
+// Validation failures that are a property of the item revision itself: retrying can never succeed.
+export const deterministicSearchFault = error => error instanceof SearchFault && /^(invalid_search_(document|classification|content|tags|acl|encoding)|sensitive_search_document|search_extraction_limit)$/.test(error.code);
 export const DEFAULT_BUDGETS = Object.freeze({ maxDocuments: 10000, indexedTokens: 2000000, vectors: 10000, dimensions: 384, queue: 1000, candidates: 200, maxTextBytes: 32768 });
 // These are product configuration placeholders, not provider pricing or entitlements.
 export const PLAN_BUDGETS = Object.freeze({ free: Object.freeze({ ...DEFAULT_BUDGETS }), paid: Object.freeze({ ...DEFAULT_BUDGETS, maxDocuments: 100000, indexedTokens: 20000000, vectors: 100000, queue: 5000 }) });
@@ -19,7 +26,7 @@ export function validateDocument(input, { maxTextBytes = DEFAULT_BUDGETS.maxText
   if (input.classification !== undefined && !bounded(input.classification, 64)) fail('invalid_search_classification');
   if (typeof input.title !== 'string' || input.title.length > 500 || typeof input.text !== 'string' || new TextEncoder().encode(input.text).length > maxTextBytes) fail('invalid_search_content');
   const tags = input.tags || [];
-  if (!Array.isArray(tags) || tags.length > 32 || tags.some(tag => !bounded(tag, 64)) || new Set(tags).size !== tags.length) fail('invalid_search_tags');
+  if (!Array.isArray(tags) || tags.length > MAX_SEARCH_TAGS || tags.some(tag => !bounded(tag, 64)) || new Set(tags).size !== tags.length) fail('invalid_search_tags');
   const readers = input.acl?.readers || [];
   if (!Array.isArray(readers) || readers.length > 100 || readers.some(reader => !bounded(reader))) fail('invalid_search_acl');
   return { id: input.id, owner: input.owner, source: { kind: input.source.kind, id: input.source.id }, revision: input.revision, type: input.type, title: input.title, text: input.text, tags: [...tags], classification: input.classification || 'unclassified', createdAt: input.createdAt, acl: { readers: [...new Set(readers)] }, quarantined: Boolean(input.quarantined), deleted: Boolean(input.deleted), embeddingAllowed: input.embeddingAllowed === true };

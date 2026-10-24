@@ -19,7 +19,7 @@ function stack({flag=true,limits}={}){
  const sessions=new Set([`${owner}.${'s'.repeat(43)}`,`${otherOwner}.${'s'.repeat(43)}`]);
  const begun=[],authority={begun,entryIdentity:async(context,id)=>{if(!sessions.has(context?.sessionToken))throw Object.assign(new Error('Sign in.'),{code:'unauthorized'});return {subject:`${issuer}/entities/${id}`,authTime:f.time()};},beginEntryAuthorization:async(context,input)=>{begun.push(structuredClone(input.entry.requests));return {requestId:input.requestId};},approve:async()=>({redirectUri:`${tasks.redirectUris[0]}?code=login-code&state=s&iss=${encodeURIComponent(issuer)}`})};
  const entries=new AuthorizationEntries({store:new MemoryMessagingStore(),issuer,clients:[tasks],authority,embedOrigin:'https://embed.provider.example',crypto:webcrypto,clock:f.time,dpop:true,incremental:port});
- const fetch=async(url,{method='GET',headers={},body}={})=>{const request=new Request(url,{method,headers,...body!==undefined?{body}:{}});return await handleIncrementalToken(request,{port,issuer,proofs:{verify:async proof=>proof==='valid-proof'?'k'.repeat(43):null}})??await handleAuthorizationEntry(request,{entries,issuer,remote:async()=>'remote-1',ownerContext:async r=>({sessionToken:r.headers.get('X-Test-Session')??undefined})});};
+ const fetch=async(url,{method='GET',headers={},body}={})=>{const request=new Request(url,{method,headers,...body!==undefined?{body}:{}});return await handleIncrementalToken(request,{port,issuer,proofs:{verify:async proof=>proof==='valid-proof'?{jkt:'k'.repeat(43),jti:'valid-proof-jti-0',nonceHash:null,expiresAt:f.time()+60000}:proof==='jkt-only'?'k'.repeat(43):null}})??await handleAuthorizationEntry(request,{entries,issuer,remote:async()=>'remote-1',ownerContext:async r=>({sessionToken:r.headers.get('X-Test-Session')??undefined})});};
  const post=(url,body,headers={})=>fetch(url,{method:'POST',headers:{'Content-Type':'application/json',...headers},body:JSON.stringify(body)});
  return {f,port,entries,fetch,post,authority};
 }
@@ -76,6 +76,7 @@ test('the token branch ignores everything but incremental codes and binds the pi
  const {json,verifier}=await create(s,{dpopJkt:'k'.repeat(43)}),p=await page(s,json.entryId);s.f.time.advance(1500);
  const code=new URL((await (await p.decide({approved:[{fragment:CAL,fields:['calendar']}]})).json()).redirectUri).searchParams.get('code');
  assert.equal((await (await token(s,{code,verifier,proof:'forged'})).json()).error,'invalid_dpop_proof');assert.equal((await token(s,{code,verifier})).status,400,'missing proof for a key-bound code');
+ assert.equal((await (await token(s,{code,verifier,proof:'jkt-only'})).json()).error,'invalid_dpop_proof','a key-bound code needs the proof facts, not a bare thumbprint');
  const tokens=await (await token(s,{code,verifier,proof:'valid-proof'})).json();assert.equal(tokens.token_type,'DPoP');assert.equal(tokens.fragment_outcomes[0].outcome,'partial');
 });
 
@@ -168,4 +169,27 @@ test('IA-4: attested incremental popups deliver only code/result, state and issu
   const redirected=await fallback.entries.decide(plain.json.entryId,context,{nonce:pv.entry.nonce,plain:true,denied:true},pp);assert.equal(new URL(redirected.redirectUri).origin,tasks.origin);
  }
  const off=stack({flag:false});assert.equal((await create(off,{presentation:'popup',delivery:'embed-popup',embedJkt:'k'.repeat(43)})).response.status,400);
+});
+
+// Wargame 2026-10-23 #5: the token proof is recorded only after its code exists and is bound to the proof's key, in a
+// per-key partition; a full partition answers temporarily_unavailable and leaves the code redeemable.
+test('wargame #5: incremental DPoP proofs are consumed per key, only for a bound code, and never burn the code when refused',async()=>{
+ const s=stack(),jkt='k'.repeat(43);
+ const facts=jti=>({jkt,jti,nonceHash:null,expiresAt:s.f.time()+60000});
+ const exchange=(code,verifier,jti)=>handleIncrementalToken(new Request(`${issuer}/oauth/token`,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded',DPoP:'p'},body:new URLSearchParams({grant_type:'authorization_code',code,redirect_uri:tasks.redirectUris[0],client_id:tasks.id,code_verifier:verifier}).toString()}),{port:s.port,issuer,proofs:{verify:async()=>facts(jti)}}).then(async r=>({status:r.status,body:await r.json()}));
+ const issue=async()=>{const {json,verifier}=await create(s,{dpopJkt:jkt}),p=await page(s,json.entryId);s.f.time.advance(1500);return {verifier,code:new URL((await (await p.decide({approved:[{fragment:CAL,fields:['calendar']}]})).json()).redirectUri).searchParams.get('code')};};
+ // Junk codes record nothing.
+ for(let i=0;i<40;i++)await exchange('ia1.'+'A'.repeat(42)+String.fromCharCode(65+(i%26)),'v'.repeat(43),'junk-proof-'+String(i).padStart(6,'0'));
+ assert.equal((await s.f.store.transaction(tx=>tx.list('incremental-dpop/'))).length,0,'proofs presented with unknown codes are not recorded');
+ // A full partition for this key answers temporarily_unavailable and does not consume the code.
+ const first=await issue();
+ await s.f.store.transaction(async tx=>{for(let i=0;i<16;i++)await tx.set(`incremental-dpop/${jkt}/jti/fill${i}`,{expiresAt:s.f.time()+60000});});
+ const full=await exchange(first.code,first.verifier,'first-proof-jti-000');assert.equal(full.status,503);assert.equal(full.body.error,'temporarily_unavailable');
+ await s.f.store.transaction(async tx=>{for(let i=0;i<16;i++)await tx.delete(`incremental-dpop/${jkt}/jti/fill${i}`);});
+ const ok=await exchange(first.code,first.verifier,'first-proof-jti-000');assert.equal(ok.status,200,JSON.stringify(ok.body));assert.equal(ok.body.token_type,'DPoP');
+ assert.ok((await s.f.store.transaction(tx=>tx.list(`incremental-dpop/${jkt}/`))).length>=1,'the proof is recorded in its key partition');
+ // The same proof (jti) on a second code bound to the same key is a replay; that code stays unredeemed.
+ const second=await issue();
+ const replay=await exchange(second.code,second.verifier,'first-proof-jti-000');assert.equal(replay.body.error,'invalid_dpop_proof');
+ const fresh=await exchange(second.code,second.verifier,'second-proof-jti-00');assert.equal(fresh.status,200,JSON.stringify(fresh.body));
 });

@@ -8,7 +8,7 @@ import {encryptSecret,decryptSecret} from '../secrets.mjs';
 import {StorageError} from '../../storage/policy.mjs';
 import {createAppEngine,perform,read,operations,AppQuery} from '../../app/engine.mjs';
 import {systemClock,cryptoRandom,nullAudit} from '../../app/providers.mjs';
-import {RecoveryReissueService,PrepareRecoveryReissue,CommitRecoveryReissue} from '../../identity/recovery-reissue.mjs';
+import {RecoveryReissueService,PrepareRecoveryReissue,CommitRecoveryReissue,CancelRecoveryReissue} from '../../identity/recovery-reissue.mjs';
 import {transferOutEngine} from './transfer-out.mjs';
 import {DelegationRegistry,delegationsProvider,DELEGATION_OPERATIONS,DelegationList,DelegationStatus,RevokeDelegation,ReconcileDelegations} from '../../identity/delegation.mjs';
 
@@ -47,7 +47,7 @@ function reissueEngine(c){
  }
  return engine;
 }
-const reissueActor=(owner,actor)=>({kind:'owner',owner,...typeof actor?.credentialId==='string'?{credentialId:actor.credentialId}:{},...typeof actor?.sessionId==='string'?{sessionId:actor.sessionId}:{}});
+const reissueActor=(owner,actor)=>({kind:'owner',owner,...typeof actor?.credentialId==='string'?{credentialId:actor.credentialId}:{},...typeof actor?.stepUpCredentialId==='string'?{stepUpCredentialId:actor.stepUpCredentialId}:{},...typeof actor?.sessionId==='string'?{sessionId:actor.sessionId}:{}});
 const delegate=(c,Operation,params)=>{if(['delegations.issue','delegations.renew'].includes(Operation.operation)&&!ownerFlags(c.config,params.actor?.owner,params.actor?.clientId).enabled('BINDLEBOX_ENABLED'))throw new StorageError('not_found','Not found.',404);const operation=new Operation(params);return operation instanceof AppQuery?read(delegationEngine(c),operation):perform(delegationEngine(c),operation);};
 const delegationInput=input=>{if(input===null||typeof input!=='object'||Array.isArray(input))throw new StorageError('invalid_request','Unsupported delegation request.');return structuredClone(input);};
 
@@ -79,6 +79,8 @@ export const methods={
   async recoveryReissuePrepare(owner,{rotation=null,keep=[],actor}={}){await this.warm(owner);return perform(reissueEngine(this),new PrepareRecoveryReissue({actor:reissueActor(owner,actor),input:{rotation,keep}}));},
   // Internal identity-backup port only (phase 2): the reissue gate again; cancels a live transfer-out. No key change.
   async recoveryReissueCommit(owner,{actor,kids}={}){await this.warm(owner);return perform(reissueEngine(this),new CommitRecoveryReissue({actor:reissueActor(owner,actor),input:kids}));},
+  // Internal identity-backup port only (cancelling a committed reissue): rotates away from the voided file's key.
+  async recoveryReissueCancel(owner,{voided,restored=null}={}){await this.warm(owner);return perform(reissueEngine(this),new CancelRecoveryReissue({actor:reissueActor(owner,{}),input:{voided,restored}}));},
   // Internal identity-backup port only: whether a verified file's keychain still restores (RecoveryKeychainMatches). Never writes.
   async recoveryKeysMatch(owner,keychain){return readKeyQuery(keyEngine(this),new RecoveryKeychainMatches({owner,input:{keychain}}));},
   // Internal key management (no `rpc` entry, so never reachable through `invoke`). Rotation and revocation change
@@ -119,6 +121,7 @@ export const rpc={
  recoveryKeysMatch:{lifecycle:'suspended'},
  recoveryReissuePrepare:{},
  recoveryReissueCommit:{},
+ recoveryReissueCancel:{},
  rememberSignupOrigin:{},
  registerSignupPush:{},
  listDelegations:{},

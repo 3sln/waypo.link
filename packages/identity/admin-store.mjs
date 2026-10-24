@@ -4,8 +4,8 @@ import {hex} from './boot.mjs';
 // hold even for a buggy caller: optimistic revisions, forever-consumed boot
 // tokens, a hash-chained append-only audit log and per-actor windows.
 const fail=(code,message,status=409)=>{throw Object.assign(new Error(message),{code,status});};
-const KEY=/^(?:boot\/(?:principal|sessions)|boot-token\/[a-f0-9]{64}|catalog|reservation\/[a-z0-9][a-z0-9_-]{2,31}|claim\/[a-f0-9-]{36}|claim-name\/[a-z0-9][a-z0-9_-]{2,31}|principal\/[a-f0-9-]{36}|client-block\/[a-z0-9.-]{1,253}|flag\/[A-Z][A-Z0-9_]{0,79}|flag-rev\/[A-Z][A-Z0-9_]{0,79}\/[1-9][0-9]{0,15}|flags-head|flag-experiment\/[a-f0-9-]{36})$/;
-const LIST=/^(?:audit\/|principal\/|reservation\/|claim\/|client-block\/)$/;
+const KEY=/^(?:boot\/(?:principal|sessions)|boot-challenge\/[A-Za-z0-9_-]{43}|boot-token\/[a-f0-9]{64}|catalog|reservation\/[a-z0-9][a-z0-9_-]{2,31}|claim\/[a-f0-9-]{36}|claim-name\/[a-z0-9][a-z0-9_-]{2,31}|principal\/[a-f0-9-]{36}|client-block\/[a-z0-9.-]{1,253}|flag\/[A-Z][A-Z0-9_]{0,79}|flag-rev\/[A-Z][A-Z0-9_]{0,79}\/[1-9][0-9]{0,15}|flags-head|flag-experiment\/[a-f0-9-]{36})$/;
+const LIST=/^(?:audit\/|boot-challenge\/|principal\/|reservation\/|claim\/|client-block\/)$/;
 // Not core/primitives canonical: undefined encodes as null here, and the audit hash chain depends on it.
 const canonical=value=>Array.isArray(value)?'['+value.map(canonical).join(',')+']':value&&typeof value==='object'?'{'+Object.keys(value).sort().map(key=>JSON.stringify(key)+':'+canonical(value[key])).join(',')+'}':JSON.stringify(value??null);
 const auditHash=async(prev,entry)=>hex(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(prev+'\n'+canonical(entry))));

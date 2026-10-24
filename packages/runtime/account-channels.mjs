@@ -20,7 +20,7 @@ import {AccountLifecycle} from './account-lifecycle.mjs';
 import {key} from '../messaging/store.mjs';
 import {isUUID as uuid} from '../core/primitives.mjs';
 
-export const SECURITY_NOTICE_EVENTS=Object.freeze(['email-removed','export-created','export-downloaded','recovery-reissued']);
+export const SECURITY_NOTICE_EVENTS=Object.freeze(['email-removed','export-created','export-downloaded','recovery-reissued','recovery-reissue-started','recovery-reissue-cancelled','passkey-added','passkey-removed','email-changed','sessions-revoked','sessions-evicted','password-changed']);
 const contactReady=channel=>AccountLifecycle.prototype.contactReady.call(null,channel);
 const MAX_PUSH=10;
 

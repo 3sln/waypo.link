@@ -43,7 +43,7 @@ const excluded={
  'activity-rev/':'Derived: activity index.', 'activity-tags/':'Derived: tag index.', 'activity-usage/':'Derived: quota counters.',
  'activity-push-bucket/':'Derived: push budgets.', 'activity-push-budget/':'Derived: push budgets.', 'activity-push-channel/':'Derived: channel readiness.',
  'activity-push-group/':'Transient: push coalescing.', 'activity-push-job/':'Transient: delivery queue.',
- 'contact-author-day/':'Derived: anti-abuse counts.', 'contact-delivery-receipt/':'Transient: replay fence.',
+ 'contact-author-day/':'Derived: anti-abuse counts.', 'contact-delivery-receipt/':'Transient: replay fence.', 'contact-grant-tombstone/':'Derived: reclaimed contact parent IDs that must never verify again.',
  'message-receipt/':'Transient: message idempotency.', 'notification-email-budget/':'Derived: email budgets.',
  'message-receipt-budget/':'Derived: message ingress budgets.', 'message-postback/':'Secret: prepared form submissions.', 'message-postback-budget':'Derived: submission abuse accounting.',
  'notification-event/':'Transient: notification queue.', 'notification-job/':'Transient: delivery queue.', 'notification-unsubscribe/':'Secret: unsubscribe capabilities.',

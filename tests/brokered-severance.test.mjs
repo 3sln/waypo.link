@@ -281,3 +281,17 @@ test('W5-S5: forged introspections naming a real connection cannot spend its aut
  for(let i=0;i<2;i++)assert.equal((await (await env.ask(m.token)).json()).active,true,'the integration keeps its full window');
  assert.equal((await env.ask(m.token)).status,429,'the authenticated window still binds the integration itself');
 });
+
+// Wargame 2026-10-23: without an injected cache, the assertion jti is recorded durably in the owner's federation shard,
+// so a replay is refused across isolates (the per-isolate memory cache is only a fallback).
+test('introspection: assertion jti replay is recorded in the owner federation shard when the port offers it',async t=>{
+ const env=await introspection(t),{f,a,r,key}=env,m=await f.mint({record:r.id});
+ const {serviceFixture}=await import('./federation-engine-helpers.mjs'),{service,store}=await serviceFixture();
+ delete env.ports.replay;env.ports.federation=()=>({brokeredGrantLive:async()=>true,brokeredAssertionReplay:input=>service.brokeredAssertionReplay(input)});
+ const jti='durable-assertion-0001';
+ assert.equal((await env.ask(m.token,key,a.clientId,{jti})).status,200);
+ assert.equal((await store.transaction(tx=>tx.list('federation/assertion-jti/'))).length,1,'the jti is held by the durable shard store');
+ assert.equal((await env.ask(m.token,key,a.clientId,{jti})).status,401,'a replay is refused through the durable record');
+ env.ports.federation=()=>({brokeredGrantLive:async()=>true,brokeredAssertionReplay:async()=>{throw Object.assign(Error('down'),{code:'temporarily_unavailable'});}});
+ assert.equal((await env.ask(m.token,key,a.clientId,{jti:'durable-assertion-0002'})).status,401,'an unavailable durable record fails closed');
+});

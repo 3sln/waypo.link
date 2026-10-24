@@ -52,5 +52,8 @@ export function identityAuthorityEpochPort(repository) {
 export function organizationVerification(account,session){
  const used=session?.stepUpCredential,enrolledAt=used?.kind==='passkey'?account.credentials?.find(c=>c.id===used.id)?.createdAt:used?.kind==='password'&&account.passwordHash?account.passwordSetAt:undefined;
  const securityChangedAt=account.security===undefined?0:account.security?.changedAt;
- return Number.isSafeInteger(enrolledAt)&&enrolledAt>=0&&Number.isSafeInteger(securityChangedAt)&&securityChangedAt>=0&&Number.isSafeInteger(session?.stepUpAt)?{enrolledAt,securityChangedAt,stepUpAt:session.stepUpAt}:null;
+ return Number.isSafeInteger(enrolledAt)&&enrolledAt>=0&&Number.isSafeInteger(securityChangedAt)&&securityChangedAt>=0&&Number.isSafeInteger(session?.stepUpAt)?{enrolledAt,securityChangedAt,stepUpAt:session.stepUpAt,
+  // For the organization recovery-file reissue (packages/orgs/ownership.mjs): a passkey step-up is required when the
+  // account has any passkey (coordinator decision 2026-10-23, the personal-reissue rule (a)).
+  hasPasskey:(account.credentials??[]).length>0,method:used.kind==='passkey'?'passkey':'password'}:null;
 }

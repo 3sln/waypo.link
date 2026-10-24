@@ -627,7 +627,7 @@ export class TransferOutService {
         // The requester's copy stops being current in the same action (mandatory reissue).
         // It also arms the forced reissue for the owner (recovery-identity spec "Active-account reissue").
         let reissue = false; try { reissue = (await this.port('identity').invalidateRecovery(owner, { reason: 'elevated-abort' }))?.ok === true; } catch { reissue = false; }
-        await this.setLock(l => ({ ...l, elevatedAbort: { at: now, credentialId: actor.credentialId ?? null, sessionId: actor.sessionId ?? null }, restart: undefined }));
+        await this.setLock(l => ({ ...l, elevatedAbort: { at: now, credentialId: typeof actor.stepUpCredentialId === 'string' ? actor.stepUpCredentialId : null, sessionId: actor.sessionId ?? null }, restart: undefined }));
         return { ...transferView(ended), recoveryReissueRequired: true, recoveryInvalidated: reissue };
       }
       if (record.path !== 'a') fail('elevated_proof_unavailable', 'A waiting-period move is resolved only by support or by withdrawing it.', 409);
@@ -815,7 +815,10 @@ const restartBlock = (record, at, reason) => {
 };
 /** Whether `actor` authenticates with the same credential that made an elevated-proof abort (the session's passkey,
  * or the same session for a password session). A step-up's own credential is not recorded by the identity service. */
-const sameCredential = (entry, actor) => entry.credentialId ? entry.credentialId === actor?.credentialId : entry.sessionId !== null && entry.sessionId === actor?.sessionId;
+/** P17: whether `actor` acts with the credential that made the elevated abort. Both sides are the credential that
+ * confirmed the STEP-UP (a passkey id or 'password'), never the one the session signed in with (wargame 2026-10-23):
+ * a session signed in with the aborting passkey but stepped up with a password is another credential. */
+const sameCredential = (entry, actor) => entry.credentialId ? entry.credentialId === actor?.stepUpCredentialId : entry.sessionId !== null && entry.sessionId === actor?.sessionId;
 /** The moved record written on the identity (design §6.5 item 3). */
 export function movedRecord(record, issuer) {
   return { v: 1, from: { iss: issuer, identity: record.chain?.identity ?? identityURI(issuer, record.owner) }, to: record.statement.to, redirectBase: record.redirect ? record.statement.redirectBase : null, boundRedirectBase: record.statement.redirectBase,

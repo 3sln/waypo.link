@@ -84,10 +84,17 @@ export const methods={
   // `cnx` names the seat incarnation: a new seat, generation (suspend/resume, reconnect) or occupant changes it (KD-1).
   async delegationSlotOccupant(query){const o=await exclusiveOccupant(this,query);return o&&{clientId:o.clientId,origin:o.origin,ingress:o.ingress,cnx:o.cnx,purposes:o.purposes};},
   // Suspension, recovery and deletion hook (KD-4). Idempotent; severs every connection and revokes every delegation.
+  // `recovery` (a recovery file started a recovery, or a reissue was cancelled; recovery-identity spec: recovery does not
+  // preserve app authorizations) ends connections permanently like `system`, and also revokes every key delegation,
+  // including any not attached to a connection.
   async connectionsSeverAccount(owner,{reason='suspended'}={}){
    if(!await bound(this,owner))return {severed:0};
-   if(reason==='lifecycle-frozen'||reason==='admin-suspended')reason='suspended';else if(reason==='lifecycle-tombstone')reason='deleted';
+   const recovery=reason==='recovery';
+   if(reason==='lifecycle-frozen'||reason==='admin-suspended')reason='suspended';else if(reason==='lifecycle-tombstone')reason='deleted';else if(recovery)reason='system';
+   // Connections first (their durable cascade rows then revoke attached delegations), then every remaining delegation
+   // (review 2026-10-23). A failure throws to the identity port, whose durable `pendingSever` row retries the whole hook.
    const result=await run(this,SeverAccountConnections,{actor:{kind:'system',owner},input:{reason}});
+   if(recovery)await this.revokeDelegationsFor(owner,{reason:'system'});
    await this.connectionsDrain(owner);await this.integrationEventsKick(owner);return result;
   },
   // Applies pending cascade rows in order; stops at the first failure, which stays durable for the next call.

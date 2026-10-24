@@ -156,7 +156,7 @@ The receiving provider treats `bindle_intent` as untrusted input. It accepts onl
 **Previews of the default HTML representation.** An owner host MAY decorate the HTML representation of a contact link with machine-readable previews (for example Open Graph tags, a Twitter card and an [oEmbed](https://oembed.com) discovery link). When it does:
 
 - Previews contain only what the link owner chose to disclose for that link (for example a display name and an avatar under the parent's profile permission). A platform that already holds the link may see that disclosure. They never describe an audience or opener, never carry eligibility, and never echo `bindle_data` or unrelated parameters.
-- A link that does not verify (malformed, invalid, revoked, expired, quarantined) yields only a generic, non-identifying card.
+- A link that does not verify (malformed, invalid, revoked, expired) yields only a generic, non-identifying card. Quarantine is not a verification failure and is silent to link holders ([contact endpoints](contact-tokens.md#live-grants-limits-and-metadata-trust)): a quarantined link previews exactly as the same link would while active (provisional, DEVLOG 2026-10-23).
 - Generating a preview is subject to the same guarantees as every GET in §7.4 and §8: it delivers nothing, consumes no quota, nonce or replay row, and creates no state. The HTML and its previews are `noindex, nofollow`, `Cache-Control: no-store` and `Referrer-Policy: no-referrer`.
 - An oEmbed response uses type `link` (or `photo` for an owner-disclosed image) only, never `rich` or `video` with HTML.
 - Image URLs in previews are derived from the same capability and scoped to it; the host bounds and rate-limits them and never fetches an owner-supplied URL on a crawler's behalf.

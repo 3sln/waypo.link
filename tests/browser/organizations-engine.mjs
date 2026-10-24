@@ -32,7 +32,7 @@ test('account teardown erases organization recovery secrets and model',()=>{cons
 
 test('targeted feature decisions override config and malformed grant JSON never reaches a provider',async t=>{const off=await client(t,{state:{data:{features:{organizationsEnabled:false}}}});await off.act('reload');assert.equal(off.calls.length,0);const c=await client(t);await c.act('grants',{id:'member',values:{confirm:true,grants:'not JSON'}});assert.equal(c.calls.length,0);assert.equal((await c.snapshot()).organizationsConsole.error,'invalid_request');await c.act('invite',{values:{grants:'[]',invitee:'{"iss":"https://provider.example","sub":"00000000-0000-4000-8000-000000000002"}'}});assert.deepEqual(c.calls[0].v.grants,[]);assert.equal(c.calls[0].v.invitee.iss,'https://provider.example');});
 
-test('invitation entry stores only bounded hints and reads nothing but the invitation preview',async t=>{const c=await client(t,{port:{call:async a=>{if(a==='invitation-preview')throw Object.assign(Error('Not found.'),{status:404,code:'not_found'});return reply(a);}}});await c.act('entry',{org,invitation:'a'.repeat(64)});const s=await c.snapshot();assert.equal(s.view,'organizations');assert.deepEqual(s.organizationsConsole.entry,{org,invitation:'a'.repeat(64),preview:{invalid:true}});assert.equal(s.organizationsConsole.context,null);assert.deepEqual(s.organizationsConsole.members,[]);assert.deepEqual(c.calls,[{a:'invitation-preview',v:{invitation:'a'.repeat(64)},org}]);c.calls.length=0;await c.act('entry',{org:'../account',invitation:'token'});assert.equal((await c.snapshot()).organizationsConsole.error,'invalid_request');await c.act('entry',{org,invitation:'a'.repeat(8193)});assert.equal((await c.snapshot()).organizationsConsole.error,'invalid_request');await c.act('entry',{org,invitation:'token<script>'});assert.equal((await c.snapshot()).organizationsConsole.error,'invalid_request');});
+test('invitation entry stores only bounded hints and reads nothing but the invitation preview',async t=>{const c=await client(t,{port:{call:async a=>{if(a==='invitation-preview')throw Object.assign(Error('Not found.'),{status:404,code:'not_found'});return reply(a);}}});await c.act('entry',{org,invitation:'a'.repeat(64)});const s=await c.snapshot();assert.equal(s.view,'organizations');assert.deepEqual(s.organizationsConsole.entry,{org,invitation:'a'.repeat(64),preview:{invalid:true}});assert.equal(s.organizationsConsole.context,null);assert.deepEqual(s.organizationsConsole.members,[]);assert.deepEqual(c.calls,[{a:'invitation-preview',v:{invitation:'a'.repeat(64)},org},{a:'list',v:undefined,org:undefined}],'besides the preview, only the person\'s own organization list (L4)');c.calls.length=0;await c.act('entry',{org:'../account',invitation:'token'});assert.equal((await c.snapshot()).organizationsConsole.error,'invalid_request');await c.act('entry',{org,invitation:'a'.repeat(8193)});assert.equal((await c.snapshot()).organizationsConsole.error,'invalid_request');await c.act('entry',{org,invitation:'token<script>'});assert.equal((await c.snapshot()).organizationsConsole.error,'invalid_request');});
 
 test('invitation handoff survives the organization details refresh',async t=>{const invitation={invitation:'token',url:'https://provider.example/orgs/'+org+'/invitation?bindle_meta=signed'},c=await client(t,{port:{call:async a=>a==='invite'?invitation:a==='get'?organization:{members:[],requests:[]}}});await c.act('invite',{values:{grants:[]}});assert.deepEqual((await c.snapshot()).organizationsConsole.invitation,invitation);});
 
@@ -140,3 +140,78 @@ test('the admin member listing follows the server cursors with "Load more", appe
  const before=c.calls.length;await c.act('more-members');assert.equal(c.calls.length,before,'nothing more to load');
  const calls=[],api={get:async p=>calls.push(p)};await createOrganizationsPort().call('members',{after:'c 1',requestsAfter:'r1',junk:'x'},{api,org});assert.deepEqual(calls,['/api/orgs/'+org+'/members?after=c+1&requestsAfter=r1']);
 });
+
+// 2026-10-23 organization console UX pass 2 (provisional): regression tests for H4, M1–M4 and L1–L7.
+const refusedWith=(status,code)=>Object.assign(Error(code),{status,code});
+test('H4: a refused change clears the stale state, refreshes the view and rebuilds the forms; reads are never blocked',async t=>{
+ let refuse=true;const c=await client(t,{port:{call:async a=>{if(a==='rename'&&refuse)throw refusedWith(409,'organization_conflict');if(a==='audit')return {entries:[{action:'organization-renamed'}]};return reply(a);}}});
+ await c.act('select',{org});const epoch=(await c.snapshot()).organizationsConsole.formEpoch??0;c.calls.length=0;
+ await c.act('rename',{values:{name:'Changed'}});let m=(await c.snapshot()).organizationsConsole;
+ assert.equal(m.error,'organization_conflict');assert.equal(m.stale,false,'the refusal applied nothing, so nothing is uncertain');assert.equal(m.formEpoch,epoch+1,'forms are rebuilt from the server state');
+ assert.deepEqual(c.calls.map(x=>x.a).slice(0,2),['rename','membership'],'the view refreshes from the server at once');
+ await c.act('audit');m=(await c.snapshot()).organizationsConsole;assert.deepEqual(m.audit,[{action:'organization-renamed'}]);assert.equal(m.error,null);
+ refuse=false;await c.act('rename',{values:{name:'Changed'}});assert.equal((await c.snapshot()).organizationsConsole.notice,'saved','a later change is not blocked');
+});
+test('H4: an uncertain change refreshes when it can; otherwise only further changes wait for a reload, never reads',async t=>{
+ const ok=await client(t,{port:{call:async a=>{if(a==='label')throw Object.assign(Error('timeout'),{code:'timeout'});return reply(a);}}});
+ await ok.act('select',{org});await ok.act('label',{values:{label:'team'}});let m=(await ok.snapshot()).organizationsConsole;assert.equal(m.error,'change_uncertain');assert.equal(m.stale,false);
+ let down=false;const c=await client(t,{port:{call:async a=>{if(a==='audit')return {entries:[{action:'x'}]};if(a==='label'||down)throw Object.assign(Error('timeout'),{code:'timeout'});return reply(a);}}});
+ await c.act('select',{org});down=true;await c.act('label',{values:{label:'team'}});m=(await c.snapshot()).organizationsConsole;assert.equal(m.stale,true);
+ await c.act('audit');assert.deepEqual((await c.snapshot()).organizationsConsole.audit,[{action:'x'}],'reads still work while a change is uncertain');
+ await c.act('rename',{values:{name:'x'}});assert.equal((await c.snapshot()).organizationsConsole.error,'reload_required');assert.equal(c.calls.filter(x=>x.a==='rename').length,0);
+ down=false;await c.act('reload');await c.act('rename',{values:{name:'x'}});assert.equal(c.calls.filter(x=>x.a==='rename').length,1);
+});
+test('H4: a refused creation never leaves the console stale and releases a refused name',async t=>{let n=0;const c=await client(t,{state:{organizationsConsole:null},port:{call:async(a,v)=>{if(a==='create'&&!n++)throw refusedWith(400,'invalid_name');return createdReply(a);}}});
+ await c.act('create',{values:{name:'x'.repeat(81),label:'team'}});let m=(await c.snapshot()).organizationsConsole;assert.equal(m.error,'invalid_name');assert.equal(m.stale,false);
+ await c.act('create',{values:{name:'Fixed',label:'team'}});assert.equal(c.calls.filter(x=>x.a==='create').at(-1).v.name,'Fixed');});
+test('M1: an existing member becomes an admin only through a bound invitation; resource changes are kept',async t=>{
+ const member={id:'member',handle:'alex',principal:{iss:'https://provider.example',sub:'00000000-0000-4000-8000-000000000002'},grants:[{resource:'https://r.example/1',methods:{'https://c.example/v1':['get']}}]},focus=[];
+ const c=await client(t,{browser:fakeBrowser({download(){},focus:s=>focus.push(s)}),port:{call:async a=>a==='members'?{members:[member],requests:[]}:reply(a)}});await c.act('select',{org});
+ await c.act('grants',{id:'member',values:{confirm:true,'keep:0':true,resource:'https://r.example/2',contract:'https://c.example/v1',methods:'list'}});
+ assert.deepEqual(c.calls.find(x=>x.a==='grants').v.grants,[{resource:'https://r.example/1',methods:{'https://c.example/v1':['get']}},{resource:'https://r.example/2',methods:{'https://c.example/v1':['list']}}]);
+ await c.act('invitee-member',{id:'member'});const m=(await c.snapshot()).organizationsConsole;assert.deepEqual(m.inviteeDraft,{iss:'https://provider.example',sub:'00000000-0000-4000-8000-000000000002',handle:'alex',foreign:false});assert.deepEqual(focus.at(-1),'#org-invite');
+ await c.act('invitee-member',{id:'nobody'});assert.equal((await c.snapshot()).organizationsConsole.error,'review_required');});
+test('M2: a wrong passphrase is a mismatch, checking first asks for the download, and a later success clears the error',async t=>{
+ const c=await client(t,{state:{organizationsConsole:null},port:{call:async a=>createdReply(a)},recoveryFile:{encrypt:async()=>({cipher:'encrypted'}),decrypt:async(_,[answer])=>{if(answer!=='f'.repeat(64))throw Error('OperationError: decrypt failed');return {recoveryToken:'token'};}}});
+ await c.act('create',{values:{name:'Example',label:'team'}});
+ await c.act('verify-recovery',{values:{passphrase:'f'.repeat(64)}});assert.equal((await c.snapshot()).organizationsConsole.error,'recovery_download_first');
+ await c.act('download-recovery');assert.equal((await c.snapshot()).organizationsConsole.error,null,'downloading clears the earlier message');
+ await c.act('verify-recovery',{values:{passphrase:'wrong'}});let m=(await c.snapshot()).organizationsConsole;assert.equal(m.error,'recovery_mismatch');assert.equal(m.recovery.stage,'verify');
+ await c.act('verify-recovery',{values:{passphrase:'f'.repeat(64)}});m=(await c.snapshot()).organizationsConsole;assert.equal(m.error,null);assert.equal(m.recovery.stage,'confirm');});
+test('M3: recovery claims coordinate tabs through storage, expire without a heartbeat, and survive storage failures',async()=>{
+ const {recoveryTabs}=await import('../../apps/web/src/providers/organizations.mjs');const rows=new Map(),storage={getItem:k=>rows.get(k)??null,setItem:(k,v)=>rows.set(k,v),removeItem:k=>rows.delete(k)};let clock=1000;
+ const a=recoveryTabs({storage:()=>storage,now:()=>clock,tab:'a',schedule:null}),b=recoveryTabs({storage:()=>storage,now:()=>clock,tab:'b',schedule:null});
+ a.claim('person',org,'issue-1');assert.deepEqual(b.active('person'),[org]);assert.deepEqual(a.active('person'),[],'a tab never blocks itself');assert.equal(b.latest('person',org),'issue-1');
+ assert.equal(JSON.stringify([...rows]).includes('passphrase'),false);clock+=61000;assert.deepEqual(b.active('person'),[],'a claim without a heartbeat expires');
+ clock=1000;a.release('person',org,'issue-1');assert.deepEqual(b.active('person'),[]);assert.equal(b.latest('person',org),'issue-1','the latest issue stays recorded');
+ b.claim('person',org,'issue-2');assert.equal(a.latest('person',org),'issue-2');
+ const broken=recoveryTabs({storage:()=>{throw Error('SecurityError');},tab:'c',schedule:null});broken.claim('person',org,'x');assert.deepEqual(broken.active('person'),[]);assert.equal(broken.latest('person',org),null);});
+test('M3: another tab saving the file blocks a replacement here; a rotation by another tab refuses Finish',async t=>{
+ const unsaved=memoryUnsaved();unsaved.add('person',org);let active=[org],latest=null;const claims=[];
+ const tabs={active:()=>active,latest:()=>latest,claim:(o,id,issue)=>{claims.push(issue);latest=issue;},release:()=>{}};
+ const c=await client(t,{port:{unsaved,recoveryTabs:tabs,call:async a=>createdReply(a)}});
+ await c.act('reload');assert.deepEqual((await c.snapshot()).organizationsConsole.recoveryElsewhere,[org]);
+ await c.act('regenerate-recovery',{org});assert.equal((await c.snapshot()).organizationsConsole.error,'recovery_saving_elsewhere');assert.equal(c.calls.filter(x=>x.a==='recovery-file').length,0);
+ active=[];await c.act('regenerate-recovery',{org});assert.equal(c.calls.filter(x=>x.a==='recovery-file').length,1);assert.equal((await c.snapshot()).organizationsConsole.recovery.issue,claims[0]);
+ await c.act('download-recovery');await c.act('verify-recovery',{values:{passphrase:'f'.repeat(64)}});latest='issued-in-another-tab';
+ await c.act('confirm-recovery',{values:{confirm:true}});const m=(await c.snapshot()).organizationsConsole;assert.equal(m.error,'recovery_superseded');assert.equal(m.recovery,null);assert.deepEqual(unsaved.list('person'),[org],'the organization still shows its file as not saved');assert.equal(c.browser.secret('organizationRecovery:person:ctx'),null);});
+test('M4: organization reissue eligibility counts any credential enrolled 7 days earlier',async()=>{const {organizationReissueEligibility}=await import('../../packages/runtime/recovery-eligibility.mjs');const day=86400000;
+ assert.deepEqual(organizationReissueEligibility({credentials:[{createdAt:10*day}],passwordHash:'h',passwordSetAt:2*day}),{organizationReissueEligibleAt:9*day});
+ assert.deepEqual(organizationReissueEligibility({credentials:[]}),{organizationReissueEligibleAt:null});assert.deepEqual(organizationReissueEligibility({credentials:[{createdAt:'x'}],passwordHash:null}),{organizationReissueEligibleAt:null});});
+test('L1: focus follows Finish, a new invitation link and "Load more"',async t=>{const focus=[],browser=fakeBrowser({download(){},focus:s=>focus.push(s)});
+ const pages={'':{members:[{id:'m1'}],next:'c1',requests:[]},c1:{members:[{id:'m2'}],next:null,requests:[]}};
+ const c=await client(t,{browser,state:{organizationsConsole:null},port:{call:async(a,v)=>a==='members'?pages[v?.after??'']:a==='invite'?{invitation:'i',url:'https://provider.example/orgs/'+org+'/invitation?bindle_meta=x'}:createdReply(a)}});
+ await c.act('create',{values:{name:'Example',label:'team'}});await c.act('download-recovery');await c.act('verify-recovery',{values:{passphrase:'f'.repeat(64)}});await c.act('confirm-recovery',{values:{confirm:true}});assert.equal(focus.at(-1),'#org-details');
+ await c.act('invite',{values:{audience:'anyone'}});assert.equal(focus.at(-1),'#org-invitation');
+ await c.act('more-members');assert.equal(focus.at(-1),'#org-member-1','the first new member');});
+test('L3: switching context and history navigation clear notices; an unknown organization leaves no context; a new organization is named at once',async t=>{
+ const unsaved=memoryUnsaved();let probe=null,c;c=await client(t,{state:{organizationsConsole:null},port:{unsaved,call:async a=>{if(a==='membership'&&probe==='refuse')throw refusedWith(404,'not_found');return createdReply(a);}},recoveryFile:{encrypt:async()=>{probe=(await c.snapshot()).organizationsConsole;return {cipher:'encrypted'};},decrypt:async()=>({recoveryToken:'token'})}});
+ await c.act('create',{values:{name:'Example',label:'team'}});assert.ok(probe.organizations.some(o=>o.id===org&&o.name==='Example'&&o.role==='owner-of-record'),'listed before the list reloads');
+ await c.act('abandon-recovery');await c.act('dismiss-recovery',{org,values:{confirm:true}});assert.equal((await c.snapshot()).organizationsConsole.notice,'recovery_dismissed');
+ await c.act('select',{org:null});assert.equal((await c.snapshot()).organizationsConsole.notice,null);
+ await c.act('dismiss-recovery',{org,values:{confirm:true}});unsaved.add('person',org);await c.act('dismiss-recovery',{org,values:{confirm:true}});await c.act('open',{org:null});assert.equal((await c.snapshot()).organizationsConsole.notice,null);
+ probe='refuse';await c.act('open',{org:'00000000-0000-4000-8000-00000000000f'});const m=(await c.snapshot()).organizationsConsole;assert.equal(m.context,null);assert.equal(m.error,'not_found');assert.equal(m.organization,null);});
+test('L4: a reopened invitation for a joined organization is recognized from the list or the preview',async t=>{
+ const c=await client(t,{state:{organizationsConsole:{...model,organizations:[],context:null}},port:{call:async a=>a==='invitation-preview'?{organization:{name:'Example',label:'team'},member:true}:reply(a)}});
+ await c.act('entry',{org,invitation:'d'.repeat(64)});const m=(await c.snapshot()).organizationsConsole;assert.equal(m.entry.preview.member,true);assert.ok(m.organizations.some(o=>o.id===org),'the person\'s own list loads with the entry');
+ await c.act('select',{org,closeEntry:true});const s=await c.snapshot();assert.equal(s.organizationsConsole.entry,null);assert.equal(s.organizationsConsole.context,org);assert.equal(s.organizationInvitationPending,false);});

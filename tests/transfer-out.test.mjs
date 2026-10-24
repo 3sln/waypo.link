@@ -165,13 +165,21 @@ test('requester withdraws without a restart block; another session cancelling bl
 
 test('elevated proof by the disputing side aborts, invalidates the recovery file and opens the 30-day contest window',async t=>{
  const fx=await transferFixture(t);await fx.start();await fx.dispute({choice:'hold',token:fx.tokenFor('email')});
- const result=await fx.elevate({side:'disputer'},{credentialId:'pk-two',sessionId:'s-two'});
+ // P17 records the credential that confirmed the step-up (wargame 2026-10-23), not the one the session signed in with.
+ const result=await fx.elevate({side:'disputer'},{credentialId:'pk-signin',stepUpCredentialId:'pk-two',sessionId:'s-two'});
  assert.equal(result.state,'aborted');assert.equal(result.recoveryReissueRequired,true);assert.equal(result.recoveryInvalidated,true);
  assert.equal((await fx.identityRecord()).recoveryHash,null);
  const lock=await fx.lock();assert.equal(lock.elevatedAbort.credentialId,'pk-two');assert.equal(lock.restart,undefined);
  // A move request by another credential within 30 days goes to support.
- await assert.rejects(fx.begin({},{credentialId:'pk-old'}),{code:'transfer_contested'});assert.equal((await fx.lock()).contested.reason,'conflicting-request-after-elevated-abort');
- await assert.rejects(fx.begin({},{credentialId:'pk-two'}),{code:'transfer_locked'});
+ await assert.rejects(fx.begin({},{stepUpCredentialId:'pk-old'}),{code:'transfer_contested'});assert.equal((await fx.lock()).contested.reason,'conflicting-request-after-elevated-abort');
+ await assert.rejects(fx.begin({},{stepUpCredentialId:'pk-two'}),{code:'transfer_locked'});
+});
+
+test('P17 compares the step-up credential: a session signed in with the aborting passkey but stepped up with a password is another credential',async t=>{
+ const fx=await transferFixture(t);await fx.start();await fx.dispute({choice:'hold',token:fx.tokenFor('email')});
+ await fx.elevate({side:'disputer'},{credentialId:'pk-two',stepUpCredentialId:'pk-two',sessionId:'s-two'});
+ await assert.rejects(fx.begin({},{credentialId:'pk-two',stepUpCredentialId:'password',sessionId:'s-three'}),{code:'transfer_contested'});
+ assert.equal((await fx.lock()).contested.reason,'conflicting-request-after-elevated-abort');
 });
 
 test('elevated proof by the requester removes named devices and emails and restarts a 72 h notified delay; a further dispute is contested',async t=>{

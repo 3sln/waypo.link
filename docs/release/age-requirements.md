@@ -17,6 +17,14 @@ Launch availability (provisional, reversible; 2026-10-22): **EU27, Iceland, Norw
 |---|---|
 | AT, BE, BG, HR, CY, CZ, DK, EE, FI, FR, DE, GR, HU, IE, IT, LV, LT, LU, MT, NL, PL, PT, RO, SK, SI, ES, SE | Blocked: representative |
 | IS, NO, LI (EEA), GB (UK) | Blocked: representative |
+| GP, MQ, GF, RE, YT, MF (EU outermost regions, TFEU Art. 349/355(1)); AX (Åland, Art. 355(4)) | Blocked: representative |
+| Unknown location: Cloudflare `XX`, Tor `T1`, or no country | Blocked on the Worker (`region-unknown`); Node follows `REGION_POLICY` |
+
+Territories added 2026-10-23 (wargame, provisional, reversible): Cloudflare geolocates EU outermost regions and Åland under their own ISO 3166-1 codes, not FR/FI, so the block lists them explicitly; their retained ages follow France (15) and Finland (13). Crown dependencies (JE, GG, IM), Gibraltar (GI), and French overseas collectivities and territories outside the EU (BL, PM, NC, PF, WF, TF) are open counsel questions in DEVLOG.md; they are not blocked. Reviewer: ___ Date: ___ Outcome: ___
+
+Unknown locations (2026-10-23, provisional): on the Worker (3sln.me), an unknown country (`XX`), Tor (`T1`) or a missing country fails closed for signup and paid checkout with a distinct "region couldn't be determined" message (`REGION_POLICY=block-unknown`, the default; `allow-unknown` is the default only for local development on a loopback `http` origin). A self-hosted Node server owns its own representative policy: `REGION_POLICY` defaults to `allow-unknown`, and a country is known only from an operator-configured `TRUSTED_COUNTRY_HEADER` set by the operator's reverse proxy. The proxy must overwrite that header, never append to it; a present but invalid value (for example duplicates joined by an appending proxy) is treated as unknown (`XX`). Client-sent country headers are always ignored.
+
+Paid checkouts (2026-10-23 review, provisional): person checkout, organization creation, renewal, billing-lapse claim and ownership-transfer acceptance checkouts, and the anonymous redirect-extension purchase all require a fresh paid-age attestation from a location the region policy permits. The organization break-glass checkout has no route yet; it must get the same gate when routed.
 
 Recommended config:
 ```json

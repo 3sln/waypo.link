@@ -38,7 +38,7 @@ test('runtime: checkout at creation, verified webhook delegation, transfer effec
  // Creation needs a verified payment bound to the request; a checkout alone does nothing.
  const request='runtime-request-00001',input={request,name:'Acme',plan:'org-team'};
  let created=await call(A,'POST','/api/orgs',input);assert.equal(created.status,200,JSON.stringify(created.body));assert.equal(created.body.payment.required,true);assert.equal(created.body.organization,null);
- const checkout=await call(A,'POST','/api/orgs/checkout',{request,plan:'org-team'});assert.match(checkout.body.checkout.url,/sandbox\.polar\.sh/);
+ const checkout=await call(A,'POST','/api/orgs/checkout',{request,plan:'org-team',ageConfirmed:18});assert.match(checkout.body.checkout.url,/sandbox\.polar\.sh/);
  created=await call(A,'POST','/api/orgs',input);assert.equal(created.body.payment.required,true);
  polar.pay(polar.checkoutBy(()=>true).id);created=await call(A,'POST','/api/orgs',input);assert.equal(created.status,200,JSON.stringify(created.body));
  const org=created.body.organization.id,oldFile=created.body.recoveryFile;assert.ok(oldFile);
@@ -53,13 +53,13 @@ test('runtime: checkout at creation, verified webhook delegation, transfer effec
  const offered=await call(A,'POST',`/api/orgs/${org}/transfer`,{operation:'offer',recipient:B,handle,confirm:true});assert.equal(offered.status,200,JSON.stringify(offered.body));
  // The recipient discovers the offer (the index hint is confirmed by the organization) and accepts with the digest.
  const listed=await call(B,'GET','/api/orgs');assert.equal(listed.body.offers.length,1,JSON.stringify(listed.body));const offer=listed.body.offers[0].offer;assert.equal(offer.decisions.join(),'accept,decline');
- const accepted=await call(B,'POST',`/api/orgs/${org}/transfer`,{operation:'accept',transfer:offer.id,disclosure:offer.plans[0].digest,confirm:true});assert.equal(accepted.status,200,JSON.stringify(accepted.body));
+ const accepted=await call(B,'POST',`/api/orgs/${org}/transfer`,{operation:'accept',transfer:offer.id,disclosure:offer.plans[0].digest,confirm:true,ageConfirmed:18});assert.equal(accepted.status,200,JSON.stringify(accepted.body));
  polar.pay(polar.checkoutBy(k=>k.metadata['3sln_me_org_purpose']==='transfer').id);
  await accountHandle(env,org).billingWebhookVerified(org,{owner:org,id:'evt_runtime_2',bodyHash:'d'.repeat(64),type:'order.paid'});
  view=await call(A,'GET',`/api/orgs/${org}/ownership`);assert.equal(view.body.transfer.state,'paid');assert.equal(view.body.ownerOfRecord.sub,A);
  const keyBefore=(await accountHandle(env,org).orgsSigningProvenance(org)).kid;
  clock.advance(DAY+1000);await accounts.get(org).alarm();
- view=await call(B,'GET',`/api/orgs/${org}/ownership`);assert.equal(view.body.ownerOfRecord.sub,B,JSON.stringify(view.body));assert.equal(view.body.recovery.state,'reissue-required');assert.ok(view.body.decisions.includes('reissue-recovery'));
+ view=await call(B,'GET',`/api/orgs/${org}/ownership`);assert.equal(view.body.ownerOfRecord.sub,B,JSON.stringify(view.body));assert.equal(view.body.recovery.state,'missing');assert.ok(view.body.decisions.includes('reissue-recovery'));
  assert.notEqual((await accountHandle(env,org).orgsSigningProvenance(org)).kid,keyBefore,'the organization signing key rotated at the ownership change');
  assert.ok(polar.effects.revoked.length===1&&polar.effects.refunds.length===0,'the previous subscription is cancelled at once, without a refund');
  // Discovery follows the organization's answer: B owns it, A remains a member.

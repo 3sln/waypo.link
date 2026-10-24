@@ -27,9 +27,9 @@ async function fixture(t) {
   const directory = await mkdtemp(join(tmpdir(), 'recovery-rotation-'));
   const app = await createNodeServer({ directory, config: {} });
   t.after(async () => { await app.close(); await rm(directory, { recursive: true, force: true }); });
-  const request = async (path, input) => { const response = await app.fetch(new Request(origin + path, { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' }, body: JSON.stringify(input) })); return { status: response.status, value: await response.json() }; };
+  const request = async (path, input, headers = {}) => { const response = await app.fetch(new Request(origin + path, { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(input) })); return { status: response.status, value: await response.json() }; };
   const signup = async () => { const result = await request('/api/auth/signup', { method: 'password', password, ageConfirmed: 18, termsAccepted: true, termsVersion: '2026-10-11', turnstileToken: challenge }); assert.equal(result.status, 200, result.value.error); return result.value; };
-  const download = async pendingToken => { const result = await request('/api/auth/recovery/download', { pendingToken }); assert.equal(result.status, 200, result.value.error); return { ...result.value, backup: JSON.parse(result.value.content) }; };
+  const download = async (pendingToken, headers) => { const result = await request('/api/auth/recovery/download', { pendingToken }, headers); assert.equal(result.status, 200, result.value.error); return { ...result.value, backup: JSON.parse(result.value.content) }; };
   const activate = async (pendingToken, recoveryToken) => { const result = await request('/api/auth/recovery/confirm', { pendingToken, recoveryToken, downloadConfirmed: true }); assert.equal(result.status, 200, result.value.error); return result.value; };
   const recover = file => request('/api/auth/recover', { recoveryToken: file.recoveryToken, identityBackup: file.backup, turnstileToken: challenge });
   const identity = id => app.resources.repository.get(id);
@@ -114,10 +114,13 @@ test('a full history of referenced keys issues without rotating and audits it (P
   const f = await fixture(t), pending = await f.signup(), id = pending.account.id, c = f.controller(id);
   let file = await f.download(pending.pendingToken);
   // Each issuance rotates; a live contact link then references the outgoing key, so nothing may be pruned.
-  for (let i = 1; i < KEY_HISTORY_LIMIT; i++) { await c.createContactLink(id, pending.account.handle, { ...linkInput, name: `L${i}` }); file = await f.download(pending.pendingToken); }
+  // Downloads are budgeted (5 per setup token, per-network and per-account windows; wargame 2026-10-23), so this
+  // white-box test resets the per-token count and spreads the downloads over addresses to reach the edge quickly.
+  const reset = async () => { const record = await f.identity(id); assert.equal(await f.app.resources.repository.compareAndSwap(id, record.revision, { ...record, recoveryDownloads: 0, revision: record.revision + 1 }), true); };
+  for (let i = 1; i < KEY_HISTORY_LIMIT; i++) { await c.createContactLink(id, pending.account.handle, { ...linkInput, name: `L${i}` }); await reset(); file = await f.download(pending.pendingToken, { 'CF-Connecting-IP': `198.51.100.${i}` }); }
   await c.createContactLink(id, pending.account.handle, { ...linkInput, name: 'last' });
   assert.equal((await c.identityKeyHistory(id, { purpose: 'signing' })).length, KEY_HISTORY_LIMIT);
-  const full = await f.download(pending.pendingToken);
+  await reset(); const full = await f.download(pending.pendingToken, { 'CF-Connecting-IP': '198.51.100.200' });
   assert.equal(full.backup.keychain.signing.kid, file.backup.keychain.signing.kid, 'issued without rotating');
   const record = await f.identity(id);
   assert.equal(audits(record).at(-2), 'recovery-key-rotation-skipped'); assert.equal(audits(record).at(-1), 'recovery-file-issued');

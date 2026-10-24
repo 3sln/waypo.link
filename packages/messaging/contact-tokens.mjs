@@ -21,6 +21,7 @@ export function contactURL({ origin, handle, token, allowInsecureLocalhost = fal
   return url.href;
 }
 
+export const MAX_STORED_GRANTS = 2000;
 export class ContactTokenService {
   constructor({ store, issuer, crypto = globalThis.crypto, clock = () => Date.now(), allowInsecureLocalhost = false }) {
     const origin = new URL(issuer);
@@ -37,7 +38,11 @@ export class ContactTokenService {
     return this.store.transaction(async tx => {
       const signingKey = await verifiableSigningKey(tx, owner, kid);
       if (!signingKey) fail('invalid_key');
-      if ((await tx.list(key('contact-grant'))).filter(row => row.value.owner === owner).length >= 1000) fail('grant_limit');
+      // Only active, unexpired parents count (wargame M3): revoked and expired parents are reclaimed by the link GC.
+      // Review #4: a hard bound on all stored parents, dead ones included, until the link GC reclaims them. It also
+      // bounds this listing and every whole-prefix contact listing (tokens.list, contacts()).
+      const parents = await tx.list(key('contact-grant'));
+      if (parents.length >= MAX_STORED_GRANTS || parents.filter(row => row.value.owner === owner && row.value.active === true && row.value.claims?.exp > Math.floor(now / 1000)).length >= 1000) fail('grant_limit');
       for (const collection of collections) if (!(await tx.get(key('collection', owner, collection)))?.active) fail('invalid_collection');
       const claims = { iss: this.issuer, sub: owner, aud: `${this.issuer}/api/messages`, jti: this.crypto.randomUUID(), iat: Math.floor(now / 1000), exp: Math.floor(expiresAt / 1000), collections, mimeTypes, maxMessages, maxBytes, maxMessageBytes,...tagPolicy };
       const header = { alg: signingKey.alg, kid, typ: 'contact+jwt' };
@@ -50,11 +55,13 @@ export class ContactTokenService {
     return this.store.transaction(async tx => {
       const path = key('contact-grant', id); const grant = await tx.get(path);
       if (!grant || grant.owner !== owner) fail('not_found');
+      if (grant.active) grant.revokedAt = this.clock();
       grant.active = false; await tx.set(path, grant);
     });
   }
   async list(owner) { return this.store.transaction(async tx => (await tx.list(key('contact-grant'))).map(row => row.value).filter(grant => grant.owner === owner)); }
   async live(tx, verified) {
+    if (await tx.get(key('contact-grant-tombstone', verified.claims.jti))) fail('unauthorized');
     const grant = await tx.get(key('contact-grant', verified.claims.jti));
     const signingKey = await verifiableSigningKey(tx, verified.claims.sub, verified.header.kid);
     if (!grant?.active || !signingKey || grant.claims.exp <= Math.floor(this.clock() / 1000) || canonical(grant.claims) !== canonical(verified.claims) || canonical(grant.header) !== canonical(verified.header)) fail('unauthorized');
