@@ -1,3 +1,4 @@
+import {dirtyTimeline,prepareTimeline,timelineKey} from './conversation-timeline.mjs';
 import {requireRestored} from '../store/restore.mjs';
 import {projectIncoming} from '../store/item-index.mjs';
 // BB-B4 conversations (spec §6, §7.1, §7.4, §8.2; architecture §7, §9.5, §16). Option A, provisional pending user
@@ -37,6 +38,8 @@ const C={settings:'conv/settings',room:c=>`conv/room/${c}`,rooms:'conv/room/',se
  response:c=>`conv/response/${c}`,responses:'conv/response/',intro:(c,p)=>`conv/intro/${c}/${pk(p)}`,intros:c=>`conv/intro/${c}/`,rotation:(c,e,p)=>`conv/rotation/${c}/${e}/${pk(p)}`,rotationsOf:(c,e)=>`conv/rotation/${c}/${e}/`,rotations:c=>`conv/rotation/${c}/`,
  mutations:c=>`conv/mutations/${c}`,placeholder:(c,id)=>`conv/placeholder/${c}/${id}`,placeholders:c=>`conv/placeholder/${c}/`,counter:(c,p,j,n)=>`conv/counter/${c}/${pk(p)}/${j}/${pad(n)}`,evidence:(c,id)=>`conv/evidence/${c}/${id}`,byJkt:(j,c,id)=>`conv/by-jkt/${j}/${c}/${id}`,decided:id=>`conv/decided/${id}`,
  edgeSeq:'conv-edge-seq',edgeOutbox:n=>`conv-edge-outbox/${pad(n)}`};
+export const replayDue=(at,id)=>`conv/replay-due/${String(Math.floor(at)).padStart(16,'0')}/${id}`;
+async function putReplay(tx,id,row){const prior=await tx.get(C.replay(id));if(prior&&prior.retainUntil!==row.retainUntil)await tx.delete(replayDue(prior.retainUntil,id));await tx.put(C.replay(id),row);await tx.put(replayDue(row.retainUntil,id),id);}
 const BODY_TYPES=new Set(['message','edit']);
 // Conversation records have their own receive allowance (architecture §11), separate from BB-B2's link budgets:
 // per author per conversation and per owner, per UTC day, with a bounded key count. Provisional policy values.
@@ -221,7 +224,7 @@ async function emit(ctx,{cid,type,to=null,target=null,data=null,body=null,mimeTy
   const audience=await P.freezeAudience(recipients.map(r=>({...r.principal,incarnation:r.incarnation})));
   await tx.put(C.stream(cid,signer.jkt),{jkt:signer.jkt,counter,head:eventId});
   const ev={eventId,type,author:{principal:principal(config.principal),keyId:signer.author.keyId,jkt:signer.jkt},counter,stream:signer.kid,previous,parents:record.parents,epoch:recordEpoch,target,content,createdAt:now,receivedAt:now,own:true,revisions:[],retracted:null,quarantined:false,audience,operationId};
-  await tx.put(C.event(cid,eventId),ev);if(body)await tx.put(C.body(cid,eventId),body.slice());
+  await tx.put(C.event(cid,eventId),ev);await dirtyTimeline(tx,cid,ev);if(body)await tx.put(C.body(cid,eventId),body.slice());
   if(type==='edit'||type==='retract')await mutate(tx,room,ev);
   room.lastOwn=eventId;if(CONTENT_TYPES.has(type)){room.heads=[eventId];await projectRoom(tx,room,now);}await tx.put(C.room(cid),room);
   const row={operationId,cid,eventId,type,kid:signer.kid,payload,recipients,secret:secret?Array.from(secret):null,hasBody:Boolean(body),knownRotation:Object.keys(room.epochs).length>1,prepared:null,submitted:!recipients.length,abandoned:false,createdAt:now};
@@ -269,7 +272,7 @@ async function mutate(tx,room,ev){
  if(target.type!=='message')protocol('record_forbidden');
  // Every retraction is kept, so a quarantined one never hides the author's genuine one (BB4-S6).
  if(ev.type==='edit')target.revisions=[...new Set([...target.revisions??[],ev.eventId])];else target.retractions=[...new Set([...target.retractions??[],ev.eventId])];
- await tx.put(C.event(room.id,target.eventId),target);return 'applied';
+ ev.mutationApplied=true;await tx.put(C.event(room.id,ev.eventId),ev);await tx.put(C.event(room.id,target.eventId),target);await dirtyTimeline(tx,room.id);return 'applied';
 }
 async function applyPending(tx,room,ev){
  const pending=await tx.get(C.mutations(room.id))??[],mine=pending.filter(m=>m.target===ev.eventId);if(!mine.length)return;
@@ -592,7 +595,7 @@ export class ConversationsReceive extends MailboxAction {
     return {receipt,replay:false,equivocation:true};
    };
    if(outcome==='equivocation')return equivocation(prior.eventId);
-   if(outcome==='duplicate-event'){await tx.put(C.replay(replayId),{...prior,contexts:[...prior.contexts??[],delivery.payloadDigest].slice(-8)});return {receipt,replay:false,duplicate:true};}
+   if(outcome==='duplicate-event'){await putReplay(tx,replayId,{...prior,contexts:[...prior.contexts??[],delivery.payloadDigest].slice(-8)});return {receipt,replay:false,duplicate:true};}
    const start=r.type==='peer-hello'?Math.min(r.data.startCounter,r.counter):1,admitted=P.admitCounter(front??P.streamState(start),r.counter,{now});
    // A counter at or below the frontier is never applied as new (B5): the same event is a duplicate; another event under
    // a consumed counter is equivocation, found through the compact counter index that outlives replay retention; an
@@ -603,7 +606,7 @@ export class ConversationsReceive extends MailboxAction {
     // A not-applied duplicate costs one record of allowance and leaves a replay row, so its retries are answered from
     // the stored receipt without verification, staging or another charge.
     await tx.put(ALLOWANCE_KEY,chargeAllowance(await tx.get(ALLOWANCE_KEY),{now,key:`${cid}|${pk(author)}`,principal:pk(author),bytes:0}));
-    await tx.put(C.replay(replayId),{payloadDigest:delivery.payloadDigest,eventId:verified.eventId,receipt,retainUntil:P.retainUntil(envelope,now),applied:held});
+    await putReplay(tx,replayId,{payloadDigest:delivery.payloadDigest,eventId:verified.eventId,receipt,retainUntil:P.retainUntil(envelope,now),applied:held});
     return {receipt,replay:false,duplicate:true,...held?{}:{applied:false}};
    }
    // New streams are bounded per author (a key change opens one), so one member cannot exhaust others' (BB4-S8).
@@ -618,7 +621,7 @@ export class ConversationsReceive extends MailboxAction {
    const ev={envelope,eventId:verified.eventId,type:r.type,author:{principal:principal(a.principal),keyId:a.keyId,jkt:a.jkt},counter:r.counter,stream:r.stream,previous:r.previous,parents:r.parents,epoch:r.epoch,target:r.target??null,content:p.content,createdAt:p.createdAt,receivedAt:now,own:false,revisions:[],retracted:null,quarantined:false,continuation:!front&&r.counter===1&&r.previous!==null,...p.resendOf?{resendOf:p.resendOf}:{},...staged?{bodyRef:staged}:{},...hot?{hot}:{}};
    // Bytes, never a number array (which serializes to about twice the size, past the 2 MiB Durable Object value limit
    // for a 1 MiB body); a copy, so a view never drags the whole request buffer into storage.
-   await tx.put(C.event(cid,ev.eventId),ev);if(content&&!staged)await tx.put(C.body(cid,ev.eventId),content.slice());
+   await tx.put(C.event(cid,ev.eventId),ev);await dirtyTimeline(tx,cid,ev);if(content&&!staged)await tx.put(C.body(cid,ev.eventId),content.slice());
    const args={room,peer,author,r,ev,verified,delivery,credential,mode,config,now};
    switch(r.type){
     case 'message':await applyPending(tx,room,ev);break;
@@ -642,7 +645,7 @@ export class ConversationsReceive extends MailboxAction {
    if(CONTENT_TYPES.has(r.type))room.heads=[...room.heads.filter(id=>!r.parents.includes(id)),ev.eventId].slice(-P.LIMITS.maxParents);
    if(CONTENT_TYPES.has(r.type))await projectRoom(tx,room,now);await tx.put(C.room(cid),room);if(r.type==='secret-share'&&mode==='awaiting'&&!room.awaitingSecret)await publishRoom(tx,room,config,now);
    await tx.put(fkey,{...admitted.state,start:front?.start??start});
-   await tx.put(C.replay(replayId),{payloadDigest:delivery.payloadDigest,eventId:ev.eventId,receipt,retainUntil:P.retainUntil(envelope,now)});
+   await putReplay(tx,replayId,{payloadDigest:delivery.payloadDigest,eventId:ev.eventId,receipt,retainUntil:P.retainUntil(envelope,now)});
    await tx.put(C.counter(cid,author,r.stream,r.counter),ev.eventId);
    await tx.put(C.byJkt(a.jkt,cid,ev.eventId),1);
    // Conversation authors feed the delegation recheck sweep like link authors do (B7).
@@ -835,8 +838,15 @@ export class ConversationsSweep extends MailboxAction {
  async run({conversations:h,clock}){
   actorOwner(this.actor,['system','owner']);const now=clock.now();
   return h.store.transaction(async tx=>{let replays=0,secrets=0;
-   for(const [key,row] of await tx.list({prefix:'conv/replay/'}))if(row.retainUntil<now){await tx.delete(key);replays++;}
-   for(const [,room] of await tx.list({prefix:C.rooms})){const used=new Set([...(await tx.list({prefix:C.peers(room.id)})).values()].map(p=>p.epoch));for(const [id,e] of Object.entries(room.epochs))if(e.until!==null&&e.until<=now&&!used.has(id)&&await tx.get(C.secret(room.id,id))){await tx.delete(C.secret(room.id,id));secrets++;}}
+   const state=await tx.get('conv/sweep-state')??{};let budget=64;
+   // Existing stores migrate once in bounded slices; ordinary receipts maintain this index atomically.
+   if(!state.replayMigrated){const rows=await tx.list({prefix:'conv/replay/',startAfter:state.replayAfter,limit:32});for(const [k,row] of rows)await tx.put(replayDue(row.retainUntil,k.slice('conv/replay/'.length)),k.slice('conv/replay/'.length));if(rows.size<32)state.replayMigrated=true;else state.replayAfter=[...rows.keys()].at(-1);budget-=rows.size;}
+   for(let i=0;i<Math.max(1,budget);i++){const due=await tx.list({prefix:'conv/replay-due/',limit:1});if(!due.size)break;const [key,id]=[...due][0];if(Number(key.split('/')[2])>=now)break;const row=await tx.get(C.replay(id));if(row&&row.retainUntil<now){await tx.delete(C.replay(id));replays++;}await tx.delete(key);}
+
+   const rooms=await tx.list({prefix:C.rooms,startAfter:state.roomAfter,limit:8});for(const [,room] of rooms){const used=new Set([...(await tx.list({prefix:C.peers(room.id)})).values()].map(p=>p.epoch));for(const [id,e] of Object.entries(room.epochs))if(e.until!==null&&e.until<=now&&!used.has(id)&&await tx.get(C.secret(room.id,id))){await tx.delete(C.secret(room.id,id));secrets++;}
+    if((await tx.get(`conv/timeline-state/${room.id}`))?.phase!=='ready')await prepareTimeline(tx,room.id,256);
+   }state.roomAfter=rooms.size===8?[...rooms.keys()].at(-1):undefined;await tx.put('conv/sweep-state',state);
+
    return {replays,secrets};});
  }
 }
@@ -846,17 +856,21 @@ const peerView=(p,room)=>({principal:principal(p.principal),state:p.state,via:p.
 const roomView=room=>({id:room.id,role:room.role,state:room.state,subject:room.subject,createdAt:room.createdAt,creator:principal(room.creator.principal),proposedParticipants:room.participants.map(x=>principal(x.principal)),rosterVerified:false,acceptListed:room.acceptListed,epoch:room.current,epochs:Object.keys(room.epochs).length,awaitingSecret:Boolean(room.awaitingSecret),secretConflict:Boolean(room.secretConflict),...room.secretConflict?.by?{secretConflictBy:principal(room.secretConflict.by),secretConflictEpoch:room.secretConflict.epoch}:{},maxParticipants:room.maxParticipants,gap:Boolean(room.gap),placeholders:room.placeholders});
 async function timeline(store,room,{limit=40,offset}={},userStorage=null){
  if(!Number.isSafeInteger(limit)||limit<1||limit>100||offset!==undefined&&(!Number.isSafeInteger(offset)||offset<0))invalid('Choose a timeline page.');
- const rows=[...(await store.list({prefix:C.events(room.id)})).values()],ids=orderEvents(rows),byId=new Map(rows.map(r=>[r.eventId,r])),pos=new Map(ids.map((id,i)=>[id,i]));
- const text=async id=>{const ref=byId.get(id)?.bodyRef;if(ref?.storage==='user'){try{return td.decode(await readBody(userStorage,ref));}catch{return null;}}const b=await store.get(C.body(room.id,id));return b?td.decode(Uint8Array.from(b)):null;},out=[];
- const visible=ids.filter(id=>['message','genesis'].includes(byId.get(id).type)&&!byId.get(id).quarantined),start=offset??Math.floor(Math.max(0,visible.length-1)/limit)*limit;
- for(const id of visible.slice(start,start+limit)){
-  const e=byId.get(id);
-  const revisions=(e.revisions??[]).map(r=>byId.get(r)).filter(r=>r&&!r.quarantined).sort((a,b)=>pos.get(a.eventId)-pos.get(b.eventId));
-  const deleted=(e.retractions??[]).some(id=>byId.get(id)&&!byId.get(id).quarantined);
-  out.push({eventId:id,type:e.type,author:principal(e.author.principal),own:e.own,createdAt:e.createdAt,text:deleted?null:await text((revisions.at(-1)??e).eventId),edited:revisions.length>0,deleted,deletedNote:deleted?(e.own?'Deleted for people whose apps accepted the deletion':'Deleted by the sender'):null,historyTruncated:revisions.length>19,history:await Promise.all([e,...revisions].slice(-20).map(async r=>({eventId:r.eventId,text:await text(r.eventId)}))),...e.resendOf?{resent:true}:{}});
+ const state=await store.transaction(tx=>prepareTimeline(tx,room.id));if(state.phase!=='ready')fault('conversation_index_building','Conversation order is being updated. Retry shortly.',503);
+ return store.transaction(async store=>{const live=await store.get(`conv/timeline-state/${room.id}`);if(live?.phase!=='ready'||live.generation!==state.generation)fault('conversation_index_building','Conversation order is being updated. Retry shortly.',503);
+ const start=offset??Math.floor(Math.max(0,state.total-1)/limit)*limit,prefix=timelineKey(room.id,'page/'),rows=await store.list({prefix,startAfter:start?prefix+String(start-1).padStart(16,'0'):undefined,limit}),out=[];
+ const text=async e=>{const ref=e?.bodyRef;if(ref?.storage==='user'){try{return td.decode(await readBody(userStorage,ref));}catch{return null;}}const b=await store.get(C.body(room.id,e.eventId));return b?td.decode(Uint8Array.from(b)):null;};
+ for(const e of rows.values()){
+  const id=e.eventId,fold=await store.get(timelineKey(room.id,'fold/'+id))??{revisions:[],deleted:false};
+  // Recheck live quarantine even if a caller invalidates between projection and body reads.
+  if(!e||e.quarantined)continue;
+  const revisions=fold.revisions;
+  const deleted=fold.deleted;
+  out.push({eventId:id,type:e.type,author:principal(e.author.principal),own:e.own,createdAt:e.createdAt,text:deleted?null:await text(revisions.at(-1)??e),edited:revisions.length>0,deleted,deletedNote:deleted?(e.own?'Deleted for people whose apps accepted the deletion':'Deleted by the sender'):null,historyTruncated:(fold.count??0)>19,history:await Promise.all([e,...revisions].slice(-20).map(async r=>({eventId:r.eventId,text:await text(r)}))),...e.resendOf?{resent:true}:{}});
  }
- return {timeline:out,pagination:{offset:start,limit,total:visible.length,previous:start>0?Math.max(0,start-limit):null,next:start+limit<visible.length?start+limit:null},quarantined:rows.filter(r=>r.quarantined).length};
+ return {timeline:out,pagination:{offset:start,limit,total:state.total,previous:start>0?Math.max(0,start-limit):null,next:start+limit<state.total?start+limit:null},quarantined:state.quarantined};});
 }
+
 export class ConversationsList extends MailboxQuery {
  static operation='conversations.list';static deps=['conversations'];static refreshOn=['conversations-changed'];
  async fetch({conversations:h}){actorOwner(this.actor);return {conversations:[...(await h.store.list({prefix:C.rooms})).values()].map(roomView)};}

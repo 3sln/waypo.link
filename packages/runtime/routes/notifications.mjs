@@ -46,7 +46,7 @@ export const stages={
     if(path==='/api/notifications/activity'||path.startsWith('/api/notifications/activity/'))return activityPushRoute({request,env,path,id,object});
     if(path==='/api/notifications')return json(await object.notificationPreferences(id,request.method==='PUT'?await body(request):undefined,Boolean(owner.account.verifiedEmail)));
     if(path==='/api/notifications/unsubscribe-link'&&request.method==='POST')return json({url:`${env.APP_ORIGIN}/unsubscribe#token=${encodeURIComponent(await object.unsubscribeLink(id))}`});
-    if(path==='/api/notifications/subscribe'&&request.method==='POST')return json(await object.subscribe(id,await body(request)));
+    if(path==='/api/notifications/subscribe'&&request.method==='POST')return json(await object.subscribe(id,await body(request),{sessionId:owner.sessionContext}));
     const device=/^\/api\/notifications\/devices\/([^/]+)$/.exec(path);if(device&&request.method==='DELETE')return json(await object.removeSubscription(id,device[1]));
  },
 };

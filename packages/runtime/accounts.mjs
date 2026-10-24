@@ -1,3 +1,5 @@
+import {producerIndexedMetadata} from '../storage/producer-index.mjs';
+import {conversationIndexedMetadata} from '../conversations/index.mjs';
 import {intentIndexedMetadata} from '../intents/index.mjs';
 import {sweepMcpJournal} from '../mcp/account.mjs';
 import {capability,flagsFor,writerConfig,withWriterFlags,recordFlag} from './account/flags.mjs';
@@ -187,7 +189,8 @@ function restore(value){if(value&&Object.hasOwn(value,'$bytes'))return Uint8Arra
 
 export class AccountController {
   constructor({metadata,gate,blobs,archives,config,sql,sqlTransaction}){
-    metadata=intentIndexedMetadata(metadata);
+    // Conversation due/dead-peer projections cover every account-store writer (scale round 2 review M1).
+    metadata=conversationIndexedMetadata(producerIndexedMetadata(intentIndexedMetadata(metadata)));
     this.flagConfig=config;config=writerConfig(config);
     const work=flagsFor(config).envState('WORK_LIMITS_ENABLED').raw,write=flagsFor(config).envState('STORAGE_WRITE_ENABLED').raw;
     if(work!==undefined&&!['true','false',true,false].includes(work))throw new TypeError('Invalid logical activity admission configuration.');

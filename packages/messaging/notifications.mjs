@@ -31,6 +31,21 @@ const quietNow = (quiet, now) => {
   return quiet.startHour < quiet.endHour ? hour >= quiet.startHour && hour < quiet.endHour : hour >= quiet.startHour || hour < quiet.endHour;
 };
 
+// Wargame 4 M1: push subscriptions are bound to the session that created them (public session id).
+const SESSION_ID = /^[A-Za-z0-9_-]{1,128}$/;
+// Sessions live at most 24 h, so an end marker older than that can no longer race a subscribe.
+export const SESSION_END_MS = 25 * 3600000;
+async function sessionEnded(reader, owner, sessionId, now) { const row = await reader.get(key('push-session-ended', owner, sessionId)); return Boolean(row && row.expiresAt > now); }
+/** Before any push send: drops (and deletes, when `reader` can) rows bound to a session identity has ended. */
+export async function livePushRows(reader, owner, rows, now = Date.now()) {
+  const out = [];
+  for (const row of rows) {
+    if (row?.sessionId && await sessionEnded(reader, owner, row.sessionId, now)) { if (typeof reader.delete === 'function' && row.id) await reader.delete(key('push-subscription', owner, row.id)); continue; }
+    out.push(row);
+  }
+  return out;
+}
+
 export class NotificationService {
   constructor({ store, messageAllowed = async()=>true, crypto = globalThis.crypto, clock = () => Date.now(), allowedPushOrigins = ['https://fcm.googleapis.com', 'https://updates.push.services.mozilla.com', 'https://web.push.apple.com'] }) { Object.assign(this, { store, messageAllowed, crypto, clock, allowedPushOrigins }); }
   async preferences(owner) { return this.store.transaction(async tx => await tx.get(key('notification-preferences', owner)) || defaultNotificationPreferences()); }
@@ -43,17 +58,37 @@ export class NotificationService {
       await tx.set(key('notification-preferences', owner), preferences); return preferences;
     });
   }
-  async subscribe(owner, { endpoint, keys }, label = 'This device', {enable=false}={}) {
+  async subscribe(owner, { endpoint, keys }, label = 'This device', {enable=false,sessionId}={}) {
     let url; try { url = new URL(endpoint); } catch { fail('invalid_subscription'); }
     if (url.protocol !== 'https:' || url.username || url.password || url.hash || endpoint.length > 2048 || !this.allowedPushOrigins.includes(url.origin) || !boundedString(label, 100)) fail('invalid_subscription');
     if (!keys || fromBase64url(keys.p256dh).length !== 65 || fromBase64url(keys.auth).length !== 16) fail('invalid_subscription');
     const id = await digest(this.crypto, endpoint);
     return this.store.transaction(async tx => {
+      // Wargame 4 M1: a subscription made from a session that has since been ended is refused (the end drained first).
+      if (sessionId !== undefined && (typeof sessionId !== 'string' || !SESSION_ID.test(sessionId) || await sessionEnded(tx, owner, sessionId, this.clock()))) fail('unauthorized');
       const all = await tx.list(key('push-subscription', owner));
       if (all.length >= 10 && !all.some(row => row.value.id === id)) fail('subscription_limit');
       if(enable){const preferences=await tx.get(key('notification-preferences',owner))??defaultNotificationPreferences();validatePreferences(preferences);await markChannel(tx,owner,structuredClone(preferences),{enabled:true,push:{enabled:true}},this.clock());preferences.enabled=true;preferences.push.enabled=true;await tx.set(key('notification-preferences',owner),preferences);}
-      await tx.set(key('push-subscription', owner, id), { id, owner, endpoint, keys, label, createdAt: this.clock() });
+      await tx.set(key('push-subscription', owner, id), { id, owner, endpoint, keys, label, createdAt: this.clock(), ...sessionId ? { sessionId } : {} });
       return { id, label };
+    });
+  }
+  /** Wargame 4 M1: identity ended these sessions (revoke, cap eviction, recovery). Deletes every subscription bound to
+   * one of them and remembers each end for SESSION_END_MS so a late subscribe from it is refused. `keep` (sign out other
+   * devices) also deletes every row not bound to a kept session, including legacy rows with no binding. Idempotent. */
+  async endSessions(owner, { sessionIds = [], keep, keepSubscriptions = [] } = {}) {
+    const ids = list => Array.isArray(list) && list.every(id => typeof id === 'string' && SESSION_ID.test(id));
+    if (!ids(sessionIds) || sessionIds.length > 200 || keep !== undefined && (!ids(keep) || keep.length > 20) || !ids(keepSubscriptions) || keepSubscriptions.length > 10) fail('invalid_request');
+    return this.store.transaction(async tx => {
+      const now = this.clock(), ended = new Set(sessionIds), kept = keep && new Set(keep), keptRows = new Set(keepSubscriptions); let removed = 0;
+      for (const { value: row } of await tx.list(key('push-subscription', owner))) {
+        if (!row?.id) continue;
+        if (ended.has(row.sessionId) || kept && !kept.has(row.sessionId) && !keptRows.has(row.id)) { await tx.delete(key('push-subscription', owner, row.id)); removed++; }
+      }
+      for (const id of ended) await tx.set(key('push-session-ended', owner, id), { at: now, expiresAt: now + SESSION_END_MS });
+      // Bounded prune of expired end markers.
+      let pruned = 0; for (const { key: path, value } of await tx.list(key('push-session-ended', owner))) { if (pruned >= 50) break; if (!(value?.expiresAt > now) && path) { await tx.delete(path); pruned++; } }
+      return { removed };
     });
   }
   async subscriptions(owner) { return this.store.transaction(async tx => (await tx.list(key('push-subscription', owner))).map(({ value: { id, label, createdAt } }) => ({ id, label, createdAt }))); }
@@ -90,7 +125,7 @@ export class NotificationService {
       for (const { value: event } of await tx.list(key('notification-event', owner))) {
         for (const channel of ['push', 'email']) {
           const eligible = await this.eligible(tx, owner, event, channel, now); if (!eligible) continue;
-          const subscriptions = channel === 'push' ? (await tx.list(key('push-subscription', owner))).map(row => row.value) : [null];
+          const subscriptions = channel === 'push' ? await livePushRows(tx, owner, (await tx.list(key('push-subscription', owner))).map(row => row.value), now) : [null];
           for (const subscription of subscriptions) {
             if (result.length >= limit) return result;
             if(channel==='email'){const state=await tx.get(key('notification-email-budget',owner));if(state&&(state.nextAt>now||state.leaseUntil>now))continue;if(result.some(job=>job.channel==='email'))continue;}

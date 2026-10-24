@@ -1,4 +1,6 @@
 import {readBody} from '../store/bodies.mjs';
+import {replayDue} from './conversations.mjs';
+import {dirtyTimeline} from './conversation-timeline.mjs';
 // BB-B6 archive and app switch (spec §6.6, §8.2, §10; architecture §8, §16, §18 retention P0). Provisional, default off:
 // the provider refuses unless BINDLEBOX_ENABLED is exactly true, and nothing here is mounted by a shell yet.
 //  - Checkpoint: one consistent cut of exportable mailbox rows (store/archive-writer.mjs classification), diffed against
@@ -264,6 +266,11 @@ async function applyBatch(tx,rows,counts){
   if(r.key.startsWith('parent/')&&r.value?.iss&&r.value.jti)await queueEdge(tx,{iss:r.value.iss,jti:r.value.jti,claimsDigest:r.value.claimsDigest,revoked:r.value.revoked===true});
   if((r.key.startsWith('item/')||r.key.startsWith('conv/event/'))&&Number.isSafeInteger(r.value?.hot)&&r.value.hot>0)await chargeUsage(tx,{bytes:r.value.hot});
   if(r.key.startsWith(SEND.task)&&r.value?.resend){const id=r.value.messageId;const prior=await tx.get(A.resend(id));await tx.put(A.resend(id),{messageId:id,kind:r.value.kind??null,recipients:[...new Map([...(prior?.recipients??[]),r.value.principal].filter(Boolean).map(p=>[`${p.issuer}|${p.subject}`,p])).values()],at:r.value.createdAt??null});}
+  // Review L1 (scale round 2): derived conversation indexes are not archived, so imported rows rebuild them. A replay
+  // row gets its expiry pointer; an event invalidates the room's materialized order, whose rebuild also recomputes the
+  // missing-parent markers (a live fast-path append never trusts markers from before the import).
+  if(r.key.startsWith('conv/replay/')&&Number.isFinite(r.value?.retainUntil))await tx.put(replayDue(r.value.retainUntil,r.key.slice('conv/replay/'.length)),r.key.slice('conv/replay/'.length));
+  if(r.key.startsWith('conv/event/'))await dirtyTimeline(tx,r.key.split('/')[2]);
   if(r.key.startsWith('conv/op/')&&r.value?.unsent)await tx.put(A.resend(r.value.operationId),{messageId:r.value.operationId,kind:'conversation-record',conversationId:r.value.cid,eventId:r.value.eventId,recipients:[],at:r.value.createdAt??null});
  }
 }

@@ -19,6 +19,8 @@
  * Returns {name,record,revision,version,audit}; history returns {name,entries}.
  * seed is per flag, refuses existing records (no overwrite or duplicate audit).
  * Queries: list, get, history, preview, seedVerify, explain, evaluate, snapshot.
+ * retire({name,expectedVersion,reason,typedName}) deletes one quarantined stored record (a flag the deployed registry
+ * no longer accepts); critical, audited, own rate window. list returns quarantined names (wargame 4, L5).
  * FF-3 owns the ngin Actions/Queries wrapping this provider; no nested dispatch.
  */
 import {FLAGS,getFlag,GATE_REVISION} from './registry.mjs';
@@ -34,6 +36,9 @@ const actions=['seed','take-control','update','rollback','reshuffle','experiment
 const common=['name','expectedRevision','expectedVersion','reason','typedName','previewDigest','acknowledgeGates'];
 const extras={update:['record'],rollback:['revision'],'experiment-conclude':['winner']};
 const digest=async value=>[...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(canonical(value))))].map(n=>n.toString(16).padStart(2,'0')).join('');
+// Flag-console rate windows are their own keys: sharing the admin service's keys with a different window let
+// either service reset the other's window (wargame 4, M2).
+export const flagRateKey=(actor,read=false)=>'flags-'+(read?'read-':'')+(actor.kind==='boot'?'boot':'admin-'+actor.owner);
 const revision=x=>x===null||Number.isSafeInteger(x)&&x>0;
 const empty=(f,salt)=>({rev:0,on:false,onValue:f.onValue,fallthrough:f.safe,salt,retainExisting:false,deny:{accounts:[],clients:[]},rules:[],experiment:null});
 /** Fixed, non-user matrix. No owner/region input to seed verification. */
@@ -48,11 +53,14 @@ export class FlagService {
   if(mutation&&context.stepUpMethod!=='passkey')fail('step_up_required','A fresh passkey step-up is required.',403);
   return actor;
  }
- async snapshot(){return validateSnapshot(await this.store.flagsSnapshot());}
+ /** Console reads spend the per-actor flag read window (no audit entry; explain audits itself). */
+ async readLimited(actor){const committed=await this.store.commit({expect:actor.expect,rate:{key:flagRateKey(actor,true),limit:300,windowMs:60000,now:this.clock()}});if(committed.rateLimited)fail('rate_limited','Administrative reads are rate limited.',429);if(!committed.committed)fail('conflict','Authority changed; reload and try again.',409);}
+ async snapshot(){return validateSnapshot(await this.store.flagsSnapshot(),{quarantine:true});}
  async state(){const snapshot=await this.snapshot(),head=await this.store.get('flags-head');if((head?.version??0)!==snapshot.version)fail('conflict','Flags changed; reload and try again.',409);return {snapshot,head};}
  checkInput(input,action){if(!input||typeof input!=='object'||Array.isArray(input)||Object.keys(input).some(k=>![...common,...extras[action]??[]].includes(k)))fail('invalid_request','Unexpected flag mutation fields.');getFlag(input.name);if(!own(input,'expectedRevision')||!revision(input.expectedRevision)||own(input,'expectedVersion')&&(!Number.isSafeInteger(input.expectedVersion)||input.expectedVersion<0))fail('invalid_request','Provide the expected flag revision.');}
  async proposal(input,action,snapshot,now){
   this.checkInput(input,action);const f=getFlag(input.name),before=snapshot.flags[f.name]??null;
+  if(snapshot.quarantined?.includes(f.name))fail('flag_quarantined','The stored record is quarantined; retire it first.',409);
   if(f.class==='b')fail('invalid_snapshot','Env-only capabilities cannot have console records.');
   if(input.expectedRevision!==(before?.rev??null)||own(input,'expectedVersion')&&input.expectedVersion!==snapshot.version)fail('conflict','Flags changed; reload and try again.',409);
   let next;
@@ -104,7 +112,7 @@ export class FlagService {
   const preview={name:f.name,action,version:state.snapshot.version,expectedRevision:before?.rev??null,record:next,critical,widens:widening,openGates,requiredGates,impact};
   preview.digest=await digest({name:f.name,action,version:state.snapshot.version,before,after:normalized,critical,requiredGates,impact,env:Object.fromEntries(Object.entries(this.env).filter(([name])=>own(FLAGS,name)||name==='RELEASE_READY').sort(([a],[b])=>a.localeCompare(b))),gateRevision:GATE_REVISION});return preview;
  }
- async preview(input,context){this.authority(context);const {action='update',...change}=input??{};if(!actions.includes(action))fail('invalid_request','Unknown flag action.');return this.previewFor(change,action,await this.state(),context,this.clock());}
+ async preview(input,context){await this.readLimited(this.authority(context));const {action='update',...change}=input??{};if(!actions.includes(action))fail('invalid_request','Unknown flag action.');return this.previewFor(change,action,await this.state(),context,this.clock());}
  async mutate(action,input,context){
   if(!actions.includes(action))fail('invalid_request','Unknown flag action.');
   const actor=this.authority(context,true),now=this.clock(),state=await this.state(),preview=await this.previewFor(input,action,state,context,now),{name,critical}=preview;
@@ -119,7 +127,7 @@ export class FlagService {
   const dependency=name=>{for(const parent of getFlag(name).requires){if(own(expect,'flag/'+parent))continue;expect['flag/'+parent]=state.snapshot.flags[parent]?.rev??null;dependency(parent);}};dependency(name);
   if(after.rev>100)writes[`flag-rev/${name}/${after.rev-100}`]=null;
   if(after.experiment&&['experiment-start','experiment-stop','experiment-conclude'].includes(action))writes['flag-experiment/'+after.experiment.id]={name,experiment:after.experiment,updatedAt:now};
-  const result=await this.store.commit({expect,writes,rate:{key:actor.kind==='boot'?'boot':'admin-'+actor.owner,limit:60,windowMs:60000,now},audit:{at:now,actor:actor.audit??{kind:actor.kind,...actor.owner?{owner:actor.owner}:{}},action:'flag.'+action,target:name,before,after,reason:input.reason??null,typedName:input.typedName??null,acknowledgeGates:acknowledged,gateRevision:GATE_REVISION,previewDigest:preview.digest,version,...action==='rollback'?{rollbackRevision:input.revision}:{}}});
+  const result=await this.store.commit({expect,writes,rate:{key:flagRateKey(actor),limit:60,windowMs:60000,now},audit:{at:now,actor:actor.audit??{kind:actor.kind,...actor.owner?{owner:actor.owner}:{}},action:'flag.'+action,target:name,before,after,reason:input.reason??null,typedName:input.typedName??null,acknowledgeGates:acknowledged,gateRevision:GATE_REVISION,previewDigest:preview.digest,version,...action==='rollback'?{rollbackRevision:input.revision}:{}}});
   if(result.rateLimited)fail('rate_limited','Administrative actions are rate limited.',429);if(!result.committed)fail('conflict','Flags or authority changed; reload and try again.',409);
   if(this.onCommit)await this.onCommit(snapshot);return {name,record:after,revision:after.rev,version,audit:result.audit};
  }
@@ -131,10 +139,33 @@ export class FlagService {
  experimentStart(input,context){return this.mutate('experiment-start',input,context);}
  experimentStop(input,context){return this.mutate('experiment-stop',input,context);}
  experimentConclude(input,context){return this.mutate('experiment-conclude',input,context);}
- async list(input,context){this.authority(context);const snapshot=await this.snapshot();return {version:snapshot.version,flags:Object.values(FLAGS).map(f=>({name:f.name,registry:f,record:snapshot.flags[f.name]??null,env:parseEnv(f.name,this.env,own(snapshot.flags,f.name),{platform:this.platform}),global:evaluateGlobal(f.name,snapshot,this.env).value}))};}
- async get({name},context){this.authority(context);getFlag(name);const snapshot=await this.snapshot();return {name,record:snapshot.flags[name]??null,version:snapshot.version,env:parseEnv(name,this.env,own(snapshot.flags,name),{platform:this.platform})};}
- async history({name},context){this.authority(context);getFlag(name);const row=await this.store.get('flag/'+name),entries=[];for(let rev=row?.rev??0;rev>Math.max(0,(row?.rev??0)-100);rev--){const entry=await this.store.get(`flag-rev/${name}/${rev}`);if(entry)entries.push(entry);}return {name,entries};}
- async seedVerify(input,context){this.authority(context);if(Object.keys(input??{}).length)fail('invalid_request','Seed verification accepts no client values.');const snapshot=await this.snapshot(),contexts=seedContexts(this.clock()),env={...this.env};for(const f of consoleFlags)delete env[f.name];return {version:snapshot.version,contexts:contexts.length,flags:Object.fromEntries(consoleFlags.map(f=>{const state=parseEnv(f.name,this.env,own(snapshot.flags,f.name),{platform:this.platform}),legacy=legacyValue(f.name,this.env,{platform:this.platform}),mismatches=contexts.reduce((n,ctx)=>n+Number(evaluate(f.name,ctx,snapshot,env,{platform:this.platform}).value!==legacy),0);return [f.name,{safeToRemove:own(snapshot.flags,f.name)&&!['kill','invalid'].includes(state.state)&&mismatches===0,envState:state.state,managed:own(snapshot.flags,f.name),matches:contexts.length-mismatches,total:contexts.length}];}))};}
- async evaluate({name,context:ctx},context){this.authority(context);return evaluate(name,ctx,await this.snapshot(),this.env,{clock:this.clock,platform:this.platform});}
- async explain(input,context){const actor=this.authority(context),result=await this.evaluate(input,context),now=this.clock(),committed=await this.store.commit({expect:actor.expect,rate:{key:'read-'+(actor.kind==='boot'?'boot':'admin-'+actor.owner),limit:300,windowMs:60000,now},audit:{at:now,actor:actor.audit??{kind:actor.kind},action:'flag.explain',target:input.name,before:null,after:result}});if(committed.rateLimited)fail('rate_limited','Administrative reads are rate limited.',429);if(!committed.committed)fail('conflict','Authority changed; reload and try again.',409);return result;}
+ async list(input,context){await this.readLimited(this.authority(context));const snapshot=await this.snapshot();return {version:snapshot.version,quarantined:(snapshot.quarantined??[]).map(name=>({name,registered:own(FLAGS,name)})),flags:Object.values(FLAGS).map(f=>({name:f.name,registry:f,record:snapshot.flags[f.name]??null,env:parseEnv(f.name,this.env,own(snapshot.flags,f.name),{platform:this.platform}),global:evaluateGlobal(f.name,snapshot,this.env).value}))};}
+ async get({name},context){await this.readLimited(this.authority(context));getFlag(name);const snapshot=await this.snapshot();return {name,record:snapshot.flags[name]??null,version:snapshot.version,env:parseEnv(name,this.env,own(snapshot.flags,name),{platform:this.platform})};}
+ /** L5: remove one stored record the registry rejects. Never touches a record that validates (use update instead). */
+ async retire(input,context){
+  if(!input||typeof input!=='object'||Array.isArray(input)||Object.keys(input).some(k=>!['name','expectedVersion','reason','typedName','acknowledgeGates'].includes(k)))fail('invalid_request','Unexpected flag retirement fields.');
+  const actor=this.authority(context,true),now=this.clock(),{snapshot,head}=await this.state(),{name}=input;
+  if(typeof name!=='string'||!snapshot.quarantined?.includes(name))fail('not_quarantined','Only a quarantined stored record can be retired.',409);
+  if(!Number.isSafeInteger(input.expectedVersion)||input.expectedVersion!==snapshot.version)fail('conflict','Flags changed; reload and try again.',409);
+  if(typeof input.reason!=='string'||input.reason.trim().length<10||input.reason.length>500)fail('reason_required','Provide a reason of 10–500 characters.');
+  if(input.typedName!==name)fail('typed_name_required','Type the exact flag name.');
+  // Review: a still-registered flag is never deleted outright (a leftover env force-on would then switch it on); its
+  // record is replaced by the off record in the same commit, and a force-on-legacy env needs an explicit acknowledgement.
+  const registered=own(FLAGS,name),f=registered?getFlag(name):null;
+  if(registered&&f.class!=='b'&&parseEnv(name,this.env,false,{platform:this.platform}).state==='force-on-legacy'){const ack=input.acknowledgeGates;if(!Array.isArray(ack)||ack.length!==1||ack[0]!=='legacy-env')fail('gates_unacknowledged','The environment still forces this flag on; acknowledge legacy-env to retire its record.',409);}
+  else if(input.acknowledgeGates!==undefined&&(!Array.isArray(input.acknowledgeGates)||input.acknowledgeGates.length))fail('gates_unacknowledged','No gate acknowledgement applies here.',409);
+  const stored=await this.store.get('flag/'+name);if(!stored)fail('conflict','Flags changed; reload and try again.',409);
+  const {revision:storedRevision,...before}=stored,version=snapshot.version+1,{quarantined:_q,...rest}=snapshot,remaining=snapshot.quarantined.filter(n=>n!==name);
+  const replacement=f&&f.class!=='b'?validateRecord(name,{...empty(f,this.randomId()),rev:(Number.isSafeInteger(before.rev)&&before.rev>0?before.rev:0)+1}):null;
+  const writes={['flag/'+name]:replacement,'flags-head':{version,issuedAt:now}};if(replacement)writes[`flag-rev/${name}/${replacement.rev}`]={record:replacement,version,at:now,action:'flag.retire'};
+  const result=await this.store.commit({expect:{...actor.expect,['flag/'+name]:storedRevision??null,'flags-head':head?.revision??null},writes,rate:{key:flagRateKey(actor),limit:60,windowMs:60000,now},audit:{at:now,actor:actor.audit??{kind:actor.kind,...actor.owner?{owner:actor.owner}:{}},action:'flag.retire',target:name,before,after:replacement,reason:input.reason,typedName:input.typedName,acknowledgeGates:input.acknowledgeGates??[],critical:true,version}});
+  if(result.rateLimited)fail('rate_limited','Administrative actions are rate limited.',429);if(!result.committed)fail('conflict','Flags or authority changed; reload and try again.',409);
+  if(this.onCommit)await this.onCommit(validateSnapshot({...rest,version,issuedAt:now,flags:{...rest.flags,...replacement?{[name]:replacement}:{}},...remaining.length?{quarantined:remaining}:{}}));
+  return {name,retired:true,record:replacement,version,audit:result.audit};
+ }
+ async history({name},context){await this.readLimited(this.authority(context));getFlag(name);const row=await this.store.get('flag/'+name),entries=[];for(let rev=row?.rev??0;rev>Math.max(0,(row?.rev??0)-100);rev--){const entry=await this.store.get(`flag-rev/${name}/${rev}`);if(entry)entries.push(entry);}return {name,entries};}
+ async seedVerify(input,context){await this.readLimited(this.authority(context));if(Object.keys(input??{}).length)fail('invalid_request','Seed verification accepts no client values.');const snapshot=await this.snapshot(),contexts=seedContexts(this.clock()),env={...this.env};for(const f of consoleFlags)delete env[f.name];return {version:snapshot.version,contexts:contexts.length,flags:Object.fromEntries(consoleFlags.map(f=>{const state=parseEnv(f.name,this.env,own(snapshot.flags,f.name),{platform:this.platform}),legacy=legacyValue(f.name,this.env,{platform:this.platform}),mismatches=contexts.reduce((n,ctx)=>n+Number(evaluate(f.name,ctx,snapshot,env,{platform:this.platform}).value!==legacy),0);return [f.name,{safeToRemove:own(snapshot.flags,f.name)&&!['kill','invalid'].includes(state.state)&&mismatches===0,envState:state.state,managed:own(snapshot.flags,f.name),matches:contexts.length-mismatches,total:contexts.length}];}))};}
+ async evaluate(input,context){await this.readLimited(this.authority(context));return this.evaluateFor(input);}
+ async evaluateFor({name,context:ctx}={}){return evaluate(name,ctx,await this.snapshot(),this.env,{clock:this.clock,platform:this.platform});}
+ async explain(input,context){const actor=this.authority(context),result=await this.evaluateFor(input),now=this.clock(),committed=await this.store.commit({expect:actor.expect,rate:{key:flagRateKey(actor,true),limit:300,windowMs:60000,now},audit:{at:now,actor:actor.audit??{kind:actor.kind},action:'flag.explain',target:input.name,before:null,after:result}});if(committed.rateLimited)fail('rate_limited','Administrative reads are rate limited.',429);if(!committed.committed)fail('conflict','Authority changed; reload and try again.',409);return result;}
 }

@@ -37,8 +37,12 @@ function overviewView(state){
   h('section',h('h2','Recent claims'),live.length?h('ul',...live.slice(0,5).map(c=>h('li',data(c.name,'strong'),h('span',tx('expires {time}',{time:formatTime(c.expiresAt,state.locale)})).classes('muted')))).classes('plain-list'):h('p','No outstanding claims.').classes('muted')).classes('panel'),
   h('section',h('h2','Badge classes'),o.badges?.length?h('ul',...o.badges.map(b=>h('li',data(b.id,'code'),pill(CLASS_LABEL[b.class]??b.class,'class-'+b.class)))).classes('plain-list'):h('p','No badges are configured on this deployment.').classes('muted')).classes('panel'));
 }
+// Wargame 4 (b): the overview is paged; more claims and runtime reservations load on request.
+const morePanel=(state,list,label)=>state.overview?.[list+'Next']?h('div',button(state,label,'overview-more',{list},'button secondary')).classes('buttons','overview-more'):null;
+function claimsView(state){return h('div',claimsListView(state),morePanel(state,'claims','Show more claims'));}
+function reservationsView(state){return h('div',reservationsListView(state),morePanel(state,'reservations','Show more reservations'));}
 // ---- reservations ----
-function reservationsView(state){
+function reservationsListView(state){
  const o=state.overview;if(!o)return h('div',head('Reservations','Handles held back from public signup.'),missingOverview(state));
  const catalog=o.catalog,roles=roleOptions(state.mode,catalog,{internal:true,roles:[]}),badges=badgeOptions(state.mode,catalog,o.badges,{internal:true,badgeIds:[]});
  return h('div',head('Reservations','Handles held back from public signup. Reserved handles become internal accounts only through a claim token.'),
@@ -60,7 +64,7 @@ function revealPanel(state){
 // A redeemed claim created its account; it is neither outstanding nor revocable (the service answers claim_in_use).
 const redeemed=c=>Number.isSafeInteger(c.redeemedAt);
 function claimState(c,now){if(c.state==='revoked')return ['Revoked','subtle'];if(redeemed(c))return ['Redeemed','subtle'];if(c.expiresAt<=now)return ['Expired','subtle'];if(c.state==='issuing')return ['Issuing','warning'];return ['Outstanding','good'];}
-function claimsView(state){
+function claimsListView(state){
  const o=state.overview;if(!o)return h('div',head('Claims','Single-use links that create reserved internal accounts.'),missingOverview(state));
  const catalog=o.catalog,roles=roleOptions(state.mode,catalog,{internal:true,roles:[]}),badges=badgeOptions(state.mode,catalog,o.badges,{internal:true,badgeIds:[]}),names=[...o.reservations.runtime.map(item=>item.name),...state.mode==='boot'?o.reservations.static:[]];
  return h('div',head('Claims','Single-use links that create reserved internal accounts through the normal onboarding flow.'),revealPanel(state),
@@ -124,7 +128,7 @@ function auditView(state){
  const audit=state.audit;
  const status=!audit?null:audit.verified.valid?h('div',icon('check'),h('div',h('strong','Chain intact'),h('p',audit.full?tx('Every entry through {seq} links to the one before it.',{seq:String(audit.verified.seq)}):tx('This page links correctly to the previous entry. Head: {seq}.',{seq:String(audit.head)})))).attrs({role:'status'}).classes('chain-status','good'):h('div',icon('close'),h('div',h('strong','Chain verification failed'),h('p',tx('The chain breaks at entry {seq}. Audit storage may have been altered outside the console. Preserve it and investigate.',{seq:String(audit.verified.seq)})))).attrs({role:'alert'}).classes('chain-status','bad');
  const entries=audit?[...audit.entries].reverse():[],first=audit?.entries[0]?.seq,last=audit?.entries.at(-1)?.seq;
- return h('div',head('Audit log','Hash-chained, append-only record of every privileged action.',h('div',button(state,'Refresh','load-audit',{},'button secondary'),button(state,'Verify entire chain','load-audit',{verify:true},'button primary')).classes('buttons')),
+ return h('div',head('Audit log','Hash-chained, append-only record of every privileged action.',h('div',button(state,'Refresh','load-audit',{},'button secondary'),state.mode==='boot'?button(state,'Verify entire chain','load-audit',{verify:true},'button primary'):null /* wargame 4 (a): the full chain walk is boot-only */).classes('buttons')),
   h('p','Tamper-evident, not tamper-proof: someone with storage access who rewrites every later entry is not detected. External anchoring of the head is not yet available.').classes('muted'),
   !audit?(state.busy?h('p','Loading audit log…').attrs({role:'status'}).classes('muted'):button(state,'Load audit log','load-audit',{},'button primary')):h('div',status,
    entries.length?h('ol',...entries.map(entry=>{const diff=auditDiff(entry.before,entry.after);return h('li',h('div',data('#'+entry.seq,'code'),h('strong',data(entry.action)),entry.phase?pill(entry.phase==='failed'?'Failed':entry.phase==='applied'?'Applied':'Intent',entry.phase==='failed'?'warning':'subtle'):null,h('span',when(entry.at,state.locale)).classes('muted')).classes('audit-head'),h('div',h('span','Actor: ').classes('muted'),actorLabel(entry.actor),entry.target?h('span',h('span',' · Target: ').classes('muted'),data(entry.target,'code')):null).classes('audit-meta'),diff.length?h('table',h('caption',tx('Changes in entry {seq}',{seq:String(entry.seq)})).classes('visually-hidden'),h('thead',h('tr',h('th','Field').attrs({scope:'col'}),h('th','Before').attrs({scope:'col'}),h('th','After').attrs({scope:'col'}))),h('tbody',...diff.map(row=>h('tr',h('th',data(row.key||'value','code')).attrs({scope:'row'}),h('td',data(row.before,'code')),h('td',data(row.after,'code')))))).classes('audit-diff'):null).classes('audit-entry');})).attrs({'aria-label':'Audit entries, newest first'}).classes('audit-list'):h('p','No audit entries yet.').classes('muted'),

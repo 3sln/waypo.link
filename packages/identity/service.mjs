@@ -125,6 +125,15 @@ export function securityState(account) {
   return Object.freeze({ epoch, changedAt });
 }
 /** identitySecurity(owner) over any identity repository with get(id). */
+/** Wargame 4 M1: queue the push-subscription end row on an account record about to be CAS-written. For code that ends
+ * sessions outside IdentityService (transfer-out, admin): write it in the ending CAS; IdentityService#flushPushEnds runs
+ * it (owner view, next save). `nonce` identifies this queueing so a stale run never clears a newer row. */
+export function queuePushEndsOn(account,ids,{keep,keepSubscriptions,nonce}={}){
+  const prior=account.pendingPushEnds&&typeof account.pendingPushEnds==='object'?account.pendingPushEnds:{ids:[]};
+  const next={ids:[...new Set([...(Array.isArray(prior.ids)?prior.ids:[]),...ids])].slice(-200),nonce:typeof nonce==='string'&&nonce?nonce:crypto.randomUUID()};
+  if(keep)Object.assign(next,{keep:keep.slice(0,20),keepSubscriptions:(keepSubscriptions??[]).slice(0,10)});else if(Array.isArray(prior.keep))Object.assign(next,{keep:prior.keep,keepSubscriptions:prior.keepSubscriptions??[]});
+  if(next.ids.length||next.keep)account.pendingPushEnds=next;
+}
 export function identitySecurityPort(repository) {
   if (typeof repository?.get !== 'function') throw new TypeError('An identity repository is required.');
   return async owner => { const account = await repository.get(owner); return account && account.id === owner && account.status !== 'deleted' ? securityState(account) : null; };
@@ -211,6 +220,7 @@ export class IdentityService {
     account.revision = revision + 1;
     if (!await this.repository.compareAndSwap(account.id, revision, account)) { this.queuedNotices?.delete(account); fail('conflict', 'The account changed; start this step again.'); }
     await this.flushNotices(account);
+    if (account.pendingPushEnds) await this.syncPushEnds(account);
   }
   /** Queues an account security notice for after this record's next successful save (`save` flushes), coalescing per
    * type: at most one per SECURITY_NOTICE_COALESCE_MS, carrying the count of changes since the last one sent
@@ -297,7 +307,7 @@ export class IdentityService {
     const now=this.clock(),removed=new Set(),explicit=new Set();for(const session of account.sessions)if(remove(session)){const id=await this.sessionID(session);removed.add(id);if(session.expiresAt>now)explicit.add(id);}
     let changed=true;while(changed){changed=false;for(const session of account.sessions)if(session.parentSessionId&&removed.has(session.parentSessionId)){const id=await this.sessionID(session);if(!removed.has(id)){removed.add(id);if(session.expiresAt>now)explicit.add(id);changed=true;}}}
     account.sessions=(await Promise.all(account.sessions.map(async session=>({session,id:await this.sessionID(session)})))).filter(item=>!removed.has(item.id)).map(item=>item.session);
-    pruneLineage(account,now);if(explicit.size)revokeLineage(account,explicit,now);
+    pruneLineage(account,now);if(explicit.size){revokeLineage(account,explicit,now);this.queuePushEnds(account,[...explicit]);}
   }
   async recent(context) {
     const result = await this.authorized(context, true);
@@ -621,6 +631,24 @@ export class IdentityService {
     }
     fail('conflict','The account changed; try again.');
   }
+  /** Wargame 4 M1: sessions ended explicitly (revoke, cap eviction, recovery) end their bound push subscriptions. The
+   * row is written in the ending CAS and run by flushPushEnds after it (save, owner view), retried like pendingSever.
+   * `keep` (sign out other devices) also ends every subscription not bound to a kept session or `keepSubscriptions`. */
+  queuePushEnds(account,ids,{keep,keepSubscriptions}={}){
+    if(typeof this.accountChannels?.endSessions!=='function')return; // no account object to clean on this host
+    queuePushEndsOn(account,ids,{keep,keepSubscriptions,nonce:this.crypto.random()});
+  }
+  async flushPushEnds(id){
+    for(let attempt=0;attempt<4;attempt++){
+      const account=await this.repository.get(id);if(!account?.pendingPushEnds)return true;const run=account.pendingPushEnds;
+      if(typeof this.accountChannels?.endSessions==='function')try{await this.accountChannels.endSessions(id,{sessionIds:run.ids??[],...run.keep?{keep:run.keep,keepSubscriptions:run.keepSubscriptions??[]}:{}});}catch{return false;}
+      const current=await this.repository.get(id);if(!current?.pendingPushEnds)return true;if(current.pendingPushEnds.nonce!==run.nonce)continue;const revision=current.revision;delete current.pendingPushEnds;current.revision=revision+1;
+      if(await this.repository.compareAndSwap(id,revision,current))return true;
+    }
+    return false;
+  }
+  /** After `save`: run the row; keep the caller's in-memory record coherent when only that clear was written. */
+  async syncPushEnds(account){const revision=account.revision;if(!await this.flushPushEnds(account.id))return;const fresh=await this.repository.get(account.id);if(fresh&&!fresh.pendingPushEnds&&fresh.revision===revision+1){delete account.pendingPushEnds;account.revision=fresh.revision;}}
   /** Runs the durable connection-severing row `account.pendingSever` (written in the recovery-start or reissue-cancel CAS)
    * and clears it once the port succeeded. A failure leaves the row, so the next attempt (recovery activation, the
    * owner view, a later cancel) retries. Without a port configured the row is cleared (nothing to sever). */
@@ -806,6 +834,7 @@ export class IdentityService {
       account.recoveryResumeHash = account.recoveryHash;
       account.recoveryResumeBackupVersion=account.recoveryBackupVersion||1;
       if(typeof account.recoveryKeyKid==='string')account.recoveryResumeKeyKid=account.recoveryKeyKid;else delete account.recoveryResumeKeyKid;delete account.recoveryKeyKid;
+      this.queuePushEnds(account, await Promise.all(account.sessions.filter(s => s.expiresAt > this.clock()).map(s => this.sessionID(s))));
       account.status = 'recovering'; account.recoveryHash = null; account.credentials = []; account.passwordHash = null; delete account.passwordSetAt; account.sessions = []; revokeAllLineage(account, this.clock()); account.emailChallenges = [];
       // The replacement file of the recovery supersedes any staged reissue and any forced-reissue marker.
       delete account.recoveryStaged; delete account.recoveryReissue; delete account.recoveryPrevious;
@@ -824,7 +853,8 @@ export class IdentityService {
   }
   async owner(input, context) {
     const { account, session } = await this.authorized(context);
-    if(account.pendingSever&&await this.flushSever(account.id)){const fresh=await this.repository.get(account.id);if(fresh){for(const key of Object.keys(account))if(!(key in fresh))delete account[key];Object.assign(account,fresh);}}
+    if(account.pendingPushEnds)await this.flushPushEnds(account.id);
+    if((account.pendingSever&&await this.flushSever(account.id))||account.pendingPushEnds){const fresh=await this.repository.get(account.id);if(fresh){for(const key of Object.keys(account))if(!(key in fresh))delete account[key];Object.assign(account,fresh);}}
     if(!account.paidHandle&&this.repository.paidHandleForOwner)account.paidHandle=await this.repository.paidHandleForOwner(account.id)||undefined;
     // Throttle last-use persistence; telemetry must not cause a read to fail
     // if another authenticated mutation won the account revision race.
@@ -895,7 +925,7 @@ export class IdentityService {
   }
   async revokeOtherSessions(input, context) {
     const { account, session } = await this.recent(context); const revision = account.revision;
-    const keep=new Set([await this.sessionID(session)]);let parent=session.parentSessionId;while(parent&&!keep.has(parent)){keep.add(parent);parent=account.sessions.find(s=>s.id===parent)?.parentSessionId;}const before=account.sessions.filter(s=>s.expiresAt>this.clock()).length;const ids=new Map(await Promise.all(account.sessions.map(async s=>[s,await this.sessionID(s)])));await this.pruneSessions(account,s=>!keep.has(ids.get(s)));const count=before-account.sessions.filter(s=>s.expiresAt>this.clock()).length; this.audit(account, 'other-device-sessions-revoked'); if (count > 0) { this.authorityEvent(account, 'sessions-revoked'); this.queueNotice(account, 'sessions-revoked', await this.sessionID(session)); }
+    const keep=new Set([await this.sessionID(session)]);let parent=session.parentSessionId;while(parent&&!keep.has(parent)){keep.add(parent);parent=account.sessions.find(s=>s.id===parent)?.parentSessionId;}const before=account.sessions.filter(s=>s.expiresAt>this.clock()).length;const ids=new Map(await Promise.all(account.sessions.map(async s=>[s,await this.sessionID(s)])));await this.pruneSessions(account,s=>!keep.has(ids.get(s)));this.queuePushEnds(account,[],{keep:[...keep],keepSubscriptions:typeof input?.pushSubscription==='string'&&/^[A-Za-z0-9_-]{43}$/.test(input.pushSubscription)?[input.pushSubscription]:[]});const count=before-account.sessions.filter(s=>s.expiresAt>this.clock()).length; this.audit(account, 'other-device-sessions-revoked'); if (count > 0) { this.authorityEvent(account, 'sessions-revoked'); this.queueNotice(account, 'sessions-revoked', await this.sessionID(session)); }
     await this.save(account, revision); return { revoked: count };
   }
   /** What ordinary sign-out of `session` also ends, for the sign-out warning (architecture §7.4). */

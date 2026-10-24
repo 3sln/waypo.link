@@ -8,7 +8,7 @@ export const ownerActor=(owner=OWNER)=>({kind:'owner',owner});
 // Serialized copy-on-write transactions: a failed callback rolls back, an after fault loses only the reply.
 export function memoryStore(initial=[]){
  let data=new Map(structuredClone(initial)),tail=Promise.resolve();
- const handle=map=>({get:async key=>structuredClone(map.get(key)),put:async(key,value)=>{map.set(key,structuredClone(value));},set:async(key,value)=>{map.set(key,structuredClone(value));},delete:async key=>map.delete(key),list:async({prefix=''}={})=>new Map([...map].filter(([key])=>key.startsWith(prefix)).sort(([a],[b])=>a<b?-1:a>b?1:0).map(([key,value])=>[key,structuredClone(value)]))});
+ const handle=map=>({get:async key=>structuredClone(map.get(key)),put:async(key,value)=>{map.set(key,structuredClone(value));},set:async(key,value)=>{map.set(key,structuredClone(value));},delete:async key=>map.delete(key),list:async({prefix='',startAfter='',limit=100000}={})=>new Map([...map].filter(([key])=>key.startsWith(prefix)&&key>(startAfter??'')).sort(([a],[b])=>a<b?-1:a>b?1:0).slice(0,limit).map(([key,value])=>[key,structuredClone(value)]))});
  return {get:key=>handle(data).get(key),list:options=>handle(data).list(options),transaction(work){const result=tail.then(async()=>{const draft=structuredClone(data),value=await work(handle(draft));data=draft;return value;});tail=result.catch(()=>{});return result;},put(key,value){return this.transaction(tx=>tx.put(key,value));},delete(key){return this.transaction(tx=>tx.delete(key));}};
 }
 export function createTestEngine({seed=Number(process.env.CHAOS_SEED??1),owner=OWNER,clock,store=memoryStore([['owner',owner]]),faults={},wrap={},providers={},interceptors=[],registry=MAILBOX_OPERATIONS}={}){

@@ -1,3 +1,4 @@
+import {dirtyTimeline} from './conversation-timeline.mjs';
 import {projectIncoming,removeIncoming} from '../store/item-index.mjs';
 // Consumer side of delegated-certificate status (spec §3.4; architecture §4.3 items 3 and 5). The receiver resolves
 // identity keys and `active`/`revoked` status through the injected `directory` provider ({resolveKey, status}), with
@@ -69,7 +70,7 @@ export async function recordRevocation(tx,{jkt,revokedHour,principal,now}){
    }else{
     const [cid,id]=key.split('/').slice(-2),eventKey=`conv/event/${cid}/${id}`,ev=await tx.get(eventKey);
     if(!ev||ev.quarantined||!quarantined(ev.createdAt,hour))continue;
-    ev.quarantined={reason:'delegation_revoked',at:now};await tx.put(eventKey,ev);count++;
+    ev.quarantined={reason:'delegation_revoked',at:now};await tx.put(eventKey,ev);await dirtyTimeline(tx,cid);count++;
    }
   }
   if(keys.length<=batch.length){phase++;after=null;}

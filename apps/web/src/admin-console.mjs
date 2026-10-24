@@ -4,6 +4,8 @@
 import {constructors as baseConstructors} from './bl/admin-console.mjs';
 import {flagConstructors} from './bl/admin-flags.mjs';
 import {experimentConstructors} from './bl/admin-experiments.mjs';
+import {orgCaseConstructors} from './bl/admin-org-cases.mjs';
 export {EnterConsole} from './bl/admin-console.mjs';
-export const constructors={...baseConstructors,...flagConstructors,...experimentConstructors};
-export {consoleView} from './ui/admin-flags.mjs';
+// ORG-12d: org-case navigation extends the flags navigation, which extends the base navigation.
+export const constructors={...baseConstructors,...flagConstructors,...experimentConstructors,...orgCaseConstructors};
+export {consoleView} from './ui/admin-org-cases.mjs';

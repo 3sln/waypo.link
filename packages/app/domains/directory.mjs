@@ -31,4 +31,4 @@ export class DirectoryKey extends AppQuery {
 export const DIRECTORY_OPERATIONS=Object.freeze([DirectoryIdentity,RefreshDirectoryIdentity,DirectoryKey]);
 /** Shared `resolveIdentityKey` directory hook. The caller admits the relationship before background refresh;
  * signature verification uses resolve only. Every call observes the engine's pinned feature configuration. */
-export const directoryHook=engine=>Object.freeze({resolve:input=>read(engine,new DirectoryKey({input})),refresh:input=>perform(engine,new RefreshDirectoryIdentity({actor:{kind:'system',reason:'directory-refresh'},input}))});
+export const directoryHook=engine=>Object.freeze({resolve:input=>read(engine,new DirectoryKey({input})),refresh:input=>perform(engine,new RefreshDirectoryIdentity({actor:{kind:'system',reason:'directory-refresh'},input:{...input,verificationOnly:input?.verificationOnly??true}}))});

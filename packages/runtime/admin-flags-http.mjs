@@ -3,7 +3,7 @@ import {createAppEngine,operate} from '../app/engine.mjs';
 import {EDGE_OPERATIONS} from '../app/edge-operations.mjs';
 import {cryptoRandom,nullAudit} from '../app/providers.mjs';
 import {adminRoutes} from './admin-http.mjs';
-const names=['list','get','history','preview','explain','seed-verify','experiment-results','seed','take-control','update','rollback','reshuffle','experiment-start','experiment-stop','experiment-conclude'];
+const names=['list','get','history','preview','explain','seed-verify','experiment-results','seed','take-control','update','rollback','reshuffle','experiment-start','experiment-stop','experiment-conclude','retire'];
 const writes=new Set(names.slice(7));
 export async function adminFlagsRoutes({path,request,env,local,admin,scoped,body,json}){
  if(!path.startsWith('/api/admin/flags/'))return null;

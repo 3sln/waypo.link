@@ -63,12 +63,17 @@ export function validateRecord(name,input,{before=null}={}){
  // Detach caller-owned arrays before freezing; validating must not mutate input.
  return freeze(JSON.parse(JSON.stringify(r)));
 }
-export function validateSnapshot(input,{before=null}={}){
+/** quarantine:true (storage reads) validates records one at a time: a record the deployed registry rejects (a retired
+ * or renamed flag, or a stale shape) is left out and its name listed in `quarantined`, so only that flag follows its
+ * outage policy instead of the whole snapshot (wargame 4, L5). Strict mode (the default, and every write) still throws. */
+const FLAG_NAME=/^[A-Z][A-Z0-9_]{0,79}$/;
+export function validateSnapshot(input,{before=null,quarantine=false}={}){
  if(compiled.has(input)&&!before)return input;
- fields(input,['v','version','issuedAt','flags']);
+ fields(input,['v','version','issuedAt','flags','quarantined']);
+ const held=input.quarantined??[];if(!Array.isArray(held)||held.length>256||held.some(name=>typeof name!=='string'||!FLAG_NAME.test(name))||new Set(held).size!==held.length)fail('Malformed quarantine list.');
  if(input.v!==1||!integer(input.version,0,Number.MAX_SAFE_INTEGER)||!integer(input.issuedAt,0,Number.MAX_SAFE_INTEGER)||!plain(input.flags))fail('Malformed snapshot.');
  let encoded;try{encoded=JSON.stringify(input);}catch{fail('Snapshot is not JSON.');}if(new TextEncoder().encode(encoded).length>SNAPSHOT_MAX_BYTES)fail('Snapshot exceeds 256 KiB.');
- const flags={};let running=0;for(const [name,record]of Object.entries(input.flags)){const r=validateRecord(name,record,{before:before?.flags?.[name]});Object.defineProperty(flags,name,{value:r,enumerable:true});if(r.experiment?.status==='running')running++;}if(running>3)fail('At most three experiments may run.');
- const result=freeze({v:1,version:input.version,issuedAt:input.issuedAt,flags});compiled.add(result);return result;
+ const flags={},quarantined=[...held];let running=0;for(const [name,record]of Object.entries(input.flags)){if(held.includes(name))fail('A quarantined flag cannot also have a record.');let r;try{r=validateRecord(name,record,{before:before?.flags?.[name]});}catch(error){if(!quarantine||error?.code!=='invalid_snapshot'&&error?.code!=='unknown_flag'||!FLAG_NAME.test(name)||quarantined.length>=256)throw error;quarantined.push(name);continue;}Object.defineProperty(flags,name,{value:r,enumerable:true});if(r.experiment?.status==='running')running++;}if(running>3)fail('At most three experiments may run.');
+ const result=freeze({v:1,version:input.version,issuedAt:input.issuedAt,flags,...quarantined.length?{quarantined:quarantined.sort()}:{}});compiled.add(result);return result;
 }
 export const compileSnapshot=validateSnapshot;

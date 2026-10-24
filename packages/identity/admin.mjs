@@ -9,6 +9,9 @@ import {secureEqual} from './crypto.mjs';
 import {flagsFor} from '../flags/read.mjs';
 import {AppAction,AppQuery} from '../app/engine.mjs';
 import {isUUID as uuid} from '../core/primitives.mjs';
+import {OPERATOR_CAPABILITY} from './roles.mjs';
+import {operatorAssertionSigner,operatorRegistered} from './operator-assertions.mjs';
+import {encryptSecret,decryptSecret} from '../runtime/secrets.mjs';
 // Host/reference administration, not Bindle protocol. Boot is a deploy-token
 // principal outside the account directory; administrators are ordinary signed-in
 // internal accounts holding the built-in `admin` role. Every operation re-reads
@@ -26,11 +29,31 @@ export async function adminClientBlocked(store,host){if(typeof host!=='string'||
 // Wargame 2026-10-23: suspension (admin suspend, assisted closure) raises the federation generation in the same CAS,
 // so ordinary OAuth families issued before it never revive on reactivate/reopen (federationEpoch digests it).
 const bumpFederationGeneration=a=>{a.federationGeneration=(Number.isSafeInteger(a.federationGeneration)&&a.federationGeneration>=0?a.federationGeneration:0)+1;};
-const deletionPasskeys=new WeakMap();
+const deletionPasskeys=new WeakMap(),operatorPasskeys=new WeakMap();
 // Trusted HTTP adapter only, after the existing passkey-only step-up boundary.
 export function adminDeletionPasskeyContext(admin,context){const scoped={...context};deletionPasskeys.set(scoped,{admin,at:admin.clock()});return scoped;}
+/** ORG-12d, trusted HTTP adapter only: one support decision after a fresh passkey assertion at the same boundary. */
+export function adminOperatorPasskeyContext(admin,context,challenge){const scoped={...context};operatorPasskeys.set(scoped,{admin,at:admin.clock(),challenge:typeof challenge==='string'?challenge:null});return scoped;}
+// ORG-12d support adjudication (design §12d.8). Provisional (coordinator), not signed off by the user.
+export const ORG_CASE_DECISIONS=Object.freeze({'break-glass':Object.freeze(['acknowledge','note','abort','proceed','uphold','reject']),'lapse-claim':Object.freeze(['close','proceed'])});
+/** Decisions in the seizing direction: two operators, and gated by ORG_BREAK_GLASS_ENABLED for the organization. The
+ * safe direction (acknowledge, note, abort, close) is never gated (§12d.12; the flag registry's retention reason). */
+export const ORG_CASE_TWO_OPERATOR=Object.freeze(['proceed','uphold','reject']);
+/** Review M2: the flag gates only proceed and reject. Upholding a contest restores the former owner, the remedy a kill
+ * switch must never block; it stays a two-operator decision. */
+export const ORG_CASE_GATED=Object.freeze(['proceed','reject']);
+export const ORG_CASE_CATEGORIES=Object.freeze(['evidence-reviewed','channel-compromised','channel-undeliverable','owner-responded','insufficient-evidence','other']);
+export const ORG_CASE_LIMITS=Object.freeze({DECISIONS_PER_DAY:20,WINDOW_MS:86400000,AUDIT_SCAN:1000,PAGE:50,LAPSE_REASON:280,PROPOSALS_KEPT:32,PROPOSAL_MS:3*86400000});
+/** Wargame 4 (b), provisional: finished claims are pruned this long after they expire or are revoked (audit entries stay),
+ * and an administrator may hold at most this many outstanding claims at once (boot is not capped). */
+export const CLAIM_LIMITS=Object.freeze({PRUNE_GRACE_MS:30*86400000,PRUNE_BATCH:20,OUTSTANDING_PER_ADMIN:20,PAGE:100});
+const sha256hex=async text=>[...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(text)))].map(b=>b.toString(16).padStart(2,'0')).join('');
+/** Review L7: the per-decision passkey challenge is bound to this digest of the decision. */
+export const orgCaseDecisionDigest=({org,kind,process,decision,exclude=[]})=>sha256hex(JSON.stringify(['org-case-decision-v1',org,kind,process,decision,[...new Set(exclude)].sort()]));
+const REASON_REQUIRED=new Set(['note','abort','close','proceed','uphold','reject']);
+const pad12=seq=>String(seq).padStart(12,'0');
 export class AdminService {
- constructor({store,identity,onboarding,webauthn,passwordHasher,rateLimiter,clock=()=>Date.now(),connectionsSeverAccount,deletion=null,config}){if(!store||!identity||!webauthn||!passwordHasher||!rateLimiter||!config?.APP_ORIGIN)throw new TypeError('Admin resources are required');Object.assign(this,{store,identity,repository:identity.repository,onboarding,webauthn,passwordHasher,rateLimiter,clock,connectionsSeverAccount,deletion,config});}
+ constructor({store,identity,onboarding,webauthn,passwordHasher,rateLimiter,clock=()=>Date.now(),connectionsSeverAccount,deletion=null,organizations=null,config}){if(!store||!identity||!webauthn||!passwordHasher||!rateLimiter||!config?.APP_ORIGIN)throw new TypeError('Admin resources are required');Object.assign(this,{store,identity,repository:identity.repository,onboarding,webauthn,passwordHasher,rateLimiter,clock,connectionsSeverAccount,deletion,organizations,config});}
  hash(purpose,value){return this.identity.crypto.hash(purpose,value);}
  async limited(operation,context){if(!await this.rateLimiter.check({operation,remoteIP:context.remoteIP}))fail('rate_limited','Please wait before trying again.',429);}
  async catalog(){const row=await this.store.get('catalog');if(!row)return {catalog:EMPTY_CATALOG,revision:null};const {revision,...value}=row;try{return {catalog:validateCatalog(value),revision};}catch{fail('admin_unavailable','Administration state requires operator review.',503);}}
@@ -131,8 +154,24 @@ export class AdminService {
  async account(owner){if(!uuid(owner))fail('invalid_request','Choose an account identifier.',400);const account=await this.repository.get(owner);if(!account)fail('not_found','Account not found.',404);return account;}
  async userView(account){const {catalog}=await this.catalog(),target=await this.principalFor(account),hold=await this.store.get('principal/'+account.id);return {id:account.id,handle:account.handle,aliases:[account.handle,...onboardingAlias(account)?[onboardingAlias(account)]:[],...account.paidHandle?[account.paidHandle]:[],...systemBadge(account)?[account.systemIdentity.handle]:[]],status:account.status,createdAt:account.createdAt,lastActiveAt:account.lastActiveAt,badgeIds:Array.isArray(account.badgeIds)?[...account.badgeIds]:[],internal:target.internal,provenance:target.evidence?.kind??null,roles:target.principal.roles,authority:effectiveAuthority(catalog,target.principal,{internal:target.internal,active:account.status==='active'}),email:mask(account.verifiedEmail),principalRevision:target.revision,suspendedByAdmin:Boolean(hold?.assignmentId===account.assignmentId&&hold.hold),identityRevision:account.revision,deletion:{operationId:hold?.assignmentId===account.assignmentId&&hold.closure?.state==='intent'?hold.closure.operationId:this.identity.crypto.id(),enabled:this.deletionEnabled(),emailEligible:Boolean(account.verifiedEmail&&account.emailLoginEnabled===true),closure:hold?.assignmentId===account.assignmentId&&hold.closure?.state!=='reversed'?this.closureView(hold.closure):null}};}
  // ---- operations ----
- async overview(input,context){return this.run(context,true,async(actor,now)=>{await this.readAudit(actor,now,'console.overview',null,null);const {catalog,revision}=await this.catalog(),boot=await this.store.get('boot/principal'),policy=configuredNamePolicy(this.config),runtime=await this.store.list('reservation/',{limit:100}),claims=await this.store.list('claim/',{limit:100}),head=await this.store.get('audit-head');let badges=[];try{badges=configuredBadgeIDs(this.config).map(id=>({id,class:badgeClass(catalog,id)}));}catch{}
-  return {actor:{kind:actor.kind,...actor.owner?{owner:actor.owner}:{}},boot:boot?{...bootSummary(boot),active:boot.status==='active'&&boot.expiresAt>this.clock()}:null,catalog,catalogRevision:revision,badges,reservations:{static:policy.reserved.filter(n=>n!==BOOT_HANDLE),runtime:runtime.map(({value:{revision:_r,...v}})=>v)},claims:claims.map(({value:c})=>({nonce:c.nonce,name:c.name,state:c.state,roles:c.roles,badgeIds:c.badgeIds,expiresAt:c.expiresAt,createdAt:c.createdAt,...c.redeemedAt?{redeemedAt:c.redeemedAt}:{},linkAvailable:actor.kind==='boot'||c.mintedBy?.kind==='admin'&&c.mintedBy.owner===actor.owner})),audit:{seq:head?.seq??0}};});}
+ // Wargame 4 (b): claims and runtime reservations are paged (`claimsAfter`, `reservationsAfter`; the answer carries
+ // `claimsNext` and `reservationsNext`, null on the last page), so no outstanding claim can hide behind 100 others.
+ async overview(input,context){return this.run(context,true,async(actor,now)=>{if(!exact(input??{},[],['claimsAfter','reservationsAfter']))fail('invalid_request','Unsupported overview fields.',400);
+  const claimsAfter=input?.claimsAfter??'',reservationsAfter=input?.reservationsAfter??'';if(claimsAfter&&!uuid(claimsAfter)||reservationsAfter&&(typeof reservationsAfter!=='string'||!/^[a-z0-9][a-z0-9_-]{2,31}$/.test(reservationsAfter)))fail('invalid_request','Invalid cursor.',400);
+  await this.readAudit(actor,now,'console.overview',null,claimsAfter||reservationsAfter?{claimsAfter,reservationsAfter}:null);const {catalog,revision}=await this.catalog(),boot=await this.store.get('boot/principal'),policy=configuredNamePolicy(this.config),runtime=await this.store.list('reservation/',{startAfter:reservationsAfter,limit:CLAIM_LIMITS.PAGE}),claims=await this.store.list('claim/',{startAfter:claimsAfter,limit:CLAIM_LIMITS.PAGE}),head=await this.store.get('audit-head');let badges=[];try{badges=configuredBadgeIDs(this.config).map(id=>({id,class:badgeClass(catalog,id)}));}catch{}
+  return {actor:{kind:actor.kind,...actor.owner?{owner:actor.owner}:{}},boot:boot?{...bootSummary(boot),active:boot.status==='active'&&boot.expiresAt>this.clock()}:null,catalog,catalogRevision:revision,badges,reservations:{static:policy.reserved.filter(n=>n!==BOOT_HANDLE),runtime:runtime.map(({value:{revision:_r,...v}})=>v)},claims:claims.map(({value:c})=>({nonce:c.nonce,name:c.name,state:c.state,roles:c.roles,badgeIds:c.badgeIds,expiresAt:c.expiresAt,createdAt:c.createdAt,...c.redeemedAt?{redeemedAt:c.redeemedAt}:{},linkAvailable:actor.kind==='boot'||c.mintedBy?.kind==='admin'&&c.mintedBy.owner===actor.owner})),claimsNext:claims.length===CLAIM_LIMITS.PAGE?claims.at(-1).key:null,reservationsNext:runtime.length===CLAIM_LIMITS.PAGE?runtime.at(-1).key:null,audit:{seq:head?.seq??0}};});}
+ /** Wargame 4 (b): prunes finished claims (revoked, or expired without redemption) once CLAIM_LIMITS.PRUNE_GRACE_MS has
+  * passed, at most PRUNE_BATCH per call, with their name pointers; their audit entries stay. Redeemed claims are kept:
+  * they are an account's internal provenance (principalFor). Runs before each mint, scanning from a rotating cursor. */
+ async pruneClaims(actor,now){
+  const rows=await this.store.list('claim/',{startAfter:this.pruneCursor??'',limit:100});this.pruneCursor=rows.length===100?rows.at(-1).key:'';
+  const done=rows.map(r=>r.value).filter(c=>!Number.isSafeInteger(c.redeemedAt)&&(c.state==='revoked'?(c.revokedAt??c.expiresAt):c.expiresAt)+CLAIM_LIMITS.PRUNE_GRACE_MS<=now).slice(0,CLAIM_LIMITS.PRUNE_BATCH);
+  let pruned=0;for(const c of done){const pointer=await this.store.get('claim-name/'+c.name),own=pointer?.nonce===c.nonce;
+   const result=await this.store.commit({expect:{['claim/'+c.nonce]:c.revision,...own?{['claim-name/'+c.name]:pointer.revision}:{}},writes:{['claim/'+c.nonce]:null,...own?{['claim-name/'+c.name]:null}:{}},audit:this.entry(actor,now,'claim.prune',c.name,{nonce:c.nonce,state:c.state},null)});if(result.committed)pruned++;}
+  return pruned;
+ }
+ /** Wargame 4 (b): an administrator's outstanding claims (live, unredeemed, minted by them). */
+ async outstandingClaims(owner,now){let count=0,startAfter='';for(;;){const rows=await this.store.list('claim/',{startAfter,limit:100});for(const {value:c} of rows)if(c.mintedBy?.kind==='admin'&&c.mintedBy.owner===owner&&['issuing','issued'].includes(c.state)&&c.expiresAt>now&&!Number.isSafeInteger(c.redeemedAt))count++;if(rows.length<100)return count;startAfter=rows.at(-1).key;}}
  async setCatalog(input,context){return this.run(context,false,async(actor,now)=>{if(!exact(input,['catalog','expectedRevision']))fail('invalid_request','Provide the catalog and its expected revision.',400);const {catalog,revision}=await this.catalog();if(input.expectedRevision!==revision)fail('conflict','The role catalog changed; reload and try again.',409);const next=validateCatalog(input.catalog);if(!catalogChangeAllowed(actor,catalog,next))fail('classification_boot_only','Only boot can classify roles, capabilities and badges or change internal roles.');await this.commit({expect:{...actor.expect,catalog:revision},writes:{catalog:next},rate:this.rate(actor,now),audit:this.entry(actor,now,'catalog.set','catalog',catalog,next)});return {catalog:next};});}
  async reserve(input,context){return this.run(context,false,async(actor,now)=>{if(!exact(input,['name'],['roles','badgeIds']))fail('invalid_request','Unsupported reservation fields.',400);const selected=name(input.name);if(isFreeHandle(selected))fail('invalid_handle','Numeric handles cannot be reserved.',400);const {catalog,revision}=await this.catalog(),roles=assignmentDecision(actor,{owner:null,internal:true,roles:[]},catalog,input.roles??[]),badgeIds=badgeDecision(actor,{owner:null,internal:true},catalog,configuredBadgeIDs(this.config),input.badgeIds??[]),key='reservation/'+selected,old=await this.store.get(key),source=configuredNamePolicy(this.config).reserved.includes(selected)?'static':'runtime';
   if(!old&&source==='runtime'&&await this.assigned(selected))fail('handle_unavailable','This handle already has a permanent assignment.',409);
@@ -167,7 +206,9 @@ export class AdminService {
  key(){if(!onboardingKeyReady(this.config)||!this.onboarding)fail('claims_unavailable','Claim tokens need a configured onboarding key.',503);return this.config.ONBOARDING_KEY;}
  link(token){return this.config.APP_ORIGIN+'/token-onboarding#token='+encodeURIComponent(token);}
  async mintClaim(input,context){return this.run(context,false,async(actor,now)=>{
-  if(!exact(input,['name'],['roles','badgeIds','hours']))fail('invalid_request','Unsupported claim fields.',400);const secret=this.key(),selected=name(input.name),reservation=await this.store.get('reservation/'+selected),staticReserved=configuredNamePolicy(this.config).reserved.includes(selected);if(staticReserved&&actor.kind!=='boot')fail('static_name_boot_only','Only boot can mint claims for handles reserved by deployment configuration.');if(!staticReserved&&!reservation)fail('not_reserved','Reserve this handle before minting a claim token.',409);
+  if(!exact(input,['name'],['roles','badgeIds','hours']))fail('invalid_request','Unsupported claim fields.',400);
+  await this.pruneClaims(actor,now);
+  if(actor.kind==='admin'&&await this.outstandingClaims(actor.owner,now)>=CLAIM_LIMITS.OUTSTANDING_PER_ADMIN)fail('claims_outstanding_limit','Revoke or wait for some of your outstanding claim tokens before minting more.',409);const secret=this.key(),selected=name(input.name),reservation=await this.store.get('reservation/'+selected),staticReserved=configuredNamePolicy(this.config).reserved.includes(selected);if(staticReserved&&actor.kind!=='boot')fail('static_name_boot_only','Only boot can mint claims for handles reserved by deployment configuration.');if(!staticReserved&&!reservation)fail('not_reserved','Reserve this handle before minting a claim token.',409);
   const hours=input.hours??24;if(!Number.isInteger(hours)||hours<1||hours>168)fail('invalid_request','Claim tokens last 1–168 hours.',400);// The outstanding-claim check and the commit's expectation use the same pointer read, so a
   // concurrent mint that lands in between conflicts instead of orphaning a second live claim.
   const pointer=await this.store.get('claim-name/'+selected);if(await this.liveClaim(selected,now,pointer))fail('claim_outstanding','This handle already has an outstanding claim token.',409);if(await this.assigned(selected))fail('handle_unavailable','This handle already has a permanent assignment.',409);
@@ -188,9 +229,16 @@ export class AdminService {
   if(input.handle!==undefined){let handle;try{handle=normalizeHandle(input.handle);}catch{fail('invalid_handle','Enter a complete handle.',400);}account=handle===BOOT_HANDLE?null:await this.repository.findByHandle(handle);}else if(input.owner!==undefined){if(!uuid(input.owner))fail('invalid_request','Enter an account identifier.',400);account=await this.repository.get(input.owner);}else{const [local,domain='']=input.email.split('@');if(!local||!domain.includes('.'))fail('invalid_email','Enter a complete email address.',400);account=await this.repository.findByEmail?.(`${local}@${domain.toLowerCase()}`);}
   await this.commit({expect:actor.expect,rate:this.rate(actor,now,true),audit:this.entry(actor,now,'user.lookup',account?.id??null,null,{by:keys[0],...input.email?{email:mask(input.email)}:{query:input[keys[0]]},found:Boolean(account)})});return {user:account?await this.userView(account):null};});}
  async principals(input,context){return this.run(context,true,async(actor,now)=>{const startAfter=input?.startAfter??'';if(startAfter&&!uuid(startAfter))fail('invalid_request','Invalid cursor.',400);await this.readAudit(actor,now,'principals.list',null,{startAfter});const rows=await this.store.list('principal/',{startAfter,limit:50});return {principals:rows.map(({key,value})=>({owner:key,roles:value.roles??[],hold:Boolean(value.hold),updatedAt:value.updatedAt})),next:rows.length===50?rows.at(-1).key:null};});}
- async audit(input,context){return this.run(context,true,async()=>{if(!exact(input??{},[],['fromSeq','verify']))fail('invalid_request','Unsupported audit fields.',400);const head=await this.store.get('audit-head'),seq=head?.seq??0,from=input?.fromSeq??Math.max(1,seq-49);if(!Number.isSafeInteger(from)||from<1)fail('invalid_request','Invalid audit position.',400);const rows=await this.store.list('audit/',{startAfter:String(from-1).padStart(12,'0'),limit:50});return {entries:rows.map(r=>r.value),head:seq,verified:rows.length?await this.store.verifyAudit(input?.verify===true?{}:{from,count:rows.length}):{valid:true,seq:from-1}};});}
- async setRoles(input,context){return this.run(context,false,async(actor,now)=>{if(!exact(input,['owner','roles','expectedRevision']))fail('invalid_request','Provide owner, roles and expected revision.',400);const account=await this.account(input.owner),{catalog,revision}=await this.catalog(),target=await this.principalFor(account);if(input.expectedRevision!==target.revision)fail('conflict','Roles changed; reload and try again.',409);const roles=assignmentDecision(actor,{owner:account.id,internal:target.internal,roles:target.principal.roles},catalog,input.roles),row=await this.store.get('principal/'+account.id);
-  await this.commit({expect:{...actor.expect,catalog:revision,...target.expect},writes:{['principal/'+account.id]:{owner:account.id,assignmentId:account.assignmentId,roles,hold:row?.assignmentId===account.assignmentId?row.hold??null:null,...row?.assignmentId===account.assignmentId&&row.lastHold?{lastHold:row.lastHold}:{},...row?.assignmentId===account.assignmentId&&row.closure?{closure:row.closure}:{},...row?.assignmentId===account.assignmentId&&row.assistedDeletion?{assistedDeletion:row.assistedDeletion}:{},updatedAt:now}},rate:this.rate(actor,now),audit:this.entry(actor,now,roles.includes(ADMIN_ROLE)!==target.principal.roles.includes(ADMIN_ROLE)?(roles.includes(ADMIN_ROLE)?'admin.grant':'admin.revoke'):'roles.set',account.id,target.principal.roles,roles)});return {user:await this.userView(await this.account(account.id))};});}
+ // Wargame 4 (a): every audit read is charged to the per-actor read window (without writing an audit entry), and a full
+ // chain walk (`verify: true`) is boot-only; administrators get the checkpointed check of the page they read.
+ async audit(input,context){return this.run(context,true,async(actor,now)=>{if(!exact(input??{},[],['fromSeq','verify']))fail('invalid_request','Unsupported audit fields.',400);
+  if(input?.verify===true&&actor.kind!=='boot')fail('verify_boot_only','Only boot can verify the whole audit chain; the page you read is verified.',403);
+  await this.commit({expect:actor.expect,rate:this.rate(actor,now,true)});const head=await this.store.get('audit-head'),seq=head?.seq??0,from=input?.fromSeq??Math.max(1,seq-49);if(!Number.isSafeInteger(from)||from<1)fail('invalid_request','Invalid audit position.',400);const rows=await this.store.list('audit/',{startAfter:String(from-1).padStart(12,'0'),limit:50});return {entries:rows.map(r=>r.value),head:seq,verified:rows.length?await this.store.verifyAudit(input?.verify===true?{}:{from,count:rows.length}):{valid:true,seq:from-1}};});}
+ async setRoles(input,context){return this.run(context,false,async(actor,now)=>{if(!exact(input,['owner','roles','expectedRevision']))fail('invalid_request','Provide owner, roles and expected revision.',400);const account=await this.account(input.owner),{catalog,revision}=await this.catalog(),target=await this.principalFor(account);if(input.expectedRevision!==target.revision)fail('conflict','Roles changed; reload and try again.',409);const roles=assignmentDecision(actor,{owner:account.id,internal:target.internal,roles:target.principal.roles},catalog,input.roles),row=await this.store.get('principal/'+account.id),wasOperator=await operatorRegistered(this.store,account.id);
+  await this.commit({expect:{...actor.expect,catalog:revision,...target.expect},writes:{['principal/'+account.id]:{owner:account.id,assignmentId:account.assignmentId,roles,hold:row?.assignmentId===account.assignmentId?row.hold??null:null,...row?.assignmentId===account.assignmentId&&row.lastHold?{lastHold:row.lastHold}:{},...row?.assignmentId===account.assignmentId&&row.closure?{closure:row.closure}:{},...row?.assignmentId===account.assignmentId&&row.assistedDeletion?{assistedDeletion:row.assistedDeletion}:{},updatedAt:now}},rate:this.rate(actor,now),audit:this.entry(actor,now,roles.includes(ADMIN_ROLE)!==target.principal.roles.includes(ADMIN_ROLE)?(roles.includes(ADMIN_ROLE)?'admin.grant':'admin.revoke'):'roles.set',account.id,target.principal.roles,roles)});
+  // ORG-12d review M1: losing the operator capability cancels the operator's pending support proposals.
+  if(wasOperator&&!await operatorRegistered(this.store,account.id))await this.cancelOperatorProposals(actor,account.id,'revoked');
+  return {user:await this.userView(await this.account(account.id))};});}
  /** Cross-store edits commit their store writes, the target revisions they
   * decided on and an `intent` entry together, then CAS the identity record,
   * then record `applied`/`failed` with any compensating store writes. */
@@ -199,10 +247,19 @@ export class AdminService {
   let ok=false;try{ok=await this.repository.compareAndSwap(account.id,revision,next);}finally{const outcome=ok?applied(intent):failed(intent);await this.store.commit({expect:outcome.expect??{},writes:outcome.writes??{},audit:{...this.entry(actor,this.clock(),action,account.id,null,null),phase:ok?'applied':'failed',ref:intent.audit.seq}});}
   if(!ok)fail('conflict','The account changed; reload and try again.',409);return next;}
  async setBadges(input,context){return this.run(context,false,async(actor,now)=>{if(!exact(input,['owner','badgeIds']))fail('invalid_request','Provide owner and badges.',400);const account=await this.account(input.owner),{catalog,revision}=await this.catalog(),target=await this.principalFor(account),before=Array.isArray(account.badgeIds)?account.badgeIds:[],badgeIds=badgeDecision(actor,{owner:account.id,internal:target.internal,roles:target.principal.roles,badgeIds:before},catalog,configuredBadgeIDs(this.config),input.badgeIds);const next=await this.accountChange(actor,now,account,{...target,expect:{...target.expect,catalog:revision}},'badges.set',before,badgeIds,a=>{a.badgeIds=badgeIds;return a;});return {user:await this.userView(next)};});}
+ /** Wargame 4 (operator agent's M1 follow-up): sessions this path ends take their bound push subscriptions with them,
+  * through the identity service's pending-cleanup row (queuePushEnds in the ending CAS, flushPushEnds after it; a
+  * failed flush stays queued and is retried by the identity service on the account's next save or owner view). */
+ async liveSessionIds(account){const now=this.clock();return Promise.all((account.sessions??[]).filter(s=>s.expiresAt>now).map(s=>this.identity.sessionID(s)));}
+ async flushPushEnds(owner){try{await this.identity.flushPushEnds?.(owner);}catch{/* retried by the identity service */}}
  guardTarget(actor,account,target){if(actor.kind==='admin'&&(account.id===actor.owner||target.principal.roles.includes(ADMIN_ROLE)))fail('admin_target_forbidden','Administrators cannot suspend themselves or another administrator.');}
  holdRecord(account,target,row,hold,now){const {revision:_r,...base}=row?.assignmentId===account.assignmentId?row:{owner:account.id,assignmentId:account.assignmentId,roles:target.principal.roles};return {...base,hold,updatedAt:now};}
  async suspend(input,context){return this.run(context,false,async(actor,now)=>{if(!exact(input,['owner']))fail('invalid_request','Provide only the account identifier.',400);const account=await this.account(input.owner),target=await this.principalFor(account),row=await this.store.get('principal/'+account.id),key='principal/'+account.id;this.guardTarget(actor,account,target);if(account.status!=='active')fail('invalid_state','Only active accounts can be suspended here.',409);if((row?.revision??null)!==target.revision)fail('conflict','Roles changed; reload and try again.',409);
-  const next=await this.accountChange(actor,now,account,target,'user.suspend',{status:'active'},{status:'suspended'},a=>{revokeAllLineage(a,now);a.status='suspended';a.sessions=[];bumpFederationGeneration(a);return a;},{writes:{[key]:this.holdRecord(account,target,row,{at:now,by:actor.audit},now)},failed:intent=>{const held=intent.records[key];return {expect:{[key]:held.revision},writes:{[key]:this.holdRecord(account,target,held,null,this.clock())}};}});await this.connectionsSeverAccount?.(account.id,{reason:'admin-suspended'});return {user:await this.userView(next)};});}
+  const wasOperator=await operatorRegistered(this.store,account.id),ended=await this.liveSessionIds(account);
+  const next=await this.accountChange(actor,now,account,target,'user.suspend',{status:'active'},{status:'suspended'},a=>{revokeAllLineage(a,now);this.identity.queuePushEnds?.(a,ended);a.status='suspended';a.sessions=[];bumpFederationGeneration(a);return a;},{writes:{[key]:this.holdRecord(account,target,row,{at:now,by:actor.audit},now)},failed:intent=>{const held=intent.records[key];return {expect:{[key]:held.revision},writes:{[key]:this.holdRecord(account,target,held,null,this.clock())}};}});await this.connectionsSeverAccount?.(account.id,{reason:'admin-suspended'});await this.flushPushEnds(account.id);
+  // ORG-12d review M1: a held operator's pending support proposals are cancelled.
+  if(wasOperator)await this.cancelOperatorProposals(actor,account.id,'held');
+  return {user:await this.userView(next)};});}
  async reactivate(input,context){return this.run(context,false,async(actor,now)=>{if(!exact(input,['owner']))fail('invalid_request','Provide only the account identifier.',400);const account=await this.account(input.owner),target=await this.principalFor(account),row=await this.store.get('principal/'+account.id),key='principal/'+account.id;this.guardTarget(actor,account,target);if(account.status!=='suspended'||!row?.hold||row.assignmentId!==account.assignmentId||row.revision!==target.revision)fail('invalid_state','Only administrator-suspended accounts can be reactivated here.',409);
   const next=await this.accountChange(actor,now,account,target,'user.reactivate',{status:'suspended'},{status:'active'},a=>{a.status='active';return a;},{applied:()=>{const released=this.clock();return {expect:{[key]:row.revision},writes:{[key]:{...this.holdRecord(account,target,row,null,released),lastHold:{at:row.hold.at,releasedAt:released}}}};}});return {user:await this.userView(next)};});}
  // Trusted account-lifecycle port, never an HTTP operation: an administrator hold
@@ -289,7 +346,7 @@ export class AdminService {
   }else await this.readAudit(actor,now,action+'-resume',account.id,{operationId:closure.operationId});
   if(!Number.isSafeInteger(closure.adminAuditSeq)){let startAfter=String(closure.auditFrom).padStart(12,'0');for(;;){const rows=await this.store.list('audit/',{startAfter,limit:100}),entry=rows.find(({value})=>value.action===action&&value.target===account.id&&value.after?.operationId===closure.operationId&&value.phase==='intent');if(entry){closure={...closure,adminAuditSeq:entry.value.seq};break;}if(rows.length<100)fail('admin_unavailable','The closure intent needs operator review.',503);startAfter=rows.at(-1).key;}}
   try{
-   if(account.status==='active'){const revision=account.revision,next=structuredClone(account);revokeAllLineage(next,now);next.status='suspended';next.sessions=[];bumpFederationGeneration(next);next.revision=revision+1;if(!await this.repository.compareAndSwap(account.id,revision,next))fail('conflict','The account changed; reload and retry the closure.',409);}
+   if(account.status==='active'){const revision=account.revision,next=structuredClone(account),ended=await this.liveSessionIds(account);revokeAllLineage(next,now);this.identity.queuePushEnds?.(next,ended);next.status='suspended';next.sessions=[];bumpFederationGeneration(next);next.revision=revision+1;if(!await this.repository.compareAndSwap(account.id,revision,next))fail('conflict','The account changed; reload and retry the closure.',409);await this.flushPushEnds(account.id);}
    else if(account.status!=='suspended')fail('invalid_state','This account can no longer be closed.',409);
    await this.connectionsSeverAccount?.(account.id,{reason:'admin-suspended'});
    await ports.schedule(account.id,{basis,operationId:closure.operationId,adminAuditSeq:closure.adminAuditSeq,exportUntil:closure.exportUntil});
@@ -312,7 +369,7 @@ export class AdminService {
   try{
    // Cancellation linearizes with DX-3's fence. Never reactivate if commit won.
    await ports.cancel(account.id);
-   if(account.status==='suspended'){const revision=account.revision,next=structuredClone(account);next.status='active';next.sessions=[];next.revision=revision+1;if(!await this.repository.compareAndSwap(account.id,revision,next))fail('conflict','The account changed. Reload before reopening it.',409);}
+   if(account.status==='suspended'){const revision=account.revision,next=structuredClone(account),ended=await this.liveSessionIds(account);this.identity.queuePushEnds?.(next,ended);next.status='active';next.sessions=[];next.revision=revision+1;if(!await this.repository.compareAndSwap(account.id,revision,next))fail('conflict','The account changed. Reload before reopening it.',409);await this.flushPushEnds(account.id);}
    const notice=await ports.notifyReopen({owner:account.id,handle:account.handle,reason:reversal.reason,operationId:reversal.operationId});if(notice?.accepted!==true)fail('notice_unavailable','The reopening notice is pending. Reload and retry this reversal.',503);
    const latest=await this.store.get(key),{revision,...base}=latest;await this.commit({expect:{[key]:revision},writes:{[key]:{...base,closure:{...closure,reversal,state:'reversed',reversedAt:now}}},audit:{...this.entry(actor,this.clock(),'users.reopen',account.id,null,{status:'active'}),phase:'applied',ref:reversal.adminAuditSeq??closure.adminAuditSeq}});return {user:await this.userView(await this.account(account.id))};
   }catch(error){await this.deletionOutcome(actor,'users.reopen',account.id,reversal.adminAuditSeq??closure.adminAuditSeq,'failed',{code:error.code??'deletion_unavailable'});throw error;}
@@ -332,6 +389,157 @@ export class AdminService {
  async clientBlocks(input,context){return this.run(context,true,async(actor,now)=>{if(!exact(input??{},[],['startAfter']))fail('invalid_request','Unsupported fields.',400);const startAfter=input?.startAfter===undefined?'':clientHost(input.startAfter);await this.readAudit(actor,now,'client.blocks',null,{startAfter});const rows=await this.store.list('client-block/',{startAfter,limit:50});return {blocks:rows.map(({value:{revision:_r,...v}})=>v),next:rows.length===50?rows.at(-1).key:null};});}
  /** Trusted federation port, never an HTTP operation. Throws when the store is unreachable, so callers fail closed. */
  clientBlocked(host){return adminClientBlocked(this.store,host);}
+ // ---- ORG-12d support adjudication (operators on organization ownership processes) ----
+ // `organizations` (constructor port, composed by the adapters: packages/runtime/admin-org-cases.mjs) reaches the
+ // organization's writer: case(org) -> {case, lapse, handle}, resolve(org, input) (orgs.breakglass-resolve) and
+ // claimResolve(org, input) (orgs.claim-resolve). The writer verifies each decision's assertion itself
+ // (packages/identity/operator-assertions.mjs) and is the authority on every rule; the checks here are the admin
+ // service's own: capability, passkey step-up, the daily limit, input shape and early refusals that save an assertion.
+ operatorSigner(){
+  if(!this.operatorAssertions){const key=this.config.KEY_ENCRYPTION_KEY,sealing=typeof key==='string'&&key.length>0;
+   this.operatorAssertions=operatorAssertionSigner({store:this.store,seal:sealing?(value,purpose)=>encryptSecret(value,key,purpose):null,open:sealing?(value,purpose)=>decryptSecret(value,key,purpose):null,issuer:this.config.APP_ORIGIN,clock:this.clock});}
+  return this.operatorAssertions;
+ }
+ orgCasesPort(){if(['case','resolve','claimResolve','cancelProposals'].some(method=>typeof this.organizations?.[method]!=='function'))fail('org_cases_unavailable','Organization cases are not available on this host.',503);return this.organizations;}
+ /** ORG_BREAK_GLASS_ENABLED for the organization (the account subject, as the engine reads it). Fails closed. */
+ orgBreakGlassEnabled(org){try{return flagsFor(this.config,{subject:{kind:'account',owner:org}}).enabled('ORG_BREAK_GLASS_ENABLED')===true;}catch{return false;}}
+ /** An administrator (never boot) holding `support.org-break-glass` through an internal, non-delegable role, under the
+  * console's passkey-only step-up (reads: the 15-minute read window; decisions: the 5-minute window). */
+ async operatorActor(context,read){
+  if(context?.actor!=='admin')fail('operator_capability_required','Support decisions need an operator account with a passkey.',403);
+  const actor=await this.actor(context,read),authority=await this.authority(actor.owner);
+  if(!authority.admin||!authority.capabilities.includes(OPERATOR_CAPABILITY)||!await operatorRegistered(this.store,actor.owner))fail('operator_capability_required','The support operator capability is required.',403);
+  return actor;
+ }
+ decisionKey(owner){return 'org-decision-'+owner;}
+ async decisionsLeft(owner,now=this.clock()){let window=null;try{window=await this.store.rateWindow?.(this.decisionKey(owner));}catch{window=null;}const live=window&&window.start+ORG_CASE_LIMITS.WINDOW_MS>now&&window.start-now<ORG_CASE_LIMITS.WINDOW_MS;return Math.max(0,ORG_CASE_LIMITS.DECISIONS_PER_DAY-(live?window.count:0));}
+ /** The held-claim queue: index rows the organizations wrote (routing only), newest state first within a page. */
+ async orgCases(input,context){{
+  if(!exact(input??{},[],['startAfter']))fail('invalid_request','Unsupported fields.',400);const startAfter=input?.startAfter??'';if(startAfter&&!uuid(startAfter))fail('invalid_request','Invalid cursor.',400);
+  const actor=await this.operatorActor(context,true),now=this.clock();this.orgCasesPort();await this.readAudit(actor,now,'org-case.list',null,{startAfter});
+  const rows=await this.store.list('org-case/',{startAfter,limit:ORG_CASE_LIMITS.PAGE});
+  return {cases:rows.map(({value})=>value).filter(v=>v.state).map(v=>({org:v.org,handle:v.handle??null,kind:v.kind,process:v.process,state:v.state,since:v.since,updatedAt:v.updatedAt})),next:rows.length===ORG_CASE_LIMITS.PAGE?rows.at(-1).key:null,decisionsLeft:await this.decisionsLeft(actor.owner,now)};
+ }}
+ /** One case as the organization reports it now, shaped for the operator: channel kinds and ages, never addresses
+  * (the writer never sends them), and the decisions the admin service would forward for this operator. */
+ async orgCase(input,context){{
+  if(!exact(input,['org'])||!uuid(input.org))fail('invalid_request','Choose an organization.',400);
+  const actor=await this.operatorActor(context,true),now=this.clock(),port=this.orgCasesPort();await this.readAudit(actor,now,'org-case.view',input.org,null);
+  return {case:await this.caseView(port,input.org,actor.owner,now)};
+ }}
+ async caseView(port,org,me,now){
+  let found;try{found=await port.case(org);}catch(error){if(error?.code==='not_found'||error?.status===404)fail('not_found','Case not found.',404);throw error;}
+  const enabled=this.orgBreakGlassEnabled(org),decisionsLeft=await this.decisionsLeft(me,now),c=found?.case,lapse=found?.lapse,handle=typeof found?.handle==='string'?found.handle:null;
+  if(lapse&&(!c||!['held','final'].includes(c.state)&&c.contest?.state!=='open')){
+   const mine=lapse.proposal?.operator===me,live=lapse.state==='pending',allowed=live?['close',...enabled&&!mine?['proceed']:[]]:[];
+   return {org,handle,kind:'lapse-claim',process:lapse.id,state:live&&Number.isSafeInteger(lapse.escalatedAt)?'escalated':lapse.state,escalatedAt:lapse.escalatedAt??null,proposal:lapse.proposal?{decision:'proceed',at:lapse.proposal.at,expiresAt:lapse.proposal.expiresAt,mine,proposerActive:mine||await operatorRegistered(this.store,lapse.proposal.operator)}:null,approved:lapse.approved===true,allowed,seizingEnabled:enabled,decisionsLeft};
+  }
+  if(!c)fail('not_found','Case not found.',404);
+  const barred=(c.barredPairs??[]).some(pair=>pair.includes(me)),proposal=c.proposal?{decision:c.proposal.decision,at:c.proposal.at,expiresAt:c.proposal.expiresAt,exclude:[...c.proposal.exclude],mine:c.proposal.operator===me,proposerActive:c.proposal.operator===me||await operatorRegistered(this.store,c.proposal.operator)}:null,live=proposal&&proposal.expiresAt>now?proposal:null,contest=c.contest?.state==='open';
+  const allowed=[];
+  if(c.state==='held'){allowed.push('acknowledge','note','abort');if(enabled&&!barred&&!c.proceedBlocked&&!(live?.decision==='proceed'&&live.mine))allowed.push('proceed');}
+  if(c.state==='effective'&&contest)for(const d of enabled?['uphold','reject']:['uphold'])if(!(live?.decision===d&&live.mine))allowed.push(d);
+  return {org,handle,kind:'break-glass',process:c.id,state:c.state,contest:c.contest??null,track:c.track,causes:[...c.causes??[]],frozen:c.frozen===true,createdAt:c.createdAt,paidAt:c.paidAt??null,waitEndsAt:c.waitEndsAt??null,held:c.held?{enteredAt:c.held.enteredAt,ackAt:c.held.ackAt??null}:null,heldTotal:c.heldTotal??0,finalEndsAt:c.finalEndsAt??null,
+   channels:(c.channels??[]).map(ch=>({id:ch.id,kind:ch.kind,enrolledAt:ch.enrolledAt,ageDays:Number.isSafeInteger(ch.enrolledAt)?Math.max(0,Math.floor((now-ch.enrolledAt)/86400000)):null,excluded:ch.excluded===true,disputed:ch.disputed===true,undeliverable:ch.undeliverable===true,excludable:ch.excludable===true})),
+   disputes:(c.disputes??[]).map(d=>({channel:d.channel,at:d.at,excluded:d.excluded===true})),objections:c.objections??0,proposal:live,decision:c.decision?{at:c.decision.at,exclude:[...c.decision.exclude??[]]}:null,barred,ownerStatus:c.ownerStatus??null,category:c.category,statementDigest:c.statementDigest,billingHeld:c.billingHeld===true,
+   timeline:c.timeline??[],allowed,seizingEnabled:enabled,decisionsLeft};
+ }
+ /**
+  * One operator decision. A fresh passkey assertion at the HTTP boundary (one use), the capability, the input, the
+  * flag for seizing decisions and the daily limit (20 per operator, a fixed 24-hour window) are checked here; then one
+  * admin-store commit records the assertion in the registry, spends the windows and writes the audit intent, and the
+  * organization's writer decides. The outcome is audited as applied or failed. Two operators, barred pairs, conflicts,
+  * exclusions and tier-1 finality are the writer's rules (break-glass.mjs); the early refusals here only save an
+  * assertion and a decision from the limit.
+  */
+ async decideOrgCase(input,context){
+  if(!exact(input,['org','kind','process','decision'],['exclude','category','reason'])||!uuid(input.org)||!uuid(input.process)||!Object.hasOwn(ORG_CASE_DECISIONS,input.kind)||!ORG_CASE_DECISIONS[input.kind].includes(input.decision))fail('invalid_request','Choose an organization case and a supported decision.',400);
+  const {org,kind,process,decision}=input;
+  if(input.exclude!==undefined&&(decision!=='proceed'||kind!=='break-glass'||!Array.isArray(input.exclude)||input.exclude.length>16||!input.exclude.every(id=>typeof id==='string'&&/^[A-Za-z0-9_.:-]{1,128}$/.test(id))))fail('invalid_request','Only a proceed decision names channels to exclude.',400);
+  const exclude=[...new Set(input.exclude??[])].sort();
+  if(input.category!==undefined&&!ORG_CASE_CATEGORIES.includes(input.category))fail('invalid_request','Choose a reason category.',400);
+  if(REASON_REQUIRED.has(decision)&&input.category===undefined&&decision!=='note')fail('reason_required','Choose a reason category and give a reason of 10–500 characters.',400);
+  const reason=input.reason===undefined?null:input.reason;if(REASON_REQUIRED.has(decision)||reason!==null)this.deletionReason(reason);
+  // Review L1: the lapse-claim writer accepts at most 280 characters; refuse longer reasons before anything is spent.
+  if(kind==='lapse-claim'&&reason!==null&&[...reason].length>ORG_CASE_LIMITS.LAPSE_REASON)fail('invalid_reason','Give a reason of at most 280 characters for a lapse claim.',400);
+  // One-use passkey evidence from the trusted adapter, then the console's passkey-only step-up and the capability.
+  const evidence=operatorPasskeys.get(context);operatorPasskeys.delete(context);
+  if(evidence?.admin!==this||evidence.at>this.clock()||evidence.at+MUTATION_MS<=this.clock())fail('step_up_required','Confirm this decision with your passkey.',403);
+  const actor=await this.operatorActor(context,false),me=actor.owner,port=this.orgCasesPort();
+  // Review L7: the passkey assertion must have answered the challenge issued for exactly this decision.
+  const challengeKey='operator-challenge/'+me,bound=await this.store.get(challengeKey),digest=await orgCaseDecisionDigest({org,kind,process,decision,exclude});
+  if(!bound||!evidence.challenge||bound.challenge!==evidence.challenge||bound.digest!==digest||bound.expiresAt<=this.clock())fail('step_up_required','Confirm this decision with your passkey.',403);
+  if(ORG_CASE_GATED.includes(decision)&&!this.orgBreakGlassEnabled(org))fail('not_found','Case not found.',404);
+  // Early refusals from the organization's current view (the writer re-checks all of them).
+  const view=await this.caseView(port,org,me,this.clock());
+  if(view.kind!==kind||view.process!==process)fail('not_found','Case not found.',404);
+  if(view.proposal?.mine&&view.proposal.decision===decision)fail('second_operator_required','A different operator must approve this decision.',409);
+  if(decision==='proceed'&&view.barred)fail('operator_pair_barred','A new pair of operators must decide after an excluded channel disputed.',409);
+  if(!view.allowed.includes(decision))fail('decision_unavailable','This decision is not available for the case now.',409);
+  const now=this.clock(),scope={org,kind,process,decision,exclude:kind==='break-glass'?exclude:[]};
+  const prepared=await this.operatorSigner().prepare({operator:me,scope},at=>({at,actor:actor.audit}));
+  // Reviews M3/L2: the reason text stays in an admin-only notes row, linked by its SHA-256 digest from the audit entry;
+  // only the digest leaves the admin service.
+  const reasonDigest=reason===null?null:await sha256hex(reason),noteKey=reasonDigest?'org-case-note/'+reasonDigest:null,note=noteKey?await this.store.get(noteKey):null;
+  const intent=await this.store.commit({expect:{...actor.expect,[challengeKey]:bound.revision,...noteKey&&!note?{[noteKey]:null}:{}},writes:{['operator-assertion/'+prepared.jti]:prepared.record,[challengeKey]:null,...noteKey&&!note?{[noteKey]:{digest:reasonDigest,text:reason,at:now,operator:me,org,kind,process,decision}}:{}},
+   rate:[this.rate(actor,now),{key:this.decisionKey(me),limit:ORG_CASE_LIMITS.DECISIONS_PER_DAY,windowMs:ORG_CASE_LIMITS.WINDOW_MS,now}],
+   audit:{...this.entry(actor,now,'org-case.decide',org,null,{kind,process,decision,...exclude.length?{exclude}:{},...input.category?{category:input.category}:{},...reasonDigest?{reasonDigest}:{},assertion:prepared.jti}),phase:'intent'}});
+  if(intent.rateLimited)fail(intent.rate===this.decisionKey(me)?'decision_limit':'rate_limited',intent.rate===this.decisionKey(me)?'An operator can make at most 20 support decisions a day.':'Administrative actions are rate limited. Wait before continuing.',429);
+  if(!intent.committed)fail('conflict','Administration state changed; reload and try again.',409);
+  let result;
+  try{
+   if(kind==='break-glass')result=await port.resolve(org,{claim:process,operator:me,decision,...exclude.length?{exclude}:{},...input.category?{category:input.category}:{},...reasonDigest?{reasonDigest}:{},assertion:prepared.assertion});
+   else result=await port.claimResolve(org,{claim:process,operator:me,decision,...reasonDigest?{reasonDigest}:{},assertion:prepared.assertion});
+  }catch(error){await this.commit({audit:{...this.entry(actor,this.clock(),'org-case.decide',org,null,{decision,code:typeof error?.code==='string'?error.code:'org_case_failed'}),phase:'failed',ref:intent.audit.seq}}).catch(()=>{});throw error;}
+  const outcome=kind==='lapse-claim'?(result?.decision==='proceed-proposed'?'proposed':result?.decision==='proceed-approved'?'approved':'recorded'):(['proposed','approved','recorded'].includes(result?.decision)?result.decision:'recorded');
+  const state=kind==='lapse-claim'?result?.claim?.state??null:result?.state??result?.contest??null;
+  await this.commit({audit:{...this.entry(actor,this.clock(),'org-case.decide',org,null,{decision,outcome,...state?{state}:{}}),phase:'applied',ref:intent.audit.seq}}).catch(()=>{});
+  if(outcome==='proposed')await this.rememberProposal(me,{org,kind,process,decision}).catch(()=>{});
+  return {outcome,...state?{state}:{},decisionsLeft:await this.decisionsLeft(me)};
+ }
+ /** Review L7: begins the passkey step-up for ONE decision and binds its challenge to the decision's digest (one row per
+  * operator, replaced by the next begin, consumed by the decision). Returns the WebAuthn options. */
+ async orgCaseChallenge(input,context){
+  if(!exact(input,['org','kind','process','decision'],['exclude'])||!uuid(input.org)||!uuid(input.process)||!Object.hasOwn(ORG_CASE_DECISIONS,input.kind)||!ORG_CASE_DECISIONS[input.kind].includes(input.decision)||input.exclude!==undefined&&(!Array.isArray(input.exclude)||input.exclude.length>16||!input.exclude.every(id=>typeof id==='string'&&/^[A-Za-z0-9_.:-]{1,128}$/.test(id))))fail('invalid_request','Choose an organization case and a supported decision.',400);
+  const actor=await this.operatorActor(context,true),now=this.clock(),options=await this.identity.stepUpBegin({},context);
+  if(!options?.passkey)fail('passkey_required','Administrators confirm with a passkey. Add a passkey to this account first.',403);
+  const key='operator-challenge/'+actor.owner,old=await this.store.get(key),digest=await orgCaseDecisionDigest(input);
+  await this.commit({expect:{...actor.expect,[key]:old?.revision??null},writes:{[key]:{challenge:options.authenticationOptions.challenge,digest,expiresAt:now+MUTATION_MS}},rate:this.rate(actor,now)});
+  return {passkey:true,authenticationOptions:options.authenticationOptions};
+ }
+ /** The current step-up challenge of this session (read by the trusted adapter before it verifies the passkey, so the
+  * decision can check that the consumed challenge is the one bound to it). */
+ async pendingStepUpChallenge(context){try{const {account,session}=await this.identity.authorized(context,true),now=this.clock();return account.challenges.find(c=>c.purpose==='step-up'&&secureEqual(c.sessionHash,session.hash)&&c.expiresAt>now)?.value??null;}catch{return null;}}
+ /** Review M1: the organizations where `operator` has a pending proposal (kept for the approval window, at most 32). */
+ async rememberProposal(operator,entry){
+  const key='operator-proposals/'+operator,now=this.clock();
+  for(let attempt=0;attempt<3;attempt++){const old=await this.store.get(key),list=(old?.list??[]).filter(x=>x.at+ORG_CASE_LIMITS.PROPOSAL_MS>now&&!(x.org===entry.org&&x.process===entry.process));
+   const result=await this.store.commit({expect:{[key]:old?.revision??null},writes:{[key]:{list:[...list,{...entry,at:now}].slice(-ORG_CASE_LIMITS.PROPOSALS_KEPT)}}});if(result.committed)return;}
+ }
+ /** Review M1: an operator lost the capability or was held. Every organization where they have a pending proposal cancels
+  * it (audited there and here). A missed one is still caught: the writer re-verifies a proposer at approval. */
+ async cancelOperatorProposals(actor,operator,reason){
+  const key='operator-proposals/'+operator,row=await this.store.get(key);if(!row?.list?.length)return 0;let cancelled=0;
+  for(const p of row.list){let code=null,out=null;try{out=await this.orgCasesPort().cancelProposals(p.org,{operator,reason});cancelled+=out?.cancelled??0;}catch(error){code=typeof error?.code==='string'?error.code:'org_case_failed';}
+   await this.commit({audit:this.entry(actor,this.clock(),'org-case.proposal-cancel',p.org,null,{operator,reason,process:p.process,...code?{code}:{cancelled:out?.cancelled??0}})}).catch(()=>{});}
+  await this.store.commit({expect:{[key]:row.revision},writes:{[key]:null}}).catch(()=>{});return cancelled;
+ }
+ /** Every operator action in the hash-chained admin audit, newest first: `org-case.*` and `operator-key.*` entries.
+  * Scans at most AUDIT_SCAN entries per page (bounded work); `next` continues below. */
+ async orgCaseAudit(input,context){{
+  if(!exact(input??{},[],['before']))fail('invalid_request','Unsupported fields.',400);
+  const actor=await this.operatorActor(context,true);await this.commit({expect:actor.expect,rate:this.rate(actor,this.clock(),true)});const head=(await this.store.get('audit-head'))?.seq??0,before=input?.before===undefined?head+1:input.before;
+  if(!Number.isSafeInteger(before)||before<1)fail('invalid_request','Invalid audit position.',400);
+  const entries=[];let low=before,scanned=0;
+  while(low>1&&entries.length<ORG_CASE_LIMITS.PAGE&&scanned<ORG_CASE_LIMITS.AUDIT_SCAN){
+   const from=Math.max(1,low-100),rows=await this.store.list('audit/',{startAfter:pad12(from-1),limit:Math.min(100,low-from)});scanned+=rows.length;
+   for(const {value} of rows.reverse())if(typeof value.action==='string'&&/^(?:org-case|operator-key)\./.test(value.action)&&entries.length<ORG_CASE_LIMITS.PAGE)entries.push({seq:value.seq,at:value.at,action:value.action,phase:value.phase??null,actor:{handle:value.actor?.handle??null},target:value.target??null,after:value.after??null});
+   low=from;if(!rows.length)break;
+  }
+  // Review L2: operators read the reason text from the admin-only notes row the audit entry links to by digest.
+  for(const e of entries)if(typeof e.after?.reasonDigest==='string'&&/^[a-f0-9]{64}$/.test(e.after.reasonDigest)){const note=await this.store.get('org-case-note/'+e.after.reasonDigest);if(note)e.reason=note.text;}
+  const last=entries.at(-1)?.seq;return {entries,next:entries.length>=ORG_CASE_LIMITS.PAGE&&last>1?last:low>1?low:null};
+ }}
  /** Embedder port: effective roles/capabilities for an account (fails closed). */
  async authority(owner){const account=uuid(owner)&&await this.repository.get(owner);if(!account)return {roles:[],capabilities:[],admin:false};const {catalog}=await this.catalog(),target=await this.principalFor(account);return effectiveAuthority(catalog,target.principal,{internal:target.internal,active:account.status==='active'});}
 }
@@ -342,3 +550,9 @@ export class CloseUser extends AppAction {static operation='users.close';static 
 export class ConfirmUserDeletion extends AppAction {static operation='users.confirm-deletion';static deps=['admin'];run({admin}){return admin.confirmDeletion(this.input,this.actor.context);}}
 export class ClosureExportAuthority extends AppQuery {static operation='users.closure-export';static deps=['admin'];fetch({admin}){if(this.actor?.kind!=='system')fail('forbidden','Trusted identity authority is required.');return admin.closureExport(this.actor.owner);}}
 export class ReopenUser extends AppAction {static operation='users.reopen';static deps=['admin'];run({admin}){return admin.reopenUser(this.input,this.actor.context);}}
+// ORG-12d: the support case operations, dispatched by packages/runtime/admin-org-cases.mjs.
+export class ListOrgCases extends AppQuery {static operation='org-cases.list';static deps=['admin'];fetch({admin}){return admin.orgCases(this.input,this.actor.context);}}
+export class ReadOrgCase extends AppQuery {static operation='org-cases.get';static deps=['admin'];fetch({admin}){return admin.orgCase(this.input,this.actor.context);}}
+export class DecideOrgCase extends AppAction {static operation='org-cases.decide';static deps=['admin'];run({admin}){return admin.decideOrgCase(this.input,this.actor.context);}}
+export class OrgCaseChallenge extends AppAction {static operation='org-cases.challenge';static deps=['admin'];run({admin}){return admin.orgCaseChallenge(this.input,this.actor.context);}}
+export class OrgCaseAudit extends AppQuery {static operation='org-cases.audit';static deps=['admin'];fetch({admin}){return admin.orgCaseAudit(this.input,this.actor.context);}}

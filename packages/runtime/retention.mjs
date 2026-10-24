@@ -37,7 +37,7 @@ const safeBytes=n=>{if(!int(n))fault('retention_unavailable','Storage accounting
 export const observe=(prev,now,readAt)=>{if(!int(prev))return now;if(now<=prev)return prev;let next=Math.min(now,prev+RETENTION_BOUNDS.observedStepMs);if(int(readAt)&&readAt<=now&&readAt>next)next=readAt;return next;};
 const advanced=(next,prior,field)=>(next?.[field]??0)>=(prior?.[field]??0)+RETENTION_BOUNDS.observedPersistMs;
 /** Owner metadata inventory, never a bucket listing. Units (hosted resources and inbox collections) come from their
- * own few records. N2: per-unit bytes come from an indexed aggregate port when one is wired (`unitBytes`), otherwise
+ * own few records. N2: per-unit bytes come from a transactionally maintained totals port when one is wired (`unitBytes`), otherwise
  * from a row scan bounded by `rowLimit`. When neither can establish exact bytes, units stay listed with `bytes:null`
  * and byte fit is unknown, so an owner can still choose whole units by name. Unknown membership never yields bytes. */
 export async function retentionInventory(tx,owner,{rowLimit=RETENTION_BOUNDS.inventoryRowLimit,unitBytes}={}){

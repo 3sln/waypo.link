@@ -5,16 +5,12 @@ import {lifecycleLog} from '../lifecycle-runner.mjs';
 import {OVER_QUOTA_EPISODE} from '../export-hooks.mjs';
 import {flagsFor} from './flags.mjs';
 const engines=new WeakMap();
-/** D092 N2: per-unit bytes from the account item index (one SQL GROUP BY per unit kind; no metadata row paging).
- * Only used once the index and its backfill report ready; otherwise the Engine falls back to a bounded scan.
- * The Engine accepts these bytes only when they reconcile exactly with logical accounting. */
+/** Per-unit totals are catalog projections, maintained atomically with every catalog mutation.
+ * Existing catalogs migrate in bounded steps; the Engine keeps its bounded/unknown fallback until ready. */
 export async function retentionUnitBytes(c,owner,tx){
- // Readiness is read through the caller's account transaction (the store is serialized; no nested access).
- const sql=c.itemIndex?.sql;if(!sql||!tx||!await tx.get('item-index-ready')||!await tx.get('search-backfill-ready'))return null;
- const collections={},resources={};
- for(const row of sql.exec("SELECT collection AS id, COALESCE(SUM(json_extract(record,'$.size')),0) AS bytes FROM inbox_catalog WHERE owner=? GROUP BY collection",owner))collections[row.id]=Number(row.bytes);
- for(const row of sql.exec("SELECT resource AS id, COALESCE(SUM(json_extract(record,'$.size')),0) AS bytes FROM hosted_catalog GROUP BY resource"))resources[row.id]=Number(row.bytes);
- return {collections,resources};
+ const index=c.itemIndex;if(!index?.sql||!tx||!await tx.get('item-index-ready')||!await tx.get('search-backfill-ready'))return null;
+ if(!index.migrateUnitTotals(200))return null;
+ return index.unitBytes(owner);
 }
 export function retentionEngine(c){let engine=engines.get(c);if(!engine){engine=createAppEngine({providers:{accountStore:c.metadata,clock:{now:()=>typeof c.config.LIFECYCLE_CLOCK==='function'?c.config.LIFECYCLE_CLOCK():Date.now()},random:cryptoRandom,audit:nullAudit,flags:{for:ctx=>flagsFor(c.config,ctx)},config:new Proxy(c.config,{get:(target,name,receiver)=>name==='retentionUnitBytes'?(owner,tx)=>retentionUnitBytes(c,owner,tx):Reflect.get(target,name,receiver)})}});engines.set(c,engine);}return engine;}
 export const methods={

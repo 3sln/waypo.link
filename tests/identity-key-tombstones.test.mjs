@@ -34,7 +34,7 @@ test('100 rotations keep 16 signing records and one tombstone page of 85 kids; e
   const state = await f.ask(IdentityKeyRetainedState);
   assert.deepEqual(state.tombstones, { kids: 85, pages: 1, legacy: 0, rows: 1 });
   assert.deepEqual(state.signing, { records: 16, pinned: 0, own: 16, limit: KEY_HISTORY_LIMIT });
-  assert.equal(await f.rows(key('identity-key-pruned', OWNER)), 1, 'one row instead of 85');
+  assert.equal(await f.rows(key('identity-key-pruned', OWNER)), 87, 'one compact archive page, 85 exact membership rows and one append-state row');
   for (const kid of [pruned[0], pruned[42], pruned.at(-1)]) await assert.rejects(f.act(RegisterIdentityKey, await external(kid)), { code: 'key_exists' });
   assert.ok((await f.act(RegisterIdentityKey, await external('never-pruned'))).kid, 'an unseen kid still registers');
 });

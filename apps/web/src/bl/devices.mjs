@@ -28,7 +28,7 @@ export class RevokeDeviceAccess extends OwnerFlow {
   if(result.currentSessionRevoked){clearBrowserAccount(r);publish(r,ctx,{...accountReset(snapshot(r)),accountPicker:false,notice:'Device sessions revoked. Sign in again.',error:''});return;}await reload(r,ctx,'Device session revoked.');}
 }
 export class RevokeOtherDeviceAccess extends OwnerFlow {
- async perform(r,ctx,d){confirmation(snapshot(r),d,'revoke-other-devices');await r.api.request('/api/auth/devices/revoke-others',{});await reload(r,ctx,'Other devices signed out.');}
+ async perform(r,ctx,d){confirmation(snapshot(r),d,'revoke-other-devices');let push=null;try{push=await r.browser.pushSubscriptionId?.()??null;}catch{}await r.api.request('/api/auth/devices/revoke-others',typeof push==='string'?{pushSubscription:push}:{});await reload(r,ctx,'Other devices signed out.');}
 }
 export class RevokeAppAccess extends OwnerFlow {
  async perform(r,ctx,d){const s=snapshot(r);if(!devicesEnabled(s)){await r.api.request('/api/grants/'+encodeURIComponent(d.id),{},'DELETE');await reload(r,ctx,'App access revoked.');return;}

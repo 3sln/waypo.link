@@ -13,6 +13,15 @@ import {concatBytes,tarHeader,tarPadding,exportLayout,exportRange,mapExportRange
 import {EXPORT_EXCLUDED_PREFIXES,createExportContributors} from './export-contributors.mjs';
 const DAY=86400000,ACTIVE='export/active',HISTORY='export/history',JOB='export/job/',PIN='export/pin/',PIN_INDEX='export/pins/',PATH='export/path/',encoder=new TextEncoder();
 export const EXPORT_PART_BYTES=16*1024**2,EXPORT_PACK_THRESHOLD=256*1024,EXPORT_TTL=7*DAY;
+// Wargame 4 M4: a non-ready job ends. Past the generation deadline (from its first step) or the consecutive-failure cap it is failed with
+// its last error code and cleaned up; a repeated export_part_missing (lost buffered parts) is final at once.
+export const EXPORT_GENERATION_DEADLINE=3*DAY,EXPORT_MAX_FAILURES=24,EXPORT_PART_MISSING_FINAL=2;
+// Data failures (the owner's data or its concurrent changes) are charged to the weekly allowance. Other (system) failures
+// are not, but at most EXPORT_UNCHARGED_PER_WEEK per 7 days, so failures cannot buy unlimited uncharged work (review).
+const DATA_FAILURES=['export_pin_budget','export_payload_missing','export_payload_changed','export_payload_invalid','export_row_limit','export_metadata_limit','export_path_collision'];
+export const EXPORT_UNCHARGED_PER_WEEK=2;
+/** Alarm back-off after `failures` consecutive failed steps: 60 s doubling to 1 h. */
+export const exportRetryDelay=failures=>Math.min(3600000,60000*2**Math.max(0,Math.min(6,(failures|0)-1)));
 const terminal=state=>['cancelled','expired','failed'].includes(state),int=n=>Number.isSafeInteger(n)&&n>=0;
 const clean=value=>JSON.parse(JSON.stringify(value)),json=value=>encoder.encode(canonical(clean(value))),line=value=>encoder.encode(canonical(clean(value))+'\n'),pad=n=>String(n).padStart(4,'0');
 const safeJob=job=>job?Object.fromEntries(['v','id','owner','purpose','createdAt','notBefore','state','payloads','counts','sealedAt','expiresAt','downloadedBytes','downloadCap','rootDigest','failure','cleanupPending'].filter(k=>job[k]!==undefined).map(k=>[k,structuredClone(job[k])]).concat([['volumes',(job.volumes??[]).map(({n,bytes,firstEntry,lastEntry})=>({n,bytes,firstEntry,lastEntry}))]])):null;
@@ -46,7 +55,7 @@ export class AccountExport {
    if(receipt){if(receipt.fingerprint!==fingerprint)fault('export_operation_conflict','This operation ID was already used.',409);return {job:await tx.get(JOB+receipt.id),created:false};}
    if(!this.port(owner).enabled('ACCOUNT_EXPORT_ENABLED'))fault('not_found','Not found.',404);
    if(await tx.get(ACTIVE))fault('export_active','An export is already active.',409);
-   if(history.filter(h=>h.createdAt>now-7*DAY).length>=2)fault('export_rate_limited','Two exports are available per seven days.',429);
+   if(history.filter(h=>h.createdAt>now-7*DAY&&!h.uncharged).length>=2)fault('export_rate_limited','Two exports are available per seven days.',429);
    const job={v:1,id,owner,purpose:'owner',operationId:input.operationId,fingerprint,createdAt:now,notBefore:security.changedAt?Math.max(now,security.changedAt+3*DAY):now,securityEpoch:security.epoch,state:'queued',revision:0,contributor:0,cursor:null,parts:[],buffers:{},sequences:{},payloads:{count:0,bytes:0},counts:{},payloadEntries:[],keys:[],downloadedBytes:0,sessionsSeen:[],noticePending:true};
    // History is bounded, but a job whose exact keys are still pending cleanup keeps its record and receipt, so
    // expiry and DX-3's E6 cancelAll (which walks history) can still delete those keys.
@@ -174,6 +183,7 @@ export class AccountExport {
    await this.fence(tx,owner);const id=await tx.get(ACTIVE);if(!id)return null;const current=await this.get(tx,owner,id);
    if(current.state==='ready')return {idle:true,wakeAt:current.expiresAt};if(terminal(current.state))return {cleanup:current.id};
    if(current.writer&&current.writer.until>now)return {busy:true,wakeAt:current.writer.until};
+   if(now>=(current.startedAt??now)+EXPORT_GENERATION_DEADLINE){await this.failJob(tx,current,current.lastFailure??'export_deadline');return {cleanup:current.id};}
    if(current.writer)current.writeEpoch=(current.writeEpoch??0)+1;
    current.writer={token,until:now+60000};current.startedAt??=now;current.state=current.state==='queued'?'generating':current.state;await tx.put(JOB+id,current);return current;
   });
@@ -196,16 +206,25 @@ export class AccountExport {
    const permitted=await this.store.transaction(async tx=>{await this.fence(tx,owner);const current=await this.get(tx,owner,job.id);if(current.writer?.token!==token||terminal(current.state))return false;current.keys=[...new Set([...current.keys,...writes.map(w=>w.key)])];await tx.put(JOB+job.id,current);job.keys=current.keys;return true;});
    if(!permitted)return {busy:true,wakeAt:now+2000};
    for(const write of writes)await this.archives.put(write.key,write.bytes);
-   const committed=await this.store.transaction(async tx=>{const current=await this.get(tx,owner,job.id);if(current.writer?.token!==token||terminal(current.state)||await tx.get('deletion/fence-v1')||await tx.get('lifecycle/purge-v1'))return false;job.writer=null;job.revision++;job.noticePending=current.noticePending;await tx.put(JOB+job.id,job);return true;});
+   const committed=await this.store.transaction(async tx=>{const current=await this.get(tx,owner,job.id);if(current.writer?.token!==token||terminal(current.state)||await tx.get('deletion/fence-v1')||await tx.get('lifecycle/purge-v1'))return false;job.writer=null;job.revision++;job.failures=0;delete job.lastFailure;job.noticePending=current.noticePending;await tx.put(JOB+job.id,job);return true;});
    if(!committed){await this.archives.delete(writes.map(w=>w.key));return {busy:true,wakeAt:now+2000};}
    return {busy:job.state!=='ready',wakeAt:job.state==='ready'?job.expiresAt:now+2000};
   }catch(error){
-   if(['export_pin_budget','export_payload_missing','export_payload_changed','export_payload_invalid','export_row_limit','export_metadata_limit','export_path_collision'].includes(error.code))await this.store.transaction(async tx=>{const current=await this.get(tx,owner,job.id);if(current.writer?.token===token&&!terminal(current.state)){current.state='failed';current.failure=error.code;current.cleanupPending=true;await tx.put(JOB+job.id,current);}});
+   const code=typeof error?.code==='string'&&/^[a-z_]{1,64}$/.test(error.code)?error.code:'export_unavailable';
+   await this.store.transaction(async tx=>{const current=await this.get(tx,owner,job.id);if(current.writer?.token!==token||terminal(current.state))return;
+    // export_stale is a lost race, not a failure of this job.
+    if(code!=='export_stale'){current.failures=(current.failures??0)+1;current.lastFailure=code;current.partMissing=code==='export_part_missing'?(current.partMissing??0)+1:0;}
+    if(DATA_FAILURES.includes(code)||current.failures>=EXPORT_MAX_FAILURES||current.partMissing>=EXPORT_PART_MISSING_FINAL)await this.failJob(tx,current,code);else await tx.put(JOB+job.id,current);});
    throw error;
   }finally{
    await this.store.transaction(async tx=>{const current=await tx.get(JOB+job.id);if(current?.writer?.token===token){current.writer=null;await tx.put(JOB+job.id,current);}});
    const current=await this.store.get(JOB+job.id);if(current&&terminal(current.state))await this.cleanup(owner,job.id);
   }
+ }
+ /** Marks a non-terminal job failed with `code` inside `tx`; system-caused failures are not charged to the allowance. */
+ async failJob(tx,current,code){
+  current.state='failed';current.failure=code;current.cleanupPending=true;current.revision=(current.revision??0)+1;await tx.put(JOB+current.id,current);
+  if(!DATA_FAILURES.includes(code)){const history=await tx.get(HISTORY)??[],now=this.clock.now();if(history.filter(h=>h.uncharged&&h.createdAt>now-7*DAY).length<EXPORT_UNCHARGED_PER_WEEK)await tx.put(HISTORY,history.map(h=>h.id===current.id?{...h,uncharged:true}:h));}
  }
  async layout(owner,id,input={},actor){
   const security=await this.security(owner),now=this.clock.now(),session=actor.kind==='export-grant'?'grant:'+actor.grantId:'session:'+actor.sessionId;

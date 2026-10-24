@@ -35,7 +35,7 @@ export function matches(when,ctx,now=ctx?.now){
  if(when.window){if(!Number.isFinite(now))return false;const {from,until}=when.window;if(from!==undefined&&now<timeValue(from)||until!==undefined&&now>=timeValue(until))return false;}
  return true;
 }
-const usable=snapshot=>{try{return validateSnapshot(snapshot);}catch{return null;}};
+const usable=snapshot=>{try{return validateSnapshot(snapshot,{quarantine:true});}catch{return null;}};
 const decision=(value,reason,extra={})=>Object.freeze({value,reason,...extra});
 function evaluator(ctx,snapshot,env,options){
  const primary=options.usable===false?null:usable(snapshot),fallback=usable(options.fallback),memo=new Map(),now=ctx?.now??options.clock?.();
@@ -46,7 +46,8 @@ function evaluator(ctx,snapshot,env,options){
   if(state.state==='kill'||state.state==='invalid')return done(decision(f.safe,'env-kill'));
   for(const dep of f.requires){const result=run(dep,global||f.dependencyMode==='global',source,fallingBack);if(result.value===getFlag(dep).safe)return done(decision(f.safe,`dependency:${dep}`));}
   if(f.capabilities?.includes('billing-configuration')&&!billingConfigured(env))return done(decision(f.safe,'dependency:billing-configuration'));
-  if(!source){if(f.outage==='last-known'&&fallback&&!fallingBack){const result=run(name,global,fallback,true);return done(decision(result.value,'outage-last-known',{...result,reason:'outage-last-known',detailReason:result.reason}));}return done(decision(f.safe,'outage'));}
+  // A quarantined record (L5) is unreadable for this flag only: it follows the outage policy, never legacy env.
+  if(!source||source.quarantined?.includes(name)){if(f.outage==='last-known'&&fallback&&!fallingBack){const result=run(name,global,fallback,true);return done(decision(result.value,'outage-last-known',{...result,reason:'outage-last-known',detailReason:result.reason}));}return done(decision(f.safe,'outage'));}
   if(!record)return done(decision(state.state==='force-on-legacy'?state.value:f.safe,state.state==='force-on-legacy'?'legacy-env':'no-record'));
   if(!record.on)return done(decision(f.safe,'console-off'));
   if(global)return done(decision(record.onValue,'global'));
@@ -68,7 +69,7 @@ export function createFlags({snapshot,env={},...options}={}){
  const pinned=usable(snapshot),fallback=usable(options.fallback),config=Object.freeze({...env}),settings={...options,fallback},version=pinned?.version??0;
  function forContext(ctx={}){
   const context=Object.freeze({...ctx,subject:Object.freeze({...ctx.subject}),client:ctx.client?Object.freeze({...ctx.client}):null,region:Object.freeze({...ctx.region}),now:ctx.now??settings.clock?.()}),run=evaluator(context,pinned,config,settings);
-  return Object.freeze({version,evaluate:name=>run(name),enabled:name=>run(name).value,global:name=>run(name,true).value,background:name=>{const state=parseEnv(name,config,Boolean(pinned?.flags[name]),settings);return getFlag(name).class==='b'?state.value:!['kill','invalid'].includes(state.state);},envState:name=>parseEnv(name,config,Boolean(pinned?.flags[name]),settings)});
+  return Object.freeze({version,usable:Boolean(pinned)&&settings.usable!==false,evaluate:name=>run(name),enabled:name=>run(name).value,global:name=>run(name,true).value,background:name=>{const state=parseEnv(name,config,Boolean(pinned?.flags[name]),settings);return getFlag(name).class==='b'?state.value:!['kill','invalid'].includes(state.state);},envState:name=>parseEnv(name,config,Boolean(pinned?.flags[name]),settings)});
  }
  return Object.freeze({version,for:forContext,evaluate:(name,ctx)=>forContext(ctx).evaluate(name)});
 }

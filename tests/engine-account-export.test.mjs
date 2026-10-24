@@ -63,8 +63,10 @@ test('range authorization charges the requested bytes and notices each distinct 
  const f=await fixture(t),job=await f.create();await f.ready(job.id);
  const first=await f.op(E.ExportLayout,{id:job.id,input:{volume:1,range:'bytes=4-20'}});assert.equal(first.status,206);assert.equal(first.contentLength,17);assert.equal((await f.op(E.ExportStatus,{id:job.id})).downloadedBytes,17);
  await f.op(E.ExportLayout,{id:job.id,input:{volume:1,range:'bytes=0-0'}});await f.op(E.ExportLayout,{actor:{...f.actor(),sessionId:'session2'},id:job.id,input:{volume:1,range:'bytes=0-0'}});
- await f.op(E.ExportLayout,{actor:{kind:'export-grant',owner:OWNER,jobId:job.id,grantId:'grant1'},id:job.id,input:{volume:1,range:'bytes=0-0'}});
- assert.equal(f.notices.filter(n=>n.type==='export-downloaded').length,3);await assert.rejects(f.op(E.ExportLayout,{actor:{kind:'export-grant',owner:OWNER,jobId:OP3,grantId:'grant1'},id:job.id,input:{volume:1}}),{code:'unauthorized'});
+ // Wargame 4: a caller-built export-grant actor is not authority on the generic layout operation (the token-verifying
+ // DownloadExport adapter is the only grant path; tests/export-grant-lifecycle.test.mjs covers its notices).
+ await assert.rejects(f.op(E.ExportLayout,{actor:{kind:'export-grant',owner:OWNER,jobId:job.id,grantId:'grant1'},id:job.id,input:{volume:1,range:'bytes=0-0'}}),{code:'unauthorized'});
+ assert.equal(f.notices.filter(n=>n.type==='export-downloaded').length,2);await assert.rejects(f.op(E.ExportLayout,{actor:{kind:'export-grant',owner:OWNER,jobId:OP3,grantId:'grant1'},id:job.id,input:{volume:1}}),{code:'unauthorized'});
  const full=await f.op(E.ExportLayout,{id:job.id,input:{volume:1,range:'bytes=0-0',ifRange:'"wrong"'}});assert.equal(full.status,200);
  await f.op(E.ExportLayout,{id:job.id,input:{volume:1}});await assert.rejects(f.op(E.ExportLayout,{id:job.id,input:{volume:1}}),{code:'export_download_cap'});
 });

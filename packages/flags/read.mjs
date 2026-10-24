@@ -8,8 +8,17 @@ export function flagsFor(config={},ctx={}){config??={};return (config.flags??con
 export const ownerFlags=(config,owner,clientId)=>flagsFor(config,{subject:{kind:'account',owner},...clientId?{client:{clientId}}:{}});
 /** Strict-string sites and independent pre-console switches are compatibility
  * rules only. Once a record exists, the evaluator owns values/dependencies. */
-export function siteEnabled(config,name,ctx={},strict=false){if(config?.[projected])return config[name]==='true';const flags=flagsFor(config,ctx),result=flags.evaluate(name),state=flags.envState(name);return state.state==='force-on-legacy'&&(result.reason==='legacy-env'||flags.version===0&&result.reason.startsWith('dependency:'))?strict?state.raw==='true':state.value:result.value;}
-export function siteGlobal(config,name,strict=false){if(config?.[projected])return config[name]==='true';const flags=flagsFor(config),state=flags.envState(name),reason=flags.evaluate(name).reason;return state.state==='force-on-legacy'&&(reason==='legacy-env'||flags.version===0&&reason.startsWith('dependency:'))?strict?state.raw==='true':state.value:flags.global(name);}
+/** The pre-console compatibility rule (legacy env "true" with no record) applies only when an empty snapshot was
+ * actually read and is usable. During an outage (cold isolate, store down) a dependency's safe value must never
+ * resurrect a leftover env force-on over a console kill (wargame 4, M3). */
+function legacyApplies(flags,name,reason){
+ if(reason==='legacy-env')return true;
+ if(flags.usable!==true||flags.version!==0||!reason.startsWith('dependency:'))return false;
+ const dependency=reason.slice(11);if(dependency==='billing-configuration')return true;
+ return !/^outage/.test(flags.evaluate(dependency).reason);
+}
+export function siteEnabled(config,name,ctx={},strict=false){if(config?.[projected])return config[name]==='true';const flags=flagsFor(config,ctx),result=flags.evaluate(name),state=flags.envState(name);return state.state==='force-on-legacy'&&legacyApplies(flags,name,result.reason)?strict?state.raw==='true':state.value:result.value;}
+export function siteGlobal(config,name,strict=false){if(config?.[projected])return config[name]==='true';const flags=flagsFor(config),state=flags.envState(name),reason=flags.evaluate(name).reason;return state.state==='force-on-legacy'&&legacyApplies(flags,name,reason)?strict?state.raw==='true':state.value:flags.global(name);}
 export function existingFeature(config,name,owner,strict=false){const flags=ownerFlags(config,owner);return flags.version>0||siteEnabled(config,name,{subject:{kind:'account',owner}},strict);}
 /** Adapter for unmigrated services whose boolean configuration is string-valued.
  * The service still owns entitlement, consent, quotas and transport readiness. */

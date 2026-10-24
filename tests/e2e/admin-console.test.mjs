@@ -75,7 +75,7 @@ test('boot setup, administrator step-up, reservation, claim, onboarding and audi
  const deskLink=await admin.page.getByLabel('Claim link',{exact:true}).inputValue();
  const desk=await claimThroughOnboarding(browser,deskLink,'night-desk');await desk.context.close();
  await adminNav('Users');await admin.page.getByLabel('Value',{exact:true}).fill('night-desk');await admin.page.getByRole('button',{name:'Look up',exact:true}).click();await admin.page.getByText('Internal · claim').waitFor();
- await adminNav('Audit log');await admin.page.getByText('Chain intact').waitFor();await admin.page.getByText('claim.mint').first().waitFor();await admin.page.getByRole('button',{name:'Verify entire chain',exact:true}).click();await admin.page.getByText(/Every entry through \d+ links/).waitFor();
+ await adminNav('Audit log');await admin.page.getByText('Chain intact').waitFor();await admin.page.getByText('claim.mint').first().waitFor();assert.equal(await admin.page.getByRole('button',{name:'Verify entire chain',exact:true}).count(),0,'wargame 4 (a): the full chain walk is boot-only');
  await screenshot(admin.page,'admin-audit');
  await admin.page.setViewportSize({width:390,height:844});assert.equal(await noOverflow(admin.page),true,'no horizontal page scroll at phone width');await screenshot(admin.page,'admin-audit-mobile');
  assert.ok(scripts.some(url=>/admin-console\.[A-Za-z0-9_-]+\.mjs/.test(url)),'the operations module loads only after access');

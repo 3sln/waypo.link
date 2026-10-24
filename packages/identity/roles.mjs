@@ -13,14 +13,17 @@ const freeze=value=>{if(value&&typeof value==='object'){for(const child of Objec
 // Built-in administrator authority is implicit and never part of a custom role.
 export const BUILTIN_ROLES=freeze({[ADMIN_ROLE]:{class:'internal',name:'Administrator',description:'Operates this host: reservations, claims, roles below administrator, badges and user lookup.',capabilities:[]}});
 export const EMPTY_CATALOG=freeze({version:1,capabilities:{},roles:{},badgeClasses:{}});
+// ORG-12d (design §12d.8): the support operator capability is internal, boot-assignable only and never delegable. A catalog
+// that classifies it `user`, or puts it in a delegable role, is invalid, so no administrator can hand it out.
+export const OPERATOR_CAPABILITY='support.org-break-glass';
 export function validateCatalog(value){
  if(!exact(value,['version','capabilities','roles','badgeClasses'])||value.version!==1||!plain(value.capabilities)||!plain(value.roles)||!plain(value.badgeClasses))invalid();
  const capabilities={},roles={},badgeClasses={},caps=Object.entries(value.capabilities),list=Object.entries(value.roles),badges=Object.entries(value.badgeClasses);
  if(caps.length>128||list.length>64||badges.length>32)invalid();
- for(const [id,cap] of caps){if(!capabilityID(id)||!exact(cap,['class','description'])||!CLASSES.includes(cap.class)||!text(cap.description,240))invalid();capabilities[id]={class:cap.class,description:cap.description};}
+ for(const [id,cap] of caps){if(!capabilityID(id)||!exact(cap,['class','description'])||!CLASSES.includes(cap.class)||!text(cap.description,240))invalid();if(id===OPERATOR_CAPABILITY&&cap.class!=='internal')invalid();capabilities[id]={class:cap.class,description:cap.description};}
  for(const [id,role] of list){if(!slug(id)||Object.hasOwn(BUILTIN_ROLES,id)||!(exact(role,['class','name','description','capabilities'])||exact(role,['class','name','description','capabilities','delegable'])&&role.delegable===true&&role.class==='internal')||!CLASSES.includes(role.class)||!text(role.name,48)||!text(role.description,240)||!Array.isArray(role.capabilities)||role.capabilities.length>32||new Set(role.capabilities).size!==role.capabilities.length)invalid();
   // A user-class role may hold only capabilities boot classified as safe for anyone.
-  for(const cap of role.capabilities)if(!Object.hasOwn(capabilities,cap)||role.class==='user'&&capabilities[cap].class!=='user')invalid();
+  for(const cap of role.capabilities)if(!Object.hasOwn(capabilities,cap)||role.class==='user'&&capabilities[cap].class!=='user'||cap===OPERATOR_CAPABILITY&&(role.class!=='internal'||role.delegable===true))invalid();
   roles[id]={class:role.class,name:role.name,description:role.description,capabilities:[...role.capabilities].sort(),...role.delegable?{delegable:true}:{}};}
  for(const [id,cls] of badges){if(!/^[a-z][a-z0-9-]{0,47}$/.test(id)||!BADGE_CLASSES.includes(cls))invalid();badgeClasses[id]=cls;}
  return freeze({version:1,capabilities,roles,badgeClasses});

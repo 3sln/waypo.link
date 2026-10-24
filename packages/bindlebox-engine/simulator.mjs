@@ -11,7 +11,7 @@ import * as B from '../bindlebox-protocol/index.mjs';
 const encoder=new TextEncoder(),ES={name:'ECDSA',namedCurve:'P-256'},pub=({kty,crv,x,y})=>({kty,crv,x,y});
 export function memoryMailbox(initial=[]){
  let data=new Map(structuredClone(initial)),tail=Promise.resolve();
- const handle=map=>({get:async k=>structuredClone(map.get(k)),put:async(k,v)=>{map.set(k,structuredClone(v));},set:async(k,v)=>{map.set(k,structuredClone(v));},delete:async k=>map.delete(k),list:async({prefix=''}={})=>new Map([...map].filter(([k])=>k.startsWith(prefix)).sort(([a],[b])=>a<b?-1:a>b?1:0).map(([k,v])=>[k,structuredClone(v)]))});
+ const handle=map=>({get:async k=>structuredClone(map.get(k)),put:async(k,v)=>{map.set(k,structuredClone(v));},set:async(k,v)=>{map.set(k,structuredClone(v));},delete:async k=>map.delete(k),list:async({prefix='',startAfter='',limit=100000}={})=>new Map([...map].filter(([k])=>k.startsWith(prefix)&&k>(startAfter??'')).sort(([a],[b])=>a<b?-1:a>b?1:0).slice(0,limit).map(([k,v])=>[k,structuredClone(v)]))});
  return {get:k=>handle(data).get(k),list:options=>handle(data).list(options),put(k,v){return this.transaction(tx=>tx.put(k,v));},delete(k){return this.transaction(tx=>tx.delete(k));},transaction(work){const result=tail.then(async()=>{const draft=structuredClone(data),value=await work(handle(draft));data=draft;return value;});tail=result.catch(()=>{});return result;}};
 }
 export async function createMailboxSimulator({count=2,seed=1,clock=memoryEffects().clock}={}){

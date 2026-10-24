@@ -9,6 +9,16 @@ const hash=async s=>digest(utf8.encode(s));
 const fail=(code,message,status=400)=>{throw new StorageError(code,message,status);};
 const clean=r=>{const {secret,...publicValue}=r;return publicValue;};
 const validId=id=>typeof id==='string'&&/^[A-Za-z0-9_-]{1,200}$/.test(id);
+// Wargame 4 L7: every per-resource row family. Disconnect marks the resource removed, then sweeps these in batches.
+// Upload and folder journals (`drive/pending/`, `drive/folder-pending/`) are not swept with the resource: they are evidence
+// of files Bindle may have created in the owner's Drive (capped at 100 per account). Folder journals, which hold sealed
+// tokens, are pruned on begin after DRIVE_FOLDER_JOURNAL_MS.
+const RESOURCE_PREFIXES=id=>['drive/object/'+id+'/','drive/retained/'+id+'/'],RESOURCE_ROWS=id=>['drive/usage/'+id];
+export const DRIVE_SWEEP_BATCH=100,DRIVE_OAUTH_PRUNE=50,DRIVE_FOLDER_JOURNAL_MS=7*86400000;
+// AU-S6 reads `drive/object/` rows that carry producer evidence (`producer`/`createdBy`) to show what an app produced
+// in a disconnected Drive as "not deletable here"; the sweep keeps those (bounded by the 10,000-object cap) for the
+// owner's What's left action or the account purge, and removes every other row of the resource.
+const producerEvidence=(path,row)=>path.startsWith('drive/object/')&&Boolean(row?.producer||row?.createdBy);
 // All provider mutation targets are immutable. Conditional publication is the
 // account metadata transaction, never an undocumented Drive HTTP precondition.
 export class GoogleDriveService {
@@ -20,14 +30,43 @@ export class GoogleDriveService {
  async begin(owner,sessionId,name='Google Drive',{resourceId}={}){
   if(!this.configured())fail('integration_unconfigured','Google Drive is not configured.',503);
   if(typeof sessionId!=='string'||!sessionId||typeof name!=='string'||!name.trim()||name.length>100)fail('invalid_request','A current session and resource name are required.');
+  try{await this.sweepRemoved({batches:2});}catch{}
   const state=random(),verifier=random(),expiresAt=this.clock()+600000;
   let reconnect;
   if(resourceId){const {resource,secret}=await this.binding(owner,resourceId);if(!validId(secret.permissionId))fail('reconnect_unavailable','This older connection cannot safely be reconnected.',409);reconnect={resourceId,generation:resource.generation,rootFolder:secret.rootFolder,permissionId:secret.permissionId};name=resource.name;}
   const pending={owner,session:await hash(sessionId),stateHash:await hash(state),expiresAt,name:name.trim(),verifier,...reconnect?{reconnect}:{}};
+  await this.pruneOAuth();
   await this.metadata.put('drive/oauth/'+await hash(sessionId),await this.seal(pending));
   const url=new URL('https://accounts.google.com/o/oauth2/v2/auth');
   for(const [k,v] of Object.entries({client_id:this.config.GOOGLE_CLIENT_ID,redirect_uri:this.callback(),response_type:'code',scope:SCOPE,access_type:'offline',prompt:'consent',state,code_challenge:await hash(verifier),code_challenge_method:'S256'}))url.searchParams.set(k,v);
   return {url:url.href,expiresAt};
+ }
+ /** Wargame 4 L8: abandoned OAuth begins are pruned (bounded) on each begin; unreadable rows count as expired. */
+ async pruneOAuth(limit=DRIVE_OAUTH_PRUNE){
+  if(typeof this.metadata.list!=='function')return 0;let pruned=0;const now=this.clock();
+  for(const [path,sealed]of await this.metadata.list({prefix:'drive/oauth/',limit})){let expired=true;try{expired=!((await this.open(sealed))?.expiresAt>now);}catch{}if(expired){await this.metadata.delete(path);pruned++;}}
+  // Review: folder journals of failed connects hold sealed tokens; after DRIVE_FOLDER_JOURNAL_MS they are dropped.
+  for(const [path,sealed]of await this.metadata.list({prefix:'drive/folder-pending/',limit})){let old=true;try{const v=await this.open(sealed);old=!(Number.isSafeInteger(v?.createdAt)&&now-v.createdAt<DRIVE_FOLDER_JOURNAL_MS);}catch{}if(old){await this.metadata.delete(path);pruned++;}}
+  return pruned;
+ }
+ /** Wargame 4 L8: a revoked or evicted session's pending OAuth state is deleted (public session ids). */
+ async forgetSessions(sessionIds=[]){for(const id of sessionIds.slice(0,200))if(typeof id==='string'&&id)await this.metadata.delete('drive/oauth/'+await hash(id));}
+ /** Wargame 4 L7: delete up to `batches` x DRIVE_SWEEP_BATCH rows of removed resources; true when nothing is left. */
+ async sweepRemoved({batches=10}={}){
+  if(typeof this.metadata.list!=='function')return true;let budget=batches;
+  for(const [marker,state]of await this.metadata.list({prefix:'drive/removed/',limit:10})){
+   const id=marker.slice('drive/removed/'.length);if(!validId(id)){await this.metadata.delete(marker);continue;}
+   // Review: the cursor lives in the marker, so kept (producer-evidence) rows are passed once, never re-read forever.
+   const prefixes=RESOURCE_PREFIXES(id);let index=Number.isSafeInteger(state?.cursor?.index)&&state.cursor.index>=0?state.cursor.index:0,startAfter=typeof state?.cursor?.startAfter==='string'?state.cursor.startAfter:'';
+   while(index<prefixes.length){
+    if(budget<=0){await this.metadata.put(marker,{...state,cursor:{index,startAfter}});return false;}
+    const rows=[...await this.metadata.list({prefix:prefixes[index],limit:DRIVE_SWEEP_BATCH,...startAfter?{startAfter}:{}})];budget--;
+    for(const [path,row]of rows)if(!producerEvidence(path,row))await this.metadata.delete(path);
+    if(rows.length<DRIVE_SWEEP_BATCH){index++;startAfter='';}else startAfter=rows.at(-1)[0];
+   }
+   for(const path of RESOURCE_ROWS(id))await this.metadata.delete(path);await this.metadata.delete(marker);
+  }
+  return (await this.metadata.list({prefix:'drive/removed/',limit:1})).size===0;
  }
  async token(params){
   const response=await checkedFetch(this.fetcher,'https://oauth2.googleapis.com/token',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({...params,client_id:this.config.GOOGLE_CLIENT_ID,client_secret:this.config.GOOGLE_CLIENT_SECRET})});
@@ -70,7 +109,7 @@ export class GoogleDriveService {
   const generation=crypto.randomUUID(),replacement={...resource,generation,status:'connected',verifiedAt:this.clock(),secret:await this.seal({...secret,generation,accessToken:tokens.access_token,refreshToken:tokens.refresh_token,expiresAt:tokens.expiresAt})};
   await this.metadata.transaction(async tx=>{const current=await tx.get('resource/'+resource.id);if(current?.owner!==owner||current.provider!=='google-drive'||current.generation!==reconnect.generation||!['connected','reauthorization_required'].includes(current.status))fail('reconnect_conflict','The Drive connection changed. Start again.',409);await tx.put('resource/'+resource.id,replacement);});return {...clean(replacement),reconnected:true};
  }
- async access(owner,id){let {resource,secret}=await this.load(owner,id);if(secret.expiresAt>this.clock()+60000)return {resource,secret};let tokens;try{tokens=await this.token({grant_type:'refresh_token',refresh_token:secret.refreshToken});}catch(error){if([400,401].includes(error.status)){await this.metadata.transaction(async tx=>{const current=await tx.get('resource/'+id);if(current?.status==='connected'&&current.generation===resource.generation&&JSON.stringify(current.secret)===JSON.stringify(resource.secret))await tx.put('resource/'+id,{...current,status:'reauthorization_required'});});}throw error;}
+ async access(owner,id){let {resource,secret}=await this.load(owner,id);if(secret.expiresAt>this.clock()+60000)return {resource,secret};let tokens;try{tokens=await this.token({grant_type:'refresh_token',refresh_token:secret.refreshToken});}catch(error){if([400,401].includes(error.status)||error.code==='scope_denied'){await this.metadata.transaction(async tx=>{const current=await tx.get('resource/'+id);if(current?.status==='connected'&&current.generation===resource.generation&&JSON.stringify(current.secret)===JSON.stringify(resource.secret))await tx.put('resource/'+id,{...current,status:'reauthorization_required'});});}throw error;}
   secret={...secret,accessToken:tokens.access_token,refreshToken:tokens.refresh_token||secret.refreshToken,expiresAt:tokens.expiresAt};
   await this.metadata.transaction(async tx=>{const current=await tx.get('resource/'+id);if(current?.status!=='connected'||current.generation!==resource.generation)fail('forbidden','Google Drive connection was removed.',403);if(JSON.stringify(current.secret)!==JSON.stringify(resource.secret))fail('refresh_conflict','The connection was refreshed concurrently. Retry the operation.',409);await tx.put('resource/'+id,{...current,secret:await this.seal(secret)});});return {resource,secret};
  }
@@ -118,7 +157,8 @@ export class GoogleDriveService {
   const secret=await this.open(resource.secret);if(secret.owner!==owner||secret.resourceId!==id||secret.generation!==resource.generation)fail('forbidden','Google Drive credential binding is invalid.',403);
   // Google revocation invalidates the principal's project-wide authorization,
   // including other OAuth clients. Removing one resource must stay local.
-  await this.metadata.transaction(async tx=>{const current=await tx.get('resource/'+id);if(current?.owner!==owner||current.provider!=='google-drive'||current.generation!==resource.generation||JSON.stringify(current.secret)!==JSON.stringify(resource.secret))fail('connection_conflict','The Drive connection changed. Try disconnecting again.',409);await tx.delete('resource/'+id);});
+  await this.metadata.transaction(async tx=>{const current=await tx.get('resource/'+id);if(current?.owner!==owner||current.provider!=='google-drive'||current.generation!==resource.generation||JSON.stringify(current.secret)!==JSON.stringify(resource.secret))fail('connection_conflict','The Drive connection changed. Try disconnecting again.',409);await tx.delete('resource/'+id);await tx.put('drive/removed/'+id,{owner,removedAt:this.clock()});});
+  try{await this.sweepRemoved();}catch{/* The marker keeps the remainder for the next begin or disconnect. */}
   return {deleted:true,providerRevoked:false,localOnly:true};
  }
 }

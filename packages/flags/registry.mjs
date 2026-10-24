@@ -93,6 +93,10 @@ const freeze=value=>{if(value&&typeof value==='object'){for(const child of Objec
 export const FLAGS=freeze(Object.fromEntries(rows.map(([name,kind,dimensions,extra])=>[name,{name,class:kind,type:'boolean',safe:false,onValue:true,dimensions:dimensions?dimensions.split(' '):[],requires:[],risk:kind==='b'?null:'std',outage:kind==='b'?null:'safe',gates:[...common],gateReferences:[GATE_SOURCE],gateRevision:GATE_REVISION,experiment:null,stateful:false,retainExisting:false,placement:extra.stateful?'account':'edge',client:false,narrowOnly:false,derived:false,envDefault:undefined,envDefaults:{},envParse:'string',...extra,...extra.stateful?{retainExisting:extra.retainExisting??true,...extra.retainExisting===false?{}:{hasState:name}}:{}}])));
 export const registry=FLAGS;
 export const FLAG_NAMES=Object.freeze(Object.keys(FLAGS));
+/** Wargame 4 L5: names removed from the registry. A deployment may still store a console record for one; that record is
+ * quarantined (only that flag falls back) until an operator runs the audited critical `flags.retire`. Removing a flag
+ * means moving it here with the date; tests/flags-registry-removals.test.mjs guards the move. */
+export const RETIRED_FLAGS=Object.freeze({});
 export function getFlag(name){if(typeof name!=='string'||!Object.hasOwn(FLAGS,name))throw Object.assign(new TypeError(`Unknown flag: ${String(name)}`),{code:'unknown_flag'});return FLAGS[name];}
 export function validateRegistry(entries=FLAGS){
  const seen=new Set(),active=new Set();

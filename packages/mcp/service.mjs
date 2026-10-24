@@ -82,11 +82,16 @@ export class McpAuthorization {
   * rows for the owner, plus its grant index. Expiry index rows are left to `cleanup`, which tolerates missing keys.
   * Paged, one transaction per page. */
  async eraseSubject(owner){
-  if(typeof owner!=='string'||!/^[a-f0-9-]{36}$/.test(owner))fail('invalid_request');let deleted=0;
-  for(const prefix of ['mcp/v1/grant/','mcp/v1/token/','mcp/v1/refresh/','mcp/v1/code/','mcp/v1/request/']){
-   let startAfter='';for(;;){const page=await this.metadata.transaction(async tx=>{const rows=await tx.list({prefix,startAfter,limit:256});for(const [k,v]of rows)if(v?.owner===owner||v?.consentOwner===owner){await tx.delete(k);deleted++;}return rows;});if(page.length<256)break;startAfter=page.at(-1)[0];}
+  if(typeof owner!=='string'||!/^[a-f0-9-]{36}$/.test(owner))fail('invalid_request');
+  // Wargame 4: a durable per-owner cursor, advanced in each page's transaction, so a retry resumes instead of
+  // re-listing every prefix from the beginning.
+  const prefixes=['mcp/v1/grant/','mcp/v1/token/','mcp/v1/refresh/','mcp/v1/code/','mcp/v1/request/'],cursorKey=`mcp/v1/erase/${owner}`;
+  const saved=await this.metadata.transaction(tx=>tx.get(cursorKey)),cursor=saved&&Number.isSafeInteger(saved.index)&&saved.index>=0&&saved.index<=prefixes.length&&typeof saved.startAfter==='string'?saved:{index:0,startAfter:'',deleted:0};
+  let deleted=Number.isSafeInteger(cursor.deleted)?cursor.deleted:0;
+  for(let index=cursor.index;index<prefixes.length;index++){
+   const prefix=prefixes[index];let startAfter=index===cursor.index?cursor.startAfter:'';for(;;){const page=await this.metadata.transaction(async tx=>{const rows=await tx.list({prefix,startAfter,limit:256});for(const [k,v]of rows)if(v?.owner===owner||v?.consentOwner===owner){await tx.delete(k);deleted++;}const done=rows.length<256;await tx.set(cursorKey,done?{index:index+1,startAfter:'',deleted}:{index,startAfter:rows.at(-1)[0],deleted});return rows;});if(page.length<256)break;startAfter=page.at(-1)[0];}
   }
-  await this.metadata.transaction(tx=>tx.delete(ownerKey(owner)));return {deleted};
+  await this.metadata.transaction(async tx=>{await tx.delete(ownerKey(owner));await tx.delete(cursorKey);});return {deleted};
  }
  async revoke(owner,id){shardOf(id);return this.metadata.transaction(async tx=>{const g=await tx.get(`mcp/v1/grant/${id}`);if(!g||g.owner!==owner)fail('not_found','Connection not found.',404);g.active=false;await tx.set(`mcp/v1/grant/${id}`,g);const ids=await tx.get(ownerKey(owner))||[];await tx.set(ownerKey(owner),ids.filter(i=>i!==id));return {revoked:true};});}
 }

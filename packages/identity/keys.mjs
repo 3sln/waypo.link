@@ -35,7 +35,8 @@
 //
 // Tombstones. A pruned kid can never be registered or imported again (review finding 3). Pruned kids are kept as an
 // exact set in pages of TOMBSTONE_PAGE kids (`identity-key-pruned/<owner>//<page>/`; the empty segment can never be a
-// kid), so the anti-reuse check stays exact while the row count grows by one per TOMBSTONE_PAGE prunes. Rows of the
+// kid). Exact SHA-256-indexed membership rows live under `identity-key-pruned/<owner>//hash/`; stored kids disambiguate
+// digest collisions. A transactional migration marker tracks the archive append page. Rows of the
 // earlier one-row-per-kid layout (`identity-key-pruned/<owner>/<kid>/`) still count and are folded into the pages at
 // the next prune. `retainedState` reports what an owner's key state retains.
 //
@@ -202,25 +203,50 @@ export class IdentityKeyRegistry {
     return bytes <= MAX_MOVES_DOCUMENT_BYTES;
   }
   // ---- tombstones (see the header) ----
-  /** True when any of `kids` was pruned for `owner`: a legacy per-kid row, or a member of a tombstone page. */
+  // Reserved empty-segment hash/state rows share the excluded tombstone family. Exact membership
+  // needs one bounded read, while
+  // archive pages retain the compact, inspectable history. SHA-256 collisions remain exact by
+  // comparing the stored kids, rather than treating a digest as proof of membership.
+  async #hashPath(owner, kid) { return key(TOMBSTONE, owner, '', 'hash', base64url(new Uint8Array(await this.crypto.subtle.digest('SHA-256', textEncoder.encode(kid))))); }
+  async #indexPruned(tx, owner, kid) {
+    const path = await this.#hashPath(owner, kid), row = await tx.get(path);
+    if (!row?.kids?.includes(kid)) await tx.set(path, { kids: [...(row?.kids ?? []), kid] });
+  }
+  async #tombstoneState(tx, owner) {
+    const path = key(TOMBSTONE, owner, '', 'state'), ready = await tx.get(path);
+    if (ready) return ready;
+    // One atomic migration of both earlier formats. No security lookup may skip old pages
+    // until the complete exact index and append pointer have committed together.
+    const rows = await tx.list(key(TOMBSTONE, owner)), pages = rows.filter(row => row.value?.owner === owner && Array.isArray(row.value.kids)).sort((a,b) => a.value.page-b.value.page);
+    let page = pages.at(-1)?.value ?? { owner, page: 0, kids: [] };
+    const seen = new Set();
+    for (const row of pages) for (const name of row.value.kids) { seen.add(name); await this.#indexPruned(tx, owner, name); }
+    for (const row of rows) if (typeof row.value?.kid === 'string' && !Array.isArray(row.value.kids)) {
+      const name = row.value.kid;
+      if (!seen.has(name)) {
+        if (page.kids.length >= TOMBSTONE_PAGE) { await tx.set(tombstonePage(owner, page.page), page); page = { owner, page: page.page + 1, kids: [] }; }
+        page = { ...page, kids: [...page.kids, name] }; seen.add(name); await this.#indexPruned(tx, owner, name);
+      }
+      await tx.delete(row.key);
+    }
+    if (page.kids.length) await tx.set(tombstonePage(owner, page.page), page);
+    const state = { page: page.page }; await tx.set(path, state); return state;
+  }
   async #pruned(tx, owner, kids) {
+    // Preserve immediate exact denial for the original one-row-per-kid layout.
     for (const kid of kids) if (await tx.get(key(TOMBSTONE, owner, kid))) return true;
-    const wanted = new Set(kids);
-    for (const { value } of await tx.list(tombstonePages(owner))) if (value?.owner === owner && Array.isArray(value.kids) && value.kids.some(kid => wanted.has(kid))) return true;
+    await this.#tombstoneState(tx, owner);
+    for (const kid of kids) if ((await tx.get(await this.#hashPath(owner, kid)))?.kids?.includes(kid)) return true;
     return false;
   }
-  /** Adds `kid` to the owner's tombstone set, folding any legacy per-kid rows into the pages first. */
   async #tombstone(tx, owner, kid) {
-    const pages = (await tx.list(tombstonePages(owner))).filter(row => row.value?.owner === owner && Array.isArray(row.value.kids)).map(row => row.value).sort((a, b) => a.page - b.page);
-    const members = new Set(pages.flatMap(page => page.kids)), fresh = [];
-    for (const { key: path, value } of await tx.list(key(TOMBSTONE, owner))) if (typeof value?.kid === 'string' && !Array.isArray(value?.kids)) { if (!members.has(value.kid)) { members.add(value.kid); fresh.push(value.kid); } await tx.delete(path); }
-    if (!members.has(kid)) fresh.push(kid);
-    let page = pages.at(-1) ?? { owner, page: 0, kids: [] };
-    for (const name of fresh) {
-      if (page.kids.length >= TOMBSTONE_PAGE) { await tx.set(tombstonePage(owner, page.page), page); page = { owner, page: page.page + 1, kids: [] }; }
-      page = { ...page, kids: [...page.kids, name] };
-    }
-    if (fresh.length) await tx.set(tombstonePage(owner, page.page), { ...page, at: this.clock() });
+    const state = await this.#tombstoneState(tx, owner), path = await this.#hashPath(owner, kid);
+    if ((await tx.get(path))?.kids?.includes(kid)) return;
+    let page = await tx.get(tombstonePage(owner, state.page)) ?? { owner, page: state.page, kids: [] };
+    if (page.kids.length >= TOMBSTONE_PAGE) page = { owner, page: page.page + 1, kids: [] };
+    await tx.set(tombstonePage(owner, page.page), { ...page, kids: [...page.kids, kid], at: this.clock() });
+    await this.#indexPruned(tx, owner, kid);
+    if (page.page !== state.page) await tx.set(key(TOMBSTONE, owner, '', 'state'), { page: page.page });
   }
   async #generate(purpose) {
     const pair = await this.crypto.subtle.generateKey(purpose === 'signing' ? ECDSA : ECDH, true, purpose === 'signing' ? ['sign', 'verify'] : ['deriveKey', 'deriveBits']);

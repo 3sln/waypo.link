@@ -30,7 +30,12 @@ export const methods={
   async mcpCollections(owner){return accountMcpCollections(this,owner);},
   async mcpOperation(owner,clientId,tool,args,connection,options={}){await this.apps.check(owner,connection?.id,connection?.generation,clientId);return tool==='collections_list'?this.mcpCollections(owner):accountMcpOperation(this,owner,clientId,tool,args,{itemRead:options?.itemRead===true,connection});},
   async notificationPreferences(owner,input,verifiedEmail){return input===undefined?this.notifications.preferences(owner):this.notifications.setPreferences(owner,input,{verifiedEmail});},
-  async subscribe(owner,input){return this.notifications.subscribe(owner,input.subscription||input,input.label);},
+  // Wargame 4 M1: the route supplies the verified creating session (never the request body).
+  async subscribe(owner,input,{sessionId}={}){return this.notifications.subscribe(owner,input.subscription||input,input.label,sessionId===undefined?{}:{sessionId});},
+  /** Wargame 4 M1: identity ended these sessions; their bound push subscriptions end too (identity retries until this succeeds). */
+  async pushSessionsEnded(owner,input={}){if(await this.metadata.get('owner')!==owner)throw new StorageError('forbidden','Account owner mismatch.',403);const result=await this.notifications.endSessions(owner,input);
+   // Wargame 4 L8: the ended sessions' pending Drive OAuth state goes too.
+   await this.googleDrive?.forgetSessions?.(Array.isArray(input?.sessionIds)?input.sessionIds:[]);return result;},
   async removeSubscription(owner,id){return this.notifications.unsubscribeDevice(owner,id);},
   async unsubscribe(owner,token){return this.notifications.unsubscribe(token);},
   async unsubscribeLink(owner){return `${owner}.${await this.notifications.issueUnsubscribe(owner,'email')}`;},
@@ -48,6 +53,7 @@ export const rpc={
  notificationPreferences:{},
  subscribe:{},
  removeSubscription:{},
+ pushSessionsEnded:{lifecycle:'suspended'},
  unsubscribe:{lifecycle:'suspended'},
  unsubscribeLink:{},
  appConnections:{warm:true},

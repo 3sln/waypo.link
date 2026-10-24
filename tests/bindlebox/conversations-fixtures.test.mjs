@@ -73,7 +73,8 @@ export async function createMesh({names=['alice','bob','carol','dave'],seed=1,ru
  for(const [name,party] of parties)if(routes.get(party.ingress)!==name)network.peers.get(name).handler=network.peers.get(routes.get(party.ingress)).handler;
  const m={network,clock,parties,directory,calls,edgeStore,revoked,
   party:name=>parties.get(name),
-  run:(name,op,input)=>parties.get(name).peer.engine.run(op,{input}),
+  // Drive bounded, resumable timeline builds to completion for fixture-level reads.
+  async run(name,op,input){for(let step=0;step<1024;step++){try{return await parties.get(name).peer.engine.run(op,{input});}catch(e){if(e.code!=='conversation_index_building'||step===1023)throw e;}}},
   get:(name,conversationId)=>m.run(name,'conversations.get',{conversationId}),
   async flush(){for(const p of parties.values()){await flushEdgeOutbox(p.store,edge,p.owner);await flushConversationEdge(p.store,conversationEdge,p.owner);}},
   // Runs every online party's conversation drain and outbox drain until a round does nothing.

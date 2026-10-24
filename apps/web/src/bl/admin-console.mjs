@@ -62,6 +62,10 @@ class ConsoleAction extends AdminAction {
 async function refreshOverview(r,ctx){const overview=await r.api.call(actor(r),'/api/admin/overview',{});update(r,ctx,{overview:sanitizeOverview(overview)});}
 function sanitizeOverview(value){if(!value||typeof value!=='object'||!value.catalog||!value.reservations)throw failure('unexpected_response');return value;}
 export class EnterConsole extends ConsoleAction {static intent='reload-overview';async perform(r,ctx){update(r,ctx,{consoleReady:true});await refreshOverview(r,ctx);r.browser.focus('#admin-heading');}async clear(r,ctx){update(r,ctx,{overview:null});}}
+// Wargame 4 (b): the next page of claims or runtime reservations, appended to the loaded overview.
+export class MoreOverview extends ConsoleAction {static intent='reload-overview';async perform(r,ctx,detail){const o=current(r).overview,list=detail?.list;if(!o||!['claims','reservations'].includes(list)||!o[list+'Next'])return;
+ const page=sanitizeOverview(await r.api.call(actor(r),'/api/admin/overview',{[list+'After']:o[list+'Next']})),now=current(r).overview;if(!now)return;
+ update(r,ctx,{overview:list==='claims'?{...now,claims:[...now.claims??[],...page.claims??[]],claimsNext:page.claimsNext??null}:{...now,reservations:{...now.reservations,runtime:[...now.reservations.runtime,...page.reservations.runtime]},reservationsNext:page.reservationsNext??null}});}}
 export class LoadOverview extends ConsoleAction {static intent='reload-overview';async perform(r,ctx){await refreshOverview(r,ctx);}async clear(r,ctx){update(r,ctx,{overview:null});}}
 export class Navigate extends Action {
  static deps={state:{write:true},api:{},browser:{}};constructor(detail){super();this.detail=detail;}
@@ -241,7 +245,7 @@ export class EndBoot extends ConsoleAction {
  async perform(r,ctx,detail){if(actor(r)!=='boot')return;if(confirmFirst(r,ctx,detail,{title:'End boot access now?',body:'Boot is signed out everywhere and cannot sign in again. Only minting a new token and redeploying its digest restores boot. Administrators, roles and claims are unaffected.',confirmLabel:'End boot access',subject:null}))return;update(r,ctx,{modal:null});await this.call(r,'/api/admin/boot/end',{confirm:'end-boot-access'});wipe(r,ctx,{phase:'boot-ended'});}
 }
 export const constructors={
- navigate:Navigate,'close-modal':CloseModal,'open-editor':OpenEditor,'step-up-confirm':StepUpConfirm,'reload-overview':LoadOverview,
+ navigate:Navigate,'close-modal':CloseModal,'open-editor':OpenEditor,'step-up-confirm':StepUpConfirm,'reload-overview':LoadOverview,'overview-more':MoreOverview,
  reserve:Reserve,unreserve:Unreserve,'mint-claim':MintClaim,'claim-link':ClaimLink,'revoke-claim':RevokeClaim,'copy-reveal':CopyReveal,'dismiss-reveal':DismissReveal,
  'save-role':SaveRole,'delete-role':DeleteRole,'save-capability':SaveCapability,'delete-capability':DeleteCapability,'set-capability-class':SetCapabilityClass,'save-badge-classes':SaveBadgeClasses,
  'open-user-lifecycle':OpenUserLifecycle,'confirm-user-lifecycle':ConfirmUserLifecycle,lookup:Lookup,'set-roles':SetRoles,'set-badges':SetBadges,suspend:Suspend,reactivate:Reactivate,'load-principals':LoadPrincipals,'principals-back':PrincipalsBack,

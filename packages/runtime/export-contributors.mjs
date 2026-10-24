@@ -47,7 +47,7 @@ const excluded={
  'identity-encryption-key/':'Secret: encrypted private keys; public keys use the keys port.', 'encryption-key':'Secret: private-key pointer.', 'identity-key-retained/':'Key history is projected by the keys port.', 'identity-key-pruned/':'Derived: key pruning tombstones.',
  'contact-key/':'Secret: contact signing key.', 'contact-url/':'Secret: encrypted contact capability URL.',
  'vault/':'Secret: integration credentials.', 'resource-secret/':'Secret: connector credentials.',
- 'activity-budget/':'Derived: abuse accounting.', 'activity-event/':'Transient: activity outbox.', 'activity-receipt/':'Transient: mutation receipts.',
+ 'activity-budget/':'Derived: abuse accounting.', 'activity-event/':'Transient: activity outbox.', 'push-session-ended/':'Transient: ended-session markers for push subscription binding.', 'activity-receipt/':'Transient: mutation receipts.',
  'activity-rev/':'Derived: activity index.', 'activity-tags/':'Derived: tag index.', 'activity-usage/':'Derived: quota counters.',
  'activity-push-bucket/':'Derived: push budgets.', 'activity-push-budget/':'Derived: push budgets.', 'activity-push-channel/':'Derived: channel readiness.',
  'activity-push-group/':'Transient: push coalescing.', 'activity-push-job/':'Transient: delivery queue.',
@@ -72,7 +72,7 @@ const excluded={
  'lifecycle':'Lifecycle state uses the lifecycle contributor; transport/effect journals are transient.', '@alarm':'Transient: scheduler wake.',
  'maintenance/':'Transient: maintenance retry.', 'population/':'Derived: aggregate active population.',
  'billing/pending':'Transient: checkout intent.', 'billing/sync':'Derived: provider synchronization health.',
- 'drive/oauth/':'Secret: OAuth callback state.', 'drive/folder-pending/':'Secret: folder creation and OAuth journal.', 'drive/pending/':'Transient: upload journal.', 'drive/retained/':'External mappings are projected by the external-storage port.', 'drive/usage/':'Derived: external quota counters.',
+ 'drive/oauth/':'Secret: OAuth callback state.', 'drive/folder-pending/':'Secret: folder creation and OAuth journal.', 'drive/pending/':'Transient: upload journal.', 'drive/retained/':'External mappings are projected by the external-storage port.', 'drive/usage/':'Derived: external quota counters.', 'drive/removed/':'Transient: removed-resource sweep markers.',
  'evbus/index/':'Derived: manifest index.', 'evbus/reader/':'Secret: reader cursor authority.', 'evbus/permit/':'Transient: history opt-in.', 'evbus/tx/':'Transient: publish journal.', 'evbus/rate/':'Derived: rate counters.', 'evbus/meter/':'Derived: quota meters.', 'evbus/wait/':'Transient: wait leases.',
  'conversation/outbox/':'Secret: delivery capabilities and pending tasks.', 'conversation/dead/':'Secret: retry-exhausted delivery tasks and capabilities.', 'conversation/sweep':'Transient: collection cursor.', 'conversation/receipt/':'Transient: replay receipts.', 'conversation/delivery/':'Transient: fanout delivery tracking.', 'conversation/inbox-message/':'Transient: inbound replay receipts.', 'conversation/pending/':'Transient: pending invitations.',
  'google-drive/':'Secret: OAuth and callback state; external mapping uses a dedicated port.'

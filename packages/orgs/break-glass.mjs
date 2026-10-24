@@ -241,12 +241,30 @@ export function hmacOperatorAssertions({secret,registered=()=>false,clock=()=>Da
    let expected,claims;try{expected=b64(await hmac(payload));claims=JSON.parse(new TextDecoder().decode(unb64(payload)));}catch{return {ok:false};}
    if(!sameHex(expected,sig)||claims?.v!==1||claims.operator!==operator||claims.capability!=='support.org-break-glass'||claims.scope!==canon(scope)||!Number.isSafeInteger(claims.expiresAt)||claims.expiresAt<=at||!registered(operator))return {ok:false};
    return {ok:true,operator,capability:claims.capability,nonce:claims.nonce,expiresAt:claims.expiresAt};
-  }
+  },
+  /** ORG-12d review M1: the registry predicate, for re-checking a proposer at approval. */
+  registered(operator){return registered(operator)===true;}
  };
 }
 
 export class BreakGlassService extends OwnershipService{
- constructor(options){super(options);this.ownerChannels=options.ownerChannels??null;this.claimLedger=options.claimLedger??null;this.claimHints=typeof options.claimHints?.apply==='function'?options.claimHints:null;}
+ constructor(options){super(options);this.ownerChannels=options.ownerChannels??null;this.claimLedger=options.claimLedger??null;this.claimHints=typeof options.claimHints?.apply==='function'?options.claimHints:null;this.supportCases=typeof options.supportCases?.apply==='function'?options.supportCases:null;}
+ /** ORG-12d: the support case this organization needs right now, from the record alone (at most one: the ownership
+  * processes exclude each other). A held break-glass claim, an open contest, or an escalated lapse claim. */
+ supportCaseOf(r){
+  const k=r.breakGlassContest;if(k?.state==='open'&&typeof k.claim==='string')return {kind:'break-glass',process:k.claim,state:'contest'};
+  const bg=r.breakGlass;if(bg?.state==='held'&&typeof bg.id==='string')return {kind:'break-glass',process:bg.id,state:'held'};
+  const lc=r.billing?.claim;if(lc?.state==='pending'&&Number.isSafeInteger(lc.escalatedAt)&&typeof lc.id==='string')return {kind:'lapse-claim',process:lc.id,state:'escalated'};
+  return null;
+ }
+ /** ORG-12d: before every commit, a change in the support case queues one `case-index` effect (the admin service's queue
+  * row, routing only). Nothing is written while no case ever existed, so ordinary commits are unchanged. */
+ async beforeCommit(tx,r,actor){
+  let changed=false;
+  if(r?.kind==='organization'){const now=r.supportCase??null,next=this.supportCaseOf(r),sig=next?next.kind+'/'+next.process+'/'+next.state:null;
+   if((now?.sig??null)!==sig&&(now||next)){this.ensure(r);const seq=(now?.seq??0)+1;r.supportCase={sig,seq};this.outbox(r,'case-index',next?{caseKind:next.kind,process:next.process,state:next.state,seq}:{state:null,seq},this.clock.now(),{critical:true});changed=true;}}
+  const flushed=await super.beforeCommit(tx,r,actor);return flushed||changed;
+ }
  /** ORG_BREAK_GLASS_ENABLED for this organization (requires ORGANIZATIONS_ENABLED). Gates starting a claim and its
   * effect only (§12d.12). */
  breakGlassEnabled(owner){if(!this.enabled(owner))return false;try{return this.flags?.for({subject:{kind:'account',owner}}).enabled(BREAK_GLASS_FLAG)===true;}catch{return false;}}
@@ -721,18 +739,20 @@ export class BreakGlassService extends OwnershipService{
   */
  breakGlassResolve(actor,input){
   if(actor?.kind!=='system')fail('forbidden','System only.',403);
-  const v=exact(input,['claim','operator','decision','category','reason','exclude','assertion']);
+  const v=exact(input,['claim','operator','decision','category','reason','reasonDigest','exclude','assertion']);
+  // Review M3: the admin service forwards only a digest of its reason (the text stays admin-side).
+  if(v.reasonDigest!==undefined&&(typeof v.reasonDigest!=='string'||!/^[a-f0-9]{64}$/.test(v.reasonDigest)||v.reason!==undefined))fail('invalid_request','Unsupported reason digest.',400);
   if(typeof v.claim!=='string'||!UUID.test(v.claim)||typeof v.operator!=='string'||!UUID.test(v.operator)||!['acknowledge','note','abort','proceed','uphold','reject'].includes(v.decision))fail('invalid_request','Unsupported operator decision.',400);
   const exclude=v.exclude===undefined?[]:Array.isArray(v.exclude)&&v.exclude.length<=BREAK_GLASS.CHANNELS&&v.exclude.every(x=>typeof x==='string'&&CHANNEL.test(x))?[...new Set(v.exclude)].sort():fail('invalid_request','Unsupported exclusions.',400);
   const reason=typeof v.reason==='string'?v.reason.slice(0,2000):null;
-  return this.verifyOperator(v.assertion,{operator:v.operator,org:actor?.owner,kind:'break-glass',process:v.claim,decision:v.decision,exclude}).then(verified=>this.onSystem(actor,async(r,c0,now,tx)=>{
+  return this.verifyOperator(v.assertion,{operator:v.operator,org:actor?.owner,kind:'break-glass',process:v.claim,decision:v.decision,exclude}).then(async verified=>{const proposer=await this.proposerCheck((await this.metadata.get(CLAIM+v.claim))?.proposal,v.operator);return this.onSystem(actor,async(r,c0,now,tx)=>{
    const contest=['uphold','reject'].includes(v.decision),c=contest?await tx.get(CLAIM+v.claim):c0;
    if(!c||c.id!==v.claim)fail('not_found','Not found.',404);
-   const operator={iss:this.issuer??null,sub:v.operator},sys={kind:'system',principal:null},detail={operator:v.operator,decision:v.decision,...v.category?{category:String(v.category).slice(0,64)}:{},...reason?{reasonDigest:await hex(reason)}:{}};
+   const operator={iss:this.issuer??null,sub:v.operator},sys={kind:'system',principal:null},detail={operator:v.operator,decision:v.decision,...v.category?{category:String(v.category).slice(0,64)}:{},...reason?{reasonDigest:await hex(reason)}:v.reasonDigest?{reasonDigest:v.reasonDigest}:{}};
    await this.operatorConflict(r,operator,[c.owner,c.candidate,c.initiator,...c.cosigners.map(s=>s.principal)]);this.spendOperatorNonce(c,verified,now);
    if(contest){
     const k=r.breakGlassContest;if(c.state!=='effective'||k?.claim!==c.id||k.state!=='open')fail('not_found','Not found.',404);
-    const approved=await this.twoOperators(tx,r,c,v.decision,v.operator,[],now,detail);if(!approved)return {decision:'proposed'};
+    const approved=await this.twoOperators(tx,r,c,v.decision,v.operator,[],now,detail,proposer);if(!approved)return {decision:'proposed'};
     if(v.decision==='reject'){k.state='rejected';this.hint(r,c.id,k.formerOwner?.sub,'drop','former-owner',now);c.contest={...c.contest,state:'rejected',at:now};await this.move(tx,r,c,'contest-resolved',now,sys,{audit:{...detail,pair:approved}});await this.notify(tx,r,c,'contest-rejected',now,{owner:false,parties:[k.formerOwner]});return {decision:'approved',contest:'rejected'};}
     await this.reinstate(tx,r,c,k,now,approved,detail);return {decision:'approved',contest:'upheld'};
    }
@@ -748,18 +768,40 @@ export class BreakGlassService extends OwnershipService{
    if(c.channels.filter(ch=>!exclude.includes(ch.id)).length<1)fail('last_channel','The owner’s last channel can never be excluded.',409);
    // Review L6: after an excluded channel's dispute the new pair shares NO operator with a barred pair (refused at once).
    if(c.barredPairs.some(p=>p.includes(v.operator)))fail('operator_pair_barred','A new pair of operators must decide after an excluded channel disputed.',409);
-   const approved=await this.twoOperators(tx,r,c,'proceed',v.operator,exclude,now,detail);if(!approved)return {decision:'proposed'};
+   const approved=await this.twoOperators(tx,r,c,'proceed',v.operator,exclude,now,detail,proposer);if(!approved)return {decision:'proposed'};
    if(c.barredPairs.some(p=>p.includes(approved[0])||p.includes(approved[1])))fail('operator_pair_barred','A new pair of operators must decide after an excluded channel disputed.',409);
    for(const ch of c.channels)ch.excluded=exclude.includes(ch.id);
    c.decision={pair:approved,exclude,at:now};c.decisionMade=true;c.finalEndsAt=now+BREAK_GLASS.FINAL_MS;this.leaveHeld(c,now);
    await this.move(tx,r,c,'proceed',now,sys,{audit:{...detail,pair:approved,excluded:exclude.length,finalEndsAt:c.finalEndsAt}});
    // T22: a 7-day final notice with fresh abort links to every owner channel, the excluded ones too.
    await this.notify(tx,r,c,'proceed',now);return {decision:'approved',state:c.state};
-  }));
+  });});
+ }
+ /** Review M1: before approving, the writer re-verifies the pending proposer through the operators port (outside the
+  * transaction). Returns {operator, active} for the proposal read now; the commit refuses if the proposal changed since. */
+ async proposerCheck(proposal,approver){
+  if(!proposal||typeof proposal.operator!=='string'||proposal.operator===approver)return {operator:proposal?.operator??null,active:true};
+  let active=true;if(typeof this.operators?.registered==='function'){try{active=await this.operators.registered(proposal.operator)===true;}catch{active=false;}}
+  return {operator:proposal.operator,active};
+ }
+ /** Review M1, system (from the admin service when an operator is revoked or held): cancels every pending proposal by
+  * `operator` here, break-glass or lapse claim, each with an audit entry. Never changes a claim's state. */
+ breakGlassProposalCancel(actor,input){
+  const v=exact(input,['operator','reason']);if(typeof v.operator!=='string'||!UUID.test(v.operator)||!['revoked','held','proposer-inactive'].includes(v.reason))fail('invalid_request','Name the operator and why.',400);
+  return this.onSystem(actor,async(r,c,now,tx)=>{
+   let cancelled=0;const sys={kind:'system',principal:null};
+   if(c?.proposal?.operator===v.operator){const decision=c.proposal.decision;c.proposal=null;await this.putClaim(tx,r,c);await this.audit(tx,r,'organization-support-proposal-cancelled',sys,{claim:c.id,kind:'break-glass',operator:v.operator,decision,reason:v.reason});cancelled++;}
+   const lc=r.billing?.claim;if(lc?.proceedProposal?.operator===v.operator){lc.proceedProposal=null;await this.audit(tx,r,'organization-support-proposal-cancelled',sys,{claim:lc.id,kind:'lapse-claim',operator:v.operator,decision:'proceed',reason:v.reason});cancelled++;}
+   return {cancelled};
+  });
  }
  /** Records a proposal, or approves it with a second, different operator. Returns the approving pair or null. */
- async twoOperators(tx,r,c,decision,operator,exclude,now,detail){
-  const p=c.proposal&&c.proposal.decision===decision&&c.proposal.at+BREAK_GLASS.OPERATOR_APPROVAL_MS>now&&JSON.stringify(c.proposal.exclude)===JSON.stringify(exclude)?c.proposal:null;
+ async twoOperators(tx,r,c,decision,operator,exclude,now,detail,checked=null){
+  let p=c.proposal&&c.proposal.decision===decision&&c.proposal.at+BREAK_GLASS.OPERATOR_APPROVAL_MS>now&&JSON.stringify(c.proposal.exclude)===JSON.stringify(exclude)?c.proposal:null;
+  // Review M1: a proposer who no longer holds the capability never counts as one of the two operators. Their proposal is
+  // cancelled (audited) and this call becomes a new proposal.
+  if(p&&p.operator!==operator){if(checked?.operator!==p.operator)fail('conflict','The proposal changed; reload and try again.',409);
+   if(!checked.active){await this.audit(tx,r,'organization-support-proposal-cancelled',{kind:'system',principal:null},{claim:c.id,kind:'break-glass',operator:p.operator,decision:p.decision,reason:'proposer-inactive'});c.proposal=null;p=null;}}
   if(!p){c.proposal={decision,operator,exclude,at:now};await this.move(tx,r,c,'propose',now,{kind:'system',principal:null},{audit:detail});return null;}
   if(p.operator===operator)fail('second_operator_required','A different operator must approve this decision.',409);
   c.proposal=null;return pair(p.operator,operator);
@@ -906,6 +948,8 @@ export class BreakGlassService extends OwnershipService{
   await this.ownerAction(r,actor,now,tx,'decision');
  }
  async drainExtra(r,e,actor){
+  // ORG-12d: the support queue row in the admin store (routing only; higher sequences win, so retries never resurrect).
+  if(e.kind==='case-index'){if(!this.supportCases)return true;const out=await this.supportCases.apply(r.id,{kind:e.caseKind??null,process:e.process??null,state:e.state??null,seq:e.seq,handle:r.handle??null});return out?.ok===true;}
   if(e.kind==='owner-notice'){
    if(!this.ownerChannels)return false;
    // Review M1: per-channel provider acceptance is recorded on the claim; a retry only re-sends what was not accepted.
@@ -991,10 +1035,16 @@ export class BreakGlassService extends OwnershipService{
   * ages, billing standing, proposal). Never the statement text or channel addresses. */
  breakGlassCase(actor){
   return this.onSystem(actor,async(r,c,now)=>{
-   if(!c)return {case:null};
-   return {case:{id:c.id,org:r.id,state:c.state,track:c.track,causes:[...c.causes],frozen:c.frozen===true,createdAt:c.createdAt,paidAt:c.paidAt,waitEndsAt:c.waitEndsAt,held:c.held,heldTotal:c.heldTotal??0,finalEndsAt:c.finalEndsAt,
-    channels:c.channels.map(ch=>({id:ch.id,kind:ch.kind,enrolledAt:ch.enrolledAt,excluded:ch.excluded===true})),disputes:c.disputes.map(d=>({channel:d.channel,at:d.at,excluded:d.excluded})),objections:c.objections.length,
-    proposal:c.proposal?{decision:c.proposal.decision,at:c.proposal.at,exclude:[...c.proposal.exclude]}:null,decision:c.decision,barredPairs:c.barredPairs,ownerStatus:c.ownerStatus,category:c.category,statementDigest:c.statementDigest,
+   // ORG-12d: an escalated lapse claim is a support case too (orgs.claim-resolve), shown without its claimant.
+   const lc=r.billing?.claim,lapse=lc&&Number.isSafeInteger(lc.escalatedAt)?{id:lc.id,state:lc.state,escalatedAt:lc.escalatedAt,proposal:lc.proceedProposal?{decision:'proceed',operator:lc.proceedProposal.operator,at:lc.proceedProposal.at,expiresAt:lc.proceedProposal.at+OWNERSHIP.OPERATOR_APPROVAL_MS}:null,approved:Number.isSafeInteger(lc.operatorApprovedAt)}:null;
+   if(!c)return {case:null,lapse,handle:r.handle??null};
+   // The engine's own exclusion rule (breakGlassResolve): a channel that disputed this or an earlier claim, or one marked
+   // undeliverable, may be excluded; never the last one.
+   const disputed=new Set([...c.disputes.map(d=>d.channel),...r.breakGlassMarks.disputed]);
+   return {handle:r.handle??null,lapse,case:{id:c.id,org:r.id,state:c.state,track:c.track,causes:[...c.causes],frozen:c.frozen===true,createdAt:c.createdAt,paidAt:c.paidAt,waitEndsAt:c.waitEndsAt,held:c.held,heldTotal:c.heldTotal??0,finalEndsAt:c.finalEndsAt,
+    channels:c.channels.map(ch=>({id:ch.id,kind:ch.kind,enrolledAt:ch.enrolledAt,excluded:ch.excluded===true,disputed:disputed.has(ch.id),undeliverable:ch.undeliverable===true,excludable:disputed.has(ch.id)||ch.undeliverable===true})),disputes:c.disputes.map(d=>({channel:d.channel,at:d.at,excluded:d.excluded})),objections:c.objections.length,
+    proposal:c.proposal?{decision:c.proposal.decision,operator:c.proposal.operator,at:c.proposal.at,expiresAt:c.proposal.at+BREAK_GLASS.OPERATOR_APPROVAL_MS,exclude:[...c.proposal.exclude]}:null,decision:c.decision,barredPairs:c.barredPairs,ownerStatus:c.ownerStatus,category:c.category,statementDigest:c.statementDigest,
+    proceedBlocked:Boolean(c.tier1At||r.breakGlassMarks.noProceedUntil>now),timeline:(c.log??[]).slice(-64).map(x=>({event:x.event,t:x.t??null,from:x.from??null,to:x.to??null,at:x.at})),
     contest:r.breakGlassContest?.claim===c.id?{state:r.breakGlassContest.state,until:r.breakGlassContest.until}:null,billingHeld:heldSubscriptions(r).length>0}};
   });
  }

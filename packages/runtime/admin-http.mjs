@@ -5,6 +5,7 @@ import {createAppEngine,perform} from '../app/engine.mjs';
 import {cryptoRandom,nullAudit} from '../app/providers.mjs';
 import {RequestUserDeletion,CloseUser,ReopenUser,ConfirmUserDeletion,adminDeletionPasskeyContext} from '../identity/admin.mjs';
 import {adminFlagsRoutes} from './admin-flags-http.mjs';
+import {adminOrgCaseRoutes} from './admin-org-cases.mjs';
 const bootCookieName=local=>local?'bindle_boot':'__Host-bindle_boot';
 const bootCookie=(token,local,maxAge)=>`${bootCookieName(local)}=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${maxAge}${local?'':'; Secure'}`;
 // Wargame 2026-10-23 #6: a per-browser nonce binds boot passkey challenges to the caller that began them.
@@ -39,6 +40,8 @@ export async function adminRoutes({path,request,env,local,context,body,json}){
   try{return json(await perform(engine,new Operation({actor:{kind:'admin-http',context:verified},input})),200,{'Cache-Control':'private, no-store'});}finally{await engine.dispose();}
  }
  if(path.startsWith('/api/admin/flags/'))return adminFlagsRoutes({path,request,env,local,admin,scoped,body,json});
+ // ORG-12d support adjudication (operators): packages/runtime/admin-org-cases.mjs.
+ if(path.startsWith('/api/admin/org-cases/'))return adminOrgCaseRoutes({path,request,env,local,admin,scoped,body,json});
  if(path==='/api/admin/boot/begin'){const input=await body(request,128);if(Object.keys(input).length)return json({error:'invalid_request'},400);await admin.limited('boot-begin',scoped);const binding=context.setupBinding||crypto.randomUUID()+crypto.randomUUID();return json({ready:true},200,{'Set-Cookie':`${local?'bindle_setup':'__Host-bindle_setup'}=${binding}; Path=/; HttpOnly; SameSite=Strict; Max-Age=1800${local?'':'; Secure'}`});}
  // Logout and end always clear the boot cookie, even if the server-side record update fails.
  if(path==='/api/admin/boot/logout'){let result;try{result=await admin.bootLogout(await body(request,128),scoped);}catch(error){result={loggedOut:false,error:error.code||'invalid_request'};}return json(result,result.loggedOut?200:409,{'Set-Cookie':bootCookie('',local,0)});}

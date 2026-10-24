@@ -49,6 +49,8 @@ export class TakeControlFlag extends FlagMutation {static operation='flags.take-
 export class UpdateFlag extends FlagMutation {static operation='flags.update';static method='update';}
 export class RollbackFlag extends FlagMutation {static operation='flags.rollback';static method='rollback';}
 export class ReshuffleFlag extends FlagMutation {static operation='flags.reshuffle';static method='reshuffle';}
+/** Wargame 4 L5: delete one quarantined stored record (critical, audited). */
+export class RetireFlag extends FlagMutation {static operation='flags.retire';static method='retire';}
 class ExperimentMutation extends FlagMutation {
  static deps=[...deps,'flagStats'];
  async run(resources){
@@ -95,4 +97,4 @@ export class RollupFlagStats extends AppAction {
  static operation='flags.stats-rollup';static deps=['flagStats'];
  run({flagStats}){if(this.actor?.kind!=='system'||this.actor.owner!==undefined)fault('forbidden','A system actor is required.',403);return flagStats.rollup();}
 }
-export const FLAG_OPERATIONS=[FlagList,FlagGet,FlagHistory,FlagPreview,FlagExplain,FlagEvaluate,FlagSeedVerify,SeedFlag,TakeControlFlag,UpdateFlag,RollbackFlag,ReshuffleFlag,StartFlagExperiment,StopFlagExperiment,ConcludeFlagExperiment,FlagExperimentResults,RecordFlagEvent,RollupFlagStats];
+export const FLAG_OPERATIONS=[FlagList,FlagGet,FlagHistory,FlagPreview,FlagExplain,FlagEvaluate,FlagSeedVerify,SeedFlag,TakeControlFlag,UpdateFlag,RollbackFlag,ReshuffleFlag,RetireFlag,StartFlagExperiment,StopFlagExperiment,ConcludeFlagExperiment,FlagExperimentResults,RecordFlagEvent,RollupFlagStats];

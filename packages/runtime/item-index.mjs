@@ -11,7 +11,45 @@ function decode(value){try{if(typeof value!=='string'||value.length>4096)throw n
 const FILTER_INDEXES=[];
 for(let mask=0;mask<8;mask++){const filters=['collection','unread','quarantined'].filter((_,bit)=>mask&(1<<bit));for(const direction of ['ASC','DESC'])if(direction==='ASC'||filters.length>1)FILTER_INDEXES.push([`inbox_filter_${mask}_${direction}`,`CREATE INDEX IF NOT EXISTS inbox_filter_${mask}_${direction} ON inbox_catalog(owner,${filters.length?filters.join(',')+',':''}received_at DESC,id ${direction})`]);}
 export class AccountItemIndex {
- constructor(sql){this.sql=sql;sql.exec('CREATE TABLE IF NOT EXISTS inbox_catalog (id TEXT PRIMARY KEY, owner TEXT NOT NULL, received_at INTEGER NOT NULL, collection TEXT NOT NULL, unread INTEGER NOT NULL, quarantined INTEGER NOT NULL, record TEXT NOT NULL)');if(![...sql.exec('SELECT 1 FROM inbox_catalog LIMIT 1')].length)this.buildFilterIndexes({rowBudget:Infinity});sql.exec('CREATE INDEX IF NOT EXISTS inbox_owner_time ON inbox_catalog(owner,received_at DESC,id DESC)');sql.exec('CREATE INDEX IF NOT EXISTS inbox_collection_time ON inbox_catalog(owner,collection,received_at DESC,id DESC)');sql.exec('CREATE INDEX IF NOT EXISTS inbox_unread_time ON inbox_catalog(owner,unread,received_at DESC,id DESC)');sql.exec('CREATE INDEX IF NOT EXISTS inbox_quarantine_time ON inbox_catalog(owner,quarantined,received_at DESC,id DESC)');this.initIncoming();sql.exec('CREATE TABLE IF NOT EXISTS hosted_catalog (resource TEXT NOT NULL, object_key TEXT NOT NULL, record TEXT NOT NULL, PRIMARY KEY(resource,object_key))');}
+ constructor(sql){this.sql=sql;sql.exec('CREATE TABLE IF NOT EXISTS inbox_catalog (id TEXT PRIMARY KEY, owner TEXT NOT NULL, received_at INTEGER NOT NULL, collection TEXT NOT NULL, unread INTEGER NOT NULL, quarantined INTEGER NOT NULL, record TEXT NOT NULL)');if(![...sql.exec('SELECT 1 FROM inbox_catalog LIMIT 1')].length)this.buildFilterIndexes({rowBudget:Infinity});sql.exec('CREATE INDEX IF NOT EXISTS inbox_owner_time ON inbox_catalog(owner,received_at DESC,id DESC)');sql.exec('CREATE INDEX IF NOT EXISTS inbox_collection_time ON inbox_catalog(owner,collection,received_at DESC,id DESC)');sql.exec('CREATE INDEX IF NOT EXISTS inbox_unread_time ON inbox_catalog(owner,unread,received_at DESC,id DESC)');sql.exec('CREATE INDEX IF NOT EXISTS inbox_quarantine_time ON inbox_catalog(owner,quarantined,received_at DESC,id DESC)');this.initIncoming();sql.exec('CREATE TABLE IF NOT EXISTS hosted_catalog (resource TEXT NOT NULL, object_key TEXT NOT NULL, record TEXT NOT NULL, PRIMARY KEY(resource,object_key))');this.initUnitTotals();}
+ /** Derived accounting is maintained by catalog triggers in the same SQL statement/transaction.
+  * Contributions make bounded legacy backfill idempotent even while rows change or move. */
+ initUnitTotals(){
+  const sql=this.sql;
+  sql.exec('CREATE TABLE IF NOT EXISTS retention_contributions (kind TEXT NOT NULL,id TEXT NOT NULL,owner TEXT NOT NULL,unit TEXT NOT NULL,bytes INTEGER NOT NULL,PRIMARY KEY(kind,id))');
+  sql.exec('CREATE TABLE IF NOT EXISTS retention_unit_totals (kind TEXT NOT NULL,owner TEXT NOT NULL,unit TEXT NOT NULL,bytes INTEGER NOT NULL,PRIMARY KEY(kind,owner,unit))');
+  sql.exec(`CREATE TRIGGER IF NOT EXISTS retention_contribution_insert AFTER INSERT ON retention_contributions BEGIN INSERT INTO retention_unit_totals VALUES(NEW.kind,NEW.owner,NEW.unit,NEW.bytes) ON CONFLICT(kind,owner,unit) DO UPDATE SET bytes=bytes+NEW.bytes; END`);
+  sql.exec(`CREATE TRIGGER IF NOT EXISTS retention_contribution_delete AFTER DELETE ON retention_contributions BEGIN UPDATE retention_unit_totals SET bytes=bytes-OLD.bytes WHERE kind=OLD.kind AND owner=OLD.owner AND unit=OLD.unit; DELETE FROM retention_unit_totals WHERE kind=OLD.kind AND owner=OLD.owner AND unit=OLD.unit AND bytes=0; END`);
+  for(const [table,kind,id,owner,unit]of [['inbox_catalog','collection','NEW.id','NEW.owner','NEW.collection'],['hosted_catalog','resource',"json_array(NEW.resource,NEW.object_key)","''",'NEW.resource']]){
+   const oldId=id.replaceAll('NEW.','OLD.');
+   const insert=`INSERT INTO retention_contributions VALUES('${kind}',${id},${owner},${unit},COALESCE(json_extract(NEW.record,'$.size'),0));`;
+   sql.exec(`CREATE TRIGGER IF NOT EXISTS retention_${kind}_insert AFTER INSERT ON ${table} BEGIN ${insert} END`);
+   sql.exec(`CREATE TRIGGER IF NOT EXISTS retention_${kind}_update AFTER UPDATE ON ${table} BEGIN DELETE FROM retention_contributions WHERE kind='${kind}' AND id=${oldId}; ${insert} END`);
+   sql.exec(`CREATE TRIGGER IF NOT EXISTS retention_${kind}_delete AFTER DELETE ON ${table} BEGIN DELETE FROM retention_contributions WHERE kind='${kind}' AND id=${oldId}; END`);
+  }
+  if(![...sql.exec('SELECT 1 FROM inbox_catalog LIMIT 1')].length&&![...sql.exec('SELECT 1 FROM hosted_catalog LIMIT 1')].length)this.setIncomingState('unit-totals-ready','1');
+ }
+ /** Explicit resumable rebuild/migration: at most limit source rows, shared across both catalogs. */
+ migrateUnitTotals(limit=200){
+  if(this.incomingState('unit-totals-ready')==='1')return true;
+  let left=limit;
+  for(const kind of ['collection','resource']){
+   if(this.incomingState('unit-totals-'+kind+'-ready')==='1')continue;
+   const after=this.incomingState('unit-totals-'+kind+'-cursor')??'',collection=kind==='collection',boundary=collection?null:after?JSON.parse(after):['',''];
+   const rows=[...this.sql.exec(collection?'SELECT id,owner,collection AS unit,record FROM inbox_catalog WHERE id>? ORDER BY id LIMIT ?':"SELECT json_array(resource,object_key) AS id,'' AS owner,resource AS unit,record FROM hosted_catalog WHERE (resource,object_key)>(?,?) ORDER BY resource,object_key LIMIT ?",...collection?[after,left]:[...boundary,left])];
+   for(const row of rows)this.sql.exec('INSERT OR IGNORE INTO retention_contributions VALUES(?,?,?,?,?)',kind,row.id,row.owner,row.unit,JSON.parse(row.record).size??0);
+   if(rows.length<left)this.setIncomingState('unit-totals-'+kind+'-ready','1');
+   else {this.setIncomingState('unit-totals-'+kind+'-cursor',rows.at(-1).id);return false;}
+   left-=rows.length;if(left===0)return false;
+  }
+  this.setIncomingState('unit-totals-ready','1');return true;
+ }
+ unitBytes(owner){
+  const collections={},resources={};
+  for(const row of this.sql.exec("SELECT unit,bytes FROM retention_unit_totals WHERE kind='collection' AND owner=?",owner))collections[row.unit]=Number(row.bytes);
+  for(const row of this.sql.exec("SELECT unit,bytes FROM retention_unit_totals WHERE kind='resource' AND owner=''"))resources[row.unit]=Number(row.bytes);
+  return {collections,resources};
+ }
  missingFilterIndexes(){const have=new Set([...this.sql.exec("SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'inbox_filter_%'")].map(row=>row.name));return FILTER_INDEXES.filter(([name])=>!have.has(name));}
  filterIndexesReady(){if(!this.filterReady)this.filterReady=!this.missingFilterIndexes().length;return this.filterReady;}
  /** Builds missing filter indexes, at least one per call, within a row budget (index count x catalog rows). Workers
@@ -21,7 +59,7 @@ export class AccountItemIndex {
   for(const [,statement]of missing.slice(0,step))this.sql.exec(statement);
   return this.filterReady=missing.length<=step;
  }
- upsert(message){message=migrateTags(message);this.sql.exec('INSERT INTO inbox_catalog(id,owner,received_at,collection,unread,quarantined,record) VALUES(?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET collection=excluded.collection,unread=excluded.unread,quarantined=excluded.quarantined,record=excluded.record',message.id,message.owner,message.receivedAt??0,message.collection??'',message.readAt==null?1:0,message.quarantined?1:0,JSON.stringify(publicMessage(message)));this.projectIncoming(message);}
+ upsert(message){message=migrateTags(message);this.sql.exec('INSERT INTO inbox_catalog(id,owner,received_at,collection,unread,quarantined,record) VALUES(?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET owner=excluded.owner,received_at=excluded.received_at,collection=excluded.collection,unread=excluded.unread,quarantined=excluded.quarantined,record=excluded.record',message.id,message.owner,message.receivedAt??0,message.collection??'',message.readAt==null?1:0,message.quarantined?1:0,JSON.stringify(publicMessage(message)));this.projectIncoming(message);}
  remove(id){const prior=[...this.sql.exec('SELECT owner,item_id,unread FROM incoming_members WHERE id=?',id)][0];this.sql.exec('DELETE FROM inbox_catalog WHERE id=?',id);this.sql.exec('DELETE FROM incoming_members WHERE id=?',id);if(prior)this.refreshIncoming(prior.owner,prior.item_id,-1,-prior.unread);}
  get(id){const row=[...this.sql.exec('SELECT record FROM inbox_catalog WHERE id=?',id)][0];return row?JSON.parse(row.record):null;}
  page(owner,{collection,unread,quarantined,limit=100,cursor}={}, {legacy=false}={}){

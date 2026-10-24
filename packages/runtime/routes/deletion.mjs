@@ -33,6 +33,12 @@ async function cancelBudget(request,env){
  const ip=request.headers.get('CF-Connecting-IP')||(env.LOCAL_DEVELOPMENT==='true'?'127.0.0.1':'unknown');
  for(const [scope,value,limit]of [['ip',ip,30],['network',subnet(ip),120]])if(!await env.ABUSE.consume('deletion-cancel:'+scope+':'+await pseudonym(value,secret),{windowMs:60000,limit}))return json({error:'rate_limited',message:'Please wait before trying again.'},429,{'Retry-After':'60'});
 }
+/** Wargame 4 L1: owner request and cancel are budgeted per session and per network (the request/cancel loop). */
+async function sessionBudget(request,env,session){
+ const secret=env.ABUSE_HASH_KEY||env.KEY_ENCRYPTION_KEY;if(!secret||typeof env.ABUSE?.consume!=='function')fail('deletion_unavailable','Account deletion is temporarily unavailable.',503);
+ const ip=request.headers.get('CF-Connecting-IP')||(env.LOCAL_DEVELOPMENT==='true'?'127.0.0.1':'unknown');
+ for(const [scope,value,limit]of [['session',String(session??'none'),10],['network',subnet(ip),60]])if(!await env.ABUSE.consume('deletion-owner:'+scope+':'+await pseudonym(value,secret),{windowMs:600000,limit}))return json({error:'rate_limited',message:'Please wait before trying again.'},429,{'Retry-After':'600'});
+}
 const escape=value=>String(value).replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
 const scriptJSON=value=>JSON.stringify(value).replaceAll('<','\\u003c');
 export function deletionCancelScript(locale='en'){
@@ -72,6 +78,7 @@ export const stages={
   if(url.search)fail('invalid_request','Unsupported deletion request.',400);
   if(request.method==='POST'&&(typeof context.csrfToken!=='string'||context.csrfToken!==owner.csrfToken))return json({error:'csrf'},403);
   const flags=routeFlags(env,{subject:{kind:'account',owner:id}});
+  if(request.method==='POST'){const limited=await sessionBudget(request,env,owner.sessionContext);if(limited)return limited;}
   if(path===ROOT&&request.method==='POST'){
    if(!flags.enabled('ACCOUNT_DELETION_ENABLED'))return json({error:'not_found'},404);
    const input=await body(request,4096),evidence=await engine.query(new DeletionStepUp(context)).peek();

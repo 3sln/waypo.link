@@ -33,7 +33,7 @@ import { isUUID } from '../core/primitives.mjs';
 import { base64url } from '../core/records.mjs';
 import { parseMoveStatement, verifyMoveStatement, statementDigest, validateRedirectBase, httpsOrigin, SuccessionError, MAX_MOVES } from './succession.mjs';
 import { IdentityCrypto, secureEqual } from './crypto.mjs';
-import { recoveryCredential, securityState } from './service.mjs';
+import { recoveryCredential, securityState, queuePushEndsOn } from './service.mjs';
 import {raiseAuthorityEpoch,authorityEpoch} from './authority-epoch.mjs';
 import { revokeAllLineage, revokeLineage, pruneLineage } from './linked-approval.mjs';
 import { movedWindow, MOVED_AUDIT } from './lifecycle-tombstone.mjs';
@@ -689,7 +689,7 @@ export class TransferOutService {
     if (!this.noticeTargets({ channels: next }).length) fail('notice_channel_required', 'Removing these would leave no email or device to notify about the move.', 409);
     const result = await this.port('identity').removeDisputers(owner, { sessions: named.sessions, passkeys: named.passkeys, emails: named.emails, expectedEpoch: expectedEpoch ?? identity.security.epoch });
     if (result?.ok !== true) fail('conflict', 'Your account changed; start this step again.', 409);
-    for (const [path, row] of pushRows) if (named.push.includes(row?.id)) await this.metadata.delete(path);
+    for (const [path, row] of pushRows) if (named.push.includes(row?.id) || Array.isArray(result.endedSessions) && result.endedSessions.includes(row?.sessionId)) await this.metadata.delete(path);
     return { security: result.security, channels: next, removed: named };
   }
   /** Tier 2 (P17), audited by the caller: support aborts (optionally locking up to 30 days) or allows a contested move,
@@ -937,13 +937,15 @@ export function transferIdentityPort(repository, { clock = () => Date.now(), cry
         if (account.status !== 'active' || securityState(account).epoch !== expectedEpoch) return { ok: false, status: 'changed' };
         const now = clock(), removed = new Set(sessions);
         for (let changed = true; changed;) { changed = false; for (const s of account.sessions ?? []) if (s.parentSessionId && removed.has(s.parentSessionId) && !removed.has(s.id)) { removed.add(s.id); changed = true; } }
+        // Wargame 4 M1: the removed live sessions' push subscriptions end too (durable row, run by IdentityService).
+        const ended = (account.sessions ?? []).filter(s => removed.has(s.id) && s.expiresAt > now && typeof s.id === 'string').map(s => s.id); if (ended.length) queuePushEndsOn(account, ended);
         account.sessions = (account.sessions ?? []).filter(s => !removed.has(s.id)); pruneLineage(account, now); revokeLineage(account, removed, now);
         account.credentials = (account.credentials ?? []).filter(c => !passkeys.includes(c.id));
         if (account.verifiedEmail && emails.includes(account.verifiedEmail)) {
           account.removedEmails = [...(Array.isArray(account.removedEmails) ? account.removedEmails : []).filter(entry => now - entry.removedAt < TIMING.removedChannels), { address: account.verifiedEmail, removedAt: now }].slice(-8);
           Object.assign(account, { verifiedEmail: null, emailVerifiedAt: null, emailLoginEnabled: false, emailChallenges: [] });
         }
-        audit(account, 'transfer-disputers-removed'); return { ok: true, write: true, value: { security: { ...bump(account) } } };
+        audit(account, 'transfer-disputers-removed'); return { ok: true, write: true, value: { security: { ...bump(account) }, endedSessions: ended } };
       });
     },
     /** Elevated-proof abort and the owner's "reissue" choice: the current credential stops being current at once.

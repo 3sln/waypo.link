@@ -179,3 +179,17 @@ test('a redeemed claim shows its redemption time, is not outstanding and offers 
   assert.match(summary,locale==='es'?/No hay reclamaciones pendientes|0/:/No outstanding claims\./);
  }
 });
+
+test('wargame 4 (b): the overview pages claims and runtime reservations on request; nothing past the first page is hidden',async()=>{
+ const claim=i=>({nonce:'6f1c2a7e-1111-4222-8333-'+String(i).padStart(12,'0'),name:'staff-'+i,state:'issued',roles:[],badgeIds:[],expiresAt:now+86400000,createdAt:now,linkAvailable:true});
+ const first=overview({claims:[claim(1)],claimsNext:'6f1c2a7e-1111-4222-8333-000000000001',reservationsNext:'staff-1'});
+ const f=await fixture({state:{phase:'console',consoleReady:true,view:'claims',overview:first},api:{'/api/admin/overview':body=>body.claimsAfter?overview({claims:[claim(2)],claimsNext:null,reservationsNext:'staff-1'}):overview({reservations:{...first.reservations,runtime:[{name:'staff-2',source:'runtime',roles:[],badgeIds:[],createdAt:now,updatedAt:now}]},claimsNext:null,reservationsNext:null})}});
+ try{
+  let {root}=render(consoleView,f.read());assert.ok([...root.querySelectorAll('button')].some(b=>b.textContent.includes('Show more claims')));
+  await f.act(new ops.MoreOverview({list:'claims'}));assert.deepEqual(f.calls.at(-1).body,{claimsAfter:'6f1c2a7e-1111-4222-8333-000000000001'});
+  assert.deepEqual(f.read().overview.claims.map(c=>c.name),['staff-1','staff-2']);assert.equal(f.read().overview.claimsNext,null);
+  ({root}=render(consoleView,f.read()));assert.equal([...root.querySelectorAll('button')].some(b=>b.textContent.includes('Show more claims')),false);
+  const runtime=f.read().overview.reservations.runtime.length;await f.act(new ops.MoreOverview({list:'reservations'}));assert.deepEqual(f.calls.at(-1).body,{reservationsAfter:'staff-1'});assert.equal(f.read().overview.reservations.runtime.length,runtime+1);
+  assert.equal(render(consoleView,{...f.read(),locale:'es'},'es').missing.size,0);
+ }finally{await f.close();}
+});

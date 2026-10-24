@@ -37,6 +37,11 @@ const MINUTE=60000,HOUR=3600000,DAY=86400000;
 export const STEP_UP_WINDOW_MS=300000,SECURITY_WINDOW_MS=72*HOUR,GRACE_DAYS=14,EXTENDED_GRACE_DAYS=30;
 export const DRAIN_GIVE_UP_MS=72*HOUR,HOLD_ALERT_MS=7*DAY,NOTICE_GIVE_UP_MS=DAY;
 const MAX_TOKENS=16,MAX_PUSH=16;
+// Wargame 4 L1: the request/cancel loop is bounded per account. At most REQUEST_BUDGET owner requests commit
+// per REQUEST_WINDOW_MS; receipts are kept for RECEIPT_TTL_MS and at most RECEIPT_CAP. Every new request gets its own
+// "scheduled" notice and cancel link (review: a quiet window hid a re-request after a cancel).
+export const REQUEST_BUDGET=3,REQUEST_WINDOW_MS=DAY,RECEIPT_CAP=16,RECEIPT_TTL_MS=30*DAY;
+export const REQUEST_LOG_KEY='deletion/request-log';
 // Outboxes E4 waits for (account-local rows only; delivery itself is the owning slice's code).
 export const DRAIN_PREFIXES=Object.freeze(['connections/cascade/','integration-events/row/']);
 const DRAINS=Object.freeze(['connectionsDrain','brokeredSeveranceDrain','integrationEventsAlarm','eventBusSweep']);
@@ -130,6 +135,9 @@ export function deletionDueIndex(metadata){
 /** One bounded sweep over due rows: invokes `deletionTick` on each owner's account. Failures are counted and
  * retried at the next sweep; the row is removed only by cancel or E11. A persisted cursor that wraps (wargame D3)
  * means held rows at the head of the index cannot starve later due accounts. */
+/** Wargame 4: the Node scheduler's run. Each run reads the live flag port (background semantics: only the env kill
+ * stops it), so a flag enabled after boot is honoured. `flags()` returns a pinned port. */
+export function deletionDueSweepRun({flags,index,accounts}){return async()=>{try{if(!(await flags()).background(DELETION_FLAG))return {skipped:true};return await sweepDeletionDue({index,accounts});}catch{return {failed:true};}};}
 export async function sweepDeletionDue({index,accounts,now=Date.now(),limit=64}){
  let ticked=0,failed=0;
  const page=typeof index.page==='function'?await index.page({now,limit}):{rows:await index.due({now,limit})};
@@ -342,6 +350,13 @@ export class DeletionService{
    if(await tx.get(FENCE_KEY)!==undefined||await tx.get(PURGE_KEY)!==undefined)fail('account_deleting','Account deletion has begun.',410);
    const existing=await tx.get(REQUEST_KEY);if(['scheduled','executing'].includes(existing?.state))fail('deletion_scheduled','Deletion is already scheduled.',409);
    const transfer=await tx.get(TRANSFER_KEY);if(transfer?.state==='committed')fail('account_unavailable','Account unavailable.',409);
+   // Admin bases are verified and rate-limited by AdminService; an owner loop must not be able to block them.
+   if(basis==='owner'){const log=(await tx.get(REQUEST_LOG_KEY)??[]).filter(at=>Number.isSafeInteger(at)&&at>now-REQUEST_WINDOW_MS&&at<=now);
+    if(log.length>=REQUEST_BUDGET)fail('deletion_rate_limited','Too many deletion requests. Try again tomorrow.',429);
+    await tx.put(REQUEST_LOG_KEY,[...log,now]);}
+   // Receipts expire and are capped; the newest (including this one) are kept for replay.
+   const receipts=[...await tx.list({prefix:RECEIPT_PREFIX,limit:64})].map(([path,value])=>({path,at:Number.isSafeInteger(value?.at)?value.at:0})).sort((a,b)=>b.at-a.at);
+   for(const [i,row]of receipts.entries())if(i>=RECEIPT_CAP-1||row.at<=now-RECEIPT_TTL_MS)await tx.delete(row.path);
    if(TRANSFER_PENDING.has(transfer?.state))await tx.put(TRANSFER_KEY,{...transfer,state:'cancelled',reason:'deletion',endedAt:now,tokens:[],hold:null,channels:null,notices:{},revision:transfer.revision+1});
    const request={v:1,id,owner,basis,operationId,fingerprint,requestedAt:now,executeAfter,graceDays,actor,handle:identity.handle??null,...exportUntil!==undefined?{exportUntil}:{},
     channels:await channelSnapshot(tx,owner,identity),cancelTokenHashes:[],securityEpoch:security.epoch,securityChangedAt:security.changedAt,
@@ -358,6 +373,10 @@ export class DeletionService{
    fail('confirmation_stale','The account email or security settings changed after this confirmation was sent.',409);
   }
   this.log({action:'deletion-requested',owner,basis,graceDays});
+  // Wargame 4 L2: anchor the committed request (due row and a backstop alarm) before any external call, so a crash
+  // or a hung provider call cannot strand it.
+  request=await this.ensureIndexed(request)??request;
+  await this.arm(this.now()+5*MINUTE);
   // Cancel-at-period-end is attempted synchronously; a Polar failure keeps billing.pending and step retries hourly.
   if(billing!==null)request=await this.retryBilling(request)??request;
   request=await this.ensureIndexed(request)??request;

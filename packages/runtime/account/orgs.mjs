@@ -38,7 +38,7 @@ import {loadOrganization} from '../../orgs/roster.mjs';
 import {organizationEntitlementPort} from '../../orgs/ownership.mjs';
 import {BreakGlassService} from '../../orgs/break-glass.mjs';
 import {OrganizationBilling} from '../../billing/organizations.mjs';
-import {organizationsProvider,ORG_OPERATIONS,InitializeOrganization,ConfirmOrganization,OrganizationTick,MembershipSweep,MembershipOutboxDrain,ObserveMemberAuthority,MemberSnapshot,membershipEnginePort,OWNERSHIP_OPERATIONS,OrganizationBillingSync,OrganizationBillingWebhook,OwnershipTick,OwnershipDrain,OwnershipIndex,ResolveLapseClaim,BREAK_GLASS_OPERATIONS,BreakGlassLiveness,BreakGlassSecurityChange,BreakGlassAbortToken,ResolveBreakGlass,BreakGlassFileRecovery,BreakGlassCase,BreakGlassLedger,BreakGlassHint,BreakGlassHints,BreakGlassSignal,BreakGlassSignals} from '../../app/domains/orgs.mjs';
+import {organizationsProvider,ORG_OPERATIONS,InitializeOrganization,ConfirmOrganization,OrganizationTick,MembershipSweep,MembershipOutboxDrain,ObserveMemberAuthority,MemberSnapshot,membershipEnginePort,OWNERSHIP_OPERATIONS,OrganizationBillingSync,OrganizationBillingWebhook,OwnershipTick,OwnershipDrain,OwnershipIndex,ResolveLapseClaim,BREAK_GLASS_OPERATIONS,BreakGlassLiveness,BreakGlassSecurityChange,BreakGlassAbortToken,ResolveBreakGlass,BreakGlassProposalCancel,BreakGlassFileRecovery,BreakGlassCase,BreakGlassLedger,BreakGlassHint,BreakGlassHints,BreakGlassSignal,BreakGlassSignals} from '../../app/domains/orgs.mjs';
 import {StorageError} from '../../storage/policy.mjs';
 import {key} from '../../messaging/store.mjs';
 import {OWNER_NOTICE_KIND_LIST} from '../../identity/owner-channels.mjs';
@@ -61,9 +61,12 @@ export function orgsEngine(c){
   // ORG-12b: person-side hint rows (the owner's sign-in liveness hook, the interstitial, co-signature items). Only wired
   // with the owner-channels port, so an unconfigured host queues none.
   const claimHints=ownerChannels?{apply:async(person,input)=>{const stub=c.config.CONVERSATION_ACCOUNT?.(person);if(!stub)return {ok:false};const result=await stub.invoke({method:'orgsBreakGlassHintApply',args:[person,input]});return result?.$fault?{ok:false}:result;}}:null;
-  // Review M3: operator decisions verify an assertion from the admin service (ORG-12d); without the port they fail closed.
+  // Review M3: operator decisions verify an assertion from the admin service; without the port they fail closed. ORG-12d:
+  // the adapters compose the production verifier over the admin store (packages/runtime/admin-org-cases.mjs).
   const operators=typeof c.config.ORGANIZATION_OPERATOR_ASSERTIONS?.verify==='function'?c.config.ORGANIZATION_OPERATOR_ASSERTIONS:null;
-  const service=new BreakGlassService({ownerChannels,claimLedger,claimHints,operators,metadata:c.metadata,clock,random:cryptoRandom,flags:{for:ctx=>flagsFor(c.config,ctx)},plans,issuer:c.config.APP_ORIGIN??null,invitationSigner:owner=>c.signingKey(owner),memberEvents:c.config.ORGANIZATION_MEMBER_EVENTS,
+  // ORG-12d: the admin service's support case queue (packages/identity/operator-assertions.mjs supportCaseIndex).
+  const supportCases=typeof c.config.ORGANIZATION_SUPPORT_CASES?.apply==='function'?c.config.ORGANIZATION_SUPPORT_CASES:null;
+  const service=new BreakGlassService({ownerChannels,claimLedger,claimHints,operators,supportCases,metadata:c.metadata,clock,random:cryptoRandom,flags:{for:ctx=>flagsFor(c.config,ctx)},plans,issuer:c.config.APP_ORIGIN??null,invitationSigner:owner=>c.signingKey(owner),memberEvents:c.config.ORGANIZATION_MEMBER_EVENTS,
    billing,alert:entry=>lifecycleLog(c.config,entry),accounts:{get:sub=>typeof c.config.IDENTITY_ACCOUNT==='function'?c.config.IDENTITY_ACCOUNT(sub):null},
    effects:{
     // Invalidates the previous owner's recovery file at an ownership change: an ordinary signing rotation (not the
@@ -119,7 +122,7 @@ export const methods={
   * parsed a token, `resolve` and `case` from the admin service after it authenticated an operator (ORG-12d), and
   * `file-recovery` from ORG-12f. */
  async orgsBreakGlassSignal(owner,{operation,input}={}){
-  const Operation={liveness:BreakGlassLiveness,'security-change':BreakGlassSecurityChange,'abort-token':BreakGlassAbortToken,resolve:ResolveBreakGlass,'file-recovery':BreakGlassFileRecovery,case:BreakGlassCase}[operation];
+  const Operation={liveness:BreakGlassLiveness,'security-change':BreakGlassSecurityChange,'abort-token':BreakGlassAbortToken,resolve:ResolveBreakGlass,'proposal-cancel':BreakGlassProposalCancel,'file-recovery':BreakGlassFileRecovery,case:BreakGlassCase}[operation];
   if(!Operation||(await this.metadata.get(ORG_RECORD))?.kind!=='organization')throw new StorageError('not_found','Not found.',404);await this.warm(owner);
   const result=await run(this,new Operation({actor:{kind:'system',owner},...input===undefined?{}:{input:structuredClone(input)}}));
   if(operation!=='case'){try{await ownershipFollowUp(this,owner);}catch{/* effects retry on the alarm */}}

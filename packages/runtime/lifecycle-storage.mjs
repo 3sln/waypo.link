@@ -9,10 +9,12 @@ const ARCHIVE_ROWS=2200,MAX_COLD_BYTES=16777216;
 
 /** Only provider-owned hosted prefixes with exact owner evidence are removable.
  * External connector objects are never addressed by these references. */
-export function ownedBlobRef(owner,ref){return typeof ref==='string'&&ref.length<=1024&&(ref.startsWith(`messages/${owner}/`)||ref.startsWith(`objects/${owner}/`))&&!ref.includes('..');}
+// Wargame 4: oversized connector RPC results (`rpc-results/<owner>/…`, referenced by a journal's `resultRef`) are hosted too.
+export function ownedBlobRef(owner,ref){return typeof ref==='string'&&ref.length<=1024&&(ref.startsWith(`messages/${owner}/`)||ref.startsWith(`objects/${owner}/`)||ref.startsWith(`rpc-results/${owner}/`))&&!ref.includes('..');}
 function collectRefs(value,out,depth=0){
  if(depth>6||!value||typeof value!=='object')return out;
  if(typeof value.blobRef==='string')out.add(value.blobRef);
+ if(typeof value.resultRef==='string'&&value.resultRef.startsWith('rpc-results/'))out.add(value.resultRef);
  for(const child of Array.isArray(value)?value:Object.values(value))if(child&&typeof child==='object')collectRefs(child,out,depth+1);
  return out;
 }

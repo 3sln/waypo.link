@@ -4,7 +4,7 @@ import {createAppEngine,perform,read,AppAction,AppQuery,operations} from '../../
 import {cryptoRandom,nullAudit} from '../../app/providers.mjs';
 import {fault} from '../../app/faults.mjs';
 import {UUID} from '../../core/primitives.mjs';
-import {AccountExport,createExportDigest} from '../export-generation.mjs';
+import {AccountExport,createExportDigest,exportRetryDelay} from '../export-generation.mjs';
 import {ACCOUNT_EXPORT_OPERATIONS,ExportList,ExportStatus,CancelExport,StepExport,ExpireExports} from '../../app/domains/account-export.mjs';
 import {CreateExportWithHooks as CreateExport,OfferOverQuotaExport,OverQuotaExportEvidence} from '../export-hooks.mjs';
 import {decryptSecret} from '../secrets.mjs';
@@ -112,6 +112,9 @@ export const methods={
  async exportDownload(owner,id,input,evidence){return downloadLayout(read(exportEngine(this),new DownloadExport({actor:actor(owner,evidence),id,input})));},
  async exportGrantDownload(owner,id,input,token){return downloadLayout(read(exportEngine(this),new DownloadExport({actor:{kind:'export-grant',owner,token},id,input})));},
  // Internal alarm hook: no RPC exposes generation to an owner or a CLI grant.
- async exportAlarm(){const owner=await this.metadata.get('owner');if(!owner||!await this.metadata.get('export/active')||await this.metadata.get('deletion/fence-v1')||await this.metadata.get('lifecycle/purge-v1')||!flagsFor(this.config).background('ACCOUNT_EXPORT_ENABLED'))return {busy:false};const engine=exportEngine(this),actor={kind:'system',owner};try{if(this.gate)await this.gate.run(()=>this.warm(owner));else await this.warm(owner);const expired=await perform(engine,new ExpireExports({actor}));await wake(this,expired);const result=await perform(engine,new StepExport({actor}));await wake(this,result);return result;}catch(error){const result={busy:true,wakeAt:Date.now()+60000,error:error?.code??'export_unavailable'};await wake(this,result);return result;}},
+ async exportAlarm(){const owner=await this.metadata.get('owner');if(!owner||!await this.metadata.get('export/active')||await this.metadata.get('deletion/fence-v1')||await this.metadata.get('lifecycle/purge-v1')||!flagsFor(this.config).background('ACCOUNT_EXPORT_ENABLED'))return {busy:false};const engine=exportEngine(this),actor={kind:'system',owner};try{if(this.gate)await this.gate.run(()=>this.warm(owner));else await this.warm(owner);const expired=await perform(engine,new ExpireExports({actor}));await wake(this,expired);const result=await perform(engine,new StepExport({actor}));await wake(this,result);return result;}catch(error){
+  // Wargame 4 M4: back off by the active job's consecutive failures (60 s doubling to 1 h); a failed job has ended.
+  let failures=1;try{const id=await this.metadata.get('export/active'),job=id&&await this.metadata.get('export/job/'+id);if(Number.isSafeInteger(job?.failures)&&job.failures>0)failures=job.failures;}catch{}
+  const result={busy:true,wakeAt:Date.now()+exportRetryDelay(failures),error:error?.code??'export_unavailable'};await wake(this,result);return result;}},
 };
 export const rpc={exportCreate:{lifecycle:'suspended',warm:true},exportOverQuotaEvidence:{lifecycle:'suspended'},exportList:{lifecycle:'suspended'},exportStatus:{lifecycle:'suspended'},exportCancel:{lifecycle:'purging'},exportGrant:{lifecycle:'suspended'},exportRevokeGrant:{lifecycle:'purging'},exportDownload:{lifecycle:'suspended'},exportGrantDownload:{lifecycle:'suspended'}};

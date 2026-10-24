@@ -1,3 +1,4 @@
+import {producerIndexedMetadata,producerIndexPrefix,producerIndexGeneration} from './producer-index.mjs';
 // AU-S6 managed-storage attribution and retained settings. Existing records from before
 // attribution and external app copies remain unknown; an empty summary is never proof of complete cleanup.
 import {AppAction} from '../app/engine.mjs';
@@ -12,16 +13,18 @@ export class DeleteRemovalSettings extends AppAction{
  }
 }
 
-// Attribution markers live in the existing managed-object record: `producer` is the last app writer
-// (an owner overwrite removes it) and `createdBy` is the creating app, preserved across overwrites. No second
-// per-object record or app-specific file-name index is created; older/unmanaged objects stay unknown. Keeping
-// a marker per object is a provisional deviation from RR1-M7 (docs/architecture/app-uninstall.md AU-S6).
+// Attribution markers live in the managed-object record: `producer` is the last app writer
+// (an owner overwrite removes it) and `createdBy` is the creating app, preserved across overwrites.
+// Derived connection/generation pointers are maintained transactionally.
+// Markers and their derived pointers are a provisional RR1-M7 deviation (see DEVLOG).
 import {Provider} from '../../vendor/ngin/index.js';
 import {AppQuery,ownerOf} from '../app/engine.mjs';
 import {StorageError} from './policy.mjs';
 export const PRODUCER_DELETION='storage/producer-deletion/',PRODUCER_KEEP='storage/producer-keep/',PRODUCER_CURSOR_KEY='storage/producer-cursor-key',PRODUCER_LINEAGE='storage/producer-lineage/',PRODUCER_GC='storage/producer-gc';
 // Per-removal bound on keep choices (one per resource plus "all"); never a connection-wide lockout.
 export const KEEP_ROWS_PER_REMOVAL=128;
+// knownResource probe bounds: distinct writer generations visited, and pointers checked per generation and root.
+export const PROBE_GENERATIONS=64,PROBE_POINTERS=4;
 // Lineage: written when a concluded (forced/completed) removal record is pruned, so What's left stays reachable by
 // its connection and generation. The alarm-driven sweep strips markers it covers unless an active keep protects them.
 export const lineageRow=(r,now)=>({removal:r.removal,entity:r.entity,connection:r.connection,generation:r.generation,client_id:r.client_id,state:r.state,concluded_at:r.concluded_at??r.committed_at??r.started_at??null,prunedAt:now,swept:false});
@@ -63,23 +66,34 @@ export function aggregateProducerRows(rows,removal,{keeps=[],bindings=new Map()}
 // Client-visible job projection: never the stored continuation position.
 const jobView=job=>job?.action==='delete'?{action:'delete',resource:job.resource??null,complete:job.complete===true,stopped:job.stopped===true,includeChanged:job.includeChanged===true,includeKept:job.includeKept===true,totalDeleted:job.totalDeleted??0,skipped:{...job.skipped},passes:job.passes??1,at:job.at}:null;
 export class ProducerSummaryService{
- constructor({metadata,deleteObject,clock={now:Date.now}}){Object.assign(this,{metadata,deleteObject,clock});}
+ constructor({metadata,deleteObject,clock={now:Date.now}}){Object.assign(this,{metadata:producerIndexedMetadata(metadata),deleteObject,clock});}
  async removal(actor,id){const owner=ownerOf(actor);if(await this.metadata.get('owner')!==owner)fail('forbidden','Account owner mismatch.',403);let r=typeof id==='string'&&id.length<=200&&await this.metadata.get('app-removal/record/'+id);if(!r&&typeof id==='string'&&id.length<=200){const l=await this.metadata.get(PRODUCER_LINEAGE+id);if(l?.removal===id&&Number.isSafeInteger(l.generation)&&typeof l.connection==='string')r={removal:id,entity:l.entity,connection:l.connection,generation:l.generation,client_id:l.client_id,state:l.state==='completed'?'completed':'forced',pruned:true};}if(!r||r.entity!==owner)fail('not_found','Removal not found.',404);if(!['forced','completed'].includes(r.state))fail('removal_pending','Finish removing the app before reviewing retained data.');return r;}
  keepPrefix(removal,own=false){return PRODUCER_KEEP+encodeURIComponent(removal.connection)+'/'+(own?encodeURIComponent(removal.removal)+'/':'');}
  // Keep choices made in other removals of the same app connection. Bounded and fail-closed.
- async keeps(removal){const rows=await this.all(this.keepPrefix(removal));return rows.map(([,v])=>v).filter(k=>k?.action==='keep'&&k.active===true&&k.removal!==removal.removal&&k.connection===removal.connection&&Number.isSafeInteger(k.generation));}
- // Paged listing of a bounded family (keep rows are capped per removal; lineage rows are pruned by the sweep).
- async all(prefix){const out=[];let after='';for(;;){const page=[...(await this.metadata.list({prefix,startAfter:after,limit:500})).entries()];out.push(...page);if(page.length<500)return out;after=page.at(-1)[0];}}
+// Request work budgets: summary and missing-binding validation read at most 5,000 target pointers/objects;
+ // delete/GC read at most 200. Keep protection uses at most two indexed rows per scope; GC uses
+ // at most two markers × (two generation lookups + two keep lookups) per object, then 128 keep/200 job rows.
+ // Migration advances 200 rows and requests retry; no request loads an entire history family.
+ async ready(){if(!await this.metadata.producerIndexReady())fail('index_building','Managed storage indexing is in progress. Retry this bounded request.',503);}
+ async keeps(removal,resources=[null]){await this.ready();const out=[];for(const resource of new Set([null,...resources])){const prefix=producerIndexPrefix('keep',removal.connection)+encodeURIComponent(resource??'~all')+'/';for(const k of (await this.metadata.list({prefix,limit:2})).values())if(k.removal!==removal.removal){out.push({...k,action:'keep',active:true});break;}}return out;}
  // A resource named by an owner action must be a current binding or appear among this removal's attributed rows.
- async knownResource(removal,resource){const binding=await this.metadata.get('resource/'+resource);if(binding)return binding.owner===removal.entity&&binding.kind!=='app-connection';for(const prefix of ['hosted/'+resource+'/','drive/object/'+resource+'/']){const rows=await this.metadata.list({prefix,limit:5000});for(const [path,o]of rows)if(resourceOf(path)===resource&&classifyProducerObject(o,removal,[],resource))return true;}return false;}
+ // Review L2 (scale round 2): a bounded per-resource probe rather than the first 5,000 pointers of the connection. It
+ // skips from generation to generation (pointer keys are generation/encoded path) and looks up this resource's path
+ // range in each, so apps with many objects in other resources still resolve. Fails closed past PROBE_GENERATIONS.
+ async knownResource(removal,resource){const binding=await this.metadata.get('resource/'+resource);if(binding)return binding.owner===removal.entity&&binding.kind!=='app-connection';await this.ready();
+  const prefix=producerIndexPrefix('producer',removal.connection),ranges=['hosted/'+resource+'/','drive/object/'+resource+'/'].map(encodeURIComponent);let after='';
+  for(let hop=0;hop<PROBE_GENERATIONS;hop++){const first=await this.metadata.list({prefix,startAfter:after,limit:1});if(!first.size)return false;const generation=[...first.keys()][0].slice(prefix.length).split('/')[0];if(Number(generation)>removal.generation)return false;
+   for(const range of ranges)for(const index of (await this.metadata.list({prefix:prefix+generation+'/'+range,limit:PROBE_POINTERS})).values()){const o=await this.metadata.get(index.path);if(o&&resourceOf(index.path)===resource&&classifyProducerObject(o,removal,[],resource))return true;}
+   after=prefix+generation+'/\uffff';}
+  return false;}
  async cursorKey(){let raw=await this.metadata.get(PRODUCER_CURSOR_KEY);if(typeof raw!=='string')raw=await this.metadata.transaction(async tx=>{const existing=await tx.get(PRODUCER_CURSOR_KEY);if(typeof existing==='string')return existing;const value=b64u(crypto.getRandomValues(new Uint8Array(32)));await tx.put(PRODUCER_CURSOR_KEY,value);return value;});return crypto.subtle.importKey('raw',unb64u(raw),'AES-GCM',false,['encrypt','decrypt']);}
  // Opaque, owner- and removal-bound: the sealed position is never readable or transplantable by a client.
  async sealCursor(removal,value){const iv=crypto.getRandomValues(new Uint8Array(12)),data=await crypto.subtle.encrypt({name:'AES-GCM',iv,additionalData:utf8(removal.entity+'|'+removal.removal)},await this.cursorKey(),utf8(JSON.stringify(value)));return b64u(iv)+'.'+b64u(new Uint8Array(data));}
- async openCursor(removal,cursor){try{if(typeof cursor!=='string'||cursor.length>8192)throw Error();const [iv,data,...rest]=cursor.split('.');if(rest.length||!iv||!data)throw Error();const c=JSON.parse(new TextDecoder().decode(await crypto.subtle.decrypt({name:'AES-GCM',iv:unb64u(iv),additionalData:utf8(removal.entity+'|'+removal.removal)},await this.cursorKey(),unb64u(data))));if(![0,1].includes(c.root)||typeof c.after!=='string'||c.after.length>4096||c.after&&!c.after.startsWith(roots[c.root]))throw Error();return c;}catch{fail('invalid_cursor','Refresh the remaining data view.',400);}}
- async scan(start,limit){let {root,after}=start,remaining=limit;const rows=[];while(root<roots.length&&remaining){const size=Math.min(remaining,200),page=await this.metadata.list({prefix:roots[root],startAfter:after,limit:size});for(const entry of page)rows.push(entry);remaining-=page.size;if(page.size<size){root++;after='';}else after=[...page.keys()].at(-1);}return {rows,next:root<roots.length?{root,after}:null};}
- async page(removal,{cursor,limit=5000}={}){limit=pageLimit(limit);const {rows,next}=await this.scan(cursor?await this.openCursor(removal,cursor):{root:0,after:''},limit);return {rows,cursor:next?await this.sealCursor(removal,next):null};}
+ async openCursor(removal,cursor){try{if(typeof cursor!=='string'||cursor.length>16384)throw Error();const [iv,data,...rest]=cursor.split('.');if(rest.length||!iv||!data)throw Error();const c=JSON.parse(new TextDecoder().decode(await crypto.subtle.decrypt({name:'AES-GCM',iv:unb64u(iv),additionalData:utf8(removal.entity+'|'+removal.removal)},await this.cursorKey(),unb64u(data))));if(![0,1].includes(c.root)||typeof c.after!=='string'||c.after.length>8192||c.after&&!c.after.startsWith(producerIndexPrefix('producer',removal.connection)))throw Error();return c;}catch{fail('invalid_cursor','Refresh the remaining data view.',400);}}
+ async scan(start,limit,removal,kind='producer'){await this.ready();const prefix=producerIndexPrefix(kind,removal.connection),after=start.after||'',entries=await this.metadata.list({prefix,startAfter:after,limit}),rows=[];let end=entries.size<limit,last=after;for(const [key,index]of entries){if(Number(key.slice(prefix.length).split('/')[0])>removal.generation){end=true;break;}last=key;const object=await this.metadata.get(index.path);if(object)rows.push([index.path,object]);}return {rows,next:end?null:{root:0,after:last}};}
+ async page(removal,{cursor,limit=5000}={}){limit=pageLimit(limit);const {rows,next}=await this.scan(cursor?await this.openCursor(removal,cursor):{root:0,after:''},limit,removal);return {rows,cursor:next?await this.sealCursor(removal,next):null};}
  async summary(removal,options={}){
-  const {rows,cursor}=await this.page(removal,options),keeps=await this.keeps(removal),bindings=new Map();
+  const {rows,cursor}=await this.page(removal,options),keeps=await this.keeps(removal,rows.map(([path])=>resourceOf(path))),bindings=new Map();
   for(const [path,object]of rows){const id=resourceOf(path);if(!bindings.has(id)&&classifyProducerObject(object,removal,[],id))bindings.set(id,await this.metadata.get('resource/'+id));}
   const jobs=[...(await this.metadata.list({prefix:PRODUCER_DELETION+removal.removal+'/',limit:101})).values()].map(jobView).filter(Boolean);
   const own=[...(await this.metadata.list({prefix:this.keepPrefix(removal,true),limit:101})).values()].filter(k=>k?.action==='keep').map(k=>({resource:k.resource??null,active:k.active===true,at:k.at,...k.supersededAt?{supersededAt:k.supersededAt}:{}}));
@@ -94,12 +108,12 @@ export class ProducerSummaryService{
   // Keep choices are stored apart from deletion checkpoints. Keeping stops an unfinished deletion of the same scope.
   if(action==='keep'){await this.metadata.transaction(async tx=>{if(!await tx.get(keepPath)&&(await tx.list({prefix:this.keepPrefix(removal,true),limit:KEEP_ROWS_PER_REMOVAL+1})).size>=KEEP_ROWS_PER_REMOVAL)fail('keep_limit','Too many saved keep choices for this removal.',409);await tx.put(keepPath,{action:'keep',removal:removal.removal,connection:removal.connection,generation:removal.generation,resource:resource??null,active:true,at:now});const job=await tx.get(jobPath);if(job?.action==='delete'&&!job.complete&&!job.stopped)await tx.put(jobPath,{...job,stopped:true,stoppedAt:now});});return {action,kept:true};}
   pageLimit(limit,200);
-  const keeps=includeKept?[]:await this.keeps(removal),previous=await this.metadata.get(jobPath);
+  const previous=await this.metadata.get(jobPath);
   // A completed pass is not terminal: a later request starts a new pass, so late or newly found rows are deleted.
   const resume=previous?.action==='delete'&&!previous.complete&&!previous.stopped&&previous.includeChanged===includeChanged&&previous.includeKept===includeKept,start=resume&&previous.cursor?previous.cursor:{root:0,after:''};
   // Deleting is choosing again: it supersedes this removal's own keep choice for the same scope.
   await this.metadata.transaction(async tx=>{const keep=await tx.get(keepPath);if(keep?.active){await tx.put(keepPath,{...keep,active:false,supersededAt:now});const lineage=await tx.get(PRODUCER_LINEAGE+removal.removal);if(lineage?.swept)await tx.put(PRODUCER_LINEAGE+removal.removal,{...lineage,swept:false});}const job=await tx.get(jobPath);await tx.put(jobPath,{action:'delete',removal:removal.removal,resource:resource??null,includeChanged,includeKept,cursor:start,complete:false,totalDeleted:job?.action==='delete'?job.totalDeleted??0:0,passes:(job?.action==='delete'?job.passes??0:0)+(resume?0:1),skipped:resume?{...job.skipped}:{},at:now});});
-  const {rows,next}=await this.scan(start,limit),skipped={changed:0,kept:0,unavailable:0,failed:0,conflict:0},bindings=new Map();let deleted=0;
+  const {rows,next}=await this.scan(start,limit,removal),keeps=includeKept?[]:await this.keeps(removal,rows.map(([path])=>resourceOf(path))),skipped={changed:0,kept:0,unavailable:0,failed:0,conflict:0},bindings=new Map();let deleted=0;
   for(const [objectPath,object]of rows){
    const id=objectPath.startsWith('hosted/')||objectPath.startsWith('drive/object/')?resourceOf(objectPath):null;if(!id||resource&&resource!==id)continue;
    const c=classifyProducerObject(object,removal,keeps,id);if(!c)continue;
@@ -125,18 +139,30 @@ export function strippedMarkers(object,resource,{lineages,removals,keeps}){
  const {producer,createdBy,...rest}=object;return {...rest,...!dropProducer&&producer?{producer}:{},...!dropCreated&&createdBy?{createdBy}:{}};
 }
 ProducerSummaryService.prototype.collectMarkers=async function({limit=200}={}){
- const lineages=(await this.all(PRODUCER_LINEAGE)).map(([,v])=>v).filter(l=>l&&typeof l.connection==='string'&&Number.isSafeInteger(l.generation));
- let state=await this.metadata.get(PRODUCER_GC);if(!state?.cursor&&!lineages.some(l=>!l.swept))return {done:true,stripped:0};
- const now=this.clock.now();if(!state?.cursor)state={cursor:{root:0,after:''},passStartedAt:now};
- const removals=[...(await this.metadata.list({prefix:'app-removal/record/',limit:1000})).values()],keeps=(await this.all(PRODUCER_KEEP)).map(([,v])=>v).filter(k=>k?.action==='keep'&&k.active===true),context={lineages,removals,keeps};
- const {rows,next}=await this.scan(state.cursor,limit);let stripped=0;
- for(const [path,object]of rows){const resource=resourceOf(path);if(!strippedMarkers(object,resource,context))continue;
-  if(await this.metadata.transaction(async tx=>{const live=await tx.get(path);if(live?.version!==object.version)return false;const value=strippedMarkers(live,resource,context);if(!value)return false;await tx.put(path,value);return true;}))stripped++;}
+ pageLimit(limit,200);if(!await this.metadata.producerIndexReady())return {done:false,stripped:0,indexing:true};let state=await this.metadata.get(PRODUCER_GC);
+ if(!state?.lineage){let page=await this.metadata.list({prefix:'storage/producer-gc/index/pending/',startAfter:state?.after??'',limit:1});if(!page.size&&state?.after)page=await this.metadata.list({prefix:'storage/producer-gc/index/pending/',limit:1});if(!page.size){await this.metadata.delete(PRODUCER_GC);return {done:true,stripped:0};}const [indexPath,index]=[...page][0],path=index.path,lineage=await this.metadata.get(path);state={lineage,path,indexPath,kind:'producer',cursor:{root:0,after:''}};}
+ const l=state.lineage,{rows,next}=await this.scan(state.cursor,limit,l,state.kind);let stripped=0;
+ for(const [path,object]of rows){
+  if(await this.metadata.transaction(async tx=>{const live=await tx.get(path);if(live?.version!==object.version)return false;const resource=resourceOf(path),lineages=[],removals=[],keeps=[];
+   for(const marker of [live.producer,live.createdBy]){if(!marker)continue;for(const [kind,out]of [['lineage',lineages],['removal',removals]]){const prefix=producerIndexPrefix(kind,marker.connection);for(const index of (await tx.list({prefix,startAfter:prefix+producerIndexGeneration(marker.generation)+'/',limit:1})).values()){const row=await tx.get(index.path);if(row)out.push(row);}}
+    for(const scope of [null,resource]){const prefix=producerIndexPrefix('keep',marker.connection)+encodeURIComponent(scope??'~all')+'/';for(const k of (await tx.list({prefix,limit:1})).values())keeps.push(k);}
+   }
+   for(const k of keeps)if(k.removal===l.removal&&(k.resource===null||k.resource===resource)&&[live.producer,live.createdBy].some(m=>m?.connection===k.connection&&m.generation<=k.generation)){const scope=k.resource??'~all',scopes=state.protectedScopes??=[];if(!scopes.includes(scope))scopes.push(scope);}const value=strippedMarkers(live,resource,{lineages,removals,keeps});if(!value)return false;await tx.put(path,value);return true;
+  }))stripped++;
+ }
+
  if(next){await this.metadata.put(PRODUCER_GC,{...state,cursor:next});return {done:false,stripped};}
- // Pass complete: every lineage pruned before the pass started is swept. Keep it only while an active keep refers to it.
- for(const l of lineages){if(l.swept||l.prunedAt>state.passStartedAt)continue;const conn=encodeURIComponent(l.connection),own=PRODUCER_KEEP+conn+'/'+encodeURIComponent(l.removal)+'/',rowsOwn=await this.all(own),active=rowsOwn.some(([,k])=>k?.active===true);
-  await this.metadata.transaction(async tx=>{for(const [path,k]of rowsOwn)if(!active||k?.active!==true)await tx.delete(path);for(const [path,job]of await tx.list({prefix:PRODUCER_DELETION+l.removal+'/',limit:200}))if(!active||job?.complete||job?.stopped)await tx.delete(path);if(active)await tx.put(PRODUCER_LINEAGE+l.removal,{...l,swept:true});else await tx.delete(PRODUCER_LINEAGE+l.removal);});}
- await this.metadata.delete(PRODUCER_GC);return {done:!lineages.some(l=>!l.swept&&l.prunedAt>state.passStartedAt),stripped};
+ // The creator index also covers owner-overwritten records whose last-writer marker has gone.
+ if(state.kind==='producer'){await this.metadata.put(PRODUCER_GC,{...state,kind:'createdBy',cursor:{root:0,after:''}});return {done:false,stripped};}
+ const own=this.keepPrefix(l,true);
+ await this.metadata.transaction(async tx=>{const rowsOwn=await tx.list({prefix:own,limit:KEEP_ROWS_PER_REMOVAL+1}),active=[...rowsOwn.values()].some(k=>k?.active===true);
+  // A keep superseded after an earlier batch protected objects requires another pass. Review L4: protection is tracked
+  // per scope, so superseding one resource's keep restarts even while another scope's keep stays active. (`protectedOwn`
+  // is the coarse flag of a pass started before this change.)
+  let superseded=state.protectedOwn===true&&!active;for(const scope of state.protectedScopes??[]){if(superseded)break;if((await tx.get(own+encodeURIComponent(scope)))?.active!==true)superseded=true;}
+  if(superseded){const {protectedOwn,protectedScopes,...rest}=state;await tx.put(PRODUCER_GC,{...rest,kind:'producer',cursor:{root:0,after:''}});return;}
+  for(const [path,k]of rowsOwn)if(!active||k?.active!==true)await tx.delete(path);for(const [path,job]of await tx.list({prefix:PRODUCER_DELETION+l.removal+'/',limit:200}))if(!active||job?.complete||job?.stopped)await tx.delete(path);if(active)await tx.put(state.path,{...l,swept:true});else await tx.delete(state.path);await tx.put(PRODUCER_GC,{after:state.indexPath});});
+ return {done:false,stripped};
 };
 export const producerSummaryProvider=service=>Provider.fromSingleton(service);
 export class RemovalRemaining extends AppQuery{

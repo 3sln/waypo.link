@@ -12,7 +12,7 @@ import {createFlags} from '../flags/evaluate.mjs';
 import {validateSnapshot} from '../flags/snapshot.mjs';
 import {accountShard} from '../flags/hash.mjs';
 import {UUID,canonical} from '../core/primitives.mjs';
-export const FLAGS_TTL_MS=15000,FLAGS_FALLBACK_MS=7*86400000,FLAGS_DEFAULT_MAX_STALE_MS=3600000;
+export const WRITER_REFRESH_MS=300000,FLAGS_TTL_MS=15000,FLAGS_FALLBACK_MS=7*86400000,FLAGS_DEFAULT_MAX_STALE_MS=3600000;
 export function flagsMaxStale(value){const n=Number(value);return Number.isSafeInteger(n)&&n>=300000&&n<=86400000?n:FLAGS_DEFAULT_MAX_STALE_MS;}
 const unavailable=()=>Object.assign(new Error('Feature configuration is temporarily unavailable.'),{code:'flags_unavailable',status:503});
 export function flagContext(ctx={}, {request,platform='worker',now}={}){
@@ -27,14 +27,14 @@ export class FlagsRuntime{
  run(flags,operation){return this.scope.run(flags,operation);}
  invalidate(){this.generation++;this.freshUntil=0;}
  accept(snapshot,checkedAt=this.clock()){
-  const next=validateSnapshot(snapshot),previous=this.entry;
+  const next=validateSnapshot(snapshot,{quarantine:true}),previous=this.entry;
   if(previous&&(next.version<previous.snapshot.version||next.version===previous.snapshot.version&&canonical(next)!==canonical(previous.snapshot)))return false;
   if(previous&&next.version===previous.snapshot.version&&checkedAt<previous.checkedAt)return false;
   this.entry={snapshot:next,checkedAt};this.freshUntil=this.clock()+FLAGS_TTL_MS;return true;
  }
  publish(snapshot){if(this.accept(snapshot))return this.persist();return Promise.resolve();}
  async cached(tier){
-  if(!this.cache)return null;try{const response=await this.cache.match(this.cacheKey+'/'+tier);if(!response)return null;const value=await response.json(),now=this.clock();if(!Number.isSafeInteger(value.checkedAt)||value.checkedAt<0||value.checkedAt>now||now-value.checkedAt>=FLAGS_FALLBACK_MS)return null;return {snapshot:validateSnapshot(value.snapshot),checkedAt:value.checkedAt};}catch{return null;}
+  if(!this.cache)return null;try{const response=await this.cache.match(this.cacheKey+'/'+tier);if(!response)return null;const value=await response.json(),now=this.clock();if(!Number.isSafeInteger(value.checkedAt)||value.checkedAt<0||value.checkedAt>now||now-value.checkedAt>=FLAGS_FALLBACK_MS)return null;return {snapshot:validateSnapshot(value.snapshot,{quarantine:true}),checkedAt:value.checkedAt};}catch{return null;}
  }
  persist(){
   const entry=this.entry;if(!this.cache||!entry)return Promise.resolve();const write=async()=>{if(this.entry!==entry)return;for(const [tier,ttl]of [['fresh',15],['fallback',FLAGS_FALLBACK_MS/1000]])try{await this.cache.put(this.cacheKey+'/'+tier,new Response(JSON.stringify(entry),{headers:{'Content-Type':'application/json','Cache-Control':'public, max-age='+ttl}}));}catch{/* Tier two is optional, including local Workers. */}};
@@ -59,8 +59,10 @@ export class FlagsRuntime{
    // overtook it. One new authority read is allowed; never dispatch an older writer.
    if(older()&&minVersion>0)await this.refresh({force:true});
    if(minVersion>0&&older())throw unavailable();
-  }else if(alarm?this.clock()-this.entry.checkedAt>=300000:!writer&&this.clock()>=this.freshUntil){
-   const refresh=this.refresh({force:alarm});if(alarm||this.platform==='node'||!execution?.waitUntil)await refresh;else execution.waitUntil(refresh);
+  // A writer (and an alarm) re-reads the authority single-flight once its copy is ~5 min old, even at the edge's
+  // current version: the edge re-verifying that version does not renew the writer's checkedAt (wargame 4, L6).
+  }else if(alarm||writer?this.clock()-this.entry.checkedAt>=WRITER_REFRESH_MS:this.clock()>=this.freshUntil){
+   const refresh=this.refresh({force:alarm||writer});if(alarm||this.platform==='node'||!execution?.waitUntil)await refresh;else execution.waitUntil(refresh);
   }
   const entry=this.entry,now=this.clock(),usable=Boolean(entry&&now-entry.checkedAt<=this.maxStale),fallback=entry&&now-entry.checkedAt<FLAGS_FALLBACK_MS?entry.snapshot:null,base=createFlags({snapshot:entry?.snapshot,env:this.env,platform:this.platform,clock:()=>now,usable,fallback,hasState}),context=ctx=>flagContext(ctx,{request,platform:this.platform,now}),port=base.for(context());
   return Object.freeze({...port,for:ctx=>base.for(context(ctx)),evaluate:(name,ctx)=>ctx===undefined?port.evaluate(name):base.evaluate(name,context(ctx))});

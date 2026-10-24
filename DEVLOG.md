@@ -5117,3 +5117,378 @@ Reviewer: ___ Date: ___ Outcome: ___
 No commit or deployment. Production release remains disabled. These are local browser/Worker/Node results; external notice delivery and provider conformance remain unverified. All choices above remain provisional pending review.
 
 Reviewer: ___ Date: ___ Outcome: ___
+
+
+## 2026-10-24 — Scalability fixes round 2 (producer, conversations, retention totals, tombstones, directory)
+
+**Implemented locally, provisional and unsigned.** Finished and reviewed the interrupted work already present in the shared checkout. Covers probe cliffs #3–#9; #1/#2 and the concurrent organization/admin/flags work remain outside this workstream. No commit or deployment. Production release stays disabled; local adapter behavior is not external-service configuration, delivery or production/provider conformance.
+
+**Provisional decisions and implementation:**
+
+- **Producer history and traversal (#3, #9).** Transactional connection/generation pointers index last writers, distinct creators, live removals, pruned lineages and active keeps by resource and generation. Objects/removal decisions remain authoritative. Summary reads at most 5,000 target pointers/objects; deletion and marker collection process at most 200 target objects. Keep lookup uses the newest relevant choices, excluding the current removal where required, rather than loading a connection's history. Marker context uses bounded generation lookups per marker; finished lineage/keep/job cleanup is bounded. Cross-removal keeps retain their own cleanup coverage until superseded; wrapping the pending cursor catches earlier newly queued lineages. Legacy attribution indexing advances 200 rows per call; owner requests explicitly retry while building, and marker alarms return unfinished and reschedule. Node metadata listing now starts at the greater of prefix and cursor, avoiding a cursor predicate that could scan earlier unrelated keys.
+- **RR1-M7 deviation, requiring review.** The earlier marker-on-object deviation remains; derived per-object path pointers add another provisional privacy/storage/write-amplification deviation. The account metadata is a portable ordered key/value store; on Workers it is the Durable Object storage KV API, whose values are not addressable from SQL, so selecting a JSON attribution field would traverse unrelated objects. This implementation therefore uses pointers in the same transaction as the authoritative record. (Corrected by review follow-up 6 below: expression indexes are not Node-only. Durable Object SQLite supports them on ordinary tables, but not on the KV API's backing table.) Equal writer/creator pointers are deduplicated (one pointer for the ordinary creation case); a distinct creator can require a second pointer. Unchanged attribution does not rewrite pointers. Pointers contain existing record paths, no contents, and have no external provider index or production API. They live under the existing derived/transient `storage/producer-gc/` family; conversation maintenance uses the existing transient `conversation/sweep/` family, so export files were left untouched. These choices are provisional, not approval of an RR1-M7 exception.
+- **BindleBox timeline and replay expiry (#4).** Persisted causal ordering uses a resumable materialized Kahn traversal, exact event-ID tie ordering and missing-parent tracking. Late parents, edits/retractions and delegation quarantine invalidate the generation; an incomplete generation returns `conversation_index_building`, never a partially ordered/partially quarantined page. A safe dependent-message append avoids rebuilding an already exact order. Pages read the requested projection plus bounded revision/body lookups. Replay deadlines are indexed transactionally, legacy replay rows migrate in 32-row slices, and sweeps use deadline/room cursors. Test fixtures explicitly drive resumable reads; direct-operation tests continue to meter each request.
+- **Legacy conversations (#5).** Collected rooms leave resumable history-cleanup jobs. Reinvitation cannot race unfinished history cleanup. Dead letters have peer/oldest and expiry pointers; replay receipts have expiry pointers. A shared sweep budget covers migration, cleanup, deadlines and rooms, with continuation alarms; future receipts cannot starve room collection. Peer recovery queues bounded redrive jobs rather than scanning all dead letters, and rechecks the indexed peer/code in the transaction. Fixed a partial-budget cleanup bug from the interrupted implementation that could discard a job before all history was removed.
+- **Retention totals (#6).** SQL catalog triggers maintain item contributions and per-unit totals with each insert/update/delete, atomically with catalog mutations. Owner/collection moves and object changes remove the old contribution and add the new one. Existing catalogs backfill at most 200 source rows per call, safely interleaved with writes/deletes/moves. Ordinary inventory has no message-wide GROUP BY; audit tests retain the full aggregate as an independent oracle. Existing exact-accounting reconciliation, unknown-size behavior and monotonic retention deadlines are preserved.
+- **Key tombstones (#7).** Exact SHA-256-addressed membership rows compare actual kids (no Bloom filter), alongside an append-page pointer and bounded archive pages. Both legacy layouts migrate once atomically before relying on the index. **Cold migration is deliberately not bounded:** 12,800 old kids read 131 list rows plus 12,813 gets / 519,664 bytes on the first prune. Subsequent absence/prune never rereads all archive pages. The added exact-membership rows are an explicit storage/write tradeoff for anti-reuse lookup work.
+- **Directory working set (#8).** Compact identity/key verification material has a byte/entry-bounded cache independent of disposable full documents/move history. Background verification refresh can reuse compact material; full-history callers still fetch the complete document after eviction. Existing freshness, refresh-ahead, durable pin and revocation bounds are unchanged. Each tier retains its documented cap; combined memory can exceed the former single-tier cap, and serialized-byte accounting is not heap RSS.
+
+**Before/after local probes:** original evidence is `scratchpad/scale2/REPORT.md`; final scripts, JSON, logs and report are under `/private/tmp/claude-501/-Users-raystubbs-Projects--3sln-3sln-me/8f763b0e-277c-4c0c-b7f0-8c3d4fc70450/scratchpad/scalefix2/`. `run-final.py` uses the original `common.mjs` metering and 115-second subprocess timeout; all seven final scripts exit zero. Rows below count list-returned values; bytes include successful point gets. These are not physical SQL read counters. Point-get counts and full timing/migration limitations are in that report.
+
+| Scenario | Before rows / read bytes / ms | After rows / read bytes / ms |
+|---|---|---|
+| Marker batch: 200 objects, 5k lineage + 5k keep history | 10,200 / 971,670 / 82.303 | 1,001 / 171,133 / 38.633 |
+| Full summary: 50k objects across 10 apps | 50,000 / 9,039,868 / 466.129 | 5,000 / 1,049,073 / 61.638 |
+| Remaining deletion pass: same fixture | 49,800 / 11,405,312 / 600.382 | 4,800 / 3,515,161 / 365.455 |
+| BindleBox page40: 10k events | 10,000 / 5,691,012 / 46.815 | 40 / 9,894 / 1.044 |
+| BindleBox idle sweep: 10k replay rows | 10,001 / 290,330 / 12.739 | 2 / 638 / 0.084 |
+| Legacy collect room: 1k history refs | 1,001 / 177,554 / 8.932 | 1 / 565 / 0.436 (cleanup resumes later) |
+| Legacy redrive: one free slot, 4,939 dead tasks | 2,111 / 3,115,325 / 18.913 | 64 / 93,575 / 0.632 (one actually moved) |
+| Retention: 100k messages, 10 units | 10 returned; 100k SQL inputs inferred / 338 / 75.564 | 10 totals / 338 / 0.102 |
+| Warm key absence: 12,800 tombstones | 104 / 507,182 / 2.158 | 4 / 1,303 / 2.127 |
+| Warm key prune: same history | 331 / 1,526,374 / 12.163 | 31 / 8,936 / 0.855 |
+
+At 5,000 maximum-size directory documents, verification entries improve **323 → 5,000**, evictions **4,677 → 0**, verification-cache serialized bytes **49,282,048 → 1,655,000** (full documents now have their separate capped tier). Fixed-size target/history regressions establish flat rows/bytes with unrelated growth. Marker probe seeding was corrected to select a lineage actually owning all 200 objects first at every scale; its summary target now matches those objects, whereas the original history-summary fixture matched none. Dirty timeline/replay/dead-letter indexes are warmed through their bounded migration before steady-state measurement. Initial probe runs overlapping full suites were materially slower; reported wall times are the final rerun after suite completion, not production throughput guarantees.
+
+**Regression and security evidence:** `tests/producer-scale-work.test.mjs`, `tests/bindlebox/conversations-scale.test.mjs`, `tests/retention-totals-scale.test.mjs`, `tests/identity-directory-scale.test.mjs` and `tests/worker/retention-totals.test.mjs` cover every requested cliff with metered row/byte bounds. Additional checks cover pointer rollback/overwrite/delete, resumable legacy migration, keep coverage after supersession, exact late-parent order and quarantine invalidation, cleanup convergence, room-sweep fairness, actual target-peer redrive, exact anti-reuse after migration, directory expiry and seeded accounting chaos with moves/deletes and rollback. The workerd totals regression asserts flat **actual SQL cursor rowsRead** at 100 versus 10,000 messages. Existing generation-fence, created-file-only default deletion, explicit changed-file opt-in, consent/quarantine, retention-deadline and anti-reuse suites pass.
+
+**Final verification (shared checkout, local evidence):**
+
+- `npm test`: **3,621 passed, zero failed**, zero skipped.
+- `npm run test:worker`: **93 passed, zero failed**, zero skipped.
+- `npm run test:ui-state`: **471 passed, zero failed**, zero skipped.
+- `npm run test:bindlebox`: **226 passed, zero failed**, zero skipped.
+- `git diff --check`: passed. No native-browser UI changes were made by this workstream; UI-state/DOM coverage ran. The Worker suite includes actual workerd, and probes use the real local SQLite adapter; external delivery and provider conformance remain unverified.
+
+Earlier runs exposed the interrupted implementation's export-inventory namespace omission and the archive fixture's missing timeline-build retry, both fixed here without editing export implementation. An overlapping run also observed a transient syntax error and later a registry superclass mismatch during concurrent flags edits; a focused rerun and the final full suite pass after that separate work settled. Reserved organization/admin/flags/export/service-worker/Drive implementations were not edited by this workstream. All design choices above await reviewer/date/outcome sign-off; no approval is inferred from passing tests.
+
+
+**Review follow-ups (2026-10-24, implemented locally, provisional and unsigned):** these fix review findings on this entry. No commit or deployment. For every code item, a check in a scratch copy of the tree confirmed that the new regression test fails once that fix is reverted.
+
+1. **M1: legacy conversation receipts were never collected.** `conversationInbox` (`packages/conversations/runtime.mjs`) wrote `conversation/inbox-message/` receipts through the raw account store, bypassing ConversationService's wrapper, so the post-migration sweep never saw them. The due/dead-peer projection wrapper is now `conversationIndexedMetadata`, an idempotent Proxy exported from `packages/conversations/index.mjs`. AccountController applies it to its whole metadata store, outside the producer and intent wrappers, the same way `producerIndexedMetadata` is applied. ConversationService still applies it for standalone stores; the wrapper returns an already-wrapped store unchanged. Audit: no other writer of indexed families (`conversation/dead/`, `conversation/inbound/`, `conversation/inbox-message/`) exists outside ConversationService. Rooms and history rows are not indexed families. Shelving delete/restore now passes through the wrapper and rewrites the same projections idempotently. Regression: `tests/conversations-receipt-index.test.mjs` drives the real runtime write path after the index migration finished, then checks both the due pointer and collection after retention.
+2. **L1: BindleBox archive import bypassed the new indexes.** `applyBatch` in `packages/bindlebox-engine/domains/archive.mjs` now writes `replayDue` for each imported `conv/replay/` row and calls `dirtyTimeline(tx,cid)` for each imported `conv/event/` row. Missing-parent markers are timeline-derived and not archived. Invalidation forces the rebuild, whose clear phase removes stale `missing/` markers and whose scan recomputes them. The live fast-path append runs only on a `ready` state, so it never trusts markers from before the import. Regression: `tests/bindlebox/archive-scale-review.test.mjs` uses a new mailbox that already migrated replay rows and holds a ready, empty materialized order.
+3. **L2: `knownResource` for apps with more than 5,000 objects.** It now runs a bounded per-resource probe instead of reading the connection's first 5,000 pointers, and adds no pointer family. It skips from generation to generation through the existing `producer/<connection>/<generation>/` pointers and lists only this resource's encoded `hosted/` and `drive/object/` path ranges in each generation, checking at most 4 pointers per range (`PROBE_POINTERS`). It visits at most 64 distinct writer generations (`PROBE_GENERATIONS`) and fails closed (`not_found`) past that. This is a documented bound, not a full guarantee. Regression in `tests/producer-scale-work.test.mjs`: 5,001 objects in another resource, with a later-generation negative case.
+4. **L3: redrive dropped its job early.** When a full page of expired backlog sat at the head of the peer index, `redrive` moved nothing and the job was deleted. `redriveBatch` now reports `more` when the page was full (`found.size===limit`), or when the outbox had no room. The drain keeps the job in both cases. `redrive()` still returns the moved count. Regression: `tests/conversations-scale-review.test.mjs`.
+5. **L4: marker-GC `protectedOwn` was too coarse.** The pass now records each own-keep scope that protected an object (`protectedScopes`: a resource, or `~all`; at most 128). At finalization it rereads each recorded scope's keep row and restarts the pass if any of them is no longer active, even while another scope stays active. A legacy in-flight `protectedOwn` keeps its old rule. Regression in `tests/producer-scale-work.test.mjs`: two resource keeps, one superseded after the first batch.
+6. **Correction: expression indexes and RR1-M7, provisional conclusion.** The earlier sentence called expression indexes Node-only. That was wrong. A local workerd probe (Miniflare, `useSQLite`) created a partial expression index on `json_extract(value,'$.producer.connection')`/generation over an ordinary DO SQL table. `EXPLAIN QUERY PLAN` used it as a covering index, and 20 matching rows out of 2,000 read 20 rows. Node `node:sqlite` plans the same index. The same probe was refused (`SQLITE_AUTH`) when it read or indexed the DO KV API's backing `_cf_KV` table, which holds the Worker account metadata. **Conclusion (provisional, unsigned):** expression indexes work on both platforms only for records stored as JSON text in an application SQL table. Removing the per-object pointer would mean moving the authoritative `hosted/` and `drive/object/` records out of the portable ordered KV metadata into such a table on both platforms. That is a storage-layer migration across the transactional metadata boundary, outside this fix round. It would also not remove the RR1-M7 concern: the index B-tree still stores the derived connection/generation per object, so it is a comparable privacy/storage deviation maintained by the engine rather than the application. The pointers stay for now. The JSON-table alternative is recorded for the RR1-M7 reviewer. This is local evidence only, not production or provider conformance.
+7. **Note (no code change): mixed-version rollout caveat for key tombstone pages.** After the new code commits an owner's tombstone `state` marker, anti-reuse lookups trust only the exact `hash/` membership rows. During a rolling or gradual deployment, an older-version instance pruning that owner's keys would append to tombstone pages (or legacy per-kid rows) without writing membership rows or advancing the state. The new version would then miss those kids, and a pruned kid could be reused. The reverse direction is safe: older readers still scan pages with `kids` arrays and ignore the owner-less hash/state rows. Before release, the rollout must make sure no older writer runs for an owner after the new version has migrated that owner. Examples are a single code version per identity object, or a drain/cutover deployment, or a future guard that re-migrates when legacy rows or unindexed page members appear after `state`. Not implemented. It falls under the production gates and is not inferred from passing tests.
+
+A first full run caught a layering bug in the new wrapper. It had captured the inner store's `transaction` when it was built, which bypassed fault/tracing overrides installed later on the wrapped store. Two `tests/message-postbacks.test.mjs` cases failed. The wrapper now resolves the inner `transaction` per call, and the M1/L3 revert checks were rerun after that change.
+
+Verification after these follow-ups (shared checkout, local evidence; other agents' concurrent work is present):
+
+- `npm test`: **3,655 passed, 1 failed**, zero skipped, zero cancelled. The failure, `tests/redirect-management-signin.test.mjs:36`, is a flaky assertion outside this workstream: a random base64 sealed transaction happened to contain `end`, which matched `/verifier|end|mover/i`. Three isolated reruns passed 6/6. The known `tests/engine-producer-summary.test.mjs` "M1 Drive" case, owned by the Drive agent, passed in this run.
+- `npm run test:worker`: **93 passed, zero failed**, zero skipped.
+- `npm run test:ui-state`: **471 passed, zero failed**, zero skipped.
+- `npm run test:bindlebox`: **227 passed, zero failed**, zero skipped.
+- `git diff --check` on the touched files: passed.
+
+Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-24 — ORG-12d support adjudication
+
+**Implemented locally** ([organizations design §12d](docs/architecture/organizations-design.md#12d-org-12-break-glass-an-organization-whose-owner-is-gone-3slnme-provider-policy), slice ORG-12d). Still behind `ORG_BREAK_GLASS_ENABLED` (default off). It runs on loopback fixtures, a local WebAuthn verifier and the offline Polar model. That shows local behaviour only, not production operator identity, key custody or provider conformance. Every item is **provisional** (coordinator, not signed off by the user).
+
+**Operator assertions (`packages/identity/operator-assertions.mjs`), replacing the HMAC shared secret in production wiring:**
+- **Signing approach (provisional):** ES256 (ECDSA P-256), the algorithm and JWK codec of the identity key registry.
+  - The admin service generates the key pair in the admin store on first use. The private JWK is kept only sealed under `KEY_ENCRYPTION_KEY`, with the same AES-GCM sealing the identity key registry uses (`packages/runtime/secrets.mjs`).
+  - The organization writer verifies with the published public key (`operator-key/<kid>`) and never reads the private key.
+  - Without `KEY_ENCRYPTION_KEY`, nothing is issued (`operator_assertions_unavailable`, 503).
+  - **Residual:** the admin service and the account objects share one deployment and one secret environment, so the separation is logical, not a hard trust boundary.
+- **The assertion:** `oa1.<payload>.<signature>`. The signature covers a domain-separated payload: issuer, kid, jti, operator, the `support.org-break-glass` capability, the engine's canonical scope (organization, process kind, process id, decision, sorted exclusions), and issue and expiry times, valid for 5 minutes.
+- **The durable registry:**
+  - `operator-assertion/<jti>` is committed in the same admin-store commit as the audit intent and the rate windows. Nothing is valid before that commit.
+  - The verifier checks the signature, the issuer, the scope, the operator and the lifetime. It then requires an issued, unused registry row matching the scope and kid, and marks it used once under the store's revision check, so every assertion is single use host-wide. The engine's per-process nonce list stays as a second check.
+  - Finally it re-checks that the operator still holds the capability: an administrator role plus `support.org-break-glass` through an internal role, with no hold.
+  - Internal provenance and active status need the identity record. They are checked at issue, at most 5 minutes before verification (residual).
+- **The capability (`roles.mjs` `OPERATOR_CAPABILITY`):** a catalog that classifies it `user`, or puts it in a delegable or user-class role, is invalid. So it is boot-assignable only and never delegable, as §12d.8 requires.
+- **Wiring:** `organizationAdminPorts` gives the account objects `ORGANIZATION_OPERATOR_ASSERTIONS` and `ORGANIZATION_SUPPORT_CASES` over the admin store, in both adapters (the Worker reaches the store through `ADMIN_AUTHORITY`). `hmacOperatorAssertions` stays as the test double for the older suites only.
+
+**Admin service (`packages/identity/admin.mjs`), as engine operations `org-cases.{list,get,decide,audit}`:**
+- **Operators** are administrator accounts, never boot. They hold the capability, under the console's passkey-only step-up (15-minute read window, 5-minute mutation window). Each decision also needs its own fresh passkey assertion at the HTTP boundary (`adminOperatorPasskeyContext`, one use), as for assisted deletion.
+- **Decisions:**
+  - Break-glass: `acknowledge`, `note` and `abort` (one operator); `proceed` with exclusions, `uphold` and `reject` (two operators).
+  - Lapse claims: `close` (one operator) and `proceed` (two).
+  - A reason category and a 10–500-character reason are required for everything except acknowledge (note needs only the reason). The audit keeps a digest of the reason, never its text.
+- **Daily limit:** 20 decisions per operator in a fixed 24-hour window (provisional). It is spent in the same commit as the per-actor window; `AdminStorage.commit` now accepts several windows and checks all of them before spending any. Every issued assertion counts, including those the writer later refuses.
+- **Where the rules live:** two distinct operators, barred pairs, operator conflicts, exclusions, the last channel and tier-1 finality are the writer's rules (unchanged since ORG-12a). The admin service refuses early, from the organization's current view, the operator's own pending proposal and a barred operator's proceed, which saves an assertion.
+- **Audit:** every operator action writes the hash-chained admin audit: `org-case.list`/`view` reads, `org-case.decide` intent then applied or failed with the writer's outcome or code, and `operator-key.create`. `org-cases.audit` returns these newest first, scanning at most 1,000 entries per page.
+
+**Queue (engine hunk, `packages/orgs/break-glass.mjs`):**
+- `BreakGlassService#beforeCommit` derives the organization's support case from the record. That is a held claim, an open contest or an escalated lapse claim; the processes exclude each other, so there is at most one.
+- On any change it queues one critical `case-index` outbox effect with a rising sequence. The drain writes `org-case/<org>` in the admin store, and a lower sequence never overwrites it. Closed cases stay as tombstones.
+- Rows are routing only: the admin service confirms every case with the writer (`orgs.breakglass-case`) before showing or deciding anything. Organizations with no case never write anything.
+- The case view now adds `disputed`, `undeliverable` and `excludable` per channel (the writer's own exclusion rule), the proposing operator, the proposal's expiry, `proceedBlocked`, the claim's transition timeline, the escalated lapse claim and the public handle. It still carries no addresses and no statement text.
+
+**Routes (`packages/runtime/admin-org-cases.mjs`, mounted in `admin-http.mjs` next to the flags routes):** `POST /api/admin/org-cases/{list,get,decide,audit}`.
+- Requests must be same-origin, with no query string. The `admin` actor header is required; boot is refused with `operator_capability_required`.
+- `decide` verifies authority, then requires `passkeyResponse` and confirms it through `/api/admin/step-up`, which accepts passkeys only.
+- **Flag gate (provisional reading):** seizing decisions (`proceed`, `uphold`, `reject`, including lapse `proceed`) answer the uniform 404 while `ORG_BREAK_GLASS_ENABLED` is off for the organization. The queue, the case and the safe direction (acknowledge, note, abort, close) are not gated, following §12d.12 and the flag registry's retention reason ("support holds … are never gated"). This narrows the instruction "flag-gate the routes"; review it.
+
+**Console (`apps/web/src/{bl,ui}/admin-org-cases.mjs`; built by a forked UI agent against the contract above, reviewed by the coordinator):**
+- A new "Organization cases" view for administrators (hidden in boot mode), in English and Spanish (143 catalogue keys). It has:
+  - the queue;
+  - the case detail: timers, track and causes, and evidence as channel kinds with ages and disputed, undeliverable and excluded badges, with no addresses;
+  - the timeline;
+  - single-operator actions;
+  - propose and approve, where an approval sends the proposal's exact exclusions;
+  - an exclusion picker limited to excludable channels that refuses excluding every channel;
+  - contest uphold and reject;
+  - lapse close and proceed;
+  - barred and flag-off notes;
+  - decisions left today;
+  - the operator audit.
+- Every decision takes a passkey through the real `/api/admin/step-up/begin`.
+
+**Readings and deviations (provisional, for review):**
+1. The routes live in `packages/runtime/admin-org-cases.mjs`, not `routes/` as the plan proposed, beside `admin-flags-http.mjs`.
+2. The flag gate covers the seizing direction only (above).
+3. An assertion is spent when the writer's verifier accepts it, before the writer's own rules run, so a refused decision still uses one assertion and one of the 20 daily decisions.
+4. Lapse-claim `proceed` is gated by the break-glass flag too (the conservative choice; `close` is not).
+5. No signing-key rotation tooling exists. A key can be retired (`retiredAt`), which stops it verifying.
+6. Excluding every channel answers `invalid_exclusion` before `last_channel` when some channel was never excludable (the writer's existing order).
+
+**Tests:**
+- `tests/orgs-break-glass-support.test.mjs` (15 tests, engine level, the real AdminService, IdentityService, AdminStorage and production verifier against the break-glass world):
+  - the signer and registry (sealed key, published public key, used row; no key, no issue);
+  - forged assertions: a tampered payload, a foreign key under the real kid, the HMAC double, an unregistered assertion, altered signature bytes, a retired key;
+  - a replay, in this process and host-wide, and an expired assertion;
+  - every other scope (organization, process, decision, kind, exclusions, operator), with the assertion still usable for its own scope afterwards;
+  - a single operator cannot proceed, through the admin service and with a registry-valid assertion straight to the writer; one operator can hold, note and abort;
+  - barred pairs (both operators refused at the admin service and at the writer; a new pair succeeds);
+  - the daily limit (20, then `decision_limit` with nothing forwarded; per operator; the window reopens after 24 hours);
+  - a non-capability administrator, boot, a capability revoked between issue and use, a held operator, and delegable or user-class catalogs;
+  - a password step-up refused, no decision without its own passkey assertion, and the HTTP `/api/admin/step-up` password refusal;
+  - the flag gate;
+  - the queue: indexing, tombstones, stale sequences and no addresses;
+  - a contest upheld by two operators;
+  - a lapse claim (proceed by two, close by one, kinds never cross);
+  - the audit, including a writer `operator_conflict` recorded as failed and the chain verifying;
+  - the HTTP routes.
+- `tests/orgs-break-glass-support-chaos.test.mjs`, seeded (`CHAOS_SEEDS`, default 6): operators racing on one held claim. The schedule includes two operators proposing at once, one operator twice at once, racing replays of one assertion, excluded-channel disputes that bar a pair, and clock jumps across the daily window. Invariants S1–S6, with a coverage check that final, barred, replay and approved races all occur. 60 seeds (from 100) passed once.
+- **Guard removal (scratch copy):** 16 new guards were removed one at a time, and each made the suite fail. They are the signature, the used-marking, the scope, the registry row, the operator registry, the retired key, the daily window, the capability, the passkey evidence, the flag gate, boot refusal, the non-delegable catalog rule, the case index, the sequence check, and the two early refusals.
+- `tests/browser/admin-org-cases-engine.mjs` (8, UI state) and `tests/e2e/admin-org-cases.test.mjs` (1 test, 16 variants: Chromium and Firefox, en/es, 390/1280, light/dark), screenshots `artifacts/browser/admin-org-cases-*`.
+  - **Environment limitation:** the e2e runs the real admin shell, a real boot claim, administrator onboarding with Chromium's virtual-authenticator passkey and real step-ups. Only the four `/api/admin/org-cases/*` routes are fixture-fulfilled, because seeding a held claim and a capability-holding operator through the Worker was impractical. The "second operator" is the fixture switching identity. Firefox variants are view-only, since Firefox has no virtual authenticator.
+
+**Before production:** the design's gate table now marks each gate.
+- **Verified operator identity:** met locally; production still needs a key custody review, rotation tooling, real WebAuthn evidence and an operator onboarding procedure.
+- **Hash-chained organization audit:** partly met (no external anchor).
+- **Verified notice delivery:** open.
+- **Terms and privacy text (ORG-13):** open.
+- **An independent security review of ORG-12a–d:** open; ORG-12d has had none.
+- **Real-browser verification:** partly met.
+
+**Shared checkout:** other agents edited files outside this slice during this work (flags, identity keys, retention, bindlebox, conversations). The counts below include their concurrent changes.
+
+Verification (local evidence only):
+- `npm test`: 3,621/3,621.
+- `npm run test:organizations`: node 159/159, engine 57/57, browser 130/130, e2e 10/10.
+- `npm run test:admin-deletion`: 28/28, 4/4, 16/16.
+- `npm run test:worker`: 93/93.
+- `npm run test:ui-state`: 471/471.
+- `npm run test:e2e`: 329 tests, 325 passed, 0 failed, 4 skipped (the optional WebKit checks).
+
+Not committed.
+
+**Review follow-ups** (independent review, 2026-10-24: no High, 3 Medium, 7 Low; all fixed and provisional). Each fix has a regression test in `tests/orgs-break-glass-support-review.test.mjs` (9 tests). The UI parts are covered by `tests/browser/admin-org-cases-engine.mjs`. Each test fails when its fix is reverted, checked one revert at a time in a scratch copy (28 reverts, all failing).
+- **M1, a revoked or held operator's proposal still counted as one of the two operators:**
+  - The engine `operators` port gains `registered(sub)`. The production verifier backs it with the admin store's registry; the HMAC double with its predicate.
+  - Before approving, `orgs.breakglass-resolve` and `orgs.claim-resolve` re-verify the pending proposer outside the transaction. An inactive proposer's proposal is cancelled, with an organization audit entry `organization-support-proposal-cancelled` (reason `proposer-inactive`), and the call becomes a new proposal. If the proposal changed in between, the call is refused with `conflict`.
+  - The admin service remembers each operator's pending proposals (`operator-proposals/<operator>`, the 72 h approval window, at most 32). When boot revokes the capability (`setRoles`) or suspends the operator, it sends the new system operation `orgs.breakglass-proposal-cancel` to each of those organizations. Each cancellation is audited in the admin audit (`org-case.proposal-cancel`) and in the organization audit.
+  - A catalog change that removes the capability from a role is not cancelled proactively. The approval-time re-check covers it.
+  - The case view adds `proposal.proposerActive`. The console then offers a new proposal instead of an approval.
+- **M2, the kill switch blocked the reinstatement remedy.** `uphold` is no longer gated by `ORG_BREAK_GLASS_ENABLED` (`ORG_CASE_GATED` = proceed, reject; same in the console). It stays a two-operator decision.
+  - **Reading (provisional):** upholding a contest restores the former owner, which is the safe direction a kill switch must never block. Rejecting leaves the break-glass owner in place, so it stays gated with proceed.
+- **M3, a lapse-claim reason reached the claimant.** The admin service forwards only `reasonDigest` (the SHA-256 of the text) to both writers; new optional `reasonDigest` inputs exist on `orgs.claim-resolve` and `orgs.breakglass-resolve`. The organization audit carries only the digest. Free-text `note` and `reason` are still accepted from other system callers.
+- **L1, a 281–500-character lapse reason spent an assertion and a decision before failing:**
+  - Lapse reasons are capped at 280 characters in the admin service and in the console (`invalid_reason`).
+  - `resolveClaim` validates `note` before `verifyOperator`, so a bad note never spends an assertion.
+- **L2, the reason text was kept nowhere:**
+  - The text is stored in an admin-only notes row, `org-case-note/<sha256>`, written in the same commit as the decision's audit intent. The intent's audit entry carries the full digest.
+  - `org-cases.audit` attaches the text for operators.
+  - The console label now reads: "The organization sees only a digest. The text stays in an admin-only note that operators read in the operator audit."
+- **L3, closed-case tombstones filled the queue:**
+  - Only live cases sit under `org-case/<org>`, and a closed case's row is deleted.
+  - The highest applied sequence is kept in `org-case-seq/<org>`, so late effects are still refused.
+- **L4, after a key was retired the signer kept issuing with it (rotate on retire, recorded as provisional):**
+  - When the current signer's published key is retired or missing, the next issue generates a new key.
+  - It replaces `operator-signer` under compare-and-swap on its revision, audited as `operator-key.rotate`.
+- **L5, least privilege:**
+  - `AdminStorage` gains three narrow RPC methods that run inside the admin object: `verifyOperatorAssertion`, `operatorRegistered` and `applySupportCase`.
+  - Account objects receive only `narrowAdminStore(...)`, never get, list or commit. It is bound to the calling organization: Node binds the account id, and the Worker reads the account object's own `owner`. A case write for any other organization is refused before the call.
+  - **Residual:** in the Worker, the `ADMIN_AUTHORITY` binding is still present in every isolate's environment. The narrowing is in what the account code is given, not in the platform's bindings.
+- **L6, the signing key's sealing had no purpose binding:**
+  - `encryptSecret`/`decryptSecret` take an optional `purpose`, which becomes the AES-GCM additional data. Without one, the additional data stays `3sln.me/credentials/v1`, so existing records are unchanged.
+  - The signing key is sealed under `operator-signer/<kid>`.
+- **L7, the per-decision passkey was not bound to the decision:**
+  - The new `POST /api/admin/org-cases/challenge {org, kind, process, decision, exclude?}` begins the step-up and stores `operator-challenge/<operator>` with the challenge, a digest of the decision and a 5-minute expiry.
+  - At decide, the route reads the session's pending challenge before verifying the passkey. The decision requires that challenge and the digest of the decision itself, and consumes the row in its intent commit.
+  - The console asks for this challenge instead of `/api/admin/step-up/begin`.
+- **Before production:** the gate table gains a row, open and procedural. The two-person rule holds only if boot onboarding binds each operator account to a distinct human and a distinct authenticator.
+
+**Wargame 4 admin items** (deferred to this slice by [Operator and lifecycle wargame fixes](#2026-10-24--operator-and-lifecycle-wargame-fixes), L3 and L4). Tests are in `tests/admin-audit-claims.test.mjs` (5) and `tests/browser/admin-console.mjs` (1 new).
+- **(a) audit reads:**
+  - `AdminService.audit` charges the per-actor read window (300 per 10 minutes) in a commit that writes no audit entry.
+  - `verify: true` (the full chain walk) is boot-only (`verify_boot_only`). Administrators keep the checkpointed check of the page they read.
+  - `org-cases.audit` is charged the same way.
+- **(b) claims listing:**
+  - The overview takes `claimsAfter` and `reservationsAfter` and returns `claimsNext` and `reservationsNext`. The console has "Show more claims" and "Show more reservations".
+  - Finished claims (revoked, or expired without redemption) are pruned 30 days after expiry or revocation, at most 20 per mint, scanning from a rotating cursor. Their name pointer is removed too. Their audit entries stay, and each prune is audited (`claim.prune`). Redeemed claims are never pruned, because they are internal provenance.
+  - An administrator may hold at most 20 outstanding claims (`claims_outstanding_limit`); boot is not capped.
+  - Grace, batch and cap figures are provisional.
+- The wargame's `rate-window-collision` repro was not assigned to this slice, and the operator wargame entry above fixed it in the flag service.
+
+**Readings (provisional, for review):**
+1. A proposal by an inactive proposer becomes the approver's new proposal; it is not refused.
+2. An assertion is still spent once the verifier accepts it, before the writer's rules run (deviation 3 above).
+3. The notes row is plain within the admin store, not sealed. Identical reason text shares one row, which keeps its first author and context. The audit entries keep each decision's own operator.
+
+Verification after the follow-ups is listed below.
+
+**Push subscriptions on admin suspension** (operator/lifecycle wargame M1, applied to `admin.mjs` at the coordinator's request):
+- Administrator suspension, closure (its auto-suspend) and reopening each end the account's sessions. They now queue the ended sessions' public ids with the identity service's existing `queuePushEnds(account, ids)` in the same compare-and-swap, then run `flushPushEnds(owner)` after it.
+- A failed flush stays on the account (`pendingPushEnds`), and the identity service retries it on the account's next save or owner view. No parallel mechanism was added.
+- Tests: `tests/admin-push-ends.test.mjs` (3). Removing each of the 4 hooks (three queues and the suspend flush) fails a test.
+
+**UI and test adjustments:**
+- The console's "Verify entire chain" button now shows in boot mode only, and the admin e2e asserts that administrators do not see it.
+- The operator chaos test's expected refusals gain `step_up_required` and `unauthorized`: an operator racing two decisions holds one bound challenge at a time.
+
+Verification after the follow-ups (local evidence only, on a checkout shared with other agents):
+- `npm test`: 3,682/3,682.
+- `npm run test:organizations`: node 168/168, engine 57/57, browser 130/130, e2e 10/10.
+- `npm run test:admin-deletion`: 28/28, 4/4, 16/16.
+- `npm run test:worker`: 93/93.
+- `npm run test:ui-state`: 473/473.
+- Admin e2e: `tests/e2e/admin-console.test.mjs` 1/1. `tests/e2e/admin-org-cases.test.mjs` 1/1 (16 variants), run in its own Worker as the default runner does; run together with admin-console in one Worker it skips by design.
+- `npm run check:worker`: passed (dry run).
+- Operator chaos: 60 seeds (from 500) and 40 seeds (from 300) each passed once.
+- The full `npm run test:e2e` was not rerun after the follow-ups.
+
+Not committed.
+
+Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-24 — Operator and lifecycle wargame fixes
+
+Wargame 4 red-team findings on operator and lifecycle surfaces. Each repro now has a permanent regression test. Each fix was reverted on its own in a scratch copy of the tree (33 single-fix reverts), and every revert made its test fail.
+
+**Medium:**
+- **M1 — push survives session revoke.** A push subscription now records the public id of the session that created it. The subscribe route supplies the id; the request body cannot.
+  - Identity writes `pendingPushEnds` in the same CAS that ends the sessions. That covers revoke, cap eviction, recovery and ordinary sign-out of the session's own chain.
+  - `flushPushEnds` runs the row after `save` and again on the owner view, following the `pendingSever` retry pattern. It goes through the new `accountChannelsPort.endSessions`, and the row clears only after the account object acknowledges.
+  - The account object deletes the bound subscriptions. It keeps a 25 h end marker per session, so a late subscribe from an ended session is refused, and it drops the ended sessions' pending Drive OAuth state.
+  - "Sign out other devices" also removes every row not bound to a kept session. That includes legacy unbound rows. The browser's own subscription id is kept: the web client now sends `pushSubscription` with revoke-others.
+  - Before any message push, `claimDue` drops rows bound to an ended session. Notice-channel counts and security notices (`accountChannelState`) skip them too.
+  - Deletion and portability channel snapshots are copies taken when the request starts (R1-M2: deleting rows later cannot suppress notices). A device revoked during an in-flight request keeps receiving that request's notices; a request started after the drain no longer sees it.
+  - The identity edits are minimal: `queuePushEnds`, `flushPushEnds`, `syncPushEnds` and four call-site hunks.
+  - With no account-channels port, nothing is queued, so there is no extra CAS.
+- **M2 — shared rate keys.** The flag service has its own windows: `flags-admin-<owner>`, `flags-read-admin-<owner>`, `flags-boot` and `flags-read-boot` (`flagRateKey`). The admin service is unchanged.
+- **M3 — leftover env force-on during an outage.** The pre-console compatibility rule now applies only when an empty snapshot was actually read and is usable (`flags.usable`). A dependency whose reason is `outage` or `outage-last-known` never returns the legacy env value.
+- **M4 — exports that never end.** The changes are in `export-generation.mjs` and `account/exports.mjs`:
+  - A non-ready job counts consecutive failures. A second `export_part_missing`, 24 failures or a 3-day deadline from the job's first step marks it `failed` with the last code and `cleanupPending`, then runs `cleanup()`.
+  - Failures not caused by the owner's own data volume are marked `uncharged` and no longer count against the weekly allowance. The charged codes are `export_pin_budget`, `export_row_limit` and `export_metadata_limit`.
+  - The account alarm backs off from 60 s, doubling to 1 h.
+
+**Low:**
+- **L1 — unbounded request/cancel loop.**
+  - Owner requests are limited to 3 per account per 24 h inside `schedule()`. Admin bases are exempt, so an owner loop cannot block an admin closure.
+  - Receipts are capped at 16 and expire after 30 days.
+  - The routes allow 10 POSTs per session and 60 per /24 every 10 minutes.
+- **L2 — no wake-up anchor during the Polar call.** After the commit and before any external call, the request writes its due row and arms a 5-minute backstop alarm.
+- **L5 — one stale record poisons the snapshot.**
+  - Storage reads validate records one at a time (`validateSnapshot(…,{quarantine:true})`). A rejected record is listed in `quarantined`, and only that flag follows its outage policy, never legacy env. Writes stay strict.
+  - The console list shows quarantined records (en/es).
+  - New `flags.retire` removes one quarantined stored record. It is critical and audited: passkey step-up, reason, typed name and expected version. After review, a still-registered flag's record is replaced by the off record (not deleted).
+  - `RETIRED_FLAGS` was added to the registry, guarded by `tests/flags-registry-removals.test.mjs` with the name lock `tests/fixtures/flag-registry-names.json`.
+- **L6 — stale writer snapshot.** An account writer re-reads the authority single-flight once its copy is 5 minutes old, even at the edge's version.
+- **L7 — Drive disconnect leaves rows.**
+  - Disconnect marks the resource `drive/removed/<id>` in its transaction, then sweeps `drive/object/<id>/` and `drive/retained/<id>/` in batches of 100, at most ten per call. Leftovers resume on the next begin or disconnect.
+  - **Reconciled with AU-S6 (coordinator):** `drive/object/` rows carrying `producer`/`createdBy` evidence are kept, so What's left can still show that storage as "not deletable here". They are bounded by the 10,000-object cap and are left to the owner's What's left action or the account purge.
+  - Upload and folder journals (`drive/pending/`, `drive/folder-pending/`) are kept as evidence, as `tests/google-drive-audit.test.mjs` requires. They are already capped at 100 per account.
+- **L8 — abandoned Drive OAuth state.** Each begin prunes up to 50 expired `drive/oauth/` rows, and a session end deletes that session's row (above).
+
+**Plausible items (fixed):**
+- `ExportLayout` accepts only `['owner']`. Grant downloads go through the token-verifying `DownloadExport` adapter.
+- MCP `eraseSubject` keeps a durable per-owner cursor (`mcp/v1/erase/<owner>`), so a retry resumes.
+- The Node deletion-due sweep always starts. Each run follows the live flag port with background semantics: only the env kill stops it (`deletionDueSweepRun`).
+- `ownedBlobRef` includes `rpc-results/<owner>/`, and the purge collects journal `resultRef`s.
+- A Drive refresh that lists extra scopes moves the resource to `reauthorization_required`.
+- Flag-console reads (list, get, history, preview, evaluate, seed-verify) spend the `flags-read-*` window: 300 per 60 s, not audited.
+
+**Deferred (another agent owns `packages/identity/admin.mjs`):**
+- **L3:** admin audit reads are unbounded, and `verify` re-walks the whole chain.
+- **L4:** the admin overview lists only the first 100 claims and reservations, with no cursor.
+
+**Readings and deviations (provisional, for review):**
+1. "A live bound session" means the session has not been ended explicitly. Sessions last at most 24 h, and the client does not re-subscribe at sign-in, so treating natural expiry as revocation would silence push daily. A subscription bound to a naturally expired session stays live until revoke-others, an explicit end or a re-subscribe.
+2. The scheduled-notice quiet window was removed after review (below).
+3. The export deadline counts from `startedAt`, not `createdAt`, because generation may start after the 3-day security `notBefore`.
+4. A quarantined record of a still-registered flag must be retired, then seeded again. It cannot be edited in place.
+5. The new account key families are `push-session-ended/`, `drive/removed/` and `deletion/request-log`. The first two are classified in the export inventory; the purge removes all of them.
+
+**Tests (new):**
+- `tests/wargame4-flags.test.mjs` (5);
+- `tests/flags-registry-removals.test.mjs` (3);
+- `tests/wargame4-push-revoke.test.mjs` (3 tests: a node-server suite of 2, account object, identity retry/eviction/revoke-others/recovery);
+- `tests/wargame4-export.test.mjs` (5);
+- `tests/wargame4-deletion.test.mjs` (5);
+- `tests/wargame4-drive.test.mjs` (6);
+- `tests/wargame4-lifecycle-storage.test.mjs` (2);
+- one DOM test in `tests/browser/admin-flags-engine.mjs`.
+- Helpers: `tests/helpers/deletion-world.mjs` and `tests/helpers/export-world.mjs`.
+- **Adjusted:**
+  - `tests/flags-chaos.test.mjs` counts only audited commits.
+  - `tests/flags-engine.test.mjs` lists `flags.retire`.
+  - `tests/engine-account-export.test.mjs`: a caller-built grant actor is now refused.
+
+**Shared checkout:** other agents edited files outside this slice during this work. The counts below include their concurrent changes.
+
+Verification (local evidence only):
+- `npm test`: 3,653/3,656. All three failures are in `tests/orgs-break-glass-support.test.mjs` (ORG-12d's in-progress `packages/orgs/break-glass.mjs` and `runtime/admin-org-cases.mjs`, which were being edited during the run). An earlier run instead failed 2 `tests/message-postbacks.test.mjs` cases. Those reproduced with this slice's files at HEAD, and a later run passed.
+- `npm run test:worker`: 93/93.
+- `npm run test:ui-state`: 471/471.
+- `npm run test:deletion`: 6/6.
+- `npm run test:admin-deletion`: 28/28, 4/4, 16/16.
+- `npm run test:admin-flags`: 8/8, 27/27.
+- `npm run test:devices`: 17/17, 13/13.
+
+Not committed.
+
+Reviewer: ___ Date: ___ Outcome: ___
+
+**Review follow-ups (2026-10-24, independent review of this entry; 2 Medium, 4 Low, info):**
+- **Medium, deletion quiet window:** removed. Every new request gets its own "scheduled" notice and cancel link. A re-request minutes after a cancel left the owner holding only the dead link from the first request. The loop stays bounded by the per-account budget (3 per day), receipts and the route budgets.
+- **Medium, `flags.retire` on a registered flag:**
+  - In the same commit, it now replaces the stored record with the registry's off record (`empty()`, a fresh salt and the next revision), adds a revision-history row, and records the replacement as the audit `after`.
+  - If the env state is force-on-legacy, retire refuses unless `acknowledgeGates:['legacy-env']` is given.
+  - An unregistered (retired) name is still deleted.
+- **Low:** `accountChannelsPort.endSessions` forwards `keepSubscriptions`. Tested through the real port.
+- **Low, Drive sweep:** the per-resource cursor (prefix index, `startAfter`) now persists in the `drive/removed/<id>` marker, so kept producer rows are passed once rather than re-read forever.
+- **Low, session-end paths:** `queuePushEndsOn(account, ids, {keep, keepSubscriptions, nonce})` is exported from `identity/service.mjs` for code outside IdentityService. `transfer-out.mjs` `removeDisputers` now queues every removed live session in its CAS. It returns `endedSessions`, and its caller deletes those bound subscriptions locally.
+  - **Handed over (ORG-12d owns `admin.mjs`):** the suspend, auto-suspend and unsuspend paths (around admin.mjs:254/:344/:367). By inspection, all three call `identity.queuePushEnds` in the ending CAS and `flushPushEnds` (3 call sites) after it. This slice did not edit or test them.
+- **Low, export allowance:**
+  - Data failures (`export_payload_missing`/`changed`/`invalid`, `export_path_collision`, plus the volume codes) are charged.
+  - System failures are uncharged at most `EXPORT_UNCHARGED_PER_WEEK` (2) times per 7 days.
+- **Info:**
+  - `pendingPushEnds` is cleared by a random `nonce`, not a millisecond timestamp.
+  - The deletion channel-snapshot wording above is corrected.
+  - `drive/folder-pending/` journals (sealed tokens from failed connects) are pruned on begin after 7 days.
+  - Not acted on: the review's same-browser re-sign-in probe (`repro-relogin-push.test.mjs`) only logs. Ordinary sign-out of a session already ends its bound subscription.
+- **Tests:**
+  - `tests/wargame4-deletion.test.mjs` +1;
+  - `tests/wargame4-flags.test.mjs` +1;
+  - `tests/wargame4-push-revoke.test.mjs` +3 (real port, removeDisputers, nonce);
+  - `tests/wargame4-drive.test.mjs` +2;
+  - `tests/wargame4-export.test.mjs` +2.
+  - In a scratch copy, 10 single-fix reverts each made their test fail.
+- **Verification after the follow-ups:**
+  - `npm test`: 3,681/3,682. The one failure was the seeded chaos test in `tests/orgs-break-glass-support-chaos.test.mjs` (ORG-12d's file, edited during the run). It passed on an immediate rerun, together with `orgs-break-glass-support.test.mjs` (16/16).
+  - `test:worker`: 93/93.
+  - `test:ui-state`: 473/473.
+  - `test:deletion`: 6/6.
+  - `test:admin-deletion`: 28/28, 4/4, 16/16.
+  - `test:admin-flags`: 8/8, 27/27.
+  - `test:devices`: 17/17, 13/13.
+
+Reviewer: ___ Date: ___ Outcome: ___

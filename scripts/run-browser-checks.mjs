@@ -70,9 +70,10 @@ try{
   const code=await new Promise(resolve=>suite.once('exit',resolve));if(code!==0)process.exitCode=code||1;
 }finally{worker.kill('SIGTERM');await new Promise(resolve=>{if(worker.exitCode!==null)return resolve();worker.once('exit',resolve);setTimeout(resolve,5000).unref();});await writeFile('artifacts/browser/wrangler.log',redactIntentLog(logs));await rm(persistence,{recursive:true,force:true});await rm(configDirectory,{recursive:true,force:true});}
 
-// Federation and the authorization-entry slice each get their own fresh Worker and durable state.
+// Federation, the authorization-entry slice and the ORG-12d admin case screens (which need an unused boot token) each
+// get their own fresh Worker and durable state.
 if(process.argv.length===2){
- for(const [suite,extra] of [['tests/e2e/federation.test.mjs',{}],['tests/e2e/authorization-entry.test.mjs',{E2E_AUTHORIZATION_ENTRIES:'1'}],['tests/e2e/authorization-entry-ui.test.mjs',{E2E_AUTHORIZATION_ENTRIES:'1'}],['tests/e2e/portability.test.mjs',{E2E_PORTABILITY:'1'}]]){
+ for(const [suite,extra] of [['tests/e2e/federation.test.mjs',{}],['tests/e2e/admin-org-cases.test.mjs',{}],['tests/e2e/authorization-entry.test.mjs',{E2E_AUTHORIZATION_ENTRIES:'1'}],['tests/e2e/authorization-entry-ui.test.mjs',{E2E_AUTHORIZATION_ENTRIES:'1'}],['tests/e2e/portability.test.mjs',{E2E_PORTABILITY:'1'}]]){
   const child=spawn(process.execPath,[process.argv[1],suite,...suite==='tests/e2e/portability.test.mjs'?['tests/e2e/ui-quality-round3.test.mjs']:[]],{stdio:'inherit',env:{...process.env,...extra}});
   const code=await new Promise((resolve,reject)=>{child.once('error',reject);child.once('exit',resolve);});
   if(code!==0)process.exitCode=process.exitCode||code||1;

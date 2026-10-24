@@ -1,3 +1,4 @@
+import {producerIndexedMetadata} from '../../packages/storage/producer-index.mjs';
 import {intentIndexedMetadata} from '../../packages/intents/index.mjs';
 import {configuredArtefacts} from '../../packages/runtime/artefact-pins.mjs';
 import {siteGlobal,capability,flagsFor} from '../../packages/flags/read.mjs';
@@ -26,6 +27,7 @@ import { resolve, join, extname } from 'node:path';
 import {nodeSqlPort} from '../../packages/search/index.mjs';
 import { IdentityRepository, FixedWindowGuard, AccountController } from '../../packages/runtime/accounts.mjs';
 import {organizationOwnerChannels} from '../../packages/identity/owner-channels.mjs';
+import {organizationAdminPorts} from '../../packages/runtime/admin-org-cases.mjs';
 import {McpShardController,mcpAuthorities} from '../../packages/mcp/runtime.mjs';
 import {MCP_SHARDS} from '../../packages/mcp/service.mjs';
 import {FederationController,federationMetadata} from '../../packages/federation/runtime.mjs';
@@ -36,13 +38,13 @@ import {adminClientBlocked} from '../../packages/identity/admin.mjs';
 import {metadataClientHost,clientSite} from '../../packages/federation/client-metadata.mjs';
 import {digest} from '../../packages/messaging/store.mjs';
 import {ENTRY_SHARDS,entryShard,remoteShard} from '../../packages/federation/authorization-entries.mjs';
-import {AdminStorage} from '../../packages/identity/admin-store.mjs';
+import {AdminStorage,narrowAdminStore} from '../../packages/identity/admin-store.mjs';
 import {MemoryLinkedLimits} from '../../packages/identity/linked-approval.mjs';
 import {deviceGrantMountable} from '../../packages/runtime/device-grant.mjs';
 import {attachAppSessions} from '../../packages/federation/device-authorization.mjs';
 import {lifecycleIdentityPort,lifecycleAdminHoldPort,deletionHoldPort,deletionAdminAuthorityPort} from '../../packages/identity/lifecycle-tombstone.mjs';
 import {identitySecurityPort} from '../../packages/identity/service.mjs';
-import {deletionDueIndex,sweepDeletionDue} from '../../packages/runtime/account-deletion.mjs';
+import {deletionDueIndex,sweepDeletionDue,deletionDueSweepRun} from '../../packages/runtime/account-deletion.mjs';
 import {createDeletionNotices} from '../../packages/runtime/deletion-notices.mjs';
 import {transferIdentityPort,createTransferNotices,attestorFromJwk,transferDueIndex,sweepTransferDue} from '../../packages/identity/transfer-out.mjs';
 import {redirectRecordsPort,createRedirectReminders} from '../../packages/identity/redirect-records.mjs';
@@ -62,12 +64,12 @@ export class SerialGate {
  async run(operation){const previous=this.tail;let release;this.tail=new Promise(r=>release=r);await previous;try{return await operation();}finally{release();}}
 }
 export class SqliteMetadata {
- constructor(file){this.db=new DatabaseSync(file);this.db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; CREATE TABLE IF NOT EXISTS records (key TEXT PRIMARY KEY, value TEXT NOT NULL)');this.gate=new SerialGate();this.timer=null;this.closed=false;this.sql=nodeSqlPort(this.db);return intentIndexedMetadata(this);}
+ constructor(file){this.db=new DatabaseSync(file);this.db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; CREATE TABLE IF NOT EXISTS records (key TEXT PRIMARY KEY, value TEXT NOT NULL)');this.gate=new SerialGate();this.timer=null;this.closed=false;this.sql=nodeSqlPort(this.db);return producerIndexedMetadata(intentIndexedMetadata(this));}
  raw(){const self=this;return {
   get:async key=>{const row=self.db.prepare('SELECT value FROM records WHERE key=?').get(key);return row?JSON.parse(row.value):undefined;},
   put:async(key,value)=>{if(typeof key==='object'){for(const [k,v]of Object.entries(key))await self.raw().put(k,v);return;}self.db.prepare('INSERT INTO records(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(key,JSON.stringify(value));},
   delete:async keys=>{for(const key of Array.isArray(keys)?keys:[keys])self.db.prepare('DELETE FROM records WHERE key=?').run(key);},
-  list:async({prefix='',startAfter='',limit=100000}={})=>new Map(self.db.prepare('SELECT key,value FROM records WHERE key>=? AND key<? AND key>? ORDER BY key LIMIT ?').all(prefix,prefix+'\uffff',startAfter,limit).map(row=>[row.key,JSON.parse(row.value)])),
+  list:async({prefix='',startAfter='',limit=100000}={})=>new Map(self.db.prepare('SELECT key,value FROM records WHERE key>=max(?,?) AND key<? AND key<>? ORDER BY key LIMIT ?').all(prefix,startAfter,prefix+'\uffff',startAfter,limit).map(row=>[row.key,JSON.parse(row.value)])),
   getAlarm:async()=>self.raw().get('@alarm'),
   setAlarm:async time=>{await self.raw().put('@alarm',time);self.arm(time);}
  };}
@@ -140,7 +142,7 @@ export async function nodeResources({directory,config,formTransport,mailer}){
    mcp:async owner=>{const rows=[];for(let n=0;n<MCP_SHARDS;n++){const shard=String(n).padStart(2,'0');if(!existsSync(join(directory,'mcp',`mcp-auth-v1-64-${shard}.sqlite`)))continue;const result=await mcpShard(shard).invoke('grants',[owner]);if(!result.ok)throw Object.assign(new Error(result.error.message),result.error);rows.push(...result.result);}return rows;}})}})};// filled once the shards exist (below)
  const accounts={get:id=>{
    if(!/^[a-f0-9-]{36}$/.test(id))throw new Error('Invalid account identifier');
-   if(!accountMap.has(id)){const metadata=new SqliteMetadata(join(directory,'accounts',id+'.sqlite'));const controller=flagWriter(new AccountController({metadata,gate:new SerialGate(),blobs,archives,config:{...config,...integrationConfig,...lifecycleConfig,...deletionConfig,...eventConfig,APP_REMOVAL_MAIL:mailer??null,APP_REMOVAL_IDENTITY:lifecycleIdentityPort(repository),FORM_POSTBACK_TRANSPORT:formTransport,DIRECTORY_EGRESS:directoryEgress,DEVELOPER_CONTACT_POPULATION:population,BILLING_CATALOG:catalog,FEDERATION_IDENTITY_CHECK:async(owner,epoch)=>{const account=await repository.get(owner);return account?.status==='active'&&await federationEpoch(account)===epoch;},WORK_AUTHORITY:abuse,CONVERSATION_ACCOUNT:owner=>accounts.get(owner),ORGANIZATION_OWNER_CHANNELS:organizationOwnerChannels({config,identity:sub=>repository.get(sub),account:owner=>accounts.get(owner),mailer}),ORGANIZATION_OWNER_PUSH:createPushTransport(config),IDENTITY_ACCOUNT:async owner=>{const account=await repository.get(owner);return account?{status:account.status,handle:account.handle,kind:account.kind==='organization'?'organization':'person',aep:account.aep,identityUri:account.identityUri??null}:null;}},sql:metadata.sql}),flagsRuntime,{flagStats});metadata.onAlarm=()=>controller.alarm();metadata.getAlarm().then(time=>{if(time)metadata.arm(time);});accountMap.set(id,{metadata,controller});}return accountMap.get(id).controller;
+   if(!accountMap.has(id)){const metadata=new SqliteMetadata(join(directory,'accounts',id+'.sqlite'));const controller=flagWriter(new AccountController({metadata,gate:new SerialGate(),blobs,archives,config:{...config,...integrationConfig,...lifecycleConfig,...deletionConfig,...eventConfig,APP_REMOVAL_MAIL:mailer??null,APP_REMOVAL_IDENTITY:lifecycleIdentityPort(repository),FORM_POSTBACK_TRANSPORT:formTransport,DIRECTORY_EGRESS:directoryEgress,DEVELOPER_CONTACT_POPULATION:population,BILLING_CATALOG:catalog,FEDERATION_IDENTITY_CHECK:async(owner,epoch)=>{const account=await repository.get(owner);return account?.status==='active'&&await federationEpoch(account)===epoch;},WORK_AUTHORITY:abuse,CONVERSATION_ACCOUNT:owner=>accounts.get(owner),ORGANIZATION_OWNER_CHANNELS:organizationOwnerChannels({config,identity:sub=>repository.get(sub),account:owner=>accounts.get(owner),mailer}),...organizationAdminPorts({narrow:narrowAdminStore((method,args)=>adminStore.invoke(method,args),async()=>id),config}),ORGANIZATION_OWNER_PUSH:createPushTransport(config),IDENTITY_ACCOUNT:async owner=>{const account=await repository.get(owner);return account?{status:account.status,handle:account.handle,kind:account.kind==='organization'?'organization':'person',aep:account.aep,identityUri:account.identityUri??null}:null;}},sql:metadata.sql}),flagsRuntime,{flagStats});metadata.onAlarm=()=>controller.alarm();metadata.getAlarm().then(time=>{if(time)metadata.arm(time);});accountMap.set(id,{metadata,controller});}return accountMap.get(id).controller;
  }};
 
  population=activePopulationPort({repository,accounts,threshold:Number(config.DEVELOPER_CONTACT_ACTIVE_THRESHOLD??1500),authority:async(name,method,input)=>(await guardFor(name)).populationAction(method,input)});await (await guardFor('active-user-v1/census')).populationAction('baseline');
@@ -208,9 +210,11 @@ export async function nodeResources({directory,config,formTransport,mailer}){
   lifecycleDb=new SqliteMetadata(join(directory,'lifecycle.sqlite'));const sweep=new LifecycleSweep({metadata:lifecycleDb,repository,accounts,config:{...config,ACCOUNT_DELETION_DUE:deletionDue}});const run=trigger=>sweep.run({trigger}).catch(()=>{});
   lifecycleDb.onAlarm=()=>run('alarm');{const alarm=await lifecycleDb.getAlarm();if(alarm)lifecycleDb.arm(alarm);}
   lifecycleTimers=[setTimeout(()=>run('startup'),60000),setInterval(()=>run('cron'),6*3600000)];for(const timer of lifecycleTimers)timer.unref();
- }else if(siteGlobal(config,'ACCOUNT_DELETION_ENABLED')){
-  // DX-3: with the lifecycle off, due account deletions are still swept (the per-account alarm is primary).
-  const run=()=>sweepDeletionDue({index:deletionDue,accounts}).catch(()=>{});lifecycleTimers=[setTimeout(run,60000),setInterval(run,6*3600000)];for(const timer of lifecycleTimers)timer.unref();
+ }else{
+  // DX-3: with the lifecycle off, due account deletions are still swept (the per-account alarm is primary). Wargame 4:
+  // the sweep always starts and each run follows the live flag (background semantics: only the env kill stops it), so a
+  // console enable after boot is honoured.
+  const run=deletionDueSweepRun({flags:()=>flagsRuntime.pin(),index:deletionDue,accounts});lifecycleTimers=[setTimeout(run,60000),setInterval(run,6*3600000)];for(const timer of lifecycleTimers)timer.unref();
  }
  // PORT-2 scheduler backstop: steps due transfers and ends moved records after their windows (the account alarm is primary).
  // Opted-in redirect expiry reminders over the injected mailer (sendRedirectReminder); acceptance only, never delivery.

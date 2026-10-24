@@ -36,8 +36,8 @@ export function metered(metadata,stats){
 }
 export const freshStats=()=>({reads:0,writes:0,lists:0,readBytes:0,writeBytes:0,maxValue:0,maxKey:null});
 
-export async function world(seed=1,{allowlist='',configured=true,owner=A,currency='usd',plan='org-team',claimLedger=memoryClaimLedger(),claimHints=null,ownerChannels:injectedChannels=null}={}){
- const metadata=new SqliteMetadata(':memory:'),clock=fakeClock(400*DAY),random=seededRandom(createRandom(seed)),flag={on:true,names:{}};await metadata.put('owner',ORG);
+export async function world(seed=1,{allowlist='',configured=true,owner=A,currency='usd',plan='org-team',claimLedger=memoryClaimLedger(),claimHints=null,ownerChannels:injectedChannels=null,operators:injectedOperators=null,supportCases=null,clock:injectedClock=null}={}){
+ const metadata=new SqliteMetadata(':memory:'),clock=injectedClock??fakeClock(400*DAY),random=seededRandom(createRandom(seed)),flag={on:true,names:{}};await metadata.put('owner',ORG);
  const stats=freshStats(),store=metered(metadata,stats);
  const polar=fakeOrgPolar({clock}),config=configured?ORG_POLAR_CONFIG:{...ORG_POLAR_CONFIG,POLAR_SERVER:'production'};
  const billing=new OrganizationBilling({config,client:polar.client,now:clock.now});
@@ -52,9 +52,10 @@ export async function world(seed=1,{allowlist='',configured=true,owner=A,currenc
  // A restart is a fresh service and engine over the same store and ports: the service keeps no state of its own.
  // Operators: assertions signed as the admin service would (review M3); every UUID counts as registered unless a test
  // narrows `operatorRegistry`.
- const operatorRegistry={allow:()=>true},operators=hmacOperatorAssertions({secret:'loopback-operator-secret-0001',registered:op=>operatorRegistry.allow(op),clock:clock.now});
+ // ORG-12d tests inject the production verifier (packages/identity/operator-assertions.mjs) and the support case index.
+ const operatorRegistry={allow:()=>true},operators=injectedOperators??hmacOperatorAssertions({secret:'loopback-operator-secret-0001',registered:op=>operatorRegistry.allow(op),clock:clock.now});
  const operatorAssertion=(operator,{process,decision,exclude=[],kind='lapse-claim'})=>operators.sign({operator,scope:{org:ORG,kind,process,decision,exclude}});
- const make=()=>new BreakGlassService({ownerChannels,claimLedger,claimHints,operators,metadata:store,clock,random,issuer:ISS,flags:{for:()=>({enabled:name=>flag.names[name]??flag.on})},plans:organizationEntitlementPort({allowlist,billing}),billing,accounts:{get:async sub=>people.get(sub)??{kind:'person',status:'active',handle:'m'+sub.slice(-6)}},effects,alert:entry=>alerts.push(entry)});
+ const make=()=>new BreakGlassService({ownerChannels,claimLedger,claimHints,operators,supportCases,metadata:store,clock,random,issuer:ISS,flags:{for:()=>({enabled:name=>flag.names[name]??flag.on})},plans:organizationEntitlementPort({allowlist,billing}),billing,accounts:{get:async sub=>people.get(sub)??{kind:'person',status:'active',handle:'m'+sub.slice(-6)}},effects,alert:entry=>alerts.push(entry)});
  let service=make(),engine=createAppEngine({providers:{clock,random,audit:memoryAudit({clock}),organizations:organizationsProvider(service)}});
  const restart=()=>{const old=engine;service=make();engine=createAppEngine({providers:{clock,random,audit:memoryAudit({clock}),organizations:organizationsProvider(service)}});old.dispose().catch(()=>{});};
  await perform(engine,new OPS['orgs.initialize']({actor:{kind:'system',owner:ORG},input:{request:REQUEST,creator:p(owner),name:'Acme',plan:{source:'polar',plan},addedUnder:prov(owner)}}));

@@ -26,7 +26,7 @@ async function fixture(options={}){
 const rejected=(operation,code)=>assert.rejects(operation,{code});
 
 test('flag registry has every administration operation, isolated from account RPC',()=>{
- for(const [name,Operation]of Object.entries(EDGE_OPERATIONS)){assert.equal(MEMORY_OPERATIONS[name],Operation);assert.equal(ACCOUNT_OPERATIONS[name],undefined);assert(Operation.prototype instanceof (['flags.record','flags.stats-rollup','flags.seed','flags.take-control','flags.update','flags.rollback','flags.reshuffle','flags.experiment-start','flags.experiment-stop','flags.experiment-conclude'].includes(name)?AppAction:AppQuery));}
+ for(const [name,Operation]of Object.entries(EDGE_OPERATIONS)){assert.equal(MEMORY_OPERATIONS[name],Operation);assert.equal(ACCOUNT_OPERATIONS[name],undefined);assert(Operation.prototype instanceof (['flags.record','flags.stats-rollup','flags.seed','flags.take-control','flags.update','flags.rollback','flags.reshuffle','flags.retire','flags.experiment-start','flags.experiment-stop','flags.experiment-conclude'].includes(name)?AppAction:AppQuery));}
  for(const [name,placement,kind]of [['flags','both','effect'],['flagStore','edge','platform'],['flagStats','both','effect']]){assert.equal(PROVIDERS[name].placement,placement);assert.equal(PROVIDERS[name].kind,kind);}
 });
 

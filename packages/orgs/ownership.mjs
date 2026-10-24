@@ -672,22 +672,30 @@ export class OwnershipService extends MembershipService{
   * account the admin service authenticated (step-up and capability are checked there). */
  async resolveClaim(actor,input){
   if(actor?.kind!=='system')fail('forbidden','System only.',403);
-  const v=exact(input,['claim','decision','note','operator','assertion']);if(typeof v.claim!=='string'||!['close','proceed'].includes(v.decision))fail('invalid_request','Name the claim and close or proceed.',400);
+  const v=exact(input,['claim','decision','note','reasonDigest','operator','assertion']);if(typeof v.claim!=='string'||!['close','proceed'].includes(v.decision))fail('invalid_request','Name the claim and close or proceed.',400);
   if(typeof v.operator!=='string'||!UUID.test(v.operator))fail('operator_required','Name the operator who decides.',400);
+  // ORG-12d review L1: the note is validated BEFORE the assertion is verified, so a bad note never spends it. Review M3:
+  // the admin service sends only `reasonDigest` (the organization audit is readable by the claimant).
+  const note=reasonOf(v.note);if(v.reasonDigest!==undefined&&(typeof v.reasonDigest!=='string'||!/^[a-f0-9]{64}$/.test(v.reasonDigest)||note!==null))fail('invalid_request','Unsupported reason digest.',400);
   const verified=await this.verifyOperator(v.assertion,{operator:v.operator,org:actor?.owner,kind:'lapse-claim',process:v.claim,decision:v.decision,exclude:[]});
-  const note=reasonOf(v.note);
+  // Review M1: re-verify a pending proposer (outside the transaction) before it can count as the first operator.
+  const pending=(await this.metadata.get(ORG_RECORD))?.billing?.claim?.proceedProposal;let proposerActive=true;
+  if(v.decision==='proceed'&&pending?.operator&&pending.operator!==v.operator&&typeof this.operators?.registered==='function'){try{proposerActive=await this.operators.registered(pending.operator)===true;}catch{proposerActive=false;}}
+  const digest=v.reasonDigest??null;
   return this.commit(actor,async(r,now,tx)=>{
    const c=r.billing.claim;if(!c||c.id!==v.claim||c.state!=='pending'||!Number.isSafeInteger(c.escalatedAt))fail('not_found','Not found.',404);
    const operator={iss:this.issuer??null,sub:v.operator};await this.operatorConflict(r,operator,[c.by]);this.spendOperatorNonce(c,verified,now);
    const sys={kind:'system',principal:null};let outcome=v.decision;
    if(v.decision==='close')await this.closeClaim(r,c,'operator-closed',now,tx);
    else{
-    const proposal=c.proceedProposal&&c.proceedProposal.at+OWNERSHIP.OPERATOR_APPROVAL_MS>now?c.proceedProposal:null;
-    if(!proposal){c.proceedProposal={operator:v.operator,at:now,...note?{note}:{}};outcome='proceed-proposed';}
+    let proposal=c.proceedProposal&&c.proceedProposal.at+OWNERSHIP.OPERATOR_APPROVAL_MS>now?c.proceedProposal:null;
+    if(proposal&&proposal.operator!==v.operator){if(proposal.operator!==pending?.operator)fail('conflict','The proposal changed; reload and try again.',409);
+     if(!proposerActive){await this.audit(tx,r,'organization-support-proposal-cancelled',sys,{claim:c.id,kind:'lapse-claim',operator:proposal.operator,decision:'proceed',reason:'proposer-inactive'});c.proceedProposal=null;proposal=null;}}
+    if(!proposal){c.proceedProposal={operator:v.operator,at:now,...note?{note}:{},...digest?{reasonDigest:digest}:{}};outcome='proceed-proposed';}
     else if(proposal.operator===v.operator)fail('second_operator_required','A different operator must approve this decision.',409);
     else{c.operatorApprovedAt=now;c.operatorPair=[proposal.operator,v.operator].sort();c.proceedProposal=null;outcome='proceed-approved';}
    }
-   await this.audit(tx,r,'organization-lapse-claim-resolved',sys,{claim:c.id,decision:outcome,operator:v.operator,...note?{note}:{}});
+   await this.audit(tx,r,'organization-lapse-claim-resolved',sys,{claim:c.id,decision:outcome,operator:v.operator,...note?{note}:{},...digest?{reasonDigest:digest}:{}});
    return {claim:{id:c.id,state:c.state,closedReason:c.closedReason??null,approved:Number.isSafeInteger(c.operatorApprovedAt)},decision:outcome};
   });
  }

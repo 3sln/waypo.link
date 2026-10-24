@@ -46,8 +46,8 @@ const fresh=(entry,now,early)=>entry?.until>now&&(!early||entry.until-now>(entry
  * once per half to three quarters of its <=300 s freshness, so the per-site budget is n/2 + the base per minute and the
  * cache holds the whole roster plus the base. Bounded by DIRECTORY_MAX_ROSTER. */
 export const DIRECTORY_MAX_ROSTER=65536;
-/** Review follow-up (F5): the document cache is bounded by bytes as well as entries (UTF-8 JSON size of each cached
- * document). The roster-scaled byte budget is 8 MiB plus 8 KiB per identity, never more than 64 MiB. */
+/** Each of the compact verification and disposable full-document caches is bounded by bytes
+ * and entries. Each roster-scaled byte budget is 8 MiB plus 8 KiB per identity, capped at 64 MiB. */
 export const DIRECTORY_MAX_CACHE_BYTES=67108864;
 export function directoryLimitsFor(n,base=DIRECTORY_LIMITS){
  const size=Math.min(DIRECTORY_MAX_ROSTER,Math.max(0,Number.isSafeInteger(n)?n:0)),perSite=Math.max(base.perSite.limit,Math.ceil(size/2)+base.perSite.limit);
@@ -57,15 +57,25 @@ export class IdentityDirectory {
  /** `tenant`: the owner whose budget this directory spends at a shared egress (passed as `budget` in the fetch init). */
  constructor({store,fetch,enabled=false,config=null,issuers=[],clock=()=>Date.now(),limiter,crypto=globalThis.crypto,limits={},tenant=null}={}){
   if(!store?.transaction||typeof fetch!=='function')throw new TypeError('Directory needs a durable transactional pin store and SSRF-safe egress.');
-  Object.assign(this,{store,fetcher:fetch,config,enabled:enabled===true,issuers:new Set(issuers),clock,crypto,limits:{...DIRECTORY_LIMITS,...limits},limiter:limiter??memoryLimiter({clock}),tenant:typeof tenant==='string'?tenant:null});this.base=this.limits;this.cache=new Map();this.cacheBytes=0;this.manifests=new Map();this.flights=new Map();this.misses=new Map();this.manifestFlights=new Map();
+  Object.assign(this,{store,fetcher:fetch,config,enabled:enabled===true,issuers:new Set(issuers),clock,crypto,limits:{...DIRECTORY_LIMITS,...limits},limiter:limiter??memoryLimiter({clock}),tenant:typeof tenant==='string'?tenant:null});this.base=this.limits;this.cache=new Map();this.cacheBytes=0;this.documents=new Map();this.documentBytes=0;this.manifests=new Map();this.flights=new Map();this.misses=new Map();this.manifestFlights=new Map();
  }
  /** F5: the caller's roster size (MemberContextService discovery); scales the per-site budget and the cache. */
  capacity(n){this.limits=directoryLimitsFor(n,this.base);}
- /** Cache only, never dials: the fresh cached document for (issuer, subject), or null. */
- peek({issuer,subject}={}){if(!this.allowed(issuer)||!isUUID(subject))return null;const entry=this.cache.get(issuer+'\n'+subject);return entry?.document&&fresh(entry,this.clock(),false)?structuredClone(entry.document):null;}
+ /** Cache only, never dials: fresh identity/key material (with full document fields while
+  * retained in the independent document cache), or null. Freshness is shared by both tiers. */
+ peek({issuer,subject}={}){if(!this.allowed(issuer)||!isUUID(subject))return null;const entry=this.cache.get(issuer+'\n'+subject);return entry?.document&&fresh(entry,this.clock(),false)?structuredClone(this.documents.get(issuer+'\n'+subject)?.document??entry.document):null;}
  allowed(issuer){const u=directoryURL(issuer+'/');return (this.config?siteGlobal(this.config,'DIRECTORY_ENABLED'):this.enabled)&&u&&u.origin===issuer&&this.issuers.has(issuer);}
  remember(map,k,v){
-  if(map===this.cache){const drop=key=>{this.cacheBytes-=map.get(key)?.bytes??0;map.delete(key);};drop(k);v.bytes=v.document?new TextEncoder().encode(JSON.stringify(v.document)).length:0;map.set(k,v);this.cacheBytes+=v.bytes;
+  if(map===this.cache){const drop=key=>{this.cacheBytes-=map.get(key)?.bytes??0;map.delete(key);};drop(k);
+   // Verification keeps only identity and key material. Bulky portability history and
+   // feature documents have an independent disposable byte budget and cannot evict keys.
+   if(v.document){
+    const document=structuredClone(v.document),old=this.documents.get(k);this.documentBytes-=old?.bytes??0;this.documents.delete(k);
+    const bytes=new TextEncoder().encode(JSON.stringify(document)).length;this.documents.set(k,{document,bytes});this.documentBytes+=bytes;
+    while(this.documents.size>this.limits.cacheEntries||this.documentBytes>this.limits.cacheBytes){const first=this.documents.keys().next().value;this.documentBytes-=this.documents.get(first).bytes;this.documents.delete(first);}
+    const {v:version,iss,sub,kind,handle,keys}=document;v={...v,document:{v:version,iss,sub,kind,...handle===undefined?{}:{handle},keys}};
+   }else{this.documentBytes-=this.documents.get(k)?.bytes??0;this.documents.delete(k);}
+   v.bytes=v.document?new TextEncoder().encode(JSON.stringify(v.document)).length:0;map.set(k,v);this.cacheBytes+=v.bytes;
    while(map.size>this.limits.cacheEntries||this.cacheBytes>this.limits.cacheBytes&&map.size>1)drop(map.keys().next().value);
    if(this.cacheBytes>this.limits.cacheBytes)drop(k);return;}
   map.delete(k);map.set(k,v);while(map.size>this.limits.cacheEntries)map.delete(map.keys().next().value);}
@@ -124,11 +134,12 @@ export class IdentityDirectory {
   });
  }
  /** `priority`: 'background' (default), 'claimed' (a request-path claim) or 'interactive' (user-triggered). `early`:
-  * refetch once less than half of the cached freshness lifetime is left (refresh-ahead for rosters, F5). */
- async refresh({issuer,subject,kid,priority='background',early=false}={}){
+  * refetch once less than half of the cached freshness lifetime is left (refresh-ahead for rosters, F5).
+  * `verificationOnly` (defaults to `early`) accepts fresh compact material after full-document eviction. */
+ async refresh({issuer,subject,kid,priority='background',early=false,verificationOnly=early}={}){
   if(!this.allowed(issuer)||!isUUID(subject))fail('issuer_refused');const name=issuer+'\n'+subject;
   if(this.flights.has(name))return this.flights.get(name);
-  const cached=this.cache.get(name),now=this.clock();if(fresh(cached,now,early&&!kid)&&(!kid||cached.document?.keys.some(k=>k.kid===kid)))return cached.document?structuredClone(cached.document):null;
+  const cached=this.cache.get(name),now=this.clock();if(fresh(cached,now,early&&!kid)&&(!kid||cached.document?.keys.some(k=>k.kid===kid))&&(!cached.document||verificationOnly||this.documents.has(name)))return cached.document?structuredClone(this.documents.get(name)?.document??cached.document):null;
   if(kid&&cached){const last=this.misses.get(name);if(last!==undefined&&last+60000>now)return null;this.remember(this.misses,name,now);}
   if(this.flights.size>=this.limits.inFlight)fail('rate_limited');
   const pending=(async()=>{
