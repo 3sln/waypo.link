@@ -4,7 +4,7 @@ Status: consolidated checklist, written 2026-10-21 from [DEVLOG.md](../../DEVLOG
 
 How to read this file:
 
-- Everything is **provisional and flag-off**. No flag below is enabled in production, `RELEASE_READY` is `false`, and no row implies reviewer sign-off or production verification. See [security.md](../spec/security.md) and `release-status.json` (all 13 release gates are `false`).
+- Decisions remain **provisional and unsigned**. This is a historical 2026-10-21 checklist, not a current configuration inventory: checked-in hosted configuration now enables signup, paid signup, waitlist, billing, mail, push, semantic search and Beam, while `RELEASE_READY` remains `false`. Configuration does not establish deployed behavior, reviewer sign-off or production verification. See [security.md](../spec/security.md) and `release-status.json` (all 13 release gates are `false`).
 - "Recommendation" means what DEVLOG or the design docs record. Where the owner's brief supplied context that is **not recorded in the repo**, the row says so.
 - Review files sometimes lag DEVLOG (a finding marked "Open" in the review table but "fixed" in a later DEVLOG integration entry). Where that happens the row says which source is newer. Treat any row marked *(uncertain)* as needing a quick check against the code before relying on it.
 - This file does not edit DEVLOG.md. Decisions made here still need to be recorded there.
@@ -74,7 +74,7 @@ Source: [email-bridge-review.md](email-bridge-review.md) "Spec and implementatio
 
 ## 2. Per feature flag: gates before enabling in production
 
-Defaults are from `wrangler.jsonc`. All are off unless stated. "Missing verification" lists what has **not** been observed anywhere outside local tests. Common to every flag: the release gates in [security.md](../spec/security.md) ("Required verification before a public beta") and the sign-off checkpoints S1–S5 (all unchecked).
+The rows below record the 2026-10-21 review snapshot; they are not authoritative current defaults. Use `packages/flags/registry.mjs`, [feature flags](../architecture/feature-flags.md), and [self-hosting](../self-hosting.md) for the complete current registry and adapter defaults. "Missing verification" lists what has **not** been observed anywhere outside local tests. Common to every flag: the release gates in [security.md](../spec/security.md) ("Required verification before a public beta") and the sign-off checkpoints S1–S5 (all unchecked).
 
 | Flag | What it enables | Open findings and gates that block it | Required secrets / config | Verification still missing |
 | --- | --- | --- | --- | --- |

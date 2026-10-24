@@ -15,8 +15,9 @@
 // generation, and after an end nothing changes the half again, so reordering, duplication or loss never revives anything.
 // A narrowing (suspend, end) is effective at the holder at once; authority never depends on event delivery.
 //
-// Events are built here unsigned. ORG-10e signs them (certification key, typ bindle-relation-event+jwt) and verifies
-// steps 1 and 3; in this pass the same-host transport supplies the sender as adapter-verified evidence (RL-15 port).
+// Event payloads are built here unsigned; packages/orgs/relation-events.mjs (ORG-10e) signs them at delivery with the
+// sending organization's certification key (typ bindle-relation-event+jwt) and verifies spec §9.9 steps 1–3 on receipt,
+// on the same host and across providers alike (RL-15).
 import {AppAction,AppQuery} from '../app/engine.mjs';
 import {AppFault} from '../app/faults.mjs';
 import {edgeEntries} from './relation-documents.mjs';
@@ -34,7 +35,11 @@ export const half=(state,generation,at,entries)=>({state,generation,at,...entrie
 /** Raises a half's generation with a new state (and entries for a live grant half). Ended halves never change. */
 export function bump(h,state,at,entries){
  if(!h||h.state==='ended')return h;
- return half(state,(h.generation??0)+1,at,entries??(state==='ended'?undefined:h.entries));
+ const next=half(state,(h.generation??0)+1,at,entries??(state==='ended'?undefined:h.entries));
+ // A suspension's cause ('moved', 'billing') survives every change that keeps the half suspended (review L2), so a
+ // narrowed edge that arrived suspended after a move still needs re-binding.
+ if(h.cause&&h.state==='suspended'&&state==='suspended')next.cause=h.cause;
+ return next;
 }
 /** My edge to the counterpart (me → them) is live. */
 export function outgoingLive(part,cp,now){
@@ -53,6 +58,45 @@ export const incomingLive=(part,cp)=>part?.state==='live'&&cp?.state==='live'&&c
 export function edgeAllows(part,cp,{resource,contract,method},now){
  if(!outgoingLive(part,cp,now)||typeof resource!=='string'||typeof contract!=='string'||typeof method!=='string')return false;
  return cp.grant.entries.some(e=>e.resources.some(r=>r.resource===resource&&resourceLive(r,now)&&r.methods&&Object.hasOwn(r.methods,contract)&&Array.isArray(r.methods[contract])&&r.methods[contract].includes(method)));
+}
+
+/**
+ * Resource scoping on a relation grant (design §8b.2 step 3, resource-scoping.md; spec §9.5 `scope`, §9.9 entries):
+ * {prefix?, readOnly?:true, maxObjectBytes?}. Enforced by the grantor on every call, fail closed:
+ *   readOnly        refuses every write-capable method (and a presign for writing);
+ *   prefix          the call must name a `key` (or a `prefix`) equal to the scope prefix or inside it ("p" or "p/…");
+ *                   a call that names neither is refused, and presign is refused (it would escape the prefix);
+ *   maxObjectBytes  a `put` must carry `dataBase64` no larger than the bound; presign is refused.
+ * Provisional reading (coordinator): unlike an attenuated child reference, a relation grantee addresses the grantor's
+ * own resource ID, so keys are not rewritten; they are checked as given. No scope allows everything the methods allow.
+ */
+export function relationScopeAllows(scope,{method,args,write}){
+ if(scope===undefined||scope===null)return true;
+ if(typeof scope!=='object'||Array.isArray(scope)||Object.keys(scope).some(k=>!['prefix','readOnly','maxObjectBytes'].includes(k)))return false;
+ const a=args??{};if(typeof a!=='object'||Array.isArray(a))return false;
+ if((scope.prefix!==undefined||scope.maxObjectBytes!==undefined)&&method==='presign')return false;
+ if(scope.readOnly===true&&(write||method==='presign'&&a.operation==='write'))return false;
+ if(scope.prefix!==undefined){const p=String(scope.prefix),target=typeof a.key==='string'?a.key:typeof a.prefix==='string'?a.prefix:undefined;
+  if(typeof scope.prefix!=='string'||target===undefined||!(target===p||target.startsWith(p+'/'))||target.split('/').some(s=>s==='..'||s==='.'))return false;
+  if(typeof a.key==='string'&&typeof a.prefix==='string'&&!(a.prefix===p||a.prefix.startsWith(p+'/')))return false;}
+ if(scope.maxObjectBytes!==undefined&&method==='put'){if(typeof a.dataBase64!=='string')return false;const d=a.dataBase64,n=Math.floor(d.length*3/4)-(d.endsWith('==')?2:d.endsWith('=')?1:0);if(n>scope.maxObjectBytes)return false;}
+ return true;
+}
+
+/**
+ * The scope a granted call runs under when both the edge grant and the certificate carry one (review L3): the storage
+ * `assignedScope` semantics of packages/runtime/account/storage.mjs, so the ORG-10f dispatch passes it as the call's
+ * `scope` and the storage adapter refuses an oversized `get` by the object's real size (the grantor cannot know it at
+ * decision time). Prefixes must nest (the narrower wins); readOnly is either; maxObjectBytes the smaller. Returns null
+ * when the two cannot compose (disjoint prefixes), which the caller treats as a refusal.
+ */
+export function composeRelationScope(a,b){
+ if(!a&&!b)return {};const x=a??{},y=b??{},out={};
+ if(x.prefix!==undefined||y.prefix!==undefined){const p=x.prefix,q=y.prefix;
+  if(p!==undefined&&q!==undefined){if(q===p||q.startsWith(p+'/'))out.prefix=q;else if(p.startsWith(q+'/'))out.prefix=p;else return null;}else out.prefix=p??q;}
+ if(x.readOnly===true||y.readOnly===true)out.readOnly=true;
+ const m=[x.maxObjectBytes,y.maxObjectBytes].filter(Number.isSafeInteger);if(m.length)out.maxObjectBytes=Math.min(...m);
+ return out;
 }
 
 /** Every required entry of the pair is granted (spec §9.2: an edge is live only when each required entry is granted). */
@@ -77,14 +121,16 @@ export function clampEntries(doc,theirSlot,mySlot,entries){
    if(typeof r?.resource!=='string'||!r.resource||r.resource.length>2048||r.methods===null||typeof r.methods!=='object')continue;
    const methods=Object.create(null);for(const [c,ms] of Object.entries(r.methods))if(Array.isArray(ms)&&ceiling.has(c)){const kept=ms.filter(m=>typeof m==='string'&&ceiling.get(c).includes(m));if(kept.length)methods[c]=[...new Set(kept)].sort();}
    if(!Object.keys(methods).length&&Object.keys(e.methods).length)continue;
-   resources.push({resource:r.resource,contracts:Object.keys(methods).sort(),methods:{...methods},...r.scope&&typeof r.scope==='object'?{scope:structuredClone(r.scope)}:{},...Number.isSafeInteger(r.expires_at)?{expires_at:r.expires_at}:{}});
+   resources.push({resource:r.resource,contracts:Object.keys(methods).sort(),methods:{...methods},...scopeShape(r.scope)?{scope:{...r.scope}}:{},...Number.isSafeInteger(r.expires_at)?{expires_at:r.expires_at}:{},...typeof r.replaces==='string'&&r.replaces.length<=2048?{replaces:r.replaces}:{}});
   }
   if(resources.length||!Object.keys(e.methods).length)out.push({index:e.index,resources});
  }
  return out.sort((a,b)=>a.index-b.index);
 }
+/** A well-formed relation scope (the grantee keeps only that; the grantor enforces it). */
+const scopeShape=v=>v!==null&&typeof v==='object'&&!Array.isArray(v)&&Object.keys(v).length>0&&Object.keys(v).every(k=>['prefix','readOnly','maxObjectBytes'].includes(k))&&(v.prefix===undefined||typeof v.prefix==='string'&&v.prefix.length>0&&v.prefix.length<=512)&&(v.readOnly===undefined||v.readOnly===true)&&(v.maxObjectBytes===undefined||Number.isSafeInteger(v.maxObjectBytes)&&v.maxObjectBytes>0);
 /** The grant half's entries as carried in relation-edge-state (spec §9.9): per entry, resources with contracts and methods. */
-export const wireEntries=entries=>(entries??[]).map(e=>({index:e.index,resources:e.resources.map(r=>({resource:r.resource,contracts:Object.keys(r.methods).sort(),methods:structuredClone(r.methods),...r.scope?{scope:structuredClone(r.scope)}:{},...r.expires_at!==undefined?{expires_at:r.expires_at}:{}}))}));
+export const wireEntries=entries=>(entries??[]).map(e=>({index:e.index,resources:e.resources.map(r=>({resource:r.resource,contracts:Object.keys(r.methods).sort(),methods:structuredClone(r.methods),...r.scope?{scope:structuredClone(r.scope)}:{},...r.expires_at!==undefined?{expires_at:r.expires_at}:{},...r.replaces?{replaces:r.replaces}:{}}))}));
 /** The relation-event payload for one of my halves (unsigned; ORG-10e signs it at delivery). */
 export function halfEvent(kind,h){
  if(h.state==='ended')return {[RELATION_EVENT.edgeEnded]:{half:kind}};

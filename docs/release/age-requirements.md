@@ -24,7 +24,7 @@ Territories added 2026-10-23 (wargame, provisional, reversible): Cloudflare geol
 
 Unknown locations (2026-10-23, provisional): on the Worker (3sln.me), an unknown country (`XX`), Tor (`T1`) or a missing country fails closed for signup and paid checkout with a distinct "region couldn't be determined" message (`REGION_POLICY=block-unknown`, the default; `allow-unknown` is the default only for local development on a loopback `http` origin). A self-hosted Node server owns its own representative policy: `REGION_POLICY` defaults to `allow-unknown`, and a country is known only from an operator-configured `TRUSTED_COUNTRY_HEADER` set by the operator's reverse proxy. The proxy must overwrite that header, never append to it; a present but invalid value (for example duplicates joined by an appending proxy) is treated as unknown (`XX`). Client-sent country headers are always ignored.
 
-Paid checkouts (2026-10-23 review, provisional): person checkout, organization creation, renewal, billing-lapse claim and ownership-transfer acceptance checkouts, and the anonymous redirect-extension purchase all require a fresh paid-age attestation from a location the region policy permits. The organization break-glass checkout has no route yet; it must get the same gate when routed.
+Paid checkouts (2026-10-23 review, provisional): person checkout, organization creation, renewal, billing-lapse claim and ownership-transfer acceptance checkouts, and the anonymous redirect-extension purchase all require a fresh paid-age attestation from a location the region policy permits. The organization break-glass checkout is now routed as `POST /api/orgs/:id/break-glass-checkout` and passes the same `PaidCheckoutAllowed` gate before dispatch (implemented locally; no live checkout verification).
 
 Recommended config:
 ```json
@@ -35,13 +35,13 @@ Recommended config:
     "DE":16,"GR":15,"HU":16,"IE":16,"IT":14,"LV":13,"LT":14,"LU":16,"MT":13,"NL":16,
     "PL":16,"PT":13,"RO":16,"SK":16,"SI":15,"ES":16,"SE":13,"IS":13,"NO":13,"LI":16,
     "GB":13,"CH":16,"US":13,"CA":13,"AU":16,"NZ":16,"JP":16,"KR":14,"SG":13,
-    "IN":18,"MX":18,"AR":18,"ZA":18,"AE":18,"SA":18,"PH":18,"VN":18,"TH":20,"MY":18,"IL":18
+    "IN":18,"MX":18,"AR":18,"ZA":18,"AE":18,"SA":18,"PH":18,"VN":18,"TH":20,"MY":18,"IL":18,
+    "GP":15,"MQ":15,"GF":15,"RE":15,"YT":15,"MF":15,"AX":13
   },
-  "representativeBlocked": ["AT","BE","BG","HR","CY","CZ","DK","EE","FI","FR","DE","GR","HU","IE","IT","LV","LT","LU","MT","NL","PL","PT","RO","SK","SI","ES","SE","IS","NO","LI","GB"],
-  "blocked": ["CN","BR","ID","TR","RU"],
-  "regions": { "CA-QC": 14 },
-  "usRegions": { "TX":18,"FL":18,"NE":18,"UT":18,"AR":18,"LA":18,"GA":18,"OH":18,"VA":18,"ID":18,"IL":18,"SC":18 },
-  "blockedRegions": ["US-MS","US-TN"]
+  "representativeBlocked": ["AT","BE","BG","HR","CY","CZ","DK","EE","FI","FR","DE","GR","HU","IE","IT","LV","LT","LU","MT","NL","PL","PT","RO","SK","SI","ES","SE","IS","NO","LI","GB","GP","MQ","GF","RE","YT","MF","AX"],
+  "blocked": ["CN","BR","ID","TR","RU","IR","KP","SY","CU"],
+  "regions": { "CA-QC":14,"US-TX":18,"US-FL":18,"US-NE":18,"US-UT":18,"US-AR":18,"US-LA":18,"US-GA":18,"US-OH":18,"US-VA":18,"US-ID":18,"US-IL":18,"US-SC":18 },
+  "blockedRegions": ["US-MS","US-TN","UA-43","UA-40","UA-14","UA-09"]
 }
 ```
 Uncertain: ES (16 ahead of bill), CH, AU, NZ, MX, AR, IL, VN, AE, TR, ID, TN, state hedges.

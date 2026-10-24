@@ -18,7 +18,7 @@ The account owner corrected the onboarded sender domain to `sys.3sln.me`. The pr
 | `login@sys.3sln.me` | Email sign-in confirmation | Worker identity mailer; `/email/login#token=…`, only accounts explicitly enabling email sign-in |
 | `notify@sys.3sln.me` | Generic unread-message reminder | Injectable `sendReminder` resource; hosted dispatcher delivery is still unconnected |
 | `accounts@sys.3sln.me` | Inactivity, suspension and deletion notices | Called by the account lifecycle executor (`packages/runtime/lifecycle-runner.mjs`) only when `LIFECYCLE_ENABLED="true"` and `LIFECYCLE_DRY_RUN="false"`. Both default to off and dry run, so nothing is sent today. Not yet verified with a real recipient. |
-| `security@sys.3sln.me` | Recovery/passkey/password alerts | Finite `sendSecurityAlert` resource; security event calls remain unconnected |
+| `security@sys.3sln.me` | Security and export alerts | Finite `sendSecurityAlert` resource; export creation/download/grant-creation notices are wired through `packages/runtime/export-ports.mjs`. This does not establish complete recovery/passkey/password alert coverage or real delivery. |
 
 The application chooses fixed sender roles; callers cannot override them. Hosted `3sln.me` configuration yields the five addresses above. Wrangler additionally limits the binding with `allowed_sender_addresses`. The portable identity and notification services continue to accept injected delivery resources. [Binding restrictions](https://developers.cloudflare.com/email-service/configuration/send-bindings/).
 

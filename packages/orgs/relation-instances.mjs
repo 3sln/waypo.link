@@ -8,13 +8,21 @@
 // store holds its own participation, counterparts and halves (spec §9.3), and parties exchange only
 //   - the relation invitation (signed link, carrying the inviter's fresh participation statement),
 //   - redemption {invitation, statement} → the inviter's fresh statement,
-//   - relation events (edge state, edge ended) through a durable outbox.
+//   - relation events (edge state, edge ended, introductions, recognition), signed with the sending organization's
+//     certification key, through a durable outbox (packages/orgs/relation-events.mjs, ORG-10e).
 // Same-host and cross-provider relations share this one code path (RL-15). Only the ports differ:
 //   transport    {offer(invitee, {meta}), retract(invitee, {jti}), redeem(inviter, {invitation, statement}),
-//                 deliver(counterpart, event)}; same host: dispatches to the other organization's writer
-//                 (sameHostRelationTransport); ORG-11 adds the foreign transport behind ORG_FOREIGN_RELATIONS_ENABLED.
-//   counterparts {resolve(principal) -> {kind, handle?, keys:[{kid, publicJwk}], aep}} cache-only on the request path.
+//                 deliver(from, counterpart, jws)}; same host: dispatches to the other organization's writer
+//                 (sameHostRelationTransport); ORG-11a adds the foreign transport behind ORG_FOREIGN_RELATIONS_ENABLED,
+//                 delivering events only to the manifest `events_endpoint` (relation-events.mjs manifestEventDelivery).
+//   counterparts {resolve(principal) -> {kind, handle?, keys:[{kid, publicJwk}], aep}} (identity signing keys, for
+//                 statements and invitations); certificationKey({iss, sub, kid}) -> {publicJwk, identity?} | null,
+//                 CACHE-ONLY (warmed by the background key refresh; events and entity certificates verify against it).
 //   signer       (org) -> {kid, privateKey}: the entity's identity signing key (statements, invitations).
+//   certification (org) -> {kid, privateKey}: the entity's certification key (relation events, entity certificates).
+//   connections  {check(connection, clientId) -> boolean}: the federation connection port (the generation fence).
+//   successors   {origin(principal)} (optional): the successor index; relations.observe-counterpart keeps a local view.
+//   writeCapable (contract, method) -> boolean: contracts method metadata (relation-access.mjs read list by default).
 //   documents    RelationDocuments.resolve(pin) (packages/orgs/relation-documents.mjs).
 //   resources    (tx, id) -> {id, contracts} | null: the organization's OWN pool (federation/resource/<id>); imports are
 //                never in it, which is how the composition rule holds (spec §9.7).
@@ -28,7 +36,8 @@
 //   rel/inbound/<jti>         inbound invitation item for my admins {meta, from, expiresAt}
 //   rel/accepting/<jti>       my pending acceptance between commit and redemption
 //   rel/mute/<p>, rel/doc/<digest>, rel/used/<id>, rel/seen/<p>, rel/outbox/<notBefore>/<seq>, rel/outbox-seq, rel/aep/<p>, rel/jti/<p>/<jti>
-//   rel/import/…, rel/import-id/…  (packages/orgs/relation-imports.mjs)
+//   rel/import/…, rel/import-id/…  (packages/orgs/relation-imports.mjs); federation/resource/imp_… mirrors (relation-access.mjs)
+//   rel/hold/…, rel/successor/…, rel/billing, rel/closing, rel/intro/…, rel/proof/…  (packages/orgs/relation-keys.mjs)
 import {Provider} from '../../vendor/ngin/index.js';
 import {AppAction,AppQuery} from '../app/engine.mjs';
 import {AppFault} from '../app/faults.mjs';
@@ -42,28 +51,28 @@ import {validPrincipal} from './memberships.mjs';
 import {relationPin,samePin,edgeEntries,projectForSlot,slotOf} from './relation-documents.mjs';
 import {participationStatements} from './relation-statements.mjs';
 import {RELATION_INVITATION_DEFAULT_MS,RELATION_INVITATION_MAX_MS,RELATION_LIMITS,signRelationInvitation,parseRelationInvitation,invitationDigest,invitationAllowed,identityURI} from './relation-invitations.mjs';
-import {RELATION_EVENT,RELATION_EVENT_TYPES,RELATION_EVENT_PAST_S,RELATION_EVENT_FUTURE_S,half,bump,outgoingLive,incomingLive,edgeAllows,requiredSatisfied,clampEntries,halfEvent,applyMirror,narrowingEvent,RELATION_EDGE_OPERATIONS,RELATION_EDGE_SYSTEM_OPERATIONS} from './relation-edges.mjs';
-import {syncImports,holdImports,importById,importView,importAuthority,isImportId,IMPORT_PREFIX,RELATION_IMPORT_OPERATIONS} from './relation-imports.mjs';
+import {half,bump,outgoingLive,incomingLive,requiredSatisfied,clampEntries,halfEvent,RELATION_EDGE_OPERATIONS,RELATION_EDGE_SYSTEM_OPERATIONS} from './relation-edges.mjs';
+import {syncImports,holdImports,importById,importView,isImportId,IMPORT_PREFIX,RELATION_IMPORT_OPERATIONS} from './relation-imports.mjs';
+import {enqueueCounterpartKeyRefresh,enqueueMemberKeyRefresh,MEMBER_REFRESH_CLAIMED} from './key-refresh.mjs';
+import {K,pad,ik,party} from './relation-keys.mjs';
+import {relationEventMethods,RELATION_EVENT_OPERATIONS} from './relation-events.mjs';
+import {relationLifecycleMethods,RELATION_LIFECYCLE_OPERATIONS,RELATION_LIFECYCLE_SYSTEM_OPERATIONS} from './relation-lifecycle.mjs';
+import {relationAccessMethods,defaultWriteCapable,RELATION_ACCESS_SYSTEM_OPERATIONS} from './relation-access.mjs';
+import {scopeValid} from '../identity/entity-certificates.mjs';
 
 export const ORG_RELATIONS_FLAG='ORG_RELATIONS_ENABLED',ORG_FOREIGN_RELATIONS_FLAG='ORG_FOREIGN_RELATIONS_ENABLED';
 const DAY=86400000,OUTBOX_RETRY_MS=72*3600000,JTI_KEEP_MS=10*60000,BATCH=256,INVITATION_RETENTION_MS=30*DAY,JTI_SWEEP_BUDGET=4096;
 const fail=(code='not_found',message='Not found.',status=404)=>{throw new AppFault(code,message,status);};
 const invalid=()=>fail('invitation_invalid','This invitation is invalid.',400);
-const party=p=>({iss:p.iss,sub:p.sub});
-const ik=instance=>encodeURIComponent(instance),pk=principalKey;
-const K={state:'rel/state',instance:i=>'rel/instance/'+ik(i),cpPrefix:i=>'rel/cp/'+ik(i)+'/',cp:(i,p)=>'rel/cp/'+ik(i)+'/'+pk(p),inv:j=>'rel/inv/'+j,pair:p=>'rel/pair/'+pk(p),
- inbound:j=>'rel/inbound/'+j,accepting:j=>'rel/accepting/'+j,mute:p=>'rel/mute/'+pk(p),doc:d=>'rel/doc/'+d,used:id=>'rel/used/'+encodeURIComponent(id),seen:p=>'rel/seen/'+pk(p),
- outbox:(at,s)=>'rel/outbox/'+String(at).padStart(15,'0')+'/'+String(s).padStart(15,'0'),outboxSeq:'rel/outbox-seq',jti:(p,j)=>'rel/jti/'+pk(p)+'/'+encodeURIComponent(j),
- jtiAt:(at,p,j)=>'rel/jti-at/'+pad(at)+'/'+pk(p)+'/'+encodeURIComponent(j),
- // Open-invitation indexes (review L3, M1): by instance (leaving), by issuing admin (removal or hold), by expiry
- // (sweep), and closed invitations by close time (retention).
- invOpen:(i,j)=>'rel/inv-open/'+ik(i)+'/'+j,invBy:(p,j)=>'rel/inv-by/'+pk(p)+'/'+j,invDue:(at,j)=>'rel/inv-due/'+pad(at)+'/'+j,invDone:(at,j)=>'rel/inv-done/'+pad(at)+'/'+j,sweep:'rel/sweep-cursor'};
-const pad=n=>String(Math.max(0,Math.min(n,999999999999999))).padStart(15,'0');
+const pk=principalKey;
 const JTI=/^[a-f0-9]{64}$/;
 const titleKey=t=>String(t).normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]+/gu,'');
 
 /** Same-host transport (RL-15): `dispatch(sub, operation, input)` performs a SYSTEM operation in the named
- * organization's own writer; `input.from` is the sending organization, which the adapter itself vouches for. */
+ * organization's own writer. Offers, retractions and redemptions carry `input.from`, the sending organization as the
+ * router's own binding (adapter evidence; their payloads are signed links and statements, verified by the receiver).
+ * Relation events carry no `from` at all: the receiver takes the sender from the event's verified signature (ORG-10e),
+ * exactly as an event from another provider. */
 export function sameHostRelationTransport({issuer,dispatch}){
  const local=p=>p?.iss===issuer;
  const call=async(to,operation,input,from)=>{if(!local(to))throw new AppFault('relation_foreign_unavailable','Cross-provider relations are not available.',503);return dispatch(to.sub,operation,{...input,from:{iss:from.iss,sub:from.sub}});};
@@ -71,17 +80,18 @@ export function sameHostRelationTransport({issuer,dispatch}){
   offer:(from,to,input)=>call(to,'relations.offer',input,from),
   retract:(from,to,input)=>call(to,'relations.retract',input,from),
   redeem:(from,to,input)=>call(to,'relations.redeem',input,from),
-  deliver:(from,to,event)=>call(to,'relations.ingest',{event},from),
+  deliver:async(from,to,jws)=>{if(!local(to))throw new AppFault('relation_foreign_unavailable','Cross-provider relations are not available.',503);return dispatch(to.sub,'relations.ingest',{event:jws});},
  });
 }
 /** The default own-pool resource port: the federation resource record in this organization's account store. */
-export const ownResources=async(tx,id)=>{if(typeof id!=='string'||isImportId(id))return null;const r=await tx.get('federation/resource/'+id);return r&&plain(r.contracts)&&!r.imported&&!r.grantor?{id,contracts:r.contracts}:null;};
+export const ownResources=async(tx,id)=>{if(typeof id!=='string'||isImportId(id))return null;const r=await tx.get('federation/resource/'+id);return r&&plain(r.contracts)&&!r.imported&&!r.grantor&&r.provider!=='relation'?{id,contracts:r.contracts,...plain(r.scoping)?{scoping:r.scoping}:{}}:null;};
 
 export class RelationService{
- constructor({organizations,documents,signer,counterparts,transport,resources=ownResources,issuer,clock,random,acceptEndpoint}){
+ constructor({organizations,documents,signer,counterparts,transport,resources=ownResources,issuer,clock,random,acceptEndpoint,certification,connections,successors,writeCapable=defaultWriteCapable,federationSubject,brokerEndpoint,allowLoopback=false}){
   if(!organizations?.frame||!documents?.resolve||typeof signer!=='function'||!counterparts?.resolve||!transport)throw new TypeError('RelationService needs organizations, documents, signer, counterparts and transport.');
   Object.assign(this,{orgs:organizations,documents,signer,counterparts,transport,resources,issuer:issuer??organizations.issuer,clock:clock??organizations.clock,random:random??organizations.random});
   this.acceptEndpoint=acceptEndpoint??(p=>`${p.iss}/relations/accept`);
+  Object.assign(this,{certification,connections,successors,writeCapable,federationSubject,brokerEndpoint,allowLoopback});
   // Review M1: the organization's commits withdraw open invitations on a pending deletion or an issuer's removal.
   (organizations.commitHooks??=[]).push((tx,r,actor)=>this.onOrganizationCommit(tx,r,actor));
   this.statements=participationStatements({signer,keys:async p=>(await this.counterparts.resolve(p))?.keys??[],clock:this.clock,random:this.random});
@@ -97,7 +107,10 @@ export class RelationService{
 
  // ---- frames ----------------------------------------------------------------------------------------------------
  /** Widening (create, invite, accept, resume): flag, one unheld admin, fresh step-up (RL-2). */
- widen(actor,input,names,apply){this.requireEnabled(actor);return this.orgs.frame(actor,input,names,apply,{admin:true,fresh:true});}
+ widen(actor,input,names,apply){this.requireEnabled(actor);return this.orgs.frame(actor,input,names,async(r,v,now,m,tx,roster)=>{await this.requireWidenable(tx);return apply(r,v,now,m,tx,roster);},{admin:true,fresh:true});}
+ /** The background key-refresh queue (packages/orgs/key-refresh.mjs): 'member' rows for recognized counterparts (the
+  * background-refresh set), bounded 'claimed' rows for any claimed sender on the request path. */
+ refreshQueue(tx,p,{now,source}){return source==='claimed'?enqueueMemberKeyRefresh(tx,party(p),{now,source:'claimed',cap:MEMBER_REFRESH_CLAIMED}):enqueueCounterpartKeyRefresh(tx,party(p),{now});}
  /** Narrowing (suspend, end, narrow, withdraw, decline, leave, mute): never flag-gated, open during a pending deletion,
   * one admin, ordinary authentication (RL-3). */
  narrowing(actor,input,names,apply){return this.orgs.frame(actor,input,names,apply,{admin:true,exposure:false,exit:true});}
@@ -149,10 +162,12 @@ export class RelationService{
     if(item.methods!==undefined&&(!plain(item.methods)||Object.keys(item.methods).some(c=>!Object.hasOwn(methods,c))))bad();
     if(!Object.keys(methods).length)bad();
     if(item.expires_at!==undefined&&(!Number.isSafeInteger(item.expires_at)||item.expires_at<=now/1000))bad();
-    // Resource scoping (prefix, readOnly) is refused until the certificate path enforces it (ORG-10d; review H1):
-    // a scope this side could not honour would exceed the grantor's configured ceiling.
-    if(item.scope!==undefined)fail('relation_scope_unsupported','Scoped sharing is not available yet; share the whole resource or choose fewer methods.',400);
-    resources.push({resource:item.resource,field,methods,...item.scope?{scope:structuredClone(item.scope)}:{},...item.expires_at!==undefined?{expires_at:item.expires_at}:{}});
+    // Resource scoping (ORG-10d; resource-scoping.md): {prefix?, readOnly?:true, maxObjectBytes?}, only where the resource
+    // offers that control and within its bounds (as federation `configure` does). The grantor enforces it on every call
+    // (relation-access.mjs edgeDecision, relation-edges.mjs relationScopeAllows) and certificates carry it.
+    if(item.scope!==undefined){const sc=item.scope,options=own.scoping?.fields;
+     if(!scopeValid(sc)||!plain(options)||Object.keys(sc).some(k=>!plain(options[k])||k==='prefix'&&Number.isSafeInteger(options[k].maxLength)&&sc.prefix.length>options[k].maxLength||k==='maxObjectBytes'&&Number.isSafeInteger(options[k].maximum)&&sc.maxObjectBytes>options[k].maximum))bad();}
+    resources.push({resource:item.resource,field,methods,...item.scope?{scope:{...item.scope}}:{},...item.expires_at!==undefined?{expires_at:item.expires_at}:{}});
    }
    out.push({index:e.index,resources});
   }
@@ -196,6 +211,8 @@ export class RelationService{
    outgoing:{state:cp.grant?.state??null,generation:cp.grant?.generation??0,entries:structuredClone(cp.grant?.entries??[]),live:outgoingLive(part,cp,now)},
    incoming:{state:cp.acceptance?.state??null,generation:cp.acceptance?.generation??0,live:incomingLive(part,cp)},
    peer:{grant:cp.peerGrant?.state??null,acceptance:cp.peerAcceptance?.state??null}}));
+  for(const c of counterparts){const hold=await this.activeHold(tx,c.principal,now),reach=await tx.get(K.reach(c.principal));
+   if(hold)c.hold={kind:hold.kind,aep:hold.aep,cause:hold.cause,since:hold.since,...hold.until?{until:hold.until}:{}};if(reach)c.unreachable={since:reach.since,flagged:now-reach.since>=30*DAY};}
   return {instance:part.instance,relation:part.relation,slots:part.slots,state:part.state,counterparts};
  });}
 
@@ -292,9 +309,14 @@ export class RelationService{
  });}
  retract(actor,input){return this.system(actor,async(r,now,tx)=>{const item=typeof input?.jti==='string'?await tx.get(K.inbound(input.jti)):null;if(item&&samePrincipal(item.from,input.from))await tx.delete(K.inbound(input.jti));return {received:true};});}
  /** relations.inbound: pending inbound invitations (admins only). */
- inbound(actor){return this.adminRead(actor,async(r,tx)=>{const now=this.clock.now();return {items:[...(await tx.list({prefix:'rel/inbound/',limit:RELATION_LIMITS.inbound})).values()].filter(i=>i.expiresAt>now).map(i=>({invitation:i.jti,from:i.from,instance:i.instance,relation:i.relation,slot:i.slot,receivedAt:i.receivedAt,expiresAt:i.expiresAt}))};});}
+ inbound(actor){return this.adminRead(actor,async(r,tx)=>{const now=this.clock.now();return {items:[...(await tx.list({prefix:'rel/inbound/',limit:RELATION_LIMITS.inbound})).values()].filter(i=>i.expiresAt>now).map(i=>({kind:'invitation',invitation:i.jti,from:i.from,instance:i.instance,relation:i.relation,slot:i.slot,receivedAt:i.receivedAt,expiresAt:i.expiresAt})),
+  introductions:[...(await tx.list({prefix:'rel/intro/',limit:RELATION_LIMITS.inbound})).values()].filter(i=>i.expiresAt>now).map(i=>({kind:'introduction',introduction:i.id,proposer:i.proposer,instance:i.instance,slot:i.slot,candidate:i.candidate,receivedAt:i.receivedAt,expiresAt:i.expiresAt}))};});}
  /** relations.decline (narrowing): drops an inbound item. Nothing is sent to the inviter. */
- decline(actor,input){return this.narrowing(actor,input,['item'],async(r,v,now,m,tx)=>{const item=typeof v.item==='string'&&JTI.test(v.item)?await tx.get(K.inbound(v.item)):null;if(!item)fail();await tx.delete(K.inbound(v.item));await this.orgs.audit(tx,r,'relation-invitation-declined',actor,{invitation:v.item,from:item.from});this.orgs.notice(r,'relation-invitation-declined',{invitation:v.item,from:item.from},now);return {declined:true};});}
+ decline(actor,input){return this.narrowing(actor,input,['item'],async(r,v,now,m,tx)=>{
+  // An introduction: dropped, and only the proposer is told it was declined (spec §9.4; never the candidate).
+  const intro=typeof v.item==='string'&&/^[A-Za-z0-9_-]{43}$/.test(v.item)?await tx.get(K.intro(v.item)):null;
+  if(intro){await this.decideIntroduction(tx,r,intro,'declined',now);await this.orgs.audit(tx,r,'relation-introduction-declined',actor,{introduction:intro.id,instance:intro.instance});return {declined:true};}
+  const item=typeof v.item==='string'&&JTI.test(v.item)?await tx.get(K.inbound(v.item)):null;if(!item)fail();await tx.delete(K.inbound(v.item));await this.orgs.audit(tx,r,'relation-invitation-declined',actor,{invitation:v.item,from:item.from});this.orgs.notice(r,'relation-invitation-declined',{invitation:v.item,from:item.from},now);return {declined:true};});}
  /** relations.mute / unmute (narrowing): a muted organization's invitations are dropped silently; muting clears its
   * pending items, which frees inbound space (RL-11). */
  mute(actor,input){return this.narrowing(actor,input,['organization','muted'],async(r,v,now,m,tx)=>{
@@ -398,7 +420,7 @@ export class RelationService{
    const row=await tx.get(K.accepting(jti)),cp=await tx.get(K.cp(instance,inviter)),c=await this.counters(tx);
    if(cp?.state==='pending'&&cp.invitation===jti){
     await tx.delete(K.cp(instance,inviter));
-    for(const [key,imp] of await tx.list({prefix:IMPORT_PREFIX+principalKey(inviter)+'/'+ik(instance)+'/',limit:65})){for(const x of imp.resources??[])await tx.delete('rel/import-id/'+x.id);await tx.delete(key);}
+    for(const [key,imp] of await tx.list({prefix:IMPORT_PREFIX+principalKey(inviter)+'/'+ik(instance)+'/',limit:65})){for(const x of imp.resources??[]){await tx.delete('rel/import-id/'+x.id);await tx.delete('federation/resource/'+x.id);}await tx.delete(key);}
     const part=await tx.get(K.instance(instance));if(part?.state==='pending'&&!(await this.counterpartsOf(tx,instance)).length){await tx.delete(K.instance(instance));c.instances=Math.max(0,c.instances-1);await tx.put(K.state,c);}
     if(notify||row?.attempted)for(const kind of ['grant','acceptance'])await this.enqueue(tx,{aep:(await tx.get('org/record-v1'))?.aep??0},inviter,halfEvent(kind,{state:'ended'}),instance);
    }
@@ -411,7 +433,11 @@ export class RelationService{
   if(part.state==='pending')part.state='live';if(slot&&!part.slots.includes(slot))part.slots=[...part.slots,slot];part.updatedAt=now;await tx.put(K.instance(part.instance),part);
   cp.state='live';cp.since=now;if(cp.grant)cp.grant=half('live',1,now,cp.grant.entries);if(cp.acceptance){cp.acceptance=half('live',1,now);const c=await this.counters(tx);c.incoming++;await tx.put(K.state,c);}
   await this.emitHalf(tx,r,cp,'grant');await this.emitHalf(tx,r,cp,'acceptance');await this.endMatching(tx,r,cp,now);await this.settleCounterpart(tx,r,part,cp,now);
-  await tx.put(K.cp(part.instance,cp.principal),cp);await tx.put(K.seen(cp.principal),{at:now});await this.refreshImports(tx,part,cp,now);
+  await tx.put(K.cp(part.instance,cp.principal),cp);await tx.put(K.seen(cp.principal),{at:now});await this.refreshImports(tx,part,cp,now,r);
+  // The counterpart's authority-epoch baseline (RL-4 compares later observations with it) and its place in the
+  // background key-refresh set (spec §9.9 step 3 verifies only against keys already held).
+  if(!await tx.get(K.aep(cp.principal))){const known=await this.resolveParty(cp.principal);await tx.put(K.aep(cp.principal),{aep:Number.isSafeInteger(known?.aep)&&known.aep>=0?known.aep:0,at:now,baseline:true});}
+  try{await this.refreshQueue(tx,cp.principal,{now,source:'member'});}catch{/* best effort */}
  }
  /** A counterpart's end is final, so my matching half can never be live again: end it too and say so. Applied on
   * ingest and at activation (a retried acceptance may already hold an ended mirror). */
@@ -471,7 +497,7 @@ export class RelationService{
   const wasLive=h.state!=='ended';cp[key]=bump(h,state,now,entries);
   if(kind==='acceptance'&&state==='ended'&&wasLive){const c=await this.counters(tx);c.incoming=Math.max(0,c.incoming-1);await tx.put(K.state,c);}
   await this.settleCounterpart(tx,r,part,cp,now);
-  await tx.put(K.cp(part.instance,cp.principal),cp);await this.emitHalf(tx,r,cp,kind);await this.refreshImports(tx,part,cp,now);
+  await tx.put(K.cp(part.instance,cp.principal),cp);await this.emitHalf(tx,r,cp,kind);await this.refreshImports(tx,part,cp,now,r);
   await this.orgs.audit(tx,r,`relation-${kind}-${state}`,actor,{instance:part.instance,counterpart:party(cp.principal),generation:cp[key].generation});
   this.orgs.notice(r,`relation-${kind}-${state}`,{instance:part.instance,counterpart:party(cp.principal)},now);
   return true;
@@ -492,6 +518,8 @@ export class RelationService{
  /** relations.resume (widening; see the edge module): a suspended half becomes live again with a new generation. */
  resume(actor,input){return this.widen(actor,input,['instance','counterpart','direction'],async(r,v,now,m,tx)=>{this.edgeInput(v);const {part,cp}=await this.edgeRecords(tx,v);
   const kind=(v.direction??'outgoing')==='outgoing'?'grant':'acceptance';if(cp[kind]?.state!=='suspended')fail();
+  // RL-10: an outgoing edge that arrived suspended after this organization's move is re-bound (relations.rebind).
+  if(cp[kind].cause==='moved')fail('relation_rebind_required','This edge needs new values after the move. Re-bind it.',409);
   let entries;if(kind==='grant'){const doc=await this.docFor(tx,part.relation);entries=await this.liveEntries(tx,doc,cp.as,cp.slot,cp.grant.entries,now);if(!entries.length||!requiredSatisfied(doc,cp.as,cp.slot,entries))fail('relation_values_incomplete','A required entry has no resource left; end this edge instead.',409);}
   await this.changeHalf(tx,r,actor,part,cp,kind,'live',now,entries);return this.edgeView(part,cp,now);});}
  /** relations.narrow (narrowing): keep only some entries or resources of my outgoing grant. Required entries stay
@@ -524,100 +552,24 @@ export class RelationService{
    // "for each half it held"; the extra end confers nothing and is recorded for review in DEVLOG ORG-10a-c).
    for(const kind of ['grant','acceptance']){const h=cp[kind];if(h&&h.state!=='ended'){if(kind==='acceptance'&&h.state!=='pending')c.incoming=Math.max(0,c.incoming-1);cp[kind]=h.state==='pending'?null:bump(h,'ended',now);}
     if(tell&&h?.state!=='ended')await this.enqueue(tx,r,cp.principal,halfEvent(kind,{state:'ended'}),part.instance);}
-   cp.state='ended';cp.endedAt=now;await tx.put(K.cp(part.instance,cp.principal),cp);await holdImports(tx,{grantor:cp.principal,instance:part.instance,now});
+   cp.state='ended';cp.endedAt=now;await tx.put(K.cp(part.instance,cp.principal),cp);await holdImports(tx,{grantor:cp.principal,instance:part.instance,now});await this.mirrorImports(tx,cp.principal,part.instance,now);
   }
-  part.state='left';part.leftAt=now;await tx.put(K.instance(part.instance),part);c.instances=Math.max(0,c.instances-1);await tx.put(K.state,c);
+  part.state='left';part.leftAt=now;await tx.put(K.instance(part.instance),part);await tx.put(K.left(now,part.instance),true);c.instances=Math.max(0,c.instances-1);await tx.put(K.state,c);
   for(;;){const page=await tx.list({prefix:'rel/inv-open/'+ik(part.instance)+'/',limit:BATCH});
    for(const key of page.keys()){const inv=await tx.get(K.inv(key.slice(key.lastIndexOf('/')+1)));if(!inv||!await this.closeInvitation(tx,r,inv,'withdrawn',now,{reason:'left'}))await tx.delete(key);}
    if(page.size<BATCH)break;}
  }
  /** Recomputes this counterpart's imports from my mirror of its grant half and my acceptance half. */
- async refreshImports(tx,part,cp,now){
+ async refreshImports(tx,part,cp,now,r){
   // Receiving is not free (R3-M2): without my acceptance half nothing is recorded as received.
-  const g=cp.peerGrant;if(!cp.acceptance||!g?.entries||g.state==='ended'){await holdImports(tx,{grantor:cp.principal,instance:part.instance,now});return;}
+  const g=cp.peerGrant;if(!cp.acceptance||!g?.entries||g.state==='ended'){await holdImports(tx,{grantor:cp.principal,instance:part.instance,now});await this.mirrorImports(tx,cp.principal,part.instance,now);return;}
   const doc=await this.docFor(tx,part.relation);
-  await syncImports(tx,{grantor:cp.principal,instance:part.instance,available:incomingLive(part,cp),entries:clampEntries(doc,cp.slot,cp.as,g.entries),now});
+  const {removed,rebound}=await syncImports(tx,{grantor:cp.principal,instance:part.instance,available:incomingLive(part,cp),entries:clampEntries(doc,cp.slot,cp.as,g.entries),now});
+  await this.mirrorImports(tx,cp.principal,part.instance,now,removed);
+  // RL-10: the grantor re-bound an entry (after its move); the grantee's admins are told, and members keep their grants.
+  if(rebound.length&&r)this.orgs.notice(r,'relation-import-rebound',{instance:part.instance,grantor:party(cp.principal),entries:rebound},now);
  }
 
- /** relations.ingest (system; the events endpoint). The response is the same `{accepted:true}` for every structurally
-  * valid event whatever happens (spec §9.9); only a malformed event is refused. Nothing here fetches anything. */
- ingest(actor,input){return this.system(actor,async(r,now,tx)=>{
-  const e=input?.event,from=input?.from,nowS=Math.floor(now/1000);
-  const ok=plain(e)&&Object.keys(e).length===10&&['bindle','v','iss','sub','aud','instance','aep','iat','jti','events'].every(k=>Object.hasOwn(e,k))&&e.bindle==='relation-event'&&e.v===1
-   &&e.aud===identityURI(this.self(r.id))&&Number.isSafeInteger(e.iat)&&e.iat>=nowS-RELATION_EVENT_PAST_S&&e.iat<=nowS+RELATION_EVENT_FUTURE_S&&typeof e.jti==='string'&&e.jti.length>0&&e.jti.length<=128
-   &&Number.isSafeInteger(e.aep)&&e.aep>=0&&typeof e.instance==='string'&&plain(e.events)&&Object.keys(e.events).length===1&&RELATION_EVENT_TYPES.includes(Object.keys(e.events)[0]);
-  if(!ok)fail('relation_event_invalid','Invalid relation event.',400);
-  const accepted={accepted:true},sender={iss:e.iss,sub:e.sub};
-  // Step 3 stand-in (same host): the adapter-verified sender must be the event's issuer. ORG-10e verifies the
-  // signature against the sender's warm certification keys instead.
-  if(!validPrincipal(from)||!samePrincipal(from,sender))return accepted;
-  // Step 2: only a counterpart in that instance (live or pending) is processed.
-  const part=await tx.get(K.instance(e.instance)),cp=part?await tx.get(K.cp(e.instance,sender)):null;if(!part||!cp||cp.state==='ended')return accepted;
-  // Step 4: a jti accepted within the window is not reprocessed (recorded only after the checks above).
-  if(await tx.get(K.jti(sender,e.jti)))return accepted;await tx.put(K.jti(sender,e.jti),{at:now});await tx.put(K.jtiAt(now,sender,e.jti),true);
-  const received=e.events,[[type,payload]]=Object.entries(received);
-  // Step 5: aep floors apply to widening events only; narrowing is always honoured.
-  // The floor is per sender (spec §9.9 step 5), across all instances (review L9).
-  const floor=Math.max((await tx.get('rel/aep/'+pk(sender)))?.aep??0,cp.peerAep??0);
-  if(!narrowingEvent(received)&&e.aep<floor)return accepted;if(e.aep>floor){await tx.put('rel/aep/'+pk(sender),{aep:e.aep,at:now});}cp.peerAep=Math.max(floor,e.aep);
-  if(type!==RELATION_EVENT.edgeState&&type!==RELATION_EVENT.edgeEnded){await tx.put(K.cp(e.instance,sender),cp);return accepted;}// introductions, recognition, doorbells: ORG-10e
-  if(!['grant','acceptance'].includes(payload?.half)){await tx.put(K.cp(e.instance,sender),cp);return accepted;}
-  const key=payload.half==='grant'?'peerGrant':'peerAcceptance',{changed,mirror}=applyMirror(cp[key],received,now);
-  if(changed){cp[key]=mirror;
-   // A counterpart's end is final, so my matching half can never be live again: end it too and say so.
-   await this.endMatching(tx,r,cp,now);
-   await this.settleCounterpart(tx,r,part,cp,now);
-  }
-  await tx.put(K.cp(e.instance,sender),cp);if(changed)await this.refreshImports(tx,part,cp,now);
-  return accepted;
- });}
- /** relations.outbox-drain (system): delivers queued relation events through the transport port. Delivery is at least
-  * once; a failure backs off and an event past the 72 h window is dropped (anti-entropy re-sends recover it). */
- async drain(actor,{limit=64}={}){
-  if(actor?.kind!=='system')fail('forbidden','System only.',403);
-  // Rows are keyed by (notBefore, seq), so backed-off rows for an unreachable counterpart never block rows behind them
-  // (review M4); the scan stops at the first row not yet due.
-  const now=this.clock.now(),me=this.self(actor.owner),rows=await this.metadata.transaction(async tx=>{if(await tx.get('owner')!==actor.owner)fail('forbidden','Account owner mismatch.',403);
-   const out=[];for(const [key,row] of await tx.list({prefix:'rel/outbox/',limit:Math.min(limit,BATCH)})){if(row.notBefore>now)break;out.push({key,row});}return out;});
-  const done=[],retry=[];
-  for(const {key,row} of rows){
-   if(this.foreign(row.to)&&!this.flag(actor.owner,ORG_FOREIGN_RELATIONS_FLAG)){retry.push({key,row});continue;}
-   try{
-    if(row.kind==='offer')await this.transport.offer(me,row.to,{meta:row.meta});
-    else if(row.kind==='retract')await this.transport.retract(me,row.to,{jti:row.invitation});
-    else await this.transport.deliver(me,row.to,{bindle:'relation-event',v:1,iss:me.iss,sub:me.sub,aud:identityURI(row.to),instance:row.instance,aep:row.aep,iat:Math.floor(this.clock.now()/1000),jti:row.jti,events:row.events});
-    done.push(key);
-   }catch{retry.push({key,row});}
-  }
-  await this.metadata.transaction(async tx=>{for(const key of done)await tx.delete(key);
-   for(const {key,row} of retry){await tx.delete(key);if(now-row.createdAt>OUTBOX_RETRY_MS)continue;row.attempts++;row.notBefore=now+Math.min(3600000,1000*2**Math.min(row.attempts,12));await tx.put(K.outbox(row.notBefore,row.seq),row);}});
-  return {delivered:done.length,pending:retry.length};
- }
- /** relations.resync (system): anti-entropy. Re-queues the latest state of every half this organization holds, so a
-  * receiver that missed an event converges (spec §9.9). ORG-10e schedules it daily. */
- resync(actor,{after}={}){return this.system(actor,async(r,now,tx)=>{
-  let n=0,last=null;const page=await tx.list({prefix:'rel/cp/',...after?{startAfter:after}:{},limit:BATCH});
-  for(const [key,cp] of page){last=key;
-   // An ended counterpart is re-told its final state for 72 h only (the same bound as deletion), then never again.
-   if(cp.state==='ended'){if(now-(cp.endedAt??0)<OUTBOX_RETRY_MS)for(const kind of ['grant','acceptance']){await this.enqueue(tx,r,cp.principal,halfEvent(kind,{state:'ended'}),cp.instance);n++;}continue;}
-   if(cp.state!=='live')continue;for(const kind of ['grant','acceptance'])if(cp[kind]&&cp[kind].state!=='pending'){await this.emitHalf(tx,r,cp,kind);n++;}}
-  return {queued:n,next:page.size===BATCH?last:null};
- });}
- /** relations.edge-check (system query; the grantor-side hook ORG-10d's certificate verification calls). */
- edgeCheck(actor,input){
-  if(actor?.kind!=='system')fail('forbidden','System only.',403);
-  return this.metadata.transaction(async tx=>{if(await tx.get('owner')!==actor.owner)fail('forbidden','Account owner mismatch.',403);
-   if(!plain(input)||typeof input.instance!=='string'||!validPrincipal(input.grantee))return {allowed:false};
-   const part=await tx.get(K.instance(input.instance)),cp=part?await tx.get(K.cp(input.instance,input.grantee)):null;
-   // The grant is re-intersected with the live pool at check time: a resource that left the pool, or a contract
-   // method it no longer offers, is refused even before any narrowing (review M2).
-   const now=this.clock.now();if(!edgeAllows(part,cp,input,now))return {allowed:false};
-   const own=await this.resources(tx,input.resource);if(!own||!Object.hasOwn(own.contracts,input.contract)||!Array.isArray(own.contracts[input.contract])||!own.contracts[input.contract].includes(input.method))return {allowed:false};
-   // An edge is live only while every required entry is still granted (spec §9.2, §9.3): a required entry whose
-   // resources all expired or left the pool stops the whole edge at once, not at the next sweep (review L1).
-   const doc=await this.docFor(tx,part.relation),live=await this.liveEntries(tx,doc,cp.as,cp.slot,cp.grant.entries,now);
-   return {allowed:requiredSatisfied(doc,cp.as,cp.slot,live)};});
- }
  /**
   * relations.sweep (system): expiry and retention, bounded per call and resumable (review L3): invitations by expiry
   * index, closed invitations deleted after 30 days, inbound items (at most 256 rows), replay rows by time index (up to
@@ -631,6 +583,10 @@ export class RelationService{
   for(const [key] of await tx.list({prefix:'rel/inv-done/',limit:BATCH})){const at=Number(key.split('/')[2]);if(at>now-INVITATION_RETENTION_MS)break;await tx.delete(K.inv(key.slice(key.lastIndexOf('/')+1)));await tx.delete(key);changed++;}
   if(r.state!=='active'||r.hold)changed+=await this.onOrganizationCommit(tx,r,actor)?1:0;
   for(const [key,item] of await tx.list({prefix:'rel/inbound/',limit:RELATION_LIMITS.inbound+1}))if(item.expiresAt<=now){await tx.delete(key);changed++;}
+  for(const [key,item] of await tx.list({prefix:'rel/intro/',limit:RELATION_LIMITS.inbound+1}))if(item.expiresAt<=now){await tx.delete(key);changed++;}
+  changed+=await this.pruneProofs(tx,now);
+  changed+=await this.pruneLeft(tx,now);
+  changed+=await this.pruneIntroductions(tx,now);
   let budget=JTI_SWEEP_BUDGET;
   while(budget>0){const page=await tx.list({prefix:'rel/jti-at/',limit:Math.min(BATCH,budget)});let stop=page.size<Math.min(BATCH,budget);
    for(const key of page.keys()){const parts=key.split('/'),at=Number(parts[2]);if(at>now-JTI_KEEP_MS){stop=true;break;}await tx.delete(key);await tx.delete('rel/jti/'+parts.slice(3).join('/'));budget--;}
@@ -662,22 +618,9 @@ export class RelationService{
   const out=[];for(const g of member.grants??[])if(!g.power&&isImportId(g.resource)){const found=await importById(tx,g.resource,now);if(found)out.push({id:found.resource.id,grantor:{...found.row.grantor},status:found.available?'available':'unavailable',contracts:[...found.resource.contracts]});}
   return {imports:out};
  });}
- /**
-  * relations.import-authority: the acting member's effective methods on one import for one application connection.
-  * The application ceiling is the active federation grant's approved methods for `field` (as packages/orgs/grants.mjs
-  * does), never a caller-supplied value, and the membership generation must match (review L4). The grant must list the
-  * import among its approved resources for that field; until ORG-10d lets connections hold imports, that leaves
-  * nothing to grant, which is the intended fail-closed state.
-  */
- importAuthority(actor,input){return this.metadata.transaction(async tx=>{
-  const r=await this.orgs.organization(tx,actor),now=this.clock.now(),member=r.memberships?.[principalKey(actor.principal)];if(member?.state!=='live')fail();
-  if(!plain(input)||Object.keys(input).some(k=>!['resource','grant','field','generation'].includes(k))||typeof input.resource!=='string'||typeof input.grant!=='string'||typeof input.field!=='string')fail('invalid_request','Unsupported relation request.',400);
-  if(input.generation!==member.generation)return {methods:{}};
-  const g=await tx.get('federation/grant/'+input.grant),own=(o,k)=>o&&typeof o==='object'&&Object.hasOwn(o,k)?o[k]:undefined;
-  const approved=g?.active===true&&Array.isArray(own(g.resources,input.field))&&own(g.resources,input.field).includes(input.resource);
-  const found=await importById(tx,input.resource,now);return {methods:approved?importAuthority({member,application:own(g.methods,input.field),found,now}):{}};
- });}
 }
+// ORG-10d and ORG-10e methods (one service, one writer; the modules own their records and rules).
+Object.assign(RelationService.prototype,relationEventMethods,relationLifecycleMethods,relationAccessMethods);
 
 // ---- engine operations ---------------------------------------------------------------------------------------------
 const CHANGED='relations-changed';
@@ -705,7 +648,7 @@ export class RedeemRelation extends RelSystem{static operation='relations.redeem
 export class OfferRelation extends RelSystem{static operation='relations.offer';run({relations}){return relations.offer(this.actor,this.input);}}
 export class RetractRelationOffer extends RelSystem{static operation='relations.retract';run({relations}){return relations.retract(this.actor,this.input);}}
 export class RelationSweep extends RelSystem{static operation='relations.sweep';run({relations}){return relations.sweep(this.actor);}}
-export const RELATION_OPERATIONS=Object.freeze([RelationPreview,RelationList,RelationGet,RelationInbound,RelationInboundPreview,CreateRelation,InviteRelation,AcceptRelation,WithdrawRelationInvitation,DeclineRelationItem,LeaveRelation,MuteRelationOrganization,...RELATION_EDGE_OPERATIONS,...RELATION_IMPORT_OPERATIONS]);
-export const RELATION_SYSTEM_OPERATIONS=Object.freeze([RedeemRelation,OfferRelation,RetractRelationOffer,RelationSweep,...RELATION_EDGE_SYSTEM_OPERATIONS]);
+export const RELATION_OPERATIONS=Object.freeze([RelationPreview,RelationList,RelationGet,RelationInbound,RelationInboundPreview,CreateRelation,InviteRelation,AcceptRelation,WithdrawRelationInvitation,DeclineRelationItem,LeaveRelation,MuteRelationOrganization,...RELATION_EDGE_OPERATIONS,...RELATION_IMPORT_OPERATIONS,...RELATION_EVENT_OPERATIONS,...RELATION_LIFECYCLE_OPERATIONS]);
+export const RELATION_SYSTEM_OPERATIONS=Object.freeze([RedeemRelation,OfferRelation,RetractRelationOffer,RelationSweep,...RELATION_EDGE_SYSTEM_OPERATIONS,...RELATION_LIFECYCLE_SYSTEM_OPERATIONS,...RELATION_ACCESS_SYSTEM_OPERATIONS]);
 /** Narrowing operations, which no relations flag ever gates (design §8b.10). */
-export const RELATION_NEVER_GATED=Object.freeze(['relations.withdraw','relations.decline','relations.leave','relations.mute','relations.suspend','relations.end','relations.narrow','relations.ingest','relations.outbox-drain','relations.resync','relations.sweep','relations.list','relations.get','relations.inbound','relations.imports']);
+export const RELATION_NEVER_GATED=Object.freeze(['relations.withdraw','relations.decline','relations.leave','relations.mute','relations.suspend','relations.end','relations.narrow','relations.ingest','relations.outbox-drain','relations.resync','relations.sweep','relations.list','relations.get','relations.inbound','relations.imports','relations.introductions','relations.holds','relations.tick','relations.lifecycle','relations.observe-counterpart','relations.purge-ready','relations.certify','relations.authorize','relations.edge-check']);

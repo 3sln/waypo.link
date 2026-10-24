@@ -954,6 +954,14 @@ Source for every item below: "2026-10-24 — ORG-12d support adjudication", incl
 - Safe alternative: none recorded.
 - Owner: ___
 
+**MC-10. Contact-delivery status: 401 versus uniform 404 (open spec question)**
+- Decided: nothing yet. `docs/spec/contact-delivery.md` (S4) requires a uniform 401 for unauthenticated signed-URL or contact-bearer delivery, but the adapters (`packages/runtime/public-unknown.mjs`, `routes/delivery.mjs`) answer refused contact targets with the uniform 404 from the later uniform-unknown work.
+- Value: the current behaviour is uniform 404 for refused signed contact targets. Missing or invalid OAuth credentials keep standard credential refusals.
+- Why: the two rules predate each other's revision; the drift audit kept the explicit S4 text and documented the adapter boundary instead of rewriting it.
+- Source: "Spec/implementation drift audit" (finding 3).
+- Safe alternative: treat signed contact targets as a named exception to the uniform-404 rule (keep 404), or restore 401 for them; either way, one spec should be updated to match.
+- Owner: ___
+
 ## App platform and AI budget
 
 **AP-1. Separate classifier budget (doubles exposure)**
@@ -1108,6 +1116,14 @@ Source for every item below: "2026-10-24 — ORG-12d support adjudication", incl
 - Why: the 5,000-object summary and the 200-object deletion batch were the probe cliffs #3 and #9. The DEVLOG calls the probe bound "a documented bound, not a full guarantee".
 - Source: "Scalability fixes round 2 (producer, conversations, retention totals, tombstones, directory)" (#3, #9; review follow-ups L2 and L4).
 - Safe alternative: none recorded.
+- Owner: ___
+
+**AP-17. Clean removal for organization apps is not built**
+- Decided: organization connections report clean removal as unsupported (`unsupported_entity`), although `docs/spec/app-removal.md` §9.6 describes a provisional policy where the reference host starts clean removal after a notified 24 h delay.
+- Value: plain disconnect only, for organization apps.
+- Why: the organization side of removal was never implemented; the spec status now records the boundary.
+- Source: "Spec/implementation drift audit" (finding 2).
+- Safe alternative: keep it unsupported until built (current state).
 - Owner: ___
 
 ## Region, legal and compliance

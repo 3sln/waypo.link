@@ -22,7 +22,7 @@ export function encodeIntent(input){return guarded(()=>{const text=jcs(input,{ma
 export function decodeIntent(value,{now}={}){return guarded(()=>{
  if(typeof value!=='string'||!value.length||value.length>(value.includes('.')?7168:6400))fail();
  const signed=value.includes('.');let raw;
- if(signed){const parts=value.split('.');if(parts.length!==3)fail();const h=strictJSON(bytes(parts[0]),{maxBytes:512,maxDepth:8});if(!exact(h,['alg','kid','typ'])||h.alg!=='ES256'||h.typ!=='bindle-intent+jwt'||typeof h.kid!=='string'||!h.kid.length||h.kid.length>200||bytes(parts[2]).length!==64)fail();raw=bytes(parts[1]);}else raw=bytes(value);
+ if(signed){const parts=value.split('.');if(parts.length!==3)fail();const h=strictJSON(bytes(parts[0]),{maxBytes:512,maxDepth:8});if(!exact(h,['alg','kid','typ'])||h.alg!=='ES256'||h.typ!=='bindle-intent+jwt'||typeof h.kid!=='string'||!h.kid.length||h.kid.length>200||/[\u0000-\u001f\u007f]/.test(h.kid)||bytes(parts[2]).length!==64)fail();raw=bytes(parts[1]);}else raw=bytes(value);
  const v=strictJSON(raw,{maxBytes:signed?5120:4608,maxDepth:8});if(!signed&&b64(textEncoder.encode(jcs(v,{maxDepth:8})))!==value)fail();object(v,{signed,now});if(signed){delete v.minter;delete v.iat;}return v;
 });}
 const name=v=>{try{return decodeURIComponent(v).toLowerCase();}catch{return v.toLowerCase();}};

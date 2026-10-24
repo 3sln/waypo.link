@@ -12,9 +12,12 @@ const mk=async o=>(await o.run('relations.create',null,{relation:o.host.pins.sha
 
 async function host(n=3){const h=await relationsHost({orgs:n});for(const o of h.list)o.host=h;return h;}
 
-test('H1: resource scoping is refused until the certificate path can enforce it',async()=>{const h=await host();try{
+test('H1 (superseded by ORG-10d): a scope is accepted only where the resource offers it, and the grantor enforces it',async()=>{const h=await host();try{
  const [A,B]=h.list,r=await res(A,'f');
- await rejects(A.run('relations.invite',null,{instance:await mk(A),slot:'recipient',invitee:B.principal,values:{0:[{resource:r,scope:{readOnly:true}}]}}),'relation_scope_unsupported');
+ await rejects(A.run('relations.invite',null,{instance:await mk(A),slot:'recipient',invitee:B.principal,values:{0:[{resource:r,scope:{readOnly:true}}]}}),'relation_values_invalid','the resource offers no scoping');
+ await A.metadata.put('federation/resource/'+r,{...await A.get('federation/resource/'+r),scoping:{fields:{readOnly:{}}}});
+ const {instance}=await h.relate(A,B,{give:{0:[{resource:r,scope:{readOnly:true}}]}});
+ assert.equal(await A.check(instance,B,r,STORE,'get'),true);assert.equal(await A.check(instance,B,r,STORE,'put'),false,'never exceeds the configured ceiling');
 }finally{await h.close();}});
 
 test('M2: the grant is re-intersected with the live pool at check time and at resume',async()=>{const h=await host();try{
@@ -95,9 +98,9 @@ test('M8: pending acceptances count toward the incoming-edge cap',async()=>{cons
 test('L9: the aep floor is per sender across instances',async()=>{const h=await host();try{
  const [A,B]=h.list,r=await res(A,'f'),i1=(await h.relate(A,B,{give:{0:[{resource:r}]}})).instance,i2=(await h.relate(A,B,{give:{0:[{resource:r}]}})).instance;
  const ev=(instance,gen,state,aep)=>({bindle:'relation-event',v:1,iss:ISS,sub:A.id,aud:`${ISS}/identity/${B.id}`,instance,aep,iat:Math.floor(h.clock.now()/1000),jti:h.random.uuid(),events:{[RELATION_EVENT.edgeState]:{half:'grant',generation:gen,state,...state==='live'?{entries:[{index:0,resources:[{resource:r,contracts:[STORE],methods:{[STORE]:['get']}}]}]}:{}}}});
- await B.system('relations.ingest',{event:ev(i1,5,'live',4),from:A.principal});
- await B.system('relations.ingest',{event:ev(i2,5,'suspended',0),from:A.principal});
- await B.system('relations.ingest',{event:ev(i2,6,'live',1),from:A.principal});
+ await h.ingest(B,A,ev(i1,5,'live',4));
+ await h.ingest(B,A,ev(i2,5,'suspended',0));
+ await h.ingest(B,A,ev(i2,6,'live',1));
  assert.equal((await B.cp(i2,A)).peerGrant.state,'suspended','a widening below the sender\'s floor from another instance is refused');
 }finally{await h.close();}});
 
@@ -141,8 +144,8 @@ test('L1: a required entry that lapsed stops the whole edge at once, before any 
 test('L2: counterpart-supplied names such as constructor never crash or match prototype members',async()=>{const h=await host();try{
  const [A,B]=h.list,r=await res(A,'f'),{instance}=await h.relate(A,B,{give:{0:[{resource:r}]}});
  const ev={bindle:'relation-event',v:1,iss:ISS,sub:A.id,aud:`${ISS}/identity/${B.id}`,instance,aep:0,iat:Math.floor(h.clock.now()/1000),jti:h.random.uuid(),
-  events:{[RELATION_EVENT.edgeState]:{half:'grant',generation:50,state:'live',entries:[{index:0,resources:[{resource:r,contracts:['constructor'],methods:{constructor:['get'],__proto__:['get']}}]}]}}};
- assert.deepEqual(await B.system('relations.ingest',{event:ev,from:A.principal}),{accepted:true});
+  events:{[RELATION_EVENT.edgeState]:{half:'grant',generation:50,state:'live',entries:[{index:0,resources:[{resource:r,contracts:['constructor'],methods:JSON.parse('{"constructor":["get"],"__proto__":["get"]}')}]}]}}};
+ assert.deepEqual(await h.ingest(B,A,ev),{accepted:true});
  await rejects(A.run('relations.invite',null,{instance:await mk(A),slot:'constructor',invitee:B.principal,values:{0:[{resource:r}]}}),'relation_slot_invalid');
  assert.equal(await A.check(instance,B,r,'constructor','get'),false);
 }finally{await h.close();}});
@@ -162,10 +165,16 @@ test('L4: the import authority takes the application ceiling from the approved g
  const pk=(await import('../packages/orgs/grants.mjs')).principalKey,m=await B.get('org/member/'+pk({iss:ISS,sub:B.member}));
  await B.run('orgs.member-grants',null,{membership:m.id,grants:[{resource:imp,methods:{[STORE]:['get','list','put']}}]});const gen=(await B.get('org/member/'+pk({iss:ISS,sub:B.member}))).generation;
  await rejects(B.run('relations.import-authority',B.member,{resource:imp,application:{[STORE]:['get','list','put','delete']}}),'invalid_request');
- await B.metadata.put('federation/grant/g',{id:'g',active:true,fields:['f'],methods:{f:{[STORE]:['get']}},resources:{f:[imp]}});
+ const grant={id:'g',active:true,clientId:'https://app.example/client',connection:{id:'c1',generation:1},fields:['f'],methods:{f:{[STORE]:['get']}},resources:{f:[imp]}};
+ h.connections.set('c1',{generation:1});await B.metadata.put('federation/grant/g',grant);
  assert.deepEqual((await B.run('relations.import-authority',B.member,{resource:imp,grant:'g',field:'f',generation:gen})).methods,{[STORE]:['get']});
  assert.deepEqual((await B.run('relations.import-authority',B.member,{resource:imp,grant:'g',field:'f',generation:gen+1})).methods,{},'a stale membership generation');
- await B.metadata.put('federation/grant/g',{id:'g',active:false,fields:['f'],methods:{f:{[STORE]:['get']}},resources:{f:[imp]}});
+ // ORG-10d connection-generation fence: a reconnected (or ended) connection makes the grant inert.
+ h.connections.set('c1',{generation:2});assert.deepEqual((await B.run('relations.import-authority',B.member,{resource:imp,grant:'g',field:'f',generation:gen})).methods,{},'a newer connection generation');
+ h.connections.delete('c1');assert.deepEqual((await B.run('relations.import-authority',B.member,{resource:imp,grant:'g',field:'f',generation:gen})).methods,{},'an ended connection');
+ h.connections.set('c1',{generation:1});await B.metadata.put('federation/grant/g',{...grant,connection:undefined});
+ assert.deepEqual((await B.run('relations.import-authority',B.member,{resource:imp,grant:'g',field:'f',generation:gen})).methods,{},'a grant with no connection');
+ await B.metadata.put('federation/grant/g',{...grant,active:false});
  assert.deepEqual((await B.run('relations.import-authority',B.member,{resource:imp,grant:'g',field:'f',generation:gen})).methods,{},'an inactive connection grant');
 }finally{await h.close();}});
 

@@ -12,6 +12,10 @@
 // Sources: 'member' (roster discovery, join, epoch observation, same-host issuance hints; bounded by the roster size
 // plus MEMBER_REFRESH_CLAIMED) and 'claimed' (the request path, for any syntactically valid claimed principal whose
 // cached keys are missing or stale, member or not; bounded by MEMBER_REFRESH_CLAIMED).
+// ORG-10e: relation counterparts join the background-refresh set as 'member' rows (enqueueCounterpartKeyRefresh, at
+// recognition and on an observed move), because relation events and entity certificates verify only against keys
+// already held (spec §9.9 step 3, §9.5). A claimed event sender is enqueued as 'claimed' exactly as a claimed member
+// certificate would be, so the schedule never depends on participation (RL-R1-H1).
 import {principalKey as memberPrincipalKey} from './grants.mjs';
 
 export const MEMBER_REFRESH_PREFIX='org/cert/refresh/',MEMBER_REFRESH_INDEX='org/cert/refresh-of/',MEMBER_REFRESH_SIZE='org/cert/refresh-size',MEMBER_REFRESH_CLAIMED_INDEX='org/cert/refresh-claimed/';
@@ -46,6 +50,8 @@ export async function enqueueMemberKeyRefresh(tx,principal,{now,source='member',
  count[kind]++;const key=refreshKey(now,who),claimedKey=kind==='claimed'?MEMBER_REFRESH_CLAIMED_INDEX+pad(now)+'/'+memberPrincipalKey(who):undefined;
  await tx.put(key,{issuer:who.iss,subject:who.sub,dueAt:now,attempts:0,source:kind,...claimedKey?{claimedKey}:{}});await tx.put(index,key);if(claimedKey)await tx.put(claimedKey,key);await tx.put(MEMBER_REFRESH_SIZE,count);return true;
 }
+/** Adds a relation counterpart ({iss, sub}) to the background-refresh set (a 'member' row, deduplicated). */
+export function enqueueCounterpartKeyRefresh(tx,principal,{now,cap}={}){return enqueueMemberKeyRefresh(tx,principal,{now,source:'member',...cap===undefined?{}:{cap}});}
 /** The due rows, oldest first, at most `limit`: [[key, row]]. Reads only due rows (plus one). */
 export async function dueMemberKeyRefreshes(tx,now,limit){
  const out=[];for(const [key,row] of await tx.list({prefix:MEMBER_REFRESH_PREFIX,limit:limit+1})){if(!(row?.dueAt<=now)||out.length>=limit)break;out.push([key,row]);}return out;

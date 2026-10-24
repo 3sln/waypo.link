@@ -88,15 +88,17 @@ Hosted 3sln.me mail uses the Cloudflare `EMAIL` send binding; see [email deploym
 
 ## Operations and limits
 
-Run `npm test`, `npm run test:worker` and browser checks. The Node adapter currently supports a single process with in-process serialization; multi-process instances require a shared linearizable repository and distributed gates. Worker auth uses a fixed, versioned 64-bucket identity layout for each account/handle/email/device lookup family. The template declares a fresh namespace; existing deployments need an audited offline identity migration before selecting this layout. Ordinary authentication avoids the global directory. Load/cost verification remains a release gate. See [identity sharding](architecture/identity-sharding.md). Account deletion and rich archive rendering are not complete. Both runtimes share these limitations.
+Run `npm test`, `npm run test:worker` and browser checks. The Node adapter currently supports a single process with in-process serialization; multi-process instances require a shared linearizable repository and distributed gates. Worker auth uses a fixed, versioned 64-bucket identity layout for each account/handle/email/device lookup family. The template declares a fresh namespace; existing deployments need an audited offline identity migration before selecting this layout. Ordinary authentication avoids the global directory. Load/cost verification remains a release gate. See [identity sharding](architecture/identity-sharding.md). Account export, scheduled deletion, cancellation, notices and purge orchestration are implemented locally behind flags; production verification and release gates remain open. Rich archive asset rendering remains incomplete.
 
 The origin hosts user data and signing authority. Provider custody sees plaintext data; no end-to-end encryption is claimed. Treat contact links as secrets, redact signed query fields from proxy/request logs, and never index them. Follow docs/spec/security.md and independent reviews before public deployment.
 
 ## Configuration reference
 
-Every setting the code reads. "Hosted" is the value in this repository's `wrangler.jsonc`, which is the 3sln.me production template, not a recommendation. "Node" is the default of `apps/node/server.mjs`, which reads only the variables it forwards (marked N); settings without N are Worker-only or are injected ports. Booleans are the strings `"true"`/`"false"`. Features marked **off** are disabled until you opt in; none is production-verified by being enabled.
+Operator configuration reference. Internal collaborator keys are summarized separately. "Hosted" is the value in this repository's `wrangler.jsonc`, which is the 3sln.me production template, not a recommendation. "Node" is the default of `apps/node/server.mjs`, which reads only the variables it forwards (marked N); settings without N are Worker-only or are injected ports. Booleans are the strings `"true"`/`"false"`. Features marked **off** are disabled until you opt in; none is production-verified by being enabled.
 
 ### Core and signup
+
+Node region policy uses `REGION_POLICY=allow-unknown` by default (`block-unknown` is the alternative). `TRUSTED_COUNTRY_HEADER` is unset by default; configure it only for a header overwritten by a trusted reverse proxy. Untrusted client location headers are discarded.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
@@ -105,7 +107,7 @@ Every setting the code reads. "Hosted" is the value in this repository's `wrangl
 | `BRAND_NAME` | Node: Personal Space; hosted: 3sln.me | Display and email-subject brand. |
 | `LOCAL_DEVELOPMENT` | `false` | Allows test CAPTCHA and loopback origins. Never set in production. |
 | `RELEASE_READY` | `false` | Production release gate. Leave `false`. |
-| `TERMS_VERSION` (N) | `2026-10-11` | Terms version a user must accept. |
+| `TERMS_VERSION` | `2026-10-11` | Terms version a user must accept. Node pins this value unless supplied through `createNodeServer({config})`. |
 | `KEY_ENCRYPTION_KEY` (N) | Node: generated in `.data/encryption-key`; Worker: required secret | Encrypts connector and signing records; also the fallback for `ABUSE_HASH_KEY`, `DPOP_NONCE_KEY`. |
 | `ABUSE_HASH_KEY` | `KEY_ENCRYPTION_KEY` | Secret for hashing network identifiers in rate limits. |
 | `SESSION_COOKIE_KEY` (N) | unset | 43-character base64url secret; enables account session cookies. |
@@ -124,9 +126,11 @@ Every setting the code reads. "Hosted" is the value in this repository's `wrangl
 | `MESSAGE_RECEIPT_LIMITS` | built-in per-plan defaults | JSON per-plan receipt budgets; invalid values refuse to start. |
 | `MESSAGE_FORMS_OUTPUT`, `PUBLIC_DOCS_OUTPUT` | build-time | Output directory overrides for build scripts. |
 
-### Roadmap feature flags
+### Feature switches
 
-These reserved switches default to `"false"` in both Worker configurations and Node. Node forwards environment values and permits explicit `createNodeServer({config})` overrides. Wave 0 only wires configuration; setting a switch does not implement a feature, mount routes or establish production readiness. Later slices must gate their declarations and behavior on these flags.
+`FLAGS_MAX_STALE_MS` (N) defaults to 3,600,000 ms; valid values are 300,000–86,400,000 ms. It bounds freshness since the last successful authority read, after which each flag follows its outage policy.
+
+These switches now gate implemented local features. They default off without console records or overrides. Node forwards registry flags from the environment and permits explicit `createNodeServer({config})` overrides. Console rollout, environment kill switches, dependencies and capability checks apply; enabling a flag does not establish production readiness. The complete registry with classes and defaults is below.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
@@ -167,7 +171,7 @@ These reserved switches default to `"false"` in both Worker configurations and N
 | `APP_METADATA_DISCOVERY_ENABLED` (N) | `false` (off) | Fetch app metadata documents from registered client origins. |
 | `APP_NOTIFICATION_SIGNING_JWK`, `APP_NOTIFICATION_PUBLIC_JWKS` (N) | unset | Signing key (secret) and published verification keys for app notifications. |
 | `MCP_ENABLED`, `MCP_LAYOUT`, `MCP_CLIENTS` (N) | `false` (off), `mcp-auth-v1-64`, `[]` | Agent endpoint. |
-| `BROWSER_AUTOMATION_ENABLED` | `true` (on; only `false` disables) | Kill switch for browser automation. Off refuses every automation operation except revoke, which always works. Node does not forward it, so Node keeps it on. |
+| `BROWSER_AUTOMATION_ENABLED` (N) | `true` (on; only `false` disables) | Kill switch for browser automation. Off refuses every automation operation except revoke, which always works. Node forwards it through the registry capability environment. |
 
 ### Mail, push and providers
 
@@ -175,7 +179,8 @@ These reserved switches default to `"false"` in both Worker configurations and N
 | --- | --- | --- |
 | `MAIL_ENABLED`, `MAIL_SENDER_DOMAIN` | hosted `true`, `sys.3sln.me` | Cloudflare `EMAIL` binding sender; see [email](deployment/email.md). |
 | `EMAIL_AVAILABLE`, `EMAIL_SETUP_AVAILABLE`, `PUSH_AVAILABLE`, `WAITLIST_MAIL_AVAILABLE` | computed | Capability flags derived from injected resources; not settings. |
-| `PUSH_ENABLED`, `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` (N) | `false` (Node); subject defaults to `APP_ORIGIN` | Web push. The private key is a secret. |
+| `PUSH_ENABLED`, `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` (N) | `false` (Node), empty keys | Web push. The private key is a secret. |
+| `VAPID_SUBJECT` | `APP_ORIGIN` | Web-push subject. Node accepts it through injected config, rather than forwarding the environment variable. |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` (N) | empty | Your own Google OAuth app; see [Google Drive](deployment/google-drive.md). |
 | `BILLING_ENABLED` (N) | Node: `false`; hosted: `true` | Polar billing; see [billing](deployment/billing.md). |
 | `POLAR_SERVER`, `POLAR_CATALOG_MODE`, `POLAR_METADATA_PREFIX`, `POLAR_ORGANIZATION_ID`, `POLAR_PRODUCT_ID_PAID`, `POLAR_PRODUCT_ID_PLUS`, `POLAR_PRODUCT_ID_ULTRA` (N) | Node: `sandbox`, `static`, `3sln_me_`, empty | Polar configuration. |
@@ -193,7 +198,7 @@ These reserved switches default to `"false"` in both Worker configurations and N
 | `STORAGE_WRITE_SERVICE_MONTHLY_LIMIT`, `_FREE_PER_HOUR`, `_FREE_PER_DAY`, `_PAID_PER_HOUR`, `_PAID_PER_DAY`, `_OWNER_PER_MINUTE`, `_APP_PER_MINUTE`, `_MAINTENANCE_MONTHLY_LIMIT`, `_MAINTENANCE_PERCENT` (N) | hosted 10000000, 500, 1000, 2000, 10000, 240, 120, 16, 10 | Write limits (each prefixed `STORAGE_WRITE`). |
 | `SEMANTIC_SEARCH_ENABLED`, `SEMANTIC_EMBEDDING_MODEL`, `SEMANTIC_GLOBAL_MONTHLY_MICRO_USD`, `SEMANTIC_GLOBAL_DAILY_MICRO_USD`, `SEMANTIC_GLOBAL_MAX_OWNERS`, `SEMANTIC_GLOBAL_MAX_UPSERTS` | Worker only; hosted on | Workers AI and Vectorize search and its spend caps. |
 | `LIFECYCLE_ENABLED` (N) | `false` (off) | Account lifecycle runner. |
-| `LIFECYCLE_DRY_RUN` (N) | `true` | Dry run arms clocks but sends and changes nothing. Set `false` only to go live. |
+| `LIFECYCLE_DRY_RUN` (N) | `true` | Dry run permits lifecycle bookkeeping but suppresses live notices, deletion and cold moves. Set `false` only to go live. |
 | `LIFECYCLE_PURGE_ENABLED` (N) | `false` (off) | Irreversible purge; also needs live mode and a fresh Polar ever-paid check. |
 | `LIFECYCLE_COLD_STORAGE`, `LIFECYCLE_COLD_MIN_BYTES` | hosted `true`, 4194304 | Move large objects to Infrequent Access (live mode only). |
 | `LIFECYCLE_FINANCE_REVIEW` (N) | hosted `polar` | `local-only` skips the Polar check and blocks purge. |
@@ -202,3 +207,73 @@ These reserved switches default to `"false"` in both Worker configurations and N
 ### Bindings and injected ports (not variables)
 
 Worker bindings: `ACCOUNTS`, `IDENTITIES`, `ABUSE`, `FEDERATION`, `MCP_AUTH`, `LIFECYCLE_SCHEDULER`, `BLOBS`, `ARCHIVES`, `ASSETS`, `AI`, `SEARCH_VECTORS_0..3`, `EMAIL`, `PLAN_CATALOG`, `SEMANTIC_BUDGET`. Internal ports supplied by adapters and tests, never configured by operators: `ADMIN_AUTHORITY`, `ADMIN_SERVICE`, `FEDERATION_AUTHORITY`, `MCP_AUTHORITY`, `STORAGE_WRITE_AUTHORITY`, `WORK_AUTHORITY`, `IDENTITY_REPOSITORY`, `IDENTITY_ENGINE`, `IDENTITY_ACCOUNT`, `BILLING_CATALOG`, `DEVELOPER_CONTACT_POPULATION`, `ACTIVE_POPULATION_CENSUS`, `E2E_AUTHORIZATION_ENTRIES`, `CONVERSATION_*`, `FORM_POSTBACK_TRANSPORT`, `*_FETCH` and `LIFECYCLE_*` collaborators. `PORT` sets the Node listen port (default from `APP_ORIGIN`, else 8788) and also the demo's; and `PROBE_KEY` only by `scripts/verify-semantic-provider.mjs`.
+
+### Complete flag registry (2026-10-24)
+
+All 61 entries in `packages/flags/registry.mjs` are listed below. Class **a** is a targeted console rollout; **c** is a console switch with its declared dimensions; **b** is an environment capability (derived rows are computed by adapters). **Safe** is the registry fallback, not a deployment setting. For a/c flags, an unset environment delegates to the console and an absent record uses Safe; an explicit safe value kills the feature. Legacy unsafe environment values apply only before a console record exists and with a usable snapshot. Dependencies and service readiness can still refuse an enabled feature.
+
+**Worker template** is the raw value in `wrangler.jsonc` (unset means no explicit value). **Node default** is the adapter's value without environment/config overrides or console records: a/c uses Safe; b uses the adapter environment parser. Derived capabilities depend on injected resources. Local signup additionally has a pre-console compatibility default in `packages/runtime/routes/shared.mjs`: with no signup record, local development may admit signup subject to its remaining gates. None of these values establishes production verification.
+
+| Flag | Class | Safe | Worker template | Node default |
+| --- | --- | --- | --- | --- |
+| `ARTEFACT_VERSIONS_ENABLED` | a | false | unset | false |
+| `INTENT_LINKS_ENABLED` | a | false | unset | false |
+| `INTENT_APP_HANDLERS_ENABLED` | a | false | unset | false |
+| `SIGNED_INTENTS_ENABLED` | c | false | unset | false |
+| `ACTIVITY_V2_ENABLED` | a | false | false | false |
+| `EVENT_BUSES_ENABLED` | a | false | false | false |
+| `INTEGRATIONS_ENABLED` | a | false | false | false |
+| `APP_CLEAN_REMOVAL_ENABLED` | a | false | unset | false |
+| `SUBJECT_DELETED_EVENTS_ENABLED` | a | false | unset | false |
+| `INCREMENTAL_AUTH_ENABLED` | a | false | false | false |
+| `EXTENSIONS_ENABLED` | a | false | false | false |
+| `BINDLEBOX_ENABLED` | a | false | false | false |
+| `EMAIL_BRIDGE_ENABLED` | a | false | false | false |
+| `SEMANTIC_SEARCH_ENABLED` | a | false | true | false |
+| `BEAM_ENABLED` | a | false | true | false |
+| `DEVICE_AUTHORIZATION_ENABLED` | a | false | false | false |
+| `APP_METADATA_DISCOVERY_ENABLED` | a | false | unset | false |
+| `ACCOUNT_EXPORT_ENABLED` | a | false | unset | false |
+| `OVER_QUOTA_RETENTION_ENABLED` | a | false | unset | false |
+| `ACCOUNT_DELETION_ENABLED` | a | false | unset | false |
+| `EMAIL_REMOVAL_ENABLED` | a | false | unset | false |
+| `IDENTITY_TRANSFER_OUT_ENABLED` | a | false | unset | false |
+| `ORGANIZATIONS_ENABLED` | a | false | unset | false |
+| `MEMBER_CERTIFICATES_ENABLED` | a | false | unset | false |
+| `ORG_FOREIGN_MEMBERS_ENABLED` | a | false | unset | false |
+| `ORG_BREAK_GLASS_ENABLED` | a | false | unset | false |
+| `ORG_RELATIONS_ENABLED` | a | false | unset | false |
+| `ORG_FOREIGN_RELATIONS_ENABLED` | a | false | unset | false |
+| `SIGNUP_ENABLED` | c | false | true | false |
+| `PAID_SIGNUP_ENABLED` | c | false | true | false |
+| `WAITLIST_ENABLED` | c | false | true | false |
+| `FEDERATION_ENABLED` | c | false | false | false |
+| `BROKERING_ENABLED` | c | false | false | false |
+| `MCP_ENABLED` | c | false | false | false |
+| `CLIENT_METADATA_ENABLED` | c | false | false | false |
+| `DIRECTORY_ENABLED` | c | false | unset | false |
+| `IDENTITY_TRANSFER_IN_ENABLED` | c | false | unset | false |
+| `IDENTITY_SUCCESSOR_ADOPTION_ENABLED` | c | false | unset | false |
+| `LIFECYCLE_DRY_RUN` | c | true | true | true |
+| `LIFECYCLE_ENABLED` | b | false | false | false |
+| `LIFECYCLE_PURGE_ENABLED` | b | false | false | false |
+| `WORK_LIMITS_ENABLED` | b | true | true | true |
+| `STORAGE_WRITE_ENABLED` | b | true | true | true |
+| `REDIRECT_EXTENSION_ENABLED` | b | false | unset | false |
+| `BILLING_ENABLED` | b | false | true | false |
+| `MAIL_ENABLED` | b | false | true | false |
+| `PUSH_ENABLED` | b | false | true | false |
+| `BEAM_TURN_ENABLED` | b | false | false | false |
+| `BEAM_STUN_ENABLED` | b | false | true | true |
+| `FEDERATION_REFRESH_ENABLED` | b | true | unset | true |
+| `BROWSER_AUTOMATION_ENABLED` | b | true | unset | true |
+| `FEDERATION_ENTRY_ENABLED` | b | false | unset | false |
+| `ONBOARDING_ENABLED` | b | false | unset | false |
+| `ADMIN_ENABLED` | b | false | unset | false |
+| `ADMIN_CLAIMS_ENABLED` | b (derived) | false | computed | computed |
+| `BROKERED_INTROSPECTION_MOUNTED` | b (derived) | false | computed | computed |
+| `EVENT_BUS_WAITS_MOUNTED` | b (derived) | false | computed | computed |
+| `PUSH_AVAILABLE` | b (derived) | false | computed | computed |
+| `EMAIL_AVAILABLE` | b (derived) | false | computed | computed |
+| `EMAIL_SETUP_AVAILABLE` | b (derived) | false | computed | computed |
+| `WAITLIST_MAIL_AVAILABLE` | b (derived) | false | computed | computed |

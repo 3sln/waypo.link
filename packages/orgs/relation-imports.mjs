@@ -10,8 +10,11 @@
 // Composition rule (spec §9.7, R3-H2): imports are never a grant value over an edge. Grant values are validated against
 // the organization's own resource pool (packages/orgs/relation-instances.mjs), where imports do not exist, and every
 // `imp_` id is refused there explicitly. `omitImports` is the same rule for any projection over an edge.
-// The preferences relay projection (spec §10) needs an entity certificate as its token (ORG-10d); `relayDescriptor`
-// builds the descriptor without one, and the packages/federation/service.mjs projection hunk waits for ORG-10d.
+// ORG-10d: each import resource is mirrored as `federation/resource/<imp_…>` (relation-access.mjs `mirrorImport`), so a
+// connection can hold it; packages/federation/service.mjs projects it in relay form (spec §10) with an entity
+// certificate from relations.certify as its token. RL-10: when a grantor re-binds an entry that held exactly one
+// resource to exactly one other (after its move), the import keeps its id, so members' grants on it survive; its
+// generation rises, so an application approval of the earlier resource stops applying until re-approved.
 import {AppQuery} from '../app/engine.mjs';
 import {digest} from '../core/records.mjs';
 import {principalKey} from './grants.mjs';
@@ -33,15 +36,24 @@ const live=(r,now)=>r.expires_at===undefined||r.expires_at>now/1000;
  * longer granted stay as `unavailable` rows (nothing is recalled, spec §9.6); dropped resources lose their id index.
  */
 export async function syncImports(tx,{grantor,instance,available,entries,now}){
- const prefix=importPrefix(grantor,instance),existing=await tx.list({prefix,limit:65}),seen=new Set();
+ const prefix=importPrefix(grantor,instance),existing=await tx.list({prefix,limit:65}),seen=new Set(),removed=[],rebound=[];
  for(const e of entries??[]){
   const key=importKey(grantor,instance,e.index),old=existing.get(key),resources=[];seen.add(key);
-  for(const r of e.resources){const id=await importId(grantor,instance,e.index,r.resource);resources.push({id,...structuredClone(r)});}
-  for(const r of old?.resources??[])if(!resources.some(x=>x.id===r.id))await tx.delete(IMPORT_ID_PREFIX+r.id);
-  for(const r of resources)if(!old?.resources?.some(x=>x.id===r.id))await tx.put(IMPORT_ID_PREFIX+r.id,{key,resource:r.resource});
-  await tx.put(key,{v:1,grantor:{iss:grantor.iss,sub:grantor.sub},instance,entry:e.index,resources,status:available?'available':'unavailable',updatedAt:now});
+  // Only when the grantor marks the replacement (`replaces`, review L5): otherwise a different resource gets a new id,
+  // so member grants never silently carry over to it.
+  const inPlace=old?.resources?.length===1&&e.resources.length===1&&old.resources[0].resource!==e.resources[0].resource&&e.resources[0].replaces===old.resources[0].resource;
+  if(inPlace)rebound.push(e.index);
+  for(const r of e.resources){
+   const id=inPlace?old.resources[0].id:await importId(grantor,instance,e.index,r.resource),prior=old?.resources?.find(x=>x.id===id);
+   const generation=inPlace?(prior?.generation??0)+1:prior?.generation??0;
+   resources.push({id,...structuredClone(r),...generation>0?{generation}:{}});
+  }
+  for(const r of old?.resources??[])if(!resources.some(x=>x.id===r.id)){await tx.delete(IMPORT_ID_PREFIX+r.id);removed.push(r.id);}
+  for(const r of resources)if(!old?.resources?.some(x=>x.id===r.id&&x.resource===r.resource))await tx.put(IMPORT_ID_PREFIX+r.id,{key,resource:r.resource});
+  await tx.put(key,{v:1,grantor:{iss:grantor.iss,sub:grantor.sub},instance,entry:e.index,resources,status:available?'available':'unavailable',...old?.held?{held:true}:{},updatedAt:now});
  }
  for(const [key,row] of existing)if(!seen.has(key)&&row.status!=='unavailable')await tx.put(key,{...row,status:'unavailable',updatedAt:now});
+ return {removed,rebound};
 }
 /** Marks every import of a counterpart unavailable (suspension, end, leaving). */
 export async function holdImports(tx,{grantor,instance,now}){
@@ -54,7 +66,7 @@ export async function importById(tx,id,now){
  if(!r)return null;return {row,resource:r,available:row.status==='available'&&live(r,now)};
 }
 /** The listing shape of an import row (no grantor values beyond what the edge carries). */
-export const importView=(row,now)=>({grantor:{...row.grantor},instance:row.instance,entry:row.entry,status:row.status,resources:row.resources.map(r=>({id:r.id,resource:r.resource,contracts:[...r.contracts],methods:structuredClone(r.methods),status:row.status==='available'&&live(r,now)?'available':'unavailable',...r.expires_at!==undefined?{expires_at:r.expires_at}:{}}))});
+export const importView=(row,now)=>({grantor:{...row.grantor},instance:row.instance,entry:row.entry,status:row.status,...row.held?{held:true}:{},resources:row.resources.map(r=>({id:r.id,resource:r.resource,contracts:[...r.contracts],methods:structuredClone(r.methods),status:row.status==='available'&&live(r,now)?'available':'unavailable',...r.expires_at!==undefined?{expires_at:r.expires_at}:{}}))});
 /**
  * Grantee-side effective authority on an import: the member's own grant on the import id ∩ the application's ceiling ∩
  * the edge's methods. Unavailable imports give nothing. Governance never appears (effectiveAuthority, spec §6.2).

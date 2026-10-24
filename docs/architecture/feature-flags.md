@@ -1,6 +1,6 @@
 # Console-managed feature flags
 
-Provisional design, 2026-10-21; revised the same day for two user decisions. Design only: no code has changed. Reviewer ___ Date ___ Outcome ___.
+Provisional design, 2026-10-21; implementation status audited 2026-10-24. Registry, evaluation, persisted snapshots, console operations and aggregate experiments are implemented locally in `packages/flags/`; production cutover and release verification remain gated. Reviewer ___ Date ___ Outcome ___.
 
 This is host/reference-implementation behaviour, not Bindle protocol.
 
@@ -11,9 +11,9 @@ User decisions (2026-10-21, relayed by the coordinator):
 - **D-FF2:** build aggregate-only A/B/n experiments **now**.
 
 Grounding in the current code:
-- About 39 distinct `*_ENABLED` / `*_MOUNTED` / `*_AVAILABLE` / `LIFECYCLE_DRY_RUN` names, read as `env.X==='true'` (sometimes `===true`, sometimes `!=='false'`) across roughly 290 files, counting docs and tests.
-- `env` is spread into a ports bag by [apps/worker/index.mjs](../../apps/worker/index.mjs) and [apps/node/server.mjs](../../apps/node/server.mjs). That bag reaches routes, the account single writer and [`/api/config`](../../packages/runtime/routes/site.mjs).
-- `wrangler.jsonc` sets `keep_vars: true`.
+- The registry declares 61 flags (27 class a, 12 class c, 22 class b); the complete class/default inventory is below.
+- `packages/flags/read.mjs` supplies synchronous domain reads over the request-pinned evaluator; Worker and Node adapters bind `FlagsRuntime` snapshots.
+- `wrangler.jsonc` sets `keep_vars: true`; template values are configuration, not production verification.
 
 Related documents: [boot-and-admin.md](boot-and-admin.md), [app-engine.md](app-engine.md) §3.5, [identity-sharding.md](identity-sharding.md), [open-items.md](../release/open-items.md) §2, [privacy.md](../legal/privacy.md) §3 "Feature rollouts and experiments".
 
@@ -31,7 +31,7 @@ Related documents: [boot-and-admin.md](boot-and-admin.md), [app-engine.md](app-e
    - Env unset: the console decides. With no console record, the flag takes the registry safe value.
    - Env explicitly set to the safe value (`"false"`, or `"true"` for `LIFECYCLE_DRY_RUN`): the flag is forced to its safe value, even while the admin store is down.
    - Env explicitly `"true"` (unsafe): honoured **only while the flag has no console record**, then ignored with a visible warning (§2).
-3. **The cutover changes no behaviour.** The order is seed, then verify, then remove the vars (§9). Flags that are on in production today stay on throughout. `BILLING_ENABLED` is class (b), so it simply stays in env.
+3. **The cutover changes no behaviour.** The planned cutover order is seed, then verify, then remove the vars (§9). It must preserve the observed deployment values; the template does not establish which values are active in production. `BILLING_ENABLED` is class (b), so it simply stays in env.
 4. **Release gates move from deploy authority to recorded acknowledgement.** While `RELEASE_READY != 'true'`, any edit that widens a flag with open gates:
    - is critical tier;
    - needs passkey step-up, a reason and the typed flag name;
@@ -41,7 +41,7 @@ Related documents: [boot-and-admin.md](boot-and-admin.md), [app-engine.md](app-e
 6. **Snapshot storage, propagation and outages.**
    - Flags live in the existing `AdminStorage`, sharing its revisions and audit log.
    - Caching is per isolate plus per colo, with about 30–45 s propagation and no per-request DO round trip.
-   - A last-known-good snapshot is served for up to `FLAGS_MAX_STALE_MS`. After that each flag follows its outage policy.
+   - A last-known-good snapshot is served for up to `FLAGS_MAX_STALE_MS`, measured from its last successful authority read. After that each flag follows its outage policy. Malformed records are quarantined individually; they do not disable unrelated flags.
 7. **A flag flip never destroys data.** Flags gate creation and new exposure. Owner read, export, revoke, disconnect and delete paths, and cleanup work, never depend on targeting.
 8. **Experiments ship now and record aggregates only (D-FF2).**
    - Assignment is a hash of the account ID and a salt: sticky without storage, with no anonymous bucketing and no new cookie.
@@ -49,7 +49,7 @@ Related documents: [boot-and-admin.md](boot-and-admin.md), [app-engine.md](app-e
    - Results are displayed only above a minimum cohort size.
    - Admins start, stop and conclude experiments in the console.
 
-## 1. Classification of every existing flag
+## 1. Classification and rollout notes
 
 Dimensions:
 - **G**: global on/off plus a schedule window
@@ -62,11 +62,13 @@ Dimensions:
 
 Classes:
 - **(a)** console rollout with targeting
-- **(c)** global-only console switch
+- **(c)** console switch with declared dimensions (some allow region or client narrowing)
 - **(b)** env-only deploy capability; the console shows it read-only
 
+This rollout table retains the original design context; the complete current class/default inventory is at the end of this document. Production seed and cutover steps below remain a procedure, not evidence they ran.
+
 Columns:
-- **Seed today** is the value the production seed copies from current `wrangler.jsonc` (§9).
+- **Seed today** is the checked-in hosted template value intended for the seed procedure (§9), not an observed production value.
 - **Outage** is what the flag uses when there is no usable snapshot (§5).
 
 | Flag | Class | Dimensions | Safe | Requires | Risk | Outage | Seed today | Notes |
@@ -80,7 +82,7 @@ Columns:
 | `EMAIL_BRIDGE_ENABLED` | a | G A S P | off | `BINDLEBOX_ENABLED` | crit | safe | off | Subject = recipient owner. Paid entitlement and owner opt-in still apply. |
 | `SEMANTIC_SEARCH_ENABLED` | a | G A S P V | off | — | std | safe | **on** | Also needs the AI/Vectorize bindings (adapter capability). The global budget is unchanged. |
 | `BEAM_ENABLED` | a | G A S P V | off | — | std | safe | **on** | Stateful, so no R. |
-| `DEVICE_AUTHORIZATION_ENABLED` | a | G A C | off | app device grant only: `FEDERATION_ENABLED` | crit | safe | off | Its declaration uses the global component only (§3.6). |
+| `DEVICE_AUTHORIZATION_ENABLED` | a | G A C | off | — | crit | safe | off | Its declaration uses the global component only (§3.6). |
 | `APP_METADATA_DISCOVERY_ENABLED` | a | G C | off | — | std | safe | off (Worker unset) | |
 | `SIGNUP_ENABLED` | c | G R | off | — | crit | last-known | **on** | No subject exists yet. R uses the same trusted `cf.country` as admission. |
 | `PAID_SIGNUP_ENABLED` | c | G R | off | valid env billing configuration | crit | last-known | **on** | |
@@ -95,12 +97,12 @@ Columns:
 | `BROWSER_AUTOMATION_ENABLED` | b | — | **on** | — | — | — | env (on; `false` disables) | Kill switch for browser automation (wargame 3, provisional). Off makes every automation operation except revoke `not_found`; revoke is never gated. |
 | `BILLING_ENABLED` | b | — | off | — | — | — | env (on) | Polar secrets. Per-user billing would corrupt entitlement. |
 | `MAIL_ENABLED`, `PUSH_ENABLED`, `BEAM_TURN_ENABLED` | b | — | off | — | — | — | env | Bindings or secrets. |
-| `BEAM_STUN_ENABLED`, `FEDERATION_REFRESH_ENABLED` | b | — | env default | — | — | — | env | Network and protocol metadata. No rollout use. |
+| `BEAM_STUN_ENABLED`, `FEDERATION_REFRESH_ENABLED` | b | — | off, on | — | — | — | env | Network and protocol metadata. No rollout use. |
 | `FEDERATION_ENTRY_ENABLED` | b | — | off | — | — | — | env | Selects a binding and embed-origin routing. |
 | `ONBOARDING_ENABLED` | b | — | off | — | — | — | env | Needs the `ONBOARDING_KEY` secret. |
 | `ADMIN_ENABLED`, `ADMIN_CLAIMS_ENABLED` | b | — | off | — | — | — | env | The console cannot control itself. |
 | `BROKERED_INTROSPECTION_MOUNTED`, `EVENT_BUS_WAITS_MOUNTED` | b, derived | — | off | — | — | — | — | Mount = the parent flag's **global** component ∧ binding. Recomputed by adapters from `flags`. |
-| `PUSH_AVAILABLE`, `EMAIL_AVAILABLE`, `EMAIL_SETUP_AVAILABLE`, `WAITLIST_MAIL_AVAILABLE` | b, derived | — | — | — | — | — | — | Capability facts about bound transports, not flags. |
+| `PUSH_AVAILABLE`, `EMAIL_AVAILABLE`, `EMAIL_SETUP_AVAILABLE`, `WAITLIST_MAIL_AVAILABLE` | b, derived | — | off | — | — | — | — | Capability facts about bound transports, not flags. |
 
 Numeric and policy settings stay in env: `SIGNUP_*_LIMIT`, `STORAGE_WRITE_*`, `BEAM_MONTHLY_*`, `SIGNUP_CONTACT_REQUIRED`, `RELEASE_READY` and `LOCAL_DEVELOPMENT`.
 
@@ -417,7 +419,7 @@ The cutover is ordered and changes no behaviour at any step.
    - The Node adapter stops defaulting class (a)/(c) vars to `'false'` and passes them unset.
    - Equivalence still holds, because unset with no record gives the safe value, which matches today's `'false'` default.
 2. **Store and console** (FF-2, FF-3, FF-6). Records stay absent, so behaviour is unchanged.
-3. **Seed.** `flags.seed` (boot or admin, critical tier, one audited commit per flag, idempotent, refuses if a record exists) writes a record from the env value **the server itself observes**: `on` with `fallthrough = onValue` for `force-on-legacy`, otherwise off. The client never supplies values. In production this keeps `SIGNUP_ENABLED`, `PAID_SIGNUP_ENABLED`, `WAITLIST_ENABLED`, `SEMANTIC_SEARCH_ENABLED` and `BEAM_ENABLED` on. Class (b) flags such as `BILLING_ENABLED` are not seeded and stay in env.
+3. **Seed.** `flags.seed` (boot or admin, critical tier, one audited commit per flag, idempotent, refuses if a record exists) writes a record from the env value **the server itself observes**: `on` with `fallthrough = onValue` for `force-on-legacy`, otherwise off. The client never supplies values. For the checked-in hosted template this keeps `SIGNUP_ENABLED`, `PAID_SIGNUP_ENABLED`, `WAITLIST_ENABLED`, `SEMANTIC_SEARCH_ENABLED` and `BEAM_ENABLED` on. Class (b) flags such as `BILLING_ENABLED` are not seeded and stay in env.
 4. **Verify.** `flags.seed-verify` evaluates every class (a)/(c) flag twice over a fixed context matrix (anonymous, account, client, several regions): once with legacy env semantics and once from the console record with env treated as `unset`. The console shows "safe to remove" per flag only when every result matches and env is not `kill`/`invalid`.
 5. **Remove vars.** Delete the class (a)/(c) entries from `wrangler.jsonc` and `wrangler.local.jsonc`, **and from the Cloudflare dashboard**, because `keep_vars: true` preserves dashboard-set values across deploys. After deploy, the console must show env state `unset` for each flag.
    - A lingering explicit `"false"` shows as `KILL (env)`.
@@ -499,3 +501,73 @@ Write ownership does not overlap. The `FLAG_STATS` binding is FF-8's; the DO cla
 2. ~~Build A/B now or later?~~ **Resolved (D-FF2, 2026-10-21):** now, aggregate-only (§7, FF-7).
 3. **Lifecycle and abuse limits stay env-only, with a console "pause lifecycle" that forces dry run.** Recommended. Accepted as provisional (coordinator relay, 2026-10-21). Reviewer ___ Date ___ Outcome ___.
 4. **Critical edits by one administrator with the extra confirmations; no second approver.** Recommended. Accepted as provisional (coordinator relay, 2026-10-21). Reviewer ___ Date ___ Outcome ___.
+
+### Complete flag registry (2026-10-24)
+
+All 61 entries in `packages/flags/registry.mjs` are listed below. Class **a** is a targeted console rollout; **c** is a console switch with its declared dimensions; **b** is an environment capability (derived rows are computed by adapters). **Safe** is the registry fallback, not a deployment setting. For a/c flags, an unset environment delegates to the console and an absent record uses Safe; an explicit safe value kills the feature. Legacy unsafe environment values apply only before a console record exists and with a usable snapshot. Dependencies and service readiness can still refuse an enabled feature.
+
+**Worker template** is the raw value in `wrangler.jsonc` (unset means no explicit value). **Node default** is the adapter's value without environment/config overrides or console records: a/c uses Safe; b uses the adapter environment parser. Derived capabilities depend on injected resources. Local signup additionally has a pre-console compatibility default in `packages/runtime/routes/shared.mjs`: with no signup record, local development may admit signup subject to its remaining gates. None of these values establishes production verification.
+
+| Flag | Class | Safe | Worker template | Node default |
+| --- | --- | --- | --- | --- |
+| `ARTEFACT_VERSIONS_ENABLED` | a | false | unset | false |
+| `INTENT_LINKS_ENABLED` | a | false | unset | false |
+| `INTENT_APP_HANDLERS_ENABLED` | a | false | unset | false |
+| `SIGNED_INTENTS_ENABLED` | c | false | unset | false |
+| `ACTIVITY_V2_ENABLED` | a | false | false | false |
+| `EVENT_BUSES_ENABLED` | a | false | false | false |
+| `INTEGRATIONS_ENABLED` | a | false | false | false |
+| `APP_CLEAN_REMOVAL_ENABLED` | a | false | unset | false |
+| `SUBJECT_DELETED_EVENTS_ENABLED` | a | false | unset | false |
+| `INCREMENTAL_AUTH_ENABLED` | a | false | false | false |
+| `EXTENSIONS_ENABLED` | a | false | false | false |
+| `BINDLEBOX_ENABLED` | a | false | false | false |
+| `EMAIL_BRIDGE_ENABLED` | a | false | false | false |
+| `SEMANTIC_SEARCH_ENABLED` | a | false | true | false |
+| `BEAM_ENABLED` | a | false | true | false |
+| `DEVICE_AUTHORIZATION_ENABLED` | a | false | false | false |
+| `APP_METADATA_DISCOVERY_ENABLED` | a | false | unset | false |
+| `ACCOUNT_EXPORT_ENABLED` | a | false | unset | false |
+| `OVER_QUOTA_RETENTION_ENABLED` | a | false | unset | false |
+| `ACCOUNT_DELETION_ENABLED` | a | false | unset | false |
+| `EMAIL_REMOVAL_ENABLED` | a | false | unset | false |
+| `IDENTITY_TRANSFER_OUT_ENABLED` | a | false | unset | false |
+| `ORGANIZATIONS_ENABLED` | a | false | unset | false |
+| `MEMBER_CERTIFICATES_ENABLED` | a | false | unset | false |
+| `ORG_FOREIGN_MEMBERS_ENABLED` | a | false | unset | false |
+| `ORG_BREAK_GLASS_ENABLED` | a | false | unset | false |
+| `ORG_RELATIONS_ENABLED` | a | false | unset | false |
+| `ORG_FOREIGN_RELATIONS_ENABLED` | a | false | unset | false |
+| `SIGNUP_ENABLED` | c | false | true | false |
+| `PAID_SIGNUP_ENABLED` | c | false | true | false |
+| `WAITLIST_ENABLED` | c | false | true | false |
+| `FEDERATION_ENABLED` | c | false | false | false |
+| `BROKERING_ENABLED` | c | false | false | false |
+| `MCP_ENABLED` | c | false | false | false |
+| `CLIENT_METADATA_ENABLED` | c | false | false | false |
+| `DIRECTORY_ENABLED` | c | false | unset | false |
+| `IDENTITY_TRANSFER_IN_ENABLED` | c | false | unset | false |
+| `IDENTITY_SUCCESSOR_ADOPTION_ENABLED` | c | false | unset | false |
+| `LIFECYCLE_DRY_RUN` | c | true | true | true |
+| `LIFECYCLE_ENABLED` | b | false | false | false |
+| `LIFECYCLE_PURGE_ENABLED` | b | false | false | false |
+| `WORK_LIMITS_ENABLED` | b | true | true | true |
+| `STORAGE_WRITE_ENABLED` | b | true | true | true |
+| `REDIRECT_EXTENSION_ENABLED` | b | false | unset | false |
+| `BILLING_ENABLED` | b | false | true | false |
+| `MAIL_ENABLED` | b | false | true | false |
+| `PUSH_ENABLED` | b | false | true | false |
+| `BEAM_TURN_ENABLED` | b | false | false | false |
+| `BEAM_STUN_ENABLED` | b | false | true | true |
+| `FEDERATION_REFRESH_ENABLED` | b | true | unset | true |
+| `BROWSER_AUTOMATION_ENABLED` | b | true | unset | true |
+| `FEDERATION_ENTRY_ENABLED` | b | false | unset | false |
+| `ONBOARDING_ENABLED` | b | false | unset | false |
+| `ADMIN_ENABLED` | b | false | unset | false |
+| `ADMIN_CLAIMS_ENABLED` | b (derived) | false | computed | computed |
+| `BROKERED_INTROSPECTION_MOUNTED` | b (derived) | false | computed | computed |
+| `EVENT_BUS_WAITS_MOUNTED` | b (derived) | false | computed | computed |
+| `PUSH_AVAILABLE` | b (derived) | false | computed | computed |
+| `EMAIL_AVAILABLE` | b (derived) | false | computed | computed |
+| `EMAIL_SETUP_AVAILABLE` | b (derived) | false | computed | computed |
+| `WAITLIST_MAIL_AVAILABLE` | b (derived) | false | computed | computed |

@@ -31,10 +31,10 @@ export async function signCompact({typ,kid,privateKey,payload,crypto=globalThis.
  return `${input}.${base64url(new Uint8Array(signature))}`;
 }
 /** Parses a compact JWS with exactly {alg:'ES256', kid, typ}; returns null on anything malformed. Verifies nothing. */
-export function parseCompact(value,{typ,maxBytes=STATEMENT_MAX_BYTES}={}){
+export function parseCompact(value,{typ,maxBytes=STATEMENT_MAX_BYTES,maxDepth=8}={}){
  try{
   if(typeof value!=='string'||value.length>maxBytes||!COMPACT.test(value))return null;
-  const [h,p,s]=value.split('.'),decode=x=>strictJSON(fromBase64url(x),{maxDepth:8});
+  const [h,p,s]=value.split('.'),decode=x=>strictJSON(fromBase64url(x),{maxDepth});
   const header=decode(h),payload=decode(p),signature=fromBase64url(s);
   if(!exact(header,['alg','kid','typ'])||header.alg!=='ES256'||header.typ!==typ||typeof header.kid!=='string'||!header.kid||header.kid.length>256||signature.length!==64||!plain(payload))return null;
   return {header,payload,input:`${h}.${p}`,signature};

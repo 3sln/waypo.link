@@ -1,6 +1,6 @@
 # Linked approval: approving sign-ins from another device
 
-Status: **provisional design, 2026-10-20.** The LA1 identity core is implemented locally behind `DEVICE_AUTHORIZATION_ENABLED` and is unrouted (§10.1). The app device grant (LA2) is implemented locally and unmounted (§10.2); the routes (LA3) remain unimplemented. §7.3 distinguishes the existing local LA1a/step-up fixes. Nothing here establishes production verification. This is a 3sln.me host design. The only Bindle interop it relies on is [device authorization](../spec/device-authorization.md) (`device-authorization.v1`, proposed). Everything about pages, wording, account choice and provider-session extension is host policy. Decisions are provisional until signed off in DEVLOG.md. Independent security review: [linked-approval-review](../release/linked-approval-review.md).
+Status: **provisional design, 2026-10-20.** The LA1 identity core, LA2 app device grant, LA3 routes and approval UI are implemented locally behind `DEVICE_AUTHORIZATION_ENABLED` (§10.1–§10.2). App endpoint mounting additionally requires the federation and key configuration checked by `deviceGrantMountable`; routes and declarations are conditional on that mount. §7.3 distinguishes the existing local LA1a/step-up fixes. Nothing here establishes production verification. This is a 3sln.me host design. The only Bindle interop it relies on is [device authorization](../spec/device-authorization.md) (`device-authorization.v1`, proposed). Everything about pages, wording, account choice and provider-session extension is host policy. Decisions are provisional until signed off in DEVLOG.md. Independent security review: [linked-approval-review](../release/linked-approval-review.md).
 
 Architecture/security/product sign-off: reviewer ___ / date ___ / outcome ___.
 
@@ -321,9 +321,9 @@ Status: implemented and engine-tested in `packages/identity/linked-approval.mjs`
 - The legacy aliases still consume on poll, without "Continue as", until LA5 ships the confirmation screen.
 - Session-kind starts are under the existing `device` guard plus the start limits above. Per-client and per-ASN caps for app starts belong to LA2.
 
-### 10.2 LA2 contract (implemented locally, 2026-10-20; unmounted until LA3)
+### 10.2 LA2 contract (implemented locally; LA3 conditionally mounted)
 
-Status: implemented and engine-tested in `packages/federation/device-authorization.mjs` and `packages/federation/app-sessions.mjs` (`tests/device-authorization.test.mjs`, `tests/app-sessions.test.mjs`). Nothing is routed or declared; every engine operation answers `not_found` unless `DEVICE_AUTHORIZATION_ENABLED` is `true`. Local behavior only: no production verification, no reviewer sign-off ([review](../release/linked-approval-review.md#la2-implementation)).
+Status: implemented and engine-tested in `packages/federation/device-authorization.mjs` and `packages/federation/app-sessions.mjs` (`tests/device-authorization.test.mjs`, `tests/app-sessions.test.mjs`). LA3 now conditionally routes and declares the device grant; new issuance requires `DEVICE_AUTHORIZATION_ENABLED`, while existing-session reversal operations follow their retained-access policy. Local behavior only: no production verification, no reviewer sign-off ([review](../release/linked-approval-review.md#la2-implementation)).
 
 **Wiring (LA3).** `createDeviceGrantProvider({issuer, clients, linked, shard, nonces, limits, pollLimits})` is the `deviceGrant` catalogue provider. `linked` is `linkedPort(identityEngine, {LinkedSystemAction, LinkedApprovalAction, LinkedResolveQuery, LinkedLineageQuery, LinkedOutboxQuery})` over the main identity resources (§10.1 storage). `shard(owner)` returns that owner's FederationController. `nonces` is the token-endpoint `dpopNonces` built from `federationDpopSecret(config)`. `limits` is a durable window port and `pollLimits` the non-durable limiter. Every owner FederationService MUST be passed to `attachAppSessions(service, {linked, config})` when it is built, so refreshes on any instance apply the host lifetime policy and the lineage check. Without the lineage port, device-grant refreshes are refused (`temporarily_unavailable`) rather than allowed. `deviceManifest(issuer)` gives the members for the declaration row, which LA3 adds only where the routes are mounted.
 
@@ -341,10 +341,10 @@ Status: implemented and engine-tested in `packages/federation/device-authorizati
 
 **Sessions.** Redemption creates one family with the reserved family ID, `lineage:{owner, lineageId}`, `access:'dpop'`, `expiresAt` = the user's `E` or a never-reached sentinel, and the host idle limit; it then re-checks the lineage and revokes the family if it ended meanwhile. A family that ends in the federation store (reuse, RFC 7009, per-client eviction, idle or stale pruning, a failed lineage check) ends its lineage best-effort, freeing the account's lineage slot. Host policy: `appSessionPolicy(config)` reads `APP_REFRESH_IDLE_DAYS` (1–365, default 180), `APP_ACCESS_TOKEN_MINUTES` (Bearer, 1–15, default 15) and `APP_DPOP_ACCESS_TOKEN_MINUTES` (1–60, default 60); LA1's displayed idle reads `config.appRefreshIdleMs`, which the integrator sets from the same value.
 
-**Reconciliation items (integrator / other owners).**
-- `FederationService.issueAccess` (`service.mjs`, not LA2-owned) still issues 5-minute Bearer tokens for the initial authorization-code exchange; renewals use the 15-minute policy. It should delegate to `issueAppAccess` for app families.
-- The SDK (`packages/sdk/src/tokens.mjs`) rejects `expires_in > 300` and treats `refresh_expires_in` as an absolute deadline that never moves later. It must accept up to 900 s Bearer / 3600 s DPoP and renew `refresh_expires_in` on rotation; until then `tests/authorization-entry-sdk-contract.test.mjs` fails on the 15-minute renewal.
-- LA4's mock duration list (`apps/web/src/bl/approve.mjs`) still offers 1 h / 8 h / 30 days for apps and expects a fresh sign-in; it must use the review view's `durations` (`ongoing`, `1h`, `8h`) and step-up.
+**Reconciled local integration (2026-10-24; provisional, unsigned).**
+- `FederationService.issueAccess` delegates to `issueAppAccess`, applying the configured access lifetime to initial exchanges and renewals.
+- The SDK accepts up to 900 s Bearer / 3600 s DPoP and computes the renewed refresh expiry from each request start and returned idle window.
+- LA4's app duration list uses `ongoing`, `1h` and `8h`, with review-time step-up enforcement.
 - LA7 notice templates must handle `expiresAt: null` ("until you disconnect it").
 
 ## 11. Reusing device-login code

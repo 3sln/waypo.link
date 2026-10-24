@@ -5712,3 +5712,197 @@ Reviewer: ___ Date: ___ Outcome: ___
 No commit or deployment. Production release stays disabled. No delivery to a real external provider, provider conformance or production key custody is inferred from these local tests.
 
 Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-24 — Spec/implementation drift audit
+
+Documentation-only audit against HEAD `1f41f0a`, guided by entries from 2026-10-22 onward. Screened the 37 spec files and the architecture, release, deployment, self-hosting and README documentation (190 Markdown files total). Source comparisons and read-only reproductions focused on concrete limits, flags, routes, status/errors, lifecycle and implemented-versus-planned claims. This is a selective static drift audit, not exhaustive protocol conformance or production verification.
+
+**Documentation reconciliation:**
+- Replaced stale blanket “nothing implemented” / Wave 0 status statements with scoped local implementation boundaries for artefacts, intents, portability, organizations, app removal, device/incremental authorization, integrations/events/extensions, BindleBox and authored contact delivery. Remaining foreign-provider, organization-removal, relation transport/certificate and publication gaps stay explicit and unsigned.
+- Corrected the total/free signup ceilings, access-token ceilings (15 min Bearer / 60 min DPoP), initial device-token/SDK descriptions, directory and device route/mount status, authored contact transports, checkout age attestation, Node metadata egress and region-policy configuration. Historical reviews retain their dated scope.
+- Both `docs/architecture/feature-flags.md` and `docs/self-hosting.md` now list all 61 registry flags (27 class a, 12 class c, 22 class b), distinguishing registry safe values, raw Worker template settings and parsed Node defaults. Corrected device-flag dependencies, Node capability forwarding, terms/VAPID config forwarding and lifecycle dry-run bookkeeping descriptions. Template enablement is not an observation of deployment or verification.
+- README/self-hosting now distinguish locally implemented export/deletion stages from open release gates. No decision was signed; no production capability was inferred from configured keys, flags or screenshots.
+
+**Findings retained for review; no code changed by this audit:**
+- **Signed intent header validation:** `packages/intents/format.mjs:25` accepts a newline in `kid`, contrary to the links §3.1 profile inherited by intents §3.3. A read-only reproduction confirmed acceptance. Attribution is still stripped; no forged-attribution claim is made.
+- **Link authoring interoperability:** `packages/runtime/contact-links.mjs:18–19` rejects unrelated query parameters even though links §2 rule 7 says they do not invalidate a link. This is a suspected sender-helper gap, not a reproduced recipient-admission failure.
+- **Organization clean removal:** app-removal §9.6 specifies a provisional notified 24 h start delay, but `packages/app/domains/app-removal.mjs:35,42` refuses organization clean removal as `unsupported_entity`. The explicit policy stays intact; its unimplemented status is now documented.
+- **Contact error policy conflict:** contact-delivery S4 still says uniform 401, while the later U404 policy and current contact-target serializers use uniform 404 for refused signed links/contact-delivery targets. S4 was not weakened to match implementation; the conflict is called out for reconciliation. Other credential surfaces retain their protocol refusals.
+- **Moved delegation exception:** the 200 final-revoked response during a live redirect window follows the explicit portability §10 rule (`moved.mjs:74–76,101–106`). It is not established as a code defect, despite tension with general U404 wording. After the window, ordinary uniform-404 handling applies. Both rules remain recorded.
+
+Detailed old → new claims, file:line evidence, reproduction, coverage and unverifiable claims: `/private/tmp/claude-501/-Users-raystubbs-Projects--3sln-3sln-me/8f763b0e-277c-4c0c-b7f0-8c3d4fc70450/scratchpad/drift/REPORT.md`.
+
+**Verification (local evidence only):**
+- `npm test`: **3,741 passed, 0 failed**, 0 skipped, 0 cancelled.
+- Mechanical comparison: all 61 flag classes/safe values/parsed Node defaults match both documentation inventories.
+- `git diff --check`: passed. Protected organizations-design §8b and organizations §9 match HEAD byte-for-byte; legal text and pending-signoffs are untouched. Earlier DEVLOG entries are unchanged.
+- A final status check found unrelated concurrent relations work (`packages/orgs/relation-statements.mjs` and a new `packages/orgs/relation-keys.mjs`) from the separate relations work. It was left untouched; the test result above is the completed shared-checkout run, not verification of subsequent concurrent edits.
+- No browser behavior changed or browser run performed. No external provider, delivery, financial settlement, deployment, legal validity or production key-custody verification was attempted.
+
+No commit or deployment. Production release remains disabled. Findings and decisions remain provisional.
+
+**Coordinator follow-up (provisional):**
+- Finding 1 is fixed: signed intent header `kid` values containing control characters are refused as `intent_malformed` (`packages/intents/format.mjs`, `tests/intents-kid-controls.test.mjs`).
+- Finding 4 is kept as deliberate authoring strictness. The sender helper refuses extra parameters with an explicit message, while links §2 rule 7 governs recipient verification, which still ignores unrelated parameters.
+- Findings 2 (organization clean removal not built) and 3 (contact-delivery 401 versus uniform 404) are open questions for the spec owner, listed in the sign-off digest.
+
+Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-24 — ORG-10d/e entity certificates and relation events (flags off)
+
+**Implemented locally** ([organizations design §8b](docs/architecture/organizations-design.md#8b-org-10-and-org-11-relations-design-for-implementation-rev-56), slices ORG-10d and ORG-10e of §8b.10; [spec](docs/spec/organizations.md) rev 4.5 §9.4, §9.5, §9.9, §10, §14). This continues "2026-10-24 — ORG-10a-c relations core (flags off)". Everything stays behind `ORG_RELATIONS_ENABLED` and `ORG_FOREIGN_RELATIONS_ENABLED`, both default off (RL-1). It is engine-level behaviour on a loopback host of several organizations, each in its own account writer. Nothing is routed, there is no console, and nothing is production-verified. Every item is **provisional** (coordinator, not signed off by the user).
+
+**ORG-10d, entity certificates (`packages/identity/entity-certificates.mjs`, `packages/orgs/relation-access.mjs`):**
+- **The codec.** The spec §9.5 profile has typ `bindle-entity-certificate+jwt` and is signed with the acting organization's certification key, never its identity key. The verifier caps the effective lifetime at 300 s (RL-16).
+- **Issuance (`relations.certify`, system).** The grantee issues only after checking its own hops, each live:
+  - the import is available;
+  - an active federation grant of exactly that client approves the import for the field;
+  - the grant's connection is live at the recorded generation (the connection-generation fence);
+  - the grant's recorded resource generation equals the import mirror's;
+  - in member context, the membership is live at exactly the presented id and generation and holds a grant on the import.
+- **What the certificate carries.** Methods are member ∩ application ∩ edge, or application ∩ edge in organization context. The certificate binds the edge (`iss`, and `aud` = the grantor's current identity URI), the instance, the grantor's resource ID (one entry of one edge), the edge's scope, `aep` and the holder key. The actor is pairwise unless the entry says `named`. Every refusal is one code.
+- **Verification (`relations.authorize`, system).** The grantor runs spec §5.2 steps 1–3 with the §9.5 substitutions:
+  - the live edge in `instance` is found with no fetch, through the successor view, and only the current issuer qualifies;
+  - the signature is checked against a cache-only certification key, with a dummy verification on every failure path;
+  - the DPoP proof (`ath` in the direct form) has its jti recorded once;
+  - then the write age rule, the `aep` floor (a higher `aep` holds the counterpart under RL-4 before the refusal), the hold itself, and the envelope within the certificate and within the edge decision.
+  - Every failure is one answer: `invalid_token` 401 (direct) or `invalid_grant` 400 (token form).
+- **The edge decision.** `relations.edge-check` now uses the same `edgeDecision`: RL-4 holds, the billing stage, the deletion pre-purge, pool re-intersection, required entries and scope, in that instance only.
+- **Connections can hold imports.** Each import resource is mirrored as `federation/resource/imp_…`, with provider `relation` and marked `imported`. It is never in the organization's own pool, never a grant value, and never dispatched locally. `relations.import-authority` now applies the connection-generation fence (review L4 follow-up).
+- **Federation hunk (`packages/federation/service.mjs`, minimal):**
+  - preferences/v2 projects a relation mirror in relay form, with an entity certificate from a `relationImports` port (`federationRelationImports`) as `token`, `token_type` `BindleEntity`, `grantor`, `instance` and `broker`; any refusal reports the member `unavailable` with no reason;
+  - preferences/v2 is served with that port even without brokering;
+  - v1 and local RPC dispatch refuse relation mirrors, as for brokered resources.
+- **Resource scope is now enforced** (design §8b.2 step 3, resource-scoping.md), instead of being refused. A grant may carry `{prefix?, readOnly?:true, maxObjectBytes?}`, only where the resource offers that control and within its bounds. The grantor enforces it on every call, and certificates carry it.
+
+**ORG-10e, relation events and lifecycle (`packages/orgs/relation-events.mjs`, `packages/orgs/relation-lifecycle.mjs`, `packages/orgs/relation-keys.mjs`):**
+- **Signed events.** The drain signs each outbox row at delivery with the sender's certification key (typ `bindle-relation-event+jwt`), with the current `aep`, a fresh `iat` and the row's `jti`. The same-host transport hands the JWS to the other writer with **no `from`**. Ingest takes the sender only from the verified signature (ORG-10f production gate 1, for events).
+- **Ingest follows spec §9.9 in order:**
+  - step 1: with no fetch, the JWS profile, ≤ 32 KiB, exact members, typ, `aud` and the `iat` window. Only a failure here is refused (400); everything else answers `{accepted:true}` (202);
+  - step 2: the origin principal is a counterpart, and the sender is its current issuer;
+  - step 3: the signature, against cache-only keys. A missing key schedules one refresh for any claimed sender before step 2, so the schedule never depends on participation, and a dummy verification keeps the cost even;
+  - step 4: the jti, recorded only after step 3;
+  - step 5: widening below the `aep` floor is ignored, narrowing always applies, and a higher `aep` is an RL-4 reset;
+  - step 6: an end is final and the highest generation wins.
+- **The events endpoint comes from the manifest only (RL-6).** The `manifestEventDelivery` port takes the counterpart's current issuer (through the successor view) and posts only to its validated `relations.v1.events_endpoint`, an https URL on that issuer's origin. ORG-11a plugs its transport in there; until then it is a port with a test double. A redemption answer naming a URL is ignored.
+- **Anti-entropy.** `relations.tick` (the account-alarm entry) runs the resync once a day, resumable by cursor. It also runs the sweep, expires write holds with a notice, flags unreachable counterparts, continues the pre-purge, drains, and returns `wakeAt`.
+- **Introductions and recognition (spec §9.4).**
+  - `relations.introduce`: RL-12, only for a candidate with a live edge to the proposer in that instance and slot. It is sent only to counterparts with a live edge whose slot has entries with the candidate's slot, never to the candidate, with the proposer's fresh statement.
+  - Receivers verify the statement, deduplicate per (instance, proposer, slot, candidate), allow 10 a day per proposer, share the 256-item inbound bound, drop muted proposers silently, record nothing while the flag is off, and expire items after 30 days.
+  - `relations.admit` issues an ordinary invitation; only the candidate's acceptance makes an edge.
+  - Declining or admitting tells only the proposer (`relation-recognition/v1`). The proposer honours a notice only from a recipient of its own introduction.
+- **The lifecycle table (§8b.6):**
+  - **RL-4 holds.** A higher `aep` on a verified event or certificate, a key reset, a contested identity or an unattested move gives a full hold. An attested move gives a write-only hold for 72 h with notice. The hold is bound to an `aep`, and imports from the held counterpart are marked. Only `relations.confirm-counterpart` for exactly that `aep` releases it; no event does, and a later reset needs a new confirmation. `relations.observe-counterpart` is the directory refresh's entry point.
+  - **Counterpart moves.** The successor view maps the destination's events and certificates to the origin principal. The earlier host fails step 2, and delivery goes to the current principal.
+  - **The organization's own move (RL-10).** `lifecycle {event:'moved-in'}` suspends outgoing grants with cause `moved` and re-sends every half. `relations.resume` refuses such an edge (`relation_rebind_required`), and `relations.rebind` (widening) re-binds it from the destination pool. On the grantee, an entry that went from one resource to one other keeps its import id (members' grants survive), its generation rises (application approvals need review), and admins are told.
+  - **Billing.** `read-only` refuses write-capable methods and widening. `export-only` suspends outgoing grants with cause `billing`; `active` restores exactly those with a new generation.
+  - **Deletion takes effect.** The pre-purge step leaves every instance and stops certification. `relations.purge-ready` reports ready once the final events are delivered or 72 h have passed.
+  - **Unreachable counterparts.** Delivery failures are tracked, never treated as revocation. After 30 days the console flag is set and every admin is told once.
+  - **Key compromise.** Every outgoing grant half gets a new generation.
+- **`packages/orgs/key-refresh.mjs` hunk.** `enqueueCounterpartKeyRefresh` adds recognized counterparts (at activation and on an observed move) to the background-refresh set. Claimed senders use the existing bounded `claimed` rows.
+
+**Shared files touched (minimal):**
+- `packages/federation/service.mjs`: the projection hunk above.
+- `packages/orgs/key-refresh.mjs`: one export.
+- `packages/orgs/relation-statements.mjs`: `parseCompact` takes a `maxDepth`, because events nest deeper than statements.
+- `package.json`: the two new suites in `test:organizations`.
+- Existing relation tests now sign events through the world helper, and `relations.import-authority` grants carry a client and connection.
+- `packages/intents/*` and `routes/intents.mjs` were not touched.
+
+**Provisional decisions and readings (reconciled with §8b.10; unsigned):**
+- **`scope` in an entity certificate** is an optional top-level member. Spec §9.5 says "`methods` … and optionally `scope`" inside an "exactly these members" table. Flagged for spec review.
+- **Prefix scope is checked as given, fail closed.** The call must name a `key` or `prefix` inside the prefix; a call naming neither is refused, and presign is refused. Unlike attenuated child references, the grantee addresses the grantor's resource ID, so keys are not rewritten.
+- **Write-capable methods** are, by default, everything outside a read list (get, list, read, status, describe, capabilities, head, subscribe, unsubscribe). A `writeCapable` port takes contract metadata later.
+- **Organization-context certificates** (no member) carry `actor:{client}` only, with methods = application ∩ edge.
+- **Relay tokens need the session key's public JWK.** Federation tokens store only the DPoP thumbprint, so the projection port receives `token.jwk` when present and otherwise reports the import `unavailable` (production gate 4).
+- **The `aep` baseline** is taken from `counterparts.resolve().aep` at activation. A first sighting with no baseline is recorded without a hold.
+- **Under a write-only hold**, widening events are still honoured (only write-capable calls are refused). Under a full hold, nothing widening is.
+- **Imports from a held counterpart** are marked and stay certifiable (spec: "marked").
+- **`relations.confirm-counterpart`** is a widening action: flag, unheld admin, fresh step-up and billing active.
+- **Introductions whose statement is older than 300 s** at receipt (an outbox retry) are dropped. The proposer introduces again. Anti-entropy does not re-send introductions.
+- **Import ids on rebinding.** Keeping the import id is limited to entries with exactly one resource before and after. Other rebindings mint new ids.
+- **Not in this pass:**
+  - the entity-certificate status endpoint (the write age rule applies alone);
+  - brokered tokens for integration-hosted grantor resources;
+  - failure rate limits on `relations.authorize` (the member path has them);
+  - doorbell forwarding and the `packages/events` `entity` reader hunk;
+  - export and import of participations (ORG-11b);
+  - routes and console (ORG-10f, ORG-10g);
+  - cross-provider transport (ORG-11a).
+- **C9 in the design** is "an introduction never creates an edge, and the candidate's view never contains an undecided or declining party". It is implemented as stated (see the chaos suite).
+
+**Tests (engine level; local evidence only):**
+- `tests/orgs-relations-access.test.mjs` (9):
+  - issuance hops and binding;
+  - certificate scope: resource, methods, another instance, a third entity;
+  - expiry, the 300 s cap, the write age rule, an identity-key signature, the holder proof and its replay;
+  - the membership-generation and connection-generation fences;
+  - imports reachable only through a live edge;
+  - aep floor and RL-4;
+  - no fetch, with a uniform refresh schedule;
+  - resource scope;
+  - the federation relay projection: an available token that works at the grantor, local dispatch refused, unavailable under the fence.
+- `tests/orgs-relations-events.test.mjs` (17):
+  - the signed path, with no adapter sender read;
+  - forged, tampered, cross-profile and earlier-key events;
+  - replay and jti poisoning;
+  - reordering, and stale and higher `aep`;
+  - the always-202 answer;
+  - no fetch, with anti-entropy recovery;
+  - manifest-only delivery;
+  - the daily tick;
+  - RL-4 resets, and attested and unattested moves with the successor;
+  - the RL-10 own move and rebinding;
+  - deletion pre-purge; unreachable counterparts; key compromise and billing stages;
+  - introductions and their limits.
+- `tests/orgs-relations-chaos.test.mjs` (7):
+  - 6 seeds × 120 steps, plus an aggregate of 3 seeds × 160 steps asserting that holds, confirmations, introductions and both honoured and refused certificates occur;
+  - new operations: `aep` rises, key resets and move adoptions, confirmations (some stale), introductions with admit or decline, and grantee-issued certificates presented at grantors;
+  - checked after every step: **C2** (honoured certificates within their own methods and the live edge), **C8** (a floor above the last confirmation always has a full hold; no widening mirror honoured while held; no held certificate honoured) and **C9** (every counterpart record traces to an invitation between exactly those two parties; no introduction names its holder; recognition only at proposers);
+  - before the final convergence check, admins confirm the remaining holds;
+  - a scratch sweep of 120 seeds (200–319, 200 steps each) passed on the final code.
+- **Revert checks in a scratch copy of the tree:**
+  - 20 guard mutations, each caught by its suite: event signature, jti after verification, narrowing whatever its `aep`, the C8 block on widening events, the hold at the edge decision, the write age rule, the envelope resource, the connection fence, the membership generation, scope enforcement, the manifest endpoint origin, earlier-host step 2, local dispatch of mirrors, a confirmation bound to its `aep`, the sender only from the signature, refresh scheduling independent of step 2, the write-only attested hold, the 300 s cap, rebind-not-resume, and the grantee's live-edge check;
+  - 5 more against the chaos suite alone: C8 events, a confirmation covering a later reset, C8 certificates, an introduction creating an edge, and C2 certificate methods.
+
+**Verification (shared checkout with concurrent documentation and intents work present; local evidence only):**
+- Relation suites alone: documents 8, statements 4, relations 17, review 15, chaos 7, access 9, events 17, so **77 passed, 0 failed**.
+- `npm test`: **3,769 passed, 0 failed**, 0 skipped, 0 cancelled.
+- `npm run test:organizations`: four subprocess suites, **442 passed, 0 failed**, 0 skipped. The node suites are 245, 57 and 130; the browser e2e suite is 10.
+- `npm run test:worker`: **93 passed, 0 failed**, 0 skipped.
+- One review test from ORG-10a–c, H1 ("scoping is refused"), was rewritten for the enforced scope: a scope is accepted only where the resource offers it, and the grantor refuses writes under `readOnly`.
+- No browser or UI test applies: there is no UI in this pass.
+
+No commit or deployment. Production release stays disabled. No delivery to a real external provider, provider conformance or production key custody is inferred from these local tests.
+
+
+**Review follow-ups (2026-10-24; independent review of ORG-10d/e requested by the coordinator; implemented locally, provisional and unsigned).** The review found no Critical or High issues. It found 2 Medium and 7 Low, plus test gaps; its repros are `scratchpad/rel-review/rel-review2-repros.test.mjs` N1–N4. Each fix below has a regression test in `tests/orgs-relations-access.test.mjs` or `tests/orgs-relations-events.test.mjs`. In a scratch copy of the tree I reverted each fix and each test gap's guard, and each of those 17 mutations made its suite fail.
+- **M1: the pre-purge could report ready without leaving every instance.**
+  - `leaveSome` now pages through `rel/instance/` with a cursor kept in `rel/closing`, across calls, until every row has been seen.
+  - `relations.purge-ready` reports ready only when the instance counter is zero and the cursor is exhausted (the counter is the one the chaos suite checks against the rows), and the final events are delivered or 72 h have passed.
+  - Left participations are now indexed by leave time (`rel/left/`). The sweep deletes them 30 days after leaving, with their counterpart records, imports and import mirrors.
+  - Leaving also refreshes the import mirrors, so a left instance's mirror is no longer reported available.
+- **M2: the federation resource sync deleted import mirrors.** `performResourceSync` now skips rows with `provider:'relation'`. The test syncs with a provider that does not return the mirror.
+- **L1: forged generations outlived a key-compromise recovery.** When an admin confirms an RL-4 hold, the generation floor of every mirror of that counterpart's halves restarts at 0 (an end stays final) and `cp.peerEpoch` rises, so the counterpart's next legitimate state applies. The chaos C6 history allows the fall only across such a confirmation.
+- **L2:** `bump` keeps a suspension's `cause` while the half stays suspended, so `relation_rebind_required` survives a later narrowing.
+- **L3:** `composeRelationScope` composes the edge scope with the certificate's scope under the storage `assignedScope` semantics: nested prefixes (the narrower wins), readOnly from either, the smaller maxObjectBytes. `relations.authorize` returns the result as `context.assignedScope`, and refuses when the prefixes are disjoint. The grantor cannot know an object's size when it decides, so the oversized-`get` refusal belongs to the ORG-10f dispatch, which must pass this scope to the storage adapter (production gate 3).
+- **L4:** a throw inside `edgeDecision` during `relations.authorize` is the uniform failure.
+- **L5: in-place import ids now need the grantor's mark.** The grantee keeps an import id only when the grantor marks the one-for-one replacement with `replaces` (the earlier resource ID) on the entry's resource. `relations.rebind` sets the mark. Any other change of resource mints a new id, so member grants never silently carry over to a different resource. **Provisional wire extension:** `replaces` is an optional member of the spec §9.9 entry resources, flagged for spec review.
+- **L6 (provisional policy):** while the grantor is fully held under RL-4, `relations.certify` drops write-capable methods; reads stay allowed. If nothing readable is left, it refuses.
+- **L7:** the sweep prunes `rel/intro-day/*` counters older than today, and `rel/introduced/*` records older than 30 days.
+- **Test gaps closed:**
+  - a certificate with the wrong `aud`;
+  - the pre-purge fence in both `relations.authorize` and `relations.certify`, checked while the edge itself is still live;
+  - a lower `aep` refused by the floor alone, with no hold;
+  - recognition notices heard only from recipients of the introduction;
+  - the preferences v1 exclusion of relation mirrors.
+- **Residual recorded:** under RL-4, the write-only hold on an attested move releases automatically after 72 h. A thief who makes an attested move with a stolen current recovery file, and is not noticed by an admin within those 72 h, regains write access through the edges. This is the remaining residual for attested moves, and it is the user's RL-4 trade-off to confirm.
+
+**Verification after the follow-ups (shared checkout; local evidence only):**
+- Relation suites: documents 8, statements 4, relations 17, review 15, chaos 7, access 15, events 22, so **88 passed, 0 failed**.
+- `npm test`: **3,780 passed, 0 failed**, 0 skipped, 0 cancelled. A first run stalled in `tests/export-hooks.test.mjs`, which is unrelated to relations. That file passed alone (11 of 11), and the fresh full run above passed. The stalled process was left running, because killing it was not permitted.
+- `npm run test:organizations`: **453 passed, 0 failed**, 0 skipped (four suites: 256, 57, 130 and 10).
+- `npm run test:worker`: **93 passed, 0 failed**, 0 skipped.
+- These counts supersede the earlier figures in this entry.
+
+Reviewer: ___ Date: ___ Outcome: ___

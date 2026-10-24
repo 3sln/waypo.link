@@ -14,12 +14,15 @@ const ALL={[STORE]:['get','list','put','delete'],[LEDGER]:['get','list','put','d
 const res=(o,name)=>o.resource(`${ISS}/r/${o.n}/${name}`,ALL);
 const audits=async(o,action)=>(await o.audits()).filter(a=>a.action===action);
 const stale=h=>({authTime:h.clock.now()-16*60000});
-const event=(h,from,to,instance,events,{jti=h.random.uuid(),aep=0,iat=Math.floor(h.clock.now()/1000)}={})=>({bindle:'relation-event',v:1,iss:from.principal.iss,sub:from.principal.sub,aud:`${ISS}/identity/${to.id}`,instance,aep,iat,jti,events});
-const ingest=(to,from,e)=>to.system('relations.ingest',{event:e,from:from.principal});
+const event=(h,from,to,instance,events,opts)=>h.event(from,to,instance,events,opts);
+/** Signs `e` with `from`'s certification key and ingests it at `to` (the sender comes only from the signature). */
+const ingest=(to,from,e)=>to.host.ingest(to,from,e);
 /** The import authority for `sub` through an application connection whose approved grant carries `ceiling` for the
  * import (review L4: the ceiling is the grant record's, never the caller's). */
 async function authority(o,sub,resource,ceiling){const id='g-'+Math.abs([...JSON.stringify([resource,ceiling])].reduce((a,c)=>a*31+c.charCodeAt(0)|0,7));
- await o.metadata.put('federation/grant/'+id,{id,active:true,fields:['f'],methods:{f:ceiling},resources:{f:[resource]}});
+ // ORG-10d: the grant's connection must be live at the generation it recorded (the connection-generation fence).
+ o.host.connections.set('conn-'+id,{generation:1,clientId:'https://app.example/client'});
+ await o.metadata.put('federation/grant/'+id,{id,active:true,clientId:'https://app.example/client',connection:{id:'conn-'+id,generation:1},fields:['f'],methods:{f:ceiling},resources:{f:[resource]}});
  const m=await o.get('org/member/'+principalKey({iss:ISS,sub:sub??o.admin}));return o.run('relations.import-authority',sub,{resource,grant:id,field:'f',generation:m.generation});}
 
 test('flags: widening needs ORG_RELATIONS_ENABLED; narrowing, leaving and own reads are never gated',async()=>{const h=await relationsHost();try{
@@ -359,16 +362,24 @@ test('relation events: uniform answers, no lookups, generation ordering, aep flo
  // Replay: the same jti is not reprocessed even with a higher generation inside.
  const once=event(h,A,B,instance,st(6,'live',entries));await ingest(B,A,once);assert.equal(await status(),'available');
  await ingest(B,A,event(h,A,B,instance,st(7,'suspended')));await ingest(B,A,once);assert.equal(await status(),'unavailable','a replay of an applied jti is ignored');
- // aep: a higher aep is recorded; a later widening event below it is refused; a narrowing applies whatever its aep.
- await ingest(B,A,event(h,A,B,instance,st(8,'live',entries),{aep:3}));assert.equal((await B.cp(instance,A)).peerAep,3);assert.equal(await status(),'available');
- await ingest(B,A,event(h,A,B,instance,st(10,'suspended'),{aep:0}));assert.equal(await status(),'unavailable','narrowing below the floor still applies');
+ // aep: a higher aep is recorded and is an authority reset (RL-4): B holds A, and the widening event that carried it is
+ // not honoured; a narrowing applies whatever its aep; a widening below the floor is refused; only an admin's
+ // confirmation bound to that aep releases the hold.
+ await ingest(B,A,event(h,A,B,instance,st(8,'live',entries),{aep:3}));assert.equal((await B.cp(instance,A)).peerAep,3);assert.equal(await status(),'unavailable','held: the widening is not honoured');
+ assert.equal((await B.get('rel/hold/'+principalKey(A.principal))).aep,3);
+ await ingest(B,A,event(h,A,B,instance,st(10,'suspended'),{aep:0}));assert.equal((await B.cp(instance,A)).peerGrant.generation,10,'narrowing below the floor still applies');
+ await B.run('relations.confirm-counterpart',null,{counterpart:A.principal,aep:3});
  await ingest(B,A,event(h,A,B,instance,st(11,'live',entries),{aep:1}));assert.equal(await status(),'unavailable','widening below the floor is refused');
+ await ingest(B,A,event(h,A,B,instance,st(12,'live',entries),{aep:3}));assert.equal(await status(),'available','released, at the confirmed aep');
  // An end is final: no later generation revives it.
  await ingest(B,A,event(h,A,B,instance,{[RELATION_EVENT.edgeEnded]:{half:'grant'}},{aep:0}));await ingest(B,A,event(h,A,B,instance,st(99,'live',entries),{aep:3}));
  assert.equal((await B.cp(instance,A)).peerGrant.state,'ended');assert.equal(await status(),'unavailable');
  assert.equal(h.counts.resolve,count,'no event caused a key lookup');
- // Introductions and other registered types are answered and ignored in this pass (ORG-10e).
- assert.deepEqual(await ingest(B,A,event(h,A,B,instance,{[RELATION_EVENT.introduction]:{slot:'recipient',candidate:X.principal,statement:'x'}})),{accepted:true});
+ // An introduction whose statement does not verify is answered like everything else and records nothing.
+ assert.deepEqual(await ingest(B,A,event(h,A,B,instance,{[RELATION_EVENT.introduction]:{slot:'recipient',candidate:X.principal,statement:'x'}},{aep:3})),{accepted:true});
+ assert.equal((await B.list('rel/intro/')).size,0);
+ // Not a JWS, or a JWS of another profile: refused at step 1.
+ await rejects(B.system('relations.ingest',{event:'not-a-jws'}),'relation_event_invalid');
 }finally{await h.close();}});
 
 test('lookalike documents: same title at another id is flagged, and the disclosure binds the exact matrix',async()=>{const h=await relationsHost({orgs:3});try{

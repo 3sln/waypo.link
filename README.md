@@ -29,7 +29,7 @@ The app has real WebAuthn/passkey and optional Argon2id-password login, multiple
 
 Static code contributions provide portal views, navigation, commands and contextual user-overridable keybindings. UI localization uses `@3sln/bab`; user content remains unchanged. The front end follows the 3sln stack's injected providers, named Actions, Query projections and pure UI factories. Vendored dependencies retain licenses and provenance.
 
-Hosted email uses Cloudflare's send binding, disabled until domain onboarding and delivery verification. [Email setup and sender addresses](docs/deployment/email.md). Provider OAuth, complete federation/preferences interoperability, hosted notification dispatch, rich archive asset rendering, production bot controls and requested account-deletion policy remain release work. Capability flags report unavailable services honestly; screenshots are not evidence of working external providers.
+Hosted email uses Cloudflare's send binding, disabled until domain onboarding and delivery verification. [Email setup and sender addresses](docs/deployment/email.md). Provider OAuth, complete federation/preferences interoperability, hosted notification dispatch, rich archive asset rendering, production bot controls and production verification of account deletion remain release work. Account export, scheduled deletion/cancellation, notices and purge orchestration are implemented locally behind flags. Capability flags report unavailable services honestly; screenshots are not evidence of working external providers.
 
 ## Verification
 

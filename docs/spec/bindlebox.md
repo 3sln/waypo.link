@@ -1,6 +1,6 @@
 # BindleBox interop v1 — normative draft
 
-Status: **design candidate**, 2026-10-20. Nothing here is implemented, published or production-verified. Identifiers under `https://spec.bindle.example/` and hosts under `.example` are placeholders until publication authority is agreed. MUST/SHOULD/MAY are draft requirements.
+Status: **design candidate**, 2026-10-20. Protocol validation and a local mailbox engine exist in `packages/bindlebox-protocol/` and `packages/bindlebox-engine/`; provider delegation/status routing exists behind `BINDLEBOX_ENABLED` (default off). These are local implementations, not a complete published occupant, independent interop or production verification. Identifiers under `https://spec.bindle.example/` and hosts under `.example` are placeholders until publication authority is agreed. MUST/SHOULD/MAY are draft requirements.
 
 Architecture and rationale: [BindleBox architecture](../architecture/messaging-app.md). Extraction: [messaging extraction](../architecture/messaging-extraction.md). Review: [messaging app review](../release/messaging-app-review.md). Protocol/security/interop sign-off: reviewer ___ / date ___ / outcome ___.
 
@@ -10,11 +10,11 @@ This profile defines peer-to-peer messaging between independent messaging apps a
 - [extensions](extensions.md);
 - the generic link envelope in [links](links.md) §1–§5 and §7.1–§9;
 - [message content](message-content.md);
-- the core directory/identity-document profile (unimplemented);
+- the core directory/identity-document profile (implemented locally for organizations; BindleBox integration is a separate dependency);
 - the `key-delegation.v1` feature (§3, assumed);
 - the links contract (§4.2, assumed).
 
-`key-delegation.v1` and the links contract are core amendments **proposed by this document**. They are not yet in the core specs, and their owners must accept them before anything is implemented. Slots, integration events and brokered resources follow [extensions](extensions.md) and [integrations](integrations.md) revision 2 as published.
+`key-delegation.v1` and the links contract are core amendments **proposed by this document**. They are not yet in the core specs, and their owners must accept them before publication or a conformance claim. Slots, integration events and brokered resources follow [extensions](extensions.md) and [integrations](integrations.md) revision 2 as published.
 
 It replaces these drafts for peer messaging:
 
@@ -723,4 +723,6 @@ An interop claim requires two independently implemented occupants on separate or
 
 | Surface | Status |
 | --- | --- |
-| All of the above | Not implemented. Contact-delivery v1 code in `packages/messaging/contact-delivery*.mjs` is the starting point; see [extraction](../architecture/messaging-extraction.md). |
+| Protocol and mailbox engine | Implemented locally in `packages/bindlebox-protocol/` and `packages/bindlebox-engine/`, including receive/send, conversations, outbox, archive and owner metadata operations. |
+| Provider delegation | Local issuance/status/revocation adapters and routes exist behind `BINDLEBOX_ENABLED` (default off); `packages/runtime/routes/delegation.mjs`. |
+| Published occupant and independent interop | Not established. Engine tests do not establish two independently implemented occupants or production provider conformance; see [extraction](../architecture/messaging-extraction.md). |
