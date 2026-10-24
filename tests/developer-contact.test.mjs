@@ -73,3 +73,5 @@ test('console route shows the single link and the caller eligibility; only the p
  assert.equal((await run('POST')).status,405);
  recipient.systemIdentity.role='system';assert.deepEqual((await run()).value,{available:false,reason:'developer-unavailable'});
 }finally{w.close();}});
+
+test('developer contact rate limiting returns a stable code without server English copy',async()=>{const result=await developerContactRoutes({path:'/api/developer-contact',request:{method:'GET'},env:{},owner:{account:{id:owner}},limit:async()=>false,json:(value,status,headers)=>({value,status,headers})});assert.deepEqual(result,{value:{error:'rate_limited'},status:429,headers:{'Retry-After':'60'}});});

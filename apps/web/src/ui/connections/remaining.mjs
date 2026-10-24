@@ -1,0 +1,38 @@
+import {h} from '../release-primitives.mjs';
+// Presentation only: the owner Engine intent loads summaries and advances one bounded batch.
+export function remainingPanel(state,m,{btn,form,confirm,plain}){
+ const es=state.locale==='es',t=(en,sp)=>es?sp:en,id=m.removalResult?.removal,value=m.removalRemaining?.removal===id?m.removalRemaining:null;
+ if(!['forced','completed'].includes(m.removalResult?.state))return null;
+ const action=(label,action,resource)=>form([confirm()],action,label,{removal:id,...resource?{resource}:{}});
+ const count=part=>`${part?.items??0} ${t('files','archivos')} · ${part?.bytes??0} bytes`;
+ const skipped=job=>{const s=job?.skipped??{},parts=[[s.changed,t('last changed but not created by this app','modificados pero no creados por esta app')],[s.kept,t('kept by your earlier choice','conservados por una decisión anterior')],[s.unavailable,t('not deletable here','no se pueden eliminar aquí')],[s.failed,t('could not be deleted','no se pudieron eliminar')],[s.conflict,t('changed during deletion','cambiaron durante la eliminación')]].filter(([n])=>n>0);return parts.length?h('p',t('Skipped: ','Omitidos: ')+parts.map(([n,label])=>`${n} ${label}`).join(' · ')):null;};
+ const keptChoice=resource=>(value?.keeps??[]).some(k=>k.active&&(k.resource===resource||k.resource===null));
+ return h('section',h('h3',t('Produced data','Datos producidos')),
+  h('p',t('Review files attributed to this app before choosing what to keep. Data from a later installation is protected.','Revisa los archivos atribuidos a esta app antes de decidir qué conservar. Los datos de una instalación posterior están protegidos.')),
+  btn(t('Refresh what’s left','Actualizar qué queda'),'removal-remaining',{removal:id}),
+  value?h('div',
+   h('p',t('Counts cover writes by apps connected through Bindle or MCP to account storage or gateway-managed Google Drive, on this page only. Browser automation, older writes and copies the app keeps elsewhere are not counted. Gateway deletion may leave immutable retained files in Google Drive; review those directly in Drive.','Las cantidades cubren las escrituras de apps conectadas mediante Bindle o MCP en el almacenamiento de la cuenta o en Google Drive gestionado por la pasarela, solo en esta página. No se cuentan la automatización del navegador, las escrituras antiguas ni las copias que la app guarda en otro lugar. La eliminación mediante la pasarela puede dejar archivos inmutables retenidos en Google Drive; revísalos directamente en Drive.')),
+   value.complete===false?h('p',t('Partial scan. Browse the next page to review more data.','Escaneo parcial. Revisa la siguiente página para ver más datos.')):null,
+   value.cursor?btn(t('Next data page','Siguiente página de datos'),'removal-remaining-next',{removal:id}):null,
+   value.deletion?h('p',value.deletion.complete?t('Deletion scan complete.','Escaneo de eliminación terminado.'):t('Deletion paused at the batch limit. Continue to resume.','La eliminación se detuvo en el límite del lote. Continúa para reanudar.')).attrs({role:'status'}):null,
+   value.deletion?skipped(value.deletion):null,
+   value.lastAction==='keep'?h('p',t('Your choice to keep this data was saved. Later removals of this app will not delete it unless you choose again.','Se guardó tu decisión de conservar estos datos. Las eliminaciones posteriores de esta app no los borrarán salvo que vuelvas a elegirlo.')).attrs({role:'status'}):null,
+   ...(value.resources??[]).map(resource=>h('section',h('h4',plain(resource.resource)),
+    resource.physicalRetention?h('p',t('Deleting through this gateway removes its data index. Immutable files retained in Google Drive may remain; review and delete those directly in Drive.','Eliminar mediante esta pasarela quita su índice de datos. Pueden quedar archivos inmutables retenidos en Google Drive; revísalos y elimínalos directamente en Drive.')).classes('connections-note'):null,
+    h('p',t('Files this app created: ','Archivos que creó esta app: ')+count(resource.created)),
+    resource.changed?.items?h('p',t('Files this app last changed but did not create (you or another app created them): ','Archivos que esta app modificó por última vez pero no creó (los creaste tú u otra app): ')+count(resource.changed)):null,
+    resource.kept?.items?h('p',t('Files you chose to keep after an earlier removal of this app: ','Archivos que decidiste conservar tras una eliminación anterior de esta app: ')+count(resource.kept)+(resource.kept.changed?.items?t(` (${resource.kept.created?.items??0} created by this app, ${resource.kept.changed.items} only changed by it)`,` (${resource.kept.created?.items??0} creados por esta app, ${resource.kept.changed.items} solo modificados por ella)`):'')):null,
+    h('ul',...(resource.prefixes??[]).map(prefix=>h('li',plain(prefix.prefix||'/'),` · ${prefix.items??0} ${t('files','archivos')} · ${prefix.bytes??0} bytes`).key(prefix.prefix))),
+    keptChoice(resource.resource)?h('p',t('You chose to keep this data.','Decidiste conservar estos datos.')).attrs({role:'status'}):null,
+    resource.deletable===false?h('p',resource.reason==='reconnect'?t('Not deletable here: reconnect this storage first, or review it directly.','No se puede eliminar aquí: vuelve a conectar este almacenamiento o revísalo directamente.'):t('Not deletable here: this storage is no longer connected. Review it directly.','No se puede eliminar aquí: este almacenamiento ya no está conectado. Revísalo directamente.')).classes('connections-note'):h('p',t('Delete removes only files this app created, one bounded batch at a time. Continue until complete; retries are safe. Export first opens the account data tools.','Eliminar quita solo los archivos que creó esta app, en lotes limitados. Continúa hasta terminar; es seguro reintentar. Exportar primero abre las herramientas de datos de la cuenta.')),
+    action(t('Keep this data','Conservar estos datos'),'removal-remaining-keep',resource.resource),
+    action(t('Export first','Exportar primero'),'removal-remaining-export',resource.resource),
+    resource.deletable===false?null:action(t('Delete files this app created / continue','Eliminar archivos que creó esta app / continuar'),'removal-remaining-delete',resource.resource),
+    resource.deletable!==false&&resource.changed?.items?action(t('Also delete files this app last changed','Eliminar también los archivos que esta app modificó por última vez'),'removal-remaining-delete-changed',resource.resource):null,
+    resource.deletable!==false&&resource.kept?.items?action(t('Delete, including files you kept earlier','Eliminar, incluidos los archivos que conservaste antes'),'removal-remaining-delete-kept',resource.resource):null,
+    resource.deletable!==false&&resource.kept?.changed?.items?action(t('Delete, including kept files and files this app only changed','Eliminar, incluidos los archivos conservados y los que esta app solo modificó'),'removal-remaining-delete-kept-changed',resource.resource):null
+   ).key(resource.resource)),
+   ...(value.deletions??[]).filter(job=>!job.complete&&!job.stopped).map(job=>h('section',h('h4',t('Unfinished deletion','Eliminación pendiente')),h('p',plain(job.resource??t('All storage','Todo el almacenamiento'))),skipped(job),action(t('Resume deletion','Reanudar eliminación'),job.includeKept&&job.includeChanged?'removal-remaining-delete-kept-changed':job.includeKept?'removal-remaining-delete-kept':job.includeChanged?'removal-remaining-delete-changed':'removal-remaining-delete',job.resource)).key('deletion:'+job.resource)),
+   !(value.resources??[]).length?h('p',t('No attributed data on this page.','No hay datos atribuidos en esta página.')):null
+  ):null);
+}

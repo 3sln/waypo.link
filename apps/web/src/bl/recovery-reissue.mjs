@@ -79,7 +79,11 @@ export class ConfirmRecoveryReissue extends ReissueFlow {
  * the new one never will. The server accepts it only from a session that existed before the replacement began. */
 export class CancelPendingRecoveryReissue extends ReissueFlow {
  async perform(r,ctx){
-  await r.api.request('/api/auth/recovery/reissue/cancel',{confirmed:true});
+  try{await r.api.request('/api/auth/recovery/reissue/cancel',{confirmed:true});}catch(error){
+   const known={rate_limited:'Too many requests. Wait a moment, then try again.',not_found:'Not found.',forbidden:'This request could not be completed. Refresh and try again.'};
+   if(error.code)throw Error(createLocalization({locale:snapshot(r).locale}).t(known[error.code]??'This request could not be completed. Refresh and try again.'));
+   throw error;
+  }
   publish(r,ctx,{error:'',notice:'Replacement cancelled. Your previous recovery file works again and the new one never will.'});
   try{const data=await r.api.get('/api/account');publish(r,ctx,{data,session:{...snapshot(r).session,account:data.account}});}catch{}
  }

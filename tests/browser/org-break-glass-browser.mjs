@@ -42,16 +42,17 @@ const calls=page=>page.evaluate(()=>window.calls);
 const layout=async(page,label)=>{assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,label+': no horizontal scroll');assert.deepEqual(await page.locator('.org-console button,.org-console input:not([type=checkbox]),.org-console select,.org-console textarea,.org-claim-gate a').evaluateAll(els=>els.filter(e=>e.getBoundingClientRect().height<44).map(e=>e.tagName+':'+(e.dataset.orgAction??e.name??''))),[],label+': 44 px targets');assert.equal(await page.locator('.org-console img,.org-console script,.org-console b').count(),0,label+': no injected markup');};
 const focused=page=>page.evaluate(()=>document.activeElement?.id??'');
 for(const name of ['chromium','firefox'])for(const locale of ['en','es'])for(const colorScheme of ['light','dark'])for(const width of [390,1280])test('ORG-12e '+[name,locale,colorScheme,width].join(' '),async()=>{
- options={locale};const es=locale==='es',tag=[name,locale,colorScheme,width].join('-');const page=await browsers[name].newPage({viewport:{width,height:900},colorScheme});page.setDefaultTimeout(6000);const errors=[];page.on('pageerror',e=>errors.push(e.message));
+ options={locale};const es=locale==='es',tag=[name,locale,colorScheme,width].join('-');const page=await browsers[name].newPage({viewport:{width,height:width===390?844:900},colorScheme});page.setDefaultTimeout(6000);const errors=[];page.on('pageerror',e=>errors.push(e.message));
  try{
   await page.goto(origin);await page.waitForFunction(()=>window.ready);await page.evaluate(()=>window.notices());await settle(page);
   // Owner interstitial: full screen, stop, contact support, not now.
-  const gate=page.locator('[data-claim-gate]');assert.equal(await gate.count(),1);assert.match(await gate.textContent(),es?/Alguien reclama la propiedad de Owned <b>co<\/b>/:/Someone is claiming ownership of Owned <b>co<\/b>/);
+  assert.equal(await focused(page),'org-claim-gate-title');const gate=page.locator('[data-claim-gate]');assert.equal(await gate.count(),1);assert.match(await gate.textContent(),es?/Alguien reclama la propiedad de Owned <b>co<\/b>/:/Someone is claiming ownership of Owned <b>co<\/b>/);
   assert.equal(await gate.locator('a[href="mailto:contact@3sln.com"]').count(),1);await layout(page,'interstitial');await page.screenshot({path:`artifacts/browser/org-break-glass-interstitial-${tag}.png`,fullPage:true});
   await press(page,'bg-gate-abort');assert.deepEqual((await calls(page)).find(c=>c.body?.operation==='abort'),{path:'/api/orgs/'+ownedOrg+'/break-glass',body:{operation:'abort',claim:ownedClaim},method:'POST'});
   assert.equal(await page.locator('[data-claim-gate]').count(),0,'a stopped claim leaves the interstitial');
   // Personal view: the co-signature item from another organization.
   await page.evaluate(()=>window.act('reload'));await settle(page);const waiting=page.locator('#org-bg-waiting').locator('..');assert.match(await waiting.textContent(),es?/Reclamación de propiedad en Club/:/Ownership claim in Club/);await layout(page,'waiting');
+  await waiting.locator('details summary').first().click();const reason=waiting.locator('textarea[name="reason"]');await reason.fill('Please review.');assert.equal(await reason.evaluate(e=>e.nextElementSibling.textContent),'14 / 280');await waiting.locator('details summary').first().click();
   await waiting.locator('[data-org-action="bg-cosign"]').first().click();await settle(page);assert.ok((await calls(page)).some(c=>c.path==='/api/orgs/'+memberOrg+'/break-glass'&&c.body.operation==='cosign'&&c.body.claim===claim));
   // Admin context: recovery banner, wizard one step at a time with focus on each step, then start.
   await page.locator('nav select').selectOption(org);await settle(page);assert.match(await page.locator('.org-console').textContent(),es?/No hay archivo de recuperación vigente/:/No current recovery file/);

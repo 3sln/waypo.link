@@ -12,6 +12,8 @@ const PRIVATE=/^(?:blobRef|secret|sharedSecret|returnCapability|bootstrap|bootst
 function publicValue(value){if(value?.kty)return pick(value,fields('kty crv x y n e alg kid use key_ops'));if(Array.isArray(value))return value.map(publicValue);if(value&&typeof value==='object')return Object.fromEntries(Object.entries(value).filter(([key])=>!PRIVATE.test(key.replace(/[-_]/g,''))&&!/hash|secret|token|bootstrap|password|private|vault|csrf|recovery/i.test(key)).map(([key,v])=>[key,publicValue(v)]));return value;}
 const projection=(row,names)=>Array.isArray(row)?row.map(v=>projection(v,names)):row&&typeof row==='object'?publicValue(pick(row,[...COMMON,...fields(names)])):row;
 const definitions=[
+ // Removal history with the owner's keep choices and deletion jobs for app-attributed data (never the stored continuation position).
+ ['app-removals',['app-removal/record/','storage/producer-keep/','storage/producer-deletion/'],'removal entity client_id connection mode generation started_at cleanup_by committed_at access_ends_by concluded_at outcome result reminders action resource active supersededAt includeChanged includeKept complete stopped stoppedAt totalDeleted skipped passes at'],
  ['intent-choices',['intent-memory/'],'kind default excluded ignored'],
  ['messages',['message/'],'collection mimeType size receivedAt readAt tags classification quarantined senderMetadata conversation grantId revision presentation'],
  ['collections',['collection/'],'active'],['tags',['tag-labels/'],'labels'],['rules',['rules/','rule-defaults/'],'actions filter conditions enabled origin automatic updatedAt'],
@@ -31,6 +33,12 @@ const definitions=[
 ];
 export const EXPORT_CLAIMED_PREFIXES=Object.freeze(Object.fromEntries(definitions.flatMap(([name,prefixes])=>prefixes.map(prefix=>[prefix,name]))));
 const excluded={
+ 'app-removal/notice/':'Transient: reminder attempts; owner removal history is exported separately.',
+ 'app-removal/open/':'Derived: open removal lookup.',
+ 'storage/producer-cursor-key':'Secret: key sealing remaining-data page cursors.',
+ 'storage/producer-gc':'Transient: marker sweep continuation.',
+ 'storage/producer-lineage/':'Derived: pointer to a pruned removal (connection and generation) for What\'s left and the marker sweep; decisions are exported under app-removals.',
+ 'app-removal/cascade/':'Transient: authority revocation cascade.',
  'intent-flow/':'Transient: intent routing receipts contain no link data.',
  'intent-meter/':'Derived: direct intent handoff anti-bounce budget.',
  'owner':'Identity subject is projected through the identity port.',
@@ -106,6 +114,11 @@ export function createExportContributors({accountStore,identity,keys,grants,exte
    return {rows:out,payloads,cursor:next,done:next===null};
   }});
  }
+ result.push({name:'producer-summaries',version:1,prefixes:['hosted/','drive/object/'],async page({owner,cursor,limit}){
+  const prefixes=['hosted/','drive/object/'],index=cursor?.index??0,prefix=prefixes[index],rows=await accountStore.list({prefix,startAfter:cursor?.after??'',limit}),groups=new Map();
+  for(const [path,row]of rows){const p=row?.producer;if(!p||row.owner!==undefined&&row.owner!==owner)continue;const resource=path.slice(prefix.length).split('/')[0],base=JSON.stringify([resource,p.connection,p.generation]),seen=[...groups.values()].filter(g=>g.base===base);let folder=p.prefix??'';if(!seen.some(g=>g.record.prefix===folder)&&seen.length>=64)folder='[other]';const bucket=JSON.stringify([base,folder]);let group=groups.get(bucket);if(!group){group={base,record:{resource,connection:p.connection,generation:p.generation,prefix:folder,items:0,bytes:0}};groups.set(bucket,group);}group.record.items++;group.record.bytes+=Number.isSafeInteger(row.size)&&row.size>=0?row.size:0;}
+  const next=rows.size===limit?{index,after:[...rows.keys()].at(-1)}:index+1<prefixes.length?{index:index+1}:null;return {rows:[...groups.values()].map(({record})=>({schemaVersion:1,record})),payloads:[],cursor:next,done:next===null};
+ }});
  result.push({name:'features',version:1,async page({owner}){const port=flags.for({subject:{kind:'account',owner}});return {rows:Object.values(FLAGS).filter(f=>f.class==='a').map(f=>({name:f.name,...port.evaluate(f.name)})),done:true};}});
  result.push({name:'apps-held',version:1,async page({cursor,limit}){const rows=await accountStore.list({prefix:'resource/',startAfter:cursor??'',limit});return {rows:[...rows.values()].filter(v=>v.kind==='app-connection').map(v=>({...projection(v,'clientId provider'),guidance:'Export data held by this app through its own export controls.'})),cursor:rows.size===limit?[...rows.keys()].at(-1):null,done:rows.size<limit};}});
  return result;

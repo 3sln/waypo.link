@@ -57,3 +57,5 @@ test('recovery refused for a pending replacement keeps the proof in memory; canc
  assert.equal(secrets.has('reissueCancelProof'),false);assert.equal(state.restoreReissuePending,false);assert.match(state.notice,/works again/);
  await assert.rejects(new CancelReissueWithFile({}).perform(r,ctx,{}),/Unlock your recovery file again/);
 });
+
+ test('cancel replacement maps unknown server codes to translated generic errors',async()=>{for(const locale of ['en','es']){const r={state:{snapshot:()=>({locale})},api:{request:async()=>{throw Object.assign(Error('server_error'),{code:'server_error',status:500});}}};await assert.rejects(new CancelPendingRecoveryReissue({}).perform(r,{},{}),{message:locale==='es'?'No se pudo completar esta solicitud. Actualiza y vuelve a intentarlo.':'This request could not be completed. Refresh and try again.'});}});

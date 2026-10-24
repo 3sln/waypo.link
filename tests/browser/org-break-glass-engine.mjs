@@ -77,7 +77,8 @@ test('ORG-12e timeline: names by handle, statement as text, no owner channels or
  const tree=await c.render(),all=text(tree);assert.match(all,/@bea/);assert.match(all,/@cy/);assert.match(all,/Held for support review/);assert.match(all,/cannot take effect by itself/);assert.match(all,/Gone <b>for months<\/b>/,'the statement is plain text');
  assert.ok(!tags(tree).includes('b'),'no injected markup');assert.doesNotMatch(all,/Notices about this claim go to your/,'no channel details for admins');
  const o=await client(t,{view:{claim:{...adminClaim(['abort']),track:'S',channels:[{kind:'email',enrolledAt:1,excluded:false},{kind:'email',enrolledAt:2,excluded:false},{kind:'push',enrolledAt:3,excluded:false}]},decisions:[],contest:null},powers:['admin','owner-of-record']});await o.act('select',{org});
- assert.match(text(await o.render()),/Notices about this claim go to your 2 email address, 1 notification device/);
+ assert.match(text(await o.render()),/Notices about this claim go to your 2 email addresses, 1 notification device/);
+ const es=await client(t,{state:{locale:'es'},view:{claim:{...adminClaim(['abort']),channels:[{kind:'email'},{kind:'email'},{kind:'push'}]},decisions:[],contest:null},powers:['admin','owner-of-record']});await es.act('select',{org});assert.match(text(await es.render()),/2 direcciones de correo, 1 dispositivo de notificaciones/);
 });
 
 test('ORG-12e members: a banner with the start and earliest effect dates; members get no claim actions',async t=>{
@@ -152,4 +153,15 @@ test('ORG-12e HTTP port: break-glass reads and writes map to the agreed routes',
  assert.deepEqual(calls,[['GET','/api/orgs/break-glass'],['GET','/api/orgs/'+org+'/break-glass'],['POST','/api/orgs/'+org+'/break-glass',{operation:'abort'}],['POST','/api/orgs/'+org+'/break-glass-checkout',{claim:'c'}]]);
  await assert.rejects(()=>port.call('break-glass-items',undefined,{api,org}),{code:'invalid_request'});
  assert.deepEqual(claimDecisions({decisions:['abort','invented']}),['abort']);
+});
+
+for(const code of ['invalid_statement','temporarily_unavailable'])test('UI pass 3: failed Start preserves wizard answers: '+code,async t=>{
+ let refuse=true;const c=await client(t,{calls:(a,v,o,reply)=>{if(a==='break-glass'&&refuse)throw Object.assign(Error(code),{code,status:code==='invalid_statement'?400:503});return reply(a,v);}});
+ await c.act('select',{org});await c.act('bg-wizard-open');await c.act('bg-wizard-next');await c.act('bg-candidate',{values:{who:'self'}});await c.act('bg-category',{values:{category:'owner-unreachable'}});await c.act('bg-statement',{values:{statement:'No answer since May.'}});
+ const wizard=structuredClone((await c.model()).breakGlassWizard);await c.act('bg-start',{values:{confirm:true}});assert.deepEqual((await c.model()).breakGlassWizard,wizard);assert.ok(actions(await c.render()).includes('bg-start'));
+ refuse=false;await c.act('bg-start',{values:{confirm:true}});assert.equal((await c.model()).breakGlassWizard,null);
+});
+test('UI pass 3: held member banner has no doubled period and reason fields are textareas',async t=>{
+ const member=await client(t,{powers:[],view:{claim:{...baseClaim,state:'held-for-support'},decisions:[],contest:null}});await member.act('select',{org});assert.doesNotMatch(text(await member.render()),/reviewing it\.\.|revisando\.\./);
+ const admin=await client(t,{view:{claim:adminClaim(['object']),decisions:[],contest:null}});await admin.act('select',{org});assert.ok(tags(await admin.render()).includes('textarea'));
 });

@@ -39,6 +39,7 @@ for(const name of ['chromium','firefox'])for(const locale of ['en','es'])test(`O
   // 1. The owner's sign-in interstitial, in the real shell; stopping the claim lets the console through.
   {const context=await browsers[name].newContext({viewport:{width,height},colorScheme});t.after(()=>context.close());const {page,errors,calls}=await fixture(context,{locale,role:'owner'});
    await page.goto(baseURL+'/console');const gate=page.locator('[data-claim-gate]');await gate.waitFor();
+   assert.equal(await page.evaluate(()=>document.activeElement?.id),'org-claim-gate-title');
    assert.match(await gate.locator('h1').textContent(),es?/Alguien reclama la propiedad de Acme <img src=x>/:/Someone is claiming ownership of Acme <img src=x>/);
    assert.match(await gate.textContent(),es?/en espera/:/on hold/);await layout(page,tag+' interstitial');
    assert.equal(await gate.evaluate(e=>getComputedStyle(e).color===getComputedStyle(e.parentElement).color),true,'theme tokens are inherited');
@@ -51,6 +52,7 @@ for(const name of ['chromium','firefox'])for(const locale of ['en','es'])test(`O
    const response=await page.goto(`${baseURL}/org-claim/abort${es?'?lang=es':''}#org=${GHOST}&token=${TOKEN}`);
    assert.match(response.headers()['content-security-policy'],/frame-ancestors 'none'/);assert.equal(response.headers()['referrer-policy'],'no-referrer');
    await page.waitForFunction(()=>!location.hash);assert.equal(new URL(page.url()).hash,'','the capability left the address bar');assert.deepEqual(posts,[],'opening the page sent nothing');
+   await page.reload();await page.locator('input[name="confirmed"]:enabled').waitFor();assert.equal(await page.evaluate(()=>!!sessionStorage.getItem('3sln:org-claim-abort')),true,'reload keeps the tab capability');
    const button=page.locator('button'),input=page.locator('input[name="confirmed"]');await button.waitFor();assert.equal(await button.textContent(),es?'Detener esta reclamación':'Stop this claim');
    // Review M2: nothing can be sent until the confirmation is typed (no handle in this link, so the word is stop).
    assert.equal(await button.isEnabled(),false);assert.match(await page.locator('[data-type-hint]').textContent(),/stop/);
@@ -67,7 +69,7 @@ for(const name of ['chromium','firefox'])for(const locale of ['en','es'])test(`O
     // Playwright's evaluate itself counts as a gesture, so the script submit is scheduled to run after that activation
     // (and the typing's) has expired (about 5 s in both engines).
     await page.evaluate(()=>{setTimeout(()=>document.querySelector('form').requestSubmit(),6500);});await page.waitForTimeout(7200);assert.deepEqual(posts,[],'no POST without user activation');
-    await page.keyboard.press('Enter');await page.locator('[role=status]').filter({hasText:es?/Gracias/:/Thank you/}).waitFor();assert.equal(posts.length,1);}assert.deepEqual(errors,[]);await context.close();}
+    await page.keyboard.press('Enter');await page.locator('[role=status]').filter({hasText:es?/Gracias/:/Thank you/}).waitFor();assert.equal(posts.length,1);assert.equal(await page.evaluate(()=>sessionStorage.getItem('3sln:org-claim-abort')),null,'success clears the capability');}assert.deepEqual(errors,[]);await context.close();}
   // 3. An admin sees the "owner is gone?" entry in the ownership panel and the missing-recovery-file banner.
   if(width===1280||colorScheme==='light'){const context=await browsers[name].newContext({viewport:{width,height},colorScheme});t.after(()=>context.close());const {page,errors}=await fixture(context,{locale,role:'admin'});
    await page.goto(baseURL+'/console?view=organizations&org='+org);await page.locator('.app-shell .org-console #org-details').waitFor();

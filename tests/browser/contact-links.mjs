@@ -155,6 +155,8 @@ test('developer contact shows the shared conditional link and current eligibilit
  }finally{await f.close();}
 });
 
+test('developer contact rate limit is mapped from a code to translated client copy',async()=>{const f=await fixture({route:{kind:'home'},session:{account}});try{f.api.get=async()=>{throw Object.assign(Error('rate_limited'),{code:'rate_limited',status:429});};await f.act(new LoadDeveloperContact());const state=await f.read();assert.equal(state.error,'Please wait before checking again.');assert.equal(state.developerContactLoading,false);assert.equal(createLocalization({locale:'es'}).t(state.error),'Espera antes de volver a comprobarlo.');}finally{await f.close();}});
+
 test('tag pills render owner labels literally and system tags with system and suspected classes',()=>{
  const state={data:{tagLabels:{labels:{'t.abc':'Clients'}}}},root=document.createElement('div');dodo.reconcile(root,[localize(tagPill('t.abc',state),createLocalization({locale:'es'})),localize(tagPill('sys:spam',state),createLocalization({locale:'en'})),localize(tagPill('sys:suspected.spam',state),createLocalization({locale:'en'}))]);
  const [user,system,suspected]=root.children;assert.equal(user.textContent,'Clients');assert.equal(user.getAttribute('translate'),'no');assert.ok(system.classList.contains('system-tag'));assert.equal(system.classList.contains('suspected-tag'),false);assert.ok(suspected.classList.contains('suspected-tag'));assert.equal(suspected.textContent,'Suspected Spam');
@@ -166,3 +168,5 @@ test('rules carry addTags/removeTags and sign-out removes this device push subsc
   await f.act(new SignOut());assert.deepEqual(calls.at(-1),{path:'/api/auth/logout',body:{pushSubscription:'P'.repeat(43)},method:undefined});
  }finally{await f.close();}
 });
+
+test('Spanish catalogue covers security, device access, contacts, browser permission and every shortcut command',async()=>{const {catalogues}=await import('../../packages/i18n/catalogues.mjs'),{builtInModules}=await import('../../apps/web/src/shared/portal-modules.mjs');const sources=['Password enabled','active links','App sign-ins and preference grants are listed separately. Revoking a sign-in ends its refresh and access tokens.','Browser permission: denied.','Browser permission: granted.','Browser permission: not requested.','Browser permission: unavailable.',...builtInModules.flatMap(module=>module.contributions.commands??[]).map(command=>command.title)];for(const source of sources){assert.equal(catalogues.en[''][source],source,source+' English coverage');assert.equal(typeof catalogues.es[''][source],'string',source+' Spanish coverage');assert.notEqual(catalogues.es[''][source],source,source+' Spanish translation');}});

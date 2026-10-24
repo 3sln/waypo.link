@@ -11,8 +11,20 @@ export class AppRemovalIntent extends OwnerFlow{
  try{
   if(d.action==='removal-load'){const result=await call(ROOT);put({removals:result.removals,cleanRemovalEnabled:result.clean_enabled===true,cleanRemovalConnections:result.clean_connections,removalError:null});if(current())r.browser.clearRemovalRoute?.();return;}
   if(d.action==='removal-return'){const p=new URLSearchParams(d.query);if([...p.keys()].some(k=>!['removal','outcome','result'].includes(k)))throw Error('Invalid return.');const result=await call(ROOT+'/return?'+p);show(result.removal);if(result.removal&&current())r.browser.clearRemovalRoute?.({returned:true});if(!result.removal)put({removalError:initial.locale==='es'?'Este regreso ya no está disponible. Actualiza para revisar el estado.':'This return is unavailable. Refresh to review the current state.'});focus();return;}
-  if(d.action==='removal-close'){put({removalReview:null,removalResult:null,removalError:null});r.browser.focusConnections?.('connections-title');return;}
+  if(d.action==='removal-close'){put({removalReview:null,removalResult:null,removalRemaining:null,removalError:null});r.browser.focusConnections?.('connections-title');return;}
   const c=m.connections.find(c=>c.id===d.id),row=m.removals?.find(row=>row.removal===d.removal);
+  if(d.action.startsWith('removal-remaining')){
+   if(!row||!['forced','completed'].includes(row.state)||m.removalResult?.removal!==row.removal)throw Error('Reload this removal.');
+   const path=ROOT+'/'+encodeURIComponent(row.removal)+'/remaining';
+   if(['removal-remaining','removal-remaining-next'].includes(d.action)){const cursor=d.action==='removal-remaining-next'?m.removalRemaining?.cursor:null;if(d.action==='removal-remaining-next'&&!cursor)throw Error('Reload what remains.');const value=await call(path+(cursor?'?cursor='+encodeURIComponent(cursor):''));put({removalRemaining:{...value,removal:row.removal},removalError:null});return;}
+   if(d.values?.confirm!==true)throw Error('Review and confirm this change.');
+   // delete-changed and delete-kept are explicit owner opt-ins beyond the default "files this app created".
+   const choice=d.action.slice('removal-remaining-'.length),action=choice.startsWith('delete')?'delete':choice,summary=m.removalRemaining,opt=choice==='delete-changed'?{includeChanged:true}:choice==='delete-kept'?{includeKept:true}:choice==='delete-kept-changed'?{includeKept:true,includeChanged:true}:{};
+   if(!['keep','delete','export','delete-changed','delete-kept','delete-kept-changed'].includes(choice)||summary?.removal!==row.removal||!(summary.resources?.some(v=>v.resource===d.resource)||action==='delete'&&summary.deletions?.some(v=>v.resource===d.resource&&!v.complete&&!v.stopped)))throw Error('Reload what remains.');
+   const result=await call(path,{action,resource:d.resource,...opt});
+   if(action==='export'){if(current())r.browser.navigate('/console?view=account-data');}
+   const value=await call(path);put({removalRemaining:{...value,removal:row.removal,lastAction:action,deletion:action==='delete'?result:undefined},removalError:null});return;
+  }
   if(d.action==='removal-result'){if(!row)throw Error('Reload this removal.');show(row);focus();return;}
   if(d.action==='removal-review'){if(!c||c.state==='disconnected')throw Error('Reload this connection.');put({removalReview:{connection:c.id,generation:c.generation,name:c.name,clean:(m.cleanRemovalConnections?m.cleanRemovalConnections[c.id]===true:m.cleanRemovalEnabled===true)&&['active','configuring','degraded','suspended'].includes(c.state)&&Boolean(connectionManifest(c).removal)&&!(c.state==='suspended'&&(c.suspensionReason!=='owner'||c.securitySuspended)),resumes:c.state==='suspended'},removalResult:null,removalError:null});focus();return;}
   if(d.values?.confirm!==true)throw Error('Review and confirm this change.');

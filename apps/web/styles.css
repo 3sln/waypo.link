@@ -420,3 +420,9 @@ input[type=checkbox][required]:user-invalid{outline:3px solid #c5221f;outline-of
  .topbar>.breadcrumb>span{white-space:normal;overflow:visible;text-overflow:clip}
  .topbar>div:last-child{width:100%;justify-content:space-between}
 }
+
+/* Round 3: the focus surface uses the same paired accent tokens as buttons. */
+:root .skip-link{background:var(--forest);color:var(--on-accent)}
+:root :is(button,.button,summary){min-height:44px}
+:root label:has(input[type=checkbox]){min-height:44px;display:flex;align-items:center;gap:10px}
+:root :is(.logo,.logo-link,.account-data a[href],.security-note a[href]){min-height:44px;display:inline-flex;align-items:center}

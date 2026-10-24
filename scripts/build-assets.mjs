@@ -166,7 +166,14 @@ const {gzipSync}=await import('node:zlib');const shellBytes=gzipSync(probe).leng
 // service worker cannot cache an incomplete graph alongside the final one.
 for(const [name,entry] of Object.entries(result.entries)){
   await rm(join(outputRoot,entry.wireup.slice(1)),{force:true});
-  const source=wireupSource({name,imports:result.imports,css:entry.css?[entry.css]:[],module:entry.module});
+  // The parser owns the map: Firefox's speculative preload scanner can run
+  // before a preceding classic script executes. Keep the vendored bootstrap's
+  // stylesheet and deferred entry behavior without installing a second map.
+  const generated=wireupSource({name,imports:result.imports,css:entry.css?[entry.css]:[],module:entry.module});
+  const mapStart=generated.indexOf('  var map = d.createElement("script");');
+  const mapEnd=generated.indexOf('  head.appendChild(map);',mapStart);
+  if(mapStart<0||mapEnd<0)throw Error('Unexpected js-tools import-map bootstrap API');
+  const source=generated.slice(0,mapStart)+generated.slice(mapEnd+'  head.appendChild(map);'.length);
   entry.wireup=assetURL(`wireup-${name}.${shortHash(Buffer.from(source))}.js`);
   await writeFile(join(outputRoot,entry.wireup.slice(1)),source);
 }
@@ -191,10 +198,10 @@ for(const page of pages){
   let html=await readFile(page.source,'utf8');
   const oldScript=`<script type="module" src="${page.module}"></script>`;
   if(!html.includes(oldScript))throw Error(`Expected application entry script missing from ${page.source}`);
-  // The classic bootstrap installs the authorized map before modulepreload
-  // parses dependencies; it defers execution until the body is available.
+  // A parser-visible CSP-hashed map precedes both speculative preloads and
+  // the classic bootstrap; execution still waits until the body is available.
   html=html.replace(oldScript,'');
-  html=html.replace('</head>',`<script src="${entry.wireup}"></script>\n${modulePreloads(page)}\n</head>`);
+  html=html.replace('</head>',`<script type="importmap">${JSON.stringify(importMap)}</script>\n<script src="${entry.wireup}"></script>\n${modulePreloads(page)}\n</head>`);
   if(entry.css)html=html.replace('href="/styles.css"',`href="${entry.css}"`);
   html=html.replace('</head>',`<meta name="bindle-import-map-csp" content="${importMapCSP}"></head>`);
   if(/<script\b[^>]*type=["']module["']/i.test(html))throw Error(`Unmanaged module script in ${page.source}`);

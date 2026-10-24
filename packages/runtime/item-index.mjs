@@ -127,12 +127,12 @@ export class AccountItemIndex {
   if(rows.length>limit){const payload=encode({scope,revision,at:last.at,id:last.id}),signature=new Uint8Array(await crypto.subtle.sign('HMAC',key,new TextEncoder().encode(payload)));next=payload+'.'+btoa(String.fromCharCode(...signature)).replaceAll('+','-').replaceAll('/','_').replace(/=+$/,'');}
   return {items:shown.map(row=>JSON.parse(row.record)),cursor:next,indexRevision:revision};
  }
- upsertObject(resource,object){const {blobRef,...record}=object;this.sql.exec('INSERT INTO hosted_catalog(resource,object_key,record) VALUES(?,?,?) ON CONFLICT(resource,object_key) DO UPDATE SET record=excluded.record',resource,object.key,JSON.stringify(record));}
+ upsertObject(resource,object){const {blobRef,producer,createdBy,...record}=object;this.sql.exec('INSERT INTO hosted_catalog(resource,object_key,record) VALUES(?,?,?) ON CONFLICT(resource,object_key) DO UPDATE SET record=excluded.record',resource,object.key,JSON.stringify(record));}
  removeObject(resource,key){this.sql.exec('DELETE FROM hosted_catalog WHERE resource=? AND object_key=?',resource,key);}
  objectPage(resource,{prefix='',limit=100,cursor}={}){
   if(typeof prefix!=='string'||prefix.length>1024||!Number.isSafeInteger(limit)||limit<1||limit>200)throw new StorageError('invalid_args','Invalid object page.');let after='';
   if(cursor){const c=decode(cursor);if(c.resource!==resource||c.prefix!==prefix||typeof c.after!=='string'||c.after.length>1024)throw new StorageError('invalid_args','Invalid object page cursor.');after=c.after;}
   const rows=[...this.sql.exec('SELECT object_key,record FROM hosted_catalog WHERE resource=? AND object_key>=? AND object_key<? AND object_key>? ORDER BY object_key LIMIT ?',resource,prefix,prefix+'\u{10ffff}',after,limit+1)];
-  const shown=rows.slice(0,limit);return {objects:shown.map(row=>JSON.parse(row.record)),cursor:rows.length>limit?encode({resource,prefix,after:shown.at(-1).object_key}):null};
+  const shown=rows.slice(0,limit);return {objects:shown.map(row=>{const {producer,createdBy,...record}=JSON.parse(row.record);return record;}),cursor:rows.length>limit?encode({resource,prefix,after:shown.at(-1).object_key}):null};
  }
 }

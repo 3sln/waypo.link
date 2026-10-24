@@ -3,11 +3,12 @@
 // advertises are offered. Admins and members never see owner channels, proof tiers or Track S causes; the owner's own
 // view lists channel kinds only. `ctx`: {s, t, h, form, input, check, panel, plain, when, btn} from the console.
 import {bgOpen,claimDecisions,viewDecisions,adminItems,contestItems,breakGlassItems,BG_CATEGORIES,BG_STEPS,LOST_DAYS} from '../bl/org-break-glass.mjs';
+import {createLocalization} from '../../../../packages/i18n/index.mjs';
 import {price} from './org-ownership.mjs';
 
 export const CATEGORY_LABELS=Object.freeze({'owner-deceased':['The owner has died','El propietario ha fallecido'],'owner-unreachable':['The owner cannot be reached','No se puede contactar con el propietario'],'owner-credentials-lost':['The owner lost every way to sign in and the recovery file','El propietario perdió todas sus formas de acceso y el archivo de recuperación'],other:['Another reason','Otro motivo']});
 const STATE_LABELS={gathering:['Collecting signatures and payment','Reuniendo firmas y pago'],waiting:['Waiting period: the owner is being notified','Periodo de espera: se está avisando al propietario'],'held-for-support':['Held for support review','En revisión por el soporte'],final:['Final notice period after a support decision','Periodo de aviso final tras una decisión del soporte'],effective:['Took effect','Surtió efecto'],closed:['Closed','Cerrada'],aborted:['Stopped by you','Detenida por ti'],withdrawn:['Withdrawn','Retirada']};
-const CHANNEL_LABELS={email:['email address','dirección de correo'],push:['notification device','dispositivo de notificaciones'],session:['signed-in session','sesión iniciada'],credential:['passkey or password','llave de acceso o contraseña']};
+const CHANNEL_LABELS={email:['{#} email addresses','{#} email address'],push:['{#} notification devices','{#} notification device'],session:['{#} signed-in sessions','{#} signed-in session'],credential:['{#} passkeys or passwords','{#} passkey or password']};
 const STEP_LABELS={alternatives:['Other options','Otras opciones'],candidate:['Candidate','Candidato'],category:['Reason','Motivo'],statement:['Statement','Declaración'],review:['Review','Revisión']};
 const shortId=value=>{const v=String(value??'');return v.length>13?v.slice(0,8)+'…':v;};
 const paidAge=s=>s?.config?.ageRequirement?.paidMinimumAge??18;
@@ -17,13 +18,14 @@ function helpers(ctx){
  const who=p=>p?.handle?plain('@'+p.handle):p?.sub===me?t('you','tú'):p?.sub?plain(shortId(p.sub)):t('someone','alguien');
  const state=c=>tt(STATE_LABELS[c?.state]??['Status unavailable','Estado no disponible']);
  const textarea=(name,label,value='',help=null)=>h('label',h('span',label),h('textarea').props({name,required:true,rows:6,value}).attrs({maxlength:'2000'}).key(name),help?h('span',help).classes('org-help'):null);
+ const reason=(name,label,max)=>h('label',h('span',label),h('textarea').props({name,rows:4}).attrs({maxlength:String(max)}).on({input:event=>{event.currentTarget.nextElementSibling.textContent=`${[...event.currentTarget.value].length} / ${max}`;}}).key(name),h('span',`0 / ${max}`).classes('org-help')).on({$update:node=>{node.lastElementChild.textContent=`${[...node.querySelector('textarea').value].length} / ${max}`;}});
  const radio=(name,value,label,checked=false)=>h('label',h('input').props({type:'radio',name,value,required:true,checked}),h('span',label)).classes('org-check').key(name+':'+value);
- return {me,tt,who,state,textarea,radio};
+ return {me,tt,who,state,textarea,radio,reason};
 }
 
 /** The claim timeline: state, dates and who signed. Channel details only for the owner (kinds and counts). */
 export function claimTimeline(claim,ctx){
- const {t,h,when}=ctx,{tt,who,state}=helpers(ctx);if(!claim)return null;
+ const {t,h,when}=ctx,{tt,who,state}=helpers(ctx),localization=createLocalization({locale:ctx.s.locale});if(!claim)return null;
  const rows=[[t('Status','Estado'),state(claim)],[t('Started','Iniciada'),when(claim.createdAt)]];
  if(claim.initiator)rows.push([t('Started by','Iniciada por'),who(claim.initiator)]);
  if(claim.candidate)rows.push([t('Candidate owner','Propietario candidato'),[who(claim.candidate),claim.candidacyAccepted?t(' (accepted)',' (aceptado)'):t(' (not accepted yet)',' (aún no aceptado)')]]);
@@ -39,13 +41,13 @@ export function claimTimeline(claim,ctx){
  return h('div',h('dl',...rows.map(([k,v])=>[h('dt',k),h('dd',v)]).flat()),
   claim.state==='held-for-support'?h('p',t('3sln.me support is reviewing this claim. It cannot take effect by itself while it is held.','El soporte de 3sln.me está revisando esta reclamación. No puede surtir efecto por sí sola mientras está en revisión.')).classes('org-note'):null,
   claim.statement?h('details',h('summary',t('Statement from the admins','Declaración de los administradores')),h('p',ctx.plain(claim.statement))):null,
-  channels.length?h('p',t('Notices about this claim go to your ','Los avisos de esta reclamación van a tus '),channels.map(([kind,n],i)=>[i?', ':'',String(n),' ',tt(CHANNEL_LABELS[kind]??['channel','canal'])]),'.').classes('org-help'):null).classes('org-bg-timeline');
+  channels.length?h('p',t('Notices about this claim go to your ','Los avisos de esta reclamación van a tus '),channels.map(([kind,n],i)=>[i?', ':'',localization.t.plural(...(CHANNEL_LABELS[kind]??['{#} channels','{#} channel']),n)]),'.').classes('org-help'):null).classes('org-bg-timeline');
 }
 
 /** Banners at the top of an organization context: open claim (members), co-signature request, missing recovery file. */
 export function breakGlassBanners(m,ctx){
  const {t,h,when}=ctx,claim=m?.breakGlass?.claim,decisions=claimDecisions(claim),out=[];
- if(bgOpen(claim)&&!Array.isArray(claim.decisions))out.push(h('p',h('strong',t('An ownership claim is open. ','Hay una reclamación de propiedad abierta. ')),t('Admins started it on ','Los administradores la iniciaron el '),when(claim.createdAt),claim.earliestEffectAt?[t('. It cannot take effect before ','. No puede surtir efecto antes del '),when(claim.earliestEffectAt)]:claim.state==='held-for-support'?t('. 3sln.me support is reviewing it.','. El soporte de 3sln.me la está revisando.'):null,t('. Your membership and access do not change.','. Tu membresía y tu acceso no cambian.')).classes('org-status','org-warning').attrs({role:'status'}).key('bg-member'));
+ if(bgOpen(claim)&&!Array.isArray(claim.decisions))out.push(h('p',h('strong',t('An ownership claim is open. ','Hay una reclamación de propiedad abierta. ')),t('Admins started it on ','Los administradores la iniciaron el '),when(claim.createdAt),claim.earliestEffectAt?[t('. It cannot take effect before ','. No puede surtir efecto antes del '),when(claim.earliestEffectAt)]:claim.state==='held-for-support'?t('. 3sln.me support is reviewing it','. El soporte de 3sln.me la está revisando'):null,t('. Your membership and access do not change.','. Tu membresía y tu acceso no cambian.')).classes('org-status','org-warning').attrs({role:'status'}).key('bg-member'));
  if(bgOpen(claim)&&(decisions.includes('cosign')||decisions.includes('accept')))out.push(h('p',decisions.includes('accept')?t('You are named as the candidate owner in an ownership claim. Review it under “The owner is gone?” below.','Se te nombra propietario candidato en una reclamación de propiedad. Revísala en «¿El propietario no está?» más abajo.'):t('Another admin asked you to co-sign an ownership claim. Review it under “The owner is gone?” below.','Otro administrador te pidió cofirmar una reclamación de propiedad. Revísala en «¿El propietario no está?» más abajo.')).classes('org-status').attrs({role:'status'}).key('bg-cosign'));
  const recovery=m?.ownership?.recovery;
  if(recovery?.state==='missing'){const owner=(m.ownership.decisions??[]).includes('reissue-recovery');
@@ -75,7 +77,7 @@ function claimActions(claim,ctx,detail={}){
   d.includes('pay')?disclosure(claim,ctx):null,
   d.includes('cosign')?h('div',h('p',t('Co-sign only if you believe the owner is truly gone. The owner is notified and can stop the claim at any time.','Cofirma solo si crees que el propietario realmente no está. Se avisa al propietario, que puede detener la reclamación en cualquier momento.')),btn(t('Co-sign','Cofirmar'),'bg-cosign',detail,false,'bg-cosign','org-primary')).classes('org-actions'):null,
   d.includes('uncosign')?form([check('confirm',t('Withdraw my co-signature','Retirar mi cofirma'))],'bg-uncosign',t('Withdraw co-signature','Retirar cofirma'),detail,'bg-uncosign'):null,
-  d.includes('object')?h('details',h('summary',t('Object to this claim','Objetar esta reclamación')),form([input('reason',t('Reason (optional)','Motivo (opcional)'),'',{maxLength:280}),check('confirm',t('Object and send this claim to 3sln.me support','Objetar y enviar esta reclamación al soporte de 3sln.me'))],'bg-object',t('Object','Objetar'),detail,'bg-object')):null,
+  d.includes('object')?h('details',h('summary',t('Object to this claim','Objetar esta reclamación')),form([helpers(ctx).reason('reason',t('Reason (optional)','Motivo (opcional)'),280),check('confirm',t('Object and send this claim to 3sln.me support','Objetar y enviar esta reclamación al soporte de 3sln.me'))],'bg-object',t('Object','Objetar'),detail,'bg-object')):null,
   d.includes('withdraw')?h('details',h('summary',t('Withdraw this claim','Retirar esta reclamación')),form([check('confirm',t('Withdraw this claim (if you paid, the refund keeps the processing fee)','Retirar esta reclamación (si pagaste, el reembolso retiene la comisión de procesamiento)'))],'bg-withdraw',t('Withdraw','Retirar'),detail,'bg-withdraw')):null];
 }
 
@@ -83,7 +85,7 @@ function contestForm(ctx,detail={}){
  const {t,h,form,input,check}=ctx;
  return h('article',h('h3',t('Contest the ownership change','Impugnar el cambio de propiedad')),
   h('p',t('Ownership of this organization changed through a claim. If that was wrong, you can contest it during the 90-day window. You will be asked to confirm with a passkey or password you had at least 7 days before the claim began. Support reviews every contest.','La propiedad de esta organización cambió mediante una reclamación. Si fue un error, puedes impugnarla durante los 90 días. Se te pedirá confirmar con una llave de acceso o contraseña que tuvieras al menos 7 días antes de que empezara la reclamación. El soporte revisa cada impugnación.')),
-  form([input('reason',t('What happened (optional)','Qué pasó (opcional)'),'',{maxLength:2000}),check('confirm',t('Contest this ownership change','Impugnar este cambio de propiedad'))],'bg-contest',t('Contest','Impugnar'),detail,'bg-contest'));
+  form([helpers(ctx).reason('reason',t('What happened (optional)','Qué pasó (opcional)'),2000),check('confirm',t('Contest this ownership change','Impugnar este cambio de propiedad'))],'bg-contest',t('Contest','Impugnar'),detail,'bg-contest'));
 }
 
 function wizardView(m,ctx){
@@ -127,7 +129,7 @@ export function breakGlassPanel(m,ctx){
  return panel('org-break-glass',bgOpen(claim)?t('Ownership claim','Reclamación de propiedad'):t('The owner is gone?','¿El propietario no está?'),
   shown?claimTimeline(claim,ctx):null,
   shown&&bgOpen(claim)?claimActions(claim,ctx):null,
-  decisions.includes('start')&&!m.breakGlassWizard?h('article',h('h3',t('The owner is gone?','¿El propietario no está?')),h('p',t('If the owner has died or can no longer be reached, two admins can ask to install a new owner without the recovery file. The owner is told and can always stop it.','Si el propietario ha fallecido o ya no se le puede contactar, dos administradores pueden pedir instalar un nuevo propietario sin el archivo de recuperación. Se avisa al propietario, que siempre puede detenerlo.')),btn(t('See the options','Ver las opciones'),'bg-wizard-open',{},false,'bg-wizard-open')):null,
+  decisions.includes('start')&&!m.breakGlassWizard?h('article',h('h3',t('Start an ownership claim','Iniciar una reclamación de propiedad')),h('p',t('If the owner has died or can no longer be reached, two admins can ask to install a new owner without the recovery file. The owner is told and can always stop it.','Si el propietario ha fallecido o ya no se le puede contactar, dos administradores pueden pedir instalar un nuevo propietario sin el archivo de recuperación. Se avisa al propietario, que siempre puede detenerlo.')),btn(t('See the options','Ver las opciones'),'bg-wizard-open',{},false,'bg-wizard-open')):null,
   decisions.includes('start')&&m.breakGlassWizard?wizardView(m,ctx):null,
   decisions.includes('contest')&&view.contest?contestForm(ctx):null);
 }

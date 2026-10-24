@@ -21,7 +21,7 @@ export function claimInterstitial(s){
  const btn=(label,action,detail,data,cls)=>h('button',label).props({type:'button',disabled:busy}).data({orgAction:data}).classes(...cls?[cls]:[]).on({click:e=>fire(e.currentTarget,'organizations',{action,...detail})});
  return h('main',h('style',orgStyle+style),
   h('div',
-   h('h1',claims.length===1?[t('Someone is claiming ownership of ','Alguien reclama la propiedad de '),name(claims[0])]:t('Someone is claiming ownership of organizations you own','Alguien reclama la propiedad de organizaciones que te pertenecen')).props({id:'org-claim-gate-title',tabIndex:-1}),
+   h('h1',claims.length===1?[t('Someone is claiming ownership of ','Alguien reclama la propiedad de '),name(claims[0])]:t('Someone is claiming ownership of organizations you own','Alguien reclama la propiedad de organizaciones que te pertenecen')).props({id:'org-claim-gate-title',tabIndex:-1}).on({$attach:node=>queueMicrotask(()=>{if(node.isConnected)node.focus();})}),
    h('p',t('Admins started a claim saying the owner of record is gone. If nobody answers, it could take effect after the waiting period and make someone else the owner. Signing in to your account puts a pending claim on hold for review by 3sln.me support; only stopping it ends it.','Los administradores iniciaron una reclamación diciendo que el propietario registrado no está. Si nadie responde, podría surtir efecto tras el periodo de espera y hacer propietaria a otra persona. Iniciar sesión en tu cuenta pone en espera una reclamación pendiente para que la revise el soporte de 3sln.me; solo detenerla la termina.')),
    m?.error?h('p',orgError(s.locale,m.error)).attrs({role:'alert'}):null,
    m?.notice?h('p',orgNotice(s.locale,m.notice)).classes('org-status').attrs({role:'status','aria-live':'polite'}):null,
@@ -32,5 +32,5 @@ export function claimInterstitial(s){
     h('div',btn(t('Stop this claim','Detener esta reclamación'),'bg-abort',{org:i.org,claim:i.claim.id},'bg-gate-abort','org-primary'),
      h('a',t('Contact support','Contactar con el soporte')).props({href:SUPPORT}),
      btn(t('Not now','Ahora no'),'bg-dismiss',{claim:i.claim.id},'bg-gate-dismiss')).classes('org-actions')).attrs({'aria-label':t('Ownership claim','Reclamación de propiedad')}).key(i.claim.id)),
-   h('p',t('You can also stop it later from Organizations, or from the link in the email or notification about the claim.','También puedes detenerla más tarde desde Organizaciones o desde el enlace del correo o de la notificación sobre la reclamación.')).classes('org-help')).classes('org-claim-gate')).classes('org-console').attrs({'aria-busy':String(busy),'data-claim-gate':''});
+   h('p',t('“Not now” hides this notice until you reload. You can also stop it later from Organizations, or from the link in the email or notification about the claim.','«Ahora no» oculta este aviso hasta que recargues la página. También puedes detenerla más tarde desde Organizaciones o desde el enlace del correo o de la notificación sobre la reclamación.')).classes('org-help')).classes('org-claim-gate')).classes('org-console').attrs({'aria-busy':String(busy),'data-claim-gate':''});
 }

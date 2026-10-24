@@ -26,7 +26,7 @@ export function notificationsView(state,{legacy=false}={}){if(!legacy&&activityE
         field('excludeTags','Exclude tags, separated by commas','text',{value:preferences.excludeTags.join(', ')})
       ],{kind:'save-notifications'})
     ).classes('panel'),h('section',icon('bell'),h('h2','No surprise pings.'),h('p','Email and push each have their own switch. Quarantined messages do not trigger notifications.').classes('muted'),
-      h('div',h('strong','This device'),h('p',state.pushPermission==='unsupported'?'Push is unsupported in this browser.':interfaceText('Browser permission: {permission}.',{permission:state.pushPermission}))).classes('security-note'),
+      h('div',h('strong','This device'),h('p',state.pushPermission==='unsupported'?'Push is unsupported in this browser.':({'denied':'Browser permission: denied.','granted':'Browser permission: granted.','default':'Browser permission: not requested.'}[state.pushPermission]??'Browser permission: unavailable.'))).classes('security-note'),
       ...(state.data.pushDevices??[]).map(device=>h('div',h('span',device.label),btn('Remove',{kind:'remove-push-device',id:device.id},'text-button danger')).classes('credential-row')),
       btn('Turn off all notifications',{kind:'disable-notifications'},'button secondary')
     ).classes('panel')).classes('settings-grid'));

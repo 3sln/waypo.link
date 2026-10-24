@@ -9,7 +9,8 @@ const cookieName=id=>'__Host-removal-'+id;
 const binding=()=>Array.from(crypto.getRandomValues(new Uint8Array(32)),b=>b.toString(16).padStart(2,'0')).join('');
 const cookie=(request,id)=>{const name=cookieName(id)+'=',found=(request.headers.get('Cookie')??'').split(';').map(s=>s.trim()).filter(s=>s.startsWith(name));return found.length===1?found[0].slice(name.length):undefined;};
 const routed=id=>typeof id==='string'&&/^([a-f0-9-]{36})\.[a-f0-9-]{36}$/.test(id)?id.slice(0,36):null;
-export const allowedMethods=path=>path===ROOT?['GET']:path===REMOVAL_RETURN?['GET']:path===REMOVAL_COMPLETE?['POST']:path.startsWith(ROOT+'/')&&actions.has(path.slice(ROOT.length+1))?['POST']:null;
+const remainingId=path=>{const match=path.match(/^\/api\/apps\/removal\/([a-f0-9-]{36}\.[a-f0-9-]{36})\/remaining$/);return match?.[1]??null;};
+export const allowedMethods=path=>remainingId(path)?['GET','POST']:path===ROOT+'/reminders'?['GET']:path===ROOT?['GET']:path===REMOVAL_RETURN?['GET']:path===REMOVAL_COMPLETE?['POST']:path.startsWith(ROOT+'/')&&actions.has(path.slice(ROOT.length+1))?['POST']:null;
 export const admission={exempt:path=>allowedMethods(path)!==null};
 async function admit(env,source){try{const secret=env.SESSION_COOKIE_KEY??env.KEY_ENCRYPTION_KEY;if(typeof secret!=='string'||!secret)return false;return await consume(env,'app-removal:'+await pseudonym(source,secret),60000,30);}catch{return false;}}
 // Wargame F2: the failure budget counts only failed verifications of a removal that matched a local, open,
@@ -34,9 +35,14 @@ export const stages={
  },
  async beforeActivity({request,env,path,object,id,context,owner}){
   if(!allowedMethods(path)||path===REMOVAL_COMPLETE)return;
+  const params=new URL(request.url).searchParams,pageInput={...params.has('cursor')?{cursor:params.get('cursor')}:{},...params.has('limit')?{limit:Number(params.get('limit'))}:{}};
+  if(path===ROOT+'/reminders')return json(await object.appRemovalOwner(id,{operation:'app-removal.reminders',input:pageInput}),200,privateHeaders);
+  const remaining=remainingId(path);
+  if(remaining&&request.method==='GET')return json(await object.appRemovalOwner(id,{operation:'app-removal.remaining',input:{...pageInput,removal:remaining}}),200,privateHeaders);
   if(path===ROOT){const rows=await object.appRemovalOwner(id,{operation:'app-removal.list'}),subject={kind:'account',owner:id};let connections=[];try{if(typeof object.connectionsOwner==='function')connections=(await object.connectionsOwner(id,{operation:'connections.list'})).connections??[];}catch{/* Missing connection review hides new cleanup; reversal remains readable. */}return json({...rows,clean_enabled:routeFlags(env,{subject}).enabled('APP_CLEAN_REMOVAL_ENABLED'),clean_connections:Object.fromEntries(connections.map(c=>[c.id,routeFlags(env,{subject,client:{clientId:c.clientId}}).enabled('APP_CLEAN_REMOVAL_ENABLED')]))});}
   if(path===REMOVAL_RETURN){if(request.headers.get('Accept')?.includes('text/html'))return humanReturn(request);const parsed=parseRemovalReturn(new URL(request.url).searchParams);if(!parsed)return json({removal:null});const result=await object.appRemovalOwner(id,{operation:'app-removal.complete',input:{...parsed,binding:cookie(request,parsed.removal)}});return json({removal:result},200,{'Referrer-Policy':'no-referrer'});}
   if(request.headers.get('Origin')!==env.APP_ORIGIN||context.csrfToken!==owner.csrfToken)return json({error:'csrf'},403);
+  if(remaining){const value=await body(request,8192);if(Object.hasOwn(value,'removal'))return json({error:'invalid_request'},400);return json(await object.appRemovalOwner(id,{operation:'app-removal.remaining-action',input:{...value,removal:remaining}}),200,privateHeaders);}
   const name=path.slice(ROOT.length+1),value=await body(request,8192);if(name==='confirm')value.confirmed=true;
   if(name==='start'||name==='reissue'){
    if(Object.hasOwn(value,'binding'))return json({error:'invalid_request'},400);const secret=binding(),row=await object.appRemovalOwner(id,{operation:actions.get(name),input:{...value,binding:secret}});

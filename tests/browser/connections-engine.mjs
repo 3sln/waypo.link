@@ -34,3 +34,38 @@ test('built-in offerings hide unconfigured Drive and mark an already connected c
  state.config.providers.google.enabled=true;assert.equal(connectionOfferings(state).length,2);
  state.connectionsConsole.connections[0].state='disconnected';assert.equal(connectionOfferings(state)[0].connected,false);
 });
+
+test('AU-S6 remaining data intents require a terminal result, loaded resource and explicit confirmation',async t=>{
+ const {AppRemovalIntent}=await import('../../apps/web/src/bl/app-removal.mjs'),state=fixture(),row={removal:'removed',state:'forced',client_id:'https://calendar.example/app/client.json',connection:'connection1',generation:2},path='/api/apps/removal/removed/remaining',summary={resources:[{resource:'store',items:2,bytes:40,prefixes:[{prefix:'notes/',items:2,bytes:40}]}],complete:true};
+ state.connectionsConsole.removals=[row];state.connectionsConsole.removalResult=row;
+ const c=await createClientEngine({state,routes:{['GET '+path]:()=>summary,['POST '+path]:()=>({complete:false,deleted:1})}});t.after(()=>c.dispose());const act=(action,detail={})=>c.dispatch(new AppRemovalIntent({action,removal:row.removal,...detail}));
+ await act('removal-remaining-delete',{resource:'store',values:{confirm:true}});assert.equal(c.api.calls.length,0);
+ await act('removal-remaining');assert.equal((await c.snapshot()).connectionsConsole.removalRemaining.resources[0].items,2);
+ await act('removal-remaining-delete',{resource:'store'});assert.equal(c.api.calls.length,1);
+ await act('removal-remaining-delete',{resource:'forged',values:{confirm:true}});assert.equal(c.api.calls.length,1);
+ await act('removal-remaining-delete',{resource:'store',values:{confirm:true}});assert.deepEqual(c.api.calls[1].body,{action:'delete',resource:'store'});assert.equal(c.api.calls.length,3);
+ assert.equal((await c.snapshot()).connectionsConsole.connections.find(v=>v.id==='connection1').generation,3);
+});
+test('AU-S6 remaining query cannot restore summaries after account change',async t=>{
+ const {AppRemovalIntent}=await import('../../apps/web/src/bl/app-removal.mjs'),held=deferred(),state=fixture(),row={removal:'removed',state:'completed'};state.connectionsConsole.removals=[row];state.connectionsConsole.removalResult=row;
+ const c=await createClientEngine({state,routes:{'GET /api/apps/removal/removed/remaining':()=>held.promise}});t.after(()=>c.dispose());const pending=c.dispatch(new AppRemovalIntent({action:'removal-remaining',removal:'removed'}));await turn();await c.engine.container.use({state:{write:true}},({state})=>state.transition(s=>{s.session={account:{id:'other'},sessionContext:'other'};s.connectionsConsole=null;}));held.resolve({resources:[{resource:'private'}]});await pending;assert.equal((await c.snapshot()).connectionsConsole,null);
+});
+
+test('AU-S6 persisted unfinished deletion resumes when its resource has no visible rows',async t=>{const {AppRemovalIntent}=await import('../../apps/web/src/bl/app-removal.mjs'),state=fixture(),row={removal:'removed',state:'forced'},path='/api/apps/removal/removed/remaining';Object.assign(state.connectionsConsole,{removals:[row],removalResult:row,removalRemaining:{removal:'removed',resources:[],deletions:[{resource:'store',complete:false}]}});const c=await createClientEngine({state,routes:{['POST '+path]:()=>({complete:true}),['GET '+path]:()=>({resources:[],deletions:[]})}});t.after(()=>c.dispose());await c.dispatch(new AppRemovalIntent({action:'removal-remaining-delete',removal:'removed',resource:'store',values:{confirm:true}}));assert.deepEqual(c.api.calls[0].body,{action:'delete',resource:'store'});});
+
+test('M3/L3 remaining intents send explicit opt-ins only from their own actions; stopped jobs are not resumable',async t=>{
+ const {AppRemovalIntent}=await import('../../apps/web/src/bl/app-removal.mjs'),state=fixture(),row={removal:'removed',state:'forced'},path='/api/apps/removal/removed/remaining',summary={removal:'removed',resources:[{resource:'store',items:2,bytes:4,created:{items:1,bytes:2},changed:{items:1,bytes:2},kept:{items:0,bytes:0},prefixes:[]}],deletions:[{resource:'gone',complete:false,stopped:true}]};
+ Object.assign(state.connectionsConsole,{removals:[row],removalResult:row,removalRemaining:summary});
+ const c=await createClientEngine({state,routes:{['POST '+path]:()=>({complete:true}),['GET '+path]:()=>summary}});t.after(()=>c.dispose());const act=(action,detail)=>c.dispatch(new AppRemovalIntent({action,removal:'removed',values:{confirm:true},...detail}));
+ await act('removal-remaining-delete-changed',{resource:'store'});assert.deepEqual(c.api.calls[0].body,{action:'delete',resource:'store',includeChanged:true});
+ await act('removal-remaining-delete-kept',{resource:'store'});assert.deepEqual(c.api.calls[2].body,{action:'delete',resource:'store',includeKept:true});
+ const count=c.api.calls.length;await act('removal-remaining-delete',{resource:'gone'});await act('removal-remaining-delete-everything',{resource:'store'});assert.equal(c.api.calls.length,count);
+});
+
+test('R3 kept opt-in with changed files sends both flags only from its own action',async t=>{
+ const {AppRemovalIntent}=await import('../../apps/web/src/bl/app-removal.mjs'),state=fixture(),row={removal:'removed',state:'forced'},path='/api/apps/removal/removed/remaining',summary={removal:'removed',resources:[{resource:'store',items:2,bytes:4,created:{items:0,bytes:0},changed:{items:0,bytes:0},kept:{items:2,bytes:4,created:{items:1,bytes:2},changed:{items:1,bytes:2}},prefixes:[]}],deletions:[]};
+ Object.assign(state.connectionsConsole,{removals:[row],removalResult:row,removalRemaining:summary});
+ const c=await createClientEngine({state,routes:{['POST '+path]:()=>({complete:true}),['GET '+path]:()=>summary}});t.after(()=>c.dispose());
+ await c.dispatch(new AppRemovalIntent({action:'removal-remaining-delete-kept-changed',removal:'removed',resource:'store',values:{confirm:true}}));assert.deepEqual(c.api.calls[0].body,{action:'delete',resource:'store',includeKept:true,includeChanged:true});
+ const {remainingPanel}=await import('../../apps/web/src/ui/connections/remaining.mjs'),seen=[];remainingPanel({locale:'en'},{removalResult:row,removalRemaining:summary},{btn:()=>null,form:(fields,action)=>{seen.push(action);return null;},confirm:()=>null,plain:v=>v});assert.ok(seen.includes('removal-remaining-delete-kept-changed'));
+});

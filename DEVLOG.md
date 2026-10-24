@@ -4940,3 +4940,180 @@ A re-review of "Redirect management review fixes" closed M1, M2 and L1. It found
 - Not committed.
 
 Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-24 — Pending sign-off digest
+
+[Pending sign-offs](docs/release/pending-signoffs.md) collects every provisional decision, number and open question from the entries since 2026-10-22 that awaits the owner. It also includes the earlier unsigned items those entries still refer to: organization prices, BG-1 to BG-17 and P14–P19.
+- **Structure:** a highest-impact list first. Then 99 items in nine areas (pricing/billing 12, identity and recovery 10, portability 11, organizations and break-glass 26, messaging and conversations 8, app platform/AI budget 11, region and legal 8, UI 7, operations and limits 6). It ends with a list of unverified external assumptions (Polar semantics, Clef billing, Cloudflare `request.cf`, mail and push delivery, and others).
+- **Item format:** each item gives the decision, value, reason, source entry and any recorded safe alternative, with a blank owner line.
+- **Status:** it is a digest only. DEVLOG stays the source of record, nothing in it is signed off, and decisions from before 2026-10-22 stay in [open-items.md](docs/release/open-items.md).
+- **Scope:** documentation only. No code changed and no tests were run.
+- **Update (same day):** the digest now covers ORG-10 relations (RL-1 to RL-17 and Q21, as OB-27 to OB-44) and AU-S6 (AP-12 to AP-14, plus the privacy.md "App storage summaries" bullet as RL-9), for 121 items in all. OB-11's passkey gap is marked closed in code: `organizationVerification` → `recoveryReissueBegin` `passkey_required`, and the identity-wargame2 test was re-run 1/1.
+
+Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-24 — AU-S6 producer summary, What's left and removal reminders
+
+Implemented local AU-S6 Engine queries/actions, with thin owner HTTP and English/Spanish connections views. Hosted and writable gateway-managed Google Drive writes embed producer connection/generation in their existing object metadata: no additional per-object write and no separate file-name ledger per app. Remaining-data queries derive counts and bytes by resource and top-level prefix, excluding overwritten objects attributed to other producers. Account exports include aggregate producer summaries and removal history; privacy wording and the [design status](docs/architecture/app-uninstall.md#9-implementation-slices-non-overlapping-ownership) now describe the implementation.
+
+Owners can keep data, open the account export tools first, or advance bounded deletion through existing executors. Persisted per-resource checkpoints remain discoverable after reload; retries after a crash safely resume. Producer generations through the removal's generation include data from before suspend/resume, while subsequent reinstall generations are excluded. Hosted deletion rechecks the exact object version inside its final transaction; Drive already checks it transactionally. Drive's existing immutable-version retention remains in force and is disclosed in the view. Export-first opens the existing reviewed export flow; it does not claim an archive has already been generated.
+
+Open removals retain the three existing reminder times. The configured fixed account-email sender and fresh verified contact projection now supplement best-effort push. Activity-centre entries derive from durable reminder notices and load with the activity view. Each notice reserves its attempt before external I/O, records channel acceptance/failure/unavailability or an unknown crash outcome, and never claims delivery. Dedicated Node/Worker mail and identity ports do not depend on enabling account-lifecycle jobs. Missing mail/push configuration still leaves console and activity notices available.
+
+**Provisional (coordinator decisions, unsigned):**
+
+- Deriving aggregates from existing durable hosted/Drive indexes replaces the design's proposed minute/64-write counter flush. This satisfies RR1-M7 without a second hot-path write or a new file-name log. Summaries cover current managed objects only, starting with newly attributed writes; older unattributed objects, other providers, retained Drive versions and app-held copies are outside the count. No external cleanup or production conformance is inferred.
+- Summary requests scan at most 5,000 existing records, using internal pages of at most 200; display buckets are bounded to 64 prefixes plus other per resource. Deletion defaults to 64 scanned records, at most 200 per action. A bounded continuation checkpoint may contain an existing index position; it is not an accumulating object ledger. Counts describe the current page rather than a complete historic inventory.
+- Removal reminder activity queries return at most 100 entries and scan at most 500 notices per request; the activity view initially requests 50. Push remains bounded to ten subscriptions. Existing removal-history retention and production gates remain unchanged.
+
+Local agent cross-review on 2026-10-24 checked storage fencing, runtime callback wiring, export projection and reminder contacts. It found and prompted fixes for persistent deletion-resume visibility, Drive retention disclosure and automatic activity loading. The initial synthetic chaos coverage was supplemented with actual hosted writes, Engine force removal, real connection registration/disconnect/reinstall, crashes after deletion transactions and Engine/service reconstruction. These checks are implementation evidence, not human sign-off.
+
+**Final validation:**
+
+- `npm test`: **3,587 passed, zero failed**, zero skipped.
+- `npm run test:worker`: **92 passed, zero failed**, zero skipped, including workerd adapters.
+- `npm run test:ui-state`: **451 passed, zero failed**, zero skipped.
+- `npm run build:assets`: passed; `npm run check:worker`: passed (dry run only).
+- Removal browser suite: **26 passed, zero failed**, zero skipped, Chromium and Firefox; includes English/Spanish remaining-data checks and narrow-screen overflow checks.
+- `CHAOS_SEED=74193 node --test tests/engine-producer-summary.test.mjs`: **21 passed, zero failed**. Covers attribution/overwrites, bounded pages and deletion, crash recovery, suspend/resume and reinstall generation fences.
+
+No commit or deployment. Production release remains disabled; mail/push delivery and provider conformance remain unverified. Concurrent organization documents and the pending-signoff digest were not edited by this workstream.
+
+**Review follow-ups (2026-10-24, provisional, unsigned).** A review of the uncommitted AU-S6 work found issues, all fixed here. Each fix has a regression test that was checked to fail when the fix is reverted (in a scratch copy of the tree, not in place). Design notes: [AU-S6 review follow-ups](docs/architecture/app-uninstall.md#9-implementation-slices-non-overlapping-ownership).
+
+- **M1, an old write could reappear after deletion.** Hosted commits now re-check the write condition, usage and the writing app connection's status and generation inside the commit transaction. Drive publication re-checks the connection too. A blob written for a commit that fails is queued for garbage collection. A completed deletion pass is no longer terminal: a later Delete starts a new pass, and the pass count is recorded. Tests stall the blob write and the Drive upload on a deferred promise.
+- **M2, privacy.** The privacy bullet now states what is recorded: which app connection and top-level folder wrote each file, which app created it, and how long the markers last. It also states which transports are covered. **This is draft legal text awaiting owner approval.** Markers are removed from `hosted_catalog` SQL rows, owner object pages, read results and `drive/retained/` rows, since deletion does not need them there.
+  - *Provisional deviation from RR1-M7's privacy intent:* keeping a marker on each object record, instead of keyless per-prefix counters. The earlier bullet's claim that this "satisfies RR1-M7" is superseded.
+  - *Deviation from §6.3, not implemented:* stripping markers when the owner dismisses the page. There are no separate summary rows, and a removed resource's records keep their markers until deleted.
+- **M3, last-writer attribution.** Records now keep `createdBy`, preserved when the file is overwritten. By default, Delete removes only files the app created. Files the app last changed but did not create are skipped and counted, unless the owner explicitly chooses "Also delete files this app last changed". The UI copy distinguishes the two.
+- **L1, MCP coverage.** MCP storage writes are now attributed to the MCP connection already verified by the account's `mcpOperation`. Browser automation writes are not attributed, and the UI and privacy text say so.
+- **L2, undeletable storage.** Disconnected storage, or storage that needs reconnecting, is shown as "not deletable here", and per-resource Delete refuses it. Skips are counted by reason: changed, kept, unavailable, failed and conflict. Permanent executor errors (retention_limit, forbidden, object_limit, invalid_record, reauthorization_required) are counted and checkpointed past; transient errors still stop the batch.
+- **L3, keep.** Keep choices are stored under `storage/producer-keep/`, separately from deletion jobs. Keeping stops an unfinished deletion of the same scope. A keep protects the kept generations, by last writer or creator, from a later removal of a reinstall of the same app. The protection lifts only when the owner chooses again (an explicit opt-in to delete kept files), or when they delete under the same removal, which supersedes its own keep.
+- **L4, activity reminders.** The reminder refresh now checks the account id, the beam generation and offline state, as well as the ticket. The "Review and remove now" link uses the server's `item.path` only when it is a `/console` path for the current account; otherwise it falls back to `/console?account=<id>&view=connections`.
+- **L5, export.** `storage/producer-deletion/` and `storage/producer-keep/` are exported with the removal history (the `app-removals` contributor), without the stored continuation position. The cursor-sealing key is an explicit secret exclusion.
+- **I1, cursors.** Summary cursors are AES-GCM sealed with an account-local key and bound to the owner and the removal. Deletion jobs keep their position server-side and never return it to the client. Reminder-list cursors still carry notice keys, which contain no object names; this is unchanged.
+- **I2, object pages.** `ItemIndex.objectPage` strips markers, including from older catalog rows.
+- **Chaos test.** The test now interleaves writes from the removed app, another app, the owner, unattributed older rows and a reinstall with bounded deletion, across both the hosted and Drive adapters. It also covers executor crashes after the effect and stalled writes that straddle the removal. It checks these invariants after every step:
+  - every write outside the deletion target is preserved at its exact version;
+  - `totalDeleted` equals the deletions actually committed (it is counted inside each adapter's delete transaction);
+  - the final passes leave no data from the removed app;
+  - retained Drive rows carry no markers.
+- **Not done:** the reminder-cursor change described under I1.
+
+**Re-review follow-ups (2026-10-24, provisional, unsigned).** A re-review closed every earlier finding and raised four more. All are fixed, each with a regression test that was checked to fail when its fix is reverted (in a scratch copy of the tree):
+
+- **Leftover data after pruning (Low/Medium).**
+  - When a forced or completed removal record is pruned (`prune` in `packages/app/domains/app-removal.mjs`), a lineage row (`storage/producer-lineage/`) records its connection, generation, client and state. What's left stays reachable and deletable under the same removal id, and the removal list shows it as `pruned`.
+  - Each removal alarm runs one bounded sweep batch of 200 rows (`collectMarkers`). It strips markers covered only by pruned lineages, not by a retained removal record or an active keep, and writes only to objects whose markers change. An idle sweep does no scan.
+  - When a pass completes, the sweep deletes each swept lineage with its keep and deletion rows, unless an active keep refers to it. In that case the lineage stays, marked swept, until the owner chooses again.
+- **Keep and deletion rows (Low).**
+  - A keep must name a current storage binding or a resource present among the removal's attributed rows.
+  - Keeps are capped at 128 rows per removal. The connection-wide fail-closed cap of 1,000 is removed; keep rows are now read page by page.
+  - Superseded keep rows and finished or stopped deletion jobs are pruned when their removal's lineage is swept.
+- **Kept files the app only changed (Low).** Kept counts are split into created and changed. A new combined action, "Delete, including kept files and files this app only changed", sends `includeKept` and `includeChanged` together. The UI offers it only when kept-but-changed files exist.
+- **Privacy wording (Low).** The bullet now matches the code:
+  - the installation generation is recorded;
+  - the export contains aggregate counts by last writer plus keep and delete decisions, not the per-file markers;
+  - markers last until the removal history is cleared (90 days after conclusion, or beyond 100 concluded removals), then are swept unless kept;
+  - an active keep lasts until the owner chooses again; other decision rows go when the history is cleared.
+
+  **This is still draft legal text awaiting owner approval.**
+- **Retention (added to the deviation list).** Per-object markers of a removed app's generations last while the removal record is retained, then until the next sweep pass completes. Markers covered by an active keep, and that keep's lineage row, last until the owner chooses again. Lineage rows are derived pointers and are excluded from the export, with a recorded reason; the keep and deletion decisions are exported. A fourth export prefix would also add an export step, which pushed `tests/dx-integration.test.mjs` past its 60-alarm loop.
+- **`scratchpad/probe.mjs`.** It now fails with `invalid_token`. This is intended: it writes on behalf of an app connection that has no record, and attribution now fails closed.
+- **Re-review validation (2026-10-24):**
+  - `npm test`: 3,589 passed, zero failed, zero skipped.
+  - `npm run test:worker`: 92 passed.
+  - `npm run test:ui-state`: 463 passed.
+  - App-removal, activity and connections engine tests: 49 passed.
+  - App-removal browser suite: 26 passed.
+  - `npm run build:assets`: passed.
+  - One earlier full run had a single `tests/dx-integration.test.mjs` failure, caused by the fourth export prefix. After that prefix was removed, the file passed alone, in combined reruns and in the full rerun above. Its 60-alarm loop leaves little headroom.
+
+**Follow-up validation (2026-10-24):**
+
+- `npm test`: **3,584 passed, zero failed**, zero skipped. This is lower than the earlier 3,587 because the producer-summary file was rewritten: 18 tests replace 9 tests plus 12 synthetic chaos subtests.
+- `npm run test:worker`: **92 passed, zero failed**, zero skipped.
+- `npm run test:ui-state`: **452 passed, zero failed**, zero skipped.
+- App-removal engine and activity engine: **25 passed, zero failed**.
+- App-removal browser suite (Chromium and Firefox): **26 passed, zero failed**, zero skipped.
+- `npm run build:assets`: passed.
+- Extra `CHAOS_SEED` runs (7, 100, 4242 and 77777) of both chaos tests passed.
+
+Local evidence only; no human sign-off.
+
+Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-24 — ORG-10 relations design
+
+**Design only** ([organizations design §8b](docs/architecture/organizations-design.md#8b-org-10-and-org-11-relations-design-for-implementation-rev-56), rev 5.6; [spec](docs/spec/organizations.md) rev 4.5). No code changed. Nothing is implemented, routed or production-verified, and no tests were run. Every item is **provisional** (coordinator, not signed off by the user). It covers ORG-10 (same-provider relations) and ORG-11 (cross-provider relations).
+
+**Kept as settled:** relations are the user's design (§1b, §8a): relationships between organizations, with membership, grants and governance internal (user, 2026-10-22). A public relation document sets slots, arity and an access matrix, and grants nothing by itself. Each edge needs consent from both sides, recognition is per edge, partial membership is normal (user, 2026-10-21), and there is no central host. Business relationships such as parent and subsidiary, vendor and customer, partners and client and firm are relation documents, not built-in kinds.
+
+**New in §8b:**
+- **Who establishes relations (3sln.me):** any admin whose governance is not held. Widening outward or accepting inward needs a fresh step-up, the full matrix disclosure, notice to every admin and an audit entry. Narrowing (suspend, end, decline, leave, withdraw) is immediate and needs no consent. There is no subject-first step and no owner elevation: no member's grant-management grant and no control changes, so it is the same act as approving an integration. Changing who may manage relations stays under §12b.
+- **What an edge grants:** only its consented fragment grants. Inside the grantee, use goes through the grantee's own member grants, member certificates and entity certificates. No governance, no membership, no transitivity, no onward sharing.
+- **Privacy:** only counterparts see a relation. Other members see only the imports they hold grants on, applications learn the grantor of resources assigned to them, and introductions are limited.
+- **Lifecycle:** suspend, end and expiry; billing read-only and export-only; transfer (no effect); recovery and break-glass (`aep` at effect); deletion (pre-purge leave); counterpart unreachable; moves in both directions; counterpart authority reset; key compromise.
+- **Abuse cases:** request floods, event floods, impersonation, lookalike documents, stale relations after a move, privilege laundering through chains, insider exfiltration, pipeline injection, counterpart takeover, arity squatting, fan-in exhaustion.
+- Alternatives considered, and decisions **RL-1 to RL-17** (§8b.9, Q21).
+
+**Spec rev 4.5 (narrow, interop only):**
+- **New §9.9, relation events.**
+  - **Signing:** each event is signed by the sending entity's certification key with `typ` `bindle-relation-event+jwt`, and its event types are a registry of their own.
+  - **Endpoint:** the endpoint comes only from the counterpart issuer's manifest (`relations.v1` `events_endpoint`).
+  - **Verification:** no request-path fetch, a uniform `202`, a `jti` recorded only after verification, and per-half generation ordering in which an end is final.
+  - **Edge state:** `relation-edge-state` tells the grantee the grantor's resource IDs.
+  - **Recovery of lost events:** daily anti-entropy re-sends.
+- **Participation statements are fresh-only** (300 s), with the recovery-file-holder residual stated.
+- Invitation withdrawal, instance identifiers with at least 122 random bits, a privacy item, conformance tests and checkpoint O7.
+
+**Decisions for the user, notably:**
+- RL-2: any admin establishes relations, with no owner elevation.
+- RL-4: a counterpart's authority reset holds outgoing edges until an admin confirms, and an attested move holds writes only, for 72 h.
+- RL-5 and RL-6: event signing and the issuer-level events endpoint.
+- RL-8: no transparency log is needed for ORG-11, because each instance pins the relation digest.
+- RL-11: limits.
+- RL-17: on 3sln.me v1, relations are between organizations only, while the spec still allows persons as parties.
+
+**Phase labels:** the request called this phase B work, but design §13.3 has ORG-10 in phase C and ORG-11 in phase D. The release gates are unchanged, and implementation may start behind default-off flags (RL-1).
+
+**Implementation plan (§8b.10):**
+- **Slices:** ORG-10a to 10g (documents; instances and invitations; edges and imports; entity certificates; events and lifecycle; engine, account and routes; console) and ORG-11a to 11c (transport; moves and resets; a clean-room conformance peer).
+- **Flags:** `ORG_RELATIONS_ENABLED`, and a new kill switch, `ORG_FOREIGN_RELATIONS_ENABLED`, both default off. Narrowing is never gated.
+- **Engine operations:** listed in §8b.10.
+- **Tests:** engine tests, seeded chaos with invariants C1 to C10 (including no transitivity, effective access within every ceiling, and convergence under event loss and reordering), named adversarial cases, and browser tests.
+
+**Review:** a forked adversarial review (RL-R1) found 3 High, 8 Medium and 6 Low issues, all applied (§8b.11):
+- **H1:** request-path fetches leaked participation through timing.
+- **H2:** no message carried the grantor's resource IDs to the grantee.
+- **H3:** the exemption for attested moves allowed a takeover with a stolen recovery file.
+
+The pending sign-off digest (docs/release/pending-signoffs.md) was not updated; RL-1 to RL-17 still need adding to it.
+
+Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-24 — UI quality pass 3 (browser probe round 3)
+
+**Implemented locally, provisional and unsigned.** Addresses M1–M7 and L1–L11 from the third browser probe. Existing 3sln/dodo/Engine APIs and the vendored js-tools bootstrap remain the integration boundary. No organization documents, pending-signoff digest, or files reserved for the concurrent app-removal workstream were edited by this pass.
+
+- **Abort notices (M1, L10).** A validated capability is retained in tab-scoped `sessionStorage` after removing the fragment, restored on reload, and cleared after a successful submission. Expired-page copy in English and Spanish directs the owner to open the notice link again. The page retains an external script and explicitly allows its same-origin icon; no inline executable script was added.
+- **Organization forms (M2, L1–L4, L11).** Failed and indeterminate Start results preserve the private break-glass wizard and answers through refresh; confirmed success clears them. Member punctuation is corrected, channel counts use catalogue plural rules, the owner interstitial focuses its heading, and the admin entry's inner heading is distinct. Contest and objection reasons are textareas with bounded character counters. **Provisional dismissal choice:** “Not now” lasts until reload, explicitly stated in both languages.
+- **Transfer and recovery feedback (M4, M5, L5–L7).** Every mapped transfer error has English and Spanish catalogue coverage. `step_up_required` retains the operation privately, points to the existing password/passkey security check, and retries after confirmation. Unchecking redirect clears and disables its reminder. Transfer-in shows no preparation status before starting. Unknown recovery-reissue cancellation codes use a generic translated error.
+- **Presentation and localization (M3, M7, L8, L9).** The focused skip link uses paired accent tokens in both themes. Shared styles give buttons, summaries and checkbox label rows a 44px minimum height, with matching standalone transfer controls and console links. Retention formats byte plurals and rounded unit rollover, uses generic labels for unlabeled units, distinguishes empty inventory, and renders one unavailable-size message per invalid unit. Security, device, contact, notification and shortcut copy has Spanish coverage. Developer-contact rate limiting returns a code; the client translates it.
+- **Firefox module loading (M6, provisional build choice).** The CSP-hashed import map is parser-visible before preloads and the classic wire-up. The build removes the generator's duplicate map installation while retaining its stylesheet and deferred-entry behavior; its actual vendored API was inspected. Hashed module preloads remain. A local agent cross-review found no actionable CSP/integration issue; this is implementation review, not human sign-off.
+
+**Verification (shared checkout, local evidence only):**
+
+- `npm test -- --test-concurrency=4`: **3,589 passed, zero failed**, zero skipped. Earlier unconstrained runs exposed export-sealing/CLI-range failures and an initially failing concurrent producer-summary test; those files were not changed by this pass. The final full run with bounded concurrency passes, including both export tests. These results do not establish that the unconstrained suite is free of intermittent failures.
+- `npm run test:ui-state`: **463 passed, zero failed**, zero skipped (latest run includes a concurrent added test).
+- `npm run test:organizations`: **340 passed, zero failed**, zero skipped across its four subprocess suites.
+- `npm run build:assets`, twice: passed; **453 identical file paths and SHA-256 digests** across the complete public output.
+- `npm run check:worker`: passed, **dry run only**.
+- `npm run test:worker`: **92 passed, zero failed**, zero skipped.
+- `npm run test:e2e`: **308 passed, zero failed, four skipped** out of 312 tests across its subprocess suites. Skips are optional WebKit checks: that executable is unavailable. Requested Chromium and Firefox coverage ran.
+- Supplemental native round-2/round-3 matrix with portability enabled: **34 passed, zero failed**, zero skipped. Chromium and Firefox, 390×844 and 1280×900, light/dark, English/Spanish; focused skip-link contrast ≥4.5:1, 390px console-tour target heights, zero console errors/404s/unhashed module requests on console and transfer pages. Firefox resets media emulation on navigation to an isolated transfer document in this environment; the new matrix reapplies and asserts the requested scheme after navigation. Screenshots are under `artifacts/browser/round3-*`.
+- Transfer fixture suite: **24 passed**; transfer engine suite: **17 passed**. Organization browser matrix: **16 passed**, including interstitial focus and reason counters. `git diff --check`: passed.
+
+No commit or deployment. Production release remains disabled. These are local browser/Worker/Node results; external notice delivery and provider conformance remain unverified. All choices above remain provisional pending review.
+
+Reviewer: ___ Date: ___ Outcome: ___

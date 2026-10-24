@@ -141,7 +141,8 @@ export class OrganizationsIntent extends OwnerFlow{
   // view is refreshed from the server and the forms are rebuilt from it (formEpoch); an uncertain failure refreshes too,
   // and only stays stale (blocking further changes, never reads) when that refresh also fails.
   const change=async(action,input)=>{if(!org)fail('organization_required');put(r,ctx,{stale:true,error:null,notice:null});let result;
-   try{result=await call(action,input);}catch(error){if(error?.code==='organization_changed')throw error;const sure=definite(error);let fresh=false;try{await details(org);fresh=true;}catch{}
+   try{result=await call(action,input);}catch(error){if(error?.code==='organization_changed')throw error;const sure=definite(error),wizard=action==='break-glass'&&input?.operation==='start'?base(snapshot(r)).breakGlassWizard:null;let fresh=false;try{await details(org);fresh=true;}catch{}
+    if(wizard)put(r,ctx,{breakGlassWizard:wizard});
     if(sure||fresh)put(r,ctx,{stale:false,formEpoch:(base(snapshot(r)).formEpoch??0)+1});
     if(!sure&&fresh)fail('change_uncertain');throw error;}put(r,ctx,{notice:result.invitation?'invitation_created':'saved',...result.invitation?{invitation:result}:{}});try{if(action==='leave'){put(r,ctx,{...privateFields,context:null});await reload();}else await details(org);}catch{put(r,ctx,{error:'saved_stale'});}if(result.invitation){put(r,ctx,{invitation:result});r.browser.focus?.('#org-invitation');}return result;};
   try{

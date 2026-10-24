@@ -12,7 +12,8 @@ test('content-addressed import map, CSS and isolated worker have immutable polic
  assert.ok(preloads.every(url=>/^\/assets\/.+\.[a-f0-9]{10}\.(?:mjs|js)$/.test(url)));
  assert.ok(!preloads.some(url=>/\/console\.[a-f0-9]{10}\.mjs$/.test(url)));
  assert.ok(!preloads.some(url=>/\/(?:admin-entry|demo-main)\./.test(url)));
- assert.ok(html.indexOf('<script src=')<html.indexOf('<link rel="modulepreload"'),'Install the CSP-authorized map before fetching modules');
+ assert.ok(html.indexOf('<script type="importmap">')<html.indexOf('<script src='),'The parser receives the CSP-authorized map before bootstrap and preloads');
+ assert.equal((html.match(/<script type="importmap">/g)??[]).length,1);
  const manifest=await(await page.request.get(baseURL+'/build-manifest.json')).json();const imports=await page.evaluate(()=>JSON.parse(document.querySelector('script[type=importmap]').textContent).imports);
  const consoleBundle=imports['/src/release.mjs'];
  assert.ok(!manifest.assets.some(url=>/\/apps\/web\/src\/release\.[a-f0-9]+\.mjs$/.test(url)));

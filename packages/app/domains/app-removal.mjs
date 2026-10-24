@@ -4,6 +4,7 @@ import {Provider} from '../../../vendor/ngin/index.js';
 import {AppAction,AppQuery} from '../engine.mjs';
 import {AppFault} from '../faults.mjs';
 import {parseRemovalResult} from '../../federation/removal.mjs';
+import {PRODUCER_LINEAGE,lineageRow} from '../../storage/producer-summary.mjs';
 export const REMOVAL_RECORD='app-removal/record/',REMOVAL_OPEN='app-removal/open/',REMOVAL_NOTICE='app-removal/notice/';
 export const removalOpen=r=>['pending','in-progress'].includes(r?.state);
 const fail=(code,message,status=409)=>{throw new AppFault(code,message,status);};
@@ -24,7 +25,10 @@ async function prune(tx,now){
  const concluded=[...(await tx.list({prefix:REMOVAL_RECORD})).entries()].filter(([,r])=>r&&!removalOpen(r)).sort((a,b)=>concludedAt(a[1])-concludedAt(b[1]));
  let excess=concluded.length-REMOVAL_CONCLUDED_LIMIT,deleted=0;
  for(const [path,r]of concluded){if(deleted>=REMOVAL_PRUNE_BATCH)break;if(excess<=0&&concludedAt(r)>now-REMOVAL_RETENTION_MS)break;
-  for(const [notice]of await tx.list({prefix:REMOVAL_NOTICE+r.removal+'/'}))await tx.delete(notice);await tx.delete(path);excess--;deleted++;}
+  for(const [notice]of await tx.list({prefix:REMOVAL_NOTICE+r.removal+'/'}))await tx.delete(notice);
+  // AU-S6: a pruned forced/completed removal leaves a lineage row so What's left stays reachable and its markers can be swept.
+  if(['forced','completed'].includes(r.state)&&typeof r.connection==='string'&&Number.isSafeInteger(r.generation))await tx.put(PRODUCER_LINEAGE+r.removal,lineageRow(r,now));
+  await tx.delete(path);excess--;deleted++;}
  return deleted;
 }
 /** AU-13 policy hook. Organizations remain refused until membership/admin authorization exists. */
@@ -33,7 +37,7 @@ export class AppRemovalService{
  constructor({metadata,clock={now:()=>Date.now()},random={uuid:()=>crypto.randomUUID()},enabled=()=>false,resume,commit,wake=()=>{}}){Object.assign(this,{metadata,clock,random,enabled,resume,commit,wake});}
  async bound(tx,actor,system=false){if(!actor||!(system?['owner','system','app']:['owner']).includes(actor.kind)||!/^[a-f0-9-]{36}$/.test(actor.owner??''))fail('unauthorized','Sign in to continue.',401);if(await tx.get('owner')!==actor.owner)fail('forbidden','Account owner mismatch.',403);return actor.owner;}
  async connection(tx,owner,id){const r=typeof id==='string'?await tx.get('resource/'+id):null;if(r?.kind!=='app-connection'||r.owner!==owner)fail('not_found','Not found.',404);return r;}
- async list(actor){return this.metadata.transaction(async tx=>{const owner=await this.bound(tx,actor);return {removals:[...(await tx.list({prefix:REMOVAL_RECORD})).values()].filter(r=>r.entity===owner).map(view)};});}
+ async list(actor){return this.metadata.transaction(async tx=>{const owner=await this.bound(tx,actor);const pruned=[...(await tx.list({prefix:PRODUCER_LINEAGE,limit:200})).values()].filter(l=>l?.entity===owner).map(l=>({removal:l.removal,connection:l.connection,generation:l.generation,client_id:l.client_id,state:l.state==='completed'?'completed':'forced',concluded_at:l.concluded_at,pruned:true}));return {removals:[...[...(await tx.list({prefix:REMOVAL_RECORD})).values()].filter(r=>r.entity===owner).map(view),...pruned]};});}
  async start(actor,value){const v=input(value,['connection','expectedGeneration','binding']),binding=await hash(v.binding);if(!binding)fail('invalid_request','A browser binding is required.',400);
  const row=await this.metadata.transaction(async tx=>{const owner=await this.bound(tx,actor),now=this.clock.now(),entity=await tx.get('identity/entity');if(!removalPolicy({kind:entity?.kind??'person',now}).supported)fail('unsupported_entity','Organization removal is not available.',409);
  if(await tx.get('deletion/fence-v1')||await tx.get('lifecycle/tombstone-v1')||['suspended','purge-review','purging'].includes((await tx.get('lifecycle/state-v1'))?.phase))fail('account_unavailable','This account is unavailable.',409);

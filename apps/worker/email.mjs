@@ -21,6 +21,7 @@ const PROVIDER_CODES = new Set([
   'E_HEADER_NAME_INVALID', 'E_HEADERS_TOO_LARGE', 'E_HEADERS_TOO_MANY'
 ]);
 const ACCOUNT_NOTICES = Object.freeze({
+  'app-removal-reminder': ['An app has not finished cleanup on {brand}', 'An app you asked to remove has not finished cleaning up. It still has all its access and keeps working normally. Sign in, open Connections and choose Remove now to end its access, or wait for cleanup.'],
   'suspension-warning': ['Action required: your {brand} account will be suspended in {days} days', 'We have tried to reach you about your unpaid account. Sign in and confirm you still want to use it before the deadline. Otherwise, your account will be suspended in {days} days. Suspension retains your hosted data but blocks normal account access and changes.'],
   'deletion-warning': ['Action required: your {brand} account will be deleted in {days} days', 'Your unpaid account is suspended. Sign in and confirm you still want to use it within {days} days to reactivate it. Otherwise, your account and data stored on {brand} will be deleted. Data in connected external storage providers will not be deleted by us.'],
   'suspended-notice': ['Action required: your {brand} account is suspended', 'Your unpaid account is suspended after a period without use. Sign in and confirm you still want to use it to reactivate it. Suspension retains your hosted data but blocks normal account access and changes.'],

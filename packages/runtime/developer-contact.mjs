@@ -58,7 +58,7 @@ export async function developerContactLink(controller,owner,handle,now=Date.now(
 export async function developerContactRoutes({path,request,env,owner,accountHandle,json,limit,remoteIP}){
  if(path!=='/api/developer-contact')return null;
  if(request.method!=='GET')return json({error:'method_not_allowed'},405,{Allow:'GET'});
- if(limit&&!await limit(env,{operation:'developer-contact',remoteIP,handle:owner.account.id}))return json({error:'rate_limited',message:'Please wait before checking again.'},429,{'Retry-After':'60'});
+ if(limit&&!await limit(env,{operation:'developer-contact',remoteIP,handle:owner.account.id}))return json({error:'rate_limited'},429,{'Retry-After':'60'});
  const recipientHandle=env.DEVELOPER_CONTACT_HANDLE??'ray',recipient=await env.IDENTITY_REPOSITORY.findByHandle(recipientHandle);
  const badge=systemBadge(recipient);
  if(recipient?.status!=='active'||!badge||badge.role!=='developer'||badge.handle!==recipientHandle)return json({available:false,reason:'developer-unavailable'});

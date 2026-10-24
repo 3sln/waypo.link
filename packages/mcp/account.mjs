@@ -42,7 +42,7 @@ export async function mcpCollections(account,owner){
  if(resources.length>200+legacyDefaultAllowance||storage.length>100+legacyDefaultAllowance)fail('resource_limit','This account has too many sources.',429);
  return [...inbox,...resources.filter(r=>r.owner===owner&&r.kind!=='app-connection'&&r.status==='connected').map(r=>({id:`resource:${r.id}`,name:r.name,kind:'storage',tools:['collections_list',...r.capabilities?.read?['item_read']:[],...r.capabilities?.write?['item_write']:[],...(r.provider==='hosted'||r.capabilities?.delete)?['item_delete']:[]]}))];
 }
-export async function mcpOperation(account,owner,clientId,tool,args,{itemRead=false,workCharged=false}={}){
+export async function mcpOperation(account,owner,clientId,tool,args,{itemRead=false,workCharged=false,connection}={}){
  const collection=(await mcpCollections(account,owner)).find(c=>c.id===args.collectionId);
  if(!collection||!collection.tools.includes(tool))fail('forbidden','The collection or function is no longer available.');
  const id=collection.id.split(':')[1];
@@ -55,7 +55,7 @@ export async function mcpOperation(account,owner,clientId,tool,args,{itemRead=fa
    // Managed Drive objects record their verified size locally, so oversize reads are refused before any download.
    else if(resource.provider==='google-drive'&&typeof account.googleDrive?.path==='function'){const entry=await account.metadata.get(await account.googleDrive.path(id,args.key));if(entry?.size>65536)fail('result_too_large','Download this item through the account interface.',413);}
   }
-  return account.federationRPC({subject:`${account.config.APP_ORIGIN}/entities/${owner}`,clientId:`mcp:${clientId}`,resource:`${account.config.APP_ORIGIN}/entities/${owner}/resources/${id}`,contract:'https://3sln.me/artefacts/contracts/object-storage/v1',method,args:input,tx:args.requestId??crypto.randomUUID()},workCharged?WORK_PRECHARGED:undefined);
+  return account.federationRPC({subject:`${account.config.APP_ORIGIN}/entities/${owner}`,clientId:`mcp:${clientId}`,resource:`${account.config.APP_ORIGIN}/entities/${owner}/resources/${id}`,contract:'https://3sln.me/artefacts/contracts/object-storage/v1',method,args:input,tx:args.requestId??crypto.randomUUID()},workCharged?WORK_PRECHARGED:undefined,connection?{connection:{id:connection.id,generation:connection.generation}}:{});
  }
  if(tool==='items_list'){const page=await account.messagePage(owner,{collection:id,limit:args.limit??20,cursor:args.cursor});return {items:page.items.map(item=>mcpListItem(item,{itemRead})),cursor:page.cursor??null};}
  const writing=['item_write','item_delete'].includes(tool);

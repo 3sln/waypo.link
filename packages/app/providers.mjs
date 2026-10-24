@@ -59,6 +59,7 @@ export const PROVIDERS = Object.freeze({
   lifecycle: row('account', 'domain', 'pilot', 'Account lifecycle runner and retention protection. DX-3: the DeletionService behind deletion.* (packages/runtime/account-deletion.mjs); ACCOUNT_DELETION_ENABLED required for new requests.'),
   notifications: row('account', 'domain', 'planned', 'NotificationService and app notifications.'),
   beams: row('account', 'domain', 'planned', 'BeamService and beam contacts.'),
+  producerSummary: row('account','domain','pilot','AU-S6: derived managed-object producer summaries and generation-fenced deletion.'),
   appRemoval: row('account','domain','pilot','AU-S2: clean/force removal records, reminder-only scheduling and co-transactional revocation over account metadata.'),
   redirectExtensions: row('edge','domain','pilot','PORT-7: sandbox-only redirect extension checkout and verified one-time orders, bound to encrypted page capabilities.'),
   redirectManagement: row('edge','domain','pilot','Redirect management for moved identities: Bindle sign-in at the current host, successor-chain verification from the moved tombstone, early end and IP-R1-L3 retarget (packages/identity/redirect-management.mjs); public actors.'),

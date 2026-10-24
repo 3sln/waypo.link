@@ -18,14 +18,15 @@ export async function loadActivity(r,ctx,{cursor=null,pages=[],filters}={}){
  const live=()=>snapshot(r).session?.account?.id===owner&&(snapshot(r).beamGeneration??0)===generation&&!snapshot(r).offline&&snapshot(r).incomingTicket===ticket;
  if(before)put(r,ctx,{detail:null,render:null,detailTicket:null,detailLoading:false,searchTicket:null,searchLoading:false});
  publish(r,ctx,{incomingTicket:ticket,incomingLoading:true,incomingError:''});
- try{const feed=await r.api.get('/api/activity?'+q);if(!live())return true;
+ try{const [reminders,feed]=await Promise.all([!before?r.api.get('/api/apps/removal/reminders?limit=50').catch(error=>{if(error.status===401)throw error;return {items:[]};}):Promise.resolve(null),r.api.get('/api/activity?'+q)]);if(!live())return true;
   // Never accumulate pages: DOM, memory and per-page text work remain bounded.
-  put(r,ctx,{items:(feed.items??[]).slice(0,ACTIVITY_PAGE_SIZE),facets:feed.facets??{apps:[],tags:[]},cursor:feed.cursor??null,pageCursor:cursor,pages,filters:f,tagsPage:0,detail:null,render:null,explanation:null,searchText:{},searchReady:false});publish(r,ctx,{incomingLoading:false});return true;
+  put(r,ctx,{...reminders?{removalReminders:(reminders.items??[]).slice(0,50)}:{},items:(feed.items??[]).slice(0,ACTIVITY_PAGE_SIZE),facets:feed.facets??{apps:[],tags:[]},cursor:feed.cursor??null,pageCursor:cursor,pages,filters:f,tagsPage:0,detail:null,render:null,explanation:null,searchText:{},searchReady:false});publish(r,ctx,{incomingLoading:false});return true;
  }catch(error){if(!live())return true;if(error.status===401)throw error;put(r,ctx,{error:true});publish(r,ctx,{incomingLoading:false,incomingError:'Activity could not be loaded. Please try again.'});return true;}
 }
 async function loadPush(r,ctx){const ticket=r.browser.id();put(r,ctx,{pushTicket:ticket});const [push,apps]=await Promise.all([r.api.get('/api/notifications/activity'),r.api.get('/api/apps')]);if(activityModel(snapshot(r))?.pushTicket!==ticket)return;put(r,ctx,{push,pushStale:false,apps:(apps.apps??[]).filter(a=>a.transport==='bindle').slice(0,200)});}
 export async function activityIntent(r,ctx,d){
  if(!activityEnabled(snapshot(r)))return;publish(r,ctx,{error:''});const feedTicket=snapshot(r).incomingTicket,m=activityModel(snapshot(r))??base(snapshot(r)),v=d.values??{},a=d.activityAction;
+ if(a==='removal-reminders'){const owner=snapshot(r).session?.account?.id,generation=snapshot(r).beamGeneration??0;if(!owner||snapshot(r).offline)return;const result=await r.api.get('/api/apps/removal/reminders?limit=50');const now=snapshot(r);if(now.session?.account?.id===owner&&(now.beamGeneration??0)===generation&&!now.offline&&now.incomingTicket===feedTicket)put(r,ctx,{removalReminders:(result.items??[]).slice(0,50)});return;}
  if(a==='filter'){const filters={...m.filters,[d.field]:d.value};if(d.field==='app')delete filters.tag;await loadActivity(r,ctx,{filters});return;}
  if(a==='reload'||a==='next'||a==='previous'){if(a==='next'&&!m.cursor||a==='previous'&&!m.pages?.length)return;const pages=a==='next'?[...(m.pages??[]),m.pageCursor??null].slice(-100):a==='previous'?m.pages.slice(0,-1):[];await loadActivity(r,ctx,{cursor:a==='next'?m.cursor:a==='previous'?m.pages.at(-1):null,pages});return;}
  if(a==='facet-page'){put(r,ctx,{tagsPage:Math.max(0,Math.min(9,Number(d.page)||0))});return;}

@@ -48,3 +48,15 @@ test('transfer-in passkey enrollment: options bound to the move, then start with
  assert.deepEqual(Object.keys(start.body).sort(),['label','method','package','passkeyTicket','response','source']);assert.equal(start.body.passkeyTicket,'ticket');assert.deepEqual(start.body.response,{id:'credential-id',type:'public-key'});
  assert.ok(created[0].challenge instanceof Uint8Array);assert.equal(port.snapshot().view.state,'pending');assert.equal(port.snapshot().error,null);
 });
+
+test('transfer errors have explicit English and Spanish translations for every mapped code',async()=>{
+ const {TRANSFER_ERROR_MESSAGES}=await import('../../apps/web/src/ui/transfer-page.mjs');const {catalogues}=await import('../../packages/i18n/catalogues.mjs');
+ for(const [code,message] of Object.entries(TRANSFER_ERROR_MESSAGES))for(const locale of ['en','es'])assert.equal(typeof catalogues[locale][''][message],'string',`${code} has ${locale} copy`);
+});
+test('expired step-up retains the operation and retries it after credential confirmation',async t=>{
+ let checked=false;const f=fixture('out',{request:async path=>{if(path.endsWith('/step-up/begin'))return {password:true};if(path==='/api/auth/step-up'){checked=true;return {};}if(!checked)throw Object.assign(Error('Fresh proof required'),{status:401,code:'step_up_required'});return {state:'draft',draft:'retry-draft',destination:'https://new.example'};}});t.after(()=>f.engine.dispose());
+ await f.act('load');await f.act('begin',{destination:'https://new.example',redirect:true,reminder:true});assert.equal(f.port.snapshot().error,'step_up_required');assert.equal(f.port.snapshot().steppedUp,false);
+ await f.act('step-up-begin');assert.equal(f.port.snapshot().stepUp.password,true);await f.act('step-up',{method:'password',password:'private password'});assert.equal(f.port.snapshot().error,null);assert.equal(f.port.snapshot().view.draft,'retry-draft');assert.equal(f.port.snapshot().steppedUp,true);assert.equal(f.calls.filter(c=>c.path.endsWith('/transfer-out/begin')).length,2);assert.ok(!JSON.stringify(f.port.snapshot()).includes('private password'));
+ await f.act('step-up-begin');await f.act('step-up',{method:'password',password:'private password'});assert.equal(f.calls.filter(c=>c.path.endsWith('/transfer-out/begin')).length,2,'confirmed operation is cleared');
+});
+test('transfer-in hides preparation status until intake has started',async()=>{const {default:render}=await import('../../apps/web/src/ui/transfer-page.mjs');for(const locale of ['en','es']){const page=JSON.stringify(render({mode:'in',phase:'review',view:{state:'intake'}},{locale,dispatch(){}}));assert.ok(!page.includes(locale==='es'?'Estado: ':'Status: '));}});

@@ -1,6 +1,6 @@
 # Organizations: design spike
 
-Status: **provisional design, 2026-10-23, revision 5.5.** Revision 5.5 adds the ORG-12 break-glass design for an organization whose owner is gone (§12d): admin quorum, payment by the candidate, a 30-day notified wait, an owner abort from any known channel, support adjudication for contested claims, and recovery-file reissue where it is missing. Spec rev 4.4 gains one rule. It is design only, Provisional (coordinator), not signed off by the user, with one adversarial review round (BG-R1) applied. Revision 5.4: Revision 5.4 applies the user's 2026-10-22 decision that an organization's ownership can be transferred, with the recipient's billing starting over (§1c item 10, §12b.3a), and records the coordinator's provisional answers to the remaining questions (§1d): break-glass exceptions to "no timeout decides", elevations passing to a new owner, held owners and recovery, tight verification for owner GM elevations (Q14), a standard effective-methods output (Q15), a portable membership export, and the cross-provider security floors restored to the spec as minimum requirements. See [Revision 5.4 reconciliation](#revision-54-reconciliation). It is unreviewed. Revision 5.3 applies the user's 2026-10-22 decisions that membership, member grants and governance are internal to the organization (Q13 resolved; new §12c, with the rules moved out of the spec), and that admins can block an admin-requested organization move but never the owner's (§12b.5). See [Revision 5.3 reconciliation](#revision-53-reconciliation). It is unreviewed. Revision 5.2 applies the user's 2026-10-22 decisions: Q3 (no roles) is accepted, and the grant-management elevation rule is refined (§12b.2a). The refinement supersedes the R4-M4 recommendation; see [Revision 5.2 reconciliation](#revision-52-reconciliation). Q13 stays open. It is unreviewed. Revision 5.1 applies AMD-P4 ([identity portability](identity-portability.md)) and AMD-I5 ([intent links](intent-links.md)), answers R4-H2, and records a *recommendation* on R4-M4 that awaits the user. It is unreviewed. Revision 5 (reviewed in [Review round 4](#review-round-4); resolved findings applied as R4-…, open items remain open). Revision 5 applies the user's decisions of 2026-10-22 (§1c): organization identity is the same as user identity, with a recovery file; Q7, Q10 and Q11 are resolved; and messaging apps get no special treatment. It is not independently reviewed. Revision 4.3: Revision 4.3 adds the user's 3sln.me grant-management policy (§12b) and makes governance explicitly provider policy in the spec (§6.3). Revision 4.2: Revision 4.2 defines the additive growth points of the `relation` artefact kind (spec §9.2) and how each maps to widening. Revision 4.1: Revision 4.1 applies the user's decision on relation admission (§8a.9): membership in an instance is per edge, and partial membership is first-class. Revision 4: Revision 4 adopts the user's relations proposal (§1b, §8a), separates provider roles and adds 3sln.me product rules (§12a). Its effect on the review findings is in [Revision 4 reconciliation](#revision-4-reconciliation), and it was reviewed in [Review round 3](#review-round-3), whose resolved findings are applied (R3-…); its open items remain open. Earlier, revision 2 applied the resolved findings of [Review round 1](#review-round-1); open items there remain open. Revision 3 applies the user's clarification (§1a) and is reconciled with the review in [Revision 3 reconciliation](#revision-3-reconciliation). Revision 3 was reviewed in [Review round 2](#review-round-2), whose resolved findings are applied (R2-…); its open items remain open. Design only: nothing here is implemented, routed or production-verified, and no code changed. The coordinator records decisions in DEVLOG.md. Every decision below is unsigned until it gets a reviewer, a date and an outcome. Terminology: [organizations terminology](organizations-terminology.md). Draft normative skeleton: [spec/organizations.md](../spec/organizations.md).
+Status: **provisional design, 2026-10-24, revision 5.6.** Revision 5.6 adds the ORG-10/ORG-11 relations design for implementation (§8b). It covers who establishes relations inside a 3sln.me organization (any unheld admin, with step-up and notices; narrowing is immediate), the boundary of what an edge grants (no transitivity), cross-provider gaps (signed relation events, the events endpoint from the manifest, fresh-only participation statements; spec rev 4.5), lifecycle, abuse cases, alternatives, decisions RL-1 to RL-17 and an implementation plan. It is design only, Provisional (coordinator), not signed off by the user, with one adversarial self-review round applied. Revision 5.5: Revision 5.5 adds the ORG-12 break-glass design for an organization whose owner is gone (§12d): admin quorum, payment by the candidate, a 30-day notified wait, an owner abort from any known channel, support adjudication for contested claims, and recovery-file reissue where it is missing. Spec rev 4.4 gains one rule. It is design only, Provisional (coordinator), not signed off by the user, with one adversarial review round (BG-R1) applied. Revision 5.4: Revision 5.4 applies the user's 2026-10-22 decision that an organization's ownership can be transferred, with the recipient's billing starting over (§1c item 10, §12b.3a), and records the coordinator's provisional answers to the remaining questions (§1d): break-glass exceptions to "no timeout decides", elevations passing to a new owner, held owners and recovery, tight verification for owner GM elevations (Q14), a standard effective-methods output (Q15), a portable membership export, and the cross-provider security floors restored to the spec as minimum requirements. See [Revision 5.4 reconciliation](#revision-54-reconciliation). It is unreviewed. Revision 5.3 applies the user's 2026-10-22 decisions that membership, member grants and governance are internal to the organization (Q13 resolved; new §12c, with the rules moved out of the spec), and that admins can block an admin-requested organization move but never the owner's (§12b.5). See [Revision 5.3 reconciliation](#revision-53-reconciliation). It is unreviewed. Revision 5.2 applies the user's 2026-10-22 decisions: Q3 (no roles) is accepted, and the grant-management elevation rule is refined (§12b.2a). The refinement supersedes the R4-M4 recommendation; see [Revision 5.2 reconciliation](#revision-52-reconciliation). Q13 stays open. It is unreviewed. Revision 5.1 applies AMD-P4 ([identity portability](identity-portability.md)) and AMD-I5 ([intent links](intent-links.md)), answers R4-H2, and records a *recommendation* on R4-M4 that awaits the user. It is unreviewed. Revision 5 (reviewed in [Review round 4](#review-round-4); resolved findings applied as R4-…, open items remain open). Revision 5 applies the user's decisions of 2026-10-22 (§1c): organization identity is the same as user identity, with a recovery file; Q7, Q10 and Q11 are resolved; and messaging apps get no special treatment. It is not independently reviewed. Revision 4.3: Revision 4.3 adds the user's 3sln.me grant-management policy (§12b) and makes governance explicitly provider policy in the spec (§6.3). Revision 4.2: Revision 4.2 defines the additive growth points of the `relation` artefact kind (spec §9.2) and how each maps to widening. Revision 4.1: Revision 4.1 applies the user's decision on relation admission (§8a.9): membership in an instance is per edge, and partial membership is first-class. Revision 4: Revision 4 adopts the user's relations proposal (§1b, §8a), separates provider roles and adds 3sln.me product rules (§12a). Its effect on the review findings is in [Revision 4 reconciliation](#revision-4-reconciliation), and it was reviewed in [Review round 3](#review-round-3), whose resolved findings are applied (R3-…); its open items remain open. Earlier, revision 2 applied the resolved findings of [Review round 1](#review-round-1); open items there remain open. Revision 3 applies the user's clarification (§1a) and is reconciled with the review in [Revision 3 reconciliation](#revision-3-reconciliation). Revision 3 was reviewed in [Review round 2](#review-round-2), whose resolved findings are applied (R2-…); its open items remain open. Design only: nothing here is implemented, routed or production-verified, and no code changed. The coordinator records decisions in DEVLOG.md. Every decision below is unsigned until it gets a reviewer, a date and an outcome. Terminology: [organizations terminology](organizations-terminology.md). Draft normative skeleton: [spec/organizations.md](../spec/organizations.md).
 
 Protocol/security/architecture sign-off: reviewer ___ / date ___ / outcome ___.
 
@@ -254,7 +254,7 @@ Alice's home is `alt.example`. Acme and the ERP connection live on 3sln.me. If A
    - the matrix as it applies to Ledgerly: it *receives* Acme's ledger fragment and grants nothing.
 
    The admin accepts on behalf of Ledgerly.
-4. **Redeem.** Ledgerly's provider POSTs `{invitation, statement}` to Acme's `join_endpoint`. The statement is Ledgerly's participation statement, signed with its identity key. Acme verifies it (locally on one host, or through `directory.v1`) and activates the edge Acme→Ledgerly, a connection with the fragment grant. It returns Acme's statement and events endpoint.
+4. **Redeem.** Ledgerly's provider POSTs `{invitation, statement}` to Acme's `join_endpoint`. The statement is Ledgerly's participation statement, signed with its identity key. Acme verifies it (locally on one host, or through `directory.v1`), activates its edge Acme→Ledgerly (a connection with the fragment grant) and returns Acme's fresh statement. Ledgerly's provider verifies that statement before activating its own pending participation. Since rev 5.6, events between the two go to each issuer's manifest `events_endpoint`, not to an endpoint named in the response, and Acme's `relation-edge-state` event tells Ledgerly which resource IDs it was granted (§8b.4).
 5. **Import.** "Acme Ltd · Ledgers 2026" appears in Ledgerly's pool. Ledgerly's admin grants Bob `get` on it and assigns it to the fragment of Ledgerly's accounting app.
 6. **Use.**
    - Bob uses the accounting app in Ledgerly context.
@@ -707,7 +707,7 @@ That is exactly how an application's fragment request works today: a public docu
 
 - **The instance record.** Each party's provider hosts its own participation. The instance URI is minted by the creator's provider and confers nothing.
 - **Signatures.** Participation statements and invitations are signed with each organization's identity key and verified through `directory.v1`. Entity certificates sign every request.
-- **The common contract** is `directory.v1` plus `relations.v1` (invitation acceptance, join endpoint, entity certificates) plus SET severance events. No registration is needed between providers.
+- **The common contract** is `directory.v1` plus `relations.v1` (invitation acceptance, join endpoint, entity certificates) plus severance events. Since rev 5.6 these are relation events signed by the sending entity's certification key (spec §9.9, §8b.4). No registration is needed between providers.
 
 ### 8a.6 Membership is not a relation
 
@@ -764,6 +764,330 @@ The user's words: "for adding new parties to a relationship, every org in a slot
 
 **Privacy.** Minimal disclosure: the newcomer learns only the edges that exist. Decline and pending states go only to the proposer, and only if the deciding party chooses to send them. This prevents the newcomer from inferring a counterpart's business decisions, and it matches the uniform-outcome rules elsewhere (§9.1).
 
+## 8b. ORG-10 and ORG-11: relations design for implementation (rev 5.6)
+
+Design only, 2026-10-24. Nothing here is implemented, routed or production-verified, and no code changed. Every rule in this section is **Provisional (coordinator), not signed off by the user**, unless it quotes a user decision. The decisions that need the user are listed in §8b.9 (RL-1 to RL-17). Spec rev 4.5 carries the interoperable part (spec §9.3, §9.4, §9.9, §12, §14, §16).
+
+### 8b.0 What is already settled, and what this section adds
+
+Relations are the user's design. §1b, §8a and spec §9 record it, and this section changes none of it:
+
+- **Between organizations.** The user's words (2026-10-22): "relations are relationships between orgs". Membership, member grants and governance are internal to each organization (§1c item 8, ORG-D20). A relation never touches them. The spec still allows a `person` as a party (spec §9.2 `kinds`), for example a sole trader. 3sln.me offers relations between organizations only in v1 and leaves the spec unchanged (RL-17).
+- **The document is the kind.** A relation is a public, versioned document with slots, arity and an access matrix over pinned fragments (ORG-D15, spec §9.2). It grants nothing. Titles and slot names never authorize (§8a.1).
+- **Consent per edge.** Every edge needs grantor consent with the grantor's own values and grantee acceptance. Admission and recognition are per edge, partial membership is normal, and arity is per view (§8a.9, the user's decision of 2026-10-21).
+- **No central host.** Each party's provider holds its own participation (§8a.5).
+- **No onward flow.** `reshare` is refused, imports are omitted from fragments granted over an edge, and owner-interface authority never crosses an edge (spec §6.2 rule 3, §9.7).
+- **Entity certificates.** The acting organization's own provider certifies requests after checking its own hops (ORG-D16, spec §9.5).
+
+This section adds what is still missing before ORG-10 and ORG-11 can be built:
+
+1. who inside a 3sln.me organization may establish, widen and narrow relations, and how that fits the elevation model (§8b.2);
+2. the exact boundary of what an edge lets the counterpart do (§8b.3);
+3. four interop gaps that block cross-provider relations (§8b.4): relation events had no defined signer or verification; the counterpart's events endpoint came from an unauthenticated response; participation statements had no freshness, so a party that had left could still be presented as a participant; and no message told a grantee which of the grantor's resources it had been granted;
+4. lifecycle interactions with suspension, billing lapse, transfer, break-glass, deletion and moves (§8b.6);
+5. abuse cases (§8b.7), alternatives (§8b.8), decisions (§8b.9) and the implementation plan (§8b.10).
+
+**Phase labels.** The coordinator's request calls this the phase B relations work. §13.3 places ORG-10 in phase C (before the first external organization) and ORG-11 in phase D (after artefact references and the egress gate). This section keeps those release gates and lets implementation start now behind default-off flags (RL-1).
+
+### 8b.1 What a relation is
+
+A relation is whatever its document's matrix says, and nothing else. Familiar business relationships are documents, not built-in kinds:
+
+| Business relationship | Relation document (examples; 3sln.me catalogue, RL-14) | Slots |
+| --- | --- | --- |
+| One-off sharing ("send the auditor this folder") | `share` | `owner` (1) grants `recipient` (1) a generic storage fragment |
+| Parent and subsidiaries | `group` (§5.5) | `parent` (1), `subsidiary` (0–64); optional sibling entries |
+| Vendor and customer | `supply` (spec §9.2) | `buyer` (1), `supplier` (1–256) |
+| Client and professional firm | `accounting-engagement` (§5.4) | `client` (1), `firm` (1) |
+| Partners | A symmetric document: one slot `partner` (2–8) with a sibling entry `partner`→`partner` | — |
+| Joint venture, transition services | `joint-venture`, `transition-services` (§5.5, §5.14) | per document |
+
+What a relation is **not**:
+
+- **Not a hierarchy.** A `parent` slot gives the parent only what each subsidiary grants it. The parent does not govern the subsidiary. Governance of a subsidiary is held by direct members (§5.5), and the deferred "governance via relationship" feature (§5.6) remains deferred.
+- **Not membership.** Members of one party are never members of another because of a relation (§8a.6).
+- **Not a trust signal.** A relation creates no badge, no public listing and no verification of the counterpart's legal identity (§8b.5, RL-9).
+
+### 8b.2 Establishing a relation (3sln.me policy; the spec leaves this to each provider)
+
+Spec §9.4 step 1 requires only "a person who can operate the invitee's owner interface". Who that is, inside an organization, is the provider's membership and grant policy (spec §6.3). For 3sln.me:
+
+**Who may act.** Relation actions are owner-interface actions, so they need the `admin` power (§12b, §12c), exercised by an admin whose governance is not held (§12c.3). Ownership adds nothing, because ownership by itself gives no GM grant (§12b.1 item 5). The owner acts on relations only as an admin.
+
+**Three classes of action.**
+
+| Class | Actions | Needs |
+| --- | --- | --- |
+| **Widening outward** | Creating an instance with outgoing grants; inviting with bound values; accepting an invitation that grants anything; consenting to an introduced newcomer; accepting a widening upgrade for an outgoing edge; adding resources to an existing outgoing entry | One unheld admin, a fresh passkey step-up (a status-checked certificate, spec §5.2 step 4), the full matrix disclosure, immediate notice to every admin, and an audit entry |
+| **Accepting inward** | Accepting an edge that only receives; pre-accepting receipt from future holders of a slot (spec §9.4); accepting `actor_disclosure:"named"` for an edge | The same as widening. Receiving is not free: it admits counterpart-authored data into the organization's pipelines (R3-M2) |
+| **Narrowing** | Suspending, ending or narrowing an outgoing edge to its optional entries; declining or ending an incoming edge; leaving an instance; withdrawing an invitation; declining an introduction | One admin, ordinary authentication. Immediate, with notice to every admin and an audit entry. Never needs anyone's consent |
+
+**Why no subject-first step or owner elevation.** The elevation rule (§12b.2a, the user's decision of 2026-10-22) protects a member whose grant-management power another admin is changing. A relation action has no such subject: it changes the organization's grants to another entity, never a member's GM grant. It is the same act as approving an integration's fragment request, with an entity in place of an application (spec §9.1), and approving integrations is an ordinary admin action. So the same rule applies (RL-2):
+
+- Any admin can narrow at once. If one admin creates an edge another admin thinks unwise, the second admin ends it, with no race to win: ending is always allowed and never needs consent.
+- Changing **who may manage relations** is a GM change and stays fully under §12b and §12b.2a, subject first and then the owner with tight verification.
+- **Tight verification** (portability §6.2 items 1–3) is reserved for changes of control and identity location: moves, transfers and owner GM decisions (§12b.5). No relation action changes control or identity location, so none needs it.
+
+**The flow** (spec §9.3–§9.4, unchanged):
+
+1. An admin picks a relation (catalogue or URL) and the organization's slot. 3sln.me fetches the pinned version, validates it (spec §9.2) and shows the matrix as it applies to that slot.
+2. The admin names the counterparty by handle. 3sln.me resolves it to `(iss, sub)` through the directory (spec §3a.2) and shows the identity URI, handle and verified origin before confirming. On a shared origin, the handle and identity URI identify the counterparty, not the origin (R1-M6).
+3. The admin binds the organization's own values for each outgoing entry: resources chosen per entry, optional [resource scoping](resource-scoping.md), optional `expires_at`. Imported resources are never offered (spec §9.7).
+4. 3sln.me records the participation and the pending outgoing grants, and issues a relation invitation bound to the counterparty, carrying a fresh participation statement (spec §9.3, rev 4.5).
+5. The counterparty's admin opens the link at **its own** provider, which shows the spec §9.4 disclosures, binds its values for any entries it grants, and records its participation as pending.
+6. Redemption activates both sides (spec §9.4). On one host this is a call between the two organizations' account writers, but it produces and verifies the same participation statements through the same ports (RL-15). ORG-11 then adds only transport.
+
+**Who sees the request.** On 3sln.me, an invitation between two 3sln.me organizations also appears as an item in the invitee organization's admin activity, under the flood limits of §8b.7. Across providers, the invitation is a link delivered out of band, as spec §9.4 already defines. No provider pushes invitations to another provider.
+
+### 8b.3 What a relation grants
+
+**Exactly the live edges, and each edge only its consented fragment grants.** Access always goes through the existing grants and certificates:
+
+```
+Acme (grantor)  --edge: ledger-store, get, /ledgers/2026, expires 2027-04-30-->  Ledgerly (grantee)
+Ledgerly: imported "Acme · Ledgers 2026" --member grant (Ledgerly policy)--> Bob
+Ledgerly: imported resource assigned to the accounting app's fragment --app grant--> accounting.example
+Bob's home provider --member certificate--> Ledgerly verifies --entity certificate (resource, methods ⊆ all hops)--> Acme verifies + checks edge live
+```
+
+Each hop is a grant at its own grantor, checked live (§6.4). The counterpart learns a pairwise actor identifier unless the edge carries `actor_disclosure:"named"` (spec §6.1).
+
+**A relation never grants:**
+
+- owner-interface authority of any kind, including managing members, grants, integrations or relations (spec §6.2 rule 3);
+- membership, or any standing for a counterpart's members inside the organization (§8a.6). A counterpart's member acts only through the counterpart's own entity certificate, bounded by the edge;
+- **transitive access.** An edge A→B and an edge B→C give C nothing from A. Being in one instance with someone gives nothing from their other counterparts. Recognition is per edge (spec §9.3), and sibling access exists only where the document has an explicit sibling entry and each sibling consents (§8b.7, "privilege laundering");
+- onward sharing (`reshare` refused; the composition rule of spec §9.7);
+- access to resources added to the grantor's fragment later, without new consent (spec §9.3);
+- any listing of the counterpart's other relations, members, integrations or resources.
+
+**Pre-acceptance** of receipt from future slot holders is the only standing consent, and only for receiving (spec §9.4). Pre-consent to granting stays forbidden.
+
+### 8b.4 Across providers (ORG-11): what Bindle must specify
+
+**Already specified:** the relation document (§9.2), the participation statement (§9.3), the invitation link and redemption (§9.4), entity certificates (§9.5), imported-resource projection (§10), the `entity` bus reader (§11) and provider discovery through `directory.v1` and `relations.v1` (§3a, §14).
+
+**Gaps closed in spec rev 4.5** (rule text in spec §9.3, §9.4, §9.9 and §14):
+
+1. **Relation events had no signer.** Spec §9.6 sends `connection-revoked` to counterparts and §9.4 sends introductions, but integration SETs are signed with the issuer's brokering key set (integrations §6.1), which an organization-only provider need not publish (`brokered-resources.v1`). Rev 4.5 defines a **relation event** (RL-5):
+   - It is a SET signed with the sending entity's active certification key, which is already discoverable through `directory.v1`.
+   - Its own `typ`, `bindle-relation-event+jwt`, means it can never pass as a certificate or an intent attribution. Its event types are a registry of their own (`relation-edge-state`, `relation-edge-ended`, introduction, recognition, doorbell), so the integrations `connection-revoked` payload is not overloaded.
+   - It is addressed to one counterpart and one instance, and carries the sender's `aep`.
+   - It is verified **without request-path fetches**, against counterpart keys kept warm by background refresh, as member certificates are (spec §5.2). The refresh schedule does not depend on whether the sender is a counterpart, so timing reveals no participation (RL-R1-H1).
+   - Each edge half has a generation; an end is final, and otherwise the highest generation wins, so reordering cannot revive anything.
+   - Senders re-send the latest state of every half at least daily (anti-entropy), so a dropped or unverifiable event converges instead of leaving an import `unavailable` for ever.
+2. **The events endpoint came from an unauthenticated response.** Redemption returned "its events endpoint", so a malicious counterpart could point another provider's outbound deliveries at an internal or third-party URL. Rev 4.5 takes the endpoint only from the counterpart issuer's validated manifest (`relations.v1` `events_endpoint`), and after a move from the current issuer's manifest through the successor index (RL-6). This also settles the `events_endpoint` part of AMD-O10's TBD for relations, without putting anything in identity documents.
+3. **Participation statements never went stale.** A statement confers nothing, but it is shown to admins as evidence ("Acme participates as `buyer`"). Statements had no freshness rule, and a party that had left could still be presented by someone holding its old statement. Rev 4.5 requires a statement to be fresh where it is presented: within 300 s of the invitation's `iat` when carried in an invitation, and within 300 s of verification when returned at redemption or carried in an introduction. A provider never signs a statement for a participation that is not live. Statements therefore need no revocation mechanism (RL-7). This also matches spec §3a.3, under which only an `active` signing key verifies a fresh signature. **Residual:** statements are signed with the identity signing key, which every recovery file contains (R4-H1). A former owner or thief holding a file can sign fresh statements outside the provider. They confer nothing, because redemption and every edge are checked at the parties' own providers, but they can mislead an admin reading an introduction. This goes away with key rotation (deferred, §1c item 1).
+4. **The grantee had no way to learn what it was granted.** Entity certificates name the grantor's `resource` (spec §9.5), but no interop message carried the grantor's resource IDs, contracts and methods to the grantee (RL-R1-H2). Rev 4.5's `relation-edge-state` event carries them for every live grant half, after activation, after every change (including rebinding after a move) and in each anti-entropy round.
+
+**Revocation, end to end.**
+
+| What | Mechanism | Bound |
+| --- | --- | --- |
+| An edge (grantor side) | The grantor ends or suspends it at its own provider. Authority never depends on the event. | Next call at the grantor |
+| An edge (grantee side) | The grantee suspends or ends its acceptance half. The grantor learns it from a `relation-edge-state` or `relation-edge-ended` event and treats the edge as not live. | On receipt; the grantee's provider also stops certifying at once |
+| An actor inside the grantee | The grantee stops certifying (spec §9.6) | Certificate lifetime + 60 s; writes 60 s (90 s with skew) |
+| An entity certificate | The issuer's status endpoint, certification-key revocation (spec §3a.4) | 300 s + 60 s for key revocation |
+| A participation statement | Not revocable; stale after 300 s and unsignable once the participation ends | 300 s |
+| An unredeemed invitation | Withdrawal, refused exactly as an invalid invitation (spec §9.4, rev 4.5) | Immediate at the inviter |
+
+**Discovery.** `directory.v1` discovers **keys**, never relations. Identity documents still list no affiliations (spec §3a.3), and relation participation stays visible only to counterparts (spec §12 item 9). Endpoints come from the issuer's manifest (`relations.v1`). The bilateral public attestation of R1-M5 stays deferred (RL-9).
+
+**Equivocation.** DEVLOG (2026-10-21, artefact references) asked for a transparency log or gossip before cross-provider relations ship. For relations it is not needed (RL-8). The invitation, both participation statements and every edge carry the relation `{artefact, version, digest}`, and redemption fails unless they match exactly. So two parties in an instance always agree on the exact bytes of the matrix that bounds their edges. A publisher serving different bodies to different parties can only make a join fail (a denial of service against itself), never make two parties disagree about what was consented. Head advancement and the "latest version" of a relation remain artefact-references concerns.
+
+**Gates for ORG-11:** the egress gate of security.md on the production runtime; a non-empty foreign-issuer allowlist (R2-M6); artefact-reference caching of every pinned version a live instance depends on (spec §9.8); conformance against a peer written from the spec alone; and the `ORG_FOREIGN_RELATIONS_ENABLED` kill switch (§8b.10).
+
+### 8b.5 Privacy: who can see that a relation exists
+
+| Who | Sees |
+| --- | --- |
+| The public, directories, search, identity documents | Nothing. Relation documents are public; instances and parties are not (spec §12 item 9). |
+| A counterpart with a live edge | The other party's identity, its slot, the edges between the two of them, and fresh participation statements when presented |
+| A party in the same instance with **no** edge to Z | Nothing about Z, unless a counterpart introduces Z (below) |
+| A newcomer | Only the edges that exist (spec §9.4). Never who declined or has not decided. |
+| The organization's admins | All of its relations, edges, pending invitations, introductions and imports |
+| The organization's other members (3sln.me policy) | Only the imported resources they hold grants on, labelled with the grantor's public name and origin (RL-13) |
+| The organization's applications | An imported resource's `grantor` and `instance` in the relay projection (spec §10), which reveals the relation to every application the resource is assigned to. The assignment page says so. |
+| The grantor, about the grantee's members | Pairwise actor identifiers, or verified principals under `"named"` (spec §6.1, §12 item 4) |
+| The home providers of members | Which organization and client a member acts in (spec §12 item 7), never the counterpart |
+
+**Introductions disclose the candidate.** An introduction tells a third party that the proposer is dealing with Z. Bindle cannot prevent a party from telling others about its own business, but 3sln.me sends an introduction only for a candidate that already holds a live edge with the proposing organization in that instance, or that asked to be introduced (RL-12).
+
+### 8b.6 Lifecycle
+
+| Event | Effect on relations (3sln.me, as grantor and as grantee) | Spec basis |
+| --- | --- | --- |
+| **Edge suspended** by its grantor | Generation raised. The grantee receives `relation-edge-state` with `state:"suspended"`, and imports go `unavailable`. Resuming raises the generation again and sends a live `relation-edge-state` with the entries. | Integrations §3.1; spec §9.9 |
+| **Edge ended** or a party **leaves** | Terminal. No grant revives. A later relationship needs a new invitation. | Spec §9.6 |
+| **Expiry** (`expires_at` on a grant or participation) | The sweep ends it like a grantor end, then sends the event | Spec §6.1 |
+| **Billing lapse: read-only** (§12a) | Outgoing edges keep serving read methods; write-capable methods on the organization's resources are refused, as for members. No widening. Narrowing, leaving and export are never gated. | §12a |
+| **Billing lapse: export-only** | Outgoing edges suspended (a suspended `relation-edge-state`), and restored by payment with a new generation. Incoming edges are untouched; they are the counterparts' grants. | §12a |
+| **Ownership transfer** (§12b.3a) | No effect. Ownership is a billing role, not an authority reset (spec §3), so counterparts see nothing. The change-of-control checklist lists the organization's relations, so a sale reviews them, as in §5.5 step 3. | §12b.3a |
+| **Organization recovery** taking effect, or **break-glass** taking effect (§12d) | The organization's `aep` rises once, at effect only (spec §3, R4-M2). Counterparts see the higher `aep` on the next certificate or event and apply their own policy. On 3sln.me as counterpart, RL-4 applies. | Spec §3, §9.5 |
+| **Organization deletion scheduled** (30-day delay) | No effect on relations, and nothing is sent to counterparts, because scheduling is cancellable and a notice would leak the decision. Admins see every relation in the deletion review. | ORG-1 |
+| **Organization deletion takes effect** | A **pre-purge step** leaves every instance while the identity is still served: `relation-edge-ended` for each half, and certification for new requests stops. The purge waits until those events are acknowledged or 72 h pass, keeping the certification keys published until then (spec §9.9), and only then serves the identity as deleted. Counterparts that miss the events find the organization unreachable (row below); its grants are gone with its resources, and its certificates no longer verify. | Spec §9.6, §9.9 |
+| **A counterpart disappears** (uniform 404, unreachable) | Not treated as revocation, because suspension and deletion are indistinguishable (spec §3a.3). Its certificates already fail verification. Outgoing edges stay until their expiry or an admin ends them; after 30 days unreachable, the console flags them. | Spec §3a.3 |
+| **The organization moves** to another provider | See below | Portability §11 |
+| **A counterpart moves** | Edges are keyed by origin principal, so they survive. Certificates and events from the destination verify through the successor index. Anything from the earlier host fails. Events go to the destination issuer's `events_endpoint` (RL-6). Under RL-4, an attested move holds only write-capable methods on outgoing edges, for 72 h with notice or until an admin confirms; an unattested, hand-adopted or contested move holds the edges entirely. The destination re-sends the state of every half (anti-entropy). | Spec §3 (origin principal), §9.9 |
+| **Counterpart authority reset** (an `aep` increase, a key reset without continuity, a move adoption, a contested identity) | RL-4: 3sln.me holds its outgoing edges to that counterpart, refusing its certificates with the uniform error, and marks imports from it. Only an admin's confirmation releases a full hold; a relation event never does. An attested move gets the lighter write-only hold. | Spec §9.5 (provider policy) |
+| **The organization's identity key compromised** | Rotate and revoke (§5.10). Raise the generation on every outgoing edge. Participation statements are re-signed fresh at their next presentation. | §5.10 |
+
+**The organization's own move.** Portability §11 says a move does not move grants or resource identifiers, and that counterparts re-consent to any resource whose identifier changed. For relations (RL-10):
+
+- **Participations travel** in the organization's export (spec §13), keyed by instance and counterpart origin principal.
+- **Incoming edges** (counterparts' grants to the moving organization) live at the counterparts. They survive unchanged, and the counterparts map the destination's certificates through the successor index.
+- **Outgoing edges arrive suspended** at the destination, because their resource identifiers changed. An admin re-binds the values per entry at the destination: a new consent by the grantor, which is its right. Each counterpart then receives a live `relation-edge-state` with a new generation and the new resource IDs (spec §9.9). Its imports are keyed by (grantor origin principal, instance, entry) (spec §10), so they update in place, and its members' grants on them survive. The grantee is told that the grantor moved and rebound the entry. Re-acceptance is needed only if the rebinding comes with a widening upgrade.
+- **Stale relation after a move**: §8b.7.
+
+### 8b.7 Abuse cases
+
+| Abuse | Attack | Mitigation | Residual |
+| --- | --- | --- | --- |
+| **Relation-request spam flood** | An organization floods another with invitations, or a counterpart floods introductions, to bury a legitimate request or to exhaust admins | Invitations need acceptance, and ignoring costs nothing. 3sln.me limits (RL-11): an organization issues at most 300 relation invitations a day; at most 3 per (inviter, invitee) in 30 days; at most **one** pending per (inviter, invitee), so no single inviter can crowd out others; at most 256 pending inbound items per organization. When that is full, new items are refused and the admins are told. Filling it takes 256 distinct paid organizations, and muting them frees the space. Introductions: at most 10 a day per (proposer, receiver), deduplicated per (instance, candidate, slot), expiring after 30 days (§8a.9). An admin can **mute** an organization: its invitations and introductions are declined silently, and the sender cannot tell. Organizations are paid (§12a), so farms cost money. | A determined paid spammer still costs each target one mute |
+| **Event or redemption flood** | A non-counterpart posts forged relation events or redemptions to force directory fetches | Spec §9.9 step 2 and §9.4: no fetch unless the sender is a counterpart in that instance, or the redemption presents a valid, live invitation that this provider issued. The answer is uniform. Per-issuer and global fetch budgets (spec §3a.5). The foreign kill switch. | — |
+| **Impersonation of an organization** | A lookalike handle ("acme-ltd" for "acme") invites a firm, or asks to be introduced | The acceptance page shows the identity URI, handle and verified origin, and warns about a counterparty never seen before. Everything is keyed by `(iss, sub)`, never by name (R1-M6). Verified-domain badges are later (§11). | An admin who ignores the warning |
+| **Lookalike or widened relation document** | A clone with a wider matrix, or a publisher's domain taken over and widened | The full matrix as it applies to the invitee, the "new relation `id`" and "same title, different `id`" warnings (R3-M6), and re-consent on every widening upgrade | Click-through on widening upgrades |
+| **Stale relation after an organization move** | (a) The earlier host keeps signing for the moved organization; (b) someone replays its old participation statements; (c) events keep going to the old endpoint; (d) an unattested "move" is used to take over a counterpart's edges | (a) An artifact whose `iss` is an earlier host fails (spec §3, origin principal), and the source's certification keys are revoked at commit (portability §6.3). (b) Statements are fresh-only (spec §9.3, rev 4.5). (c) The endpoint is taken from the current issuer's manifest only (spec §9.9). (d) Under RL-4 every move adoption is held: an attested one for write-capable methods for 72 h or until an admin confirms (a stolen current file plus the 7-day public wait can produce an attested move, portability §6.1), and an unattested or contested one entirely, until an admin confirms. (e) The destination re-sends edge state, so counterparts converge on the new resource IDs. | A counterpart that runs no successor index keeps failing safe: it refuses the moved organization's certificates |
+| **Privilege laundering through chains** | B holds A's ledger through an A–B edge and has a B–C edge. B puts A's import into the storage fragment it shares with C, or issues certificates for C's actors, or relies on a document like `group` to imply sibling access. | No transitivity: authority is only a direct live edge in the certificate's `instance` (spec §9.5). Imports are omitted from every fragment projected or granted over an edge (spec §9.7). A provider certifies only its own entity's actors, and a host refuses a certificate whose `iss` is not the grantee of a live edge. Sibling access exists only through an explicit sibling entry plus each sibling's consent. Admission into one edge never implies another (spec §9.4). | B **proxying** C's requests under its own identity is undetectable by A, is a violation of spec §6.2 rule 2, and is disclosed on the acceptance page (spec §9.7). Copies B already read cannot be recalled. |
+| **Insider exfiltration through an outward edge** | A rogue admin creates a `share` edge to an outside organization | Widening needs a fresh step-up, every admin gets an immediate notice, and any admin can end the edge at once (§8b.2). The audit records it, hash-chained. | Data read before another admin ends the edge |
+| **Liability dumping or pipeline injection** | An organization pushes unwanted data, such as fake invoices, by inviting a target that only receives, or exploiting pre-acceptance | Acceptance is required. Pre-accepted counterparts are shown to operators and their imports are marked and may be held (spec §9.4, R3-M2). | Pre-acceptance is a deliberate, disclosed risk |
+| **Counterpart takeover** | An attacker takes over a counterpart organization through recovery, break-glass, a key reset or a move made with a stolen current recovery file, then uses its edges | RL-4: hold on the `aep` increase, key reset or move adoption. Recovery and break-glass raise `aep` only at effect, so a cancelled attempt cannot churn holds (R4-M2). | A takeover that does not reset authority (stolen admin session at the counterpart) is the counterpart's own breach, bounded by the edge |
+| **Arity squatting** | An attacker tries to fill a `max:1` slot to block the real holder | Arity is per view, and each party recognizes only holders it consents to (spec §9.3). An attacker cannot fill another party's view. | — |
+| **Import fan-in exhaustion** | A counterpart creates many instances to fill a target's imports | Each edge needs the target's acceptance. 3sln.me caps an organization at 256 live instances and 1,024 live incoming edges until measured (RL-11), and lists imports by relation and slot (§8.5 gap 5). | — |
+
+### 8b.8 Alternatives considered
+
+| Alternative | Why not |
+| --- | --- |
+| **Relation kinds as a fixed enum** (parent, partner, vendor) with built-in access | Authority by label, rejected since revision 1 (§7.2). The user's documents already cover every kind. |
+| **Transitive or inherited access** (a parent reaches its subsidiaries' counterparts; a group reaches every member's resources) | Privilege laundering by design, and incompatible with per-edge consent (the user's decision, §8a.9). Explicit sibling entries cover the real need. |
+| **Governance through a relation** (a parent administers subsidiaries) | Governance is non-delegable (§6.4 rule 4). Direct admin memberships serve the case (§5.5). Still deferred, not rejected, as "governance via relationship" (§5.6). |
+| **Owner approval for every outward edge** | No subject or control change is involved, and approving an integration is already an admin action with the same exposure. Owner approval would stall every relation while the owner is away, and any admin can still end an edge at once (§8b.2). Kept as a possible per-organization setting later, if asked. |
+| **A notified delay before an outward edge goes live** | Data flows are reversible at once, and a delay only postpones the legitimate case. Notices and the ability of any admin to end the edge give the same oversight. |
+| **Relation events signed with the issuer's brokering key set** (as integrations do) | Organization-only providers need not publish one, and a provider-level signature does not bind the event to the sending entity. The certification key is already in the entity's identity document. |
+| **Per-party events endpoint in the redemption response or the identity document** | The first is SSRF-prone (§8b.4 gap 2). The second puts protocol metadata about relations into identity documents, which list no affiliations. |
+| **Revocable participation statements** (status list or revocation SET) | Statements confer nothing. Freshness gives the same result with no new state. |
+| **A public bilateral attestation now** (R1-M5) | Useful against lookalikes, but it publishes business relationships. Deferred until a customer asks for it (RL-9). |
+| **A central instance roster at the creator's provider** | Rejected in §4. It recreates a central authority that per-edge consent makes unnecessary. |
+| **A transparency log for relation documents before ORG-11** | Per-instance digest agreement already prevents parties from disagreeing (§8b.4). |
+| **No hold at all on an attested move** (the first draft of RL-4) | Rejected in review RL-R1-H3. Portability §6.1 allows an attested move with the current recovery file plus a 7-day public wait and no fresh session, so a thief holding the file could move a counterpart and use its edges at once. |
+| **A full hold on an attested move** | It stalls ordinary moves on every counterpart until an admin acts. A write-only hold for 72 h covers the theft case at lower cost (RL-4). |
+
+### 8b.9 Provisional decisions
+
+Each is **Provisional (coordinator), not signed off by the user.** Implementation may proceed on them behind default-off flags; they stay revisable. Reviewer ___ / date ___ / outcome ___ (for each row).
+
+| ID | Decision | Recommendation and reason |
+| --- | --- | --- |
+| RL-1 | **Phasing.** Implementation starts now behind default-off flags. The §13.3 release gates stay: ORG-10 before the first external organization (phase C), ORG-11 after the egress gate, artefact-reference caching and clean-room conformance (phase D). | Recommended. It lets the user's own companies use `group` and `supply` on one host first, without loosening any cross-provider gate. |
+| RL-2 | **Who establishes relations.** Any unheld admin, with a fresh step-up, a full matrix disclosure, notice to every admin and an audit entry. No subject-first step, owner elevation or delay. | Recommended. A relation changes no member's GM grant and no control (§8b.2). It is the same act as approving an integration. |
+| RL-3 | **Narrowing is immediate** by any admin and needs no consent: suspend, end, decline, leave, withdraw. | Recommended. Narrowing is always safe, and it is the remedy against a rogue admin's edge. |
+| RL-4 | **Counterpart authority reset (3sln.me policy; resolves R3-M7 for 3sln.me as grantor).** Triggers: a counterpart's `aep` increase, a key reset without continuity, an unattested or hand-adopted move, or a contested identity (equivocation, portability §8). Effect: hold outgoing edges to it, so its certificates get the uniform refusal, until an admin confirms. The confirmation is bound to that `aep`. Imports from it are marked. Triggers also include an automatically adopted, attested move (portability §8.3), but that gets a **lighter hold**: only write-capable methods are refused, for 72 h with notice to the admins or until an admin confirms. Revised after review RL-R1-H3, because an attested move can be made with a stolen current recovery file and a 7-day public wait (portability §6.1). No relation event releases any hold. | Recommended (R3-M7 position B). Relations are low-churn, so confirming is cheap, and the write-only hold spares ordinary moves from a full stall. The spec keeps this as provider policy (spec §9.5). |
+| RL-5 | **Relation events are signed with the sending entity's certification key**, `typ` `bindle-relation-event+jwt`, with their own type registry, generation ordering, cache-only verification and daily anti-entropy (spec §9.9). | Recommended. The key is already discoverable, and the `typ` separates it from certificates and intents. It departs from RFC 8417's recommended `typ`, which is allowed, and keeps the RFC 8935 media type. |
+| RL-6 | **The events endpoint is issuer-level**, from `relations.v1` `events_endpoint` in the validated manifest, never from a response or an identity document. | Recommended. It closes an SSRF path and settles that part of AMD-O10. |
+| RL-7 | **Participation statements are fresh-only** (300 s), not revocable. | Recommended. No new state, and a provider cannot be made to present a stale statement. The residual is that a recovery-file holder can sign fresh statements outside the provider (§8b.4). They confer nothing, and the residual ends with key rotation. Moving statements to the certification key is the alternative if the user prefers to close it now. |
+| RL-8 | **No transparency log is required for ORG-11.** | Recommended, for the reason in §8b.4. Revisit if relations gain head-advancing automation. |
+| RL-9 | **The public bilateral attestation stays deferred.** No relation is published anywhere. | Recommended. Privacy first; revisit on demand. |
+| RL-10 | **Organization moves:** outgoing edges arrive suspended and an admin re-binds them; incoming edges survive; imports update in place, keyed by origin principal, instance and entry. | Recommended. It follows portability §11 (re-consent when identifiers change) with the least churn for counterparts. |
+| RL-11 | **Limits** (3sln.me): 300 invitations a day per organization; 3 per (inviter, invitee) per 30 days; one pending per pair; 256 pending inbound items per organization, after which new items are refused and admins are told; 10 introductions a day per (proposer, receiver); muting; 256 live instances and 1,024 live incoming edges per organization until measured. | Recommended as starting values. A group of 64 subsidiaries or a buyer with 256 suppliers fits in one day; filling a target's inbox needs 256 paid organizations. |
+| RL-12 | **Introductions** only for a candidate with a live edge to the proposer in that instance, or one that asked. | Recommended, to avoid disclosing a candidate's dealings without cause. |
+| RL-13 | **Member visibility** (3sln.me): admins see all relations; other members see only the imports they hold grants on. | Recommended. Relations are governance-level information. |
+| RL-14 | **First catalogue:** `share`, `group`, `supply` and `accounting-engagement`, published under a reserved `.example` placeholder until publication authority is agreed. The catalogue shows "listed by 3sln.me", never "verified publisher". | Recommended. It follows AGENTS.md on `.example` domains and keeps "publisher unverified" truthful. |
+| RL-15 | **One code path.** Same-host redemption and events go through the same statement and event ports as cross-provider ones; only the transport differs. | Recommended. ORG-11 then adds transport, not semantics, and ORG-10 tests exercise the interop rules. |
+| RL-16 | **Entity-certificate lifetime on 3sln.me: 300 s** (members stay at 660 s). | Recommended, as §15 Q10 suggested: entity certificates are cheap to re-issue in proxy and token forms, and a shorter lifetime bounds grantee-side revocation that the grantor cannot see. |
+| RL-17 | **Persons as relation parties.** The spec keeps `person` in `kinds` (sole traders). 3sln.me v1 lets only organizations create, join or be invited into relations. | Recommended, because it follows the user's "relations are relationships between orgs" without narrowing the spec for other providers. Revisit if sole traders ask for it. |
+
+### 8b.10 Implementation plan
+
+Engine-first (§13): every operation is an ngin Action or Query in a domain module, dispatched in the organization's account single writer. HTTP routes and the console are thin adapters. Tests are mainly engine-level, with seeded chaos.
+
+**Flags** (rows for `packages/flags/registry.mjs`, default off, added by the flags owner):
+
+| Flag | Class | Requires | Gates | Never gated |
+| --- | --- | --- | --- | --- |
+| `ORG_RELATIONS_ENABLED` | a, G A, crit, stateful | `ORGANIZATIONS_ENABLED`, `DIRECTORY_ENABLED` | Creating instances, inviting, accepting, widening, introductions, certificate issuance for new edges | Narrowing, leaving, ending, withdrawing, muting, inbound revocation events, export. Turning it off leaves existing edges readable and endable, but stops new ones. |
+| `ORG_FOREIGN_RELATIONS_ENABLED` | a, G A, crit, stateful (new) | `ORG_RELATIONS_ENABLED`, plus the foreign-issuer allowlist (R2-M6) | Every outbound fetch or POST to another provider for relations (directory, manifest, document fetch, redemption, event delivery) and accepting foreign redemptions and certificates. The kill switch for that egress surface. | Local narrowing. Outbound events are queued while it is off. Those that pass the 72 h retry window are recovered by anti-entropy re-sends (spec §9.9), and authority never depends on them. |
+
+**Slices** (non-overlapping write ownership; interfaces agreed first, below):
+
+| Slice | Scope | Files (new unless marked) | Depends on |
+| --- | --- | --- | --- |
+| ORG-10a [S] | **Relation documents.** The `relation` artefact kind: validator (bounds, `crit`, exact methods, `reshare:true` refused, bus `entity` reader check), the growth table and the upgrade delta, the "matrix as it applies to slot X" projection, digest pinning and the cache port. | `packages/orgs/relation-documents.mjs`; `packages/federation/artefact-store.mjs` hunk (kind registration only) | ART store |
+| ORG-10b [S] | **Instances, invitations and redemption.** Participation records, relation invitations (link type), the acceptance commit (pending), redemption and activation, withdrawal, per-view arity, participation statements (sign fresh, verify, freshness), the flood limits and mute. | `packages/orgs/relation-instances.mjs`, `packages/orgs/relation-invitations.mjs`, `packages/orgs/relation-statements.mjs`; `packages/links` type-registration hunk | 10a, ORG-7 |
+| ORG-10c [S] | **Edges and imports.** Edges as entity connections carrying fragment grants (generation, suspend, resume, end, expiry); imported resources keyed by (grantor origin principal, instance, entry); the composition rule (imports never projected over an edge); the preferences projection hook (relay form); imports listing. | `packages/orgs/relation-edges.mjs`, `packages/orgs/relation-imports.mjs`; one projection hunk in `packages/federation/service.mjs` (serialized after the current editors) | 10b, ORG-3 |
+| ORG-10d [S] | **Entity certificates.** Issuance by the acting organization after its own hop evaluation (`resource`, `methods` ⊆ all hops, `aep`, actor with pairwise or named disclosure, 300 s, status); verification at the grantor (edge live in `instance`, origin principal, uniform failure, no-oracle, write age rule); journal key; brokered tokens for integration-hosted resources. | `packages/identity/entity-certificates.mjs` (new, IDKEYS stream owner; parallel to `member-certificates.mjs`), `packages/orgs/relation-access.mjs`; one RPC-authorization hunk in `packages/federation/service.mjs` | 10c, ORG-4 |
+| ORG-10e [S] | **Relation events and lifecycle.** Signing and verifying relation events (spec §9.9: cache-only verification, generation ordering, `jti` recorded after verification, uniform `202`), `relation-edge-state` carrying entries, daily anti-entropy re-sends, the durable outbox, ingest, introductions and recognition notices, the RL-4 hold, lifecycle hooks (billing stages, deletion effect, key compromise), the expiry and introduction sweep. Bus doorbells to entity grantees. | `packages/orgs/relation-events.mjs`, `packages/orgs/relation-lifecycle.mjs`; `packages/events` hunk for the `entity` reader; `packages/orgs/key-refresh.mjs` hunk adding counterparts to the background-refresh set (owner of that file) | 10b–10d |
+| ORG-10f [S] | **Engine domain, account slice and routes.** | `packages/app/domains/relations.mjs`, `packages/runtime/account/relations.mjs`, `packages/runtime/routes/relations.mjs` (join endpoint, events endpoint, accept landing), `relations.v1` manifest members hunk | 10a–10e |
+| ORG-10g [A] | **Console.** Surfaces listed below. | `apps/web/src/bl/org-relations*.mjs`, `apps/web/src/ui/org-relations*.mjs`, messages hunk | 10f |
+| ORG-11a [S] | **Cross-provider transport.** Foreign redemption and acceptance, event delivery to `events_endpoint` from the manifest, SSRF-safe fetches under budgets (reusing `packages/identity/directory.mjs`), the foreign kill switch. | `packages/orgs/relation-transport.mjs`; `packages/orgs/federation.mjs` hunk (directory and successor-index wiring for counterparts); adapter wiring in `apps/worker/objects.mjs` and `apps/node/resources.mjs` (integrator) | 10f, ORG-7, egress gate |
+| ORG-11b [S] | **Moves and resets.** Export and import of participations, rebinding outgoing edges after the organization's own move, destination re-sends of every half's state, successor-index mapping for counterparts' moves, the RL-4 triggers (including the write-only hold on an attested move) from directory refresh, and the deletion pre-purge leave step. | `packages/orgs/relation-moves.mjs`; a hunk in `packages/orgs/export.mjs` (new, owned by the ORG-12 export slice, which does not exist yet) | 11a, PORT |
+| ORG-11c [S] | **Clean-room conformance peer.** A second relations implementation written from spec §9 alone, run as a separate Node instance, plus the conformance suite. Evidence of interoperability only when written without the 3sln.me code (R2-M6). | `tests/conformance/relations-peer/*` | 11a |
+
+**Engine operations** (`packages/app/domains/relations.mjs`; organization placement and `admin` unless marked):
+
+- *Queries:* `relations.catalogue` (person or organization); `relations.preview` `{artefact, version, digest, slot}` → the validated matrix as it applies to the slot; `relations.list`; `relations.get` `{instance}` → own view, edges both ways, pins, holds; `relations.inbound` (pending invitations and introductions); `relations.imports` `{instance?, slot?}` (also for members, filtered to their grants, RL-13); `relations.audit` `{instance?}`.
+- *Widening actions (step-up):* `relations.create` `{relation pin, slots}`; `relations.invite` `{instance, slot, invitee, values, expires_at?}`; `relations.accept` `{invitation, values, receive, preaccept?}`; `relations.admit` `{introduction, values}` (issues the newcomer an invitation); `relations.upgrade` `{instance, counterpart, version, values?}`; `relations.confirm-counterpart` `{counterpart, aep}` (releases an RL-4 hold).
+- *Narrowing actions (never flag-gated):* `relations.withdraw` `{invitation}`; `relations.decline` `{item}`; `relations.suspend`, `relations.resume`, `relations.end` `{instance, counterpart, direction}`; `relations.narrow` `{instance, counterpart, entries}`; `relations.leave` `{instance}`; `relations.mute` `{organization}`.
+- *Proposals:* `relations.introduce` `{instance, slot, candidate}`.
+- *System (never wire-dispatchable; adapters build a system actor from verified evidence):* `relations.redeem` (join endpoint), `relations.ingest` (events endpoint), `relations.certify` (acting side, from the member-context or proxy path), `relations.authorize` (grantor side, from the RPC hook), `relations.outbox-drain`, `relations.sweep`, `relations.observe-counterpart` (`aep`, key reset, move adoption), `relations.lifecycle` (billing stage, deletion effect, key compromise), `relations.export` and `relations.import` (moves).
+
+**Interfaces agreed first** (ports; each slice codes against these): `RelationDocuments.resolve(pin)`; `Statements.sign(participation)` and `Statements.verify(jws, context)`; `RelationEvents.sign(event)`, `RelationEvents.deliver(counterpart, jws)` and `RelationEvents.verify(jws)`; `EntityCertificates.issue(evaluation)` and `.verify(jws, request)`; `Counterparts.resolve(originPrincipal)` (identity URI, active keys, `aep`, current issuer, events endpoint); `Imports.project(fragment, context)`. Same-host and foreign implementations differ only behind `deliver` and `resolve` (RL-15).
+
+**Test plan.**
+
+- **Engine-level tests per slice**, with injected clock, fake directory, fake transport and capturing outbox: every conformance item of spec §16 "Relations", plus the rev 4.5 additions.
+- **Seeded chaos** (`tests/orgs-relations-chaos.test.mjs`): random instances of 2–12 parties across two simulated providers, interleaving invitations, acceptances, redemptions (doubled and raced), withdrawals, introductions, upgrades, narrowing, leaving, expiry, key rotation, `aep` increases, moves, flag flips, billing stages, and event drop, duplication, reordering and delay, with clock jumps. Invariants, checked after every step:
+  - **C1** No edge is live without both a grantor consent record and a grantee acceptance record.
+  - **C2** Every honoured certificate's `resource` and `methods` lie within the live edge grant in its own `instance` and within the issuer's hop evaluation: effective ⊆ every ceiling.
+  - **C3 No transitivity.** C can reach A's resource only through a live direct edge A→C in a common instance, whatever other edges exist.
+  - **C4** No imported resource appears in any projection or grant over an edge.
+  - **C5** No party recognizes more holders of a slot than `max`.
+  - **C6** After a narrowing commit, the next call is refused, whatever happens to event delivery. Under any reordering, duplication or loss of events, an ended half never revives, the highest generation wins, and anti-entropy converges every receiver's view of each half to its holder's state.
+  - **C7** Non-counterpart events, redemptions and certificates cause no request-path fetch and identical responses. The background-refresh schedule is the same whether or not the sender is a counterpart.
+  - **C8** While an RL-4 hold is active, nothing from that counterpart is honoured; a confirmation for one `aep` does not cover a later reset.
+  - **C9** An introduction never creates an edge, and the candidate's view never contains an undecided or declining party.
+  - **C10** Statements older than 300 s at presentation, or for a participation that ended, never verify.
+- **Adversarial named cases:** forged statement; stale statement replayed after leaving; invitation forwarded to another organization; redemption by a non-invitee; redemption racing withdrawal; lookalike document with the same title; a widening version from a taken-over publisher; re-sharing by composition; a third entity's certificate; proxy forwarding (documented as undetectable); an event from a non-counterpart; an event signed by an earlier host after a move; a redemption response naming an internal events URL (refused; delivery only to the manifest endpoint); an invitation and introduction flood (the legitimate invitation is still deliverable); a held admin trying to accept; a counterpart key rollback; `aep` churn from a cancelled recovery (no hold); deletion effect leaving every instance before the identity is served as deleted; the foreign kill switch stopping all egress while local narrowing still works; a re-signed retry after a lost acknowledgement (`202`, not reprocessed); a forger pre-poisoning a `jti` (impossible, because it is recorded after verification); a resume reordered after an end; a relation event trying to release an RL-4 hold; a takeover by an attested move made with a stolen file (writes held); an invitation whose statement fails after a key rotation (the console says to ask for a new invitation); a grantee's ended acceptance half making the grantor refuse its certificates.
+- **Browser tests** for the console surfaces, in Chromium and Firefox, English and Spanish, light and dark, at 390 and 1280 px.
+- **Cross-provider:** two Node instances on loopback, then the clean-room peer (ORG-11c). Evidence of interoperability only from the clean-room peer.
+
+**Console surfaces** (one question per step, as elsewhere):
+
+- **Relationships tab** in the organization console: each instance with the relation title, the organization's slot, counterparts in its own view, edge states both ways, holds and expiries.
+- **"Share with an organization" wizard:** relation (catalogue or URL) → slot → counterparty by handle, with the resolved identity shown → values per entry, with scoping and expiry → review of the full matrix, what is given and what is received → step-up.
+- **Acceptance page** (the top-level POST landing): every spec §9.4 disclosure, the new-counterparty and new-relation warnings, inline configuration of unconfigured fragments, and the step-up.
+- **Activity items** for admins: inbound invitations, introductions (30-day expiry), widening upgrades, RL-4 holds and unreachable counterparts.
+- **Edge detail:** what we give and what we receive, the actor-disclosure setting, Suspend, End and Leave, and the audit.
+- **Imports view:** grantor name with origin, pre-accepted and held marks, and assignment to the organization's own fragments, with the note that applications learn the relation (§8b.5).
+- **Member view:** imported resources the member holds grants on.
+- **Change-of-control and deletion checklists** list the organization's relations.
+
+**Production gates** (in addition to §13): the hash-chained organization audit; an independent security review of spec §9 and these slices; for ORG-11, the egress gate, artefact-reference caching and conformance with the clean-room peer; organization terms and the DPA, including controller-to-controller disclosure between related organizations (§12, ORG-13). Delivery of relation events to a real external provider is not inferred from local tests.
+
+### 8b.11 Review round RL-R1
+
+A forked adversarial review of revision 5.6 and spec rev 4.5, 2026-10-24. Reviewer sign-off on this round: reviewer ___ / date ___ / outcome ___. "Resolved" means the text now says it; nobody has signed it.
+
+| Finding | Resolution |
+| --- | --- |
+| **H1.** Event verification fetched on the request path, so latency revealed participation. Instance URIs are not secret, because applications see them. | Resolved. Spec §9.9 step 3 is cache-only, with counterparts in the background-refresh set and a refresh schedule independent of participation. The "relies on unguessable instance IDs" sentence was removed. |
+| **H2.** No message told the grantee the grantor's resource IDs, so ORG-11 and move rebinding could not work. | Resolved. The `relation-edge-state` event carries entries with resource IDs, contracts and methods (spec §9.9, §8b.4 gap 4). |
+| **H3.** RL-4's attested-move exception let a thief with a stolen current recovery file move a counterpart and use its edges. | Resolved. An attested move gets a write-only hold for 72 h or until an admin confirms (RL-4). |
+| **M1.** Freshness does not bind a recovery-file holder, who can sign statements. | Stated as a residual (spec §9.3, §8b.4, RL-7). The alternative, moving statements to the certification key, is offered in RL-7. |
+| **M2.** A retry was answered `400`, and a `jti` could be poisoned before verification. | Resolved. A duplicate gets `202` and is not reprocessed, and a `jti` is recorded only after verification. |
+| **M3.** Lost events never reconciled. | Resolved. Daily anti-entropy re-sends (spec §9.9). |
+| **M4.** Generation ordering was underspecified, and events could release holds. | Resolved. An end is final and the highest generation wins per half; events never release a hold. |
+| **M5.** The integrations event identifier was reused with a different payload. | Resolved. A separate registry: `relation-edge-state`, `relation-edge-ended` and `relation-bus-advanced`. |
+| **M6.** Deletion and moves broke signed retries. | Resolved. A pre-purge leave step keeps certification keys published for up to 72 h, and the destination re-sends state after a move. |
+| **M7.** "Between organizations only" contradicted spec `kinds`. | Resolved by RL-17: the spec is unchanged, and 3sln.me v1 offers relations between organizations only. |
+| **M8.** The limits contradicted their own justification. | Resolved. 300 invitations a day, and a full inbox refuses new items and notifies admins (RL-11). |
+| **L1.** Shedding by the claimed issuer let a forger get a victim's events shed. | Resolved. Shedding is by source network before verification, and by budget per verified sender after it. |
+| **L2.** The flag coupling was needless, and queued events could expire. | Resolved. The foreign flag depends on `ORG_RELATIONS_ENABLED` plus the allowlist, and anti-entropy covers expired events. |
+| **L3.** The file plan missed existing files and gave the wrong owners. | Resolved (§8b.10). |
+| **L4.** An invitation dies on key rotation. | Accepted; tested, and the console tells the invitee to ask for a new invitation. |
+| **L5.** The §5.4 wargame disagreed with redemption ordering. | Resolved. |
+| **L6.** A test for an ended acceptance half was missing. | Added (spec §16). |
+
 ## 9. Private membership checks, elements and switching
 
 ### 9.1 Rules
@@ -818,7 +1142,7 @@ The controller never publishes an intermediate `null` during a switch. The previ
 | **A home provider forges certificates for its users** | Inherent to provider custody and stated. Issuer allowlists. Signed approvals later. | Stated limit (ORG-D14) |
 | **A certificate replayed to another organization or client** | Binding by `aud`, `client` and `cnf`; a `jti` on every proof | — |
 | **Invitation theft** (organization or relation) | Principal-bound by default, single use, short `exp`, uniform errors, query redaction (links §8) | An unbound invitation is a bearer capability, and the UI says so |
-| **Relation-invitation spam or liability dumping** | Acceptance is required, invitations are rate-limited per inviter, and ignoring costs nothing | — |
+| **Relation-invitation spam or liability dumping** | Acceptance is required, invitations are rate-limited per inviter, and ignoring costs nothing. Rev 5.6: per-pair and per-organization limits with fair eviction, and muting (§8b.7, RL-11). | — |
 | **Lookalike or over-broad relation documents** (an attacker publishes "supply" with a wide matrix) | The full matrix, as it applies to the invitee, is disclosed before consent. The publisher is shown as unverified. Entries need exact methods. Grantors pick their own values per counterpart. A 3sln.me catalogue of reviewed relations (later). | Consent fatigue on large matrices |
 | **Silent widening through upgrades or future joiners** | A widening upgrade needs re-consent per edge. Pre-consent to granting to future parties is forbidden. | — |
 | **A grantee lies about its actor chain** | The chain is asserted and signed by the grantee's provider in the entity certificate, and disclosed as such. The edge bounds the damage. `actor_disclosure:"named"` uses verified principals. | Named chains still rest on the grantee provider's honesty |
@@ -1469,7 +1793,8 @@ Engine-first: every operation is an ngin Action or Query in a domain module, dis
 | `MEMBER_CERTIFICATES_ENABLED` | a | G A | `DIRECTORY_ENABLED` | crit, stateful. 3sln.me as a **home** provider issuing member certificates, with consent records and status. The subject is the member's account. Revocation and status stay available when it is off. |
 | `ORG_FOREIGN_MEMBERS_ENABLED` | a | G A | `ORGANIZATIONS_ENABLED` | crit, stateful. Verifying certificates from **other** issuers, which means outbound directory fetches. It is the kill switch for that SSRF surface; same-host members keep working. |
 | `ORG_BREAK_GLASS_ENABLED` | a | G A | `ORGANIZATIONS_ENABLED` | crit, stateful. Rev 5.5, §12d.12: gates starting a claim and its effect; aborts, withdrawals, objections, support holds and refunds are never gated. |
-| `ORG_RELATIONS_ENABLED` | a | G A | `ORGANIZATIONS_ENABLED`, `DIRECTORY_ENABLED` | crit, stateful. Relation documents, instances, entity certificates and imports. Cross-provider use is also behind the foreign-issuer allowlist (R2-M6). |
+| `ORG_RELATIONS_ENABLED` | a | G A | `ORGANIZATIONS_ENABLED`, `DIRECTORY_ENABLED` | crit, stateful. Relation documents, instances, entity certificates and imports. Cross-provider use is also behind the foreign-issuer allowlist (R2-M6). Rev 5.6: narrowing, leaving, inbound revocation and export are never gated (§8b.10). |
+| `ORG_FOREIGN_RELATIONS_ENABLED` | a | G A | `ORG_RELATIONS_ENABLED`, `ORG_FOREIGN_MEMBERS_ENABLED` | crit, stateful. Rev 5.6 (§8b.10): the kill switch for relations' outbound fetches and posts to other providers and for accepting foreign redemptions and certificates. Local narrowing keeps working; outbound revocation events queue while it is off. |
 
 ### 13.2 Slices and ownership (non-overlapping; IDs ORG-#)
 
@@ -1486,8 +1811,8 @@ Engine-first: every operation is an ngin Action or Query in a domain module, dis
 | ORG-7 [S] | **Directory profile** (`directory.v1`, spec §3a). Publisher routes; a verifier with SSRF-safe fetch, budgets, caching and continuity pinning, implementing the `resolveIdentityKey` directory hook. Shared with BindleBox and links. | new `packages/identity/directory.mjs`, new `packages/runtime/routes/directory.mjs`, `tests/directory*.test.mjs` | A |
 | ORG-8 [S] | **Member-scoped fragment fields.** | `packages/federation/schema.mjs` hunk, `packages/orgs/member-fields.mjs` | B |
 | ORG-9 [A] | **Templates and drift view.** | `packages/orgs/templates.mjs`, console | B |
-| ORG-10 [S] | **Same-provider relations.** Relation-document validation (artefact class), instances and participation, invitations and joins, edges as fragment grants, entity certificates, imported resources, upgrade and leave, bus `entity` kind, `audit-log/v1`, the generic `share` relation. | `packages/orgs/{relations,instances,certificates,imports}.mjs`, `packages/federation/schema.mjs` hunk (relation validator), events hunk | C |
-| ORG-11 [S] | **Cross-provider relations** (invitations, joins, entity certificates and SETs between providers, over ORG-7). Integrates the artefact-references cache. | `packages/orgs/{instances,certificates}.mjs` hunks | D |
+| ORG-10 [S] | **Same-provider relations.** Relation-document validation (artefact class), instances and participation, invitations and joins, edges as fragment grants, entity certificates, imported resources, upgrade and leave, bus `entity` kind, `audit-log/v1`, the generic `share` relation. **Rev 5.6:** designed in §8b and split into ORG-10a–g (§8b.10). The file names are revised there, because `packages/orgs/certificates.mjs` already holds member certificates. | §8b.10 | C (implementation may start behind the flag, RL-1) |
+| ORG-11 [S] | **Cross-provider relations** (invitations, joins, entity certificates and SETs between providers, over ORG-7). Integrates the artefact-references cache. **Rev 5.6:** split into ORG-11a–c (§8b.10), including a clean-room conformance peer. | §8b.10 | D (implementation may start behind the flag, RL-1) |
 | ORG-12 [S] | **Export, break-glass, critical-action delays, change of control.** Rev 5.5: break-glass and recovery-file reissue are designed in §12d, split into ORG-12a–f and ORG-12r (§12d.12). Export and critical-action delays stay here, undesigned. | `packages/orgs/{export,recovery}.mjs`; break-glass files per §12d.12 | B/D |
 | ORG-13 | **Legal.** DPA, organization terms, privacy section (counsel). | `docs/legal/*` | before public organizations |
 
@@ -1674,6 +1999,7 @@ Rev 3 status: Q1 is accepted. Q2 and Q6 are superseded by the 2026-10-21 clarifi
 | Q18 | ~~**Pending elevations on a change of owner; accepting after rejecting; held owner cancelling a recovery?**~~ **Provisional (coordinator), not signed off by the user (rev 5.4):** elevations pass to the new owner; a subject may accept after rejecting; a held owner cannot cancel a recovery (§12b.2a items 5 and 9, §12b.3). | — |
 | Q19 | ~~**Portable membership export and spec security floors (§12c.4 items 2–3)?**~~ **Provisional (coordinator), not signed off by the user (rev 5.4):** both in the spec (spec §5.1, §5.2a, §13.1). | — |
 | Q20 | **ORG-12 break-glass** (rev 5.5): the provisional decisions BG-1 to BG-17 in §12d.11, notably a third timeout exception (BG-1), support adjudication (BG-16) and reinstatement billing (BG-13). | The coordinator's recommendations are in §12d.11; implementation may proceed behind the default-off flag. |
+| Q21 | **ORG-10/ORG-11 relations** (rev 5.6): the provisional decisions RL-1 to RL-17 in §8b.9. Notably: any admin establishes relations with no owner elevation (RL-2); holding edges on a counterpart's authority reset, except for an attested move (RL-4); relation events signed by certification keys (RL-5); no transparency log for ORG-11 (RL-8); and 3sln.me relations between organizations only (RL-17). | The coordinator's recommendations are in §8b.9. Implementation may proceed behind the default-off flags. |
 
 ## Review round 1
 
