@@ -47,23 +47,51 @@ async function intake(tx,owner,input){
  await applyRules(message,await ownerRules(tx,owner),{now,active:async id=>(await tx.get(key('collection',owner,id)))?.active});
  if(!message.tags.includes('app-message')){if(message.tags.filter(t=>!isSystemTag(t)).length>=32)fail('invalid_actions','The message rule must leave room for the app-message tag.',400);message.tags=['app-message',...message.tags];message.tagProvenance={...message.tagProvenance,'app-message':{source:'app',at:now}};}const {mimeType,grantId,...stored}=message;return stored;
 }
+// F5 (wargame 3): receipts are counted per connection, so one app at its permitted 100/day pace (at most ~300 live
+// receipts across a 48-hour retention window) cannot fill a shared account cap. The account-wide bound still exists,
+// but every connection keeps a reserved share below which the account bound never refuses it. A `reserved` receipt
+// is a short lease: a crash before commit leaves it indeterminate only until the lease lapses, after which it no
+// longer counts and the same transaction may retry. The commit re-checks the lease identity, so a lapsed in-flight
+// attempt cannot commit beside its retry. The reserved share itself is bounded account-wide by `accountHard`, so
+// many connections each under their reserve cannot grow the account without limit. The authoritative capacity check
+// runs in the same metadata transaction as the reservation write, so concurrent sends cannot both pass a full cap.
+export const APP_NOTIFICATION_RECEIPTS=Object.freeze({perConnection:320,account:1024,accountHard:4096,reservedPerConnection:32,retainMs:2*86400000,reservedLeaseMs:5*60000});
+async function liveReceipts(store,prefix,limit,now){
+ // Expired rows are deleted as they are seen; a full page that contained expired rows is re-listed so the live
+ // count at the bound is exact rather than hidden behind stale rows.
+ for(;;){const rows=await store.list({prefix,limit:limit+1});let count=0,expired=0;
+  for(const [path,row]of rows){if(!Number.isSafeInteger(row?.expiresAt))fail();if(row.expiresAt<=now){await store.delete(path);expired++;}else count++;}
+  if(!expired||rows.size<=limit)return count;}
+}
+async function receiptCapacity(store,connectionId,now){
+ const L=APP_NOTIFICATION_RECEIPTS,own=await liveReceipts(store,`app-notification-receipt/${connectionId}/`,L.perConnection,now);
+ if(own>=L.perConnection)fail('rate_limited','This app has too many retained message operations.',429,86400);
+ if(await liveReceipts(store,'app-notification-receipt/',L.account,now)<L.account)return;
+ if(own>=L.reservedPerConnection)fail('rate_limited','Retained app notification operations are full.',429,86400);
+ if(await liveReceipts(store,'app-notification-receipt/',L.accountHard,now)>=L.accountHard)fail('rate_limited','Retained app notification operations are full.',429,86400);
+}
 export async function createAppNotification(c,owner,context){
  const now=Date.now(),input=notificationInput(context.args,context.tx,now);validateContent(input.mimeType,new TextEncoder().encode(input.body));await c.warm(owner);const client=await configuredContext(c,owner,context);const signer=await appNotificationSigner(c.config);
  const fingerprint=await digest(crypto,canonical({input,owner,clientId:client.id,origin:client.origin,connection:context.connection.id,generation:context.connection.generation,notificationGeneration:context.connection.notifications.generation})),receiptKey=`app-notification-receipt/${context.connection.id}/${input.transactionId}`;
- const prior=await c.metadata.get(receiptKey);if(prior){if(prior.fingerprint!==fingerprint)fail('tx_conflict','The transaction was already used for another message.',409);if(prior.state!=='done')fail('indeterminate','The previous notification outcome is unknown.',503);return prior.result;}
- const rows=await c.metadata.list({prefix:'app-notification-receipt/',limit:257});let count=0;for(const [path,row]of rows){if(!Number.isSafeInteger(row.expiresAt))fail();if(row.expiresAt<=now)await c.metadata.delete(path);else count++;}if(count>=256)fail('rate_limited','Retained app notification operations are full.',429,86400);
+ let prior=await c.metadata.get(receiptKey);if(prior&&(!Number.isSafeInteger(prior.expiresAt)||prior.expiresAt<=now)){if(!Number.isSafeInteger(prior.expiresAt))fail();await c.metadata.delete(receiptKey);prior=undefined;}
+ if(prior){if(prior.fingerprint!==fingerprint)fail('tx_conflict','The transaction was already used for another message.',409);if(prior.state!=='done')fail('indeterminate','The previous notification outcome is unknown.',503,Math.max(1,Math.ceil((prior.expiresAt-now)/1000)));return prior.result;}
+ await receiptCapacity(c.metadata,context.connection.id,now);
  await c.store.transaction(tx=>intake(tx,owner,input));
  const bytes=new TextEncoder().encode(input.body);await c.quota.check(owner,{bytes:bytes.length});await budget(c,owner,context.connection,now);await c.messageReceiptBudget.admit(owner,{source:'app-notification',bytes:bytes.length});await c.admitWork(owner,{clientId:client.id});
- const id=crypto.randomUUID(),reservation=await c.quota.reserve(owner,{id,bytes:bytes.length,blobRef:`messages/${owner}/${id}`,kind:'message'}),result={id,accepted:true,receivedAt:now};
- await c.metadata.put(receiptKey,{fingerprint,state:'reserved',expiresAt:now+2*86400000});c.messageReservation=reservation;
+ const id=crypto.randomUUID(),result={id,accepted:true,receivedAt:now};
+ // Authoritative capacity check and reservation write in one transaction (the earlier check only fails fast).
+ await c.metadata.transaction(async tx=>{const held=await tx.get(receiptKey);if(held!==undefined&&held!==null){if(!Number.isSafeInteger(held.expiresAt))fail();if(held.expiresAt>now)fail('indeterminate','The previous notification outcome is unknown.',503,Math.max(1,Math.ceil((held.expiresAt-now)/1000)));await tx.delete(receiptKey);}
+  await receiptCapacity(tx,context.connection.id,now);await tx.put(receiptKey,{fingerprint,state:'reserved',reservation:id,expiresAt:now+APP_NOTIFICATION_RECEIPTS.reservedLeaseMs});});
+ let reservation;try{reservation=await c.quota.reserve(owner,{id,bytes:bytes.length,blobRef:`messages/${owner}/${id}`,kind:'message'});}catch(error){await c.metadata.transaction(async tx=>{if((await tx.get(receiptKey))?.reservation===id)await tx.delete(receiptKey);});throw error;}
+ c.messageReservation=reservation;
  try{
   const provenance={version:1,purpose:'bindle-app-notification-admission-v1',issuer:c.config.APP_ORIGIN,owner,id,clientId:client.id,origin:client.origin,name:client.name,connectionId:context.connection.id,connectionGeneration:context.connection.generation,notificationGeneration:context.connection.notifications.generation,transactionId:input.transactionId,createdAt:input.createdAt,receivedAt:now,subject:input.subject,mimeType:input.mimeType,tags:input.tags,bodyDigest:await digest(crypto,bytes)};
   const attestation={alg:'ES256',kid:signer.kid,keysURL:c.config.APP_ORIGIN+'/.well-known/bindle/app-notification-keys.json',signature:await signer.sign(provenance)};
   await c.blobs.put(reservation.blobRef,bytes,{httpMetadata:{contentType:'application/octet-stream'},storageAdmission:{clientId:client.id}});
   await configuredContext(c,owner,context);
-  await c.store.transaction(async tx=>{if(!await appNotificationAllowed(tx,owner,{appNotification:provenance}))fail('forbidden','App messages were disabled.',403);const routed=await intake(tx,owner,input);
+  await c.store.transaction(async tx=>{const held=await tx.get(receiptKey);if(held?.state!=='reserved'||held.reservation!==id||held.fingerprint!==fingerprint)fail('indeterminate','The notification reservation lapsed before commit.',503);if(!await appNotificationAllowed(tx,owner,{appNotification:provenance}))fail('forbidden','App messages were disabled.',403);const routed=await intake(tx,owner,input);
    const message={id,owner,...routed,mimeType:input.mimeType,size:bytes.length,bytes,receivedAt:now,readAt:null,grantId:null,senderMetadata:{subject:input.subject,tags:input.tags},appNotification:{...provenance,attestation}};
-   const usage=await tx.get(key('message-usage',owner))||{bytes:0,messages:0};if(!Number.isSafeInteger(usage.bytes)||!Number.isSafeInteger(usage.messages)||usage.bytes<0||usage.messages<0)fail();usage.bytes+=bytes.length;usage.messages++;await tx.set(key('message-usage',owner),usage);await tx.set(key('message',owner,id),message);await tx.set(receiptKey,{fingerprint,state:'done',result,expiresAt:now+2*86400000});if(!message.quarantined)await tx.set(key('notification-event',owner,id),{id,owner,messageId:id,createdAt:now});
+   const usage=await tx.get(key('message-usage',owner))||{bytes:0,messages:0};if(!Number.isSafeInteger(usage.bytes)||!Number.isSafeInteger(usage.messages)||usage.bytes<0||usage.messages<0)fail();usage.bytes+=bytes.length;usage.messages++;await tx.set(key('message-usage',owner),usage);await tx.set(key('message',owner,id),message);await tx.set(receiptKey,{fingerprint,state:'done',result,expiresAt:now+APP_NOTIFICATION_RECEIPTS.retainMs});if(!message.quarantined)await tx.set(key('notification-event',owner,id),{id,owner,messageId:id,createdAt:now});
   });await c.scheduleAlarm(Date.now()+1000);return result;
  }finally{c.messageReservation=null;await c.quota.release(id);}
 }

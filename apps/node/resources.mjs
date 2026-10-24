@@ -25,6 +25,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { resolve, join, extname } from 'node:path';
 import {nodeSqlPort} from '../../packages/search/index.mjs';
 import { IdentityRepository, FixedWindowGuard, AccountController } from '../../packages/runtime/accounts.mjs';
+import {organizationOwnerChannels} from '../../packages/identity/owner-channels.mjs';
 import {McpShardController,mcpAuthorities} from '../../packages/mcp/runtime.mjs';
 import {MCP_SHARDS} from '../../packages/mcp/service.mjs';
 import {FederationController,federationMetadata} from '../../packages/federation/runtime.mjs';
@@ -44,6 +45,12 @@ import {identitySecurityPort} from '../../packages/identity/service.mjs';
 import {deletionDueIndex,sweepDeletionDue} from '../../packages/runtime/account-deletion.mjs';
 import {createDeletionNotices} from '../../packages/runtime/deletion-notices.mjs';
 import {transferIdentityPort,createTransferNotices,attestorFromJwk,transferDueIndex,sweepTransferDue} from '../../packages/identity/transfer-out.mjs';
+import {redirectRecordsPort,createRedirectReminders} from '../../packages/identity/redirect-records.mjs';
+import {portabilityClient} from '../../packages/identity/successors.mjs';
+import {redirectCapability} from '../../packages/runtime/redirect-extension.mjs';
+import {transferInIdentityPort} from '../../packages/identity/transfer-in.mjs';
+import {transferInRecoveryPort} from '../../packages/identity/recovery-reissue.mjs';
+import {createNodePortabilityFetch} from '../../packages/identity/node-portability-fetch.mjs';
 import {createExportAdapterPorts} from '../../packages/runtime/account/exports.mjs';
 import {exportNoticePort,exportGrantsPort} from '../../packages/runtime/export-ports.mjs';
 import {lifecycleMode} from '../../packages/runtime/lifecycle-runner.mjs';
@@ -120,7 +127,12 @@ export async function nodeResources({directory,config,formTransport,mailer}){
  // Restore the one bounded waitlist expiry alarm even before its next visitor.
  await guardFor('signup:waitlist:v1');
  const eventWaits=memoryBusWaits(),eventConfig=eventWaits?{EVENT_BUS_WAITER:eventWaits,EVENT_BUS_WAITS_MOUNTED:true}:{};
- let integrationConfig={};const deletionPorts={},transferPorts={},deletionConfig={ACCOUNT_DELETION_PORTS:deletionPorts,TRANSFER_OUT_PORTS:transferPorts,
+ // PORT-4/PORT-6 transfer-in ports, as the Worker's workerTransferOutConfig: the identity and recovery ports and the
+ // DNS-pinned public-IPv4 portability egress (packages/identity/node-portability-fetch.mjs). Injected
+ // PORTABILITY_DNS_LOOKUP/PORTABILITY_HTTPS_REQUEST replace only DNS and the socket; the screening policy stays. New
+ // transfer-ins still need IDENTITY_TRANSFER_IN_ENABLED.
+ const transferInPorts={identity:transferInIdentityPort(repository),recovery:transferInRecoveryPort(repository),fetch:createNodePortabilityFetch({...typeof config.PORTABILITY_DNS_LOOKUP==='function'?{lookup:config.PORTABILITY_DNS_LOOKUP}:{},...typeof config.PORTABILITY_HTTPS_REQUEST==='function'?{request:config.PORTABILITY_HTTPS_REQUEST}:{}})};
+ let integrationConfig={};const deletionPorts={},transferPorts={},deletionConfig={ACCOUNT_DELETION_PORTS:deletionPorts,TRANSFER_OUT_PORTS:transferPorts,TRANSFER_IN_PORTS:transferInPorts,
   // DX-1/DX-2 export ports. Grants read only shard files that already exist (MCP fan-out never creates stores).
   exportPorts:createExportAdapterPorts({repository,notice:exportNoticePort({repository,mailer}),contributorPorts:{grants:exportGrantsPort({
    devices:async owner=>{if(!existsSync(join(directory,'federation',`${FEDERATION_LAYOUT}-${owner}.sqlite`)))return [];federationShard(owner);return [...(await federationMap.get(owner).metadata.list({prefix:'federation/family/'})).values()].filter(row=>row.subject===`${config.APP_ORIGIN}/entities/${owner}`);},
@@ -128,7 +140,7 @@ export async function nodeResources({directory,config,formTransport,mailer}){
    mcp:async owner=>{const rows=[];for(let n=0;n<MCP_SHARDS;n++){const shard=String(n).padStart(2,'0');if(!existsSync(join(directory,'mcp',`mcp-auth-v1-64-${shard}.sqlite`)))continue;const result=await mcpShard(shard).invoke('grants',[owner]);if(!result.ok)throw Object.assign(new Error(result.error.message),result.error);rows.push(...result.result);}return rows;}})}})};// filled once the shards exist (below)
  const accounts={get:id=>{
    if(!/^[a-f0-9-]{36}$/.test(id))throw new Error('Invalid account identifier');
-   if(!accountMap.has(id)){const metadata=new SqliteMetadata(join(directory,'accounts',id+'.sqlite'));const controller=flagWriter(new AccountController({metadata,gate:new SerialGate(),blobs,archives,config:{...config,...integrationConfig,...lifecycleConfig,...deletionConfig,...eventConfig,FORM_POSTBACK_TRANSPORT:formTransport,DIRECTORY_EGRESS:directoryEgress,DEVELOPER_CONTACT_POPULATION:population,BILLING_CATALOG:catalog,FEDERATION_IDENTITY_CHECK:async(owner,epoch)=>{const account=await repository.get(owner);return account?.status==='active'&&await federationEpoch(account)===epoch;},WORK_AUTHORITY:abuse,CONVERSATION_ACCOUNT:owner=>accounts.get(owner),IDENTITY_ACCOUNT:async owner=>{const account=await repository.get(owner);return account?{status:account.status,handle:account.handle,kind:account.kind==='organization'?'organization':'person',aep:account.aep,identityUri:account.identityUri??null}:null;}},sql:metadata.sql}),flagsRuntime,{flagStats});metadata.onAlarm=()=>controller.alarm();metadata.getAlarm().then(time=>{if(time)metadata.arm(time);});accountMap.set(id,{metadata,controller});}return accountMap.get(id).controller;
+   if(!accountMap.has(id)){const metadata=new SqliteMetadata(join(directory,'accounts',id+'.sqlite'));const controller=flagWriter(new AccountController({metadata,gate:new SerialGate(),blobs,archives,config:{...config,...integrationConfig,...lifecycleConfig,...deletionConfig,...eventConfig,FORM_POSTBACK_TRANSPORT:formTransport,DIRECTORY_EGRESS:directoryEgress,DEVELOPER_CONTACT_POPULATION:population,BILLING_CATALOG:catalog,FEDERATION_IDENTITY_CHECK:async(owner,epoch)=>{const account=await repository.get(owner);return account?.status==='active'&&await federationEpoch(account)===epoch;},WORK_AUTHORITY:abuse,CONVERSATION_ACCOUNT:owner=>accounts.get(owner),ORGANIZATION_OWNER_CHANNELS:organizationOwnerChannels({config,identity:sub=>repository.get(sub),account:owner=>accounts.get(owner),mailer}),ORGANIZATION_OWNER_PUSH:createPushTransport(config),IDENTITY_ACCOUNT:async owner=>{const account=await repository.get(owner);return account?{status:account.status,handle:account.handle,kind:account.kind==='organization'?'organization':'person',aep:account.aep,identityUri:account.identityUri??null}:null;}},sql:metadata.sql}),flagsRuntime,{flagStats});metadata.onAlarm=()=>controller.alarm();metadata.getAlarm().then(time=>{if(time)metadata.arm(time);});accountMap.set(id,{metadata,controller});}return accountMap.get(id).controller;
  }};
 
  population=activePopulationPort({repository,accounts,threshold:Number(config.DEVELOPER_CONTACT_ACTIVE_THRESHOLD??1500),authority:async(name,method,input)=>(await guardFor(name)).populationAction(method,input)});await (await guardFor('active-user-v1/census')).populationAction('baseline');
@@ -201,10 +213,12 @@ export async function nodeResources({directory,config,formTransport,mailer}){
   const run=()=>sweepDeletionDue({index:deletionDue,accounts}).catch(()=>{});lifecycleTimers=[setTimeout(run,60000),setInterval(run,6*3600000)];for(const timer of lifecycleTimers)timer.unref();
  }
  // PORT-2 scheduler backstop: steps due transfers and ends moved records after their windows (the account alarm is primary).
- {const run=()=>sweepTransferDue({index:transferDue,identity:transferPorts.identity,accounts}).catch(()=>{});const timers=[setTimeout(run,60000),setInterval(run,6*3600000)];for(const timer of timers)timer.unref();lifecycleTimers.push(...timers);}
+ // Opted-in redirect expiry reminders over the injected mailer (sendRedirectReminder); acceptance only, never delivery.
+ {let reminders=null;try{reminders=createRedirectReminders({records:redirectRecordsPort(repository),mail:mailer??null,origin:config.APP_ORIGIN,capability:account=>redirectCapability(config,account),client:typeof transferInPorts?.fetch==='function'?portabilityClient({fetch:transferInPorts.fetch}):null});}catch{/* reminder rows wait */}
+ const run=()=>sweepTransferDue({index:transferDue,identity:transferPorts.identity,accounts,reminders}).catch(()=>{});const timers=[setTimeout(run,60000),setInterval(run,6*3600000)];for(const timer of timers)timer.unref();lifecycleTimers.push(...timers);}
  linkedLimits={consume:(key,window)=>abuse.consume('linked-v1:'+key,window)};
  // DX-2: the edge export stream reads parts and payloads directly from the buckets, as the Worker's bindings do.
  Object.assign(integrationConfig,{BLOBS:blobs,ARCHIVES:archives});
  const attachDeviceGrant=({linked,drain})=>{if(!deviceMounted)return;device.linked=linked;device.drain=drain;for(const {controller}of federationMap.values())attachAppSessions(controller.service,{linked,config});};
- return {redirectExtensionDue:transferDue,flagsRuntime,flagStats,integrationConfig,incremental,eventWaits,repository,deviceRequests,linkedLimits,linkedPollLimits,accounts,abuse,population,assets,mcp,federation,federationShard,attachDeviceGrant,brokering,federationEntries:federationEntryStore,adminStore,catalog,close(){const statsClosed=flagStats.close();artefactDb.close();incrementalDb?.close();brokeringDb?.close();for(const timer of lifecycleTimers)clearTimeout(timer);lifecycleDb?.close();catalogDb.close();adminDb.close();for(const {db}of entryShards.values())db.close();identities.close();deviceDb.close();for(const {metadata}of accountMap.values())metadata.close();for(const {metadata}of guardMap.values())metadata.close();for(const {metadata}of mcpMap.values())metadata.close();for(const {metadata}of federationMap.values())metadata.close();return statsClosed;}};
+ return {transferInPorts,redirectExtensionDue:transferDue,flagsRuntime,flagStats,integrationConfig,incremental,eventWaits,repository,deviceRequests,linkedLimits,linkedPollLimits,accounts,abuse,population,assets,mcp,federation,federationShard,attachDeviceGrant,brokering,federationEntries:federationEntryStore,adminStore,catalog,close(){const statsClosed=flagStats.close();artefactDb.close();incrementalDb?.close();brokeringDb?.close();for(const timer of lifecycleTimers)clearTimeout(timer);lifecycleDb?.close();catalogDb.close();adminDb.close();for(const {db}of entryShards.values())db.close();identities.close();deviceDb.close();for(const {metadata}of accountMap.values())metadata.close();for(const {metadata}of guardMap.values())metadata.close();for(const {metadata}of mcpMap.values())metadata.close();for(const {metadata}of federationMap.values())metadata.close();return statsClosed;}};
 }

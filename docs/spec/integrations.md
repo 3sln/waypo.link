@@ -486,6 +486,10 @@ After the retry window:
 - undelivered non-revocation events are dropped, the connection becomes `degraded`, and the owner is informed;
 - undelivered revocation events are recorded as unacknowledged (§7.3). Safety does not depend on them.
 
+When the window ends for one event, the connection's whole pending backlog expires with it.
+
+Pending events are bounded per connection, below the account-wide bound, so one connection's backlog cannot fill the account's outbox. A refused non-revocation event never blocks later events of other connections; the provider re-derives it from current state. Pending `credential-revoked` events of one connection are merged while their grants fit one event: the grants are unioned and the latest `until` is kept.
+
 Event delivery uses the provider's SSRF-safe egress. Response bodies are bounded to 4 KiB, and response time is bounded.
 
 ## 7. Severance

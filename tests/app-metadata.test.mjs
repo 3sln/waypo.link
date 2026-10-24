@@ -44,7 +44,7 @@ test('concurrent MCP consent reads share one metadata fetch and durable snapshot
  const {McpAuthorization}=await import('../packages/mcp/service.mjs');const {MemoryMessagingStore}=await import('../packages/messaging/store.mjs');
  const store=new MemoryMessagingStore();let calls=0,release,started;const wait=new Promise(resolve=>{release=resolve;}),fetching=new Promise(resolve=>{started=resolve;});
  const registered={...client,metadataSources:{webAppManifest:origin+'/manifest'}};
- const service=new McpAuthorization({metadata:{transaction:fn=>store.transaction(fn)},config:{APP_ORIGIN:'https://identity.example',MCP_CLIENTS:JSON.stringify([registered]),APP_METADATA_FETCH:async()=>{calls++;started();await wait;return json({name:'Fetched once'});}}});
+ const service=new McpAuthorization({metadata:{transaction:fn=>store.transaction(fn)},config:{APP_ORIGIN:'https://identity.example',APP_METADATA_DISCOVERY_ENABLED:'true',MCP_CLIENTS:JSON.stringify([registered]),APP_METADATA_FETCH:async()=>{calls++;started();await wait;return json({name:'Fetched once'});}}});
  const {requestId}=await service.begin({client_id:client.id,redirect_uri:client.redirectUris[0],response_type:'code',code_challenge:await digest(crypto,'A'.repeat(43)),code_challenge_method:'S256',state:'singleflight-state',scope:'mcp:items_list',resource:'https://identity.example/mcp'});
  const reads=[service.inspect('owner',requestId),service.inspect('owner',requestId)];
  // Both reads are in flight while the first fetch is held: a bounded number of event-loop turns, never wall time.

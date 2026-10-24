@@ -227,7 +227,7 @@ export function createDeviceGrantProvider({issuer,clients=[],linked,shard,nonces
    const client=eligible(view.app.clientId),owner=view.account.id,service=serviceOf(owner),target={owner,linkedRequestId:view.requestId};
    if(!featureAllowed({owner,clientId:client.id}))fault('access_denied');await sweepDeviceFamilies(service,owner);
    await deviceConsentApprove(service,context,{...target,client,requests:view.app.requests,approved});
-   try{return await linked.approve({requestId,code,approved:true,...choice!==undefined?{choice}:{},...accountHandle!==undefined?{accountHandle}:{}},context);}
+   try{return await linked.approve({requestId,code,approved:true,kind:'app',...choice!==undefined?{choice}:{},...accountHandle!==undefined?{accountHandle}:{}},context);}
    catch(error){await deviceConsentRevert(service,target);throw error;}
   },
   /** Resource RPC with a DPoP-bound access token (`Authorization: DPoP`, spec §6.3). `input`: {authorization, dpop,

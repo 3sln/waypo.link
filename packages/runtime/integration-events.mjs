@@ -71,6 +71,12 @@ function eventInput(e){
  else{ok(Array.isArray(e.grants)&&e.grants.length>0&&e.grants.length<=64&&new Set(e.grants).size===e.grants.length&&e.grants.every(g=>typeof g==='string'&&GRANT.test(g))&&Number.isSafeInteger(e.until)&&e.until>0);Object.assign(out,{grants:[...e.grants],until:e.until});}
  return out;
 }
+// Every row under a prefix, paged with startAfter (storage pages are bounded; a store that ignores startAfter still
+// terminates because only keys after the last one seen are taken). Callers bound the prefix's size by the caps.
+async function rowsUnder(tx,prefix,page=256){
+ const out=[];let after='';
+ for(;;){const got=[...(await tx.list({prefix,startAfter:after,limit:page})).entries()].filter(([k])=>k>after);out.push(...got);if(got.length<page)return out;after=got.at(-1)[0];}
+}
 async function meta(tx){const m=await tx.get(META);return m?.v===1?{bells:0,...m}:{v:1,cursor:0,order:0,rows:0,log:0,unacked:0,bells:0};}
 async function conn(tx,id){const k=await tx.get(CONN+id);return k?.v===1?k:{v:1,seq:0,generation:0};}
 async function remove(tx,m,key){await tx.delete(key);if(bell(key))m.bells=Math.max(0,m.bells-1);/* EV-3 */else m.rows=Math.max(0,m.rows-1);}
@@ -81,7 +87,8 @@ async function put(tx,m,e,now,limits){
  // EV-3: doorbells take their own budget and never count against (or get evicted by) the rows below.
  if(e.type==='subject-deleted'){const key=ROW+e.connection+'/subject-deleted';if(await tx.get(key))return {coalesced:true};m.order++;m.rows++;await tx.put(key,{...e,key,order:m.order,priority:PRIORITY[e.type],createdAt:now,nextAt:Math.max(now,e.notBefore),attempts:0});return {coalesced:false};}
  if(e.type==='bus-advanced')return putDoorbell(tx,m,e,now,limits);
- const prefix=ROW+e.connection+'/',rows=[...(await tx.list({prefix,limit:limits.perConnection+limits.doorbellsPerConnection+1/* EV-3 */})).entries()].filter(([k])=>!bell(k)),drop=new Set();let key,carry;
+ // Wargame3 F2: count this connection's rows exactly (paged), so the per-connection ceilings below actually hold.
+ const prefix=ROW+e.connection+'/',rows=(await rowsUnder(tx,prefix)).filter(([k])=>!bell(k)),drop=new Set();let key,carry;
  const supersede=k=>{const old=rows.find(([x])=>x===k)?.[1];if(old){drop.add(k);carry=old.firstAttemptAt;}};
  if(e.type==='preferences-updated'){key=prefix+'p:'+encodeURIComponent(e.fragment);supersede(key);}
  else if(e.type==='resource-detached'){key=prefix+'d:'+encodeURIComponent(e.resource);supersede(key);}
@@ -93,6 +100,13 @@ async function put(tx,m,e,now,limits){
   if(rows.some(([,r])=>r.type==='connection-revoked'&&r.floor>=e.floor&&(r.terminal||!e.terminal)))return {coalesced:true};
   for(const [k,r] of rows)if(r.type==='connection-revoked'&&r.floor<=e.floor&&(e.terminal||!r.terminal)||r.type==='connection-resumed'&&r.generation<e.floor)drop.add(k);
   key=prefix+'r:'+pad(m.order+1);
+ }else if(e.type==='credential-revoked'){
+  // Wargame3 F2: one pending credential-revoked per connection while the grants fit one event: union the grants and
+  // keep the latest `until`. The older row is replaced (never edited in place), so an in-flight attempt on it settles
+  // as superseded and the merged row is sent afresh; its 72 h window carries over.
+  const merge=rows.find(([k,r])=>r.type==='credential-revoked'&&!drop.has(k)&&new Set([...r.grants,...e.grants]).size<=64);
+  if(merge){const [k,r]=merge;drop.add(k);carry=r.firstAttemptAt;e={...e,grants:[...new Set([...r.grants,...e.grants])],until:Math.max(r.until,e.until)};}
+  key=prefix+'c:'+pad(m.order+1);
  }else key=prefix+'c:'+pad(m.order+1);
  // X6-S1: a revocation is never refused inside a severance commit. Over the caps it evicts this connection's
  // non-control rows (an integration that misses them reads @preferences); only the hard ceiling (twice the caps,
@@ -326,7 +340,7 @@ async function settle(x,owner,port,r,c,lease,outcome){
   else if(now-cur.firstAttemptAt>=x.limits.window){
    // X6-S2: the endpoint failed for the whole window, so the connection's backlog expires with this row instead of
    // starting its own 72 h one row at a time; revocations among it are recorded as unacknowledged.
-   result='expired';for(const [key,row] of await tx.list({prefix:ROW+c.id+'/',limit:x.limits.perConnection*2+x.limits.doorbellsPerConnection+1/* EV-3 */})){if(row.type==='subject-deleted'&&now-(row.firstAttemptAt??row.nextAt)<x.limits.window)continue;await remove(tx,m,key);
+   result='expired';for(const [key,row] of await rowsUnder(tx,ROW+c.id+'/')/* wargame3 F2: the whole backlog, paged */){if(row.type==='subject-deleted'&&now-(row.firstAttemptAt??row.nextAt)<x.limits.window)continue;await remove(tx,m,key);
     if(REVOCATION.has(row.type))await unacked(tx,m,{...entry,type:row.type,seq:row.seq??null,reason:'expired'},x.limits);else if(!k.degraded){k.degraded=true;health=true;}
     if(key!==r.key)await log(tx,m,{at:now,connection:c.id,type:row.type,outcome:'expired',code:'backlog'},x.limits);}}
   else{cur.lastError=outcome.code;await tx.put(r.key,cur);result='retrying';}
@@ -349,7 +363,13 @@ async function ingest(x,owner){
   let ingested=0,full=false;
   for(const e of out.events.filter(e=>Number.isSafeInteger(e?.seq)&&e.seq>m.cursor).sort((a,b)=>a.seq-b.seq)){
    const mapped=fromConnectionEvent(e);
-   if(mapped)try{await put(tx,m,mapped,now,x.limits);ingested++;}catch(error){if(error?.code==='integration_events_full'){full=true;break;}throw error;}
+   // Wargame3 F2: a refused non-revocation (a resume) never stops ingest behind it, since a later revocation for
+   // another connection must still get through. It is skipped without advancing that connection's generation, and the
+   // resync below re-derives it from current state once there is room. Only a refused revocation stops the cursor.
+   if(mapped)try{await put(tx,m,mapped,now,x.limits);ingested++;}catch(error){if(error?.code!=='integration_events_full')throw error;if(REVOCATION.has(mapped.type)){full=true;break;}m.resync=true;m.cursor=e.seq;
+    // Review follow-up: remember the skipped resume on the connection record, so later unmapped events that advance
+    // k.generation cannot make the resync below believe the connection is current and drop the resume for good.
+    if(mapped.type==='connection-resumed'){const k=await conn(tx,mapped.connection);if(!k.pendingResume){k.pendingResume=true;await tx.put(CONN+mapped.connection,k);}}continue;}
    if(mapped||typeof e.connection==='string'&&CONNECTION.test(e.connection)&&Number.isSafeInteger(e.generation)){const k=await conn(tx,e.connection);if(e.generation>k.generation){k.generation=e.generation;await tx.put(CONN+e.connection,k);}}
    m.cursor=e.seq;
   }
@@ -357,19 +377,35 @@ async function ingest(x,owner){
   // revoked below its current value, and a live connection is resumed at it. Retried until it fits.
   if(out.gap)m.resync=true;
   if(m.resync&&!full&&connections){
-   try{for(const c of connections){if(!endpointOf(c,x.issuer)||!Number.isSafeInteger(c.generation))continue;const k=await conn(tx,c.id);if(c.generation<=k.generation)continue;
-    await put(tx,m,{type:'connection-revoked',connection:c.id,floor:c.generation,terminal:c.state==='disconnected'},now,x.limits);if(LIVE.includes(c.state))await put(tx,m,{type:'connection-resumed',connection:c.id,generation:c.generation},now,x.limits);
-    k.generation=c.generation;await tx.put(CONN+c.id,k);ingested++;}delete m.resync;}catch(error){if(error?.code!=='integration_events_full')throw error;full=true;}
+   let pending=false;
+   try{for(const c of connections){if(!endpointOf(c,x.issuer)||!Number.isSafeInteger(c.generation))continue;const k=await conn(tx,c.id);if(c.generation<k.generation||c.generation===k.generation&&!k.pendingResume)continue;
+    // A pending resume at the current generation needs only the resume (its revocation was already ingested).
+    if(c.generation>k.generation||!LIVE.includes(c.state))await put(tx,m,{type:'connection-revoked',connection:c.id,floor:c.generation,terminal:c.state==='disconnected'},now,x.limits);
+    // A refused resume leaves this connection for the next resync (its revocation above coalesces), never the others.
+    if(LIVE.includes(c.state))try{await put(tx,m,{type:'connection-resumed',connection:c.id,generation:c.generation},now,x.limits);}catch(error){if(error?.code!=='integration_events_full')throw error;pending=true;continue;}
+    k.generation=c.generation;delete k.pendingResume;await tx.put(CONN+c.id,k);ingested++;}if(!pending)delete m.resync;}catch(error){if(error?.code!=='integration_events_full')throw error;full=true;}
   }
-  await tx.put(META,m);return {ingested,cursor:m.cursor,full,gap:out.gap};
+  await tx.put(META,m);return {ingested,cursor:m.cursor,full,gap:out.gap,...m.resync?{resync:true}:{}};
  });
  if(result.cursor>start)try{await port.ack({through:result.cursor});}catch{/* The cursor already guards against re-ingest. */}
  return result;
 }
+// Wargame3 F2: delivery and status page through the outbox per connection, at most each connection's own ceiling
+// (twice the cap, its doorbells and a subject deletion), so a large backlog under one connection id never hides the rows
+// of connections whose ids sort after it.
+async function pendingRows(x){
+ const per=x.limits.perConnection*2+x.limits.doorbellsPerConnection+1,out=[];let after='';
+ for(let guard=0;guard<4096;guard++){
+  const [first]=[...(await x.store.list({prefix:ROW,startAfter:after,limit:1})).keys()].filter(k=>k>after);if(!first)break;
+  const id=first.slice(ROW.length).split('/')[0],prefix=ROW+id+'/';
+  out.push(...[...(await x.store.list({prefix,limit:per})).values()]);after=prefix+'\uffff';
+ }
+ return out;
+}
 async function deliver(x,owner,{limit}={}){
  if(limit!==undefined&&(!Number.isSafeInteger(limit)||limit<1||limit>x.limits.sends))fault('invalid_request','Unsupported delivery request.');
  const port=x.connections(owner),started=x.clock.now(),max=limit??x.limits.sends,conns=new Map((await listed(port)).map(c=>[c.id,c]));
- const held=r=>!REVOCATION.has(r.type)&&!LIVE.includes(conns.get(r.connection)?.state??'active')||r.type==='preferences-updated'&&typeof x.snapshot!=='function',load=async()=>[...(await x.store.list({prefix:ROW,limit:x.limits.rows+x.limits.doorbellRows+1/* EV-3 */})).values()].sort((a,b)=>a.priority-b.priority||a.order-b.order);
+ const held=r=>!REVOCATION.has(r.type)&&!LIVE.includes(conns.get(r.connection)?.state??'active')||r.type==='preferences-updated'&&typeof x.snapshot!=='function',load=async()=>(await pendingRows(x)).sort((a,b)=>a.priority-b.priority||a.order-b.order);
  // Head of line per connection: a pending revocation (due or backing off) holds back resumes and other events.
  const head=(rows,id,gone=new Set())=>Math.min(...rows.filter(r=>r.connection===id&&!gone.has(r.key)&&!held(r)).map(r=>r.priority));
  const rows=await load(),gone=new Set(),per=new Map(),failed=new Map(),tally={acknowledged:0,rejected:0,retrying:0,expired:0,dropped:0,held:0,skipped:0,superseded:0};let sent=0;
@@ -389,7 +425,7 @@ async function deliver(x,owner,{limit}={}){
 async function status(x){
  const values=async(prefix,limit)=>[...(await x.store.list({prefix,limit})).entries()];
  return {
-  pending:(await values(ROW,x.limits.rows+x.limits.doorbellRows+1/* EV-3 */)).map(([,r])=>({connection:r.connection,type:r.type,attempts:r.attempts,createdAt:r.createdAt,nextAt:r.nextAt,...r.firstAttemptAt?{firstAttemptAt:r.firstAttemptAt}:{},...r.seq?{seq:r.seq}:{},...r.lastError?{lastError:r.lastError}:{}})),
+  pending:(await pendingRows(x)).map(r=>({connection:r.connection,type:r.type,attempts:r.attempts,createdAt:r.createdAt,nextAt:r.nextAt,...r.firstAttemptAt?{firstAttemptAt:r.firstAttemptAt}:{},...r.seq?{seq:r.seq}:{},...r.lastError?{lastError:r.lastError}:{}})),
   connections:(await values(CONN,257)).map(([k,v])=>({connection:k.slice(CONN.length),seq:v.seq,degraded:v.degraded===true,delivered:v.delivered??null})),
   unacknowledged:(await values(UNACKED,x.limits.unacked+1)).map(([,v])=>v),
   log:(await values(LOG,x.limits.log+1)).map(([,v])=>v),
@@ -477,7 +513,9 @@ export const methods={
   const ingested=await perform(engine,new IngestIntegrationEvents({actor}));if(ingested.ready===false)return {ready:false};
   const rang=doorbellsEnabled(this.config,owner)&&(typeof this.config.INTEGRATION_EVENT_PORTS?.doorbellGrant==='function'||(await this.metadata.list({prefix:'evbus/sub/',limit:1})).size)?await perform(engine,new RingEventDoorbells({actor})):null;/* EV-3 */
   const delivered=await perform(engine,new DeliverIntegrationEvents({actor}));
-  const next=Math.min(Number.isSafeInteger(delivered.next)?delivered.next:Infinity,Number.isSafeInteger(rang?.next)?rang.next:Infinity);/* EV-3 */
+  // Wargame3 F2: a pending resync (a skipped resume) or a full outbox is retried even once no row is due.
+  const retry=ingested.resync||ingested.full?Date.now()+60000:Infinity;
+  const next=Math.min(Number.isSafeInteger(delivered.next)?delivered.next:Infinity,Number.isSafeInteger(rang?.next)?rang.next:Infinity,retry);/* EV-3 */
   if(Number.isSafeInteger(next))await this.scheduleAlarm(Math.max(next,Date.now()+1000));
   return {ingested,delivered,...rang?{rang}:{}};
  },

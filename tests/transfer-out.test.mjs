@@ -56,7 +56,7 @@ test('commit effects: identity moved, sessions and recovery ended, keys destroye
  assert.deepEqual(Object.keys(record.stages),COMMIT_STAGES);assert.deepEqual(fx.effects,{revoked:1,severed:1,erased:1,purged:0,destroyed:1});
  assert.deepEqual(fx.events.filter(e=>!e.startsWith('notice.')),['keys.destroy','delegations','connections','grants']);
  assert.ok(fx.notices.some(n=>n.kind==='committed'&&!n.disputeToken));
- const due=await fx.ports.due.due({now:Infinity});assert.deepEqual(due.map(row=>row.kind).sort(),['moved-end','tick']);
+ const due=await fx.ports.due.due({now:Infinity});assert.deepEqual(due.map(row=>row.kind).sort(),['moved-end','moved-probe','tick'],'redirect management adds the 30-day target probe');
  // The owner's own surface shows identity_moved (spec §6.3).
  const status=await fx.status();assert.equal(status.error,'identity_moved');assert.deepEqual(status.moved.to,{iss:DEST,identity:`${DEST}/identity/${OWNER}`});
  // A committed move never attests again and refuses a different statement or a new transfer.
@@ -362,9 +362,9 @@ test('moved purge through the shared executor: plan, reason, connections vocabul
  const port=transferIdentityPort(fx.repository,{clock:fx.clock.now});
  assert.deepEqual(await port.endMoved(OWNER),{ok:true,ended:false,nextAt:account.moved.redirectUntil});
  fx.clock.set(account.moved.movedUntil);const due=transferDueIndex(fx.dueDb);
- assert.deepEqual(await sweepTransferDue({index:due,identity:port,accounts:{get:()=>({invoke:async()=>({$fault:{code:'account_deleted'}})})},now:fx.clock.now()}),{done:2,failed:0});
- const ended=await fx.identityRecord();assert.equal(ended.status,'deleted');assert.equal(ended.moved,undefined);assert.ok(!JSON.stringify(ended).includes('dest.example'));
- assert.deepEqual(await due.due({now:Infinity}),[]);
+ assert.deepEqual(await sweepTransferDue({index:due,identity:port,accounts:{get:()=>({invoke:async()=>({$fault:{code:'account_deleted'}})})},now:fx.clock.now()}),{done:2,failed:1},'the target-probe row waits without a reminders port');
+ const ended=await fx.identityRecord();assert.equal(ended.status,'deleted');assert.equal(ended.moved,undefined);assert.equal(ended.movedSettlement.endedAt,account.moved.redirectUntil,'review M2: the address-free settlement marker stays in the purged tombstone');assert.ok(!JSON.stringify(ended).includes('dest.example'));
+ assert.deepEqual((await due.due({now:Infinity})).map(row=>row.kind).sort(),['moved-end','moved-probe'],'the marker keeps its moved-end row (pruned after 400 days); the probe row waits for a port');
 });
 
 test('moved tombstone retention and windows are pure',()=>{

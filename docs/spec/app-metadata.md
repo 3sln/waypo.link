@@ -35,7 +35,7 @@ A web app manifest can legitimately be cross-origin under the web standard. This
 
 ## Deployment boundaries
 
-Node self-hosting can enable `APP_METADATA_DISCOVERY_ENABLED=true`. Its adapter resolves IPv4 addresses, rejects non-public addresses, pins the selected address to the actual HTTPS request, retains original-hostname TLS verification, and enforces HTTPS/443, bounded bodies/time, no compression/redirects, and per-process concurrency/rate limits. IPv6-only sites fall back. Process-local limits reset on restart and are not a provider invoice cap.
+Node self-hosting can enable `APP_METADATA_DISCOVERY_ENABLED=true`; the Node host wires its fetch port only when the flag is on globally, and MCP consent inspection also evaluates the flag for the requesting client before passing any `APP_METADATA_FETCH` port to the collector. Its adapter resolves IPv4 addresses, rejects non-public addresses, pins the selected address to the actual HTTPS request, retains original-hostname TLS verification, and enforces HTTPS/443, bounded bodies/time, no compression/redirects, and per-process concurrency/rate limits. IPv6-only sites fall back. Process-local limits reset on restart and are not a provider invoice cap.
 
 Cloudflare has no equivalent verified metadata egress port configured. It uses declared registered metadata and safe fallback; automatic external discovery remains unavailable there. An injected `APP_METADATA_FETCH` port must verify the actual network destination and enforce equivalent credentials, response and spend policy. A hostname allowlist followed by unconstrained ordinary fetch is insufficient to prove protection against DNS rebinding.
 

@@ -5,9 +5,11 @@ import {RedirectExtensionStatus,CreateRedirectExtensionCheckout,ApplyRedirectExt
 import {redirectCapability,resolveRedirect,redirectExtensionService} from '../redirect-extension.mjs';
 import {movedWindow} from '../../identity/lifecycle-tombstone.mjs';
 import {ageRequirement,requestAgeLocation} from '../../identity/age-policy.mjs';
-import {json,body,privateHeaders,flagGlobal,pseudonym,subnet,securePage} from './shared.mjs';
-const ROOT='/api/portability/redirect',SUCCESSORS='/api/account/successors';
-const pages=new Map([['/transfer-security','security'],['/transfer-out','out'],['/account/transfer-out','out'],['/transfer-in','in'],['/transfer-moved','moved'],['/transfer-redirect','redirect'],['/transfer-successor','successor'],['/transfer-dispute','dispute'],['/account/transfer-out/dispute','dispute']]);
+import {json,body,privateHeaders,flagGlobal,pseudonym,subnet,securePage,routeFlags} from './shared.mjs';
+import {BeginRedirectManagement,CompleteRedirectManagement} from '../../identity/redirect-management.mjs';
+import {redirectManagementService,redirectClientMetadata,REDIRECT_CLIENT_PATH} from '../redirect-management.mjs';
+const ROOT='/api/portability/redirect',SUCCESSORS='/api/account/successors',MANAGE=[ROOT+'/manage/begin',ROOT+'/manage/complete'],CALLBACK_PARAMS=['code','state','iss','error','error_description'];
+const pages=new Map([['/transfer-security','security'],['/transfer-out','out'],['/account/transfer-out','out'],['/transfer-in','in'],['/transfer-moved','moved'],['/transfer-redirect','redirect'],['/transfer-successor','successor'],['/transfer-dispute','dispute'],['/account/transfer-out/dispute','dispute'],['/transfer-manage','manage']]);
 const unknown=()=>json({error:'not_found'},404);
 const engineFor=env=>createAppEngine({providers:{clock:systemClock,random:cryptoRandom,audit:nullAudit,redirectExtensions:redirectExtensionService(env)}});
 export async function redirectWebhook(env,verified){const engine=engineFor(env);try{return await perform(engine,new ApplyRedirectExtensionWebhook(verified));}finally{engine.dispose();}}
@@ -22,21 +24,39 @@ export async function transferDocument({request,env,url},kind,packageJSON){
  if(kind==='security')headers['Content-Security-Policy']="default-src 'none'; script-src 'self' https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline'; connect-src 'self' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
  const response=await securePage(new Response(html,{status:200,headers}),true,false,{keepPolicy:true});return request.method==='HEAD'?new Response(null,{status:response.status,headers:response.headers}):response;
 }
-async function budget({request,env,local}){
+/** Redirect management (design §6.4): public, same-origin JSON only, rate limited, and continuation of an existing move,
+ * so it follows the IDENTITY_TRANSFER_OUT_ENABLED env kill switch (`background`); unconfigured egress or sealing key: 503. */
+async function manageRoute(route){
+ const {request,env,url,path}=route;
+ if(request.method!=='POST')return json({error:'method_not_allowed'},405,{Allow:'POST'});
+ if(request.headers.has('Authorization'))return unknown();
+ if(request.headers.get('Origin')!==env.APP_ORIGIN||request.headers.get('X-Bindle-Transfer')!=='1'||url.search||['cross-site','same-site'].includes(request.headers.get('Sec-Fetch-Site')))return json({error:'csrf'},403);
+ if(routeFlags(env).background('IDENTITY_TRANSFER_OUT_ENABLED')!==true)return unknown();
+ const denied=await budget(route,'redirect-manage',20);if(denied)return denied;
+ const redirectManagement=await redirectManagementService(env);if(!redirectManagement)return json({error:'temporarily_unavailable',message:'Managing redirects is not available on this service.'},503);
+ const input=await body(request,16384),engine=createAppEngine({providers:{clock:systemClock,random:cryptoRandom,audit:nullAudit,redirectManagement}});
+ try{const Operation=path.endsWith('/begin')?BeginRedirectManagement:CompleteRedirectManagement;return json(await perform(engine,new Operation({actor:{kind:'public'},input})));}
+ catch(error){if(error.status===404)return unknown();throw error;}finally{engine.dispose();}
+}
+async function budget({request,env,local},scope='redirect-page',limit=120){
  const secret=env.ABUSE_HASH_KEY||env.KEY_ENCRYPTION_KEY;if(!secret||!env.ABUSE?.consume)return local?null:json({error:'temporarily_unavailable'},503);
- const ip=request.headers.get('CF-Connecting-IP')||(local?'127.0.0.1':'unknown');if(!await env.ABUSE.consume('redirect-page:'+await pseudonym(subnet(ip),secret),{limit:120,windowMs:60000}))return json({error:'rate_limited'},429,{'Retry-After':'60'});
+ const ip=request.headers.get('CF-Connecting-IP')||(local?'127.0.0.1':'unknown');if(!await env.ABUSE.consume(scope+':'+await pseudonym(subnet(ip),secret),{limit,windowMs:60000}))return json({error:'rate_limited'},429,{'Retry-After':'60'});
 }
 export const stages={
  async public(route){
   const {request,env,url}=route,path=route.path.endsWith('.html')?route.path.slice(0,-5):route.path,match=/^\/moved\/([A-Za-z0-9_-]{64,240})$/.exec(path);
   if(match){if(request.headers.has('Authorization'))return unknown();const denied=await budget(route);if(denied)return denied;if(!['GET','HEAD'].includes(request.method)||url.search)return unknown();const account=await resolveRedirect(env,match[1]);if(!account||!movedWindow(account.moved,typeof env.MOVED_CLOCK==='function'?env.MOVED_CLOCK():Date.now()).live)return unknown();return transferDocument(route,'redirect');}
   if(path.startsWith('/moved/'))return unknown();
+  if(MANAGE.includes(path))return manageRoute({...route,path});
+  if(path===REDIRECT_CLIENT_PATH){if(!['GET','HEAD'].includes(request.method))return json({error:'method_not_allowed'},405,{Allow:'GET, HEAD'});if(url.search)return unknown();return new Response(request.method==='HEAD'?null:JSON.stringify(redirectClientMetadata(env.APP_ORIGIN)),{headers:{'Content-Type':'application/json','Cache-Control':'public, max-age=3600','Access-Control-Allow-Origin':'*','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer'}});}
   if(pages.has(path)){
    if(!['GET','HEAD'].includes(request.method))return json({error:'method_not_allowed'},405,{Allow:'GET, HEAD'});
    const kind=pages.get(path);
    if(kind==='redirect'){if(request.headers.has('Authorization')||[...url.searchParams.keys()].some(k=>k!=='id')||url.searchParams.getAll('id').length!==1)return unknown();const account=await resolveRedirect(env,url.searchParams.get('id'));if(!account||!movedWindow(account.moved,typeof env.MOVED_CLOCK==='function'?env.MOVED_CLOCK():Date.now()).live)return unknown();}
    // The transfer-out page also accepts the destination-start statement digest its move endpoint's authorize_url
    // carries (spec §6.1 item 1); it is not a secret, only the statement an authorization will be made against.
+   // The manage page is also the Bindle callback (code, state, iss or error); each parameter at most once.
+   else if(kind==='manage'){if(request.headers.has('Authorization')||[...url.searchParams.keys()].some(k=>k!=='lang'&&!CALLBACK_PARAMS.includes(k))||[...new Set(url.searchParams.keys())].some(k=>url.searchParams.getAll(k).length!==1))return unknown();}
    else if([...url.searchParams.keys()].some(k=>k!=='lang'&&!(kind==='out'&&k==='statement'))||url.searchParams.getAll('lang').length>1||url.searchParams.has('lang')&&!['en','es'].includes(url.searchParams.get('lang'))||url.searchParams.has('statement')&&(url.searchParams.getAll('statement').length!==1||!/^sha256-[A-Za-z0-9_-]{43}$/.test(url.searchParams.get('statement'))))return unknown();
    const flag=['in','security'].includes(kind)?'IDENTITY_TRANSFER_IN_ENABLED':kind==='successor'?'IDENTITY_SUCCESSOR_ADOPTION_ENABLED':'IDENTITY_TRANSFER_OUT_ENABLED';
    // Existing moves, disputes and read-only export must remain reachable after a rollout closes.
@@ -65,5 +85,5 @@ export const stages={
   const input=await body(request,2048);return json(await object.transferSuccessorDecide(id,{...input,dismiss:path.endsWith('/dismiss')}));
  },
 };
-export const allowedMethods=path=>path===ROOT?['GET']:path===ROOT+'/checkout'?['POST']:path===SUCCESSORS?['GET']:[SUCCESSORS+'/adopt',SUCCESSORS+'/dismiss'].includes(path)?['POST']:null;
+export const allowedMethods=path=>path===ROOT?['GET']:path===ROOT+'/checkout'||MANAGE.includes(path)?['POST']:path===REDIRECT_CLIENT_PATH?['GET','HEAD']:path===SUCCESSORS?['GET']:[SUCCESSORS+'/adopt',SUCCESSORS+'/dismiss'].includes(path)?['POST']:null;
 export const admission={exempt:path=>path.startsWith(SUCCESSORS)};

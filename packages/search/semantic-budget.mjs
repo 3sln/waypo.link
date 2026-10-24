@@ -12,12 +12,15 @@ export class SearchMutationGate {
   async run(operation) { const previous = this.tail; let release; this.tail = new Promise(resolve => { release = resolve; }); await previous; try { return await operation(); } finally { release(); } }
 }
 export class DurableSemanticBudget {
-  constructor({ state, configured = false, globalSpend, clock = () => Date.now(), limits = {} }) {
-    this.state = state; this.configured = configured; this.globalSpend = globalSpend; this.clock = clock;
+  // `eligible(owner)` is the service admission gate (paid entitlement or a 7-day-old account in the account runtime,
+  // provisional DEVLOG 2026-10-23). It runs before any owner or shared ledger is touched; absent means no gate.
+  constructor({ state, configured = false, globalSpend, clock = () => Date.now(), limits = {}, eligible }) {
+    this.state = state; this.configured = configured; this.globalSpend = globalSpend; this.clock = clock; this.eligible = eligible;
     this.limits = Object.fromEntries(Object.entries(SEMANTIC_LIMITS).map(([name, maximum]) => { const value = limits[name] ?? maximum; if (!Number.isSafeInteger(value) || value < 0 || value > maximum) fail('invalid_semantic_budget'); return [name, value]; }));
   }
   async enabled(owner) { return this.configured && Boolean(this.globalSpend?.reserve) && (await this.state.get(recordKey('search-consent', owner)))?.enabled === true; }
   async generation(owner) { return (await this.state.get(recordKey('search-consent', owner)))?.generation || 0; }
+  async admissible(owner) { if (typeof this.eligible === 'function' && await this.eligible(owner) !== true) fail('semantic_search_not_eligible'); }
   month() { return new Date(this.clock()).toISOString().slice(0, 7); }
   async status(owner) {
     if (!bounded(owner)) fail('invalid_search_owner');
@@ -30,6 +33,7 @@ export class DurableSemanticBudget {
   async consent(owner, enabled) {
     if (!bounded(owner) || typeof enabled !== 'boolean') fail('invalid_search_consent');
     if (enabled && (!this.configured || !this.globalSpend?.reserve)) fail('semantic_search_unavailable');
+    if (enabled) await this.admissible(owner);
     await this.state.transaction(async tx => {
       const key = recordKey('search-consent', owner), prior = await tx.get(key);
       await tx.put(key, { enabled, generation: (prior?.generation || 0) + 1, updatedAt: this.clock() });
@@ -38,6 +42,7 @@ export class DurableSemanticBudget {
   async reserve(owner, operation, { purpose, newVector = false } = {}) {
     if (!bounded(owner) || !Object.hasOwn(SEMANTIC_COST, operation) || operation === 'embed' && !['document', 'query'].includes(purpose)) fail('invalid_semantic_operation');
     if (!await this.enabled(owner)) fail('semantic_search_not_authorized');
+    await this.admissible(owner);
     const month = this.month(), units = operation === 'embed' ? 512 : SEMANTIC_DIMENSIONS, costMicroUSD = SEMANTIC_COST[operation];
     await this.state.transaction(async tx => {
       if ((await tx.get(recordKey('search-consent', owner)))?.enabled !== true) fail('semantic_search_not_authorized');

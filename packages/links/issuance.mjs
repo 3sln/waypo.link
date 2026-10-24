@@ -67,17 +67,18 @@ export class LinkService {
     const rows = sorted(await tx.list(key('link-change', owner)));
     for (const row of rows.slice(0, Math.max(0, rows.length - this.changeRetention))) { await tx.delete(row.key); state.floor = Math.max(state.floor, row.value.seq); }
   }
-  // Expired records are kept 30 days for list/changes, then reclaimed (bounded) when the owner is at the cap.
-  async #reclaim(tx, owner, state, now) {
-    let removed = 0;
+  // Expired and revoked records are kept 30 days for list/changes, then reclaimed: a bounded purge (16 rows) runs on
+  // every issue, so an occupant that issues and revokes without ever reaching the cap cannot grow the store without
+  // bound (wargame round 3 L4). Revoked records were uncounted at revocation; expired live ones are uncounted here.
+  async #reclaim(tx, owner, state, now, limit = 16) {
+    let removed = 0, uncounted = 0;
     for (const { key: path, value } of sorted(await tx.list(key('link')))) {
-      if (removed >= 16) break;
+      if (removed >= limit) break;
       if (value?.owner !== owner) continue;
-      // Revoked records were uncounted at revocation; expired live ones are uncounted here.
-      if (value.revoked && Math.min(value.revokedAt ?? Infinity, value.claims.exp * 1000) + PURGE_AFTER <= now) { await tx.delete(path); continue; }
-      if (!value.revoked && value.claims.exp * 1000 + PURGE_AFTER <= now) { await tx.delete(path); removed++; }
+      if (value.revoked && Math.min(value.revokedAt ?? Infinity, value.claims.exp * 1000) + PURGE_AFTER <= now) { await tx.delete(path); removed++; continue; }
+      if (!value.revoked && value.claims.exp * 1000 + PURGE_AFTER <= now) { await tx.delete(path); removed++; uncounted++; }
     }
-    state.count = Math.max(0, state.count - removed);
+    state.count = Math.max(0, state.count - uncounted);
   }
 
   /** Issues one link of an app-declared type. `issuer`: {kind, clientId?, generation?} for the record. */
@@ -101,7 +102,8 @@ export class LinkService {
       if (!await mintableSigningKey(tx, owner, signer.kid)) fail('key_conflict');
       const state = await this.#state(tx, owner);
       // Reclaimed rows commit even when the cap still refuses, so the refusal is returned rather than thrown.
-      if (state.count >= this.maxLinks) { await this.#reclaim(tx, owner, state, now); if (state.count >= this.maxLinks) { await tx.set(key('link-state', owner), state); return 'link_limit'; } }
+      await this.#reclaim(tx, owner, state, now);
+      if (state.count >= this.maxLinks) { await tx.set(key('link-state', owner), state); return 'link_limit'; }
       state.count += 1;
       await tx.set(key('link', jti), { version: 1, jti, owner, type, slot: binding.slot, header, claims: meta, input, revoked: false, issuedAt: now, issuer: { kind: issuer.kind, ...(issuer.clientId ? { clientId: issuer.clientId } : {}), ...(issuer.generation !== undefined ? { generation: issuer.generation } : {}) } });
       await this.#change(tx, owner, state, jti, binding.slot, 'issued');

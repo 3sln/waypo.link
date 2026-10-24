@@ -92,6 +92,7 @@ Columns:
 | `LIFECYCLE_DRY_RUN` | c, narrow-only | G | **on** | — | crit | safe | on | The console can only force dry run ("pause lifecycle"). It can never switch to live. |
 | `LIFECYCLE_ENABLED`, `LIFECYCLE_PURGE_ENABLED` | b | — | off | — | — | — | env | Irreversible deletion, so deploy authority is the second factor. |
 | `WORK_LIMITS_ENABLED`, `STORAGE_WRITE_ENABLED` | b | — | **on** | — | — | — | env | Abuse and cost guards. A console action must never disable enforcement. |
+| `BROWSER_AUTOMATION_ENABLED` | b | — | **on** | — | — | — | env (on; `false` disables) | Kill switch for browser automation (wargame 3, provisional). Off makes every automation operation except revoke `not_found`; revoke is never gated. |
 | `BILLING_ENABLED` | b | — | off | — | — | — | env (on) | Polar secrets. Per-user billing would corrupt entitlement. |
 | `MAIL_ENABLED`, `PUSH_ENABLED`, `BEAM_TURN_ENABLED` | b | — | off | — | — | — | env | Bindings or secrets. |
 | `BEAM_STUN_ENABLED`, `FEDERATION_REFRESH_ENABLED` | b | — | env default | — | — | — | env | Network and protocol metadata. No rollout use. |

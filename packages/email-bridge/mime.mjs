@@ -142,9 +142,18 @@ export function automationHints({map,envelopeFrom,from,subject,text:body='',repo
 /** RFC 8601 results from the ONE header bearing the configured receiving `authservId`. With no configured id, none or
  * several such headers (a sender-supplied copy beside the receiver's), every result is `unknown`: a caller-provided
  * header is never evidence. Results are recorded as the provider's observations, never as authorship. */
+const trustedResults=(map,authservId)=>{if(typeof authservId!=='string'||!authservId)return null;const ours=(map.get('authentication-results')??[]).filter(v=>lower(v.split(';')[0].trim().split(/\s+/)[0])===lower(authservId));return ours.length===1?ours[0]:null;};
+/** The envelope domain that the trusted receiver's header reports as `spf=pass` (its `smtp.mailfrom` property, an
+ * address or a domain), or null. SPF authorizes the envelope MAIL FROM domain, so this is the only evidence that the
+ * envelope sender was not forged; it is used solely for abuse accounting, never for authorship. */
+export function spfPassDomain(map,authservId){
+ const header=trustedResults(map,authservId);if(!header)return null;
+ for(const clause of header.split(';').slice(1)){const m=/^\s*spf\s*=\s*([a-z]+)\b(.*)$/is.exec(clause);if(!m)continue;if(lower(m[1])!=='pass')return null;
+  const from=/(?:^|\s)smtp\.mailfrom\s*=\s*"?([^\s";]+)/i.exec(m[2])?.[1];if(!from)return null;const domain=lower(from.slice(from.lastIndexOf('@')+1));return /^[a-z0-9.-]+\.[a-z0-9-]{2,}$/.test(domain)?domain:null;}
+ return null;
+}
 export function authResults(map,authservId){
- const none={spf:'unknown',dkim:'unknown',dmarc:'unknown'};if(typeof authservId!=='string'||!authservId)return none;
- const ours=(map.get('authentication-results')??[]).filter(v=>lower(v.split(';')[0].trim().split(/\s+/)[0])===lower(authservId));if(ours.length!==1)return none;
+ const none={spf:'unknown',dkim:'unknown',dmarc:'unknown'};const header=trustedResults(map,authservId);if(!header)return none;const ours=[header];
  const out={...none};for(const clause of ours[0].split(';').slice(1)){const m=/^\s*(spf|dkim|dmarc)\s*=\s*([a-z]+)/i.exec(clause);if(m&&out[lower(m[1])]==='unknown'){const r=lower(m[2]);out[lower(m[1])]=['pass','fail','none','neutral','softfail','temperror','permerror','policy'].includes(r)?r:'unknown';}}
  out.dmarc=['pass','fail','none'].includes(out.dmarc)?out.dmarc:'unknown';return out;
 }
@@ -171,7 +180,7 @@ export async function parseEmail(bytes,{envelopeFrom='',authservId}={}){
  const message={parts:parts.map(p=>({mimeType:p.mimeType,dataBase64url:base64url(p.bytes)}))};
  const hints=automationHints({map,envelopeFrom,from:from.address,subject,text:acc.text??'',reports:acc.reports});
  const headerFrom=from.display?sanitize(`${sanitize(from.display,MIME_LIMITS.senderText-from.address.length-3)} <${from.address}>`,MIME_LIMITS.senderText):from.address;
- return {message,from,replyTo,subject,messageId,hints,auth:authResults(map,authservId),headerFrom,multipleReplyTo:replyRaw!==undefined&&!replyTo};
+ return {message,from,replyTo,subject,messageId,hints,auth:authResults(map,authservId),spfPassDomain:spfPassDomain(map,authservId),headerFrom,multipleReplyTo:replyRaw!==undefined&&!replyTo};
 }
 
 /** Owner-scoped canonical ingress fingerprint (design "Keep deduplication owner-scoped"): envelope sender, normalized

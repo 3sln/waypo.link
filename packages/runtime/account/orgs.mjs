@@ -38,8 +38,11 @@ import {loadOrganization} from '../../orgs/roster.mjs';
 import {organizationEntitlementPort} from '../../orgs/ownership.mjs';
 import {BreakGlassService} from '../../orgs/break-glass.mjs';
 import {OrganizationBilling} from '../../billing/organizations.mjs';
-import {organizationsProvider,ORG_OPERATIONS,InitializeOrganization,ConfirmOrganization,OrganizationTick,MembershipSweep,MembershipOutboxDrain,ObserveMemberAuthority,MemberSnapshot,membershipEnginePort,OWNERSHIP_OPERATIONS,OrganizationBillingSync,OrganizationBillingWebhook,OwnershipTick,OwnershipDrain,OwnershipIndex,ResolveLapseClaim,BREAK_GLASS_OPERATIONS,BreakGlassLiveness,BreakGlassSecurityChange,BreakGlassAbortToken,ResolveBreakGlass,BreakGlassFileRecovery,BreakGlassCase,BreakGlassLedger} from '../../app/domains/orgs.mjs';
+import {organizationsProvider,ORG_OPERATIONS,InitializeOrganization,ConfirmOrganization,OrganizationTick,MembershipSweep,MembershipOutboxDrain,ObserveMemberAuthority,MemberSnapshot,membershipEnginePort,OWNERSHIP_OPERATIONS,OrganizationBillingSync,OrganizationBillingWebhook,OwnershipTick,OwnershipDrain,OwnershipIndex,ResolveLapseClaim,BREAK_GLASS_OPERATIONS,BreakGlassLiveness,BreakGlassSecurityChange,BreakGlassAbortToken,ResolveBreakGlass,BreakGlassFileRecovery,BreakGlassCase,BreakGlassLedger,BreakGlassHint,BreakGlassHints,BreakGlassSignal,BreakGlassSignals} from '../../app/domains/orgs.mjs';
 import {StorageError} from '../../storage/policy.mjs';
+import {key} from '../../messaging/store.mjs';
+import {OWNER_NOTICE_KIND_LIST} from '../../identity/owner-channels.mjs';
+// The adapters build ORGANIZATION_OWNER_CHANNELS with organizationOwnerChannels (packages/identity/owner-channels.mjs).
 
 const engines=new WeakMap(),clockOf=c=>typeof c.config.LIFECYCLE_CLOCK==='function'?c.config.LIFECYCLE_CLOCK:Date.now;
 /** The organization writer's clock (LIFECYCLE_CLOCK when injected), shared with the ORG-4 membership port. */
@@ -55,9 +58,12 @@ export function orgsEngine(c){
   const ownerChannels=['snapshot','domains','notify'].every(k=>typeof c.config.ORGANIZATION_OWNER_CHANNELS?.[k]==='function')?c.config.ORGANIZATION_OWNER_CHANNELS:null;
   const ledgerCall=async(person,input)=>{const stub=c.config.CONVERSATION_ACCOUNT?.(person);if(!stub)return {ok:false,reason:'break_glass_unavailable'};const result=await stub.invoke({method:'orgsBreakGlassLedgerApply',args:[person,input]});return result?.$fault?{ok:false,reason:'break_glass_unavailable'}:result;};
   const claimLedger={reserve:(person,input)=>ledgerCall(person,{op:'reserve',org:input.org,claim:input.claim,role:input.role,at:input.at}),update:(person,input)=>ledgerCall(person,{op:'update',org:input.org,claim:input.claim,event:input.event,at:input.at})};
+  // ORG-12b: person-side hint rows (the owner's sign-in liveness hook, the interstitial, co-signature items). Only wired
+  // with the owner-channels port, so an unconfigured host queues none.
+  const claimHints=ownerChannels?{apply:async(person,input)=>{const stub=c.config.CONVERSATION_ACCOUNT?.(person);if(!stub)return {ok:false};const result=await stub.invoke({method:'orgsBreakGlassHintApply',args:[person,input]});return result?.$fault?{ok:false}:result;}}:null;
   // Review M3: operator decisions verify an assertion from the admin service (ORG-12d); without the port they fail closed.
   const operators=typeof c.config.ORGANIZATION_OPERATOR_ASSERTIONS?.verify==='function'?c.config.ORGANIZATION_OPERATOR_ASSERTIONS:null;
-  const service=new BreakGlassService({ownerChannels,claimLedger,operators,metadata:c.metadata,clock,random:cryptoRandom,flags:{for:ctx=>flagsFor(c.config,ctx)},plans,issuer:c.config.APP_ORIGIN??null,invitationSigner:owner=>c.signingKey(owner),memberEvents:c.config.ORGANIZATION_MEMBER_EVENTS,
+  const service=new BreakGlassService({ownerChannels,claimLedger,claimHints,operators,metadata:c.metadata,clock,random:cryptoRandom,flags:{for:ctx=>flagsFor(c.config,ctx)},plans,issuer:c.config.APP_ORIGIN??null,invitationSigner:owner=>c.signingKey(owner),memberEvents:c.config.ORGANIZATION_MEMBER_EVENTS,
    billing,alert:entry=>lifecycleLog(c.config,entry),accounts:{get:sub=>typeof c.config.IDENTITY_ACCOUNT==='function'?c.config.IDENTITY_ACCOUNT(sub):null},
    effects:{
     // Invalidates the previous owner's recovery file at an ownership change: an ordinary signing rotation (not the
@@ -90,6 +96,8 @@ export const methods={
  async orgsInitialize(owner,input){await this.warm(owner);const view=await run(this,new InitializeOrganization({actor:{kind:'system',owner},input:structuredClone(input)}));return view;},
  async orgsConfirm(owner,input){await this.warm(owner);return run(this,new ConfirmOrganization({actor:{kind:'system',owner},input:structuredClone(input)}));},
  async orgsAlarm(){
+  // ORG-12b review M1: a person account retries undelivered owner-liveness signals.
+  try{const owner=await this.metadata.get('owner');if(owner&&(await this.metadata.get(ORG_RECORD))?.kind!=='organization'){await deliverOwnerSignals(this,owner);return;}}catch{/* retried on the next alarm */}
   try{const owner=await this.metadata.get('owner');if(!owner||(await this.metadata.get(ORG_RECORD))?.kind!=='organization')return;
    await run(this,new MembershipOutboxDrain({actor:{kind:'system',owner}}));const sweep=await run(this,new MembershipSweep({actor:{kind:'system',owner}})),result=await run(this,new OrganizationTick({actor:{kind:'system',owner}}));const wake=[sweep?.wakeAt,result?.wakeAt].filter(Number.isSafeInteger);if(wake.length)await this.scheduleAlarm(Math.min(...wake));}
   catch{/* The next alarm retries; a failed step never advances the deletion. */}
@@ -119,6 +127,40 @@ export const methods={
  },
  /** System, person placement: this person's break-glass claim ledger (per-person limits, §12d.8). */
  async orgsBreakGlassLedgerApply(owner,input){await this.warm(owner);return run(this,new BreakGlassLedger({actor:{kind:'system',owner},input:structuredClone(input)}));},
+ /** ORG-12b, system, person placement: put or drop one break-glass hint row (from an organization's ownership outbox). */
+ async orgsBreakGlassHintApply(owner,input){await this.warm(owner);return run(this,new BreakGlassHint({actor:{kind:'system',owner},input:structuredClone(input)}));},
+ /** ORG-12b, system, person placement: this person's live hints (read only, no warm, no write). */
+ async orgsBreakGlassHints(owner){return run(this,new BreakGlassHints({actor:{kind:'system',owner}}));},
+ /**
+  * ORG-12b, the identity sign-in hook's target (fire-and-forget from IdentityService): an interactive sign-in or step-up
+  * by this person. For each organization where a hint says they are the owner of record of an open claim, the
+  * organization receives `liveness` (T9) and decides for itself; nothing is returned to the identity service. With no
+  * hint this is one read of this account's hint prefix and nothing is written anywhere.
+  */
+ async orgsBreakGlassOwnerSignal(owner,{kind,at}={}){
+  if(!['sign-in','step-up'].includes(kind)||!Number.isSafeInteger(at))throw new StorageError('invalid_request','Unsupported signal.',400);
+  const {hints}=await run(this,new BreakGlassHints({actor:{kind:'system',owner}})),orgs=[...new Set(hints.filter(h=>h.role==='owner').map(h=>h.org))].slice(0,16);
+  if(!orgs.length)return {signalled:0};
+  // Review M1: durable. The rows are written first and removed only once each organization accepted the signal; the alarm
+  // retries the rest.
+  await run(this,new BreakGlassSignal({actor:{kind:'system',owner},input:{op:'queue',orgs,kind,at}}));
+  return deliverOwnerSignals(this,owner);
+ },
+ /**
+  * ORG-12b, system, person placement: the owner's push subscriptions for the owner-channels port. `list` gives ids and
+  * enrolment times only; `send` pushes one fixed-shape notice to one subscription (the service worker builds the text)
+  * through ORGANIZATION_OWNER_PUSH, the push transport the adapter injects (no Node-only module in shared runtime code).
+  */
+ async orgsBreakGlassPush(owner,{op,subscription,notice}={}){
+  const rows=[...(await this.metadata.list({prefix:key('push-subscription',owner)})).values()].filter(r=>r?.owner===owner&&typeof r.endpoint==='string'&&typeof r.id==='string').slice(0,10);
+  if(op==='list')return rows.map(r=>({id:r.id,createdAt:Number.isSafeInteger(r.createdAt)?r.createdAt:0}));
+  if(op!=='send'||typeof subscription!=='string')throw new StorageError('invalid_request','Unsupported push request.',400);
+  const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,path=String(notice?.path??'');
+  if(!OWNER_NOTICE_KIND_LIST.includes(notice?.event)||!uuid.test(notice?.org??'')||!(new RegExp('^/org-claim/abort#org='+notice.org+'&token=bg1\\.[0-9a-f-]{36}\\.[0-9a-f-]{36}\\.[A-Za-z0-9_-]{43}(?:&handle=[A-Za-z0-9][A-Za-z0-9._-]{0,63})?$').test(path)||path==='/console?view=organizations&org='+notice.org))throw new StorageError('invalid_request','Unsupported push notice.',400);
+  const row=rows.find(r=>r.id===subscription),push=this.config.ORGANIZATION_OWNER_PUSH;
+  if(!row||typeof push?.send!=='function')return {accepted:false};
+  try{await push.send({endpoint:row.endpoint,keys:row.keys},{type:'bindle-org-claim-notice',owner,event:notice.event,org:notice.org,path});return {accepted:true};}catch{return {accepted:false};}
+ }
 };
 // ORG-5 organization context for the existing connections operations. Reducing operations (list, suspend, disconnect)
 // stay available during a ramp-down or pending deletion; resume and approve can add authority (`widen`).
@@ -134,6 +176,17 @@ Object.assign(methods,{
   return operation==='list'?{connections:result.connections??[]}:result;
  },
 });
+/** ORG-12b review M1: delivers this person's due owner-liveness signals to each organization, records each outcome, and
+ * schedules the next retry. With no row it reads one prefix and writes nothing. */
+async function deliverOwnerSignals(c,owner){
+ const actor={kind:'system',owner},{due,wakeAt}=await run(c,new BreakGlassSignals({actor}));let signalled=0;
+ for(const row of due){let ok=false;const stub=c.config.CONVERSATION_ACCOUNT?.(row.org);
+  if(stub)try{const result=await stub.invoke({method:'orgsBreakGlassSignal',args:[row.org,{operation:'liveness',input:{principal:{iss:c.config.APP_ORIGIN??null,sub:owner},kind:row.kind,at:row.at}}]});ok=!result?.$fault||result.$fault.code==='not_found';}catch{ok=false;}
+  if(ok)signalled++;await run(c,new BreakGlassSignal({actor,input:{op:'result',org:row.org,at:row.at,ok}}));}
+ const after=await run(c,new BreakGlassSignals({actor})),next=Math.min(after.wakeAt,...after.due.map(()=>Date.now()+60000));
+ if(Number.isFinite(next)&&typeof c.scheduleAlarm==='function')try{await c.scheduleAlarm(next);}catch{}
+ return {signalled};
+}
 /** Reconcile (when asked and organization billing is configured), apply the time rules, drain due ownership effects,
  * and schedule the next alarm. A provider failure falls back to the time rules alone. */
 async function ownershipFollowUp(c,owner,{sync=false}={}){
@@ -146,4 +199,4 @@ async function ownershipFollowUp(c,owner,{sync=false}={}){
  const wake=[step?.wakeAt,drained?.wakeAt,again?.wakeAt].filter(Number.isSafeInteger);if(wake.length)await c.scheduleAlarm(Math.min(...wake));
  return step;
 }
-export const rpc={orgsBreakGlassSignal:{lifecycle:'suspended'},orgsBreakGlassLedgerApply:{lifecycle:'purging'},orgsClaimResolve:{lifecycle:'suspended'},orgsBillingWebhook:{lifecycle:'purging'},orgsBillingSync:{lifecycle:'suspended'},orgsOwnershipIndexApply:{lifecycle:'purging'},orgsActingAuthority:{lifecycle:'suspended'},orgsConnections:{},orgsSigningProvenance:{},orgsMemberSnapshot:{},orgsDispatch:{lifecycle:'suspended'},orgsInitialize:{lifecycle:'suspended'},orgsConfirm:{}};
+export const rpc={orgsBreakGlassHintApply:{lifecycle:'purging'},orgsBreakGlassHints:{lifecycle:'purging',gate:'none'},orgsBreakGlassOwnerSignal:{lifecycle:'suspended',gate:'none'},orgsBreakGlassPush:{lifecycle:'suspended',gate:'none'},orgsBreakGlassSignal:{lifecycle:'suspended'},orgsBreakGlassLedgerApply:{lifecycle:'purging'},orgsClaimResolve:{lifecycle:'suspended'},orgsBillingWebhook:{lifecycle:'purging'},orgsBillingSync:{lifecycle:'suspended'},orgsOwnershipIndexApply:{lifecycle:'purging'},orgsActingAuthority:{lifecycle:'suspended'},orgsConnections:{},orgsSigningProvenance:{},orgsMemberSnapshot:{},orgsDispatch:{lifecycle:'suspended'},orgsInitialize:{lifecycle:'suspended'},orgsConfirm:{}};

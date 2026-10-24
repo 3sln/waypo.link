@@ -33,9 +33,9 @@ test('a transient TURN provider failure releases the reservation and allows a re
   const ice=()=>f.controller.beamIce(f.sender.account.id,f.record.id,f.actor);
   await assert.rejects(ice(),{code:'beam_turn_unavailable'});
   assert.deepEqual(events,['reserve','release:1']);
-  assert.equal((await f.controller.beams.raw(f.record.id)).iceIssued.sender,undefined);
+  assert.deepEqual((await f.controller.beams.raw(f.record.id)).iceIssued.sender,{state:'idle',count:0,usernames:[]});
   const second=await ice();assert.equal(second.relayEnabled,true);
-  assert.equal((await f.controller.beams.raw(f.record.id)).iceIssued.sender,true);
+  assert.equal((await f.controller.beams.raw(f.record.id)).iceIssued.sender.state,'issued');
   await assert.rejects(ice(),{code:'beam_turn_already_issued'});
  }finally{globalThis.fetch=originalFetch;await f.close();}
 });

@@ -8,6 +8,7 @@ import {lookup as nodeLookup} from 'node:dns/promises';
 import {request as nodeRequest} from 'node:https';
 import {isIP} from 'node:net';
 import {directoryURL} from './directory.mjs';
+import {MAX_MOVES_DOCUMENT_BYTES} from '../identity/document-budget.mjs';
 
 function publicIPv4(address){
  if(isIP(address)!==4)return false;
@@ -15,11 +16,42 @@ function publicIPv4(address){
  return !(a===0||a===10||a===127||a>=224||a===100&&b>=64&&b<=127||a===169&&b===254||a===172&&b>=16&&b<=31||a===192&&(b===168||b===0||b===2||b===88&&c===99)||a===198&&(b===18||b===19||b===51&&c===100)||a===203&&b===0&&c===113);
 }
 function positive(value,max,label){if(!Number.isSafeInteger(value)||value<1||value>max)throw new Error(`Invalid metadata ${label}.`);return value;}
-export function createNodeDirectoryFetch({allowedOrigins,lookup=nodeLookup,request=nodeRequest,timeoutMs=1500,maxBytes=131072,maxConcurrent=4,maxRequestsPerMinute=30,maxRequestsPerDay=200,clock=()=>Date.now()}={}){
+/** Budgets (wargame 2026-10-23 F1, provisional; review follow-up). The fetcher is process-wide, so one tenant must not
+ * be able to spend it for everyone. Every request names `budget: {tenant, priority, allowance}` in its init
+ * (IdentityDirectory does; a request without one is an anonymous interactive request):
+ *  - the two classes are isolated: `interactive` requests together and `background` (`background`/`claimed`) requests
+ *    together are each capped at half of every global window (minute and day) and half of the concurrency, so each
+ *    class is guaranteed the other half;
+ *  - `interactive`: per (tenant, origin) at most TENANT_INTERACTIVE per minute and per hour;
+ *  - `background`: per tenant ACROSS ALL ORIGINS at most `allowance` per minute (the directory's roster-scaled limit),
+ *    clamped server-side to a quarter of the background minute window, and at most an eighth of the background day
+ *    window per UTC day (the tenant's daily share). Per-tenant state is fixed-window counters.
+ * There is no flat process-wide day budget that one caller can spend for 24 h. */
+export const NODE_DIRECTORY_BUDGETS=Object.freeze({perMinute:600,perDay:100000,tenantInteractive:{minute:10,hour:60},backgroundAllowance:30,tenantMinuteShare:4,tenantDayShare:8,maxTenants:4096});
+export function createNodeDirectoryFetch({allowedOrigins,lookup=nodeLookup,request=nodeRequest,timeoutMs=1500,maxBytes=MAX_MOVES_DOCUMENT_BYTES,maxConcurrent=8,maxRequestsPerMinute=NODE_DIRECTORY_BUDGETS.perMinute,maxRequestsPerDay=NODE_DIRECTORY_BUDGETS.perDay,clock=()=>Date.now()}={}){
  if(!Array.isArray(allowedOrigins)||!allowedOrigins.length)throw new Error('Registered metadata origins are required.');
  const origins=new Set(allowedOrigins.map(value=>{const u=new URL(value);if(u.protocol!=='https:'||u.username||u.password||u.search||u.hash||u.pathname!=='/'||u.port&&u.port!=='443')throw new Error('Metadata origins must be HTTPS on port 443.');return u.origin;}));
- positive(timeoutMs,1500,'timeout');positive(maxBytes,131072,'body limit');positive(maxConcurrent,16,'concurrency');positive(maxRequestsPerMinute,600,'request rate');positive(maxRequestsPerDay,10000,'daily request rate');
- let active=0;let attempts=[];
+ positive(timeoutMs,1500,'timeout');positive(maxBytes,MAX_MOVES_DOCUMENT_BYTES,'body limit');positive(maxConcurrent,16,'concurrency');positive(maxRequestsPerMinute,6000,'request rate');positive(maxRequestsPerDay,1000000,'daily request rate');
+ const half=n=>Math.max(1,Math.floor(n/2)),classMinute=half(maxRequestsPerMinute),classDay=half(maxRequestsPerDay),classConcurrent=half(maxConcurrent);
+ const tenantMinuteMax=Math.max(1,Math.floor(classMinute/NODE_DIRECTORY_BUDGETS.tenantMinuteShare)),tenantDayMax=Math.max(1,Math.floor(classDay/NODE_DIRECTORY_BUDGETS.tenantDayShare));
+ const windows={interactive:[],background:[]},tenants=new Map(),active={interactive:0,background:0};
+ const recent=(list,now,ms)=>{let n=0;for(let i=list.length-1;i>=0&&list[i]>now-ms;i--)n++;return n;};
+ // Fixed-window counter: {minute,minuteCount,hour,hourCount,day,dayCount}.
+ const counter=(key,now)=>{const c=tenants.get(key)??{},minute=Math.floor(now/60000),hour=Math.floor(now/3600000),day=Math.floor(now/86400000);
+  if(c.minute!==minute){c.minute=minute;c.minuteCount=0;}if(c.hour!==hour){c.hour=hour;c.hourCount=0;}if(c.day!==day){c.day=day;c.dayCount=0;}return c;};
+ /** Admits one request or returns false; records it on admission. */
+ function admit(budget,origin,now){
+  for(const list of Object.values(windows))while(list.length&&list[0]<=now-86400000)list.shift();
+  const priority=['background','claimed'].includes(budget?.priority)?'background':'interactive',interactive=priority==='interactive',list=windows[priority];
+  const tenant=typeof budget?.tenant==='string'&&budget.tenant.length<=256?budget.tenant:'',key=interactive?'i\n'+tenant+'\n'+origin:'b\n'+tenant;
+  if(active[priority]>=classConcurrent)return false;
+  if(list.length>=classDay||recent(list,now,60000)>=classMinute)return false;
+  const c=counter(key,now);
+  if(interactive){if(c.minuteCount>=NODE_DIRECTORY_BUDGETS.tenantInteractive.minute||c.hourCount>=NODE_DIRECTORY_BUDGETS.tenantInteractive.hour)return false;}
+  else{const allowance=Number.isSafeInteger(budget?.allowance)&&budget.allowance>0?budget.allowance:NODE_DIRECTORY_BUDGETS.backgroundAllowance;if(c.minuteCount>=Math.min(tenantMinuteMax,allowance)||c.dayCount>=tenantDayMax)return false;}
+  c.minuteCount++;c.hourCount++;c.dayCount++;tenants.delete(key);tenants.set(key,c);while(tenants.size>NODE_DIRECTORY_BUDGETS.maxTenants)tenants.delete(tenants.keys().next().value);
+  list.push(now);return priority;
+ }
  return async function publicFetch(value,options={}){
   const u=new URL(value);
   if(!directoryURL(value)||!origins.has(u.origin)||isIP(u.hostname.replace(/^\[|\]$/g,''))===6)throw new Error('Metadata URL is outside the registered public HTTPS policy.');
@@ -28,8 +60,8 @@ export function createNodeDirectoryFetch({allowedOrigins,lookup=nodeLookup,reque
   if(!['application/json'].includes(accept))throw new Error('Unsupported metadata Accept header.');
   if(options.signal?.aborted)throw new Error('Metadata request aborted.');
   const now=clock();if(!Number.isFinite(now))throw new Error('Metadata clock unavailable.');
-  attempts=attempts.filter(t=>t>now-86400000);if(active>=maxConcurrent||attempts.length>=maxRequestsPerDay||attempts.filter(t=>t>now-60000).length>=maxRequestsPerMinute)throw new Error('Metadata egress budget exhausted.');
-  attempts.push(now);active++;
+  const admitted=admit(options.budget,u.origin,now);if(!admitted)throw Object.assign(new Error('Metadata egress budget exhausted.'),{code:'rate_limited'});
+  active[admitted]++;
   try{return await new Promise((resolve,reject)=>{
    let req,res,done=false;const abort=()=>finish(new Error('Metadata request aborted.'));
    const timer=setTimeout(()=>finish(new Error('Metadata request timed out.')),timeoutMs);
@@ -51,11 +83,11 @@ export function createNodeDirectoryFetch({allowedOrigins,lookup=nodeLookup,reque
     });
     req.once('error',error=>finish(error));req.end();
    }).catch(error=>finish(error));
-  });}finally{active--;}
+  });}finally{active[admitted]--;}
  };
 }
 /** The Node adapter's DIRECTORY_EGRESS (packages/runtime/account/foreign-directory.mjs): issuers -> one budgeted,
- * process-wide fetcher per allowlist. An empty allowlist dials nothing. */
+ * process-wide fetcher per allowlist, with per-tenant budgets inside it (above). An empty allowlist dials nothing. */
 export function nodeDirectoryEgress(options={}){
  let key,port;
  return issuers=>{const k=JSON.stringify(issuers);if(k!==key){key=k;port=issuers.length?createNodeDirectoryFetch({...options,allowedOrigins:issuers}):async()=>{throw new Error('No directory issuer is allowed.');};}return port;};

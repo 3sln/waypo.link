@@ -405,6 +405,8 @@ Unknown `type` values are refused (`record_unsupported`, 415).
 
 **Missing parents.** A missing parent gets a placeholder. Beyond 64 outstanding placeholders, the receiver collapses further ones into a single gap marker and still accepts the event (review P-7).
 
+**Provisional wargame reconciliation (2026-10-23).** One author holds at most 16 of the 64 placeholders, and its further missing parents are not tracked; placeholders expire after 7 days; the gap marker is set only when the room-wide pool overflows and clears once no placeholder is outstanding, so it is a hint rather than a completeness guarantee. Pending mutations at the 64 bound evict the oldest of the author holding the most, not the oldest overall. A counter at or below the stream frontier is never applied as a new event: the same event is a duplicate, a different event under a consumed counter is equivocation (found through a per-stream counter index kept beyond replay retention), and an abandoned counter is a duplicate that is not applied. A not-applied duplicate costs one record of allowance and leaves a replay row. Each room's stored bytes (envelope plus any body held in the mailbox, for every event) are bounded cumulatively, per room and per author; past the bound records are refused with `recipient_storage_unavailable`.
+
 ### 6.4 Conversation credential
 
 Records travel with `Authorization: BindleConversation <epoch>.<pairToken>`, where:
@@ -424,6 +426,7 @@ The secret never appears in URLs, logs, search, notifications, previews, or expo
 - **Rotation overlap.** After an owner accepts a rotation, the previous epoch remains accepted for 7 days. A sender that receives `not_authorized` for a record after a rotation it knows of treats the obligation as `retry_scheduled` with reason `epoch` until the deadline. It never treats it as terminal (review P-6).
 - **Late events.** A valid signature never overrides a newer local block.
 - **Equivocation.** Two different events with the same `(author, conversationId, stream, counter)` are equivocation. The receiver keeps both as evidence, quarantines the later one, and stops accepting that stream until the owner acts. Other streams of the same author are unaffected.
+- **Rotation conflicts (provisional, 2026-10-23).** Pending rotations are keyed by `(epoch, proposer)`. Two proposals of one epoch with different secret digests are a conflict the owner sees; accepting needs the owner to name the proposer, and an epoch already selected never takes a second secret; a late differing proposal records a secret conflict naming its proposer, which the owner can dismiss.
 - **Group bound.** `maxParticipants` bounds each owner's accepted-peer set for a conversation. An occupant refuses to accept a peer beyond it. Senders pre-check descriptor limits at compose time, and the UI shows "some participants can't see messages from everyone" when bindings show that limits differ (review P-12).
 
 ### 6.6 Rejoin after an app switch
@@ -440,6 +443,8 @@ Until archive encryption exists, conversation secrets are not exported (§10). A
 A peer that is offline answers when it returns. Until then, obligations to that peer are `retry_scheduled` with reason `epoch`.
 
 **Provisional BB4-I3 reconciliation:** while a restored mailbox awaits its secret, records from accepted peers are refused with `recipient_unavailable` (503, `Retry-After: 60`) after author verification, rather than treated as terminal authorization failures. The edge uses its awaiting-secret fence to route these accepted peers without an available pair-token digest. Only a valid, digest-bound `secret-share` installs the missing secret. Other authors remain refused. Independent reviewer/date/outcome pending.
+
+**Provisional wargame reconciliation (2026-10-23):** the restored mailbox installs a `secret-share` only for the epoch it had selected before the switch, or for another epoch still inside its overlap; its selected epoch never changes, and it keeps awaiting until that epoch's secret is installed. A share of an expired epoch is ignored. If no peer holds the selected epoch's secret (for example an own rotation nobody selected), the mailbox stays awaiting until the owner acts.
 
 ### 6.7 Request filtering is not observable
 

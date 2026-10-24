@@ -62,7 +62,7 @@ export function decodeValue(v,depth=0){
 // bb:send body/queue/breaker/events, cursors, hot usage (recomputed on import) and archive/* itself.
 const R=(prefix,type,phase,exact=false)=>Object.freeze({prefix,type,phase,exact});
 export const ARCHIVE_CLASSES=Object.freeze([
- R('block/','block',0),R('revoked/','revocation',0),R('conv/frontier/','frontier',0),R('conv/mutations/','pending-mutation',0),
+ R('block/','block',0),R('revoked/','revocation',0),R('conv/frontier/','frontier',0),R('conv/counter/','frontier',0),R('conv/mutations/','pending-mutation',0),
  R('conv/replay/','replay',0),R('replay/','replay',0),R('conv/evidence/','evidence',0),R('intake/jti/','replay',0),R('intake/tx/','replay',0),
  R('bridge/fp/','replay',0),R('edge-seq','counter',0,true),R('conv-edge-seq','counter',0,true),
  R('conv/settings','overlay',1,true),R('conv/room/','conversation',1),R('conv/peer/','peer',1),R('conv/stream/','stream-head',1),

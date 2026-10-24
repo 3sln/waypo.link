@@ -19,8 +19,10 @@ import {createPushTransport} from '../../packages/messaging/web-push.mjs';
 import {transferIdentityPort,createTransferNotices,attestorFromJwk,transferDueIndex,sweepTransferDue} from '../../packages/identity/transfer-out.mjs';
 import {transferInIdentityPort} from '../../packages/identity/transfer-in.mjs';
 import {transferInRecoveryPort} from '../../packages/identity/recovery-reissue.mjs';
-import {createPortabilityFetch} from '../../packages/identity/successors.mjs';
+import {createPortabilityFetch,portabilityClient} from '../../packages/identity/successors.mjs';
 import {createDohResolver} from '../../packages/federation/resource-discovery.mjs';
+import {redirectRecordsPort,createRedirectReminders} from '../../packages/identity/redirect-records.mjs';
+import {redirectCapability} from '../../packages/runtime/redirect-extension.mjs';
 
 export const LIFECYCLE_SCHEDULER_NAME='lifecycle-sweep-v1';
 const repositoryOf=env=>new ShardedIdentityRepository({shard:name=>env.IDENTITIES.get(env.IDENTITIES.idFromName(name)),layout:env.IDENTITY_LAYOUT,config:env});
@@ -82,12 +84,12 @@ export function workerTransferOutConfig(env){
  * deletion-due index, swept on every run independent of LIFECYCLE_ENABLED (DX-3 §2.2), and the PORT-2 transfer-due
  * index, swept after it. */
 export class LifecycleScheduler extends DurableObject {
- constructor(ctx,env){super(ctx,env);this.due=deletionDueIndex(ctx.storage);this.transferDue=transferDueIndex(ctx.storage);this.accounts={get:id=>env.ACCOUNTS.get(env.ACCOUNTS.idFromName(id))};this.transferIdentity=transferIdentityPort(repositoryOf(env));this.sweep=new LifecycleSweep({metadata:ctx.storage,repository:repositoryOf(env),accounts:this.accounts,config:{...env,ACCOUNT_DELETION_DUE:this.due}});}
+ constructor(ctx,env){super(ctx,env);this.due=deletionDueIndex(ctx.storage);this.transferDue=transferDueIndex(ctx.storage);this.accounts={get:id=>env.ACCOUNTS.get(env.ACCOUNTS.idFromName(id))};this.transferIdentity=transferIdentityPort(repositoryOf(env));try{this.redirectReminders=createRedirectReminders({records:redirectRecordsPort(repositoryOf(env)),mail:mailTransport(env),origin:env.APP_ORIGIN,capability:account=>redirectCapability(env,account),client:portabilityClient({fetch:createPortabilityFetch({resolve:createDohResolver(),publicRouting:true})})});}catch{this.redirectReminders=null;}this.sweep=new LifecycleSweep({metadata:ctx.storage,repository:repositoryOf(env),accounts:this.accounts,config:{...env,ACCOUNT_DELETION_DUE:this.due}});}
  duePut(owner,at){return this.due.put(owner,at);}
  dueDelete(owner,at){return this.due.delete(owner,at);}
  transferDuePut(owner,at,kind){return this.transferDue.put(owner,at,kind);}
  transferDueDelete(owner,at,kind){return this.transferDue.delete(owner,at,kind);}
- async sweepTransfers(){try{return await sweepTransferDue({index:this.transferDue,identity:this.transferIdentity,accounts:this.accounts});}catch{return {done:0,failed:1};}}
+ async sweepTransfers(){try{return await sweepTransferDue({index:this.transferDue,identity:this.transferIdentity,accounts:this.accounts,reminders:this.redirectReminders});}catch{return {done:0,failed:1};}}
  async run(input){const result=await this.sweep.run(input);await this.sweepTransfers();return result;}
  status(){return this.sweep.status();}
  async alarm(){const result=await this.sweep.run({trigger:'alarm'});await this.sweepTransfers();return result;}

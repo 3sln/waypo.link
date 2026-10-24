@@ -240,7 +240,9 @@ export class LinkedApproval {
     if (!legacy) this.enabled(); const identity = this.identity, { account, session, check } = await this.decidable(input, context);
     if (input.approved !== true || ((legacy || input.accountHandle !== undefined) && input.accountHandle !== account.handle)) this.fail('confirmation_required', 'Confirm the account and code shown on the device you are signing in.');
     const request = await check(), app = request.kind === 'app', now = this.now();
-    if (legacy && app) this.invalid();
+    // Wargame round 3 D4: the caller names the kind it is approving (the session route `session`, the device grant's
+    // consent path `app`); a mismatch is the uniform miss, so an app request is never approved without owner consent.
+    if ((legacy && app) || (input.kind ?? 'session') !== request.kind) this.invalid();
     if(!legacy&&!this.allowed(account,request))this.fail('not_found','Linked approval is not enabled.');
     if (!this.fresh(session, request)) this.fail('reauthentication_required', 'Confirm your password or passkey before approving this sign-in.');
     const choice = legacy ? 'session' : input.choice ?? (app ? 'ongoing' : 'session'), lifetime = linkedLifetime({ kind: request.kind, choice, now, sessionExpiresAt: session.expiresAt, sessionTtlMs: identity.config.sessionTtlMs, idleMs: this.idleMs() });
@@ -248,6 +250,9 @@ export class LinkedApproval {
     if (input.consent !== undefined && (!app || !plain(input.consent, 4096) || Array.isArray(input.consent))) this.fail('invalid_consent', 'Review the requested access again.');
     const revision = request.revision; delete request.requester?.network;
     request.status = 'approved'; request.owner = account.id;
+    // Wargame round 3 D5: an approval always leaves the device one maximum poll interval to collect it (RFC 8628 §3.5),
+    // so an approval in the last interval before pendingUntil is not answered with expired_token.
+    request.pendingUntil = Math.max(pendingUntil(request), now + LINKED.maxInterval * 1000); request.expiresAt = Math.max(request.expiresAt ?? 0, request.pendingUntil);
     request.approval = { sessionId: await identity.sessionID(session), sessionHash: session.hash, sessionExpiresAt: session.expiresAt, authAt: identity.authAt(session), approvedAt: now, choice, ...lifetime, ...input.consent !== undefined ? { consent: structuredClone(input.consent) } : {} };
     if (!await this.save(request, revision)) this.fail('conflict', 'This request was already decided.');
     await this.notify(request);

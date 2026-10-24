@@ -14,8 +14,15 @@ export function foreignIssuers(config){
 export function foreignDirectoryEnabled(config,owner){
  try{return typeof config?.DIRECTORY_EGRESS==='function'&&siteGlobal(config,'DIRECTORY_ENABLED')&&flagsFor(config,{subject:{kind:'account',owner}}).enabled('ORG_FOREIGN_MEMBERS_ENABLED');}catch{return false;}
 }
-/** The directory for `owner` (an organization), or null when gated off. `store`: the account store (transaction/put). */
+const shared=new WeakMap();
+/** The directory for `owner`, or null when gated off. `store`: the account store (transaction/put). Wargame 2026-10-23
+ * F1: one directory per controller (keyed by its store), so its manifest cache, document cache and per-site limiter
+ * persist across calls; it spends the shared egress as tenant `owner`. Rebuilt only when the config, owner or
+ * allowlist changes. */
 export function foreignDirectory(config,{store,owner}){
- if(!foreignDirectoryEnabled(config,owner))return null;const issuers=foreignIssuers(config);
- return new IdentityDirectory({config,issuers,fetch:config.DIRECTORY_EGRESS(issuers),store:{transaction:fn=>store.transaction(tx=>fn({get:k=>tx.get(k),set:(k,v)=>tx.put(k,v)}))}});
+ if(!foreignDirectoryEnabled(config,owner))return null;const issuers=foreignIssuers(config),key=JSON.stringify(issuers);
+ const entry=store&&typeof store==='object'?shared.get(store):null;
+ if(entry?.config===config&&entry.owner===owner&&entry.key===key)return entry.directory;
+ const directory=new IdentityDirectory({config,issuers,tenant:typeof owner==='string'?owner:null,fetch:config.DIRECTORY_EGRESS(issuers),store:{transaction:fn=>store.transaction(tx=>fn({get:k=>tx.get(k),set:(k,v)=>tx.put(k,v)}))}});
+ if(store&&typeof store==='object')shared.set(store,{config,owner,key,directory});return directory;
 }

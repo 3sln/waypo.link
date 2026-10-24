@@ -26,6 +26,7 @@
 //   effects   {revokeDelegations, severConnections, eraseGrants, purge(owner) -> {done, wakeAt?, halted?}}
 //   due       {put(owner, at, kind), delete(owner, at, kind)}   transferDueIndex below (scheduler backstop)
 //   issuer    this provider's issuer origin
+//   destinationKeys  origin -> attestation-key thumbprints | null   optional, best effort at commit (redirect management)
 import { AppAction, AppQuery } from '../app/engine.mjs';
 import { AppFault } from '../app/faults.mjs';
 import { isUUID } from '../core/primitives.mjs';
@@ -37,6 +38,7 @@ import {raiseAuthorityEpoch,authorityEpoch} from './authority-epoch.mjs';
 import { revokeAllLineage, revokeLineage, pruneLineage } from './linked-approval.mjs';
 import { movedWindow, MOVED_AUDIT } from './lifecycle-tombstone.mjs';
 import { attestorFromConfig } from './attestation-keys.mjs';
+import { movedAudit, settlementMarker, REMINDER_LEAD, REDIRECT_TIMING } from './redirect-records.mjs';
 
 export const TRANSFER_FLAG = 'IDENTITY_TRANSFER_OUT_ENABLED';
 export const TRANSFER_KEY = 'transfer-out/v1', LOCK_KEY = 'transfer-out/lock-v1';
@@ -84,13 +86,13 @@ export async function transferBlocksDeletion(reader) { const record = await read
 export function transferView(record, { now } = {}) {
   if (!record) return { state: 'none' };
   const base = { state: record.state, path: record.path ?? null, destination: record.destination ?? null, createdAt: record.createdAt ?? null };
-  if (record.state === 'draft') return { ...base, draft: record.id, expiresAt: record.expiresAt };
+  if (record.state === 'draft') return { ...base, draft: record.id, expiresAt: record.expiresAt, redirect: record.redirect === true, reminder: record.reminder === true };
   if (record.state === 'committed') return { ...base, error: 'identity_moved', moved: { to: record.statement?.to ?? null, committedAt: record.committedAt, exportUntil: record.exportUntil, redirectUntil: record.redirectUntil } };
   const pending = LIVE.has(record.state);
   return {
     ...base, notBefore: notBefore(record), expiresAt: record.statement ? null : record.expiresAt, statementReceived: Boolean(record.statement),
     hold: record.hold ? { since: record.hold.at, until: record.hold.expiresAt } : null, disputed: (record.disputes?.length ?? 0) > 0,
-    freshDelay: record.elevated?.side === 'requester' && pending, redirect: record.redirect === true,
+    freshDelay: record.elevated?.side === 'requester' && pending, redirect: record.redirect === true, reminder: record.reminder === true,
     ...pending && !record.statement ? { transfer: { id: record.transfer.id, exp: record.transfer.exp } } : {},
     ...TERMINAL.has(record.state) ? { endedAt: record.endedAt ?? null, reason: record.reason ?? null } : {},
     ...now !== undefined && pending ? { waiting: notBefore(record) === null ? 'notices' : notBefore(record) > now ? 'delay' : record.statement ? 'commit' : 'statement' } : {},
@@ -190,13 +192,13 @@ export class TransferOutService {
    * `statement` is the digest a destination-start `authorize_url` carries (spec §6.1 item 1): the authorization is then
    * made against that exact statement, which may arrive with `transfer: null`. */
   async begin(actor, input) {
-    const owner = ownerActor(actor), v = exact(input, ['destination', 'redirect', 'statement']), now = this.now();
+    const owner = ownerActor(actor), v = exact(input, ['destination', 'redirect', 'statement', 'reminder']), now = this.now();
     if (!transferEnabled(this.flags, owner)) notFound();
     stepUp(actor, now);
     const destination = this.destination(v.destination); if (v.redirect !== undefined && typeof v.redirect !== 'boolean') fail('invalid_request', 'Choose whether old links redirect.');
-    const statementDigest = boundDigest(v.statement);
+    const statementDigest = boundDigest(v.statement), reminder = reminderChoice(v);
     await this.eligible(owner, { now, actor });
-    const draft = { v: 1, id: this.random.uuid(), owner, state: 'draft', destination, redirect: v.redirect !== false, createdAt: now, expiresAt: now + TIMING.draftTtl, requester: requester(actor), ...statementDigest ? { statementDigest } : {}, revision: 1 };
+    const draft = { v: 1, id: this.random.uuid(), owner, state: 'draft', destination, redirect: v.redirect !== false, ...reminder ? { reminder: true } : {}, createdAt: now, expiresAt: now + TIMING.draftTtl, requester: requester(actor), ...statementDigest ? { statementDigest } : {}, revision: 1 };
     await this.metadata.transaction(async tx => { const live = await tx.get(TRANSFER_KEY); if (live && (LIVE.has(live.state) || ['contested', 'committed'].includes(live.state))) fail('transfer_pending', 'A move is already pending for this identity.', 409); await tx.put(TRANSFER_KEY, draft); });
     this.log({ action: 'transfer-begun', owner });
     return transferView(draft);
@@ -224,7 +226,7 @@ export class TransferOutService {
     // Spec §6.1(a): notice goes to every channel before commit. Sessions are not an out-of-band channel here, so a move
     // that could notify no one is refused, as on path (b) (F3).
     else if (!this.noticeTargets({ channels }).length) fail('notice_channel_required', 'Moving needs an email address or a device that can receive notices.', 409);
-    return this.create(owner, { path: 'a', destination: draft.destination, redirect: draft.redirect, credential, security, channels, now, requester: requester(actor), delay: elevated ? TIMING.freshDelay : TIMING.personDelay, elevated, draft, chain, statementDigest: draft.statementDigest });
+    return this.create(owner, { path: 'a', destination: draft.destination, redirect: draft.redirect, reminder: draft.reminder === true && draft.redirect, credential, security, channels, now, requester: requester(actor), delay: elevated ? TIMING.freshDelay : TIMING.personDelay, elevated, draft, chain, statementDigest: draft.statementDigest });
   }
   /** Path (b) (spec §6.1(b), design §3.3): the current credential without a session starts a 7-day public waiting
    * period. Actor {kind:'credential', owner}. `input`: {recoveryToken, keychain, destination, redirect, confirm,
@@ -232,11 +234,11 @@ export class TransferOutService {
    * answered and before anything can escalate to the support lock (F4). */
   async authorizeWaiting(actor, input) {
     if (actor?.kind !== 'credential' || !isUUID(actor.owner)) fail('unauthorized', 'Load your recovery file to continue.', 401);
-    const owner = actor.owner, v = exact(input, ['recoveryToken', 'keychain', 'destination', 'redirect', 'confirm', 'statement']), now = this.now();
+    const owner = actor.owner, v = exact(input, ['recoveryToken', 'keychain', 'destination', 'redirect', 'confirm', 'statement', 'reminder']), now = this.now();
     if (!transferEnabled(this.flags, owner)) notFound();
     if (v.confirm !== true) fail('confirmation_required', 'Confirm that 3sln.me will stop speaking for you.');
     const destination = this.destination(v.destination); if (v.redirect !== undefined && typeof v.redirect !== 'boolean') fail('invalid_request', 'Choose whether old links redirect.');
-    const statementDigest = boundDigest(v.statement);
+    const statementDigest = boundDigest(v.statement), reminder = reminderChoice(v);
     await this.bound(owner);
     const presented = await this.port('identity').get(owner);
     if (!presented) fail('recovery_invalid', 'This recovery file cannot authorize a move. Use your newest recovery file.', 400);
@@ -249,7 +251,7 @@ export class TransferOutService {
     const channels = await this.channels(owner, identity, { removed: true, now });
     if (!channels.email && !channels.removedEmails.length && !channels.push.length) fail('notice_channel_required', 'A waiting-period move needs an email address or a device that can receive notices.', 409);
     const chain = await this.chainPosition(owner, identity);
-    return this.create(owner, { path: 'b', destination, redirect: v.redirect !== false, credential, security: identity.security, channels, now, requester: { sessionId: null, credentialId: null }, delay: TIMING.waitingPeriod, elevated: false, chain, statementDigest });
+    return this.create(owner, { path: 'b', destination, redirect: v.redirect !== false, reminder, credential, security: identity.security, channels, now, requester: { sessionId: null, credentialId: null }, delay: TIMING.waitingPeriod, elevated: false, chain, statementDigest });
   }
   /** Spec §4 `seq`/`prev` and `from.identity` for this identity's next move: an identity that moved in carries the
    * chain that brought it here (transfer-in `moves`), and its move out continues it. */
@@ -260,8 +262,8 @@ export class TransferOutService {
     if (moves.length) { try { prev = await statementDigest(parseMoveStatement(moves.at(-1).statement).input); } catch { unavailable(); } }
     return { seq: moves.length + 1, prev, identity: typeof identity.identityUri === 'string' && identity.identityUri ? identity.identityUri : identityURI(this.issuer, owner) };
   }
-  async create(owner, { path, destination, redirect, credential, security, channels, now, requester, delay, elevated, draft, chain, statementDigest = null }) {
-    const record = { v: 1, id: this.random.uuid(), owner, kind: 'person', path, state: 'pending', destination, redirect, chain, ...statementDigest ? { statementDigest } : {},
+  async create(owner, { path, destination, redirect, reminder = false, credential, security, channels, now, requester, delay, elevated, draft, chain, statementDigest = null }) {
+    const record = { v: 1, id: this.random.uuid(), owner, kind: 'person', path, state: 'pending', destination, redirect, ...reminder === true && redirect ? { reminder: true } : {}, chain, ...statementDigest ? { statementDigest } : {},
       transfer: { id: base64url(this.random.bytes(24)), exp: seconds(now + TIMING.expiry) }, createdAt: now, begunAt: now, expiresAt: now + TIMING.expiry,
       delay, noticedAt: null, round: 1, credential, securityEpoch: security.epoch, requester, channels, tokens: [], notices: {}, statement: null,
       disputes: [], hold: null, elevated: elevated ? { side: 'requester', at: now, credentialId: requester.credentialId ?? null, restart: true } : null,
@@ -453,6 +455,10 @@ export class TransferOutService {
     const changed = identityChanged(identity, record);
     if (changed) return { record: await this.end(record, 'cancelled', changed, { block: true }), action: 'cancelled', reason: changed };
     const s = record.statement, redirectUntil = record.redirect ? now + TIMING.redirect : null, exportUntil = now + TIMING.exportWindow;
+    // Best effort (redirect management, design §6.4): the destination's attestation keys as they are while it is
+    // posting this very statement, so that a later retarget verifies its attestation against them instead of trusting
+    // them on first use. A failure only leaves the record without them.
+    const destinationKeys = record.redirect ? await this.destinationKeys(s.to.iss) : null;
     const movedUntil = Math.max(redirectUntil ?? 0, now + TIMING.attestationRetention);
     // The attested `aep` is the same-host authority epoch (authority-epoch.mjs), never `security.epoch`, which also rises on
     // routine credential changes; a malformed epoch fails closed into the hold.
@@ -469,7 +475,7 @@ export class TransferOutService {
       if (live?.id !== record.id || live.revision !== record.revision || live.state !== 'pending') return null;
       const request = await tx.get(DELETION_REQUEST);
       if (['scheduled', 'executing'].includes(request?.state) || await tx.get(DELETION_FENCE) !== undefined || await tx.get(PURGE) !== undefined || await tx.get(TOMBSTONE) !== undefined) return null;
-      const next = { ...live, state: 'committed', attestation, committedAt: now, redirectUntil, exportUntil, movedUntil, aep, tokens: [], hold: null, stages: {}, revision: live.revision + 1 };
+      const next = { ...live, state: 'committed', attestation, committedAt: now, redirectUntil, exportUntil, movedUntil, aep, ...destinationKeys ? { destinationKeys } : {}, tokens: [], hold: null, stages: {}, revision: live.revision + 1 };
       await tx.put(TRANSFER_KEY, next); return next;
     });
     if (!committed) { const fresh = await this.metadata.get(TRANSFER_KEY); return { record: fresh, action: 'retry', wakeAt: now + 1000 }; }
@@ -477,6 +483,11 @@ export class TransferOutService {
     const after = await this.stages(committed);
     if (after.state !== 'committed') return { record: after, action: after.state, reason: after.reason };
     return { record: after, action: 'committed', wakeAt: this.nextWake(after) };
+  }
+  /** The destination's attestation-key thumbprints (port `destinationKeys(origin) -> string[]`), or null. Bounded. */
+  async destinationKeys(origin) {
+    const port = this.ports.destinationKeys; if (typeof port !== 'function') return null;
+    try { const list = await port(origin); return Array.isArray(list) && list.length && list.length <= 64 && list.every(value => typeof value === 'string' && /^[A-Za-z0-9_-]{43}$/.test(value)) ? [...new Set(list)] : null; } catch { return null; }
   }
   /** Post-commit effects, each idempotent and recorded. A failing stage retries on the next step. */
   async stages(record) {
@@ -508,7 +519,7 @@ export class TransferOutService {
     // 5. App grants, token families and MCP grants: a moved identity's credentials then fail uniformly.
     await run('grants', async () => { if (typeof effects.eraseGrants !== 'function') return { absent: true }; return { ...await effects.eraseGrants(owner) ?? {}, erased: true }; });
     // 6. Scheduler backstop: the redirect and proof end (`movedUntil`), and the purge after the export window.
-    await run('due', async () => { const due = ports.due; if (!due || typeof due.put !== 'function') return { absent: true }; await due.put(owner, current.movedUntil, 'moved-end'); await due.put(owner, current.exportUntil, 'tick'); return { indexed: true }; });
+    await run('due', async () => { const due = ports.due; if (!due || typeof due.put !== 'function') return { absent: true }; await due.put(owner, current.movedUntil, 'moved-end'); await due.put(owner, current.exportUntil, 'tick'); if (current.reminder === true && time(current.redirectUntil)) await due.put(owner, Math.max(current.committedAt, current.redirectUntil - REMINDER_LEAD), 'moved-reminder'); if (time(current.redirectUntil)) await due.put(owner, current.committedAt + REDIRECT_TIMING.probeEvery, 'moved-probe'); return { indexed: true }; });
     // 7. Completion notice, informational (spec §6.3 SHOULD). Acceptance is recorded, never delivery.
     await run('notice', async () => ({ accepted: await this.inform(current, 'committed') }));
     if (current.stages.notice && current.channels) current = await this.patch(current.id, r => { if (r.state !== 'committed') return null; r.channels = null; r.notices = {}; return r; }) ?? current;
@@ -795,6 +806,8 @@ const requester = actor => ({ sessionId: typeof actor.sessionId === 'string' ? a
 /** Whether a recorded disputer is the move's own requester (same session or passkey). Such entries never count as
  * tier-0 disputes for elevation or an elevated restart (review follow-up 1); legacy records may still hold them. */
 const fromRequester = (by, asked) => by?.kind === 'session' && Boolean(asked) && (Boolean(asked.sessionId) && by.id === asked.sessionId || Boolean(asked.credentialId) && by.credentialId === asked.credentialId);
+/** The expiry-reminder opt-in (design §6.4): a boolean, only meaningful with a redirect; default no. */
+const reminderChoice = v => { if (v.reminder !== undefined && typeof v.reminder !== 'boolean') fail('invalid_request', 'Choose whether to get a reminder before the redirect ends.'); if (v.reminder === true && v.redirect === false) fail('invalid_request', 'A reminder needs old links to redirect.'); return v.reminder === true; };
 /** A destination-start statement digest (spec §4 `prev` encoding), or null when absent. */
 const boundDigest = value => { if (value === undefined || value === null) return null; if (typeof value !== 'string' || !DIGEST.test(value)) fail('invalid_request', 'Unsupported transfer request.'); return value; };
 /** Spec §6.1 commit re-checks against the identity: the reason a move can no longer commit, or null. */
@@ -823,7 +836,9 @@ const sameCredential = (entry, actor) => entry.credentialId ? entry.credentialId
 export function movedRecord(record, issuer) {
   return { v: 1, from: { iss: issuer, identity: record.chain?.identity ?? identityURI(issuer, record.owner) }, to: record.statement.to, redirectBase: record.redirect ? record.statement.redirectBase : null, boundRedirectBase: record.statement.redirectBase,
     statement: record.statement.jws, statementDigest: record.statement.digest, attestation: record.attestation, committedAt: record.committedAt,
-    redirectUntil: record.redirectUntil, exportUntil: record.exportUntil, movedUntil: record.movedUntil };
+    redirectUntil: record.redirectUntil, exportUntil: record.exportUntil, movedUntil: record.movedUntil,
+    // The reminder opt-in becomes one verified email in markMoved (which reads the identity's own record), never here.
+    ...record.redirect && record.reminder === true ? { reminder: true } : {}, ...record.redirect && Array.isArray(record.destinationKeys) ? { destinationKeys: [...record.destinationKeys] } : {} };
 }
 
 // ---- engine operations ----------------------------------------------------------------------------------------
@@ -906,7 +921,11 @@ export function transferIdentityPort(repository, { clock = () => Date.now(), cry
         const credential = recoveryCredential(account);
         if (!credential || credential.issuedAt !== expect.recoveryIssuedAt || await ref(account.recoveryHash) !== expect.recoveryRef) return { ok: false, status: 'credential-superseded' };
         const now = clock(); revokeAllLineage(account, now);
-        Object.assign(account, { status: 'moved', moved: structuredClone(moved), sessions: [], challenges: [], emailChallenges: [], emailLoginEnabled: false, recoveryHash: null, pendingHash: null, pendingExpiresAt: null });
+        // Expiry reminder (design §6.4): opted in at transfer-out, it keeps exactly the identity's verified email as of
+        // this write, solely for the reminder; no verified email means no reminder (recorded, address-free).
+        const kept = structuredClone(moved), wanted = kept.reminder === true; delete kept.reminder;
+        if (wanted) { const email = typeof account.verifiedEmail === 'string' && time(account.emailVerifiedAt) ? { address: account.verifiedEmail, verifiedAt: account.emailVerifiedAt } : null; if (email && typeof kept.redirectBase === 'string') kept.reminderEmail = email; kept.audit = movedAudit(kept, { event: email ? 'reminder-email-kept' : 'reminder-unavailable', at: now }); }
+        Object.assign(account, { status: 'moved', moved: kept, sessions: [], challenges: [], emailChallenges: [], emailLoginEnabled: false, recoveryHash: null, pendingHash: null, pendingExpiresAt: null });
         for (const name of ['recoveryResumeHash', 'recoveryResumeBackupVersion', 'recoveryResumeKeyKid', 'recoveryIssuedAt', 'recoveryKeyKid', 'recoveryStaged', 'recoveryReissue']) delete account[name];
         audit(account, MOVED_AUDIT); return { ok: true, write: true };
       });
@@ -946,14 +965,26 @@ export function transferIdentityPort(repository, { clock = () => Date.now(), cry
     /** Scheduler: at `movedUntil`, the new address and the move proof are deleted (design §6.5 item 4). */
     async endMoved(owner) {
       return cas(owner, (account) => {
-        if (account.status !== 'moved' || !plain(account.moved)) return { ok: true, value: { ended: true } };
-        const window = movedWindow(account.moved, clock());
+        const now = clock();
+        // Review M2: the address-free settlement marker (`settledOrder`, `endedAt`) outlives the record by
+        // REDIRECT_TIMING.settlementMarker, in the ended stub or, once purged, in the deleted tombstone; then it goes.
+        const keptMarker = account.status === 'moved' && plain(account.moved) && account.moved.ended === true ? account.moved.settlement : account.movedSettlement;
+        if (account.status !== 'moved' || !plain(account.moved) || account.moved.ended === true) {
+          if (!plain(keptMarker)) return { ok: true, value: { ended: true } };
+          if (time(keptMarker.until) && keptMarker.until > now) return { ok: true, value: { ended: false, nextAt: keptMarker.until } };
+          if (account.status === 'moved' && plain(account.moved)) delete account.moved.settlement; else delete account.movedSettlement;
+          return { ok: true, write: true, value: { ended: true } };
+        }
+        const window = movedWindow(account.moved, now);
         if (window.live || window.proof) return { ok: true, value: { ended: false, nextAt: window.nextAt } };
         // Purged (credentials gone) identities become exactly a deleted one; an unpurged one keeps `moved` without a target.
         const purged = !account.passwordHash && !(account.credentials ?? []).length && account.movedPurgedAt !== undefined;
-        account.moved = { v: 1, ended: true, committedAt: account.moved.committedAt, exportUntil: account.moved.exportUntil };
-        if (purged) { account.status = 'deleted'; delete account.moved; }
-        return { ok: true, write: true, value: { ended: true } };
+        // The address-free audit trail survives as long as the marker; a kept reminder email is deleted here (expiry).
+        let trail = account.moved.audit; if (account.moved.reminderEmail) trail = movedAudit(account.moved, { event: 'reminder-email-deleted', reason: 'expired', at: now });
+        const marker = settlementMarker(account.moved, now);
+        account.moved = { v: 1, ended: true, committedAt: account.moved.committedAt, exportUntil: account.moved.exportUntil, ...marker ? { settlement: marker } : {}, ...Array.isArray(trail) && trail.length ? { audit: movedAudit({ audit: trail }, { event: 'moved-record-ended', at: now }) } : {} };
+        if (purged) { account.status = 'deleted'; delete account.moved; if (marker) account.movedSettlement = marker; }
+        return { ok: true, write: true, value: marker ? { ended: false, nextAt: marker.until } : { ended: true } };
       });
     },
   });
@@ -1005,9 +1036,12 @@ export function createTransferNotices({ origin, mail = null, push = null }) {
 // ---- scheduler backstop ---------------------------------------------------------------------------------------
 
 /** `transfer-due/<at>/<kind>/<owner>` rows over any key/value metadata store (the lifecycle scheduler object on the
- * Worker, the identity directory on Node). `tick` rows step the account; `moved-end` rows end a moved record. */
+ * Worker, the identity directory on Node). `tick` rows step the account; `moved-end` rows end a moved record;
+ * `moved-reminder` rows send the opted-in expiry reminder and `moved-probe` rows check the target for the 30-day 404
+ * rule (packages/identity/redirect-records.mjs). */
+const DUE_KINDS = ['tick', 'moved-end', 'moved-reminder', 'moved-probe'];
 export function transferDueIndex(metadata) {
-  const name = (owner, at, kind) => { if (!isUUID(owner) || !time(at) || !['tick', 'moved-end'].includes(kind)) throw new TypeError('Invalid transfer index entry'); return `transfer-due/${String(at).padStart(16, '0')}/${kind}/${owner}`; };
+  const name = (owner, at, kind) => { if (!isUUID(owner) || !time(at) || !DUE_KINDS.includes(kind)) throw new TypeError('Invalid transfer index entry'); return `transfer-due/${String(at).padStart(16, '0')}/${kind}/${owner}`; };
   return Object.freeze({
     put: (owner, at, kind = 'tick') => metadata.put(name(owner, at, kind), { owner, at, kind }),
     delete: (owner, at, kind = 'tick') => metadata.delete(name(owner, at, kind)),
@@ -1016,11 +1050,13 @@ export function transferDueIndex(metadata) {
 }
 /** One bounded sweep: `moved-end` rows end the moved record through the identity port (no account object needed, so
  * it works after the purge); `tick` rows step the account. A row is removed once its work reports done. */
-export async function sweepTransferDue({ index, identity, accounts, now = Date.now(), limit = 64 }) {
+export async function sweepTransferDue({ index, identity, accounts, reminders = null, now = Date.now(), limit = 64 }) {
   let done = 0, failed = 0;
   for (const row of await index.due({ now, limit })) {
     try {
-      if (row.kind === 'moved-end') { const result = await identity.endMoved(row.owner); if (result?.ok && result.ended !== false) { await index.delete(row.owner, row.at, row.kind); done++; } else if (result?.ok && time(result.nextAt)) { await index.put(row.owner, result.nextAt, row.kind); await index.delete(row.owner, row.at, row.kind); done++; } else failed++; }
+      // `reminders.remind(owner)` -> {ok, done?, nextAt?}; without the port the row waits (no reminder is lost).
+      if (row.kind === 'moved-reminder' || row.kind === 'moved-probe') { const method = row.kind === 'moved-reminder' ? 'remind' : 'probe'; if (typeof reminders?.[method] !== 'function') { failed++; continue; } const result = await reminders[method](row.owner); if (result?.ok && time(result.nextAt) && result.nextAt !== row.at) { await index.put(row.owner, result.nextAt, row.kind); await index.delete(row.owner, row.at, row.kind); done++; } else if (result?.ok && result.done !== false) { await index.delete(row.owner, row.at, row.kind); done++; } else failed++; }
+      else if (row.kind === 'moved-end') { const result = await identity.endMoved(row.owner); if (result?.ok && result.ended !== false) { await index.delete(row.owner, row.at, row.kind); done++; } else if (result?.ok && time(result.nextAt)) { await index.put(row.owner, result.nextAt, row.kind); await index.delete(row.owner, row.at, row.kind); done++; } else failed++; }
       else { const result = await accounts.get(row.owner).invoke({ method: 'transferOutTick', args: [row.owner, { source: 'sweep' }] }); if (result?.$fault && result.$fault.code !== 'account_deleted') failed++; else { await index.delete(row.owner, row.at, row.kind); done++; } }
     } catch { failed++; }
   }

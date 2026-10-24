@@ -21,9 +21,10 @@ import * as P from '../../bindlebox-protocol/index.mjs';
 import {equalDigest,isUUID} from '../../bindlebox-protocol/encoding.mjs';
 import {MailboxAction,MailboxQuery} from '../engine.mjs';
 import {fault} from '../faults.mjs';
-import {MailboxDomain,KEYS,actorOwner,readConfig,principalKey,pad} from '../store/mailbox.mjs';
+import {MailboxDomain,KEYS,BOUNDS,actorOwner,readConfig,principalKey,pad,chargeUsage} from '../store/mailbox.mjs';
+import {stageBody,readBody,bodyObjects} from '../store/bodies.mjs';
 import {parseLinkURL,contactMeta} from './contacts.mjs';
-import {verificationPorts,knownRevoked,recordRevocation} from './delegation.mjs';
+import {verificationPorts,knownRevoked,recordRevocation,seenKey} from './delegation.mjs';
 import {handleIngress,ingressError} from './receive.mjs';
 
 const DAY=86400000,HOUR=3600000,te=new TextEncoder(),td=new TextDecoder();
@@ -33,20 +34,30 @@ const pk=p=>principalKey(p);
 const C={settings:'conv/settings',room:c=>`conv/room/${c}`,rooms:'conv/room/',secret:(c,e)=>`conv/secret/${c}/${e}`,secrets:c=>`conv/secret/${c}/`,peer:(c,p)=>`conv/peer/${c}/${pk(p)}`,peers:c=>`conv/peer/${c}/`,
  stream:(c,j)=>`conv/stream/${c}/${j}`,frontier:(c,p,j)=>`conv/frontier/${c}/${pk(p)}/${j}`,frontiers:c=>`conv/frontier/${c}/`,event:(c,id)=>`conv/event/${c}/${id}`,events:c=>`conv/event/${c}/`,body:(c,id)=>`conv/body/${c}/${id}`,
  replay:d=>`conv/replay/${d}`,op:id=>`conv/op/${id}`,ops:'conv/op/',work:id=>`conv/work/${encodeURIComponent(id)}`,works:'conv/work/',invite:(c,p)=>`conv/invite/${c}/${pk(p)}`,route:t=>`conv/route/${t}`,
- response:c=>`conv/response/${c}`,responses:'conv/response/',intro:(c,p)=>`conv/intro/${c}/${pk(p)}`,intros:c=>`conv/intro/${c}/`,rotation:(c,e)=>`conv/rotation/${c}/${e}`,rotations:c=>`conv/rotation/${c}/`,
- mutations:c=>`conv/mutations/${c}`,placeholder:(c,id)=>`conv/placeholder/${c}/${id}`,evidence:(c,id)=>`conv/evidence/${c}/${id}`,byJkt:(j,c,id)=>`conv/by-jkt/${j}/${c}/${id}`,decided:id=>`conv/decided/${id}`,
+ response:c=>`conv/response/${c}`,responses:'conv/response/',intro:(c,p)=>`conv/intro/${c}/${pk(p)}`,intros:c=>`conv/intro/${c}/`,rotation:(c,e,p)=>`conv/rotation/${c}/${e}/${pk(p)}`,rotationsOf:(c,e)=>`conv/rotation/${c}/${e}/`,rotations:c=>`conv/rotation/${c}/`,
+ mutations:c=>`conv/mutations/${c}`,placeholder:(c,id)=>`conv/placeholder/${c}/${id}`,placeholders:c=>`conv/placeholder/${c}/`,counter:(c,p,j,n)=>`conv/counter/${c}/${pk(p)}/${j}/${pad(n)}`,evidence:(c,id)=>`conv/evidence/${c}/${id}`,byJkt:(j,c,id)=>`conv/by-jkt/${j}/${c}/${id}`,decided:id=>`conv/decided/${id}`,
  edgeSeq:'conv-edge-seq',edgeOutbox:n=>`conv-edge-outbox/${pad(n)}`};
 const BODY_TYPES=new Set(['message','edit']);
 // Conversation records have their own receive allowance (architecture §11), separate from BB-B2's link budgets:
 // per author per conversation and per owner, per UTC day, with a bounded key count. Provisional policy values.
-export const CONVERSATION_ALLOWANCE=Object.freeze({authorRecords:5000,authorBytes:256*1048576,ownerRecords:50000,ownerBytes:2048*1048576,keys:4096});
+// authorTotal* bound one author across every conversation of this owner, so N shared rooms do not give N x 5,000.
+export const CONVERSATION_ALLOWANCE=Object.freeze({authorRecords:5000,authorBytes:256*1048576,authorTotalRecords:10000,authorTotalBytes:512*1048576,ownerRecords:50000,ownerBytes:2048*1048576,keys:4096});
 const ALLOWANCE_KEY='conv/allowance';
-function chargeAllowance(state,{now,key,bytes,check=false}){
- const day=Math.floor(now/DAY),s=state?.day===day?structuredClone(state):{day,records:0,bytes:0,authors:{}},a=s.authors[key]??{records:0,bytes:0},A=CONVERSATION_ALLOWANCE;
- const over=check?s.records>=A.ownerRecords||s.bytes>=A.ownerBytes:(!s.authors[key]&&Object.keys(s.authors).length>=A.keys)||a.records+1>A.authorRecords||a.bytes+bytes>A.authorBytes||s.records+1>A.ownerRecords||s.bytes+bytes>A.ownerBytes;
+function chargeAllowance(state,{now,key,principal:who,bytes,check=false}){
+ const day=Math.floor(now/DAY),s=state?.day===day?structuredClone(state):{day,records:0,bytes:0,authors:{}},A=CONVERSATION_ALLOWANCE;s.principals??={};
+ const a=s.authors[key]??{records:0,bytes:0},t=s.principals[who]??{records:0,bytes:0};
+ const over=check?s.records>=A.ownerRecords||s.bytes>=A.ownerBytes:(!s.authors[key]&&Object.keys(s.authors).length>=A.keys)||(!s.principals[who]&&Object.keys(s.principals).length>=A.keys)||a.records+1>A.authorRecords||a.bytes+bytes>A.authorBytes||t.records+1>A.authorTotalRecords||t.bytes+bytes>A.authorTotalBytes||s.records+1>A.ownerRecords||s.bytes+bytes>A.ownerBytes;
  if(over)protocol('rate_limited',{retryAfter:Math.max(1,Math.ceil(((day+1)*DAY-now)/1000))});
- if(!check){s.authors[key]={records:a.records+1,bytes:a.bytes+bytes};s.records++;s.bytes+=bytes;}return s;
+ if(!check){s.authors[key]={records:a.records+1,bytes:a.bytes+bytes};s.principals[who]={records:t.records+1,bytes:t.bytes+bytes};s.records++;s.bytes+=bytes;}return s;
 }
+// Missing-parent placeholders (§6.3): each author may hold at most a quarter of the room pool, and each expires after
+// 7 days, so one member naming random parents cannot fill the pool and force every honest gap into the sticky marker;
+// the marker clears once the pool drains (wargame 2026-10-23, B6).
+export const PLACEHOLDER_POLICY=Object.freeze({perAuthor:Math.floor(P.LIMITS.maxPlaceholders/4),ttlMs:7*DAY});
+// Lifetime bytes a room may keep in this mailbox (every event row's envelope plus any body held here, small ones
+// included), and one author's share of it. Events are never collected, so this is the cumulative bound the hot
+// allowance does not give small records (review of B2). Provisional policy values.
+export const ROOM_STORAGE=Object.freeze({roomBytes:512*1048576,authorBytes:128*1048576});
 // Only shared content advances causal heads; pairwise control records (hellos, proposals, shares) are never parents,
 // since other replicas never hold them.
 const CONTENT_TYPES=new Set(['message','edit','retract']);
@@ -210,7 +221,7 @@ async function emit(ctx,{cid,type,to=null,target=null,data=null,body=null,mimeTy
   const audience=await P.freezeAudience(recipients.map(r=>({...r.principal,incarnation:r.incarnation})));
   await tx.put(C.stream(cid,signer.jkt),{jkt:signer.jkt,counter,head:eventId});
   const ev={eventId,type,author:{principal:principal(config.principal),keyId:signer.author.keyId,jkt:signer.jkt},counter,stream:signer.kid,previous,parents:record.parents,epoch:recordEpoch,target,content,createdAt:now,receivedAt:now,own:true,revisions:[],retracted:null,quarantined:false,audience,operationId};
-  await tx.put(C.event(cid,eventId),ev);if(body)await tx.put(C.body(cid,eventId),Array.from(body));
+  await tx.put(C.event(cid,eventId),ev);if(body)await tx.put(C.body(cid,eventId),body.slice());
   if(type==='edit'||type==='retract')await mutate(tx,room,ev);
   room.lastOwn=eventId;if(CONTENT_TYPES.has(type)){room.heads=[eventId];await projectRoom(tx,room,now);}await tx.put(C.room(cid),room);
   const row={operationId,cid,eventId,type,kid:signer.kid,payload,recipients,secret:secret?Array.from(secret):null,hasBody:Boolean(body),knownRotation:Object.keys(room.epochs).length>1,prepared:null,submitted:!recipients.length,abandoned:false,createdAt:now};
@@ -248,8 +259,11 @@ async function submitOp(ctx,op){
 async function mutate(tx,room,ev){
  const target=await tx.get(C.event(room.id,ev.target));
  if(!target){
-  // At most 16 pending per author, so one member cannot push out others' mutations (BB4-S8).
-  let pending=await tx.get(C.mutations(room.id))??[];const theirs=pending.filter(m=>same(m.author,ev.author.principal));if(theirs.length>=16)pending=pending.filter(m=>m!==theirs[0]);
+  // At most 16 pending per author, so one member cannot push out others' mutations (BB4-S8); when the room bound is
+  // full, the author holding the most pending loses its oldest, so colluding members only evict each other.
+  let pending=await tx.get(C.mutations(room.id))??[];const theirs=pending.filter(m=>same(m.author,ev.author.principal));
+  if(theirs.length>=16)pending=pending.filter(m=>m!==theirs[0]);
+  else if(pending.length>=P.LIMITS.maxPendingMutations){const counts=new Map();for(const m of pending)counts.set(pk(m.author),(counts.get(pk(m.author))??0)+1);const most=Math.max(...counts.values()),victim=pending.find(m=>counts.get(pk(m.author))===most);pending=pending.filter(m=>m!==victim);}
   const q=P.queueMutation(pending,{target:ev.target,author:principal(ev.author.principal),eventId:ev.eventId});await tx.put(C.mutations(room.id),q.pending);return 'pending';}
  P.checkMutationAuthor({author:principal(target.author.principal)},principal(ev.author.principal));
  if(target.type!=='message')protocol('record_forbidden');
@@ -271,8 +285,13 @@ export function orderEvents(all){
  // A content event with no known parent is ordered after the genesis, never before it (BB4-S7).
  const genesis=rows.find(e=>e.type==='genesis')?.eventId;
  if(genesis)for(const e of rows)if(e.eventId!==genesis&&indegree.get(e.eventId)===0){indegree.set(e.eventId,1);if(!children.has(genesis))children.set(genesis,[]);children.get(genesis).push(e.eventId);}
- const ready=[...indegree].filter(([,n])=>!n).map(([id])=>id).sort(),out=[];
- while(ready.length){const id=ready.shift();out.push(id);for(const c of children.get(id)??[]){indegree.set(c,indegree.get(c)-1);if(!indegree.get(c)){ready.push(c);ready.sort();}}}
+ // A binary min-heap on event ID keeps ordering O(n log n): re-sorting the ready set after each push was quadratic in
+ // sibling events, which one member can mint at the daily allowance (wargame 2026-10-23, B3).
+ const ready=[],out=[];
+ const push=id=>{let i=ready.push(id)-1;while(i>0){const up=(i-1)>>1;if(ready[up]<=id)break;ready[i]=ready[up];i=up;}ready[i]=id;};
+ const pop=()=>{const top=ready[0],last=ready.pop();if(ready.length){let i=0;for(;;){const l=2*i+1,r=l+1;let m=i,v=last;if(l<ready.length&&ready[l]<v){m=l;v=ready[l];}if(r<ready.length&&ready[r]<v)m=r;if(m===i)break;ready[i]=ready[m];i=m;}ready[i]=last;}return top;};
+ for(const [id,n] of indegree)if(!n)push(id);
+ while(ready.length){const id=pop();out.push(id);for(const c of children.get(id)??[]){indegree.set(c,indegree.get(c)-1);if(!indegree.get(c))push(c);}}
  return out;
 }
 
@@ -293,10 +312,8 @@ async function admitGate(s,{cid,author,envelope,credential,me,now}){
  await P.checkPairGate(credential,envelope,await gateEntry(s,room,peer,author,me,now));
  return {room,peer,mode:r.type==='peer-hello'?'hello':'record'};
 }
-// Quarantine conversation events signed by a revoked delegate key at or after revokedHour - 1 h (§3.4, review S-3).
-async function quarantineJkt(tx,jkt,revokedHour,now){
- for(const [key] of await tx.list({prefix:`conv/by-jkt/${jkt}/`})){const [cid,id]=key.split('/').slice(-2),ev=await tx.get(C.event(cid,id));if(ev&&!ev.quarantined&&P.quarantined(ev.createdAt,revokedHour)){ev.quarantined={reason:'delegation_revoked',at:now};await tx.put(C.event(cid,id),ev);}}
-}
+// Conversation events signed by a revoked delegate key are quarantined by delegation.recordRevocation (conv/by-jkt/),
+// whether the revocation is learned here, on a link delivery or by the delegation.recheck sweep (B7).
 
 // Record effects inside the admission transaction. Each may queue replies; none performs network I/O.
 async function onHello(tx,{room,peer,author,r,ev,config,now}){
@@ -323,13 +340,20 @@ async function onProposal(tx,{room,author,r,ev,verified,config,now}){
  if(existing&&['removed','left','declined','pending'].includes(existing.state))return;
  await offer(tx,room,{...base,state:'proposed'},config,now);
 }
+// Pending rotations are keyed by (epoch, proposer), so a member racing another's proposal with the same epoch ID cannot
+// make it vanish; two proposals of one epoch with different secret digests are a visible conflict, never silently
+// resolved, and an epoch already selected here never takes a second secret (wargame 2026-10-23, B4).
 async function onRotate(tx,{room,author,r,ev,delivery,now}){
- const epoch=r.data.newEpoch;if(room.epochs[epoch]||await tx.get(C.rotation(room.id,epoch)))return;
+ const epoch=r.data.newEpoch;
+ if(room.epochs[epoch]){if(!equalDigest(room.epochs[epoch].digest,r.data.secretDigest))room.secretConflict={by:principal(author),epoch,eventId:ev.eventId,at:now};return;}
+ if(await tx.get(C.rotation(room.id,epoch,author)))return;
+ let conflict=false;
+ for(const [key,x] of await tx.list({prefix:C.rotationsOf(room.id,epoch)}))if(!equalDigest(x.secretDigest,r.data.secretDigest)){conflict=true;if(!x.conflict)await tx.put(key,{...x,conflict:true});}
  // One pending proposal per proposer (its latest), and a bound overall, so one member cannot evict others' (BB4-S8).
  for(const [key,x] of await tx.list({prefix:C.rotations(room.id)}))if(x.state==='pending'&&same(x.proposer,author))await tx.delete(key);
  const rows=[...(await tx.list({prefix:C.rotations(room.id)}))].filter(([,x])=>x.state==='pending').sort(([,a],[,b])=>a.at-b.at);
  if(rows.length>=CONVERSATION_LIMITS.rotations)await tx.delete(rows[0][0]);
- await tx.put(C.rotation(room.id,epoch),{epoch,base:r.epoch,proposer:principal(author),secret:Array.from(delivery.secret),secretDigest:r.data.secretDigest,at:now,eventId:ev.eventId,state:'pending'});
+ await tx.put(C.rotation(room.id,epoch,author),{epoch,base:r.epoch,proposer:principal(author),secret:Array.from(delivery.secret),secretDigest:r.data.secretDigest,at:now,eventId:ev.eventId,state:'pending',...conflict?{conflict:true}:{}});
 }
 async function onRejoin(tx,{room,peer,author,r,config,now}){
  const day=Math.floor(now/DAY),used=peer.rejoin?.day===day?peer.rejoin.count:0;
@@ -341,15 +365,19 @@ async function onRejoin(tx,{room,peer,author,r,config,now}){
 // Rejoining mailbox: the share is bound to the incarnation this mailbox issued in its rejoin; the secret must match the
 // digest this mailbox recorded for that epoch (control state survives an app switch, secrets do not), and the
 // presented pair token must verify under it. A member therefore cannot plant an unknown epoch or a wrong secret.
+// Only the epoch this mailbox had selected before the switch (room.current), or another epoch still inside its overlap,
+// is installed; room.current never moves, and the mailbox keeps awaiting until the current epoch's secret is installed.
+// A share of an expired epoch (whose digest is still recorded) therefore cannot pin the mailbox to a dead epoch and
+// wedge it (wargame 2026-10-23, B1).
 async function onSecretShare(tx,{room,peer,author,r,mode,delivery,credential,config,now}){
  if(mode!=='awaiting'||r.data.epoch!==r.epoch)return;
  const expected=await P.pairToken(delivery.secret,{conversationId:room.id,author:principal(author),recipient:principal(config.principal),incarnation:peer.inbound});
  if(!equalDigest(expected,credential.token))protocol('not_authorized');
- if(!room.epochs[r.epoch]?.digest||!equalDigest(room.epochs[r.epoch].digest,r.data.secretDigest))protocol('not_authorized');
- if(await tx.get(C.secret(room.id,r.epoch)))return;
- await tx.put(C.secret(room.id,r.epoch),Array.from(delivery.secret));
- if(!await tx.get(C.secret(room.id,room.current)))room.current=r.epoch;
- room.awaitingSecret=false;
+ const epoch=room.epochs[r.epoch];
+ if(!epoch?.digest||!equalDigest(epoch.digest,r.data.secretDigest))protocol('not_authorized');
+ if(r.epoch!==room.current&&!(epoch.until===null||epoch.until>now))return;
+ if(!await tx.get(C.secret(room.id,r.epoch)))await tx.put(C.secret(room.id,r.epoch),Array.from(delivery.secret));
+ if(await tx.get(C.secret(room.id,room.current)))room.awaitingSecret=false;
 }
 
 async function projectRoom(tx,room,now){room.activityRevision=(room.activityRevision??0)+1;await projectIncoming(tx,{id:room.id,type:'conversation',kind:'conversation',subject:room.subject,receivedAt:room.createdAt,activityAt:now,activityRevision:room.activityRevision});}
@@ -399,7 +427,7 @@ export class ConversationsCreate extends MailboxAction {
    const existing=await tx.get(C.op(operationId));if(existing)return existing;
    await projectRoom(tx,room,now);await tx.put(C.room(cid),room);await tx.put(C.secret(cid,epoch),Array.from(secret));
    await tx.put(C.event(cid,genesisDigest),{signedGenesis:genesis,eventId:genesisDigest,type:'genesis',author:{principal:principal(signer.author.principal),keyId:signer.author.keyId,jkt:signer.jkt},parents:[],previous:null,content,createdAt:now,receivedAt:now,own:true,revisions:[],retracted:null,quarantined:false});
-   await tx.put(C.body(cid,genesisDigest),Array.from(body));
+   await tx.put(C.body(cid,genesisDigest),body.slice());
    for(const i of invitees){
     await tx.put(C.invite(cid,i.principal),{principal:i.principal,nonce:i.nonce,incarnation:i.incarnation,expiresAt,route:i.route,response:null});
     await tx.put(C.route(i.route),{cid,principal:principal(i.principal)});await queueEdge(tx,{kind:'route',token:i.route});
@@ -473,7 +501,7 @@ export class ConversationsAccept extends MailboxAction {
    await projectRoom(tx,room,now);await tx.put(C.room(cid),room);await tx.put(C.secret(cid,g.secretEpoch),Array.from(secret));
    const body=await tx.get(KEYS.body(itemId));
    await tx.put(C.event(cid,genesisDigest),{signedGenesis:c.genesis,eventId:genesisDigest,type:'genesis',author:{principal:creator,keyId:g.creator.keyId,jkt:P.jktOf(g.creator.delegate)},parents:[],previous:null,content:g.content,createdAt:g.createdAt,receivedAt:now,own:false,revisions:[],retracted:null,quarantined:false});
-   if(body)await tx.put(C.body(cid,genesisDigest),Array.from(body));
+   if(body)await tx.put(C.body(cid,genesisDigest),Uint8Array.from(body));
    await putPeer(tx,room,{principal:g.creator.principal,keyId:g.creator.keyId,state:'accepted',inbound,outbound:c.creatorBinding,ready:false,epoch:g.secretEpoch,generation:1,via:'invitation',acceptedAt:now},config,now);
    for(const x of g.participants)if(!same(x.principal,creator)&&!same(x.principal,config.principal))await putPeer(tx,room,{principal:x.principal,keyId:x.keyId,state:'listed',inbound:null,outbound:null,ready:true,generation:0,via:'genesis'},config,now);
   });
@@ -516,8 +544,8 @@ export class ConversationsRespond extends MailboxAction {
 
 // ---- Conversation records received through the conversation edge.
 export class ConversationsReceive extends MailboxAction {
- static operation='conversations.receive';static deps=['conversations','directory','delegateKeys','clock'];static changes='conversations-changed';
- async run({conversations:h,directory,delegateKeys,clock}){
+ static operation='conversations.receive';static deps=['conversations','directory','delegateKeys','userStorage','clock'];static changes='conversations-changed';
+ async run({conversations:h,directory,delegateKeys,userStorage,clock}){
   actorOwner(this.actor,['ingress']);const store=h.store,now=clock.now(),config=await readConfig(store),settings=await settingsOf(store),me=config.principal;
   const {contentType,body,authorization,idempotencyKey,ingress}=this.input??{};
   await requireRestored(store);if(ingress!==config.ingress)protocol('ingress_moved');
@@ -534,33 +562,63 @@ export class ConversationsReceive extends MailboxAction {
   if(!prior)chargeAllowance(await store.get(ALLOWANCE_KEY),{now,check:true});
   const learned=[],ports=verificationPorts({directory,store,now,learned});let verified;
   try{verified=await P.verifyEnvelope(envelope,{resolveKey:ports.resolveKey,status:ports.status,now});}
-  catch(error){if(learned.length)await store.transaction(async tx=>{for(const l of learned){await recordRevocation(tx,{...l,now});await quarantineJkt(tx,l.jkt,l.revokedHour,now);}}).catch(()=>{});throw error;}
+  catch(error){if(learned.length)await store.transaction(async tx=>{for(const l of learned)await recordRevocation(tx,{...l,now});}).catch(()=>{});throw error;}
   const a=verified.author;
   if(early.mode==='defer')protocol('recipient_unavailable',{retryAfter:30});
   if(!P.statusRequired(envelope)&&await knownRevoked({directory,store,now},a.jkt))protocol('author_unverifiable',{revoked:true});
+  // Bodies of 4 KiB or more go to the owner's storage resource (the BB-B2 path) or, without one, into the bounded hot
+  // allowance, charged with the envelope the event row keeps; at the cap the record is refused (wargame 2026-10-23, B2).
+  const envelopeBytes=te.encode(P.jcs(envelope)).byteLength,content=delivery.body&&BODY_TYPES.has(r.type)?delivery.body:null,large=Boolean(content&&content.byteLength>=BOUNDS.inlineBodyBytes),hotCharge=large?content.byteLength+envelopeBytes:0;
+  const hotFull=u=>u.hotBytes+hotCharge>BOUNDS.hotBytes||u.hotItems+1>BOUNDS.hotItems,storageReady=typeof userStorage?.put==='function';
+  if(large&&!prior&&!storageReady&&hotFull(await store.get(KEYS.usage)??{hotBytes:0,hotItems:0}))protocol('recipient_storage_unavailable',{retryAfter:60});
   const signer=await receiptSnapshot(delegateKeys,config,settings,now);
   const receipt=await P.signReceipt(await P.receiptPayload(envelope,{recipient:me,ingress:config.ingress,receivedAt:now,bodyDigest:delivery.bodyDigest}),signer);
-  return store.transaction(async tx=>{
+  // Dry admission, read-only: a duplicate or abandoned counter (or an event already held) is never staged, so replays of
+  // a refused-as-duplicate record cause no user-storage churn (review of B5).
+  let fresh=large&&!prior&&storageReady;
+  if(fresh){const front=await store.get(C.frontier(cid,author,r.stream));try{fresh=!front?.quarantined&&P.admitCounter(front??P.streamState(1),r.counter,{now}).status!=='duplicate'&&!await store.get(C.event(cid,verified.eventId));}catch{fresh=false;}}
+  let staged=null;if(fresh){try{staged=await stageBody(userStorage,`bindlebox/v1/conversations/${cid}/${replayId}/${newId()}`,content);}catch{staged=null;}}
+  let result;
+  try{result=await store.transaction(async tx=>{
    await requireRestored(tx,{envelope,replay:!!await tx.get(C.replay(replayId))});const {room,peer,mode}=await admitGate(tx,gate);if(mode==='defer')protocol('recipient_unavailable',{retryAfter:30});
    if(await tx.get(KEYS.revoked(a.jkt)))protocol('author_unverifiable',{revoked:true});
    const prior=await tx.get(C.replay(replayId)),outcome=P.replayDecision(prior,{payloadDigest:delivery.payloadDigest,eventId:verified.eventId});
    if(outcome==='replay')return {receipt:prior.receipt,replay:true};
    const fkey=C.frontier(cid,author,r.stream),front=await tx.get(fkey);
-   if(outcome==='equivocation'){
-    // Keep both as evidence, never apply the later one, and stop the stream until the owner acts (§6.5).
-    await tx.put(C.evidence(cid,verified.eventId),{eventId:verified.eventId,conflictsWith:prior.eventId,author:principal(author),stream:r.stream,counter:r.counter,envelope,at:now});
-    await tx.put(fkey,{...front??P.streamState(1),quarantined:{at:now,evidence:[prior.eventId,verified.eventId]}});
+   // Keep both as evidence, never apply the later one, and stop the stream until the owner acts (§6.5).
+   const equivocation=async conflictsWith=>{
+    await tx.put(C.evidence(cid,verified.eventId),{eventId:verified.eventId,conflictsWith,author:principal(author),stream:r.stream,counter:r.counter,envelope,at:now});
+    await tx.put(fkey,{...front??P.streamState(1),quarantined:{at:now,evidence:[conflictsWith,verified.eventId]}});
     return {receipt,replay:false,equivocation:true};
-   }
+   };
+   if(outcome==='equivocation')return equivocation(prior.eventId);
    if(outcome==='duplicate-event'){await tx.put(C.replay(replayId),{...prior,contexts:[...prior.contexts??[],delivery.payloadDigest].slice(-8)});return {receipt,replay:false,duplicate:true};}
    const start=r.type==='peer-hello'?Math.min(r.data.startCounter,r.counter):1,admitted=P.admitCounter(front??P.streamState(start),r.counter,{now});
-   if(admitted.status==='duplicate'&&await tx.get(C.event(cid,verified.eventId)))return {receipt,replay:false,duplicate:true};
+   // A counter at or below the frontier is never applied as new (B5): the same event is a duplicate; another event under
+   // a consumed counter is equivocation, found through the compact counter index that outlives replay retention; an
+   // abandoned or never-seen counter is a duplicate that is not applied.
+   if(admitted.status==='duplicate'){
+    const held=Boolean(await tx.get(C.event(cid,verified.eventId))),holder=held?undefined:await tx.get(C.counter(cid,author,r.stream,r.counter));
+    if(P.equivocates(holder,verified.eventId))return equivocation(holder);
+    // A not-applied duplicate costs one record of allowance and leaves a replay row, so its retries are answered from
+    // the stored receipt without verification, staging or another charge.
+    await tx.put(ALLOWANCE_KEY,chargeAllowance(await tx.get(ALLOWANCE_KEY),{now,key:`${cid}|${pk(author)}`,principal:pk(author),bytes:0}));
+    await tx.put(C.replay(replayId),{payloadDigest:delivery.payloadDigest,eventId:verified.eventId,receipt,retainUntil:P.retainUntil(envelope,now),applied:held});
+    return {receipt,replay:false,duplicate:true,...held?{}:{applied:false}};
+   }
    // New streams are bounded per author (a key change opens one), so one member cannot exhaust others' (BB4-S8).
    if(!front&&((await tx.list({prefix:C.frontiers(cid)})).size>=CONVERSATION_LIMITS.peers*4||(await tx.list({prefix:`conv/frontier/${cid}/${pk(author)}/`})).size>=8))protocol('rate_limited',{retryAfter:3600});
    // Every admitted record is charged (control records at zero bytes), so no record type grows rows without bound.
-   await tx.put(ALLOWANCE_KEY,chargeAllowance(await tx.get(ALLOWANCE_KEY),{now,key:`${cid}|${pk(author)}`,bytes:delivery.body?.byteLength??0}));
-   const ev={envelope,eventId:verified.eventId,type:r.type,author:{principal:principal(a.principal),keyId:a.keyId,jkt:a.jkt},counter:r.counter,stream:r.stream,previous:r.previous,parents:r.parents,epoch:r.epoch,target:r.target??null,content:p.content,createdAt:p.createdAt,receivedAt:now,own:false,revisions:[],retracted:null,quarantined:false,continuation:!front&&r.counter===1&&r.previous!==null,...p.resendOf?{resendOf:p.resendOf}:{}};
-   await tx.put(C.event(cid,ev.eventId),ev);if(delivery.body&&BODY_TYPES.has(r.type))await tx.put(C.body(cid,ev.eventId),Array.from(delivery.body));
+   // Charged on the whole delivery (envelope and body), so control records are not free either.
+   await tx.put(ALLOWANCE_KEY,chargeAllowance(await tx.get(ALLOWANCE_KEY),{now,key:`${cid}|${pk(author)}`,principal:pk(author),bytes:body.byteLength}));
+   const stored=envelopeBytes+(content&&!staged?content.byteLength:0),usage=room.stored??{bytes:0,authors:{}},authorStored=usage.authors[pk(author)]??0;
+   if(usage.bytes+stored>ROOM_STORAGE.roomBytes||authorStored+stored>ROOM_STORAGE.authorBytes)protocol('recipient_storage_unavailable',{retryAfter:3600});
+   room.stored={bytes:usage.bytes+stored,authors:{...usage.authors,[pk(author)]:authorStored+stored}};
+   let hot=0;if(large&&!staged){if(hotFull(await tx.get(KEYS.usage)??{hotBytes:0,hotItems:0}))protocol('recipient_storage_unavailable',{retryAfter:60});await chargeUsage(tx,{bytes:hotCharge});hot=hotCharge;}
+   const ev={envelope,eventId:verified.eventId,type:r.type,author:{principal:principal(a.principal),keyId:a.keyId,jkt:a.jkt},counter:r.counter,stream:r.stream,previous:r.previous,parents:r.parents,epoch:r.epoch,target:r.target??null,content:p.content,createdAt:p.createdAt,receivedAt:now,own:false,revisions:[],retracted:null,quarantined:false,continuation:!front&&r.counter===1&&r.previous!==null,...p.resendOf?{resendOf:p.resendOf}:{},...staged?{bodyRef:staged}:{},...hot?{hot}:{}};
+   // Bytes, never a number array (which serializes to about twice the size, past the 2 MiB Durable Object value limit
+   // for a 1 MiB body); a copy, so a view never drags the whole request buffer into storage.
+   await tx.put(C.event(cid,ev.eventId),ev);if(content&&!staged)await tx.put(C.body(cid,ev.eventId),content.slice());
    const args={room,peer,author,r,ev,verified,delivery,credential,mode,config,now};
    switch(r.type){
     case 'message':await applyPending(tx,room,ev);break;
@@ -574,22 +632,33 @@ export class ConversationsReceive extends MailboxAction {
     case 'leave':await putPeer(tx,room,{...peer,state:'left',inbound:null,outbound:null,generation:(peer.generation??0)+1},config,now);break;
     case 'ingress':await tx.put(C.peer(cid,author),{...peer,outbound:r.data.binding});break;
    }
-   // Causal bookkeeping: placeholders for missing parents, collapsing into one gap marker past 64 (§6.3).
-   if(await tx.get(C.placeholder(cid,ev.eventId))){await tx.delete(C.placeholder(cid,ev.eventId));room.placeholders=Math.max(0,room.placeholders-1);}
+   // Causal bookkeeping: placeholders for missing parents, collapsing into one gap marker past 64 (§6.3), bounded per
+   // author and expiring (B6). The pool is at most 64 rows, so this scan is bounded.
+   if(await tx.get(C.placeholder(cid,ev.eventId)))await tx.delete(C.placeholder(cid,ev.eventId));
+   let live=0,mine=0;for(const [key,row] of await tx.list({prefix:C.placeholders(cid)})){if(!(row?.at+PLACEHOLDER_POLICY.ttlMs>now)){await tx.delete(key);continue;}live++;if(row.author===pk(author))mine++;}
    const known=new Set();for(const id of r.parents)if(await tx.get(C.event(cid,id))||await tx.get(C.placeholder(cid,id)))known.add(id);
-   const plan=P.placeholderPlan(r.parents,known,room.placeholders);for(const id of plan.placeholders)await tx.put(C.placeholder(cid,id),{at:now});room.placeholders+=plan.placeholders.length;if(plan.collapsed)room.gap=true;
+   const plan=P.placeholderPlan(r.parents,known,live),added=plan.placeholders.slice(0,Math.max(0,PLACEHOLDER_POLICY.perAuthor-mine));
+   for(const id of added)await tx.put(C.placeholder(cid,id),{at:now,author:pk(author)});room.placeholders=live+added.length;if(plan.collapsed)room.gap=true;else if(!room.placeholders)room.gap=false;
    if(CONTENT_TYPES.has(r.type))room.heads=[...room.heads.filter(id=>!r.parents.includes(id)),ev.eventId].slice(-P.LIMITS.maxParents);
    if(CONTENT_TYPES.has(r.type))await projectRoom(tx,room,now);await tx.put(C.room(cid),room);if(r.type==='secret-share'&&mode==='awaiting'&&!room.awaitingSecret)await publishRoom(tx,room,config,now);
    await tx.put(fkey,{...admitted.state,start:front?.start??start});
    await tx.put(C.replay(replayId),{payloadDigest:delivery.payloadDigest,eventId:ev.eventId,receipt,retainUntil:P.retainUntil(envelope,now)});
+   await tx.put(C.counter(cid,author,r.stream,r.counter),ev.eventId);
    await tx.put(C.byJkt(a.jkt,cid,ev.eventId),1);
+   // Conversation authors feed the delegation recheck sweep like link authors do (B7).
+   const seen=await tx.get(seenKey(a.jkt));await tx.put(seenKey(a.jkt),{jkt:a.jkt,principal:a.principal,lastSeen:now,checkedAt:seen?.checkedAt??(a.statusChecked?now:0)});
    const current=await tx.get(C.peer(cid,author));if(current){current.lastSeen=now;if(mode!=='rejoin'&&mode!=='awaiting')current.epoch=r.epoch;await tx.put(C.peer(cid,author),current);}
    // Any authenticated record from a peer starts catch-up of its expired in-window obligations (architecture §9.6).
    await enqueue(tx,{type:'catch-up',principal:author});
-   return {receipt,replay:false};
-  });
+   return {receipt,replay:false,committed:true};
+  });}
+  catch(error){if(staged)await discardBody(userStorage,store,staged);throw error;}
+  if(staged&&!result.committed)await discardBody(userStorage,store,staged);
+  const {committed,...out}=result;return out;
  }
 }
+// A staged body no committed event references is deleted now, or queued for the storage sweep (as BB-B2 does).
+async function discardBody(userStorage,store,ref){for(const key of bodyObjects(ref)){try{if(typeof userStorage?.delete!=='function')throw new Error();await userStorage.delete(key);}catch{await store.transaction(tx=>tx.put(`storage-gc/${encodeURIComponent(key)}`,{key})).catch(()=>{});}}}
 
 // ---- Owner operations that emit records.
 const ownerContext=async({conversations:h,outbox,delegateKeys,clock})=>{const store=h.store,config=await readConfig(store),settings=await settingsOf(store);return {store,outbox,config,settings,clock,signer:await snapshot(delegateKeys,config,settings,clock.now())};};
@@ -630,12 +699,19 @@ export class ConversationsRotate extends MailboxAction {
 export class ConversationsSelectRotation extends MailboxAction {
  static operation='conversations.select-rotation';static deps=['conversations','clock'];static changes='conversations-changed';
  async run({conversations:h,clock}){
-  actorOwner(this.actor);const {conversationId,epoch,decision}=this.input??{},store=h.store,config=await readConfig(store);await activeRoom(store,conversationId);
-  if(!isUUID(epoch)||!['accept','decline'].includes(decision))invalid('Choose a rotation.');
+  actorOwner(this.actor);const {conversationId,epoch,decision,proposer}=this.input??{},store=h.store,config=await readConfig(store);await activeRoom(store,conversationId);
+  if(!isUUID(epoch)||!['accept','decline'].includes(decision)||proposer!==undefined&&(typeof proposer?.issuer!=='string'||typeof proposer?.subject!=='string'))invalid('Choose a rotation.');
   return store.transaction(async tx=>{
-   const room=await tx.get(C.room(conversationId)),row=await tx.get(C.rotation(conversationId,epoch));if(!row||row.state!=='pending')fault('not_found','Rotation not found.',404);
-   if(decision==='accept'){await selectEpoch(tx,room,epoch,Uint8Array.from(row.secret),config,clock.now());const proposer=await tx.get(C.peer(conversationId,row.proposer));if(proposer)await tx.put(C.peer(conversationId,row.proposer),{...proposer,epoch});}
-   await tx.put(C.rotation(conversationId,epoch),{...row,secret:null,state:decision==='accept'?'selected':'declined',decidedAt:clock.now()});
+   const room=await tx.get(C.room(conversationId)),rows=[...await tx.list({prefix:C.rotationsOf(conversationId,epoch)})].filter(([,x])=>x.state==='pending');
+   const chosen=proposer?rows.filter(([,x])=>same(x.proposer,proposer)):rows;if(!chosen.length)fault('not_found','Rotation not found.',404);
+   const now=clock.now(),close=async([key,x],state)=>tx.put(key,{...x,secret:null,state,decidedAt:now});
+   if(decision==='decline'){for(const row of chosen)await close(row,'declined');return {epoch,decision,current:room.current};}
+   // Accepting needs one proposal: with conflicting proposals the owner names the proposer, and an epoch already
+   // selected here with another secret is never overwritten (B4).
+   const digests=new Set(chosen.map(([,x])=>x.secretDigest));if(digests.size>1)fault('rotation_conflict','People proposed this rotation with different secrets. Choose whose to use.',409);
+   const [key,row]=chosen[0];if(room.epochs[epoch]&&!equalDigest(room.epochs[epoch].digest,row.secretDigest))fault('rotation_conflict','This rotation was already selected with a different secret.',409);
+   await selectEpoch(tx,room,epoch,Uint8Array.from(row.secret),config,now);const peer=await tx.get(C.peer(conversationId,row.proposer));if(peer)await tx.put(C.peer(conversationId,row.proposer),{...peer,epoch});
+   await close([key,row],'selected');for(const other of rows)if(other[0]!==key)await close(other,equalDigest(other[1].secretDigest,row.secretDigest)?'selected':'declined');
    return {epoch,decision,current:room.current};
   });
  }
@@ -710,6 +786,14 @@ export class ConversationsRejoin extends MailboxAction {
   return {rejoins:sent.length};
  }
 }
+// Owner acknowledgement of a rotation secret conflict (B4): clears the marker; the evidence is the named proposer.
+export class ConversationsDismissConflict extends MailboxAction {
+ static operation='conversations.dismiss-conflict';static deps=['conversations'];static changes='conversations-changed';
+ async run({conversations:h}){
+  actorOwner(this.actor);const cid=cidOf(this.input?.conversationId);
+  return h.store.transaction(async tx=>{const room=await tx.get(C.room(cid));if(!room)fault('not_found','Conversation not found.',404);if(!room.secretConflict)fault('not_found','There is no conflict to dismiss.',404);const dismissed=room.secretConflict;delete room.secretConflict;await tx.put(C.room(cid),room);return {dismissed:true,...dismissed?.by?{by:principal(dismissed.by),epoch:dismissed.epoch}:{}};});
+ }
+}
 export class ConversationsResolveStream extends MailboxAction {
  static operation='conversations.resolve-stream';static deps=['conversations'];static changes='conversations-changed';
  async run({conversations:h}){
@@ -759,11 +843,11 @@ export class ConversationsSweep extends MailboxAction {
 
 // ---- Views. No secret, pair token, incarnation or credential is ever returned.
 const peerView=(p,room)=>({principal:principal(p.principal),state:p.state,via:p.via??null,ready:p.ready!==false,epoch:p.epoch??null,rotationDisagreement:p.state==='accepted'&&p.epoch!=null&&p.epoch!==room.current,limitsDiffer:Boolean(p.outbound?.limits&&p.outbound.limits.maxParticipants!==room.maxParticipants),awaitingHello:Boolean(p.awaitingHello),offered:p.state==='pending'||p.state==='proposed',proposedBy:p.proposedBy??null});
-const roomView=room=>({id:room.id,role:room.role,state:room.state,subject:room.subject,createdAt:room.createdAt,creator:principal(room.creator.principal),proposedParticipants:room.participants.map(x=>principal(x.principal)),rosterVerified:false,acceptListed:room.acceptListed,epoch:room.current,epochs:Object.keys(room.epochs).length,awaitingSecret:Boolean(room.awaitingSecret),secretConflict:Boolean(room.secretConflict),maxParticipants:room.maxParticipants,gap:Boolean(room.gap),placeholders:room.placeholders});
-async function timeline(store,room,{limit=40,offset}={}){
+const roomView=room=>({id:room.id,role:room.role,state:room.state,subject:room.subject,createdAt:room.createdAt,creator:principal(room.creator.principal),proposedParticipants:room.participants.map(x=>principal(x.principal)),rosterVerified:false,acceptListed:room.acceptListed,epoch:room.current,epochs:Object.keys(room.epochs).length,awaitingSecret:Boolean(room.awaitingSecret),secretConflict:Boolean(room.secretConflict),...room.secretConflict?.by?{secretConflictBy:principal(room.secretConflict.by),secretConflictEpoch:room.secretConflict.epoch}:{},maxParticipants:room.maxParticipants,gap:Boolean(room.gap),placeholders:room.placeholders});
+async function timeline(store,room,{limit=40,offset}={},userStorage=null){
  if(!Number.isSafeInteger(limit)||limit<1||limit>100||offset!==undefined&&(!Number.isSafeInteger(offset)||offset<0))invalid('Choose a timeline page.');
  const rows=[...(await store.list({prefix:C.events(room.id)})).values()],ids=orderEvents(rows),byId=new Map(rows.map(r=>[r.eventId,r])),pos=new Map(ids.map((id,i)=>[id,i]));
- const text=async id=>{const b=await store.get(C.body(room.id,id));return b?td.decode(Uint8Array.from(b)):null;},out=[];
+ const text=async id=>{const ref=byId.get(id)?.bodyRef;if(ref?.storage==='user'){try{return td.decode(await readBody(userStorage,ref));}catch{return null;}}const b=await store.get(C.body(room.id,id));return b?td.decode(Uint8Array.from(b)):null;},out=[];
  const visible=ids.filter(id=>['message','genesis'].includes(byId.get(id).type)&&!byId.get(id).quarantined),start=offset??Math.floor(Math.max(0,visible.length-1)/limit)*limit;
  for(const id of visible.slice(start,start+limit)){
   const e=byId.get(id);
@@ -778,12 +862,12 @@ export class ConversationsList extends MailboxQuery {
  async fetch({conversations:h}){actorOwner(this.actor);return {conversations:[...(await h.store.list({prefix:C.rooms})).values()].map(roomView)};}
 }
 export class ConversationsGet extends MailboxQuery {
- static operation='conversations.get';static deps=['conversations'];static refreshOn=['conversations-changed'];
- async fetch({conversations:h}){
+ static operation='conversations.get';static deps=['conversations','userStorage'];static refreshOn=['conversations-changed'];
+ async fetch({conversations:h,userStorage}){
   actorOwner(this.actor);const store=h.store,cid=cidOf(this.input?.conversationId),room=await store.get(C.room(cid));if(!room)fault('not_found','Conversation not found.',404);
   const peers=[...(await store.list({prefix:C.peers(cid)})).values()],rotations=[...(await store.list({prefix:C.rotations(cid)})).values()],pending=rotations.filter(r=>r.state==='pending');
   const streams=[...(await store.list({prefix:C.frontiers(cid)})).values()].filter(f=>f.quarantined).length,response=await store.get(C.response(cid));
-  return {...roomView(room),...await timeline(store,room,this.input),peers:peers.map(p=>peerView(p,room)),someCannotSeeEveryone:peers.some(p=>peerView(p,room).limitsDiffer),rotations:rotations.map(r=>({epoch:r.epoch,proposer:r.proposer,state:r.state,at:r.at})),rotationConflict:pending.length>1,quarantinedStreams:streams,invitationResponse:response?{state:response.state,attempts:response.attempts}:null};
+  return {...roomView(room),...await timeline(store,room,this.input,userStorage),peers:peers.map(p=>peerView(p,room)),someCannotSeeEveryone:peers.some(p=>peerView(p,room).limitsDiffer),rotations:rotations.map(r=>({epoch:r.epoch,proposer:r.proposer,state:r.state,at:r.at,...r.conflict?{conflict:true}:{}})),rotationConflict:pending.length>1||Boolean(room.secretConflict),quarantinedStreams:streams,invitationResponse:response?{state:response.state,attempts:response.attempts}:null};
  }
 }
 // Honest per-recipient status of one own event (architecture §9.4–§9.5): the outbox states over the frozen audience,
@@ -800,4 +884,4 @@ export class ConversationsStatus extends MailboxQuery {
  }
 }
 
-export const CONVERSATION_OPERATIONS=[ConversationsConfigure,ConversationsCreate,ConversationsInvitations,ConversationsAccept,ConversationsRespond,ConversationsReceive,ConversationsSend,ConversationsEdit,ConversationsRetract,ConversationsRotate,ConversationsSelectRotation,ConversationsDecide,ConversationsRemove,ConversationsReadmit,ConversationsLeave,ConversationsRejoin,ConversationsResolveStream,ConversationsDrain,ConversationsSweep,ConversationsList,ConversationsGet,ConversationsStatus];
+export const CONVERSATION_OPERATIONS=[ConversationsConfigure,ConversationsCreate,ConversationsInvitations,ConversationsAccept,ConversationsRespond,ConversationsReceive,ConversationsSend,ConversationsEdit,ConversationsRetract,ConversationsRotate,ConversationsSelectRotation,ConversationsDecide,ConversationsRemove,ConversationsReadmit,ConversationsLeave,ConversationsRejoin,ConversationsResolveStream,ConversationsDismissConflict,ConversationsDrain,ConversationsSweep,ConversationsList,ConversationsGet,ConversationsStatus];

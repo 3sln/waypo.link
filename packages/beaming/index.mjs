@@ -1,6 +1,6 @@
 import {siteEnabled,capability} from '../flags/read.mjs';
 import {isUUID} from '../core/primitives.mjs';
-export const BEAM_LIMITS=Object.freeze({maxFiles:16,maxBytes:100_000_000,maxFileBytes:100_000_000,offerTtlMs:300000,sessionTtlMs:900000,maxPending:128,maxSignals:128,maxSignalBytes:262144});
+export const BEAM_LIMITS=Object.freeze({maxFiles:16,maxBytes:100_000_000,maxFileBytes:100_000_000,offerTtlMs:300000,sessionTtlMs:900000,maxPending:128,maxPendingPerSender:16,maxSignals:128,maxSignalBytes:262144});
 export class BeamError extends Error {constructor(code,message,status=400){super(message);this.name='BeamError';this.code=code;this.status=status;}}
 const fail=(code,message,status)=>{throw new BeamError(code,message,status);};
 export const uuid=isUUID;
@@ -14,7 +14,7 @@ export function beamFiles(input){
 }
 export function beamView(record,actor){
  const role=actor.account===record.sender&&actor.device===record.senderDevice?'sender':'recipient';
- const {allowedDevices,signals,signalBytes,nextSeq,iceIssued,...publicRecord}=record;
+ const {allowedDevices,signals,signalBytes,nextSeq,iceIssued,relayReserved,...publicRecord}=record;
  return {...publicRecord,role,signals:signals.filter(s=>s.role!==role).map(({role,...s})=>s),nextSeq:nextSeq[role]+1};
 }
 export class BeamService {
@@ -35,7 +35,7 @@ export class BeamService {
  });
  }
  async raw(id){if(!uuid(id))fail('beam_not_found','Transfer not found.',404);const r=await this.metadata.get('beam/offer/'+id);if(!r)fail('beam_not_found','Transfer not found.',404);return r;}
- authorize(r,actor){if(r.expiresAt<=this.clock())fail('beam_expired','This transfer has expired.',410);if(actor.account===r.sender&&actor.device===r.senderDevice)return 'sender';if(actor.account===r.recipient&&r.allowedDevices.includes(actor.device)&&(!r.recipientDevice||r.recipientDevice===actor.device))return 'recipient';fail('beam_forbidden','This transfer belongs to another device.',403);}
+ authorize(r,actor){if(actor.account!==r.sender&&actor.account!==r.recipient)fail('beam_not_found','Transfer not found.',404);if(r.expiresAt<=this.clock())fail('beam_expired','This transfer has expired.',410);if(actor.account===r.sender&&actor.device===r.senderDevice)return 'sender';if(actor.account===r.recipient&&r.allowedDevices.includes(actor.device)&&(!r.recipientDevice||r.recipientDevice===actor.device))return 'recipient';fail('beam_forbidden','This transfer belongs to another device.',403);}
  async action(id,actor,operation,input={}){return this.metadata.transaction(async tx=>{
  const r=await tx.get('beam/offer/'+id);if(!r)fail('beam_not_found','Transfer not found.',404);const role=this.authorize(r,actor);
  if(operation==='get')return beamView(r,actor);
@@ -61,6 +61,6 @@ export class BeamService {
  });}
  async outbox(owner,device){return [...(await this.metadata.list({prefix:'beam/offer/',limit:129})).values()].filter(r=>r.sender===owner&&r.senderDevice===device&&r.expiresAt>this.clock());}
  async mailbox(owner,device){const rows=await this.metadata.list({prefix:'beam/mailbox/',limit:BEAM_LIMITS.maxPending+1}),offers=[];for(const [path,r]of rows){if(r.expiresAt<=this.clock()){await this.metadata.delete(path);continue;}if(r.owner===owner&&r.devices.includes(device))offers.push({sender:r.sender,id:r.id,expiresAt:r.expiresAt});}return {offers,pollAfterMs:5000};}
- async notify(owner,input){return this.metadata.transaction(async tx=>{const rows=await tx.list({prefix:'beam/mailbox/',limit:BEAM_LIMITS.maxPending+1});let live=0;for(const [path,r]of rows){if(r.expiresAt<=this.clock())await tx.delete(path);else live++;}if(live>=BEAM_LIMITS.maxPending)fail('beam_mailbox_full','The receiving mailbox is full.',429);await tx.put('beam/mailbox/'+input.id,{owner,sender:input.sender,id:input.id,devices:input.allowedDevices,expiresAt:input.createdAt+BEAM_LIMITS.offerTtlMs+BEAM_LIMITS.sessionTtlMs});return {queued:true};});}
+ async notify(owner,input){return this.metadata.transaction(async tx=>{const rows=await tx.list({prefix:'beam/mailbox/',limit:BEAM_LIMITS.maxPending+1});let live=0,fromSender=0;for(const [path,r]of rows){if(r.expiresAt<=this.clock())await tx.delete(path);else{live++;if(r.sender===input.sender)fromSender++;}}if(live>=BEAM_LIMITS.maxPending||fromSender>=BEAM_LIMITS.maxPendingPerSender)fail('beam_mailbox_full','The receiving mailbox is full.',429);await tx.put('beam/mailbox/'+input.id,{owner,sender:input.sender,id:input.id,devices:input.allowedDevices,expiresAt:input.createdAt+BEAM_LIMITS.offerTtlMs+BEAM_LIMITS.sessionTtlMs});return {queued:true};});}
  async cleanup(){for(const prefix of ['beam/offer/','beam/mailbox/','beam/invite/','beam/nearby/'])for(const [path,r]of await this.metadata.list({prefix,limit:129}))if(r.expiresAt<=this.clock())await this.metadata.delete(path);}
 }

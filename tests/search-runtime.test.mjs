@@ -15,6 +15,8 @@ const create = async (config = {}) => {
   const message = { id, owner, collection: 'inbox', mimeType: 'text/plain', receivedAt: Date.now(), readAt: null, size: bytes.length, tags: ['work'], classification: 'work', quarantined: false, blobRef: 'body', revision: 1 };
   await metadata.put(key('message', owner, id), message); controller.itemIndex.upsert(message);
   await metadata.put('owner', owner); await metadata.put('lastOwnerActiveAt', Date.now());
+  // Semantic admission needs a paid plan or a 7-day-old account (DEVLOG 2026-10-23); this fixture is an established free account.
+  await metadata.put('account/created-at', Date.now() - 8 * 86400000);
   return { metadata, controller, message };
 };
 

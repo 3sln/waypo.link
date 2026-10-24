@@ -4,6 +4,8 @@ import {h,fire} from './release-primitives.mjs';
 import {organizationsEnabled,organizationsModel,organizationsRequestDecisions,organizationPowers,OrganizationsIntent} from '../bl/organizations.mjs';
 import {offersPanel,creationPaymentPanel,ownershipPanel} from './org-ownership.mjs';
 import {orgError,orgNotice,ORG_SIGNED_OUT_INVITATION} from './org-messages.mjs';
+import {breakGlassPanel,breakGlassBanners,breakGlassWaiting} from './org-break-glass.mjs';
+import {claimInterstitial} from './org-claim-interstitial.mjs';
 const text=(s,en,es)=>s.locale==='es'?es:en;
 const plain=value=>h('bdi',String(value??'')).attrs({dir:'auto',translate:'no'});
 // Shell tokens (apps/web/styles.css :root): --forest, --muted, --line, --surface, --focus, --lime. Text and page colour
@@ -177,7 +179,7 @@ export default function organizations(s){
   m.preferencesUnavailable?h('p',t('Preferences are not available for this organization on this host.','Las preferencias no están disponibles para esta organización en este servidor.')).classes('org-status').attrs({role:'status'}):!(m.preferences??[]).length?h('p',t('This organization has no saved preferences yet. They appear after an app asks the organization for them.','Esta organización aún no tiene preferencias guardadas. Aparecen cuando una app se las pide a la organización.')):null,
   ...(m.preferencesUnavailable?[]:(m.preferences??[]).map(p=>h('article',h('h3',plain(p.schema?.title??p.fragment)),p.schema?.description?h('p',plain(p.schema.description)):null,p.affectedApps?.length?h('p',t('Used by: ','Usado por: '),plain(p.affectedApps.map(app=>app.name??app.client).join(', '))):null,
    form([...Object.entries(p.schema?.fields??{}).map(([name,f])=>preferenceField(p,name,f)),check('confirm',t('Save these values for the organization and its apps','Guardar estos valores para la organización y sus apps'))],'preference',t('Save preferences','Guardar preferencias'),{fragment:p.fragment})).key(p.fragment)))):null;
- const ctx={s,t,h,form,input,check,panel,plain,when};
+ const ctx={s,t,h,form,input,check,panel,plain,when,btn};
  const error=m?.error?h('p',orgError(s.locale,m.error)).attrs({role:'alert'}):null;
  const notice=m?.notice?h('p',orgNotice(s.locale,m.notice)).classes('org-status').attrs({role:'status','aria-live':'polite'}):null;
  // L7: each option carries the handle (or else the kind), so organizations with the same name can be told apart.
@@ -191,9 +193,9 @@ export default function organizations(s){
   h('header',h('h1',t('Organizations','Organizaciones')).props({id:'org-title',tabIndex:-1}),h('p',t('Create organizations, join them, and act for them. Your personal space stays separate.','Crea organizaciones, únete a ellas y actúa en su nombre. Tu espacio personal sigue separado.'))),
   s.stepUp?h('p',t('Confirm it’s you above to continue. The organization console is paused until you confirm or cancel.','Confirma que eres tú arriba para continuar. La consola de la organización queda en pausa hasta que confirmes o canceles.')).classes('org-status','org-modal-note').attrs({role:'status'}):null,
   // L2: while the shell's step-up card is open, the rest of the console is inert (the pending request holds it).
-  h('div',contextBar,error,notice,guard,recovery,...unsaved,join,
+  h('div',contextBar,error,notice,guard,recovery,...unsaved,join,...(m?.context?breakGlassBanners(m,ctx):[]),
   h('div',
-   offersPanel(m,ctx),
+   offersPanel(m,ctx),breakGlassWaiting(m,ctx),
    !m?.context&&m?.creation?creationPaymentPanel(m,ctx):null,
    createPanel,acceptPanel,
    org?panel('org-details',plain(org.name),h('p',kindLabel(org.label),org.handle?[' · ',plain('@'+org.handle)]:null,' · ',t('your role: ','tu rol: '),powers.includes('owner-of-record')?t('owner of record','propietario registrado'):admin?t('admin','administración'):t('member','miembro')),
@@ -201,7 +203,7 @@ export default function organizations(s){
     deleting&&privileged&&org.state==='deletion-scheduled'?form([check('confirm',t('Cancel the scheduled deletion','Cancelar la eliminación programada'))],'cancel-deletion',t('Cancel deletion','Cancelar eliminación')):null,
     admin&&!deleting?form([input('name',t('Display name','Nombre visible'),org.name,{required:true,maxLength:80})],'rename',t('Rename','Renombrar')):null,admin&&!deleting?form([kindSelect(org.label)],'label',t('Save kind','Guardar tipo')):null,
     h('details',h('summary',t('Leave this organization','Salir de esta organización')),form([check('confirm',t('I want to leave this organization','Quiero salir de esta organización'))],'leave',t('Leave','Salir')))):null,
-   org?ownershipPanel(m,ctx):null,
+   org?ownershipPanel(m,ctx):null,org?breakGlassPanel(m,ctx):null,
    membership,
    admin?panel('org-members',t('Members and access','Miembros y acceso'),
     m.membersUnavailable==='deletion_pending'?h('p',t('Member management is paused while deletion is scheduled. Cancel the deletion to manage members again.','La gestión de miembros está en pausa mientras la eliminación está programada. Cancela la eliminación para volver a gestionar miembros.')).classes('org-status').attrs({role:'status'}):m.membersUnavailable?h('p',t('The member list is not available.','La lista de miembros no está disponible.')).classes('org-status').attrs({role:'status'}):null,
@@ -222,4 +224,7 @@ export const organizationsView=organizations;
 export function withOrganizationsSurface(render){return s=>{
  if(!s.session?.account){return s.organizationInvitationPending&&!s.notice&&!s.error&&s.route?.kind==='home'?render({...s,notice:ORG_SIGNED_OUT_INVITATION}):render(s);}
  if(!organizationsEnabled(s)||s.loading||s.offline||s.accountPicker)return render(s);
+ // ORG-12e: an open claim against an organization this person owns takes the whole screen until stopped or set aside.
+ // A pending step-up shows the shell instead, which renders the step-up card the stop needs.
+ if(!s.stepUp){const gate=claimInterstitial(s);if(gate)return gate;}
  const navigation=[...(s.navigation??[['inbox','inbox','Messages'],['contacts','link','Contact links'],['resources','storage','Resources'],['rules','rules','Rules'],['notifications','bell','Notifications'],['security','shield','Account & security'],['settings','rules','Preferences & shortcuts']]),['organizations','apps','Organizations']];return render({...s,navigation});};}

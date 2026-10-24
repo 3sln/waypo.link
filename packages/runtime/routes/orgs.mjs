@@ -36,6 +36,17 @@
 //   POST   /api/orgs/{id}/invitee         {handle}                    admin: resolve a 3sln.me handle to {iss, sub} for a bound invitation
 //   GET    /api/orgs/plans                also answers `creation`: allowlisted | checkout | unavailable for this person
 //   GET    /api/orgs/{id}/members|requests add each local principal's public handle (handles are public, directory.v1)
+// ORG-12b/12e break-glass (design §12d.12; packages/orgs/break-glass.mjs; provisional, behind ORG_BREAK_GLASS_ENABLED):
+//   GET    /api/orgs/break-glass                                     the person's own break-glass items: claims they own
+//                                                                    (the interstitial), co-signature and objection items,
+//                                                                    and a contest entry; every hint is confirmed by the
+//                                                                    organization (orgs.breakglass). Never flag-gated.
+//   GET    /api/orgs/{id}/break-glass                                the role-filtered claim view (engine-gated)
+//   POST   /api/orgs/{id}/break-glass     {operation, ...}           start | accept | cosign (uniform 404 with the flag
+//                                                                    off) · uncosign | withdraw | object | abort | contest
+//                                                                    (never gated: the safe direction)
+//   POST   /api/orgs/{id}/break-glass-checkout {claim, disclosure, confirm, plan?, currency?, locale?}  the candidate's
+//                                                                    checkout; passes PaidCheckoutAllowed (routes/identity.mjs)
 import {json,body,accountHandle,flagEnabled,privateHeaders} from './shared.mjs';
 import {createAppEngine,perform,read} from '../../app/engine.mjs';
 import {systemClock,cryptoRandom,nullAudit} from '../../app/providers.mjs';
@@ -51,13 +62,21 @@ import {identityBackupPort} from '../identity-backup.mjs';
 // beforeActivity stage (routes/identity.mjs); its `ageConfirmed` is removed here before the writer sees the input.
 const paidInput=input=>{if(!input||typeof input!=='object'||Array.isArray(input))return input;const {ageConfirmed:_,...rest}=input;return rest;};
 
-const ROOT='/api/orgs',ROOT_EXTRA=/^\/api\/orgs\/(plans|checkout)$/,ORG=/^\/api\/orgs\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:\/(audit|name|label|deletion|members|invitations|accept|leave|remove-member|member-grants|grant-decision|membership-policy|reconfirm|mute-requests|invitation-preview|invitation-revoke|membership|requests|connections|preferences|ownership|billing-checkout|transfer-recipient|transfer|claim|recovery-file|invitee))?$/;
+const ROOT='/api/orgs',ROOT_EXTRA=/^\/api\/orgs\/(plans|checkout|break-glass)$/,ORG=/^\/api\/orgs\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:\/(audit|name|label|deletion|members|invitations|accept|leave|remove-member|member-grants|grant-decision|membership-policy|reconfirm|mute-requests|invitation-preview|invitation-revoke|membership|requests|connections|preferences|ownership|billing-checkout|transfer-recipient|transfer|claim|recovery-file|invitee|break-glass|break-glass-checkout))?$/;
+const BREAK_GLASS_ROUTE={start:'orgs.breakglass-start',accept:'orgs.breakglass-accept',cosign:'orgs.breakglass-cosign',uncosign:'orgs.breakglass-uncosign',withdraw:'orgs.breakglass-withdraw',object:'orgs.breakglass-object',abort:'orgs.breakglass-abort',contest:'orgs.breakglass-contest'};
+// Start-side steps follow ORG_BREAK_GLASS_ENABLED (with ORGANIZATIONS_ENABLED) at the route too; the writer re-checks.
+const BREAK_GLASS_GATED=new Set(['start','accept','cosign']);
+const breakGlassOn=(env,org)=>{const ctx={subject:{kind:'account',owner:org}};return flagEnabled(env,'ORGANIZATIONS_ENABLED',ctx,true)&&flagEnabled(env,'ORG_BREAK_GLASS_ENABLED',ctx,true);};
+const OPEN_CLAIM=['gathering','waiting','held-for-support','final'];
+// Capacity admission never refuses the safe direction: a break-glass abort, withdrawal, co-signature withdrawal, objection
+// or contest (the owner's abort above all) passes even when the host is under write pressure.
+export const admission={protective:[{match:(path,method)=>method==='POST'&&/^\/api\/orgs\/[0-9a-f-]{36}\/break-glass$/.test(path),test:change=>['abort','withdraw','uncosign','object','contest'].includes(change?.operation)}]};
 const TRANSFER_OPERATIONS={offer:'orgs.transfer-offer',withdraw:'orgs.transfer-withdraw',object:'orgs.transfer-object',block:'orgs.transfer-block',accept:'orgs.transfer-accept',decline:'orgs.transfer-decline'};
 const organizationBilling=env=>{const injected=env.ORGANIZATION_BILLING_CLIENT;return new OrganizationBilling({config:env,client:injected&&typeof injected==='object'?injected:undefined});};
 const POST_ACTIONS={name:'orgs.rename',label:'orgs.set-label',deletion:'orgs.schedule-deletion',invitations:'orgs.invite',accept:'orgs.accept',leave:'orgs.leave','remove-member':'orgs.remove-member','member-grants':'orgs.member-grants','grant-decision':'orgs.decide-grants','membership-policy':'orgs.membership-policy',reconfirm:'orgs.reconfirm','mute-requests':'orgs.mute-requests','invitation-preview':'orgs.invitation-preview','invitation-revoke':'orgs.invitation-revoke'};
 export function allowedMethods(path){
- if(path===ROOT)return ['GET','POST'];const extra=ROOT_EXTRA.exec(path);if(extra)return extra[1]==='plans'?['GET']:['POST'];const match=ORG.exec(path);if(!match)return null;
- return !match[2]?['GET']:['audit','members','membership','requests','ownership'].includes(match[2])?['GET']:['connections','preferences'].includes(match[2])?['GET','POST']:match[2]==='deletion'?['POST','DELETE']:['POST'];
+ if(path===ROOT)return ['GET','POST'];const extra=ROOT_EXTRA.exec(path);if(extra)return ['plans','break-glass'].includes(extra[1])?['GET']:['POST'];const match=ORG.exec(path);if(!match)return null;
+ return !match[2]?['GET']:['audit','members','membership','requests','ownership'].includes(match[2])?['GET']:['connections','preferences','break-glass'].includes(match[2])?['GET','POST']:match[2]==='deletion'?['POST','DELETE']:['POST'];
 }
 const call=async(object,owner,request)=>object.orgsDispatch(owner,request);
 // Federation errors carry a code only; give them the statuses the federation HTTP adapter uses (packages/federation/http.mjs)
@@ -98,8 +117,30 @@ async function withHandles(env,result){
  if(Array.isArray(result.requests))out.requests=await Promise.all(result.requests.map(async q=>({...q,...q.subject?{subject:await tag(q.subject)}:{},...q.requester?{requester:await tag(q.requester)}:{}})));
  return out;
 }
+/** Adds public handles to the principals of a break-glass claim view (initiator, candidate, co-signers). */
+async function claimHandles(env,view){
+ const claim=view?.claim;if(!claim||!env.IDENTITY_REPOSITORY?.get)return view;
+ const tag=async p=>{if(!p||p.iss!==env.APP_ORIGIN||typeof p.sub!=='string')return p;try{const a=await env.IDENTITY_REPOSITORY.get(p.sub);return a?.status==='active'&&a.kind!=='organization'&&typeof a.handle==='string'?{...p,handle:a.handle}:p;}catch{return p;}};
+ return {...view,claim:{...claim,...claim.initiator?{initiator:await tag(claim.initiator)}:{},...claim.candidate?{candidate:await tag(claim.candidate)}:{},...Array.isArray(claim.cosigners)?{cosigners:await Promise.all(claim.cosigners.slice(0,64).map(async s=>({...s,principal:await tag(s.principal)})))}:{}}};
+}
+/** ORG-12b/12e: the person's own break-glass items. Hints (the person's account) only route; each organization confirms
+ * what this person may see and do now. At most 16 organizations; an unconfirmed hint shows nothing. */
+async function breakGlassItems(env,{id,object,actor}){
+ let hints=[];try{hints=(await object.orgsBreakGlassHints(id))?.hints??[];}catch{hints=[];}
+ const rank={owner:0,'former-owner':1,admin:2},byOrg=new Map();
+ for(const h of hints)if(!byOrg.has(h.org)||rank[h.role]<rank[byOrg.get(h.org).role])byOrg.set(h.org,h);
+ const items=[];
+ for(const h of [...byOrg.values()].slice(0,16)){
+  let view;try{view=await accountHandle(env,h.org).orgsDispatch(h.org,{operation:'orgs.breakglass',actor:actingAs(actor,{kind:'organization',id:h.org})});}catch{continue;}
+  const claim=view?.claim,open=claim&&OPEN_CLAIM.includes(claim.state),decisions=Array.isArray(view?.decisions)?view.decisions:[];
+  const shown=h.role==='owner'?open&&claim.decisions?.includes('abort'):h.role==='former-owner'?decisions.includes('contest'):open&&(claim.decisions??[]).some(d=>['cosign','object','accept','pay','uncosign','withdraw'].includes(d));
+  if(!shown)continue;const tagged=await claimHandles(env,view);
+  items.push({org:h.org,name:view.organization?.name??null,handle:view.organization?.handle??null,role:h.role,claim:tagged.claim??null,decisions,contest:view.contest??null});
+ }
+ return {items};
+}
 export const stages={
- async owner({request,env,url,path,id,object,actor,context}){
+ async owner(route){const {request,env,url,path,id,object,actor,context}=route;
   const allow=allowedMethods(path);if(!allow)return;
   const match=ORG.exec(path),extra=ROOT_EXTRA.exec(path),cancel=match?.[2]==='deletion'&&request.method==='DELETE';
   // Exit and reducing paths stay reachable during a ramp-down: leave, decisions (and the requests that drive them),
@@ -107,9 +148,11 @@ export const stages={
   // stored preferences, so they follow the flag (wargame F-01): off, they answer the uniform 404 like any unknown route.
   // Withdrawing, objecting to, blocking or declining an offer, and reading the ownership view, stay reachable too (the
   // writer checks the flag for offers, acceptance and checkouts).
-  if(!cancel&&!['leave','grant-decision','reconfirm','requests','connections','transfer','ownership','invitation-revoke'].includes(match?.[2])&&!flagEnabled(env,'ORGANIZATIONS_ENABLED',{subject:{kind:'account',owner:match?.[1]??id}},true))return json({error:'not_found'},404);
+  // Break-glass aborts, withdrawals, objections and contests are never gated (§12d.12); start-side steps check below.
+  if(!cancel&&extra?.[1]!=='break-glass'&&!['leave','grant-decision','reconfirm','requests','connections','transfer','ownership','invitation-revoke','break-glass'].includes(match?.[2])&&!flagEnabled(env,'ORGANIZATIONS_ENABLED',{subject:{kind:'account',owner:match?.[1]??id}},true))return json({error:'not_found'},404);
   const self={principal:actor.principal,entity:actor.entity,authTime:actor.authTime,epoch:actor.epoch,aep:actor.aep??0,...actor.verification?{verification:actor.verification}:{}};
   if(extra?.[1]==='plans'){const billing=organizationBilling(env),creation=await creationEligibility(env,billing,actor);if(!billing.configured())return json({configured:false,server:null,plans:[],creation},200,privateHeaders);const currency=url?.searchParams?.get('currency')??'usd';if(!/^[a-z]{3}$/.test(currency))return json({error:'invalid_currency'},400);return json({configured:true,...await billing.plans(currency),creation},200,privateHeaders);}
+  if(extra?.[1]==='break-glass')return json(await breakGlassItems(env,{id,object,actor}),200,privateHeaders);
   if(extra?.[1]==='checkout')return json(await object.orgsDispatch(id,{operation:'orgs.creation-checkout',actor:self,input:paidInput(await body(request,4096))}),200,privateHeaders);
   if(path===ROOT){
    if(request.method==='GET'){const engine=discoveryEngine({env,id,object});try{return json(await read(engine,new DiscoverOrganizations({actor})),200,privateHeaders);}finally{await engine.dispose();}}
@@ -128,6 +171,16 @@ export const stages={
    const {operation,...requested}=input,rest=operation==='accept'?paidInput(requested):requested,acting=operation==='accept'?{...as,addedUnder:await object.orgsSigningProvenance(id)}:as;
    return json(await call(orgObject,org,{operation:TRANSFER_OPERATIONS[operation],actor:acting,input:rest}),200,privateHeaders);
   }
+  if(match[2]==='break-glass'){
+   if(request.method==='GET')return json(await claimHandles(env,await call(orgObject,org,{operation:'orgs.breakglass',actor:as})),200,privateHeaders);
+   const input=await body(request,8192);if(!input||typeof input!=='object'||Array.isArray(input)||!Object.hasOwn(BREAK_GLASS_ROUTE,input.operation))return json({error:'invalid_request',message:'Unsupported break-glass request.'},400);
+   const {operation,...rest}=input;if(BREAK_GLASS_GATED.has(operation)&&!breakGlassOn(env,org))return json({error:'not_found'},404);
+   // Tier 0 (§12d.3): a session created before the claim began is a known owner channel. The creation time comes from
+   // the authenticated owner view (packages/identity/service.mjs owner()), never from the request.
+   const sessionCreatedAt=(route.owner?.devices??[]).find(d=>d.current)?.createdAt,acting=operation==='abort'&&Number.isSafeInteger(sessionCreatedAt)?{...as,verification:{...as.verification??{},sessionCreatedAt}}:as;
+   return json(await claimHandles(env,await call(orgObject,org,{operation:BREAK_GLASS_ROUTE[operation],actor:acting,input:rest})),200,privateHeaders);
+  }
+  if(match[2]==='break-glass-checkout'){if(!breakGlassOn(env,org))return json({error:'not_found'},404);return json(await call(orgObject,org,{operation:'orgs.breakglass-checkout',actor:as,input:paidInput(await body(request,4096))}),200,privateHeaders);}
   if(match[2]==='transfer-recipient'){
    // Handles are public (directory.v1). Resolution is still offered only to an owner who may offer now.
    const input=await body(request,2048),view=await call(orgObject,org,{operation:'orgs.ownership',actor:as,input:{}});if(!view?.decisions?.includes('offer'))return json({error:'not_found'},404);

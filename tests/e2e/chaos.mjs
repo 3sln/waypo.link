@@ -23,6 +23,8 @@ async function fault(route,kind){
 // Pending indicators a settled screen must not keep: busy submit labels, aria-busy regions,
 // the boot screen and "Loading…" status lines.
 const STUCK=()=>[...document.querySelectorAll('button')].filter(button=>button.textContent.trim()==='Please wait…').length+document.querySelectorAll('.boot-screen,[aria-busy=true]').length+[...document.querySelectorAll('[role=status]')].filter(node=>/^(Loading|Cargando)/.test(node.textContent.trim())).length;
+// Settled predicate as a standalone function: string predicates are refused by the page CSP (no 'unsafe-eval').
+const SETTLED=()=>([...document.querySelectorAll('button')].filter(button=>button.textContent.trim()==='Please wait…').length+document.querySelectorAll('.boot-screen,[aria-busy=true]').length+[...document.querySelectorAll('[role=status]')].filter(node=>/^(Loading|Cargando)/.test(node.textContent.trim())).length)===0;
 /** One browser context whose /api surface is a mutable fixture model. */
 export async function chaosConsole(browser,t,{account={id:OWNER_A,handle:'n.chaos',status:'active',hasPassword:true,passkeyCount:0},signedIn=true,config={},data={},views=builtinViews(),incoming={},viewport={width:1440,height:1000},contextOptions={},handlers={},goto='/console'}={}){
  const context=await browser.newContext({viewport,serviceWorkers:'block',...contextOptions});t.after(()=>context.close());
@@ -70,7 +72,7 @@ export async function chaosConsole(browser,t,{account={id:OWNER_A,handle:'n.chao
   /** Settled: no "Please wait…" control, no global boot screen, and no private loading text left behind. */
   // Rendering is coalesced into animation frames, so every DOM check first lets two frames pass.
   frames:()=>page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))),
-  async settled(){for(;;){await api.frames();if(await api.stuck()===0)return;await page.waitForFunction(`(${STUCK})()===0`);}},
+  async settled(){for(;;){await api.frames();if(await api.stuck()===0)return;await page.waitForFunction(SETTLED);}},
   /** The busy state must be visible while a held request is pending. */
   async busy(){await page.waitForFunction(()=>[...document.querySelectorAll('button')].some(button=>button.textContent.trim()==='Please wait…'));},
   async stuck(){return page.evaluate(STUCK);},

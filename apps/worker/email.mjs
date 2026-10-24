@@ -6,6 +6,7 @@ import { waitlistMailLocalization } from '../../packages/i18n/waitlist-mail.mjs'
 import { UUID } from '../../packages/core/primitives.mjs';
 import {deletionNoticeTemplate} from '../../packages/runtime/deletion-notices.mjs';
 import {transferNoticeTemplate} from '../../packages/identity/transfer-out.mjs';
+import {redirectReminderTemplate} from '../../packages/identity/redirect-records.mjs';
 
 const SENDER_ROLES = Object.freeze({
   link: 'verify', login: 'login', reminder: 'notify',
@@ -47,6 +48,21 @@ const SECURITY_ALERTS = Object.freeze({
 });
 // The reissue cancel page (packages/runtime/routes/recovery-reissue.mjs); the capability stays in the fragment.
 const REISSUE_CANCEL_PATH = '/account/recovery/cancel';
+// ORG-12b break-glass owner notices (organizations design §12d.8; provisional). English then Spanish in one message:
+// the owner's language is not known to the organization. The organization is named only by its public handle, and the
+// abort link (packages/runtime/routes/org-claim-abort.mjs) carries its single-use capability in the fragment.
+const ORG_CLAIM_ABORT_PATH = '/org-claim/abort';
+const BREAK_GLASS_NOTICES = Object.freeze({
+  'claim-started': [['Someone is claiming ownership of your organization{org}', 'Admins of your organization{org} on {brand} started a claim to make another person its owner, saying they cannot reach you. Nothing changes yet. If you did not agree to this, stop the claim with the link below: it needs no sign-in and no proof. Any sign-in to your account also puts the claim on hold for review.'], ['Alguien reclama la propiedad de tu organización{org}', 'Administradores de tu organización{org} en {brand} iniciaron una reclamación para que otra persona sea su propietaria, diciendo que no pueden contactarte. Todavía no cambia nada. Si no estás de acuerdo, detén la reclamación con el enlace de abajo: no necesita iniciar sesión ni ninguna prueba. Cualquier inicio de sesión en tu cuenta también pone la reclamación en espera para revisión.']],
+  'wait-started': [['An ownership claim on your organization{org} is now waiting', 'The candidate paid, so the claim on your organization{org} now waits at least 30 days before it could take effect. You can stop it at any time before then with the link below.'], ['Una reclamación de propiedad sobre tu organización{org} está en espera', 'La persona candidata pagó, así que la reclamación sobre tu organización{org} espera al menos 30 días antes de poder surtir efecto. Puedes detenerla en cualquier momento antes con el enlace de abajo.']],
+  reminder: [['Reminder: an ownership claim on your organization{org} is pending', 'A claim to change the owner of your organization{org} is still pending. If you did not agree to it, stop it with the link below.'], ['Recordatorio: hay una reclamación de propiedad pendiente sobre tu organización{org}', 'Sigue pendiente una reclamación para cambiar la propiedad de tu organización{org}. Si no estás de acuerdo, detenla con el enlace de abajo.']],
+  'final-reminder': [['Final notice: your organization{org} may change owner in 3 days', 'Unless you stop it, a claim will make another person the owner of your organization{org} in about 72 hours. Stop it with the link below if you did not agree.'], ['Último aviso: tu organización{org} puede cambiar de propietario en 3 días', 'Salvo que la detengas, una reclamación hará que otra persona sea propietaria de tu organización{org} en unas 72 horas. Detenla con el enlace de abajo si no estás de acuerdo.']],
+  held: [['The ownership claim on your organization{org} is on hold', '3sln.me support will review the claim on your organization{org} before anything can happen. You can still stop it with the link below.'], ['La reclamación sobre tu organización{org} está en espera', 'El soporte de 3sln.me revisará la reclamación sobre tu organización{org} antes de que pueda pasar nada. Aún puedes detenerla con el enlace de abajo.']],
+  proceed: [['Support allowed an ownership claim on your organization{org}', 'After review, 3sln.me support decided that the claim on your organization{org} may proceed. It takes effect in 7 days unless you answer. Use the link below to dispute it, or sign in with a passkey or password you had before the claim began to end it.'], ['El soporte permitió una reclamación sobre tu organización{org}', 'Tras revisarla, el soporte de 3sln.me decidió que la reclamación sobre tu organización{org} puede continuar. Surte efecto en 7 días salvo que respondas. Usa el enlace de abajo para disputarla, o inicia sesión con una llave de acceso o contraseña que tuvieras antes de la reclamación para terminarla.']],
+  effective: [['Your organization{org} has a new owner', 'A break-glass claim made another person the owner of your organization{org}. You remain a member. For 90 days you can contest the change: sign in with a passkey or password you had before the claim began and open the organization.'], ['Tu organización{org} tiene una nueva persona propietaria', 'Una reclamación de emergencia hizo que otra persona sea propietaria de tu organización{org}. Sigues siendo miembro. Durante 90 días puedes impugnar el cambio: inicia sesión con una llave de acceso o contraseña que tuvieras antes de la reclamación y abre la organización.']],
+  ended: [['The ownership claim on your organization{org} has ended', 'The claim on your organization{org} has ended. Its owner did not change. Sign in to review the organization and its members.'], ['La reclamación sobre tu organización{org} terminó', 'La reclamación sobre tu organización{org} terminó. Su propiedad no cambió. Inicia sesión para revisar la organización y sus miembros.']],
+  update: [['News about an ownership claim on your organization{org}', 'There is news about a claim on your organization{org}. Sign in to review it.'], ['Novedades sobre una reclamación de tu organización{org}', 'Hay novedades sobre una reclamación de tu organización{org}. Inicia sesión para revisarla.']]
+});
 
 function safeHeader(value, max = 2048) {
   return typeof value === 'string' && value.length > 0 && value.length <= max && !/[\u0000-\u001f\u007f]/.test(value);
@@ -140,6 +156,17 @@ export function mailTransport(env = {}) {
       if(typeof link!=='string'||!link.startsWith(prefix)||!/^[0-9a-f-]{36}&token=[A-Za-z0-9_-]{43}$/.test(link.slice(prefix.length))||typeof handle!=='string'||!safeHeader(handle,64)||!Number.isSafeInteger(expiresAt))throw new Error('Invalid deletion confirmation request.');
       return send({from:senders.account,to:email,subject:`Confirm deletion of your ${brand} account`,text:[`Someone asked ${brand} to delete the account @${handle} on your behalf. Only continue if you asked for this.`,link,`The link expires on ${new Date(expiresAt).toISOString().slice(0,16).replace('T',' ')} UTC. Opening it does not delete anything until you confirm on the page. Deletion is then scheduled for 30 days later, and you can cancel it during that time.`,'If you did not ask for this, ignore this email.'].join('\n\n')});
     },
+    // ORG-12b break-glass owner notice: fixed templates, the organization's public handle and an optional abort link.
+    async sendBreakGlassNotice({ email, event, orgHandle, abortUrl }) {
+      if (!Object.hasOwn(BREAK_GLASS_NOTICES, event) || (orgHandle !== null && orgHandle !== undefined && (typeof orgHandle !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(orgHandle)))) throw new Error('Invalid break-glass notice.');
+      const prefix = `${origin}${ORG_CLAIM_ABORT_PATH}#org=`;
+      if (abortUrl !== null && abortUrl !== undefined && (typeof abortUrl !== 'string' || !abortUrl.startsWith(prefix) || !/^[0-9a-f-]{36}&token=bg1\.[0-9a-f-]{36}\.[0-9a-f-]{36}\.[A-Za-z0-9_-]{43}(?:&handle=[A-Za-z0-9][A-Za-z0-9._-]{0,63})?$/.test(abortUrl.slice(prefix.length)))) throw new Error('Invalid break-glass link.');
+      const [[subject, text], [asunto, texto]] = BREAK_GLASS_NOTICES[event], org = orgHandle ? ` @${orgHandle}` : '';
+      const format = value => value.replaceAll('{brand}', () => brand).replaceAll('{org}', () => org);
+      const link = abortUrl ? [`Stop the claim: ${abortUrl}`, 'Opening the link does not stop anything until you confirm on the page. It cannot sign you in.'] : [`Open ${origin}/console`];
+      const enlace = abortUrl ? [`Detener la reclamación: ${abortUrl.replace(ORG_CLAIM_ABORT_PATH + '#', ORG_CLAIM_ABORT_PATH + '?lang=es#')}`, 'Abrir el enlace no detiene nada hasta que confirmes en la página. No puede iniciar sesión.'] : [`Abre ${origin}/console`];
+      return send({ from: senders.security, to: email, subject: format(subject), text: [format(text), ...link, '—', format(asunto), format(texto), ...enlace].join('\n\n') });
+    },
     // DX-7: closure and reopening notices (terms §10). The export window is stated; no reason text is mailed.
     async sendClosureNotice({email,handle,exportUntil,executeAfter}) {
       if(typeof handle!=='string'||!safeHeader(handle,64)||!Number.isSafeInteger(executeAfter)||exportUntil!==null&&!Number.isSafeInteger(exportUntil))throw new Error('Invalid closure notice.');
@@ -154,6 +181,12 @@ export function mailTransport(env = {}) {
     async sendTransferNotice({email,notice}) {
       const template=transferNoticeTemplate(notice,{origin});
       return send({from:senders.security,to:email,subject:template.subject,text:template.text});
+    },
+    // Redirect expiry reminder (opt-in at transfer-out): the only message sent to the address kept on a moved tombstone,
+    // from the fixed notify@ sender. Acceptance is the caller's evidence; delivery is never claimed.
+    async sendRedirectReminder({email,notice}) {
+      const template=redirectReminderTemplate(notice,{origin,brand});
+      return send({from:senders.reminder,to:email,subject:template.subject,text:template.text});
     },
     // DX-5: deletion notices carry the cancel-only link in a fragment, from the fixed accounts@ sender.
     async sendDeletionNotice({email,notice,locale='en'}) {

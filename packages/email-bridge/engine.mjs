@@ -31,7 +31,7 @@ import {buildReply,buildFollowup} from './reply.mjs';
 export {INTAKE_SLOT};
 export const BRIDGE_REF='email-bridge';
 export const BRIDGE_LIMITS=Object.freeze({
- ingressPerHour:20000,sourcePerHour:2000,ownerDaily:200,ownerDailyBytes:16*1048576,queueItems:500,queueBytes:32*1048576,
+ ingressPerHour:20000,sourcePerHour:2000,sourceDomainMissesPerHour:50,sourceAuthenticatedPerHour:20000,sourceUnauthenticatedPerHour:20000,ownerDaily:200,ownerDailyBytes:16*1048576,queueItems:500,queueBytes:32*1048576,
  // The occupant bounds receivedAt to its last 7 days (spec §9), so mail is held 7 days less an hour, not §13's 30.
  holdMs:7*86400000-3600000,dedupMs:8*86400000,ledgerMs:30*86400000,statusMs:30*86400000,
  senderIntakeDaily:20,recipientRepliesDaily:20,domainRepliesDaily:50,senderCooldownMs:30*86400000,globalRepliesDaily:2000,
@@ -77,7 +77,7 @@ export const PROVIDERS=Object.freeze({
  random:row('both','{uuid()}.'),
  audit:row('both','{record(entry)}; never records input.'),
  directory:row('edge','{resolve(handle)} -> {owner, principal, active, entitled} | null: the public handle directory and current paid entitlement.'),
- limiter:row('edge','{consume(key,{limit,windowMs})} -> boolean: fleet-wide fixed windows (ingress budget).'),
+ limiter:row('edge','{consume(key,{limit,windowMs,peek})} -> boolean: fleet-wide fixed windows (ingress and source budgets); peek tests capacity without charging.'),
  owners:row('edge','{admit(owner,input)}: the owner placement (EmailBridgeObject, Node store, test engine).'),
  stores:row('owner','{for(owner)} -> transactional store {get,put,delete,list,transaction}.'),
  senders:row('owner','{consume(key,{limit,windowMs}), refund(key), suppressed(key), suppress(key,{until})}: sender-keyed reply budgets and the suppression list.'),
@@ -131,14 +131,34 @@ export class BridgeReceive extends BridgeAction{
   const envelopeFrom=rawFrom===''||rawFrom==='<>'||rawFrom==null?'':mailbox(String(rawFrom));if(envelopeFrom===null)return reject;
   if(!Number.isSafeInteger(v.rawSize)||v.rawSize<0||v.rawSize>MIME_LIMITS.rawBytes||typeof v.read!=='function')return reject;
   // Per-source bucket before any directory work (review EB-3 re-review): the envelope sender's domain hashed into 256
-  // buckets, so lookups for nonexistent handles are throttled without allocating a key per attacker domain.
-  const bucket=parseInt((await hex(`email-bridge-src-v1\0${envelopeFrom?envelopeFrom.slice(envelopeFrom.lastIndexOf('@')+1):'<>'}`)).slice(0,2),16);
-  if(!await limiter.consume(`email-bridge/source-v1/${bucket}`,{limit:L.sourcePerHour,windowMs:3600000}))return reject;
+  // buckets, so lookups for nonexistent handles are throttled without allocating a key per attacker domain. The
+  // bucket is only peeked here and charged on a refused lookup, so eligible mail never spends it (wargame 3, F6).
+  // Under pressure (bucket exhausted) the envelope domain is only trusted when the configured receiver reports
+  // spf=pass for exactly that domain: such mail falls through to that domain's own refusal allowance, which forged
+  // envelopes therefore cannot spend. All other mail (no trusted receiver, e.g. Cloudflare; forged; unaligned) shares
+  // one fleet-wide unauthenticated pool. Authenticated keys are backed by their own fleet-wide pool so domains with
+  // wildcard SPF cannot mint unbounded lookups. Review follow-up 3 (2026-10-23).
+  const sourceDomain=envelopeFrom?envelopeFrom.slice(envelopeFrom.lastIndexOf('@')+1).toLowerCase():'<>',sourceHash=await hex(`email-bridge-src-v1\0${sourceDomain}`);
+  const hour={windowMs:3600000},bucketKey=`email-bridge/source-v1/${parseInt(sourceHash.slice(0,2),16)}`,domainKey=`email-bridge/source-domain-v1/${sourceHash.slice(0,32)}`;
+  const authPool='email-bridge/source-authenticated-v1',unauthPool='email-bridge/source-unauthenticated-v1';
+  let rawBytes,parsed;const readRaw=async()=>rawBytes??=await v.read(MIME_LIMITS.rawBytes);
+  const parse=async()=>{if(parsed)return parsed;try{return parsed=await parseEmail(await readRaw(),{envelopeFrom,authservId:c.authservId});}catch(error){if(error instanceof BridgeMimeError)return null;throw error;}};
+  const misses=[],peek=(key,limit)=>limiter.consume(key,{...hour,limit,peek:true});
+  if(await peek(bucketKey,L.sourcePerHour))misses.push([bucketKey,L.sourcePerHour]);
+  else{
+   const authenticated=c.authservId&&envelopeFrom?(await parse())?.spfPassDomain===sourceDomain:false;
+   if(c.authservId&&envelopeFrom&&!parsed)return reject;// malformed under pressure: refused without directory work or charge
+   if(authenticated){if(await peek(domainKey,L.sourceDomainMissesPerHour)&&await peek(authPool,L.sourceAuthenticatedPerHour))misses.push([domainKey,L.sourceDomainMissesPerHour],[authPool,L.sourceAuthenticatedPerHour]);else return reject;}
+   else if(await peek(unauthPool,L.sourceUnauthenticatedPerHour))misses.push([unauthPool,L.sourceUnauthenticatedPerHour]);
+   else return reject;
+  }
+  const miss=async()=>{for(const [key,limit] of misses){try{await limiter.consume(key,{...hour,limit});}catch{}}return reject;};
+  // A directory failure is ours, not the sender's: refuse without charging any source allowance.
   let target;try{target=await directory.resolve(local);}catch{return reject;}
-  if(!target||target.active!==true||target.entitled!==true||!/^[a-f0-9-]{36}$/.test(target.owner??'')||!bridgeConfig(config,target.owner).enabled)return reject;
+  if(!target||target.active!==true||target.entitled!==true||!/^[a-f0-9-]{36}$/.test(target.owner??'')||!bridgeConfig(config,target.owner).enabled)return miss();
   // Charged only for eligible recipients (review EB-3), so mail to nonexistent handles cannot exhaust bridge intake.
   if(!await limiter.consume('email-bridge/ingress-v1',{limit:L.ingressPerHour,windowMs:3600000}))return reject;
-  let parsed;try{parsed=await parseEmail(await v.read(MIME_LIMITS.rawBytes),{envelopeFrom,authservId:c.authservId});}catch(error){if(error instanceof BridgeMimeError)return reject;throw error;}
+  if(!await parse())return reject;
   const admitted=await owners.admit(target.owner,{envelope:{from:envelopeFrom,to},principal:target.principal,parsed,dmarcGate:['platform','trusted'].includes(v.dmarcGate)?v.dmarcGate:'unavailable'});
   return admitted?.accepted===true?{action:'accept',owner:target.owner,reply:admitted.reply?{...admitted.reply,owner:target.owner}:null}:reject;
  }
@@ -188,7 +208,9 @@ export class BridgeAdmit extends BridgeAction{
   try{
    if(await senders.suppressed(key))reason='suppressed';
    else if(!(cooled=await senders.consume(`sender/${key}`,{limit:1,windowMs:L.senderCooldownMs})))reason='cooldown';
-   else{const domain=`domain/${await domainKey(envelopeFrom)}`,d=await senders.consume(domain,{limit:L.domainRepliesDaily,windowMs:DAY});
+   // The cooldown is a charge like the others, so a reply the platform refuses (a forged sender failing DMARC)
+   // gives it back and a forged mail cannot silence the real sender for 30 days (wargame 3, F8).
+   else{charged.push({key:`sender/${key}`,start:cooled});const domain=`domain/${await domainKey(envelopeFrom)}`,d=await senders.consume(domain,{limit:L.domainRepliesDaily,windowMs:DAY});
     if(!d)reason='domain';else{charged.push({key:domain,start:d});const g=await senders.consume('global/replies-v1',{limit:L.globalRepliesDaily,windowMs:DAY});if(!g)reason='global';else charged.push({key:'global/replies-v1',start:g});}}
   }catch{reason='error';}
   // Claimed before sending, with the recipient cap charged in the same commit: a crash after this point leaves
@@ -197,7 +219,7 @@ export class BridgeAdmit extends BridgeAction{
    if(!why){const r=windowed(await t.get(K.replies),now);if(r.count>=L.recipientRepliesDaily)why='recipient';else await t.put(K.replies,{...r,count:r.count+1});}
    await t.put(K.ledger(jti),{...l,initial:why?`suppressed:${why}`:'claimed',charged:why?[]:charged,repliesWindow:windowed(await t.get(K.replies),now).start});return why;});
   // A budget miss gives the sender's cooldown back too, so exhaustion elsewhere never costs a later legitimate reply.
-  if(claimed){await refund(senders,cooled?[...charged,{key:`sender/${key}`,start:cooled}]:charged);return {accepted:true,reply:null};}
+  if(claimed){await refund(senders,charged);return {accepted:true,reply:null};}
   return {accepted:true,reply:{from:envelope.to,to:envelopeFrom,jti,raw:buildReply({from:envelope.to,to:envelopeFrom,link:c.link,now,messageId:(await hex(`email-bridge-reply-v1\0${fp}`)).slice(0,32)})}};
  }
 }
@@ -317,8 +339,9 @@ export const BRIDGE_OPERATIONS=Object.freeze(Object.fromEntries([BridgeReceive,B
 /** Sender-keyed fixed windows and the suppression list over one transactional store; rows expire. */
 export function storeSenders(store,{clock={now:()=>Date.now()}}={}){
  return {
-  async consume(key,{limit,windowMs}){if(typeof key!=='string'||key.length>200||!Number.isSafeInteger(limit)||limit<1||!Number.isSafeInteger(windowMs)||windowMs<1000)return false;const now=clock.now();
-   // Returns the charged window's start (truthy) or false.
+  async consume(key,{limit,windowMs,peek=false}){if(typeof key!=='string'||key.length>200||!Number.isSafeInteger(limit)||limit<1||!Number.isSafeInteger(windowMs)||windowMs<1000)return false;const now=clock.now();
+   // Returns the charged window's start (truthy) or false; `peek` reports capacity without charging (AbuseGuard parity).
+   if(peek){const w=windowed(await store.get(`w/${key}`),now,windowMs);return w.count+1<=limit;}
    return store.transaction(async t=>{const w=windowed(await t.get(`w/${key}`),now,windowMs);if(w.count+1>limit)return false;await t.put(`w/${key}`,{start:w.start,count:w.count+1,until:w.start+windowMs});
     if(!w.count)await t.put(`x/${pad(w.start+windowMs)}/${key}`,1);
     // Expiry index (review EB-8): windows are removed in end-time order, a few per call.

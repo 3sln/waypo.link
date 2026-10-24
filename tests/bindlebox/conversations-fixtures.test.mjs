@@ -29,7 +29,8 @@ const enc=v=>B.base64url(encoder.encode(JSON.stringify(v)));
 const HOSTS={alice:'https://alice.box.example/ingress',bob:'https://hub.box.example/ingress',carol:'https://hub.box.example/ingress',dave:'https://dave.box.example/ingress',erin:'https://erin.box.example/ingress'};
 async function signCompact(header,claims,privateKey){const head=`${enc(header)}.${enc(claims)}`;return `${head}.${B.base64url(new Uint8Array(await crypto.subtle.sign({name:'ECDSA',hash:'SHA-256'},privateKey,encoder.encode(head))))}`;}
 
-export async function createMesh({names=['alice','bob','carol','dave'],seed=1,rules=[],maxParticipants={},shell=false}={}){
+// `storage: true` composes an in-memory user storage resource per party (bodies of 4 KiB or more are staged there).
+export async function createMesh({names=['alice','bob','carol','dave'],seed=1,rules=[],maxParticipants={},shell=false,storage=false}={}){
  const clock=fakeClock(NOW),network=createNetwork({peers:names,clock,seed,rules}),edgeStore=memoryStore(),edge=createEdgeIndex(edgeStore),conversationEdge=createConversationEdge(edgeStore,{now:()=>clock.now()});
  const parties=new Map(),revoked=new Map(),routes=new Map(),calls={status:0,resolve:0};
  const directory={
@@ -48,7 +49,8 @@ export async function createMesh({names=['alice','bob','carol','dave'],seed=1,ru
   const peer=network.peers.get(name);await peer.engine.dispose();
   const issuer=`https://${name}.provider.example`,owner=peer.owner,principal={issuer,subject:owner,identityURI:`${issuer}/identity/${owner}`},keyId=`${principal.identityURI}#k1`;
   const identity=await crypto.subtle.generateKey(ES,true,['sign','verify']),delegate=await crypto.subtle.generateKey(ES,true,['sign','verify']);
-  const party={name,owner,peer,principal,keyId,ingress:shell?(HOSTS[name]??`https://${name}.box.example/ingress`).replace('/ingress','/bindle/ingress'):HOSTS[name]??`https://${name}.box.example/ingress`,identity:{privateKey:identity.privateKey,publicJwk:pub(await crypto.subtle.exportKey('jwk',identity.publicKey))},delegatePrivate:delegate.privateKey,delegateJwk:pub(await crypto.subtle.exportKey('jwk',delegate.publicKey)),store:peer.store,links:0};
+  const objects=new Map(),userStorage=storage?{objects,put:async(k,v)=>{objects.set(k,Uint8Array.from(v));},get:async k=>objects.get(k)??null,delete:async k=>{objects.delete(k);}}:null;
+  const party={name,owner,peer,principal,keyId,userStorage,ingress:shell?(HOSTS[name]??`https://${name}.box.example/ingress`).replace('/ingress','/bindle/ingress'):HOSTS[name]??`https://${name}.box.example/ingress`,identity:{privateKey:identity.privateKey,publicJwk:pub(await crypto.subtle.exportKey('jwk',identity.publicKey))},delegatePrivate:delegate.privateKey,delegateJwk:pub(await crypto.subtle.exportKey('jwk',delegate.publicKey)),store:peer.store,links:0};
   await certify(party);parties.set(name,party);routes.set(party.ingress,routes.get(party.ingress)??name);
   let serial=0;
   const providerLink={async issue({type,claims}){const jti=`jti-${name}-${++serial}`,iat=Math.floor(clock.now()/1000),aud=`${issuer}/users/${name}/contact/${serial}`;const meta=await signCompact({alg:'ES256',kid:keyId,typ:'bindle-link-meta+jwt'},{bindle:'link-meta',v:1,type,iss:issuer,aud,jti,iat,exp:iat+30*86400,...claims},identity.privateKey);return {link:`${aud}?bindle_meta=${meta}`,jti};},revoke:async()=>({}),evaluate:async()=>({state:'eligible'})};
@@ -56,7 +58,7 @@ export async function createMesh({names=['alice','bob','carol','dave'],seed=1,ru
   const egress={fetch:async(url,init)=>{const target=[...routes].find(([ingress])=>url===ingress||url.startsWith(`${ingress}/return/`));if(!target)throw Object.assign(new Error('Unknown simulated ingress'),{code:'network_denied'});const {signal,...wire}=init;return network.send(name,target[1],{url,...wire});}};
   const Outbox=createOutboxProvider({BINDLEBOX_ENABLED:true,authorize:withConversations(()=>true),renewDelegation:async()=>{await certify(party);return party.signer.delegation;}});
   const delegateKeys={current:async()=>party.current?party.current():party.signer,renew:()=>certify(party)};
-  const start=()=>shell?(()=>{const box=createMailbox({store:peer.store,clock:peer.clock,BINDLEBOX_ENABLED:true,ports:{egress,directory,delegateKeys,providerLink}});return {...box,run:(op,params)=>box.run(owner,op,params)};})():createTestEngine({seed:seed+1,owner,clock:peer.clock,store:peer.store,registry:REGISTRY,providers:{conversations:ConversationsDomain,contacts:ContactsDomain,receive:ReceiveDomain,outbox:Outbox,egress,directory:{resolveKey:q=>directory.resolveKey(q),status:q=>directory.status(q)},delegateKeys:{current:async()=>party.current?party.current():party.signer},providerLink,userStorage:null,classifier:null}});
+  const start=()=>shell?(()=>{const box=createMailbox({store:peer.store,clock:peer.clock,BINDLEBOX_ENABLED:true,ports:{egress,directory,delegateKeys,providerLink}});return {...box,run:(op,params)=>box.run(owner,op,params)};})():createTestEngine({seed:seed+1,owner,clock:peer.clock,store:peer.store,registry:REGISTRY,providers:{conversations:ConversationsDomain,contacts:ContactsDomain,receive:ReceiveDomain,outbox:Outbox,egress,directory:{resolveKey:q=>directory.resolveKey(q),status:q=>directory.status(q)},delegateKeys:{current:async()=>party.current?party.current():party.signer},providerLink,userStorage,classifier:null}});
   peer.engine=start();party.engine=()=>peer.engine;
   peer.restart=async()=>{peer.online=false;await peer.engine.dispose();peer.engine=start();peer.online=true;};
   peer.handler=request=>handleConversationIngress(request,{edge,conversationEdge,now:()=>clock.now(),

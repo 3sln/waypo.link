@@ -20,11 +20,11 @@ const makeOwnerBudget = async (state, options = {}) => {
 test('independent audit: concurrent global reservations stop before daily ceiling and survive controller replacement', async () => {
   const metadata = new SqliteMetadata(':memory:');
   try {
-    const config = { SEMANTIC_GLOBAL_DAILY_MICRO_USD: 22, SEMANTIC_GLOBAL_MONTHLY_MICRO_USD: 100 };
+    const config = { SEMANTIC_GLOBAL_DAILY_MICRO_USD: 132, SEMANTIC_GLOBAL_MONTHLY_MICRO_USD: 1000, SEMANTIC_OWNER_SHARE_PERCENT: 100 };
     const budget = new GlobalSemanticBudget({ metadata, config, clock: () => start });
     const attempts = await Promise.allSettled(Array.from({ length: 25 }, () => budget.reserve({ operation: 'embed', units: 512, owner })));
-    assert.equal(attempts.filter(attempt => attempt.status === 'fulfilled').length, 2);
-    assert.equal((await metadata.get('semantic/day')).microUSD, 22);
+    assert.equal(attempts.filter(attempt => attempt.status === 'fulfilled').length, 12);
+    assert.equal((await metadata.get('semantic/day')).microUSD, 132);
     const restarted = new GlobalSemanticBudget({ metadata, config, clock: () => start });
     await assert.rejects(restarted.reserve({ operation: 'embed', units: 512, owner }), { code: 'semantic_global_budget' });
   } finally { metadata.close(); }

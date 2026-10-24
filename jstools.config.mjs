@@ -34,7 +34,7 @@ export const publicSources = [
 
 export const pages = [
   {source:'apps/web/transfer-security.html',output:'transfer-security.html',entry:'transferSecurity',module:'/src/transfer-security.mjs'},
-  ...['out','in','moved','redirect','successor','dispute'].map(kind=>({source:'apps/web/transfer-'+kind+'.html',output:'transfer-'+kind+'.html',entry:'transfer',module:'/src/transfer-page.mjs'})),
+  ...['out','in','moved','redirect','successor','dispute','manage'].map(kind=>({source:'apps/web/transfer-'+kind+'.html',output:'transfer-'+kind+'.html',entry:'transfer',module:'/src/transfer-page.mjs'})),
   {source:'apps/web/intent.html',output:'intent.html',entry:'intent',module:'/src/intent.mjs'},
   {source:'apps/web/console.html',output:'console.html',entry:'app',module:'/src/main.mjs'},
   {source:'apps/web/authorize.html',output:'authorize.html',entry:'authorize',module:'/src/authorize.mjs'},

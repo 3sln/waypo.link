@@ -158,7 +158,7 @@ const publicCredentials = account => account.credentials.map(({ id, label, devic
 /** Platform-independent account policy. Repository must implement linearizable
  * create and compareAndSwap; an in-memory repository is only a test resource. */
 export class IdentityService {
-  constructor({ repository, deviceRequests, linkedApprovals = deviceRequests, linkedLimits, linkedPollLimits, approvalNotices, crypto, clock = () => Date.now(), turnstile, rateLimiter, webauthn, passwordHasher, mailer, identityBackup, paidHandleEligibility, setupBilling, systemBootstrap, onboarding, resolveIdentityBadges, pushTransport, reservedHandle, flags, accountChannels, closure, severConnections, config }) {
+  constructor({ repository, deviceRequests, linkedApprovals = deviceRequests, linkedLimits, linkedPollLimits, approvalNotices, crypto, clock = () => Date.now(), turnstile, rateLimiter, webauthn, passwordHasher, mailer, identityBackup, paidHandleEligibility, setupBilling, systemBootstrap, onboarding, resolveIdentityBadges, pushTransport, reservedHandle, flags, accountChannels, closure, severConnections, organizationSignals, config }) {
     if (!repository || !turnstile || !rateLimiter || !webauthn || !passwordHasher || !config?.termsVersion) throw new TypeError('Identity resources and terms version are required');
     const origin = new URL(config.origin);
     if (origin.origin !== config.origin || origin.hostname !== config.rpID || (origin.protocol !== 'https:' && !(config.allowInsecureLocalhost && origin.protocol === 'http:' && origin.hostname === 'localhost'))) throw new TypeError('Exact RP origin is required');
@@ -168,11 +168,15 @@ export class IdentityService {
     // `linkedApprovals` is the renamed `deviceRequests` repository (create/get/findByUserCode/compareAndSwap).
     // `linkedLimits` is the durable window port for budgets; `linkedPollLimits` the non-durable poll limiter.
     this.deviceRequests = this.linkedApprovals = linkedApprovals; this.linkedLimits = linkedLimits ?? new MemoryLinkedLimits(clock); this.linkedPollLimits = linkedPollLimits ?? new MemoryLinkedLimits(clock); this.approvalNotices = approvalNotices;
-    this.setupBilling = setupBilling;this.systemBootstrap=systemBootstrap;this.onboarding=onboarding;this.resolveIdentityBadges=resolveIdentityBadges??defaultBadgeResolver;this.reservedHandle=reservedHandle;this.flags=flags;this.accountChannels=accountChannels;this.closure=closure;this.severConnections=severConnections;
+    this.setupBilling = setupBilling;this.systemBootstrap=systemBootstrap;this.onboarding=onboarding;this.resolveIdentityBadges=resolveIdentityBadges??defaultBadgeResolver;this.reservedHandle=reservedHandle;this.flags=flags;this.accountChannels=accountChannels;this.closure=closure;this.severConnections=severConnections;this.organizationSignals=organizationSignals;
     this.config = { rpName: '3sln.me', sessionTtlMs: 86400000, pendingTtlMs: 1800000, challengeTtlMs: 300000, ...config };
     if (!(this.config.sessionTtlMs > 0 && this.config.sessionTtlMs <= 86400000)) throw new TypeError('Sessions must expire within 24 hours');
   }
   origin(context) { if (context?.origin !== this.config.origin) fail('csrf', 'Use the account website to complete this request.'); }
+  /** ORG-12b break-glass liveness (organizations design §12d.3): an interactive sign-in (password, passkey, email) or a
+   * step-up. `lastInteractiveAt` rides the caller's own CAS (no extra write); the owner hook `organizationSignals.liveness`
+   * runs fire-and-forget and returns nothing to identity. Background session refreshes never call this. */
+  interactive(account,kind,context){const at=this.clock();account.lastInteractiveAt=at;if(account.status==='active'&&typeof this.organizationSignals?.liveness==='function'){const owner=account.id;this.background(context,()=>this.organizationSignals.liveness(owner,{kind,at}));}}
   async projectAccount(account){
     const aliases=[account.handle,...onboardingAlias(account)?[onboardingAlias(account)]:[],...account.paidHandle?[account.paidHandle]:[],...systemBadge(account)?[account.systemIdentity.handle]:[]],identity=Object.freeze({id:account.id,handle:account.handle,status:account.status,aliases:Object.freeze(aliases),badgeIds:Object.freeze(Array.isArray(account.badgeIds)?[...account.badgeIds]:[])});let ids,timer;
     try{ids=await Promise.race([Promise.resolve().then(()=>this.resolveIdentityBadges(identity)),new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('Badge resolution timed out')),500);})]);}catch{ids=[];}finally{clearTimeout(timer);}
@@ -312,7 +316,7 @@ export class IdentityService {
     else if(input.method==='passkey'){const challenge=account.challenges.find(c=>c.purpose==='step-up'&&secureEqual(c.sessionHash,session.hash)&&c.expiresAt>this.clock()),credential=account.credentials.find(c=>c.id===input.response?.id);if(!challenge||!credential)fail('unauthorized','Authentication failed.');let verified;try{verified=await this.webauthn.verifyAuthentication({response:input.response,challenge:challenge.value,credential,account,config:this.config});}catch{fail('unauthorized','Authentication failed.');}credential.counter=verified.counter;credential.backedUp=verified.backedUp;account.challenges=account.challenges.filter(c=>c!==challenge);used={kind:'passkey',id:credential.id};}
     else fail('invalid_method');
     // Which credential confirmed it (reissue authority: a credential enrolled >= 7 days earlier, P18).
-    session.stepUpAt=this.clock();session.stepUpCredential=used;this.audit(account,'step-up');await this.save(account,revision);return {stepUpUntil:session.stepUpAt+300000};
+    session.stepUpAt=this.clock();session.stepUpCredential=used;this.audit(account,'step-up');this.interactive(account,'step-up',context);await this.save(account,revision);return {stepUpUntil:session.stepUpAt+300000};
   }
   ageAttestation(input,context,{paid=false,bootstrap=false}={}){const location=trustedAgeLocation({country:context?.ageLocation?.country,regionCode:context?.ageLocation?.region}),requirement=ageRequirement(location),minimum=paid?requirement.paidMinimumAge:requirement.minimumAge;if(requirement.blocked&&!bootstrap)throw Object.assign(new IdentityFault('signup_region_blocked',"Sign-up isn't available in your region."),{status:403});if(input.ageConfirmed===undefined)fail('age_confirmation_required','Confirm the minimum signup age.');if(!Number.isSafeInteger(input.ageConfirmed)||input.ageConfirmed<minimum||input.ageConfirmed>150)fail('age_confirmation_insufficient','Confirm the required signup age.');return {ageConfirmedAt:this.clock(),ageMinimum:minimum,ageCountry:location.country};}
   async acceptTerms(input,context){
@@ -728,7 +732,7 @@ export class IdentityService {
     if (['suspended','moved'].includes(account?.status) && account.passwordHash && verified && await this.closureWindow(account)) return this.closureSession(account, account.revision, { label: input.label });
     if (!account || !['active',...(this.config.requireReachability===true||account?.systemIdentity||account?.onboardingIdentity)?['pending','recovering']:[]].includes(account.status) || !account.passwordHash || !verified) fail('unauthorized', 'Authentication failed.');
     if(account.status!=='active')return this.resumeSetupCredential(account,context);
-    const revision = account.revision; const result = await this.session(account, { label: input.label }); await this.save(account, revision); return result;
+    const revision = account.revision; this.interactive(account,'sign-in',context); const result = await this.session(account, { label: input.label }); await this.save(account, revision); return result;
   }
   /** Passkey sign-in, phase 1 (wargame 2026-10-23 #3, #9 and challenge eviction). The challenge is not stored: the
    * token is `pl1.<payload>.<mac>`, a keyed MAC over {handle, challenge, nonce, expiry}. Begin therefore reads no
@@ -769,7 +773,7 @@ export class IdentityService {
     account.challenges = account.challenges.filter(c => c.purpose !== 'login');
     if(closed)return this.closureSession(account,revision,{ label: input.label, credentialId: credential.id });
     if(account.status!=='active')return this.resumeSetupCredential(account,context,revision);
-    const result = await this.session(account, { label: input.label, credentialId: credential.id }); await this.save(account, revision); return result;
+    this.interactive(account,'sign-in',context); const result = await this.session(account, { label: input.label, credentialId: credential.id }); await this.save(account, revision); return result;
   }
   async recover(input, context) {
     await this.guard('recovery', input, context); const [id] = tokenParts(input.recoveryToken);
@@ -973,7 +977,7 @@ export class IdentityService {
     const challenge = account?.emailChallenges?.find(c => c.purpose === 'login' && secureEqual(c.hash, hash) && c.expiresAt > this.clock());
     if (!account || account.status !== 'active' || account.emailLoginEnabled !== true || !challenge || challenge.email !== account.verifiedEmail || challenge.emailRevision !== account.emailVerifiedAt) fail('unauthorized', 'Email login failed.');
     const revision = account.revision; account.emailChallenges = account.emailChallenges.filter(c => c !== challenge);
-    const result = await this.session(account,{source:'email'}); await this.save(account, revision); return result;
+    this.interactive(account,'sign-in',context); const result = await this.session(account,{source:'email'}); await this.save(account, revision); return result;
   }
   async configureEmailLogin(input, context) {
     const { account } = await this.recent(context); const revision = account.revision;

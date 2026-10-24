@@ -235,7 +235,13 @@ const system=(c,owner,Operation,input)=>runBrokered(engineOf(c),Operation,{actor
 export const account={
  methods:{
   /** Federation shard → account: {clientId, record, fragment, field, methods, jkt?}. */
-  async brokeredFederationEvent(owner,{source,event}={}){await bound(this,owner);if(typeof source!=='string'||source.length>128)invalid();const out=await this.metadata.transaction(async tx=>{const now=Date.now(),key='integrations/x8/federation/'+source;if(await tx.get(key))return {duplicate:true};for(const [k,v]of await tx.list({prefix:'integrations/x8/federation/'}))if(v<=now)await tx.delete(k);if((await tx.list({prefix:'integrations/x8/federation/',limit:1025})).size>=1024)fault('rate_limited','Too many pending federation events.',429);await enqueueIntegrationEvent(tx,event,{now});if(event.type==='credential-revoked')for(const grant of event.grants)await tx.put(REVOKED+grant,{at:now});await tx.put(key,now+86400000);return {enqueued:true};});await this.integrationEventsKick(owner);return out;},
+  async brokeredFederationEvent(owner,{source,event}={}){await bound(this,owner);if(typeof source!=='string'||source.length>128)invalid();const out=await this.metadata.transaction(async tx=>{const now=Date.now(),key='integrations/x8/federation/'+source;if(await tx.get(key))return {duplicate:true};// Wargame3 F2: the dedupe set is bounded by evicting its oldest markers, never by refusing: a refusal would stall the
+    // federation shard's in-order drain behind it. A lost marker can only re-enqueue an event, which coalesces.
+    const seen=[];for(const [k,v]of await tx.list({prefix:'integrations/x8/federation/',limit:4096}))if(!(v>now))await tx.delete(k);else seen.push([k,v]);
+    seen.sort((a,b)=>a[1]-b[1]);for(const [k] of seen.slice(0,Math.max(0,seen.length-1023)))await tx.delete(k);
+    await enqueueIntegrationEvent(tx,event,{now});
+    // The revocation marker carries the same bound as the severance drain's, so its sweep keeps it for that window.
+    if(event.type==='credential-revoked')for(const grant of event.grants)await tx.put(REVOKED+grant,{at:now,until:now+ACCESS_ENDS_BY_MS});await tx.put(key,now+86400000);return {enqueued:true};});await this.integrationEventsKick(owner);return out;},
   async brokeredMint(owner,input){await bound(this,owner);return system(this,owner,MintBrokeredToken,input);},
   async brokeredSeq(owner,input){await bound(this,owner);return system(this,owner,BrokeredSeq,input);},
   /** Federation resource sync (runtime/federation.mjs resourceProvider): brokered records as descriptors. */
@@ -264,6 +270,8 @@ export const brokeredResourcesDeclaration=(issuer,{introspection=false}={})=>({f
 
 // ---- RFC 7523 client assertion ----
 const text=new TextEncoder();
+/** RSA public exponents must be odd and at least 65537, as for integration key sets (integrations.mjs). */
+export function rsaExponentOk(e){if(typeof e!=='string'||e.length<2||e.length>8)return false;let bytes;try{bytes=atob(e.replaceAll('-','+').replaceAll('_','/')+'='.repeat((4-e.length%4)%4));}catch{return false;}let value=0;for(const c of bytes)value=value*256+c.charCodeAt(0);return value>=65537&&value%2===1;}
 const ALGS=Object.freeze({
  ES256:{kty:'EC',crv:'P-256',importer:{name:'ECDSA',namedCurve:'P-256'},verifier:{name:'ECDSA',hash:'SHA-256'},bytes:64},
  ES384:{kty:'EC',crv:'P-384',importer:{name:'ECDSA',namedCurve:'P-384'},verifier:{name:'ECDSA',hash:'SHA-384'},bytes:96},
@@ -286,7 +294,7 @@ export async function verifyClientAssertion(assertion,{clientId,audience,keys,no
  if(!Number.isSafeInteger(claims.exp)||!Number.isSafeInteger(claims.iat)||claims.exp<=claims.iat||claims.exp-claims.iat>L.assertionLifetime||claims.exp<=seconds||claims.iat>seconds+L.assertionSkew||claims.nbf!==undefined&&(!Number.isSafeInteger(claims.nbf)||claims.nbf>seconds+L.assertionSkew))assertionFault('time');
  if(typeof claims.jti!=='string'||!/^[\x21-\x7e]{16,128}$/.test(claims.jti))assertionFault('jti');
  const signature=unb64u(parts[2]);if(alg.bytes&&signature.length!==alg.bytes)assertionFault('signature');
- const candidates=(keys??[]).filter(k=>k?.kty===alg.kty&&(alg.crv===undefined||k.crv===alg.crv)&&(k.alg===undefined||k.alg===header.alg)&&(header.kid===undefined||k.kid===undefined||k.kid===header.kid));
+ const candidates=(keys??[]).filter(k=>k?.kty===alg.kty&&(alg.crv===undefined||k.crv===alg.crv)&&(k.alg===undefined||k.alg===header.alg)&&(header.kid===undefined||k.kid===undefined||k.kid===header.kid)&&(alg.kty!=='RSA'||rsaExponentOk(k.e)));
  let verified=null;
  for(const k of candidates){try{const {thumbprint,kid,alg:ignored,...jwk}=k;const key=await crypto.subtle.importKey('jwk',{...jwk,ext:true},alg.importer,false,['verify']);if(await crypto.subtle.verify(alg.verifier,key,signature,text.encode(`${parts[0]}.${parts[1]}`))){verified={thumbprint:thumbprint??null};break;}}catch{/* next key */}}
  if(!verified)assertionFault('signature');

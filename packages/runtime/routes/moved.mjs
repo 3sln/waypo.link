@@ -39,6 +39,7 @@ import {isUUID} from '../../core/primitives.mjs';
 import {normalizeHandle} from '../../identity/handles.mjs';
 import {redirectablePath,redirectTarget,parseMoveStatement} from '../../identity/succession.mjs';
 import {movedWindow} from '../../identity/lifecycle-tombstone.mjs';
+import {redirectTo} from '../../identity/redirect-records.mjs';
 import {statusCacheControl,isJkt} from '../../identity/delegation.mjs';
 import {TRANSFER_FLAG} from '../../identity/transfer-out.mjs';
 import {ATTESTATION_KEYS_PATH,parseAttestationKeySet,publishedAttestationJwks} from '../../identity/attestation-keys.mjs';
@@ -71,7 +72,7 @@ export async function movedLookup(env,{handle,sub},now=clockOf(env)){
  try{if(sub!==undefined){if(!isUUID(sub))return null;account=await repository.get(sub);}else{let name;try{name=normalizeHandle(decodeURIComponent(handle));}catch{return null;}account=await repository.findByHandle?.(name);}}catch{return null;}
  if(account?.status!=='moved'||!account.moved||typeof account.id!=='string')return null;
  const window=movedWindow(account.moved,now);if(!window.live)return null;
- const moved=account.moved;return {sub:account.id,to:moved.to,redirectBase:moved.redirectBase,statement:moved.statement,attestation:moved.attestation,redirectUntil:moved.redirectUntil,committedAt:moved.committedAt};
+ const moved=account.moved;return {sub:account.id,to:redirectTo(moved),redirectBase:moved.redirectBase,statement:moved.statement,attestation:moved.attestation,redirectUntil:moved.redirectUntil,committedAt:moved.committedAt};
 }
 /** Spec §11: `{to}` for an authorization request naming a moved identity (`handle@host` on this host) while its
  * redirect runs; null otherwise, after which the request answers exactly as for a deleted identity. */

@@ -6,6 +6,7 @@ import {migrateTags} from '../../messaging/tags.mjs';
 import {retryReady,retryFailure} from '../cleanup-retry.mjs';
 import {key} from '../../messaging/store.mjs';
 import {StorageError} from '../../storage/policy.mjs';
+export const SEMANTIC_MIN_ACCOUNT_AGE_MS=7*86400000;
 import {storageState} from '../storage-quota.mjs';
 import {vectorBinding} from '../semantic-routing.mjs';
 import {lifecycleLog} from '../lifecycle-runner.mjs';
@@ -18,6 +19,16 @@ export const methods={
     const entitlement=await storageState(tx,message.owner,Date.now(),this.config);
     const event=await enqueueSearchEvent(tx,{owner:message.owner,id,source:{kind:'message',id:message.id},operation,revision},{maxQueue:planBudget(entitlement.plan==='free'?'free':'paid').limits.queue});
     await tx.setAlarm(Date.now()+60000);return event;
+  },
+  // Semantic admission (provisional, DEVLOG 2026-10-23): a paid entitlement, or an account at least 7 days old. Age is
+  // account-local: `account/created-at` (written when the account first binds its owner) or, for accounts created before
+  // that record existed, the first semantic eligibility check. Either is no earlier than creation, so the gate errs closed.
+  async semanticEligible(owner){
+    let plan='free';try{plan=(await this.billing.entitlement(owner))?.plan??'free';}catch{}
+    if(plan!=='free')return true;
+    const now=Date.now();let since=await this.metadata.get('account/created-at');
+    if(!Number.isSafeInteger(since)){since=await this.metadata.get('semantic/first-seen');if(!Number.isSafeInteger(since)){since=now;await this.metadata.put('semantic/first-seen',now);}}
+    return now-since>=SEMANTIC_MIN_ACCOUNT_AGE_MS;
   },
   async configureSemanticSearch(owner){
     this.semanticBudget.configured=ownerFlags(this.config,owner).enabled('SEMANTIC_SEARCH_ENABLED')&&Boolean(this.config.AI?.run&&(this.config.SEARCH_VECTORS?.query||[0,1,2,3].every(shard=>this.config[`SEARCH_VECTORS_${shard}`]?.query)));

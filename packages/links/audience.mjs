@@ -98,16 +98,27 @@ export async function collectDeadParents(c,owner,{limit=64,scan=256,batch=64,now
    const legacy=[...await tx.list({prefix:legacyPrefix,limit:batch+1})],remaining=receipts.length>batch||legacy.length>batch;
    const stale=[...receipts.slice(0,batch),...legacy.slice(0,batch)].map(([name])=>name);if(stale.length)await tx.delete(stale);
    if(remaining)return false;
-   await tx.delete([path,`contact-name/${grant.id}`,`contact-url/${grant.id}`,`beam/grant/${grant.id}`,`beam/redeemed/${grant.id}`,replayBase+'count']);
-   await tx.put(key('contact-grant-tombstone',grant.id),{owner,reclaimedAt:now});reclaimed++;return true;
+   const redeemed=await tx.get(`beam/redeemed/${grant.id}`);
+   await tx.delete([path,`contact-name/${grant.id}`,`contact-url/${grant.id}`,`beam/grant/${grant.id}`,`beam/redeemed/${grant.id}`,...UUID.test(redeemed?.peer??'')?[`beam/redeemed-peer/${redeemed.peer}/${grant.id}`]:[],replayBase+'count']);
+   // Round 3 L5: the tombstone carries the parent's signed exp, so it can be collected once no meta or bearer for
+   // this ID could verify on expiry alone (collectTombstones).
+   await tx.put(key('contact-grant-tombstone',grant.id),{owner,reclaimedAt:now,...Number.isSafeInteger(current.claims?.exp)?{exp:current.claims.exp}:{}});reclaimed++;return true;
   });
   if(!done)more=true;
  }
  if(last&&(more||rows.size===scan))await c.metadata.put(cursorKey,last);else await c.metadata.delete(cursorKey);
  return {reclaimed,more};
 }
+// Wargame round 3 L5: a tombstone only has to outlive every credential that could name its parent. Signed exp is
+// checked from the claims themselves, so once exp (plus clock skew) has passed nothing for this ID can verify and the
+// tombstone is dead weight. A tombstone written before exp was recorded is kept for the maximum parent lifetime
+// (366 days) after reclamation. Cursor-walked and bounded like the other link sweeps.
+export const TOMBSTONE_SKEW_MS=300000,LEGACY_TOMBSTONE_HOLD_MS=366*86400000;
+export const tombstoneExpired=(row,now)=>Number.isSafeInteger(row?.exp)?row.exp*1000+TOMBSTONE_SKEW_MS<=now:Number.isSafeInteger(row?.reclaimedAt)&&row.reclaimedAt+LEGACY_TOMBSTONE_HOLD_MS<=now;
 export async function collectLinkState(c,owner){
  let more=false;
+ // Tombstones are swept before parents are reclaimed, so a tombstone written by this run is first examined by the next.
+ more=await sweep(c,key('contact-grant-tombstone'),tombstoneExpired)||more;
  const parents=await collectDeadParents(c,owner);more=parents.more||more;
  more=await sweep(c,key('contact-delivery-receipt',owner),(row,now)=>Number.isSafeInteger(row?.retainUntil)&&row.retainUntil<=now)||more;
  more=await sweep(c,key('contact-author-day',owner),(row,now)=>Number.isSafeInteger(row?.expiresAt)&&row.expiresAt<=now)||more;

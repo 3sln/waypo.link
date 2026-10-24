@@ -28,7 +28,7 @@ export const methods={
   async appNotificationCheck(owner,connection,clientId){await this.warm(owner);return appNotificationCheck(this,owner,connection,clientId);},
   async appConnectionCheck(owner,id,generation,clientId){return this.apps.check(owner,id,generation,clientId);},
   async mcpCollections(owner){return accountMcpCollections(this,owner);},
-  async mcpOperation(owner,clientId,tool,args,connection){await this.apps.check(owner,connection?.id,connection?.generation,clientId);return tool==='collections_list'?this.mcpCollections(owner):accountMcpOperation(this,owner,clientId,tool,args);},
+  async mcpOperation(owner,clientId,tool,args,connection,options={}){await this.apps.check(owner,connection?.id,connection?.generation,clientId);return tool==='collections_list'?this.mcpCollections(owner):accountMcpOperation(this,owner,clientId,tool,args,{itemRead:options?.itemRead===true});},
   async notificationPreferences(owner,input,verifiedEmail){return input===undefined?this.notifications.preferences(owner):this.notifications.setPreferences(owner,input,{verifiedEmail});},
   async subscribe(owner,input){return this.notifications.subscribe(owner,input.subscription||input,input.label);},
   async removeSubscription(owner,id){return this.notifications.unsubscribeDevice(owner,id);},

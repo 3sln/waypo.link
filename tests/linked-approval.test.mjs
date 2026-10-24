@@ -26,7 +26,8 @@ function fixture(overrides = {}) {
 const startSession = f => f.la('linkedStart', { deviceKind: 'tv', turnstileToken: 'verified' }, tv);
 const startApp = (f, overrides) => f.sys('linkedStartApp', appInput(overrides), context);
 const redeem = (f, request, overrides = {}) => f.sys('linkedRedeem', { deviceCode: request.deviceCode, clientId: 'https://acme.example/client', dpopJkt: 'J'.repeat(43), ...overrides }, context);
-const approve = (f, request, session, extra = {}) => f.la('linkedApprove', { requestId: request.requestId, code: request.userCode, approved: true, ...extra }, sessionContext(session));
+// The caller names the kind it approves (wargame round 3 D4); the HTTP session route always says `session`.
+const approve = (f, request, session, extra = {}) => f.la('linkedApprove', { requestId: request.requestId, code: request.userCode, approved: true, kind: request.kind ?? 'session', ...extra }, sessionContext(session));
 /** An app approved from a fresh credential sign-in and redeemed: the lineage under test. */
 async function approvedApp(f, choice = '1h') {
   const request = await startApp(f); f.clock.advance(1000); const approver = await f.login();

@@ -1,5 +1,6 @@
 import {Query,Action} from '../shared/stack.mjs';
 import {OwnerFlow,snapshot,publish} from './owner-flow.mjs';
+import {breakGlassIntent} from './org-break-glass.mjs';
 export const organizationsEnabled=s=>(s.data?.features?.organizationsEnabled??s.session?.account?.consoleFeatures?.organizationsEnabled??s.config?.organizationsEnabled)===true;
 export const organizationsModel=s=>organizationsEnabled(s)&&!s.offline&&s.session?.account?.id&&s.organizationsConsole?.owner===s.session.account.id&&s.organizationsConsole?.session===s.session.sessionContext&&s.organizationsConsole?.generation===(s.beamGeneration??0)?s.organizationsConsole:null;
 const DECISIONS=['accept','reject','elevate','retract'];
@@ -8,7 +9,9 @@ const DECISIONS=['accept','reject','elevate','retract'];
 export function organizationsRequestDecisions(s,q){return organizationsModel(s)&&q&&['subject','elevated'].includes(q.state)&&Array.isArray(q.decisions)?q.decisions.filter(d=>DECISIONS.includes(d)):[];}
 export const organizationPowers=m=>m?.membership?.powers??m?.organization?.powers??[];
 export const organizationAdmin=m=>organizationPowers(m).includes('admin');
-const base=s=>organizationsModel(s)??{owner:s.session.account.id,session:s.session.sessionContext,generation:s.beamGeneration??0,organizations:[],pending:[],offers:[],creation:null,plans:null,context:null,unsavedRecovery:[],leaveGuard:null,...privateFields};
+const base=s=>organizationsModel(s)??{owner:s.session.account.id,session:s.session.sessionContext,generation:s.beamGeneration??0,organizations:[],pending:[],offers:[],creation:null,plans:null,context:null,unsavedRecovery:[],leaveGuard:null,breakGlassItems:[],breakGlassDismissed:[],...privateFields};
+/** The organizations model for this session, or a fresh one (ORG-12e notices load before the console opens). */
+export const organizationsBase=s=>base(s);
 /** Checkout links leave the console only for the Polar sandbox (organization billing is sandbox-only). */
 export function organizationCheckoutURL(value){let url;try{url=new URL(value);}catch{fail('billing_unavailable');}if(url.protocol!=='https:'||url.hostname!=='sandbox.polar.sh'||url.username||url.password||url.port)fail('billing_unavailable');return url.href;}
 /** The decisions the server advertises for the current organization's ownership view (it rechecks every one). */
@@ -17,7 +20,7 @@ const json=(value,fallback)=>{if(value===undefined||value==='')return fallback;i
 const fail=code=>{throw Object.assign(Error(code),{code});};
 const put=(r,ctx,p)=>publish(r,ctx,{organizationsConsole:{...base(snapshot(r)),...p}});
 // Everything read for one organization context. Switching context clears all of it before anything new is fetched.
-const privateFields={organization:null,membership:null,members:[],membersNext:null,requests:[],adminRequests:[],requestsNext:null,audit:[],invitation:null,membersUnavailable:false,connections:[],connectionsUnavailable:false,preferences:[],preferencesUnavailable:false,ownership:null,offerDraft:null,inviteeDraft:null};
+const privateFields={organization:null,membership:null,members:[],membersNext:null,requests:[],adminRequests:[],requestsNext:null,audit:[],invitation:null,membersUnavailable:false,connections:[],connectionsUnavailable:false,preferences:[],preferencesUnavailable:false,ownership:null,offerDraft:null,inviteeDraft:null,breakGlass:null,breakGlassWizard:null};
 const UUID=/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/,TOKEN=/^[A-Za-z0-9_.-]{1,8192}$/;
 const refused=error=>error?.status===403||error?.status===404||error?.code==='not_found';
 // A definite refusal: the server answered and did not apply the change (validation, conflict, authority, rate limit).
@@ -25,7 +28,7 @@ const refused=error=>error?.status===403||error?.status===404||error?.code==='no
 const definite=error=>Number.isInteger(error?.status)&&error.status>=400&&error.status<500&&error.status!==408;
 // Organization changes whose outcome must be known before another one is sent. Reads, lookups, local actions,
 // idempotent creation (keyed by its request) and the recovery steps are never blocked by an uncertain change.
-const GUARDED=new Set(['rename','label','invite','leave','cancel-deletion','remove','grants','decide','connection','preference','revoke-invitation','offer','withdraw','object','block','renew','claim','reissue-recovery','accept-offer','decline-offer']);
+const GUARDED=new Set(['rename','label','invite','leave','cancel-deletion','remove','grants','decide','connection','preference','revoke-invitation','offer','withdraw','object','block','renew','claim','reissue-recovery','accept-offer','decline-offer','bg-start','bg-accept','bg-cosign','bg-uncosign','bg-withdraw','bg-object','bg-contest','bg-checkout']);
 const unavailable=error=>refused(error)||error?.status===503||['feature_unavailable','preferences_unavailable','connections_unavailable'].includes(error?.code);
 /** The claims of a signed invitation token, decoded only as untrusted display and routing hints (never authority; the
  * server validates the whole signed token on accept). The organization comes from `aud` (`<issuer>/identity/<org>`). */
@@ -88,7 +91,7 @@ export class OrganizationsIntent extends OwnerFlow{
   // Tight verification also needs the existing interactive step-up. Adapt only
   // this organization's request, once; cooling-period refusals remain visible
   // after confirmation and must not expire the person's authenticated session.
-  let prompted=false;const api=new Proxy(r.api,{get:(target,key)=>['request','get'].includes(key)?async(...args)=>{if(args[0]==='/api/auth/step-up/begin')prompted=true;try{return await target[key](...args);}catch(error){if(typeof args[0]!=='string'||!args[0].startsWith('/api/orgs/')||error.code!=='tight_verification_required')throw error;const retry=prompted;prompted=true;throw Object.assign(Error(error.message),{code:retry?'tight_verification_required':'reauthentication_required',status:retry?409:401});}}:typeof target[key]==='function'?target[key].bind(target):target[key]});
+  let prompted=false;const api=new Proxy(r.api,{get:(target,key)=>['request','get'].includes(key)?async(...args)=>{if(args[0]==='/api/auth/step-up/begin')prompted=true;try{return await target[key](...args);}catch(error){if(typeof args[0]!=='string'||!args[0].startsWith('/api/orgs/')||!['tight_verification_required','owner_proof_required'].includes(error.code))throw error;const retry=prompted;prompted=true;throw Object.assign(Error(error.message),{code:retry?error.code:'reauthentication_required',status:retry?409:401});}}:typeof target[key]==='function'?target[key].bind(target):target[key]});
   return super.execute({...r,api},ctx);
  }
  async perform(resources,ctx,d){
@@ -121,6 +124,8 @@ export class OrganizationsIntent extends OwnerFlow{
    const organization=privileged?await call('get',undefined,id):{...membership.organization,powers};
    put(r,ctx,{membership:{...membership.membership,powers},organization:{...organization,powers},stale:false});
    const requests=await call('requests',undefined,id);put(r,ctx,{requests:requests.requests??[]});
+   // ORG-12e: the role-filtered break-glass view (members see only dates; uniform 404 when nothing applies).
+   try{const view=await call('break-glass-view',undefined,id);put(r,ctx,{breakGlass:view&&typeof view==='object'?view:null});}catch(error){if(error?.code==='organization_changed')throw error;put(r,ctx,{breakGlass:null});}
    // Billing, the offer, the claim and their decisions: loaded only for the owner of record and admins (other members
    // keep the ORG-5 read set; a read-only refusal explains itself on their next change).
    const ownership=async()=>{if(privileged)try{put(r,ctx,{ownership:await call('ownership',undefined,id)});}catch(error){if(!unavailable(error))throw error;}};
@@ -146,7 +151,7 @@ export class OrganizationsIntent extends OwnerFlow{
     publish(r,ctx,{view:'organizations'});await reload();
     if(d.returnTo==='checkout'){const attempt=r.browser.secret(creationKey);if(attempt&&attempt.request===d.request){put(r,ctx,{stale:true});await created(await call('create',attempt,null));}return;}
     if(UUID.test(d.org??'')&&(m.organizations.some(o=>o.id===d.org)||snapshot(r).organizationsConsole?.organizations?.some(o=>o.id===d.org)))await details(d.org);
-    put(r,ctx,{notice:d.returnTo==='transfer'?'transfer_checkout_returned':'billing_checkout_returned'});return;
+    put(r,ctx,{notice:d.returnTo==='transfer'?'transfer_checkout_returned':d.returnTo==='break-glass'?'break_glass_checkout_returned':'billing_checkout_returned'});return;
    }
    if(a==='entry'){if(!UUID.test(d.org??'')||typeof d.invitation!=='string'||!TOKEN.test(d.invitation))fail('invalid_request');if(m.recovery)fail('recovery_required');const hint=invitationClaims(d.invitation);if(hint?.org&&hint.org!==d.org)fail('invalid_request');const entry={org:d.org,invitation:d.invitation,...hint?.expiresAt?{expiresAt:hint.expiresAt}:{},...hint?.invitee?{invitee:hint.invitee}:{}};put(r,ctx,{...privateFields,context:null,entry,error:null});publish(r,ctx,{view:'organizations'});
     // The organization's own name and kind, from its record, for an invitation this account could accept now. Any
@@ -183,6 +188,7 @@ export class OrganizationsIntent extends OwnerFlow{
     if(latest&&m.recovery.issue&&latest!==m.recovery.issue){r.browser.storeSecret(key,null);put(r,ctx,{recovery:null,leaveGuard:null,...recoveryMarkers()});fail('recovery_superseded');}
     r.browser.storeSecret(key,null);if(m.context){unsaved?.remove(m.owner,m.context);try{tabs?.release(m.owner,m.context,m.recovery.issue);}catch{}}put(r,ctx,{recovery:null,leaveGuard:null,...recoveryMarkers(),notice:'recovery_saved',error:null});if(m.context){try{await reload();await details(m.context);}catch{}}r.browser.focus?.(base(snapshot(r)).organization?'#org-details':'#org-title');return;
    }
+   if(typeof a==='string'&&a.startsWith('bg-')){if(m.stale&&GUARDED.has(a))fail('reload_required');await breakGlassIntent({r,ctx,m:base(snapshot(r)),v,d,a,org,call,change,put:p=>put(r,ctx,p),leave,age,details,focus:selector=>r.browser.focus?.(selector)});return;}
    if(m.recovery)fail('recovery_required');if(m.stale&&GUARDED.has(a))fail('reload_required');
    if(a==='create'){
     const prior=r.browser.secret(creationKey),input={name:String(v.name??''),label:String(v.label??'organization'),...v.plan?{plan:String(v.plan)}:{}},attempt=prior??{request:port.id(),...input};if(prior&&(prior.name!==input.name||prior.label!==input.label))fail('reload_required');r.browser.storeSecret(creationKey,attempt);put(r,ctx,{stale:true});

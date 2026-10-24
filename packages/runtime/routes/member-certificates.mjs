@@ -25,6 +25,8 @@ import {memberStatusCacheControl} from '../../identity/member-certificates.mjs';
 import {isJkt} from '../../identity/delegation.mjs';
 import {localAudience} from '../account/member-certificates.mjs';
 
+/** Consent-screen inspections and acquisitions per owner per minute. */
+export const MEMBER_ACQUIRE_PER_MINUTE=30;
 const STATUS=/^\/identity\/([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})\/delegations\/([^/]+)$/;
 const SETTINGS=/^\/api\/member-certificates\/settings\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/;
 const noStore={'Cache-Control':'no-store',Pragma:'no-cache'},publicHeaders={'X-Robots-Tag':'noindex, nofollow','Referrer-Policy':'no-referrer'};
@@ -85,6 +87,9 @@ export const stages={
   if(path==='/api/member-certificates/acquire'){
    const enabled=clientId=>flagEnabled(env,'ORGANIZATIONS_ENABLED',{subject:{kind:'account',owner:id},client:{clientId}},true)&&flagEnabled(env,'MEMBER_CERTIFICATES_ENABLED',{subject:{kind:'account',owner:id},client:{clientId}},true);
    if(!['GET','POST'].includes(request.method))return json({error:'method_not_allowed'},405,{Allow:'GET, POST'});
+   // Wargame 2026-10-23 F1: a per-owner limit (each inspection may warm the directory for a foreign audience).
+   const secret=env.ABUSE_HASH_KEY||env.KEY_ENCRYPTION_KEY;
+   if(secret&&typeof env.ABUSE?.consume==='function'&&!await consume(env,`member-acquire/owner/${await pseudonym(id,secret)}`,60000,MEMBER_ACQUIRE_PER_MINUTE))return json({error:'rate_limited'},429,{...privateHeaders,'Retry-After':'60'});
    const directory=env.FEDERATION_AUTHORITY?.directory,clients=env.FEDERATION_AUTHORITY?.clients??[];
    const engine=createAppEngine({providers:{clock:systemClock,random:cryptoRandom,audit:nullAudit,config:{issuer:env.APP_ORIGIN,allowLoopback:env.LOCAL_DEVELOPMENT==='true',enabled},federationStore:{resolve:clientId=>directory?.resolve(clientId)??clients.find(c=>c.id===clientId)},organizations:{describe:aud=>typeof object?.memberCertificateOrganization==='function'?object.memberCertificateOrganization(id,aud):null},accounts:{get:owner=>owner===id?object:accountHandle(env,owner)}}});
    try{

@@ -129,8 +129,11 @@ test('large bodies are staged in the owner storage resource first, else held in 
  assert.equal((await w.deliver('alice','bob',link,{body:big})).status,200);assert.equal(puts.length,1);assert.ok(puts[0][0].startsWith('bindlebox/v1/items/'));
  let [item]=await w.items('bob');assert.equal(item.bodyRef.storage,'user');assert.equal(await w.peer('bob').store.get(`body/${item.id}`),undefined);
  storage.fail=true;assert.equal((await w.deliver('alice','bob',link,{body:big,operationId:uuidOf(2)})).status,200);
- item=(await w.items('bob')).find(i=>i.operationId===uuidOf(2));assert.equal(item.bodyRef.storage,'mailbox');assert.equal(item.hot,5000);
- assert.deepEqual(await w.peer('bob').store.get('usage/v1'),{hotBytes:5000,hotItems:1,rejected:0});
+ item=(await w.items('bob')).find(i=>i.operationId===uuidOf(2));assert.equal(item.bodyRef.storage,'mailbox');
+ // The hot charge covers the body and the envelope the item row keeps (wargame 2026-10-23 review of B2).
+ const raw=await w.peer('bob').store.get(`item/${item.id}`),envelopeBytes=encoder.encode(B.jcs(raw.envelope)).byteLength;
+ assert.equal(raw.hot,5000+envelopeBytes);assert.ok(envelopeBytes>0);
+ assert.deepEqual(await w.peer('bob').store.get('usage/v1'),{hotBytes:5000+envelopeBytes,hotItems:1,rejected:0});
  // Small bodies stay inline and never count against the hot allowance.
  assert.equal((await w.deliver('alice','bob',link,{operationId:uuidOf(3)})).status,200);assert.equal((await w.peer('bob').store.get('usage/v1')).hotItems,1);
 });

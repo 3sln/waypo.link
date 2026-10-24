@@ -177,10 +177,10 @@ test('T10: the owner aborts with tier 0 from a known session or an email link: r
 test('T10: an email abort link works once; used, unknown and malformed tokens get the identical answer',async()=>{const w=await bgWorld();try{
  await w.start();await w.settle();const [token]=w.tokens('start'),c=await w.claim();
  const forged=token.slice(0,-4)+'AAAA',unknown=`bg1.${c.id}.${uuid(1).replace(/^0000/,'0000')}.${'A'.repeat(43)}`;
- for(const t of [forged,unknown,'nonsense',`bg1.${uuid(2)}.${uuid(3)}.${'B'.repeat(43)}`])assert.deepEqual(await w.run('orgs.breakglass-abort-token','system',{token:t}),{received:true});
+ for(const t of [forged,unknown,'nonsense',`bg1.${uuid(2)}.${uuid(3)}.${'B'.repeat(43)}`])assert.deepEqual(await w.run('orgs.breakglass-abort-token','system',{token:t}),{received:true,outcome:'refused'});
  assert.equal((await w.claim()).state,'gathering','a forged or unknown token changes nothing');
- assert.deepEqual(await w.run('orgs.breakglass-abort-token','system',{token}),{received:true});assert.equal((await w.claim()).state,'aborted');
- assert.deepEqual(await w.run('orgs.breakglass-abort-token','system',{token}),{received:true},'replay: identical answer');
+ assert.deepEqual(await w.run('orgs.breakglass-abort-token','system',{token}),{received:true,outcome:'stopped'});assert.equal((await w.claim()).state,'aborted');
+ assert.deepEqual(await w.run('orgs.breakglass-abort-token','system',{token}),{received:true,outcome:'refused'},'replay: refused (the route answers identically; review L1 outcome is private)');
  assert.equal((await w.claim()).tokens.filter(t=>t.usedAt).length,1);
 }finally{await w.close();}});
 test('T10: a held owner may abort with tier 0 (BG-9)',async()=>{const w=await bgWorld();try{

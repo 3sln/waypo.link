@@ -20,14 +20,15 @@ import {stages as incrementalRoutes} from '../packages/runtime/routes/incrementa
 import {CLASSIFIER_SLOT as BOX_CLASSIFIER_SLOT} from '../packages/bindlebox-engine/domains/classify.mjs';
 
 const ORIGIN='https://3sln.example',VERSION='clef-flash-evaluation-2026-10-20',owner={kind:'owner',owner:OWNER},system={kind:'system',owner:OWNER};
+const HELLO_COST=X.classifierCostMicroUSD(X.classifierRequest({text:'Hello',hints:[]}));
 const response=()=>({model:'clef-flash',answers:Object.fromEntries(X.CLASSIFIER_CATEGORIES.map(k=>[k,k==='social'?.91:.01]))});
 async function fixture(t,options={}){
- const modelCalls=[],leases=[],work=[],config={APP_ORIGIN:ORIGIN,INTEGRATIONS_ENABLED:true,EXTENSIONS_ENABLED:true,...options.config};let paid=true;
+ const modelCalls=[],leases=[],work=[],clients=[],config={APP_ORIGIN:ORIGIN,INTEGRATIONS_ENABLED:true,EXTENSIONS_ENABLED:true,...options.config};let paid=true;
  // Both the account operation and shared global admission ledger use the real durable metadata adapter.
  const global=await createTestEngine();t.after(()=>global.dispose());
  const authority=new GlobalSemanticBudget({metadata:global.metadata,clock:global.clock.now,config:options.budget??{}});
  const spend=new LeasedSemanticSpend({metadata:global.metadata,clock:global.clock.now,authorityFor:async id=>({partition:await semanticShard(id,SEMANTIC_LAYOUT.budgetShards),authority:{async reserveLease(input){leases.push(input);const grant=await authority.reserveLease(input);return {...grant,owner:input.owner,partition:input.partition,layoutVersion:SEMANTIC_LAYOUT.version,...options.grant};}}})});
- const ai=X.classifierAI({binding:{async run(model,request){modelCalls.push({model,request});return options.run?options.run(model,request):response();}},spend,clock:global.clock,version:VERSION,eligible:async()=>paid,admitWork:async id=>{work.push(id);return options.work!==false;},...options.ai});
+ const ai=X.classifierAI({binding:{async run(model,request){modelCalls.push({model,request});return options.run?options.run(model,request):response();}},spend,clock:global.clock,version:VERSION,eligible:async()=>paid,admitWork:async (id,clientId)=>{work.push(id);clients.push(clientId);return options.work!==false;},...options.ai});
  const e=await createTestEngine({clock:global.clock,providers:{config,ai}});t.after(()=>e.dispose());await e.metadata.put('owner',OWNER);
  const connections=new AppConnections({metadata:e.metadata,origin:ORIGIN,clock:e.clock.now,builtins:{classifier:X.CLASSIFIER_INTEGRATION}});
  // The engine is composed with X4's actual scoped provider, including the live identity-directory fence.
@@ -37,7 +38,7 @@ async function fixture(t,options={}){
  const connect=async()=>record=await perform(C.ConnectBuiltIn,{integration:'classifier'});
  const occupy=async()=>{record??=await connect();return perform(C.OccupySlot,{slot:X.CLASSIFIER_SLOT,connection:record.id});};
  const decide=input=>perform(X.ClassifierDecide,input??{text:'Hello',hints:[]},system);
- return {e:h,metadata:e.metadata,connections,perform,read,connect,occupy,decide,modelCalls,leases,work,config,ai,paid:value=>paid=value,record:()=>record,global};
+ return {e:h,metadata:e.metadata,connections,perform,read,connect,occupy,decide,modelCalls,leases,work,clients,config,ai,paid:value=>paid=value,record:()=>record,global};
 }
 
 test('classifier uses the versioned artifact, valid X4 manifest and registered contract handler',async()=>{
@@ -54,7 +55,7 @@ test('fixed questions, no tools/instructions from content, independently scored 
  const result=await f.decide({text,hints:['auto-submitted','auto-submitted']});
  assert.deepEqual(result,{labels:response().answers,evidence:{model:X.CLASSIFIER_MODEL,version:VERSION,schema:X.CLASSIFIER_SCHEMA}});
  const {model,request}=f.modelCalls[0];assert.equal(model,X.CLASSIFIER_MODEL);assert.deepEqual(Object.keys(request).sort(),['model','questions','state']);assert.deepEqual(JSON.parse(request.state),{untrusted_text:text,untrusted_header_hints:['auto-submitted']});
- assert.equal(JSON.stringify(request.questions).includes(text),false);assert.deepEqual(request.questions,X.classifierRequest({text:'Other content'}).questions);assert.ok(Object.values(request.questions).every(q=>q.type==='noul'));assert.equal(f.leases[0].microUSD,1000);assert.equal((await f.global.metadata.get('semantic/day')).microUSD,1000);assert.deepEqual(f.work,[OWNER]);
+ assert.equal(JSON.stringify(request.questions).includes(text),false);assert.deepEqual(request.questions,X.classifierRequest({text:'Other content'}).questions);assert.ok(Object.values(request.questions).every(q=>q.type==='noul'));assert.equal(f.leases[0].microUSD,X.classifierCostMicroUSD(request));assert.ok(f.leases[0].microUSD<X.CLASSIFIER_LIMITS.microUSD);assert.equal(f.leases[0].ledger,'classifier');assert.equal((await f.global.metadata.get('classifier/day')).microUSD,f.leases[0].microUSD);assert.equal(await f.global.metadata.get('semantic/day'),undefined);assert.equal(await f.global.metadata.get('semantic/stock'),undefined,'classifier leases never consume semantic owner admissions');assert.deepEqual(f.work,[OWNER]);
  assert.ok(f.e.audit.entries.every(row=>!JSON.stringify(row).includes('attacker.example')));
 });
 test('actors, unknown members, UTF-8 bytes and bounded hints fail before spend',async t=>{
@@ -70,11 +71,11 @@ test('unconfigured model provenance, free entitlement and covered-work refusal n
 });
 test('all malformed model outputs are rejected whole and remain charged',async t=>{
  const bad=[{},null,{...response(),model:'another-model'},{...response(),answers:{spam:1}},...['sys:spam','unknown'].map(key=>({...response(),answers:{...response().answers,[key]:1}})),...[NaN,Infinity,-.1,1.1,'0.9',{}].map(value=>({...response(),answers:{...response().answers,spam:value}})),{...response(),extra:'x'.repeat(17000)}];
- for(const value of bad){const f=await fixture(t,{run:()=>value});await f.occupy();await assert.rejects(f.decide(),{code:'invalid_classification'});assert.equal(f.modelCalls.length,1);assert.equal((await f.metadata.get('classifier/usage/v1')).dailyCalls,1);assert.equal((await f.global.metadata.get('semantic/day')).microUSD,1000);}
+ for(const value of bad){const f=await fixture(t,{run:()=>value});await f.occupy();await assert.rejects(f.decide(),{code:'invalid_classification'});assert.equal(f.modelCalls.length,1);assert.equal((await f.metadata.get('classifier/usage/v1')).dailyCalls,1);assert.equal((await f.global.metadata.get('classifier/day')).microUSD,HELLO_COST);}
 });
 test('global exhaustion and malformed lease receipts fail closed without invoking the model',async t=>{
- const f=await fixture(t,{budget:{SEMANTIC_GLOBAL_DAILY_MICRO_USD:999}});await f.occupy();await assert.rejects(f.decide(),{code:'semantic_global_budget'});assert.equal(f.modelCalls.length,0);
- for(const grant of [{owner:OTHER},{partition:99},{layoutVersion:0},{day:'2000-01-01'},{month:'2000-01'},{microUSD:0},{upsertSlots:1}]){const f=await fixture(t,{grant});await f.occupy();await assert.rejects(f.decide(),{code:'semantic_global_budget'});assert.equal(f.modelCalls.length,0);assert.equal((await f.global.metadata.get('semantic/day')).microUSD,1000);}
+ const f=await fixture(t,{budget:{CLASSIFIER_GLOBAL_DAILY_MICRO_USD:3000,CLASSIFIER_OWNER_SHARE_PERCENT:100}});await f.occupy();const today=new Date(f.global.clock.now()).toISOString().slice(0,10);await f.global.metadata.put('classifier/day',{period:today,microUSD:3000-HELLO_COST+1,calls:1});await assert.rejects(f.decide(),{code:'semantic_global_budget'});assert.equal(f.modelCalls.length,0);
+ for(const grant of [{owner:OTHER},{partition:99},{layoutVersion:0},{day:'2000-01-01'},{month:'2000-01'},{microUSD:0},{upsertSlots:1},{ledger:'semantic'}]){const f=await fixture(t,{grant});await f.occupy();await assert.rejects(f.decide(),{code:'semantic_global_budget'});assert.equal(f.modelCalls.length,0);assert.equal((await f.global.metadata.get('classifier/day')).microUSD,HELLO_COST);}
 });
 test('unknown outcomes and timeout do not retry or refund either ledger',async t=>{
  for(const run of [()=>{throw Error('private provider body');},()=>new Promise(()=>{})]){const f=await fixture(t,{run,ai:{timeoutMs:5}});await f.occupy();const result=await f.decide().catch(e=>e);assert.equal(result.code,'indeterminate');assert.equal(result.message.includes('private provider'),false);assert.equal(f.modelCalls.length,1);assert.equal(f.leases.length,1);assert.equal((await f.metadata.get('classifier/usage/v1')).monthlyCalls,1);}
@@ -89,7 +90,7 @@ test('suspension, vacate, entitlement changes and consent races discard in-fligh
  for(const change of ['suspend','vacate','paid']){
   let release,started;const ready=new Promise(r=>started=r),pending=new Promise(r=>release=r),f=await fixture(t,{run:()=>{started();return pending;}});await f.occupy();
   const decision=f.decide();await ready;if(change==='suspend')await f.perform(C.SuspendConnection,{connection:f.record().id});else if(change==='vacate')await f.perform(C.VacateSlot,{slot:X.CLASSIFIER_SLOT,seat:(await f.connections.occupant(OWNER,X.CLASSIFIER_SLOT)).occupants[0].seat});else f.paid(false);
-  release(response());await assert.rejects(decision,{code:'forbidden'});assert.equal(f.modelCalls.length,1);assert.equal((await f.global.metadata.get('semantic/day')).microUSD,1000);
+  release(response());await assert.rejects(decision,{code:'forbidden'});assert.equal(f.modelCalls.length,1);assert.equal((await f.global.metadata.get('classifier/day')).microUSD,HELLO_COST);
  }
 });
 test('BindleBox consumes only calibrated evidence and records suspected tags; a model-version change recalibrates',async t=>{
@@ -100,11 +101,13 @@ test('BindleBox consumes only calibrated evidence and records suspected tags; a 
  port.decide=async input=>{const r=await f.decide(input);return {...r,evidence:{...r.evidence,version:'new-model-revision'}};};await put('new-version');const changed=await box.run('classify.item',{id:'new-version'});assert.equal(changed.status,'calibration');assert.deepEqual(changed.item.tags,[]);
 });
 test('contract adapter rejects foreign resource/subject, stale consumers and unsupported methods',async t=>{
- const f=await fixture(t);await f.occupy();let active=true,checks=0;
- const c={config:{...f.config,AI:{run:async()=>response()},CLASSIFIER_MODEL_VERSION:VERSION,SEMANTIC_SPEND:f.ai.configured?{authorityFor:async id=>({partition:await semanticShard(id,16),authority:{reserveLease:async input=>({owner:id,partition:input.partition,layoutVersion:1,day:new Date().toISOString().slice(0,10),month:new Date().toISOString().slice(0,7),microUSD:1000,upsertSlots:0})}})}:null,FEDERATION_IDENTITY_CHECK:async()=>active},metadata:f.metadata,warm:async()=>{},billingRefresh:async()=>{},billing:{entitlement:async()=>({plan:'paid'})},admitWork:async()=>true,apps:{check:async()=>{checks++;if(!active)throw Object.assign(Error(),{code:'unauthorized'});}},connectionsSystem:async(_owner,{operation,input})=>operation==='connections.list'?{connections:await f.connections.list(OWNER)}:f.connections.occupant(OWNER,input.slot)};
+ const f=await fixture(t);await f.occupy();let active=true,checks=0;const workClients=[];
+ const c={config:{...f.config,AI:{run:async()=>response()},CLASSIFIER_MODEL_VERSION:VERSION,SEMANTIC_SPEND:f.ai.configured?{authorityFor:async id=>({partition:await semanticShard(id,16),authority:{reserveLease:async input=>({owner:id,partition:input.partition,layoutVersion:1,day:new Date().toISOString().slice(0,10),month:new Date().toISOString().slice(0,7),microUSD:input.microUSD,upsertSlots:0,ledger:'classifier'})}})}:null,FEDERATION_IDENTITY_CHECK:async()=>active},metadata:f.metadata,warm:async()=>{},billingRefresh:async()=>{},billing:{entitlement:async()=>({plan:'paid'})},admitWork:async(_id,{clientId}={})=>{workClients.push(clientId);return true;},apps:{check:async()=>{checks++;if(!active)throw Object.assign(Error(),{code:'unauthorized'});}},connectionsSystem:async(_owner,{operation,input})=>operation==='connections.list'?{connections:await f.connections.list(OWNER)}:f.connections.occupant(OWNER,input.slot)};
  const context={authority:'bindle',contract:X.CLASSIFIER_CONTRACT,method:'decide',subject:`${ORIGIN}/entities/${OWNER}`,resource:`${ORIGIN}/entities/${OWNER}/resources/${f.record().id}`,resourceGeneration:String(f.record().generation),connection:{id:'consumer',generation:1},epoch:'verified',clientId:'https://box.example/client.json',args:{text:'Hello'}};
  for(const extra of [{resource:'https://foreign.example/resource'},{subject:`${ORIGIN}/entities/${OTHER}`},{resourceGeneration:'999'},{authority:'mcp'},{contract:'other'},{connection:null}])await assert.rejects(X.classifierResourceMethod(c,OWNER,{...context,...extra}),{code:'forbidden'});
  await assert.rejects(X.classifierResourceMethod(c,OWNER,{...context,method:'delete'}),{code:'unsupported_method'});assert.deepEqual((await X.classifierResourceMethod(c,OWNER,context)).labels,response().answers);assert.ok(checks>=2);
+ // Work is charged to the consuming app's own client budget, not a shared '@classifier' bucket (wargame3 F1).
+ assert.deepEqual(workClients,['https://box.example/client.json']);
  c.config.AI.run=async()=>{active=false;return response();};await assert.rejects(X.classifierResourceMethod(c,OWNER,context),{code:'unauthorized'});
 });
 

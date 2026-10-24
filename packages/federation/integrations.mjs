@@ -101,6 +101,9 @@ export function validIntegrationValue(value,context){
 // --- Key sets (RFC 7517) and thumbprints (RFC 7638) ---
 const B64=/^[A-Za-z0-9_-]+$/,PRIVATE=['d','p','q','dp','dq','qi','oth','k'];
 const ALGS={EC:{'P-256':['ES256'],'P-384':['ES384']},OKP:{Ed25519:['EdDSA','Ed25519']},RSA:{'':['RS256','PS256']}};
+/** Wargame 2026-10-23 (plausible): an RSA public exponent must be odd and at least 65537 (small exponents such as 3
+ * invite signature-forgery bugs in lenient verifiers). `e` is base64url, at most 8 characters (6 bytes). */
+function rsaExponent(e){let bytes;try{bytes=atob(e.replaceAll('-','+').replaceAll('_','/')+'='.repeat((4-e.length%4)%4));}catch{return false;}let value=0;for(const c of bytes)value=value*256+c.charCodeAt(0);return value>=65537&&value%2===1;}
 function publicJwk(key){
  if(!object(key))return null;const crv=key.crv??'';if(key.use!==undefined&&key.use!=='sig')return null;
  if(key.key_ops!==undefined&&(!Array.isArray(key.key_ops)||!key.key_ops.includes('verify')))return null;
@@ -110,7 +113,7 @@ function publicJwk(key){
  let clean;
  if(key.kty==='EC'){const n=crv==='P-256'?43:64;if(!b(key.x,n,n)||!b(key.y,n,n))return null;clean={kty:'EC',crv,x:key.x,y:key.y};}
  else if(key.kty==='OKP'){if(!b(key.x,43,43))return null;clean={kty:'OKP',crv,x:key.x};}
- else{if(!b(key.n,342,1366)||!b(key.e,2,8))return null;clean={kty:'RSA',n:key.n,e:key.e};}
+ else{if(!b(key.n,342,1366)||!b(key.e,2,8)||!rsaExponent(key.e))return null;clean={kty:'RSA',n:key.n,e:key.e};}
  return {...clean,...key.alg!==undefined?{alg:key.alg}:{},...key.kid!==undefined?{kid:key.kid}:{}};
 }
 const importParams=key=>key.kty==='EC'?{name:'ECDSA',namedCurve:key.crv}:key.kty==='OKP'?{name:'Ed25519'}:{name:key.alg==='PS256'?'RSA-PSS':'RSASSA-PKCS1-v1_5',hash:'SHA-256'};

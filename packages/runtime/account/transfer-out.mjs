@@ -24,6 +24,8 @@ import {deletionPortsFor} from './deletion.mjs';
 import {erasureStages} from '../account-deletion.mjs';
 import {purgeBatch} from '../lifecycle-storage.mjs';
 import {lifecycleLog} from '../lifecycle-runner.mjs';
+import {destinationKeysPort} from '../../identity/redirect-management.mjs';
+import {portabilityClient} from '../../identity/successors.mjs';
 
 const engines=new WeakMap();
 const clockOf=c=>typeof c.config.LIFECYCLE_CLOCK==='function'?c.config.LIFECYCLE_CLOCK:Date.now;
@@ -60,6 +62,8 @@ export function transferPortsFor(c,service){
  const deletion=()=>{const ports=deletionPortsFor(c);return ports&&typeof ports==='object'?ports:{};};
  return {
   ...configured,issuer:configured.issuer??c.config.APP_ORIGIN,hold:configured.hold??deletion().hold,
+  // Redirect management: the destination's attestation keys captured at commit (best effort, over the portability egress).
+  destinationKeys:configured.destinationKeys??(typeof c.config.TRANSFER_IN_PORTS?.fetch==='function'?destinationKeysPort(portabilityClient({fetch:c.config.TRANSFER_IN_PORTS.fetch,clock:clockOf(c)})):undefined),
   keys:configured.keys??{
    async current(owner){const history=await c.identityKeyHistory(owner,{purpose:'signing'});const key=history.find(entry=>entry.current===true&&entry.state==='active');return key?{kid:key.kid,publicJwk:key.publicJwk}:null;},
    matches:(owner,keychain)=>c.recoveryKeysMatch(owner,keychain),

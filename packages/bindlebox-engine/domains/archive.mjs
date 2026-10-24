@@ -262,7 +262,7 @@ async function applyBatch(tx,rows,counts){
   if(existing!==undefined){counts.kept=(counts.kept??0)+1;continue;}
   await tx.put(r.key,r.value);counts[r.type]=(counts[r.type]??0)+1;
   if(r.key.startsWith('parent/')&&r.value?.iss&&r.value.jti)await queueEdge(tx,{iss:r.value.iss,jti:r.value.jti,claimsDigest:r.value.claimsDigest,revoked:r.value.revoked===true});
-  if(r.key.startsWith('item/')&&Number.isSafeInteger(r.value?.hot)&&r.value.hot>0)await chargeUsage(tx,{bytes:r.value.hot});
+  if((r.key.startsWith('item/')||r.key.startsWith('conv/event/'))&&Number.isSafeInteger(r.value?.hot)&&r.value.hot>0)await chargeUsage(tx,{bytes:r.value.hot});
   if(r.key.startsWith(SEND.task)&&r.value?.resend){const id=r.value.messageId;const prior=await tx.get(A.resend(id));await tx.put(A.resend(id),{messageId:id,kind:r.value.kind??null,recipients:[...new Map([...(prior?.recipients??[]),r.value.principal].filter(Boolean).map(p=>[`${p.issuer}|${p.subject}`,p])).values()],at:r.value.createdAt??null});}
   if(r.key.startsWith('conv/op/')&&r.value?.unsent)await tx.put(A.resend(r.value.operationId),{messageId:r.value.operationId,kind:'conversation-record',conversationId:r.value.cid,eventId:r.value.eventId,recipients:[],at:r.value.createdAt??null});
  }
@@ -293,7 +293,7 @@ async function verifyImported(records,directory,now,userStorage,owner){
     content=p.content;v.imported.verified=true;
    }
    if(content){
-    const body=r.key.startsWith('conv/event/')?rows.get(r.key.replace('conv/event/','conv/body/')):v.bodyRef?.storage==='user'?await readBody(userStorage,v.bodyRef):rows.get('body/'+v.id);
+    const body=v.bodyRef?.storage==='user'?await readBody(userStorage,v.bodyRef):r.key.startsWith('conv/event/')?rows.get(r.key.replace('conv/event/','conv/body/')):rows.get('body/'+v.id);
     if(v.imported.verified&&(body===undefined||body===null)||body!==undefined&&body!==null&&!same(await P.contentDescriptor(content.mimeType,Uint8Array.from(body)),content))bad();
    }
   }catch{fault('archive_invalid','An imported envelope or its body could not be verified.',422);}

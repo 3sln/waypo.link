@@ -155,7 +155,11 @@ test('a crashed drain re-reads from its cursor and never duplicates; overflow re
  // A later row acknowledges through the cursor.
  await f.metadata.transaction(async tx=>{const m=await tx.get('integrations/meta');m.seq++;await tx.put('integrations/severance/~'+a.id,{seq:m.seq,at:f.clock.now(),type:'overflow',connection:a.id,generation:a.generation,grants:[]});await tx.put('integrations/meta',m);});
  assert.equal((await f.q(X.DrainBrokeredSeverance)).drained,1);assert.equal((await f.severance()).rows.length,0);
- const overflow=(await x6rows(f)).filter(r=>r.type==='credential-revoked').at(-1);assert.deepEqual(overflow.grants,[slow.assignments[0].grant],'X7-R4: every current grant of the overflowing connection');
+ // Wargame3 F2: pending credential-revoked rows of one connection merge (grants unioned), so the overflow's grants join
+ // the still-pending unassignment row instead of adding a row.
+ const revoked=(await x6rows(f)).filter(r=>r.type==='credential-revoked');assert.equal(revoked.length,1);
+ assert.ok(revoked[0].grants.includes(slow.assignments[0].grant),'X7-R4: every current grant of the overflowing connection');
+ assert.deepEqual(new Set(revoked[0].grants),new Set([fast.assignments[0].grant,slow.assignments[0].grant]),'the earlier pending grant is kept');
 });
 
 test('stale generations and paused connections mint nothing and introspect inactive',async t=>{

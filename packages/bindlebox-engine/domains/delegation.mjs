@@ -46,16 +46,36 @@ export async function knownRevoked({directory,store,now},jkt){
 }
 // Persists a revocation and quarantines unreviewed items (inside the caller's transaction). Without revokedHour the
 // protocol treats every unapplied record as affected.
+// The walk is bounded: one call quarantines at most REVOCATION_BATCH indexed rows (link items under by-jkt/, then
+// conversation events under conv/by-jkt/, BB-B4 §3.4) and keeps its cursor in the revocation row; the recheck sweep
+// continues unfinished walks. The revocation row itself (the admission fence) is written at once (review of B7).
+export const REVOCATION_BATCH=256;
+const WALK=[`by-jkt/`,`conv/by-jkt/`];
 export async function recordRevocation(tx,{jkt,revokedHour,principal,now}){
  const prior=await tx.get(KEYS.revoked(jkt));
- if(!prior)await tx.put(KEYS.revoked(jkt),{jkt,...revokedHour===undefined?{}:{revokedHour},principal,learnedAt:now});
- let count=0;
- for(const [key] of await tx.list({prefix:`by-jkt/${jkt}/`})){
-  const id=key.slice(key.lastIndexOf('/')+1),item=await tx.get(KEYS.item(id));
-  if(!item||item.quarantined||item.reviewed||!quarantined(item.createdAt,revokedHour))continue;
-  item.quarantined={reason:'delegation_revoked',at:now};await tx.put(KEYS.item(id),item);await projectIncoming(tx,item);
-  if(item.state==='pending')await tx.delete(KEYS.pending(item.receivedAt,id));count++;
+ if(prior&&!prior.sweep)return 0;
+ const row=prior??{jkt,...revokedHour===undefined?{}:{revokedHour},principal,learnedAt:now,sweep:{phase:0,after:null}},hour=row.revokedHour;
+ let {phase,after}=row.sweep,budget=REVOCATION_BATCH,count=0;
+ while(phase<WALK.length&&budget>0){
+  // Adapters may ignore startAfter/limit, so the cursor is applied here too.
+  const keys=[...(await tx.list({prefix:WALK[phase]+jkt+'/',...after?{startAfter:after}:{},limit:budget+1})).keys()].filter(k=>after===null||k>after),batch=keys.slice(0,budget);
+  for(const key of batch){
+   budget--;after=key;
+   if(phase===0){
+    const id=key.slice(key.lastIndexOf('/')+1),item=await tx.get(KEYS.item(id));
+    if(!item||item.quarantined||item.reviewed||!quarantined(item.createdAt,hour))continue;
+    item.quarantined={reason:'delegation_revoked',at:now};await tx.put(KEYS.item(id),item);await projectIncoming(tx,item);
+    if(item.state==='pending')await tx.delete(KEYS.pending(item.receivedAt,id));count++;
+   }else{
+    const [cid,id]=key.split('/').slice(-2),eventKey=`conv/event/${cid}/${id}`,ev=await tx.get(eventKey);
+    if(!ev||ev.quarantined||!quarantined(ev.createdAt,hour))continue;
+    ev.quarantined={reason:'delegation_revoked',at:now};await tx.put(eventKey,ev);count++;
+   }
+  }
+  if(keys.length<=batch.length){phase++;after=null;}
  }
+ if(phase<WALK.length)row.sweep={phase,after};else delete row.sweep;
+ await tx.put(KEYS.revoked(jkt),row);
  return count;
 }
 export const jktIndex=(jkt,id)=>`by-jkt/${jkt}/${id}`;
@@ -78,7 +98,9 @@ export class DelegationRecheck extends MailboxAction {
    });
    if(value?.status==='revoked')cachesFor(directory).status.set(seen.jkt,{status:'revoked'},Number.MAX_SAFE_INTEGER);
   }
-  return {checked:due.length,revoked,unavailable};
+  // Continue revocation walks a batch left unfinished.
+  let continued=0;for(const [,row] of await receive.store.list({prefix:'revoked/'})){if(continued>=limit)break;if(!row?.sweep)continue;continued++;await receive.store.transaction(tx=>recordRevocation(tx,{jkt:row.jkt,now}));}
+  return {checked:due.length,revoked,unavailable,...continued?{continued}:{}};
  }
 }
 export const DELEGATION_OPERATIONS=[DelegationRecheck];

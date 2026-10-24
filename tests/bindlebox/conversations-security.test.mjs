@@ -179,9 +179,6 @@ test('review regressions BB4-S2/S6/S7/S9: secrets leave op rows, retractions sur
  await m.run('alice','conversations.rotate',{conversationId:cid});await m.settle();
  const secrets=[];for(const [,x] of await m.party('alice').store.list({prefix:`conv/secret/${cid}/`}))secrets.push(B.base64url(Uint8Array.from(x)));
  const ops=JSON.stringify([...(await m.party('alice').store.list({prefix:'conv/op/'})).values()]);for(const x of secrets)assert.ok(!ops.includes(x)&&!ops.includes(JSON.stringify(Array.from(B.fromBase64url(x)))));
- // S7: a parentless message never sorts before the genesis.
- for(let i=0;i<6;i++){const r=await m.craft('bob','carol',cid,{counter:900+i,text:`root ${i}`});assert.equal((await m.post('bob','carol',r.request)).status,200);}
- assert.equal((await m.get('carol',cid)).timeline[0].type,'genesis');
  // S6: a retraction later quarantined (revoked key) does not hide the author's genuine retraction.
  const msg=await m.run('bob','conversations.send',{conversationId:cid,text:'please delete me'});await m.settle();
  const {old}=await m.switchApp('bob');const stolen=m.party('bob');void stolen;
@@ -189,6 +186,10 @@ test('review regressions BB4-S2/S6/S7/S9: secrets leave op rows, retractions sur
  assert.equal((await m.get('carol',cid)).timeline.find(e=>e.eventId===msg.eventId).deleted,false);
  await m.run('bob','conversations.retract',{conversationId:cid,target:msg.eventId});await m.settle({advance:true});
  assert.equal((await m.get('carol',cid)).timeline.find(e=>e.eventId===msg.eventId).deleted,true);void old;
+ // S7: a parentless message never sorts before the genesis. (Crafted after bob's real sends: a counter jump to 900
+ // abandons the lower counters of that stream, which wargame B5 no longer applies.)
+ for(let i=0;i<6;i++){const r=await m.craft('bob','carol',cid,{counter:900+i,text:`root ${i}`});assert.equal((await m.post('bob','carol',r.request)).status,200);}
+ assert.equal((await m.get('carol',cid)).timeline[0].type,'genesis');
  // S9: while awaiting a secret, a hello with a forged signature is refused without revealing membership.
  await m.party('carol').store.transaction(async tx=>{for(const [k] of await tx.list({prefix:`conv/secret/${cid}/`}))await tx.delete(k);});await m.run('carol','conversations.rejoin');await m.flush();
  const binding={ingress:m.party('alice').ingress,incarnation:'a-x',profiles:[B.PROFILE],limits:{maxParticipants:32,maxMessageBytes:1048576,maxEnvelopeBytes:65536}};

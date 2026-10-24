@@ -13,6 +13,11 @@ export function abuseWindows({operation,ipHash,subnetHash,handleHash,regionHash,
  // backstop (600 per 5 minutes) so a distributed flood cannot hold off the operator's begin.
  if(operation==='boot-login-begin')return [{key:`boot-login-begin:burst:${ipHash}`,windowMs:60000,limit:10},{key:`boot-login-begin:ip:${ipHash}`,windowMs:3600000,limit:50},{key:'boot-login-begin:principal',windowMs:300000,limit:600}];
  if(operation==='boot-password')return [{key:'boot-password:principal',windowMs:300000,limit:20},{key:'boot-password:global',windowMs:3600000,limit:200}];
+ // ORG-12b break-glass abort links (no sign-in): a tighter per-address budget plus a per-network one, so token guessing
+ // from one network stays slow (the token is 256-bit; the organization also counts failures per claim).
+ // Review L1: `peek` checks without spending; the route charges (`charge`) only refused or failed outcomes, so an owner's
+ // successful stop never uses up the budget of the network they share.
+ if(operation==='org-claim-abort'){const p=phase==='peek'?{peek:true}:{};return [{key:`org-claim-abort:burst:${ipHash}`,windowMs:60000,limit:5,...p},{key:`org-claim-abort:ip:${ipHash}`,windowMs:3600000,limit:20,...p},{key:`org-claim-abort:network:${subnetHash}`,windowMs:3600000,limit:200,...p}];}
  if(operation==='device-poll')return [{key:`device-poll:burst:${ipHash}`,windowMs:60000,limit:30},{key:`device-poll:ip:${ipHash}`,windowMs:600000,limit:120}];
  // Handle-keyed sign-in windows (wargame 2026-10-23 #3). They run only after the Turnstile check: `credential` peeks
  // (never counts) before the password KDF, `failure` counts one completed, failed credential check. CAPTCHA-less

@@ -36,6 +36,7 @@ import {ORGANIZATION_PLANS} from '../../billing/organizations.mjs';
 import {memberAccessCapacity} from '../../federation/member-access.mjs';
 import {connectionState} from '../../apps/connections.mjs';
 import {foreignDirectory,foreignDirectoryEnabled,foreignIssuers} from './foreign-directory.mjs';
+import {directoryHandle} from '../../federation/directory.mjs';
 import {assertLifecycleOpen} from '../account-deletion.mjs';
 
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -118,6 +119,9 @@ const plain=value=>value!==null&&typeof value==='object'&&!Array.isArray(value);
  * organization to refresh this member's cached keys. Fire-and-forget: never awaited, never changes the answer. */
 function keysChanged(c,owner,aud){const org=localAudience(c.config,aud);if(!org||org===owner)return;void peer(c.config,org,'memberKeysChanged',[org,owner]).catch(()=>{});}
 
+// Review follow-up (F2): a directory-sourced handle is always shown qualified as local@host (the issuer's host), so a
+// bare foreign handle can never read as a verified local label.
+const fullDirectoryHandle=(handle,issuer)=>{const local=directoryHandle(handle,issuer);return local===null?null:`${local}@${new URL(issuer).hostname}`;};
 export const methods={
  // ---- home placement ----
  async memberCertificateConsent(owner,{client,input}={}){await this.warm(owner);return perform(issuerEngine(this),new GrantMemberConsent({actor:{kind:'owner',owner,client:plain(client)?{client_id:client.client_id,origin:client.origin}:null},input:structuredClone(input??{})}));},
@@ -140,8 +144,12 @@ export const methods={
   if(org){const r=await peer(this.config,org,'memberCertificateOrganizationName',[org]).catch(()=>null);return typeof r?.name==='string'?{name:r.name,handle:typeof r.handle==='string'?r.handle:null,verified:true,source:'local'}:unverified('local');}
   let issuer,subject;try{const u=new URL(aud);issuer=u.origin;subject=/^\/identity\/([0-9a-f-]{36})$/.exec(u.pathname)?.[1];}catch{return unverified('directory');}
   if(!subject||!UUID.test(subject))return unverified('directory');
-  try{const directory=foreignDirectory(this.config,{store:this.metadata,owner});if(!directory)return unverified('directory');const d=await directory.refresh({issuer,subject});
-   return d?.kind==='organization'&&d.iss===issuer&&d.sub===subject?{name:null,handle:typeof d.handle==='string'?d.handle:null,verified:true,source:'directory'}:unverified('directory');}
+  // Wargame 2026-10-23 F1: cache only. A miss answers unverified and warms this controller's shared directory in the
+  // background, as an interactive request on this person's own egress budget; the consent page shows it once warm.
+  // F2: the handle must be on the issuer's host (validateDirectoryDocument); only its local part is shown, beside `host`.
+  try{const directory=foreignDirectory(this.config,{store:this.metadata,owner});if(!directory)return unverified('directory');const d=directory.peek({issuer,subject});
+   if(!d){void directory.refresh({issuer,subject,priority:'interactive'}).catch(()=>{});return unverified('directory');}
+   return d.kind==='organization'&&d.iss===issuer&&d.sub===subject?{name:null,handle:fullDirectoryHandle(d.handle,issuer),verified:true,source:'directory'}:unverified('directory');}
   catch{return unverified('directory');}
  },
  // ---- organization placement ----

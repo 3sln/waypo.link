@@ -77,7 +77,7 @@ async function linkedRoutes({request,env,path,local,engine,context,vault}){
    if(!grant)return json({error:'invalid_code',message:'That code does not match.'},400);
    return json(await grant.approve({owner,context:ctx,requestId:input.requestId,code:input.code,approved:input.consent,...typeof input.choice==='string'?{choice:input.choice}:{}}));
   }
-  return json(await run('linkedApprove',{requestId:input.requestId,code:input.code,approved:true,...input.choice!==undefined?{choice:typeof input.choice==='number'?SESSION_CHOICE[input.choice]??'session':input.choice}:{}}));
+  return json(await run('linkedApprove',{requestId:input.requestId,code:input.code,approved:true,kind:'session',...input.choice!==undefined?{choice:typeof input.choice==='number'?SESSION_CHOICE[input.choice]??'session':input.choice}:{}}));
  }catch(error){
   if(typeof error?.code!=='string'||error instanceof IdentityFault)throw error;
   return json({error:error.code,message:error.message||'The request could not be completed.'},status(error),Number.isSafeInteger(error.retryAfter)&&error.retryAfter>0?{'Retry-After':String(error.retryAfter)}:{});
@@ -95,7 +95,7 @@ export function allowedMethods(path){
 export {createsContentOrGrant} from '../../identity/age-policy.mjs';
 // Review 2026-10-23 (M3): person, organization creation/renewal/claim and ownership-transfer acceptance checkouts all need
 // a fresh paid-age attestation from a permitted region (PaidCheckoutAllowed); the orgs route strips `ageConfirmed`.
-const paidCheckout=async(path,request)=>path==='/api/billing/checkout'||path==='/api/orgs/checkout'||/^\/api\/orgs\/[0-9a-f-]{36}\/(?:billing-checkout|claim)$/.test(path)||/^\/api\/orgs\/[0-9a-f-]{36}\/transfer$/.test(path)&&(await body(request.clone(),8192))?.operation==='accept';
+const paidCheckout=async(path,request)=>path==='/api/billing/checkout'||path==='/api/orgs/checkout'||/^\/api\/orgs\/[0-9a-f-]{36}\/(?:billing-checkout|claim|break-glass-checkout)$/.test(path)||/^\/api\/orgs\/[0-9a-f-]{36}\/transfer$/.test(path)&&(await body(request.clone(),8192))?.operation==='accept';
 export const stages={
  async public({request,env,path}){
   // Incoming contact-delivery capabilities authorize recipient ingress; their authors may belong to another

@@ -78,6 +78,29 @@ export const ORG_ERRORS=Object.freeze({
  unauthorized:'Your session needs to be refreshed. Reload the page and sign in again if asked.',
  csrf:'Your session needs to be refreshed. Reload the page and sign in again if asked.',
 });
+// ORG-12e break-glass codes, with their Spanish text here (the shared catalogue is owned elsewhere).
+export const ORG_BREAK_GLASS_ERRORS=Object.freeze({
+ owner_proof_required:['Confirm with a passkey or password you had before this claim began.','Confirma con una llave de acceso o contraseña que tenías antes de que empezara esta reclamación.'],
+ candidate_ineligible:['That account cannot be the candidate. Candidates are active 3sln.me admins of at least 30 days, with no recent security change.','Esa cuenta no puede ser la candidata. Las candidatas son administradores activos de 3sln.me desde hace al menos 30 días, sin cambios de seguridad recientes.'],
+ break_glass_pending:['An ownership claim is already open for this organization.','Ya hay una reclamación de propiedad abierta para esta organización.'],
+ break_glass_locked:['A recent claim was stopped by the owner or support. A new claim is possible later.','El propietario o el soporte detuvo una reclamación reciente. Podrás iniciar otra más adelante.'],
+ break_glass_limit:['This organization has reached its yearly limit of ownership claims.','Esta organización alcanzó su límite anual de reclamaciones de propiedad.'],
+ break_glass_person_limit:['You have reached your yearly limit of ownership claims.','Alcanzaste tu límite anual de reclamaciones de propiedad.'],
+ break_glass_start_limit:['You started too many unpaid claims this year.','Iniciaste demasiadas reclamaciones sin pagar este año.'],
+ candidacy_pending:['That person is already the candidate in another open claim.','Esa persona ya es candidata en otra reclamación abierta.'],
+ contest_window:['This is not available while the former owner can contest the last ownership change.','Esto no está disponible mientras el propietario anterior pueda impugnar el último cambio de propiedad.'],
+ quorum_required:['Two eligible admins must sign before payment.','Dos administradores elegibles deben firmar antes del pago.'],
+ cosign_limit:['Too many co-signature changes today. Try again tomorrow.','Demasiados cambios de cofirma hoy. Inténtalo mañana.'],
+ invalid_statement:['Write a statement of up to 2,000 characters.','Escribe una declaración de hasta 2000 caracteres.'],
+ break_glass_unavailable:['Ownership claims are not available on this host right now.','Las reclamaciones de propiedad no están disponibles en este servidor ahora.'],
+ file_recovery_pending:['A recovery with the organization file is pending.','Hay una recuperación con el archivo de la organización pendiente.'],
+ ownership_outbox_full:['Ownership changes need operator attention. Try again later.','Los cambios de propiedad necesitan atención del operador. Inténtalo más tarde.'],
+});
+export const ORG_BREAK_GLASS_NOTICES=Object.freeze({
+ break_glass_aborted:['Claim stopped. The admins are told it closed; nothing changes for the organization.','Reclamación detenida. Se avisa a los administradores de que se cerró; nada cambia en la organización.'],
+ break_glass_contested:['Contest sent. Support will review it and contact you.','Impugnación enviada. El soporte la revisará y se pondrá en contacto contigo.'],
+ break_glass_checkout_returned:['Back from checkout. The claim updates once the payment is verified.','De vuelta del pago. La reclamación se actualiza cuando se verifica el pago.'],
+});
 export const ORG_FALLBACK='Something went wrong and the change was not made. Try again in a moment.';
 export const ORG_NOTICES=Object.freeze({
  saved:'Saved.',
@@ -95,8 +118,8 @@ export const ORG_NOTICE_FALLBACK='Done.';
 const localizations=new Map();
 const localization=locale=>{const key=locale==='es'?'es':'en';if(!localizations.has(key))localizations.set(key,createLocalization({locale:key}));return localizations.get(key);};
 /** The translated message for an error code (or a generic fallback). */
-export const orgError=(locale,code)=>localization(locale).t(ORG_ERRORS[code]??ORG_FALLBACK);
+export const orgError=(locale,code)=>Object.hasOwn(ORG_BREAK_GLASS_ERRORS,code)?ORG_BREAK_GLASS_ERRORS[code][locale==='es'?1:0]:localization(locale).t(ORG_ERRORS[code]??ORG_FALLBACK);
 /** The translated message for a notice code (or a generic fallback). */
-export const orgNotice=(locale,code)=>localization(locale).t(ORG_NOTICES[code]??ORG_NOTICE_FALLBACK);
+export const orgNotice=(locale,code)=>Object.hasOwn(ORG_BREAK_GLASS_NOTICES,code)?ORG_BREAK_GLASS_NOTICES[code][locale==='es'?1:0]:localization(locale).t(ORG_NOTICES[code]??ORG_NOTICE_FALLBACK);
 /** Shell text owned by the organization console (signed-out invitation hint). */
 export const ORG_SIGNED_OUT_INVITATION='You’ve been invited to join an organization. Sign in or create an account, and you’ll come back to the invitation.';

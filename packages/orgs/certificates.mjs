@@ -38,7 +38,8 @@
 //   org/cert/token/<sha256(token)>    member-context tokens: DPoP-bound to (organization, membership, client, jkt),
 //                                     `exp` ≤ the certificate's, no refresh token
 //   org/cert/proof/<sha256(jkt,jti)>  DPoP replay rows until the proof window ends
-//   org/cert/key-epoch/<principal>    the highest directory key-reset epoch seen for a member (foreign issuers)
+//   org/cert/key-epoch/<claimed>      the highest directory key-reset epoch seen per CLAIMED (iss, sub) of a member
+//                                     (foreign issuers); a new issuer after a move starts a fresh baseline (F4)
 //   org/cert/keys/<principal>         the same-host certification key cache (TTL 300 s, negative 60 s)
 //   org/cert/refresh/<dueAt>/<principal>  the refresh queue, time-ordered (packages/orgs/key-refresh.mjs, F-07): filled
 //                                     by roster discovery (the batch scales so the whole roster is checked about every
@@ -152,9 +153,11 @@ export function directoryIssuerKeys(directory) {
       const signing = sig ? await directory.resolve({ issuer, subject, kid: sig.kid, purpose: 'signing', identity: found.identity }) : null;
       return { publicJwk: found.publicJwk, identity: found.identity, authorityEpoch: nonNegative(found.authorityEpoch) ? found.authorityEpoch : 0, signing: signing ? { kid: signing.kid, publicJwk: signing.publicJwk } : null };
     },
-    /** Background discovery only: the directory has no cached document for this member. */
-    async needsRefresh({ issuer, subject }) { const entry = directory?.cache?.get?.(`${issuer}\n${subject}`); const now = typeof directory?.clock === 'function' ? directory.clock() : Date.now(); return !entry || !(entry.until > now); },
-    async refresh({ issuer, subject }) { await directory?.refresh?.({ issuer, subject }); return true; },
+    /** Background discovery only: no cached document, or less than half of its freshness left (refresh-ahead, F5). */
+    async needsRefresh({ issuer, subject }) { const entry = directory?.cache?.get?.(`${issuer}\n${subject}`); const now = typeof directory?.clock === 'function' ? directory.clock() : Date.now(); return !entry || !(entry.until - now > (entry.ttl ?? 0) / 2); },
+    async refresh({ issuer, subject, source }) { await directory?.refresh?.({ issuer, subject, priority: source === 'claimed' ? 'claimed' : 'background', early: true }); return true; },
+    /** F5: the roster size scales the directory's per-site budget and cache. */
+    capacity(n) { directory?.capacity?.(n); },
   });
 }
 
@@ -269,7 +272,7 @@ export class MemberContextService {
     if (typeof input.admit === 'function') return { ok: true, context: this.#context(principal, member, claims, key, parsed.header.kid) };
     // Step 5: the authority epoch, and a directory key reset (foreign issuers), persisted by ORG-2 before any refusal.
     let reset = false;
-    if (claims.iss !== this.issuer && nonNegative(key.authorityEpoch)) reset = await this.metadata.transaction(async tx => { const path = KEY_EPOCH + memberPrincipalKey(principal), seen = await tx.get(path); if (nonNegative(seen) && key.authorityEpoch < seen) return null; if (!nonNegative(seen) || key.authorityEpoch > seen) { await tx.put(path, key.authorityEpoch); return nonNegative(seen); } return false; });
+    if (claims.iss !== this.issuer && nonNegative(key.authorityEpoch)) reset = await this.metadata.transaction(async tx => { const path = KEY_EPOCH + memberPrincipalKey(claimed), seen = await tx.get(path); if (nonNegative(seen) && key.authorityEpoch < seen) return null; if (!nonNegative(seen) || key.authorityEpoch > seen) { await tx.put(path, key.authorityEpoch); return nonNegative(seen); } return false; });
     if (reset === null) return { ok: false };
     const addedUnder = memberProvenance(key, parsed.header.kid);
     try { await this.members.observe(principal, { aep: claims.aep, reset, ...addedUnder ? { addedUnder } : {} }); } catch { return { ok: false }; }
@@ -374,6 +377,7 @@ export class MemberContextService {
         this.discovery.after = typeof page?.next === 'string' ? page.next : '';
       } else return;
     } catch { return; }
+    try { this.foreign?.capacity?.(this.discovery.size); } catch { /* best effort */ }
     for (const principal of principals.slice(0, MEMBER_DISCOVERY_MAX_BATCH)) {
       if (!plain(principal) || typeof principal.sub !== 'string') continue;
       const iss = principal.iss ?? this.issuer, port = this.#port(iss);
@@ -387,13 +391,15 @@ export class MemberContextService {
     try { await this.local?.prune?.({ limit: 64 }); } catch { /* best effort */ }
     await this.#discover(this.clock());
     const now = this.clock(), max = Number.isSafeInteger(limit) && limit > 0 ? limit : memberRefreshLimit(this.discovery.size);
-    const due = await this.metadata.transaction(tx => dueMemberKeyRefreshes(tx, now, max));
+    // Member rows before request-path 'claimed' rows (stable sort keeps time order within each).
+    const due = (await this.metadata.transaction(tx => dueMemberKeyRefreshes(tx, now, max))).sort((a, b) => (a[1].source === 'claimed') - (b[1].source === 'claimed'));
     let done = 0;
     for (const [path, row] of due) {
       const issuer = row.issuer ?? this.issuer, port = this.#port(issuer);
       // A 'claimed' (request-path) refresh never stores a negative row (review follow-up 1); its row leaves the queue.
-      let ok = false; try { ok = port ? await port.refresh({ issuer, subject: row.subject, negative: row.source !== 'claimed' }) !== false || row.source === 'claimed' : false; } catch { ok = false; }
-      await this.metadata.transaction(async tx => { if (ok || !port || row.attempts >= 4) await removeMemberKeyRefresh(tx, path); else await rescheduleMemberKeyRefresh(tx, path, { attempts: row.attempts + 1, dueAt: now + 60000 * 2 ** row.attempts }); });
+      // A rate-limited refresh is not a failed attempt: a member row retries in a minute with its attempts unchanged.
+      let ok = false, limited = false; try { ok = port ? await port.refresh({ issuer, subject: row.subject, negative: row.source !== 'claimed', source: row.source }) !== false || row.source === 'claimed' : false; } catch (error) { ok = false; limited = error?.code === 'rate_limited'; }
+      await this.metadata.transaction(async tx => { if (ok || !port || row.source === 'claimed' && limited || !limited && row.attempts >= 4) await removeMemberKeyRefresh(tx, path); else await rescheduleMemberKeyRefresh(tx, path, { attempts: limited ? row.attempts : row.attempts + 1, dueAt: now + (limited ? 60000 : 60000 * 2 ** row.attempts) }); });
       if (ok) done++;
     }
     const next = await this.metadata.transaction(tx => nextMemberKeyRefresh(tx));

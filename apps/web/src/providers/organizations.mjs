@@ -2,11 +2,11 @@ import {Provider} from '../shared/stack.mjs';
 const uuid=/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
 // Thin HTTP port. The person session remains the authentication context; organization
 // routing is explicit and never replaces the API's selected account or its CSRF binding.
-const READS={list:'',get:'',members:'/members',audit:'/audit',membership:'/membership',requests:'/requests',connections:'/connections',preferences:'/preferences',ownership:'/ownership',plans:'/plans'};
+const READS={list:'',get:'',members:'/members',audit:'/audit',membership:'/membership',requests:'/requests',connections:'/connections',preferences:'/preferences',ownership:'/ownership',plans:'/plans','break-glass-view':'/break-glass','break-glass-items':'/break-glass'};
 const WRITES={create:'',rename:'/name',label:'/label',invite:'/invitations',accept:'/accept',leave:'/leave',remove:'/remove-member',grants:'/member-grants',decide:'/grant-decision',connection:'/connections',preference:'/preferences',
- 'creation-checkout':'/checkout','billing-checkout':'/billing-checkout',transfer:'/transfer','transfer-recipient':'/transfer-recipient',claim:'/claim','recovery-file':'/recovery-file',invitee:'/invitee','invitation-preview':'/invitation-preview','invitation-revoke':'/invitation-revoke'};
+ 'creation-checkout':'/checkout','billing-checkout':'/billing-checkout',transfer:'/transfer','transfer-recipient':'/transfer-recipient',claim:'/claim','recovery-file':'/recovery-file',invitee:'/invitee','invitation-preview':'/invitation-preview','invitation-revoke':'/invitation-revoke','break-glass':'/break-glass','break-glass-checkout':'/break-glass-checkout'};
 // Root-level paths (no organization id) and organization paths must not be confused.
-const ROOT_ONLY=new Set(['list','plans','create','creation-checkout']);
+const ROOT_ONLY=new Set(['list','plans','create','creation-checkout','break-glass-items']);
 export function createOrganizationsPort(){const tabs=recoveryTabs();return Object.freeze({
  async call(action,input,{api,org}={}){
   if(org!==undefined&&!uuid.test(org))throw Object.assign(Error('invalid_organization'),{code:'invalid_organization'});

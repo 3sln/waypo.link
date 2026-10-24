@@ -36,7 +36,7 @@ export function metered(metadata,stats){
 }
 export const freshStats=()=>({reads:0,writes:0,lists:0,readBytes:0,writeBytes:0,maxValue:0,maxKey:null});
 
-export async function world(seed=1,{allowlist='',configured=true,owner=A,currency='usd',plan='org-team',claimLedger=memoryClaimLedger()}={}){
+export async function world(seed=1,{allowlist='',configured=true,owner=A,currency='usd',plan='org-team',claimLedger=memoryClaimLedger(),claimHints=null,ownerChannels:injectedChannels=null}={}){
  const metadata=new SqliteMetadata(':memory:'),clock=fakeClock(400*DAY),random=seededRandom(createRandom(seed)),flag={on:true,names:{}};await metadata.put('owner',ORG);
  const stats=freshStats(),store=metered(metadata,stats);
  const polar=fakeOrgPolar({clock}),config=configured?ORG_POLAR_CONFIG:{...ORG_POLAR_CONFIG,POLAR_SERVER:'production'};
@@ -46,14 +46,15 @@ export async function world(seed=1,{allowlist='',configured=true,owner=A,currenc
  const effects={rotateRecovery:async org=>{rotations.push(org);return {rotated:true};},index:async(person,input)=>{indexed.push({person,...input});return true;}};
  // ORG-12a: the owner's person-account channels (an out-of-band email and push, a known session and passkey, all long
  // enrolled, no recent interactive sign-in), as the identity stream's port would report them. Tests change them.
- const ownerChannels=ownerChannelsPort();
- for(const sub of [A,B,C,E])ownerChannels.owners.set(sub,{status:'active',lastInteractiveAt:clock.now()-90*DAY,channels:[{id:'email-'+sub.slice(0,4),kind:'email',enrolledAt:clock.now()-200*DAY,domain:'home-'+sub.slice(0,4)+'.example'},{id:'push-'+sub.slice(0,4),kind:'push',enrolledAt:clock.now()-150*DAY},{id:'session-'+sub.slice(0,4),kind:'session',enrolledAt:clock.now()-100*DAY},{id:'passkey-'+sub.slice(0,4),kind:'credential',enrolledAt:clock.now()-300*DAY}]});
+ // ORG-12b tests may inject the production adapter (packages/identity/owner-channels.mjs) and a hint port instead.
+ const ownerChannels=injectedChannels??ownerChannelsPort();
+ if(!injectedChannels)for(const sub of [A,B,C,E])ownerChannels.owners.set(sub,{status:'active',lastInteractiveAt:clock.now()-90*DAY,channels:[{id:'email-'+sub.slice(0,4),kind:'email',enrolledAt:clock.now()-200*DAY,domain:'home-'+sub.slice(0,4)+'.example'},{id:'push-'+sub.slice(0,4),kind:'push',enrolledAt:clock.now()-150*DAY},{id:'session-'+sub.slice(0,4),kind:'session',enrolledAt:clock.now()-100*DAY},{id:'passkey-'+sub.slice(0,4),kind:'credential',enrolledAt:clock.now()-300*DAY}]});
  // A restart is a fresh service and engine over the same store and ports: the service keeps no state of its own.
  // Operators: assertions signed as the admin service would (review M3); every UUID counts as registered unless a test
  // narrows `operatorRegistry`.
  const operatorRegistry={allow:()=>true},operators=hmacOperatorAssertions({secret:'loopback-operator-secret-0001',registered:op=>operatorRegistry.allow(op),clock:clock.now});
  const operatorAssertion=(operator,{process,decision,exclude=[],kind='lapse-claim'})=>operators.sign({operator,scope:{org:ORG,kind,process,decision,exclude}});
- const make=()=>new BreakGlassService({ownerChannels,claimLedger,operators,metadata:store,clock,random,issuer:ISS,flags:{for:()=>({enabled:name=>flag.names[name]??flag.on})},plans:organizationEntitlementPort({allowlist,billing}),billing,accounts:{get:async sub=>people.get(sub)??{kind:'person',status:'active',handle:'m'+sub.slice(-6)}},effects,alert:entry=>alerts.push(entry)});
+ const make=()=>new BreakGlassService({ownerChannels,claimLedger,claimHints,operators,metadata:store,clock,random,issuer:ISS,flags:{for:()=>({enabled:name=>flag.names[name]??flag.on})},plans:organizationEntitlementPort({allowlist,billing}),billing,accounts:{get:async sub=>people.get(sub)??{kind:'person',status:'active',handle:'m'+sub.slice(-6)}},effects,alert:entry=>alerts.push(entry)});
  let service=make(),engine=createAppEngine({providers:{clock,random,audit:memoryAudit({clock}),organizations:organizationsProvider(service)}});
  const restart=()=>{const old=engine;service=make();engine=createAppEngine({providers:{clock,random,audit:memoryAudit({clock}),organizations:organizationsProvider(service)}});old.dispose().catch(()=>{});};
  await perform(engine,new OPS['orgs.initialize']({actor:{kind:'system',owner:ORG},input:{request:REQUEST,creator:p(owner),name:'Acme',plan:{source:'polar',plan},addedUnder:prov(owner)}}));
@@ -70,7 +71,7 @@ export async function world(seed=1,{allowlist='',configured=true,owner=A,currenc
  const offer=async(to=B,handle=people.get(to).handle,input={})=>(await run('orgs.transfer-offer',(await summary()).ownerOfRecord.sub,{recipient:to,handle,confirm:true,...input})).transfer.id;
  const accept=async(to=B,input={})=>{const view=await run('orgs.ownership',to);const choice=view.offer.plans[0];return run('orgs.transfer-accept',to,{transfer:view.offer.id,disclosure:choice.digest,confirm:true,...view.offer.choosePlan?{plan:choice.plan}:{},...input});};
  const payLatest=(purpose='transfer')=>polar.pay(polar.checkoutBy(k=>k.metadata?.['3sln_me_org_purpose']===purpose).id);
- return {operators,operatorRegistry,operatorAssertion,metadata,store,stats,get service(){return service;},get engine(){return engine;},restart,clock,flag,polar,ownerChannels,claimLedger,billing,people,indexed,rotations,alerts,act,run,record,summary,member,join,sync,tick,drain,sweep,webhook,offer,accept,payLatest,ownerSub,verification,close:async()=>{await engine.dispose();metadata.close();}};
+ return {claimHints,operators,operatorRegistry,operatorAssertion,metadata,store,stats,get service(){return service;},get engine(){return engine;},restart,clock,flag,polar,ownerChannels,claimLedger,billing,people,indexed,rotations,alerts,act,run,record,summary,member,join,sync,tick,drain,sweep,webhook,offer,accept,payLatest,ownerSub,verification,close:async()=>{await engine.dispose();metadata.close();}};
 }
 /** Every stored value's size: [{key, bytes}] sorted largest first. */
 export async function storedSizes(metadata){return [...await metadata.list({prefix:''})].map(([key,value])=>({key,bytes:new TextEncoder().encode(JSON.stringify(value)).length})).sort((a,b)=>b.bytes-a.bytes);}

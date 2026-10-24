@@ -2,13 +2,18 @@ import {CloudflareTurnAdapter} from './turn.mjs';
 import QRCode from 'qrcode';
 import {BeamError,beamView,uuid} from './index.mjs';
 import {IdentityCrypto} from '../identity/crypto.mjs';
+import {canonicalContactLink} from '../links/preview.mjs';
+import {contactUnknown,lifecycleUnknown} from '../runtime/public-unknown.mjs';
 const ic=new IdentityCrypto();
 const fail=(c,m,s)=>{throw new BeamError(c,m,s);};
 async function devices(env,id){const account=await env.IDENTITY_REPOSITORY.get(id);if(!account||account.status!=='active')fail('beam_device_unavailable','The account is unavailable.',409);return {account,devices:await Promise.all((account.sessions||[]).filter(s=>s.expiresAt>Date.now()).map(async s=>({id:s.id||await ic.hash('session-public-id',s.hash),label:s.label||'Browser session'})))};}
+// Non-participants learn nothing about an existing offer or its participants (wargame round 3 D3): they get the
+// unknown-offer answer before any device or account check.
+const participant=(record,actor)=>{if(actor.account!==record.sender&&actor.account!==record.recipient)fail('beam_not_found','Transfer not found.',404);};
 async function validateOffer(env,record,actor){
+ participant(record,actor);
  const sender=await devices(env,record.sender),recipient=record.sender===record.recipient?sender:await devices(env,record.recipient);
  if(!sender.devices.some(d=>d.id===record.senderDevice)||record.recipientDevice&&!recipient.devices.some(d=>d.id===record.recipientDevice))fail('beam_device_revoked','A transfer device has signed out or expired.',410);
- if(actor.account!==record.sender&&actor.account!==record.recipient)fail('beam_forbidden','You are not a transfer participant.',403);
  if(!record.recipientDevice&&!recipient.devices.some(d=>record.allowedDevices.includes(d.id)))fail('beam_device_revoked','The receiving devices are no longer signed in.',410);
 }
 async function validatePermission(env,record,accountHandle){
@@ -24,8 +29,15 @@ export async function beamRoutes({path,url,request,env,owner,object,accountHandl
  if(path==='/api/beams/status')return json(await object.beamStatus(id));
  const grant=/^\/api\/contacts\/([a-f0-9-]{36})\/beam$/.exec(path);if(grant)return json(await object.beamContactEnable(id,grant[1],await body(request)));
  if(path==='/api/contacts/redeem'){
- const input=await body(request);let target,claims;try{target=new URL(input.url);if(target.origin!==env.APP_ORIGIN)throw new Error();claims=JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(target.searchParams.get('sig').split('.')[1].replaceAll('-','+').replaceAll('_','/')),c=>c.charCodeAt(0))));}catch{fail('contact_invalid_redemption','This signed contact URL is invalid.',400);}
- if(!uuid(claims.sub))fail('contact_invalid_redemption','This signed contact URL is invalid.',400);await devices(env,claims.sub);const binding=await accountHandle(env,claims.sub).beamContactRedeem(claims.sub,input.url,id);return json(await object.beamContactRemember(id,binding,input.url));
+ // Wargame round 3 L2/L2b: one shared canonical parser (both URL forms), and every refusal (malformed, foreign,
+ // unknown or inactive account, handle mismatch, failed verification) is the same answer, so a forged link is not
+ // an account-state oracle. The identity lookup precedes the account object so an arbitrary UUID never creates
+ // account storage; its outcome is indistinguishable from a link that fails verification.
+ const refused=()=>fail('contact_invalid_redemption','This signed contact URL is invalid.',400);
+ const input=await body(request),canonical=typeof input?.url==='string'&&input.url.length<=18000?canonicalContactLink(env.APP_ORIGIN,input.url):null;if(!canonical||!uuid(canonical.sub))refused();
+ const account=await env.IDENTITY_REPOSITORY.get(canonical.sub);if(!account||account.status!=='active'||account.handle!==canonical.handle)refused();
+ let binding;try{binding=await accountHandle(env,canonical.sub).beamContactRedeem(canonical.sub,canonical.link,id);}catch(error){if(contactUnknown(error)||error?.code==='link_malformed'||error?.code==='contact_invalid_redemption')refused();throw error;}
+ return json(await object.beamContactRemember(id,binding,canonical.link));
  }
  const forget=/^\/api\/contacts\/directory\/([a-f0-9-]{36})$/.exec(path);if(forget)return json(await object.beamContactForget(id,forget[1]));
  if(path==='/api/contacts/directory'){
@@ -58,7 +70,9 @@ export async function beamRoutes({path,url,request,env,owner,object,accountHandl
  for(const reference of [...mailbox.offers,...outbox]){if(seen.has(reference.id))continue;try{const sender=accountHandle(env,reference.sender),r=await sender.beamRaw(reference.sender,reference.id);await validateOffer(env,r,actor);await validatePermission(env,r,accountHandle);offers.push(await displayOffer(env,r,await sender.beamAction(reference.sender,r.id,actor,'get',{}),accountHandle));seen.add(reference.id);}catch(error){if(!error.code)throw error;}}return json({...mailbox,offers});
  }
  const offer=/^\/api\/beams\/([a-f0-9-]{36})\/([a-f0-9-]{36})(?:\/(accept|reject|signal|ice))?$/.exec(path);
- if(offer){const sender=accountHandle(env,offer[1]),r=await sender.beamRaw(offer[1],offer[2]);await validateOffer(env,r,actor);await validatePermission(env,r,accountHandle);if(offer[3]==='ice'){const issued=await sender.beamIce(offer[1],offer[2],actor);try{const current=await sender.beamRaw(offer[1],offer[2]);if(current.state!=='accepted')fail('beam_not_accepted','This transfer is no longer accepted.',409);await validateOffer(env,current,actor);await validatePermission(env,current,accountHandle);}catch(error){if(issued.relayEnabled){const adapter=new CloudflareTurnAdapter({keyId:env.CLOUDFLARE_TURN_KEY_ID,apiToken:env.CLOUDFLARE_TURN_API_TOKEN});for(const username of new Set(issued.iceServers.map(s=>s.username).filter(Boolean)))try{await adapter.revoke(username);}catch{}}throw error;}return json(issued);}return json(await displayOffer(env,r,await sender.beamAction(offer[1],offer[2],actor,offer[3]||'get',request.method==='POST'?await body(request,70000):{}),accountHandle));}
+ // Review follow-up: the sender's identity is checked before its account object (Node would create storage for an
+ // arbitrary UUID), and a lifecycle-faulted sender answers as an unknown offer.
+ if(offer){if(!await env.IDENTITY_REPOSITORY.get(offer[1]))fail('beam_not_found','Transfer not found.',404);const sender=accountHandle(env,offer[1]);let r;try{r=await sender.beamRaw(offer[1],offer[2]);}catch(error){if(lifecycleUnknown(error))fail('beam_not_found','Transfer not found.',404);throw error;}participant(r,actor);await validateOffer(env,r,actor);await validatePermission(env,r,accountHandle);if(offer[3]==='ice'){const issued=await sender.beamIce(offer[1],offer[2],actor);try{const current=await sender.beamRaw(offer[1],offer[2]);if(current.state!=='accepted')fail('beam_not_accepted','This transfer is no longer accepted.',409);await validateOffer(env,current,actor);await validatePermission(env,current,accountHandle);}catch(error){if(issued.relayEnabled){const adapter=new CloudflareTurnAdapter({keyId:env.CLOUDFLARE_TURN_KEY_ID,apiToken:env.CLOUDFLARE_TURN_API_TOKEN});for(const username of new Set(issued.iceServers.map(s=>s.username).filter(Boolean)))try{await adapter.revoke(username);}catch{}}throw error;}return json(issued);}return json(await displayOffer(env,r,await sender.beamAction(offer[1],offer[2],actor,offer[3]||'get',request.method==='POST'?await body(request,70000):{}),accountHandle));}
  return json({error:'not_found'},404);
 }
 export function beamAllowedMethods(path){

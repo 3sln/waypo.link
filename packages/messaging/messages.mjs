@@ -171,6 +171,9 @@ export class MessagingService {
       const path = key('message', owner, id); const message = await tx.get(path); if (!message) fail('not_found');
       const usage = await tx.get(key('message-usage', owner));
       if (usage) { usage.bytes -= message.size; usage.messages--; await tx.set(key('message-usage', owner), usage); }
+      // Conversation history rows are references to the message (wargame 3 C4): they go with it.
+      const history = message.conversation?.historyKey;
+      if (typeof history === 'string' && history.startsWith('conversation/history/')) await tx.delete(history);
       await tx.delete(path); await tx.delete(key('notification-event', owner, id)); return { deleted: true };
     });
   }

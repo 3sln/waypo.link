@@ -79,6 +79,9 @@ const rows=[
  ['BILLING_ENABLED','b','',{}],['MAIL_ENABLED','b','',{}],['PUSH_ENABLED','b','',{}],['BEAM_TURN_ENABLED','b','',{}],
  ['BEAM_STUN_ENABLED','b','',{envDefaults:{node:'true'}}],
  ['FEDERATION_REFRESH_ENABLED','b','',{safe:true,envDefault:true,envParse:'not-false'}],
+ // Browser automation kill switch (wargame 3). It shipped always-on, so it stays default on; env 'false' refuses tool
+ // discovery, grants, prepare, confirm and invoke. Revoking a session grant is never gated (the safe direction).
+ ['BROWSER_AUTOMATION_ENABLED','b','',{safe:true,envDefault:true,envParse:'not-false'}],
  ['FEDERATION_ENTRY_ENABLED','b','',{}],['ONBOARDING_ENABLED','b','',{}],['ADMIN_ENABLED','b','',{}],
  ['ADMIN_CLAIMS_ENABLED','b','',{derived:true,envParse:'true-only'}],
  ['BROKERED_INTROSPECTION_MOUNTED','b','',{derived:true,envParse:'true-only',parent:'BROKERING_ENABLED'}],

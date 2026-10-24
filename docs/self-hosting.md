@@ -167,6 +167,7 @@ These reserved switches default to `"false"` in both Worker configurations and N
 | `APP_METADATA_DISCOVERY_ENABLED` (N) | `false` (off) | Fetch app metadata documents from registered client origins. |
 | `APP_NOTIFICATION_SIGNING_JWK`, `APP_NOTIFICATION_PUBLIC_JWKS` (N) | unset | Signing key (secret) and published verification keys for app notifications. |
 | `MCP_ENABLED`, `MCP_LAYOUT`, `MCP_CLIENTS` (N) | `false` (off), `mcp-auth-v1-64`, `[]` | Agent endpoint. |
+| `BROWSER_AUTOMATION_ENABLED` | `true` (on; only `false` disables) | Kill switch for browser automation. Off refuses every automation operation except revoke, which always works. Node does not forward it, so Node keeps it on. |
 
 ### Mail, push and providers
 

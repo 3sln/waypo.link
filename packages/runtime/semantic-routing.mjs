@@ -8,7 +8,10 @@ export async function vectorBinding(config,owner){
 }
 export function semanticBudgetPartition(config,partition){
  if(!Number.isInteger(partition)||partition<0||partition>=SEMANTIC_LAYOUT.budgetShards)throw new TypeError('Invalid budget partition');
- const totals={SEMANTIC_GLOBAL_MONTHLY_MICRO_USD:5000000,SEMANTIC_GLOBAL_DAILY_MICRO_USD:500000,SEMANTIC_GLOBAL_MAX_OWNERS:1000,SEMANTIC_GLOBAL_MAX_UPSERTS:2000000};const result={};
+ // Service totals are split across partitions; the classifier ledger is independent of semantic money/stock.
+ const totals={SEMANTIC_GLOBAL_MONTHLY_MICRO_USD:5000000,SEMANTIC_GLOBAL_DAILY_MICRO_USD:500000,SEMANTIC_GLOBAL_MAX_OWNERS:1000,SEMANTIC_GLOBAL_MAX_UPSERTS:2000000,CLASSIFIER_GLOBAL_MONTHLY_MICRO_USD:5000000,CLASSIFIER_GLOBAL_DAILY_MICRO_USD:500000};const result={};
  for(const [key,fallback]of Object.entries(totals)){const total=config[key]===undefined?fallback:Number(config[key]);if(!Number.isSafeInteger(total)||total<SEMANTIC_LAYOUT.budgetShards)throw new TypeError('Invalid partitioned semantic budget');result[key]=Math.floor(total/SEMANTIC_LAYOUT.budgetShards)+(partition<total%SEMANTIC_LAYOUT.budgetShards?1:0);}
+ // Owner shares are percentages of one partition's windows, so they pass through unsplit.
+ for(const key of ['SEMANTIC_OWNER_SHARE_PERCENT','CLASSIFIER_OWNER_SHARE_PERCENT'])if(config[key]!==undefined){const value=Number(config[key]);if(!Number.isSafeInteger(value)||value<1||value>100)throw new TypeError('Invalid partitioned semantic budget');result[key]=value;}
  return result;
 }

@@ -25,6 +25,10 @@
 //                   domains({org, principals}) -> [domain], notify(owner, {org, claim, event, channel, kind, abort?})
 //                   -> {accepted}}. Channel ADDRESSES never cross this port; email `domain` is hashed on arrival.
 //                   `ownerChannelsPort()` below is the in-memory implementation (tests, loopback).
+//   claimHints     ORG-12b, optional: {apply(person, {op:'put'|'drop', org, claim, role:'owner'|'admin'|'former-owner', at,
+//                   until?}) -> {ok}}, the person-side hint rows (BreakGlassService#breakGlassHint, or `memoryClaimHints()`)
+//                   that drive the owner's sign-in liveness hook, the owner interstitial and co-signature items. Hints
+//                   are routing only: every reader confirms them with the organization. Without the port none are queued.
 //   claimLedger    {reserve(person, {org, claim, role, at}) -> {ok, reason?}, update(person, {org, claim, event, at})}
 //                   the per-person limits (§12d.8), kept in each person's own account (BreakGlassService#breakGlassLedger,
 //                   or `memoryClaimLedger()`).
@@ -56,6 +60,7 @@ export const BREAK_GLASS=Object.freeze({
  COSIGN_CHANGES_PER_DAY:10,RETRY_MS:HOUR,OPERATOR_APPROVAL_MS:3*DAY,
  STATEMENT_CHARS:2000,CHANNELS:16,TOKENS:512,TOKEN_RESERVE:64,TOKEN_FAILURES:64,LOG:256,DISPUTED_MEMORY:32,
  OWNER_NOTICES_PER_CLAIM:24,
+ HINTS:16,                        // ORG-12b: person-side hint rows per claim (the owner, the candidate and up to 14 admins)
  CHANNEL_ATTEMPTS:8,CHANNEL_DAYS_MS:7*DAY, // review R2-M1: a channel is undeliverable after 8 failed attempts over 7 days
  NOTICE_BOUND_MS:7*DAY,           // review R2-M1: a final claim whose notice was never accepted is held after this
  CONTEST_OPEN_MAX_MS:30*DAY,      // review R2: an undecided contest blocks lapse claims at most this long, then escalates      // review H1: non-critical owner notices per claim; critical ones always go out
@@ -63,7 +68,7 @@ export const BREAK_GLASS=Object.freeze({
 });
 export const BREAK_GLASS_OPEN=Object.freeze(['gathering','waiting','held','final']);
 export const BREAK_GLASS_TERMINAL=Object.freeze(['effective','aborted','withdrawn','closed']);
-const CLAIM='org/claim/',LEDGER='orgs/break-glass/',UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,CHANNEL=/^[A-Za-z0-9_.:-]{1,128}$/;
+const CLAIM='org/claim/',LEDGER='orgs/break-glass/',HINT='orgs/break-glass-hint/',SIGNAL='orgs/break-glass-signal/',UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,CHANNEL=/^[A-Za-z0-9_.:-]{1,128}$/;
 const KINDS=['session','credential','email','push'];
 const fail=(code='not_found',message='Not found.',status=409)=>{throw new AppFault(code,message,status);};
 const party=p=>({iss:p?.iss??null,sub:p?.sub});
@@ -80,6 +85,12 @@ const pair=(a,b)=>[a,b].sort();
 /** IDNA (UTS 46 via the URL parser) to the ASCII form, lowercase, without a trailing dot; null when invalid. */
 const asciiDomain=domain=>{try{const host=new URL('http://'+String(domain).trim().replace(/\.$/,'')+'/').hostname;return /^[a-z0-9.-]+$/.test(host)&&host.includes('.')?host:null;}catch{return null;}};
 const suffixHashes=async domain=>{const ascii=asciiDomain(domain);if(!ascii)return [];const labels=ascii.split('.').filter(Boolean),out=[];for(let i=0;i<=labels.length-2;i++)out.push(await hex(labels.slice(i).join('.')));return out;};
+/** ORG-12b: the same suffix hashes, for adapters that hash email domains on arrival (packages/identity/owner-channels.mjs),
+ * so no address or domain crosses the owner-channels port. */
+export const emailDomainHashes=suffixHashes;
+const HASH=/^[a-f0-9]{64}$/;
+/** Port values to suffix hashes: a domain string (hashed here), or `{hashes:[hex]}` already hashed by the adapter. */
+const portHashes=async(list,cap)=>[...new Set((await Promise.all((Array.isArray(list)?list:[]).slice(0,cap).map(d=>typeof d==='string'?suffixHashes(d):plain(d)&&Array.isArray(d.hashes)?d.hashes.filter(h=>typeof h==='string'&&HASH.test(h)).slice(0,16):[]))).flat())];
 /** Owner notices that are always sent (never dropped for the per-claim cap, never refused for outbox capacity). */
 const CRITICAL=new Set(['start','paid','remind','remind-72h','liveness','dispute','proceed','effect','abort','tier1','owner-active','withdraw','ineligible','lapse','unpaid','superseded','support-abort','expire','undelivered','contest']);
 /** What admins and members see of a closure (review L8): never which owner proof or action ended it. */
@@ -172,6 +183,30 @@ export function memoryClaimLedger(){
   async reserve(sub,{org,claim,role,at}){const mine=rows(sub),refusal=ledgerDecision([...mine.values()],{org,claim,role},at);if(refusal)return {ok:false,reason:refusal};const key=org+'/'+claim,prior=mine.get(key);mine.set(key,{org,claim,role:prior?.role==='candidate'?'candidate':role,state:'pending',startedAt:prior?.startedAt??at,countedAt:prior?.countedAt??null});return {ok:true};},
   async update(sub,{org,claim,event,at}){const mine=rows(sub),key=org+'/'+claim,row=mine.get(key);if(row)mine.set(key,ledgerApply(row,{event,at}));return {ok:true};}};
 }
+/** ORG-12b person-side hint roles: the owner of record of an open claim, an admin who may co-sign or object, and a
+ * former owner inside the contest window. */
+export const BREAK_GLASS_HINT_ROLES=Object.freeze(['owner','admin','former-owner']);
+/**
+ * Pure: one organization's hint row after a put or drop. Outbox effects may be retried or reordered, so every drop leaves
+ * a tombstone for its role and claim (the newest 16 are kept), a put for a tombstoned claim is ignored, and a put older
+ * than a newer claim's put never displaces it. A row is `{org, roles:{[role]:{claim, at, until?}}, dropped:{['role:claim']:at}}`.
+ */
+export function hintApply(row,{op,org,claim,role,at,until}){
+ const next={org,roles:{...row?.roles},dropped:{...row?.dropped}},current=next.roles[role],tomb=role+':'+claim;
+ if(op==='put'){if(next.dropped[tomb]!==undefined)return next;if(current&&current.claim!==claim&&current.at>at)return next;next.roles[role]={claim,at,...Number.isSafeInteger(until)?{until}:{}};return next;}
+ if(current?.claim===claim)delete next.roles[role];
+ next.dropped[tomb]=Math.max(at,next.dropped[tomb]??0);
+ next.dropped=Object.fromEntries(Object.entries(next.dropped).sort((x,y)=>y[1]-x[1]).slice(0,16));return next;
+}
+/** Pure: the live hints of a row at `now` (a contest entry ends with its window). */
+export function liveHints(row,now){return Object.entries(row?.roles??{}).filter(([role,h])=>BREAK_GLASS_HINT_ROLES.includes(role)&&(!Number.isSafeInteger(h.until)||h.until>now)).map(([role,h])=>({org:row.org,role,claim:h.claim,at:h.at,...Number.isSafeInteger(h.until)?{until:h.until}:{}}));}
+/** An in-memory hint port (tests and loopback): the same rules as the person-side operation. */
+export function memoryClaimHints(){
+ const people=new Map(),rows=sub=>{if(!people.has(sub))people.set(sub,new Map());return people.get(sub);};
+ return {people,
+  async apply(sub,input){const mine=rows(sub);mine.set(input.org,hintApply(mine.get(input.org),input));return {ok:true};},
+  list(sub,now=Date.now()){return [...rows(sub).values()].flatMap(row=>liveHints(row,now));}};
+}
 /**
  * The in-memory owner-channels port (tests, loopback demonstration): `owners` maps an owner sub to {status,
  * lastInteractiveAt, channels:[{id, kind, enrolledAt, domain?}]}; `domains` maps a party key (an org id or a person sub)
@@ -211,7 +246,7 @@ export function hmacOperatorAssertions({secret,registered=()=>false,clock=()=>Da
 }
 
 export class BreakGlassService extends OwnershipService{
- constructor(options){super(options);this.ownerChannels=options.ownerChannels??null;this.claimLedger=options.claimLedger??null;}
+ constructor(options){super(options);this.ownerChannels=options.ownerChannels??null;this.claimLedger=options.claimLedger??null;this.claimHints=typeof options.claimHints?.apply==='function'?options.claimHints:null;}
  /** ORG_BREAK_GLASS_ENABLED for this organization (requires ORGANIZATIONS_ENABLED). Gates starting a claim and its
   * effect only (§12d.12). */
  breakGlassEnabled(owner){if(!this.enabled(owner))return false;try{return this.flags?.for({subject:{kind:'account',owner}}).enabled(BREAK_GLASS_FLAG)===true;}catch{return false;}}
@@ -315,6 +350,18 @@ export class BreakGlassService extends OwnershipService{
   return null;
  }
  ledger(r,c,event,now){for(const p of new Set([c.initiator.sub,c.candidate.sub]))this.outbox(r,'ledger',{person:p,claim:c.id,event},now,{critical:true});}
+ /** ORG-12b person-side hints (routing only; readers confirm with the organization). Local principals only. */
+ hint(r,claim,sub,op,role,now,extra={}){if(!this.claimHints||typeof sub!=='string'||!UUID.test(sub))return;this.outbox(r,'bg-hint',{person:sub,org:r.id,claim,op,role,...extra},now,{critical:true});}
+ /** T1: the owner (sign-in liveness, the interstitial) and the candidate and other eligible admins (co-signature and
+  * objection items), at most HINTS rows. The recipients are kept on the claim so every one is dropped when it ends. */
+ hintsStart(r,c,now,admins=[]){
+  if(!this.claimHints)return;const local=p=>p&&(p.iss??null)===(this.issuer??null)&&typeof p.sub==='string',list=[];
+  if(local(c.owner))list.push({sub:c.owner.sub,role:'owner'});
+  for(const p of [c.candidate,...admins])if(local(p)&&!samePrincipal(p,c.owner)&&!samePrincipal(p,c.initiator)&&!list.some(x=>x.sub===p.sub))list.push({sub:p.sub,role:'admin'});
+  c.hinted=list.slice(0,BREAK_GLASS.HINTS);for(const x of c.hinted)this.hint(r,c.id,x.sub,'put',x.role,now);
+ }
+ /** A claim ended: drop every hint. At effect the former owner's hint becomes a contest entry until the window ends. */
+ hintsEnd(r,c,now,{until=null}={}){for(const x of c.hinted??[]){if(until&&x.role==='owner')this.hint(r,c.id,x.sub,'put','former-owner',now,{until});this.hint(r,c.id,x.sub,'drop',x.role,now);}}
 
  // ---- ending a claim -------------------------------------------------------------------------------------------
  async end(...args){
@@ -343,7 +390,7 @@ export class BreakGlassService extends OwnershipService{
   if(lock)marks.lockUntil=Math.max(marks.lockUntil,now+BREAK_GLASS.LOCK_MS);
   if(ownerAbort)marks.trackSUntil=Math.max(marks.trackSUntil,now+BREAK_GLASS.TRACK_S_AFTER_ABORT_MS);
   marks.counted=marks.counted.filter(x=>x.at>now-BREAK_GLASS.YEAR_MS);
-  this.ledger(r,c,'ended',now);
+  this.ledger(r,c,'ended',now);this.hintsEnd(r,c,now);
   // Review L1: abort links for an ended claim are useless; erase any still waiting in the outbox.
   // Review R2-L2: earlier undelivered notices of an ended claim are dropped (the closing notice below replaces them).
   for(const e of r.ownershipOutbox)if(e.kind==='owner-notice'&&e.claim===c.id){if(Array.isArray(e.channels))e.channels=e.channels.map(({abort,...ch})=>ch);if(!e.doneAt){e.doneAt=now;e.dropped=true;}}
@@ -379,7 +426,7 @@ export class BreakGlassService extends OwnershipService{
     // The initiator is eligible by now, so a ledger refusal may say why (one pending candidacy, yearly limits).
     const result=await this.claimLedger.reserve(p.sub,{org:pre.id,claim:id,role,at:now});if(!result?.ok)fail(['candidacy_pending','break_glass_person_limit','break_glass_start_limit'].includes(result?.reason)?result.reason:'break_glass_unavailable','You cannot take part in another break-glass claim now.',429);reserved.push(p.sub);
    }
-   const statementDigest=await hex(v.statement.trim()),channels=await this.channelsOf(snapshot,now),adminDomains=[...new Set((await Promise.all(domains.filter(d=>typeof d==='string').slice(0,64).map(suffixHashes))).flat())];
+   const statementDigest=await hex(v.statement.trim()),channels=await this.channelsOf(snapshot,now),adminDomains=await portHashes(domains,64);
    return await this.act(actor,{},[],async(r,_,now,tx,powers)=>{
     const {memberInitiated,eligible,cand}=await this.startEligibility(r,actor,candidate,account,self,now);
     const c={v:1,id,org:r.id,state:null,track:'A',causes:[],frozen:false,owner:party(r.ownerOfRecord),ownerAep:r.memberships[principalKey(r.ownerOfRecord)]?.aep??0,
@@ -400,6 +447,7 @@ export class BreakGlassService extends OwnershipService{
     await this.checkQuorum(r,c,now);await this.putClaim(tx,r,c);
     // Invariant I6: notices to every recorded owner channel are enqueued at T1, long before any wait starts.
     await this.notify(tx,r,c,'start',now);
+    this.hintsStart(r,c,now,eligible.map(m=>m.principal));await this.putClaim(tx,r,c);
     return {claim:await this.claimView(r,c,actor,now)};
    },{exposure:false});
   }catch(error){for(const sub of reserved){try{await this.claimLedger.update(sub,{org:pre.id,claim:id,event:'released',at:now});}catch{/* an orphan pending row ends with the claim id that never existed */}}throw error;}
@@ -426,7 +474,7 @@ export class BreakGlassService extends OwnershipService{
  async channelsOf(snapshot,now){
   const out=[];for(const ch of Array.isArray(snapshot?.channels)?snapshot.channels:[]){
    if(!plain(ch)||typeof ch.id!=='string'||!CHANNEL.test(ch.id)||!KINDS.includes(ch.kind)||!Number.isSafeInteger(ch.enrolledAt)||ch.enrolledAt>=now||out.some(x=>x.id===ch.id))continue;
-   out.push({id:ch.id,kind:ch.kind,enrolledAt:ch.enrolledAt,excluded:false,...ch.kind==='email'&&typeof ch.domain==='string'&&ch.domain?{domainHashes:await suffixHashes(ch.domain)}:{}});
+   out.push({id:ch.id,kind:ch.kind,enrolledAt:ch.enrolledAt,excluded:false,...ch.kind==='email'&&Array.isArray(ch.domainHashes)?{domainHashes:ch.domainHashes.filter(h=>typeof h==='string'&&HASH.test(h)).slice(0,16)}:ch.kind==='email'&&typeof ch.domain==='string'&&ch.domain?{domainHashes:await suffixHashes(ch.domain)}:{}});
    if(out.length>=BREAK_GLASS.CHANNELS)break;
   }
   return out;
@@ -462,7 +510,7 @@ export class BreakGlassService extends OwnershipService{
   * (BG-R1-H2), which may move the claim to Track S. */
  async breakGlassCosign(actor,input){
   const v=exact(input,['claim']);const now0=this.clock.now();this.freshStepUp(actor,now0);
-  let hashes=[];if(this.ownerChannels){try{hashes=[...new Set((await Promise.all((await this.ownerChannels.domains({org:actor.owner,principals:[actor.principal]})).filter(d=>typeof d==='string').slice(0,16).map(suffixHashes))).flat())];}catch{fail('break_glass_unavailable','Break-glass is not available right now.',503);}}
+  let hashes=[];if(this.ownerChannels){try{hashes=await portHashes(await this.ownerChannels.domains({org:actor.owner,principals:[actor.principal]}),16);}catch{fail('break_glass_unavailable','Break-glass is not available right now.',503);}}
   return this.onClaim(actor,v,[],async(r,c,_,now,tx)=>{
    if(c.state!=='gathering')fail('not_found','Not found.',404);
    const m=await rosterOf(r).principal(actor.principal);if(!this.eligibleAdmin(r,m,c.createdAt,now)||samePrincipal(actor.principal,c.initiator)||samePrincipal(actor.principal,c.candidate))fail('not_found','Not found.',404);
@@ -604,13 +652,24 @@ export class BreakGlassService extends OwnershipService{
   const v=exact(input,['principal','kind','at']);
   return this.onSystem(actor,async(r,c,now,tx)=>{
    if(!['sign-in','step-up'].includes(v.kind)||!c||!isOpen(c)||!samePrincipal(v.principal,c.owner))return {received:true};
-   this.toTrackS(c,'owner-liveness');const before=c.state;
-   if(before==='final'){c.decision=null;c.finalEndsAt=null;for(const x of c.channels)x.excluded=false;}
-   c.proposal=null; // review L3: a pending proposal never survives owner liveness
-   await this.move(tx,r,c,'liveness',now);if(before!=='held'&&c.state==='held')this.enterHeld(c,now);
-   await this.putClaim(tx,r,c);await this.notify(tx,r,c,'liveness',now);return {received:true};
+   // ORG-12b review M1: signals are retried durably, so they are idempotent: a sign-in already applied (or one from before
+   // this claim began) changes nothing. `at` is clamped to now.
+   const at=Number.isSafeInteger(v.at)?Math.min(v.at,now):now;if(at<c.createdAt||at<=(c.livenessAt??-1))return {received:true};
+   await this.applyLiveness(tx,r,c,now,at);return {received:true};
   });
  }
+ /** T9: owner liveness at `at` (a signal, or a sign-in found at effect time). Track S; waiting and final become held, a final
+  * decision and a pending proposal are void (BG-R1-M2, review L3). Records `livenessAt` so the same sign-in is applied once. */
+ async applyLiveness(tx,r,c,now,at){
+  c.livenessAt=Math.max(c.livenessAt??0,at);this.toTrackS(c,'owner-liveness');const before=c.state;
+  if(before==='final'){c.decision=null;c.finalEndsAt=null;for(const x of c.channels)x.excluded=false;}
+  c.proposal=null; // review L3: a pending proposal never survives owner liveness
+  await this.move(tx,r,c,'liveness',now);if(before!=='held'&&c.state==='held')this.enterHeld(c,now);
+  await this.putClaim(tx,r,c);await this.notify(tx,r,c,'liveness',now);
+ }
+ /** ORG-12b review M1: the owner's last interactive sign-in, newer than T1, every liveness already applied and any support
+  * decision, is unapplied liveness (a lost or late signal). Null when there is none. */
+ unseenLiveness(c,owner){const last=owner?.lastInteractiveAt;return Number.isSafeInteger(last)&&last>Math.max(c.createdAt,c.livenessAt??-1,c.decision?.at??-1)?last:null;}
  /** T16: a security change on the candidate's account closes the claim (an authority reset is seen through the
   * membership's `aep`). A co-signer's change withdraws their signature. */
  breakGlassSecurityChange(actor,input){
@@ -630,13 +689,16 @@ export class BreakGlassService extends OwnershipService{
   const v=exact(input,['token']);const parts=typeof v.token==='string'&&v.token.length<=256?v.token.split('.'):[];
   const ok=parts.length===4&&parts[0]==='bg1'&&UUID.test(parts[1])&&UUID.test(parts[2])&&/^[A-Za-z0-9_-]{43}$/.test(parts[3]);
   const digest=ok?await hex(parts[3]):null;
+  // Review L1: the writer tells the route privately whether the link stopped the claim (the route charges the budget only
+  // otherwise); the HTTP answer stays identical either way.
+  let outcome='refused';
   await this.onSystem(actor,async(r,c,now,tx)=>{
    if(!ok||!c||c.id!==parts[1])return;
    const t=c.tokens.find(x=>x.id===parts[2]),valid=isOpen(c)&&t&&!t.usedAt&&sameHex(t.hash,digest)&&c.channels.some(ch=>ch.id===t.channel);
    if(!valid){if(c.tokenFailures<BREAK_GLASS.TOKEN_FAILURES){c.tokenFailures++;await this.putClaim(tx,r,c);}return;}
-   t.usedAt=now;await this.ownerStop(tx,r,c,0,now,null,{channel:t.channel});
+   t.usedAt=now;await this.ownerStop(tx,r,c,0,now,null,{channel:t.channel});outcome='stopped';
   });
-  return {received:true};
+  return {received:true,outcome};
  }
  /** ORG-12f seam (T17–T19): a file-based recovery started, was cancelled, or took effect. */
  breakGlassFileRecovery(actor,input){
@@ -671,7 +733,7 @@ export class BreakGlassService extends OwnershipService{
    if(contest){
     const k=r.breakGlassContest;if(c.state!=='effective'||k?.claim!==c.id||k.state!=='open')fail('not_found','Not found.',404);
     const approved=await this.twoOperators(tx,r,c,v.decision,v.operator,[],now,detail);if(!approved)return {decision:'proposed'};
-    if(v.decision==='reject'){k.state='rejected';c.contest={...c.contest,state:'rejected',at:now};await this.move(tx,r,c,'contest-resolved',now,sys,{audit:{...detail,pair:approved}});await this.notify(tx,r,c,'contest-rejected',now,{owner:false,parties:[k.formerOwner]});return {decision:'approved',contest:'rejected'};}
+    if(v.decision==='reject'){k.state='rejected';this.hint(r,c.id,k.formerOwner?.sub,'drop','former-owner',now);c.contest={...c.contest,state:'rejected',at:now};await this.move(tx,r,c,'contest-resolved',now,sys,{audit:{...detail,pair:approved}});await this.notify(tx,r,c,'contest-rejected',now,{owner:false,parties:[k.formerOwner]});return {decision:'approved',contest:'rejected'};}
     await this.reinstate(tx,r,c,k,now,approved,detail);return {decision:'approved',contest:'upheld'};
    }
    if(!isOpen(c))fail('not_found','Not found.',404);
@@ -711,6 +773,9 @@ export class BreakGlassService extends OwnershipService{
   if(r.state!=='active')return 'organization-unavailable';
   if(!this.breakGlassEnabled(r.id))return 'flag-off';
   if(!fresh)return 'stale-snapshot';if(heldSubscriptions(r).length)return 'billing-held';
+  // ORG-12b review M1, both tracks: the owner's activity must be read at the effect, and show no sign-in newer than T1.
+  if(extra?.breakGlassOwner?.ok!==true)return 'owner-unverified';
+  if(this.unseenLiveness(c,extra.breakGlassOwner)!==null)return 'owner-active';
   if(extra?.breakGlassCandidate?.ok!==true)return 'candidate-unverified';
   if(!await this.quorumMet(r,c,now))return 'quorum';
   if(this.paymentState(r,c.payment,c.candidate,now))return 'payment';
@@ -723,7 +788,7 @@ export class BreakGlassService extends OwnershipService{
   if(r.billing.claim&&['awaiting-payment'].includes(r.billing.claim.state)){r.billing.claim.state='closed';r.billing.claim.closedReason='owner-changed';r.billing.claim.closedAt=now;}
   r.breakGlassContest={claim:c.id,formerOwner:party(prev),newOwner:party(c.candidate),t1:c.createdAt,until:now+BREAK_GLASS.CONTEST_MS,state:'window'};
   c.effectiveAt=now;await this.move(tx,r,c,'effect',now,null,{audit:{from:prev,to:party(c.candidate),subscription:c.payment.subscriptionId,authorityEpoch:r.authorityEpoch,contestUntil:r.breakGlassContest.until}});
-  this.ledger(r,c,'ended',now);await this.notify(tx,r,c,'effect',now,{parties:[prev]});
+  this.ledger(r,c,'ended',now);this.hintsEnd(r,c,now,{until:r.breakGlassContest.until});await this.notify(tx,r,c,'effect',now,{parties:[prev]});
  }
  /** An upheld contest: a restoration, not a transfer (BG-13). One commit restores the former owner, revokes the
   * break-glass owner's subscription (no automatic refund), raises the epoch, rotates the recovery binding, holds the
@@ -736,7 +801,7 @@ export class BreakGlassService extends OwnershipService{
   const roster=rosterOf(r),bg=await roster.principal(prev),former=await roster.principal(k.formerOwner);
   if(bg?.state==='live')bg.hold={aep:bg.aep,at:now,noticeAt:null,objected:false,cause:'reinstatement'};
   if(former?.hold?.cause==='break-glass')former.hold=null;
-  k.state='upheld';c.contest={...c.contest,state:'upheld',at:now};
+  k.state='upheld';c.contest={...c.contest,state:'upheld',at:now};this.hint(r,c.id,k.formerOwner?.sub,'drop','former-owner',now);
   await this.move(tx,r,c,'contest-resolved',now,{kind:'system',principal:null},{audit:{...detail,pair:approved,reinstated:party(k.formerOwner),authorityEpoch:r.authorityEpoch}});
   await this.notify(tx,r,c,'reinstated',now,{owner:false,parties:[k.formerOwner,prev]});
  }
@@ -747,11 +812,17 @@ export class BreakGlassService extends OwnershipService{
   const c=await this.metadata.get(CLAIM+id);if(!c)return {};
   let a=null;try{a=await this.accounts?.get(c.candidate.sub);}catch{a=null;}
   const changed=Number.isSafeInteger(a?.securityChangedAt)&&a.securityChangedAt>c.createdAt;
-  return {breakGlassCandidate:{ok:a?a.kind==='person'&&a.status==='active'&&!changed:null,gone:a?a.kind!=='person'||!['active'].includes(a.status)||changed:false}};
+  const out={breakGlassCandidate:{ok:a?a.kind==='person'&&a.status==='active'&&!changed:null,gone:a?a.kind!=='person'||!['active'].includes(a.status)||changed:false}};
+  // ORG-12b review M1: when the effect is due, re-read the owner's last interactive sign-in (outside the transaction), so a
+  // lost liveness signal can never let a claim take effect over an owner who signed in.
+  const now=this.clock.now(),due=c.state==='waiting'?now>=(c.waitEndsAt??Infinity):c.state==='final'?now>=Math.max(c.finalEndsAt??Infinity,(c.paidAt??0)+BREAK_GLASS.WAIT_S_MS):false;
+  if(due){let snap=null;try{snap=this.ownerChannels?await this.ownerChannels.snapshot(party(c.owner),{org:c.org??r0.id,at:now}):null;}catch{snap=null;}
+   out.breakGlassOwner=snap&&typeof snap==='object'?{ok:true,lastInteractiveAt:Number.isSafeInteger(snap.lastInteractiveAt)?snap.lastInteractiveAt:null}:{ok:false};}
+  return out;
  }
  async advanceExtra(r,now,tx,{fresh,extra,alerts,wake}){
   const k=r.breakGlassContest;
-  if(k&&k.state==='window'&&now>=k.until){k.state='closed';await this.audit(tx,r,'organization-break-glass-contest-window-closed',{kind:'system',principal:null},{claim:k.claim});}
+  if(k&&k.state==='window'&&now>=k.until){k.state='closed';this.hint(r,k.claim,k.formerOwner?.sub,'drop','former-owner',now);await this.audit(tx,r,'organization-break-glass-contest-window-closed',{kind:'system',principal:null},{claim:k.claim});}
   if(k&&['window','open'].includes(k.state)&&k.until>now)wake(k.until);
   if(k?.state==='open'&&!k.escalatedAt){const due=(k.openedAt??now)+BREAK_GLASS.CONTEST_OPEN_MAX_MS;if(now>=due){k.escalatedAt=now;alerts.push({kind:'organization-break-glass',action:'operator-alert',reason:'contest-undecided',org:r.id,claim:k.claim,since:k.openedAt});await this.audit(tx,r,'organization-break-glass-contest-escalated',{kind:'system',principal:null},{claim:k.claim});}else wake(due);}
   const c=await this.claimOf(tx,r);if(!c||!isOpen(c))return;
@@ -792,6 +863,9 @@ export class BreakGlassService extends OwnershipService{
   }
  }
  async tryEffect(tx,r,c,now,{fresh,extra,wake}){
+  // ORG-12b review M1: a sign-in found at the effect that no signal delivered is liveness (T9), before anything else.
+  const seen=extra?.breakGlassOwner?.ok===true?this.unseenLiveness(c,extra.breakGlassOwner):null;
+  if(seen!==null){await this.applyLiveness(tx,r,c,now,Math.min(seen,now));return;}
   // Review M1: Track A takes effect only if the T1, T5 and 72 h notices were each accepted by the provider on at least one
   // out-of-band channel; otherwise the claim is held for support (Track S).
   if(c.state==='waiting'){const missing=['start','paid','remind-72h'].filter(e=>!this.deliveredOutOfBand(c,e));
@@ -856,6 +930,7 @@ export class BreakGlassService extends OwnershipService{
     return {done:(e.channels??[]).every(ch=>row.has(ch.channel))};});
    return outcome?.done===true;
   }
+  if(e.kind==='bg-hint'){if(!this.claimHints)return true;const out=await this.claimHints.apply(e.person,{op:e.op,org:e.org,claim:e.claim,role:e.role,at:e.createdAt,...Number.isSafeInteger(e.until)?{until:e.until}:{}});return out?.ok===true;}
   if(e.kind==='ledger'){if(!this.claimLedger)return false;const out=await this.claimLedger.update(e.person,{org:r.id,claim:e.claim,event:e.event,at:e.createdAt});return out?.ok===true;}
   return false;
  }
@@ -881,7 +956,7 @@ export class BreakGlassService extends OwnershipService{
    const decisions=[];
    if(enabled&&!this.otherProcess(r)&&!this.limitsRefusal(r,now)&&(this.eligibleAdmin(r,m,now,now)||(await this.effectiveAdmins(r,now)).length===0&&this.eligibleMember(r,m,now,now)))decisions.push('start');
    if(formerOwner&&this.contestActive(r,now)&&r.breakGlassContest.state==='window')decisions.push('contest');
-   return {claim:view,decisions,contest:r.breakGlassContest&&(formerOwner||organizationPowers(r,actor.principal,{now}).length)?{claim:r.breakGlassContest.claim,until:r.breakGlassContest.until,state:r.breakGlassContest.state}:null};
+   return {organization:{id:r.id,name:r.name??null,handle:r.handle??null},claim:view,decisions,contest:r.breakGlassContest&&(formerOwner||organizationPowers(r,actor.principal,{now}).length)?{claim:r.breakGlassContest.claim,until:r.breakGlassContest.until,state:r.breakGlassContest.state}:null};
   });
  }
  async claimView(r,c,actor,now){
@@ -943,5 +1018,53 @@ export class BreakGlassService extends OwnershipService{
    if(!['counted','uncounted','ended','released'].includes(v.event))fail('invalid_request','Unsupported event.',400);
    const row=await tx.get(key);if(row)await tx.put(key,ledgerApply(row,{event:v.event,at:v.at}));return {ok:true};
   });
+ }
+
+ // ---- person placement: hints (ORG-12b) ---------------------------------------------------------------------------
+ /** System, in a PERSON's account writer: put or drop one hint row (`orgs/break-glass-hint/<org>`). At most 64 rows;
+  * rows with no live role and tombstones older than 400 days are pruned on write. Hints only route: every reader asks
+  * the organization (orgs.breakglass) before showing anything or signalling. */
+ async breakGlassHint(actor,input){
+  const v=exact(input,['op','org','claim','role','at','until']);
+  if(actor?.kind!=='system'||!['put','drop'].includes(v.op)||!UUID.test(v.org??'')||!UUID.test(v.claim??'')||!BREAK_GLASS_HINT_ROLES.includes(v.role)||!Number.isSafeInteger(v.at)||v.until!==undefined&&!Number.isSafeInteger(v.until))fail('forbidden','System only.',403);
+  return this.metadata.transaction(async tx=>{
+   if(await tx.get('owner')!==actor.owner)fail('forbidden','Account owner mismatch.',403);
+   const key=HINT+v.org,row=hintApply(await tx.get(key),v),old=v.at-400*DAY;
+   for(const [tomb,at] of Object.entries(row.dropped))if(!Number.isSafeInteger(at)||at<old)delete row.dropped[tomb];
+   if(!Object.keys(row.roles).length&&!Object.keys(row.dropped).length){await tx.delete(key);return {ok:true};}
+   if(!await tx.get(key)&&[...await tx.list({prefix:HINT,limit:65})].length>=64)return {ok:true,dropped:true};
+   await tx.put(key,row);return {ok:true};
+  });
+ }
+ /** ORG-12b review M1, person placement: durable owner-liveness signals. A sign-in queues one row per organization this
+  * person owns an open claim in (`orgs/break-glass-signal/<org>`, the newest sign-in wins); the account delivers it and
+  * retries with backoff for up to 7 days or 8 attempts (after that the effect-time re-read of the owner's activity still
+  * applies). `op`: queue {orgs, kind, at} | result {org, at, ok}. */
+ async breakGlassSignal(actor,input){
+  const v=exact(input,['op','orgs','kind','at','org','ok']);
+  if(actor?.kind!=='system'||!['queue','result'].includes(v.op)||!Number.isSafeInteger(v.at))fail('forbidden','System only.',403);
+  return this.metadata.transaction(async tx=>{
+   if(await tx.get('owner')!==actor.owner)fail('forbidden','Account owner mismatch.',403);const now=this.clock.now();
+   if(v.op==='queue'){if(!['sign-in','step-up'].includes(v.kind)||!Array.isArray(v.orgs))fail('invalid_request','Unsupported signal.',400);
+    for(const org of v.orgs.filter(o=>typeof o==='string'&&UUID.test(o)).slice(0,16)){const prior=await tx.get(SIGNAL+org);if(prior&&prior.at>=v.at)continue;await tx.put(SIGNAL+org,{org,kind:v.kind,at:v.at,attempts:0,nextAt:now,firstAt:prior?.firstAt??now});}
+    return {queued:true};}
+   if(typeof v.org!=='string'||!UUID.test(v.org))fail('invalid_request','Unsupported signal.',400);
+   const row=await tx.get(SIGNAL+v.org);if(!row||row.at!==v.at)return {done:true};
+   if(v.ok===true){await tx.delete(SIGNAL+v.org);return {done:true};}
+   const attempts=row.attempts+1;if(attempts>=BREAK_GLASS.CHANNEL_ATTEMPTS||now-row.firstAt>=BREAK_GLASS.CHANNEL_DAYS_MS){await tx.delete(SIGNAL+v.org);return {done:true,gaveUp:true};}
+   await tx.put(SIGNAL+v.org,{...row,attempts,nextAt:now+Math.min(6*HOUR,BREAK_GLASS.RETRY_MS/4*2**attempts)});return {done:false};
+  });
+ }
+ /** Person placement, read only: signals due now, and the next retry time. */
+ async breakGlassSignals(actor){
+  if(actor?.kind!=='system')fail('forbidden','System only.',403);if(await this.metadata.get('owner')!==actor.owner)return {due:[],wakeAt:null};
+  const now=this.clock.now(),rows=[...(await this.metadata.list({prefix:SIGNAL,limit:32})).values()];
+  return {due:rows.filter(x=>x.nextAt<=now).slice(0,16),wakeAt:rows.filter(x=>x.nextAt>now).reduce((m,x)=>Math.min(m,x.nextAt),Infinity)};
+ }
+ /** System, in a PERSON's account writer: this person's live hints (read only; never writes). */
+ async breakGlassHints(actor){
+  if(actor?.kind!=='system')fail('forbidden','System only.',403);
+  if(await this.metadata.get('owner')!==actor.owner)return {hints:[]};
+  const now=this.clock.now();return {hints:[...(await this.metadata.list({prefix:HINT,limit:64})).values()].flatMap(row=>liveHints(row,now))};
  }
 }

@@ -1,6 +1,8 @@
 import {BeamError,uuid} from './index.mjs';
 import {IdentityCrypto,secureEqual} from '../identity/crypto.mjs';
 import {key} from '../messaging/store.mjs';
+import {MAX_STORED_GRANTS} from '../messaging/contact-tokens.mjs';
+export const redeemedPeerKey=(peer,grantId)=>`beam/redeemed-peer/${peer}/${grantId}`;
 const fail=(c,m,s=400)=>{throw new BeamError(c,m,s);};
 const ic=new IdentityCrypto();
 export class BeamContacts {
@@ -16,7 +18,13 @@ export class BeamContacts {
  const prior=await this.metadata.get('beam/grant/'+id)||{},profileFields=input.profileFields!==undefined?[...input.profileFields]:input.discloseProfile!==undefined?input.discloseProfile?['displayName','bio','avatar']:[]:prior.profileFields||[];
  const permission={beamEnabled:input.beamEnabled??prior.beamEnabled??false,profileFields};await this.metadata.put('beam/grant/'+id,permission);return {id,...permission,discloseProfile:profileFields.length>0};
  }
- async redeem(owner,url,peer){const {grant}=await this.endpoints.inspect(url);if(grant.owner!==owner||!uuid(peer)||peer===owner)fail('contact_invalid_redemption','Redeem another account’s signed contact link.');/* Quarantine is silent to link holders (contact-tokens.md): redemption answers as for an active link. While quarantined the binding is not persisted (review #2), so a leaked paused link cannot take the single redemption slot; the holder redeems again after release. */return this.metadata.transaction(async tx=>{const prior=await tx.get('beam/redeemed/'+grant.id);if(prior&&prior.peer!==peer)fail('contact_already_redeemed','This invitation has already been bound to another account.',409);const binding={peer,grantId:grant.id,owner,expiresAt:grant.claims.exp*1000};if(!grant.quarantined)await tx.put('beam/redeemed/'+grant.id,binding);return binding;});}
+ // Wargame round 3 L3: every binding also writes a peer-keyed index row (`beam/redeemed-peer/<peer>/<grantId>`), so
+ // permission() reads only this peer's bindings instead of scanning a capped prefix of every owner binding.
+ // Quarantine is read inside the transaction (round 3 plausible finding), so a link quarantined after inspection is
+ // never persisted. Quarantine is silent to link holders (contact-tokens.md): redemption answers as for an active
+ // link. While quarantined the binding is not persisted (review #2), so a leaked paused link cannot take the single
+ // redemption slot; the holder redeems again after release.
+ async redeem(owner,url,peer){const {grant}=await this.endpoints.inspect(url);if(grant.owner!==owner||!uuid(peer)||peer===owner)fail('contact_invalid_redemption','Redeem another account’s signed contact link.');return this.metadata.transaction(async tx=>{const current=await tx.get(key('contact-grant',grant.id));if(!current||current.owner!==owner||!current.active||current.claims.exp*1000<=this.clock())throw Object.assign(new Error('Invalid contact capability.'),{code:'unauthorized'});const prior=await tx.get('beam/redeemed/'+grant.id);if(prior&&prior.peer!==peer)fail('contact_already_redeemed','This invitation has already been bound to another account.',409);const binding={peer,grantId:grant.id,owner,expiresAt:current.claims.exp*1000};if(!current.quarantined){await tx.put('beam/redeemed/'+grant.id,binding);await tx.put(redeemedPeerKey(peer,grant.id),{grantId:grant.id});}return binding;});}
 
  async remember(owner,binding){if(!uuid(binding.owner)||!uuid(binding.peer)||binding.peer!==owner||!uuid(binding.grantId))fail('contact_invalid_redemption','Invalid contact binding.');const rows=await this.metadata.list({prefix:'beam/directory/',limit:1001});if(rows.size>=1000&&!rows.has('beam/directory/'+binding.owner))fail('contact_directory_full','The contact directory is full.',429);await this.metadata.put('beam/directory/'+binding.owner,binding);return {peer:binding.owner,grantId:binding.grantId};}
  async forget(owner,peer){if(!uuid(peer))fail('contact_invalid','Choose a contact.');await this.metadata.delete('beam/directory/'+peer);return {removed:true,peer};}
@@ -24,7 +32,7 @@ export class BeamContacts {
  async permission(owner,peer,input={}){
  if(owner===peer)return {kind:'self'};
  if(input.inviteId){return this.metadata.transaction(async tx=>{const r=await tx.get('beam/nearby/'+input.inviteId);if(!r||r.peer!==peer||r.used||r.expiresAt<=this.clock())fail('beam_invite_expired','The nearby invitation has expired or was used.',410);if(input.consume){r.used=true;await tx.put('beam/nearby/'+input.inviteId,r);}return {kind:'nearby',id:input.inviteId,deviceId:r.deviceId,senderDevice:r.senderDevice};});}
- const grants=await this.metadata.list({prefix:'beam/redeemed/',limit:1000});for(const r of grants.values())if(r.owner===owner&&r.peer===peer&&(!input.grantId||r.grantId===input.grantId)){const grant=await this.metadata.get(key('contact-grant',r.grantId)),permission=await this.metadata.get('beam/grant/'+r.grantId);if(grant?.active&&!grant.quarantined&&grant.claims.exp*1000>this.clock()&&permission?.beamEnabled)return {kind:'contact',id:r.grantId};}
+ const indexed=await this.metadata.list({prefix:`beam/redeemed-peer/${peer}/`,limit:MAX_STORED_GRANTS});for(const {grantId} of indexed.values()){if(input.grantId&&grantId!==input.grantId)continue;const r=await this.metadata.get('beam/redeemed/'+grantId);if(r?.owner!==owner||r.peer!==peer)continue;const grant=await this.metadata.get(key('contact-grant',r.grantId)),permission=await this.metadata.get('beam/grant/'+r.grantId);if(grant?.active&&!grant.quarantined&&grant.claims.exp*1000>this.clock()&&permission?.beamEnabled)return {kind:'contact',id:r.grantId};}
  fail('beam_contact_required','Redeem a beam-enabled contact link or pair nearby first.',403);
  }
  async relationship(owner,peer,{grantId}={}){

@@ -60,13 +60,13 @@ const excluded={
  'builtin/':'Derived: built-in resource pointer.', 'hosted-index':'Derived: hosted index.', 'storage/':'Transient: quota cleanup and reservations.',
  'rpc-journal/':'Transient: RPC replay journal.', 'links-rpc/':'Transient: RPC replay journal.',
  'integration-events/':'Transient: integration delivery outbox.', 'brokered/':'Secret: brokered authority and severance journal.',
- 'shelved':'Derived: archive placement marker.', 'cold-index-mode':'Derived: archive placement marker.', 'lastOwnerActiveAt':'Lifecycle projection supplies activity time.', 'lastResourceActiveAt':'Lifecycle projection supplies activity time.',
+ 'shelved':'Derived: archive placement marker.', 'cold-index-mode':'Derived: archive placement marker.', 'lastOwnerActiveAt':'Lifecycle projection supplies activity time.', 'lastResourceActiveAt':'Lifecycle projection supplies activity time.', 'account/created-at':'Derived: account-local creation time for the semantic admission age gate.', 'semantic/first-seen':'Derived: semantic admission age-gate fallback clock.',
  'lifecycle':'Lifecycle state uses the lifecycle contributor; transport/effect journals are transient.', '@alarm':'Transient: scheduler wake.',
  'maintenance/':'Transient: maintenance retry.', 'population/':'Derived: aggregate active population.',
  'billing/pending':'Transient: checkout intent.', 'billing/sync':'Derived: provider synchronization health.',
  'drive/oauth/':'Secret: OAuth callback state.', 'drive/folder-pending/':'Secret: folder creation and OAuth journal.', 'drive/pending/':'Transient: upload journal.', 'drive/retained/':'External mappings are projected by the external-storage port.', 'drive/usage/':'Derived: external quota counters.',
  'evbus/index/':'Derived: manifest index.', 'evbus/reader/':'Secret: reader cursor authority.', 'evbus/permit/':'Transient: history opt-in.', 'evbus/tx/':'Transient: publish journal.', 'evbus/rate/':'Derived: rate counters.', 'evbus/meter/':'Derived: quota meters.', 'evbus/wait/':'Transient: wait leases.',
- 'conversation/outbox/':'Secret: delivery capabilities and pending tasks.', 'conversation/receipt/':'Transient: replay receipts.', 'conversation/delivery/':'Transient: fanout delivery tracking.', 'conversation/inbox-message/':'Transient: inbound replay receipts.', 'conversation/pending/':'Transient: pending invitations.',
+ 'conversation/outbox/':'Secret: delivery capabilities and pending tasks.', 'conversation/dead/':'Secret: retry-exhausted delivery tasks and capabilities.', 'conversation/sweep':'Transient: collection cursor.', 'conversation/receipt/':'Transient: replay receipts.', 'conversation/delivery/':'Transient: fanout delivery tracking.', 'conversation/inbox-message/':'Transient: inbound replay receipts.', 'conversation/pending/':'Transient: pending invitations.',
  'google-drive/':'Secret: OAuth and callback state; external mapping uses a dedicated port.'
 };
 export const EXPORT_EXCLUDED_PREFIXES=Object.freeze(excluded);

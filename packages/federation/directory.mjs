@@ -10,11 +10,20 @@ import {siteGlobal} from '../flags/read.mjs';
 import {isUUID} from '../core/primitives.mjs';
 import {verifyKeyContinuity} from '../identity/keys.mjs';
 import {MAX_MOVES,MAX_MOVES_DOCUMENT_BYTES,DOCUMENT_BYTES,MAX_DOCUMENT_KEYS,MAX_STATEMENT_BYTES,MAX_ATTESTATION_BYTES} from '../identity/succession.mjs';
-export const DIRECTORY_LIMITS=Object.freeze({timeoutMs:1500,maxBytes:65536,cacheEntries:256,inFlight:32,global:{windowMs:60000,limit:600},perSite:{windowMs:60000,limit:30}});
+export const DIRECTORY_LIMITS=Object.freeze({timeoutMs:1500,maxBytes:65536,cacheEntries:256,cacheBytes:8388608,inFlight:32,global:{windowMs:60000,limit:600},perSite:{windowMs:60000,limit:30}});
 const fail=code=>{throw Object.assign(new Error('The identity could not be verified.'),{code,status:503});};
 export function directoryURL(value){let u;try{u=new URL(value);}catch{return null;}return typeof value==='string'&&value.length<=2048&&u.href===value&&u.protocol==='https:'&&!u.port&&!u.username&&!u.password&&!u.hash&&!value.includes('#')&&publicClientHost(u.hostname)&&!/%2f|%5c|\\/i.test(u.pathname)?u:null;}
 const onOrigin=(value,issuer)=>{const u=directoryURL(value);return u&&u.origin===issuer&&!u.search&&!value.includes('?')?value:null;};
 const pinKey=(issuer,subject)=>key('directory-pin',issuer,subject);
+/** Wargame 2026-10-23 F2: the optional `handle` is `local` or `local@host` where host is exactly the issuer's host (a
+ * provider vouches only for handles on its own host); local is 1..64 printable ASCII characters without `@`, `/`, `?`,
+ * `#`, `\\` or `:`. Returns the local part, or null for an invalid handle. */
+export function directoryHandle(handle,issuer){
+ if(typeof handle!=='string'||handle.length>320)return null;const at=handle.indexOf('@'),local=at<0?handle:handle.slice(0,at),host=at<0?null:handle.slice(at+1);
+ if(!/^[\x21-\x7e]{1,64}$/.test(local)||/[@/?#\\:]/.test(local))return null;
+ let issuerHost;try{issuerHost=new URL(issuer).hostname;}catch{return null;}
+ return host===null||host.toLowerCase()===issuerHost?local:null;
+}
 const age=(header,cap)=>{if(/no-store|no-cache/i.test(header??''))return 0;const m=/(?:^|,)\s*max-age=(\d+)\s*(?:,|$)/i.exec(header??'');return m?Math.min(cap,Number(m[1])*1000):0;};
 export async function validateDirectoryDocument(document,{issuer,subject,crypto=globalThis.crypto}={}){
  if(!plainObject(document)||document.v!==1||document.iss!==issuer||document.sub!==subject||!['person','organization'].includes(document.kind)||Object.keys(document).some(n=>!['v','iss','sub','kind','handle','keys','features','moves'].includes(n))||!Array.isArray(document.keys)||document.keys.length>MAX_DOCUMENT_KEYS)fail('invalid_document');
@@ -28,21 +37,47 @@ export async function validateDirectoryDocument(document,{issuer,subject,crypto=
  if(document.keys.filter(k=>k.use==='sig'&&k.state==='active').length!==1)fail('invalid_document');
  const bytes=new TextEncoder().encode(JSON.stringify(document)).length;if(bytes>(document.moves?MAX_MOVES_DOCUMENT_BYTES:DOCUMENT_BYTES))fail('invalid_document');
  // Move chains confer no authority here. SuccessorRegistry must adopt them before the caller changes issuer.
- return structuredClone(document);
+ // Review follow-up (F2): a handle failing directoryHandle is dropped; the keys stay usable.
+ const accepted=structuredClone(document);if(accepted.handle!==undefined&&directoryHandle(accepted.handle,issuer)===null)delete accepted.handle;return accepted;
+}
+/** Fresh enough: unexpired, and with `early` more than half of its freshness lifetime left (refresh-ahead, F5). */
+const fresh=(entry,now,early)=>entry?.until>now&&(!early||entry.until-now>(entry.ttl??0)/2);
+/** Scaled limits for a roster of `n` identities (wargame 2026-10-23 F5, provisional): each identity is refetched about
+ * once per half to three quarters of its <=300 s freshness, so the per-site budget is n/2 + the base per minute and the
+ * cache holds the whole roster plus the base. Bounded by DIRECTORY_MAX_ROSTER. */
+export const DIRECTORY_MAX_ROSTER=65536;
+/** Review follow-up (F5): the document cache is bounded by bytes as well as entries (UTF-8 JSON size of each cached
+ * document). The roster-scaled byte budget is 8 MiB plus 8 KiB per identity, never more than 64 MiB. */
+export const DIRECTORY_MAX_CACHE_BYTES=67108864;
+export function directoryLimitsFor(n,base=DIRECTORY_LIMITS){
+ const size=Math.min(DIRECTORY_MAX_ROSTER,Math.max(0,Number.isSafeInteger(n)?n:0)),perSite=Math.max(base.perSite.limit,Math.ceil(size/2)+base.perSite.limit);
+ return {...base,cacheEntries:Math.max(base.cacheEntries,size+base.cacheEntries),cacheBytes:Math.min(DIRECTORY_MAX_CACHE_BYTES,Math.max(base.cacheBytes,base.cacheBytes+size*8192)),perSite:{...base.perSite,limit:perSite},global:{...base.global,limit:Math.max(base.global.limit,perSite*2)}};
 }
 export class IdentityDirectory {
- constructor({store,fetch,enabled=false,config=null,issuers=[],clock=()=>Date.now(),limiter,crypto=globalThis.crypto,limits={}}={}){
+ /** `tenant`: the owner whose budget this directory spends at a shared egress (passed as `budget` in the fetch init). */
+ constructor({store,fetch,enabled=false,config=null,issuers=[],clock=()=>Date.now(),limiter,crypto=globalThis.crypto,limits={},tenant=null}={}){
   if(!store?.transaction||typeof fetch!=='function')throw new TypeError('Directory needs a durable transactional pin store and SSRF-safe egress.');
-  Object.assign(this,{store,fetcher:fetch,config,enabled:enabled===true,issuers:new Set(issuers),clock,crypto,limits:{...DIRECTORY_LIMITS,...limits},limiter:limiter??memoryLimiter({clock})});this.cache=new Map();this.manifests=new Map();this.flights=new Map();this.misses=new Map();
+  Object.assign(this,{store,fetcher:fetch,config,enabled:enabled===true,issuers:new Set(issuers),clock,crypto,limits:{...DIRECTORY_LIMITS,...limits},limiter:limiter??memoryLimiter({clock}),tenant:typeof tenant==='string'?tenant:null});this.base=this.limits;this.cache=new Map();this.cacheBytes=0;this.manifests=new Map();this.flights=new Map();this.misses=new Map();this.manifestFlights=new Map();
  }
+ /** F5: the caller's roster size (MemberContextService discovery); scales the per-site budget and the cache. */
+ capacity(n){this.limits=directoryLimitsFor(n,this.base);}
+ /** Cache only, never dials: the fresh cached document for (issuer, subject), or null. */
+ peek({issuer,subject}={}){if(!this.allowed(issuer)||!isUUID(subject))return null;const entry=this.cache.get(issuer+'\n'+subject);return entry?.document&&fresh(entry,this.clock(),false)?structuredClone(entry.document):null;}
  allowed(issuer){const u=directoryURL(issuer+'/');return (this.config?siteGlobal(this.config,'DIRECTORY_ENABLED'):this.enabled)&&u&&u.origin===issuer&&this.issuers.has(issuer);}
- remember(map,k,v){map.delete(k);map.set(k,v);while(map.size>this.limits.cacheEntries)map.delete(map.keys().next().value);}
- async json(url,maxBytes){
-  const u=directoryURL(url);if(!u||!this.allowed(u.origin))fail('issuer_refused');
-  if(!await this.limiter.consume('directory/global',this.limits.global)||!await this.limiter.consume('directory/site/'+clientSite(u.hostname),this.limits.perSite))fail('rate_limited');
+ remember(map,k,v){
+  if(map===this.cache){const drop=key=>{this.cacheBytes-=map.get(key)?.bytes??0;map.delete(key);};drop(k);v.bytes=v.document?new TextEncoder().encode(JSON.stringify(v.document)).length:0;map.set(k,v);this.cacheBytes+=v.bytes;
+   while(map.size>this.limits.cacheEntries||this.cacheBytes>this.limits.cacheBytes&&map.size>1)drop(map.keys().next().value);
+   if(this.cacheBytes>this.limits.cacheBytes)drop(k);return;}
+  map.delete(k);map.set(k,v);while(map.size>this.limits.cacheEntries)map.delete(map.keys().next().value);}
+ async json(url,maxBytes,priority='background'){
+  const u=directoryURL(url);if(!u||!this.allowed(u.origin))fail('issuer_refused');const site=clientSite(u.hostname);
+  // Unconfirmed degradation (claimed-refresh starvation): request-path 'claimed' refreshes use at most a third of the
+  // per-site budget, so member refreshes keep the rest.
+  // Review follow-up: the narrower limiters run first, so a refused claimed or per-site request spends no global token.
+  if(priority==='claimed'&&!await this.limiter.consume('directory/claimed/'+site,{...this.limits.perSite,limit:Math.max(1,Math.floor(this.limits.perSite.limit/3))})||!await this.limiter.consume('directory/site/'+site,this.limits.perSite)||!await this.limiter.consume('directory/global',this.limits.global))fail('rate_limited');
   const controller=new AbortController();let timer;
   const work=(async()=>{
-   const response=await this.fetcher(url,{method:'GET',redirect:'manual',credentials:'omit',headers:{Accept:'application/json','Accept-Encoding':'identity'},signal:controller.signal});
+   const response=await this.fetcher(url,{method:'GET',redirect:'manual',credentials:'omit',headers:{Accept:'application/json','Accept-Encoding':'identity'},signal:controller.signal,budget:{tenant:this.tenant??'',priority,allowance:this.limits.perSite.limit}});
    if(response?.status===404){void response.body?.cancel().catch(()=>{});return {gone:true,ttl:Math.min(60000,age(response.headers.get('Cache-Control'),60000))};}
    if(response?.status!==200){void response?.body?.cancel().catch(()=>{});fail('temporarily_unavailable');}
    const length=response.headers.get('Content-Length'),encoding=response.headers.get('Content-Encoding');
@@ -55,9 +90,14 @@ export class IdentityDirectory {
   })();work.catch(()=>{});
   try{return await Promise.race([work,new Promise((_,reject)=>{timer=setTimeout(()=>{controller.abort();reject(Object.assign(new Error('Directory timeout.'),{code:'temporarily_unavailable'}));},this.limits.timeoutMs);})]);}finally{clearTimeout(timer);}
  }
- async manifest(issuer){
+ async manifest(issuer,priority){
   const cached=this.manifests.get(issuer);if(cached?.until>this.clock())return cached.directory;
-  const result=await this.json(issuer+'/.well-known/bindle/manifest.json',65536),d=result.document;
+  // F1: concurrent refreshes share one manifest fetch.
+  if(this.manifestFlights.has(issuer))return this.manifestFlights.get(issuer);
+  const pending=this.#manifest(issuer,priority).finally(()=>this.manifestFlights.delete(issuer));this.manifestFlights.set(issuer,pending);return pending;
+ }
+ async #manifest(issuer,priority){
+  const result=await this.json(issuer+'/.well-known/bindle/manifest.json',65536,priority),d=result.document;
   if(!plainObject(d)||d.issuer!==issuer||d.version!=='0'||!plainObject(d.features)||!onOrigin(d.features['directory.v1']?.directory_url,issuer))fail('invalid_manifest');
   for(const name of ['authorization_request_endpoint','authorization_endpoint','token_endpoint','rpc_endpoint','jwks_uri'])if(!onOrigin(d[name],issuer))fail('invalid_manifest');
   if(!Array.isArray(d.login_presentation)||!d.login_presentation.includes('redirect')||Object.keys(d.features).length>32||Object.values(d.features).some(v=>!plainObject(v)||new TextEncoder().encode(JSON.stringify(v)).length>4096))fail('invalid_manifest');
@@ -83,19 +123,21 @@ export class IdentityDirectory {
    const pin={identity,kid:active.kid,states,material,epoch:(previous?.epoch??0)+(reset?1:0)};await tx.set(path,pin);return pin;
   });
  }
- async refresh({issuer,subject,kid}={}){
+ /** `priority`: 'background' (default), 'claimed' (a request-path claim) or 'interactive' (user-triggered). `early`:
+  * refetch once less than half of the cached freshness lifetime is left (refresh-ahead for rosters, F5). */
+ async refresh({issuer,subject,kid,priority='background',early=false}={}){
   if(!this.allowed(issuer)||!isUUID(subject))fail('issuer_refused');const name=issuer+'\n'+subject;
   if(this.flights.has(name))return this.flights.get(name);
-  const cached=this.cache.get(name),now=this.clock();if(cached?.until>now&&(!kid||cached.document?.keys.some(k=>k.kid===kid)))return cached.document?structuredClone(cached.document):null;
+  const cached=this.cache.get(name),now=this.clock();if(fresh(cached,now,early&&!kid)&&(!kid||cached.document?.keys.some(k=>k.kid===kid)))return cached.document?structuredClone(cached.document):null;
   if(kid&&cached){const last=this.misses.get(name);if(last!==undefined&&last+60000>now)return null;this.remember(this.misses,name,now);}
   if(this.flights.size>=this.limits.inFlight)fail('rate_limited');
   const pending=(async()=>{
    const pinned=await this.store.transaction(tx=>tx.get(pinKey(issuer,subject)));let identity=pinned?.identity;
-   if(!identity){const directory=await this.manifest(issuer),lookup=await this.json(directory+'?sub='+encodeURIComponent(subject),8192);if(lookup.gone){this.remember(this.cache,name,{document:null,until:this.clock()+lookup.ttl});return null;}const d=lookup.document;if(!plainObject(d)||Object.keys(d).sort().join(',')!=='identity,iss,sub'||d.iss!==issuer||d.sub!==subject||!onOrigin(d.identity,issuer))fail('invalid_directory');identity=d.identity;}
-   const result=await this.json(identity+'/identity.json',MAX_MOVES_DOCUMENT_BYTES);
-   if(result.gone){this.remember(this.cache,name,{document:null,until:this.clock()+result.ttl});return null;}
+   if(!identity){const directory=await this.manifest(issuer,priority),lookup=await this.json(directory+'?sub='+encodeURIComponent(subject),8192,priority);if(lookup.gone){this.remember(this.cache,name,{document:null,until:this.clock()+lookup.ttl,ttl:lookup.ttl});return null;}const d=lookup.document;if(!plainObject(d)||Object.keys(d).sort().join(',')!=='identity,iss,sub'||d.iss!==issuer||d.sub!==subject||!onOrigin(d.identity,issuer))fail('invalid_directory');identity=d.identity;}
+   const result=await this.json(identity+'/identity.json',MAX_MOVES_DOCUMENT_BYTES,priority);
+   if(result.gone){this.remember(this.cache,name,{document:null,until:this.clock()+result.ttl,ttl:result.ttl});return null;}
    const document=await validateDirectoryDocument(result.document,{issuer,subject,crypto:this.crypto});await this.accept(issuer,subject,identity,document);
-   this.remember(this.cache,name,{document,identity,until:this.clock()+result.ttl});return structuredClone(document);
+   this.remember(this.cache,name,{document,identity,until:this.clock()+result.ttl,ttl:result.ttl});return structuredClone(document);
   })().finally(()=>this.flights.delete(name));this.flights.set(name,pending);return pending;
  }
  async resolve({issuer,subject,kid,purpose='signing',identity}={}){

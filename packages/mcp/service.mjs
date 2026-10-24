@@ -1,4 +1,5 @@
 import {collectAppMetadata,validateAppMetadataConfig} from '../apps/metadata.mjs';
+import {siteEnabled} from '../flags/read.mjs';
 import {base64url,digest,boundedString} from '../messaging/store.mjs';
 export const MCP_LAYOUT='mcp-auth-v1-64';
 export const MCP_SHARDS=64;
@@ -31,6 +32,8 @@ export class McpAuthorization {
  validGrant(g){return this.live(g)&&g.active===true&&identifier.test(g.id)&&g.id.startsWith(this.shard+'.')&&/^[a-f0-9-]{36}$/.test(g.owner)&&this.clients.has(g.clientId)&&Number.isSafeInteger(g.approvedAt)&&g.approvedAt<=this.clock()&&g.expiresAt<=g.approvedAt+30*86400000&&Array.isArray(g.permissions)&&g.permissions.length>0&&g.permissions.length<=200&&new Set(g.permissions.map(p=>p?.collectionId)).size===g.permissions.length&&g.permissions.every(p=>p&&/^(inbox|resource):[a-f0-9-]{36}$/.test(p.collectionId)&&Array.isArray(p.tools)&&p.tools.length>0&&p.tools.length<=TOOLS.length&&new Set(p.tools).size===p.tools.length&&p.tools.every(n=>TOOLS.some(t=>t.name===n)));}
  async record(tx,k,value){await tx.set(k,value);await tx.set(`mcp/v1/expiry/${String(value.expiresAt).padStart(16,'0')}/${k}`,{key:k,expiresAt:value.expiresAt});}
  async cleanup(){return this.metadata.transaction(async tx=>{const rows=await tx.list({prefix:'mcp/v1/expiry/',limit:100});let removed=0;for(const[k,v]of rows){if(v.expiresAt>this.clock())break;const current=await tx.get(v.key);if(current?.expiresAt<=this.clock())await tx.delete(v.key);await tx.delete(k);removed++;}return {removed};});}
+ // APP_METADATA_DISCOVERY_ENABLED (class a, G C) gates any injected egress port per client; default off (wargame 3, F7).
+ discovery(clientId){try{return siteEnabled(this.config,'APP_METADATA_DISCOVERY_ENABLED',{client:{clientId}})===true;}catch{return false;}}
  client(id,uri){const c=this.clients.get(id);if(!c||!c.redirectUris.includes(uri))fail('invalid_client','Application and redirect must be registered.');return c;}
  resourceCheck(value){let canonical;try{canonical=new URL(value).href;}catch{}if(canonical!==this.resource)fail('invalid_target','The resource must be this MCP endpoint.');}
  async begin(input){
@@ -42,7 +45,7 @@ export class McpAuthorization {
  async pending(tx,id){shardOf(id);const r=await tx.get(`mcp/v1/request/${id}`);if(!this.live(r)||r.status!=='pending'||r.requestId!==id||r.resource!==this.resource||!Array.isArray(r.scopes)||!r.scopes.length||r.scopes.some(s=>!TOOLS.some(t=>s===`mcp:${t.name}`)))fail('invalid_request','Authorization expired or completed.');this.client(r.client_id,r.redirect_uri);return r;}
  async inspect(owner,id){
   const pending=await this.metadata.transaction(async tx=>{const r=await this.pending(tx,id);if(this.connections){if(r.consentOwner&&r.consentOwner!==owner)fail('invalid_request','Authorization belongs to another account.');if(!r.consentOwner){r.consentOwner=owner;r.connectionBinding=await this.connections.binding(owner,r.client_id);await tx.set(`mcp/v1/request/${id}`,r);}}return r;});
-  let metadata=pending.appMetadata;if(!metadata){let loading=this.metadataLoads.get(id);if(!loading){loading=collectAppMetadata(this.clients.get(pending.client_id),{publicFetch:this.metadataLoads.size<16?this.config.APP_METADATA_FETCH:undefined,local:this.config.LOCAL_DEVELOPMENT==='true'});if(this.metadataLoads.size<16)this.metadataLoads.set(id,loading);}try{metadata=await loading;}finally{if(this.metadataLoads.get(id)===loading)this.metadataLoads.delete(id);}}
+  let metadata=pending.appMetadata;if(!metadata){let loading=this.metadataLoads.get(id);if(!loading){loading=collectAppMetadata(this.clients.get(pending.client_id),{publicFetch:this.metadataLoads.size<16&&this.discovery(pending.client_id)?this.config.APP_METADATA_FETCH:undefined,local:this.config.LOCAL_DEVELOPMENT==='true'});if(this.metadataLoads.size<16)this.metadataLoads.set(id,loading);}try{metadata=await loading;}finally{if(this.metadataLoads.get(id)===loading)this.metadataLoads.delete(id);}}
   return this.metadata.transaction(async tx=>{const r=await this.pending(tx,id);if(this.connections&&r.consentOwner!==owner)fail('invalid_request');if(!r.appMetadata){r.appMetadata=metadata;await tx.set(`mcp/v1/request/${id}`,r);}return {requestId:id,client:{id:r.client_id,name:r.appMetadata.name,registeredName:this.clients.get(r.client_id).name,metadata:r.appMetadata,redirectUri:r.redirect_uri},scopes:r.scopes,tools:TOOLS.filter(t=>r.scopes.includes(`mcp:${t.name}`)),expiresAt:r.expiresAt};});
  }
  redirect(r,params){const u=new URL(r.redirect_uri);for(const[k,v]of Object.entries({...params,state:r.state,iss:this.issuer}))u.searchParams.set(k,v);return u.href;}

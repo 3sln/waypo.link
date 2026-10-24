@@ -25,6 +25,11 @@ const protocol=code=>{throw new P.ProtocolFault(code);};
 const unavailable=(code='recipient_unavailable')=>{throw new P.ProtocolFault(code,{retryAfter:60});};
 const DAY=86400000,NEGATIVE_REUSE_MS=900000,MAX_DECISIONS=256;
 const issuerHost=issuer=>new URL(issuer).host;
+// Refusal buckets are per registrable domain, so one operator cannot spread refusals over subdomain issuers. An
+// approximation without the public suffix list: the last two labels (three under a known two-level suffix); IP
+// literals and single-label hosts are their own bucket.
+const TWO_LEVEL=new Set(['co.uk','org.uk','ac.uk','gov.uk','com.au','net.au','org.au','co.nz','co.jp','ne.jp','or.jp','com.br','com.cn','co.in','co.za','com.mx','com.tr']);
+export const issuerSite=issuer=>{const host=new URL(issuer).hostname;if(host.includes(':')||/^\[|^\d+(\.\d+){3}$/.test(host))return host;const labels=host.split('.');if(labels.length<=2)return host;return labels.slice(TWO_LEVEL.has(labels.slice(-2).join('.'))?-3:-2).join('.');};
 
 export class ReceiveConfigure extends MailboxAction {
  static operation='receive.configure';static deps=['receive'];
@@ -62,18 +67,18 @@ async function audience({store,providerLink,parent,principal,envelope,now}){
 const sameSegments=(a,b)=>typeof a==='string'&&typeof b==='string'&&a.length===b.length&&equalDigest(a,b);
 
 // Pre-crypto refusal limiter (review BB2-R3): refusals that happen after author verification (ineligible, blocked,
-// over quota or budget) are counted per verified principal and per issuer host, in memory and bounded; the next
+// over quota or budget) are counted per verified principal, per issuer host and per issuer registrable domain, in memory and bounded; the next
 // attempt claiming that principal or issuer is refused before any crypto, status fetch or links-contract call.
 // Only verified refusals count, so nobody can throttle another principal by claiming it.
-export const REFUSALS=Object.freeze({windowMs:3600000,principal:20,issuer:200});
+export const REFUSALS=Object.freeze({windowMs:3600000,principal:20,issuer:200,site:1000});
 const limiters=new WeakMap();
 const limiterFor=store=>{let l=limiters.get(store);if(!l){l=boundedCache(4096);limiters.set(store,l);}return l;};
-const refusalKeys=principal=>[`p|${principalKey(principal)}`,`i|${issuerHost(principal.issuer)}`];
+export const refusalKeys=principal=>[[`p|${principalKey(principal)}`,REFUSALS.principal],[`i|${issuerHost(principal.issuer)}`,REFUSALS.issuer],[`s|${issuerSite(principal.issuer)}`,REFUSALS.site]];
 function checkRefusals(store,principal,now){
- const l=limiterFor(store),[pk,ik]=refusalKeys(principal);
- for(const [key,max] of [[pk,REFUSALS.principal],[ik,REFUSALS.issuer]]){const row=l.get(key,now);if(row&&row.count>=max){const e=new MailboxFault('rate_limited','Too many messages. Try again later.',429);e.retryAfter=Math.max(1,Math.ceil((row.until-now)/1000));throw e;}}
+ const l=limiterFor(store);
+ for(const [key,max] of refusalKeys(principal)){const row=l.get(key,now);if(row&&row.count>=max){const e=new MailboxFault('rate_limited','Too many messages. Try again later.',429);e.retryAfter=Math.max(1,Math.ceil((row.until-now)/1000));throw e;}}
 }
-function countRefusal(store,principal,now){const l=limiterFor(store);for(const key of refusalKeys(principal)){const row=l.get(key,now)??{count:0,until:now+REFUSALS.windowMs};l.set(key,{count:row.count+1,until:row.until},row.until);}}
+function countRefusal(store,principal,now){const l=limiterFor(store);for(const [key] of refusalKeys(principal)){const row=l.get(key,now)??{count:0,until:now+REFUSALS.windowMs};l.set(key,{count:row.count+1,until:row.until},row.until);}}
 const COUNTED=new Set(['audience_ineligible','not_authorized','rate_limited','link_invalid','too_large','operation_conflict']);
 
 // Link quotas, request status and budgets for one new admission. Pure over the rows it is given: run read-only before
@@ -144,7 +149,7 @@ export class ReceiveDeliver extends MailboxAction {
     if(outcome==='replay')return {receipt:prior.receipt,replay:true};
     const plan=admissionPlan({live,budget:await tx.get(KEYS.budget),known:await tx.get(`known/${principalKey(principal)}`),principal,bytes,now,plan:config.plan}),request=plan.request;let hot=0;
     await tx.put(KEYS.budget,plan.budget);
-    if(delivery.body&&bytes>=BOUNDS.inlineBodyBytes&&!staged){const u=await tx.get(KEYS.usage)??{hotBytes:0,hotItems:0};if(u.hotBytes+bytes>BOUNDS.hotBytes||u.hotItems+1>BOUNDS.hotItems)unavailable('recipient_storage_unavailable');await chargeUsage(tx,{bytes});hot=bytes;}
+    if(delivery.body&&bytes>=BOUNDS.inlineBodyBytes&&!staged){/* The item row keeps the envelope too, so it is charged with the body. */const charge=bytes+new TextEncoder().encode(P.jcs(envelope)).byteLength,u=await tx.get(KEYS.usage)??{hotBytes:0,hotItems:0};if(u.hotBytes+charge>BOUNDS.hotBytes||u.hotItems+1>BOUNDS.hotItems)unavailable('recipient_storage_unavailable');await chargeUsage(tx,{bytes:charge});hot=charge;}
     const intake=live.intake??{revision:0,autoTags:[],optionalTags:[]},offered=new Set(intake.optionalTags.map(t=>t.id));
     const tags=[...intake.autoTags.map(id=>({id,source:'intake'})),...p.optionalTags.filter(t=>offered.has(t)).map(id=>({id,source:'sender'}))];
     const item={id,origin:'native',kind:p.kind,author:{principal:author.principal,keyId:author.keyId,jkt:author.jkt,client:{client_id:author.client.client_id,origin:author.client.origin}},

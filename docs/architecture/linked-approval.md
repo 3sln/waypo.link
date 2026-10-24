@@ -268,7 +268,8 @@ Status: implemented and engine-tested in `packages/identity/linked-approval.mjs`
 - `app` kind: the same `authAt` rule (2026-10-20, superseding the fresh-sign-in rule and its `fresh_sign_in_required` error): the confirmation must also postdate the request (review LA2-S7), so `reauthentication_required` until a step-up made for this approval. A derived session qualifies only after its own step-up.
 
 **Errors (`IdentityFault.code`).**
-- `invalid_code`: one generic shape for unknown, expired, decided or mismatched codes, from resolve, approve and deny.
+- `invalid_code`: one generic shape for unknown, expired, decided or mismatched codes, from resolve, approve and deny. `linkedApprove` takes the `kind` its caller is approving (the session route sends `session`; the device grant's consent path sends `app`; absent means `session`), and a mismatch with the request's kind is `invalid_code`, so an `app` request is never approved without owner consent (provisional, DEVLOG 2026-10-23, red-team round 3 D4).
+- Approval extends `pendingUntil` to at least one maximum poll interval (60 s) after the approval, so a request approved in its last interval is still collected on the device's next poll rather than answered `expired_token` (provisional, DEVLOG 2026-10-23, round 3 D5).
 - `rate_limited`, with `retryAfter` in seconds.
 - `challenge_required`: the global budget is spent, so retry with a Turnstile token.
 - `typed_resolution_unavailable`: the operator refuses typed codes; locators still work.

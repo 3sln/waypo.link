@@ -2,7 +2,7 @@
 import {TransferEnrollmentAction} from '../../identity/transfer-enrollment.mjs';
 import {requestAgeLocation} from '../../identity/age-policy.mjs';
 import {identity,json,body,bytesOf,flagGlobal,status,pseudonym,subnet,securePage} from './shared.mjs';
-const API=/^\/api\/transfer-in\/(check|start|status|cancel|retry|email-start|email-confirm)$/;
+const API=/^\/api\/transfer-in\/(check|start|passkey-options|status|cancel|retry|email-start|email-confirm)$/;
 export function allowedMethods(path){return API.test(path)?['POST']:null;}
 export const admission={exempt:path=>API.test(path)};
 export const stages={
@@ -25,7 +25,7 @@ export const stages={
  async unauthenticated({request,env,path,local}){
   const match=API.exec(path);if(!match)return;
   if(new URL(request.url).search)return json({error:'not_found'},404);
-  if(!env.TRANSFER_IN_INTAKE||['check','start'].includes(match[1])&&!flagGlobal(env,'IDENTITY_TRANSFER_IN_ENABLED'))return json({error:'not_found'},404);
+  if(!env.TRANSFER_IN_INTAKE||['check','start','passkey-options'].includes(match[1])&&!flagGlobal(env,'IDENTITY_TRANSFER_IN_ENABLED'))return json({error:'not_found'},404);
   const origin=request.headers.get('Origin');if(origin!==env.APP_ORIGIN)return json({error:'invalid_origin'},403);
   const secret=env.ABUSE_HASH_KEY||env.KEY_ENCRYPTION_KEY,ip=request.headers.get('CF-Connecting-IP')||(local?'127.0.0.1':'unknown');
   if(!secret||typeof env.ABUSE?.consume!=='function'){if(!local)return json({error:'temporarily_unavailable'},503);}else for(const [kind,value,limit]of [['ip',ip,20],['network',subnet(ip),80]])if(!await env.ABUSE.consume('transfer-intake:'+kind+':'+await pseudonym(value,secret),{windowMs:60000,limit}))return json({error:'rate_limited'},429,{'Retry-After':'60'});

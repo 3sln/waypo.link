@@ -34,16 +34,24 @@ Scopes are `mcp:collections_list`, `mcp:items_list`, `mcp:item_read`, `mcp:item_
 | Function | Inbox | Storage |
 | --- | --- | --- |
 | `collections_list` | Selected descriptor | Selected descriptor |
-| `items_list` | Bounded collection page | Bounded object page |
+| `items_list` | Bounded collection page of allowlisted metadata | Bounded object page |
 | `item_read` | Item contents | Object contents |
-| `item_write` | Message metadata only, no moving to another collection | Conditional hosted object creation/replacement |
+| `item_write` | Message metadata only, no moving to another collection, may quarantine but never release quarantine | Conditional hosted object creation/replacement |
 | `item_delete` | Delete selected collection's message | Version-conditional hosted object deletion |
 
 External source adapters currently provide verified configured read capabilities; writes/deletes are available only for hosted storage. All mutation paths use the existing free/paid account work budget, storage quotas and durable journals. MCP itself is not gated on a paid plan. Request UUIDs bind mutation retries to exact arguments. Account storage conditions and uncertainty handling remain authoritative. Inbox mutation journals reserve before effects and fail closed with `indeterminate` after an interrupted operation.
 
+Inbox `item_write` and `item_delete` are each charged once to the account work budget before the journal reservation. Browser automation charges a write once, at its confirmed prepare step, and the dispatched operation does not charge it again (hosted storage writes included). A deterministic refusal raised by the messaging update, such as an unregistered system tag or a missing message, is journaled as `failed` and replays as the same error rather than wedging the request UUID as `indeterminate`. Journal rows carry `expiresAt` 48 hours after reservation and an expiry index (`mcp/operation-expiry/`) that the account alarm sweeps in batches of 100. A request UUID therefore binds to its arguments and outcome for 48 hours; after the sweep, the same UUID is a new request. Rows written before this change carry no expiry and are not migrated (pre-release data).
+
+Inbox `items_list` rows, wherever they are produced (the tool, the collection resource, the `review_collection` prompt and browser automation, which share one account operation), are projected to an allowlist: `id`, `mimeType`, `size`, `receivedAt`, `readAt`, `tags`, `classification`, `quarantined`, and `subject` only when `item_read` is also consented for that collection. Notification summaries (body excerpts), grant identifiers, the owner identifier and other sender metadata are never returned.
+
+Agents may set `quarantined: true` but never release quarantine. The tool schema accepts only `true`, and the account operation refuses any other value with `forbidden`, so an injected instruction in quarantined content cannot release it or re-arm its notification. Release stays an owner action in the console (provisional decision, wargame 3, 2026-10-23).
+
+Browser automation has an operator kill switch, `BROWSER_AUTOMATION_ENABLED` (class b, default on, because the surface shipped always on). With `false`, tool discovery, grants, prepare, confirm and invoke return `not_found`. Revoking a session grant is never gated.
+
 Inbox collection resources expose a bounded item listing using the same `items_list` authorization check. Object-storage sources do not offer `items_list`, listing resources, or listing prompts: apps read their own known directory/index objects with `item_read`. Tool discovery intersects exact grants with the current source capabilities, so stale storage listing grants cannot revive enumeration. The `review_collection` prompt loads only permitted collection metadata and describes item content as untrusted data. Prompt generation does not expose account identity credentials or grant secrets.
 
-Input bodies are capped at 128 KiB, OAuth token forms at 8 KiB, pages at 50 items and generated tool results at 100,000 encoded bytes. Hosted/inbox content over 64 KiB is rejected before blob download; configured external adapters retain their own bounded download policy and the MCP output limit. Large file handling belongs in the account interface. No tool runs a fleet-wide search or unbounded inbox snapshot.
+Input bodies are capped at 128 KiB, OAuth token forms at 8 KiB, pages at 50 items and generated tool results at 100,000 encoded bytes. Hosted/inbox content over 64 KiB is rejected before blob download. Managed Google Drive objects are refused before download from their locally recorded verified size. S3/WebDAV adapters have no local size record and retain their own bounded download policy (1 MiB) plus the MCP output limit. Large file handling belongs in the account interface. No tool runs a fleet-wide search or unbounded inbox snapshot.
 
 ## Durable routing and operational limits
 
@@ -62,6 +70,9 @@ Implemented and tested locally: Node SQLite restart persistence, official SDK HT
 | Independent MCP namespace and fixed 64-shard layout | Unassigned | — | Provisional |
 | Operator pre-registration and refresh-family revocation | Unassigned | — | Provisional |
 | Bounded storage/inbox tool capability surface | Unassigned | — | Provisional |
+| Agents may quarantine but never release quarantine; release is owner-only in the console (wargame 3) | Unassigned | — | Provisional |
+| `items_list` allowlist projection; subject only with `item_read` (wargame 3) | Unassigned | — | Provisional |
+| 48-hour mutation journal replay lifetime with alarm-swept expiry index (wargame 3) | Unassigned | — | Provisional |
 
 ## References
 

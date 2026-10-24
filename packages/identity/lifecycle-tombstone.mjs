@@ -1,6 +1,8 @@
 import {revokeAllLineage} from './linked-approval.mjs';
 import {AdminService} from './admin.mjs';
 import {isUUID as uuid} from '../core/primitives.mjs';
+import {settlementMarker} from './redirect-records.mjs';
+const plain=value=>value!==null&&typeof value==='object'&&!Array.isArray(value);
 
 // Kept on the tombstone so permanent namespace claims stay bound and are never recycled. Everything else,
 // including the identity `security` state (account-deletion-export.md §2.1), is discarded. A moved identity
@@ -25,7 +27,7 @@ export function movedWindow(moved,now){
  * marker that the identity moved. After `movedUntil` nothing that names the new address is kept. */
 export function retainedMoved(moved,now){
  const window=movedWindow(moved,now);if(!moved||typeof moved!=='object')return null;
- if(window.live||window.proof){const kept=structuredClone(moved);if(!window.live){delete kept.redirectBase;delete kept.reminderEmail;delete kept.extensionOrder;}return kept;}
+ if(window.live||window.proof){const kept=structuredClone(moved);if(!window.live){for(const name of ['redirectBase','reminderEmail','extensionOrder','retarget','destinationKeys'])delete kept[name];}return kept;}
  return null;
 }
 
@@ -63,7 +65,7 @@ export function lifecycleIdentityPort(repository,{clock=()=>Date.now()}={}){
     const now=clock(),next=Object.fromEntries(RETAINED.filter(key=>account[key]!==undefined).map(key=>[key,structuredClone(account[key])]));
     revokeAllLineage(account,now);if(account.lineageOutbox?.length)next.lineageOutbox=account.lineageOutbox;
     Object.assign(next,{status:'deleted',deletedAt:now,revision:account.revision+1,sessions:[],credentials:[],challenges:[],emailChallenges:[],passwordHash:null,recoveryHash:null,audit:[{event:`account-deleted-${reason}`,at:now}]});
-    if(moved){const kept=retainedMoved(account.moved,now);next.movedPurgedAt=now;if(kept){next.status='moved';next.moved=kept;}}
+    if(moved){const kept=retainedMoved(account.moved,now);next.movedPurgedAt=now;if(kept){next.status='moved';next.moved=kept;}else{const marker=plain(account.moved)&&account.moved.ended===true?account.moved.settlement:settlementMarker(account.moved,now);if(marker)next.movedSettlement=structuredClone(marker);}}
     if(await repository.compareAndSwap(owner,account.revision,next))return true;
    }
    throw Object.assign(new Error('The identity changed during deletion; retry later.'),{code:'lifecycle_identity_conflict',status:409});

@@ -58,12 +58,14 @@ export const stages={
       headers.set('Content-Security-Policy',headers.get('Content-Security-Policy').replace("connect-src 'self'",`connect-src 'self' https:${local?' http://localhost:*':''}`).replace("form-action 'self'",flagsFor(env).enabled('INTENT_LINKS_ENABLED')?`form-action https:${local?' http://localhost:*':''}`:"form-action 'self'"));if(!page.ok||!headers.get('Content-Type')?.includes('text/html'))return new Response(page.body,{status:page.status,headers});const preview=await contactPreview({env,intentLinksEnabled:flagsFor(env).enabled('INTENT_LINKS_ENABLED'),target:request.url,profile:previewProfile(env,request,local)});return new Response(injectPreview(await page.text(),preview),{status:preview.verified?page.status:404,headers});}
      let sub;if(linkForm){try{const claims=parseLinkMeta(query.meta).claims;if(claims.aud===env.APP_ORIGIN+path)sub=claims.sub;}catch{}}else if(query.form==='legacy'){const sig=url.searchParams.get('sig');if(sig&&sig.length<=16384)sub=jwsPart(sig,1)?.sub;}
      if(typeof sub!=='string'||!uuidPattern.test(sub))return refused();
-     const recipient=await env.IDENTITY_REPOSITORY.get(sub);if(!recipient||recipient.status!=='active'||recipient.handle!==signedContact[1])return refused();
      const remoteIP=request.headers.get('CF-Connecting-IP')||(local?'127.0.0.1':'unknown');
      let ingressRetry=3600;if(!await limit(env,{operation:'message',remoteIP,onDenied:window=>ingressRetry=Math.ceil(window.windowMs/1000)}))return json({error:'rate_limited'},429,{...publicHeaders,'Retry-After':String(ingressRetry)});
      // Per claimed principal and network before any verification or policy work (links §7.2). Keying by
      // network too means nobody can exhaust another principal's window from elsewhere.
      if(query.data!==undefined){const claimed=jwsPart(query.data,1);if(typeof claimed?.iss==='string'&&typeof claimed?.sub==='string'&&!await limit(env,{operation:'link-audience',remoteIP,handle:`${claimed.iss}\u0000${claimed.sub}\u0000${subnet(remoteIP)}`}))return json({error:'rate_limited'},429,{...publicHeaders,'Retry-After':'60'});}
+     // The identity is looked up only after the caller's own budgets (wargame round 3 L1): a limited caller gets the
+     // same 429 whatever the named identity's lifecycle, so the limiter is not an account-state oracle.
+     const recipient=await env.IDENTITY_REPOSITORY.get(sub);if(!recipient||recipient.status!=='active'||recipient.handle!==signedContact[1])return refused();
      try{
      const handle=accountHandle(env,sub);
      if(!representation&&request.method!=='POST'){await handle.contactMetadata(sub,request.url,[]);return json({error:'not_acceptable'},406,publicHeaders);}

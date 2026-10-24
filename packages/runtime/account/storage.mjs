@@ -17,6 +17,7 @@ import {LINKS_CONTRACT} from '../../links/types.mjs';
 import {linksResourceMethod} from './links.mjs';
 import {CLASSIFIER_CONTRACT,classifierResourceMethod} from './classifier.mjs'; // EXT-X10
 import {collectGarbageRef} from '../export-pins.mjs';
+import {WORK_PRECHARGED} from '../../mcp/account.mjs';
 
 // Append-only: add one contract handler per slice. Handlers receive (controller,owner,context)
 // and own method validation, live authorization and replay checks before effects or cached results.
@@ -48,7 +49,7 @@ export const methods={
       }else {const existing=await existingBuiltins();resource=existing[0];id=resource?.id??crypto.randomUUID();}
       const freshBuiltin=!resource&&pointer===undefined;
       if(!resource){resource={id,owner,name:'Account storage',provider:'hosted',builtin:true,status:'connected',contracts:[contract],capabilities:{read:true,write:true,range:true,conditionalWrites:true,presigned:{read:false,write:false},maxObjectBytes:1048576},verifiedAt:Date.now()};await tx.put(`resource/${id}`,resource);}
-      if(pointer===undefined)await tx.put(pointerKey,{version:1,owner,id});if(boundOwner===undefined)await tx.put('owner',owner);return resource;
+      if(pointer===undefined)await tx.put(pointerKey,{version:1,owner,id});if(boundOwner===undefined){await tx.put('owner',owner);if(await tx.get('account/created-at')===undefined)await tx.put('account/created-at',Date.now());}return resource;
     });
   },
   async storageUsage(owner){await this.warm(owner);const usage=await this.quota.usage(owner);return {...usage,...this.storageWriteBudget?{writeOperations:await this.storageWriteBudget.status(owner)}:{}};},
@@ -67,7 +68,7 @@ export const methods={
   async googleDriveComplete(owner,sessionId,input){await this.warm(owner);if(!input||Object.keys(input).some(k=>!['state','code','error'].includes(k)))throw new StorageError('invalid_args','Invalid Google connection callback.');await this.admitWork(owner);const result=await this.googleDrive.complete(owner,sessionId,input);await this.touch(owner);return result;},
   async verifyResource(owner,id,input={}){objectKey(input.key);const resource=await this.metadata.get(`resource/${id}`);if(!resource||resource.owner!==owner||resource.kind==='app-connection')throw new Error('Resource not found');const options={allowedHosts:(this.config.ALLOWED_CONNECTOR_HOSTS||'').split(',').filter(Boolean)};const config=resource.provider==='google-drive'?null:await decryptSecret(resource.secret,this.config.KEY_ENCRYPTION_KEY);const adapter=resource.provider==='google-drive'?await this.googleDrive.adapter(owner,id):resource.provider==='s3'?new S3Adapter(config,options):new WebDAVAdapter(config,options);await adapter.get({key:input.key});const updated=await this.metadata.transaction(async tx=>{const current=await tx.get(`resource/${id}`);if(!current||current.owner!==owner||current.generation!==resource.generation)throw new StorageError('forbidden','The connection changed during verification.',403);const next={...current,capabilities:adapter.describe(),status:'connected',verifiedAt:Date.now()};await tx.put(`resource/${id}`,next);return next;});const {secret,...result}=updated;return result;},
   async deleteResource(owner,id){const builtin=await this.metadata.get('builtin/hosted-resource-v1');if(builtin?.owner===owner&&builtin.id===id)throw new StorageError('builtin_resource','Account storage is always available and cannot be disconnected.',409);const app=await this.metadata.get(`resource/${id}`);if(app?.kind==='app-connection')return this.apps.disconnect(owner,id);const resource=await this.metadata.get(`resource/${id}`);if(!resource||resource.owner!==owner)throw new Error('Resource not found');if(resource.builtin===true)throw new StorageError('builtin_resource','Account storage is always available and cannot be disconnected.',409);if(resource.provider==='google-drive')return this.googleDrive.disconnect(owner,id);if(resource.provider==='hosted'&&(await this.metadata.list({prefix:`hosted/${id}/`,limit:1})).size)throw new StorageError('resource_not_empty','Delete the files in this hosted resource before removing it.',409);await this.metadata.delete(`resource/${id}`);return {deleted:true};},
-  async federationRPC(context){
+  async federationRPC(context,precharged){
     const owner=/\/entities\/([a-f0-9-]{36})$/.exec(context.subject)?.[1];if(!owner||context.subject!==`${this.config.APP_ORIGIN}/entities/${owner}`)throw new StorageError('forbidden','Resource access denied.',403);
     if(Object.hasOwn(RESOURCE_METHOD_HANDLERS,context.contract))return RESOURCE_METHOD_HANDLERS[context.contract](this,owner,context);
     if(context.method==='list')throw new StorageError('unsupported_method','Object storage has no listing operation; use application-managed directory objects.');
@@ -96,7 +97,7 @@ export const methods={
     let journalReserved=false;const reserveJournal=async()=>{let live=0;for(const [record,value]of await this.metadata.list({prefix:'rpc-journal/',limit:257})){if(value.createdAt+86400000<=Date.now())await this.metadata.delete(record);else live++;}if(live>=256)throw new StorageError('rate_limited','This account has reached its retained write-operation limit.',429);await this.metadata.put(journalKey,{fingerprint,state:'reserved',createdAt:Date.now()});journalReserved=true;};
     try{
       let result;
-      if(resource.provider==='hosted')result=await this.hostedOperation(resource,context.method,context.args,reserveJournal,context.clientId);
+      if(resource.provider==='hosted')result=await this.hostedOperation(resource,context.method,context.args,reserveJournal,context.clientId,precharged===WORK_PRECHARGED);
       else if(resource.provider==='google-drive'){const adapter=await this.googleDrive.adapter(owner,resource.id);if(context.method==='capabilities')result=adapter.describe();else if(context.method==='get'){const value=await adapter.get(context.args);result={dataBase64:base64(value.bytes),object:{key:context.args.key,version:value.version,size:value.size??value.bytes.byteLength,contentType:value.contentType}};}else if(context.method==='put'){if(typeof context.args.dataBase64!=='string'||context.args.dataBase64.length>1398104||!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(context.args.dataBase64))throw new StorageError('invalid_args','Canonical base64 data is required.');let bytes;try{bytes=Uint8Array.from(atob(context.args.dataBase64),c=>c.charCodeAt(0));}catch{throw new StorageError('invalid_args','Use a valid base64 byte payload.');}if(base64(bytes)!==context.args.dataBase64)throw new StorageError('invalid_args','Canonical base64 data is required.');if(bytes.length>1048576)throw new StorageError('body_too_large','This resource accepts files up to 1 MiB.',413);await this.admitWork(owner,{clientId:context.clientId});await reserveJournal();const value=await adapter.put({...context.args,bytes});result={object:{key:context.args.key,...value}};}else if(context.method==='delete'){await reserveJournal();result=await adapter.delete(context.args);}else throw new StorageError('unsupported_method','Google Drive does not support this operation.');}
       else {const config=await decryptSecret(resource.secret,this.config.KEY_ENCRYPTION_KEY);const options={allowedHosts:(this.config.ALLOWED_CONNECTOR_HOSTS||'').split(',').filter(Boolean)};const adapter=resource.provider==='s3'?new S3Adapter(config,options):new WebDAVAdapter(config,options);if(context.method==='capabilities')result=adapter.describe();else if(context.method==='get'){const value=await adapter.get(context.args);result={dataBase64:base64(value.bytes),object:{key:context.args.key,version:value.version,size:value.size??value.bytes.byteLength,contentType:value.contentType}};}else if(context.method==='presign')result=await adapter[context.method](context.args);else throw new StorageError('unsupported_method','This connector does not support that operation.');}
       if(assignedScope.maxObjectBytes&&context.method==='get'&&result.object?.size>assignedScope.maxObjectBytes)throw new StorageError('forbidden','The object exceeds the assigned byte limit.',403);
@@ -111,7 +112,7 @@ export const methods={
     const rows=await this.metadata.list({prefix,...cursor?{startAfter:cursor}:{},limit:200});
     await this.metadata.transaction(async tx=>{for(const [,object]of rows)this.itemIndex.upsertObject(resource.id,object);if(rows.size<200){await tx.put(`hosted-index-ready/${resource.id}`,true);await tx.delete(`hosted-index-cursor/${resource.id}`);}else await tx.put(`hosted-index-cursor/${resource.id}`,[...rows.keys()].at(-1));});
   },
-  async hostedOperation(resource,method,args={},beforeEffect=async()=>{},clientId='@system'){
+  async hostedOperation(resource,method,args={},beforeEffect=async()=>{},clientId='@system',workCharged=false){
     if(method==='capabilities'){const {list:legacyList,...capabilities}=resource.capabilities;return capabilities;}
     if(method==='list')throw new StorageError('unsupported_method','Object storage has no listing operation; use application-managed directory objects.');
     objectKey(args.key);const path=`hosted/${resource.id}/${encodeURIComponent(args.key)}`,current=await this.metadata.get(path);
@@ -126,7 +127,7 @@ export const methods={
       const bytes=Uint8Array.from(atob(args.dataBase64),c=>c.charCodeAt(0));if(bytes.length>1048576)throw new StorageError('quota_exceeded','Objects are limited to one MiB.',429);
       if(args.contentType!==undefined&&(typeof args.contentType!=='string'||args.contentType.length>100||/[\r\n]/.test(args.contentType)))throw new StorageError('invalid_args','Content type is invalid.');
       const usage=await this.metadata.get('hosted-usage')||{bytes:0,objects:0};if(usage.objects+(!current?1:0)>1_000_000)throw new StorageError('quota_exceeded','The object count limit has been reached.',429);
-      await this.quota.check(resource.owner,{bytes:bytes.length,replacedBytes:current?.size||0});await this.admitWork(resource.owner,{clientId});
+      await this.quota.check(resource.owner,{bytes:bytes.length,replacedBytes:current?.size||0});if(!workCharged)await this.admitWork(resource.owner,{clientId});
       const version=crypto.randomUUID(),blobRef=`objects/${resource.owner}/${resource.id}/${version}`;
       const reservation=await this.quota.reserve(resource.owner,{id:version,bytes:bytes.length,replacedBytes:current?.size||0,blobRef,kind:'object'});
       try{
