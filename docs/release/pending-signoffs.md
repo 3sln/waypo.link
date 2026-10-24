@@ -2,6 +2,8 @@
 
 Status: digest, written 2026-10-24 at HEAD a38bfed. It covers DEVLOG.md from "2026-10-22 — User decisions: Parley data on deletion, org identity, certificates, naming" through "2026-10-23 — Redirect management re-review fixes (round 2)". An update the same day adds two entries: "2026-10-24 — AU-S6 producer summary, What's left and removal reminders" and "2026-10-24 — ORG-10 relations design". It also covers the earlier organization and portability decisions that those entries still refer to: organization prices, BG-1 to BG-17 and P14–P19.
 
+A second update, at HEAD 6bbae45, adds everything after "2026-10-24 — Pending sign-off digest": "2026-10-24 — UI quality pass 3 (browser probe round 3)"; "2026-10-24 — Scalability fixes round 2 (producer, conversations, retention totals, tombstones, directory)" and its review follow-ups; "2026-10-24 — ORG-12d support adjudication" and its review follow-ups and wargame 4 admin items; and "2026-10-24 — Operator and lifecycle wargame fixes" and its review follow-ups. The new items are ID-11, OB-45 to OB-52, MC-9, AP-15, AP-16, UI-8 to UI-11 and OL-7 to OL-17, plus new unverified external assumptions at the end.
+
 How to read this file:
 
 - [DEVLOG.md](../../DEVLOG.md) is the source of record. This file only summarises it, and where the two differ, DEVLOG wins. Sign-offs go on the DEVLOG entry's `Reviewer / Date / Outcome` line, not here.
@@ -26,6 +28,8 @@ These items reverse an earlier stated position, carry legal or compliance weight
 10. **PB-7 — Break-glass processing fee.** 5% + $0.50 is kept on a voluntary withdrawal, and what counts as voluntary is set (BG-4, BG-17).
 11. **PB-11 — Regional pricing arbitrage policy (open).** Buyers can choose the cheapest configured currency.
 12. **OB-28 — ORG-10 RL-2: any admin establishes relations.** There is no owner approval, elevation or delay, which is a governance call.
+13. **AP-15 — RR1-M7 privacy deviation: per-object app markers plus a pointer index.** Together they effectively make a per-app file record, which the RR1-M7 privacy position was meant to avoid. The DEVLOG says it is not approval of an exception.
+14. **OB-45 — Operator key custody residual.** Operator assertion keys are held by the admin service, but the admin service and the account objects share one deployment and one secret environment, so the separation is logical, not a hard trust boundary. Production needs a key custody review.
 
 ## Pricing and billing
 
@@ -228,6 +232,21 @@ These items reverse an earlier stated position, carry legal or compliance weight
 - Why: to stop P15 rotation churn (#11).
 - Source: "Identity and federation wargame fixes".
 - Safe alternative: none recorded.
+- Owner: ___
+
+**ID-11. Push subscriptions end with an explicit session end, not natural expiry**
+- Decided: a push subscription records the public id of the session that created it. It ends when that session is ended explicitly, but not when the session expires naturally.
+- Value:
+  - "Explicit end" covers revoke, session-cap eviction, recovery, ordinary sign-out of the session's own chain, "sign out other devices", and administrator suspension, closure and reopening.
+  - A natural 24 h expiry does not end the subscription. It stays live until revoke-others, an explicit end or a re-subscribe.
+  - The account object keeps a 25 h end marker per ended session, so a late subscribe from that session is refused.
+  - "Sign out other devices" also removes every subscription not bound to a kept session, including legacy unbound rows. The browser's own subscription id is kept.
+  - Before any message push, rows bound to an ended session are dropped, and notice-channel counts skip them.
+  - Deletion and portability channel snapshots are copies taken when the request starts. A device revoked during an in-flight request keeps receiving that request's notices.
+  - A failed end stays on the account as `pendingPushEnds` and is retried on the next save or owner view. It clears by a random nonce.
+- Why: a revoked device must stop receiving pushes. Sessions last at most 24 h and the client does not re-subscribe at sign-in, so treating natural expiry as revocation would silence push daily.
+- Source: "Operator and lifecycle wargame fixes" (M1, reading 1, and review follow-ups); "ORG-12d support adjudication" (push subscriptions on admin suspension).
+- Safe alternative: end the subscription on natural expiry too. It was rejected as silencing push daily.
 - Owner: ___
 
 ## Portability
@@ -732,6 +751,112 @@ Already settled by the user and not repeated here: relations as relationships be
 - Safe alternative: none recorded.
 - Owner: ___
 
+### ORG-12d support adjudication
+
+Source for every item below: "2026-10-24 — ORG-12d support adjudication", including its review follow-ups and wargame 4 admin items, unless an item names another. Everything is behind `ORG_BREAK_GLASS_ENABLED` (default off) and runs on loopback fixtures, a local WebAuthn verifier and the offline Polar model. The DEVLOG marks every item provisional.
+
+**OB-45. ES256 operator assertions, keys held by the admin service (custody residual)**
+- Decided: operator assertions are signed with ES256 (ECDSA P-256) instead of the HMAC shared secret. The admin service generates and holds the key pair, and the organization writer only verifies.
+- Value:
+  - the private JWK is kept sealed under `KEY_ENCRYPTION_KEY` in the admin store, with the same AES-GCM sealing as the identity key registry;
+  - the sealing is bound to its purpose (`operator-signer/<kid>`) through the AES-GCM additional data;
+  - the writer verifies with the published `operator-key/<kid>` and never reads the private key;
+  - without `KEY_ENCRYPTION_KEY`, nothing is issued (`operator_assertions_unavailable`, 503);
+  - the assertion is `oa1.<payload>.<signature>`, covers a domain-separated scope, and lasts 5 minutes;
+  - it is registered in the same admin-store commit as the audit intent, so nothing is valid before that commit;
+  - it is single use host-wide, checked against a registry row under the store's revision check, with the engine's per-process nonce list as a second check;
+  - the verifier re-checks that the operator still holds the capability (administrator role plus `support.org-break-glass`, no hold);
+  - internal provenance and active status are checked at issue, at most 5 minutes before verification;
+  - account objects receive only `narrowAdminStore(...)`, bound to the calling organization.
+- Why: it replaces the HMAC shared secret in production wiring, and the verified-operator-identity gate needs a real signer.
+- Residual: the admin service and the account objects share one deployment and one secret environment, so the separation is logical, not a hard trust boundary. In the Worker, the `ADMIN_AUTHORITY` binding is still present in every isolate's environment. The narrowing is in what the account code is given, not in the platform's bindings. Production still needs a key custody review, rotation tooling, real WebAuthn evidence and an operator onboarding procedure.
+- Safe alternative: none recorded. The HMAC double stays only as a test double for older suites.
+- Owner: ___
+
+**OB-46. Rotate on retire**
+- Decided: when the current signing key's published key is retired or missing, the next issue generates a new key rather than failing.
+- Value: the new key replaces `operator-signer` under compare-and-swap on its revision, audited as `operator-key.rotate`. A retired key (`retiredAt`) stops verifying. There is no other rotation tooling.
+- Why: after a key was retired, the signer kept issuing with it (review L4).
+- Source: "ORG-12d support adjudication" (deviation 5; review follow-up L4).
+- Safe alternative: none recorded.
+- Owner: ___
+
+**OB-47. Operator daily decision limit, and refused decisions still spend quota**
+- Decided: each operator may issue a limited number of decisions a day, and a decision the writer later refuses still counts.
+- Value:
+  - 20 decisions per operator in a fixed 24-hour window;
+  - it is spent in the same commit as the per-actor window, and `AdminStorage.commit` checks all windows before spending any;
+  - every issued assertion counts, including those the writer later refuses;
+  - an assertion is spent when the writer's verifier accepts it, before the writer's own rules run, so a refused decision still uses one assertion and one of the 20;
+  - the admin service refuses early, from the current view, an operator's own pending proposal and a barred operator's proceed, which saves an assertion;
+  - at the cap the answer is `decision_limit`, with nothing forwarded;
+  - lapse reasons are capped at 280 characters, and a bad note never spends an assertion.
+- Why: the entry gives no reason beyond the limit itself, which it marks provisional.
+- Source: "ORG-12d support adjudication" (daily limit; readings and deviations 3; review follow-ups L1 and reading 2).
+- Safe alternative: none recorded. Refunding quota on writer refusal is not recorded as an option.
+- Owner: ___
+
+**OB-48. Flag gate: uphold is exempt, and the gate covers the seizing direction only**
+- Decided: while `ORG_BREAK_GLASS_ENABLED` is off for the organization, `proceed`, `reject` and lapse `proceed` answer the uniform 404. `uphold`, the queue, the case view and the safe direction (`acknowledge`, `note`, `abort`, lapse `close`) are not gated.
+- Value: `ORG_CASE_GATED` = proceed, reject. Uphold stays a two-operator decision.
+- Why: following §12d.12 and the flag registry's reason that support holds are never gated. Upholding a contest restores the former owner, a safe direction a kill switch must never block. Rejecting leaves the break-glass owner in place, so it stays gated.
+- Source: "ORG-12d support adjudication" (flag gate; readings 2 and 4; review follow-up M2).
+- Note: the DEVLOG says this narrows the instruction "flag-gate the routes", and asks for review.
+- Safe alternative: gate uphold too (the state before review follow-up M2), which would block the reinstatement remedy while the switch is off.
+- Owner: ___
+
+**OB-49. Operators: administrator accounts, passkey-bound decisions**
+- Decided: operators are administrator accounts, never boot. Each decision needs its own passkey assertion, bound to that decision.
+- Value:
+  - operators hold the capability under the console's passkey-only step-up (15-minute read window, 5-minute mutation window);
+  - `OPERATOR_CAPABILITY` is boot-assignable only and never delegable, and a catalog that classifies it as user class or delegable is invalid;
+  - `POST /api/admin/org-cases/challenge` stores a digest of the decision and a 5-minute expiry, and the decide route consumes it in its intent commit;
+  - an operator racing two decisions holds one bound challenge at a time;
+  - boot is refused with `operator_capability_required`.
+- Why: no single operator, and no stolen session, should be able to seize an organization (§12d.8).
+- Open: the two-person rule holds only if boot onboarding binds each operator account to a distinct human and a distinct authenticator. The DEVLOG's gate table lists this as open and procedural.
+- Source: "ORG-12d support adjudication" (operators; capability; review follow-up L7; before production).
+- Safe alternative: none recorded.
+- Owner: ___
+
+**OB-50. Operator proposals: cancellation and approval**
+- Decided: a proposal by an inactive operator (revoked, held or suspended) stops counting as one of the two operators.
+- Value:
+  - before approving, the writer re-verifies the pending proposer, cancels an inactive proposer's proposal with the organization audit entry `organization-support-proposal-cancelled` (reason `proposer-inactive`), and the call becomes a new proposal. If the proposal changed in between, the call is refused with `conflict`;
+  - the admin service remembers each operator's pending proposals (`operator-proposals/<operator>`, the 72 h approval window, at most 32) and cancels them when boot revokes the capability or suspends the operator;
+  - a catalog change that removes the capability from a role is not cancelled proactively, and the approval-time re-check covers it.
+- Why: a revoked or held operator's proposal had still counted as one of the two operators (review M1).
+- Source: "ORG-12d support adjudication" (review follow-up M1; readings 1).
+- Safe alternative: none recorded.
+- Owner: ___
+
+**OB-51. Reason text handling**
+- Decided: the organization and claimants see only a digest of a decision reason. The text stays in an admin-only note.
+- Value:
+  - the admin service forwards only `reasonDigest` (SHA-256) to both writers, and the organization audit carries only the digest;
+  - the text is stored in `org-case-note/<sha256>`, written in the same commit as the decision's audit intent, and shown to operators in the operator audit;
+  - the notes row is plain within the admin store, not sealed, and identical text shares one row, which keeps its first author and context;
+  - reasons are 10–500 characters, 280 for lapse claims;
+  - the console says: "The organization sees only a digest. The text stays in an admin-only note that operators read in the operator audit."
+- Why: a lapse-claim reason had reached the claimant (review M3), and the text was otherwise kept nowhere (L2).
+- Source: "ORG-12d support adjudication" (decisions; review follow-ups M3, L1, L2; reading 3).
+- Safe alternative: none recorded. Sealing the notes row is not recorded as an option.
+- Owner: ___
+
+**OB-52. ORG-12d readings and deviations from the plan**
+- Decided: the implementation departs from the plan in small ways.
+- Value:
+  - the routes live in `packages/runtime/admin-org-cases.mjs` beside `admin-flags-http.mjs`, not under `routes/`;
+  - excluding every channel answers `invalid_exclusion` before `last_channel` when some channel was never excludable (the writer's existing order);
+  - only live cases sit under `org-case/<org>`, a closed case's row is deleted, and the highest applied sequence is kept in `org-case-seq/<org>`;
+  - rows are routing only, and the admin service confirms every case with the writer before showing or deciding;
+  - `org-cases.audit` scans at most 1,000 entries per page;
+  - the case view carries no addresses and no statement text.
+- Why: engine and console reasons recorded in the entry.
+- Source: "ORG-12d support adjudication" (readings and deviations 1 and 6; queue; review follow-up L3).
+- Safe alternative: none recorded.
+- Owner: ___
+
 ## Messaging and conversations
 
 **MC-1. Quarantine is silent; Beam exception left to the user**
@@ -810,6 +935,22 @@ Already settled by the user and not repeated here: relations as relationships be
 - Value: TTL is min(300 s, the beam's remaining life). 4 re-issues. The reservation cap is 4 × the participant envelope. 16 live offers per sender.
 - Why: findings D1 and D2.
 - Source: "Links, Beam, device and directory wargame fixes".
+- Safe alternative: none recorded.
+- Owner: ___
+
+**MC-9. Conversation index trade-offs (BindleBox and legacy)**
+- Decided: conversation reads use derived indexes that are maintained with each write and built in bounded steps. A read of an incomplete index fails instead of returning a partial page.
+- Value:
+  - BindleBox ordering uses a resumable materialized traversal. A late parent, an edit, a retraction or a delegation quarantine invalidates the generation, and an incomplete generation returns `conversation_index_building`, never a partially ordered or partially quarantined page;
+  - replay deadlines are indexed, and legacy replay rows migrate in 32-row slices;
+  - legacy dead letters have peer, oldest and expiry pointers, and replay receipts have expiry pointers;
+  - one shared sweep budget covers migration, cleanup, deadlines and rooms, with continuation alarms;
+  - peer recovery queues bounded redrive jobs and keeps the job while a full page or no outbox room remains;
+  - collected rooms leave resumable history-cleanup jobs, and reinvitation waits for them;
+  - a safe dependent-message append skips a rebuild;
+  - the new families live under the existing transient `conversation/sweep/` family, and export files were left untouched.
+- Why: ordering, replay expiry and dead-letter redrive scanned every row (probe cliffs #4 and #5). The trade-off is extra write-time pointers and a transient unavailable state while an index builds.
+- Source: "Scalability fixes round 2 (producer, conversations, retention totals, tombstones, directory)" (#4, #5; review follow-ups M1, L1, L3).
 - Safe alternative: none recorded.
 - Owner: ___
 
@@ -939,6 +1080,33 @@ Already settled by the user and not repeated here: relations as relationships be
 - Value: activity queries return at most 100 entries and scan at most 500 notices. The view first requests 50. Push stays bounded to ten subscriptions.
 - Why: reminders were push-only and best-effort.
 - Source: "2026-10-24 — AU-S6 producer summary, What's left and removal reminders".
+- Safe alternative: none recorded.
+- Owner: ___
+
+**AP-15. RR1-M7 deviation: per-object producer pointers (requires privacy review)**
+- Decided: on top of the earlier marker-on-object deviation (AP-12), the engine writes derived per-object path pointers, in the same transaction as the authoritative record. Together they effectively make a per-app file record. The DEVLOG says this is a provisional privacy/storage/write-amplification deviation and not approval of an RR1-M7 exception.
+- Value:
+  - transactional connection/generation pointers index last writers, distinct creators, live removals, pruned lineages and active keeps by resource and generation;
+  - they sit under the derived `storage/producer-gc/` family, hold existing record paths and no contents, and have no external provider index or production API;
+  - equal writer and creator pointers are deduplicated (one pointer for the ordinary creation case), and a distinct creator can need a second;
+  - unchanged attribution does not rewrite pointers;
+  - the account metadata is a portable ordered key/value store (on Workers the Durable Object KV API), whose values are not addressable from SQL.
+- Why: summaries and deletion would otherwise traverse unrelated objects. A local workerd probe showed expression indexes work only for JSON stored in an ordinary SQL table, and the KV API's backing table refused them (`SQLITE_AUTH`).
+- Source: "Scalability fixes round 2 (producer, conversations, retention totals, tombstones, directory)" (RR1-M7 deviation; review follow-up 6).
+- Safe alternative: move the authoritative `hosted/` and `drive/object/` records into an application SQL table and index with expression indexes. It is a storage-layer migration across the transactional metadata boundary. It would not remove the concern either, because the index B-tree still stores the derived connection and generation per object. It is recorded for the RR1-M7 reviewer.
+- Owner: ___
+
+**AP-16. Producer index bounds and fail-closed probes**
+- Decided: producer summaries, deletion and marker collection run on bounded passes over the pointers, with documented limits that fail closed.
+- Value:
+  - summaries read at most 5,000 target pointers or objects, and deletion and marker collection at most 200 target objects;
+  - keep lookup uses the newest relevant choices, and cross-removal keeps keep their own cleanup coverage until superseded;
+  - `knownResource` for large apps skips between generations and checks at most 4 pointers per range (`PROBE_POINTERS`) over at most 64 writer generations (`PROBE_GENERATIONS`), and past that it answers `not_found`;
+  - marker collection records at most 128 protected keep scopes (`protectedScopes`) and restarts the pass if any is no longer active;
+  - legacy attribution indexing advances 200 rows per call, owner requests retry while it builds, and marker alarms reschedule;
+  - Node metadata listing starts at the greater of prefix and cursor.
+- Why: the 5,000-object summary and the 200-object deletion batch were the probe cliffs #3 and #9. The DEVLOG calls the probe bound "a documented bound, not a full guarantee".
+- Source: "Scalability fixes round 2 (producer, conversations, retention totals, tombstones, directory)" (#3, #9; review follow-ups L2 and L4).
 - Safe alternative: none recorded.
 - Owner: ___
 
@@ -1090,6 +1258,41 @@ Already settled by the user and not repeated here: relations as relationships be
 - Safe alternative: none recorded.
 - Owner: ___
 
+**UI-8. "Not now" on the owner interstitial lasts until reload**
+- Decided: dismissing the break-glass owner interstitial with "Not now" lasts only until the page reloads, and the copy says so in both languages.
+- Value: reload.
+- Why: the DEVLOG records it as a provisional choice without a further reason.
+- Source: "UI quality pass 3 (browser probe round 3)" (provisional dismissal choice).
+- Safe alternative: none recorded.
+- Owner: ___
+
+**UI-9. What the browser keeps across refresh (abort capability, wizard answers, transfer retries)**
+- Decided: some private state is kept in the browser so a refresh or an interrupted step does not lose it.
+- Value:
+  - a validated abort-notice capability is kept in tab-scoped `sessionStorage` after the fragment is removed, restored on reload, and cleared after a successful submission;
+  - failed and indeterminate break-glass Start results keep the private wizard and answers through refresh, and success clears them;
+  - a `step_up_required` transfer error keeps the operation privately and retries after the security check.
+- Why: browser probe findings M1, M2 and M4.
+- Source: "UI quality pass 3 (browser probe round 3)".
+- Safe alternative: none recorded.
+- Owner: ___
+
+**UI-10. Firefox module loading: import map and preloads (build choice)**
+- Decided: the CSP-hashed import map is parser-visible before preloads and the classic wire-up. The build removes the generator's duplicate map installation and keeps its stylesheet and deferred-entry behaviour. Hashed module preloads remain.
+- Value: 453 identical file paths and digests across two builds. A local agent cross-review found no actionable CSP issue, which is not human sign-off.
+- Why: browser probe finding M6 (Firefox module loading).
+- Source: "UI quality pass 3 (browser probe round 3)".
+- Safe alternative: none recorded.
+- Owner: ___
+
+**UI-11. Admin console: organization cases view and audit controls**
+- Decided: administrators get an "Organization cases" view, hidden in boot mode, in English and Spanish. "Verify entire chain" shows in boot mode only.
+- Value: 143 catalogue keys. The view shows channel kinds with ages and disputed, undeliverable and excluded badges, no addresses, and "decisions left today". Administrators keep the checkpointed check of the page they read. "Show more claims" and "Show more reservations" paginate the overview.
+- Why: ORG-12d needed an operator console, and the full-chain walk is boot-only.
+- Source: "ORG-12d support adjudication" (console; wargame 4 admin items).
+- Safe alternative: none recorded.
+- Owner: ___
+
 ## Operations and limits
 
 **OL-1. Sign-in abuse limits**
@@ -1151,6 +1354,136 @@ Already settled by the user and not repeated here: relations as relationships be
 - Safe alternative: none recorded.
 - Owner: ___
 
+**OL-7. Admin and operator audit reads are bounded**
+- Decided: audit reads spend a rate window and the full chain walk is boot-only.
+- Value: `AdminService.audit` charges the per-actor read window (300 per 10 minutes) in a commit that writes no audit entry. `verify: true` is boot-only (`verify_boot_only`). `org-cases.audit` is charged the same way.
+- Why: admin audit reads were unbounded and `verify` re-walked the whole chain (wargame L3).
+- Source: "ORG-12d support adjudication" (wargame 4 admin items (a)).
+- Safe alternative: none recorded.
+- Owner: ___
+
+**OL-8. Admin claim caps and pruning**
+- Decided: an administrator may hold a limited number of outstanding claims, and finished claims are pruned.
+- Value:
+  - at most 20 outstanding claims per administrator (`claims_outstanding_limit`), and boot is not capped;
+  - finished claims (revoked, or expired without redemption) are pruned 30 days after expiry or revocation, at most 20 per mint, from a rotating cursor, with the name pointer removed, and each prune audited (`claim.prune`);
+  - redeemed claims are never pruned, because they are internal provenance;
+  - the overview pages claims and reservations with `claimsAfter` and `reservationsAfter`.
+  - The DEVLOG says the grace, batch and cap figures are provisional.
+- Why: the overview listed only the first 100 claims and reservations with no cursor (wargame L4).
+- Source: "ORG-12d support adjudication" (wargame 4 admin items (b)).
+- Safe alternative: none recorded.
+- Owner: ___
+
+**OL-9. Export failure deadlines and charging**
+- Decided: an export that cannot finish is failed and cleaned up, and failures not caused by the owner's own data volume do not count against the weekly allowance, up to a cap.
+- Value:
+  - a second `export_part_missing`, 24 consecutive failures, or 3 days from the job's first step (`startedAt`, not `createdAt`) marks the job `failed` with `cleanupPending`, then runs `cleanup()`;
+  - data failures are charged (`export_payload_missing`/`changed`/`invalid`, `export_path_collision`, `export_pin_budget`, `export_row_limit`, `export_metadata_limit`);
+  - system failures are uncharged at most `EXPORT_UNCHARGED_PER_WEEK` (2) times per 7 days;
+  - the account alarm backs off from 60 s, doubling to 1 h;
+  - `ExportLayout` accepts only `['owner']`.
+- Why: exports could never end (M4). The deadline counts from `startedAt` because generation may start after the 3-day security `notBefore`.
+- Source: "Operator and lifecycle wargame fixes" (M4, reading 3, review follow-up on export allowance).
+- Safe alternative: none recorded.
+- Owner: ___
+
+**OL-10. Deletion request limits and the deletion notice change**
+- Decided: deletion requests are rate-limited, and every new request gets its own "scheduled" notice and cancel link. The earlier quiet window for scheduled notices was removed after review.
+- Value:
+  - 3 requests per account per 24 h, inside `schedule()`, with admin bases exempt so an owner loop cannot block an admin closure;
+  - receipts are capped at 16 and expire after 30 days;
+  - routes allow 10 POSTs per session and 60 per /24 every 10 minutes;
+  - a request writes its due row and arms a 5-minute backstop alarm before any external Polar call.
+- Why: a request/cancel loop was unbounded (L1). A re-request minutes after a cancel left the owner holding only the dead link from the first request, which is why the quiet window was removed.
+- Source: "Operator and lifecycle wargame fixes" (L1, L2, reading 2, review follow-up, deletion quiet window).
+- Safe alternative: the quiet window (the removed reading).
+- Owner: ___
+
+**OL-11. Flag service: separate rate windows, outage reading and quarantine**
+- Decided: the flag service has its own rate windows, a leftover env value never forces a flag on during an outage, and one stale record no longer poisons the snapshot.
+- Value:
+  - windows `flags-admin-<owner>`, `flags-read-admin-<owner>`, `flags-boot` and `flags-read-boot`; flag-console reads (list, get, history, preview, evaluate, seed-verify) spend `flags-read-*` at 300 per 60 s and are not audited;
+  - the pre-console compatibility rule applies only when an empty snapshot was actually read and is usable (`flags.usable`), and a dependency whose reason is `outage` or `outage-last-known` never returns the legacy env value;
+  - storage reads validate records one at a time, a rejected record is listed in `quarantined`, and only that flag follows its outage policy, never legacy env. Writes stay strict;
+  - the console list shows quarantined records (English and Spanish).
+- Why: shared rate keys (M2), leftover env force-on during an outage (M3), one stale record poisoning the snapshot (L5).
+- Source: "Operator and lifecycle wargame fixes" (M2, M3, L5, plausible items).
+- Safe alternative: none recorded.
+- Owner: ___
+
+**OL-12. `flags.retire` semantics**
+- Decided: a new critical, audited operation removes one quarantined stored flag record. A still-registered flag is replaced by its off record, not deleted.
+- Value:
+  - it needs a passkey step-up, a reason, the typed name and the expected version;
+  - for a registered flag, the same commit replaces the stored record with the registry's off record (`empty()`, a fresh salt and the next revision), adds a revision-history row and records the replacement as the audit `after`;
+  - if the env state is force-on-legacy, retire refuses unless `acknowledgeGates:['legacy-env']` is given;
+  - an unregistered (retired) name is deleted;
+  - a quarantined record of a still-registered flag must be retired, then seeded again, and cannot be edited in place;
+  - `RETIRED_FLAGS` is guarded by `tests/flags-registry-removals.test.mjs` and the name lock `tests/fixtures/flag-registry-names.json`.
+- Why: a quarantined record needed an explicit, reviewed exit.
+- Source: "Operator and lifecycle wargame fixes" (L5, reading 4, review follow-up on `flags.retire`).
+- Safe alternative: none recorded.
+- Owner: ___
+
+**OL-13. Drive disconnect sweep and abandoned OAuth state**
+- Decided: a Drive disconnect marks the resource removed, then sweeps its rows in batches, but keeps rows that carry producer evidence.
+- Value:
+  - the marker is `drive/removed/<id>`, written in the transaction. The sweep covers `drive/object/<id>/` and `drive/retained/<id>/` in batches of 100, at most ten per call, with a persisted cursor;
+  - `drive/object/` rows with `producer` or `createdBy` evidence are kept, bounded by the 10,000-object cap, and left to the owner's What's left action or the account purge;
+  - upload and folder journals are kept as evidence (capped at 100 per account), and `drive/folder-pending/` journals are pruned on begin after 7 days;
+  - each begin prunes up to 50 expired `drive/oauth/` rows, and a session end deletes that session's row;
+  - a refresh that lists extra scopes moves the resource to `reauthorization_required`.
+- Why: a disconnect left rows (L7) and OAuth state was abandoned (L8). The kept rows reconcile with AU-S6.
+- Source: "Operator and lifecycle wargame fixes" (L7, L8, plausible items, review follow-ups).
+- Safe alternative: none recorded.
+- Owner: ___
+
+**OL-14. Other lifecycle storage and refresh bounds**
+- Decided: small bounds and a new key family set added by the wargame fixes.
+- Value:
+  - an account writer re-reads the authority single-flight once its copy is 5 minutes old, even at the edge's version;
+  - MCP `eraseSubject` keeps a durable per-owner cursor (`mcp/v1/erase/<owner>`);
+  - the Node deletion-due sweep always starts, follows the live flag port with background semantics, and only the env kill stops it;
+  - `ownedBlobRef` includes `rpc-results/<owner>/`;
+  - new account key families `push-session-ended/`, `drive/removed/` and `deletion/request-log`. The first two are classified in the export inventory, and the purge removes all of them.
+- Why: wargame 4 findings L6 and the plausible items.
+- Source: "Operator and lifecycle wargame fixes" (L6, plausible items, reading 5).
+- Safe alternative: none recorded.
+- Owner: ___
+
+**OL-15. Retention totals maintained by triggers, with a bounded backfill rebuild**
+- Decided: retention totals are kept incrementally by SQL catalog triggers, and an existing catalog is backfilled in small steps.
+- Value:
+  - triggers maintain item contributions and per-unit totals with each insert, update and delete, atomically with the catalog mutation. A move removes the old contribution and adds the new one;
+  - an existing catalog backfills at most 200 source rows per call, interleaved with writes, deletes and moves;
+  - ordinary inventory has no message-wide GROUP BY, and audit tests keep the full aggregate as an independent oracle;
+  - exact-accounting reconciliation, unknown-size behaviour and monotonic retention deadlines are preserved.
+- Why: each inventory read re-aggregated every message (probe cliff #6). Measured: 100,000 messages and 10 units, 75.564 ms before and 0.102 ms after.
+- Source: "Scalability fixes round 2 (producer, conversations, retention totals, tombstones, directory)" (#6).
+- Safe alternative: none recorded.
+- Owner: ___
+
+**OL-16. Key tombstones: exact membership rows, unbounded cold migration**
+- Decided: anti-reuse lookups use exact SHA-256-addressed membership rows instead of reading all archive pages, at a storage and write cost. The first migration is deliberately not bounded.
+- Value:
+  - membership rows compare actual kids (no Bloom filter), alongside an append-page pointer and bounded archive pages. Both legacy layouts migrate once, atomically;
+  - cold migration for 12,800 old kids read 131 list rows plus 12,813 gets (519,664 bytes) on the first prune;
+  - warm prune after that: 31 rows and 8,936 bytes;
+  - before release, the rollout must ensure no older writer runs for an owner after the new version has migrated that owner. Otherwise an older instance can prune kids without writing membership rows, and a pruned kid could be reused. Examples are a single code version per identity object, or a drain/cutover deployment. Nothing is implemented, and it falls under the production gates.
+- Why: key tombstone anti-reuse lookups read every page (probe cliff #7).
+- Source: "Scalability fixes round 2 (producer, conversations, retention totals, tombstones, directory)" (#7; review follow-up 7).
+- Safe alternative: none recorded.
+- Owner: ___
+
+**OL-17. Directory working-set cache split**
+- Decided: compact identity and key verification material has its own byte- and entry-bounded cache, separate from disposable full documents and move history.
+- Value: at 5,000 maximum-size documents, verification entries improve from 323 to 5,000 and evictions from 4,677 to 0. Verification-cache serialized bytes go from 49,282,048 to 1,655,000. Each tier keeps its documented cap, so combined memory can exceed the former single-tier cap, and serialized-byte accounting is not heap RSS. Full-history callers still fetch the full document after eviction.
+- Why: verification entries were being evicted by full documents (probe cliff #8).
+- Source: "Scalability fixes round 2 (producer, conversations, retention totals, tombstones, directory)" (#8).
+- Safe alternative: none recorded.
+- Owner: ___
+
 ## Unverified external assumptions
 
 These need a real-provider check. Nothing below has been run against the live service.
@@ -1173,10 +1506,16 @@ These need a real-provider check. Nothing below has been run against the live se
   - the external Email Routing for the bridge, including `reply()` and live DMARC.
 
   "Accepted" in the code means a provider (or fake) accepted the message, never that it was delivered. Sources: "Portability: redirect end/retarget…"; "ORG-12b/12e…"; "Identity and federation wargame fixes".
-- **Push delivery.** Web-push notices and 410 handling for dead subscriptions are unverified, and Track A depends on accepted out-of-band notices. Source: "ORG-12b/12e…".
+- **Push delivery.** Web-push notices and 410 handling for dead subscriptions are unverified, and Track A depends on accepted out-of-band notices. The deletion of session-bound subscriptions (ID-11) was tested only against local adapters. Source: "ORG-12b/12e…"; "Operator and lifecycle wargame fixes".
 - **Email bridge `Authentication-Results` trust.** On Cloudflare no authserv-id is configured, so all mail is treated as unauthenticated. Source: "App-platform wargame fixes".
 - **Directory and federation interoperability.** Unverified: production directory egress, independent-provider conformance, client-metadata resolution by other providers, and real external portability providers. Sources: "Organizations phase A: ORG-0…"; "Portability: redirect end/retarget…".
 - **TURN relay budget.** `BEAM_RELAY_BUDGET.release` is an optional port with no implementation in the repo. Source: "Messaging, search and deletion wargame fixes".
 - **Worker CPU limits for index builds.** A single index over about 1M rows is projected at 3–4 s, and Worker CPU limits are unmeasured. Source: "Scalability fixes…".
+- **Round-2 scale probes are local.** The before/after probes use the real local SQLite adapter and count list-returned rows and read bytes, not physical SQL read counters. Wall times are not production throughput. Cold key-tombstone migration (12,800 kids) is unbounded, and its Worker CPU cost is unmeasured. Source: "Scalability fixes round 2…".
+- **Durable Object SQLite expression indexes.** The RR1-M7 conclusion rests on one local workerd (Miniflare, `useSQLite`) probe: an expression index worked on an ordinary DO SQL table and `_cf_KV` refused it (`SQLITE_AUTH`). It has not been run on deployed Durable Objects. Source: "Scalability fixes round 2…" (review follow-up 6).
+- **Mixed-version rollout of key tombstones.** Safety assumes no older writer touches an owner after the new version migrates it. No guard exists, and the deployment procedure is unspecified. Source: "Scalability fixes round 2…" (review follow-up 7).
+- **Operator identity in production.** Real WebAuthn evidence for operators, distinct human and authenticator onboarding, key custody review, and an external anchor for the organization audit are unverified. The admin org-cases e2e fixture-fulfils the four `/api/admin/org-cases/*` routes, and Firefox variants are view-only because it has no virtual authenticator. Source: "ORG-12d support adjudication".
+- **Google Drive OAuth behaviour.** The `reauthorization_required` handling for a refresh that lists extra scopes, and the 7-day and 50-row pruning of OAuth and folder journals, were tested only against local fakes. Source: "Operator and lifecycle wargame fixes".
+- **WebKit.** The WebKit executable was unavailable, so four optional e2e checks were skipped and no WebKit result exists. Source: "UI quality pass 3"; "ORG-12d support adjudication".
 - **Browser platform behaviour.** Unverified: real WebAuthn at transfer-in intake, OS and PWA protocol installation for intents, and deployed `bintent` log redaction. Sources: "Portability: redirect end/retarget…"; "Intent links (INT-1 to INT-7, INT-9)…".
 - **Public suffix handling.** The admin-domain and issuer-bucket rules use suffix and two-label approximations without a public suffix list. Sources: "ORG-12a/12c…" (M4); "Conversations and bindlebox wargame fixes".

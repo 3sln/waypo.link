@@ -8,6 +8,7 @@ import {principalKey,samePrincipal,memberPowers,normalizeMemberGrants,effectiveA
 import {invitationProposal,signOrganizationInvitation} from './invitations.mjs';
 import {attachRoster,rosterOf,loadOrganization,openRequest,ORG_KEYS,ORG_ROSTER_VERSION,ORG_RETENTION_MS,ORG_OUTBOX_EXPIRY_MS,ORG_SWEEP_BATCH,ORG_ADMIN_DELAY_MS} from './roster.mjs';
 import {enqueueMemberKeyRefresh} from './key-refresh.mjs';
+import {fanoutPage,fanoutDone} from './admin-index.mjs';
 import {AppFault} from '../app/faults.mjs';
 const DAY=86400000,fail=(code='not_found',message='Not found.',status=409)=>{throw new AppFault(code,message,status);};
 const party=p=>({iss:p.iss??null,sub:p.sub}),hasAdmin=m=>m?.grants?.some(g=>g.power==='admin');
@@ -59,8 +60,9 @@ export class MembershipService extends OrganizationService{
  async open(tx,principals=[]){const r=await tx.get(ORG_RECORD);if(r?.kind!=='organization')return r;await attachRoster(tx,r,[...principals,r.ownerOfRecord]);membershipState(r,this.random,this.clock.now());return r;}
  /** A read outside any write: the record with the named principals' memberships. */
  load(principals=[]){return loadOrganization(this.metadata,principals);}
- /** Before every commit: close requests a membership change made stale, then write the changed roster rows. */
- async beforeCommit(tx,r,actor){const roster=rosterOf(r);if(!roster)return false;await this.settle(tx,r,actor);return roster.flush(this.clock.now());}
+ /** Before every commit: close requests a membership change made stale, run the registered commit hooks (ORG-10:
+  * relation invitations withdrawn on a pending deletion or an issuer's removal), then write the changed roster rows. */
+ async beforeCommit(tx,r,actor){const roster=rosterOf(r);if(!roster)return false;await this.settle(tx,r,actor);let hooked=false;for(const hook of this.commitHooks??[])hooked=await hook(tx,r,actor)||hooked;return await roster.flush(this.clock.now())||hooked;}
  async settle(tx,r,actor){
   const roster=rosterOf(r);
   for(const {member:m,before} of roster.changedMembers()){
@@ -301,28 +303,53 @@ export class MembershipService extends OrganizationService{
   else if(kind==='member-hold'){const m=await roster.member(ref);if(m?.state==='live'&&m.hold&&Number.isSafeInteger(m.hold.noticeAt)&&!m.hold.objected&&m.hold.noticeAt+ORG_ADMIN_DELAY_MS<=now&&m.hold.aep===m.aep){const aep=m.hold.aep;m.hold=null;await this.audit(tx,r,'member-authority-reconfirmed',actor,{membership:m.id,aep});}}
   else if(kind==='member-expiry'){const m=await roster.member(ref);if(m?.state==='live'&&m.expires_at!==undefined&&m.expires_at<=now/1000){const generation=m.generation;try{await this.end(r,m,actor,'expired',now,tx);}catch(error){if(!['last_admin','owner_must_be_member'].includes(error.code))throw error;m.state='live';m.generation=generation;delete m.endedAt;delete m.endReason;m.expiryBlocked=true;roster.due(now+3600000,'member-expiry',ref);}}}
   else if(kind==='outbox-prune'){const key=ORG_KEYS.outboxDelivered+ref,e=await tx.get(key);if(e&&(e.deliveredAt??0)+ORG_RETENTION_MS<=now)await tx.delete(key);}
-  else if(kind==='outbox-expire'){const key=ORG_KEYS.outboxPending+ref;if(await tx.get(key)!==undefined)await tx.delete(key);}
+  else if(kind==='outbox-expire'){const key=ORG_KEYS.outboxPending+ref,e=await tx.get(key);if(e!==undefined){await tx.delete(key);if(e?.fanout)await fanoutDone(tx,e.seq);}}
+  else if(kind==='admin-reindex')roster.reindex(ref);
  }
- /** Delivers due member outbox events (at most 32). Each event retries on its own back-off, so a failing event never
-  * blocks the ones behind it; one undeliverable for ORG_OUTBOX_EXPIRY_MS is dropped. */
+ /** Delivers due member outbox events (at most 32 deliveries). Each event retries on its own back-off, so a failing event
+  * never blocks the ones behind it; one undeliverable for ORG_OUTBOX_EXPIRY_MS is dropped. A fan-out event (more than
+  * ORG_INLINE_ADMINS admins, packages/orgs/admin-index.mjs) is delivered as pages `{..., recipients, page:{index, final}}`
+  * of at most ORG_FANOUT_PAGE recipients through the cursor stored on the event; each page counts as one delivery and a
+  * failed page is retried from the same cursor. Delivery is at least once: ORGANIZATION_MEMBER_EVENTS consumers deduplicate
+  * by event id plus recipient (admin) id, since a retried or racing page can repeat a recipient (review L3, 2026-10-24). */
  async drain(actor){
   if(actor?.kind!=='system')fail('forbidden','System only.',403);if(typeof this.memberEvents!=='function')return {held:true};
   const record=await this.metadata.get(ORG_RECORD);if(record?.id!==actor.owner)fail('not_found','Not found.',404);
   const now=this.clock.now(),due=[];for(const [key,e] of await this.metadata.list({prefix:ORG_KEYS.outboxPending,limit:33})){if((e.nextAt??0)>now||due.length>=32)break;due.push([key,e]);}
-  for(const [key,event] of due){
-   const expired=(event.at??0)+ORG_OUTBOX_EXPIRY_MS<=now;let ok=false;
-   if(!expired){const {attempts:_a,nextAt:_n,...payload}=event;try{ok=await this.memberEvents(structuredClone(payload))===true;}catch{ok=false;}}
-   await this.metadata.transaction(async tx=>{const row=await tx.get(key);if(!row)return;const at=this.clock.now(),seq=String(row.seq).padStart(12,'0');await tx.delete(key);
-    if(expired)return;
-    if(ok){await tx.put(ORG_KEYS.outboxDelivered+seq,{...row,deliveredAt:at});await tx.put(ORG_KEYS.due+pad(at+ORG_RETENTION_MS)+'/outbox-prune/'+seq,{at:at+ORG_RETENTION_MS,kind:'outbox-prune',ref:seq});return;}
-    const attempts=(row.attempts??0)+1,nextAt=at+Math.min(6*3600000,60000*2**Math.min(attempts,9));await tx.put(ORG_KEYS.outboxPending+pad(nextAt)+'/'+seq,{...row,attempts,nextAt});
-   });
+  let budget=32,pages=0;
+  for(const [key,first] of due){
+   let event=first;
+   for(;;){
+    // Fan-out pages read up to ORG_FANOUT_PAGE index rows each: at most 8 per call, the rest continue at the next one.
+    if(event.fanout&&pages>=8||budget<=0)break;budget--;if(event.fanout)pages++;
+    const expired=(event.at??0)+ORG_OUTBOX_EXPIRY_MS<=now;let ok=false,page=null;
+    if(!expired){const {attempts:_a,nextAt:_n,fanout:_f,...payload}=event;
+     if(event.fanout){page=await fanoutPage(this.metadata,event);payload.recipients=[...event.fanout.pages===0?event.recipients??[]:[],...page.ids];payload.page={index:event.fanout.pages,final:page.final};}
+     // An empty last page of a fan-out event has nobody left to tell.
+     if(page&&page.final&&event.fanout.pages>0&&!payload.recipients.length)ok=true;
+     else try{ok=await this.memberEvents(structuredClone(payload))===true;}catch{ok=false;}}
+    const next=await this.metadata.transaction(async tx=>{const row=await tx.get(key);if(!row||row.fanout?.pages!==event.fanout?.pages)return null;const at=this.clock.now(),seq=String(row.seq).padStart(12,'0');
+     if(ok&&page&&!page.final){const moved={...row,fanout:{...page.cursor,pages:row.fanout.pages+1}};await tx.put(key,moved);return moved;}
+     await tx.delete(key);if(row.fanout&&(expired||ok))await fanoutDone(tx,row.seq);
+     if(expired)return null;
+     if(ok){const {fanout:_f,...kept}=row;await tx.put(ORG_KEYS.outboxDelivered+seq,{...kept,deliveredAt:at});await tx.put(ORG_KEYS.due+pad(at+ORG_RETENTION_MS)+'/outbox-prune/'+seq,{at:at+ORG_RETENTION_MS,kind:'outbox-prune',ref:seq});return null;}
+     const attempts=(row.attempts??0)+1,nextAt=at+Math.min(6*3600000,60000*2**Math.min(attempts,9));await tx.put(ORG_KEYS.outboxPending+pad(nextAt)+'/'+seq,{...row,attempts,nextAt});return null;
+    });
+    if(!next)break;event=next;
+   }
+   if(budget<=0)break;
   }
   return {held:false};
  }
  /** ORG-4 adapter port: validate generation live, and durably remember recipients for removal delivery. */
  context(actor,input){return this.frame(actor,input,['client','generation'],async(r,v,now,m)=>{if(!m||m.state!=='live'||m.expires_at!==undefined&&m.expires_at<=now/1000||v.generation!==undefined&&m.generation!==v.generation)fail('not_found','Not found.',404);this.rememberClient(m,v.client);return {membership_id:m.id,generation:m.generation,aep:m.aep};});}
- authority(actor,input){return this.frame(actor,input,['membership','generation','application','resource','connections','imported','descriptor'],async(r,v,now,self,tx,roster)=>{const m=await roster.memberById(v.membership);if(m&&!samePrincipal(m.principal,actor.principal)&&!organizationPowers(r,actor.principal,{now}).includes('admin'))fail('not_found','Not found.',404);if(v.generation!==undefined&&m?.generation!==v.generation)return v.descriptor?null:{};const args={member:m,application:v.application,resource:v.resource,connections:v.connections,imported:v.imported,now};return v.descriptor?memberResourceProjection(args,v.descriptor):effectiveAuthority(args);});}
+ /** ORG-3 authority query. The ceilings come from this organization's own records, never from the caller (ORG-10 review
+  * L4): the application ceiling is the active federation grant's approved methods for `field` on `resource`, and the
+  * resource ceiling is the registered resource's contracts. The membership generation must match. */
+ authority(actor,input){return this.frame(actor,input,['membership','generation','grant','field','resource','descriptor'],async(r,v,now,self,tx,roster)=>{const m=await roster.memberById(v.membership);if(m&&!samePrincipal(m.principal,actor.principal)&&!organizationPowers(r,actor.principal,{now}).includes('admin'))fail('not_found','Not found.',404);if(!Number.isSafeInteger(v.generation)||m?.generation!==v.generation)return v.descriptor?null:{};
+  const g=typeof v.grant==='string'?await tx.get('federation/grant/'+v.grant):null,resource=typeof v.resource==='string'?await tx.get('federation/resource/'+v.resource):null,own=(o,k)=>o&&typeof o==='object'&&typeof k==='string'&&Object.hasOwn(o,k)?o[k]:undefined;
+  const application=g?.active===true&&Array.isArray(own(g.resources,v.field))&&own(g.resources,v.field).includes(v.resource)?own(g.methods,v.field):undefined;
+  const args={member:m,application,resource:resource?{id:v.resource,contracts:resource.contracts}:null,now};return v.descriptor?memberResourceProjection(args,v.descriptor):effectiveAuthority(args);});}
 
  // ORG-5 discovery reads (2026-10-23, provisional coordinator work). Both answer only about the acting principal's own
  // live membership; a non-member, an ended or expired member and an unknown organization all get the same not_found

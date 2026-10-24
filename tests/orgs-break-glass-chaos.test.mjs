@@ -78,7 +78,7 @@ async function chaos(random,{steps=90}={}){
    // I16 (review R2-M2): a reissue is confirmed only for the current owner in the generation it began.
    const r=await w.summary();if(out?.issued===true)assert.ok(r.ownerOfRecord.sub===b.owner&&(r.recoveryGeneration??0)===b.generation,`I16: a reissue confirmed for a superseded owner; trace=${trace.join(',')}`);
    if(out?.issued===false)assert.ok(r.ownershipOutbox.some(e=>e.kind==='recovery-rotate'&&!e.doneAt)||r.recovery?.state!=='issued',`I16: an unconfirmed reissue left no rotation; trace=${trace.join(',')}`);return out;},
-  outboxFill:async()=>{if(!filled&&random.chance(0.3)){filled=true;const r=await w.metadata.get('org/record-v1');for(let i=0;i<260;i++)r.ownershipOutbox.push({id:'junk-'+random.int(1e9),kind:'index',person:'00000000-0000-4000-8000-000000000000',role:'member',createdAt:w.clock.now(),doneAt:null,attempts:0,nextAt:w.clock.now()+400*DAY});await w.metadata.put('org/record-v1',r);}},
+  outboxFill:async()=>{if(!filled&&random.chance(0.3)){filled=true;const r=await w.metadata.get('org/record-v1');for(let i=0;i<260;i++)(r.ownershipOutbox??=[]).push({id:'junk-'+random.int(1e9),kind:'index',person:'00000000-0000-4000-8000-000000000000',role:'member',createdAt:w.clock.now(),doneAt:null,attempts:0,nextAt:w.clock.now()+400*DAY});await w.metadata.put('org/record-v1',r);}},
   lapseClaim:async()=>{if(random.chance(0.2)){const sub=pick(ADMINS),out=await run('orgs.claim-start',sub,{plan:'org-team',confirm:true});if(!out?.refused){w.payLatest('claim');if(!outage)return tolerate(()=>w.webhook());}return out;}},
   drain:async()=>tolerate(()=>w.settle()),
   restart:async()=>{w.restart();}

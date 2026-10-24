@@ -4949,6 +4949,7 @@ Reviewer: ___ Date: ___ Outcome: ___
 - **Status:** it is a digest only. DEVLOG stays the source of record, nothing in it is signed off, and decisions from before 2026-10-22 stay in [open-items.md](docs/release/open-items.md).
 - **Scope:** documentation only. No code changed and no tests were run.
 - **Update (same day):** the digest now covers ORG-10 relations (RL-1 to RL-17 and Q21, as OB-27 to OB-44) and AU-S6 (AP-12 to AP-14, plus the privacy.md "App storage summaries" bullet as RL-9), for 121 items in all. OB-11's passkey gap is marked closed in code: `organizationVerification` → `recoveryReissueBegin` `passkey_required`, and the identity-wargame2 test was re-run 1/1.
+- **Update 2 (same day, HEAD 6bbae45):** the digest now also covers UI quality pass 3, scalability fixes round 2, ORG-12d support adjudication and the operator/lifecycle wargame fixes, with their follow-ups: 27 new items (ID-11, OB-45 to OB-52, MC-9, AP-15, AP-16, UI-8 to UI-11, OL-7 to OL-17), 148 in all, two new highest-impact entries (AP-15, OB-45) and new unverified external assumptions. Documentation only; nothing signed off.
 
 Reviewer: ___ Date: ___ Outcome: ___
 
@@ -5490,5 +5491,224 @@ Reviewer: ___ Date: ___ Outcome: ___
   - `test:admin-deletion`: 28/28, 4/4, 16/16.
   - `test:admin-flags`: 8/8, 27/27.
   - `test:devices`: 17/17, 13/13.
+
+Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-24 — Break-glass and ownership outbox scaling
+
+**Implemented locally, provisional and unsigned.** This fixes probe cliffs #1 and #2 from `scratchpad/scale2/REPORT.md`. Nothing is committed or deployed. Organizations and break-glass stay behind their flags. Everything here is local adapter behavior, not production or provider conformance. ORG-10 relation files were not touched.
+
+**Provisional decisions:**
+
+- **Admin summaries (#1).** New module `packages/orgs/admin-index.mjs`; the roster maintains it in the same transaction as the membership rows.
+  - `org/admin/<key>` now holds `{id, since, u, f}`.
+  - `org/admin-unbounded/<issuer>/<grantedAt>/<key>` lists live, unheld, non-expiring memberships that hold an admin grant without an expiry.
+  - `org/admin-from/<notBefore>/<key>` lists admins whose admin grant and membership have not expired. An `admin-reindex` due entry at each grant expiry keeps it current.
+  - The record's `roster` gains an `admins` count and a layout version `ix:3`. Older layouts are rebuilt once by the next roster flush, at O(admins) for that one migration.
+- **Eligibility and quorum, same semantics.**
+  - `eligibleAdmins` reads only this provider's unbounded index up to `since − 30 days`, oldest first. It stops at `HINTS+2` rows: quorum needs two eligible admins and hints go to at most 16 people.
+  - `effectiveAdminExists` replaces `effectiveAdmins().length===0` and is evaluated only when the answer matters (a member-initiated start, or the view's `start` decision).
+  - `quorumMet` stops at the second eligible signer.
+  - Every candidate row is still checked with the unchanged `eligibleAdmin`/`memberPowers` predicates, and rows changed in the same transaction are considered too. Organizations not yet migrated use the old enumeration.
+  - **Visible difference:** with more than 14 eligible admins, the hinted admins are now the longest-tenured instead of the first by principal key. Who is eligible does not change.
+- **Recipient fan-out (#1).** A member outbox notice to at most 64 admins (`ORG_INLINE_ADMINS`) still lists its recipients inline, unchanged. Above that, the event carries only its named members plus a cursor (`fanout`). The drain delivers pages of at most 256 admins (`ORG_FANOUT_PAGE`), with at most 8 fan-out pages per drain call.
+  - **Snapshot semantics are the same as before:** the admins after the queuing transaction. Each admin's `since` (the outbox sequence it became admin after) bounds the interval. An admin removed while an older fan-out is pending is kept in `org/admin-ended/<until>/<key>` until the last such fan-out ends, then pruned.
+  - A failed page is retried from the same cursor, so delivery stays at least once.
+  - **Port contract change:** pages carry `page:{index, final}`, and consumers deduplicate by event id plus recipient (admin) id (corrected by review L3 below). `ORGANIZATION_MEMBER_EVENTS` is still unwired, so no consumer exists yet.
+- **Ownership outbox rows (#2).** New module `packages/orgs/ownership-effects.mjs`, flushed by `OwnershipService#beforeCommit` in the queuing commit.
+  - Each effect is its own row `org/effect/<id>`, with `org/effect-due/`, `org/effect-done/` and `org/effect-claim/` indexes.
+  - The record keeps a summary `ownershipEffects:{pending, done, subs}`, which answers the pending cap and "a revoke or refund for this subscription is pending".
+  - **Preserved guarantees:**
+    - critical effects are never refused, and only pending rows count toward the 256 cap;
+    - at most 128 done rows are kept, for 30 days, pruned at flush;
+    - the drain lease, refund idempotency (`billing.handled` plus a per-subscription pending count) and the provider re-read before acting are unchanged;
+    - an ended claim drops its pending owner notices (via the claim index) and erases their abort tokens.
+  - **Migration:** a record still holding the in-record `ownershipOutbox` array is migrated by its next commit, or by a commit the drain makes first. Pending rows plus the newest 128 done rows from the last 30 days become rows, and the array is removed. Until then, the readers count the array too.
+  - `readOrganization` and the test `summary()` show the rows as `ownershipOutbox`.
+
+**Before/after probes.** Scripts and output are in `scratchpad/scale3/{before,after}/`. The "before" run was at HEAD 6bbae45 and reproduced the report. The after-scripts use the same seeding, plus one unmeasured migration commit. The outbox backlog is now queued inside one commit, because the outbox no longer accepts a bare record write. Rows are list-returned rows; read bytes include gets.
+
+| Scenario | Before (rows / gets / bytes read / ms) | After |
+|---|---|---|
+| All-admin start, 5,000 | 25,000 / 10,008 / 6,431,743 / 219 — **rejected** `organization_row_limit` | 44 / 48 / 27,871 / 3.8 — succeeds |
+| All-admin start, 500 | 2,500 / 1,008 / 643,741 / 21.3 | 44 / 48 / 27,867 / 3.7 |
+| All-admin cosign / objection / abort, 5,000 | not reached | 0/8, 0/8, 4/9 rows/gets; ≤ 7.7 KB |
+| All-admin cosign / objection / abort, 500 | 500 rows / 505 gets each, ≈ 311 KB | same as 5,000 |
+| All-admin, 50 (inline path, ≤ 64 admins) | start 250/108; cosign 50/55 | start 94/78; cosign 50/55 |
+| Member drain, 5,000-admin fan-out | n/a | ≤ 2,055 rows / 146 KB per call; 4 notices → 80 pages, every admin of each snapshot reached (no repeats observed in this run) |
+| One-time admin index migration | n/a | 50: 58 rows; 500: 508; 5,000: 5,008 rows / 3.08 MB / 179 ms (once) |
+| Outbox 1,000 / 5,000 critical effects: largest value | 500,635 / 2,496,635 B (the record) | 2,470 / 2,568 B (the claim row); record 1,696 B |
+| Outbox build, 5,000 | 286 ms, cumulative O(N²) array scans | 146 ms for 5,000 rows in one commit (O(N)) |
+| Append one effect with 10 vs 5,000 pending | O(N) record rewrite | 0 vs 16 rows, 3 gets, ≈ 2.3 KB |
+| Drain one batch with 5,000 pending | (array scan) | 68 rows / 27 gets / 20.8 KB |
+| Done rows after completing 5,000 | 129 in the record | 128 rows, record 1,693 B |
+
+**Regression tests:** `tests/orgs-breakglass-outbox-scale.test.mjs`, 5 tests, in `npm test`.
+
+- An all-admin org at 50, 500 and 5,000 members: start, cosign, objection, abort and the view all succeed, store work is bounded, and 500 → 5,000 is flat.
+- Fan-out exactness: a leaver after the event still gets it, a joiner does not, a later event follows the later set, no repeat in the tested schedules (see review L3 below for the race that can still repeat one), pages are bounded to 8 per drain call, and ended rows are pruned.
+- Eligibility at 120 admins: tenure-limited admins, the single-admin Track S, holds and a member-initiated start, all through the indexes.
+- The outbox at 10, 100, 1,000 and 5,000 effects: the record stays under 8 KiB, no value exceeds 128 KiB, append and drain are flat, the non-critical cap applies, at most 128 done rows remain and there are no orphan rows.
+- A legacy in-record outbox migrates and drains exactly once.
+
+A revert check (inline recipients forced for every size) makes the all-admin test fail. Existing tests that inject legacy junk now write `(r.ownershipOutbox??=[]).push(...)`, which exercises the migration. One in-transaction assertion uses `queuedEffects(r)`.
+
+**Not addressed:**
+- The claim row's `cosigners` and `adminDomains` arrays grow with the number of distinct co-signers (one cosign is flat).
+- `MembershipService#operator`/`hasOperator` (when an admin ends or grants change) and `requests()` still read every admin. Neither is on the break-glass path measured here.
+
+**Verification (shared checkout; the ORG-10 agent's concurrent work is present):**
+- `npm test`: **3,696 passed, 0 failed**.
+- `npm run test:organizations`: **168 + 57 + 130 + 10 passed, 0 failed**. This includes the Chromium browser and e2e checks.
+- `npm run test:worker`: **93 passed, 0 failed**.
+- `npm run test:ui-state`: **473 passed, 0 failed**.
+
+Reviewer: ___ Date: ___ Outcome: ___
+
+**Review follow-ups (2026-10-24, break-glass review of this entry: no regressions, three Low; implemented locally, provisional and unsigned).** Each has a regression test in `tests/orgs-break-glass-review3.test.mjs` (3 tests, in `npm test`). In a scratch copy of the tree, reverting each fix made its test fail; reverting L2 also brings back the liveness-chaos failure at seed 94 with `CHAOS_SEEDS=150`.
+
+1. **L1 (older bug): contest escalation had no transition.** The undecided-contest escalation in `advanceExtra` wrote an `organization-break-glass-contest-escalated` audit entry with no claim log entry, so chaos invariant I7 (one audit entry per transition) failed at seeds 128, 156 and 236 with `CHAOS_SEEDS=150`. It is now a table transition, `contest-escalated` (T27, effective→effective), applied through `move` to the contested claim. The record's `breakGlass` summary keeps pointing at whatever claim it named. I7 was not loosened. `CHAOS_SEEDS=300` passes.
+2. **L2 (older bug): a sign-in between the T1 snapshot read and the claim commit was lost.** `unseenLiveness` compared `last > createdAt`. The start now re-reads the owner's activity just before its commit (one extra port call) and stores that read's time as `c.snapshotAt`. Status and `lastInteractiveAt` also come from this second read. Liveness is now `last >= snapshotAt`, still above any applied liveness or decision. The liveness signal accepts `at >= snapshotAt`. Claims without `snapshotAt` keep the old rule. The liveness chaos suite passes at seed 94 and at `CHAOS_SEEDS=300`.
+3. **L3 (new in this entry): fan-out could repeat an admin.** An admin removed after a live page had already listed them was delivered again in the ended phase. Each live page now records its last key and the organization's admin-removal counter (`roster.removals`), read after listing, in `fanout.seen`. Ended rows carry their removal counter `r`. An ended row whose key a live page covered, removed after that page was read, is skipped.
+   - Reading the counter after the listing means a removal racing the read can still be delivered twice, but is never missed.
+   - Retried pages also repeat recipients. The `ORGANIZATION_MEMBER_EVENTS` contract (memberships drain comment, design doc) now says consumers deduplicate by event id plus recipient (admin) id. The earlier "nothing is duplicated" wording above is corrected.
+   - The event row grows by one `seen` entry (about 100 B) per live page: roughly 2 KB at 5,000 admins.
+
+**Verification after the follow-ups (shared checkout; the ORG-10 agent's concurrent work is present):**
+- `npm test`: **3,726 passed, 0 failed**.
+- `npm run test:organizations`: **203 + 57 + 130 + 10 passed, 0 failed**, including Chromium browser and e2e checks.
+- Chaos with more seeds:
+  - `CHAOS_SEEDS=300` `orgs-break-glass-chaos`: 1/1;
+  - `CHAOS_SEEDS=300` `orgs-break-glass-liveness-chaos`: 2/2;
+  - `CHAOS_SEEDS=60` `orgs-break-glass-support-chaos`: 1/1;
+  - `CHAOS_SEEDS=60` `orgs-ownership` + `orgs-wargame`: 51/51.
+
+Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-24 — ORG-10a-c relations core (flags off)
+
+**Implemented locally** ([organizations design §8b](docs/architecture/organizations-design.md#8b-org-10-and-org-11-relations-design-for-implementation-rev-56), slices ORG-10a, ORG-10b and ORG-10c of §8b.10; [spec](docs/spec/organizations.md) rev 4.5 §9). Behind `ORG_RELATIONS_ENABLED` and `ORG_FOREIGN_RELATIONS_ENABLED`, both class a and default off (RL-1); the §13.3 release gates are unchanged. This is engine-level behaviour on a loopback host of several organizations, each in its own account writer. Nothing is routed, no console exists, and nothing is production-verified. Every item is **provisional** (coordinator, not signed off by the user).
+
+**What exists (packages/orgs/relation-*.mjs):**
+- **Documents (10a, `relation-documents.mjs`).** The spec §9.2 validator: size and bounds, `crit` (any entry is invalid here, fail closed), slots, arity and kinds, exact methods, `reshare:true` refused, superseding entries, and, against the pinned fragment bodies, fields, resource-field methods within the field's contracts and the bus `entity` reader. Also the growth table (`relationAdditive`), the per-pair upgrade delta, the "matrix as it applies to a slot" projection, and the `RelationDocuments.resolve(pin)` port, which verifies the pinned version's hash chain through `packages/core/artefacts.mjs` and caches by digest. Each organization also keeps a durable copy per pin (`rel/doc/<digest>`), so its instances keep working if the document disappears.
+- **Statements and invitations (10b, `relation-statements.mjs`, `relation-invitations.mjs`).** Participation statements are signed only when presented, for a participation that is live or recorded as pending in the same commit. They verify only under the party's active key, and only while fresh (300 s, or 300 s before the invitation's `iat` when carried in one). Relation invitations are signed links through the shared envelope, with exactly the spec §9.4 members plus the inviter's statement. They are single use and bound to the invitee, expire within 30 days, and a withdrawn one fails exactly as an invalid one.
+- **Instances, redemption and limits (10b, `relation-instances.mjs`).**
+  - Engine operations: create, invite, inbound items, inbound preview (the full disclosure and its digest), accept, redeem, withdraw, decline, mute, leave, list and get.
+  - Widening (create, invite, accept, resume) needs the flag, an admin whose governance is not held and a fresh step-up (RL-2), with an audit entry and a notice to every admin.
+  - Narrowing (suspend, end, narrow, withdraw, decline, leave, mute) is never flag-gated, needs no step-up and stays open while deletion is pending (RL-3).
+  - Arity is per view, counting the party itself when it holds the slot. Redemption rechecks it, so two invitations for the last place cannot both land.
+  - RL-11 limits: 300 invitations a day, 3 per pair in 30 days, one open per pair, 256 inbound items, then refusal with an admin notice and a sender-uniform answer. Muting clears a sender's items. Caps of 256 instances and 1,024 incoming edges.
+- **Edges and imports (10c, `relation-edges.mjs`, `relation-imports.mjs`).**
+  - Each side keeps, per counterpart, its own grant and acceptance halves and mirrors of the counterpart's halves, with generations.
+  - An edge X→Y is live only with X's grant live, Y's acceptance (as last reported by Y) live, X's participation and Y's recognition live, and a granted entry. Required entries must all be granted.
+  - Grant values come only from the organization's own pool (`federation/resource/`). `imp_` ids are refused, which is the composition rule.
+  - The grantee clamps received entries to the pinned matrix. Imports are keyed by (grantor, instance, entry) and get grantee-scoped `imp_` ids. They are recorded only when the grantee accepted receiving.
+  - Use inside the grantee is `effectiveAuthority` (member grant ∩ application ∩ edge methods).
+  - `relations.edge-check` is the grantor-side hook ORG-10d's certificate verification will call. It is scoped to one instance, so there is no transitivity.
+  - Relation events (`relation-edge-state`, `relation-edge-ended`) go through a durable outbox and `relations.ingest`, which applies spec §9.9 steps 2 and 4–6: counterpart only, `jti` dedupe recorded after the checks, aep floors for widening only, an end is final and the highest generation wins. Responses are uniform, and nothing on that path fetches anything.
+  - `relations.resync` (anti-entropy) and `relations.sweep` exist as system operations; no alarm schedules them yet (ORG-10e).
+    - Resync re-tells an ended counterpart its final state for 72 h only.
+    - Sweep expires invitations, inbound items, granted resources and replay rows, and abandons pending acceptances older than any invitation could live.
+  - The outbox is keyed by (notBefore, seq), so backed-off rows never block later ones.
+  - The grantor's check re-intersects the grant with the live pool: a resource that left, or a narrowed contract, is refused at once.
+  - Resource scoping (`scope`) is refused until the certificate path can enforce it.
+
+**Shared files touched (minimal):** `packages/flags/registry.mjs`, which gains two rows. `ORG_RELATIONS_ENABLED` requires `ORGANIZATIONS_ENABLED` and `DIRECTORY_ENABLED`; `ORG_FOREIGN_RELATIONS_ENABLED` requires `ORG_RELATIONS_ENABLED`; neither is retained when off. `tests/flags-registry.test.mjs` and `tests/fixtures/flag-registry-names.json` were updated to match (61 flags, 27 class a). `packages/app/providers.mjs` gains one catalogue row, `relations` (status `planned` until ORG-10f wires the account slice). `package.json` adds the four relation suites to `test:organizations`. No organization file (`organizations.mjs`, `memberships.mjs`, `app/domains/orgs.mjs`, `runtime/account/orgs.mjs`, `routes/orgs.mjs`) was edited: the service composes the existing `MembershipService` frame, audit, notices and roster. `break-glass.mjs`, `ownership.mjs` and `roster.mjs` (the concurrent scaling work) were not touched.
+
+**Provisional decisions and readings (reconciled with §8b.10):**
+- **No `artefact-store.mjs` kind registration.** Spec §9.2 says an unsigned growth table means validators process `relation` as an unknown kind. The table is implemented in `relationAdditive` instead, so registration later is one row.
+- **No `packages/links` registration.** As with the organization invitation, the relation invitation is a provider link type with no app slot binding.
+- **No `federation/service.mjs` projection hunk yet.** The relay descriptor's token is an entity certificate, which is ORG-10d. `relayDescriptor` builds the rest.
+- **Engine operations live in the relation modules** (as `certificates.mjs` does). ORG-10f moves or re-exports them into `packages/app/domains/relations.mjs`.
+- **`relations.resume` is treated as widening** (flag and step-up), although §8b.10 lists it with the narrowing actions. It restores outward or inward flow.
+- **Same-host transport instead of signatures (RL-15 port).** `sameHostRelationTransport` dispatches the other organization's system operation and passes the sending organization as adapter evidence. Spec §9.9 step 3 (signature against warm certification keys) and step 1's JWS checks are ORG-10e. Redemption, statements and invitation signatures already use the interop formats.
+- **One counterpart relationship per pair per instance in a view (v1).** Each counterpart is recognized in one slot, against one of this organization's slots. A second invitation to an already-recognized counterpart in the same instance is refused (`relation_counterpart_exists`). An organization may still hold several slots in an instance.
+- **Pending acceptances.** A refusal by the inviter discards the invitee's pending records (spec §9.4 step 5). An unreachable inviter, or a lost response, keeps them, and a retry is answered idempotently by the inviter with a fresh statement.
+- **Ending matching halves.** When a counterpart ends a half, this side ends its matching half too, because that half can never be live again, and says so. A counterpart no longer recognized in a view is told "ended" for any half this side never held, and a leaver sends "ended" for both halves. This goes beyond spec §9.6's "for each half it held", but it confers nothing, and the chaos suite needs it to converge when a grant event was lost before the end. Flagged for spec review.
+- **An invitation must share or receive something.** An invitation or acceptance that would neither share nor receive is refused. "Receive" counts only where the document has entries in that direction.
+- **Not in this pass:** introductions, recognition notices, pre-acceptance, upgrades, entity certificates, RL-4 holds, lifecycle hooks (billing stages, deletion pre-purge, key compromise), routes, console, ORG-11 transport, export and import. Foreign counterparts are refused: `not_found` with the kill switch off, and `relation_foreign_unavailable` with it on, because no transport exists.
+
+**Tests (engine level; local evidence only):**
+- `tests/orgs-relation-documents.test.mjs` (8): every validator rule, fragment checks, superseding, projection, every growth-table row and the never-additive changes, the upgrade delta, and resolve, including lookalike and tampered envelopes.
+- `tests/orgs-relation-statements.test.mjs` (4): C10 freshness, active-key-only verification, forged, wrong-`typ` and extra-member statements, invitation verification, pure RL-11 issuance checks, and no statement for a party that left.
+- `tests/orgs-relations.test.mjs` (17): flags (widening gated, narrowing never), create, invite, accept with the disclosure digest, consent at both ends, single-use invitations (forwarded, withdrawn, expired and garbage all fail identically), withdrawal racing redemption in both orders, a lost redemption response and an unreachable inviter, key rotation (L4), every edge transition (immediate at the holder, converging at the counterpart), leave, privacy (one subsidiary's store never names its sibling; members see only imports they hold grants on), no transitivity or onward sharing and instance-scoped grants, ceilings (document ∩ grantor values ∩ member ∩ application, plus the grantee clamp), the RL-11 limits and caps, arity per view (squatting impossible, split views normal), relation events (uniform, no lookups, reordering, replay, aep floors), lookalike documents, sweep and expiry, and a pending deletion.
+- `tests/orgs-relations-chaos.test.mjs` (6 seeds × 120 steps, 6 organizations):
+  - C1–C7, and the counters, are checked after every step.
+  - The suite runs a daily resync on its simulated clock.
+  - At the end, faults stop, anti-entropy runs, every mirror equals its holder's half, a counterpart that is no longer recognized has had its halves ended, and available imports match live grantor edges.
+  - Separately, after the review fixes, 120 scratch seeds (200–319, at 200 steps each) passed.
+  - C8 and C9 belong to ORG-10e, and certificates in C2 to ORG-10d.
+- `tests/orgs-relations-review.test.mjs` (9): regressions for the cross-review findings below. No revert checks were run for them.
+
+**Agent cross-review (2026-10-24; implementation review, not sign-off).** A read-only adversarial review found 1 High, 7 Medium and 13 Low items. It found no path that grants access without both consents, and no transitivity, onward sharing or cross-instance leak.
+- **Fixed:**
+  - **H1:** an unenforced `scope`. Scope is now refused.
+  - **M2:** stale grants after the pool changed. The pool is re-intersected at check, redemption and resume.
+  - **M3:** ghost counterparts and stuck pending acceptances after a lost redemption answer. Abandoning tells the inviter; there is a sweep; leaving with a pending acceptance tells the inviter; a retried acceptance holding an ended mirror ends its matching half on activation.
+  - **M4:** outbox head-of-line blocking.
+  - **M5:** a document fetch, or an invitation-validity oracle, before the admin check.
+  - **M6:** key lookups before the claimed inviter is bound to the sender or the local issuer.
+  - **M8:** pending acceptances now count toward the incoming cap.
+  - **L9:** the aep floor is per sender.
+  - **L11:** nothing is sent to ended counterparts after 72 h.
+  - **L12:** counterparts are settled after activation.
+  - **L13:** empty entries are dropped.
+  - **L14:** the idempotent retry works past expiry.
+  - **L15:** the resync cursor works, and leaving withdraws every open invitation.
+  - **L16:** offers are not recorded while the flag is off.
+  - **L17:** the `jti` format is checked.
+  - **L18:** decline and mute notify admins.
+  - **L21:** discard removes orphaned imports.
+- **Left open, provisional:**
+  - **M7:** an ended counterpart cannot be re-invited into the same instance. The reading is that an ended half is final per (instance, pair), so a later relationship needs a new instance. To be confirmed against spec §9.9.
+  - **L10:** `relations.import-authority` takes the application ceiling from the caller. It is a self-report; the federation hook (ORG-10d) must pass the registered ceiling.
+  - **Sweep:** the sweep's per-family scans are bounded to 256 rows without a cursor, until ORG-10e schedules it.
+  - **L16, ingest:** ingest stays ungated. Existing edges stay readable, and a counterpart may resume them while the flag is off.
+  - **L19:** the one-pairing-per-pair-per-instance limit is a v1 limitation, stated above.
+  - **L20:** the grantee clamp uses the union of an entry's fields, because the wire format carries no field. This is defence in depth only.
+  - **L18, system-ended halves:** halves ended by ingest are audited only through the counterpart's view.
+
+**Verification (shared checkout with the concurrent scaling work present; local evidence only):**
+- `npm test`: **3,735 passed, 0 failed**, 0 skipped, 0 cancelled.
+- `npm run test:organizations`: four subprocess suites, **409 passed, 0 failed**, 0 skipped. The node suites are 212, 57 and 130; the browser e2e suite is 10. The first suite now includes the 44 relation tests.
+- `npm run test:worker`: **93 passed, 0 failed**, 0 skipped.
+- Relation suites alone, run three times with concurrency 4: 35 of 35 each time before the review fixes. After the fixes, 44 of 44.
+- No browser or UI test applies: there is no UI in this pass.
+
+**Review follow-ups (2026-10-24, independent review requested by the coordinator; implemented locally, provisional and unsigned).** The review found no Critical or High issues: no access without both consents, no transitivity, nothing beyond the consented fragment. It found one Medium and six Low; its repros are `scratchpad/rel-review/rel-review-repros.test.mjs` F1–F6. Each fix below has a regression test in `tests/orgs-relations-review.test.mjs` (now 15 tests). In a scratch copy of the tree, I reverted each fix and confirmed that its test fails (13 mutations, plus two for L4).
+1. **M1: an invitation redeemed while the inviter was deleting.**
+   - `relations.redeem` answers the uniform `invitation_invalid` unless the inviting organization is `active` and carries no organization-level hold (`record.hold`), and unless the issuing admin is still an unheld live admin.
+   - **Provisional decision (coordinator, unsigned):** scheduling deletion withdraws every open relation invitation. An issuing admin who is removed, leaves or is held has their open invitations withdrawn. An organization-level hold refuses redemption.
+   - Mechanism: a minimal commit-hook seam in `packages/orgs/memberships.mjs` (`commitHooks`, run in `beforeCommit` before the roster flush). `RelationService` registers `onOrganizationCommit`, which is bounded per commit, and the sweep finishes any remainder.
+2. **L1: a lapsed required entry left the edge live.** `relations.edge-check` now requires every required entry to be live at check time, after expiry and pool re-intersection, so the edge stops at once rather than at the next sweep.
+3. **L2: prototype-named keys.**
+   - Counterpart-supplied keys meet only own-member lookups: the grantee clamp uses a `Map` and null-prototype objects, and `edgeAllows` and the pool checks use `Object.hasOwn`.
+   - The audit also found that a slot named `constructor` passed the document's slot lookup. `slotOf()` now does every slot lookup, and the document validator uses `has(slots, …)`.
+4. **L3: sweeps did not reach past the first rows.**
+   - Open invitations are indexed by instance (used by leaving), by issuing admin (used by the hook) and by expiry (used by the sweep). Closed invitations are deleted 30 days after closing.
+   - Replay rows carry a time index, and the sweep deletes up to 4,096 stale rows per call.
+   - The counterpart expiry scan keeps a cursor.
+5. **L4: caller-supplied application ceilings.**
+   - `relations.import-authority` takes the application ceiling from the active federation grant record (`federation/grant/<id>`, `methods[field]`, as `grants.mjs` does), requires the import among that grant's approved resources for the field, and requires the membership generation to match. A caller-supplied ceiling is refused (`invalid_request`).
+   - Until ORG-10d lets connections hold imports, this gives nothing, which is the intended fail-closed state. Connection liveness is read as `grant.active`; the connection-generation fence comes with the ORG-10d federation hook.
+   - `orgs.member-authority` (`memberships.mjs` `authority`) had the same pattern and now takes `{membership, generation, grant, field, resource}`, with the ceilings read from its own records. `tests/orgs-memberships.test.mjs` was updated to match.
+6. **L5: the invitee offer was synchronous.** It and its retraction now leave through the outbox. Issuing never calls the invitee, so the inviter's latency reveals nothing about the invitee's state. An offer for an instance where the invitee already holds the inviter as a counterpart is dropped.
+7. **L6:** the L11 regression test now asserts exact outbox counts: two final halves within 72 h, none after, and nothing sent when leaving towards an ended counterpart.
+- **Chaos-model correction:**
+  - The chaos suite's "forged" event is now always an impersonation, or a non-counterpart speaking for itself. A counterpart speaking for itself sends a genuine event about its own halves, and had made convergence fail on a few seeds.
+  - C3 now asserts the check never allows beyond the direct edge; it may refuse more.
+  - Scratch runs after the follow-ups: 180 seeds (400–579, at 200 steps each), all passing.
+- **Production gates added** (design §8b.10 "Production gates"):
+  - The ORG-10f adapters must take the sending organization (`from`) only from verified evidence, never from a request body.
+  - The RL-4 hold on a counterpart's authority reset, and invariant C8, are unimplemented (ORG-10e) and must exist before relations are enabled for any organization.
+
+**Verification after the follow-ups (shared checkout; local evidence only):**
+- Relation suites: **50 passed, 0 failed**.
+- `npm test`: **3,741 passed, 0 failed**, 0 skipped, 0 cancelled.
+- `npm run test:organizations`: **415 passed, 0 failed**, 0 skipped (four suites: 218, 57, 130 and 10).
+- `npm run test:worker`: **93 passed, 0 failed**, 0 skipped.
+- These counts supersede the earlier figures in this entry.
+
+No commit or deployment. Production release stays disabled. No delivery to a real external provider, provider conformance or production key custody is inferred from these local tests.
 
 Reviewer: ___ Date: ___ Outcome: ___

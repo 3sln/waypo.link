@@ -10,6 +10,7 @@ import {fakeClock,seededRandom,createRandom} from '../../packages/app/memory-pro
 import {organizationEntitlementPort} from '../../packages/orgs/ownership.mjs';
 import {BreakGlassService,ownerChannelsPort,memoryClaimLedger,hmacOperatorAssertions} from '../../packages/orgs/break-glass.mjs';
 import {readOrganization} from '../../packages/orgs/roster.mjs';
+import {readOwnershipOutbox} from '../../packages/orgs/ownership-effects.mjs';
 import {principalKey} from '../../packages/orgs/grants.mjs';
 import {organizationsProvider,ORG_OPERATIONS,ORG_SYSTEM_OPERATIONS} from '../../packages/app/domains/orgs.mjs';
 import {OrganizationBilling} from '../../packages/billing/organizations.mjs';
@@ -62,7 +63,10 @@ export async function world(seed=1,{allowlist='',configured=true,owner=A,currenc
  const verification=(extra={})=>({stepUpAt:clock.now(),enrolledAt:clock.now()-30*DAY,securityChangedAt:clock.now()-60*DAY,...extra});
  const act=(sub,extra={})=>({kind:'owner',owner:ORG,principal:p(sub),entity:{kind:'organization',id:ORG},powers:[],authTime:clock.now(),epoch:0,aep:0,verification:verification(),addedUnder:prov(sub),...extra});
  const run=(op,sub,input={},extra={})=>{const action=new OPS[op]({actor:sub==='system'?{kind:'system',owner:ORG}:act(sub,extra),input});return action instanceof AppQuery?read(engine,action):perform(engine,action);};
- const record=()=>readOrganization(metadata),summary=()=>metadata.get('org/record-v1');
+ // The ownership outbox is rows since 2026-10-24; the summary puts it back on the record as `ownershipOutbox` (as
+ // readOrganization does).
+ const withOutbox=async r=>r?.kind==='organization'?{...r,ownershipOutbox:await readOwnershipOutbox(metadata,r)}:r;
+ const record=()=>readOrganization(metadata),summary=async()=>withOutbox(await metadata.get('org/record-v1'));
  const member=async sub=>metadata.get('org/member/'+principalKey(p(sub)));
  const join=async(sub,grants=[],inviteExtra={},by=null)=>{const inviter=by??(await summary()).ownerOfRecord.sub;const invite=await run('orgs.invite',inviter,{invitee:p(sub),grants,...inviteExtra});await run('orgs.accept',sub,{invitation:invite.invitation});return member(sub);};
  const sync=()=>run('orgs.billing-sync','system'),tick=()=>run('orgs.ownership-tick','system'),drain=()=>run('orgs.ownership-drain','system'),sweep=()=>run('orgs.membership-sweep','system');

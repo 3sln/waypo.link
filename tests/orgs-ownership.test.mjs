@@ -10,6 +10,7 @@ import {fakeClock,seededRandom,createRandom} from '../packages/app/memory-provid
 import {OwnershipService,OWNERSHIP,billingStanding,organizationEntitlementPort} from '../packages/orgs/ownership.mjs';
 import {ORG_RECORD} from '../packages/orgs/organizations.mjs';
 import {readOrganization} from '../packages/orgs/roster.mjs';
+import {queuedEffects} from '../packages/orgs/ownership-effects.mjs';
 import {principalKey,memberPowers} from '../packages/orgs/grants.mjs';
 import {organizationsProvider,ORG_OPERATIONS,ORG_SYSTEM_OPERATIONS} from '../packages/app/domains/orgs.mjs';
 import {OrganizationBilling} from '../packages/billing/organizations.mjs';
@@ -326,7 +327,7 @@ test('H1: an ownership change revokes every live subscription of the former owne
   // owner of record the process recorded when it began.
   const now=w.clock.now();r.billing.subscriptions.sub_claim={id:'sub_claim',owner:C,purpose:'claim',paid:true,paidThrough:now+365*DAY};r.billing.reconciledAt=now;
   await w.service.changeOwner(r,p(C),{subscriptionId:'sub_claim'},now,tx,{cause:'lapse-claim',id:'claim-1',expect:p(A)});
-  assert.equal(r.billing.handled[legacy.id],'revoke');assert.ok(r.ownershipOutbox.some(e=>e.kind==='revoke'&&e.subscriptionId===legacy.id));});
+  assert.equal(r.billing.handled[legacy.id],'revoke');assert.ok(queuedEffects(r).some(e=>e.kind==='revoke'&&e.subscriptionId===legacy.id));});
 }finally{await w.close();}});
 
 test('H2: a claim never takes effect on stale data; an owner payment made before the deadline defeats it when Polar recovers',async()=>{const w=await world();try{

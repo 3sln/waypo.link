@@ -11,7 +11,7 @@ const H=3600000;
 async function waiting(w){await w.trackA();const c=await w.claim();assert.equal(c.state,'waiting');return c;}
 const pending=async w=>(await w.summary()).ownershipOutbox.filter(e=>!e.doneAt).length;
 /** Fills the ownership outbox with pending, undeliverable effects, as a stuck provider would. */
-async function fillOutbox(w,n=300){const r=await w.metadata.get('org/record-v1');for(let i=0;i<n;i++)r.ownershipOutbox.push({id:'junk-'+i,kind:'index',person:uuid(900+i),role:'member',createdAt:w.clock.now(),doneAt:null,attempts:0,nextAt:w.clock.now()+365*DAY});await w.metadata.put('org/record-v1',r);}
+async function fillOutbox(w,n=300){const r=await w.metadata.get('org/record-v1');for(let i=0;i<n;i++)(r.ownershipOutbox??=[]).push({id:'junk-'+i,kind:'index',person:uuid(900+i),role:'member',createdAt:w.clock.now(),doneAt:null,attempts:0,nextAt:w.clock.now()+365*DAY});await w.metadata.put('org/record-v1',r);}
 
 test('H1: a full ownership outbox never blocks an owner abort, an abort link, liveness, a withdrawal or a support abort, and their refunds queue',async()=>{
  for(const [label,stop] of [
@@ -28,11 +28,11 @@ test('H1: a full ownership outbox never blocks an owner abort, an abort link, li
  }finally{await w.close();}}
 });
 test('H1: done rows no longer count toward the cap; one objection per admin; owner notices per claim are capped',async()=>{const w=await bgWorld(52);try{
- const r=await w.metadata.get('org/record-v1');for(let i=0;i<300;i++)r.ownershipOutbox.push({id:'done-'+i,kind:'index',createdAt:w.clock.now(),doneAt:w.clock.now(),attempts:0,nextAt:w.clock.now()});await w.metadata.put('org/record-v1',r);
+ const r=await w.metadata.get('org/record-v1');for(let i=0;i<300;i++)(r.ownershipOutbox??=[]).push({id:'done-'+i,kind:'index',createdAt:w.clock.now(),doneAt:w.clock.now(),attempts:0,nextAt:w.clock.now()});await w.metadata.put('org/record-v1',r);
  await w.start();assert.ok((await w.summary()).ownershipOutbox.length<=BREAK_GLASS.OWNER_NOTICES_PER_CLAIM+140,'done rows are bounded');
  const c=await w.claim();
  // 200 stuck pending effects plus 128 kept done rows: over 256 rows in all, yet a non-critical effect still queues.
- const rec=await w.metadata.get('org/record-v1');for(let i=0;i<200;i++)rec.ownershipOutbox.push({id:'stuck-'+i,kind:'index',person:uuid(700+i),role:'member',createdAt:w.clock.now(),doneAt:null,attempts:0,nextAt:w.clock.now()+365*DAY});await w.metadata.put('org/record-v1',rec);
+ const rec=await w.metadata.get('org/record-v1');for(let i=0;i<200;i++)(rec.ownershipOutbox??=[]).push({id:'stuck-'+i,kind:'index',person:uuid(700+i),role:'member',createdAt:w.clock.now(),doneAt:null,attempts:0,nextAt:w.clock.now()+365*DAY});await w.metadata.put('org/record-v1',rec);
  assert.ok((await w.summary()).ownershipOutbox.length>256);
  for(let i=0;i<10;i++)await w.run('orgs.breakglass-object',E,{claim:c.id});
  let x=await w.claim();assert.equal(x.objections.length,1,'one objection per admin');

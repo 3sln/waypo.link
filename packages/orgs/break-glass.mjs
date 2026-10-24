@@ -40,6 +40,8 @@ import {ORG_RECORD} from './organizations.mjs';
 import {organizationPowers} from './authority.mjs';
 import {principalKey,samePrincipal,memberPowers} from './grants.mjs';
 import {rosterOf,attachRoster} from './roster.mjs';
+import {ADMIN_KEYS,scanAdmins,unboundedPrefix} from './admin-index.mjs';
+import {pendingEffects,claimEffects} from './ownership-effects.mjs';
 import {AppFault} from '../app/faults.mjs';
 
 const DAY=86400000,HOUR=3600000;
@@ -137,6 +139,8 @@ export const BREAK_GLASS_TRANSITIONS=Object.freeze({
  // Review H2: the claim's payment is gone (refunded, charged back, cancelled) before effect.
  unpaid:{t:'T16',from:['waiting','held','final'],to:()=>'closed'},
  contest:{t:'T27',from:['effective'],to:same},
+ // Review (2026-10-24, L1): an undecided contest escalated to operators is a logged transition too (invariant I7).
+ 'contest-escalated':{t:'T27',from:['effective'],to:same},
  'contest-resolved':{t:'T27',from:['effective'],to:same}
 });
 /**
@@ -290,15 +294,33 @@ export class BreakGlassService extends OwnershipService{
  }
  /** A live member homed here with MEMBER_TENURE_MS (member-initiated claims, only when no admin is effective). */
  eligibleMember(r,m,since,now){return Boolean(m&&m.state==='live'&&!m.hold&&m.expires_at===undefined&&!samePrincipal(m.principal,r.ownerOfRecord)&&(m.principal.iss??null)===(this.issuer??null)&&Number.isSafeInteger(m.createdAt)&&m.createdAt<=since-BREAK_GLASS.MEMBER_TENURE_MS);}
- async eligibleAdmins(r,since,now){return (await rosterOf(r).admins()).filter(m=>this.eligibleAdmin(r,m,since,now));}
- async effectiveAdmins(r,now){return (await rosterOf(r).admins()).filter(m=>!samePrincipal(m.principal,r.ownerOfRecord)&&memberPowers(m,now).includes('admin'));}
+ /** Eligible admins (eligibleAdmin), at most `want` of them. With the admin summaries (packages/orgs/admin-index.mjs,
+  * 2026-10-24) only this provider's unbounded admin grants old enough to qualify are read, oldest first, and each row is
+  * still checked by eligibleAdmin; so the answer is exact up to `want`, without reading every admin. */
+ async eligibleAdmins(r,since,now,want=Infinity){
+  const roster=rosterOf(r),ok=m=>this.eligibleAdmin(r,m,since,now);
+  if(roster.indexed())return scanAdmins(roster,unboundedPrefix(this.issuer),since-BREAK_GLASS.ADMIN_TENURE_MS,ok,want);
+  return (await roster.admins()).filter(ok).slice(0,want);
+ }
+ /** Whether any admin other than the owner is effective now (memberPowers), from the admin-from index when present. */
+ async effectiveAdminExists(r,now){
+  const roster=rosterOf(r),ok=m=>!samePrincipal(m.principal,r.ownerOfRecord)&&memberPowers(m,now).includes('admin');
+  if(roster.indexed())return (await scanAdmins(roster,ADMIN_KEYS.from,now,ok,1)).length>0;
+  return (await roster.admins()).some(ok);
+ }
  /** The distinct eligible admins currently signing: the initiator, the candidate once accepted, and co-signers. */
  async signers(r,c,now){
   const roster=rosterOf(r),out=new Set(),add=async p=>{const m=await roster.principal(p);if(this.eligibleAdmin(r,m,c.createdAt,now))out.add(principalKey(p));};
   await add(c.initiator);if(c.candidacy)await add(c.candidate);for(const s of c.cosigners)await add(s.principal);
   return out;
  }
- async quorumMet(r,c,now){return !c.quorumRequired||(await this.signers(r,c,now)).size>=2;}
+ /** Two distinct eligible signers (signers(), stopping at the second: a claim with many co-signers reads at most what it
+  * needs, 2026-10-24). */
+ async quorumMet(r,c,now){
+  if(!c.quorumRequired)return true;const roster=rosterOf(r),found=new Set();
+  for(const p of [c.initiator,...c.candidacy?[c.candidate]:[],...c.cosigners.map(s=>s.principal)]){const k=principalKey(p);if(found.has(k))continue;if(this.eligibleAdmin(r,await roster.principal(p),c.createdAt,now)){found.add(k);if(found.size>=2)return true;}}
+  return false;
+ }
  /** The candidate is still eligible: a live, unheld member (an admin unless member-initiated) with no authority reset. */
  async candidateEligible(r,c,now){
   const m=await rosterOf(r).principal(c.candidate);if(!m||m.state!=='live'||m.hold||m.aep!==c.candidateAep)return false;
@@ -411,7 +433,7 @@ export class BreakGlassService extends OwnershipService{
   this.ledger(r,c,'ended',now);this.hintsEnd(r,c,now);
   // Review L1: abort links for an ended claim are useless; erase any still waiting in the outbox.
   // Review R2-L2: earlier undelivered notices of an ended claim are dropped (the closing notice below replaces them).
-  for(const e of r.ownershipOutbox)if(e.kind==='owner-notice'&&e.claim===c.id){if(Array.isArray(e.channels))e.channels=e.channels.map(({abort,...ch})=>ch);if(!e.doneAt){e.doneAt=now;e.dropped=true;}}
+  for(const e of await claimEffects(tx,r,c.id))if(e.kind==='owner-notice'&&e.claim===c.id){if(Array.isArray(e.channels))e.channels=e.channels.map(({abort,...ch})=>ch);if(!e.doneAt){e.doneAt=now;e.dropped=true;}}
   await this.notify(tx,r,c,event,now);
   return c;
  }
@@ -445,13 +467,16 @@ export class BreakGlassService extends OwnershipService{
     const result=await this.claimLedger.reserve(p.sub,{org:pre.id,claim:id,role,at:now});if(!result?.ok)fail(['candidacy_pending','break_glass_person_limit','break_glass_start_limit'].includes(result?.reason)?result.reason:'break_glass_unavailable','You cannot take part in another break-glass claim now.',429);reserved.push(p.sub);
    }
    const statementDigest=await hex(v.statement.trim()),channels=await this.channelsOf(snapshot,now),adminDomains=await portHashes(domains,64);
+   // Review (2026-10-24, L2): the owner's activity is re-read just before the commit, and the claim keeps the time of that
+   // read (`snapshotAt`): a sign-in at or after it counts as liveness, so none falls between the read and T1.
+   let live=snapshot,snapshotAt=now;try{const again=this.clock.now(),fresh=await this.ownerChannels.snapshot(party(pre.ownerOfRecord),{org:pre.id,at:again});if(fresh&&typeof fresh==='object'){live=fresh;snapshotAt=again;}}catch{/* the first read stands, with its own time */}
    return await this.act(actor,{},[],async(r,_,now,tx,powers)=>{
     const {memberInitiated,eligible,cand}=await this.startEligibility(r,actor,candidate,account,self,now);
     const c={v:1,id,org:r.id,state:null,track:'A',causes:[],frozen:false,owner:party(r.ownerOfRecord),ownerAep:r.memberships[principalKey(r.ownerOfRecord)]?.aep??0,
      initiator:party(actor.principal),candidate:party(candidate),candidateAep:cand?.aep??0,memberInitiated,quorumRequired:!memberInitiated&&eligible.length>=2,candidacy:null,cosigners:[],cosignChanges:{},
      category:v.category,statement:v.statement.trim(),statementDigest,channels,adminDomains,tokens:[],tokenFailures:0,createdAt:now,quorumAt:null,checkout:null,payment:null,paidAt:null,
      waitStartedAt:null,waitEndsAt:null,reminders:[],held:null,heldTotal:0,objections:[],disputes:[],barredPairs:[],proposal:null,decision:null,finalEndsAt:null,counted:false,tier1At:null,contest:null,log:[],
-     ownerStatus:snapshot?.status==='active'?'active':String(snapshot?.status??'unknown').slice(0,32),ownerLastInteractiveAt:Number.isSafeInteger(snapshot?.lastInteractiveAt)?snapshot.lastInteractiveAt:null};
+     ownerStatus:live?.status==='active'?'active':String(live?.status??'unknown').slice(0,32),ownerLastInteractiveAt:Number.isSafeInteger(live?.lastInteractiveAt)?live.lastInteractiveAt:null,snapshotAt};
     // Track S triggers at T1 (§12d.4). The causes are kept for operators and the owner only.
     if(!c.quorumRequired)this.toTrackS(c,memberInitiated?'member-initiated':'single-admin');
     if(c.ownerStatus!=='active')this.toTrackS(c,'owner-account');
@@ -475,10 +500,12 @@ export class BreakGlassService extends OwnershipService{
  async startEligibility(r,actor,candidate,account,self,now){
   if(samePrincipal(candidate,r.ownerOfRecord)||samePrincipal(actor.principal,r.ownerOfRecord))fail('invalid_decision','The owner cannot start a break-glass claim.',409);
   const roster=rosterOf(r),initiator=await roster.principal(actor.principal),cand=await roster.principal(candidate);
-  const effective=await this.effectiveAdmins(r,now),eligible=await this.eligibleAdmins(r,now,now);
+  // 2026-10-24: at most HINTS+2 eligible admins are needed (quorum needs two; hints go to at most HINTS people), and
+  // whether any admin is effective only matters for a member-initiated claim; neither reads every admin any more.
+  const eligible=await this.eligibleAdmins(r,now,now,BREAK_GLASS.HINTS+2);
   let memberInitiated=false;
   if(!this.eligibleAdmin(r,initiator,now,now)){
-   if(effective.length===0&&self&&this.eligibleMember(r,initiator,now,now))memberInitiated=true;
+   if(self&&this.eligibleMember(r,initiator,now,now)&&!await this.effectiveAdminExists(r,now))memberInitiated=true;
    else fail('not_found','Not found.',404);
   }
   // Review L8: one answer for every unusable candidate (unknown, not a person, inactive, foreign or not eligible).
@@ -486,7 +513,7 @@ export class BreakGlassService extends OwnershipService{
   const busy=this.otherProcess(r);if(busy)fail(busy,'Another ownership process is pending.',409);
   const limit=this.limitsRefusal(r,now);if(limit)fail(limit,limit==='break_glass_locked'?'A recent claim was stopped; a new one is possible later.':'This organization has reached the yearly claim limit.',429);
   // Review R2-L2: a new claim is refused while the ownership outbox is backed up (aborts never are).
-  if(r.ownershipOutbox.filter(e=>!e.doneAt).length>=OWNERSHIP.OUTBOX_PENDING_MAX)fail('ownership_outbox_full','Ownership effects need operator attention.',503);
+  if(pendingEffects(r)>=OWNERSHIP.OUTBOX_PENDING_MAX)fail('ownership_outbox_full','Ownership effects need operator attention.',503);
   return {memberInitiated,eligible,cand};
  }
  async channelsOf(snapshot,now){
@@ -672,7 +699,7 @@ export class BreakGlassService extends OwnershipService{
    if(!['sign-in','step-up'].includes(v.kind)||!c||!isOpen(c)||!samePrincipal(v.principal,c.owner))return {received:true};
    // ORG-12b review M1: signals are retried durably, so they are idempotent: a sign-in already applied (or one from before
    // this claim began) changes nothing. `at` is clamped to now.
-   const at=Number.isSafeInteger(v.at)?Math.min(v.at,now):now;if(at<c.createdAt||at<=(c.livenessAt??-1))return {received:true};
+   const at=Number.isSafeInteger(v.at)?Math.min(v.at,now):now;if(at<(Number.isSafeInteger(c.snapshotAt)?c.snapshotAt:c.createdAt)||at<=(c.livenessAt??-1))return {received:true};
    await this.applyLiveness(tx,r,c,now,at);return {received:true};
   });
  }
@@ -687,7 +714,10 @@ export class BreakGlassService extends OwnershipService{
  }
  /** ORG-12b review M1: the owner's last interactive sign-in, newer than T1, every liveness already applied and any support
   * decision, is unapplied liveness (a lost or late signal). Null when there is none. */
- unseenLiveness(c,owner){const last=owner?.lastInteractiveAt;return Number.isSafeInteger(last)&&last>Math.max(c.createdAt,c.livenessAt??-1,c.decision?.at??-1)?last:null;}
+ unseenLiveness(c,owner){const last=owner?.lastInteractiveAt;return Number.isSafeInteger(last)&&last>=this.livenessFrom(c)&&last>Math.max(c.livenessAt??-1,c.decision?.at??-1)?last:null;}
+ /** Review (2026-10-24, L2): the earliest owner activity that is liveness for claim `c`: the T1 snapshot read (inclusive),
+  * or for an older claim without one, just after T1. */
+ livenessFrom(c){return Number.isSafeInteger(c.snapshotAt)?c.snapshotAt:c.createdAt+1;}
  /** T16: a security change on the candidate's account closes the claim (an authority reset is seen through the
   * membership's `aep`). A co-signer's change withdraws their signature. */
  breakGlassSecurityChange(actor,input){
@@ -866,7 +896,12 @@ export class BreakGlassService extends OwnershipService{
   const k=r.breakGlassContest;
   if(k&&k.state==='window'&&now>=k.until){k.state='closed';this.hint(r,k.claim,k.formerOwner?.sub,'drop','former-owner',now);await this.audit(tx,r,'organization-break-glass-contest-window-closed',{kind:'system',principal:null},{claim:k.claim});}
   if(k&&['window','open'].includes(k.state)&&k.until>now)wake(k.until);
-  if(k?.state==='open'&&!k.escalatedAt){const due=(k.openedAt??now)+BREAK_GLASS.CONTEST_OPEN_MAX_MS;if(now>=due){k.escalatedAt=now;alerts.push({kind:'organization-break-glass',action:'operator-alert',reason:'contest-undecided',org:r.id,claim:k.claim,since:k.openedAt});await this.audit(tx,r,'organization-break-glass-contest-escalated',{kind:'system',principal:null},{claim:k.claim});}else wake(due);}
+  if(k?.state==='open'&&!k.escalatedAt){const due=(k.openedAt??now)+BREAK_GLASS.CONTEST_OPEN_MAX_MS;if(now>=due){k.escalatedAt=now;alerts.push({kind:'organization-break-glass',action:'operator-alert',reason:'contest-undecided',org:r.id,claim:k.claim,since:k.openedAt});
+   // The escalation is a transition of the contested claim (one audit entry per log entry, invariant I7). The record's
+   // breakGlass summary keeps pointing at whichever claim it named.
+   const kc=await tx.get(CLAIM+k.claim),prior=r.breakGlass;
+   if(kc?.state==='effective'){await this.move(tx,r,kc,'contest-escalated',now,{kind:'system',principal:null},{audit:{since:k.openedAt}});if(prior?.id!==kc.id)r.breakGlass=prior;}
+   else await this.audit(tx,r,'organization-break-glass-contest-escalated',{kind:'system',principal:null},{claim:k.claim});}else wake(due);}
   const c=await this.claimOf(tx,r);if(!c||!isOpen(c))return;
   const sys={kind:'system',principal:null};
   // T16: the candidate left, was removed, held, reset, suspended or deleting; or a required quorum is short.
@@ -998,7 +1033,7 @@ export class BreakGlassService extends OwnershipService{
    const enabled=this.breakGlassEnabled(r.id),view=c?await this.claimView(r,c,actor,now):null;
    if(!enabled&&!(view&&(isOpen(c)||this.contestActive(r,now))))fail('not_found','Not found.',404);
    const decisions=[];
-   if(enabled&&!this.otherProcess(r)&&!this.limitsRefusal(r,now)&&(this.eligibleAdmin(r,m,now,now)||(await this.effectiveAdmins(r,now)).length===0&&this.eligibleMember(r,m,now,now)))decisions.push('start');
+   if(enabled&&!this.otherProcess(r)&&!this.limitsRefusal(r,now)&&(this.eligibleAdmin(r,m,now,now)||this.eligibleMember(r,m,now,now)&&!await this.effectiveAdminExists(r,now)))decisions.push('start');
    if(formerOwner&&this.contestActive(r,now)&&r.breakGlassContest.state==='window')decisions.push('contest');
    return {organization:{id:r.id,name:r.name??null,handle:r.handle??null},claim:view,decisions,contest:r.breakGlassContest&&(formerOwner||organizationPowers(r,actor.principal,{now}).length)?{claim:r.breakGlassContest.claim,until:r.breakGlassContest.until,state:r.breakGlassContest.state}:null};
   });

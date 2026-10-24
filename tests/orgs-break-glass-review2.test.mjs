@@ -37,11 +37,11 @@ test('R2-L2: an ended claim drops its undelivered notices; its closing notice gi
 }finally{await w.close();}});
 test('R2-L2: with the outbox backed up, a transfer still takes effect and syncs never throw; new claims are refused',async()=>{const w=await bgWorld(84);try{
  await w.offer(B);await w.acceptOffer(B);w.payLatest('transfer');await w.webhook();
- const r=await w.metadata.get('org/record-v1');for(let i=0;i<300;i++)r.ownershipOutbox.push({id:'junk-'+i,kind:'index',person:uuid(900+i),role:'member',createdAt:w.clock.now(),doneAt:null,attempts:0,nextAt:w.clock.now()+365*DAY});await w.metadata.put('org/record-v1',r);
+ const r=await w.metadata.get('org/record-v1');for(let i=0;i<300;i++)(r.ownershipOutbox??=[]).push({id:'junk-'+i,kind:'index',person:uuid(900+i),role:'member',createdAt:w.clock.now(),doneAt:null,attempts:0,nextAt:w.clock.now()+365*DAY});await w.metadata.put('org/record-v1',r);
  await rejects(w.start(C),'transfer_pending');
  const t=(await w.summary()).transfer;w.clock.set(t.notBefore+1000);await w.sync();await w.webhook();assert.equal((await w.summary()).ownerOfRecord.sub,B);
 }finally{await w.close();}
- const w2=await bgWorld(85);try{const r=await w2.metadata.get('org/record-v1');for(let i=0;i<300;i++)r.ownershipOutbox.push({id:'junk-'+i,kind:'index',person:uuid(900+i),role:'member',createdAt:w2.clock.now(),doneAt:null,attempts:0,nextAt:w2.clock.now()+365*DAY});await w2.metadata.put('org/record-v1',r);
+ const w2=await bgWorld(85);try{const r=await w2.metadata.get('org/record-v1');for(let i=0;i<300;i++)(r.ownershipOutbox??=[]).push({id:'junk-'+i,kind:'index',person:uuid(900+i),role:'member',createdAt:w2.clock.now(),doneAt:null,attempts:0,nextAt:w2.clock.now()+365*DAY});await w2.metadata.put('org/record-v1',r);
   await rejects(w2.start(),'ownership_outbox_full');}finally{await w2.close();}
 });
 

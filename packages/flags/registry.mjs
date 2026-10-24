@@ -58,6 +58,15 @@ const rows=[
  // claims stay pending and cannot take effect; aborts, withdrawals, objections, support holds and aborts, and refunds are
  // never gated (abort is the safe direction). Subject: the organization's account.
  ['ORG_BREAK_GLASS_ENABLED','a','G A',{risk:'crit',requires:['ORGANIZATIONS_ENABLED'],stateful:true,retainExisting:false,retentionReason:'Pending claims stay pending and can never take effect while it is off; aborts, withdrawals, objections, support holds and refunds are never gated.',envParse:'boolean'}],
+ // ORG-10 relations (organizations design §8b.10, RL-1). Gates NEW relations only: creating instances, inviting,
+ // accepting, redemption of a new edge and resuming. Narrowing (suspend, end, narrow, withdraw, decline, leave, mute),
+ // inbound revocation events and export are never gated, so turning it off leaves existing edges readable and endable.
+ // Subject: the organization's account.
+ ['ORG_RELATIONS_ENABLED','a','G A',{risk:'crit',requires:['ORGANIZATIONS_ENABLED','DIRECTORY_ENABLED'],stateful:true,retainExisting:false,retentionReason:'Existing edges stay readable, narrowable and endable; only new instances, invitations, acceptances and resumptions stop. Narrowing, leaving, inbound revocation and export are never gated.',envParse:'boolean'}],
+ // ORG-11 kill switch: every outbound fetch or POST to another provider for relations and accepting foreign redemptions,
+ // certificates and events. Also needs the foreign-issuer allowlist (R2-M6). Local narrowing is never gated; outbound
+ // events stay queued while it is off. ORG-11 transport is not implemented, so foreign counterparts are refused today.
+ ['ORG_FOREIGN_RELATIONS_ENABLED','a','G A',{risk:'crit',requires:['ORG_RELATIONS_ENABLED'],stateful:true,retainExisting:false,retentionReason:'A kill switch: cross-provider relation egress and foreign redemptions stop at once; local narrowing is never gated and outbound events stay queued.',envParse:'boolean'}],
  ['SIGNUP_ENABLED','c','G R',{risk:'crit',outage:'last-known'}],
  ['PAID_SIGNUP_ENABLED','c','G R',{risk:'crit',outage:'last-known',capabilities:['billing-configuration']}],
  ['WAITLIST_ENABLED','c','G R',{outage:'last-known'}],

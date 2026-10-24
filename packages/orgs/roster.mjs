@@ -16,11 +16,14 @@
 //   org/outbox/pending/<seq>                  member outbox event awaiting delivery ({..., attempts, nextAt})
 //   org/outbox/delivered/<seq>                delivered event, kept for ORG_RETENTION_MS
 //   org/due/<ms, 15 digits>/<kind>/<ref>      time index: the sweep reads only what is due
-// The record carries `roster:{v:2, live}` (live membership count) and `outboxSeq`.
+// The record carries `roster:{v:2, live, admins, ix}` (live membership and admin counts, admin index layout) and
+// `outboxSeq`. The admin summaries and the member outbox fan-out are packages/orgs/admin-index.mjs (2026-10-24).
 // The pre-release single-value shape (memberships, invitations, grantRequests and memberOutbox inside the record) is
 // not migrated: organizations are behind ORGANIZATIONS_ENABLED and unreleased.
 import {AppFault} from '../app/faults.mjs';
 import {principalKey} from './grants.mjs';
+import {readOwnershipOutbox} from './ownership-effects.mjs';
+import {ADMIN_INDEX_VERSION,ADMIN_KEYS,ORG_INLINE_ADMINS,isAdminRow,indexAdmin,rebuildAdminIndexes,seqKey as fanoutSeq} from './admin-index.mjs';
 
 const DAY=86400000;
 export const ORG_ROSTER_VERSION=2;
@@ -42,7 +45,7 @@ export const openRequest=q=>OPEN.includes(q?.state);
 export class Roster{
  /** `tx`: the account transaction (get, put, delete, list({prefix, startAfter, limit}) -> Map). */
  constructor(tx,record){
-  this.tx=tx;this.record=record;this.rows=new Map();this.notices=[];this.dues=new Map();this.members=Object.create(null);
+  this.tx=tx;this.record=record;this.rows=new Map();this.notices=[];this.dues=new Map();this.reindexed=new Set();this.members=Object.create(null);
   Object.defineProperty(record,ROSTER,{value:this,enumerable:false,configurable:true,writable:true});
   // The loaded memberships, keyed by principalKey, as organizationPowers and requestDecisions read them. Never
   // serialized (non-enumerable): the record itself never stores the roster.
@@ -66,6 +69,17 @@ export class Roster{
   for(const [key] of await this.#list(ORG_KEYS.admin))await this.member(key.slice(ORG_KEYS.admin.length));
   return Object.values(this.members).filter(m=>m.state==='live'&&hasAdmin(m));
  }
+ /** The admin count after this transaction's changes (the stored summary plus the changed rows), or null before the
+  * admin index layout exists. */
+ adminCount(){
+  if(this.record.roster?.ix!==ADMIN_INDEX_VERSION)return null;let n=this.record.roster.admins??0;
+  for(const [key,entry] of this.rows)if(key.startsWith(ORG_KEYS.member)&&entry.value!==undefined&&JSON.stringify(entry.value)!==entry.before)n+=(isAdminRow(entry.value)?1:0)-(entry.before!==null&&isAdminRow(JSON.parse(entry.before))?1:0);
+  return Math.max(0,n);
+ }
+ /** Whether the admin summaries (packages/orgs/admin-index.mjs) can answer for this organization. */
+ indexed(){return this.record.roster?.ix===ADMIN_INDEX_VERSION;}
+ /** Re-derives a membership's admin index rows at the next flush (a grant expired; the row itself did not change). */
+ reindex(key){if(typeof key==='string')this.reindexed.add(key);}
  /** Memberships whose stored row changed in this transaction: [{member, before}] (before is null for a new row). */
  changedMembers(){const out=[];for(const [key,entry] of this.rows)if(key.startsWith(ORG_KEYS.member)&&entry.value!==undefined&&JSON.stringify(entry.value)!==entry.before)out.push({member:entry.value,before:entry.before===null?null:JSON.parse(entry.before)});return out;}
  /** One page of membership rows in key order (admin listing, background key discovery). */
@@ -110,35 +124,49 @@ export class Roster{
   * whole transaction) when a row exceeds ORG_ROW_BYTES. Returns whether anything was written. */
  async flush(now){
   const tx=this.tx,record=this.record;let wrote=false;
+  // One-time admin index layout migration (2026-10-24), before any row below reads it.
+  if(record.roster?.v===ORG_ROSTER_VERSION&&record.roster.ix!==ADMIN_INDEX_VERSION){record.roster.admins=await rebuildAdminIndexes(tx,now);record.roster.ix=ADMIN_INDEX_VERSION;wrote=true;}
+  // The member-outbox sequence before this transaction's notices: admin changes below take effect after it.
+  const base=record.outboxSeq??0;
   // Notices first: resolving the admin recipients may load rows, and the outbox sequence lives on the record.
   if(this.notices.length){
-   const admins=this.notices.some(n=>n.admins)?(await this.admins()).map(m=>m.id):[];
+   // Up to ORG_INLINE_ADMINS admins are resolved now (the event lists them); more are delivered by fan-out pages, each
+   // admin whose admin interval holds the event's sequence (the same snapshot: the admins after this transaction).
+   const anyAdmins=this.notices.some(n=>n.admins),count=anyAdmins?this.adminCount():null,fan=count!==null&&count>ORG_INLINE_ADMINS;
+   const admins=anyAdmins&&!fan?(await this.admins()).map(m=>m.id):[];
    for(const {row,admins:all,members} of this.notices.splice(0)){
-    const seq=record.outboxSeq=(record.outboxSeq??0)+1,recipients=[...new Set([...all?admins:[],...members.filter(id=>typeof id==='string')])];
-    const event={...row,...(all||members.length)?{recipients}:{},seq,attempts:0,nextAt:row.at};
+    const seq=record.outboxSeq=(record.outboxSeq??0)+1,named=members.filter(id=>typeof id==='string'),recipients=[...new Set([...all&&!fan?admins:[],...named])];
+    const event={...row,...(all||members.length)?{recipients}:{},...all&&fan?{fanout:{phase:'live',after:'',pages:0}}:{},seq,attempts:0,nextAt:row.at};
     const key=ORG_KEYS.outboxPending+seqKey(seq);this.#size(key,event);await tx.put(key,event);this.due((row.at??now)+ORG_OUTBOX_EXPIRY_MS,'outbox-expire',seqKey(seq));wrote=true;
+    if(event.fanout)await tx.put(ADMIN_KEYS.fanout+fanoutSeq(seq),1);
    }
   }
   for(const [key,entry] of this.rows){
    const after=entry.value===undefined?null:JSON.stringify(entry.value);if(after===entry.before)continue;
    const before=entry.before===null?null:JSON.parse(entry.before),value=entry.value;wrote=true;
-   if(key.startsWith(ORG_KEYS.member))await this.#member(key.slice(ORG_KEYS.member.length),before,value,now);
+   if(key.startsWith(ORG_KEYS.member)){const k=key.slice(ORG_KEYS.member.length);this.reindexed.delete(k);await this.#member(k,before,value,now,base);}
    else if(key.startsWith(ORG_KEYS.invitation))await this.#invitation(before,value,now);
    else if(key.startsWith(ORG_KEYS.request))await this.#request(before,value,now);
    if(value===undefined)await tx.delete(key);else{this.#size(key,value);await tx.put(key,value);}
    entry.before=after;
   }
+  for(const k of this.reindexed){if(this.indexed()){const d=await indexAdmin(tx,k,await this.member(k),now,base,()=>this.#removal());this.record.roster.admins=Math.max(0,(this.record.roster.admins??0)+d);this.#reindexDue(k,await this.member(k),now);wrote=true;}}
+  this.reindexed.clear();
   for(const [key,value] of this.dues){await tx.put(key,value);wrote=true;}
   this.dues.clear();return wrote;
  }
  #size(key,value){const bytes=new TextEncoder().encode(JSON.stringify(value)).length;if(bytes>ORG_ROW_BYTES)fail(key.startsWith(ORG_KEYS.member)?'member_row_limit':'organization_row_limit','This change is too large to store.',413);}
- async #member(key,before,m,now){
+ /** The admin-removal counter (packages/orgs/admin-index.mjs fanoutPage, review L3). */
+ #removal(){this.record.roster.removals=(this.record.roster.removals??0)+1;return this.record.roster.removals;}
+ /** The admin-from index forgets an expired grant only when the row is re-indexed: schedule that at each expiry. */
+ #reindexDue(key,m,now){if(!isAdminRow(m))return;for(const g of m.grants)if(g.power==='admin'&&Number.isSafeInteger(g.expires_at)&&g.expires_at*1000>now)this.due(g.expires_at*1000,'admin-reindex',key);}
+ async #member(key,before,m,now,base){
   const tx=this.tx,live=v=>v?.state==='live';
   if(m===undefined)return;
   if(!before||before.id!==m.id)await tx.put(ORG_KEYS.memberId+m.id,key);
-  const admin=live(m)&&hasAdmin(m),wasAdmin=live(before)&&hasAdmin(before);
-  if(admin)await tx.put(ORG_KEYS.admin+key,m.id);else if(wasAdmin||!before)await tx.delete(ORG_KEYS.admin+key);
-  this.record.roster??={v:ORG_ROSTER_VERSION,live:0};this.record.roster.live=Math.max(0,(this.record.roster.live??0)+(live(m)?1:0)-(live(before)?1:0));
+  this.record.roster??={v:ORG_ROSTER_VERSION,live:0};
+  if(this.indexed()){this.record.roster.admins=Math.max(0,(this.record.roster.admins??0)+await indexAdmin(tx,key,m,now,base,()=>this.#removal()));this.#reindexDue(key,m,now);}
+  else{const admin=live(m)&&hasAdmin(m),wasAdmin=live(before)&&hasAdmin(before);if(admin)await tx.put(ORG_KEYS.admin+key,m.id);else if(wasAdmin||!before)await tx.delete(ORG_KEYS.admin+key);}this.record.roster.live=Math.max(0,(this.record.roster.live??0)+(live(m)?1:0)-(live(before)?1:0));
   if(live(m)){
    if(m.expires_at!==undefined&&(before?.expires_at!==m.expires_at||!live(before)))this.due(m.expires_at*1000,'member-expiry',key);
    if(Number.isSafeInteger(m.hold?.noticeAt)&&m.hold.noticeAt!==before?.hold?.noticeAt)this.due(m.hold.noticeAt+ORG_ADMIN_DELAY_MS,'member-hold',key);
@@ -177,5 +205,7 @@ export async function readOrganization(metadata){
  const invitations=Object.fromEntries((await all(ORG_KEYS.invitation)).map(([,value])=>[value.id,value]));
  const grantRequests=Object.fromEntries((await all(ORG_KEYS.request)).map(([,value])=>[value.id,value]));
  const memberOutbox=[...(await all(ORG_KEYS.outboxDelivered)),...(await all(ORG_KEYS.outboxPending))].map(([,value])=>value).sort((a,b)=>a.seq-b.seq);
- return {...record,memberships,invitations,grantRequests,memberOutbox};
+ // The ownership outbox has been rows since 2026-10-24 (packages/orgs/ownership-effects.mjs); shown here as the old field.
+ const ownershipOutbox=await readOwnershipOutbox(metadata,record);
+ return {...record,memberships,invitations,grantRequests,memberOutbox,ownershipOutbox};
 }

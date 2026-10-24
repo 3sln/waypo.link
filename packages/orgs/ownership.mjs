@@ -2,7 +2,7 @@
 // ORG-D18, ORG-D21, §1d, §12a, §12b.1, §12b.2a item 9, §12b.3, §12b.3a, §12b.5). Engine-first: every rule here runs in
 // the organization's account single writer and commits through one record transaction; provider I/O (Polar, identity,
 // peer accounts) is done through ports OUTSIDE transactions, and every external effect leaves through a durable,
-// idempotent outbox (`ownershipOutbox`), so a crash or a replayed webhook can never apply a rule twice.
+// idempotent outbox (`ownershipOutbox`, one row per effect), so a crash or a replayed webhook can never apply a rule twice.
 //
 // What the user decided (2026-10-21/22): organizations are always paid; ownership can be transferred; the recipient sets
 // up billing first; billing starts a fresh period; the previous owner's payment confers nothing. Everything else here
@@ -15,7 +15,9 @@
 //   transfer  null|{id, state, from, to, toHandle, admin, plan, offeredAt, notBefore, expiresAt, blockableUntil,
 //              objections, acceptance, payment, closedAt, closedReason, effectiveAt}
 //   transferHistory  the last 16 closed transfers
-//   ownershipOutbox  [{id, kind:'revoke'|'refund'|'recovery-rotate'|'index', ..., doneAt, attempts}]
+//   ownershipEffects {v, pending, done, subs}: the summary of the ownership outbox, whose effects are rows
+//              (org/effect/<id>, {id, kind:'revoke'|'refund'|'recovery-rotate'|'index'|..., doneAt, attempts}; see
+//              packages/orgs/ownership-effects.mjs, 2026-10-24; the pre-release in-record `ownershipOutbox` array migrates once)
 //   recovery  null|{state:'rotation-pending'|'missing'|'issued', owner, since, cause} (§12d.9; null: the creation file)
 //   authorityEpoch  the organization's `aep` (spec §3 rev 4.4): raised only by a change of control without the file
 //   moveCoolingUntil  ms (portability §6.2; moves stay refused by the portability guards regardless)
@@ -37,6 +39,7 @@ import {organizationPowers,requireFresh} from './authority.mjs';
 import {principalKey,samePrincipal,normalizeMemberGrants} from './grants.mjs';
 import {rosterOf} from './roster.mjs';
 import {enqueueMemberKeyRefresh} from './key-refresh.mjs';
+import {queueEffect,loadEffect,pendingEffects,subscriptionEffectPending,flushEffects,dueEffects,firstDueAt} from './ownership-effects.mjs';
 import {AppFault} from '../app/faults.mjs';
 
 const DAY=86400000,MINUTE=60000;
@@ -80,7 +83,7 @@ const paidNow=(s,now)=>Number.isSafeInteger(s?.paidThrough)&&s.paidThrough>now&&
 const live=(r,s,now)=>!['revoke','refund'].includes(r.billing?.handled?.[s.id])&&!(Number.isSafeInteger(s.endedAt)&&s.endedAt<=now);
 const ended=(s,now)=>Number.isSafeInteger(s?.endedAt)&&s.endedAt<=now;
 /** Whether a revoke or refund for subscription `id` is still waiting in the ownership outbox. */
-const effectPending=(r,id)=>(r?.ownershipOutbox??[]).some(e=>!e.doneAt&&e.subscriptionId===id);
+const effectPending=subscriptionEffectPending;
 /** Subscriptions Polar could not confirm at the last reconcile (gone or failing verification): held for an operator.
  * A hold never counts as unpaid: it blocks the unpaid clock, claims and claim effects until reconciled. */
 export const heldSubscriptions=r=>Object.values(r?.billing?.subscriptions??{}).filter(s=>s?.hold);
@@ -148,7 +151,9 @@ export class OwnershipService extends MembershipService{
  }
 
  // ---- transaction frame ------------------------------------------------------------------------------------
- ensure(r){membershipState(r,this.random,this.clock.now());r.billing??={v:1,subscriptions:{},handled:{},unpaidSince:null,reconciledAt:null,claim:null,renewal:null};r.billing.subscriptions??={};r.billing.handled??={};r.transfer??=null;r.transferHistory??=[];r.ownershipOutbox??=[];r.recovery??=null;return r;}
+ ensure(r){membershipState(r,this.random,this.clock.now());r.billing??={v:1,subscriptions:{},handled:{},unpaidSince:null,reconciledAt:null,claim:null,renewal:null};r.billing.subscriptions??={};r.billing.handled??={};r.transfer??=null;r.transferHistory??=[];r.recovery??=null;return r;}
+ /** Before every commit: this transaction's ownership effects (rows, indexes, summary), then the roster. */
+ async beforeCommit(tx,r,actor){const wrote=r?.kind==='organization'?await flushEffects(tx,r,this.clock.now(),{doneKept:OWNERSHIP.OUTBOX_DONE_KEPT}):false;const flushed=await super.beforeCommit(tx,r,actor);return wrote||flushed;}
  /** One record transaction (system or adapter-verified actor). `fn(r, now, tx)` mutates; a change is written once. */
  async commit(actor,fn,{system=true}={}){
   if(system&&actor?.kind!=='system')fail('forbidden','System only.',403);
@@ -169,17 +174,16 @@ export class OwnershipService extends MembershipService{
    await this.finish(tx,r,before,actor,now);return structuredClone(result);
   });
  }
- /** Queues an external effect. Only PENDING rows count toward the cap (break-glass review H1); done rows are kept for
-  * 30 days, at most OUTBOX_DONE_KEPT of them. Effects are `critical` by default and never refused for capacity, so a
+ /** Queues an external effect (its own row, written with this commit; packages/orgs/ownership-effects.mjs). Only PENDING
+  * rows count toward the cap (break-glass review H1); done rows are kept for 30 days, at most OUTBOX_DONE_KEPT of them
+  * (pruned at the flush). Effects are `critical` by default and never refused for capacity, so a
   * full outbox can never block an abort, a refund or an owner change in a system step (review R2: a non-critical revoke
   * or index row could throw inside an effect commit and wedge every sync). Only effects a person's NEW request adds
   * (an ownership offer, an ordinary break-glass notice) pass `critical:false`; starting a new process also checks the
   * backlog first. */
  outbox(r,kind,detail,now,{critical=true}={}){
-  r.ownershipOutbox=r.ownershipOutbox.filter(e=>!e.doneAt||e.doneAt>now-30*DAY);
-  const done=r.ownershipOutbox.filter(e=>e.doneAt);if(done.length>OWNERSHIP.OUTBOX_DONE_KEPT){const drop=new Set(done.sort((a,b)=>a.doneAt-b.doneAt).slice(0,done.length-OWNERSHIP.OUTBOX_DONE_KEPT));r.ownershipOutbox=r.ownershipOutbox.filter(e=>!drop.has(e));}
-  if(!critical&&r.ownershipOutbox.filter(e=>!e.doneAt).length>=OWNERSHIP.OUTBOX_PENDING_MAX)fail('ownership_outbox_full','Ownership effects need operator attention.',503);
-  const {id:ignored,...rest}=detail??{},row={...structuredClone(rest),id:this.random.uuid(),kind,createdAt:now,doneAt:null,attempts:0,nextAt:now};r.ownershipOutbox.push(row);return row;
+  if(!critical&&pendingEffects(r)>=OWNERSHIP.OUTBOX_PENDING_MAX)fail('ownership_outbox_full','Ownership effects need operator attention.',503);
+  const {id:ignored,...rest}=detail??{},row={...structuredClone(rest),id:this.random.uuid(),kind,createdAt:now,doneAt:null,attempts:0,nextAt:now};return queueEffect(r,row);
  }
  /** Notices to every admin, plus named principals (the recipient need not be a member), via the member outbox. */
  ownershipNotice(r,type,detail,now,{principals=[],members=[]}={}){
@@ -591,7 +595,7 @@ export class OwnershipService extends MembershipService{
   if(after.paidUntil)wake(after.paidUntil);
   if(after.readOnlyAt&&after.readOnlyAt>now)wake(after.readOnlyAt);
   if(after.claimableAt&&after.claimableAt>now)wake(after.claimableAt);
-  const pending=r.ownershipOutbox.filter(e=>!e.doneAt);if(pending.length)wake(Math.min(...pending.map(e=>e.nextAt??now)));
+  const effectDue=await firstDueAt(tx,r);if(effectDue!==null)wake(effectDue);
   return {wakeAt,standing:after.standing,transfer:nt?.state??null,claim:nc?.state??null,...this.stepSummary(r)};
  }
  /** Whether the owner of record began a payment before the claim's deadline that Polar has not settled yet (the order
@@ -729,12 +733,14 @@ export class OwnershipService extends MembershipService{
   // are serialized by a lease: an overlapping run backs off instead of re-reading an order another run is refunding.
   // The lease outlives the slowest run (16 effects, each a few bounded provider calls) and is released at the end.
   const holder=this.random.uuid(),leased=await this.metadata.transaction(async tx=>{const lease=await tx.get(OWNERSHIP_DRAIN_LEASE);if(lease?.until>this.clock.now())return false;await tx.put(OWNERSHIP_DRAIN_LEASE,{holder,until:this.clock.now()+OWNERSHIP.DRAIN_LEASE_MS});return true;});
-  if(!leased){const pending=(r.ownershipOutbox??[]).filter(e=>!e.doneAt);return {done:0,pending:pending.length,leased:false,wakeAt:this.clock.now()+OWNERSHIP.RETRY_MS};}
+  if(!leased)return {done:0,pending:pendingEffects(r),leased:false,wakeAt:this.clock.now()+OWNERSHIP.RETRY_MS};
   try{return await this.#drainOwnership(actor,r);}
   finally{try{await this.metadata.transaction(async tx=>{if((await tx.get(OWNERSHIP_DRAIN_LEASE))?.holder===holder)await tx.delete(OWNERSHIP_DRAIN_LEASE);});}catch{/* the lease expires on its own */}}
  }
  async #drainOwnership(actor,r){
-  const now=this.clock.now(),due=(r.ownershipOutbox??[]).filter(e=>!e.doneAt&&(e.nextAt??0)<=now).slice(0,16);let done=0;
+  // A record still holding the pre-release in-record outbox is migrated to rows by one commit first.
+  if(Array.isArray(r.ownershipOutbox)){await this.commit(actor,()=>{});r=await this.metadata.get(ORG_RECORD);}
+  const now=this.clock.now(),due=await dueEffects(this.metadata,now,16);let done=0;
   for(const e of due){
    let ok=false,error=null;
    try{
@@ -745,15 +751,15 @@ export class OwnershipService extends MembershipService{
     else if(e.kind==='index')ok=(await this.effects?.index?.(e.person,{org:r.id,role:e.role,handle:r.handle??null}))===true;
     else ok=await this.drainExtra(r,e,actor)===true;
    }catch(err){error=typeof err?.code==='string'?err.code:'effect_failed';}
-   await this.commit(actor,async(x,at)=>{const row=x.ownershipOutbox.find(y=>y.id===e.id);if(!row||row.doneAt)return;
+   await this.commit(actor,async(x,at,tx)=>{const row=await loadEffect(tx,x,e.id);if(!row||row.doneAt)return;
     // §12d.9: once the old binding is cleared the state is `missing` until the new owner saves a file. A delivered
     // notice's abort token is erased from the row (only its hash stays, on the claim).
     if(ok){row.doneAt=at;delete row.token;if(Array.isArray(row.channels))row.channels=row.channels.map(({abort,...ch})=>ch);if(e.kind==='recovery-rotate'&&x.recovery?.state==='rotation-pending'&&x.recovery.ref===e.ref)x.recovery={...x.recovery,state:'missing',rotatedAt:at};}
     else{row.attempts++;row.lastError=error??'effect_unavailable';row.nextAt=at+Math.min(6*3600000,OWNERSHIP.RETRY_MS*2**Math.min(row.attempts,9));}});
    if(ok)done++;
   }
-  const after=await this.metadata.get(ORG_RECORD),pending=(after?.ownershipOutbox??[]).filter(e=>!e.doneAt);
-  return {done,pending:pending.length,wakeAt:pending.length?Math.min(...pending.map(e=>e.nextAt??now)):null};
+  const after=await this.metadata.get(ORG_RECORD),pending=pendingEffects(after);
+  return {done,pending,wakeAt:pending?await firstDueAt(this.metadata,after):null};
  }
  /** Owner of record: begins an organization recovery-file reissue (the transfer rule "reissued to the new owner").
   * Returns the creation request the identity record binds; the edge action issues and binds the file.
