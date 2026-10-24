@@ -14,7 +14,9 @@ export async function transferDocument({request,env,url},kind,packageJSON){
  let asset=await env.ASSETS.fetch(new Request(new URL('/transfer-'+kind+'.html',url),{method:'GET'}));
  if([301,302,307,308].includes(asset.status)){const target=new URL(asset.headers.get('Location')??'',url);if(target.origin===url.origin&&target.pathname==='/transfer-'+kind&&!target.search&&!target.hash)asset=await env.ASSETS.fetch(new Request(target,{method:'GET'}));}
  if(!asset.ok)return json({error:'temporarily_unavailable'},503);
- let html=await asset.text();if(packageJSON)html=html.replace('</head>',`<script type="application/json" id="transfer-package">${packageJSON}</script></head>`);
+ // A replacer function, never a replacement string: the package comes from a cross-site POST, and `$'`, `$&` or `$``
+ // in it would otherwise splice page markup into the data script.
+ let html=await asset.text();if(packageJSON)html=html.replace('</head>',()=>`<script type="application/json" id="transfer-package">${packageJSON}</script></head>`);
  const headers={...privateHeaders,'Content-Type':'text/html; charset=utf-8','Content-Security-Policy':"default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; connect-src 'self' https:; img-src 'self' data:; base-uri 'none'; form-action 'self' https:; frame-ancestors 'none'; worker-src 'self' blob:",'Cross-Origin-Opener-Policy':'same-origin','X-Robots-Tag':'noindex, nofollow, nosnippet'};
  if(kind==='security')headers['Content-Security-Policy']="default-src 'none'; script-src 'self' https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline'; connect-src 'self' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
  const response=await securePage(new Response(html,{status:200,headers}),true,false,{keepPolicy:true});return request.method==='HEAD'?new Response(null,{status:response.status,headers:response.headers}):response;
@@ -32,7 +34,9 @@ export const stages={
    if(!['GET','HEAD'].includes(request.method))return json({error:'method_not_allowed'},405,{Allow:'GET, HEAD'});
    const kind=pages.get(path);
    if(kind==='redirect'){if(request.headers.has('Authorization')||[...url.searchParams.keys()].some(k=>k!=='id')||url.searchParams.getAll('id').length!==1)return unknown();const account=await resolveRedirect(env,url.searchParams.get('id'));if(!account||!movedWindow(account.moved,typeof env.MOVED_CLOCK==='function'?env.MOVED_CLOCK():Date.now()).live)return unknown();}
-   else if([...url.searchParams.keys()].some(k=>k!=='lang')||url.searchParams.getAll('lang').length>1||url.searchParams.has('lang')&&!['en','es'].includes(url.searchParams.get('lang')))return unknown();
+   // The transfer-out page also accepts the destination-start statement digest its move endpoint's authorize_url
+   // carries (spec §6.1 item 1); it is not a secret, only the statement an authorization will be made against.
+   else if([...url.searchParams.keys()].some(k=>k!=='lang'&&!(kind==='out'&&k==='statement'))||url.searchParams.getAll('lang').length>1||url.searchParams.has('lang')&&!['en','es'].includes(url.searchParams.get('lang'))||url.searchParams.has('statement')&&(url.searchParams.getAll('statement').length!==1||!/^sha256-[A-Za-z0-9_-]{43}$/.test(url.searchParams.get('statement'))))return unknown();
    const flag=['in','security'].includes(kind)?'IDENTITY_TRANSFER_IN_ENABLED':kind==='successor'?'IDENTITY_SUCCESSOR_ADOPTION_ENABLED':'IDENTITY_TRANSFER_OUT_ENABLED';
    // Existing moves, disputes and read-only export must remain reachable after a rollout closes.
    if(['in','security','successor'].includes(kind)&&!flagGlobal(env,flag))return unknown();

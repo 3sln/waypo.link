@@ -28,7 +28,8 @@
 //     byte; each record still passes items 1, 2, 3 and 5 (as §8.6 does for first contact).
 //   - §8.3 item 5: a `308` without a parseable moved body counts as "let go"; any other 3xx, an invalid `200` and a
 //     `200` naming `from.identity` fail closed. A `200` naming a different identity URI is a later return to that host
-//     (spec §4 gives a return a new identity URI), which has let go of the old one.
+//     (spec §4 gives a return a new identity URI), which has let go of the old one, only when a later record of the
+//     same chain moves the identity to exactly that URI; any other different URI fails closed (wargame F6).
 //   - Pending successors (§8.5) are offered only for records whose items 1 and 2 pass and whose destination directory
 //     check passes; the first failing record of a chain is the one offered.
 //   - P16 pinning starts with the relationship: `track`, each adoption and each first contact also pin the current
@@ -49,16 +50,22 @@ import { isUUID } from '../core/primitives.mjs';
 import { strictJSON, exactMembers, plainObject } from '../links/envelope.mjs';
 import { memoryLimiter, publicClientHost, clientSite } from '../federation/client-metadata.mjs';
 import { publicAddress } from '../apps/form-fetch-policy.mjs';
-import { parseMoveStatement, parseMoveAttestation, verifyMoveStatement, verifyMoveAttestation, verifyMoveRecordLink, statementDigest, evaluateAttestationKeys, attestationKeyThumbprint, documentLineage, httpsOrigin, MAX_MOVES, SuccessionError } from './succession.mjs';
+import { parseMoveStatement, parseMoveAttestation, verifyMoveStatement, verifyMoveAttestation, verifyMoveRecordLink, statementDigest, evaluateAttestationKeys, attestationKeyThumbprint, documentLineage, httpsOrigin, MAX_MOVES, MAX_MOVES_DOCUMENT_BYTES, DOCUMENT_BYTES, MAX_DOCUMENT_KEYS, MAX_STATEMENT_BYTES, MAX_ATTESTATION_BYTES, SuccessionError } from './succession.mjs';
 
 export const ADOPTION_FLAG = 'IDENTITY_SUCCESSOR_ADOPTION_ENABLED';
 const MINUTE = 60000, HOUR = 3600000, DAY = 86400000;
+// `documentBytes` is the §7 budget of a moved identity's document (derived in succession.mjs); a document without
+// `moves` is held to DOCUMENT_BYTES (32 KiB, organizations §3a.3) after it is read.
 export const PORTABILITY_LIMITS = Object.freeze({
-  timeoutMs: 3000, manifestBytes: 65536, documentBytes: 32768, directoryBytes: 8192, jwksBytes: 16384, moveBytes: 16384,
+  timeoutMs: 3000, manifestBytes: 65536, documentBytes: MAX_MOVES_DOCUMENT_BYTES, directoryBytes: 8192, jwksBytes: 16384, moveBytes: 16384,
   manifestTtl: HOUR, jwksFresh: HOUR, sourceGone: 7 * DAY, maxHops: 3, cacheEntries: 256,
   perSite: Object.freeze({ windowMs: MINUTE, limit: 30 }), global: Object.freeze({ windowMs: MINUTE, limit: 600 }),
 });
 export const PENDING_LIMIT = 8, QUEUE_LIMIT = 256;
+/** Presented-chain queue (§8.7, wargame F8): at most `perOrigin` rows per origin principal (a new presentation evicts
+ * that origin's most-tried, then oldest, row), retried with exponential backoff from `base` to `max`, and dropped after
+ * `attempts` unavailable answers. A drain processes due rows in `nextAt` order, at most `perOriginPass` per origin. */
+export const QUEUE_POLICY = Object.freeze({ perOrigin: 8, perOriginUnverified: 2, perOriginPass: 4, attempts: 8, base: 15 * MINUTE, max: DAY });
 export const MANIFEST_PATH = '/.well-known/bindle/manifest.json';
 
 export class PortabilityUnavailable extends Error {
@@ -80,6 +87,9 @@ export function portabilityURL(value) {
 }
 /** An HTTPS URL on exactly `origin`, without query or fragment (manifest feature members). */
 const onOrigin = (value, origin) => { const url = portabilityURL(value); return url && url.origin === origin && !url.search && !value.includes('?') ? value : null; };
+/** The move endpoint's `authorize_url` (spec §5.2): an HTTPS URL on exactly `origin`; a query is allowed (a source may
+ * carry the statement digest a destination-start authorization binds to, spec §6.1 item 1), a fragment is not. */
+const authorizeOn = (value, origin) => { const url = portabilityURL(value); return url && url.origin === origin ? value : null; };
 const identityOn = (value, origin) => { const url = portabilityURL(value); return Boolean(url) && url.origin === origin && !url.search && !value.includes('?'); };
 const place = value => exactMembers(value, ['iss', 'identity']) && httpsOrigin(value.iss) && identityOn(value.identity, value.iss);
 
@@ -119,13 +129,13 @@ export function portabilityClient({ fetch, limiter, clock = () => Date.now(), li
       if (status === 429 || status >= 500) { await response.body?.cancel?.().catch(() => {}); unavailable(retryAfter); }
       const location = status >= 300 && status < 400 ? response.headers?.get?.('Location') ?? null : null;
       const type = (response.headers?.get?.('Content-Type') ?? '').split(';')[0].trim().toLowerCase(), encoding = response.headers?.get?.('Content-Encoding');
-      let json = null, invalid = false;
+      let json = null, invalid = false, size = 0;
       if (JSON_TYPES.includes(type) && (!encoding || encoding.toLowerCase() === 'identity')) {
         const bytes = await boundedBytes(response, maxBytes, controller.signal);
         if (bytes === null) invalid = true;
-        else if (bytes.byteLength) { try { json = strictJSON(new TextDecoder('utf-8', { fatal: true }).decode(bytes)); } catch { invalid = true; } }
+        else if (bytes.byteLength) { size = bytes.byteLength; try { json = strictJSON(new TextDecoder('utf-8', { fatal: true }).decode(bytes)); } catch { invalid = true; } }
       } else await response.body?.cancel?.().catch(() => {});
-      return { status, location: typeof location === 'string' && location.length <= 4096 ? location : null, retryAfter, json, invalid };
+      return { status, location: typeof location === 'string' && location.length <= 4096 ? location : null, retryAfter, json, invalid, size };
     })();
     work.catch(() => {});
     try { return await Promise.race([work, new Promise((_, reject) => { timer = setTimeout(() => { controller.abort(); reject(new PortabilityUnavailable()); }, limits.timeoutMs); })]); }
@@ -178,7 +188,7 @@ export function portabilityClient({ fetch, limiter, clock = () => Date.now(), li
     async document(identity, { sub } = {}) {
       const url = portabilityURL(identity); if (!url || url.search) fault('invalid_url', 'The identity URI is not allowed.', 400);
       const response = await request(`${identity}/identity.json`, { maxBytes: limits.documentBytes });
-      if (response.status === 200) return !response.invalid && validDocument(response.json, url.origin, sub) ? { status: 'ok', document: response.json } : { status: 'invalid' };
+      if (response.status === 200) return !response.invalid && validDocument(response.json, url.origin, sub, response.size) ? { status: 'ok', document: response.json } : { status: 'invalid' };
       if (response.status === 308) return { status: 'moved', location: response.location, record: movedBody(response.json, url.origin, sub) };
       if (response.status >= 300 && response.status < 400) return { status: 'redirect', location: response.location };
       if (response.status === 404 || response.status === 410) return { status: 'gone' };
@@ -205,7 +215,7 @@ export function portabilityClient({ fetch, limiter, clock = () => Date.now(), li
       const response = await request(manifest.portability.move_endpoint, { method: 'POST', body: JSON.stringify(body), maxBytes: limits.moveBytes });
       const json = response.json;
       if (response.status === 200 && exactMembers(json, ['status', 'attestation', 'redirect_until']) && json.status === 'attested' && typeof json.attestation === 'string' && (json.redirect_until === null || time(json.redirect_until))) return { status: 'attested', attestation: json.attestation, redirect_until: json.redirect_until };
-      if (response.status === 202 && exactMembers(json, ['status', 'authorize_url', 'retry_after']) && json.status === 'pending' && Number.isSafeInteger(json.retry_after) && json.retry_after >= 0) return { status: 'pending', authorize_url: onOrigin(json.authorize_url, origin), retry_after: json.retry_after };
+      if (response.status === 202 && exactMembers(json, ['status', 'authorize_url', 'retry_after']) && json.status === 'pending' && Number.isSafeInteger(json.retry_after) && json.retry_after >= 0) return { status: 'pending', authorize_url: authorizeOn(json.authorize_url, origin), retry_after: json.retry_after };
       if (response.status === 409) return { status: 'refused' };
       if (response.status === 404 || response.status === 405 || response.status === 501) return { status: 'unsupported' };
       unavailable(response.retryAfter);
@@ -218,11 +228,14 @@ function movedBody(json, origin, sub) {
   const { statement, attestation } = json.moved;
   return typeof statement === 'string' && (attestation === null || typeof attestation === 'string') ? { statement, attestation } : null;
 }
-function validDocument(document, origin, sub) {
+/** Organizations §3a.3 with spec §7: `size` is the received byte count. A document with `moves` is within the §7 budget
+ * (the fetch bound) and its records within the per-record caps; one without `moves` is at most DOCUMENT_BYTES (32 KiB). */
+function validDocument(document, origin, sub, size = 0) {
   if (!plainObject(document) || document.v !== 1 || document.iss !== origin || (sub !== undefined && document.sub !== sub) || !isUUID(document.sub) || !['person', 'organization'].includes(document.kind ?? 'person')) return false;
-  if (!Array.isArray(document.keys) || document.keys.length === 0 || document.keys.length > 64) return false;
-  if (document.moves !== undefined && (!Array.isArray(document.moves) || document.moves.length === 0 || document.moves.length > MAX_MOVES || document.moves.some(record => !exactMembers(record, ['statement', 'attestation']) || typeof record.statement !== 'string' || !(record.attestation === null || typeof record.attestation === 'string')))) return false;
-  return true;
+  if (!Array.isArray(document.keys) || document.keys.length === 0 || document.keys.length > MAX_DOCUMENT_KEYS) return false;
+  if (document.moves === undefined) return size <= DOCUMENT_BYTES;
+  if (!Array.isArray(document.moves) || document.moves.length === 0 || document.moves.length > MAX_MOVES || document.moves.some(record => !exactMembers(record, ['statement', 'attestation']) || typeof record.statement !== 'string' || record.statement.length > MAX_STATEMENT_BYTES || !(record.attestation === null || typeof record.attestation === 'string' && record.attestation.length <= MAX_ATTESTATION_BYTES))) return false;
+  return size <= MAX_MOVES_DOCUMENT_BYTES;
 }
 /** Signing keys of an identity document in the PORT-1 shape (`use:"sig"` only; certification and encryption keys are
  * separate purposes and never sign statements). */
@@ -353,7 +366,7 @@ export class SuccessorRegistry {
     return { document: doc.document, lineage };
   }
   /** §8.3 item 5 with the 7-day rule. 'ok' | 'active' | 'mismatch'; throws PortabilityUnavailable inside 7 days. */
-  async letGo(record, sub) {
+  async letGo(record, sub, later = []) {
     const source = record.parsed.payload.from.iss; let found;
     try { found = await this.client.lookup(source, sub); }
     catch (error) {
@@ -369,9 +382,14 @@ export class SuccessorRegistry {
       unavailable();
     }
     await this.store.transaction(tx => tx.delete(SOURCE(source, sub)));
-    // A host serving the identity under a different identity URI is a later incarnation (a return, spec §4) that
-    // has let go of `from.identity`; serving `from.identity` itself means the move did not commit there.
-    if (found.status === 'found') return found.identity === record.parsed.payload.from.identity ? 'active' : 'ok';
+    // A host serving the identity under a different identity URI is a later incarnation (a return, spec §4) that has
+    // let go of `from.identity` ONLY when a later record of the chain being verified moves the identity back there
+    // (wargame F6). Any other URI is unexplained: a fabricated `from.identity` on a source that still serves the
+    // identity must not pass as "let go". Serving `from.identity` itself means the move did not commit there.
+    if (found.status === 'found') {
+      if (found.identity === record.parsed.payload.from.identity) return 'active';
+      return later.some(next => next.parsed.payload.to.iss === source && next.parsed.payload.to.identity === found.identity) ? 'ok' : 'active';
+    }
     if (found.status === 'invalid') return 'active';
     if (found.status === 'gone') return 'ok';
     if (found.status === 'moved') return !found.record || (found.record.statement === record.statement && found.record.attestation === record.attestation) ? 'ok' : 'mismatch';
@@ -394,7 +412,7 @@ export class SuccessorRegistry {
       if (record.attestation === null) return { ok: false, index: i, reason: 'unattested', verifiedItems12: true };
       const checked = await this.pins.check(s.from.iss, record.attestation, record.parsed, { fresh: true });
       if (!checked.ok) return { ok: false, index: i, reason: checked.reason, verifiedItems12: true };
-      const released = await this.letGo(record, sub);
+      const released = await this.letGo(record, sub, records.slice(i + 1));
       if (released !== 'ok') return { ok: false, index: i, reason: released === 'active' ? 'source-active' : 'source-mismatch', verifiedItems12: true };
       aep = checked.aep; firstUse ||= checked.firstUse; prev = record.parsed;
     }
@@ -410,16 +428,19 @@ export class SuccessorRegistry {
     if (pinned.x !== pin.signing.publicJwk.x || pinned.y !== pin.signing.publicJwk.y) return { fail: 'pinned-key-unlinked' };
     return { floor: position };
   }
-  /** Whether the pinned host declares portability.v1 and serves the identity as active with the pinned key (§8.5,
-   * IP-R1-M7). Throws PortabilityUnavailable. */
-  async pinnedHostActive(pin) {
+  /** The pinned host's state (§8.5, IP-R1-M7), two separate facts (wargame F7): `serving`, whether its directory names
+   * the pinned identity URI and its document lists the pinned key as active, whatever its manifest declares; and
+   * `portability`, whether it declares portability.v1 (a move endpoint), so that a real move would carry its
+   * attestation. Throws PortabilityUnavailable. */
+  async hostState(pin) {
     const manifest = await this.client.manifest(pin.current.iss);
-    if (manifest.status !== 'ok' || !manifest.portability?.move_endpoint) return false;
+    const portability = Boolean(manifest.status === 'ok' && manifest.portability?.move_endpoint);
+    if (manifest.status !== 'ok' || !manifest.directory) return { serving: false, portability };
     const found = await this.client.lookup(pin.current.iss, pin.origin.sub);
-    if (found.status !== 'found' || found.identity !== pin.current.identity) return false;
+    if (found.status !== 'found' || found.identity !== pin.current.identity) return { serving: false, portability };
     const doc = await this.client.document(pin.current.identity, { sub: pin.origin.sub });
-    if (doc.status !== 'ok') return false;
-    return signingKeysOf(doc.document).some(entry => entry.state === 'active' && entry.kid === pin.signing.kid);
+    if (doc.status !== 'ok') return { serving: false, portability };
+    return { serving: signingKeysOf(doc.document).some(entry => entry.state === 'active' && entry.kid === pin.signing.kid), portability };
   }
   parse(records) {
     if (!Array.isArray(records) || records.length === 0 || records.length > MAX_MOVES) return null;
@@ -529,23 +550,26 @@ export class SuccessorRegistry {
     // The §8.3 item 4 directory check already passed for the final destination; it must pass for this record too.
     const to = record.parsed.payload.to, found = await this.client.lookup(to.iss, pin.origin.sub);
     if (found.status !== 'found' || found.identity !== to.identity) return result('refused', { reason });
-    const sourceActive = await this.pinnedHostActive(pin);
-    if (sourceActive) return result('refused', { reason, sourceActive: true });
+    // A portability host that still serves the identity would have attested a real move: refused outright. A host
+    // without portability that still serves it is offered with the warning (§8.5: the human confirms after it).
+    const host = await this.hostState(pin);
+    if (host.serving && host.portability) return result('refused', { reason, sourceActive: true });
     const digest = await this.digest(record), now = this.clock();
     await this.store.transaction(async tx => {
       const existing = await tx.list(PENDING_OF(pin.origin.iss, pin.origin.sub));
       if (existing.some(row => row.key === PENDING(pin.origin.iss, pin.origin.sub, digest))) return;
       if (existing.length >= PENDING_LIMIT) await tx.delete(existing.sort((a, b) => a.value.offeredAt - b.value.offeredAt)[0].key);
-      await tx.set(PENDING(pin.origin.iss, pin.origin.sub, digest), { digest, seq: record.parsed.payload.seq, record: { statement: record.statement, attestation: record.attestation }, reason, from: record.parsed.payload.from, to, offeredAt: now });
+      await tx.set(PENDING(pin.origin.iss, pin.origin.sub, digest), { digest, seq: record.parsed.payload.seq, record: { statement: record.statement, attestation: record.attestation }, reason, from: record.parsed.payload.from, to, offeredAt: now, oldHostServing: host.serving, checkedAt: now });
     });
     this.log({ action: 'successor-pending', origin: pin.origin, reason });
-    return result('pending', { origin: { ...pin.origin }, reason, digest, from: { ...record.parsed.payload.from }, to: { ...to }, oldProviderConfirmed: false });
+    return result('pending', { origin: { ...pin.origin }, reason, digest, from: { ...record.parsed.payload.from }, to: { ...to }, oldProviderConfirmed: false, oldHostServing: host.serving });
   }
   /** What the human must be shown before adopting (§8.5): the old provider did not confirm the move, both hosts by
-   * origin, and whether the old host still serves the identity as active. */
+   * origin, and whether the old host still serves the identity as active (`oldHostServing`, as last checked at
+   * `checkedAt`; confirm re-checks live and answers `confirmation-required` if it serves now). */
   async pending(origin) {
     const rows = await this.store.transaction(tx => tx.list(PENDING_OF(origin.iss, origin.sub)));
-    return rows.map(({ value }) => ({ digest: value.digest, seq: value.seq, reason: value.reason, oldProviderConfirmed: false, oldHost: value.from.iss, newHost: value.to.iss, offeredAt: value.offeredAt }));
+    return rows.map(({ value }) => ({ digest: value.digest, seq: value.seq, reason: value.reason, oldProviderConfirmed: false, oldHost: value.from.iss, newHost: value.to.iss, offeredAt: value.offeredAt, oldHostServing: value.oldHostServing === true, checkedAt: value.checkedAt ?? value.offeredAt }));
   }
   /** The explicit local act (§8.5): adopts a pending successor with the §8.3 effects, including the authority reset.
    * `acknowledgeSourceActive` is required when the pinned host still serves the identity as active. */
@@ -572,7 +596,12 @@ export class SuccessorRegistry {
         const position = dest.lineage.findIndex(entry => entry.kid === record.parsed.header.kid);
         if (position < floor.floor) return result('refused', { reason: 'statement-key' });
         try { await verifyMoveStatement(record.parsed.value, dest.lineage[position].publicJwk, { crypto: this.crypto }); } catch { return result('refused', { reason: 'statement-invalid' }); }
-        if (await this.pinnedHostActive(pin) && acknowledgeSourceActive !== true) return result('confirmation-required', { reason: 'source-active', oldHost: pin.current.iss, newHost: record.parsed.payload.to.iss });
+        // §8.5: while the pinned host serves the identity as active with the pinned key (with or without portability),
+        // only a confirmation given after the warning adopts. The row learns the fact so pending() shows the warning.
+        if ((await this.hostState(pin)).serving && acknowledgeSourceActive !== true) {
+          await this.store.transaction(async tx => { const live = await tx.get(PENDING(origin.iss, origin.sub, digest)); if (live) await tx.set(PENDING(origin.iss, origin.sub, digest), { ...live, oldHostServing: true, checkedAt: this.clock() }); });
+          return result('confirmation-required', { reason: 'source-active', oldHost: pin.current.iss, newHost: record.parsed.payload.to.iss });
+        }
         // A dest document that ends later than this record: the commit records only this record.
         const partial = { document: { ...dest.document }, lineage: dest.lineage };
         const committed = await this.commit(pin, [record], partial, { aep: 0, firstUse: false, unattested: true });
@@ -673,32 +702,87 @@ export class SuccessorRegistry {
     }
     return result('refused', { reason: 'redirect-hops' });
   }
-  /** Presentation intake (§8.7): structurally checked and queued for background verification; the caller's request
-   * never fetches and always gets the same answer. Chains for identities the verifier does not pin are dropped. */
+  /** Presentation intake (§8.7): structurally and offline checked, then queued for background verification; the
+   * caller's request never fetches and always gets the same answer. Chains for identities the verifier does not pin,
+   * and chains that fail the offline checks against the pin, are dropped (wargame F8). */
   async present({ moves } = {}) {
     if (!this.on()) return { accepted: true };
     const records = this.parse(moves); if (!records) return { accepted: true };
     const origin = { iss: records[0].parsed.payload.from.iss, sub: records[0].parsed.payload.sub };
-    if (!await this.pin(origin)) return { accepted: true };
-    const id = `${origin.iss}|${origin.sub}|${await this.digest(records.at(-1))}`;
+    const pin = await this.pin(origin);
+    const checked = pin ? await this.queueable(pin, records) : false;
+    if (!checked) return { accepted: true };
+    const verified = checked === 'verified';
+    const id = `${origin.iss}|${origin.sub}|${await this.digest(records.at(-1))}`, now = this.clock();
+    // Eviction order (review follow-up 2): rows not verified offline go before rows verified under the pinned key; the
+    // most-tried, then oldest, row of that class goes first. Unverified rows are capped per origin, and a full queue
+    // evicts from the origin holding the most rows instead of dropping the new row.
+    const victim = list => [...list].sort((a, b) => Number(a.value.verified === true) - Number(b.value.verified === true) || (b.value.attempts ?? 0) - (a.value.attempts ?? 0) || (a.value.at ?? 0) - (b.value.at ?? 0))[0];
     await this.store.transaction(async tx => {
-      const rows = await tx.list(key('successor-queue'));
-      if (rows.some(row => row.value?.id === id) || rows.length >= QUEUE_LIMIT) return;
-      await tx.set(QUEUE(this.random.uuid()), { id, origin, moves: records.map(record => ({ statement: record.statement, attestation: record.attestation })), at: this.clock() });
+      let rows = await tx.list(key('successor-queue'));
+      if (rows.some(row => row.value?.id === id)) return;
+      const drop = async row => { await tx.delete(row.key); rows = rows.filter(other => other.key !== row.key); };
+      const ofOrigin = name => rows.filter(row => row.value?.origin && originKey(row.value.origin) === name);
+      const mine = () => ofOrigin(originKey(origin));
+      if (!verified) { const unverified = mine().filter(row => row.value.verified !== true); if (unverified.length >= QUEUE_POLICY.perOriginUnverified) await drop(victim(unverified)); }
+      if (mine().length >= QUEUE_POLICY.perOrigin) { const candidates = verified ? mine() : mine().filter(row => row.value.verified !== true); if (!candidates.length) return; await drop(victim(candidates)); }
+      if (rows.length >= QUEUE_LIMIT) {
+        const counts = new Map(); for (const row of rows) { const name = row.value?.origin ? originKey(row.value.origin) : ''; counts.set(name, (counts.get(name) ?? 0) + 1); }
+        const largest = [...counts.entries()].sort((a, b) => b[1] - a[1])[0][0];
+        const pool = largest === '' ? rows.filter(row => !row.value?.origin) : ofOrigin(largest);
+        const candidates = verified ? pool : pool.filter(row => row.value?.verified !== true);
+        if (!candidates.length) return;
+        await drop(victim(candidates));
+      }
+      await tx.set(QUEUE(this.random.uuid()), { id, origin, moves: records.map(record => ({ statement: record.statement, attestation: record.attestation })), at: now, nextAt: now, attempts: 0, verified });
     });
     return { accepted: true };
   }
-  /** One bounded background pass over presented chains. */
+  /** Offline checks before a presented chain may occupy the queue: one subject; records above the pin's head are
+   * contiguous from it and link (`seq`/`prev`/`from` = previous `to`, the first from the pinned current place); a
+   * record signed by the pinned key's `kid` must verify under it. A chain with nothing above the head is kept only
+   * when it carries an attested record that differs from the pinned chain (possible equivocation evidence, §8.4).
+   * Resolves false, 'verified' (the first record above the head verified under the pinned key) or 'unverified'. */
+  async queueable(pin, records) {
+    if (records.some(record => record.parsed.payload.sub !== pin.origin.sub)) return false;
+    const sorted = [...records].sort((a, b) => a.parsed.payload.seq - b.parsed.payload.seq);
+    const ahead = sorted.filter((record, i) => record.parsed.payload.seq > pin.head.seq && (i === 0 || record.parsed.payload.seq !== sorted[i - 1].parsed.payload.seq));
+    if (!ahead.length) return sorted.some(record => record.attestation !== null && pin.chain[record.parsed.payload.seq - 1]?.statement !== record.statement) ? 'unverified' : false;
+    let prev = pin.chain.length ? parseMoveStatement(pin.chain.at(-1).statement) : null, verified = false;
+    for (const [i, record] of ahead.entries()) {
+      try { await verifyMoveRecordLink(prev, record.parsed, { crypto: this.crypto }); } catch { return false; }
+      if (prev === null && !samePlace(record.parsed.payload.from, pin.current)) return false;
+      if (record.parsed.header.kid === pin.signing.kid) { try { await verifyMoveStatement(record.parsed.value, pin.signing.publicJwk, { crypto: this.crypto }); } catch { return false; } if (i === 0) verified = true; }
+      prev = record.parsed;
+    }
+    return verified ? 'verified' : 'unverified';
+  }
+  /** One bounded background pass over presented chains: due rows in `nextAt` order, at most `perOriginPass` per origin.
+   * An unavailable answer backs the row off; after `attempts` of them it is dropped (a later presentation or the
+   * background refresh can bring the chain back). */
   async drain({ limit = 16 } = {}) {
     if (!this.on()) return { processed: 0 };
-    const rows = (await this.store.transaction(tx => tx.list(key('successor-queue')))).sort((a, b) => a.value.at - b.value.at).slice(0, limit);
-    let processed = 0;
+    const now = this.clock(), perOrigin = new Map(), rows = [];
+    for (const row of (await this.store.transaction(tx => tx.list(key('successor-queue')))).filter(row => (row.value?.nextAt ?? row.value?.at ?? 0) <= now).sort((a, b) => (a.value.nextAt ?? a.value.at) - (b.value.nextAt ?? b.value.at))) {
+      if (rows.length >= limit) break;
+      const name = row.value?.origin ? originKey(row.value.origin) : '', count = perOrigin.get(name) ?? 0;
+      if (count >= QUEUE_POLICY.perOriginPass) continue;
+      perOrigin.set(name, count + 1); rows.push(row);
+    }
+    let processed = 0, dropped = 0;
     for (const { key: path, value } of rows) {
       const outcome = await this.adopt(value.origin, value.moves);
-      if (outcome.outcome !== 'unavailable') await this.store.transaction(tx => tx.delete(path));
+      const attempts = (value.attempts ?? 0) + 1;
+      if (outcome.outcome !== 'unavailable' || attempts >= QUEUE_POLICY.attempts) {
+        await this.store.transaction(tx => tx.delete(path));
+        if (outcome.outcome === 'unavailable') { dropped++; this.log({ action: 'successor-queue-dropped', origin: value.origin, attempts }); }
+      } else {
+        const wait = Math.min(QUEUE_POLICY.max, QUEUE_POLICY.base * 2 ** (attempts - 1)), retry = (outcome.retryAfter ?? 0) * 1000;
+        await this.store.transaction(async tx => { const live = await tx.get(path); if (live) await tx.set(path, { ...live, attempts, nextAt: this.clock() + Math.max(wait, Math.min(retry, QUEUE_POLICY.max)) }); });
+      }
       processed++;
     }
-    return { processed };
+    return { processed, dropped };
   }
 }
 

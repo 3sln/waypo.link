@@ -30,8 +30,41 @@ import { verifyKeyContinuity } from './keys.mjs';
 export const MOVE_TYP = 'bindle-identity-move+jwt';
 export const ATTESTATION_TYP = 'bindle-move-attestation+jwt';
 export const ATTESTATION_KEY_CONTINUITY_DOMAIN = 'bindle-attestation-key-continuity-v1';
-export const MAX_MOVES = 16, MAX_PACKAGE_BYTES = 8192, MAX_MOVES_DOCUMENT_BYTES = 32768;
+export const MAX_PACKAGE_BYTES = 8192;
+import { MAX_MOVES } from './document-budget.mjs';
+export { MAX_MOVES };
 const MAX_JWS = 8192, MAX_URL = 2048;
+
+// ---- byte budget of a moved identity's document (§7 "Size") ------------------------------------------------------
+// The budget is derived from the worst-case size of each move, so 16 legal moves always fit (scalability probe,
+// 2026-10-23: a flat 32 KiB refused rotating chains of 15 and 16 moves). Each move contributes its record (a statement
+// and an attestation, each capped below) and one signing-key entry: the key the destination rotates to at activation
+// (§7.1), which every later host keeps listing. Everything the current host lists on its own (the non-`moves` members,
+// its certification keys and up to KEY_HISTORY_LIMIT = 16 signing keys of its own history) is DOCUMENT_BASE_BYTES.
+//   statement    identity URIs <= 512, `iss` <= 256, a 128-character ASCII kid: at most 2,721 bytes, capped at 3,072
+//   attestation  the same bounds:                                                at most 2,022 bytes, capped at 2,560
+//   key entry    a published signing key with its continuity statement, 128-character kids: 1,709 bytes; 1,792
+// The constants live in document-budget.mjs (no dependencies), so keys.mjs can check rotation headroom without an
+// import cycle; they are re-exported here.
+import { MAX_MOVE_URI, MAX_STATEMENT_BYTES, MAX_ATTESTATION_BYTES, MOVE_KEY_ALLOWANCE, MOVE_RECORD_FRAMING, MOVE_ALLOWANCE, DOCUMENT_BYTES, DOCUMENT_BASE_BYTES, MAX_DOCUMENT_KEYS, MAX_MOVES_DOCUMENT_BYTES, MOVE_KID } from './document-budget.mjs';
+export { MAX_MOVE_URI, MAX_STATEMENT_BYTES, MAX_ATTESTATION_BYTES, MOVE_KEY_ALLOWANCE, MOVE_RECORD_FRAMING, MOVE_ALLOWANCE, DOCUMENT_BYTES, DOCUMENT_BASE_BYTES, MAX_DOCUMENT_KEYS, MAX_MOVES_DOCUMENT_BYTES, MOVE_KID };
+const utf8Length = value => textEncoder.encode(value).length;
+/** The exact length of the compact statement that `signMoveStatement` would produce for `{kid, payload}` (a raw ES256
+ * signature is always 64 bytes, so the length does not depend on the key). Producers check it before signing. */
+export function moveStatementBytes({ kid, payload }) {
+  const segment = value => Math.ceil(utf8Length(canonical(value)) * 4 / 3);
+  return segment({ alg: 'ES256', kid, typ: MOVE_TYP }) + 1 + segment(payload) + 1 + 86;
+}
+/** The largest document an arriving identity can have at its destination, for the producer check of §7 "Size" (PORT-4
+ * intake). `keys`: the signing-key entries the destination will import and publish (history and the arriving key,
+ * in identity-document form); `moves`: the source's records; `statementBytes`: this move's statement (exact); the
+ * attestation is reserved at its cap, and DOCUMENT_BASE_BYTES reserves the destination's own members and keys. */
+export function projectedMoveDocument({ keys = [], moves = [], statementBytes, attested = true }) {
+  const entries = keys.reduce((sum, entry) => sum + utf8Length(JSON.stringify(entry)) + 1, 0);
+  const records = moves.reduce((sum, record) => sum + utf8Length(JSON.stringify({ statement: record.statement, attestation: record.attestation ?? null })) + 1, 0);
+  const own = statementBytes + (attested ? MAX_ATTESTATION_BYTES : 4) + MOVE_RECORD_FRAMING;
+  return { bytes: DOCUMENT_BASE_BYTES + entries + records + own, keys: keys.length, moves: moves.length + 1 };
+}
 
 export class SuccessionError extends Error {
   constructor(code, message = 'The identity move record could not be verified.') { super(message); this.code = code; }
@@ -49,8 +82,10 @@ const encodeSegment = value => base64url(textEncoder.encode(canonical(value)));
 /** An HTTPS origin exactly (no path, no trailing slash). */
 export const httpsOrigin = value => { try { const url = new URL(value); return typeof value === 'string' && value.length <= 256 && url.protocol === 'https:' && url.origin === value; } catch { return false; } };
 /** An identity URI on `origin`: canonical HTTPS URL without userinfo, query or fragment. */
-const identityOn = (value, origin) => { try { const url = new URL(value); return typeof value === 'string' && value.length <= MAX_URL && url.href === value && url.protocol === 'https:' && url.origin === origin && !url.username && !url.password && !url.search && !url.hash && !value.includes('?') && !value.includes('#'); } catch { return false; } };
+const identityOn = (value, origin, max = MAX_URL) => { try { const url = new URL(value); return typeof value === 'string' && value.length <= max && url.href === value && url.protocol === 'https:' && url.origin === origin && !url.username && !url.password && !url.search && !url.hash && !value.includes('?') && !value.includes('#'); } catch { return false; } };
 const place = value => exactMembers(value, ['iss', 'identity']) && httpsOrigin(value.iss) && identityOn(value.identity, value.iss);
+/** A `from`/`to` of a move statement or attestation: `place` with the identity URI at most MAX_MOVE_URI (§4 "Size"). */
+const movePlace = value => exactMembers(value, ['iss', 'identity']) && httpsOrigin(value.iss) && identityOn(value.identity, value.iss, MAX_MOVE_URI);
 const samePlace = (a, b) => a?.iss === b?.iss && a?.identity === b?.identity;
 /** Public P-256 coordinates, 32 bytes each. */
 const coordinate = value => { try { return typeof value === 'string' && fromBase64url(value).length === 32; } catch { return false; } };
@@ -72,12 +107,12 @@ const sOf = signature => BigInt('0x' + [...signature.slice(32)].map(b => b.toStr
 export const lowS = signature => signature?.length === 64 && (s => s >= 1n && s <= HALF_N)(sOf(signature));
 const toLowS = signature => { const s = sOf(signature); if (s <= HALF_N) return signature; const flipped = (N - s).toString(16).padStart(64, '0'), out = new Uint8Array(64); out.set(signature.slice(0, 32)); for (let i = 0; i < 32; i++) out[32 + i] = parseInt(flipped.slice(2 * i, 2 * i + 2), 16); return out; };
 const canonicalSign = async (privateKey, bytes, crypto) => toLowS(new Uint8Array(await crypto.subtle.sign(ES256, privateKey, bytes)));
-function parseJWS(value, typ, code) {
+function parseJWS(value, typ, code, max = MAX_JWS) {
   try {
-    if (typeof value !== 'string' || value.length > MAX_JWS || !SEGMENTS.test(value)) fail(code);
+    if (typeof value !== 'string' || value.length > max || !SEGMENTS.test(value)) fail(code);
     const [h, p, s] = value.split('.');
     const header = strictJSON(utf8(fromBase64url(h))), payload = strictJSON(utf8(fromBase64url(p))), signature = fromBase64url(s);
-    if (!exactMembers(header, ['alg', 'kid', 'typ']) || header.alg !== 'ES256' || header.typ !== typ || !boundedString(header.kid, 128) || /[\u0080-\u009f]/.test(header.kid) || !lowS(signature) || !plainObject(payload)) fail(code);
+    if (!exactMembers(header, ['alg', 'kid', 'typ']) || header.alg !== 'ES256' || header.typ !== typ || typeof header.kid !== 'string' || !MOVE_KID.test(header.kid) || !lowS(signature) || !plainObject(payload)) fail(code);
     return { header, payload, input: `${h}.${p}`, signature, value };
   } catch (error) { if (error instanceof SuccessionError) throw error; fail(code); }
 }
@@ -94,16 +129,16 @@ const STATEMENT = ['bindle', 'v', 'sub', 'kind', 'seq', 'prev', 'from', 'to', 'i
 function statementPayload(payload) {
   if (!exactMembers(payload, STATEMENT) || payload.bindle !== 'identity-move' || payload.v !== 1 || typeof payload.sub !== 'string' || !UUID.test(payload.sub) || !['person', 'organization'].includes(payload.kind)) fail('statement_invalid');
   if (!Number.isSafeInteger(payload.seq) || payload.seq < 1 || (payload.seq === 1 ? payload.prev !== null : typeof payload.prev !== 'string' || !DIGEST.test(payload.prev))) fail('statement_invalid');
-  if (!place(payload.from) || !place(payload.to) || payload.from.iss === payload.to.iss || !safeTime(payload.iat)) fail('statement_invalid');
+  if (!movePlace(payload.from) || !movePlace(payload.to) || payload.from.iss === payload.to.iss || !safeTime(payload.iat)) fail('statement_invalid');
   return payload;
 }
 export async function signMoveStatement({ kid, payload }, privateKey, { crypto = globalThis.crypto } = {}) {
-  if (!boundedString(kid, 128)) fail('statement_invalid');
+  if (typeof kid !== 'string' || !MOVE_KID.test(kid)) fail('statement_invalid');
   statementPayload(payload);
   const value = await signJWS({ alg: 'ES256', kid, typ: MOVE_TYP }, payload, privateKey, crypto);
   parseMoveStatement(value); return value;
 }
-export function parseMoveStatement(jws) { const parsed = parseJWS(jws, MOVE_TYP, 'statement_invalid'); statementPayload(parsed.payload); return parsed; }
+export function parseMoveStatement(jws) { const parsed = parseJWS(jws, MOVE_TYP, 'statement_invalid', MAX_STATEMENT_BYTES); statementPayload(parsed.payload); return parsed; }
 /** Parses and verifies under `publicJwk` (the key the header's kid names). */
 export async function verifyMoveStatement(jws, publicJwk, { crypto = globalThis.crypto } = {}) {
   const parsed = typeof jws === 'string' ? parseMoveStatement(jws) : parseMoveStatement(jws?.value);
@@ -115,16 +150,16 @@ export async function verifyMoveStatement(jws, publicJwk, { crypto = globalThis.
 
 const ATTESTATION = ['bindle', 'v', 'iss', 'sub', 'seq', 'statement', 'to', 'aep', 'at'];
 function attestationPayload(payload) {
-  if (!exactMembers(payload, ATTESTATION) || payload.bindle !== 'move-attestation' || payload.v !== 1 || !httpsOrigin(payload.iss) || typeof payload.sub !== 'string' || !UUID.test(payload.sub) || !Number.isSafeInteger(payload.seq) || payload.seq < 1 || typeof payload.statement !== 'string' || !DIGEST.test(payload.statement) || !place(payload.to) || !safeTime(payload.aep) || !safeTime(payload.at)) fail('attestation_invalid');
+  if (!exactMembers(payload, ATTESTATION) || payload.bindle !== 'move-attestation' || payload.v !== 1 || !httpsOrigin(payload.iss) || typeof payload.sub !== 'string' || !UUID.test(payload.sub) || !Number.isSafeInteger(payload.seq) || payload.seq < 1 || typeof payload.statement !== 'string' || !DIGEST.test(payload.statement) || !movePlace(payload.to) || !safeTime(payload.aep) || !safeTime(payload.at)) fail('attestation_invalid');
   return payload;
 }
 export async function signMoveAttestation({ kid, payload }, privateKey, { crypto = globalThis.crypto } = {}) {
-  if (!boundedString(kid, 128)) fail('attestation_invalid');
+  if (typeof kid !== 'string' || !MOVE_KID.test(kid)) fail('attestation_invalid');
   attestationPayload(payload);
   const value = await signJWS({ alg: 'ES256', kid, typ: ATTESTATION_TYP }, payload, privateKey, crypto);
   parseMoveAttestation(value); return value;
 }
-export function parseMoveAttestation(jws) { const parsed = parseJWS(jws, ATTESTATION_TYP, 'attestation_invalid'); attestationPayload(parsed.payload); return parsed; }
+export function parseMoveAttestation(jws) { const parsed = parseJWS(jws, ATTESTATION_TYP, 'attestation_invalid', MAX_ATTESTATION_BYTES); attestationPayload(parsed.payload); return parsed; }
 /** Verifies `jws` over `statement` (parsed or compact) under the attestation key `publicJwk`. Matching is §8.3 item 3. */
 export async function verifyMoveAttestation(jws, { statement, publicJwk } = {}, { crypto = globalThis.crypto } = {}) {
   const parsed = parseMoveAttestation(jws), stated = typeof statement === 'string' ? parseMoveStatement(statement) : parseMoveStatement(statement?.value);
@@ -184,7 +219,9 @@ export async function evaluateAttestationKeys({ issuer, jwks, pins = {}, roots =
   if (!httpsOrigin(issuer)) fail('attestation_invalid');
   const keys = attestationJwks(jwks), byKid = new Map(keys.map(key => [key.kid, key]));
   const prints = new Map(); for (const key of keys) prints.set(key.kid, await attestationKeyThumbprint(key, { crypto }));
-  const chained = async key => key.continuity !== undefined && byKid.has(key.continuity?.kid) && await verifyAttestationKeyContinuity({ signer: byKid.get(key.continuity.kid), next: key }, { crypto });
+  // One continuity verification per listed key per evaluation (review: the closure below re-ran it up to n^2/4 times).
+  const verdicts = new Map();
+  const chained = key => { if (!verdicts.has(key.kid)) verdicts.set(key.kid, (async () => key.continuity !== undefined && byKid.has(key.continuity?.kid) && await verifyAttestationKeyContinuity({ signer: byKid.get(key.continuity.kid), next: key }, { crypto }))()); return verdicts.get(key.kid); };
   const existing = pinOf(pins, issuer), configured = Array.isArray(roots?.[issuer]) ? roots[issuer] : null;
   const trusted = new Set(); let firstUse = false;
   if (!existing && !configured) {
@@ -205,7 +242,7 @@ export async function evaluateAttestationKeys({ issuer, jwks, pins = {}, roots =
 // ---- chain (§8.6, §8.3 items 1–3) -------------------------------------------------------------------------------
 
 function keySet(keys, subject) {
-  if (!Array.isArray(keys) || keys.length === 0 || keys.length > 64) fail('chain_invalid');
+  if (!Array.isArray(keys) || keys.length === 0 || keys.length > MAX_DOCUMENT_KEYS) fail('chain_invalid');
   const byKid = new Map();
   for (const key of keys) {
     const publicJwk = key?.publicJwk ?? key?.jwk;

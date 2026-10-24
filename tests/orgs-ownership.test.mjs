@@ -9,6 +9,7 @@ import {memoryAudit} from '../packages/app/providers.mjs';
 import {fakeClock,seededRandom,createRandom} from '../packages/app/memory-providers.mjs';
 import {OwnershipService,OWNERSHIP,billingStanding,organizationEntitlementPort} from '../packages/orgs/ownership.mjs';
 import {ORG_RECORD} from '../packages/orgs/organizations.mjs';
+import {readOrganization} from '../packages/orgs/roster.mjs';
 import {principalKey,memberPowers} from '../packages/orgs/grants.mjs';
 import {organizationsProvider,ORG_OPERATIONS,ORG_SYSTEM_OPERATIONS} from '../packages/app/domains/orgs.mjs';
 import {OrganizationBilling} from '../packages/billing/organizations.mjs';
@@ -32,7 +33,7 @@ async function world(seed=1,{allowlist='',configured=true,owner=A,currency='usd'
  const verification=(extra={})=>({stepUpAt:clock.now(),enrolledAt:clock.now()-30*DAY,securityChangedAt:clock.now()-60*DAY,...extra});
  const act=(sub,extra={})=>({kind:'owner',owner:ORG,principal:p(sub),entity:{kind:'organization',id:ORG},powers:[],authTime:clock.now(),epoch:0,aep:0,verification:verification(),addedUnder:{kid:'identity-key-'+sub.slice(0,4),publicKey:{kty:'EC'},certificationKid:null,authentication:'same-host-session'},...extra});
  const run=(op,sub,input={},extra={})=>{const action=new OPS[op]({actor:sub==='system'?{kind:'system',owner:ORG}:act(sub,extra),input});return action instanceof AppQuery?read(engine,action):perform(engine,action);};
- const record=()=>metadata.get(ORG_RECORD),member=async sub=>(await record()).memberships[principalKey(p(sub))];
+ const record=()=>readOrganization(metadata),member=async sub=>(await record()).memberships[principalKey(p(sub))];
  const join=async(sub,grants=[])=>{const invite=await run('orgs.invite',owner,{invitee:p(sub),grants});await run('orgs.accept',sub,{invitation:invite.invitation});return member(sub);};
  const sync=()=>run('orgs.billing-sync','system'),tick=()=>run('orgs.ownership-tick','system'),drain=()=>run('orgs.ownership-drain','system');
  let events=0;const webhook=(id='auto_'+(++events),bodyHash='a'.repeat(64))=>run('orgs.billing-webhook','system',{id,bodyHash,type:'subscription.updated'});
@@ -311,7 +312,7 @@ test('H1: a subscription Polar cannot confirm is held with an operator alert; it
   await h.join(C,[{power:'admin'}]);h.clock.advance(4*DAY);await lapsed(h);
   await h.run('orgs.claim-start',C,{plan:'org-team',confirm:true});h.payLatest('claim');await h.webhook();
   const old=h.polar.subscriptions.get(h.ownerSub.subscription);h.polar.subscriptions.delete(old.id);h.clock.advance(DAY);await h.sync();
-  let r=await h.record();assert.equal(r.billing.subscriptions[old.id].hold,undefined,'an ended subscription is not held');
+  let r=await h.record();assert.equal(r.billing.subscriptions[old.id]?.hold,undefined,'an ended subscription is not held (and, settled, is forgotten)');
   h.polar.subscriptions.get(r.billing.claim.payment.subscriptionId).amount=1;h.clock.advance(2*DAY+60000);await h.sync();r=await h.record();
   assert.equal(r.billing.claim.state,'pending','an unverifiable claim payment holds the claim past its deadline');assert.equal(r.ownerOfRecord.sub,A);assert.equal(h.alerts.at(-1).reason,'subscription-unverifiable');
   h.polar.subscriptions.get(r.billing.claim.payment.subscriptionId).amount=120000;await h.sync();r=await h.record();assert.equal(r.ownerOfRecord.sub,C,'reconciled: the claim takes effect');
@@ -320,9 +321,9 @@ test('H1: a subscription Polar cannot confirm is held with an operator alert; it
 });
 
 test('H1: an ownership change revokes every live subscription of the former owner, including one marked missing',async()=>{const w=await world();try{
- const r=await w.record();w.service.ensure(r);const legacy=r.billing.subscriptions[w.ownerSub.subscription];legacy.status='missing';
- await w.service.changeOwner(r,p(C),{subscriptionId:'sub_claim'},w.clock.now(),null,{cause:'lapse-claim',id:'claim-1'});
- assert.equal(r.billing.handled[legacy.id],'revoke');assert.ok(r.ownershipOutbox.some(e=>e.kind==='revoke'&&e.subscriptionId===legacy.id));
+ await w.metadata.transaction(async tx=>{const r=w.service.ensure(await w.service.open(tx));const legacy=r.billing.subscriptions[w.ownerSub.subscription];legacy.status='missing';
+  await w.service.changeOwner(r,p(C),{subscriptionId:'sub_claim'},w.clock.now(),tx,{cause:'lapse-claim',id:'claim-1'});
+  assert.equal(r.billing.handled[legacy.id],'revoke');assert.ok(r.ownershipOutbox.some(e=>e.kind==='revoke'&&e.subscriptionId===legacy.id));});
 }finally{await w.close();}});
 
 test('H2: a claim never takes effect on stale data; an owner payment made before the deadline defeats it when Polar recovers',async()=>{const w=await world();try{

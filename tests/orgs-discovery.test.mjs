@@ -11,6 +11,7 @@ import {memoryAudit} from '../packages/app/providers.mjs';
 import {fakeClock,seededRandom,createRandom} from '../packages/app/memory-providers.mjs';
 import {MembershipService,requestDecisions} from '../packages/orgs/memberships.mjs';
 import {ORG_RECORD,ORG_JOINED_LIMIT} from '../packages/orgs/organizations.mjs';
+import {readOrganization,loadOrganization} from '../packages/orgs/roster.mjs';
 import {accountActor,personActor} from '../packages/orgs/authority.mjs';
 import {principalKey} from '../packages/orgs/grants.mjs';
 import {organizationsProvider,ORG_OPERATIONS,ORG_SYSTEM_OPERATIONS} from '../packages/app/domains/orgs.mjs';
@@ -33,8 +34,8 @@ async function writer({owner,clock,seed,flag,org=null}){
  const run=operation=>operation instanceof AppQuery?read(engine,operation):perform(engine,operation);
  if(org)await run(new OPS['orgs.initialize']({actor:{kind:'system',owner},input:{request:'discovery-request-'+String(seed).padStart(4,'0'),creator:p(org.creator),name:org.name,plan:{source:'test',plan:'test'}}}));
  // The same steps as AccountController#orgsDispatch: resolve inside the writer, never trust caller powers.
- const dispatch=async(operation,requested,input)=>{const Operation=OPS[operation];if(!Operation)throw new AppFault('not_found','Not found.',404);const actor=await accountActor({owner,requested,Operation,issuer:ISS,organization:()=>metadata.get(ORG_RECORD)});return run(new Operation({actor,...input===undefined?{}:{input:structuredClone(input)}}));};
- return {owner,metadata,service,engine,run,dispatch,record:()=>metadata.get(ORG_RECORD),close:async()=>{await engine.dispose();metadata.close();}};
+ const dispatch=async(operation,requested,input)=>{const Operation=OPS[operation];if(!Operation)throw new AppFault('not_found','Not found.',404);const actor=await accountActor({owner,requested,Operation,issuer:ISS,organization:principal=>loadOrganization(metadata,[principal])});return run(new Operation({actor,...input===undefined?{}:{input:structuredClone(input)}}));};
+ return {owner,metadata,service,engine,run,dispatch,record:()=>readOrganization(metadata),close:async()=>{await engine.dispose();metadata.close();}};
 }
 
 async function world(seed=1,{orgs=[[ORG1,A,'Alpha'],[ORG2,E,'Beta']],people=[A,B,C,D,E]}={}){

@@ -9,6 +9,7 @@ import { recoveryCredential, RECOVERY_CREDENTIAL_AGE_MS, RECOVERY_REISSUE_TTL_MS
 import { transferIdentityPort } from '../packages/identity/transfer-out.mjs';
 import { transferInRecoveryPort, RECOVERY_REISSUE_OPERATIONS } from '../packages/identity/recovery-reissue.mjs';
 import { operations } from '../packages/app/engine.mjs';
+import { KEY_HISTORY_LIMIT } from '../packages/identity/keys.mjs';
 
 const audits = record => record.audit.map(entry => entry.type);
 
@@ -101,6 +102,22 @@ test('an ordinary key rotation between begin and confirm refuses the stale stage
   const record = await f.identity(); assert.equal(record.recoveryHash, (await f.identityBefore()).recoveryHash, 'nothing was committed');
   await f.stepUp('password'); const fresh = f.parse(await f.begin()); await f.confirm(fresh);
   assert.ok(await f.recover(fresh));
+});
+
+test('a reissue that must rotate but cannot (a full history of referenced keys) refuses with rotation_unavailable and stages nothing', async t => {
+  // Review 2026-10-23 item 3: never issue a replacement file that holds the same signing key.
+  const f = await reissueFixture(t), { id, c } = f; await f.age();
+  const link = { name: 'Friends', mimeTypes: ['text/plain'], expiresAt: Date.now() + 365 * DAY, maxMessages: 50, maxBytes: 65536, maxMessageBytes: 4096 };
+  // Each cycle: a live contact link references the file's key, then a reissue rotates away from it; nothing is prunable.
+  for (let i = 1; i < KEY_HISTORY_LIMIT; i++) { await c.createContactLink(id, f.handle, { ...link, name: `L${i}` }); await f.age(); await f.stepUp('password'); await f.confirm(f.parse(await f.begin())); }
+  await c.createContactLink(id, f.handle, { ...link, name: 'last' });
+  assert.equal((await c.identityKeyHistory(id, { purpose: 'signing' })).length, KEY_HISTORY_LIMIT);
+  await f.age(); await f.stepUp('password');
+  const before = await f.identity();
+  await assert.rejects(f.begin(), { code: 'rotation_unavailable', status: 409 });
+  const after = await f.identity();
+  assert.equal(after.recoveryStaged ?? null, before.recoveryStaged ?? null, 'nothing staged'); assert.equal(after.recoveryHash, before.recoveryHash, 'the current file keeps working');
+  assert.equal((await c.identityKeyHistory(id, { purpose: 'signing' })).length, KEY_HISTORY_LIMIT, 'no referenced key was pruned');
 });
 
 test('deletion: refused while scheduled or executing, including one scheduled between begin and confirm; nothing changes', async t => {

@@ -294,6 +294,10 @@ async function attempt(x,owner,port,r,c){
  let built;try{built=snap===undefined&&r.type==='preferences-updated'?null:payloadOf(r,c,snap,target);}catch{built=null;}
  const lease=await x.store.transaction(async tx=>{
   const cur=await tx.get(r.key);if(!cur||cur.order!==r.order||cur.nextAt>now)return null;
+  // The connection listing predates this pass (and the snapshot fetch): re-check the live record inside the lease, so
+  // a disconnect or generation change in between never lets a data-bearing event out (wargame plausible-4).
+  // A composition whose connection port is not backed by this store has no row here and relies on the listing.
+  if(!REVOCATION.has(r.type)){const live=await tx.get('resource/'+c.id);if(live&&(live.generation!==c.generation||!LIVE.includes(live.state??(live.status==='active'?'active':'disconnected'))))return {stale:true};}
   if(r.type==='bus-advanced'){const again=await doorbellTarget(tx,{row:r,connection:c});if(!again)return {moot:true};built=payloadOf(r,c,snap,again);await markDoorbellSent(tx,{row:r,now});}/* EV-3 */
   if(built&&(!cur.jti||JSON.stringify([cur.sentGeneration,cur.body])!==JSON.stringify([built.generation,built.body]))){
    const k=await conn(tx,c.id);if(k.seq>=Number.MAX_SAFE_INTEGER)fault('unavailable','Event sequence exhausted.',503);
@@ -301,7 +305,7 @@ async function attempt(x,owner,port,r,c){
   }
   cur.attempts++;cur.firstAttemptAt??=now;cur.nextAt=now+backoff(x,cur.attempts);cur.attempt=token16(x.random);await tx.put(r.key,cur);return cur;
  });
- if(!lease)return 'skipped';
+ if(!lease||lease.stale)return 'skipped';
  if(lease.moot||r.type==='bus-advanced'&&!await doorbellTarget(x.store,{row:r,connection:c,owner,subscribed:x.doorbellGrant??null}))return drop(x,r,'moot');/* EV-3: re-checked just before egress (EV3-R5) */
  let outcome;
  if(!built)outcome={kind:'retry',code:'snapshot_unavailable'};

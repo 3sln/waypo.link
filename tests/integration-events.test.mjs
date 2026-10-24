@@ -35,7 +35,7 @@ function recorder(keys,clock,connection){
  const seen=[];return {seen,async fetch(url,init){const token=init.body;try{const v=await E.verifySecurityEventToken(token,{subject:SUB,keys:await keys.jwks(),issuer:ISSUER,audience:url,subject:SUB,connection:({connection:id})=>id===connection(),now:clock.now()});seen.push({type:v.type,...v.payload});return new Response(null,{status:202});}catch{return Response.json({err:'authentication_failed'},{status:401});}}};
 }
 
-async function world(t,{limits,events,crashable=false,enabled=true}={}){
+async function world(t,{limits,events,crashable=false,enabled=true,onSnapshot}={}){
  const clock=fakeClock(Date.UTC(2026,9,20,12)),keys=brokeringKeys({issuer:ISSUER,secret:SECRET,metadata:memory(),clock:()=>clock.now()});
  const crash={next:false},wrap=crashable?{accountStore:store=>new Proxy(store,{get(target,key){const value=Reflect.get(target,key);if(key==='transaction')return async(...args)=>{if(crash.next){crash.next=false;throw Object.assign(new Error('process crashed'),{code:'crashed'});}return value.apply(target,args);};return typeof value==='function'?value.bind(target):value;}})}:{};
  const values=new Map();let revision=0;const setValues=(fragment,v)=>values.set(fragment,{revision:`rev-${++revision}`,values:v});
@@ -51,7 +51,7 @@ async function world(t,{limits,events,crashable=false,enabled=true}={}){
  const system={kind:'system',owner:OWNER},owner={kind:'owner',owner:OWNER,authTime:clock.now()};let x4;
  const op=(Operation,actor,input)=>{const o=new Operation({actor,...input===undefined?{}:{input}});return o instanceof AppQuery?read(x4,o):perform(x4,o);};
  const port=()=>({outbox:i=>op(C.ConnectionOutbox,system,i),ack:i=>op(C.AckConnectionOutbox,system,i),list:()=>op(C.ConnectionList,system),health:i=>op(C.ConnectionHealth,system,i)});
- const harness=await createTestEngine({clock,wrap,providers:{integrationEvents:E.integrationEventsProvider({enabled,issuer:ISSUER,signer:keys,egress,snapshot:async({fragment})=>values.get(fragment)??{revision:null,values:null},connections:port,limits})}});
+ const harness=await createTestEngine({clock,wrap,providers:{integrationEvents:E.integrationEventsProvider({enabled,issuer:ISSUER,signer:keys,egress,snapshot:async({fragment})=>{await onSnapshot?.();return values.get(fragment)??{revision:null,values:null};},connections:port,limits})}});
  t.after(()=>harness.dispose());await harness.metadata.put('owner',OWNER);
  const connections=new AppConnections({metadata:harness.metadata,origin:ISSUER,clock:clock.now});
  x4=createAppEngine({providers:{clock,random:{uuid:()=>crypto.randomUUID(),bytes:n=>crypto.getRandomValues(new Uint8Array(n))},audit:memoryAudit({clock}),connections:C.connectionsProvider({connections,enabled:true,account:async()=>({status:'active'})})}});
@@ -298,4 +298,14 @@ test('alarm-driven draining on the real AccountController (shared by the Worker 
  assert.equal((await a.connectionsSystem(OWNER,{operation:'connections.outbox',input:{}})).events.length,0,'ingested rows are acknowledged in the X4 outbox');
  const off=new AccountController({metadata:new SqliteMetadata(':memory:'),gate:new SerialGate(),blobs:bucket,archives:bucket,config:{...config,INTEGRATIONS_ENABLED:'false'},sql:db.sql});
  assert.deepEqual(await off.integrationEventsAlarm(OWNER),{ready:false});await assert.rejects(off.integrationEventsMark(OWNER,{connection:c.id,fragment:F}),{code:'not_found'});
+});
+
+test('wargame plausible-4: a disconnect committed after the connection listing never lets a data-bearing event out',async t=>{
+ let hook=null;const w=await world(t,{onSnapshot:()=>hook?.()});
+ w.setValues(F,{secret:'owner value'});await w.ev.mark(F);await w.ev.ingest();
+ // The owner disconnects while the delivery pass is fetching the snapshot (after it listed the connections).
+ hook=async()=>{hook=null;const r=await w.harness.metadata.get('resource/'+w.connection.id);await w.harness.metadata.put('resource/'+w.connection.id,{...r,status:'disconnected',state:'disconnected',generation:r.generation+1});};
+ const result=await w.ev.deliver();
+ assert.equal(w.sent.filter(s=>eventOf(s.body).type===PREFERENCES_UPDATED_EVENT).length,0,'preferences were sent to a disconnected app');
+ assert.equal(result.skipped,1);
 });

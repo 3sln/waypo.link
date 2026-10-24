@@ -63,8 +63,11 @@ export function requireFresh(actor,now,windowMs=900000){if(!nonNegative(actor?.a
 export function organizationPowers(record,principal,{membership,now=Date.now()}={}){
  if(record?.kind!=='organization'||!plain(principal))return [];
  const same=party=>plain(party)&&party.sub===principal.sub&&(party.iss??null)===(principal.iss??null);
- const stored=record.memberships?.[principalKey(principal)],powers=[];if(same(record.ownerOfRecord)&&(!record.memberships||stored?.state==='live'&&(stored.expires_at===undefined||stored.expires_at>now/1000)&&!stored.hold))powers.push('owner-of-record');
- if(record.memberships){powers.push(...memberPowers(stored,now));return powers;}
+ // A split roster record (packages/orgs/roster.mjs) carries only the memberships its reader attached; one read
+ // without them grants nothing (fail closed), never the phase-A initial-admin fallback.
+ const memberships=record.memberships??(record.roster?.v===2?{}:null);
+ const stored=memberships?.[principalKey(principal)],powers=[];if(same(record.ownerOfRecord)&&(!memberships||stored?.state==='live'&&(stored.expires_at===undefined||stored.expires_at>now/1000)&&!stored.hold))powers.push('owner-of-record');
+ if(memberships){powers.push(...memberPowers(stored,now));return powers;}
  const member=typeof membership==='function'?membership(principal):undefined;
  if(member!==undefined&&member!==null){for(const power of Array.isArray(member.powers)?member.powers:[])if(power==='admin')powers.push('admin');}
  else if(same(record.initialAdmin))powers.push('admin');
@@ -75,7 +78,8 @@ export function organizationPowers(record,principal,{membership,now=Date.now()}=
  * The actor an account single writer accepts for one operation, resolved inside the writer's gate.
  * `requested` is what a trusted adapter passed (or undefined for the legacy implicit owner). `Operation.entities`
  * lists the entity kinds the operation supports (default ['person']). `organization()` reads this writer's
- * organization record (only called for an organization entity). `issuer` is this provider's origin: a same-host
+ * organization record (only called for an organization entity), with the acting principal's membership attached; it
+ * receives that principal ({iss, sub}). `issuer` is this provider's origin: a same-host
  * principal may name it or leave `iss` null.
  */
 export async function accountActor({owner,requested,Operation,issuer,organization,membership}={}){
@@ -94,7 +98,7 @@ export async function accountActor({owner,requested,Operation,issuer,organizatio
   return personActor({owner,iss,authTime,epoch,aep:requested.aep,verification:requested.verification});
  }
  if(!supported.includes('organization'))fail('not_found','Not found.',404);
- const record=typeof organization==='function'?await organization():undefined;
+ const record=typeof organization==='function'?await organization({iss,sub:principal.sub}):undefined;
  if(record?.kind!=='organization'||record.id!==owner)fail('not_found','Not found.',404);
  const powers=organizationPowers(record,{iss,sub:principal.sub},{membership});
  if(!powers.length&&!Operation?.membershipEntry)fail('not_found','Not found.',404);

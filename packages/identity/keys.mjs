@@ -23,7 +23,21 @@
 // imports; retired/revoked signing private keys are dropped, and encryption private keys are retained sealed
 // (`identity-key-retained/<owner>/<kid>/`), because old content may still need them. Never log key material.
 // History is bounded per owner and purpose: signing prunes its oldest revoked record, then its oldest retired record
-// that nothing still needs; encryption never prunes and refuses rotation with `key_history_full`.
+// that nothing still needs; encryption never prunes and refuses rotation with `key_history_full`. Pinned records (a
+// moved identity's imported keys, below) do not count against KEY_HISTORY_LIMIT: they are bounded by the portability
+// byte budget instead (spec §7 "Size", checked at transfer-in intake), so 16 moves never fill the history. For an
+// identity with pinned keys, every retired key on the continuity chain from the current key back to the pinned keys
+// is never pruned either: spec §7 requires the chain from each statement signer to the current key to stay listed,
+// and pruning one link would make the published `moves` unverifiable. Such an identity may keep own keys beyond
+// KEY_HISTORY_LIMIT while its published document has headroom (64 keys and the §7 byte budget, computed from the arrival
+// record `transfer-in/v1`); past that, rotation is refused with `key_history_full`. The active-account recovery reissue
+// then refuses with `rotation_unavailable` (identity/service.mjs) instead of issuing a file with the same key.
+//
+// Tombstones. A pruned kid can never be registered or imported again (review finding 3). Pruned kids are kept as an
+// exact set in pages of TOMBSTONE_PAGE kids (`identity-key-pruned/<owner>//<page>/`; the empty segment can never be a
+// kid), so the anti-reuse check stays exact while the row count grows by one per TOMBSTONE_PAGE prunes. Rows of the
+// earlier one-row-per-kid layout (`identity-key-pruned/<owner>/<kid>/`) still count and are folded into the pages at
+// the next prune. `retainedState` reports what an owner's key state retains.
 //
 // Old-key honouring (identity portability P11, PORT-9; docs/spec/identity-portability.md §7.1). A retired signing key
 // is never pruned while it is *referenced*: named by a live stored record whose exact header the provider re-serves
@@ -52,9 +66,16 @@
 // because the identity document must keep listing every key that signed a statement in `moves` (spec §7, §7.1).
 import { Engine, Provider, Action, Query } from '../../vendor/ngin/index.js';
 import { fail, key, canonical, base64url, fromBase64url, textEncoder, strictText, boundedString } from '../core/records.mjs';
+import { MAX_DOCUMENT_KEYS, MAX_MOVES_DOCUMENT_BYTES, MOVE_KEY_ALLOWANCE } from './document-budget.mjs';
+/** Headroom reserve for a moved identity's document header (`v`, `iss`, `sub`, `kind`, `handle`) and certification keys. */
+const HEADER_CERT_BYTES = 4096, HEADER_CERT_KEYS = 4;
 
 export const KEY_PURPOSES = Object.freeze(['signing', 'encryption']);
 export const KEY_HISTORY_LIMIT = 16;
+/** Pruned kids per tombstone page (see the header). */
+export const TOMBSTONE_PAGE = 128;
+/** Most published-history entries a transfer-in imports beside the arriving key (spec §7: at most 64 document keys). */
+export const IMPORTED_HISTORY_LIMIT = 63;
 export const REVOCATION_REASONS = Object.freeze(['unspecified', 'compromise', 'owner', 'superseded']);
 export const CONTINUITY_DOMAIN = '3sln-identity-key-continuity-v1';
 const PREFIX = { signing: 'contact-key', encryption: 'identity-encryption-key' }, POINTER = { signing: 'signing-key', encryption: 'encryption-key' }, RETAINED = 'identity-key-retained', TOMBSTONE = 'identity-key-pruned', BINDING = 'identity-key-recovery';
@@ -100,6 +121,14 @@ export async function referencedSigningKids(tx, owner, now) {
   for (const kid of (await tx.get(key(BINDING, owner)))?.kids ?? []) add(kid);
   return kids;
 }
+/** The kids on the continuity chain from `currentKid` back through `predecessor` links among `records` (stops at a
+ * missing or revoked link). Used to keep a moved identity's published chain intact (see the header). */
+export function continuityChain(records, currentKid) {
+  const byKid = new Map(records.map(record => [record.kid, record])), chain = new Set();
+  for (let record = byKid.get(currentKid); record && !chain.has(record.kid) && keyState(record) !== 'revoked'; record = byKid.get(record.predecessor)) chain.add(record.kid);
+  return chain;
+}
+const tombstonePages = owner => `${key(TOMBSTONE, owner)}/`, tombstonePage = (owner, page) => key(TOMBSTONE, owner, '', page);
 /** Same-host signing record still usable for provider-stored artifacts (contact grants, link metas): active or retired. */
 export async function verifiableSigningKey(tx, owner, kid) { const record = await tx.get(publicPath('signing', owner, kid)); return record?.active === true && keyState(record) !== 'revoked' ? record : null; }
 
@@ -137,19 +166,61 @@ export class IdentityKeyRegistry {
   async #records(tx, owner, purpose) { return (await tx.list(key(PREFIX[purpose], owner))).map(row => row.value).filter(record => record?.owner === owner).sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0) || (a.createdAt ?? 0) - (b.createdAt ?? 0) || String(a.kid).localeCompare(String(b.kid))); }
   // Records carry a per-owner, per-purpose sequence, so history order and pruning never depend on clock resolution.
   async #next(tx, owner, purpose) { return (await this.#records(tx, owner, purpose)).reduce((max, record) => Math.max(max, record.seq ?? 0), 0) + 1; }
-  // Makes room for one more record within the bounded history (see the header).
+  // Makes room for one more record within the bounded history (see the header). Pinned records do not count.
   async #admit(tx, owner, purpose, keep, protect = []) {
-    const records = await this.#records(tx, owner, purpose); if (records.length < this.historyLimit) return;
+    const records = await this.#records(tx, owner, purpose), own = records.filter(record => record.pinned !== true); if (own.length < this.historyLimit) return;
     // Encryption prunes only revoked public records (their private keys stay in `identity-key-retained/`), so a
     // revocation can always be followed by a replacement (review finding 1); retired encryption keys are never pruned.
-    // Signing then prunes the oldest retired record nothing references (P11): a referenced one is never dropped.
-    const prunable = records.filter(record => record.kid !== keep && keyState(record) !== 'active' && record.pinned !== true);
+    // Signing then prunes the oldest retired record nothing references (P11): a referenced one is never dropped, nor,
+    // for a moved identity, a link of the continuity chain its published `moves` need (spec §7).
+    const moved = purpose === 'signing' && own.length !== records.length;
+    const chain = moved ? continuityChain(records, (await this.#pointer(tx, owner, purpose))?.kid) : new Set();
+    const prunable = own.filter(record => record.kid !== keep && keyState(record) !== 'active' && !(keyState(record) === 'retired' && chain.has(record.kid)));
     let victim = prunable.find(record => keyState(record) === 'revoked');
     if (!victim && purpose === 'signing') { const referenced = await referencedSigningKids(tx, owner, this.clock()); for (const kid of protect) referenced.add(kid); victim = prunable.find(record => !referenced.has(record.kid)); }
-    if (!victim || records.length - 1 >= this.historyLimit) fail('key_history_full');
+    // A moved identity may keep own keys beyond KEY_HISTORY_LIMIT (the 16 keys of the §7 base are a reserve, not a
+    // ceiling) while its published document keeps real headroom: 64 keys and the byte budget (review 2026-10-23, item 3).
+    const fits = victim && own.length - 1 < this.historyLimit || moved && await this.#headroom(tx, records.filter(record => record !== victim));
+    if (!fits) fail('key_history_full');
+    if (!victim) return;
     // A pruned kid is tombstoned for good, so it can never be registered again (review finding 3).
-    await tx.set(key(TOMBSTONE, owner, victim.kid), { kid: victim.kid, purpose, prunedAt: this.clock() });
+    await this.#tombstone(tx, owner, victim.kid);
     await tx.delete(publicPath(purpose, owner, victim.kid));
+  }
+  /** Whether a moved identity's published document still fits spec §7 "Size" with one more signing key: its `moves`
+   * (the arrival record `transfer-in/v1`: the source's records and this host's statement and attestation), every
+   * remaining signing key as published, the new key at MOVE_KEY_ALLOWANCE, and a reserve for the header and
+   * certification keys; and at most MAX_DOCUMENT_KEYS keys. No arrival record: no headroom (fail closed). */
+  async #headroom(tx, remaining) {
+    const arrival = await tx.get(TRANSFER_IN_RECORD);
+    if (arrival?.state !== 'active' || typeof arrival.statement?.jws !== 'string') return false;
+    if (remaining.length + 1 + HEADER_CERT_KEYS > MAX_DOCUMENT_KEYS) return false;
+    const moves = [...Array.isArray(arrival.sourceMoves) ? arrival.sourceMoves : [], { statement: arrival.statement.jws, attestation: arrival.attestation ?? null }];
+    const size = value => textEncoder.encode(JSON.stringify(value)).length + 1;
+    const published = record => ({ kid: record.kid, use: 'sig', alg: record.alg, jwk: publicOf(record.publicJwk), state: keyState(record) === 'active' ? 'retired' : keyState(record), created: Number.MAX_SAFE_INTEGER, retired: Number.MAX_SAFE_INTEGER, predecessor: record.predecessor ?? null, continuity: record.continuity ?? null });
+    const bytes = HEADER_CERT_BYTES + MOVE_KEY_ALLOWANCE + remaining.reduce((sum, record) => sum + size(published(record)), 0) + moves.reduce((sum, record) => sum + size({ statement: record.statement, attestation: record.attestation ?? null }), 0);
+    return bytes <= MAX_MOVES_DOCUMENT_BYTES;
+  }
+  // ---- tombstones (see the header) ----
+  /** True when any of `kids` was pruned for `owner`: a legacy per-kid row, or a member of a tombstone page. */
+  async #pruned(tx, owner, kids) {
+    for (const kid of kids) if (await tx.get(key(TOMBSTONE, owner, kid))) return true;
+    const wanted = new Set(kids);
+    for (const { value } of await tx.list(tombstonePages(owner))) if (value?.owner === owner && Array.isArray(value.kids) && value.kids.some(kid => wanted.has(kid))) return true;
+    return false;
+  }
+  /** Adds `kid` to the owner's tombstone set, folding any legacy per-kid rows into the pages first. */
+  async #tombstone(tx, owner, kid) {
+    const pages = (await tx.list(tombstonePages(owner))).filter(row => row.value?.owner === owner && Array.isArray(row.value.kids)).map(row => row.value).sort((a, b) => a.page - b.page);
+    const members = new Set(pages.flatMap(page => page.kids)), fresh = [];
+    for (const { key: path, value } of await tx.list(key(TOMBSTONE, owner))) if (typeof value?.kid === 'string' && !Array.isArray(value?.kids)) { if (!members.has(value.kid)) { members.add(value.kid); fresh.push(value.kid); } await tx.delete(path); }
+    if (!members.has(kid)) fresh.push(kid);
+    let page = pages.at(-1) ?? { owner, page: 0, kids: [] };
+    for (const name of fresh) {
+      if (page.kids.length >= TOMBSTONE_PAGE) { await tx.set(tombstonePage(owner, page.page), page); page = { owner, page: page.page + 1, kids: [] }; }
+      page = { ...page, kids: [...page.kids, name] };
+    }
+    if (fresh.length) await tx.set(tombstonePage(owner, page.page), { ...page, at: this.clock() });
   }
   async #generate(purpose) {
     const pair = await this.crypto.subtle.generateKey(purpose === 'signing' ? ECDSA : ECDH, true, purpose === 'signing' ? ['sign', 'verify'] : ['deriveKey', 'deriveBits']);
@@ -166,7 +237,7 @@ export class IdentityKeyRegistry {
     return this.store.transaction(async tx => {
       const path = publicPath('signing', owner, kid);
       await fenced(tx);
-      if (await tx.get(path) || await tx.get(publicPath('encryption', owner, kid)) || await tx.get(key(TOMBSTONE, owner, kid))) fail('key_exists');
+      if (await tx.get(path) || await tx.get(publicPath('encryption', owner, kid)) || await this.#pruned(tx, owner, [kid])) fail('key_exists');
       await this.#admit(tx, owner, 'signing', (await this.#pointer(tx, owner, 'signing'))?.kid);
       await tx.set(path, { owner, kid, alg, publicJwk: clean, active: true, purpose: 'signing', state: 'active', custody: 'external', createdAt: this.clock(), seq: await this.#next(tx, owner, 'signing') });
       return { kid, alg };
@@ -320,7 +391,7 @@ export class IdentityKeyRegistry {
     const signing = input.signing, encryption = input.encryption ?? null, history = input.history ?? [];
     const point = jwk => ({ kty: 'EC', crv: 'P-256', x: jwk?.x, y: jwk?.y });
     const ok = (entry, d) => entry && boundedString(entry.kid) && typeof entry.jwk?.x === 'string' && typeof entry.jwk?.y === 'string' && (!d || typeof entry.jwk.d === 'string');
-    if (!ok(signing, true) || (encryption && !ok(encryption, true)) || !Array.isArray(history) || history.length >= this.historyLimit) fail('invalid_key');
+    if (!ok(signing, true) || (encryption && !ok(encryption, true)) || !Array.isArray(history) || history.length > IMPORTED_HISTORY_LIMIT) fail('invalid_key');
     for (const entry of history) if (!boundedString(entry?.kid) || typeof entry.publicJwk?.x !== 'string' || !['retired', 'revoked'].includes(entry.state) || entry.kid === signing.kid) fail('invalid_key');
     if (new Set([signing.kid, ...history.map(entry => entry.kid), ...encryption ? [encryption.kid] : []]).size !== history.length + 1 + (encryption ? 1 : 0)) fail('invalid_key');
     const ms = value => Number.isSafeInteger(value) && value >= 0 ? value * 1000 : undefined;
@@ -333,7 +404,7 @@ export class IdentityKeyRegistry {
       if (pointer) { if (pointer.kid === signing.kid && stored?.publicJwk?.x === signing.jwk.x && stored.publicJwk.y === signing.jwk.y) return { kid: pointer.kid, imported: false }; fail('key_conflict'); }
       const existing = await this.#records(tx, owner, 'signing');
       if (existing.some(record => record.kid !== signing.kid && !history.some(entry => entry.kid === record.kid))) fail('key_conflict');
-      for (const kid of [signing.kid, ...history.map(entry => entry.kid)]) if (await tx.get(key(TOMBSTONE, owner, kid))) fail('key_exists');
+      if (await this.#pruned(tx, owner, [signing.kid, ...history.map(entry => entry.kid)])) fail('key_exists');
       let seq = await this.#next(tx, owner, 'signing');
       for (const entry of history) await tx.set(publicPath('signing', owner, entry.kid), { owner, kid: entry.kid, alg: 'ES256', publicJwk: point(entry.publicJwk), active: entry.state !== 'revoked', purpose: 'signing', state: entry.state, createdAt: ms(entry.created), ...entry.state === 'retired' ? { retiredAt: ms(entry.retired) } : { revokedAt: ms(entry.revoked) }, seq: seq++, predecessor: entry.predecessor ?? null, ...entry.continuity ? { continuity: structuredClone(entry.continuity) } : {}, custody: 'history', pinned: true });
       await tx.set(publicPath('signing', owner, signing.kid), { owner, kid: signing.kid, alg: 'ES256', publicJwk: point(signing.jwk), active: true, purpose: 'signing', state: 'active', createdAt: ms(signing.created) ?? this.clock(), seq: seq++, predecessor: signing.predecessor ?? null, ...signing.continuity ? { continuity: structuredClone(signing.continuity) } : {}, custody: 'imported', pinned: true });
@@ -364,6 +435,22 @@ export class IdentityKeyRegistry {
   async current(owner, { purpose } = {}) {
     purposeOf(purpose); ownerOf(owner);
     return this.store.transaction(async tx => { const pointer = await this.#pointer(tx, owner, purpose), record = pointer && await tx.get(publicPath(purpose, owner, pointer.kid)); return record ? describe(record, purpose, pointer) : null; });
+  }
+  /** Retained-state accounting for `owner` (rows and the counts that drive them; no key material): signing records
+   * (own, pinned), encryption records and retained private keys, the recovery binding, and tombstones (kids, pages,
+   * legacy rows not yet folded). Read-only. */
+  async retainedState(owner) {
+    ownerOf(owner);
+    return this.store.transaction(async tx => {
+      const signing = await this.#records(tx, owner, 'signing'), encryption = await this.#records(tx, owner, 'encryption');
+      const pages = (await tx.list(tombstonePages(owner))).filter(row => row.value?.owner === owner && Array.isArray(row.value.kids));
+      const legacy = (await tx.list(key(TOMBSTONE, owner))).filter(row => typeof row.value?.kid === 'string' && !Array.isArray(row.value?.kids));
+      const binding = await tx.get(key(BINDING, owner));
+      return { signing: { records: signing.length, pinned: signing.filter(record => record.pinned === true).length, own: signing.filter(record => record.pinned !== true).length, limit: this.historyLimit },
+        encryption: { records: encryption.length, retained: (await tx.list(key(RETAINED, owner))).length },
+        binding: Array.isArray(binding?.kids) ? binding.kids.length : 0,
+        tombstones: { kids: pages.reduce((sum, row) => sum + row.value.kids.length, 0) + legacy.length, pages: pages.length, legacy: legacy.length, rows: pages.length + legacy.length } };
+    });
   }
   /** Bounded history, oldest first. */
   async history(owner, { purpose } = {}) {
@@ -414,6 +501,8 @@ export class IdentityKeyByKid extends KeyQuery { fetch({ identityKeys }) { retur
 export class CurrentIdentityKey extends KeyQuery { fetch({ identityKeys }) { return identityKeys.current(this.owner, this.input); } }
 /** `input`: {purpose}. */
 export class IdentityKeyHistory extends KeyQuery { fetch({ identityKeys }) { return identityKeys.history(this.owner, this.input); } }
+/** Retained-state accounting (`retainedState`). */
+export class IdentityKeyRetainedState extends KeyQuery { fetch({ identityKeys }) { return identityKeys.retainedState(this.owner); } }
 /** `input`: {keychain}; the recovery restore check (one-shot; nothing is retained). */
 export class RecoveryKeychainMatches extends KeyQuery { fetch({ identityKeys }) { return identityKeys.recoveryMatch(this.owner, this.input.keychain); } }
 

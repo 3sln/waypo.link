@@ -10,6 +10,7 @@ import {CONSENT_CONTRACT_SCHEMAS} from '../consent/contracts.mjs';
 // ART-4 adapter composition. Only operator-reviewed documents; never ambient network access.
 import {artefactRuntime} from './artefacts.mjs';
 import {federationSchemas} from './federation.mjs';
+import {GOOGLE_DRIVE_SETUP_FRAGMENT} from '../storage/google-drive-integration.mjs';
 import {flagsFor,siteGlobal} from '../flags/read.mjs';
 import {systemClock,cryptoRandom,nullAudit} from '../app/providers.mjs';
 import {validateSchema,fail} from '../federation/schema.mjs';
@@ -31,14 +32,31 @@ export function reviewedSchemaFetcher(config,missing='untrusted_schema_host'){
  const fetcher=async url=>{const schemas=federationSchemas(config);if(!Object.hasOwn(schemas,url))fail(missing,missing==='unsupported_fragment'?'Unsupported fragment.':'This fragment has not been registered with this provider.');return structuredClone(schemas[url]);};
  Object.defineProperty(fetcher,'artefacts',{get:()=>config.ARTEFACTS});return fetcher;
 }
-export function remoteArtefacts(config,invoke){return {get enabled(){return siteGlobal(config,'ARTEFACT_VERSIONS_ENABLED');},...Object.fromEntries(['pin','resolve','refresh','record'].map(method=>[method,async input=>{const response=await invoke(method,input);if(!response.ok)throw Object.assign(new Error(response.error.code),response.error);return response.result;}]))};}
+// The registry check is local (operator configuration), so an unregistered id never reaches the provider-wide store.
+export const registeredArtefact=(config,id)=>{if(typeof id!=='string')return false;const documents=configuredArtefactDocuments(config);return Object.hasOwn(documents,id)||Object.hasOwn(documents,id+'/envelope');};
+export function remoteArtefacts(config,invoke){return {get enabled(){return siteGlobal(config,'ARTEFACT_VERSIONS_ENABLED');},registered:id=>registeredArtefact(config,id),...Object.fromEntries(['pin','resolve','refresh','record'].map(method=>[method,async input=>{const response=await invoke(method,input);if(!response.ok)throw Object.assign(new Error(response.error.code),response.error);return response.result;}]))};}
 
 // Operator-reviewed contracts share the durable resolver; no URL from an app becomes an ambient fetch.
+const documentRevisions=new WeakMap(),frozenCopies=new WeakMap();
+function deepFreeze(value){if(value&&typeof value==='object'&&!ArrayBuffer.isView(value)){Object.freeze(value);for(const child of Object.values(value))deepFreeze(child);}return value;}
+// Callers never receive a live operator (or module) object: each distinct value is copied and frozen once.
+const detached=value=>{if(!value||typeof value!=='object')return value;if(ArrayBuffer.isView(value))return value.slice();let copy=frozenCopies.get(value);if(!copy)frozenCopies.set(value,copy=deepFreeze(structuredClone(value)));return copy;};
+// federationSchemas' 100-entry bound, re-checked against a live object registry on every lookup.
+function boundedSchemas(config){const live=config.FEDERATION_SCHEMAS;if(live&&typeof live==='object'&&Object.keys(live).length+(siteGlobal(config,'INTEGRATIONS_ENABLED')&&!Object.hasOwn(live,GOOGLE_DRIVE_SETUP_FRAGMENT.id)?1:0)>100)throw new TypeError('Invalid reviewed fragment registry.');}
 export function configuredArtefactDocuments(config){
+ const revision=[config.FEDERATION_CONTRACTS,config.FEDERATION_SCHEMAS,siteGlobal(config,'INTEGRATIONS_ENABLED'),siteGlobal(config,'EXTENSIONS_ENABLED')],cached=documentRevisions.get(config);
+ if(cached&&revision.every((value,i)=>value===cached.revision[i])){boundedSchemas(config);return cached.documents;}
  const contracts=typeof config.FEDERATION_CONTRACTS==='string'?JSON.parse(config.FEDERATION_CONTRACTS):config.FEDERATION_CONTRACTS??{},documents={};
  for(const body of [...CONSENT_CONTRACT_SCHEMAS,preferencesV2]){documents[body.$id]=body;documents[body.$id+'/envelope']={bindle_artefact:1,id:body.$id,kind:'rpc-contract',versions:[{version:1,prev:null,body}]};}
  for(const envelope of [sendMessageIntent,addContactIntent,openConversationIntent]){documents[envelope.id]=envelope;documents[envelope.id+'/envelope']=envelope;}
- return Object.assign(documents,contracts,federationSchemas(config));
+ const schemas=federationSchemas(config),liveSchemas=config.FEDERATION_SCHEMAS&&typeof config.FEDERATION_SCHEMAS==='object'?config.FEDERATION_SCHEMAS:null;
+ if(liveSchemas){const builtins=federationSchemas({...config,FEDERATION_SCHEMAS:{}});for(const key of Object.keys(schemas))delete schemas[key];Object.assign(schemas,builtins);}
+ const sources=[schemas,...liveSchemas?[liveSchemas]:[],contracts,documents];
+ // Object registries remain live for local operator updates; replacing a registry (or its JSON
+ // bytes / relevant flags) creates a new normalized revision. No per-property flattening.
+ const owner=key=>{boundedSchemas(config);return sources.find(source=>Object.hasOwn(source,key));};
+ const normalized=new Proxy({}, {get:(_,key)=>{const source=owner(key);return source?detached(source[key]):undefined;},getOwnPropertyDescriptor:(_,key)=>{const source=owner(key);return source?{configurable:true,enumerable:true,value:detached(source[key])}:undefined;},ownKeys:()=>{boundedSchemas(config);return [...new Set(sources.flatMap(source=>Reflect.ownKeys(source)))];}});
+ documentRevisions.set(config,{revision,documents:normalized});return normalized;
 }
 export async function pinConfiguredContract(config,target){
  if(!siteGlobal(config,'ARTEFACT_VERSIONS_ENABLED')||!config.ARTEFACTS?.enabled)fail('unsupported_artefact_version');

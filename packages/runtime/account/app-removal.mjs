@@ -8,7 +8,7 @@ import {AppRemovalService,appRemovalProvider,REMOVAL_OPERATIONS,RemovalReminderT
 import {removalCommitTx,drainRemovalCascades} from '../app-removal-commit.mjs';
 import {ownerFlags} from './flags.mjs';
 const engines=new WeakMap(),clockOf=c=>typeof c.config.LIFECYCLE_CLOCK==='function'?c.config.LIFECYCLE_CLOCK:Date.now;
-const drain=async(c,owner)=>{const result=await drainRemovalCascades(c,owner);if(result.pending)await c.scheduleAlarm(clockOf(c)()+60000);return result;};
+const drain=async(c,owner)=>{const result=await drainRemovalCascades(c,owner,{now:clockOf(c)()});if(result.pending&&result.wakeAt!==null)await c.scheduleAlarm(result.wakeAt);return result;};
 const boundStore=tx=>({get:k=>tx.get(k),put:(k,v)=>tx.put(k,v),delete:k=>tx.delete(k),list:o=>tx.list(o),transaction:fn=>fn(tx)});
 export function removalEngine(c){let entry=engines.get(c);if(!entry){const clock={now:()=>clockOf(c)()},service=new AppRemovalService({metadata:c.metadata,clock,random:cryptoRandom,
  enabled:(owner,clientId)=>typeof c.config.INTEGRATION_EVENT_PORTS?.signer?.sign==='function'&&ownerFlags(c.config,owner,clientId).enabled('APP_CLEAN_REMOVAL_ENABLED'),wake:t=>c.scheduleAlarm(t),

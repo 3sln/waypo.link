@@ -34,12 +34,15 @@ import {flagsFor} from './flags.mjs';
 import {lifecycleBlocked,lifecycleLog} from '../lifecycle-runner.mjs';
 import {accountActor} from '../../orgs/authority.mjs';
 import {ORG_RECORD} from '../../orgs/organizations.mjs';
+import {loadOrganization} from '../../orgs/roster.mjs';
 import {OwnershipService,organizationEntitlementPort} from '../../orgs/ownership.mjs';
 import {OrganizationBilling} from '../../billing/organizations.mjs';
-import {organizationsProvider,ORG_OPERATIONS,InitializeOrganization,ConfirmOrganization,OrganizationTick,MembershipSweep,MembershipOutboxDrain,ObserveMemberAuthority,MemberSnapshot,membershipEnginePort,OWNERSHIP_OPERATIONS,OrganizationBillingSync,OrganizationBillingWebhook,OwnershipTick,OwnershipDrain,OwnershipIndex} from '../../app/domains/orgs.mjs';
+import {organizationsProvider,ORG_OPERATIONS,InitializeOrganization,ConfirmOrganization,OrganizationTick,MembershipSweep,MembershipOutboxDrain,ObserveMemberAuthority,MemberSnapshot,membershipEnginePort,OWNERSHIP_OPERATIONS,OrganizationBillingSync,OrganizationBillingWebhook,OwnershipTick,OwnershipDrain,OwnershipIndex,ResolveLapseClaim} from '../../app/domains/orgs.mjs';
 import {StorageError} from '../../storage/policy.mjs';
 
 const engines=new WeakMap(),clockOf=c=>typeof c.config.LIFECYCLE_CLOCK==='function'?c.config.LIFECYCLE_CLOCK:Date.now;
+/** The organization writer's clock (LIFECYCLE_CLOCK when injected), shared with the ORG-4 membership port. */
+export const orgsClock=c=>clockOf(c);
 export function orgsEngine(c){
  let entry=engines.get(c);
  if(!entry){
@@ -67,7 +70,7 @@ export const methods={
   const Operation=ORG_OPERATIONS.find(O=>O.operation===operation);if(!Operation)throw new StorageError('not_found','Not found.',404);
   const blocked=await lifecycleBlocked(this,'orgsDispatch',{lifecycle:Operation.lifecycle??'active'},owner);if(blocked)throw new StorageError(blocked.code,blocked.message,blocked.status);
   if(actor?.entity?.kind==='organization'&&actor?.principal)await run(this,new ObserveMemberAuthority({actor:{kind:'system',owner},input:{principal:{iss:actor.principal.iss??this.config.APP_ORIGIN??null,sub:actor.principal.sub},aep:actor.aep??0}}));
-  const resolved=await accountActor({owner,requested:actor,Operation,issuer:this.config.APP_ORIGIN??null,organization:()=>this.metadata.get(ORG_RECORD)});
+  const resolved=await accountActor({owner,requested:actor,Operation,issuer:this.config.APP_ORIGIN??null,organization:principal=>loadOrganization(this.metadata,[principal])});
   await this.warm(owner);
   const result=await run(this,new Operation({actor:resolved,...input===undefined?{}:{input:structuredClone(input)}}));
   if(Operation.entities?.includes('organization')){const sweep=await run(this,new MembershipSweep({actor:{kind:'system',owner}}));if(Number.isSafeInteger(sweep?.wakeAt))await this.scheduleAlarm(sweep.wakeAt);if(OWNERSHIP_OPERATIONS.includes(Operation))await ownershipFollowUp(this,owner);}
@@ -91,6 +94,8 @@ export const methods={
   return {accepted:true,...result};
  },
  async orgsBillingSync(owner){if((await this.metadata.get(ORG_RECORD))?.kind!=='organization')return {synced:false};await this.warm(owner);await ownershipFollowUp(this,owner,{sync:true});return {synced:true};},
+ /** Operator tooling only (internal RPC, never an owner route): resolve an escalated lapse claim (review follow-up 6). */
+ async orgsClaimResolve(owner,input){if((await this.metadata.get(ORG_RECORD))?.kind!=='organization')throw new StorageError('not_found','Not found.',404);await this.warm(owner);const result=await run(this,new ResolveLapseClaim({actor:{kind:'system',owner},input:structuredClone(input??{})}));try{await ownershipFollowUp(this,owner,{sync:true});}catch{/* effects retry on the alarm */}return result;},
  async orgsOwnershipIndexApply(owner,input){await this.warm(owner);return run(this,new OwnershipIndex({actor:{kind:'system',owner},input:structuredClone(input)}));},
 };
 // ORG-5 organization context for the existing connections operations. Reducing operations (list, suspend, disconnect)
@@ -111,10 +116,12 @@ Object.assign(methods,{
  * and schedule the next alarm. A provider failure falls back to the time rules alone. */
 async function ownershipFollowUp(c,owner,{sync=false}={}){
  const actor={kind:'system',owner};let step;
- if(sync&&orgsEngine(c).service.billingConfigured()){try{step=await run(c,new OrganizationBillingSync({actor}));}catch{step=null;}}
+ // A refused reconcile falls back to the time rules, which never change the owner (H2). A capacity refusal needs an
+ // operator, so it is reported (wargame F-05); provider outages are retried silently.
+ if(sync&&orgsEngine(c).service.billingConfigured()){try{step=await run(c,new OrganizationBillingSync({actor}));}catch(error){step=null;if(error?.code==='billing_subscription_capacity'){try{lifecycleLog(c.config,{kind:'organization-billing',action:'operator-alert',reason:'subscription-capacity',org:owner});}catch{}}}}
  step??=await run(c,new OwnershipTick({actor}));
  const drained=await run(c,new OwnershipDrain({actor})),again=drained?.done?await run(c,new OwnershipTick({actor})):null;
  const wake=[step?.wakeAt,drained?.wakeAt,again?.wakeAt].filter(Number.isSafeInteger);if(wake.length)await c.scheduleAlarm(Math.min(...wake));
  return step;
 }
-export const rpc={orgsBillingWebhook:{lifecycle:'purging'},orgsBillingSync:{lifecycle:'suspended'},orgsOwnershipIndexApply:{lifecycle:'purging'},orgsActingAuthority:{lifecycle:'suspended'},orgsConnections:{},orgsSigningProvenance:{},orgsMemberSnapshot:{},orgsDispatch:{lifecycle:'suspended'},orgsInitialize:{lifecycle:'suspended'},orgsConfirm:{}};
+export const rpc={orgsClaimResolve:{lifecycle:'suspended'},orgsBillingWebhook:{lifecycle:'purging'},orgsBillingSync:{lifecycle:'suspended'},orgsOwnershipIndexApply:{lifecycle:'purging'},orgsActingAuthority:{lifecycle:'suspended'},orgsConnections:{},orgsSigningProvenance:{},orgsMemberSnapshot:{},orgsDispatch:{lifecycle:'suspended'},orgsInitialize:{lifecycle:'suspended'},orgsConfirm:{}};

@@ -1,4 +1,5 @@
 import test from 'node:test';
+import {brokeredResourceIndexKey} from '../packages/federation/brokered.mjs';
 import assert from 'node:assert/strict';
 import {createAppEngine,perform} from '../packages/app/engine.mjs';
 import {CommitAppRemoval,removalCommit,drainRemovalCascades} from '../packages/runtime/app-removal-commit.mjs';
@@ -9,15 +10,15 @@ const OWNER='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',CLIENT='https://tasks.example
 async function fixture(t){const metadata=new SqliteMetadata(':memory:');t.after(()=>metadata.close());await metadata.put('owner',OWNER);const clock=fakeClock(1000000),config={APP_ORIGIN:ORIGIN},apps=new AppConnections({metadata,origin:ORIGIN,clock:clock.now});const app=await apps.register(OWNER,{id:CLIENT,name:'Tasks'});const engine=createAppEngine({providers:{accountStore:metadata,config,clock,random:{uuid:()=>crypto.randomUUID()},audit:{record:async()=>{}}}});return {metadata,config,clock,apps,app,engine,run:input=>perform(engine,new CommitAppRemoval({actor:{kind:'owner',owner:OWNER},input:{clientId:CLIENT,...input}}))};}
 test('one engine commit fences authority, detaches hosting and consumer grants, leaves owner data and other apps',async t=>{
  const f=await fixture(t),id=f.app.id;const connection=await f.metadata.get('resource/'+id);connection.notifications={enabled:true,generation:1};await f.metadata.put('resource/'+id,connection);await f.metadata.put('connections/slot/ordered',{slot:'https://slots.example/ordered',revision:1,occupants:[{connection:id,seat:'old',clientId:CLIENT,generation:1},{connection:'other',seat:'kept',clientId:'https://other.example/client',generation:1}]});const kept=['preferences/task','suppression/tasks','evbus/rec/bus/1','activity/already-delivered','storage/object'];for(const k of kept)await f.metadata.put(k,{data:'kept'});
- await f.metadata.put('integrations/record/host',{v:1,id:'host',owner:OWNER,connection:id,clientId:CLIENT,generation:1,resource:'mailbox',assignments:[{grant:'hosting-grant',consumer:{clientId:'https://notes.example/client'}}]});await f.metadata.put('integrations/resource/index','host');
+ await f.metadata.put('integrations/record/host',{v:1,id:'host',owner:OWNER,connection:id,clientId:CLIENT,generation:1,resource:'mailbox',assignments:[{grant:'hosting-grant',consumer:{clientId:'https://notes.example/client'}}]});await f.metadata.put(await brokeredResourceIndexKey(id,'mailbox'),'host');
  await f.metadata.put('integrations/record/other',{v:1,id:'other',owner:OWNER,connection:'other',generation:1,resource:'store',assignments:[{grant:'consumer-grant',consumer:{clientId:CLIENT}},{grant:'keep',consumer:{clientId:'https://notes.example/client'}}]});
  await f.metadata.put('evbus/sub/bus/'+id,{bus:'bus',connection:id,clientId:CLIENT});
- const result=await f.run({expectedGeneration:1});assert.equal(result.generation,2);assert.equal(result.access_ends_by,1360000);assert.equal((await f.metadata.get('resource/'+id)).status,'disconnected');assert.deepEqual((await f.metadata.get('resource/'+id)).notifications,{enabled:false,generation:2});assert.deepEqual((await f.metadata.get('connections/slot/ordered')).occupants.map(o=>o.seat),['kept']);assert.equal(await f.metadata.get('integrations/record/host'),undefined);assert.equal(await f.metadata.get('integrations/resource/index'),undefined);assert.deepEqual((await f.metadata.get('integrations/record/other')).assignments.map(a=>a.grant),['keep']);assert.equal((await f.metadata.list({prefix:'integrations/severance/'})).size,2);assert.equal((await f.metadata.list({prefix:'evbus/sub/'})).size,0);for(const k of kept)assert.deepEqual(await f.metadata.get(k),{data:'kept'});
+ const result=await f.run({expectedGeneration:1});assert.equal(result.generation,2);assert.equal(result.access_ends_by,1360000);assert.equal((await f.metadata.get('resource/'+id)).status,'disconnected');assert.deepEqual((await f.metadata.get('resource/'+id)).notifications,{enabled:false,generation:2});assert.deepEqual((await f.metadata.get('connections/slot/ordered')).occupants.map(o=>o.seat),['kept']);assert.equal(await f.metadata.get('integrations/record/host'),undefined);assert.equal(await f.metadata.get(await brokeredResourceIndexKey(id,'mailbox')),undefined);assert.deepEqual((await f.metadata.get('integrations/record/other')).assignments.map(a=>a.grant),['keep']);assert.equal((await f.metadata.list({prefix:'integrations/severance/'})).size,2);assert.equal((await f.metadata.list({prefix:'evbus/sub/'})).size,0);for(const k of kept)assert.deepEqual(await f.metadata.get(k),{data:'kept'});
  await assert.rejects(f.apps.check(OWNER,id,1,CLIENT),{code:'invalid_token'});const repeat=await f.run();assert.equal(repeat.committed_at,result.committed_at);assert.equal((await f.metadata.list({prefix:'app-removal/cascade/'})).size,1);
 });
 test('conclusion rollback is atomic; durable remote cascade retries and a later reconnect survives old completion',async t=>{
  const f=await fixture(t),c={metadata:f.metadata,config:f.config};await assert.rejects(removalCommit(c,{owner:OWNER,clientId:CLIENT,clock:f.clock.now,finalize:async(tx)=>{await tx.put('concluded',true);throw Error('crash');}}));assert.equal((await f.metadata.get('resource/'+f.app.id)).status,'active');assert.equal(await f.metadata.get('concluded'),undefined);
- await f.run();assert.deepEqual(await drainRemovalCascades(c,OWNER),{drained:0,pending:true});let calls=0;f.config.APP_REMOVAL_REVOKE_EXTERNAL=async row=>{calls++;assert.equal(row.generation,2);if(calls===1)throw Error('offline');};assert.equal((await drainRemovalCascades(c,OWNER)).pending,true);assert.equal((await drainRemovalCascades(c,OWNER)).drained,1);
+ await f.run();const t0=Date.now();assert.deepEqual(await drainRemovalCascades(c,OWNER,{now:t0}),{drained:0,failed:0,pending:true,wakeAt:null});let calls=0;f.config.APP_REMOVAL_REVOKE_EXTERNAL=async row=>{calls++;assert.equal(row.generation,2);assert.equal(row.attempts,undefined);if(calls===1)throw Error('offline');};assert.equal((await drainRemovalCascades(c,OWNER,{now:t0})).pending,true);assert.equal((await drainRemovalCascades(c,OWNER,{now:t0+1000})).drained,0,'backoff respected');assert.equal((await drainRemovalCascades(c,OWNER,{now:t0+60000})).drained,1);
  const reconnected=await f.apps.register(OWNER,{id:CLIENT,name:'Tasks'},2);assert.equal(reconnected.generation,3);await assert.rejects(f.run({expectedGeneration:1}),{code:'connection_stale'});assert.equal((await f.metadata.get('resource/'+f.app.id)).generation,3);
 });
 test('seeded force/reconnect/deletion contention uses the first generation fence without reviving old authority',async t=>{await forEachSeed(20,async random=>{
@@ -64,4 +65,24 @@ test('force removal revokes an actual certified delegate inside its commit with 
  await c.delegationOperation(OWNER,{actor:{kind:'app',owner:OWNER,clientId:CLIENT},operation:'delegations.issue',input:{delegate,purposes,proof}});assert.equal((await c.delegationStatus(OWNER,jkt)).status,'active');c.config.BINDLEBOX_ENABLED='false';
  await assert.rejects(removalCommit(c,{owner:OWNER,clientId:CLIENT,expectedGeneration:app.generation,finalize:async()=>{throw Error('rollback');}}));assert.equal((await c.delegationStatus(OWNER,jkt)).status,'active');
  await removalCommit(c,{owner:OWNER,clientId:CLIENT,expectedGeneration:app.generation});const record=(await c.listDelegations(OWNER)).delegations.find(d=>d.jkt===jkt);assert.deepEqual([record.state,record.reason],['revoked','uninstalled']);assert.deepEqual(await c.delegationStatus(OWNER,jkt),{status:'revoked',revokedHour:Math.floor(record.revokedAt/3600000),final:true});assert.ok((await metadata.list({prefix:'connections/cascade/'})).size>0,'the delayed cascade is not needed to make status final');
+});
+
+test('host removal reads each record once and never lists the resource index as fanout grows',async t=>{
+ for(const size of [10,64,256]){
+  const f=await fixture(t),id=f.app.id;
+  for(let i=0;i<size;i++){
+   const connection=i<64?id:'other',resource=`https://resources.example/${i}`,recordId=String(i);
+   await f.metadata.put('integrations/record/'+recordId,{v:1,id:recordId,owner:OWNER,connection,generation:1,resource,assignments:[]});
+   await f.metadata.put(await brokeredResourceIndexKey(connection,resource),recordId);
+  }
+  let indexLists=0,recordRows=0;
+  const store={transaction:fn=>f.metadata.transaction(tx=>fn({...tx,
+   get:key=>tx.get(key),put:(key,value)=>tx.put(key,value),delete:key=>tx.delete(key),
+   list:async options=>{const result=await tx.list(options);if(options.prefix==='integrations/resource/')indexLists++;if(options.prefix==='integrations/record/')recordRows+=result.size;return result;}
+  }))};
+  const engine=createAppEngine({providers:{accountStore:store,config:f.config,clock:f.clock,random:{uuid:()=>crypto.randomUUID()},audit:{record:async()=>{}}}});
+  try{await perform(engine,new CommitAppRemoval({actor:{kind:'owner',owner:OWNER},input:{clientId:CLIENT,expectedGeneration:1}}));}finally{await engine.dispose();}
+  assert.equal(indexLists,0);assert.equal(recordRows,size);
+  assert.equal((await f.metadata.list({prefix:'integrations/resource/'})).size,Math.max(0,size-64));
+ }
 });

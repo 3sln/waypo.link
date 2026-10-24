@@ -106,7 +106,7 @@ This section is the directory/identity-document profile that [contact delivery](
 
 ### 3a.3 Identity document
 
-`GET <identity URI>/identity.json` returns `application/json`, at most 16 KiB, or at most 32 KiB when it carries `moves` (AMD-P4):
+`GET <identity URI>/identity.json` returns `application/json`, at most 32 KiB (enough for 16 signing keys with continuity statements), or within the byte budget of [identity portability §7](identity-portability.md#7-identity-documents-for-moved-identities) (152,576 bytes) when it carries `moves` (AMD-P4):
 
 ```json
 {"v":1,"iss":"https://alt.example","sub":"<uuid>","kind":"person",
@@ -209,6 +209,8 @@ The link carries no free-text title or inviter-supplied description, as in links
 Rules:
 
 - Single use; `exp − iat` ≤ 30 days (**TBD**: final bound). Processing order and uniform errors follow links §8. A bound invitation opened by any other principal yields the same `invitation_invalid` result as an expired or revoked one.
+- The issuing provider MAY let the organization withdraw an unaccepted invitation. A withdrawn invitation MUST then be refused exactly as an invalid one (provisional, 2026-10-23).
+- The issuing provider MAY offer a pre-acceptance preview of the organization's display name and kind. The preview MUST come from the organization's own record, never from the link or the inviter, and MUST be given only for an invitation the requester could accept at that moment. Every other case, including an unknown organization, MUST get one indistinguishable refusal (provisional, 2026-10-23).
 - Before accepting, the owner host MUST disclose:
   - the organization's verified origin and handle;
   - what the organization will learn about the invitee (at least the principal and handle, and any profile fields the invitee chooses to share);
@@ -260,7 +262,7 @@ Issuance rules for the home provider:
 **No membership oracle** (review R2-H1). Anyone can construct an unsigned or wrongly signed certificate naming any `(iss, sub)`. Step 1 runs before the signature check, so the result MUST NOT depend on whether step 1 passed:
 
 - Every failure at steps 1–6 gives the same error (`invalid_grant` at the token endpoint, the same 401 in the direct form), with the same body.
-- The request path MUST NOT perform a network fetch that the request triggered. The organization keeps the identity documents of its members (and of principals named by live bound invitations) warm by **background refresh**, on a jittered schedule independent of requests, within the §3a.4 bounds. A certificate whose key is not in that cache fails uniformly and only schedules a refresh. An unbound-invitation acceptance (§5.1) is the one case that fetches during the request, and then only after the presented link verified.
+- The request path MUST NOT perform a network fetch that the request triggered. The organization keeps the identity documents of its members (and of principals named by live bound invitations) warm by **background refresh**, on a jittered schedule independent of requests, within the §3a.4 bounds. A certificate whose key is not in that cache fails uniformly and only schedules a refresh. Whether a request schedules a refresh MUST NOT depend on whether the claimed principal is a member, and the queue it uses MUST be bounded (wargame F-07, 2026-10-23; provisional). An unbound-invitation acceptance (§5.1) is the one case that fetches during the request, and then only after the presented link verified.
 - When step 1 fails, the provider performs an equivalent signature verification against a fixed dummy key, so that the cost of the two paths is the same.
 - Failed presentations are rate-limited per client and per network, with the same limits whether or not step 1 passed.
 3. The proof: its signature by `delegate`, a thumbprint equal to `cnf.jkt`, `htm` and `htu`, freshness, and `jti` replay within the proof window. The replay cache MUST be shared by every instance that accepts requests for the organization; a provider that cannot share it SHOULD require DPoP server nonces (R2-L2).
@@ -399,6 +401,7 @@ O's provider verifies the certificate under §5.2. It also checks that O's conne
 
   `label` appears only if the member shared a display name with O.
 - Tokens are bound to `(O, membership, client, jkt)`.
+- A provider MAY bound the live member-context tokens of one `(membership, client)` pair. Reaching that bound MUST end that pair's oldest token rather than refuse the request, and member-context tokens MUST NOT count against a bound shared with other members or with the organization's own application tokens, so one member cannot lock out the others (wargame F-06, 2026-10-23; provisional).
 - Bearer access tokens MUST NOT be issued for member context. Every request therefore carries a signature by the certified holder key, and an application backend cannot act for the member without that key.
 - Organization-as-itself access (§6.2 rule 5) is the only way to act with no member present.
 - **Holder keys (review R1-H2, re-evaluated).** Binding member context to a key in the member's own user agent now depends on where acquisition places the holder key.

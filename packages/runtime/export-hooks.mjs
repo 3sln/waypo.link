@@ -18,14 +18,22 @@ export async function overQuotaEpisode(tx,owner,id,now){
  await bound(tx,owner);const episode=await tx.get(OVER_QUOTA_EPISODE);
  if(!UUID.test(id??'')||!episode||episode.id!==id||episode.owner!==owner)fault('export_episode_unavailable','No matching over-quota grace episode exists.',409);
  if(episode.v!==1||(!int(episode.revision)||episode.revision===Number.MAX_SAFE_INTEGER)||!int(episode.effectiveAt)||episode.effectiveAt>now||!int(episode.deadlineAt)||episode.deadlineAt<episode.effectiveAt+OVER_QUOTA_NOTICE_MS||!int(episode.quotaBytes)||!int(episode.usageBytes))unavailable();
- if(episode.state!=='grace'||episode.usageBytes<=episode.quotaBytes)fault('export_episode_unavailable','The over-quota episode is not in grace.',409);
+ if(!(episode.state==='grace'||episode.policyVersion&&episode.state==='cleanup-eligible')||episode.usageBytes<=episode.quotaBytes)fault('export_episode_unavailable','The over-quota episode is not in grace.',409);
  return episode;
+}
+/** Shared availability projection. D092 policy episodes always preserve their
+ * funded absolute cutoff; legacy manually seeded hook records retain DX-9 compatibility. */
+export function recordOverQuotaExportOffer(episode,{owner,now}){
+ if(episode.exportOffered)return episode.exportOffered;
+ episode.exportOffered={at:now,href:`/console?account=${owner}&view=account-data`};
+ if(!episode.policyVersion)episode.deadlineAt=Math.max(episode.deadlineAt,now+OVER_QUOTA_NOTICE_MS);
+ return episode.exportOffered;
 }
 /** Called by export creation inside its own account transaction. Recording the
  * job and consuming the episode allowance must commit together. */
 export async function claimOverQuotaExport(tx,{owner,episodeId,jobId,now}){
  const episode=await overQuotaEpisode(tx,owner,episodeId,now);
- if(!episode.exportOffered||!int(episode.exportOffered.at)||episode.exportOffered.at>now||episode.deadlineAt<episode.exportOffered.at+OVER_QUOTA_NOTICE_MS)fault('export_not_offered','An export must be offered before using this allowance.',409);
+ if(!episode.exportOffered||!int(episode.exportOffered.at)||episode.exportOffered.at>now||!episode.policyVersion&&episode.deadlineAt<episode.exportOffered.at+OVER_QUOTA_NOTICE_MS)fault('export_not_offered','An export must be offered before using this allowance.',409);
  if(episode.exportOffered.jobId)fault('export_episode_used','This episode already used its export allowance.',429);
  if(!UUID.test(jobId??''))throw new TypeError('An export job ID is required.');
  episode.exportOffered={...episode.exportOffered,jobId};episode.revision++;await tx.put(OVER_QUOTA_EPISODE,episode);return episode;
@@ -42,10 +50,10 @@ export class OfferOverQuotaExport extends HookAction {
    if(!scope(flags,owner).enabled('ACCOUNT_EXPORT_ENABLED'))fault('not_found','Not found.',404);
    // Lost replies preserve the first offer and deadline, including after a job
    // consumes it. This is in-app availability evidence, NOT notice delivery.
-   if(episode.exportOffered){if(!int(episode.exportOffered.at)||episode.exportOffered.at>now||episode.deadlineAt<episode.exportOffered.at+OVER_QUOTA_NOTICE_MS)unavailable();return structuredClone(episode.exportOffered);}
+   if(episode.exportOffered){if(!int(episode.exportOffered.at)||episode.exportOffered.at>now||!episode.policyVersion&&episode.deadlineAt<episode.exportOffered.at+OVER_QUOTA_NOTICE_MS)unavailable();return structuredClone(episode.exportOffered);}
    if(!int(now+OVER_QUOTA_NOTICE_MS))unavailable();
    if(episode.revision!==input.expectedRevision)fault('retention_conflict','The retention episode changed.',409);
-   episode.exportOffered={at:now,href:`/console?account=${owner}&view=account-data`};episode.deadlineAt=Math.max(episode.deadlineAt,now+OVER_QUOTA_NOTICE_MS);episode.revision++;
+   recordOverQuotaExportOffer(episode,{owner,now});episode.revision++;
    await tx.put(OVER_QUOTA_EPISODE,episode);return structuredClone(episode.exportOffered);
   });
  }

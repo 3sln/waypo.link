@@ -1,6 +1,6 @@
 # Identity portability: moves, attestations and successor pins — normative draft
 
-Status: **design candidate, 2026-10-22, revision 3.2.** Revision 3.2 applies design P14 and P16, which were *decided by the security design agent under the user's delegation, 2026-10-22; not signed off by the user*. P14: a current recovery credential must be at least 7 days old (§2, §6.1 item 2). P16: attestation keys form a continuity chain that verifiers pin, with an `attestation_first_use` signal (§5.1, §8.3, §8.6, §11). Pre-rotation is deferred (design P15) and is not part of this version. Revision 3.1 corrects the §8.6 residual (pre-rotation alone does not close first-contact forks; design §2.5–§2.6) and follows the organizations spec's renaming of "grant-management policy" to "membership and grant policy". The 3sln.me person-move delay and organization-move rules decided on 2026-10-22 are provider policy under §6.1 and live in the design (§6.1a, §6.2). Revision 3 applies the user's 2026-10-22 decision on design Q1 (rotation at transfer-in, with provenance chained and old-key issuance honoured only when recorded before rotation): §2, §7.1, §12 and AMD-P10/P11. Revision 2 applies the confident fixes of [review round 1](../architecture/identity-portability.md#review-round-1) (marked IP-R1-…); its open items remain open. Not implemented, not signed off, not published and not production-verified. Rationale, flows, the 3sln.me product rules, threat model, slices and tests: [identity portability design](../architecture/identity-portability.md). It incorporates the constraints of [organizations review round 4](../architecture/organizations-design.md#review-round-4) (R4-H1, R4-H2) as relayed by the coordinator on 2026-10-22. Identifiers under `https://spec.bindle.example/` and hosts under `.example` are placeholders. MUST, SHOULD and MAY express draft requirements. §13 lists the core amendments this draft needs; they are **proposed and unsigned**.
+Status: **design candidate, 2026-10-22, revision 3.3.** Revision 3.3 (2026-10-23) replaces the flat 32 KiB bound on a moved identity's document with a byte budget derived from the worst-case size of each move, so that 16 legal moves always fit, and caps identity URIs, header kids (printable ASCII) and each move record, raises the bound of a document without `moves` to 32,768 bytes, and states what revoking a chain key does (§4 "Size", §5.3, §7 "Size"); *provisional, not signed off (DEVLOG 2026-10-23, "Successor chain byte budget and key tombstone compaction")*. Revision 3.2 applies design P14 and P16, which were *decided by the security design agent under the user's delegation, 2026-10-22; not signed off by the user*. P14: a current recovery credential must be at least 7 days old (§2, §6.1 item 2). P16: attestation keys form a continuity chain that verifiers pin, with an `attestation_first_use` signal (§5.1, §8.3, §8.6, §11). Pre-rotation is deferred (design P15) and is not part of this version. Revision 3.1 corrects the §8.6 residual (pre-rotation alone does not close first-contact forks; design §2.5–§2.6) and follows the organizations spec's renaming of "grant-management policy" to "membership and grant policy". The 3sln.me person-move delay and organization-move rules decided on 2026-10-22 are provider policy under §6.1 and live in the design (§6.1a, §6.2). Revision 3 applies the user's 2026-10-22 decision on design Q1 (rotation at transfer-in, with provenance chained and old-key issuance honoured only when recorded before rotation): §2, §7.1, §12 and AMD-P10/P11. Revision 2 applies the confident fixes of [review round 1](../architecture/identity-portability.md#review-round-1) (marked IP-R1-…); its open items remain open. Not implemented, not signed off, not published and not production-verified. Rationale, flows, the 3sln.me product rules, threat model, slices and tests: [identity portability design](../architecture/identity-portability.md). It incorporates the constraints of [organizations review round 4](../architecture/organizations-design.md#review-round-4) (R4-H1, R4-H2) as relayed by the coordinator on 2026-10-22. Identifiers under `https://spec.bindle.example/` and hosts under `.example` are placeholders. MUST, SHOULD and MAY express draft requirements. §13 lists the core amendments this draft needs; they are **proposed and unsigned**.
 
 Protocol/security/interop sign-off: reviewer ___ / date ___ / outcome ___.
 
@@ -72,6 +72,8 @@ The payload has exactly these members:
 
 `from.iss` and `to.iss` MUST differ. A move back to an earlier host is allowed and has a new identity URI and a higher `seq`.
 
+**Size.** `from.identity` and `to.identity` are at most 512 characters each. The header `kid` is 1 to 128 printable ASCII characters (`!` to `~`). A verifier refuses any other `kid`, including non-ASCII characters, controls and lone surrogates. The compact statement is at most 3,072 bytes. A statement within these limits is at most 2,721 bytes. A verifier refuses a longer statement before checking its signature. A signer refuses to produce one, and a destination refuses a move whose statement would be longer (§9.3).
+
 Any holder of the signing key can produce a valid statement. That is why a statement never authorizes anything by itself (§8.3, §8.5).
 
 ## 5. Move attestation
@@ -97,7 +99,7 @@ The request carries no credentials. The statement is checked against the source'
 | Status | Body | Meaning |
 | --- | --- | --- |
 | 200 | `{"status":"attested","attestation":"<JWS>","redirect_until":<unix seconds or null>}` | The move has committed at the source (§6.3). |
-| 202 | `{"status":"pending","authorize_url":"<URL>","retry_after":<seconds>}` | Transfer authority is not yet established. `authorize_url` is on the source's origin; the destination sends the user there by top-level navigation, and repeats the identical POST after `retry_after`. |
+| 202 | `{"status":"pending","authorize_url":"<URL>","retry_after":<seconds>}` | Transfer authority is not yet established. `authorize_url` is on the source's origin (it may carry a query, for example the statement digest an authorization will be made against, but no fragment); the destination sends the user there by top-level navigation, and repeats the identical POST after `retry_after`. |
 | 409 | `{"status":"refused"}` | Uniform for every other outcome: unknown, suspended or ended identity; an invalid statement; a cancelled or expired transfer; a move already attested to another destination; policy refusal. |
 | 429, 503 | — | Retryable, with `Retry-After`. |
 
@@ -119,6 +121,8 @@ The protected header is exactly `{"alg":"ES256","kid":<attestation kid>,"typ":"b
 | `to` | Equal to the statement's `to`. |
 | `aep` | The identity's authority epoch at the source when the move committed ([organizations §2](organizations.md#2-terms)). |
 | `at` | Unix seconds of the commit. |
+
+The compact attestation is at most 2,560 bytes. Its `kid` follows the §4 rule, so an attestation within the §4 limits is at most 2,022 bytes. A verifier refuses a longer attestation, and a source never signs one.
 
 ## 6. Transfer authority and commit
 
@@ -164,11 +168,30 @@ This section extends the identity document of organizations §3a.3.
 
 - The host of an identity that has moved at least once MUST include `moves`: an array of move records in ascending `seq`, starting at `seq` 1, each `{"statement":"<JWS>","attestation":"<JWS>"|null}`. The origin issuer is `moves[0]`'s statement `from.iss`.
 - The last record's `to` MUST equal the document's own `iss` and identity URI.
-- At most 16 records. A document with `moves` MAY be up to 32 KiB. An identity that would exceed 16 moves cannot move again under this version.
+- At most 16 records. A document with `moves` is at most 152,576 bytes (§7 "Size"). An identity that would exceed 16 moves cannot move again under this version.
 - The host MUST NOT list as `active` any signing key that the source listed as `retired` or `revoked` before the move. The no-rollback rule of §3a.4 continues across hosts.
 - The host MUST keep listing every signing key that signed a statement in `moves` (as `active`, or as `retired` once rotated), with its continuity chain to the current key, so that first-contact verifiers can check the chain (§8.6). This is an exception to the omission allowance of §3a.3.
 - Certification keys (`use:"cert"`) are the destination's own fresh keys. A destination MUST NOT reuse a certification key of an earlier host, and no package or file carries one (§9.1).
 - Certificates that the destination issues carry an `aep` strictly greater than the latest attested `aep`.
+
+**Size.** The budget is derived from the worst-case move, so 16 legal moves always fit when each destination rotates once at activation (§7.1):
+
+- Each move adds its record (a statement of at most 3,072 bytes, §4, and an attestation of at most 2,560 bytes, §5.3, with 64 bytes of JSON framing) and one signing-key entry of at most 1,792 bytes: the key that the destination rotates to at activation, which later hosts keep listing. That is 7,488 bytes per move.
+- The current host's own members get a base of 32,768 bytes: the non-`moves` members, its certification keys, and the signing keys of its own history. The base covers 16 such keys. A document without `moves` has the same bound, 32,768 bytes (organizations §3a.3), so an identity that never moved can always list its 16 keys.
+- The budget is 32,768 + 16 × 7,488 = 152,576 bytes. A document is at most 64 keys.
+- A verifier MUST refuse a document above the budget, a record above its cap, or more than 16 records. The fetch bound is the budget.
+- A host MUST NOT publish a document that a verifier would refuse. A destination therefore refuses a move before it reserves, imports or signs anything when the identity's largest possible document at the destination would exceed the budget or 64 keys (§9.3). That document is the source's records, this move's statement with an attestation at its cap, every key the destination will import and publish, and the base.
+- **More than one rotation per host.** The per-move allowance assumes one chain key per move. A host that rotated more than once leaves extra chain keys, which every later host must keep listing. They use up headroom that the allowance does not reserve. The destination's check above counts them, so such an identity can still move whenever its real document fits. When it would not fit, the identity cannot move again under this version.
+- **Rotation headroom.** A host keeps every key of the continuity chain from the key that signed the first record to the current key (the listing rule above), and never removes one to make room. The 16 keys in the base are a reserve, not a ceiling. A host MAY keep further own keys while its published document still fits the budget and 64 keys. It MUST refuse a rotation that would exceed either bound.
+
+**Revoking a chain key.** A revoked key vouches for nothing (organizations §3a.4), so revoking a retired key of the chain cuts the continuity lineage at that key:
+
+- statements signed by that key, or by any earlier key, no longer verify against the published key list;
+- verifiers that already adopted those records keep their pins (§8.2);
+- a verifier meeting the identity for the first time (§8.6), or adopting through a record at or before the cut, cannot verify the chain. It does not adopt automatically, and the record may be offered as a pending successor (§8.5) at most;
+- a destination refuses a later move out (§9.3, the chain does not verify).
+
+Revoke a chain key only on compromise. Revoking it costs the identity its verifiable portability history.
 
 **Activation.** A destination MUST NOT serve the identity as active, issue certificates or sign fresh artifacts for it until it holds either a verified attestation for the last move or, for an unattested move, a stored decision under its own policy to host an unattested identity (§8.5).
 
@@ -217,7 +240,7 @@ A verifier adopts a move record automatically only when all of the following hol
 2. `from` equals the pinned current issuer and identity URI; `seq` equals the pinned `seq` plus one; `prev` equals the pinned chain head (`null` for `seq` 1); `sub` and `kind` are unchanged.
 3. The attestation verifies under a key from `from.iss`'s `attestation_jwks_uri` (fetched from that issuer's manifest, or cached under §5.1) that is **trusted** under the §5.1 pinning rules, and its `iss`, `sub`, `seq`, `statement` and `to` match. A key that is untrusted because of an attestation reset fails this item for a reason other than unavailability (§8.5).
 4. The destination's manifest meets the protocol §2 conformance floor and declares `directory.v1`. The destination's directory `?sub=` lookup returns exactly `to.identity` (organizations §3a.1, R2-H2), so that a record cannot point the verifier at an attacker-influenced path on the destination's origin (IP-R1-M4). The identity document at `to.identity` has matching `iss` and `sub`, a `moves` array ending with this record, and a signing key equal to or continuity-linked from the pinned key, and it does not violate the no-rollback rule.
-5. **The source has let go (IP-R1-H2).** The source does not serve the identity as active: its directory `?sub=` lookup answers with the §10 redirect or moved body carrying this exact record, or with 404. A `200` that still lists the identity as hosted there means the attestation was not produced by a committed move (a leaked or misused attestation key, or a source that keeps serving after attesting), and the record is not adopted automatically. An unreachable source is `temporarily_unavailable`; after 7 days of failed attempts the verifier MAY treat the source as gone for this item.
+5. **The source has let go (IP-R1-H2).** The source does not serve the identity as active: its directory `?sub=` lookup answers with the §10 redirect or moved body carrying this exact record, or with 404. A `200` that still lists the identity as hosted there means the attestation was not produced by a committed move (a leaked or misused attestation key, or a source that keeps serving after attesting), and the record is not adopted automatically. A `200` naming a different identity URI at the source counts as let go only when a later record of the chain being verified moves the identity to exactly that URI (a return, §4); otherwise it is treated as still serving (a fabricated `from.identity` must not pass). An unreachable source is `temporarily_unavailable`; after 7 days of failed attempts the verifier MAY treat the source as gone for this item.
 
 On adoption the verifier atomically: updates the successor pin; maps `(to.iss, sub)` to the origin principal; stops accepting the earlier host's certification keys; and raises its recorded `aep` floor to the attested `aep`. Adoption is an **authority reset** in the sense of organizations §5.2a, so owner-interface authority is held until re-confirmed.
 
@@ -238,7 +261,7 @@ A verifier MAY offer the record to the human who owns the relationship (a contac
 - the old and new hosts by origin;
 - whether the old host still serves the identity as active.
 
-Adopting it is an explicit local act with the effects of §8.3, including the authority reset. A verifier MUST NOT adopt a pending successor while the pinned host serves the identity as active with the pinned key, unless the human confirms after that warning.
+Adopting it is an explicit local act with the effects of §8.3, including the authority reset. A verifier MUST NOT adopt a pending successor while the pinned host serves the identity as active with the pinned key, unless the human confirms after that warning. "Serves as active" is judged from the pinned host's directory and identity document alone, whether or not it declares `portability.v1`; declaring `portability.v1` only decides whether the record may be offered at all.
 
 ### 8.6 First contact with a moved identity
 
@@ -255,7 +278,7 @@ If any record cannot be verified (an unattested record, or an issuer or attestat
 ### 8.7 How verifiers learn of moves
 
 - **Background refresh.** A verifier that refreshes pinned identity documents (organizations §5.2) receives the source's §10 response for a moved identity and evaluates the record it carries or the destination document it points to.
-- **Presentation.** The identity, or its host on its behalf, MAY present its `moves` through any channel a role's specification defines. Verification is identical. A role that forbids request-triggered fetches (organizations §5.2, R2-H1) verifies presented records in the background and fails the triggering request uniformly.
+- **Presentation.** The identity, or its host on its behalf, MAY present its `moves` through any channel a role's specification defines. Verification is identical. A role that forbids request-triggered fetches (organizations §5.2, R2-H1) verifies presented records in the background and fails the triggering request uniformly. A verifier SHOULD check presented records offline against its pin (linkage from the pinned head and place, and the signature of any record signed by the pinned key) before queuing them, and SHOULD bound its queue per origin principal with retry backoff and a drop-after limit, so that presentations naming unreachable hosts cannot starve later ones.
 
 Neither path trusts an HTTP redirect.
 
@@ -293,7 +316,8 @@ Before signing a statement, the destination MUST:
 
 - refuse a `sub` that it already hosts or has hosted, unless its own records or the identity's verified chain show that this identity previously moved out of it. One exception: `sub` values are public, so anyone can import fake keys under a victim's `sub` as an unattested identity to block a later move. An attested move therefore displaces an identity that the destination hosts unattested under the same `sub`. The destination ends that identity first;
 - check, when the source is reachable, that `keys.signing`'s public key is the `active` signing key in the source's current identity document for `sub` (otherwise it can only produce an unattested move);
-- store the keys under its own custody before activation.
+- store the keys under its own custody before activation;
+- refuse a move whose `from.identity` or `to.identity` exceeds 512 characters, whose statement would exceed 3,072 bytes (§4), or whose largest possible document at the destination would exceed the §7 budget or 64 keys. These checks come before anything is reserved, imported or signed.
 
 ## 10. Redirects from the source
 
@@ -333,6 +357,7 @@ The source MUST NOT reassign the identity's handles (identity names) or reuse it
 - **Recovery-credential age (P14):** a current credential issued less than 7 days before authorization is refused on both paths; a credential that can only resume an in-progress recovery is refused.
 - **Attestation-key continuity (P16):** a key whose `continuity` signature fails, or names an unlisted key, is untrusted; a key chained from a pinned key is accepted and pinned; a JWKS with a new root and no pinned key is an attestation reset, and its records are not adopted automatically but may be offered as pending successors; first-use pinning sets `attestation_first_use`; a preconfigured root is never pinned on first use; a lapsed-domain fork (old key, new attestation root, directory answering moved) is refused by a verifier holding the old pin.
 - **Rotation at activation (§7.1):** the continuity statement is signed by the old key and names the new key; the retired key stays listed with `created` and `retired`; a link whose exact record was stored before the rotation verifies under the retired key, and so does a delivery through it; a bearer minted from such a link is signed by the current key; a signature by the retired key over claims with no record made before the rotation fails, even with an earlier `iat`; a move statement or participation statement signed by the retired key fails; revoking the retired key ends verification of its recorded links.
+- **Size (§4, §5.3, §7):** a 16-move chain where every destination rotates at activation, with 252-character origins and 512-character identity URIs, is adopted. A 17th record, a 513-character identity URI, a non-ASCII or lone-surrogate `kid`, a statement above 3,072 bytes, an attestation above 2,560 bytes, a moved document above 152,576 bytes and a document without `moves` above 32,768 bytes are each refused. A document without `moves` that lists 16 own keys is published. A destination refuses an intake whose largest possible document exceeds the budget or 64 keys, and it reserves, imports and signs nothing for it. The 16th move of a rotating chain activates with every statement signer still listed. A host refuses a rotation that would remove a chain key. It keeps own keys beyond 16 while its document fits, and refuses the rotation that would not fit.
 - **Destination:** a reused `sub` is refused; a package with a recovery credential, certification key or unknown member is refused; mismatched key material is refused; no activation before attestation or an explicit unattested decision; `aep` above the attested floor; fresh certification keys.
 
 ## 13. Core amendments — proposed (unsigned)
@@ -342,7 +367,7 @@ The source MUST NOT reassign the identity's handles (identity names) or reuse it
 | AMD-P1 | protocol §1, §6 | Replace "Domain/key continuity and cross-provider identity migration remain a future specification; a v0 export MUST NOT imply portable identity" with a pointer to this document: an export alone still implies no portable identity, and grants and tokens issued to applications still never migrate. Remove "provider migration" from the §6 out-of-scope list. |
 | AMD-P2 | protocol §2 | Add the `portability.v1` feature row (§3). |
 | AMD-P3 | auth, "Identity and discovery" | Clients key identities by origin principal (§8.1), which equals issuer plus subject until a verified move. Add the `identity_moved` result and the optional `bindle_origin`/`bindle_moves` token-response members (§11). "Account merge and identity migration are explicitly outside v0" points here for migration; merge stays out of scope. |
-| AMD-P4 | organizations §3, §3a, §5.2, §5.2a, §5.3, §9.5 (owned by the organizations author) | §3's portability bullet is satisfied by §6 here. §3a.1 adds §8.8. §3a.3 adds `moves`, the 32 KiB bound and the cross-host no-rollback rule (§7), and its no-redirect fetch rule gains the §10 hint exception. §5.2 step 1 and §9.5 look up the successor index (§8.2). §5.2a lists move adoption as an authority reset. §5.3 stores members by origin principal. Certification keys are re-established at the destination as in §7. |
+| AMD-P4 | organizations §3, §3a, §5.2, §5.2a, §5.3, §9.5 (owned by the organizations author) | §3's portability bullet is satisfied by §6 here. §3a.1 adds §8.8. §3a.3 adds `moves`, the §7 byte budget (152,576 bytes; 32,768 bytes without `moves`) and the cross-host no-rollback rule (§7), and its no-redirect fetch rule gains the §10 hint exception. §5.2 step 1 and §9.5 look up the successor index (§8.2). §5.2a lists move adoption as an authority reset. §5.3 stores members by origin principal. Certification keys are re-established at the destination as in §7. |
 | AMD-P5 | links §3.2, §7.2, §7.3 | Imported links at redirected URLs (§11). Signature-domain rows for `bindle-identity-move+jwt` (identity signing key) and `bindle-move-attestation+jwt` (provider attestation key, never an identity key). §7.3 resolves audiences through the successor index. |
 | AMD-P6 | recovery identity, "Return, compromise and missing state" | A recovery file is never transfer authority by itself (§6.1). "Another provider cannot claim the original provider's name namespace without an authenticated migration protocol" becomes "names never move; identities move under identity portability". |
 | AMD-P7 | identity names, "Rollback and deletion" | A moved identity's names stay claimed forever, as for deletion. They resolve to a redirect only during the source's redirect period. |

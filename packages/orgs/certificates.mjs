@@ -12,8 +12,10 @@
 //      membership for the certificate's origin principal (successor index), with no network fetch;
 //   2. the signature under an ACTIVE CERTIFICATION key of the identity (R4-H1), resolved CACHE-ONLY for the claimed
 //      (iss, sub, kid), and the certificate's `identity` equal to the directory-derived or pinned identity URI (R2-H2);
-//      when step 1 failed or the key is not cached, an equivalent verification runs against a fixed dummy key; the
-//      request path writes nothing for a cache miss (the background refresh discovers stale members from the roster);
+//      when step 1 failed or the key is not cached, an equivalent verification runs against a fixed dummy key. For
+//      ANY syntactically valid claimed principal of a local or allowed foreign issuer whose cached keys are missing or
+//      stale, member or not, the request path enqueues a 'claimed' refresh through a bounded queue (F-07; the write
+//      depends on the cache, never on membership, keeping review LM1's uniform cost);
 //   3. the DPoP proof by the certified key: thumbprint = cnf.jkt = thumbprint(delegate), htm, htu, iat within 60 s,
 //      `ath` (direct form: SHA-256 of the certificate) and the jti replay row in this organization's store, which
 //      every request for the organization shares (one single writer; R2-L2);
@@ -38,21 +40,32 @@
 //   org/cert/proof/<sha256(jkt,jti)>  DPoP replay rows until the proof window ends
 //   org/cert/key-epoch/<principal>    the highest directory key-reset epoch seen for a member (foreign issuers)
 //   org/cert/keys/<principal>         the same-host certification key cache (TTL 300 s, negative 60 s)
-//   org/cert/refresh/<principal>      background refresh queue (filled by roster discovery in refreshDue, never on the
-//                                     request path; exponential back-off; bounded; run after the uniform answer)
+//   org/cert/refresh/<dueAt>/<principal>  the refresh queue, time-ordered (packages/orgs/key-refresh.mjs, F-07): filled
+//                                     by roster discovery (the batch scales so the whole roster is checked about every
+//                                     TTL/4), by ORG-2 at join and at an authority-epoch observation, by a same-host
+//                                     issuance hint (`hint`), and by the request path ('claimed', bounded); exponential
+//                                     back-off; run after the uniform answer
 import { Provider } from '../../vendor/ngin/index.js';
 import { AppAction, AppQuery } from '../app/engine.mjs';
 import { AppFault } from '../app/faults.mjs';
 import { base64url, textEncoder } from '../core/records.mjs';
 import { verifyProof, DPOP_TYP } from '../federation/dpop.mjs';
+import { enqueueMemberKeyRefresh, dueMemberKeyRefreshes, removeMemberKeyRefresh, rescheduleMemberKeyRefresh, nextMemberKeyRefresh, MEMBER_REFRESH_CLAIMED } from './key-refresh.mjs';
 import { parseMemberCertificate, verifyMemberSignature, memberHolderKey, memberCertificateLifetime, MEMBER_PURPOSES, MEMBER_CERTIFICATE_DEFAULT_SECONDS, MEMBER_CERTIFICATE_MIN_SECONDS } from '../identity/member-certificates.mjs';
 
 export const ORG_FOREIGN_MEMBERS_FLAG = 'ORG_FOREIGN_MEMBERS_ENABLED';
 export const JWT_BEARER = 'urn:ietf:params:oauth:grant-type:jwt-bearer';
 export const MEMBER_SKEW_SECONDS = 60, MEMBER_PROOF_WINDOW_SECONDS = 60, MEMBER_KEY_CACHE_MS = 300000, MEMBER_KEY_NEGATIVE_MS = 60000;
 export const MEMBER_FAILURE_LIMITS = Object.freeze({ windowMs: 60000, client: 60, network: 120 });
-export const MEMBER_TOKENS_PER_MEMBERSHIP = 64, MEMBER_TOKEN_LIMIT = 4096, MEMBER_REFRESH_QUEUE = 256, MEMBER_DISCOVERY_MS = 60000, MEMBER_DISCOVERY_BATCH = 64;
-const SETTINGS = 'org/cert/settings', TOKEN = 'org/cert/token/', PROOF = 'org/cert/proof/', KEY_EPOCH = 'org/cert/key-epoch/', KEYS = 'org/cert/keys/', REFRESH = 'org/cert/refresh/';
+export const MEMBER_TOKENS_PER_MEMBERSHIP = 64, MEMBER_TOKEN_LIMIT = 4096, MEMBER_REFRESH_QUEUE = MEMBER_REFRESH_CLAIMED, MEMBER_DISCOVERY_MS = 60000, MEMBER_DISCOVERY_BATCH = 64, MEMBER_DISCOVERY_MAX_BATCH = 8192;
+/** Discovery batch for a roster of `n`: the whole roster is checked about every TTL/4 (F-07), within 64..8192. */
+export const memberDiscoveryBatch = n => Math.min(MEMBER_DISCOVERY_MAX_BATCH, Math.max(MEMBER_DISCOVERY_BATCH, Math.ceil(n * MEMBER_DISCOVERY_MS / (MEMBER_KEY_CACHE_MS / 4))));
+/** Default refreshes per refreshDue run for a roster of `n`: ceil(n/64) within 16..128. */
+export const memberRefreshLimit = n => Math.min(128, Math.max(16, Math.ceil(n / 64)));
+const SETTINGS = 'org/cert/settings', TOKEN = 'org/cert/token/', PROOF = 'org/cert/proof/', KEY_EPOCH = 'org/cert/key-epoch/', KEYS = 'org/cert/keys/', KEYS_DUE = 'org/cert/keys-due/';
+/** Request-path claims waiting for the background run (review follow-up 3), deduplicated and bounded in memory. */
+export const MEMBER_DEFERRED_CLAIMS = 256;
+const pad15 = at => String(Math.max(0, Math.min(Math.floor(at), 999999999999999))).padStart(15, '0');
 const TOKEN_PATTERN = /^mc_[A-Za-z0-9_-]{43}$/, CERT_PATTERN = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/;
 const ES256 = { name: 'ECDSA', hash: 'SHA-256' }, P256 = { name: 'ECDSA', namedCurve: 'P-256' };
 const plain = value => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -99,12 +112,32 @@ export function cachedIssuerKeys({ metadata, issuer, read, clock = () => Date.no
       const row = await metadata.get(path(subject)), now = clock();
       return !plain(row) || !(row.until > now) || (row.identity !== null && row.until - now < ttlMs / 2);
     },
-    async refresh({ issuer: iss, subject }) {
+    /** `negative: false` (a request-path 'claimed' refresh) never stores a negative row, so unauthenticated claims
+     * cannot grow the cache (review follow-up 1). Every stored row is indexed by its expiry for `prune`. */
+    async refresh({ issuer: iss, subject, negative = true }) {
       if (iss !== issuer || typeof subject !== 'string') return null;
       const found = await read(subject), now = clock();
       const signing = plain(found?.signing) && typeof found.signing.kid === 'string' && typeof found.signing.publicJwk?.x === 'string' ? { kid: found.signing.kid, publicJwk: { x: found.signing.publicJwk.x, y: found.signing.publicJwk.y } } : null;
       const row = found && typeof found.identity === 'string' && Array.isArray(found.keys) ? { identity: found.identity, signing, keys: found.keys.filter(k => ['active', 'retired', 'revoked'].includes(k?.state)).slice(0, 16).map(k => ({ kid: k.kid, state: k.state, publicJwk: { x: k.publicJwk.x, y: k.publicJwk.y } })), until: now + ttlMs } : { identity: null, keys: [], until: now + negativeMs };
-      await metadata.put(path(subject), row); return row.identity !== null;
+      if (row.identity === null && !negative) return false;
+      await metadata.transaction(async tx => { await tx.put(path(subject), row); await tx.put(KEYS_DUE + pad15(row.until) + '/' + memberPrincipalKey({ iss: issuer, sub: subject }), 1); });
+      return row.identity !== null;
+    },
+    /** Deletes cache rows that have expired, through the expiry index (at most `limit` index entries; stale entries of
+     * rows refreshed since are dropped without touching the row). Returns {removed, more}. */
+    async prune({ limit = 64 } = {}) {
+      const now = clock();
+      return metadata.transaction(async tx => {
+        let removed = 0, scanned = 0;
+        for (const [key] of await tx.list({ prefix: KEYS_DUE, limit })) {
+          const rest = key.slice(KEYS_DUE.length), at = Number(rest.slice(0, 15)); if (!(at <= now)) return { removed, more: false };
+          scanned++;
+          const rowKey = KEYS + rest.slice(16), row = await tx.get(rowKey);
+          if (plain(row) && !(row.until > now)) { await tx.delete(rowKey); removed++; }
+          await tx.delete(key);
+        }
+        return { removed, more: scanned === limit };
+      });
     },
   });
 }
@@ -136,7 +169,7 @@ export class MemberContextService {
   constructor({ metadata, organization, issuer, members, successors, local, foreign, connections, status, flags = {}, foreignIssuers = [], clock = () => Date.now(), crypto = globalThis.crypto, random, allowLoopback = false, failureLimits = MEMBER_FAILURE_LIMITS }) {
     if (typeof metadata?.transaction !== 'function' || typeof metadata.get !== 'function') throw new TypeError('Member context needs the organization account store.');
     Object.assign(this, { metadata, organization, issuer, members, successors, local, foreign, connections, status, flags, foreignIssuers: new Set(foreignIssuers), clock, crypto, random: random ?? (n => crypto.getRandomValues(new Uint8Array(n))), allowLoopback: allowLoopback === true, failureLimits });
-    this.failures = new Map(); this.discovery = { at: -Infinity, cursor: 0 };
+    this.failures = new Map(); this.discovery = { at: -Infinity, cursor: 0, after: '', size: 0 }; this.deferred = new Map();
   }
   #flag(name) { try { return this.flags?.[name]?.() === true; } catch { return false; } }
   foreignAllowed(iss) { return iss !== this.issuer && this.#flag('foreign') && this.foreignIssuers.has(iss); }
@@ -157,14 +190,27 @@ export class MemberContextService {
     const port = claims.iss === this.issuer ? this.local : this.foreignAllowed(claims.iss) ? this.foreign : null;
     try { return port ? await port.resolve({ issuer: claims.iss, subject: claims.sub, kid, identity: claims.identity }) : null; } catch { return null; }
   }
-  async #schedule(principal, issuer, subject) {
-    try {
-      await this.metadata.transaction(async tx => {
-        const path = REFRESH + memberPrincipalKey(principal); if (await tx.get(path)) return;
-        if ((await tx.list({ prefix: REFRESH, limit: MEMBER_REFRESH_QUEUE + 1 })).size >= MEMBER_REFRESH_QUEUE) return;
-        await tx.put(path, { issuer, subject, dueAt: this.clock(), attempts: 0 });
-      });
-    } catch { /* a refresh is best effort */ }
+  async #schedule(principal, source = 'member') {
+    try { return await this.metadata.transaction(tx => enqueueMemberKeyRefresh(tx, principal, { now: this.clock(), source, cap: this.discovery.size + MEMBER_REFRESH_CLAIMED })); } catch { return false; /* a refresh is best effort */ }
+  }
+  /** The key port of a claimed issuer: local, an allowed foreign issuer, or none. */
+  #port(iss) { return iss === this.issuer ? this.local : this.foreignAllowed(iss) ? this.foreign : null; }
+  /** Request path (F-07, review follow-up 3): remembers the claimed principal in memory only (no store work, the same
+   * for anyone); the cache check and the bounded enqueue run in the background run after the uniform answer. */
+  #defer(claims) {
+    if (!claims || typeof claims.sub !== 'string' || typeof claims.iss !== 'string' || !this.#port(claims.iss)) return;
+    const key = claims.iss + '\n' + claims.sub; this.deferred.delete(key);
+    if (this.deferred.size >= MEMBER_DEFERRED_CLAIMS) this.deferred.delete(this.deferred.keys().next().value);
+    this.deferred.set(key, { iss: claims.iss, sub: claims.sub });
+  }
+  async #flushDeferred() { const claims = [...this.deferred.values()]; this.deferred.clear(); for (const claim of claims) await this.#claimed(claim); }
+  /** Background: the same check and, when the cache needs it, the same bounded enqueue for any valid claimed principal,
+   * whatever its membership. */
+  async #claimed(claims) {
+    if (!claims || typeof claims.sub !== 'string' || typeof claims.iss !== 'string') return;
+    const port = this.#port(claims.iss); if (typeof port?.needsRefresh !== 'function') return;
+    let needed = false; try { needed = await port.needsRefresh({ issuer: claims.iss, subject: claims.sub }) === true; } catch { needed = false; }
+    if (needed) await this.#schedule({ iss: claims.iss, sub: claims.sub }, 'claimed');
   }
   async #replay(proof) {
     const path = PROOF + await sha(this.crypto, `member-dpop\0${proof.jkt}\0${proof.jti}`), now = this.clock();
@@ -209,8 +255,9 @@ export class MemberContextService {
     const signed = key && member && claims ? await verifyMemberSignature(parsed, key.publicJwk, this.crypto) : await dummyCheck(this.crypto);
     if (!signed || !key || key.identity !== claims?.identity) ok = false;
     trace.signed = Boolean(signed && key && member && claims);
-    // Review LM1: no request-path store write for anyone. Key refresh scheduling is discovered in the background
-    // (refreshDue walks the live roster), so a member's cache miss costs the same as a non-member's.
+    // Review LM1 / F-07 / follow-up 3: the claimed principal is only remembered in memory here, the same for anyone; its
+    // cache check and enqueue run in the background run after the uniform answer, so no response cost depends on it.
+    this.#defer(claims);
     if (!ok) return { ok: false };
     // Step 3: the proof by the certified key, then its replay row.
     const holder = await memberHolderKey(claims, this.crypto); if (!holder) return { ok: false };
@@ -257,11 +304,14 @@ export class MemberContextService {
   async token(input) {
     const { context, exp, expiresIn } = await this.admitToken(input), now = this.clock();
     const token = `mc_${base64url(this.random(32))}`, hash = await sha(this.crypto, `member-token\0${token}`);
+    // Expired rows are pruned in their own transaction, so a refusal below never rolls the cleanup back; only live rows
+    // count toward the limit (plausible item 7).
+    await this.metadata.transaction(async tx => { for (const [k, row] of await tx.list({ prefix: TOKEN })) if (!(row?.exp * 1000 > now)) await tx.delete(k); });
     await this.metadata.transaction(async tx => {
-      const rows = [...await tx.list({ prefix: TOKEN, limit: MEMBER_TOKEN_LIMIT + 1 })], mine = [];
-      for (const [k, row] of rows) { if (!(row?.exp * 1000 > now)) await tx.delete(k); else if (row.membership === context.membership.id) mine.push([k, row]); }
-      if (rows.length > MEMBER_TOKEN_LIMIT) fault('rate_limited', 'Too many member sessions.', 429);
-      mine.sort((a, b) => a[1].createdAt - b[1].createdAt); for (const [k] of mine.slice(0, Math.max(0, mine.length + 1 - MEMBER_TOKENS_PER_MEMBERSHIP))) await tx.delete(k);
+      const live = [...await tx.list({ prefix: TOKEN, limit: MEMBER_TOKEN_LIMIT + 1 })].filter(([, row]) => row?.exp * 1000 > now), mine = live.filter(([, row]) => row.membership === context.membership.id);
+      mine.sort((a, b) => a[1].createdAt - b[1].createdAt); const evict = mine.slice(0, Math.max(0, mine.length + 1 - MEMBER_TOKENS_PER_MEMBERSHIP));
+      if (live.length - evict.length >= MEMBER_TOKEN_LIMIT) fault('rate_limited', 'Too many member sessions.', 429);
+      for (const [k] of evict) await tx.delete(k);
       await tx.put(TOKEN + hash, { membership: context.membership.id, generation: context.membership.generation, principal: context.principal, client: context.client, jkt: context.jkt, aep: context.aep, exp, certificate: context.certificate.jti, createdAt: now });
     });
     return { access_token: token, token_type: 'DPoP', expires_in: expiresIn, bindle_member: { entity: this.organization.identity, id: context.membership.id, ...typeof context.membership.label === 'string' ? { label: context.membership.label } : {} } };
@@ -304,40 +354,65 @@ export class MemberContextService {
     if (principal && input.reset === true) { const member = await this.#lookup(principal); if (member) await this.members.observe(principal, { aep: member.aep ?? 0, reset: true }); }
     return { ended };
   }
-  /** System, background: performs due key refreshes (jittered queue). Returns {done, wakeAt}. */
-  /** Background only: enqueue live members whose cached keys are missing or stale. `members.roster()` -> [{iss, sub}]
-   * (live memberships). A rotating cursor bounds each pass; passes are at most once per MEMBER_DISCOVERY_MS. */
+  /** Background only: enqueue live members whose cached keys are missing or stale. `members.roster(page)` -> an
+   * array of live {iss, sub}, or a page {principals, next, total} for `{after, limit}`. The batch scales with the
+   * roster (memberDiscoveryBatch); passes are at most once per MEMBER_DISCOVERY_MS. */
   async #discover(now) {
     if (typeof this.members?.roster !== 'function' || now - this.discovery.at < MEMBER_DISCOVERY_MS) return;
     this.discovery.at = now;
-    let roster; try { roster = await this.members.roster(); } catch { return; }
-    if (!Array.isArray(roster) || !roster.length) return;
-    const start = this.discovery.cursor % roster.length, count = Math.min(roster.length, MEMBER_DISCOVERY_BATCH);
-    this.discovery.cursor = start + count;
-    for (let i = 0; i < count; i++) {
-      const principal = roster[(start + i) % roster.length]; if (!plain(principal) || typeof principal.sub !== 'string') continue;
-      const iss = principal.iss ?? this.issuer, port = iss === this.issuer ? this.local : this.foreignAllowed(iss) ? this.foreign : null;
+    let batch = memberDiscoveryBatch(this.discovery.size), principals = [];
+    try {
+      const first = await this.members.roster({ after: this.discovery.after, limit: batch });
+      if (Array.isArray(first)) {
+        this.discovery.size = first.length; batch = memberDiscoveryBatch(first.length); if (!first.length) return;
+        const start = this.discovery.cursor % first.length, count = Math.min(first.length, batch); this.discovery.cursor = start + count;
+        for (let i = 0; i < count; i++) principals.push(first[(start + i) % first.length]);
+      } else if (plain(first) && Array.isArray(first.principals)) {
+        if (nonNegative(first.total)) this.discovery.size = first.total;
+        let page = first; principals.push(...page.principals);
+        while (principals.length < batch && typeof page.next === 'string' && page.next) { page = await this.members.roster({ after: page.next, limit: batch - principals.length }); if (!plain(page) || !Array.isArray(page.principals)) break; principals.push(...page.principals); }
+        this.discovery.after = typeof page?.next === 'string' ? page.next : '';
+      } else return;
+    } catch { return; }
+    for (const principal of principals.slice(0, MEMBER_DISCOVERY_MAX_BATCH)) {
+      if (!plain(principal) || typeof principal.sub !== 'string') continue;
+      const iss = principal.iss ?? this.issuer, port = this.#port(iss);
       let needed = false; try { needed = typeof port?.needsRefresh === 'function' && await port.needsRefresh({ issuer: iss, subject: principal.sub }) === true; } catch { needed = false; }
-      if (needed) await this.#schedule({ iss, sub: principal.sub }, iss, principal.sub);
+      if (needed) await this.#schedule({ iss, sub: principal.sub });
     }
   }
-  async refreshDue({ limit = 16 } = {}) {
+  /** System, background: performs due key refreshes (time-ordered queue; reads only due rows). Returns {done, wakeAt}. */
+  async refreshDue({ limit } = {}) {
+    await this.#flushDeferred();
+    try { await this.local?.prune?.({ limit: 64 }); } catch { /* best effort */ }
     await this.#discover(this.clock());
-    const now = this.clock(), due = [...await this.metadata.transaction(tx => tx.list({ prefix: REFRESH, limit: MEMBER_REFRESH_QUEUE }))].filter(([, row]) => row?.dueAt <= now).slice(0, limit);
+    const now = this.clock(), max = Number.isSafeInteger(limit) && limit > 0 ? limit : memberRefreshLimit(this.discovery.size);
+    const due = await this.metadata.transaction(tx => dueMemberKeyRefreshes(tx, now, max));
     let done = 0;
     for (const [path, row] of due) {
-      const port = row.issuer === this.issuer ? this.local : this.foreignAllowed(row.issuer) ? this.foreign : null;
-      let ok = false; try { ok = port ? await port.refresh({ issuer: row.issuer, subject: row.subject }) !== false : false; } catch { ok = false; }
-      await this.metadata.transaction(async tx => { if (ok || !port || row.attempts >= 4) await tx.delete(path); else await tx.put(path, { ...row, attempts: row.attempts + 1, dueAt: now + 60000 * 2 ** row.attempts }); });
+      const issuer = row.issuer ?? this.issuer, port = this.#port(issuer);
+      // A 'claimed' (request-path) refresh never stores a negative row (review follow-up 1); its row leaves the queue.
+      let ok = false; try { ok = port ? await port.refresh({ issuer, subject: row.subject, negative: row.source !== 'claimed' }) !== false || row.source === 'claimed' : false; } catch { ok = false; }
+      await this.metadata.transaction(async tx => { if (ok || !port || row.attempts >= 4) await removeMemberKeyRefresh(tx, path); else await rescheduleMemberKeyRefresh(tx, path, { attempts: row.attempts + 1, dueAt: now + 60000 * 2 ** row.attempts }); });
       if (ok) done++;
     }
-    const rest = [...await this.metadata.transaction(tx => tx.list({ prefix: REFRESH, limit: MEMBER_REFRESH_QUEUE }))].map(([, row]) => row?.dueAt).filter(Number.isSafeInteger);
-    return { done, wakeAt: rest.length ? Math.max(now + 1000, Math.min(...rest)) : null };
+    const next = await this.metadata.transaction(tx => nextMemberKeyRefresh(tx));
+    return { done, wakeAt: next === null ? null : Math.max(now + 1000, next) };
+  }
+  /** System: a same-host issuance, acquisition or revocation hint for `subject` at this provider. Enqueues a refresh
+   * for a live member only, then runs due refreshes; the answer is the same whether or not `subject` is a member. */
+  async hint(input) {
+    if (!only(input, ['subject']) || typeof input.subject !== 'string' || !/^[0-9a-f-]{36}$/.test(input.subject)) fault('invalid_request', 'Name a subject.', 400);
+    const principal = { iss: this.issuer, sub: input.subject };
+    if (await this.#lookup(principal)) await this.#schedule(principal);
+    try { await this.refreshDue(); } catch { /* best effort */ }
+    return { accepted: true };
   }
   /** System: drops expired tokens and replay rows. */
   async sweep() {
     const now = this.clock();
-    return this.metadata.transaction(async tx => { let removed = 0; for (const prefix of [TOKEN, PROOF]) for (const [k, row] of await tx.list({ prefix })) if (!((prefix === TOKEN ? row?.exp * 1000 : row?.expiresAt) > now)) { await tx.delete(k); removed++; } return { removed }; });
+    let keys = 0; try { for (let more = true; more;) { const step = await this.local?.prune?.({ limit: 64 }); keys += step?.removed ?? 0; more = step?.more === true; } } catch { /* best effort */ }
+    return this.metadata.transaction(async tx => { let removed = keys; for (const prefix of [TOKEN, PROOF]) for (const [k, row] of await tx.list({ prefix })) if (!((prefix === TOKEN ? row?.exp * 1000 : row?.expiresAt) > now)) { await tx.delete(k); removed++; } return { removed }; });
   }
   /** Admin: the organization's certificate lifetime (60–660 s). `actor` is a resolved ORG-0 organization actor. */
   async setSettings(actor, input) {
@@ -359,10 +434,11 @@ export class MemberTokenAdmit extends ContextAction { static operation = 'orgs.m
 export class MemberDirect extends ContextAction { static operation = 'orgs.member-direct'; run({ memberContext }) { system(this.actor); return memberContext.direct(this.input); } }
 export class MemberAuthenticate extends ContextAction { static operation = 'orgs.member-authenticate'; run({ memberContext }) { system(this.actor); return memberContext.authenticate(this.input); } }
 export class EndMemberTokens extends ContextAction { static operation = 'orgs.member-tokens-end'; static lifecycle = 'suspended'; run({ memberContext }) { system(this.actor); return memberContext.end(this.input); } }
+export class MemberKeysChanged extends ContextAction { static operation = 'orgs.member-keys-changed'; static lifecycle = 'suspended'; run({ memberContext }) { system(this.actor); return memberContext.hint(this.input); } }
 export class MemberKeyRefresh extends ContextAction { static operation = 'orgs.member-key-refresh'; static lifecycle = 'suspended'; run({ memberContext }) { system(this.actor); return memberContext.refreshDue(this.input ?? {}); } }
 export class MemberContextSweep extends ContextAction { static operation = 'orgs.member-context-sweep'; static lifecycle = 'suspended'; run({ memberContext }) { system(this.actor); return memberContext.sweep(); } }
 export class MemberCertificateSettings extends AppQuery { static operation = 'orgs.certificate-settings'; static deps = ['memberContext']; static entities = ['organization']; fetch({ memberContext }) { return memberContext.settings(); } }
 export class SetMemberCertificateSettings extends ContextAction { static operation = 'orgs.set-certificate-settings'; static entities = ['organization']; run({ memberContext }) { return memberContext.setSettings(this.actor, this.input); } }
-export const MEMBER_CONTEXT_OPERATIONS = Object.freeze([MemberToken, MemberTokenAdmit, MemberDirect, MemberAuthenticate, EndMemberTokens, MemberKeyRefresh, MemberContextSweep, MemberCertificateSettings, SetMemberCertificateSettings]);
+export const MEMBER_CONTEXT_OPERATIONS = Object.freeze([MemberToken, MemberTokenAdmit, MemberDirect, MemberAuthenticate, EndMemberTokens, MemberKeyRefresh, MemberKeysChanged, MemberContextSweep, MemberCertificateSettings, SetMemberCertificateSettings]);
 /** Owner-route operations resolved with `accountActor` (ORG-0). */
 export const MEMBER_CONTEXT_OWNER_OPERATIONS = Object.freeze([MemberCertificateSettings, SetMemberCertificateSettings]);

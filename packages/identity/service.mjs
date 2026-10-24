@@ -407,6 +407,9 @@ export class IdentityService {
     const recoveryToken=`${account.id}.${this.crypto.random()}`;
     const issued=await this.identityBackup.reissue(account,recoveryToken,{rotation,keep,actor:{credentialId:session.credentialId??null,sessionId}});
     const backup=issued?.backup,outcome=issued?.rotation;if(!backup?.keychain?.signing?.kid)fail('recovery_unavailable','Recovery files cannot be replaced right now.',503);
+    // Review 2026-10-23 item 3 (provisional): a reissue that had to rotate but could not (keys.mjs `key_history_full`, e.g. a
+    // moved identity whose published document has no headroom) never stages a file holding the same signing key.
+    if(rotation&&outcome?.skipped)fail('rotation_unavailable','Your identity key cannot be replaced right now, so a new recovery file would not protect you. Your current file keeps working.',409);
     const now=this.clock();
     account.recoveryStaged={hash:await this.crypto.hash('recovery',recoveryToken),kid:backup.keychain.signing.kid,encryptionKid:backup.keychain.encryption.kid,sessionId,preparedAt:now,expiresAt:now+RECOVERY_REISSUE_TTL_MS,base:account.recoveryHash||null,credential:authority.credential,...authority.forced?{forced:authority.forced}:{}};
     if(outcome?.rotated)this.audit(account,'recovery-key-rotated');else if(outcome?.skipped)this.audit(account,'recovery-key-rotation-skipped');

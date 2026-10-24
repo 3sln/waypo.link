@@ -87,3 +87,37 @@ test('ORG-1 runtime: the routes are not exposed while ORGANIZATIONS_ENABLED is o
  assert.equal((await f.call('POST','/api/orgs',{input:{request:'runtime-create-000002',name:'Off'}})).status,404);
  assert.equal((await f.call('GET','/api/orgs/12345678-1234-4123-8123-123456789abc')).status,404);
 });
+
+// Wargame F-01 (2026-10-23): muting stores a preference in the organization, so the route follows ORGANIZATIONS_ENABLED
+// like every widening path; with the flag off it answers the same uniform 404 as an unknown route, while exit paths
+// (leave, decisions, re-confirmation) stay reachable.
+test('F-01 runtime: mute-requests answers the uniform 404 while ORGANIZATIONS_ENABLED is off',async t=>{
+ const f=await fixture(t);
+ const created=await f.call('POST','/api/orgs',{input:{request:'runtime-create-000003',name:'Acme Ltd',label:'company'}});assert.equal(created.status,200,JSON.stringify(created.body));
+ const org=created.body.organization.id,input={requester:{iss:ORIGIN,sub:f.id},muted:true};
+ f.env.ORGANIZATIONS_ENABLED='false';
+ const off=await f.call('POST',`/api/orgs/${org}/mute-requests`,{input});
+ assert.deepEqual(off,{status:404,body:{error:'not_found'}});
+ assert.notEqual((await f.call('POST',`/api/orgs/${org}/grant-decision`,{input:{request:'missing-request-0001',decision:'reject'}})).body.error,undefined);
+ f.env.ORGANIZATIONS_ENABLED='true';
+ assert.equal((await f.call('POST',`/api/orgs/${org}/mute-requests`,{input})).status,200);
+});
+
+// Invitation preview and withdrawal over the runtime routes (2026-10-23): the preview's refusal for a bad token at a
+// real organization is byte-identical to its refusal at an organization that does not exist.
+test('runtime: invitation preview answers uniformly, and an admin can withdraw an invitation',async t=>{
+ const f=await fixture(t);
+ const created=await f.call('POST','/api/orgs',{input:{request:'runtime-create-000004',name:'Acme Ltd',label:'company'}});assert.equal(created.status,200,JSON.stringify(created.body));
+ const org=created.body.organization.id,invite=await f.call('POST',`/api/orgs/${org}/invitations`,{input:{grants:[]}});assert.equal(invite.status,200,JSON.stringify(invite.body));
+ const token=invite.body.meta??invite.body.invitation;
+ const ok=await f.call('POST',`/api/orgs/${org}/invitation-preview`,{input:{invitation:token}});
+ assert.equal(ok.status,200,JSON.stringify(ok.body));assert.deepEqual({name:ok.body.organization.name,label:ok.body.organization.label},{name:'Acme Ltd',label:'company'});
+ const bad=await f.call('POST',`/api/orgs/${org}/invitation-preview`,{input:{invitation:'x'.repeat(64)}}),unknown=await f.call('POST','/api/orgs/12345678-1234-4123-8123-123456789abc/invitation-preview',{input:{invitation:token}});
+ assert.equal(bad.status,404);assert.deepEqual(bad,unknown,'no oracle about which organizations exist');
+ const revoked=await f.call('POST',`/api/orgs/${org}/invitation-revoke`,{input:{invitation:invite.body.invitation}});assert.equal(revoked.status,200,JSON.stringify(revoked.body));
+ assert.deepEqual(await f.call('POST',`/api/orgs/${org}/invitation-preview`,{input:{invitation:token}}),unknown,'a withdrawn invitation previews like an invalid one');
+ // Withdrawal is a reducing operation: it stays open while ORGANIZATIONS_ENABLED is off; the preview does not.
+ const second=await f.call('POST',`/api/orgs/${org}/invitations`,{input:{grants:[]}});f.env.ORGANIZATIONS_ENABLED='false';
+ assert.equal((await f.call('POST',`/api/orgs/${org}/invitation-preview`,{input:{invitation:second.body.meta??second.body.invitation}})).status,404);
+ const off=await f.call('POST',`/api/orgs/${org}/invitation-revoke`,{input:{invitation:second.body.invitation}});assert.equal(off.status,200,JSON.stringify(off.body));
+});

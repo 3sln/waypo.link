@@ -7,7 +7,9 @@
 //                                  orgs/owned/<org>         index of organizations this person is owner of record of
 //   the organization's own account org/record-v1            the authoritative organization record (below)
 //                                  identity/entity          {v:1, kind:'organization'} (read by app removal, AU-13)
-//                                  org/audit/<seq>          owner-interface audit rows (not yet hash-chained)
+//                                  org/audit/<seq>          owner-interface audit rows (hash-chained by ORG-2)
+//                                  org/member/…, org/invitation/…, org/request/…, org/outbox/…, org/due/…
+//                                                           the ORG-2 roster rows (packages/orgs/roster.mjs)
 //                                  org/principal-epoch/<k>  highest security epoch seen per acting principal
 //
 // The organization record:
@@ -195,8 +197,9 @@ export class OrganizationService{
    const now=this.clock.now();
    const record={v:1,kind:'organization',id:actor.owner,name,label,handle:typeof value.handle==='string'?value.handle:null,ownerOfRecord:creator,initialAdmin:creator,createdBy:creator,
     plan:plain(value.plan)?{source:String(value.plan.source),plan:String(value.plan.plan)}:null,request:value.request,createdAt:now,updatedAt:now,state:'active',deletion:null,revision:1,auditSeq:0};
-   this.initializeMembership?.(record,now,value.addedUnder);
+   await this.initializeMembership?.(tx,record,now,value.addedUnder);
    await this.audit(tx,record,'organization-created',{kind:'system',principal:creator},{name,label});
+   await this.beforeCommit?.(tx,record,{kind:'system',principal:creator});
    await tx.put(ORG_ENTITY,{v:1,kind:'organization'});await tx.put(ORG_RECORD,record);
    return organizationView(record);
   });
@@ -213,8 +216,8 @@ export class OrganizationService{
    if(fresh)requireFresh(actor,now,ORG_FRESH_AUTH_MS);
    if(value.expectedRevision!==undefined&&value.expectedRevision!==record.revision)fail('organization_stale','This organization changed. Reload and try again.',409);
    if(!states.includes(record.state))fail(record.state==='active'?'organization_not_pending':'organization_deletion_pending',record.state==='active'?'No deletion is pending.':'This organization is scheduled for deletion.',409);
-   const changed=await apply(record,value,now,tx);
-   if(changed!==false){record.revision++;record.updatedAt=now;await tx.put(ORG_RECORD,record);}
+   const changed=await apply(record,value,now,tx),flushed=await this.beforeCommit?.(tx,record,actor);
+   if(changed!==false||flushed){record.revision++;record.updatedAt=now;await tx.put(ORG_RECORD,record);}
    return organizationView(record,actor);
   });
  }
@@ -242,5 +245,14 @@ export class OrganizationService{
   let outcome;try{outcome=await this.purge(record.id);}catch{outcome=null;}
   return {state:record.state,wakeAt:outcome?.handedOff===true?null:now+3600000,held:outcome?.handedOff!==true};
  }
- async audits(actor,{limit=50}={}){return this.metadata.transaction(async tx=>{await this.organization(tx,actor);return {entries:[...(await tx.list({prefix:ORG_AUDIT})).values()].slice(-Math.min(Math.max(1,limit),200))};});}
+ /** The newest audit rows, a bounded page (at most 200): `before` is the `next` of a previous page (a sequence number).
+  * Reads only the rows returned, never the whole log. */
+ async audits(actor,input={}){
+  const value=exact(input??{},['limit','before']);
+  if(value.limit!==undefined&&(!Number.isSafeInteger(value.limit)||value.limit<1)||value.before!==undefined&&(!Number.isSafeInteger(value.before)||value.before<1))fail('invalid_request','Unsupported organization request.',400);
+  const limit=Math.min(value.limit??50,200);
+  return this.metadata.transaction(async tx=>{const record=await this.organization(tx,actor),end=Math.min(value.before??Infinity,(record.auditSeq??0)+1),from=Math.max(1,end-limit);
+   const entries=end>from?[...(await tx.list({prefix:ORG_AUDIT,startAfter:ORG_AUDIT+String(from-1).padStart(12,'0'),limit:end-from})).values()]:[];
+   return {entries,next:from>1?from:null};});
+ }
 }

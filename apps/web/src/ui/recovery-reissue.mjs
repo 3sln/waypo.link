@@ -14,8 +14,9 @@ export function recoveryFilePanel(state){
   required?h('div',h('strong','You need a new recovery file.'),h('p',required)).attrs({role:'alert'}).classes('security-note','recovery-required'):
    view.issuedAt?h('p',interfaceText('Your current recovery file was created {date}.',{date:date(view.issuedAt)})).classes('muted'):h('p','This account has no current recovery file.').classes('muted'),
   view.transferEligibleAt&&!required?h('p',interfaceText('It can authorize moving your identity from {date}.',{date:date(view.transferEligibleAt)})).classes('field-help'):null,
+  view.reissueEligible===false?h('p',view.reissueEligibleAt?interfaceText('You can replace your recovery file from {date}.',{date:date(view.reissueEligibleAt)}):'Add a password or passkey and keep it for 7 days before replacing your recovery file.').classes('field-help').attrs({role:'status'}):null,
   h('p','Replacing it makes every copy of your current recovery file stop working. Your sign-in, data and connected apps stay the same.').classes('field-help'),
-  view.reissueAvailable?btn([icon('download'),required?'Create a new recovery file':'Replace recovery file'],{kind:'open-modal',modal:{kind:'reissue-recovery'}},required?'button primary':'button secondary'):h('p','Recovery files cannot be replaced on this service right now.').classes('field-help')
+  view.reissueAvailable?btn([icon('download'),required?'Create a new recovery file':'Replace recovery file'],{kind:'open-modal',modal:{kind:'reissue-recovery'}},required?'button primary':'button secondary',view.reissueEligible===false):h('p','Recovery files cannot be replaced on this service right now.').classes('field-help')
  ).classes('panel','recovery-file-panel').key('recovery-file-panel');
 }
 

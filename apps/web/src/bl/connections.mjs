@@ -3,6 +3,8 @@ import {OwnerFlow,snapshot,publish} from './owner-flow.mjs';
 import {connectionManifest,connectionLink} from './connections-port.mjs';
 export const connectionsEnabled=s=>s.config?.integrationsEnabled===true;
 export const connectionsModel=s=>connectionsEnabled(s)&&!s.offline&&s.session?.account?.id&&s.connectionsConsole?.owner===s.session.account.id&&s.connectionsConsole?.session===s.session.sessionContext&&s.connectionsConsole?.generation===(s.beamGeneration??0)?s.connectionsConsole:null;
+// Display availability follows configured upstream capability and the current connection state.
+export const connectionOfferings=s=>{const m=connectionsModel(s);return (m?.offerings??[]).filter(d=>d.id!=='google-drive'||s.config?.providers?.google?.enabled===true||s.data?.providerCapabilities?.['google-drive']?.enabled===true).map(d=>({...d,connected:(m.connections??[]).some(c=>c.integration?.builtin===d.id&&c.state!=='disconnected')}));};
 const base=s=>connectionsModel(s)??{owner:s.session.account.id,session:s.session.sessionContext,generation:s.beamGeneration??0,connections:[],slots:[],offerings:[]};
 const put=(r,ctx,p)=>publish(r,ctx,{connectionsConsole:{...base(snapshot(r)),...p}});
 // Optional host focus port: moves focus to a rendered panel heading (or back to the console title) after a change.

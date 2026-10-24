@@ -1,11 +1,13 @@
 // AU-S3: one account-store commit; remote stores are durable cascades. Used by the removal engine provider,
 // never as a second Action dispatch. The generation fence protects reinstallation from old completion/retry inputs.
+import {brokeredResourceIndexKey} from '../federation/brokered.mjs';
 import {DelegationRegistry} from '../identity/delegation.mjs';
 import {AppConnections} from '../apps/connections.mjs';
 import {busKeys,principalKey} from '../events/cursor.mjs';
 import {cancelIntegrationDoorbell} from './integration-events.mjs';
 import {AppAction} from '../app/engine.mjs';
 import {StorageError} from '../storage/policy.mjs';
+import {lifecycleLog} from './lifecycle-runner.mjs';
 const CASCADE='app-removal/cascade/',STAMP='app-removal/commit/',pad=n=>String(n).padStart(16,'0');
 const fail=(code,message,status)=>{throw new StorageError(code,message,status);};
 async function* rows(tx,prefix){let startAfter='';for(;;){const page=[...(await tx.list({prefix,startAfter,limit:200})).entries()];for(const row of page)yield row;if(page.length<200)return;const next=page.at(-1)[0];if(next<=startAfter)fail('unavailable','Invalid storage pagination.',503);startAfter=next;}}
@@ -34,7 +36,7 @@ export async function removalCommitTx(c,tx,{owner,clientId,connection,expectedGe
    if(r?.owner!==owner||r.v!==1)continue;
    const hosted=r.connection===id,gone=(r.assignments??[]).filter(a=>hosted||a.consumer?.clientId===clientId);
    if(hosted||gone.length)await sever({type:hosted?'detached':'unassigned',connection:r.connection,generation:r.generation,resource:r.resource,grants:gone.map(a=>a.grant)});
-   if(hosted){await tx.delete(key);for await(const [index,value]of rows(tx,'integrations/resource/'))if(value===r.id)await tx.delete(index);}
+   if(hosted){await tx.delete(key);await tx.delete(await brokeredResourceIndexKey(r.connection,r.resource));}
    else if(gone.length){r.assignments=r.assignments.filter(a=>!gone.includes(a));await tx.put(key,r);}
   }
   await tx.put('integrations/meta',meta);
@@ -48,14 +50,33 @@ export async function removalCommitTx(c,tx,{owner,clientId,connection,expectedGe
  const conclude=finalize??transaction;if(conclude)await conclude(tx,result);return result;
 }
 export async function removalCommit(c,options){return c.metadata.transaction(tx=>removalCommitTx(c,tx,options));}
-export async function drainRemovalCascades(c,owner){
- let drained=0;for await(const [key,row]of rows(c.metadata,CASCADE)){
+// Wargame F4: one failing row never blocks the others. Each row keeps its own attempt count and next attempt time
+// with exponential backoff (1 min doubling, capped at 6 h). After CASCADE_STUCK_ATTEMPTS failures the row is marked
+// stuck and one operator alert is logged; a stuck row is still retried at the cap, since over-revocation is safe and
+// abandoning revocation is not. `wakeAt` is the earliest next attempt, for the caller's alarm.
+export const CASCADE_BASE_MS=60000,CASCADE_MAX_MS=6*3600000,CASCADE_STUCK_ATTEMPTS=8;
+export const cascadeBackoff=attempts=>Math.min(CASCADE_MAX_MS,CASCADE_BASE_MS*2**Math.max(0,attempts-1));
+export async function drainRemovalCascades(c,owner,{now=Date.now()}={}){
+ let drained=0,failed=0,wakeAt=null;const later=t=>{wakeAt=Math.min(wakeAt??Infinity,t);};
+ for await(const [key,row]of rows(c.metadata,CASCADE)){
   if(row.owner!==owner)continue;
-  if(typeof c.config.APP_REMOVAL_REVOKE_EXTERNAL!=='function')return {drained,pending:true};
-  try{await c.config.APP_REMOVAL_REVOKE_EXTERNAL(structuredClone(row));}catch{return {drained,pending:true};}
-  await c.metadata.transaction(async tx=>{const current=await tx.get(key);if(current?.generation===row.generation&&current.committed_at===row.committed_at)await tx.delete(key);});drained++;
+  // Without a revocation port nothing can make progress: rows stay pending, but no alarm is armed for them; the next
+  // owner operation or a configured port drains them (review follow-up 4).
+  if(typeof c.config.APP_REMOVAL_REVOKE_EXTERNAL!=='function')return {drained,failed,pending:true,wakeAt:null};
+  if(Number.isSafeInteger(row.next_attempt_at)&&row.next_attempt_at>now){later(row.next_attempt_at);continue;}
+  const {attempts,next_attempt_at,stuck,last_error,...cascade}=row;
+  let error=null;try{await c.config.APP_REMOVAL_REVOKE_EXTERNAL(structuredClone(cascade));}catch(e){error=e;}
+  if(!error){await c.metadata.transaction(async tx=>{const current=await tx.get(key);if(current?.generation===row.generation&&current.committed_at===row.committed_at)await tx.delete(key);});drained++;continue;}
+  failed++;
+  const alert=await c.metadata.transaction(async tx=>{
+   const current=await tx.get(key);if(current?.generation!==row.generation||current.committed_at!==row.committed_at)return null;
+   const n=(Number.isSafeInteger(current.attempts)?current.attempts:0)+1,becameStuck=n>=CASCADE_STUCK_ATTEMPTS&&current.stuck!==true;
+   const next={...current,attempts:n,next_attempt_at:now+cascadeBackoff(n),last_error:typeof error?.code==='string'?error.code.slice(0,64):'error',...n>=CASCADE_STUCK_ATTEMPTS?{stuck:true}:{}};
+   await tx.put(key,next);later(next.next_attempt_at);return becameStuck?next:null;
+  });
+  if(alert)lifecycleLog(c.config,{kind:'app-removal',action:'operator-alert',reason:'cascade-stuck',owner,connection:alert.connection,clientId:alert.clientId,generation:alert.generation,attempts:alert.attempts,error:alert.last_error});
  }
- return {drained,pending:false};
+ return {drained,failed,pending:wakeAt!==null,wakeAt};
 }
 
 // Engine entry for direct force-removal compositions; clean completion uses the same transaction primitive.

@@ -59,7 +59,7 @@ export async function lineageLive(service,family){
 /** Access token for a family: Bearer (≤ 15 min) or DPoP-bound (≤ 60 min, stored under `boundTokenId`), never past the
  * family's absolute expiry. Grants are re-read live. */
 export async function issueAppAccess(service,tx,family){
- const grants=await service.liveGrantIds(tx,family);await service.bounded(tx,'token',256);
+ const grants=await service.liveGrantIds(tx,family);await service.bounded(tx,'token',256,{count:row=>!row.member});
  const now=service.clock(),bound=family.access==='dpop',access_token=service.random(),expiresAt=Math.min(now+appAccessMs(service,family),family.expiresAt),expires_in=Math.floor((expiresAt-now)/1000);if(expires_in<1)fail('invalid_grant');
  const id=bound?await boundTokenId(service,access_token):await digest(service.crypto,`token\0${access_token}`);
  await tx.set(key('token',id),{issuer:service.issuer,audience:service.audience,subject:family.subject,epoch:family.epoch,...family.connection?{connection:structuredClone(family.connection)}:{},familyId:family.familyId,clientId:family.clientId,grants,expiresAt,...bound?{jkt:family.jkt}:{}});

@@ -8,6 +8,20 @@ const fail=code=>{throw new ArtefactFault(code);},clone=structuredClone;
 const lineKey=id=>'artefacts/line/'+id,recordKey=digest=>'artefacts/record/'+digest,pinKey=ref=>'artefacts/pin/'+ref.id+'/'+(ref.version??'legacy')+'/'+ref.digest;
 const legacyKey=(id,digest)=>recordKey(digest)+'/legacy/'+id;
 const empty=()=>({head:0,digests:[],observed:[],notices:[],faults:[],blockedFrom:null,fetchedAt:null,negativeUntil:0});
+const PAGE=128,pageKey=(id,n)=>'artefacts/digests/'+id+'/'+n;
+// Ephemeral verified copies accelerate a warm line; durable pages remain authoritative.
+const caches=new WeakMap();
+const cacheFor=store=>{let cache=caches.get(store);if(!cache)caches.set(store,cache=new Map());return cache;};
+async function history(tx,id,state,cache){
+ const hit=cache.get(id);if(hit&&hit.head===state.head&&hit.observedCount===(state.observedCount??state.observed?.length??0)&&hit.headDigest===state.headDigest)return hit;
+ const count=Math.max(state.head,state.observedCount??0),digests=state.digests??[],observed=state.observed??[];
+ if(!state.digests)for(let i=0;i<Math.ceil(count/PAGE);i++){const page=await tx.get(pageKey(id,i))??[];for(let j=0;j<page.length;j++){observed[i*PAGE+j]=page[j];if(i*PAGE+j<state.head)digests[i*PAGE+j]=page[j];}}
+ return {digests,observed};
+}
+async function saveHistory(tx,id,state,oldCount){
+ const values=state.observed??[];for(let i=Math.floor(oldCount/PAGE);i<Math.ceil(values.length/PAGE);i++)await tx.put(pageKey(id,i),values.slice(i*PAGE,(i+1)*PAGE));
+ const {digests,observed,...head}=state;head.observedCount=values.length;head.headDigest=values[state.head-1]??null;await tx.put(lineKey(id),head);state.headDigest=head.headDigest;state.observedCount=head.observedCount;
+}
 const enabled=flags=>flags.for({}).global('ARTEFACT_VERSIONS_ENABLED');
 const reference=input=>parseReference(input.reference??input,{urlMember:input.urlMember??'artefact',kind:input.kind});
 const legacyDigest=async body=>'sha256-'+btoa(String.fromCharCode(...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(canonical(body)))))).replaceAll('+','-').replaceAll('/','_').replace(/=+$/,'');
@@ -35,11 +49,17 @@ async function obtain(resources,ref,{refresh=false}={}){
    return {legacy:value};
   }
   if(!enabled(resources.flags))fail('unsupported_artefact_version');
+  const warm=cacheFor(store).get(ref.id),trusted=warm&&warm.head===state.head&&warm.headDigest===state.headDigest&&warm.observedCount===(state.observedCount??state.observed?.length??0)?warm.verified:null;
   const records=new Map();for(let i=0;i<Math.max(refresh?envelope.versions.length:ref.version??envelope.versions.length,state.head);i++)if(envelope.versions[i]&&!Object.hasOwn(envelope.versions[i],'body')){
-   const url=versionURL(ref.id,i+1),stored=await store.get(recordKey(envelope.versions[i+1]?.prev));records.set(url,stored??await egress.fetch(url,{record:true}));
+   const url=versionURL(ref.id,i+1);if(trusted?.records[i]&&trusted.envelope.id===envelope.id&&trusted.envelope.kind===envelope.kind&&jcs(trusted.envelope.versions[i])===jcs(envelope.versions[i])){records.set(url,trusted.records[i]);continue;}
+   const stored=await store.get(recordKey(envelope.versions[i+1]?.prev));records.set(url,stored??await egress.fetch(url,{record:true}));
   }
   return {envelope,records};
  }catch(error){
+  // Our own exhausted budget says nothing about the line: refuse now, persist nothing. An unregistered id is the
+  // operator registry's answer and is never negatively cached in provider-wide state (wargame F1).
+  if(error.code==='artefact_budget_exhausted')fail('artefact_unavailable');
+  if(error.code==='artefact_unregistered')throw error;
   if(!error.code||['artefact_unavailable','timeout','too_large','untrusted_schema_host'].includes(error.code)){
    await store.transaction(async tx=>{const current=await tx.get(lineKey(ref.id))??empty();current.negativeUntil=Math.max(current.negativeUntil,now+60000);await tx.put(lineKey(ref.id),current);});fail('artefact_unavailable');
   }throw error;
@@ -48,7 +68,8 @@ async function obtain(resources,ref,{refresh=false}={}){
 async function accept(resources,ref,copy,{refresh=false,clear=false}={}){
  const {federationStore:store,clock,config}=resources;if(typeof config.validateArtefactBody!=='function')fail('artefact_unverifiable');
  return finish(await store.transaction(async tx=>{
-  const state=await tx.get(lineKey(ref.id))??empty(),save=()=>tx.put(lineKey(ref.id),state);
+  const state=await tx.get(lineKey(ref.id))??empty(),cache=cacheFor(store),prefix=await history(tx,ref.id,state,cache),oldCount=Object.hasOwn(state,'digests')?0:prefix.observed.length;state.digests=prefix.digests.slice();state.observed=prefix.observed.slice();
+  const save=()=>saveHistory(tx,ref.id,state,oldCount);
   const fault=async(code,from)=>{if(!state.faults.some(f=>f.code===code&&f.from===from))state.faults.push({code,...from?{from}:{}});if(from)state.blockedFrom=state.blockedFrom===null?from:Math.min(from,state.blockedFrom);await save();return {error:code};};
   if(copy.legacy!==undefined){
    if(!copy.legacy||typeof copy.legacy!=='object'||Array.isArray(copy.legacy))return {error:'artefact_invalid'};
@@ -61,10 +82,10 @@ async function accept(resources,ref,copy,{refresh=false,clear=false}={}){
   }
   const {envelope,records}=copy,target=refresh?Math.max(1,state.head):ref.version??envelope.versions.length;
   let verified;
-  try{verified=await extractVersion(envelope,Math.max(target,state.head),{id:ref.id,kind:ref.kind,records,storedDigests:state.digests});}
+  try{verified=await extractVersion(envelope,Math.max(target,state.head),{id:ref.id,kind:ref.kind,records,storedDigests:state.digests,authenticatedPrefix:prefix.verified});}
   catch(error){if(error.code==='artefact_history_rewritten')return fault(error.code);return {error:error.code??'artefact_invalid'};}
   // Notices can bind to the copy's later head without advancing the provider head.
-  let noticeCopy=verified;try{noticeCopy=await extractVersion(envelope,envelope.versions.length,{id:ref.id,kind:ref.kind,records,storedDigests:state.digests});}catch{}
+  let noticeCopy=verified;try{if(envelope.versions.length!==verified.digests.length)noticeCopy=await extractVersion(envelope,envelope.versions.length,{id:ref.id,kind:ref.kind,records,storedDigests:state.digests,authenticatedPrefix:prefix.verified});}catch{}
   const notices=evaluateNotices(envelope,{digests:noticeCopy.digests,storedDigests:state.digests,accepted:state.notices});state.notices=notices.notices;state.fetchedAt=clock.now();state.negativeUntil=0;
   if(notices.rewritten)return fault('artefact_history_rewritten');
   if(clear){if(state.blockedFrom!==null)return {error:'artefact_not_additive'};state.faults=[];await save();return {value:clone(state)};}
@@ -78,13 +99,15 @@ async function accept(resources,ref,copy,{refresh=false,clear=false}={}){
   const kinds=config.artefactKinds??DEFAULT_KINDS,known=kinds instanceof Map?kinds.has(envelope.kind):Object.hasOwn(kinds,envelope.kind);
   if(!known&&ref.latest){await save();return {error:'artefact_unverifiable'};}
   const old=await tx.get('artefacts/legacy/'+ref.id);if(old&&old!==await legacyDigest(verified.records[0].body))return fault('artefact_history_rewritten');
-  for(let i=0;i<version;i++){
+  const accepted=known?state.head:state.observed.length;
+  for(let i=accepted;i<version;i++){
    const r=verified.records[i];if(await config.validateArtefactBody(clone(r.body),{id:r.id,kind:r.kind,version:r.version})===false){await save();return {error:'artefact_invalid'};}
    if(i&&known&&validateAdditive(envelope.kind,verified.records[i-1].body,r.body,{kinds}).additive!==true)return fault('artefact_not_additive',i+1);
-   state.observed??=[];state.observed[i]=verified.digests[i];const key=recordKey(verified.digests[i]),previous=await tx.get(key);if(previous&&jcs(previous)!==jcs(r))return fault('artefact_history_rewritten');if(!previous)await tx.put(key,r);if(known&&i+1>state.head){state.head=i+1;state.digests=verified.digests.slice(0,i+1);}
+   state.observed??=[];state.observed[i]=verified.digests[i];const key=recordKey(verified.digests[i]),previous=await tx.get(key);if(previous&&jcs(previous)!==jcs(r))return fault('artefact_history_rewritten');if(!previous)await tx.put(key,r);if(known&&i+1>state.head)state.head=i+1;
   }
+  if(known&&version>0){state.head=Math.max(state.head,version);state.digests=verified.digests.slice(0,state.head);}
   const resolved={...ref,version:ref.legacy?undefined:version,digest};if(ref.legacy)await tx.put(legacyKey(ref.id,digest),{id:ref.id,kind:record.kind,body:record.body});
-  await save();await tx.put(pinKey(resolved),true);return {value:result(resolved,record,state)};
+  await save();cache.delete(ref.id);cache.set(ref.id,{head:state.head,headDigest:state.headDigest,observedCount:state.observedCount,digests:state.digests,observed:state.observed,verified:clone(verified)});while(cache.size>16)cache.delete(cache.keys().next().value);await tx.put(pinKey(resolved),true);return {value:result(resolved,record,state)};
  }));
 }
 // Configured mirror records never supply notices, answer latest, or advance heads.
@@ -94,7 +117,7 @@ async function acceptMirror(resources,ref){
  for(let n=ref.version;n>=1;n--){const raw=await resources.federationStore.get(recordKey(digest))??await resources.egress.record(digest),record=parseVersionRecord(raw);if(record.id!==ref.id||record.version!==n||ref.kind&&record.kind!==ref.kind||await versionDigest(record)!==digest)fail('artefact_digest_mismatch');records.unshift(record);digests.unshift(digest);digest=record.prev;}
  if(records.some(r=>r.kind!==records[0].kind))fail('artefact_invalid');
  return finish(await resources.federationStore.transaction(async tx=>{
-  const state=await tx.get(lineKey(ref.id))??empty();
+  const state=await tx.get(lineKey(ref.id))??empty();state.digests=(await history(tx,ref.id,state,cacheFor(resources.federationStore))).digests;
   if(state.fetchedAt===null||resources.clock.now()-state.fetchedAt>=86400000)return {error:'artefact_unavailable'};
   if(state.faults.length)return {error:'artefact_history_rewritten'};
   if(state.notices.some(n=>n.type==='retracted'&&n.from<=ref.version))return {error:'artefact_retracted'};
@@ -108,7 +131,7 @@ async function acceptMirror(resources,ref){
 }
 export class PinArtefact extends AppAction {
  static operation='artefacts.pin';static deps=['federationStore','egress','flags','clock','config'];static changes='artefacts.changed';
- async run(resources){const ref=reference(this.input);if(ref.version&&!enabled(resources.flags))fail('unsupported_artefact_version');const hit=await resources.federationStore.transaction(async tx=>{const hit=await cached(tx,ref,{now:resources.clock.now()});if(hit)await tx.put(pinKey(ref),true);return hit;});if(hit)return hit;let copy;try{copy=await obtain(resources,ref);}catch(error){if(error.code!=='artefact_unavailable'||!ref.version||!resources.egress.record)throw error;return acceptMirror(resources,ref);}return accept(resources,ref,copy);}
+ async run(resources){const ref=reference(this.input);if(ref.version&&!enabled(resources.flags))fail('unsupported_artefact_version');const hit=await resources.federationStore.transaction(async tx=>{const hit=await cached(tx,ref,{now:resources.clock.now()});if(hit)await tx.put(pinKey(ref),true);return hit;});if(hit)return hit;let copy;try{copy=await obtain(resources,ref);}catch(error){if(!['artefact_unavailable','artefact_unregistered'].includes(error.code)||!ref.version||!resources.egress.record)throw error;return acceptMirror(resources,ref);}return accept(resources,ref,copy);}
 }
 export class ResolveArtefact extends AppQuery {
  static operation='artefacts.resolve';static deps=['federationStore'];

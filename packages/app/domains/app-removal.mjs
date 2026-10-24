@@ -13,6 +13,20 @@ const index=client=>REMOVAL_OPEN+encodeURIComponent(client),key=id=>REMOVAL_RECO
 const view=r=>{if(!r)return null;const {binding,reissues,...visible}=r;return structuredClone(visible);};
 const hash=async value=>{if(typeof value!=='string'||value.length<32||value.length>256)return null;const bytes=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(value));return [...new Uint8Array(bytes)].map(b=>b.toString(16).padStart(2,'0')).join('');};
 const result=v=>{if(v===undefined)return undefined;try{const raw=new TextEncoder().encode(JSON.stringify(v));let s='';for(const b of raw)s+=String.fromCharCode(b);return parseRemovalResult(btoa(s).replaceAll('+','-').replaceAll('/','_').replace(/=+$/,''));}catch{return undefined;}};
+// A reinstall writes a fresh record (new connectedAt, no disconnectedAt); a suspend/resume keeps connectedAt.
+const severedSince=(c,r)=>c.status==='disconnected'||Number.isSafeInteger(c.disconnectedAt)&&c.disconnectedAt>=r.started_at||Number.isSafeInteger(c.connectedAt)&&c.connectedAt>r.started_at;
+// Wargame plausible-7 bound (provisional): concluded removal records, and their reminder notices, are kept for
+// REMOVAL_RETENTION_MS after conclusion and at most REMOVAL_CONCLUDED_LIMIT of them per account. Pruning is
+// opportunistic (each start and tick) and deletes at most REMOVAL_PRUNE_BATCH records per call.
+export const REMOVAL_RETENTION_MS=90*86400000,REMOVAL_CONCLUDED_LIMIT=100,REMOVAL_PRUNE_BATCH=50;
+const concludedAt=r=>r.concluded_at??r.committed_at??r.started_at??0;
+async function prune(tx,now){
+ const concluded=[...(await tx.list({prefix:REMOVAL_RECORD})).entries()].filter(([,r])=>r&&!removalOpen(r)).sort((a,b)=>concludedAt(a[1])-concludedAt(b[1]));
+ let excess=concluded.length-REMOVAL_CONCLUDED_LIMIT,deleted=0;
+ for(const [path,r]of concluded){if(deleted>=REMOVAL_PRUNE_BATCH)break;if(excess<=0&&concludedAt(r)>now-REMOVAL_RETENTION_MS)break;
+  for(const [notice]of await tx.list({prefix:REMOVAL_NOTICE+r.removal+'/'}))await tx.delete(notice);await tx.delete(path);excess--;deleted++;}
+ return deleted;
+}
 /** AU-13 policy hook. Organizations remain refused until membership/admin authorization exists. */
 export function removalPolicy({kind='person',now,admins=[]}={}){return kind==='organization'?{supported:false,delay:86400000,notBefore:now+86400000,notify:[...new Set(admins)],forceDelay:0}:{supported:kind==='person',delay:0,notBefore:now,notify:[],forceDelay:0};}
 export class AppRemovalService{
@@ -27,9 +41,11 @@ export class AppRemovalService{
  if(await tx.get(index(c.clientId)))fail('removal_pending','Removal is already pending.',409);
  const snapshot=c.integration?.snapshot,manifest=snapshot?.manifest??c.integration?.manifest,declaration=manifest?.removal,state=c.state??(c.status==='active'?'active':'disconnected');
  if(!declaration||!['active','configuring','degraded','suspended'].includes(state)||state==='suspended'&&(c.suspensionReason!=='owner'||c.securitySuspended===true))fail('clean_removal_unavailable','This app cannot clean up. Remove it now instead.');
- const resumed=state==='suspended';if(resumed){if(typeof this.resume!=='function')fail('clean_removal_unavailable','Resuming this app is unavailable.');c=await this.resume(tx,owner,c);}
+ const resumed=state==='suspended';if(resumed){if(typeof this.resume!=='function')fail('clean_removal_unavailable','Resuming this app is unavailable.');c=await this.resume(tx,owner,c);
+ // A resume across an account suspension severs instead (connections #severAllTx); never record a removal for it.
+ if(c?.status!=='active'||(c.state??'active')==='disconnected')fail('clean_removal_unavailable','This app was disconnected. Remove it now instead.');}
  const r={removal:owner+'.'+this.random.uuid(),entity:owner,client_id:c.clientId,connection:c.id,generation:c.generation,mode:'clean',state:'pending',started_at:now,cleanup_by:now+Math.min(declaration.cleanup_seconds??900,86400)*1000,declaration:structuredClone(declaration),confidential:snapshot?.authMethod==='private_key_jwt',binding,reissues:[],resumed,reminders:0};
- await tx.put(key(r.removal),r);await tx.put(index(c.clientId),r.removal);return r;});await this.wake(row.cleanup_by);return view(row);
+ await tx.put(key(r.removal),r);await tx.put(index(c.clientId),r.removal);await prune(tx,now);return r;});await this.wake(row.cleanup_by);return view(row);
  }
  async reissue(actor,value){const v=input(value,['removal','binding']),binding=await hash(v.binding);if(!binding)fail('invalid_request','A browser binding is required.',400);return this.metadata.transaction(async tx=>{const owner=await this.bound(tx,actor),r=await tx.get(key(v.removal));if(!removalOpen(r)||r.entity!==owner)fail('not_found','Not found.',404);const now=this.clock.now();r.reissues=(r.reissues??[]).filter(t=>t>now-86400000);if(r.reissues.length>=5)fail('rate_limited','Try again tomorrow.',429);r.reissues.push(now);r.binding=binding;await tx.put(key(r.removal),r);return view(r);});}
  async cancel(actor,value){const v=input(value,['removal']);return this.metadata.transaction(async tx=>{const owner=await this.bound(tx,actor),r=await tx.get(key(v.removal));if(!r||r.entity!==owner)return null;if(!removalOpen(r))return view(r);r.state='canceled';r.concluded_at=this.clock.now();await tx.put(key(r.removal),r);await tx.delete(index(r.client_id));return view(r);});}
@@ -40,7 +56,10 @@ export class AppRemovalService{
  if(!force&&!['completed','failed','in-progress','canceled'].includes(v.outcome))fail('invalid_request','Unsupported removal outcome.',400);
  if(!force&&actor.kind==='app'&&!['completed','failed'].includes(v.outcome))fail('invalid_request','Unsupported completion outcome.',400);
  if(!force&&actor.kind!=='app'&&binding!==r.binding&&v.confirmed!==true)return {...view(r),confirmation_required:true,reported_outcome:v.outcome,...result(v.result)?{reported_result:result(v.result)}:{}};
- const c=await this.connection(tx,owner,r?.connection??v.connection);if(c.generation!==(r?.generation??v.expectedGeneration)){if(force&&r)r.generation=c.generation;else return null;}
+ const c=await this.connection(tx,owner,r?.connection??v.connection);if(c.generation!==(r?.generation??v.expectedGeneration)){
+ // Force may follow a suspend/resume generation forward, never a disconnect: after one, the connection is a new
+ // incarnation (or a tombstone) the owner did not choose to remove from this record (wargame F5).
+ if(force&&r){if(severedSince(c,r))fail('connection_stale','This app was disconnected and connected again. Reload and try again.',409);r.generation=c.generation;}else return null;}
  if(!r){const now=this.clock.now();r={removal:owner+'.'+this.random.uuid(),entity:owner,client_id:c.clientId,connection:c.id,generation:c.generation,mode:'force',state:'pending',started_at:now};const open=await tx.get(index(c.clientId));if(open){const pending=await tx.get(key(open));if(removalOpen(pending)){r=pending;r.generation=c.generation;r.connection=c.id;}}}
  const validResult=result(v.result);if(validResult)r.result=validResult;
  if(!force&&v.outcome!=='completed'){if(v.outcome==='in-progress')r.state='in-progress';r.outcome=v.outcome;await tx.put(key(r.removal),r);return view(r);}
@@ -48,7 +67,14 @@ export class AppRemovalService{
  const committed=await this.commit(tx,{owner,clientId:r.client_id,connection:r.connection,expectedGeneration:r.generation});Object.assign(r,{state:force?'forced':'completed',outcome:force?'forced':'completed',committed_at:committed.committed_at,access_ends_by:committed.access_ends_by});await tx.put(key(r.removal),r);await tx.delete(index(r.client_id));return view(r);
  });
  }
- async tick(actor){return this.metadata.transaction(async tx=>{await this.bound(tx,actor,true);if(actor.kind!=='system')fail('forbidden','System only.',403);const now=this.clock.now();let wakeAt=null,notified=0;for(const [path,r]of await tx.list({prefix:REMOVAL_RECORD})){if(!removalOpen(r))continue;const times=[r.cleanup_by,r.cleanup_by+86400000,r.cleanup_by+7*86400000];while((r.reminders??0)<3&&times[r.reminders??0]<=now){const n=r.reminders??0;await tx.put(REMOVAL_NOTICE+r.removal+'/'+n,{owner:r.entity,clientId:r.client_id,removal:r.removal,at:now,kind:'app-removal-reminder',message:'This app has not finished cleaning up. Remove now?',primary:'force'});r.reminders=n+1;r.reminded_at??=now;notified++;}await tx.put(path,r);if(r.reminders<3)wakeAt=Math.min(wakeAt??Infinity,times[r.reminders]);}return {notified,wakeAt};});}
+ async tick(actor){return this.metadata.transaction(async tx=>{await this.bound(tx,actor,true);if(actor.kind!=='system')fail('forbidden','System only.',403);const now=this.clock.now();let wakeAt=null,notified=0;for(const [path,r]of await tx.list({prefix:REMOVAL_RECORD})){if(!removalOpen(r))continue;
+ // Wargame F5: never remind about an incarnation that is gone (missing, disconnected or reinstalled). A generation
+ // bump while connected (suspend/resume, setup, approval) keeps reminding, as force keeps working (review follow-up 2).
+ const c=await tx.get('resource/'+r.connection);if(c?.kind!=='app-connection'||c.owner!==r.entity||severedSince(c,r))continue;
+ const times=[r.cleanup_by,r.cleanup_by+86400000,r.cleanup_by+7*86400000],before=r.reminders??0;while((r.reminders??0)<3&&times[r.reminders??0]<=now){const n=r.reminders??0;await tx.put(REMOVAL_NOTICE+r.removal+'/'+n,{owner:r.entity,clientId:r.client_id,removal:r.removal,at:now,kind:'app-removal-reminder',message:'This app has not finished cleaning up. Remove now?',primary:'force'});r.reminders=n+1;r.reminded_at??=now;notified++;}
+ // Only records whose reminder count advanced are rewritten.
+ if((r.reminders??0)!==before)await tx.put(path,r);if((r.reminders??0)<3)wakeAt=Math.min(wakeAt??Infinity,times[r.reminders??0]);}
+ await prune(tx,now);return {notified,wakeAt};});}
 }
 export function appRemovalProvider(service){return class extends Provider{static deps=[];obtain(){return service;}release(){}};}
 export class RemovalList extends AppQuery{static operation='app-removal.list';static deps=['appRemoval'];static refreshOn=['app-removal-changed'];fetch({appRemoval}){return appRemoval.list(this.actor);}}

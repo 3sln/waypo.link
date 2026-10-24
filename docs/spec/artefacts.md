@@ -233,7 +233,7 @@ Artefact fetches are server-side outbound requests under [security](security.md)
 
 - HTTPS only; no redirects; no cookies, credentials or `Authorization`; `Accept: application/json`;
 - response bodies at most 256 KiB after decompression; time-bounded; the response media type is `application/json` or a `+json` type;
-- per-origin and global fetch budgets; failures are remembered as failures for at least 60 seconds and never stored as documents;
+- per-origin and global fetch budgets; failures are remembered as failures for at least 60 seconds and never stored as documents. The provider's own exhausted budget is not a failure of the line and MUST NOT be remembered in shared state. A provider whose fetches are limited to an operator registry refuses an unregistered URL before charging any budget or recording anything (2026-10-23 wargame F1, Provisional (coordinator), not signed off by the user);
 - an artefact fetch is triggered only by a reference, a request or an operator action, never by a URL taken from a body, a notice, a mirror hint or another party's free text.
 
 Version records are immutable, so a stored record never needs revalidation. While some live pin references a line, a provider SHOULD refresh it at least every 24 hours and MUST NOT refresh it more than once per hour, to learn of notices; a refresh accepts notices (§9.1) but never advances the head (§7.2).

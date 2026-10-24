@@ -289,6 +289,8 @@ The account alarm records the three reminder notices without changing authority.
 have local purge/cleanup operations and a removal page; archive delete/export choices require configured live-grant
 service ports and are hidden otherwise. No external cleanup service or production conformance is claimed.
 
+**Scalability follow-up, 2026-10-23 (provisional).** Hosted-record removal deletes the resource index by the same SHA-256 `(connection, resource)` key used by registration. The commit traverses the bounded account record collection once to detach hosted records and consumer assignments; it does not traverse the resource index for each hosted record. The generation fence, severance rows and atomic delegation revocation remain in the same transaction. `tests/engine-app-removal-commit.test.mjs` meters record reads at 10/64/256 records and asserts zero resource-index list calls.
+
 **AU-2 follow-up, 2026-10-22 (unsigned):** AU-S7 now has ngin console intents and dodo views for clean navigation,
 force removal, pending/reissue/cancel controls, unbound-return confirmation, attributed result claims and What's left.
 Human returns hand off to the console; authenticated JSON returns preserve terminal summaries. Recent terminal
@@ -298,6 +300,28 @@ AU-14 disclosures and Remove now controls exist on legacy and entry consent page
 client-side prior-approval/identity-only shortcuts. A server-completed entry still has no consent page to render.
 Settings remain intact by default. The owner settings page offers revision-checked deletion through an engine Action;
 it refuses deletion while any active consumer remains, rather than silently deleting another app's shared values.
+
+**Wargame fixes, 2026-10-23 (unsigned; values Provisional (coordinator), not signed off by the user).**
+- *Stale removals (F5).* `AppConnections.disconnect` and `#severAllTx` conclude the connection's open removal and
+  delete its `app-removal/open/` index row in the same commit (`state: forced`, `outcome: disconnected`), mirroring
+  the account-deletion hook. Force refuses `connection_stale` when the connection was disconnected or reinstalled
+  since the removal started (it still follows a suspend/resume generation forward). The reminder tick skips records
+  under the same rule (connection missing, disconnected or reinstalled since start), so a generation bump while
+  connected keeps reminding, and rewrites only records whose reminder count advanced.
+  Starting from `suspended` refuses `clean_removal_unavailable` when the resume severs instead (capability fence
+  mismatch); the severance is re-derived on the next check, so nothing is recorded.
+- *Back channel (F2).* The per-source limit stays before any lookup. The failure budget (30 failures per 60 s,
+  keyed by a pseudonym of the removal id and client id, so one owner's removal cannot spend another's) is charged only
+  when a locally matched open removal fails verification, and is peeked before verifying; an unverified `iss` alone
+  never spends it. No shared per-client backstop: it would reopen cross-owner starvation. `FixedWindowGuard.consume`
+  gains `peek`.
+- *Cascade drain (F4).* Each `app-removal/cascade/` row keeps `attempts`, `next_attempt_at` and `last_error`; a failing
+  row backs off (1 min doubling, capped at 6 h) and never blocks later rows. After 8 failures the row is marked `stuck`
+  and one `operator-alert` (`kind: app-removal`, `reason: cascade-stuck`) goes to the lifecycle log; stuck rows keep
+  retrying at the cap. The account alarm re-arms at the earliest `next_attempt_at` instead of every 60 s, and not at
+  all while no revocation port is configured (rows wait for the next owner operation).
+- *Bounds.* Concluded removal records and their notices are pruned 90 days after conclusion, keeping at most 100
+  concluded records per account (at most 50 deletions per start or tick).
 The three durable reminder rows have console presentation and one best-effort attempt each through the configured
 push notice port, with reserved/accepted/failed/unavailable/unknown evidence, never a delivery claim. No email template
 or activity-centre item is added by this slice: those presentations remain unresolved. A crash after reservation leaves

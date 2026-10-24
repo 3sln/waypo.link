@@ -14,8 +14,8 @@
 // Records (account store, one per account):
 //   transfer-out/v1       the current transfer: draft → pending ⇄ held → committed | cancelled | expired | aborted | contested
 //   transfer-out/lock-v1  {restart?, contested?, elevatedAbort?}: restart block after a dispute or automatic cancel
-//                         (spec §6.2, IP-R1-M2), the support lock (P17) and the 30-day contest window after an
-//                         elevated-proof abort.
+//                         (spec §6.2, IP-R1-M2; it records when the ended move began, its requester and its tier-0
+//                         disputers), the support lock (P17) and the 30-day contest window after an elevated-proof abort.
 //
 // Ports (TransferOutPorts; a port that is `undefined` is misconfigured and the operation refuses or holds):
 //   identity  transferIdentityPort(repository) below: get, verifyRecovery, markMoved, removeDisputers, invalidateRecovery
@@ -30,7 +30,7 @@ import { AppAction, AppQuery } from '../app/engine.mjs';
 import { AppFault } from '../app/faults.mjs';
 import { isUUID } from '../core/primitives.mjs';
 import { base64url } from '../core/records.mjs';
-import { parseMoveStatement, verifyMoveStatement, statementDigest, validateRedirectBase, httpsOrigin, SuccessionError } from './succession.mjs';
+import { parseMoveStatement, verifyMoveStatement, statementDigest, validateRedirectBase, httpsOrigin, SuccessionError, MAX_MOVES } from './succession.mjs';
 import { IdentityCrypto, secureEqual } from './crypto.mjs';
 import { recoveryCredential, securityState } from './service.mjs';
 import {raiseAuthorityEpoch,authorityEpoch} from './authority-epoch.mjs';
@@ -52,7 +52,7 @@ export const TRANSFER_STATES = Object.freeze(['draft', 'pending', 'held', 'conte
 const LIVE = new Set(['pending', 'held']), TERMINAL = new Set(['cancelled', 'expired', 'aborted']);
 // Purge is the last stage; everything before it is idempotent and recorded in `record.stages`.
 export const COMMIT_STAGES = Object.freeze(['identity', 'keys', 'delegations', 'connections', 'grants', 'due', 'notice']);
-const MAX_PUSH = 16, MAX_TOKENS = 64, MAX_DISPUTES = 32, TOKEN = /^[A-Za-z0-9_-]{43}$/;
+const MAX_PUSH = 16, MAX_TOKENS = 64, MAX_DISPUTES = 32, TOKEN = /^[A-Za-z0-9_-]{43}$/, DIGEST = /^sha256-[A-Za-z0-9_-]{43}$/;
 // Deletion records this engine reads but never writes (packages/runtime/account-deletion.mjs, lifecycle-storage.mjs).
 const DELETION_REQUEST = 'deletion/request-v1', DELETION_FENCE = 'deletion/fence-v1', PURGE = 'lifecycle/purge-v1', TOMBSTONE = 'lifecycle/tombstone-v1';
 
@@ -186,14 +186,17 @@ export class TransferOutService {
 
   // ---- begin and authorize ----
 
-  /** Path (a), step 1. Owner with a fresh step-up. `input`: {destination, redirect}. Records a short draft. */
+  /** Path (a), step 1. Owner with a fresh step-up. `input`: {destination, redirect, statement?}. Records a short draft.
+   * `statement` is the digest a destination-start `authorize_url` carries (spec §6.1 item 1): the authorization is then
+   * made against that exact statement, which may arrive with `transfer: null`. */
   async begin(actor, input) {
-    const owner = ownerActor(actor), v = exact(input, ['destination', 'redirect']), now = this.now();
+    const owner = ownerActor(actor), v = exact(input, ['destination', 'redirect', 'statement']), now = this.now();
     if (!transferEnabled(this.flags, owner)) notFound();
     stepUp(actor, now);
     const destination = this.destination(v.destination); if (v.redirect !== undefined && typeof v.redirect !== 'boolean') fail('invalid_request', 'Choose whether old links redirect.');
+    const statementDigest = boundDigest(v.statement);
     await this.eligible(owner, { now, actor });
-    const draft = { v: 1, id: this.random.uuid(), owner, state: 'draft', destination, redirect: v.redirect !== false, createdAt: now, expiresAt: now + TIMING.draftTtl, requester: requester(actor), revision: 1 };
+    const draft = { v: 1, id: this.random.uuid(), owner, state: 'draft', destination, redirect: v.redirect !== false, createdAt: now, expiresAt: now + TIMING.draftTtl, requester: requester(actor), ...statementDigest ? { statementDigest } : {}, revision: 1 };
     await this.metadata.transaction(async tx => { const live = await tx.get(TRANSFER_KEY); if (live && (LIVE.has(live.state) || ['contested', 'committed'].includes(live.state))) fail('transfer_pending', 'A move is already pending for this identity.', 409); await tx.put(TRANSFER_KEY, draft); });
     this.log({ action: 'transfer-begun', owner });
     return transferView(draft);
@@ -211,28 +214,54 @@ export class TransferOutService {
     const credential = await this.credential(owner, identity, v, now);
     const elevated = v.remove !== undefined;
     if (!elevated && !this.restartAllowed(lock, credential)) fail('restart_blocked', 'Choose whether to reissue your recovery file before starting again.', 409);
+    // An elevated restart (P17, design §6.1a items 4 and 7) settles against the tier-0 disputes that ended the previous
+    // move, so it exists only after one, and names only those disputers (F1). A first move has nothing to settle.
+    const disputers = lock.restart?.disputers ?? [];
+    if (elevated && !disputers.length) fail('elevated_restart_unavailable', 'Only a restart after a disputed move can name devices or emails to remove.', 409);
+    const chain = await this.chainPosition(owner, identity);
     let security = identity.security, channels = await this.channels(owner, identity, { now });
-    if (elevated) ({ security, channels } = await this.removeNamed(owner, identity, channels, v.remove, { lookback: true }));
-    return this.create(owner, { path: 'a', destination: draft.destination, redirect: draft.redirect, credential, security, channels, now, requester: requester(actor), delay: elevated ? TIMING.freshDelay : TIMING.personDelay, elevated, draft });
+    if (elevated) ({ security, channels } = await this.removeNamed(owner, identity, channels, v.remove, { lookback: true, disputers }));
+    // Spec §6.1(a): notice goes to every channel before commit. Sessions are not an out-of-band channel here, so a move
+    // that could notify no one is refused, as on path (b) (F3).
+    else if (!this.noticeTargets({ channels }).length) fail('notice_channel_required', 'Moving needs an email address or a device that can receive notices.', 409);
+    return this.create(owner, { path: 'a', destination: draft.destination, redirect: draft.redirect, credential, security, channels, now, requester: requester(actor), delay: elevated ? TIMING.freshDelay : TIMING.personDelay, elevated, draft, chain, statementDigest: draft.statementDigest });
   }
   /** Path (b) (spec §6.1(b), design §3.3): the current credential without a session starts a 7-day public waiting
-   * period. Actor {kind:'credential', owner}. `input`: {recoveryToken, keychain, destination, redirect, confirm}. */
+   * period. Actor {kind:'credential', owner}. `input`: {recoveryToken, keychain, destination, redirect, confirm,
+   * statement?}. The route is unauthenticated, so the recovery credential is verified before any eligibility fact is
+   * answered and before anything can escalate to the support lock (F4). */
   async authorizeWaiting(actor, input) {
     if (actor?.kind !== 'credential' || !isUUID(actor.owner)) fail('unauthorized', 'Load your recovery file to continue.', 401);
-    const owner = actor.owner, v = exact(input, ['recoveryToken', 'keychain', 'destination', 'redirect', 'confirm']), now = this.now();
+    const owner = actor.owner, v = exact(input, ['recoveryToken', 'keychain', 'destination', 'redirect', 'confirm', 'statement']), now = this.now();
     if (!transferEnabled(this.flags, owner)) notFound();
     if (v.confirm !== true) fail('confirmation_required', 'Confirm that 3sln.me will stop speaking for you.');
     const destination = this.destination(v.destination); if (v.redirect !== undefined && typeof v.redirect !== 'boolean') fail('invalid_request', 'Choose whether old links redirect.');
-    // A path (b) requester has no session credential, so inside an elevated-abort contest window it is "another credential".
+    const statementDigest = boundDigest(v.statement);
+    await this.bound(owner);
+    const presented = await this.port('identity').get(owner);
+    if (!presented) fail('recovery_invalid', 'This recovery file cannot authorize a move. Use your newest recovery file.', 400);
+    const credential = await this.credential(owner, presented, v, now);
+    // A path (b) requester has no session credential, so inside an elevated-abort contest window it is "another
+    // credential" (P17) and eligible() escalates — but only now that it proved it holds the current one.
     const { identity, lock } = await this.eligible(owner, { now, actor: { kind: 'credential' } });
-    const credential = await this.credential(owner, identity, v, now);
+    if (identity.recovery?.ref !== credential.ref || identity.recovery?.issuedAt !== credential.issuedAt) fail('recovery_invalid', 'This recovery file cannot authorize a move. Use your newest recovery file.', 400);
     if (!this.restartAllowed(lock, credential)) fail('restart_blocked', 'Choose whether to reissue your recovery file before starting again.', 409);
     const channels = await this.channels(owner, identity, { removed: true, now });
     if (!channels.email && !channels.removedEmails.length && !channels.push.length) fail('notice_channel_required', 'A waiting-period move needs an email address or a device that can receive notices.', 409);
-    return this.create(owner, { path: 'b', destination, redirect: v.redirect !== false, credential, security: identity.security, channels, now, requester: { sessionId: null, credentialId: null }, delay: TIMING.waitingPeriod, elevated: false });
+    const chain = await this.chainPosition(owner, identity);
+    return this.create(owner, { path: 'b', destination, redirect: v.redirect !== false, credential, security: identity.security, channels, now, requester: { sessionId: null, credentialId: null }, delay: TIMING.waitingPeriod, elevated: false, chain, statementDigest });
   }
-  async create(owner, { path, destination, redirect, credential, security, channels, now, requester, delay, elevated, draft }) {
-    const record = { v: 1, id: this.random.uuid(), owner, kind: 'person', path, state: 'pending', destination, redirect,
+  /** Spec §4 `seq`/`prev` and `from.identity` for this identity's next move: an identity that moved in carries the
+   * chain that brought it here (transfer-in `moves`), and its move out continues it. */
+  async chainPosition(owner, identity) {
+    const moves = Array.isArray(identity.moves) ? identity.moves : [];
+    if (moves.length >= MAX_MOVES) fail('too_many_moves', 'This identity has moved too many times to move again.', 409);
+    let prev = null;
+    if (moves.length) { try { prev = await statementDigest(parseMoveStatement(moves.at(-1).statement).input); } catch { unavailable(); } }
+    return { seq: moves.length + 1, prev, identity: typeof identity.identityUri === 'string' && identity.identityUri ? identity.identityUri : identityURI(this.issuer, owner) };
+  }
+  async create(owner, { path, destination, redirect, credential, security, channels, now, requester, delay, elevated, draft, chain, statementDigest = null }) {
+    const record = { v: 1, id: this.random.uuid(), owner, kind: 'person', path, state: 'pending', destination, redirect, chain, ...statementDigest ? { statementDigest } : {},
       transfer: { id: base64url(this.random.bytes(24)), exp: seconds(now + TIMING.expiry) }, createdAt: now, begunAt: now, expiresAt: now + TIMING.expiry,
       delay, noticedAt: null, round: 1, credential, securityEpoch: security.epoch, requester, channels, tokens: [], notices: {}, statement: null,
       disputes: [], hold: null, elevated: elevated ? { side: 'requester', at: now, credentialId: requester.credentialId ?? null, restart: true } : null,
@@ -257,7 +286,8 @@ export class TransferOutService {
   async sendNotices(record, kind) {
     let current = record; const notices = this.ports.notices;
     const targets = this.noticeTargets(current), now = this.now();
-    if (!targets.length) { if (current.noticedAt === null) current = await this.update(current, r => { r.noticedAt = now; return r; }) ?? current; return current; }
+    // No target is never "noticed": such a move cannot commit (cancelReason ends it; F3).
+    if (!targets.length) return current;
     if (typeof notices?.deliver !== 'function') return current;
     for (const target of targets) {
       const slot = `${current.round}:${channelKey(target)}`, entry = current.notices[slot];
@@ -299,11 +329,20 @@ export class TransferOutService {
     if (!transferBackground(this.flags, owner)) return { status: 'unavailable' };
     let record = await this.metadata.get(TRANSFER_KEY);
     // Idempotent per statement: an attested statement returns the same attestation for as long as it is kept.
-    if (record?.state === 'committed') return record.statement?.digest === digest && record.statement.redirectBase === v.redirect_base ? this.attested(record) : refused;
-    const pendingAnswer = () => ({ status: 'pending', authorize_url: `${this.issuer}/account/transfer-out`, retry_after: 3600 });
+    if (record?.state === 'committed') {
+      if (record.statement?.digest !== digest || record.statement.redirectBase !== v.redirect_base) return refused;
+      // No attestation leaves before the identity stopped being active (stage 1); a commit whose identity changed in
+      // between is unwound instead (F2).
+      if (record.stages?.identity) return this.attested(record);
+      const after = await this.stages(record);
+      return after.state === 'committed' ? after.stages.identity ? this.attested(after) : this.retryLater() : refused;
+    }
+    // The destination-start flow (spec §6.1 item 1): the authorize URL carries this statement's digest, so the owner's
+    // authorization can be made against exactly this statement (F11).
+    const pendingAnswer = () => ({ status: 'pending', authorize_url: `${this.issuer}/account/transfer-out?statement=${digest}`, retry_after: 3600 });
     if (!record || !LIVE.has(record.state)) {
       // Cancellation and expiry discard the authorization; its statement and transfer are then refused (spec §6.2).
-      if (record?.state === 'contested' || record && TERMINAL.has(record.state) && (record.statement?.digest === digest || v.transfer === record.transfer?.id)) return refused;
+      if (record?.state === 'contested' || record && TERMINAL.has(record.state) && (record.statement?.digest === digest || record.statementDigest === digest || v.transfer === record.transfer?.id)) return refused;
       // A statement without an authorization creates no state (IP-R1-H3); a structurally valid one learns where to go.
       return await this.verifiedNow(owner, parsed) ? pendingAnswer() : refused;
     }
@@ -312,28 +351,33 @@ export class TransferOutService {
       if (record.statement.digest !== digest || record.statement.redirectBase !== v.redirect_base) return refused;
     } else {
       if (now >= record.expiresAt) return refused;
-      if (!await this.statementBinds(record, parsed, v, now)) return refused;
+      if (!await this.statementBinds(record, parsed, v, now, digest)) return refused;
       record = await this.update(record, r => { if (!LIVE.has(r.state) || r.statement) return null; r.statement = { jws: parsed.value, digest, redirectBase: v.redirect_base, to: parsed.payload.to, kid: parsed.header.kid, at: now }; return r; });
       if (!record) return refused;
       this.log({ action: 'transfer-statement-bound', owner });
     }
     const outcome = await this.advance(record);
-    if (outcome.record?.state === 'committed') return this.attested(outcome.record);
+    if (outcome.record?.state === 'committed') return outcome.record.stages?.identity ? this.attested(outcome.record) : this.retryLater();
     if (!outcome.record || !LIVE.has(outcome.record.state)) return refused;
     const at = notBefore(outcome.record);
     return { status: 'pending', authorize_url: `${this.issuer}/account/transfer-out`, retry_after: Math.max(60, Math.min(86400, at === null ? 3600 : Math.ceil((at - this.now()) / 1000))) };
   }
   attested(record) { return { status: 'attested', attestation: record.attestation, redirect_until: record.redirectUntil === null ? null : seconds(record.redirectUntil) }; }
+  retryLater() { return { status: 'pending', authorize_url: `${this.issuer}/account/transfer-out`, retry_after: 60 }; }
   async verifiedNow(owner, parsed) {
     try { const key = await this.port('keys').current(owner); if (!key || key.kid !== parsed.header.kid) return false; await verifyMoveStatement(parsed.value, key.publicJwk); return true; } catch { return false; }
   }
-  /** §6.1 item 1 binding (IP-R1-H3) against the source's own records. */
-  async statementBinds(record, parsed, v, now) {
-    const s = parsed.payload, issuer = this.issuer;
-    if (s.kind !== record.kind || s.seq !== 1 || s.prev !== null || s.from.iss !== issuer || s.from.identity !== identityURI(issuer, record.owner) || s.to.iss !== record.destination) return false;
+  /** §6.1 item 1 binding (IP-R1-H3) against the source's own records. `seq`/`prev`/`from.identity` continue the chain
+   * the identity arrived with (records made before chains were recorded are first moves). The request's `transfer`
+   * must equal the authorization's, except in the destination-start flow: an authorization made against this exact
+   * statement digest accepts `transfer: null` and waives the `iat` floor (spec §6.1 item 1; F11). */
+  async statementBinds(record, parsed, v, now, digest) {
+    const s = parsed.payload, issuer = this.issuer, chain = record.chain ?? { seq: 1, prev: null, identity: identityURI(issuer, record.owner) };
+    if (s.kind !== record.kind || s.seq !== chain.seq || s.prev !== chain.prev || s.from.iss !== issuer || s.from.identity !== chain.identity || s.to.iss !== record.destination) return false;
     try { validateRedirectBase(v.redirect_base, record.destination); } catch { return false; }
-    if (v.transfer !== record.transfer.id) return false;
-    if (s.iat * 1000 < record.createdAt - TIMING.statementSkew || s.iat * 1000 > now + TIMING.statementSkew) return false;
+    let againstDigest = false;
+    if (v.transfer !== record.transfer.id) { if (v.transfer !== null || !record.statementDigest || record.statementDigest !== digest) return false; againstDigest = true; }
+    if (!againstDigest && s.iat * 1000 < record.createdAt - TIMING.statementSkew || s.iat * 1000 > now + TIMING.statementSkew) return false;
     return this.verifiedNow(record.owner, parsed);
   }
 
@@ -348,7 +392,7 @@ export class TransferOutService {
     }
     if (current.state !== 'pending') return { record: current, action: current.state };
     const reason = await this.cancelReason(current, now);
-    if (reason) return { record: await this.end(current, 'cancelled', reason, { block: reason !== 'deletion' }), action: 'cancelled', reason };
+    if (reason) return { record: await this.end(current, 'cancelled', reason, { block: !['deletion', 'no-notice-channel'].includes(reason) }), action: 'cancelled', reason };
     if (!current.statement && now >= current.expiresAt) return { record: await this.end(current, 'expired', 'no-statement'), action: 'expired' };
     current = await this.sendNotices(current, current.round === 1 ? 'pending' : 'restarted') ?? current;
     if (current.state !== 'pending') return { record: current, action: current.state };
@@ -367,9 +411,8 @@ export class TransferOutService {
     const request = await this.metadata.get(DELETION_REQUEST);
     if (['scheduled', 'executing'].includes(request?.state) || await this.metadata.get(DELETION_FENCE) !== undefined || await this.metadata.get(PURGE) !== undefined) return 'deletion';
     let identity; try { identity = await this.port('identity').get(record.owner); } catch { return null; }
-    if (!identity || identity.status !== 'active') return 'identity-inactive';
-    if (identity.security.epoch !== record.securityEpoch) return 'security-change';
-    if (identity.recovery?.ref !== record.credential.ref || identity.recovery?.issuedAt !== record.credential.issuedAt) return 'credential-superseded';
+    const changed = identityChanged(identity, record); if (changed) return changed;
+    if (!this.noticeTargets(record).length) return 'no-notice-channel';
     // Path (b): any fresh sign-in during the period cancels it (spec §6.1(b); design §6.1a item 4).
     if (record.path === 'b' && identity.sessions.some(session => session.createdAt > record.begunAt)) return 'sign-in';
     if (record.statement) { let key; try { key = await this.port('keys').current(record.owner); } catch { return null; } if (key && key.kid !== record.statement.kid) return 'key-rotated'; }
@@ -379,7 +422,7 @@ export class TransferOutService {
     const now = this.now();
     const next = await this.patch(record.id, r => { if (!LIVE.has(r.state) && r.state !== 'contested') return null; Object.assign(r, { state, reason, endedAt: now, tokens: [], hold: null }); return r; });
     if (!next) return this.metadata.get(TRANSFER_KEY);
-    if (block) await this.setLock(lock => ({ ...lock, restart: { ref: next.credential.ref, at: now, reason } }));
+    if (block) await this.setLock(lock => ({ ...lock, restart: restartBlock(next, now, reason) }));
     this.log({ action: `transfer-${state}`, owner: next.owner, reason });
     await this.inform(next, 'cancelled');
     // The copied channel snapshot (addresses, push endpoints) is dropped once the last notice went out.
@@ -405,7 +448,10 @@ export class TransferOutService {
   async commit(record, attestor) {
     const owner = record.owner, now = this.now();
     let identity; try { identity = await this.port('identity').get(owner); } catch { return { record, action: 'hold', reason: 'identity-unavailable', wakeAt: now + HOUR }; }
-    if (!identity || identity.status !== 'active') return { record: await this.end(record, 'cancelled', 'identity-inactive', { block: true }), action: 'cancelled' };
+    // Spec §6.1 (at commit) and §6.2: the credential is still current and no authority reset happened since. The
+    // identity lives in another store, so stage 1 (markMoved) checks the same facts again in its own write (F2).
+    const changed = identityChanged(identity, record);
+    if (changed) return { record: await this.end(record, 'cancelled', changed, { block: true }), action: 'cancelled', reason: changed };
     const s = record.statement, redirectUntil = record.redirect ? now + TIMING.redirect : null, exportUntil = now + TIMING.exportWindow;
     const movedUntil = Math.max(redirectUntil ?? 0, now + TIMING.attestationRetention);
     // The attested `aep` is the same-host authority epoch (authority-epoch.mjs), never `security.epoch`, which also rises on
@@ -413,7 +459,7 @@ export class TransferOutService {
     let attestation, aep;
     try {
       aep = authorityEpoch(identity);
-      attestation = await attestor.sign({ bindle: 'move-attestation', v: 1, iss: this.issuer, sub: owner, seq: 1, statement: s.digest, to: s.to, aep, at: seconds(now) });
+      attestation = await attestor.sign({ bindle: 'move-attestation', v: 1, iss: this.issuer, sub: owner, seq: record.chain?.seq ?? 1, statement: s.digest, to: s.to, aep, at: seconds(now) });
     } catch { this.log({ action: 'transfer-hold', owner, reason: 'attestation-failed' }); return { record, action: 'hold', reason: 'attestation-failed', wakeAt: now + HOUR }; }
     // One account commit. Everything the transaction re-reads decides against a deletion, cancellation or dispute
     // that committed first (spec §6.2: serialized in the identity's single writer). An attestation signed for a commit
@@ -429,6 +475,7 @@ export class TransferOutService {
     if (!committed) { const fresh = await this.metadata.get(TRANSFER_KEY); return { record: fresh, action: 'retry', wakeAt: now + 1000 }; }
     this.log({ action: 'transfer-committed', owner, path: committed.path });
     const after = await this.stages(committed);
+    if (after.state !== 'committed') return { record: after, action: after.state, reason: after.reason };
     return { record: after, action: 'committed', wakeAt: this.nextWake(after) };
   }
   /** Post-commit effects, each idempotent and recorded. A failing stage retries on the next step. */
@@ -442,7 +489,16 @@ export class TransferOutService {
       return true;
     };
     // 1. Stop speaking for the identity: status `moved` ends every session and refuses recovery and credentials.
-    if (!await run('identity', async () => { const moved = movedRecord(current, this.issuer); const result = await this.port('identity').markMoved(owner, { moved }); if (result?.ok !== true) throw Object.assign(new Error('identity not moved'), { code: result?.status ?? 'identity_unavailable' }); return { status: 'moved' }; })) return current;
+    // The identity must still be the one the move was authorized for: markMoved re-checks status, security epoch and
+    // the recovery credential in the identity's own write. A definite refusal unwinds the commit, which no
+    // attestation has left yet (statement() returns one only after this stage), so it ends deterministically.
+    let refusal = null;
+    if (!await run('identity', async () => {
+      const moved = movedRecord(current, this.issuer);
+      const result = await this.port('identity').markMoved(owner, { moved, expect: { securityEpoch: current.securityEpoch, recoveryRef: current.credential.ref, recoveryIssuedAt: current.credential.issuedAt } });
+      if (result?.ok !== true) { if (UNWIND.has(result?.status)) refusal = result.status; throw Object.assign(new Error('identity not moved'), { code: result?.status ?? 'identity_unavailable' }); }
+      return { status: 'moved' };
+    })) return refusal ? this.unwind(current, refusal) : current;
     // 2. Destroy the custody copies of the private keys (public records stay published).
     await run('keys', async () => { await this.port('keys').destroy(owner); return { destroyed: true }; });
     // 3. Key delegations died at commit; status answers `revoked` from this host (spec §6.3, §10).
@@ -457,6 +513,19 @@ export class TransferOutService {
     await run('notice', async () => ({ accepted: await this.inform(current, 'committed') }));
     if (current.stages.notice && current.channels) current = await this.patch(current.id, r => { if (r.state !== 'committed') return null; r.channels = null; r.notices = {}; return r; }) ?? current;
     return current;
+  }
+
+  /** A commit whose identity stage was definitely refused (the identity changed or left `active` after the account
+   * commit): it becomes `cancelled` with that reason, its unreturned attestation is dropped, and the restart is blocked
+   * as for any automatic cancel. Nothing after stage 1 has run. */
+  async unwind(record, reason) {
+    const now = this.now();
+    const next = await this.patch(record.id, r => { if (r.state !== 'committed' || r.stages.identity) return null; Object.assign(r, { state: 'cancelled', reason, endedAt: now, attestation: null, committedAt: null, redirectUntil: null, exportUntil: null, movedUntil: null, aep: null, tokens: [], hold: null, stages: {} }); return r; });
+    if (!next) return this.metadata.get(TRANSFER_KEY);
+    await this.setLock(lock => ({ ...lock, restart: restartBlock(next, now, reason) }));
+    this.log({ action: 'transfer-unwound', owner: next.owner, reason });
+    await this.inform(next, 'cancelled');
+    return await this.patch(next.id, r => { if (!TERMINAL.has(r.state)) return null; r.channels = null; r.notices = {}; return r; }) ?? next;
   }
 
   // ---- owner, link and support actions ----
@@ -499,9 +568,15 @@ export class TransferOutService {
         // Devices added after the move began cannot dispute (design §6.1a item 2).
         const known = time(actor.sessionCreatedAt) && actor.sessionCreatedAt < record.begunAt || time(actor.credentialCreatedAt) && actor.credentialCreatedAt < record.begunAt;
         if (!known) fail('dispute_not_allowed', 'Only a device or email you had before this move began can dispute it.', 403);
-        by = { kind: 'session', id: actor.sessionId ?? null, contestOnly: false };
+        by = { kind: 'session', id: actor.sessionId ?? null, credentialId: typeof actor.credentialId === 'string' ? actor.credentialId : null, contestOnly: false };
+        // The requester is never its own tier-0 disputer (review follow-up 1): its "abort" is a withdrawal (no restart
+        // block, as cancel), and a "hold" is refused, so a self-dispute can neither open elevation nor contest the move.
+        if (fromRequester(by, record.requester)) {
+          if (v.choice === 'hold') fail('dispute_not_allowed', 'You asked for this move. Withdraw it instead of holding it.', 403);
+          return transferView(await this.end(record, 'cancelled', 'withdrawn'));
+        }
       }
-      const disputes = [...record.disputes, { at: now, by: { kind: by.kind, id: by.id }, choice: v.choice }].slice(-MAX_DISPUTES);
+      const disputes = [...record.disputes, { at: now, by: { kind: by.kind, id: by.id, ...by.credentialId ? { credentialId: by.credentialId } : {} }, choice: v.choice }].slice(-MAX_DISPUTES);
       // After a requester-side elevated resolution or restart, or a support decision, there is no second
       // self-resolution: any dispute (including one through a detached email's link) goes to support.
       if (by.contestOnly || record.elevated) {
@@ -556,8 +631,12 @@ export class TransferOutService {
         return { ...transferView(ended), recoveryReissueRequired: true, recoveryInvalidated: reissue };
       }
       if (record.path !== 'a') fail('elevated_proof_unavailable', 'A waiting-period move is resolved only by support or by withdrawing it.', 409);
+      // Requester-side elevation settles AGAINST tier-0 disputes (design §6.1a item 4): an undisputed move has none,
+      // and only the recorded disputers can be named (F1).
+      const disputers = (record.disputes ?? []).map(entry => entry.by).filter(by => !fromRequester(by, record.requester));
+      if (!disputers.length) fail('nothing_to_resolve', 'Nobody disputed this move, so there is nothing to resolve.', 409);
       if (v.remove === undefined) fail('invalid_request', 'Name the devices and emails that disputed this move.');
-      const { security, channels, removed } = await this.removeNamed(owner, identity, record.channels, v.remove, { lookback: false, expectedEpoch: record.securityEpoch });
+      const { security, channels, removed } = await this.removeNamed(owner, identity, record.channels, v.remove, { lookback: false, expectedEpoch: record.securityEpoch, disputers });
       const next = await this.patch(record.id, r => {
         if (!LIVE.has(r.state)) return null;
         const gone = new Set([...removed.sessions.map(id => `session:${id}`), ...removed.passkeys.map(id => `passkey:${id}`), ...removed.push.map(id => `push:${id}`)]);
@@ -574,8 +653,11 @@ export class TransferOutService {
     });
   }
   /** Removes named sessions, passkeys and push devices and detaches named emails (P17). Detached emails stay notice
-   * targets for 30 days and can only escalate to support. Returns the new security state as the move's baseline. */
-  async removeNamed(owner, identity, channels, remove, { lookback, expectedEpoch } = {}) {
+   * targets for 30 days and can only escalate to support. Returns the new security state as the move's baseline.
+   * `disputers`: the recorded tier-0 disputers ({kind:'email'|'push'|'session', id, credentialId?}); only they, and
+   * the passkeys their disputing sessions used, can be named. A removal that would leave no notice target is refused
+   * (F1). Everything is checked before the identity changes. */
+  async removeNamed(owner, identity, channels, remove, { lookback, expectedEpoch, disputers = [] } = {}) {
     const r = exact(remove, ['sessions', 'passkeys', 'emails', 'push']), list = (value, max) => { if (value === undefined) return []; if (!Array.isArray(value) || value.length > max || value.some(item => typeof item !== 'string' || !item || item.length > 256)) fail('invalid_request', 'Name devices and emails exactly.'); return [...new Set(value)]; };
     const named = { sessions: list(r.sessions, 16), passkeys: list(r.passkeys, 8), emails: list(r.emails, 8), push: list(r.push, MAX_PUSH) };
     if (!named.sessions.length && !named.passkeys.length && !named.emails.length && !named.push.length) fail('invalid_request', 'Name at least one device or email.');
@@ -584,14 +666,19 @@ export class TransferOutService {
     for (const address of named.emails) if (identity.email?.address !== address) fail('unknown_email', 'One of the named emails is not on this account.', 409);
     const pushRows = [...(await this.metadata.list({ prefix: `push-subscription/${encodeURIComponent(owner)}/` })).entries()];
     for (const id of named.push) if (!pushRows.some(([, row]) => row?.id === id)) fail('unknown_device', 'One of the named devices is not on this account.', 409);
+    const disputing = kind => new Set(disputers.filter(entry => entry?.kind === kind && typeof entry.id === 'string').map(entry => entry.id));
+    const sessions = disputing('session'), emails = disputing('email'), push = disputing('push');
+    const passkeys = new Set([...disputers.filter(entry => entry?.kind === 'session' && typeof entry.credentialId === 'string').map(entry => entry.credentialId), ...identity.sessions.filter(entry => sessions.has(entry.id) && typeof entry.credentialId === 'string').map(entry => entry.credentialId)]);
+    if (named.sessions.some(id => !sessions.has(id)) || named.passkeys.some(id => !passkeys.has(id)) || named.emails.some(address => !emails.has(address)) || named.push.some(id => !push.has(id))) fail('not_a_disputer', 'Name only the devices and emails that disputed the move.', 409);
     if (lookback && this.now() - identity.security.changedAt < TIMING.securityLookback) fail('recent_security_change', 'Wait 7 days after a security change before moving your identity.', 409);
-    const result = await this.port('identity').removeDisputers(owner, { sessions: named.sessions, passkeys: named.passkeys, emails: named.emails, expectedEpoch: expectedEpoch ?? identity.security.epoch });
-    if (result?.ok !== true) fail('conflict', 'Your account changed; start this step again.', 409);
-    for (const [path, row] of pushRows) if (named.push.includes(row?.id)) await this.metadata.delete(path);
     const now = this.now(), detached = named.emails.map(address => ({ address, removedAt: now, detached: true }));
     const next = { ...channels, email: channels.email && named.emails.includes(channels.email.address) ? null : channels.email,
       removedEmails: [...(channels.removedEmails ?? []).filter(entry => !named.emails.includes(entry.address)), ...detached],
       push: (channels.push ?? []).filter(row => !named.push.includes(row.id)), sessions: channels.sessions.filter(s => !named.sessions.includes(s.id)), passkeys: channels.passkeys.filter(p => !named.passkeys.includes(p.id)) };
+    if (!this.noticeTargets({ channels: next }).length) fail('notice_channel_required', 'Removing these would leave no email or device to notify about the move.', 409);
+    const result = await this.port('identity').removeDisputers(owner, { sessions: named.sessions, passkeys: named.passkeys, emails: named.emails, expectedEpoch: expectedEpoch ?? identity.security.epoch });
+    if (result?.ok !== true) fail('conflict', 'Your account changed; start this step again.', 409);
+    for (const [path, row] of pushRows) if (named.push.includes(row?.id)) await this.metadata.delete(path);
     return { security: result.security, channels: next, removed: named };
   }
   /** Tier 2 (P17), audited by the caller: support aborts (optionally locking up to 30 days) or allows a contested move,
@@ -623,11 +710,19 @@ export class TransferOutService {
     });
   }
   /** After a dispute or automatic cancel, the owner chooses (spec §6.2): `reissue` invalidates the presented credential,
-   * `keep` lifts the restart block. Owner with a fresh step-up. */
+   * `keep` lifts the restart block. Owner with a fresh step-up. `keep` is the OWNER's choice (design §6.1a item 7): it
+   * is refused from the session or passkey that requested the ended move, and needs a device known before that move
+   * began (F5). `reissue` is the safe direction and stays open to any signed-in device. */
   async restartChoice(actor, input) {
     const owner = ownerActor(actor), v = exact(input, ['choice']), now = this.now(); stepUp(actor, now); await this.bound(owner);
     if (!['reissue', 'keep'].includes(v.choice)) fail('invalid_request', 'Choose whether to reissue your recovery file.');
     const lock = await this.lock(); if (!lock.restart) return { restartBlocked: false };
+    if (v.choice === 'keep') {
+      const asked = lock.restart.requester ?? {}, begun = time(lock.restart.begunAt) ? lock.restart.begunAt : lock.restart.at;
+      if (asked.sessionId && asked.sessionId === actor.sessionId || asked.credentialId && asked.credentialId === actor.credentialId) fail('restart_choice_not_allowed', 'The device that asked for the move cannot lift the block. Use another device you had before, or reissue your recovery file.', 403);
+      const known = time(actor.sessionCreatedAt) && actor.sessionCreatedAt < begun || time(actor.credentialCreatedAt) && actor.credentialCreatedAt < begun;
+      if (!known) fail('restart_choice_not_allowed', 'Only a device you had before the move began can lift the block. You can reissue your recovery file instead.', 403);
+    }
     let invalidated = false; if (v.choice === 'reissue') { try { invalidated = (await this.port('identity').invalidateRecovery(owner))?.ok === true; } catch { invalidated = false; } if (!invalidated) unavailable(); }
     await this.setLock(l => ({ ...l, restart: undefined }));
     return { restartBlocked: false, recoveryReissueRequired: v.choice === 'reissue' };
@@ -671,6 +766,7 @@ export class TransferOutService {
     if (TERMINAL.has(record.state) || record.state === 'contested') return { action: record.state };
     if (record.state === 'committed') {
       const after = await this.stages(record);
+      if (after.state !== 'committed') return { action: after.state, reason: after.reason };
       if (COMMIT_STAGES.some(stage => !after.stages[stage])) { const wakeAt = now + 5 * MINUTE; await this.arm(wakeAt); return { action: 'committed', moved: true, wakeAt }; }
       if (now < after.exportUntil) { await this.arm(after.exportUntil); return { action: 'export-window', moved: true, wakeAt: after.exportUntil }; }
       if (!transferBackground(this.flags, owner)) return { action: 'killed', moved: true, wakeAt: now + HOUR };
@@ -696,12 +792,33 @@ export class TransferOutService {
 function ownerActor(actor) { if (actor?.kind !== 'owner' || !isUUID(actor.owner)) fail('unauthorized', 'Sign in to continue.', 401); return actor.owner; }
 function stepUp(actor, now) { if (!time(actor.stepUpAt) || actor.stepUpAt > now || now - actor.stepUpAt >= TIMING.stepUp) fail('step_up_required', 'Confirm your password or passkey to continue.', 401); }
 const requester = actor => ({ sessionId: typeof actor.sessionId === 'string' ? actor.sessionId : null, credentialId: typeof actor.credentialId === 'string' ? actor.credentialId : null });
+/** Whether a recorded disputer is the move's own requester (same session or passkey). Such entries never count as
+ * tier-0 disputes for elevation or an elevated restart (review follow-up 1); legacy records may still hold them. */
+const fromRequester = (by, asked) => by?.kind === 'session' && Boolean(asked) && (Boolean(asked.sessionId) && by.id === asked.sessionId || Boolean(asked.credentialId) && by.credentialId === asked.credentialId);
+/** A destination-start statement digest (spec §4 `prev` encoding), or null when absent. */
+const boundDigest = value => { if (value === undefined || value === null) return null; if (typeof value !== 'string' || !DIGEST.test(value)) fail('invalid_request', 'Unsupported transfer request.'); return value; };
+/** Spec §6.1 commit re-checks against the identity: the reason a move can no longer commit, or null. */
+const identityChanged = (identity, record) => {
+  if (!identity || identity.status !== 'active') return 'identity-inactive';
+  if (identity.security.epoch !== record.securityEpoch) return 'security-change';
+  if (identity.recovery?.ref !== record.credential.ref || identity.recovery?.issuedAt !== record.credential.issuedAt) return 'credential-superseded';
+  return null;
+};
+/** markMoved refusals that are final for this commit (the identity changed); anything else is retried. */
+const UNWIND = new Set(['identity-inactive', 'security-change', 'credential-superseded']);
+/** The restart block (spec §6.2, IP-R1-M2): the credential, when the ended move began, who requested it (F5) and the
+ * tier-0 disputers an elevated restart may name (F1). */
+const restartBlock = (record, at, reason) => {
+  const seen = new Set(), disputers = [];
+  for (const entry of record.disputes ?? []) { const by = entry?.by; const name = `${by?.kind}:${by?.id}`; if (!by || seen.has(name) || fromRequester(by, record.requester)) continue; seen.add(name); disputers.push({ kind: by.kind, id: by.id, ...by.credentialId ? { credentialId: by.credentialId } : {} }); }
+  return { ref: record.credential.ref, at, reason, begunAt: record.begunAt ?? null, requester: record.requester ? { sessionId: record.requester.sessionId ?? null, credentialId: record.requester.credentialId ?? null } : null, disputers: disputers.slice(-MAX_DISPUTES) };
+};
 /** Whether `actor` authenticates with the same credential that made an elevated-proof abort (the session's passkey,
  * or the same session for a password session). A step-up's own credential is not recorded by the identity service. */
 const sameCredential = (entry, actor) => entry.credentialId ? entry.credentialId === actor?.credentialId : entry.sessionId !== null && entry.sessionId === actor?.sessionId;
 /** The moved record written on the identity (design §6.5 item 3). */
 export function movedRecord(record, issuer) {
-  return { v: 1, from: { iss: issuer, identity: identityURI(issuer, record.owner) }, to: record.statement.to, redirectBase: record.redirect ? record.statement.redirectBase : null, boundRedirectBase: record.statement.redirectBase,
+  return { v: 1, from: { iss: issuer, identity: record.chain?.identity ?? identityURI(issuer, record.owner) }, to: record.statement.to, redirectBase: record.redirect ? record.statement.redirectBase : null, boundRedirectBase: record.statement.redirectBase,
     statement: record.statement.jws, statementDigest: record.statement.digest, attestation: record.attestation, committedAt: record.committedAt,
     redirectUntil: record.redirectUntil, exportUntil: record.exportUntil, movedUntil: record.movedUntil };
 }
@@ -760,6 +877,9 @@ export function transferIdentityPort(repository, { clock = () => Date.now(), cry
         sessions: (account.sessions ?? []).filter(s => typeof s?.id === 'string' && s.expiresAt > now).map(s => ({ id: s.id, createdAt: s.createdAt, credentialId: s.credentialId ?? null })),
         credentials: (account.credentials ?? []).filter(c => typeof c?.id === 'string').map(c => ({ id: c.id, createdAt: time(c.createdAt) ? c.createdAt : 0 })),
         moved: account.status === 'moved' && plain(account.moved) ? structuredClone(account.moved) : null,
+        // The chain this identity arrived with (transfer-in), so its next move continues `seq`/`prev` (spec §4).
+        moves: Array.isArray(account.moves) ? account.moves.filter(record => typeof record?.statement === 'string').map(record => ({ statement: record.statement })) : [],
+        identityUri: typeof account.identityUri === 'string' ? account.identityUri : null,
       };
     },
     /** Checks a recovery token against the current credential without consuming it. Unknown and wrong fail alike. */
@@ -771,11 +891,17 @@ export function transferIdentityPort(repository, { clock = () => Date.now(), cry
       return { issuedAt: credential.issuedAt, version: credential.version, keyKid: credential.keyKid, ref: await ref(account.recoveryHash) };
     },
     /** Commit stage 1 (spec §6.3): status `moved`, every session and lineage revoked, recovery refused, email sign-in
-     * off. Credentials stay until the purge so the owner can sign in read-only during the export window. */
-    async markMoved(owner, { moved }) {
-      return cas(owner, (account) => {
+     * off. Credentials stay until the purge so the owner can sign in read-only during the export window. `expect`
+     * ({securityEpoch, recoveryRef, recoveryIssuedAt}, required) re-checks in this write that no authority reset or
+     * credential change happened since the move was authorized (spec §6.1, §6.2; F2). */
+    async markMoved(owner, { moved, expect }) {
+      if (!plain(expect) || !Number.isSafeInteger(expect.securityEpoch) || typeof expect.recoveryRef !== 'string' || !time(expect.recoveryIssuedAt)) throw new TypeError('markMoved needs the expected security epoch and recovery credential.');
+      return cas(owner, async (account) => {
         if (account.status === 'moved' && account.moved?.statementDigest === moved.statementDigest) return { ok: true };
-        if (account.status !== 'active') return { ok: false, status: account.status };
+        if (account.status !== 'active') return { ok: false, status: 'identity-inactive' };
+        if (securityState(account).epoch !== expect.securityEpoch) return { ok: false, status: 'security-change' };
+        const credential = recoveryCredential(account);
+        if (!credential || credential.issuedAt !== expect.recoveryIssuedAt || await ref(account.recoveryHash) !== expect.recoveryRef) return { ok: false, status: 'credential-superseded' };
         const now = clock(); revokeAllLineage(account, now);
         Object.assign(account, { status: 'moved', moved: structuredClone(moved), sessions: [], challenges: [], emailChallenges: [], emailLoginEnabled: false, recoveryHash: null, pendingHash: null, pendingExpiresAt: null });
         for (const name of ['recoveryResumeHash', 'recoveryResumeBackupVersion', 'recoveryResumeKeyKid', 'recoveryIssuedAt', 'recoveryKeyKid', 'recoveryStaged', 'recoveryReissue']) delete account[name];

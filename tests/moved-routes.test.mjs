@@ -138,7 +138,8 @@ test('HTTP: begin and authorize with a fresh step-up, a move-endpoint commit aft
  const session=await x.request('/api/session');assert.deepEqual(await session.json(),{authenticated:false});
  // Idempotent replies come from the identity's moved record (also after the account record is purged).
  const replay=await x.move(body);assert.equal(replay.status,200);assert.deepEqual(await replay.json(),answer);
- x.state.on=false;assert.equal((await x.move(body)).status,200);assert.equal((await x.move({...body,redirect_base:`${DEST}/x/`})).status,409);x.state.on=true;
+ // Only an exact replay answers about a moved identity; anything else is the unknown-identity path (F12).
+ x.state.on=false;assert.equal((await x.move(body)).status,200);assert.equal((await x.move({...body,redirect_base:`${DEST}/x/`})).status,404);x.state.on=true;assert.equal((await x.move({...body,redirect_base:`${DEST}/x/`})).status,409);
  // Redirects through the real router.
  const contact=await x.request('/users/mover/contact/dddddddd-dddd-4ddd-8ddd-dddddddddddd?bindle_meta=abc',{auth:false});
  assert.equal(contact.status,308);assert.equal(contact.headers.get('Location'),`${DEST}/from/3sln/users/mover/contact/dddddddd-dddd-4ddd-8ddd-dddddddddddd?bindle_meta=abc`);

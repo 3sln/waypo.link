@@ -282,7 +282,27 @@ t.events; t.audit.entries; t.metadata; t.itemIndex; t.clock.advance(ms); await t
   listed here: production `messaging` is the pre-built `MessagingService` over
   the controller's side-effecting store (search queue, item index, blobs). The
   harness builds it lazily without those effects. Slice 2 converges them.
-  Production `messaging` takes `systemClock`/`cryptoRandom`.
+  Production `messaging` takes `systemClock`/`cryptoRandom`. Its legacy array
+  list injects the shared SQL inbox catalog on Node and Worker: scalar filters,
+  at most 1,000 metadata records, and received-time descending/ID ascending
+  ties preserve the legacy API. The legacy array takes no cursor; a wrong-typed
+  filter matches nothing (an empty array, as before), while the v2 page rejects
+  it. Index and scan fallback treat a missing `readAt` as unread and a missing
+  `quarantined` as not quarantined (provisional). Every production writer of a
+  `message/` record (store, presentation, postback, archive restore) updates the
+  catalog in the same transaction. The catalog uses scoped keyset cursors and bounded
+  migration; an unfinished migration returns temporary unavailability instead of
+  scanning message records. Compound indexes cover every combination of the
+  three scalar filters in both ID orderings, trading additional index writes
+  and storage for bounded matching reads without an SQL sort. An empty catalog
+  creates them at construction; an existing catalog builds them in migration
+  steps bounded by index count x rows (100,000), reads answering 503 until all
+  exist (measured locally: 125-436 ms per index, 2.1-3.4 s for all twelve, over
+  100,000 rows). Continuations
+  perform two disjoint indexed seeks (timestamp ties and older timestamps),
+  merging at most twice the page limit plus two metadata rows; deep cursors
+  do not rescan earlier rows. The standalone memory demonstration retains its
+  in-memory service implementation.
 - **In-memory provider set.** `SqliteMetadata(':memory:')` as `accountStore`,
   plus `itemIndex` over the same database. `messaging` is a lazy singleton over
   `accountStore`, so chaos on the store reaches it. Domain providers are the

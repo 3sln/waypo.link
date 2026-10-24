@@ -134,20 +134,26 @@ export class OrganizationBilling{
   * at, never against today's catalog, so archiving or repricing a catalog price cannot drop a paying subscription.
   * A subscription failing any check is never trusted; a KNOWN one that is gone (404) or fails a check is reported in
   * `unverified` ({id, reason:'missing'|'unverifiable'}) so the writer can hold it for an operator instead of reading it
-  * as unpaid. `paid` means a signature-independent provider read shows a captured order that is not fully refunded.
+  * as unpaid. A NEW subscription to an organization product that fails a check is reported too, with `unknown: true`
+  * (review item 3), instead of being dropped. `paid` means a signature-independent provider read shows a captured
+  * order for the current period that is not fully refunded.
+  * Capacity (F-05): at most 16 subscriptions that still count (new ones and known ones not marked `settled`, i.e. not
+  * revoked or refunded by the writer), and at most 64 in all; the writer forgets settled, ended ones.
   */
  async state(org,{known=[]}={}){
   if(!UUID.test(org??''))throw new BillingError('invalid_request','Unsupported organization.',400);
   const terms=new Map(Array.isArray(known)?known.filter(bounded).map(id=>[id,null]):Object.entries(known??{}).filter(([id])=>bounded(id)).map(([id,t])=>[id,typeof t?.currency==='string'&&Number.isSafeInteger(t?.amount)?{currency:t.currency,amount:t.amount}:null]));
+  const settled=new Set(Array.isArray(known)?[]:Object.entries(known??{}).filter(([id,t])=>bounded(id)&&t?.settled===true).map(([id])=>id));
   const catalog=await this.catalog(),client=await this.client();let customer;
   try{customer=await client.customers.getStateExternal(org);}catch(error){if(error?.statusCode===404)return {customerId:null,subscriptions:[],unverified:[...terms.keys()].sort().map(id=>({id,reason:'missing'})),reconciledAt:this.now(),server:'sandbox'};throw unavailable();}
   if(customer?.external_id!==org||customer.organization_id!==catalog.organizationId||!bounded(customer.id)||!Array.isArray(customer.active_subscriptions)||customer.active_subscriptions.length>100)throw unavailable();
   const ids=new Set([...customer.active_subscriptions.map(s=>s?.id),...terms.keys()]);if([...ids].some(id=>!bounded(id)))throw unavailable();
-  if(ids.size>16)throw new BillingError('billing_subscription_capacity','Organization subscriptions need operator reconciliation.',503);
+  if([...ids].filter(id=>!settled.has(id)).length>16||ids.size>64)throw new BillingError('billing_subscription_capacity','Organization subscriptions need operator reconciliation.',503);
   const subscriptions=[],unverified=[];
   for(const id of ids){
    let s;try{s=await client.subscriptions.get(id);}catch(error){if(error?.statusCode===404){if(terms.has(id))unverified.push({id,reason:'missing'});continue;}throw unavailable();}
    const verified=await this.verify(org,s,customer,catalog,terms.get(id)??null);if(verified)subscriptions.push(verified);else if(terms.has(id))unverified.push({id,reason:'unverifiable'});
+   else if(ORGANIZATION_PLAN_IDS.some(plan=>catalog.entries[plan].id===s?.product_id))unverified.push({id,reason:'unverifiable',unknown:true});
   }
   subscriptions.sort((a,b)=>a.id.localeCompare(b.id));unverified.sort((a,b)=>a.id.localeCompare(b.id));
   return {customerId:customer.id,subscriptions,unverified,reconciledAt:this.now(),server:'sandbox'};
@@ -162,23 +168,44 @@ export class OrganizationBilling{
   if(pinned?s.currency!==pinned.currency||s.amount!==pinned.amount:catalog.entries[plan].prices[s.currency]?.amount!==s.amount)return null;
   const start=timestamp(s.current_period_start),end=timestamp(s.current_period_end),ends=s.ends_at?timestamp(s.ends_at):end,ended=s.ended_at?timestamp(s.ended_at):null;
   if(!Number.isFinite(start)||!Number.isFinite(end)||!Number.isFinite(ends)||end<=start||ended!==null&&!Number.isFinite(ended))return null;
-  const order=await this.firstPayment(s,catalog);
+  const order=await this.periodPayment(s,catalog,start);
   return {id:s.id,plan,productId:s.product_id,owner,purpose,binding,status:String(s.status),currency:s.currency,amount:s.amount,periodStart:start,periodEnd:end,validUntil:Math.min(end,ends),
    cancelAtPeriodEnd:s.cancel_at_period_end===true,endedAt:ended,paid:order.paid,orderId:order.orderId??null,refunded:order.refunded,netAmount:order.netAmount??null};
  }
- /** The subscription's captured first order. Only a void, a full refund or a refund of at least the order's net amount
-  * marks it refunded; a partial (goodwill) refund leaves it paid. Amounts must be self-consistent. */
- async firstPayment(s,catalog){
+ /** The order paying for the subscription's current period: the latest order created at or after `periodStart` (with a
+  * day's tolerance), else the latest order. Only a void, a full refund or a refund of at least that order's net amount
+  * marks it refunded; a partial (goodwill) refund leaves it paid. A refund of an EARLIER period's order does not mark
+  * the current period refunded (review item 4). Amounts must be self-consistent across every order. */
+ async periodPayment(s,catalog,periodStart){
   let result;try{result=await (await this.client()).orders.list({organization_id:catalog.organizationId,subscription_id:s.id,limit:20,page:1,sorting:['created_at']});}catch{throw unavailable();}
   if(!Array.isArray(result?.items)||result.items.length>20)throw unavailable();
-  let paid=false,orderId,refunded=false,netAmount;
+  const orders=[];
   for(const o of result.items){
    if(!bounded(o?.id)||o.subscription_id!==s.id||o.product_id!==s.product_id||o.customer_id!==s.customer_id||o.currency!==s.currency)continue;
    const money=['net_amount','tax_amount','total_amount','refunded_amount'];if(!money.every(k=>Number.isSafeInteger(o[k])&&o[k]>=0)||o.net_amount+o.tax_amount!==o.total_amount)throw unavailable();
-   if(['refunded','void'].includes(o.status)||o.refunded_amount>0&&o.refunded_amount>=o.net_amount){refunded=true;orderId??=o.id;netAmount??=o.net_amount;continue;}
-   if(!paid&&['paid','partially_refunded'].includes(o.status)&&o.paid===true&&o.net_amount>0){paid=true;orderId=o.id;netAmount=o.net_amount;}
+   orders.push(o);
   }
-  return {paid:paid&&!refunded,orderId,refunded,netAmount};
+  const at=o=>{const t=timestamp(o.created_at);return Number.isFinite(t)?t:-Infinity;},sorted=orders.map((o,i)=>[o,i]).sort((a,b)=>at(a[0])-at(b[0])||a[1]-b[1]).map(([o])=>o);
+  const inPeriod=sorted.filter(o=>at(o)>=periodStart-86400000),o=(inPeriod.length?inPeriod:sorted).at(-1);
+  if(!o)return {paid:false,orderId:undefined,refunded:false,netAmount:undefined};
+  const refunded=['refunded','void'].includes(o.status)||o.refunded_amount>0&&o.refunded_amount>=o.net_amount;
+  const paid=!refunded&&['paid','partially_refunded'].includes(o.status)&&o.paid===true&&o.net_amount>0;
+  return {paid,orderId:o.id,refunded,netAmount:o.net_amount};
+ }
+ /** A full refund of EVERY order of a subscription (review follow-up 6: a claim or transfer refund covers every order
+  * bound to it, renewals included, not only the first). Idempotent: each order is refunded only for what is not yet
+  * refunded, re-read from the provider. */
+ async refundAll(org,{subscriptionId,reason='other',comment}={}){
+  if(!bounded(subscriptionId))throw new BillingError('invalid_request','Unsupported refund.',400);
+  const catalog=await this.catalog(),client=await this.client();let result;
+  try{result=await client.orders.list({organization_id:catalog.organizationId,subscription_id:subscriptionId,limit:20,page:1,sorting:['created_at']});}catch{throw unavailable();}
+  if(!Array.isArray(result?.items)||result.items.length>20)throw unavailable();
+  let amount=0;
+  for(const listed of result.items){
+   if(!bounded(listed?.id)||listed.subscription_id!==subscriptionId||listed.paid!==true||['refunded','void'].includes(listed.status))continue;
+   const out=await this.refund(org,{subscriptionId,orderId:listed.id,reason,comment});amount+=out.already?0:out.amount??0;
+  }
+  return {refunded:true,amount};
  }
  /** Cancels a subscription at once (not at period end). Idempotent: an already ended subscription is left alone. */
  async revoke(org,subscriptionId){

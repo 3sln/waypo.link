@@ -1,3 +1,4 @@
+import {intentIndexedMetadata} from '../../packages/intents/index.mjs';
 import {configuredArtefacts} from '../../packages/runtime/artefact-pins.mjs';
 import {siteGlobal,capability,flagsFor} from '../../packages/flags/read.mjs';
 import {FlagsRuntime,flagWriter} from '../../packages/runtime/flags.mjs';
@@ -54,7 +55,7 @@ export class SerialGate {
  async run(operation){const previous=this.tail;let release;this.tail=new Promise(r=>release=r);await previous;try{return await operation();}finally{release();}}
 }
 export class SqliteMetadata {
- constructor(file){this.db=new DatabaseSync(file);this.db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; CREATE TABLE IF NOT EXISTS records (key TEXT PRIMARY KEY, value TEXT NOT NULL)');this.gate=new SerialGate();this.timer=null;this.closed=false;this.sql=nodeSqlPort(this.db);}
+ constructor(file){this.db=new DatabaseSync(file);this.db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; CREATE TABLE IF NOT EXISTS records (key TEXT PRIMARY KEY, value TEXT NOT NULL)');this.gate=new SerialGate();this.timer=null;this.closed=false;this.sql=nodeSqlPort(this.db);return intentIndexedMetadata(this);}
  raw(){const self=this;return {
   get:async key=>{const row=self.db.prepare('SELECT value FROM records WHERE key=?').get(key);return row?JSON.parse(row.value):undefined;},
   put:async(key,value)=>{if(typeof key==='object'){for(const [k,v]of Object.entries(key))await self.raw().put(k,v);return;}self.db.prepare('INSERT INTO records(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(key,JSON.stringify(value));},

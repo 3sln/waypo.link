@@ -283,7 +283,13 @@ test('identity documents and directory answers are uniform for anything not acti
   const key = { kid: 'k', alg: 'ES256', publicJwk: { kty: 'EC', crv: 'P-256', x: 'x'.repeat(43), y: 'y'.repeat(43) }, state: 'active' };
   assert.equal(identityDocument({ issuer: DEST, identity: { id: OWNER, status: 'active' }, signing: [] }), null, 'exactly one active signing key');
   assert.ok(identityDocument({ issuer: DEST, identity: { id: OWNER, status: 'active' }, signing: [key] }));
-  assert.equal(identityDocument({ issuer: DEST, identity: { id: OWNER, status: 'active', moves: Array.from({ length: 16 }, () => ({ statement: 's'.repeat(2500), attestation: 'a'.repeat(1000) })) }, signing: [key] }), null);
+  // Spec §7 "Size": 16 records at their caps fit; a record above its cap, a 17th record or a document above the budget
+  // is never published (the uniform 404).
+  const capped = Array.from({ length: 16 }, () => ({ statement: 's'.repeat(3072), attestation: 'a'.repeat(2560) }));
+  assert.ok(identityDocument({ issuer: DEST, identity: { id: OWNER, status: 'active', moves: capped }, signing: [key] }));
+  assert.equal(identityDocument({ issuer: DEST, identity: { id: OWNER, status: 'active', moves: [...capped.slice(1), { statement: 's'.repeat(3073), attestation: null }] }, signing: [key] }), null);
+  assert.equal(identityDocument({ issuer: DEST, identity: { id: OWNER, status: 'active', moves: [...capped, capped[0]] }, signing: [key] }), null);
+  assert.equal(identityDocument({ issuer: DEST, identity: { id: OWNER, status: 'active', handle: 'h'.repeat(153000), moves: capped }, signing: [key] }), null);
   assert.deepEqual(transferInView(null), { state: 'none' }); assert.ok(TRANSFER_IN_STATES.includes('held'));
 });
 

@@ -61,10 +61,9 @@ test('runtime: jwt-bearer member grant over the router, bindle_member, no refres
   const s = await setup(t), key = await holder(), issued = await s.certify(s.alice, key);
   const payload = parseMemberCertificate(issued.certificate, { allowLoopback: true }).payload;
   assert.equal(payload.iss, ORIGIN); assert.equal(payload.aud, s.aud); assert.equal(payload.exp - payload.iat, 660);
-  // First use: the organization has not cached Alice's certification key yet; the uniform failure warms it.
-  const first = await s.tokenRequest(issued.certificate, key);
-  assert.equal(first.status, 400); assert.deepEqual(await first.json(), { error: 'invalid_grant' }); assert.equal(first.headers.get('Cache-Control'), 'no-store');
-  await new Promise(resolve => setTimeout(resolve, 400));
+  // F-07: the same-host issuance hinted the organization, which warmed Alice's certification key in the background
+  // (fire-and-forget, so give it a moment); the first use then succeeds.
+  await new Promise(resolve => setTimeout(resolve, 200));
   const response = await s.tokenRequest(issued.certificate, key);
   const body = await response.json(); assert.equal(response.status, 200, JSON.stringify(body));
   assert.equal(body.token_type, 'DPoP'); assert.equal(body.refresh_token, undefined); assert.ok(body.expires_in <= 660);

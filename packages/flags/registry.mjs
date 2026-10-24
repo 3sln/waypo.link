@@ -34,6 +34,7 @@ const rows=[
  ['APP_METADATA_DISCOVERY_ENABLED','a','G C',{}],
  ['ACCOUNT_EXPORT_ENABLED','a','G A S P',{risk:'crit',stateful:true,envParse:'boolean',
   gates:['termsAndPrivacyApproved','realBrowserFlowsPassing','durableStorageAndArchiveRecoveryVerified','notificationTransportsVerified','securityRedTeamFindingsResolved']}],
+ ['OVER_QUOTA_RETENTION_ENABLED','a','G A S P',{risk:'crit',stateful:true,retainExisting:false,retentionReason:'The producer follows the flag kill switch; persisted episodes remain read-only evidence when disabled.',envParse:'boolean'}],
  ['ACCOUNT_DELETION_ENABLED','a','G A S P',{risk:'crit',stateful:true,envParse:'boolean',
   gates:['termsAndPrivacyApproved','realBrowserFlowsPassing','lifecycleNoticesAndDeletionVerified','emailLifecycleVerified','notificationTransportsVerified','durableStorageAndArchiveRecoveryVerified','securityRedTeamFindingsResolved']}],
  ['EMAIL_REMOVAL_ENABLED','a','G A S P',{risk:'crit',envParse:'boolean',

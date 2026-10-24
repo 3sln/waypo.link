@@ -1,0 +1,20 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {Window} from 'happy-dom';
+import {recoveryReissueEligibility} from '../../packages/runtime/recovery-eligibility.mjs';
+const window=new Window({url:'https://space.example'});
+for(const key of ['document','HTMLElement','CustomEvent','Event','EventTarget','Node','Element','FormData'])globalThis[key]=window[key];
+const {dodo}=await import('../../apps/web/src/shared/stack.mjs');
+const {intentPage}=await import('../../apps/web/src/ui/intent-page.mjs');
+const {default:transferPage}=await import('../../apps/web/src/ui/transfer-page.mjs');
+const {default:authCard}=await import('../../apps/web/src/ui/release-auth.mjs');
+const {default:signup}=await import('../../apps/web/src/ui/release-signup.mjs');
+const {recoveryFilePanel}=await import('../../apps/web/src/ui/recovery-reissue.mjs');
+function render(view){const root=document.createElement('div');dodo.reconcile(root,[view]);return root;}
+test.after(()=>window.happyDOM.close());
+test('unopenable intent shows one actionable error without waiting text in either locale',()=>{for(const locale of ['en','es']){const root=render(intentPage({locale,state:'loading',error:'invalid_link'}));assert.equal(root.querySelectorAll('[role=alert]').length,1);assert.doesNotMatch(root.textContent,/Please wait|Espera…|original link/);assert.match(root.querySelector('a[href^="/console"]').textContent,/console|consola/);assert.equal(root.querySelector('button').style.minHeight,'44px');}});
+test('transfer lookup failures hide loading and raw intake status is human readable',()=>{for(const locale of ['en','es']){const root=render(transferPage({mode:'dispute',phase:'loading',error:'not_found'},{locale,dispatch(){}}));assert.doesNotMatch(root.textContent,/Checking…|Verificando…/);const intake=render(transferPage({mode:'in',phase:'ready',view:{state:'intake'}},{locale,dispatch(){}}));assert.doesNotMatch(intake.textContent,/Status: intake|Estado: intake/);}});
+test('credential age metadata respects earliest eligible credential and forced marker boundary',()=>{const now=20*86400000;assert.deepEqual(recoveryReissueEligibility({passwordHash:'hash',passwordSetAt:now},now),{reissueEligible:false,reissueEligibleAt:now+7*86400000});assert.equal(recoveryReissueEligibility({credentials:[{createdAt:0}]},now).reissueEligible,true);assert.equal(recoveryReissueEligibility({passwordHash:'hash',passwordSetAt:now,recoveryReissue:{reason:'transfer-in',at:now}},now).reissueEligible,true);assert.equal(recoveryReissueEligibility({passwordHash:'hash',passwordSetAt:now,recoveryReissue:{reason:'transfer-in',at:now-1}},now).reissueEligible,false);});
+test('ineligible recovery replacement shows its date and disables action',()=>{const root=render(recoveryFilePanel({locale:'en',config:{},data:{recovery:{reissueAvailable:true,reissueEligible:false,reissueEligibleAt:Date.UTC(2026,10,1)}}}));assert.match(root.textContent,/You can replace your recovery file from/);assert.equal(root.querySelector('button').disabled,true);});
+test('sign-in hides device selector until linked-device flow and defaults to computer',()=>{const state={locale:'en',config:{deviceAuthorizationEnabled:true},auth:'login',authMethod:'password',brand:{host:'space.example'}};const root=render(authCard(state));assert.equal(root.querySelector('fieldset'),null);const linked=render(authCard({...state,captchaPurpose:'device'}));assert.equal(linked.querySelector('fieldset button[aria-pressed=true]').textContent,'Computer');});
+test('signup uses inclusive configured age and counts recovery steps',()=>{for(const locale of ['en','es']){const root=render(signup({locale,config:{ageRequirement:{minimumAge:18}},signupStep:'terms',authMethod:'password'}));assert.match(root.textContent,locale==='es'?/Tengo 18 años o más/:/I am 18 or older/);assert.match(root.textContent,/Step 2 of 7/);assert.doesNotMatch(root.textContent,/contact channel/);}});

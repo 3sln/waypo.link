@@ -4,6 +4,7 @@ import {validateIntegrationManifest} from '../federation/integrations.mjs';
 import {validateSlotManifest,validateExtensions,createSlotOperation} from '../federation/extensions.mjs';
 import {MESSAGING_INGRESS_SLOT} from '../links/types.mjs';
 import classifierSlot from '../../docs/artefacts/slots/item-classifier-v1.json' with {type:'json'};
+import {REMOVAL_RECORD,REMOVAL_OPEN,removalOpen} from '../app/domains/app-removal.mjs';
 export class AppConnectionError extends Error{constructor(code,message,status=400){super(message);Object.assign(this,{code,status});}}
 const fail=(code,message,status)=>{throw new AppConnectionError(code,message,status);};
 const prefix='resource/';
@@ -123,7 +124,7 @@ export class AppConnections{
     if(r.generation>=Number.MAX_SAFE_INTEGER)fail('unavailable','Connection generation unavailable.',503);
     const migrated=r.state!==undefined;r.severanceReason=reason;r.status='disconnected';r.generation++;r.disconnectedAt=this.clock();
     if(migrated){r.state='disconnected';r.stateChangedAt=r.disconnectedAt;}
-    await tx.put(prefix+id,r);
+    await tx.put(prefix+id,r);await this.#closeRemovals(tx,r,r.disconnectedAt);
     const removed=await this.#vacateConnection(tx,id);
     if(migrated||removed.length){
      await this.#emit(tx,[{type:'connection-revoked',connection:id,clientId:r.clientId,generation:r.generation,terminal:true,reason}]);
@@ -135,6 +136,16 @@ export class AppConnections{
   });
   if(out.cascaded&&typeof this.severed==='function')try{await this.severed(owner);}catch{/* Durable cascade rows are retried. */}
   return out.result;
+ }
+
+ // Wargame F5: a disconnect or severance concludes this connection's open clean removal in the same commit, as the
+ // account-deletion hook does, so a stale record can neither block, remind about nor force a later reinstallation.
+ // The removal's own commit also passes through here; its conclusion then overwrites this one in the same commit.
+ async #closeRemovals(tx,r,now){
+  const index=REMOVAL_OPEN+encodeURIComponent(r.clientId),open=await tx.get(index);if(typeof open!=='string')return;
+  const rec=await tx.get(REMOVAL_RECORD+open);if(removalOpen(rec)&&rec.entity===r.owner&&rec.connection!==r.id)return;
+  if(removalOpen(rec)&&rec.entity===r.owner)await tx.put(REMOVAL_RECORD+open,{...rec,state:'forced',outcome:'disconnected',committed_at:now,access_ends_by:now+360000});
+  await tx.delete(index);
  }
 
  // ---- X4 connections domain (called by packages/app/domains/connections.mjs; INTEGRATIONS_ENABLED is checked there) ----
@@ -281,6 +292,7 @@ export class AppConnections{
     }
     // The trusted host hook appends directly to the durable SET outbox in this same severance transaction.
     if(reason==='deleted'&&eligible&&r.subjectDeletedAt===undefined&&typeof this.subjectDeleted==='function'&&await this.subjectDeleted(tx,r,now))r.subjectDeletedAt=now;
+    await this.#closeRemovals(tx,r,now);
     await tx.put(key,r);
    }
    if(rows.length<200)break;const next=rows.at(-1)[0];if(next<=after)break;after=next;

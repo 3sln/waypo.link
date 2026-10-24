@@ -3388,3 +3388,370 @@ A new guard test (tests/cost-model-organizations.test.mjs) requires at least 50%
 Individual Ultra (1 TB, $250, user-set) keeps the thin margin already recorded in unit-economics.md. That's unchanged and noted for review.
 
 Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-23 — Portability wargame fixes (F1–F13)
+
+A red-team pass over identity portability found 13 issues (one High). Each has a permanent regression test that fails when its fix is reverted: tests/portability-wargame-out.test.mjs (source side, plus a seeded commit-window chaos case) and tests/portability-wargame-in.test.mjs (destination and verifier side, plus a seeded successor-queue chaos case). UI-state coverage is in tests/browser/successor-warning.mjs. Design §3.2, §3.3, §3.5, §5, §6.1, §6.1a, §6.3, §6.4 and §7, and spec §5.2 and §8.3/§8.5/§8.7, record the behaviour.
+
+**Provisional (unsigned):**
+- **F1 (High), requester-side elevation needs a dispute.** An elevated restart is refused unless the previous move ended with recorded tier-0 disputers. Requester-side `elevate` is refused on an undisputed move. Only recorded disputers can be named: the disputing email or push subscription, the disputing session and that session's passkey. A removal that would leave no notice target is refused before the identity changes. The restart lock now records who disputed.
+- **F2, commit re-checks.** The commit cancels unless the security epoch and the recovery credential (ref and issue time) still match. `markMoved` takes these as required expected values and re-checks them in the identity's own write. No attestation is returned before stage 1; until then the move endpoint answers 202 with `retry_after: 60`. A definite stage-1 refusal unwinds the commit to `cancelled` and drops the unreturned attestation, so a commit whose identity leaves `active` in that window now ends deterministically.
+- **F3, path (a) needs a notice channel.** Path (a) is refused without a verified email or push subscription, matching path (b). A pending move with no notice target is cancelled (`no-notice-channel`) rather than counted as noticed. In-account session notices were not counted, because nothing records that a session saw one.
+- **F4:** path (b) verifies the presented recovery credential before eligibility facts and before any escalation to the contest lock.
+- **F5:** `restartChoice('keep')` is refused from the requester's session or passkey and needs a device known before the move began. `reissue` stays open to any signed-in device.
+- **F6:** a source directory naming a different identity URI counts as a return only if a later chain record moves there.
+- **F7, still-serving warning.** "Still serving" and "declares portability.v1" are now separate facts. `pending()` shows `oldHostServing`. `confirm()` requires the acknowledgement whenever the old host still serves. The successor page renders the warning and sends `acknowledgeSourceActive` only after the warning was shown and ticked.
+- **F8, successor queue.** `present()` runs offline chain checks before queuing. Rows get attempt counts, backoff, drop-after-8 and a per-origin cap of 8. `drain()` takes due rows by `nextAt`, at most 4 per origin per pass. A chain signed by a key other than the pinned one can't be checked offline; those rows are bounded rather than refused.
+- **F9:** an unbegun `pending-transfer` reservation expires after 7 days, and the owner's cancel releases a reservation that has no transfer-in record.
+- **F10, held transfer-ins.** A `held` transfer-in gives up automatically after 45 days, longer than the source's 30-day replay window. The owner can abandon it after that window. Both raise an operator alert.
+- **F11, destination start.** The source's 202 `authorize_url` carries `?statement=<digest>`. A move authorized from that page binds that exact digest, accepts `transfer: null` and waives the `iat` floor (spec §6.1 item 1). The transfer-out page accepts the `statement` parameter, and the verifier client accepts a query on `authorize_url`.
+- **F12:** the move endpoint answers about a moved identity only for an exact replay of the attested statement. Everything else takes the unknown-identity path (404 while unmounted).
+- **F13:** a paid redirect extension processed after the redirect stopped being live is refunded in full, unless it is the recorded extension. A failed refund still answers 503. An order routed to another subject is still ignored.
+- **Also confirmed and fixed:**
+  - An identity that moved in can now move out: `seq` and `prev` continue its arrival chain, and the attestation carries that `seq`.
+  - Percent-encoded capability parameter names now get `no-store`.
+
+Existing tests were updated where they encoded the old behaviour (pre-emptive naming, requester `keep`, early attestation, flag-off 409, ignored late orders).
+
+**Review follow-ups (independent review of these fixes, same day; provisional):**
+1. **The requester is never its own tier-0 disputer.** An in-account dispute from the requester's session or passkey counts as a withdrawal: "abort" cancels as `withdrawn` without a restart block, and "hold" is refused (`dispute_not_allowed`). Self-disputes already recorded on legacy records never count toward the elevate gate or the restart lock's disputers. At least one non-requester disputer is required.
+2. **Successor queue eviction.** Rows record whether they verified offline under the pinned key. Unverified rows are evicted first and capped at 2 per origin, so junk can't evict a verified row. A full queue evicts from the origin with the most rows instead of dropping the new row.
+3. **Transfer-in begin order.** Begin claims the reservation (`begun`, compare-and-swap on its id) before writing the `importing` record. A lost race leaves no orphan record. After a crash, a begun reservation with no record is released by the owner's cancel.
+4. **Redirect extension refunds.** A new order that is already partly refunded is never recorded; its remainder is refunded. A refund on a redirect that isn't live is confirmed by re-reading the order, and otherwise answers 503.
+5. **Held transfer-in warning.** An operator alert fires at 30 days held (`transfer-in-held-warning`). The give-up or owner abandon needs both 45 days held and 15 days since the warning. A legacy held record without `heldSince` starts its clock at its next step.
+6. **Transfer-in document injection (from the intents review).** The transfer-in document embeds the posted package with a replacer function, so `$'`, `$&` or `` $` `` in it can't splice page markup into the data script. This was the only `.replace` in transfer-pages.mjs.
+
+
+**Gates:** `npm test` 2954 of 2958. The 4 failures are in orgs certificate and integration-conformance tests, which other agents had files open for and which import no portability module. UI-state 341, tests/browser/transfer-browser.mjs 24, portability suites 156 (162 after the review follow-ups). Full browser e2e (`test:e2e`) was not run.
+
+Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-23 — Intents and app-removal wargame fixes
+
+A red-team review of intent links, app removal and artefacts confirmed five findings. Each is fixed, with a regression test that fails if its fix is reverted (checked by mutating each fix):
+- **F1 (Medium), junk intent kinds grew the shared artefact store and spent the global fetch budget.** The router now checks the operator registry before any store read, pin or fetch. The fetch port refuses an unregistered id as `artefact_unregistered` before charging any budget or negative cache. The provider's own exhausted budget (`artefact_budget_exhausted`) is never persisted as `negativeUntil`. The in-process negative cache is LRU-bounded at 1,024 ids.
+- **F2 (Low–Medium), forged assertions could spend a victim app's back-channel budget.** The per-source limit stays before lookup. The per-client budget now counts only failed verifications of a locally matched removal, and is peeked before verifying. `FixedWindowGuard.consume` gains a windowed `peek`.
+- **F5 (Low–Medium), an open removal survived disconnect and reinstall.** Disconnect and account-wide severance now conclude the open removal (`forced`, outcome `disconnected`) and delete its index row in the same commit. Force refuses `connection_stale` after a disconnect or reinstall, and the reminder tick skips disconnected or other-generation connections.
+- **F3 (Low), `$'` and `` $` `` in a legacy link spliced page markup into the intent page.** Every insertion uses a replacer function, and `'` and `>` are escaped.
+- **F4 (Low), one failing removal cascade blocked all later ones, re-arming every 60 s forever.** Rows now keep per-row attempts and back off from 1 min, doubling to a 6 h cap. After 8 failures a row is marked `stuck` and one `operator-alert` is logged. The alarm re-arms at the earliest next attempt.
+
+Plausible items:
+- **Fixed:** COOP `same-origin` on intent pages; the activation ticket is bound to a server-rendered POST or query intent (fragment and legacy tickets stay unbound, since the server never sees that value); starting from `suspended` refuses when the resume severs; integration-event leases re-check the live connection; the tick rewrites only advanced records; concluded removals are pruned.
+- **Checked, unchanged:** back-channel `jti` replay protection is durable and bounded (`removalNonce`, 256 live per shard). `revokeRemovalFederation` still revokes rows with no connection binding or timestamp, because failing closed is the safe direction and such rows are short-lived.
+- **Not added:** a per-account kind-miss limit, since an unregistered kind no longer costs any shared resource.
+
+**Provisional:**
+- the drain backoff, cap and stuck threshold (1 min, 6 h, 8 attempts);
+- removal retention (90 days after conclusion, at most 100 concluded records per account);
+- the `forced`/`disconnected` conclusion for a removal superseded by a disconnect.
+
+The repro for F5 also counted the reinstalled app's own legitimate reminder, so the ported test counts only the old removal's notices.
+
+**Review follow-ups** (independent review of these fixes; each has a regression test that fails when reverted):
+- **F2 was only partly fixed.** An attacker could open their own removal of the victim app and spend the shared per-client failure budget. The budget is now keyed per removal and client. A shared per-client backstop was not added, because it would reopen the same starvation.
+- **The reminder skip silenced connected apps.** The tick now skips only a connection that is missing, disconnected or reinstalled since start, the same rule force uses. A generation bump while connected keeps reminding.
+- **An F1 variant remained.** Junk digests or versions of a registered kind spent the fetch budget. The configured port serves only local operator bytes, so it no longer charges a budget.
+- **The alarm re-armed with no port.** With no `APP_REMOVAL_REVOKE_EXTERNAL`, rows stay pending without re-arming the alarm every 60 s.
+
+**Gates:**
+- focused intents, app-removal, artefact and integration-event suites: 247 of 247;
+- UI-state 341 of 341, test:connections 18 + 13, Worker 89 of 89;
+- core: 2,926 of 2,963. The 37 failures are 36 in orgs-memberships, orgs-ownership, orgs-discovery and orgs-certificates-runtime, from concurrent organization roster work outside this change, and the timing-sensitive resource-discovery cool-down test, which passes when rerun.
+
+Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-23 — Organizations wargame fixes (F-01–F-07)
+
+A red-team review of organizations found three High and four Medium findings, plus eight plausible items. Every confirmed finding is fixed. Each has a regression test (ported from the repro where one existed) that fails when its fix is reverted; that was checked revert by revert. Design notes are in [organizations design §13.2](docs/architecture/organizations-design.md#organizations-wargame-fixes-2026-10-23-provisional-coordinator-work), and two narrow rules are added to spec §5.2 and §7.2. Everything stays behind `ORGANIZATIONS_ENABLED` and the Polar sandbox: loopback fixtures and an offline Polar model, not production verification.
+- **F-01 (High), mute grew the record without bound.**
+  - A mute must name a valid principal.
+  - Any valid principal is recorded, member or not (revised after re-review, below).
+  - At most 64 per member, and the route now follows the flag (uniform 404 when off).
+  - Every roster row has a 64 KiB budget, and app clients per member are capped at 32.
+- **F-02 (Medium, structural), the whole roster lived in one value.** Memberships, invitations, requests and outbox events are now separate keys.
+  - They commit in the same transaction, with indexes and a time index for the sweep. The record keeps bounded summary state.
+  - At 5,000 members (the Scale plan) the largest value is under 2 KB.
+  - Joins, decisions, the member view and the sweep cost the same store work at 100 and 5,000 members.
+  - Closed invitations and requests, and delivered outbox events, are pruned after 30 days.
+  - The admin listing is paged. The pre-release single-value shape is not migrated, because organizations are unreleased (flags off).
+- **F-03 (High), an objecting admin could seize a held owner's organization.**
+  - A held owner of record can renew; paying grants no governance.
+  - A lapse claim whose deadline passes while the owner's hold is objected is escalated to an operator (audit and alert) instead of taking effect. It still closes if the owner pays.
+- **F-04 (Medium):** an ownership change clears the new owner's membership expiry.
+- **F-05 (Medium), the 17th subscription wedged reconciliation.**
+  - Only live or held subscriptions are re-read and counted.
+  - Settled subscriptions are forgotten after 30 days.
+  - A claim checkout is reused for the same admin and terms, and capped at 4 a day; a superseded claim's payment is refunded.
+  - A capacity refusal raises an operator alert.
+- **F-06 (High), one member could lock everyone out of member tokens.**
+  - Member tokens no longer share the shard's 256-token bound with app tokens.
+  - At most 8 live per (membership, client), with the oldest evicted.
+  - The organization-wide bound is the plan's members × 8.
+- **F-07 (Medium), large organizations' member keys went stale.**
+  - The refresh queue is time-ordered, and discovery is scaled to the roster.
+  - Refreshes are enqueued at join, at an epoch rise and at same-host issuance.
+  - The request path enqueues uniformly for any valid claimed principal through a bounded queue, keeping LM1's timing protection.
+- **Plausible items, all confirmed and fixed:**
+  - (1) per-event outbox back-off, so failures don't block later events;
+  - (2) ending a membership closes the member's own requests;
+  - (3) a new subscription failing verification is held with an alert;
+  - (4) the refund check reads the current period's order;
+  - (5) the membership port uses the writer's clock;
+  - (6) the audit read is a bounded page;
+  - (7) `token()` counts live rows and keeps its cleanup;
+  - (8) a claim's standing is computed inside its commit.
+
+**Provisional:**
+- the retention windows (30 days for closed rows and settled subscriptions, 90 days for undeliverable events);
+- the caps (64 mutes, 32 clients, a 64 KiB row, 8 tokens per membership and client, 4 claim checkouts a day);
+- escalating rather than refusing the claim effect while the owner's hold is objected;
+- storing any valid principal in a mute list (bounded by the cap and the row budget).
+
+**Not fixed:**
+- Superseded claim checkouts are not expired at Polar, because the pinned SDK has no expiry call. Their payment is refunded as unbound.
+- Member-token issuance still lists every token row in the shard.
+
+**Review follow-ups** (independent review of these fixes found no High issues; each item has a regression test that fails when reverted):
+- **F-07 (Medium), unauthenticated claims could grow the key cache.** A request-path refresh stores no negative row. Key rows are indexed by expiry and pruned by the background run and the sweep. The claimed queue evicts its oldest entry when full.
+- **F-01, the mute cap was a membership oracle.** The cap is checked first. After re-review, any valid principal is stored: when only known requesters were stored, the list's length still leaked membership. Mute and unmute now do identical work for members and non-members.
+- **Refund idempotency:** the pinned Polar SDK (1.0.2) takes no idempotency key on `refunds.create`, so `drainOwnership` holds a lease. An overlapping drain backs off, and each order is refunded once.
+- **F-07, request-path cost correlated with membership.** The request path now only notes the claimed principal in memory, and the enqueue runs in the background run after the uniform answer.
+- **F-05:** claim-checkout reuse and the daily limit are re-checked in the commit; a concurrent same-terms start returns the committed claim.
+- **F-06:**
+  - at most 16 live member tokens per membership across clients;
+  - the organization bound is the plan's members × 16;
+  - a refused mint still commits the expired-token pruning.
+- **F-03:**
+  - an escalated claim closes after 30 days with every order of its subscription refunded;
+  - ownership refunds now cover every order;
+  - an operator can close or proceed (`orgs.claim-resolve`);
+  - a held owner's view shows billing and renew only.
+- **Sweep:** each due entry runs in its own transaction, and a failing one backs off without stalling the rest.
+- **Small fixes:** `memberById` checks the row id, the app-client list is least-recently-used, and the runtime verifier and key cache use the writer's clock.
+- **Scalability:** at 5,000 members, the console's default member listing read 5,004 rows and returned 3.3 MB.
+  - It now pages 100 members and 100 requests (at most 500), with cursors and a "Load more" button (English and Spanish).
+  - Requests are read with a bounded indexed query, and dedupe uses a Set instead of a quadratic scan.
+  - The listing's store work is now flat at 100, 800 and 5,000 members (tested).
+
+**Invitation preview and withdrawal** (for the org console; provisional):
+- `orgs.invitation-preview` returns the organization's name and kind from its own record, only for an invitation the caller could accept now. Every other case, including an unknown organization, gets one uniform `not_found`.
+- `orgs.invitation-revoke` (admin, also open while the flag is off) closes an invitation as `revoked`. It is pruned like other closed invitations, and acceptance then fails as `invitation_invalid`.
+- The join screen shows the previewed name, and the share view has a Withdraw link button (English and Spanish).
+- Spec §5.1 gains MAY rules for both.
+
+**Provisional (follow-ups):**
+- the 30-day escalation bound;
+- the per-membership token total of 16;
+- least-recently-used client eviction (a forgotten client misses only the removal event; its tokens still fail the generation check).
+
+**Gates** (final tree, after the review follow-ups, invitation preview and withdrawal, paging and re-review fixes):
+- core 3,095 of 3,095;
+- test:organizations, full chain: 47, 46, 98 (browser) and 4 (e2e), all passing;
+- UI-state 367 of 367 and Worker 90 of 90.
+
+Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-23 — Organization console UX pass
+
+This pass covers the organization console findings from the browser QA probe: F-1, F-2, F-3, F-4, the organization parts of F-8 and F-19, F-10 and F-12. The console's code is in `apps/web/src/ui/org-console.mjs`, `ui/org-messages.mjs`, `bl/organizations.mjs`, `bl/org-entry.mjs` and `providers/organizations.mjs`, plus the organization wiring in `release.mjs`.
+
+**Provisional decisions:**
+- **F-2, rendering and address.**
+  - The organization console now renders inside the normal shell, as the `organizations` view composed in `release.mjs`.
+  - Its address is `/console?view=organizations[&org=<uuid>]`, following the existing `?view=` links. No new server path is needed.
+  - Entering the view and changing context push history entries, so Back and Forward reconcile from the address and reload reopens the same context.
+  - The context bar always states who you are acting as. Unavailable organizations cannot be chosen.
+- **F-1, unsaved recovery file.**
+  - "This organization still needs its recovery file saved" is kept in `localStorage` as organization ids only, under `3sln-org-recovery-unsaved:<account>`. The file, the passphrase and any key material are never written there.
+  - Leaving the recovery step is guarded in two ways:
+    - `beforeunload` covers closing or reloading the page;
+    - an in-app guard covers shell navigation, account switching, sign-out and Back. It offers "Stay and finish" or "Leave without saving".
+  - The unsaved organization shows a persistent banner.
+  - The banner offers a fresh file through the existing owner-of-record reissue (`POST /api/orgs/{id}/recovery-file`, fresh step-up). That reissue rotates the signing key before binding (P15), so the lost copy stops working. A non-owner sees that only the owner can issue a file.
+  - "Mark as saved" needs an explicit confirmation.
+- **F-3, invitations.**
+  - The invitation link is now read before the browser provider strips link capabilities from the address bar. That stripping was the root cause of the link never opening.
+  - The link opens a join screen that shows:
+    - what joining means;
+    - the expiry and the bound account, both from the token's claims, as untrusted hints;
+    - a switch-account prompt when the invitation is for another account.
+  - A signed-out landing keeps the invitation in `sessionStorage` for that tab only. The auth card says the person will return to it, and the join screen opens after sign-in or signup.
+  - Paste accepts the full link or the bare signed token. The organization comes from the token's `aud`.
+  - Owners get a share view with copy, expiry, audience and access.
+- **F-4, forms instead of JSON.**
+  - An invitee is entered by handle (resolved by the server) or by full identity link.
+  - The audience is either one account or anyone with the link.
+  - Grants are an admin checkbox plus an optional resource row (address, contract, methods) over the `packages/orgs/grants.mjs` vocabulary.
+  - Members show their handle, "you" and admin badges, and an editable access form.
+  - Kind labels are translated.
+  - Audit rows are readable sentences.
+- **F-8 messages.** Every console error and notice code maps to English source text translated through `packages/i18n/catalogues.mjs`, in English and Spanish, with a generic fallback.
+- **F-12 creation eligibility.** It is shown up front:
+  - allowlisted: the form is shown;
+  - checkout: the sandbox text and the form are shown;
+  - unavailable: there is no form, a state is shown, and there is a link to Billing.
+- **F-19.** The organization skip link shows only on focus.
+- **Theme.** The console uses the shell's tokens (`--line`, `--surface`, `--lime`, `--focus`, `--forest`, `--muted`) and inherited text colour, with no palette of its own.
+- **F-10.**
+  - Organization confirmation boxes show an inline "Tick this box to continue" message after a failed submit.
+  - App-wide, `styles.css` marks any unticked required checkbox after a submit attempt (`:user-invalid`). `release-primitives` and connections forms call `reportValidity()`.
+- **Additive backend, routes only (`packages/runtime/routes/orgs.mjs`):**
+  - `POST /api/orgs/{id}/invitee {handle}`: admin-only, gated by the organization's own membership view. It returns the person's `{iss, sub, handle}`.
+  - `GET /api/orgs/plans` adds `creation`: `allowlisted`, `checkout` or `unavailable`, for this person.
+  - `GET /api/orgs/{id}/members|requests` add the public handle of each local principal.
+
+**Gaps (not done):**
+- The join screen cannot show the organization's name and kind before joining. Invitations deliberately carry no inviter text, and no server-validated invitation preview exists. Adding one needs a membership-domain operation in `packages/orgs/memberships.mjs`.
+- Invitations cannot be revoked: there is no withdraw operation in the membership domain. The share view says so.
+- Display names are not shown, because only handles are public.
+- F-10 is fixed inline for the organization and connections forms. Other required-checkbox forms (signup, billing, accounts, account data, consent) rely on the shared CSS marker plus the browser's validation message.
+- Dark mode of the shell itself belongs to the concurrent styles work. The console follows its tokens.
+
+**Gates:**
+- `npm test` 3,006 of 3,006;
+- `npm run test:ui-state` 347 of 347;
+- `npm run test:organizations`: 47 of 47, engine 42 of 42, browser 98 of 98 and e2e 4 of 4;
+- `npm run build:assets` verified;
+- `tests/e2e/org-console.test.mjs` 4 of 4 on an ephemeral Worker;
+- connections browser 13 of 13;
+- the new `tests/orgs-console-routes.test.mjs` passes, as part of `npm test`.
+
+Reviewer: ___ Date: ___ Outcome: ___
+
+
+## 2026-10-23 — D092 phase 1: policy and read-only visibility
+
+Person billing reconciliation now records verified storage-entitlement reductions in the same transaction as its committed state. The causal provider event, before/after plan and bytes, revision, effective time and reason are durable. The account-owned producer consumes those transitions behind the default-off `OVER_QUOTA_RETENTION_ENABLED` flag. It persists the thirty-day absolute deadline, warning projection, notice schedule and separate attempt evidence, and connects the episode to the existing over-quota export allowance. The default notice port records `not-configured` and sends no message.
+
+Owner Engine operations expose whole hosted-resource and inbox-collection units with byte totals and validate a revisioned keep selection against the current quota. Thin HTTP and the bilingual console expose the warning, exact UTC/local cutoff, selection and export link. Eligibility is computed only; phase 1 has no retention executor, no `reducing` transition and no user-data deletion.
+
+**Provisional:**
+- the thirty-day policy version, bounded anti-abuse history and conservative whole-unit selection model;
+- catalog reductions require an explicit operator notice date and otherwise remain recorded without starting an episode;
+- physical storage debt, adoption/backfill notice policy, terms migration, real notice delivery and destructive execution remain later work; these are reconciled against the broader phase outline in [offload-retention.md](docs/architecture/offload-retention.md#bounded-implementation-phases);
+- export availability and a viewed account warning are separate evidence from provider acceptance, delivery or bounce.
+
+**Spec reconciliation:** Engine operations are `retention.produce`, `retention.status`, `retention.keep`, `retention.view`, `retention.catalog-notice` and `retention.notice-result`. The system-only catalog action can supply a notice date after the original transition was consumed without an episode; first creation uses the later of the operator date and consumption time, and never extends an existing funded cutoff. Status exposes logical excess and reservations, with `physicalRetainedBytes:null` explicitly unknown because existing garbage references lack durable sizes and successful-delete receipts. This physical-debt metric is deferred from the broader phase outline. Whole-unit inventory pages metadata within an account transaction; million-item scalability is not claimed. Terms adoption and existing-excess backfill remain unadopted policy.
+
+**Files changed by this pass:** `packages/app/operations.mjs`; `packages/billing/service.mjs`; `packages/flags/registry.mjs`; `packages/runtime/{retention,accounts,export-hooks}.mjs`; `packages/runtime/account/{retention,billing,index}.mjs`; `packages/runtime/routes/{retention,index,shared}.mjs`; `apps/web/src/bl/account-data.mjs`; `apps/web/src/ui/account-data.mjs`; `tests/{billing-retention-transitions,engine-retention,flags-registry,retention-http,retention-webhook-chaos}.test.mjs`; `tests/worker/retention.test.mjs`; `tests/browser/{retention,account-data-browser}.mjs`; `package.json`; `docs/architecture/{offload-retention,account-deletion-export}.md`; `DEVLOG.md`. Concurrent changes in shared files belong to their separate work entries.
+
+**Validation:** final `npm test`: 3,050 of 3,050; `npm run test:ui-state`: 364 of 364; `npm run test:worker`: 90 of 90, including actual workerd SQLite retention parity. Focused flag registry tests: 14 of 14; retention Engine review checks: 13 of 13. Real-webhook chaos covers 16 seeded schedules with 12 contention rounds each, and the Node HTTP check verifies restart persistence and owner/CSRF guards. Chromium/Firefox retention cases pass 4 of 4 in English/Spanish. The broader account-data browser file passes 46 of 58; all 12 failures pin the previous dark background `rgb(24, 35, 29)` while the concurrent theme renders `rgb(34, 40, 38)`. Those unrelated assertions were preserved. An earlier core run encountered a transient syntax error during concurrent organization edits; the final full run is green.
+
+**Review follow-ups (2026-10-23, provisional; each has a regression test that fails when its fix is reverted):**
+- M1, backdated episodes: the producer records a flag-adoption point in the ledger. Transitions recorded before it are backfill: a fresh episode with effective time and deadline taken from consumption, nothing from history. Every new deadline is floored at `max(effectiveAt, consumedAt) + 30 days`. Notice slots already past at creation, or overtaken by a later due slot, are marked `skipped` instead of firing together. The late-consumption Engine test now pins the design rule "fresh notified episode, not backdated cleanup". The billing transition still records the provider's paid-through time.
+- M2, flag gating: the routes return the uniform `{error:'not_found'}` 404 with `OVER_QUOTA_RETENTION_ENABLED` off. As with deletion and export status, a persisted episode stays readable but not writable. `retention.keep`, `retention.view` and `retention.catalog-notice` refuse with the flag off, and `retention.status` answers `not_found` without an episode. `retention.notice-result` stays available so evidence for an existing episode can still be recorded during a ramp-down. The client treats a retention 404 as absent.
+- M3, alarm load: the retention alarm no longer warms (un-shelves) an account or refreshes billing. It runs the producer only with an active or paused episode, unconsumed transitions or catalog-pending rows. The producer returns its next wake: a notice slot, retry or deadline, at least every six hours while an episode is active, hourly while paused, and none when idle.
+- M4, anchor release policy (provisional; reviewer sign-off below): a funded anchor is released by (a) a verified purchase that raises entitlement above the anchor's reduced quota and covers current usage, at most once per 90 days; (b) 30 days of continuous adequate paid entitlement; or (c) its deadline passing while the account fitted its quota, which is never reused. Quick toggles inside the purchase window reuse the funded cutoff. Continuity is observed at producer runs, and every entitlement reduction triggers one.
+- L1: producer runs write the episode, warning and ledger only on a semantic change. An observation-only advance is persisted at most hourly without a revision bump, so `OfferOverQuotaExport`'s `expectedRevision` stays valid. Status scans the inventory only for an unresolved episode, at most 5,000 rows per request (`inventoryTruncated`; keep refuses with `retention_inventory_too_large`). Routes have a 30-per-minute per-owner budget that follows the app-removal admission pattern.
+- L2: `retention.view` stamps only an active episode, and only once. L3: `retention.notice-result` accepts evidence only for accepted, delivered or bounced attempts. Port outcome timestamps outside `[attemptedAt, completion]` are dropped. L4: `not-configured` records `checkedAt` and `port: absent|declined`. An absent port is re-asked once configured, and a declining port after a day.
+- L5: eligibility and notice due times use a persisted high-water observation that advances at most one day per reading. Wakes are computed against that observation, so a lagging observation does not spin. L6: a malformed transition with no episode is skipped (`malformed-skipped`) with an `over-quota-retention` operator alert, logged through `lifecycleLog`. L7: replaced resolved episodes keep their notice, view and export-offer evidence in a bounded ledger history of 8. L8: a provider effective time up to five minutes ahead of the clock is recorded as now, with `providerEffectiveAt`; larger skew is still not evidence. L9: local cutoff times name the viewer's IANA zone. An out-of-range deadline renders as unavailable in the panel and banner instead of throwing.
+
+**Follow-up files:** `packages/runtime/retention.mjs`; `packages/runtime/account/retention.mjs`; `packages/runtime/routes/retention.mjs`; `packages/billing/service.mjs` (skew clamp only); `apps/web/src/ui/account-data.mjs` (cutoff rendering helpers only); `apps/web/src/bl/account-data.mjs` (retention 404 only); `docs/architecture/offload-retention.md`; `tests/{engine-retention,retention-http,retention-webhook-chaos,billing-retention-transitions}.test.mjs`; `tests/worker/retention.test.mjs`; `tests/browser/retention.mjs`. `packages/runtime/accounts.mjs` needed no change.
+
+**Follow-up validation:** `npm test`: 3,099 of 3,099; `npm run test:worker`: 90 of 90; `npm run test:ui-state`: 367 of 367; Chromium/Firefox retention cases in `tests/browser/account-data-browser.mjs`: 4 of 4. Reverting each fix by mutation made its regression test fail (30 mutations, all caught).
+
+**Re-review follow-ups (2026-10-23, provisional; each has a regression test, revert-checked on a scratch copy of the tree so shared files were never rewritten):**
+- N1, grace renewal through short paid holds: the review probe (deadlines 32→62→92→122→152 days) is ported as Engine tests with ~1-day and 8-day holds. Decision: a fit caused by an entitlement rise counts against the same 90-day window as `verified-upgrade`. Only fitting achieved by reducing stored bytes (usage within the anchor's reduced quota) qualifies for `deadline-passed-fitting`, and only from at least seven days before the deadline.
+- N2, inventory dead end above 5,000 rows: units now come from their few resource and collection records. On Worker and Node, per-unit bytes come from one SQL `GROUP BY` per unit kind over the item index (`inbox_catalog`, `hosted_catalog`) once `item-index-ready` and `search-backfill-ready` are set, read through the account transaction. Otherwise a bounded scan is used. Bytes are shown, and fit enforced, only when they reconcile exactly with logical accounting. Otherwise units stay selectable by name with `keepSelectionFit:'unknown'`, and the console shows an explicit "sizes too large to calculate here; choose by name or export" state. With no listable units it shows an export pointer instead of an empty Save form. This supersedes the L1 refusal above. Remaining limit: more than 5,000 unit records still reports `inventoryTruncated` and cannot save. The aggregate remains linear in indexed rows inside SQLite. No per-unit counters were added, because the message-usage writers live in concurrently owned messaging code.
+- N3: anchor release uses the ledger's own step-capped, corroborated observation. A reduction that arrives after more than an hour without a producer run waits one corroborating reading (a minute), leaving the anchor trackers and any resolved episode untouched, instead of deciding reuse on a lagging clock.
+- N4: with the flag off, the route asks the new owner-checked RPC `retentionHasEpisode` and answers the uniform 404 before spending the request budget.
+- N5: removed the unconditional `scheduleAlarm(now+60s)` after every billing webhook in `packages/runtime/account/billing.mjs`. D092 phase 1 had added it; before that the webhook scheduled nothing, and the producer now schedules its own `wakeAt`.
+- N6: the observation catches up after downtime to the previous persisted reading once a later reading corroborates it, and never exceeds the current reading. Notices are therefore never early and the cutoff never moves earlier. Notice due times use the run's corroborated observation, never a reading that the same run persisted. A lagging episode wakes again a minute later.
+
+**Re-review files:** `packages/runtime/{retention,account/retention,routes/retention}.mjs`; `packages/runtime/account/billing.mjs` (webhook alarm line only); `apps/web/src/ui/account-data.mjs` (retention unit list and notice only); `docs/architecture/offload-retention.md`; `tests/{engine-retention,retention-http}.test.mjs`; `tests/browser/retention.mjs`.
+
+**Re-review validation:** `npm test`: 3,115 of 3,115; `npm run test:worker`: 90 of 90; `npm run test:ui-state`: 368 of 368; Chromium/Firefox retention cases: 4 of 4. All 12 scratch-copy reverts made their tests fail.
+
+Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-23 — UI quality pass (browser probe findings)
+
+Addressed F-5/F-6/F-7/F-9/F-11/F-13/F-14/F-16/F-17/F-18/F-19/F-20/F-21: bounded account-read retries (250/500 ms, three attempts) and explicit Retry state; retained signed-in shell during offline/session outages; signup step history and a cross-tab pending hint; persisted explicit locale; actionable intent/transfer errors and localized certificate fallback; credential-age recovery eligibility before opening the replacement dialog; inclusive configured minimum-age copy and truthful setup progress; connected integration state and configured-only Google Drive offerings; shared light/dark tokens, help associations, contrast and responsive layout fixes; removal of the unsupported Permissions-Policy feature and duplicate catalogue keys. Existing concurrent organization, transfer, removal and retention work was preserved.
+
+**Provisional:** device labels use touch plus narrow viewport to suggest phone/tablet, otherwise computer; TV remains an explicit choice after choosing linked-device sign-in ([linked-approval.md](docs/architecture/linked-approval.md)). Pending setup in other tabs is a nonsecret browser hint: the session endpoint exposes no pending account details, and the hint grants no setup authority. Recovery eligibility is display metadata derived from existing credential timestamps; the identity service rechecks actual authority when requested. Shared theme tokens are available to the concurrently owned organization console; its views were not edited in this pass.
+
+**Validation:** `npm test`: 3,050 passed, zero failed; `npm run test:ui-state`: 364 passed, zero failed; `npm run build:assets` and `npm run check:worker`: passed. Activity Chromium regression: 14 passed; focused theme regression: one passed; focused Connections browser regression: 13 passed; `npm run test:e2e`: 272 passed, zero failed, four skipped across 13 suites (276 tests total); the four skips require the unavailable WebKit executable. The main Worker suite contributed 125 passed, zero failed, zero skipped. The requested eight-case Chromium visual matrix passed within that suite (390×844 / 1280×900 × English/Spanish × light/dark), including account retry and retained offline shell. The first core attempt had one HTTP-page failure while assets were being rebuilt concurrently (the isolated file then passed 7/7); the complete rerun above passed. Updated the old e2e assertion requiring a light-only console to require the shared dark theme and matching logo; the standalone Connections fixture now loads the real shared stylesheet and checks palette consistency. Chromium screenshots cover 390×844 and 1280×900, English/Spanish and light/dark; representative small labels/help/navigation text meet 4.5:1 contrast. This is representative measurement, not an exhaustive contrast audit of every possible account content state.
+
+**Files changed by this pass:** `apps/web/src/bl/{release,connections}.mjs`; `apps/web/src/providers/browser.mjs`; `apps/web/src/certify-member.mjs`; `apps/web/src/ui/{release-app,release-primitives,release-auth,release-signup,release-recovery,release-security,release-views,intent-page,transfer-page,recovery-reissue,activity,devices,account-data,certify-member}.mjs`; `apps/web/src/ui/connections/{index,style}.mjs`; `apps/web/styles.css`; `packages/i18n/catalogues.mjs`; `packages/runtime/{http,recovery-eligibility}.mjs`; `packages/runtime/routes/shared.mjs`; `docs/architecture/linked-approval.md`; `tests/browser/{release-state,ui-chaos,connections-engine,ui-quality-views,activity-browser,connections-browser}.mjs`; `tests/e2e/{ui-quality,ui-adversarial}.test.mjs`; `scripts/run-browser-checks.mjs`; `package.json`; `DEVLOG.md`.
+
+Reviewer: ___ Date: ___ Outcome: ___
+
+
+## 2026-10-23 — Scalability fixes (legacy message reads, removal index, artefact history, intent index)
+
+Legacy message arrays now use the shared Node/Worker SQL item catalog, preserving the 1,000-message limit and ascending ID ties. All filter combinations have ordered indexes; cursors bind their filters and use two disjoint seeks, including deep equal-timestamp pages. Incomplete migration fails closed. Hosted app removal deletes the resource-index key using registration's shared `(connection, resource)` hash, retaining the same transaction, generation fence, delegation revocation and severance/cascade behavior.
+
+Artefact head/notices now persist separately from 128-digest pages. Exact resolution avoids history metadata; bounded warm authenticated copies reuse verified prefixes, validate/store the new suffix, and assign the digest vector once. Legacy history migrates transactionally. Normalized operator documents are cached per configuration revision, retaining live operator object updates and builtin precedence. Adopted intent handlers have a transactional kind/version index updated with connection mutations; routing rechecks the current generation and exact declaration and deduplicates version resolutions. The adapter still reconciles before every operation. Derived keys use the existing `item-index/` namespace; export files were not changed.
+
+**Provisional:** extra SQL indexes trade write/storage work for bounded filtered reads. Existing intent accounts migrate once in a transaction using 100-row pages; steady-state work depends on matching handlers, not unrelated resources. Unwrapped custom engine stores retain the compatibility scan fallback; durable Node/Worker stores install the wrapper. Warm artefact comparisons remain proportional to bounded envelope bytes, and cold processes authenticate the supplied prefix again. The 16-line authenticated cache is ephemeral; durable records and digest pages remain authoritative. These local measurements do not establish production CPU/memory limits or external service conformance; production release remains disabled.
+
+**Re-measurement:** original report baselines versus final local runs (timings noisy under concurrent work):
+
+| Workload | Before | After |
+|---|---|---|
+| Legacy page50 / 5,000 messages | 91.540 ms; 5,000 metadata rows / 3,850,000 B | 0.273 ms; 1 housekeeping row / 861 B; SQL separately bounded at 51 rows; identical 33,801 B array |
+| Hosted removal / 256 records | 241.209 ms; 14,624 rows / 126 lists | 8.748 ms; 256 rows / 5 lists; zero resource-index lists |
+| Latest repin / 1,024 versions | 2,536.116 ms; 1,027 gets / 502,905 B | 107.219 ms; 3 gets / 376 B |
+| Cold pin / 1,024 versions | 3,413.827 ms | 400.845 ms; largest stored value 108,670 → 6,785 B |
+| Exact resolve / 1,024 versions | 0.876 ms; 108,954 B | 6.448 ms; 472 B (timing regressed in this noisy sample; bytes bounded) |
+| Registry check / pin with 5,000 lines | 6.463 / 285.002 ms | 0.100 / 2.955 ms |
+| Selective intent / 100 apps, one match | 2.449 ms; 101 rows / 104,789 B | 0.317 ms; 1 index row plus exact connection check / 1,346 B |
+
+The selective intent baseline is a paired run with the indexed capability disabled to exercise the original fallback. Original same-kind routing still needs all 100 candidates: the indexed run reads 100 index rows plus 100 current connections and measured 6.84 ms versus the report's 1.632 ms; no speedup is claimed for all-matching fanout. At 10/50/100 apps the selective run reads one index row and three total gets. Probe scripts, outputs and a fuller report live in `/private/tmp/claude-501/-Users-raystubbs-Projects--3sln-3sln-me/8f763b0e-277c-4c0c-b7f0-8c3d4fc70450/scratchpad/scalefix/REPORT.md`; the original removal script ran unchanged.
+
+**Review/spec reconciliation:** coordinator review found and corrected legacy digest-page migration at page boundaries, sparse-envelope prefix rereads, unknown-to-known kind validation, configured builtin precedence, deep SQL cursor scans, and transaction instrumentation recursion. A separate technical review found no change to removal atomicity/generation semantics and no stale-handler offering path through the indexed router. These are implementation reviews, not approval/sign-off. Architecture notes updated in `app-engine.md`, `app-uninstall.md`, `artefact-references.md` and `intent-links.md`.
+
+**Validation:** final `npm test`: **3,061 passed, zero failed**; final `npm run test:worker`: **90 passed, zero failed**, including actual workerd adapters. Focused message/index tests: 26/26; artefacts: 132/132; combined intents and app-removal engine/wire/runtime tests: 111/111. New metering tests cover flat unrelated-resource work, bounded message rows and query plans/deep cursors, linear removal record reads with zero resource-index lists, bounded artefact repins/resolution, migration, stale/corrupt indexes, rollback and portable Worker-style KV transactions. The first full run exposed four transaction-instrumentation recursion failures from this change; all were fixed and the complete suites rerun successfully. No remaining failure is attributed to concurrent agents. No UI changes or commits in this pass.
+
+**Review follow-ups** (second review of this entry; each fix has a regression test confirmed to fail with the fix reverted):
+
+1. *Stale legacy list (medium-low).* `messagePresentation` rewrote `message/<owner>/<id>` without updating the SQL catalog, so both the legacy array and v2 `messagePage` served stale `presentation` metadata. Fixed by `itemIndex.upsert` in that transaction. Audit of every raw `message/` writer: postback request writes (`message-postbacks.mjs`, two sites; the public projection strips `postbacks`, so this is consistency only) and shelved-archive restore in `warm` now upsert too; store-mediated writers (messaging, contact delivery, conversations, app notifications) already did; search backfill already did; retention/activity/notifications only read. `tests/message-presentations.test.mjs` now uses SQL and seeds through `c.store` instead of a raw put after `item-index-ready`; new test compares legacy-list and `messagePage` entries with the stored record after two saves and a restart. Other raw-put fixtures construct controllers without SQL (scan path) or seed before migration.
+2. *Legacy filter drift (low).* **Provisional decisions:** (a) a missing `readAt` counts as unread, matching `readAt==null` in the catalog and the incoming catalog; the scan fallback now agrees. (b) A missing `quarantined` counts as not quarantined (falsy), likewise in both paths. (c) `docs/spec/messaging.md` documents no error for wrong-typed legacy filters, so the legacy array again returns `[]` for them (the v2 page keeps `invalid_args`). (d) The legacy array takes no cursor, as before; the parameter added in this pass was removed. Production writers always store `readAt` and `quarantined`, so (a)/(b) affect only legacy-shaped rows. Test: `tests/messages-legacy-filters.test.mjs` (SQL and scan paths).
+3. *Warm accepts what cold rejects (low).* The authenticated-prefix shortcut now reuses a body-less entry only when the next entry still has `version===i+2` and `prev` equal to the stored digest and the supplied record equals the authenticated record canonically; otherwise the cold verifier decides. Test: `tests/artefacts/warm-cold.test.mjs` runs both paths over trailing, wrong-next, tampered, missing-record and valid sparse copies, at core level and through the runtime (including recorded faults).
+4. *Intent index epoch (low).* The ready marker is now `item-index/intent-handler-index/state` = `{version:INTENT_INDEX_VERSION}` (1). Any other epoch, including the earlier boolean `.../v1` marker, clears derived keys and rebuilds in 100-row pages inside one transaction. **Provisional:** a rollback to code that did not maintain the index is caught only if the roll-forward release bumps the epoch; that is the documented procedure (`intent-links.md`). Test added to `tests/intents-index.test.mjs`.
+5. *Index build at boot (low).* Measured locally (Node SQLite, WAL, ~700 B records): building the 12 indexes over 100,000 existing rows took 2.1–3.4 s in total, 125–436 ms each; 10,000 rows took 190 ms. Construction is therefore no longer used for an existing catalog. An empty catalog still creates all indexes at construction. Otherwise `migrateItemIndex` (on warm and alarm) builds missing indexes, at least one per step, up to 100,000 index-rows per step (count x rows; Workers clocks do not advance during synchronous SQL, so the bound counts work, not time). It arms a 1 s alarm and both legacy and v2 reads return 503 until every index exists. **Provisional:** a single index over a very large catalog is still one unsplittable statement (about 3–4 s per index projected at 1M rows); Worker CPU limits are not measured here. Test added to `tests/messages-index-scale.test.mjs` (30,000 rows: no build at construction, three 503 steps, then ready).
+6. *Registry (informational).* `configuredArtefactDocuments` again enforces the 100-fragment bound (counting the Drive builtin while integrations are enabled) on every lookup against a live registry, and returns deep-frozen copies cached per distinct value (byte arrays are copied) instead of live operator or module objects. **Provisional:** an in-place nested edit to an entry already read takes effect only after the entry or registry is replaced. Test added to `tests/artefacts/scale.test.mjs`.
+
+Docs reconciled: `app-engine.md`, `intent-links.md`, `artefact-references.md`. **Follow-up validation:** `npm test`: 3,102 passed, 2 failed. Both failures (`tests/identity-key-tombstones.test.mjs` seeded chaos, `tests/successor-budget.test.mjs` budget constants) are in concurrent identity work, untracked/modified under `packages/identity`, and this pass did not touch them. `npm run test:worker`: 90/90. Focused: artefacts 135/135; intents 61/61; app-removal and engine app-removal 51/51; `tests/messag*` + `engine-item-index` 86/86. Not committed.
+
+Reviewer: ___ Date: ___ Outcome: ___
+
+
+## 2026-10-23 — Successor chain byte budget and key tombstone compaction
+
+The scalability probe found that rotating successor chains hit the flat 32 KiB document bound at 15 moves (33,932 B), below the 16-move limit. It also found that the key tombstone collection grows by one row per pruned kid (85 after 100 rotations). Spec revision 3.3 is in `docs/spec/identity-portability.md` (§4 and §7 "Size", §5.3, §9.3, §12, AMD-P4); `docs/spec/organizations.md` §3a.3 has a one-line pointer to it; the design is in `docs/architecture/identity-portability.md` §7.1.
+
+**Provisional (security/protocol agent, not signed off):**
+- **Per-move caps (§4, §5.3).** Identity URIs inside moves are at most 512 characters. A compact statement is at most 3,072 B and an attestation at most 2,560 B. With 128-character ASCII kids the worst cases are 2,721 B and 2,022 B. Parsers refuse oversize records before any signature work, and signers refuse to produce them.
+- **Derived document budget (§7 "Size").** The budget is 32,768 B of base (own members, certification keys and 16 own signing keys) plus 16 × 7,488 B per move (statement, attestation, framing and one 1,792 B chain key for the activation rotation), which is 152,576 B. The client fetch bound equals the budget. Verifiers refuse anything above it, an over-cap record or more than 16 records. A document without `moves` stays at 16 KiB, which the client now enforces. Separate history and key pages were rejected because they add fetch rounds and failure modes without lowering the worst case.
+- **Producer guard.** `assessTransferIn` runs at check, reserve and begin, before anything is reserved, imported or signed. It projects the largest document the identity can have at the destination: the source's records, the exact statement size, an attestation at its cap, every imported key, and the base reserve for 16 own keys. It refuses with `identity_uri_too_long`, `move_too_large` or `document_budget_exceeded` (409), and also when the identity would need more than 64 keys. `identityDocument` also refuses to publish over-cap records or more than 64 keys.
+- **Found while fixing.** Transfer-in imported only the last 12 ancestors, which would drop statement signers from the 14th rotating move onward. With the full history, pinned keys counting against `KEY_HISTORY_LIMIT` would make the 16th arrival's activation rotation fail with `key_history_full`. Separately, `#admit` could prune a retired link of a moved identity's continuity chain, leaving its published `moves` unverifiable. Fixes: history reaches back to the first statement signer; pinned keys do not count against the 16-key own history (`IMPORTED_HISTORY_LIMIT` 63); and chain links of a moved identity are never pruned. Such an identity's 17th own key at one host is therefore refused with `key_history_full`, and recovery issuance skips and audits, as P15 already does. Lifting that bound needs an independent key-event record, not a larger history.
+- **Tombstones.** Pruned kids form an exact set paged at 128 kids per row (`identity-key-pruned/<owner>//<n>/`; the empty segment can never be a kid). There are no digests or Bloom filters, so anti-reuse stays exact. Legacy per-kid rows still refuse reuse and are folded in at the next prune. Bytes still grow by about 40 per prune, which is inherent to exact anti-reuse of arbitrary kids. 100 rotations now leave one row instead of 85. `retainedState` and the `IdentityKeyRetainedState` query report signing (own/pinned), encryption, retained-key, binding and tombstone counts.
+- **Reference discovery unchanged.** The scan still runs only at a full-history rotation and covers the account's own grants and links. A per-key index would have to be maintained by the messaging and links writers, and a stale index would let a referenced key be pruned. Deferred to those owners.
+
+**Re-measurement:** the probe's `successors.mjs` was rerun unchanged, rotating. 1/4/8/12/15/16 moves are all adopted (15: 33,932 B, 16: 36,187 B), and 17 is refused as malformed. The new worst case (252-character origins, 512-character URIs, 16 rotations) is a 84,310 B document, and it is adopted.
+
+**Tests:** new `tests/successor-budget.test.mjs` (5), `tests/transfer-in-budget.test.mjs` (3) and `tests/identity-key-tombstones.test.mjs` (5, including seeded chaos). In `tests/transfer-in.test.mjs`, the size-bound test is updated to the new caps. The portability suites (`portability-wargame-*`, `transfer-*`, `successors*`, `identity-succession`, `moved-routes`, `recovery-*`) pass 196/196. Adding `successor-budget`, `identity-key-tombstones`, `identity-keys`, `rotation-honouring`, `key-delegation` and `engine-account-export` gives 255/255. `npm test`: 3,074/3,074. Not covered: Worker adapters (`npm run test:worker` was not run, since no adapter changed), real provider conformance and production limits.
+
+
+**Independent review follow-up (same day).** These points supersede the "16 KiB without `moves`", "17th own key is refused" and "issuance skips" statements above. Each fix has a regression test that fails when the fix is reverted; reverting each fix in turn was checked by script.
+1. **Directory consumer (medium-high).** `packages/federation/directory.mjs` still fetched and validated identity documents at 32,768 B, so contact delivery and organization member-certificate verification would break for chains that now publish. It now uses the shared constants for the fetch bound and validation, and checks the per-record caps and the 16-record limit. The constants moved to the dependency-free `packages/identity/document-budget.mjs`, which `succession.mjs` re-exports. A grep found no other consumer with hard-coded document bounds. Test: `tests/directory.test.mjs`, a moved document above 32 KiB through `IdentityDirectory.refresh`.
+2. **No-moves bound (medium).** At 16 KiB, a document without `moves` could not hold 16 own keys: after about 15 recovery reissues `identityDocument` returned null and the identity answered the uniform 404. The bound is now `DOCUMENT_BYTES` = `DOCUMENT_BASE_BYTES` = 32,768 B everywhere: org spec §3a.3, `identityDocument`, `validDocument` and the directory. Tests: 15 rotations still publish a document (`identity-key-tombstones`), plus the directory test.
+3. **Moved identities and P15 (medium). Coordinator decision, provisional, not signed off.**
+   - The 16-key base is a reserve, not a ceiling. A moved identity keeps own chain keys beyond 16 while its published document has real headroom. `keys.mjs` checks this from the arrival record `transfer-in/v1` (the source's records, this host's statement and attestation), every remaining signing key in published form, the new key at 1,792 B and a 4 KiB header and certification reserve, against the budget and 64 keys. With no arrival record the check fails closed. In tests, a byte-bound run reached 28 own keys and stopped within about 350 B of the real limit, because the estimate counts published times at maximum width. A count-bound run stopped at 64 keys including the certification reserve.
+   - When rotation is still impossible, `IdentityService#reissueRecoveryBegin` refuses with `rotation_unavailable` (409) and stages nothing. It never issues a file that holds the same signing key. The console (`apps/web/src/bl/recovery-reissue.mjs`, one catch, no catalogue change) explains that the key cannot be replaced, that the current file keeps working, and that the owner should contact support if it was exposed.
+   - The replacement file after an actual recovery keeps the documented P15 skip and audit, so a recovering owner is never locked out. Revisit if the coordinator wants that path refused too.
+   - Spec §7 now states what revoking a retired chain key does: the lineage is cut there, existing pins remain, first contact and adoption through that point fail closed (pending successor at most), and later moves out are refused.
+   - Tests: `identity-key-tombstones` (growth beyond 16, refusal near the real bound, chain intact), `recovery-reissue` (`rotation_unavailable`, nothing staged, no pruning) and `tests/browser/recovery-reissue-rotation.mjs` (the console message; nothing stored or published).
+4. **Attestation-key amplification (low).** `chained()` is memoized per kid within one `evaluateAttestationKeys` call. A 64-key JWKS with 32 never-verifying keys now costs at most 64 ECDSA verifications. Without the memo it cost about 1,000, from re-verifying on every closure pass.
+5. **ASCII kids (low).** Move statement and attestation headers, and their signers, require a kid of 1–128 printable ASCII characters (`MOVE_KID`). Non-ASCII characters, lone surrogates and controls are refused, so the stated worst cases hold. Intake refuses a non-ASCII package kid with `identity_key_unsupported`. Spec §7 "Size" now states the one-chain-key-per-move assumption, and what happens when a host rotated more than once: the extra chain keys are counted by the intake projection and limited by rotation headroom.
+6. **Chaos test (low).** It now seeds legacy rows, runs 400 steps at `historyLimit` 2, crosses the 128-kid page boundary for every seed, and attempts `importTransfer` reuse of pruned and legacy kids (as the signing key and in the history), plus a positive import. Checked with seeds 1, 17, 40, 78 and 120.
+
+**Validation after the follow-up:**
+- Portability suites: 204/204.
+- Identity, directory, certificate, rotation-honouring, key-delegation and account-export suites: 229/229.
+- Console test: 1/1.
+- `npm run test:worker`: 90/90.
+- `npm test`: 3,103/3,107. All 4 failures are in `tests/engine-retention.test.mjs`, untracked files of the concurrent over-quota retention work. That file passes 29/29 on a rerun alone, so the failures were mid-edit churn, not this change.
+
+Reviewer: ___ Date: ___ Outcome: ___

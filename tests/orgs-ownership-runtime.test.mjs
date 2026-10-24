@@ -72,3 +72,23 @@ test('runtime: checkout at creation, verified webhook delegation, transfer effec
  const fresh=await repository.get(org);await backup.verify(JSON.parse(reissued.body.recoveryFile.content),fresh,reissued.body.recoveryFile.recoveryToken,{expectedKid:fresh.recoveryKeyKid});
  assert.equal((await call(B,'GET',`/api/orgs/${org}/ownership`)).body.recovery.state,'issued');
 });
+
+// Wargame F-05 (2026-10-23): a reconcile the provider port refuses for capacity falls back to the time rules (which never
+// change the owner) and is reported to the operator through the lifecycle log, instead of failing silently forever.
+test('runtime: a reconcile refused for subscription capacity raises an operator alert',async t=>{
+ const directory=await mkdtemp(join(tmpdir(),'orgs-capacity-')),clock=fakeClock(Date.now()),polar=fakeOrgPolar({clock}),log=[];
+ const app=await createNodeServer({directory,config:{...ORG_POLAR_CONFIG,APP_ORIGIN:ORIGIN,LOCAL_DEVELOPMENT:'true',ORGANIZATIONS_ENABLED:'true',ORGANIZATION_BILLING_CLIENT:polar.client,LIFECYCLE_CLOCK:clock.now,LIFECYCLE_LOG:entry=>log.push(entry)}});
+ t.after(async()=>{await app.close();await rm(directory,{recursive:true,force:true});});
+ const RECOVERY_SIGNING_KEY=await readFile(join(directory,'recovery-signing-key'),'utf8'),repository=app.resources.repository,accounts=app.resources.accounts;
+ const identity=new IdentityService({repository,identityBackup:identityBackupPort({config:{APP_ORIGIN:ORIGIN,RECOVERY_SIGNING_KEY},accounts}),turnstile:{verify:async()=>true},rateLimiter:{check:async()=>true},webauthn:{},passwordHasher:fakeHasher,config:{origin:ORIGIN,rpID:'localhost',termsVersion:'2026-10-11',allowInsecureLocalhost:true}});
+ const base={origin:ORIGIN,remoteIP:'127.0.0.1'},pending=await identity.signup({method:'password',password:PASSWORD,ageConfirmed:18,termsAccepted:true,termsVersion:'2026-10-11',turnstileToken:'ok'},base);
+ const downloaded=await identity.downloadRecovery({pendingToken:pending.pendingToken},base);await identity.confirmRecovery({pendingToken:pending.pendingToken,recoveryToken:downloaded.recoveryToken,downloadConfirmed:true},base);
+ const A=pending.account.id,env={...ORG_POLAR_CONFIG,APP_ORIGIN:ORIGIN,LOCAL_DEVELOPMENT:'true',RECOVERY_SIGNING_KEY,IDENTITY_REPOSITORY:repository,ACCOUNTS:accounts,ORGANIZATIONS_ENABLED:'true',ORGANIZATION_BILLING_CLIENT:polar.client};
+ const call=async(method,path,input)=>{const request=new Request(ORIGIN+path,{method,headers:input?{'Content-Type':'application/json'}:{},...input?{body:JSON.stringify(input)}:{}});const response=await stages.owner({request,env,url:new URL(request.url),path:new URL(request.url).pathname,id:A,object:accountHandle(env,A),actor:personActor({owner:A,iss:ORIGIN,authTime:clock.now()}),context:{remoteIP:'127.0.0.1'}}).catch(error=>new Response(JSON.stringify({error:error.code}),{status:error.status??500}));return {status:response.status,body:await response.json()};};
+ const input={request:'runtime-request-00002',name:'Acme',plan:'org-team'};await call('POST','/api/orgs',input);await call('POST','/api/orgs/checkout',{request:input.request,plan:'org-team'});polar.pay(polar.checkoutBy(()=>true).id);
+ const created=await call('POST','/api/orgs',input);assert.equal(created.status,200,JSON.stringify(created.body));const org=created.body.organization.id;
+ for(let i=0;i<17;i++)polar.subscribe({org,owner:A,purpose:'renew',binding:'renew-flood-'+i});
+ log.length=0;await accountHandle(env,org).orgsBillingSync(org);
+ assert.ok(log.some(e=>e.reason==='subscription-capacity'&&e.org===org),JSON.stringify(log.map(e=>e.reason)));
+ assert.equal((await call('GET',`/api/orgs/${org}/ownership`)).body.ownerOfRecord.sub,A);
+});

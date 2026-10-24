@@ -6,6 +6,7 @@ import {memoryAudit} from '../packages/app/providers.mjs';
 import {fakeClock,seededRandom,createRandom} from '../packages/app/memory-providers.mjs';
 import {MembershipService} from '../packages/orgs/memberships.mjs';
 import {ORG_RECORD} from '../packages/orgs/organizations.mjs';
+import {readOrganization} from '../packages/orgs/roster.mjs';
 import {accountActor} from '../packages/orgs/authority.mjs';
 import {principalKey,memberPowers,effectiveAuthority,effectiveMethods,memberResourceProjection,organizationFederationPort} from '../packages/orgs/grants.mjs';
 import {organizationsProvider,ORG_OPERATIONS,ORG_SYSTEM_OPERATIONS} from '../packages/app/domains/orgs.mjs';
@@ -19,7 +20,7 @@ async function world(seed=1){
  const act=(sub,extra={})=>({kind:'owner',owner:ORG,principal:p(sub),entity:{kind:'organization',id:ORG},powers:[],authTime:clock.now(),epoch:0,aep:0,addedUnder:{kid:'identity-key',publicKey:{kty:'EC'},certificationKid:null,authentication:'same-host-session'},...extra});
  // Deliberately bypass adapter serial gates: transactions must enforce live powers even with stale actors.
  const run=(op,sub,input={},extra={})=>{const action=new OPS[op]({actor:sub==='system'?{kind:'system',owner:ORG}:act(sub,extra),input});return action instanceof AppQuery?read(engine,action):perform(engine,action);};
- const record=()=>metadata.get(ORG_RECORD),member=async sub=>(await record()).memberships[principalKey(p(sub))];
+ const record=()=>readOrganization(metadata),member=async sub=>(await record()).memberships[principalKey(p(sub))];
  const join=async(sub,grants=[])=>{const invite=await run('orgs.invite',A,{invitee:p(sub),grants});await run('orgs.accept',sub,{invitation:invite.invitation},{addedUnder:{kid:'identity-key',publicKey:{kty:'EC'},certificationKid:'cert-key'}});return member(sub);};
  return {metadata,service,engine,clock,flag,act,run,record,member,join,close:async()=>{await engine.dispose();metadata.close();}};
 }
@@ -76,7 +77,7 @@ test('ORG-2 engine ports, existing-member admin invitations, muted requests, exp
  const lookup=await w.run('orgs.member-lookup','system',{principal:p(B)});assert.equal(lookup.id,b.id);await w.run('orgs.observe-authority','system',{principal:p(B),aep:1});assert.ok((await w.member(B)).hold);
  const snapshot=await w.run('orgs.member-snapshot','system',{principal:p(B),membership_id:b.id,generation:b.generation,client:'https://app.example'});assert.equal(snapshot.member.id,b.id);await rejects(w.run('orgs.member-snapshot','system',{principal:p(C),membership_id:b.id,generation:b.generation}),'not_found');
  const invite=await w.run('orgs.invite',A,{invitee:p(C),grants:[],expires_at:Math.floor(w.clock.now()/1000)+1});await w.run('orgs.accept',C,{invitation:invite.invitation});await w.run('orgs.member-context',C,{client:'https://app.example'});w.clock.advance(1000);await w.run('orgs.membership-sweep','system');assert.equal((await w.member(C)).state,'ended');
- let attempts=0;w.service.memberEvents=async()=>++attempts>1;await w.run('orgs.member-outbox-drain','system');assert.ok((await w.record()).memberOutbox.some(e=>!e.deliveredAt));await w.run('orgs.member-outbox-drain','system');assert.ok((await w.record()).memberOutbox.every(e=>e.deliveredAt));
+ let attempts=0;w.service.memberEvents=async()=>++attempts>1;await w.run('orgs.member-outbox-drain','system');assert.ok((await w.record()).memberOutbox.some(e=>!e.deliveredAt));w.clock.advance(3*60000);await w.run('orgs.member-outbox-drain','system');assert.ok((await w.record()).memberOutbox.every(e=>e.deliveredAt));
  const rows=[...(await w.metadata.list({prefix:'org/audit/'})).values()];for(let n=1;n<rows.length;n++)assert.equal(rows[n].previous,rows[n-1].hash);
  }finally{await w.close();}});
 test('ORG-2 signed invitation uses the common envelope and only accepts its exact signed proposal',async()=>{const w=await world();try{

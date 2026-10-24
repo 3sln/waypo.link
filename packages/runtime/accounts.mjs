@@ -1,3 +1,4 @@
+import {intentIndexedMetadata} from '../intents/index.mjs';
 import {capability,flagsFor,writerConfig,withWriterFlags,recordFlag} from './account/flags.mjs';
 import {validateHostAlias,configuredReservedName} from '../identity/badge-policy.mjs';
 import {onboardingAlias,sameOnboardingIdentity} from '../identity/onboarding.mjs';
@@ -11,6 +12,7 @@ import {systemClock,cryptoRandom,nullAudit} from '../app/providers.mjs';
 import {ACCOUNT_OPERATIONS} from '../app/operations.mjs';
 import {accountActor} from '../orgs/authority.mjs';
 import {ORG_RECORD} from '../orgs/organizations.mjs';
+import {loadOrganization} from '../orgs/roster.mjs';
 import {accountProviders} from '../app/account.mjs';
 import {SavedViews} from '../app/domains/views.mjs';
 import {TagRules,TagLabels} from '../app/domains/tags.mjs';
@@ -154,8 +156,8 @@ export class FixedWindowGuard {
   async waitlistAction(method,input){if(!['prepare','confirm','leave'].includes(method))throw new Error('Invalid waitlist operation');return this.waitlist[method](input);}
   async consumeSignup(options){return consumeSignupCapacity(this.metadata,options);}
   async signupStatus(options){return signupCapacityStatus(this.metadata,options);}
-  async consume({windowMs,limit,lifetime=false,units=1,storageWrite}) {
-    if(!Number.isSafeInteger(units)||units<1||units>16||!Number.isSafeInteger(limit)||limit<1||typeof lifetime!=='boolean'||!lifetime&&(!Number.isSafeInteger(windowMs)||windowMs<1000))return false;
+  async consume({windowMs,limit,lifetime=false,units=1,storageWrite,peek=false}) {
+    if(!Number.isSafeInteger(units)||units<1||units>16||!Number.isSafeInteger(limit)||limit<1||typeof lifetime!=='boolean'||!lifetime&&(!Number.isSafeInteger(windowMs)||windowMs<1000)||typeof peek!=='boolean'||peek&&(lifetime||storageWrite!==undefined))return false;
     if(storageWrite!==undefined){
       if(!lifetime||!storageWrite||typeof storageWrite!=='object'||!['foreground','maintenance'].includes(storageWrite.pool))return false;
       const {pool,totalLimit,foregroundLimit,maintenanceLimit}=storageWrite,limits={total:totalLimit,foreground:foregroundLimit,maintenance:maintenanceLimit};
@@ -173,7 +175,7 @@ export class FixedWindowGuard {
       // Rollback shorter than one window keeps counting; a window starting more than a window ahead came
       // from a clock glitch that was later corrected and must not lock the key for the glitch's duration.
       if(!value||value.end<=now||value.end>now+2*windowMs)value={count:0,end:now+windowMs};
-      if(!Number.isSafeInteger(value.count)||value.count<0||value.count+units>limit)return false;value.count+=units;await tx.put('window',value);await tx.setAlarm(value.end);return true;
+      if(!Number.isSafeInteger(value.count)||value.count<0||value.count+units>limit)return false;if(peek)return true;value.count+=units;await tx.put('window',value);await tx.setAlarm(value.end);return true;
     });
   }
   async alarm(){if(await this.metadata.get('population/census-v1')||await this.metadata.get('population/census-wake')){if(this.config.ACTIVE_POPULATION_CENSUS)try{await this.config.ACTIVE_POPULATION_CENSUS();}catch{await this.metadata.setAlarm(Date.now()+60000);}}if(await this.metadata.get('waitlist/counts'))await this.waitlist.cleanupExpired();await this.metadata.transaction(async tx=>{const window=await tx.get('window');if(window&&window.end<=this.clock())await tx.delete('window');else if(window)await tx.setAlarm(window.end);});}
@@ -184,6 +186,7 @@ function restore(value){if(value&&Object.hasOwn(value,'$bytes'))return Uint8Arra
 
 export class AccountController {
   constructor({metadata,gate,blobs,archives,config,sql,sqlTransaction}){
+    metadata=intentIndexedMetadata(metadata);
     this.flagConfig=config;config=writerConfig(config);
     const work=flagsFor(config).envState('WORK_LIMITS_ENABLED').raw,write=flagsFor(config).envState('STORAGE_WRITE_ENABLED').raw;
     if(work!==undefined&&!['true','false',true,false].includes(work))throw new TypeError('Invalid logical activity admission configuration.');
@@ -209,7 +212,7 @@ export class AccountController {
     this.endpoints=new ContactEndpointService({tokens:this.tokens,linkPolicies:linkPolicyRegistry(config),signer:async({owner,kid})=>{const signer=await this.signingKey(owner);if(signer.kid!==kid)throw new Error('Signing key unavailable');return signer.privateKey;}});
     // Identity-authored link delivery (links §6.1). Cross-account identity lookups run outside the account gate.
     this.delivery=new ContactDeliveryService({store,issuer:config.APP_ORIGIN,allowInsecureLocalhost:config.LOCAL_DEVELOPMENT==='true',maxStoredBytes:1_000_000_000_000,maxStoredMessages:1_000_000,parents:{verify:credential=>this.endpoints.verifyCredential(credential),live:(tx,verified)=>this.endpoints.liveCredential(tx,verified)},intake:(id,tx)=>this.endpoints.intakeOf(id,tx),resolve:localAuthorResolver({issuer:config.APP_ORIGIN,lookup:(subject,kid)=>this.identityKey(subject,kid)}),admissionKey:async()=>{const owner=await this.metadata.get('owner');return this.signingKey(owner);},audience:{admit:(tx,input)=>admitLinkAudience(tx,input)}});
-    this.messages=new MessagingService({store,tokens:this.endpoints,clock:systemClock.now,crypto:{randomUUID:cryptoRandom.uuid,subtle:crypto.subtle,getRandomValues:array=>crypto.getRandomValues(array)},maxStoredBytes:1_000_000_000_000,maxStoredMessages:1_000_000});
+    this.messages=new MessagingService({store,tokens:this.endpoints,clock:systemClock.now,crypto:{randomUUID:cryptoRandom.uuid,subtle:crypto.subtle,getRandomValues:array=>crypto.getRandomValues(array)},maxStoredBytes:1_000_000_000_000,maxStoredMessages:1_000_000,...this.itemIndex?{indexedList:async(owner,options)=>{await this.warm(owner);if(!await this.metadata.get('item-index-ready')||!this.itemIndex.filterIndexesReady())throw new StorageError('temporarily_unavailable','Your inbox index is being upgraded. Try again shortly.',503);return this.itemIndex.page(owner,options,{legacy:true}).items;}}:{}});
     this.notifications=new NotificationService({store,messageAllowed:appNotificationAllowed});
     this.beams=new BeamService({metadata,config,entitlement:owner=>this.billing.entitlement(owner)});this.beamContacts=new BeamContacts({metadata,endpoints:this.endpoints});
     // Account placement of the application engine (docs/architecture/app-engine.md): migrated domains are
@@ -227,7 +230,7 @@ export class AccountController {
     if(!Operation)throw new StorageError('unsupported_method','Unsupported account operation.',400);
     // ORG-0: the trusted adapter's actor is resolved here, inside the gate; powers never come from the caller. No
     // registered operation supports an organization entity yet, so only a person acting as itself gets through.
-    const actor=await accountActor({owner,requested,Operation,issuer:this.config.APP_ORIGIN,organization:()=>this.metadata.get(ORG_RECORD)});
+    const actor=await accountActor({owner,requested,Operation,issuer:this.config.APP_ORIGIN,organization:principal=>loadOrganization(this.metadata,[principal])});
     await this.warm(owner);if(['activity.list','activity.pending'].includes(operation))recordFlag(this,owner,'ACTIVITY_V2_ENABLED','exposure');const result=await operate(this.engine,new Operation({actor,id,input}));if(operation==='activity.get')recordFlag(this,owner,'ACTIVITY_V2_ENABLED','activity_opened');return result;
   }
   async invoke({method,args}){
@@ -260,7 +263,7 @@ export class AccountController {
         const envelope=await snapshot.json();
         if(envelope.version!==1||envelope.owner!==owner||!Array.isArray(envelope.rows)||envelope.rows.length>2200||envelope.digest!==await archiveDigest(JSON.stringify(envelope.rows)))throw new Error('Account archive integrity check failed');
         const rows=restore(envelope.rows);if(rows.some(row=>!Array.isArray(row)||row.length!==2||typeof row[0]!=='string'||!row[0].startsWith('message/')&&!row[0].startsWith('resource/')||!row[1]||row[1].owner!==owner))throw new Error('Account archive record invalid');
-        await this.metadata.transaction(async tx=>{for(const [k,v]of rows)await tx.put(k,v);await tx.delete('shelved');});
+        await this.metadata.transaction(async tx=>{for(const [k,v]of rows){await tx.put(k,v);if(k.startsWith('message/'))this.itemIndex?.upsert(v);}await tx.delete('shelved');});
       }
       const storedOwner=await this.metadata.get('owner');if(storedOwner!==undefined&&storedOwner!==owner)throw new StorageError('forbidden','Account owner mismatch.',403);await this.ensureBuiltinStorage(owner);await this.migrateItemIndex(owner);
       if(!(await this.messages.collections(owner)).length)await this.messages.createCollection(owner,'Inbox');
@@ -297,6 +300,7 @@ export class AccountController {
     // DX-2: export generation and expiry only when no deletion fence or purge job exists (checked above and again
     // inside every generation transaction). It never runs while fenced, so E6 owns cleanup from the fence on.
     await this.exportAlarm();
+    await this.retentionAlarm();
     await this.appRemovalAlarm();
     if(typeof this.orgsAlarm==='function')await this.orgsAlarm();
     await this.alarmMaintenance();

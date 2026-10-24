@@ -60,13 +60,25 @@ export function parseReference(input,{urlMember='artefact',kind}={}){return guar
 // storedDigests is the already accepted prefix; checking it detects truncation and history rewrites.
 // These checks establish the envelope/profile and cryptographic chain. The provider supplies the kind's
 // existing domain validator as validateBody; this core does not import federation's server-only validators.
-export async function extractVersion(input,version,{id,kind,records=new Map(),storedDigests=[],crypto=globalThis.crypto,validateBody}={}){
+function sameDetachedRecord(envelope,records,i,digest,authenticated){
+ const next=envelope.versions[i+1];if(!next||next.version!==i+2||next.prev!==digest||!authenticated)return false;
+ const received=records.get(versionURL(envelope.id,i+1))??records.get(next.prev);if(received===undefined)return false;
+ try{return jcs(parseVersionRecord(received),{maxDepth:36})===jcs(parseVersionRecord(authenticated),{maxDepth:36});}catch{return false;}
+}
+export async function extractVersion(input,version,{id,kind,records=new Map(),storedDigests=[],authenticatedPrefix,crypto=globalThis.crypto,validateBody}={}){
  const envelope=parseEnvelope(input,{id});if(!positive(version))fail();if(kind!==undefined&&kind!==envelope.kind)fail();
  if(envelope.versions.length<storedDigests.length)fail('artefact_history_rewritten');
  if(version>envelope.versions.length)fail('artefact_unavailable');const digests=[],verified=[];
  for(let i=0;i<Math.max(version,storedDigests.length);i++){
   try{
-  const e=envelope.versions[i];if(!exact(e,['version','prev'],['body'])||e.version!==i+1||i===0&&e.prev!==null||i>0&&e.prev!==digests[i-1])fail(i<storedDigests.length?'artefact_history_rewritten':'artefact_invalid');
+  const e=envelope.versions[i];
+  // A provider may reuse its detached, previously authenticated copy. Compare complete entries,
+  // including bodies, before skipping cryptography; any changed prefix takes the normal verifier.
+  // A body-less entry is only bound by the following entry's prev and a supplied record, so it is reused only when
+  // that binding and the supplied record match the authenticated copy; otherwise the cold verifier decides, keeping
+  // warm and cold outcomes (and recorded faults) identical.
+  if(authenticatedPrefix?.digests[i]===storedDigests[i]&&storedDigests[i]!==undefined&&authenticatedPrefix.envelope.id===envelope.id&&authenticatedPrefix.envelope.kind===envelope.kind&&jcs(e)===jcs(authenticatedPrefix.envelope.versions[i])&&(Object.hasOwn(e,'body')||sameDetachedRecord(envelope,records,i,storedDigests[i],authenticatedPrefix.records[i]))){digests.push(storedDigests[i]);verified.push(authenticatedPrefix.records[i]);continue;}
+  if(!exact(e,['version','prev'],['body'])||e.version!==i+1||i===0&&e.prev!==null||i>0&&e.prev!==digests[i-1])fail(i<storedDigests.length?'artefact_history_rewritten':'artefact_invalid');
   let record;
   if(Object.hasOwn(e,'body'))record=versionRecord(envelope,e);
   else{

@@ -57,10 +57,14 @@ test('an allowlisted foreign member: a miss fails uniformly with no request-path
   assert.equal(response.token_type, 'DPoP'); assert.deepEqual(response.bindle_member, { entity: AUD, id: m.id }); assert.equal(w.second.calls.length, calls);
   const sig = (await w.second.person(CAROL)).keys.find(k => k.use === 'sig' && k.state === 'active');
   assert.equal(w.lastProvenance.value.kid, sig.kid); assert.deepEqual(w.lastProvenance.value.publicKey, sig.jwk); assert.equal(w.lastProvenance.value.authentication, 'member-certificate');
-  // A non-member naming the same issuer never schedules a fetch.
+  // F-07 (keeping LM1's uniform cost): a non-member naming the same issuer is enqueued exactly like a member would be
+  // (the enqueue depends on the cache, never on membership), so one bounded background fetch of its document happens;
+  // it is still refused, and a fresh cache row means no further fetch.
   const other = await holder(); await w.second.person(DAVE);
   await assert.rejects(w.token(await w.second.certify({ sub: DAVE, aud: AUD, client: ERP, holder: other }), other), { code: 'invalid_grant' });
-  w.clock.advance(10000); assert.equal((await w.refresh()).done, 0); assert.equal(w.second.calls.length, calls);
+  w.clock.advance(10000); assert.equal((await w.refresh()).done, 1); const fetched = w.second.calls.slice(calls).map(u => new URL(u).pathname); assert.equal(fetched.at(-1), `/people/${DAVE}/identity.json`); assert.ok(fetched.length <= 2);
+  await assert.rejects(w.token(await w.second.certify({ sub: DAVE, aud: AUD, client: ERP, holder: other }), other), { code: 'invalid_grant' });
+  w.clock.advance(10000); assert.equal((await w.refresh()).done, 0); assert.equal(w.second.calls.length, calls + fetched.length);
   // The kill switch takes effect at once.
   w.flags.foreign = false; await assert.rejects(w.token(await w.second.certify({ sub: CAROL, aud: AUD, client: ERP, holder: key }), key), { code: 'invalid_grant' });
 });

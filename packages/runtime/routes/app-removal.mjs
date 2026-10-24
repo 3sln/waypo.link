@@ -12,6 +12,11 @@ const routed=id=>typeof id==='string'&&/^([a-f0-9-]{36})\.[a-f0-9-]{36}$/.test(i
 export const allowedMethods=path=>path===ROOT?['GET']:path===REMOVAL_RETURN?['GET']:path===REMOVAL_COMPLETE?['POST']:path.startsWith(ROOT+'/')&&actions.has(path.slice(ROOT.length+1))?['POST']:null;
 export const admission={exempt:path=>allowedMethods(path)!==null};
 async function admit(env,source){try{const secret=env.SESSION_COOKIE_KEY??env.KEY_ENCRYPTION_KEY;if(typeof secret!=='string'||!secret)return false;return await consume(env,'app-removal:'+await pseudonym(source,secret),60000,30);}catch{return false;}}
+// Wargame F2: the failure budget counts only failed verifications of a removal that matched a local, open,
+// back-channel removal for that client. It is keyed by the removal (which names its owner) and the client, so an
+// attacker who opens their own removal of the same app spends only their own budget (review follow-up 1). An
+// unverified `iss` alone never spends it, and a success never charges it. The pre-verification gate is a peek.
+async function removalFailures(env,removal,clientId,{peek=false}={}){try{const secret=env.SESSION_COOKIE_KEY??env.KEY_ENCRYPTION_KEY;if(typeof secret!=='string'||!secret)return false;return await env.ABUSE.consume('app-removal:removal-failure:'+await pseudonym(removal+'\n'+clientId,secret),{windowMs:60000,limit:30,...peek?{peek:true}:{}});}catch{return false;}}
 const humanReturn=request=>{const params=new URL(request.url).searchParams,owner=routed(params.get('removal'));return new Response(null,{status:303,headers:{Location:'/console?'+(owner?'account='+owner+'&':'')+'removal_return='+encodeURIComponent(params.toString()),'Cache-Control':'no-store','Referrer-Policy':'no-referrer'}});};
 export const stages={
  async public({request,env,path}){
@@ -21,8 +26,11 @@ export const stages={
   let raw;try{raw=new TextDecoder('utf-8',{fatal:true}).decode(await bytesOf(request,8192));}catch{return json({error:'invalid_request'},400);}
   const p=new URLSearchParams(raw),parsed=parseRemovalReturn(p,{backChannel:true});if(!parsed||p.get('client_assertion_type')!=='urn:ietf:params:oauth:client-assertion-type:jwt-bearer'||!p.get('client_assertion'))return json({error:'invalid_request'},400);
   const claims=jwsPart(p.get('client_assertion'),1),removal=claims?.bindle_removal,owner=routed(removal),clientId=claims?.iss;
-  if(!await admit(env,'ip:'+(request.headers.get('CF-Connecting-IP')??'unknown'))||typeof clientId!=='string'||!await admit(env,'client:'+clientId)||!owner)return accepted();
-  try{const object=accountHandle(env,owner),local=await object.appRemovalAdmission(owner,removal);if(!local||local.clientId!==clientId||parsed.removal&&parsed.removal!==removal)return accepted();await env.FEDERATION_AUTHORITY.removalVerifyAssertion({owner,clientId,removal,assertion:p.get('client_assertion')});await object.appRemovalComplete(owner,clientId,{removal,outcome:parsed.outcome,...parsed.result?{result:parsed.result}:{}});}catch{/* Uniform accepted response, including unknown subjects and invalid credentials. */}return accepted();
+  if(!await admit(env,'ip:'+(request.headers.get('CF-Connecting-IP')??'unknown'))||typeof clientId!=='string'||!owner)return accepted();
+  try{const object=accountHandle(env,owner),local=await object.appRemovalAdmission(owner,removal);if(!local||local.clientId!==clientId||parsed.removal&&parsed.removal!==removal)return accepted();
+   if(!await removalFailures(env,removal,clientId,{peek:true}))return accepted();
+   try{await env.FEDERATION_AUTHORITY.removalVerifyAssertion({owner,clientId,removal,assertion:p.get('client_assertion')});}catch{await removalFailures(env,removal,clientId);return accepted();}
+   await object.appRemovalComplete(owner,clientId,{removal,outcome:parsed.outcome,...parsed.result?{result:parsed.result}:{}});}catch{/* Uniform accepted response, including unknown subjects and invalid credentials. */}return accepted();
  },
  async beforeActivity({request,env,path,object,id,context,owner}){
   if(!allowedMethods(path)||path===REMOVAL_COMPLETE)return;

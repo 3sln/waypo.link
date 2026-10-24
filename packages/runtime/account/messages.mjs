@@ -6,11 +6,14 @@ import {messageWithPresentation,messagePresentation} from '../message-presentati
 import {key} from '../../messaging/store.mjs';
 import {StorageError} from '../../storage/policy.mjs';
 import {storageState} from '../storage-quota.mjs';
+import {armAlarm} from '../account-deletion.mjs';
 import {enqueueSearchEvent,searchRevisionKey,planBudget} from '../../search/index.mjs';
 
 export const methods={
   async migrateItemIndex(owner){
     if(!this.itemIndex)return;
+    // Filter indexes over an existing catalog build in bounded steps; reads answer 503 until all exist.
+    if(!this.itemIndex.buildFilterIndexes())await armAlarm(this.metadata,Date.now()+1000);
     const prefix=key('message',owner);
     // Catalog progress never depends on extraction capacity. A full search
     // queue must not roll back the owner's authoritative inbox browse index.
@@ -49,7 +52,7 @@ export const methods={
       if(rows.size||!await tx.get('search-backfill-ready'))await tx.setAlarm(Date.now()+60000);
     });
   },
-  async messagePage(owner,options={}){await this.warm(owner);if(!this.itemIndex)return {items:await this.messages.list(owner,options),cursor:null};if(!await this.metadata.get('item-index-ready'))throw new StorageError('temporarily_unavailable','Your inbox index is being upgraded. Try again shortly.',503);return this.itemIndex.page(owner,options);},
+  async messagePage(owner,options={}){await this.warm(owner);if(!this.itemIndex)return {items:await this.messages.list(owner,options),cursor:null};if(!await this.metadata.get('item-index-ready')||!this.itemIndex.filterIndexesReady())throw new StorageError('temporarily_unavailable','Your inbox index is being upgraded. Try again shortly.',503);return this.itemIndex.page(owner,options);},
   async collections(owner,name){await this.warm(owner);return name===undefined?this.messages.collections(owner):this.messages.createCollection(owner,name);},
   async content(owner,id){const record=await this.messages.read(owner,id);if(record.blobRef){const blob=await this.blobs.get(record.blobRef);if(!blob)throw Object.assign(new Error('Message content is temporarily unavailable.'),{code:'temporarily_unavailable',status:503});return {...record,bytes:new Uint8Array(await blob.arrayBuffer())};}return record;},
   async message(owner,id,options){return messageWithPresentation(this,owner,id,options);},

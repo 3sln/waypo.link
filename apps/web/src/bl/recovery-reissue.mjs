@@ -23,7 +23,9 @@ class ReissueFlow extends OwnerFlow {static deps={state:{write:true},api:{},brow
 export class BeginRecoveryReissue extends ReissueFlow {
  async perform(r,ctx,detail){
   if(detail.values?.acknowledged!=='on')throw Error('Confirm that your current recovery file will stop working.');
-  const result=await r.api.request('/api/auth/recovery/reissue/begin',{acknowledged:true});
+  // rotation_unavailable: the identity key could not be rotated (a moved identity's published key history is full), so
+  // a new file would hold the same key. Nothing was staged; the current file keeps working.
+  const result=await r.api.request('/api/auth/recovery/reissue/begin',{acknowledged:true}).catch(error=>{if(error?.code==='rotation_unavailable')throw Error('Your identity key cannot be replaced right now, so a new recovery file would not protect you. Your current recovery file keeps working. Contact support if you think it was exposed.');throw error;});
   if(typeof result?.content!=='string'||result.content.length>65536||!TOKEN.test(result.recoveryToken??'')||!FILE.test(result.fileName??''))throw Error('The service returned an invalid recovery file.');
   r.browser.storeSecret('reissue',{content:result.content,recoveryToken:result.recoveryToken,fileName:result.fileName});r.browser.storeSecret('reissueEncrypted',null);
   const t=createLocalization({locale:snapshot(r).locale}).t;

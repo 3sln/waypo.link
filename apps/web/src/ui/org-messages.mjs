@@ -1,0 +1,97 @@
+// Organization console messages (F-8). Every error and notice code the console can show maps to an English source
+// string translated through the shared catalogue (packages/i18n/catalogues.mjs); unknown codes fall back to a generic
+// message, so a raw code never reaches the person.
+import {createLocalization} from '../shared/i18n.mjs';
+export const ORG_ERRORS=Object.freeze({
+ not_found:'This organization is not available to you.',
+ invalid_organization:'This organization is not available to you.',
+ organization_deletion_pending:'This organization is scheduled for deletion, so this change is paused.',
+ organization_deletion_due:'This organization is being deleted, so this change is not possible.',
+ review_required:'Review and confirm before continuing.',
+ reload_required:'Reload before making another change.',
+ connection_changed:'This app connection changed. Reload and try again.',
+ stale_consent:'These preferences changed. Reload and review them again.',
+ invalid_preferences:'Check the preference values.',
+ organization_read_only:'The organization’s payment has lapsed, so it is read-only. Leaving, removing members, decisions and export stay available.',
+ tight_verification_required:'Confirm with a passkey or password enrolled more than 7 days ago. After a recent security change, wait until the 30-day cooling period ends.',
+ recipient_unavailable:'No active 3sln.me person account has that handle.',
+ billing_unavailable:'Organization billing is not available on this host.',
+ billing_provider_unavailable:'The payment provider is not responding. Try again in a few minutes.',
+ disclosure_changed:'The plan, price or offer changed. Review it again.',
+ transfer_pending:'An ownership transfer is already pending.',
+ transfer_changed:'The ownership transfer changed. Reload and review it again.',
+ transfer_lapsed:'This ownership offer has lapsed.',
+ transfer_not_withdrawable:'This ownership transfer can no longer be withdrawn.',
+ claim_pending:'A billing-lapse claim is pending.',
+ claim_in_progress:'A billing-lapse claim is already in progress.',
+ claim_limit:'Too many billing-lapse claims were started. Try again later.',
+ claim_unavailable:'A billing-lapse claim is not available for this organization right now.',
+ subscription_exists:'This organization already has an active subscription.',
+ organization_payment_required:'Creating an organization needs a paid plan, which is not available for your account yet.',
+ organization_limit:'Your account has reached the number of organizations it can create.',
+ organization_unavailable:'Organizations are temporarily unavailable. Try again.',
+ organization_stale:'This organization changed. Reload and try again.',
+ organization_conflict:'Someone else changed this organization at the same time. Reload and try again.',
+ idempotency_conflict:'This request was already sent with different details. Reload and try again.',
+ invalid_name:'Enter an organization name of up to 80 characters.',
+ invalid_label:'Choose one of the listed kinds.',
+ invalid_plan:'Choose one of the listed plans.',
+ invalid_reason:'Check the reason: it must be short plain text.',
+ invalid_decision:'This decision is no longer available. Reload and try again.',
+ invitation_invalid:'This invitation can’t be used. It may have expired, been used already, or be meant for another account. Ask the organization for a new link.',
+ invitation_unrecognized:'That doesn’t look like an invitation. Paste the full invitation link, or the invitation code from it.',
+ invalid_invitation:'The invitation details aren’t valid. Check who it is for, the access and the expiry.',
+ invitation_limit:'This organization has too many open invitations. Wait for some to expire and try again.',
+ invitee_unrecognized:'Enter a 3sln.me handle, like @alex, or a full identity link.',
+ invitee_unavailable:'No active 3sln.me person account has that handle.',
+ invitee_required:'Find the account this invitation is for, or choose “Anyone with the link”.',
+ bound_invitation_required:'The admin power can only be given through an invitation for a specific account.',
+ invalid_grant:'Check the access: a resource needs its address, a contract and at least one method, and an end date must be in the future.',
+ invalid_grants:'Check the access: a resource needs its address, a contract and at least one method, and an end date must be in the future.',
+ self_widening:'You can’t widen your own access. Ask another admin or the owner.',
+ last_admin:'The organization needs at least one admin. Give someone else the admin power first.',
+ owner_must_be_member:'The owner of record must stay a member of the organization.',
+ request_limit:'Too many access changes are waiting. Resolve some before requesting more.',
+ objection_limit:'Too many objections were recorded. Try again later.',
+ mute_limit:'Too many requests are muted. Unmute some first.',
+ context_limit:'This browser has too many organization contexts open. Reload and try again.',
+ authority_held:'Your admin powers are on hold after a recent security change on your account.',
+ billing_held:'Billing for this organization is on hold. Try again later.',
+ invalid_handle:'Enter a complete 3sln.me handle.',
+ invalid_request:'Some of the details aren’t valid. Check them and try again.',
+ recovery_required:'Finish saving the organization recovery file first.',
+ recovery_mismatch:'That passphrase doesn’t open the downloaded file. Check your copy and try again.',
+ recovery_reissue_unavailable:'Only the organization’s owner of record can get a new recovery file. Ask them to issue one.',
+ recovery_rotation_pending:'The previous owner’s file is still being invalidated. Try again in a minute.',
+ organization_changed:'Your account or organization changed while this was in progress. Check the page and try again.',
+ organization_required:'Choose an organization first.',
+ saved_stale:'The change was saved, but the page could not refresh. Reload to see the latest.',
+ reauthentication_required:'Confirm it’s you to continue.',
+ copy_failed:'The link could not be copied. Select it and copy it yourself.',
+ rate_limited:'Too many attempts. Wait a minute and try again.',
+ forbidden:'You don’t have permission to do that in this organization.',
+ unauthorized:'Your session needs to be refreshed. Reload the page and sign in again if asked.',
+ csrf:'Your session needs to be refreshed. Reload the page and sign in again if asked.',
+});
+export const ORG_FALLBACK='Something went wrong and the change was not made. Try again in a moment.';
+export const ORG_NOTICES=Object.freeze({
+ saved:'Saved.',
+ joined:'You joined the organization.',
+ recovery_saved:'Organization recovery file saved.',
+ recovery_dismissed:'Marked as saved. Keep the file and its passphrase somewhere safe and offline.',
+ offer_declined:'Ownership offer declined.',
+ transfer_checkout_returned:'Back from checkout. The transfer updates once the payment is verified.',
+ billing_checkout_returned:'Back from checkout. Billing updates once the payment is verified.',
+ invitation_created:'Invitation link created. Share it privately.',
+ copied:'Invitation link copied.',
+ invitation_revoked:'Invitation link withdrawn. It no longer works.',
+});
+export const ORG_NOTICE_FALLBACK='Done.';
+const localizations=new Map();
+const localization=locale=>{const key=locale==='es'?'es':'en';if(!localizations.has(key))localizations.set(key,createLocalization({locale:key}));return localizations.get(key);};
+/** The translated message for an error code (or a generic fallback). */
+export const orgError=(locale,code)=>localization(locale).t(ORG_ERRORS[code]??ORG_FALLBACK);
+/** The translated message for a notice code (or a generic fallback). */
+export const orgNotice=(locale,code)=>localization(locale).t(ORG_NOTICES[code]??ORG_NOTICE_FALLBACK);
+/** Shell text owned by the organization console (signed-out invitation hint). */
+export const ORG_SIGNED_OUT_INVITATION='You’ve been invited to join an organization. Sign in or create an account, and you’ll come back to the invitation.';

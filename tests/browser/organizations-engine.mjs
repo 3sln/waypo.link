@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {Provider} from '../../vendor/ngin/index.js';
 import {createClientEngine,fakeBrowser,turn} from '../helpers/client-engine.mjs';
 import {forEachSeed,createScheduler} from '../helpers/chaos.mjs';
-import {OrganizationsIntent,OrganizationsView,organizationsModel,organizationsRequestDecisions,invitationInput,preferenceValues} from '../../apps/web/src/bl/organizations.mjs';
+import {OrganizationsIntent,OrganizationsView,organizationsModel,organizationsRequestDecisions,invitationInput,inviteeInput,grantsFromForm,preferenceValues} from '../../apps/web/src/bl/organizations.mjs';
 import {createOrganizationsPort} from '../../apps/web/src/providers/organizations.mjs';
 import {ConfirmOwner} from '../../apps/web/src/bl/step-up.mjs';
 import {accountReset,clearBrowserAccount} from '../../apps/web/src/bl/account-context.mjs';
@@ -32,7 +32,7 @@ test('account teardown erases organization recovery secrets and model',()=>{cons
 
 test('targeted feature decisions override config and malformed grant JSON never reaches a provider',async t=>{const off=await client(t,{state:{data:{features:{organizationsEnabled:false}}}});await off.act('reload');assert.equal(off.calls.length,0);const c=await client(t);await c.act('grants',{id:'member',values:{confirm:true,grants:'not JSON'}});assert.equal(c.calls.length,0);assert.equal((await c.snapshot()).organizationsConsole.error,'invalid_request');await c.act('invite',{values:{grants:'[]',invitee:'{"iss":"https://provider.example","sub":"00000000-0000-4000-8000-000000000002"}'}});assert.deepEqual(c.calls[0].v.grants,[]);assert.equal(c.calls[0].v.invitee.iss,'https://provider.example');});
 
-test('invitation entry stores only bounded hints and never reads member or organization data',async t=>{const c=await client(t);await c.act('entry',{org,invitation:'a'.repeat(64)});const s=await c.snapshot();assert.equal(s.view,'organizations');assert.deepEqual(s.organizationsConsole.entry,{org,invitation:'a'.repeat(64)});assert.equal(s.organizationsConsole.context,null);assert.deepEqual(s.organizationsConsole.members,[]);assert.equal(c.calls.length,0);await c.act('entry',{org:'../account',invitation:'token'});assert.equal((await c.snapshot()).organizationsConsole.error,'invalid_request');await c.act('entry',{org,invitation:'a'.repeat(8193)});assert.equal((await c.snapshot()).organizationsConsole.error,'invalid_request');await c.act('entry',{org,invitation:'token<script>'});assert.equal((await c.snapshot()).organizationsConsole.error,'invalid_request');});
+test('invitation entry stores only bounded hints and reads nothing but the invitation preview',async t=>{const c=await client(t,{port:{call:async a=>{if(a==='invitation-preview')throw Object.assign(Error('Not found.'),{status:404,code:'not_found'});return reply(a);}}});await c.act('entry',{org,invitation:'a'.repeat(64)});const s=await c.snapshot();assert.equal(s.view,'organizations');assert.deepEqual(s.organizationsConsole.entry,{org,invitation:'a'.repeat(64),preview:{invalid:true}});assert.equal(s.organizationsConsole.context,null);assert.deepEqual(s.organizationsConsole.members,[]);assert.deepEqual(c.calls,[{a:'invitation-preview',v:{invitation:'a'.repeat(64)},org}]);c.calls.length=0;await c.act('entry',{org:'../account',invitation:'token'});assert.equal((await c.snapshot()).organizationsConsole.error,'invalid_request');await c.act('entry',{org,invitation:'a'.repeat(8193)});assert.equal((await c.snapshot()).organizationsConsole.error,'invalid_request');await c.act('entry',{org,invitation:'token<script>'});assert.equal((await c.snapshot()).organizationsConsole.error,'invalid_request');});
 
 test('invitation handoff survives the organization details refresh',async t=>{const invitation={invitation:'token',url:'https://provider.example/orgs/'+org+'/invitation?bindle_meta=signed'},c=await client(t,{port:{call:async a=>a==='invite'?invitation:a==='get'?organization:{members:[],requests:[]}}});await c.act('invite',{values:{grants:[]}});assert.deepEqual((await c.snapshot()).organizationsConsole.invitation,invitation);});
 
@@ -53,7 +53,7 @@ test('preference saves keep stored resource values, convert scalar fields, and s
  await c.act('preference',{fragment:preference.fragment,values:{confirm:true,'field:name':'New','field:count':'','field:on':true,'field:files':'https://evil.example/r','field:extra':'x'}});
  assert.deepEqual(c.calls.find(x=>x.a==='preference').v,{fragment:preference.fragment,values:{name:'New',on:true,files:'https://provider.example/r/1'},expectedRevision:'r1'});
  await c.act('preference',{fragment:preference.fragment,values:{confirm:true,'field:count':'1.5'}});assert.equal((await c.snapshot()).organizationsConsole.error,'invalid_preferences');assert.throws(()=>preferenceValues(preference,{name:''}),{code:'invalid_preferences'});});
-test('an invitation pasted as a link supplies only routing hints; malformed input never reaches the provider',async t=>{const token='e30.'+Buffer.from('{"jti":"x"}').toString('base64url')+'.sig',c=await client(t,{state:{organizationsConsole:null}});assert.deepEqual(invitationInput('https://provider.example/orgs/'+org+'/invitation?bindle_meta='+token),{org,invitation:token});assert.throws(()=>invitationInput('https://provider.example/console'),{code:'invalid_request'});
+test('an invitation pasted as a link supplies only routing hints; malformed input never reaches the provider',async t=>{const token='e30.'+Buffer.from('{"jti":"x"}').toString('base64url')+'.sig',c=await client(t,{state:{organizationsConsole:null}});assert.deepEqual(invitationInput('https://provider.example/orgs/'+org+'/invitation?bindle_meta='+token),{org,invitation:token});assert.throws(()=>invitationInput('https://provider.example/console'),{code:'invitation_unrecognized'});
  await c.act('accept',{values:{invitation:'https://provider.example/orgs/'+org+'/invitation?bindle_meta='+token,confirm:true}});assert.deepEqual(c.calls[0],{a:'accept',v:{invitation:token},org});assert.equal((await c.snapshot()).organizationsConsole.context,org);
  await c.act('accept',{org,values:{invitation:'bad token!',confirm:true}});assert.equal(c.calls.filter(x=>x.a==='accept').length,1);});
 test('HTTP port maps the ORG-5 routes and the cancel-deletion method',async()=>{const calls=[],api={get:async p=>calls.push(['GET',p]),request:async(p,b,m='POST')=>calls.push([m,p,b])},port=createOrganizationsPort();for(const a of ['membership','requests','connections','preferences'])await port.call(a,undefined,{api,org});await port.call('connection',{operation:'suspend'},{api,org});await port.call('preference',{fragment:'f'},{api,org});await port.call('cancel-deletion',undefined,{api,org});
@@ -62,3 +62,81 @@ test('HTTP port maps the ORG-5 routes and the cancel-deletion method',async()=>{
 test('seeded races between context switches and admin surface loads never publish late connections or preferences',async t=>{await forEachSeed(20,async random=>{const scheduler=createScheduler(random),port=scheduler.wrap({async call(a){return a==='connections'?{connections:[{id:'late',state:'active',generation:1}]}:a==='preferences'?{preferences:[{fragment:'late'}]}:reply(a);}},'org'),c=await client(t,{port:{call:port.call}}),other='00000000-0000-4000-8000-000000000009';
  await scheduler.run([()=>c.act('select',{org}),()=>c.act('select',{org:random.chance(0.5)?other:null})]);const m=(await c.snapshot()).organizationsConsole;
  if(m.context!==org){assert.equal(m.connections.some(x=>x.id==='late')&&m.context!==other,false);if(m.context===null){assert.deepEqual(m.connections,[]);assert.deepEqual(m.preferences,[]);}}});});
+// 2026-10-23 organization console UX pass (provisional): recovery-file persistence and leave guard, the console's own
+// address, invitation join and paste, form-built invitations and grants, and creation eligibility.
+const memoryUnsaved=()=>{const rows=new Map();return {rows,list:o=>[...(rows.get(o)??[])],add:(o,id)=>rows.set(o,[...new Set([...(rows.get(o)??[]),id])]),remove:(o,id)=>rows.set(o,(rows.get(o)??[]).filter(x=>x!==id))};};
+const createdReply=a=>a==='create'?{organization,recoveryFile:{content:JSON.stringify({recoveryToken:'token'}),recoveryToken:'token',fileName:'org.json'}}:a==='recovery-file'?{recoveryFile:{content:JSON.stringify({recoveryToken:'token'}),recoveryToken:'token',fileName:'org.json'}}:reply(a);
+test('F-1: an unsaved organization recovery file is remembered by id only, guards leaving, and can be replaced',async t=>{
+ const unsaved=memoryUnsaved(),c=await client(t,{state:{organizationsConsole:null},port:{unsaved,call:async a=>createdReply(a)}});
+ await c.act('create',{values:{name:'Example',label:'team'}});let m=(await c.snapshot()).organizationsConsole;assert.ok(m.recovery);assert.deepEqual(unsaved.list('person'),[org]);assert.deepEqual(m.unsavedRecovery,[org]);
+ assert.equal(JSON.stringify([...unsaved.rows]).includes(m.recovery.passphrase),false,'the marker never holds the passphrase');
+ // The guard records only primitive intent fields, and only while the recovery step is open.
+ await c.act('guard',{pending:{kind:'navigate',view:'inbox',form:{},nested:{x:1}}});assert.deepEqual((await c.snapshot()).organizationsConsole.leaveGuard,{kind:'navigate',view:'inbox'});
+ await c.act('guard-cancel');assert.equal((await c.snapshot()).organizationsConsole.leaveGuard,null);
+ // Abandoning drops the in-memory copy but keeps the persisted marker.
+ await c.act('abandon-recovery');m=(await c.snapshot()).organizationsConsole;assert.equal(m.recovery,null);assert.equal(c.browser.secret('organizationRecovery:person:ctx'),null);assert.deepEqual(unsaved.list('person'),[org]);
+ await c.act('guard',{pending:{kind:'navigate',view:'inbox'}});assert.equal((await c.snapshot()).organizationsConsole.leaveGuard,null,'no guard without an open recovery step');
+ // A fresh file is the owner's reissue; it is offered only for a marked organization.
+ await c.act('regenerate-recovery',{org:'00000000-0000-4000-8000-000000000009'});assert.equal(c.calls.filter(x=>x.a==='recovery-file').length,0);
+ await c.act('regenerate-recovery',{org});assert.deepEqual(c.calls.filter(x=>x.a==='recovery-file').map(x=>x.org),[org]);m=(await c.snapshot()).organizationsConsole;assert.equal(m.recovery.stage,'download');
+ await c.act('download-recovery');await c.act('verify-recovery',{values:{passphrase:'f'.repeat(64)}});await c.act('confirm-recovery',{values:{confirm:true}});m=(await c.snapshot()).organizationsConsole;
+ assert.equal(m.recovery,null);assert.deepEqual(unsaved.list('person'),[]);assert.equal(m.notice,'recovery_saved');assert.equal(m.organization?.id,org,'the organization reloads after saving');
+ // Marking as saved needs explicit confirmation.
+ unsaved.add('person',org);await c.act('dismiss-recovery',{org,values:{}});assert.deepEqual(unsaved.list('person'),[org]);await c.act('dismiss-recovery',{org,values:{confirm:true}});assert.deepEqual(unsaved.list('person'),[]);
+});
+test('F-1: a refused reissue explains that only the owner of record can issue a file',async t=>{const unsaved=memoryUnsaved();unsaved.add('person',org);const c=await client(t,{port:{unsaved,call:async a=>{if(a==='recovery-file')throw Object.assign(Error('nf'),{status:404,code:'not_found'});return reply(a);}}});await c.act('regenerate-recovery',{org});const m=(await c.snapshot()).organizationsConsole;assert.equal(m.error,'recovery_reissue_unavailable');assert.ok(!m.recovery);assert.deepEqual(unsaved.list('person'),[org]);});
+test('F-2: open shows the organization view and loads the addressed context; personal clears it',async t=>{const c=await client(t,{state:{organizationsConsole:null,view:'inbox'}});await c.act('open',{org});let s=await c.snapshot();assert.equal(s.view,'organizations');assert.equal(s.organizationsConsole.context,org);assert.ok(c.calls.some(x=>x.a==='membership'&&x.org===org));await c.act('open',{org:null});s=await c.snapshot();assert.equal(s.organizationsConsole.context,null);assert.equal(s.organizationsConsole.organization,null);await c.act('open',{org:'not-a-uuid'});assert.equal((await c.snapshot()).organizationsConsole.error,'not_found');});
+test('F-3: a pasted bare token names its organization; the join screen accepts the entry token and forgets it',async t=>{
+ const claims={aud:'https://provider.example/identity/'+org,exp:2000000000,jti:'i1',invitee:{iss:'https://provider.example',sub:'person'}},token='e30.'+Buffer.from(JSON.stringify(claims)).toString('base64url')+'.sig';
+ assert.deepEqual(invitationInput(token),{org,invitation:token});assert.throws(()=>invitationInput('hello there'),{code:'invitation_unrecognized'});
+ let forgotten=false;const c=await client(t,{state:{organizationsConsole:null},port:{invitation:{get:()=>null,set:v=>{if(v===null)forgotten=true;}}}});
+ await c.act('entry',{org,invitation:token});const entry=(await c.snapshot()).organizationsConsole.entry;assert.equal(entry.expiresAt,2000000000000);assert.deepEqual(entry.invitee,{iss:'https://provider.example',sub:'person'});
+ await c.act('entry',{org:'00000000-0000-4000-8000-000000000009',invitation:token});assert.equal((await c.snapshot()).organizationsConsole.error,'invalid_request','a link whose path and token disagree is refused');
+ await c.act('entry',{org,invitation:token});await c.act('accept',{org,values:{confirm:true}});assert.deepEqual(c.calls.find(x=>x.a==='accept'),{a:'accept',v:{invitation:token},org});assert.equal(forgotten,true);const s=await c.snapshot();assert.equal(s.organizationsConsole.entry,null);assert.equal(s.organizationInvitationPending,false);
+});
+test('F-4: invitations and grants come from form fields over the grant vocabulary',async t=>{
+ const c=await client(t,{port:{call:async(a,v)=>a==='invitee'?{invitee:{iss:'https://provider.example',sub:'00000000-0000-4000-8000-000000000002',handle:v.handle}}:a==='invite'?{invitation:'inv',url:'https://provider.example/orgs/'+org+'/invitation?bindle_meta=x',expiresAt:1}:a==='members'?{members:[{id:'member',principal:{iss:'https://provider.example',sub:'x'},grants:[{power:'admin'},{resource:'https://r.example/1',methods:{'https://c.example/v1':['get']}}]}],requests:[]}:reply(a)}});
+ assert.throws(()=>inviteeInput('not a handle!'),{code:'invitee_unrecognized'});assert.deepEqual(inviteeInput('https://other.example/identity/'+org),{identity:{iss:'https://other.example',sub:org}});
+ // An admin grant needs a bound invitee.
+ await c.act('invite',{values:{audience:'anyone',admin:true}});assert.equal(c.calls.filter(x=>x.a==='invite').length,0);assert.equal((await c.snapshot()).organizationsConsole.error,'bound_invitation_required');
+ await c.act('invitee-resolve',{values:{invitee:'@alex'}});assert.deepEqual(c.calls.find(x=>x.a==='invitee').v,{handle:'alex'});assert.equal((await c.snapshot()).organizationsConsole.inviteeDraft.handle,'alex');
+ await c.act('invite',{values:{audience:'bound',admin:true,resource:'https://r.example/2',contract:'https://c.example/v1',methods:'get, list',expiresInDays:'7'}});const sent=c.calls.find(x=>x.a==='invite').v;
+ assert.deepEqual(sent.invitee,{iss:'https://provider.example',sub:'00000000-0000-4000-8000-000000000002'});assert.deepEqual(sent.grants,[{power:'admin'},{resource:'https://r.example/2',methods:{'https://c.example/v1':['get','list']}}]);assert.ok(sent.expiresAt>Date.now()+6*86400000&&sent.expiresAt<Date.now()+8*86400000);
+ assert.equal((await c.snapshot()).organizationsConsole.invitation.url.includes('/invitation?'),true);
+ await c.act('invite',{values:{audience:'anyone',resource:'https://r.example/2',methods:'get'}});assert.equal((await c.snapshot()).organizationsConsole.error,'invalid_grant','an incomplete resource row never reaches the provider');
+ // Member grants: unticked existing grants are dropped, the admin box decides the power.
+ await c.act('select',{org});await c.act('grants',{id:'member',values:{confirm:true,admin:false,'keep:0':true}});assert.deepEqual(c.calls.filter(x=>x.a==='grants').at(-1).v.grants,[{resource:'https://r.example/1',methods:{'https://c.example/v1':['get']}}]);
+ assert.deepEqual(grantsFromForm({admin:true},[{power:'admin',expires_at:5}]),[{power:'admin',expires_at:5}],'an existing admin expiry is kept');
+});
+test('F-12: creation eligibility from the plans route reaches the model without billing',async t=>{const c=await client(t,{port:{call:async a=>a==='plans'?{configured:false,plans:[],creation:'allowlisted'}:reply(a)}});await c.act('reload');assert.equal((await c.snapshot()).organizationsConsole.plans.creation,'allowlisted');});
+
+// Invitation preview and withdrawal (2026-10-23): the join screen names the organization from the server's preview
+// (its own record), and the share view withdraws the link it shows.
+test('the join screen shows the organization\'s own name and kind from the preview; a transient failure shows none',async t=>{
+ const c=await client(t,{port:{call:async(a,v)=>a==='invitation-preview'?{organization:{name:'Acme Robotics',label:'company',handle:'acme'},expiresAt:1,bound:false,member:false}:reply(a)}});
+ await c.act('entry',{org,invitation:'b'.repeat(64)});assert.deepEqual((await c.snapshot()).organizationsConsole.entry.preview,{name:'Acme Robotics',label:'company',handle:'acme'});
+ const flaky=await client(t,{port:{call:async a=>{if(a==='invitation-preview')throw Object.assign(Error('offline'),{code:'timeout'});return reply(a);}}});
+ await flaky.act('entry',{org,invitation:'b'.repeat(64)});const entry=(await flaky.snapshot()).organizationsConsole.entry;assert.equal(entry.preview,undefined);assert.equal((await flaky.snapshot()).organizationsConsole.error,null);
+});
+test('withdrawing the shared invitation calls revoke with its id and clears the share view',async t=>{
+ const invitation={invitation:'c'.repeat(64),type:'org-invitation',invitee:null,expiresAt:2,grants:[]};
+ const c=await client(t,{state:{organizationsConsole:{...model,context:org,invitation}}});
+ await c.act('revoke-invitation');
+ assert.deepEqual(c.calls.find(x=>x.a==='invitation-revoke'),{a:'invitation-revoke',v:{invitation:'c'.repeat(64)},org});
+ const m=(await c.snapshot()).organizationsConsole;assert.equal(m.invitation,null);assert.equal(m.notice,'invitation_revoked');
+ const none=await client(t,{state:{organizationsConsole:{...model,context:org,invitation:null}}});await none.act('revoke-invitation');assert.equal(none.calls.filter(x=>x.a==='invitation-revoke').length,0);
+});
+test('the HTTP port maps the invitation preview and withdrawal routes',async()=>{const calls=[],api={get:async p=>calls.push(['GET',p]),request:async(p,b,m='POST')=>calls.push([m,p,b])},port=createOrganizationsPort();
+ await port.call('invitation-preview',{invitation:'t'},{api,org});await port.call('invitation-revoke',{invitation:'t'},{api,org});
+ assert.deepEqual(calls,[['POST','/api/orgs/'+org+'/invitation-preview',{invitation:'t'}],['POST','/api/orgs/'+org+'/invitation-revoke',{invitation:'t'}]]);
+ assert.deepEqual(allowedMethods('/api/orgs/'+org+'/invitation-preview'),['POST']);assert.deepEqual(allowedMethods('/api/orgs/'+org+'/invitation-revoke'),['POST']);});
+test('the admin member listing follows the server cursors with "Load more", appending each row once',async t=>{
+ const pages={'':{members:[{id:'m1'},{id:'m2'}],next:'c1',requests:[{id:'q1',state:'subject'}],requestsNext:'r1'},c1:{members:[{id:'m2'},{id:'m3'}],next:null,requests:[{id:'q2',state:'subject'}],requestsNext:null}};
+ const c=await client(t,{port:{call:async(a,v)=>a==='members'?pages[v?.after??'']:reply(a)}});
+ await c.act('select',{org});let m=(await c.snapshot()).organizationsConsole;assert.deepEqual(m.members.map(x=>x.id),['m1','m2']);assert.equal(m.membersNext,'c1');
+ await c.act('more-members');m=(await c.snapshot()).organizationsConsole;
+ assert.deepEqual(c.calls.filter(x=>x.a==='members').at(-1).v,{after:'c1',requestsAfter:'r1'});
+ assert.deepEqual(m.members.map(x=>x.id),['m1','m2','m3']);assert.deepEqual(m.adminRequests.map(x=>x.id),['q1','q2']);assert.equal(m.membersNext,null);assert.equal(m.requestsNext,null);
+ const before=c.calls.length;await c.act('more-members');assert.equal(c.calls.length,before,'nothing more to load');
+ const calls=[],api={get:async p=>calls.push(p)};await createOrganizationsPort().call('members',{after:'c 1',requestsAfter:'r1',junk:'x'},{api,org});assert.deepEqual(calls,['/api/orgs/'+org+'/members?after=c+1&requestsAfter=r1']);
+});

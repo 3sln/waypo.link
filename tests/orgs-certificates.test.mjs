@@ -121,13 +121,15 @@ test('a member key cache miss fails uniformly without a request-path read or wri
   const cert = await w.certify(ALICE, o), writes = instrument(o);
   await assert.rejects(w.token(o, cert), { code: 'invalid_grant' });
   assert.equal(o.log.reads, 0, 'no read of the member\'s account on the request path');
-  // Review LM1: nothing is written on the request path for anyone, so the refresh queue is filled by roster discovery.
-  const bob = await w.certify(BOB, o); await assert.rejects(w.token(o, bob), { code: 'invalid_grant' });
-  assert.equal(writes(), 0, 'no request-path store write for a member or a non-member');
+  // Review LM1 / F-07 / follow-up 3: a cache miss only remembers the claimed principal in memory; the bounded enqueue
+  // runs in the background run, so the request path writes nothing for a member or a non-member.
+  const member = writes(), bob = await w.certify(BOB, o); await assert.rejects(w.token(o, bob), { code: 'invalid_grant' });
+  assert.equal(member, 0, 'no request-path write for a member'); assert.equal(writes(), 0, 'nor for a non-member');
+  assert.equal(o.log.reads, 0);
   w.clock.advance(5000);
-  assert.equal((await perform(o.engine, new MemberKeyRefresh({ actor: w.sys(o) }))).done, 1); assert.equal(o.log.reads, 1, 'only the live member is refreshed');
+  assert.equal((await perform(o.engine, new MemberKeyRefresh({ actor: w.sys(o) }))).done, 2); assert.equal(o.log.reads, 2, 'both claimed principals are refreshed in the background');
   assert.ok((await w.token(o, cert)).access_token);
-  assert.equal((await perform(o.engine, new MemberKeyRefresh({ actor: w.sys(o) }))).done, 0); assert.equal(o.log.reads, 1);
+  assert.equal((await perform(o.engine, new MemberKeyRefresh({ actor: w.sys(o) }))).done, 0); assert.equal(o.log.reads, 2);
 });
 
 test('uniform failure (R2-H1): every rejection is the same invalid_grant, with equal verification cost for members and non-members', async () => {
@@ -296,13 +298,14 @@ test('the profile codec rejects every deviation from the exact members and types
 });
 
 // Security review regressions (organizations phase A, findings LM1/F1 and M4/F2).
-test('review LM1 (F1): a forged certificate naming a member does the same request-path writes as a non-member (none)', async () => {
+test('review LM1 (F1): a forged certificate naming a member does the same request-path writes as a non-member', async () => {
   const w = await world(), o = w.org(ORG); o.add(ALICE);
   const genuine = await w.certify(ALICE, o), parsed = parseMemberCertificate(genuine.certificate);
   const forge = async sub => ({ certificate: await jws(parsed.header, { ...parsed.payload, sub, identity: identityOf(sub) }, (await holder()).privateKey), key: genuine.key });
   const writes = instrument(o), counts = {};
   for (const [name, sub, network] of [['nonMember', BOB, 'a'], ['unknown', 'ffffffff-ffff-4fff-8fff-ffffffffffff', 'b'], ['member', ALICE, 'c']]) { await assert.rejects(w.token(o, await forge(sub), { network }), { code: 'invalid_grant' }); counts[name] = writes(); }
-  assert.deepEqual(counts, { nonMember: 0, unknown: 0, member: 0 });
+  // F-07: each claimed principal with a missing cache row is enqueued once, member or not (the same writes).
+  assert.equal(counts.nonMember, counts.member); assert.equal(counts.unknown, counts.member);
 });
 test('review M4 (F2): unsigned certificates naming an app do not lock its genuine members out', async () => {
   const w = await world(), o = w.org(ORG); o.add(ALICE); await w.warm(o, ALICE);

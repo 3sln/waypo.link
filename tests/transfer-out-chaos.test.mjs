@@ -45,7 +45,9 @@ async function schedule(random){
    const record=await fx.get();if(!record)return;
    if(!seen.has(record.id))seen.set(record.id,i);
    if(TERMINAL.has(record.state))terminal.add(record.id);
-   if(record.state==='committed'){
+   // A commit counts once the identity stopped being active (stage 1); before that it may still be unwound (F2) and
+   // its attestation has never left.
+   if(record.state==='committed'&&record.stages.identity){
     assert.ok(!terminal.has(record.id),'a cancelled, expired or aborted transfer never commits');
     attestations.add(record.attestation);
     if(commitOp===null){

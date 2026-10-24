@@ -144,7 +144,9 @@ test('a known signed-in device holds; an abort cancels, blocks a restart with th
  const held=await fx.dispute({choice:'hold'},{kind:'owner',owner:OWNER,sessionId:'s-two',sessionCreatedAt:fx.clock.now()-20*DAY});assert.equal(held.state,'held');
  const aborted=await fx.dispute({choice:'abort',token:fx.tokenFor('push')});assert.equal(aborted.state,'aborted');assert.equal(aborted.recoveryReissueOffered,true);
  await assert.rejects(fx.start(),{code:'restart_blocked'});
- assert.deepEqual(await fx.restartChoice('keep'),{restartBlocked:false,recoveryReissueRequired:false});
+ // The requesting session cannot lift its own block; another device known before the move can (F5).
+ await assert.rejects(fx.restartChoice('keep'),{code:'restart_choice_not_allowed'});
+ assert.deepEqual(await fx.restartChoice('keep',{sessionId:'s-two',sessionCreatedAt:fx.clock.now()-20*DAY,credentialId:'pk-two',credentialCreatedAt:fx.clock.now()-50*DAY}),{restartBlocked:false,recoveryReissueRequired:false});
  assert.equal((await fx.start()).state,'pending');
 });
 
@@ -176,6 +178,10 @@ test('elevated proof by the requester removes named devices and emails and resta
  const fx=await transferFixture(t);await fx.start();await fx.post();
  const emailToken=fx.tokenFor('email'),pushToken=fx.tokenFor('push');
  await fx.dispute({choice:'hold',token:pushToken});
+ // The device s-two (signed in with passkey pk-two) and the email dispute as well; only disputers can be named (F1).
+ await fx.dispute({choice:'hold'},{kind:'owner',owner:OWNER,sessionId:'s-two',sessionCreatedAt:fx.clock.now()-20*DAY,credentialId:'pk-two',credentialCreatedAt:fx.clock.now()-50*DAY});
+ await assert.rejects(fx.elevate({side:'requester',remove:{emails:['owner@mover.example']}}),{code:'not_a_disputer'});
+ await fx.dispute({choice:'hold',token:emailToken});
  await assert.rejects(fx.elevate({side:'requester',remove:{sessions:['nope']}}),{code:'unknown_device'});
  await assert.rejects(fx.elevate({side:'requester'}),{code:'invalid_request'});
  const view=await fx.elevate({side:'requester',remove:{sessions:['s-two'],passkeys:['pk-two'],push:['p1'],emails:['owner@mover.example']}});
@@ -207,7 +213,7 @@ test('support decides a contested move: allow needs two operators and a final 24
  const other=await transferFixture(t);await other.start();await other.dispute({choice:'hold',token:other.tokenFor('push')});await other.elevate({side:'requester',remove:{push:['p1']}});await other.dispute({choice:'hold',token:other.tokenFor('email')});
  await assert.rejects(other.support({decision:'abort',operators:['op-1'],lockDays:31}),{code:'invalid_request'});
  const aborted=await other.support({decision:'abort',operators:['op-1'],lockDays:30});assert.equal(aborted.state,'aborted');
- await assert.rejects(other.begin(),{code:'transfer_locked'});other.clock.advance(30*DAY+1);await other.restartChoice('keep');assert.equal((await other.begin()).state,'draft');
+ await assert.rejects(other.begin(),{code:'transfer_locked'});other.clock.advance(30*DAY+1);await other.restartChoice('keep',{sessionId:'s-two',sessionCreatedAt:other.clock.now()-31*DAY,credentialId:'pk-two'});assert.equal((await other.begin()).state,'draft');
 });
 
 test('elevated proof on both sides, or a second elevated proof, is contested',async t=>{
@@ -298,13 +304,15 @@ test('deletion racing a move (IP-R1-L10): a deletion request cancels a pending m
 test('crash between phases: an identity stage failure after commit is resumed; the attestation never changes; an attestation signed for a lost commit is never returned',async t=>{
  const fx=await transferFixture(t);await fx.start();await fx.post();fx.clock.advance(25*HOUR);
  const markMoved=fx.ports.identity.markMoved;let fail=2;fx.ports.identity={...fx.ports.identity,async markMoved(...args){if(fail-->0)throw Object.assign(new Error('identity shard down'),{code:'unavailable'});return markMoved(...args);}};
- const first=await fx.post();assert.equal(first.status,'attested');
+ // No attestation leaves before the identity stopped being active: the destination is told to retry (F2).
+ const early=await fx.post();assert.equal(early.status,'pending');assert.equal(early.retry_after,60);
  let record=await fx.get();assert.equal(record.state,'committed');assert.deepEqual(record.stages,{});assert.equal((await fx.identityRecord()).status,'active');
+ const signedAttestation=record.attestation;
  // Nothing after the identity stage ran: the keys are still in custody until the identity stops speaking.
  assert.equal(fx.effects.destroyed,0);
  fx.clock.advance(MINUTE);await fx.step();assert.equal((await fx.identityRecord()).status,'active');
  fx.clock.advance(MINUTE);await fx.step();record=await fx.get();assert.deepEqual(Object.keys(record.stages),COMMIT_STAGES);assert.equal((await fx.identityRecord()).status,'moved');
- assert.deepEqual(await fx.post(),first);assert.equal(fx.effects.destroyed,1);
+ const first=await fx.post();assert.equal(first.status,'attested');assert.equal(first.attestation,signedAttestation);assert.deepEqual(await fx.post(),first);assert.equal(fx.effects.destroyed,1);
  // Every stage is idempotent: re-running steps repeats nothing.
  fx.clock.advance(MINUTE);await fx.step();assert.equal(fx.effects.destroyed,1);assert.equal(fx.effects.severed,1);
  // A commit transaction that loses its revision race discards the attestation it signed.
@@ -362,8 +370,13 @@ test('identity port: verifyRecovery never consumes, refuses other owners and wro
  const fx=await transferFixture(t);const port=fx.ports.identity;
  const ok=await port.verifyRecovery(OWNER,fx.token);assert.equal(ok.version,2);assert.equal(await port.verifyRecovery(OWNER,fx.token).then(v=>v.ref),ok.ref);
  for(const bad of [null,'x',`${OWNER}.short`,`bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb.${'r'.repeat(43)}`,`${OWNER}.${'q'.repeat(43)}`])assert.equal(await port.verifyRecovery(OWNER,bad),null);
- const moved={v:1,statementDigest:'sha256-x',exportUntil:1};assert.equal((await port.markMoved(OWNER,{moved})).ok,true);assert.equal((await port.markMoved(OWNER,{moved})).ok,true);
- assert.equal((await port.markMoved(OWNER,{moved:{...moved,statementDigest:'sha256-y'}})).ok,false);
+ const current=await port.get(OWNER),expect={securityEpoch:current.security.epoch,recoveryRef:current.recovery.ref,recoveryIssuedAt:current.recovery.issuedAt};
+ await assert.rejects(port.markMoved(OWNER,{moved:{v:1,statementDigest:'sha256-x'}}),TypeError);
+ // The expected epoch and credential are re-checked in the identity's own write (F2).
+ assert.deepEqual(await port.markMoved(OWNER,{moved:{v:1,statementDigest:'sha256-x'},expect:{...expect,securityEpoch:expect.securityEpoch+1}}),{ok:false,status:'security-change'});
+ assert.deepEqual(await port.markMoved(OWNER,{moved:{v:1,statementDigest:'sha256-x'},expect:{...expect,recoveryRef:'other'}}),{ok:false,status:'credential-superseded'});
+ const moved={v:1,statementDigest:'sha256-x',exportUntil:1};assert.equal((await port.markMoved(OWNER,{moved,expect})).ok,true);assert.equal((await port.markMoved(OWNER,{moved,expect})).ok,true);
+ assert.equal((await port.markMoved(OWNER,{moved:{...moved,statementDigest:'sha256-y'},expect})).ok,false);
  assert.equal(await port.verifyRecovery(OWNER,fx.token),null);
 });
 
@@ -393,8 +406,11 @@ test('privacy: the copied channel snapshot is dropped when a transfer ends or af
 
 test('a path (b) request inside the 30-day window after an elevated abort is contested',async t=>{
  const fx=await transferFixture(t);await fx.start();
+ const hash=(await fx.identityRecord()).recoveryHash,issuedAt=(await fx.identityRecord()).recoveryIssuedAt;
  await fx.elevate({side:'disputer'},{credentialId:'pk-two'});
- await fx.patchIdentity(a=>({...a,recoveryHash:a.recoveryHash??'x'}));
+ // Garbage credentials never reach the contest (F4); the current credential does.
+ await assert.rejects(fx.waiting({recoveryToken:'garbage'}),{code:'recovery_invalid'});assert.equal((await fx.lock()).contested,undefined);
+ await fx.patchIdentity(a=>({...a,recoveryHash:hash,recoveryIssuedAt:issuedAt}));
  await assert.rejects(fx.waiting(),{code:'transfer_contested'});assert.equal((await fx.lock()).contested.reason,'conflicting-request-after-elevated-abort');
 });
 

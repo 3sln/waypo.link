@@ -9,6 +9,7 @@ import {canonical,key} from '../core/records.mjs';
 import {siteGlobal} from '../flags/read.mjs';
 import {isUUID} from '../core/primitives.mjs';
 import {verifyKeyContinuity} from '../identity/keys.mjs';
+import {MAX_MOVES,MAX_MOVES_DOCUMENT_BYTES,DOCUMENT_BYTES,MAX_DOCUMENT_KEYS,MAX_STATEMENT_BYTES,MAX_ATTESTATION_BYTES} from '../identity/succession.mjs';
 export const DIRECTORY_LIMITS=Object.freeze({timeoutMs:1500,maxBytes:65536,cacheEntries:256,inFlight:32,global:{windowMs:60000,limit:600},perSite:{windowMs:60000,limit:30}});
 const fail=code=>{throw Object.assign(new Error('The identity could not be verified.'),{code,status:503});};
 export function directoryURL(value){let u;try{u=new URL(value);}catch{return null;}return typeof value==='string'&&value.length<=2048&&u.href===value&&u.protocol==='https:'&&!u.port&&!u.username&&!u.password&&!u.hash&&!value.includes('#')&&publicClientHost(u.hostname)&&!/%2f|%5c|\\/i.test(u.pathname)?u:null;}
@@ -16,14 +17,16 @@ const onOrigin=(value,issuer)=>{const u=directoryURL(value);return u&&u.origin==
 const pinKey=(issuer,subject)=>key('directory-pin',issuer,subject);
 const age=(header,cap)=>{if(/no-store|no-cache/i.test(header??''))return 0;const m=/(?:^|,)\s*max-age=(\d+)\s*(?:,|$)/i.exec(header??'');return m?Math.min(cap,Number(m[1])*1000):0;};
 export async function validateDirectoryDocument(document,{issuer,subject,crypto=globalThis.crypto}={}){
- if(!plainObject(document)||document.v!==1||document.iss!==issuer||document.sub!==subject||!['person','organization'].includes(document.kind)||Object.keys(document).some(n=>!['v','iss','sub','kind','handle','keys','features','moves'].includes(n))||!Array.isArray(document.keys)||document.keys.length>64)fail('invalid_document');
+ if(!plainObject(document)||document.v!==1||document.iss!==issuer||document.sub!==subject||!['person','organization'].includes(document.kind)||Object.keys(document).some(n=>!['v','iss','sub','kind','handle','keys','features','moves'].includes(n))||!Array.isArray(document.keys)||document.keys.length>MAX_DOCUMENT_KEYS)fail('invalid_document');
+ // Identity portability §7 "Size": the derived budget with `moves`, per-record caps and at most 16 records.
+ if(document.moves!==undefined&&(!Array.isArray(document.moves)||document.moves.length===0||document.moves.length>MAX_MOVES||document.moves.some(r=>!plainObject(r)||Object.keys(r).sort().join(',')!=='attestation,statement'||typeof r.statement!=='string'||r.statement.length>MAX_STATEMENT_BYTES||!(r.attestation===null||typeof r.attestation==='string'&&r.attestation.length<=MAX_ATTESTATION_BYTES))))fail('invalid_document');
  const seen=new Set();
  for(const entry of document.keys){
   if(!plainObject(entry)||typeof entry.kid!=='string'||!entry.kid||entry.kid.length>128||seen.has(entry.kid)||!['sig','cert','enc'].includes(entry.use)||!['active','retired','revoked'].includes(entry.state)||entry.alg!==(entry.use==='enc'?'ECDH-ES':'ES256')||!plainObject(entry.jwk)||Object.keys(entry.jwk).some(n=>!['kty','crv','x','y'].includes(n))||entry.jwk.kty!=='EC'||entry.jwk.crv!=='P-256')fail('invalid_document');
   seen.add(entry.kid);try{await crypto.subtle.importKey('jwk',entry.jwk,{name:entry.use==='enc'?'ECDH':'ECDSA',namedCurve:'P-256'},false,entry.use==='enc'?[]:['verify']);}catch{fail('invalid_document');}
  }
  if(document.keys.filter(k=>k.use==='sig'&&k.state==='active').length!==1)fail('invalid_document');
- const bytes=new TextEncoder().encode(JSON.stringify(document)).length;if(bytes>(document.moves?32768:16384))fail('invalid_document');
+ const bytes=new TextEncoder().encode(JSON.stringify(document)).length;if(bytes>(document.moves?MAX_MOVES_DOCUMENT_BYTES:DOCUMENT_BYTES))fail('invalid_document');
  // Move chains confer no authority here. SuccessorRegistry must adopt them before the caller changes issuer.
  return structuredClone(document);
 }
@@ -89,7 +92,7 @@ export class IdentityDirectory {
   const pending=(async()=>{
    const pinned=await this.store.transaction(tx=>tx.get(pinKey(issuer,subject)));let identity=pinned?.identity;
    if(!identity){const directory=await this.manifest(issuer),lookup=await this.json(directory+'?sub='+encodeURIComponent(subject),8192);if(lookup.gone){this.remember(this.cache,name,{document:null,until:this.clock()+lookup.ttl});return null;}const d=lookup.document;if(!plainObject(d)||Object.keys(d).sort().join(',')!=='identity,iss,sub'||d.iss!==issuer||d.sub!==subject||!onOrigin(d.identity,issuer))fail('invalid_directory');identity=d.identity;}
-   const result=await this.json(identity+'/identity.json',32768);
+   const result=await this.json(identity+'/identity.json',MAX_MOVES_DOCUMENT_BYTES);
    if(result.gone){this.remember(this.cache,name,{document:null,until:this.clock()+result.ttl});return null;}
    const document=await validateDirectoryDocument(result.document,{issuer,subject,crypto:this.crypto});await this.accept(issuer,subject,identity,document);
    this.remember(this.cache,name,{document,identity,until:this.clock()+result.ttl});return structuredClone(document);

@@ -42,7 +42,8 @@ import { AppAction, AppQuery } from '../app/engine.mjs';
 import { AppFault } from '../app/faults.mjs';
 import { isUUID, isUUIDv4 } from '../core/primitives.mjs';
 import { key } from '../core/records.mjs';
-import { verifyPackage, signMoveStatement, parseMoveStatement, statementDigest, validateRedirectBase, documentLineage, httpsOrigin, attestationKeyThumbprint, verifyMoveStatement, verifyMoveRecordLink, MAX_MOVES, MAX_MOVES_DOCUMENT_BYTES, SuccessionError } from './succession.mjs';
+import { verifyPackage, signMoveStatement, parseMoveStatement, statementDigest, validateRedirectBase, documentLineage, httpsOrigin, attestationKeyThumbprint, verifyMoveStatement, verifyMoveRecordLink, MAX_MOVES, MAX_MOVES_DOCUMENT_BYTES, DOCUMENT_BYTES, MAX_DOCUMENT_KEYS, MAX_MOVE_URI, MAX_STATEMENT_BYTES, MAX_ATTESTATION_BYTES, MOVE_KID, moveStatementBytes, projectedMoveDocument, SuccessionError } from './succession.mjs';
+import { KEY_HISTORY_LIMIT } from './keys.mjs';
 import { PortabilityUnavailable, signingKeysOf } from './successors.mjs';
 import { identityURI } from './transfer-out.mjs';
 import { securityState } from './service.mjs';
@@ -53,13 +54,20 @@ export const TRANSFER_IN_KEY = 'transfer-in/v1';
 export const TRANSFER_IN_PATH = '/bindle/portability/transfer-in';
 export const REDIRECT_PREFIX = '/bindle/portability/from/';
 const MINUTE = 60000, HOUR = 3600000, DAY = 86400000;
-export const TRANSFER_IN_TIMING = Object.freeze({ minPoll: MINUTE, maxPoll: DAY, backoffMax: 6 * HOUR, giveUp: 45 * DAY, heldRetry: HOUR, statementSkew: 5 * MINUTE });
+// reservationTtl (wargame F9): a `pending-transfer` reservation whose begin never ran is re-reservable afterwards.
+// heldGiveUp (wargame F10): a `held` transfer-in may be abandoned by its owner, and is given up automatically, only
+// after the source's idempotency window (spec §5.2: an attested statement replays for at least 30 days).
+export const TRANSFER_IN_TIMING = Object.freeze({ minPoll: MINUTE, maxPoll: DAY, backoffMax: 6 * HOUR, giveUp: 45 * DAY, heldRetry: HOUR, statementSkew: 5 * MINUTE, reservationTtl: 7 * DAY, heldWarn: 30 * DAY, heldGiveUp: 45 * DAY });
 export const TRANSFER_IN_STATES = Object.freeze(['importing', 'posting', 'pending', 'decided', 'activating', 'held', 'active', 'refused', 'cancelled', 'failed']);
 const LIVE = new Set(['importing', 'posting', 'pending', 'decided', 'activating', 'held']), TERMINAL = new Set(['refused', 'cancelled', 'failed']);
 export const ACTIVATION_STAGES = Object.freeze(['rotate', 'certification', 'identity', 'recovery']);
 const CERT_PREFIX = 'identity-cert-key', CERT_POINTER = 'certification-key';
-const DOCUMENT_BYTES = 16384;
+/** Certification keys the §7 budget check reserves room for (one per activation; a re-run stage may mint another). */
+const CERTIFICATION_RESERVE = 4;
 
+/** A held transfer-in may end (give-up or owner abandon) once `heldGiveUp` passed since it was first held AND the operator
+ * warning raised at `heldWarn` has stood for the gap between them (review follow-up 5). */
+const heldExpired = (record, now) => time(record.heldSince) && time(record.heldWarnedAt) && now - record.heldSince >= TRANSFER_IN_TIMING.heldGiveUp && now - record.heldWarnedAt >= TRANSFER_IN_TIMING.heldGiveUp - TRANSFER_IN_TIMING.heldWarn;
 const fail = (code, message, status = 400) => { throw new AppFault(code, message, status); };
 const notFound = () => fail('not_found', 'Not found.', 404);
 const unavailable = (message = 'Moving your identity here is temporarily unavailable.') => fail('transfer_in_unavailable', message, 503);
@@ -135,20 +143,45 @@ export async function assessTransferIn({ input, source = 'package' }, { issuer, 
   const origin = mode === 'attested' ? { iss: sourceMoves.length ? parseMoveStatement(sourceMoves[0].statement).payload.from.iss : pkg.from.iss, sub: pkg.sub } : { iss: issuer, sub: pkg.sub };
   // §9.3 first bullet, with the IP-R1-M5 origin rule and the two exceptions.
   const existing = await identity.get(pkg.sub);
-  if (existing && !(existing.status === 'transfer-released' || existing.status === 'pending-transfer' && existing.transferIn?.keyThumbprint === keyThumbprint && existing.transferIn.from?.iss === pkg.from.iss)) {
+  if (existing && !(existing.status === 'transfer-released' || existing.reservationExpired === true || existing.status === 'pending-transfer' && existing.transferIn?.keyThumbprint === keyThumbprint && existing.transferIn.from?.iss === pkg.from.iss)) {
     if (existing.transferIn?.mode === 'unattested' && mode === 'attested') refuse('displacement_unsupported', 'This identity is hosted here without confirmation. Contact support to replace it with the confirmed move.');
     const movedOut = existing.moved?.statementDigest && await Promise.all(sourceMoves.map(record => statementDigest(parseMoveStatement(record.statement).input, { crypto }))).then(list => list.includes(existing.moved.statementDigest));
     if (movedOut && mode === 'attested') refuse('return_unsupported', 'Moving back to 3sln.me is not available yet.');
     refuse('sub_in_use', 'This identity cannot be moved here.');
   }
   const last = sourceMoves.at(-1);
-  // The published key history (spec §7.1): the active key's continuity ancestors, with the source's own times.
+  // The published key history (spec §7, §7.1): the active key's continuity ancestors, with the source's own times. It
+  // reaches back to the key that signed the first record of `moves` (every statement signer stays listed, so a
+  // first-contact verifier can walk the chain), and to at most 12 ancestors beyond what the chain needs.
   const raw = kid => signingKeysOf(facts.document).find(entry => entry?.kid === kid) ?? {};
   const described = entry => { const published = raw(entry.kid), when = name => Number.isSafeInteger(published[name]) && published[name] >= 0 ? published[name] : undefined; return { kid: entry.kid, publicJwk: point(entry.publicJwk), state: entry.state === 'revoked' ? 'revoked' : 'retired', created: when('created'), retired: when('retired'), revoked: when('revoked'), predecessor: entry.predecessor ?? null, continuity: entry.continuity ?? null }; };
   const active = facts.lineage.at(-1);
-  return { package: pkg, mode, origin, source, keyThumbprint, seq: sourceMoves.length + 1, prev: last ? await statementDigest(parseMoveStatement(last.statement).input, { crypto }) : null, sourceMoves,
-    history: facts.keyMatch ? facts.lineage.slice(0, -1).slice(-12).map(described) : [], activeEntry: facts.keyMatch && active ? { predecessor: active.predecessor ?? null, continuity: active.continuity ?? null, created: described(active).created } : null,
+  const firstSigner = sourceMoves.length ? facts.lineage.findIndex(entry => entry.kid === parseMoveStatement(sourceMoves[0].statement).header.kid) : -1;
+  const from = Math.max(0, facts.lineage.length - 13), start = firstSigner >= 0 ? Math.min(firstSigner, from) : from;
+  const history = facts.keyMatch ? facts.lineage.slice(start, -1).map(described) : [];
+  const activeEntry = facts.keyMatch && active ? { predecessor: active.predecessor ?? null, continuity: active.continuity ?? null, created: described(active).created } : null;
+  const seq = sourceMoves.length + 1, prev = last ? await statementDigest(parseMoveStatement(last.statement).input, { crypto }) : null;
+  // §7 "Size": refuse here, before anything is reserved, imported or signed, a move whose statement or resulting
+  // document a verifier would refuse (a producer never publishes a chain its verifiers cannot adopt).
+  budgetCheck({ pkg, issuer, seq, prev, sourceMoves, history, activeEntry, attested: mode === 'attested' });
+  return { package: pkg, mode, origin, source, keyThumbprint, seq, prev, sourceMoves, history, activeEntry,
     facts: { reachable: facts.reachable, portability: facts.portability, serving: facts.serving } };
+}
+/** Spec §4 and §7 "Size" for the move this destination would sign: identity URIs within MAX_MOVE_URI, the statement
+ * within MAX_STATEMENT_BYTES, and the largest document the identity can have here (the source's records, this record
+ * with an attestation at its cap, every imported key in published form, plus DOCUMENT_BASE_BYTES for this host's own
+ * members, certification keys and KEY_HISTORY_LIMIT signing keys) within MAX_MOVES_DOCUMENT_BYTES and 64 keys. */
+function budgetCheck({ pkg, issuer, seq, prev, sourceMoves, history, activeEntry, attested }) {
+  const to = { iss: issuer, identity: identityURI(issuer, pkg.sub) };
+  if (pkg.from.identity.length > MAX_MOVE_URI || to.identity.length > MAX_MOVE_URI) refuse('identity_uri_too_long', 'This identity\'s address is too long to move.');
+  if (!MOVE_KID.test(pkg.keys.signing.kid)) refuse('identity_key_unsupported', 'This identity\'s key name cannot be used in a move.');
+  const payload = { bindle: 'identity-move', v: 1, sub: pkg.sub, kind: pkg.kind, seq, prev, from: pkg.from, to, iat: Number.MAX_SAFE_INTEGER };
+  const statementBytes = moveStatementBytes({ kid: pkg.keys.signing.kid, payload });
+  if (statementBytes > MAX_STATEMENT_BYTES) refuse('move_too_large', 'This identity\'s move record would be too large to verify.');
+  const published = entry => ({ kid: entry.kid, use: 'sig', alg: 'ES256', jwk: point(entry.publicJwk), state: entry.state, ...entry.created !== undefined ? { created: entry.created } : {}, ...entry.state === 'retired' ? { retired: entry.retired ?? Number.MAX_SAFE_INTEGER } : {}, predecessor: entry.predecessor ?? null, continuity: entry.continuity ?? null });
+  const arriving = { kid: pkg.keys.signing.kid, publicJwk: pkg.keys.signing.jwk, state: 'retired', created: activeEntry?.created ?? Number.MAX_SAFE_INTEGER, retired: Number.MAX_SAFE_INTEGER, predecessor: activeEntry?.predecessor ?? null, continuity: activeEntry?.continuity ?? null };
+  const projected = projectedMoveDocument({ keys: [...history, arriving].map(published), moves: sourceMoves, statementBytes, attested });
+  if (projected.bytes > MAX_MOVES_DOCUMENT_BYTES || projected.keys + KEY_HISTORY_LIMIT + CERTIFICATION_RESERVE > MAX_DOCUMENT_KEYS) refuse('document_budget_exceeded', 'This identity\'s history is too large to move here.');
 }
 async function offlineChain(moves, lineage, last, crypto) {
   if (!lineage?.length) return false;
@@ -250,6 +283,11 @@ export class TransferInService {
     let record = await this.metadata.get(TRANSFER_IN_KEY);
     if (record && record.reservation === reservation && record.keyThumbprint === facts.keyThumbprint && record.state !== 'importing') { if (LIVE.has(record.state) || record.state === 'active') return transferInView(record); refuse('transfer_in_ended', 'This move ended. Start again.'); }
     if (record && record.reservation !== reservation && LIVE.has(record.state)) refuse('transfer_in_pending', 'A move here is already in progress.');
+    // Claim the reservation (compare-and-swap on its id) BEFORE writing a record for it (review follow-up 3): a TTL
+    // re-reservation that won the race makes this refuse with no orphan record, and a crash after the claim leaves a
+    // begun reservation without a record, which the owner's cancel releases (F9). From here the transfer-in record's
+    // own end releases the reservation; the reservation TTL no longer applies.
+    if (typeof ports.identity.begun === 'function') { const marked = await ports.identity.begun(owner, { reservation }); if (marked?.ok !== true) refuse('reservation_mismatch', 'Start moving your identity again.'); }
     if (!record || record.reservation !== reservation) {
       const to = { iss: this.issuer, identity: identityURI(this.issuer, owner) }, redirectBase = redirectBaseFor(this.issuer, pkg.from.iss);
       validateRedirectBase(redirectBase, this.issuer);
@@ -298,6 +336,15 @@ export class TransferInService {
       if (current.state !== 'activating') return { record: current, action: current.state, wakeAt: LIVE.has(current.state) ? current.nextAt : null };
     }
     if (current.state === 'held') {
+      // Review follow-up 5: a held record without `heldSince` (written before F10) starts its clock now, so it gets the
+      // full warning period; an operator alert fires at `heldWarn`, before the give-up at `heldGiveUp`.
+      if (!time(current.heldSince)) current = await this.patch(current.id, r => { if (r.state !== 'held' || time(r.heldSince)) return null; r.heldSince = now; return r; }) ?? await this.metadata.get(TRANSFER_IN_KEY);
+      if (current.state === 'held' && now - current.heldSince >= TRANSFER_IN_TIMING.heldWarn && !time(current.heldWarnedAt)) {
+        this.log({ action: 'transfer-in-held-warning', owner: current.owner, heldReason: current.reason ?? null, giveUpAt: Math.max(current.heldSince + TRANSFER_IN_TIMING.heldGiveUp, now + TRANSFER_IN_TIMING.heldGiveUp - TRANSFER_IN_TIMING.heldWarn), alert: true });
+        current = await this.patch(current.id, r => { if (r.state !== 'held') return null; r.heldWarnedAt = now; return r; }) ?? current;
+      }
+      // The give-up needs the warning to have stood for the full gap (15 days), however late the steps ran.
+      if (current.state === 'held' && heldExpired(current, now)) return { record: await this.abandonHeld(current, 'held-gave-up'), action: 'failed' };
       if (time(current.nextAt) && current.nextAt > now) return { record: current, action: 'held', wakeAt: current.nextAt };
       current = await this.verifyAttestation(current, current.attestation);
       if (current.state !== 'activating') return { record: current, action: current.state, wakeAt: current.nextAt ?? null };
@@ -341,7 +388,7 @@ export class TransferInService {
       // The source has committed and destroyed its copies; this host must not drop the identity. It holds, alerts and
       // retries (the source's attestation keys may be refetched, or an operator resolves an attestation reset).
       this.log({ action: 'transfer-in-held', owner: record.owner, reason: checked.reason });
-      return await this.patch(record.id, r => { if (!['posting', 'pending', 'held'].includes(r.state)) return null; Object.assign(r, { state: 'held', reason: checked.reason, attestation, nextAt: now + TRANSFER_IN_TIMING.heldRetry }); return r; }) ?? record;
+      return await this.patch(record.id, r => { if (!['posting', 'pending', 'held'].includes(r.state)) return null; Object.assign(r, { state: 'held', reason: checked.reason, attestation, heldSince: r.heldSince ?? now, nextAt: Math.min(now + TRANSFER_IN_TIMING.heldRetry, (r.heldSince ?? now) + (time(r.heldWarnedAt) ? TRANSFER_IN_TIMING.heldGiveUp : TRANSFER_IN_TIMING.heldWarn)) }); return r; }) ?? record;
     }
     return await this.patch(record.id, r => { if (!['posting', 'pending', 'held'].includes(r.state)) return null; Object.assign(r, { state: 'activating', attestation, aep: checked.aep, attestationFirstUse: checked.firstUse, attestationKey: { kid: checked.kid, thumbprint: checked.thumbprint }, verifiedAt: now, reason: undefined }); return r; }) ?? record;
   }
@@ -383,6 +430,15 @@ export class TransferInService {
     if (current.state === 'active') this.log({ action: 'transfer-in-activated', owner, mode: current.mode });
     return current;
   }
+  /** Wargame F10: a `held` transfer-in (the source answered `attested`, but the attestation never verified) ends only
+   * after `heldGiveUp`, longer than the source's idempotency window (spec §5.2, at least 30 days). Safety: if the source
+   * did commit, the identity is already stranded here, because an unverifiable attestation can never activate it; after
+   * the window the source no longer replays it, so holding longer recovers nothing. Ending releases the reservation and
+   * destroys custody, as any never-activated end does, and raises an operator alert (`transfer-in-held-abandoned`). */
+  async abandonHeld(record, reason) {
+    this.log({ action: 'transfer-in-held-abandoned', owner: record.owner, reason, heldReason: record.reason ?? null, alert: true });
+    return this.end(record, 'failed', reason === 'held-gave-up' ? reason : 'held-abandoned');
+  }
   async end(record, state, reason) {
     const now = this.now();
     const next = await this.patch(record.id, r => { if (!LIVE.has(r.state) || r.state === 'activating') return null; Object.assign(r, { state, reason, endedAt: now, nextAt: null }); return r; });
@@ -403,7 +459,21 @@ export class TransferInService {
       if (!['owner', 'system'].includes(actor?.kind) || !isUUID(actor.owner)) fail('unauthorized', 'Sign in to continue.', 401);
       exact(input, []); await this.bound(actor.owner);
       const record = await this.metadata.get(TRANSFER_IN_KEY);
-      if (!record || !LIVE.has(record.state)) return transferInView(record);
+      if (!record || !LIVE.has(record.state)) {
+        // A reservation whose begin never ran (or failed) has no transfer-in record of its own: the owner may release
+        // it, so a later package for this `sub` can reserve again (wargame F9).
+        const identity = await this.port('identity').get(actor.owner).catch(() => null);
+        if (identity?.status === 'pending-transfer' && (!record || record.reservation !== identity.transferIn?.reservation)) {
+          try { await this.port('keys').destroy(actor.owner); } catch {}
+          const released = await this.port('identity').release(actor.owner, { reservation: identity.transferIn?.reservation });
+          if (released?.ok !== true) unavailable();
+          this.log({ action: 'transfer-in-reservation-released', owner: actor.owner, reason: actor.kind === 'system' ? 'system' : 'owner' });
+          return { ...transferInView(record), reservationReleased: true };
+        }
+        return transferInView(record);
+      }
+      // A held transfer-in may be abandoned once the source's idempotency window has passed (wargame F10).
+      if (record.state === 'held' && heldExpired(record, this.now())) return transferInView(await this.abandonHeld(record, actor.kind === 'system' ? 'system' : 'owner'));
       if (record.sourceBound || ['activating', 'held'].includes(record.state)) refuse('cancel_at_source', 'Your old provider is already processing this move. Cancel it there.');
       return transferInView(await this.end(record, 'cancelled', actor.kind === 'system' ? 'system' : 'owner'));
     });
@@ -458,6 +528,9 @@ export function identityDocument({ issuer, identity, signing = [], certification
   ];
   if (keys.filter(entry => entry.use === 'sig' && entry.state === 'active').length !== 1) return null;
   const moves = Array.isArray(identity.moves) && identity.moves.length ? identity.moves.map(record => ({ statement: record.statement, attestation: record.attestation ?? null })) : null;
+  // Spec §7 "Size": never publish a document a verifier refuses (records within their caps, at most 16 of them).
+  if (moves && (moves.length > MAX_MOVES || moves.some(record => typeof record.statement !== 'string' || record.statement.length > MAX_STATEMENT_BYTES || (record.attestation !== null && (typeof record.attestation !== 'string' || record.attestation.length > MAX_ATTESTATION_BYTES))))) return null;
+  if (keys.length > MAX_DOCUMENT_KEYS) return null;
   const document = { v: 1, iss: issuer, sub: identity.id, kind: identity.kind === 'organization' ? 'organization' : 'person', ...typeof identity.handle === 'string' ? { handle: identity.handle } : {}, keys, ...moves ? { moves } : {} };
   return new TextEncoder().encode(JSON.stringify(document)).length <= (moves ? MAX_MOVES_DOCUMENT_BYTES : DOCUMENT_BYTES) ? document : null;
 }
@@ -484,12 +557,13 @@ export function transferInIdentityPort(repository, { clock = () => Date.now(), c
     return { ok: false, status: 'conflict' };
   };
   const audit = (account, type) => { account.audit = [...(account.audit || []).slice(-99), { id: webCrypto.randomUUID(), type, at: clock() }]; };
+  const reservationExpired = (account, now) => account.status === 'pending-transfer' && !time(account.transferIn?.begunAt) && time(account.transferIn?.reservedAt) && now - account.transferIn.reservedAt >= TRANSFER_IN_TIMING.reservationTtl;
   const marker = ({ reservation, kind, from, mode, origin, keyThumbprint, now }) => ({ v: 1, reservation, kind, from: structuredClone(from), mode, origin: structuredClone(origin), keyThumbprint, reservedAt: now });
   return Object.freeze({
     async get(sub) {
       if (!isUUID(sub)) throw new TypeError('Invalid account identifier');
       const account = await repository.get(sub); if (!account || account.id !== sub) return null;
-      return { id: account.id, status: account.status, kind: account.kind === 'organization' ? 'organization' : 'person', handle: account.handle ?? null, transferIn: plain(account.transferIn) ? structuredClone(account.transferIn) : null, moved: plain(account.moved) ? { statementDigest: account.moved.statementDigest ?? null } : null, moves: Array.isArray(account.moves) ? structuredClone(account.moves) : null, identityUri: account.identityUri ?? null, origin: account.origin ?? null, security: securityState(account) };
+      return { id: account.id, status: account.status, kind: account.kind === 'organization' ? 'organization' : 'person', handle: account.handle ?? null, transferIn: plain(account.transferIn) ? structuredClone(account.transferIn) : null, moved: plain(account.moved) ? { statementDigest: account.moved.statementDigest ?? null } : null, moves: Array.isArray(account.moves) ? structuredClone(account.moves) : null, identityUri: account.identityUri ?? null, origin: account.origin ?? null, security: securityState(account), reservationExpired: reservationExpired(account, clock()) };
     },
     /** Creates (or re-reserves a released) `pending-transfer` record. Idempotent for the same key and source. */
     async reserve(sub, input) {
@@ -507,9 +581,19 @@ export function transferInIdentityPort(repository, { clock = () => Date.now(), c
       }
       return cas(sub, account => {
         if (account.status === 'pending-transfer' && account.transferIn?.keyThumbprint === input.keyThumbprint && account.transferIn.from?.iss === input.from.iss) return { ok: true, value: { reservation: account.transferIn.reservation, handle: account.handle } };
-        if (account.status !== 'transfer-released') return { ok: false, status: 'sub_in_use' };
+        // An unbegun reservation past its TTL is treated as released (wargame F9); a begun one ends with its record.
+        const expired = reservationExpired(account, now);
+        if (account.status !== 'transfer-released' && !expired) return { ok: false, status: 'sub_in_use' };
         Object.assign(account, { status: 'pending-transfer', transferIn: marker({ ...input, now }), sessions: [], challenges: [] }); audit(account, 'transfer-in-reserved');
         return { ok: true, write: true, value: { reservation: input.reservation, handle: account.handle } };
+      });
+    },
+    /** Begin ran for `reservation`: its transfer-in record now owns the reservation's end (no TTL). Idempotent. */
+    async begun(sub, { reservation }) {
+      return cas(sub, account => {
+        if (account.status !== 'pending-transfer' || account.transferIn?.reservation !== reservation) return { ok: false, status: account.status };
+        if (time(account.transferIn.begunAt)) return { ok: true };
+        account.transferIn = { ...account.transferIn, begunAt: clock() }; return { ok: true, write: true };
       });
     },
     /** A never-activated reservation ends (refused, cancelled, failed). The handle stays claimed for this `sub`. */

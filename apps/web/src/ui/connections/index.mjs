@@ -4,7 +4,7 @@
 import {AppRemovalIntent} from '../../bl/app-removal.mjs';
 import {removalPanels} from './removal.mjs';
 import {h,fire} from '../release-primitives.mjs';
-import {ConnectionsIntent,connectionsEnabled,connectionsModel} from '../../bl/connections.mjs';
+import {ConnectionsIntent,connectionsEnabled,connectionsModel,connectionOfferings} from '../../bl/connections.mjs';
 import {connectionManifest,connectionHost,connectionLink} from '../../bl/connections-port.mjs';
 import {accessLink} from '../../bl/access.mjs';
 import {connectionsCopy} from './copy.mjs';
@@ -20,7 +20,7 @@ export default function connections(state,{accessHref}={}){
  const t=connectionsCopy(state.locale),m=connectionsModel(state),busy=state.busy||Boolean(m?.stale),href=accessHref??connectionsAccessHref(m),issuer=state.config.origin;
  const link=(label,url,extra={})=>url?h('a',label).props({href:url}).attrs({rel:'noopener noreferrer',...extra}):null;
  const btn=(label,action,detail={},disabled=false,extra={})=>h('button',label).props({type:'button',disabled:state.busy||disabled}).data({action}).attrs(extra).on({click:e=>fire(e.currentTarget,'connections',{action,...detail})});
- const form=(children,action,label,detail={},disabled=false)=>h('form',...children,h('button',label).props({type:'submit',disabled:state.busy||disabled}).classes('connections-primary').data({action})).on({submit:e=>{e.preventDefault();if(!state.busy&&!disabled&&e.currentTarget.checkValidity())fire(e.currentTarget,'connections',{action,...detail,form:e.currentTarget});}});
+ const form=(children,action,label,detail={},disabled=false)=>h('form',...children,h('button',label).props({type:'submit',disabled:state.busy||disabled}).classes('connections-primary').data({action})).on({submit:e=>{e.preventDefault();if(!state.busy&&!disabled&&!e.currentTarget.checkValidity())e.currentTarget.reportValidity();else if(!state.busy&&!disabled)fire(e.currentTarget,'connections',{action,...detail,form:e.currentTarget});}});
  const input=(name,label,value='',type='text',extra={})=>{const {minLength,maxLength,...props}=extra;return h('label',h('span',label),h('input').props({name,type,value,...props}).attrs({...minLength!==undefined?{minlength:String(minLength)}:{},...maxLength!==undefined?{maxlength:String(maxLength)}:{}}).key(name+':'+type));};
  const confirm=()=>h('label',h('input').props({type:'checkbox',name:'confirm',required:true}).key('confirm'),h('span',t.confirm)).classes('connections-check');
  const select=(name,label,rows)=>h('label',h('span',label),h('select',h('option','—').props({value:''}),...rows.map(([value,text])=>h('option',String(text??'')).attrs({translate:'no'}).props({value}))).props({name,required:true}));
@@ -33,7 +33,7 @@ export default function connections(state,{accessHref}={}){
   h('p',plain(review.kind==='connect'?definition?.name:review.kind==='replace'?review.old:review.name)),review.new?h('p','→ ',plain(review.new)):null,
   h('p',review.kind==='disconnect'?t.cascade:review.kind==='replace'?t.replacement:t.configureConsent),
   review.slots?.length?h('ul',...review.slots.map(title=>h('li',plain(title)))):null,
-  review.kind==='connect'?h('ul',...(definition?.manifest?.setup?.fragments??[]).map(f=>h('li',plain(f.purpose),h('small',plain(f.fragment))))):null,
+  review.kind==='connect'?h('ul',...(definition?.manifest?.setup?.fragments??[]).map(f=>h('li',plain(f.purpose),))):null,
   review.kind==='manifest'?h('pre',plain(JSON.stringify(review.manifest,null,2))).styles({whiteSpace:'pre-wrap',overflowWrap:'anywhere'}):null,
   form([confirm()],review.kind==='manifest'?'confirm-manifest':review.kind==='disconnect'?'confirm-disconnect':review.kind==='replace'?'confirm-replace':'confirm-built-in',review.kind==='disconnect'?t.disconnect:review.kind==='replace'?t.replace:t.connect,{id:review.id}),
   btn(t.cancel,'close')).classes('connections-review'):null;
@@ -62,13 +62,13 @@ export default function connections(state,{accessHref}={}){
 
  const external=m?.external?panel('connections-external',plain(m.external.host),h('p',t.login),link(t.leave,m.external.url,{'aria-describedby':'connections-external-site'}),btn(t.cancel,'close')):null;
 
- const connect=h('section',h('h2',t.available),h('ul',...(m?.offerings??[]).map(d=>h('li',h('h3',plain(d.name)),h('p',t.builtin),...(d.manifest?.setup?.fragments??[]).map(f=>h('p',plain(f.purpose))),btn(t.connect,'connect-built-in',{id:d.id},busy,{'aria-label':t.connect+': '+d.name})).key(d.id))).classes('connections-grid'),
+ const connect=h('section',h('h2',t.available),h('ul',...connectionOfferings(state).map(d=>h('li',h('h3',plain(d.name)),h('p',t.builtin),...(d.manifest?.setup?.fragments??[]).map(f=>h('p',plain(f.purpose))),btn(d.connected?(state.locale==='es'?'Conectado':'Connected'):t.connect,'connect-built-in',{id:d.id},busy||d.connected,{'aria-label':(d.connected?(state.locale==='es'?'Conectado':'Connected'):t.connect)+': '+d.name})).key(d.id))).classes('connections-grid'),
   h('h2',t.externalTitle),h('p',t.externalHint),form([input('clientId',t.client,'','url',{required:true,maxLength:2048,pattern:'https://.*'})],'connect-external',t.continue,{},busy));
 
  const list=h('section',h('h2',t.connected),m&&!m.connections.length?h('p',t.empty):null,h('ul',...(m?.connections??[]).map(c=>{const host=connectionHost(c),s=stateOf(c);return h('li',h('article',
   h('h3',plain(c.name??host)),h('dl',h('div',h('dt',t.state),h('dd',badge(c))),h('div',h('dt',t.kind),h('dd',c.integration?.kind==='built-in'?t.builtin:t.external)),h('div',h('dt',host?t.host:t.unknown),h('dd',plain(host)))),
   h('div',link(t.access,href({connection:c.id})),s!=='disconnected'?manage(c,t.manage):null).classes('connections-links'),
-  h('div',c.integration?.staged?btn(state.locale==='es'?'Revisar cambios':'Review changes','review-manifest',{id:c.id},busy):null,s!=='disconnected'&&c.integration?btn(t.setup,'setup',{id:c.id},busy):null,s==='suspended'?btn(t.resume,'resume',{id:c.id},busy):[...SERVING,'configuring'].includes(s)&&c.integration?btn(t.suspend,'suspend',{id:c.id},busy):null,s!=='disconnected'?btn(state.locale==='es'?'Quitar app…':'Remove app…','removal-review',{id:c.id},busy):null,s!=='disconnected'?btn(t.disconnect,'disconnect',{id:c.id},busy).classes('connections-danger'):null).classes('connections-actions')
+  h('div',c.integration?.staged?btn(state.locale==='es'?'Revisar cambios':'Review changes','review-manifest',{id:c.id},busy):null,s!=='disconnected'&&c.integration?btn(t.setup,'setup',{id:c.id},busy):null,s==='suspended'?btn(t.resume,'resume',{id:c.id},busy):[...SERVING,'configuring'].includes(s)&&c.integration?btn(t.suspend,'suspend',{id:c.id},busy):null,s!=='disconnected'?btn(state.locale==='es'?'Quitar app…':'Remove app…','removal-review',{id:c.id},busy):null,s!=='disconnected'?btn(t.disconnect,'disconnect',{id:c.id},busy).classes('connections-danger'):null).classes('connections-actions'),s!=='disconnected'?h('p',state.locale==='es'?'Desconectar detiene el acceso. Quitar app también permite revisar y gestionar sus datos.':'Disconnect stops access. Remove app also lets you review and manage its data.').classes('connections-note'):null
  ).data({connection:c.id})).key(c.id);})).classes('connections-grid'));
 
  const slots=h('section',h('h2',t.slots),h('p',t.rolesIntro),h('ul',...(m?.slots??[]).map(slot=>{

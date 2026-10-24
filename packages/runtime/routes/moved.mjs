@@ -9,7 +9,7 @@
 //   else falls through to the ordinary routes, which answer a non-active identity with the uniform 404. Key-delegation
 //   status is never redirected: delegations died at commit, so it answers the final `revoked` itself (IP-R1-L5).
 //   Redirects are never authority (spec §10): identity-document requests carry the moved record in the body. Headers:
-//   `Referrer-Policy: no-referrer`; `no-store` on capability URLs, otherwise `private, max-age=86400`; never varying
+//   `Referrer-Policy: no-referrer`; `no-store` on capability URLs (parameter names compared decoded), otherwise `private, max-age=86400`; never varying
 //   on request headers. No per-request record is kept. After the redirect window the identity answers exactly as a
 //   deleted one (the ordinary routes' uniform 404 and invalid-credential refusals). Committed redirects are a
 //   commitment, so no flag gates them.
@@ -18,8 +18,11 @@
 // (spec §11): routes/federation.mjs calls `movedAuthorization` before its public-identity probe.
 //
 // Move endpoint `POST /bindle/portability/move` (spec §5.2): mounted while IDENTITY_TRANSFER_OUT_ENABLED is globally
-// on, and for idempotent replies about committed moves whatever the flag says. 200 attested, 202 pending, 409 refused
-// (uniform), 429/503 retryable. `portability.v1` is not advertised: it requires `directory.v1`, which is not mounted.
+// on, and for idempotent replies about committed moves whatever the flag says: only an exact replay of the attested
+// statement (and its bound redirect_base, inside the proof window) answers 200 from the moved record; every other
+// request about a moved identity takes the same path as an unknown one (404 while unmounted, 409 refused while
+// mounted), so the endpoint is no moved-status oracle (F12). 200 attested, 202 pending, 409 refused (uniform), 429/503
+// retryable. `portability.v1` is not advertised: it requires `directory.v1`, which is not mounted.
 //
 // Attestation keys `GET /bindle/portability/attestation-keys` (spec §5.1, PORT-4 P16): the published key set of
 // IDENTITY_ATTESTATION_KEYS (or the legacy IDENTITY_ATTESTATION_KEY), public members and continuity only, credentialless
@@ -45,7 +48,14 @@ export const MOVE_PATH='/bindle/portability/move';
 const ROOT='/api/account/transfer-out',OWNER_ACTIONS=['begin','authorize','cancel','dispute','elevate','restart-choice'],PUBLIC_ACTIONS=['link','waiting','withdraw'];
 const HOUR=3600000;
 const USERS=/^\/users\/([^/?#]+)(?:\/|$)/,IDENTITY=/^\/identity\/([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})(?:\/|$)/,DELEGATION=/^\/identity\/([a-f0-9-]{36})\/delegations\/([^/]+)$/;
-const CAPABILITY=/(?:^|&)(?:bindle_meta|bindle_data|sig|bintent)=/;
+const CAPABILITY_PARAMS=new Set(['bindle_meta','bindle_data','sig','bintent']);
+/** Whether a raw query carries a capability parameter, by its DECODED name (`bindle%5Fmeta=` is `bindle_meta=`). A
+ * name that does not decode is treated as a capability: `no-store` is the safe answer. */
+export function capabilityQuery(rawQuery){
+ if(rawQuery===null||rawQuery===undefined)return false;
+ for(const part of rawQuery.split('&')){const name=part.split('=',1)[0];let decoded;try{decoded=decodeURIComponent(name.replaceAll('+',' '));}catch{return true;}if(CAPABILITY_PARAMS.has(decoded))return true;}
+ return false;
+}
 
 /** The path as received and the raw query (null without `?`), from the request URL string, never re-serialized. */
 export function rawTarget(requestURL){
@@ -73,7 +83,7 @@ export async function movedAuthorization(env,identity){
 export function movedResponse(request,moved,{iss,document=false}={}){
  const target=rawTarget(request.url);if(!target||!redirectablePath(target.path,target.rawQuery))return null;
  let location;try{location=redirectTarget({redirectBase:moved.redirectBase,path:target.path,rawQuery:target.rawQuery});}catch{return null;}
- const capability=target.rawQuery!==null&&CAPABILITY.test(target.rawQuery)||/\/contact\//.test(target.path);
+ const capability=capabilityQuery(target.rawQuery)||/\/contact\//.test(target.path);
  const headers={Location:location,'Referrer-Policy':'no-referrer','Cache-Control':capability?'no-store':'private, max-age=86400','X-Content-Type-Options':'nosniff','X-Robots-Tag':'noindex, nofollow'};
  if(document&&request.method!=='HEAD')return new Response(JSON.stringify({v:1,iss,sub:moved.sub,moved:{statement:moved.statement,attestation:moved.attestation}}),{status:308,headers:{...headers,'Content-Type':'application/json'}});
  return new Response(null,{status:308,headers});
@@ -117,11 +127,8 @@ async function moveRoute({request,env,local}){
  let account;try{account=await env.IDENTITY_REPOSITORY?.get(sub);}catch{return json({error:'temporarily_unavailable'},503,{...moveHeaders,'Retry-After':'60'});}
  // A committed move answers from the identity's moved record (kept at least 30 days and through the redirect), so a
  // lost response never strands it, even after the account's own record was purged (IP-R1-L4).
- if(account?.status==='moved'){
-  const moved=account.moved;
-  if(moved&&moved.statement===input.statement&&(moved.boundRedirectBase??moved.redirectBase)===input.redirect_base&&movedWindow(moved,clockOf(env)).proof)return json({status:'attested',attestation:moved.attestation,redirect_until:Number.isSafeInteger(moved.redirectUntil)?Math.floor(moved.redirectUntil/1000):null},200,moveHeaders);
-  return refused();
- }
+ const moved=account?.status==='moved'?account.moved:null;
+ if(moved&&moved.statement===input.statement&&(moved.boundRedirectBase??moved.redirectBase)===input.redirect_base&&movedWindow(moved,clockOf(env)).proof)return json({status:'attested',attestation:moved.attestation,redirect_until:Number.isSafeInteger(moved.redirectUntil)?Math.floor(moved.redirectUntil/1000):null},200,moveHeaders);
  if(!mounted)return json({error:'not_found'},404,moveHeaders);
  if(account?.status!=='active')return refused();
  let result;try{result=await accountHandle(env,sub).transferOutStatement(sub,{statement:input.statement,transfer:input.transfer,redirect_base:input.redirect_base});}catch(error){if(['temporarily_unavailable','transfer_unavailable','lifecycle_unavailable'].includes(error?.code))return json({error:'temporarily_unavailable'},503,{...moveHeaders,'Retry-After':'60'});return refused();}

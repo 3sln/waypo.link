@@ -57,3 +57,18 @@ test('engine and shared hook honor a flag kill over warm caches without egress',
  const config={DIRECTORY_ENABLED:true},f=await fixture({config});t.after(()=>f.engine.dispose());await f.refresh();assert(await f.resolve());const calls=f.state.calls.length;
  config.DIRECTORY_ENABLED=false;assert.equal(await f.resolve(),null);assert.equal(await f.hook.resolve({issuer,subject,kid:f.state.document.keys[0].kid}),null);await assert.rejects(f.refresh(),{code:'feature_disabled'});assert.equal(f.state.calls.length,calls);
 });
+test('identity portability §7 "Size": a moved document above 32 KiB within the budget refreshes; caps, 16 records and the budget fail closed; a no-moves document holds 16 own keys',async t=>{
+ // Review 2026-10-23 items 1-2: the directory fetch bound and validation share the budget constants of succession.mjs.
+ const {MAX_MOVES,MAX_STATEMENT_BYTES,MAX_ATTESTATION_BYTES,MAX_MOVES_DOCUMENT_BYTES,DOCUMENT_BYTES}=await import('../packages/identity/succession.mjs');
+ const capped=Array.from({length:MAX_MOVES},()=>({statement:'s'.repeat(MAX_STATEMENT_BYTES),attestation:'a'.repeat(MAX_ATTESTATION_BYTES)}));
+ const f=await fixture();t.after(()=>f.engine.dispose());const base=structuredClone(f.state.document);
+ f.state.document={...base,moves:capped};const size=Buffer.byteLength(JSON.stringify(f.state.document));assert.ok(size>32768&&size<=MAX_MOVES_DOCUMENT_BYTES,String(size));
+ const refreshed=await f.refresh();assert.equal(refreshed.moves.length,MAX_MOVES);assert.ok(await f.resolve());
+ for(const moves of [[...capped,capped[0]],[...capped.slice(1),{statement:'s'.repeat(MAX_STATEMENT_BYTES+1),attestation:null}],[...capped.slice(1),{statement:'s',attestation:'a'.repeat(MAX_ATTESTATION_BYTES+1)}],[]])await assert.rejects(validateDirectoryDocument({...base,moves},{issuer,subject}),{code:'invalid_document'});
+ const over={...base,handle:'h'.repeat(MAX_MOVES_DOCUMENT_BYTES),moves:capped.slice(0,1)};await assert.rejects(validateDirectoryDocument(over,{issuer,subject}),{code:'invalid_document'});
+ f.state.document=over;f.state.time+=300001;await assert.rejects(f.refresh(),{code:'invalid_document'});
+ // Without moves: above the old 16 KiB, within DOCUMENT_BYTES (32 KiB), accepted; above it, refused.
+ const pad=n=>({...base,handle:'h'.repeat(n-Buffer.byteLength(JSON.stringify({...base,handle:''})))});
+ assert.ok(await validateDirectoryDocument(pad(DOCUMENT_BYTES),{issuer,subject}));assert.ok(DOCUMENT_BYTES>16384);
+ await assert.rejects(validateDirectoryDocument(pad(DOCUMENT_BYTES+1),{issuer,subject}),{code:'invalid_document'});
+});

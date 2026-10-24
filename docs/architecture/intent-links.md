@@ -311,6 +311,8 @@ Oversized legacy contact links use a migration-only fragment and built-in-only c
 
 Kind resolution uses the existing operator-configured artefact store and its bounded fetch port, with no ambient network fetch of arbitrary publisher URLs. External publisher discovery, deployed log-redaction verification, actual OS/PWA installation behaviour and production release gates remain unverified. Browser suites exercise protocol substitutions and handler confirmations locally; they do not certify third-party handlers. DEVLOG reconciliation is left to the coordinator because this workstream was instructed not to edit DEVLOG.md. Final local verification: 71 focused codec/engine/flag/boundary checks, 12 intent client-engine checks, 12 contact/transport checks, the 292-test UI-state gate, DOM smoke, asset build and Worker dry run passed. The resumed sandbox refuses loopback listeners (`listen EPERM`), so its full core run finished with 2,695 passes, nine listener failures and a native Node assertion in the export-hooks suite; Worker/browser/e2e reruns are blocked by that environment. Before the sandbox changed, Worker (80 tests), intent browser matrices and the full e2e (214 passes, four skips) passed; those earlier runs do not verify every final resumed edit.
 
+**Wargame fixes, 2026-10-23 (unsigned; Provisional (coordinator), not signed off by the user).** Resolve checks the operator artefact registry (`ARTEFACTS.registered`, a local configuration lookup in both the in-process and remote ports) before any provider-wide store read, pin or fetch, so an unregistered kind URL fails `intent_kind_unavailable` with no shared row and no budget spent (F1). The intent page inserts its ticket and bootstrap with replacer functions (no `$&`, `` $` `` or `$'` expansion) and escapes `'` and `>` (F3); `/i`, `/i/contact` and the legacy `/console` bootstrap send `Cross-Origin-Opener-Policy: same-origin`. A navigation ticket rendered with a POST or query `bintent` carries that value's SHA-256 and activates only a resolve of the same value; fragment and legacy tickets remain unbound because the server never sees the value in the form the page submits. A per-account kind-miss limit was not added: an unregistered kind now costs only the account's own request.
+
 ### 10.2 Flags (proposed rows, default off; the flags owner adds them)
 
 | Flag | Class | Notes |
@@ -427,3 +429,26 @@ Independent adversarial security and UX review, 2026-10-22, against spec revisio
 - `bintent` is not a `bindle_*` name, and mixing it with `bindle_meta` or `sig` is malformed.
 - Old `web+bindle` handlers refuse the new `intent` name (links §6.4), so they fail closed.
 - Intent links on `/i` carry no account, so they survive the minter's move. Identity portability §10 already excludes intent endpoints from redirects and adds `no-store` for `bintent`.
+
+
+### 2026-10-23 local routing index (provisional)
+
+The Node metadata adapter and the Worker account controller install the same transactional
+`intentIndexedMetadata` wrapper. It derives `item-index/intent-handler/` keys from adopted
+connection manifests, partitioned by owner, kind and version. Resource writes, generation
+changes, declaration adoption and deletes update those keys in the same transaction.
+Routing reads only the requested kind and rechecks each exact resource record, its current
+generation and the adopted declaration before offering a handler. A stale or corrupted
+index entry cannot authorize a route. Reconciliation still runs before every owner intent
+operation; defaults retain their existing generation fence. Version resolutions, including
+those used to check defaults, are cached only within one operation.
+
+An existing account is migrated once in a transaction using resource pages of 100 rows;
+this first migration still takes O(resources) total work. The ready marker records a code
+epoch (`INTENT_INDEX_VERSION`); a marker from any other epoch, including the original boolean
+marker, clears the derived keys and rebuilds them. Bump the epoch when the derivation changes
+and on the first release after a rollback to code that did not maintain the index. Subsequent lookups take work
+proportional to matching handlers, independent of unrelated resources. Stores supplied
+directly to the engine without the indexed capability retain the compatibility scan.
+The index is derived local state, excluded from exports under the existing `item-index`
+prefix. These are implemented local behaviors, with production release still disabled.

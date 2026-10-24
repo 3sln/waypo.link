@@ -20,7 +20,7 @@ export async function ownerRules(tx, owner) {
 }
 
 export class MessagingService {
-  constructor({ store, tokens, crypto = globalThis.crypto, clock = () => Date.now(), maxStoredBytes = 1073741824, maxStoredMessages = 10000 }) { Object.assign(this, { store, tokens, crypto, clock, maxStoredBytes, maxStoredMessages }); }
+  constructor({ store, tokens, crypto = globalThis.crypto, clock = () => Date.now(), maxStoredBytes = 1073741824, maxStoredMessages = 10000, indexedList }) { Object.assign(this, { store, tokens, crypto, clock, maxStoredBytes, maxStoredMessages, indexedList }); }
   async createCollection(owner, name) {
     if (!boundedString(owner) || !boundedString(name, 100)) fail('invalid_collection');
     return this.store.transaction(async tx => {
@@ -121,7 +121,10 @@ export class MessagingService {
   }
   async list(owner, { collection, unread, quarantined, limit = 100 } = {}) {
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1000) fail('invalid_limit');
-    return this.store.transaction(async tx => (await tx.list(key('message', owner))).map(row => migrateTags(row.value)).filter(message => (collection === undefined || message.collection === collection) && (unread === undefined || (message.readAt === null) === unread) && (quarantined === undefined || message.quarantined === quarantined)).sort((a, b) => b.receivedAt - a.receivedAt || a.id.localeCompare(b.id)).slice(0, limit).map(metadata));
+    // Legacy arrays take no cursor. Index and scan share one normalization: a missing readAt is unread and a missing
+    // quarantined flag is not quarantined; a filter of the wrong type matches nothing (DEVLOG 2026-10-23 follow-ups).
+    if (this.indexedList) return this.indexedList(owner, { collection, unread, quarantined, limit });
+    return this.store.transaction(async tx => (await tx.list(key('message', owner))).map(row => migrateTags(row.value)).filter(message => (collection === undefined || message.collection === collection) && (unread === undefined || (message.readAt == null) === unread) && (quarantined === undefined || Boolean(message.quarantined) === quarantined)).sort((a, b) => b.receivedAt - a.receivedAt || a.id.localeCompare(b.id)).slice(0, limit).map(metadata));
   }
   async read(owner, id) { return this.store.transaction(async tx => { const message = await tx.get(key('message', owner, id)); if (!message) fail('not_found'); return migrateTags(message); }); }
   async update(owner, id, actions, provenance = { source: 'owner' }) {

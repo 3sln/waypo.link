@@ -255,6 +255,7 @@ Each removal concludes exactly once.
 | Owner chooses "remove now" | open | Force: revocation commit, `state: forced`. |
 | `cleanup_by` passes | open | **Reminder, no state change (UD-1).** The provider records `reminded_at`, notifies the owner through its owner notification channels that the app has not finished, and offers force removal there and on the app's entry. |
 | Account deletion severance | open | Force, inside the severance commit: `state: forced` (§8.4). |
+| Owner disconnects the app outside removal, or an account-level severance | open | Concluded inside the disconnect or severance commit: `state: forced`, `outcome: disconnected`. A later reconnect is a new incarnation; the concluded record can neither block a new removal, remind, nor force it (2026-10-23 wargame F5, Provisional (coordinator), not signed off by the user). |
 | Any input | concluded | No state change. A provider MAY store a late result for display, marked as received after removal. |
 
 Conclusion is idempotent: duplicate or concurrent inputs race in the entity's single writer, the first one wins, and the rest are no-ops that return the same view.

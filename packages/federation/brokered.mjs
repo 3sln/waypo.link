@@ -54,7 +54,7 @@ const anchorOf=r=>r.assignments.find(a=>a.contracts.length)?.contracts[0]??r.con
 const epochOf=s=>Number.isSafeInteger(s?.capabilityEpoch)?s.capabilityEpoch:0;
 export const brokeringFlag=config=>siteGlobal(config,'BROKERING_ENABLED');
 export const integrationsFlag=config=>siteGlobal(config,'INTEGRATIONS_ENABLED');
-const indexKey=async(connection,resource)=>INDEX+[...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(`brokered-record/v1\0${connection}\0${resource}`)))].map(b=>b.toString(16).padStart(2,'0')).join('');
+export const brokeredResourceIndexKey=async(connection,resource)=>INDEX+[...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(`brokered-record/v1\0${connection}\0${resource}`)))].map(b=>b.toString(16).padStart(2,'0')).join('');
 
 // ---- Connection reads (mirror AppConnections.check: the same store, record shape and lifecycle fence) ----
 /** The external connection `id` of `owner` as seen inside `tx`, or null. */
@@ -129,7 +129,7 @@ function scope(p,actor){
  const narrow=(r,kept)=>{const hit=r.assignments.filter(a=>a.contracts.some(k=>!kept.includes(k))).map(a=>a.grant);r.contracts=[...kept];for(const a of r.assignments)a.contracts=a.contracts.filter(k=>kept.includes(k));return hit.length?[{type:'narrowed',connection:r.connection,generation:r.generation,resource:r.resource,grants:hit}]:[];};
  const allRecords=async t=>{const rows=[...(await t.list({prefix:RECORD,limit:BROKERED_LIMITS.perAccount+1})).values()];if(rows.length>BROKERED_LIMITS.perAccount)fault('unavailable','Too many brokered records.',503);return rows.filter(r=>r?.v===1&&r.owner===owner);};
  const load=async(t,id)=>{if(typeof id!=='string'||!UUID.test(id))notFound();const r=await t.get(RECORD+id);if(r?.v!==1||r.owner!==owner)notFound();return r;};
- const remove=async(t,r)=>{await t.delete(RECORD+r.id);await t.delete(await indexKey(r.connection,r.resource));};
+ const remove=async(t,r)=>{await t.delete(RECORD+r.id);await t.delete(await brokeredResourceIndexKey(r.connection,r.resource));};
  /** One authenticated exact lookup of `ids` (anchor contract: narrowing is visible in the claims). */
  const lookup=(c,contract,ids)=>p.discovery.discover({subject,connection:c,query:{contracts:[contract],ids},fresh:true});
  async function health(connectionId,ok){
@@ -177,7 +177,7 @@ function scope(p,actor){
    if(!item)fault('resource_unavailable','The integration no longer offers this resource for that field.',409);
    return tx(async t=>{
     const now=await readConnection(t,owner,c.id);if(!now?.serving||now.generation!==c.generation||now.connectedAt!==c.connectedAt)fault('connection_stale','The connection changed. Reload and try again.',409);
-    const key=await indexKey(c.id,item.id),existing=await t.get(key),at=p.clock(),contracts=item.contracts.filter(x=>now.manifest.resources.contracts.includes(x)).sort(),rows=[];
+    const key=await brokeredResourceIndexKey(c.id,item.id),existing=await t.get(key),at=p.clock(),contracts=item.contracts.filter(x=>now.manifest.resources.contracts.includes(x)).sort(),rows=[];
     let r=existing?await t.get(RECORD+existing):null;if(r&&(r.v!==1||r.owner!==owner||r.connection!==c.id))r=null;
     if(r&&recordState(r,now)==='ended'){rows.push({type:'detached',connection:r.connection,generation:r.generation,resource:r.resource,grants:r.assignments.map(x=>x.grant)});await remove(t,r);r=null;}
     if(!r){const all=await allRecords(t);if(all.length>=BROKERED_LIMITS.perAccount||all.filter(x=>x.connection===c.id).length>=BROKERED_LIMITS.perConnection)fault('record_limit','This account has reached its brokered resource limit.',429);
