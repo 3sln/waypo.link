@@ -32,7 +32,8 @@ import {verifyClientAssertion,memoryReplayCache,CLIENT_ASSERTION_TYPE} from '../
 import {pinnedKeys} from '../federation/integrations.mjs';
 import {brokeredResourcesDeclaration} from '../federation/introspection.mjs';
 import {foreignIssuers} from './account/foreign-directory.mjs';
-import {rtcBoundArtefacts,RTC_FEATURE,RTC_SIGNALING_CONTRACT,RTC_SIGNALING_METHODS,RTC_SIGNALING_SLOT,RTC_OCCUPANT_DECLARATION} from '../rtc/extension.mjs';
+import {rtcBoundArtefacts,RTC_SIGNALING_SLOT_MANIFEST,RTC_FEATURE,RTC_SIGNALING_CONTRACT,RTC_SIGNALING_METHODS,RTC_SIGNALING_SLOT,RTC_OCCUPANT_DECLARATION,ICE_RELAY_CONTRACT,ICE_RELAY_SLOT} from '../rtc/extension.mjs';
+import {ICE_RELAY_METHODS,relayConfigured} from '../rtc/relay.mjs';
 import {LEG_CERTIFICATE_SECONDS} from '../rtc/certificates.mjs';
 
 export const messagingAddressMounted=config=>siteGlobal(config,'LINKS_ENABLED',true)&&siteGlobal(config,'INTEGRATIONS_ENABLED',true)&&typeof config.MESSAGING_DESCRIBE==='function';
@@ -76,9 +77,18 @@ export const MANIFEST_DECLARATIONS=Object.freeze([
  // RTC-e (rtc-signaling spec §3.1, §3.2): the built-in signaling occupant beside a declared extensions.v1, and the
  // provider-to-provider feature only while RTC_FOREIGN_ENABLED is on and the adapter mounted the foreign transport
  // (`mounts.rtc`: the /bindle/rtc route plus an RTC_EGRESS port). Flags alone never declare either.
- {flag:['RTC_SIGNALING_ENABLED','EXTENSIONS_ENABLED'],mounted:c=>c.target==='authority'&&c.mounts.rtcOccupant===true,declare:()=>({extensions:[{...RTC_OCCUPANT_DECLARATION}]})},
+ // RTC-i (RTCe-16 revised, provisional): this row also declares `extensions.v1`, which rtc-signaling.v1 requires (spec
+ // §3.1) and which no other row declares; it is the first slice whose slot processing (AMD-X1 `bind`) a peer or an
+ // application must be able to rely on. A later row that declares extensions.v1 must replace this member, not add a
+ // second one (a duplicate feature fails closed). Its presence also keeps the other rows' `extensions` entries.
+ {flag:['RTC_SIGNALING_ENABLED','EXTENSIONS_ENABLED'],mounted:c=>c.target==='authority'&&c.mounts.rtcOccupant===true,declare:()=>({features:{'extensions.v1':{}},extensions:[{...RTC_OCCUPANT_DECLARATION}]})},
+ // RTC-f: the built-in ice-relay/v1 occupant beside the signaling occupant, only with RTC_TURN_ENABLED (class b, read from
+ // env here) and a configured relay (TURN adapter and the external spend authority, which no deployment has yet).
+ {flag:['RTC_SIGNALING_ENABLED','EXTENSIONS_ENABLED'],mounted:c=>c.target==='authority'&&c.mounts.rtcOccupant===true&&capability(c.config,'RTC_TURN_ENABLED')&&relayConfigured(c.config),declare:()=>({extensions:[{slot:ICE_RELAY_SLOT,role:'occupant',ref:'relay'}]})},
  // Review F7: and only while RTC_FOREIGN_ISSUERS names at least one issuer (with it empty, nothing is ever delivered).
- {flag:['RTC_SIGNALING_ENABLED','RTC_FOREIGN_ENABLED','DIRECTORY_ENABLED'],mounted:c=>c.target==='authority'&&c.mounts.rtc===true&&foreignIssuers(c.config,'RTC_FOREIGN_ISSUERS').length>0,declare:c=>({features:{[RTC_FEATURE]:{endpoint:c.issuer+'/bindle/rtc',max_leg_certificate_seconds:LEG_CERTIFICATE_SECONDS}}})},
+ // RTC-i: and only beside its prerequisites (spec §3.1): extensions.v1 (the occupant row above), artefact-versions.v1
+ // (ARTEFACT_VERSIONS_ENABLED with a mounted artefact store) and directory.v1 (DIRECTORY_ENABLED).
+ {flag:['RTC_SIGNALING_ENABLED','RTC_FOREIGN_ENABLED','DIRECTORY_ENABLED','EXTENSIONS_ENABLED','ARTEFACT_VERSIONS_ENABLED'],mounted:c=>c.target==='authority'&&c.mounts.rtc===true&&c.mounts.rtcOccupant===true&&c.config.ARTEFACTS?.enabled===true&&foreignIssuers(c.config,'RTC_FOREIGN_ISSUERS').length>0,declare:c=>({features:{[RTC_FEATURE]:{endpoint:c.issuer+'/bindle/rtc',max_leg_certificate_seconds:LEG_CERTIFICATE_SECONDS}}})},
 ]);
 /** Synchronous adapter over the same provider Query used by the engine harness. Mounts never come from query input. */
 export function federationDeclarations(config,context={}){return new ManifestDeclarations().fetch({config:surfaceConfig(config),federation:createManifestDeclarationProvider({registry:MANIFEST_DECLARATIONS,context:{...context,issuer:config.APP_ORIGIN,mounts:context.mounts??{}}})});}
@@ -92,6 +102,10 @@ export function federationSchemas(config){
  if(siteGlobal(config,'INTEGRATIONS_ENABLED'))schemas[GOOGLE_DRIVE_SETUP_FRAGMENT.id]=structuredClone(GOOGLE_DRIVE_SETUP_FRAGMENT);
  if(!schemas||Array.isArray(schemas)||typeof schemas!=='object'||Object.keys(schemas).length>100)throw new TypeError('Invalid reviewed fragment registry.');
  if(siteGlobal(config,'INTEGRATIONS_ENABLED')&&siteGlobal(config,'EXTENSIONS_ENABLED'))schemas[ITEM_CLASSIFIER_MANIFEST.id]=structuredClone(ITEM_CLASSIFIER_MANIFEST);
+ // RTC-i: the signaling slot manifest of spec §3.2 is a first-party reviewed fragment while the provider implements
+ // the slot (RTC_SIGNALING_ENABLED and EXTENSIONS_ENABLED), so a default deployment needs no operator registration; an
+ // operator entry for the same id is replaced by the shipped one.
+ if(siteGlobal(config,'RTC_SIGNALING_ENABLED')&&siteGlobal(config,'EXTENSIONS_ENABLED'))schemas[RTC_SIGNALING_SLOT]=structuredClone(RTC_SIGNALING_SLOT_MANIFEST);
  return schemas;
 }
 export function federationClients(config){const clients=federationConfig(config.FEDERATION_CLIENTS,[]);if(!Array.isArray(clients)||clients.length>100)throw new TypeError('At most 100 reviewed federation clients can be configured.');for(const client of clients){if(typeof client?.id!=='string'||client.id.length>200||typeof client.name!=='string'||!client.name.trim()||client.name.length>100)throw new TypeError('Reviewed clients require a URL ID of at most 200 characters and name of at most 100 characters.');}return clients;}
@@ -165,6 +179,9 @@ export function federationControllerOptions({config,repository,accounts,owner,ma
    if(siteEnabled(config,'EVENT_BUSES_ENABLED',{subject:{kind:'account',owner}},true))descriptors.push(...await account.eventBusDescriptors(owner));
    if(ownerFlags(config,owner).enabled('INTEGRATIONS_ENABLED')&&ownerFlags(config,owner).enabled('EXTENSIONS_ENABLED'))descriptors.push(...await account.classifierDescriptors(owner));
    // RTC-e: the built-in rtc-signaling/v1 occupant (spec §3.2), assignable by the owner to the slot's `signaling` field.
+   // RTC-f: the built-in ice-relay/v1 occupant, only with RTC_SIGNALING_ENABLED, EXTENSIONS_ENABLED, RTC_TURN_ENABLED (class
+   // b, read here because its `requires` is not evaluated from env) and a configured relay (TURN adapter and spend port).
+   if(siteEnabled(config,'RTC_SIGNALING_ENABLED',{subject:{kind:'account',owner}},true)&&siteEnabled(config,'EXTENSIONS_ENABLED',{subject:{kind:'account',owner}},true)&&ownerFlags(config,owner).enabled('RTC_TURN_ENABLED')&&relayConfigured(config))descriptors.push({id:`${subject}/relay`,label:'Connection relay',provider:'bindle',contracts:{[ICE_RELAY_CONTRACT]:[...ICE_RELAY_METHODS]},generation:owner,limits:{maxRequestBytes:4096,maxResultBytes:16384,txRetentionSeconds:86400}});
    if(siteEnabled(config,'RTC_SIGNALING_ENABLED',{subject:{kind:'account',owner}},true)&&siteEnabled(config,'EXTENSIONS_ENABLED',{subject:{kind:'account',owner}},true))descriptors.push({id:`${subject}/rtc`,label:'Real-time connections',provider:'bindle',contracts:{[RTC_SIGNALING_CONTRACT]:[...RTC_SIGNALING_METHODS]},generation:owner,limits:{maxRequestBytes:262144,maxResultBytes:1048576,txRetentionSeconds:86400}});
    if(siteEnabled(config,'LINKS_ENABLED',{subject:{kind:'account',owner}},true))descriptors.push({id:`${subject}/links`,label:'Contact links',provider:'bindle',contracts:{[LINKS_CONTRACT]:['issue','revoke','rotate','evaluate','list','changes',...bridgeConfig(featureConfig(config,{subject:{kind:'account',owner}})).enabled?['consumerKey','accepted']:[]]},generation:owner});
    // ORG-10f: an organization's imported resources (relation import mirrors kept by its writer), so its admins can
@@ -172,12 +189,13 @@ export function federationControllerOptions({config,repository,accounts,owner,ma
    if(ownerFlags(config,owner).enabled('ORGANIZATIONS_ENABLED')&&current.kind==='organization')descriptors.push(...await account.relationImportDescriptors(owner));
    descriptors.push({id:`${subject}/app-messages`,label:'Messages from this app',provider:'bindle',contracts:{[APP_NOTIFICATIONS]:['createOwn']},generation:owner,limits:{maxRequestBytes:16384,maxResultBytes:1024,txRetentionSeconds:86400}});descriptors.push({id:`${subject}/profile`,label:'Identity profile',provider:'identity',alias:'@profile',contracts:{[PROFILE]:['read']},generation:owner,preview:{entity:subject,handle:current.handle,name:profile.displayName||current.handle,avatar:profile.avatar||null}});return descriptors;
   },
+  // RTC-f: relay credentials (bearer secrets, spec §12) are never kept in the journal either.
   // RTC-e: the signaling contract's `listen` and `endpoints` are reads (spec §9.1), so never journaled; its writes'
   // results (leg certificates, callback and minted ticket links) are not kept in the journal (§12); and `listen` runs
   // outside the account gate (a long poll must not hold the writer).
-  dispatcher:{durableJournal:true,readOnly:context=>context.contract===RTC_SIGNALING_CONTRACT&&['listen','endpoints'].includes(context.method),retainResult:context=>context.contract!==RTC_SIGNALING_CONTRACT,execute:async context=>{if(!await validateSubject(context.subject,context.epoch))fail('unauthorized','Application authorization is no longer active.');if(context.connection)await account.appConnectionCheck(owner,context.connection.id,context.connection.generation,context.clientId);if(context.resource===`${subject}/profile`&&context.contract===PROFILE&&context.method==='read'){if(Object.keys(context.args).length)fail('invalid_args','Profile read takes no arguments.');const current=await repository.get(owner),profile=await account.accountProfile(owner);return {entity:subject,handle:current.handle,name:profile.displayName||current.handle,avatar:profile.avatar||null};}if(context.contract===RTC_SIGNALING_CONTRACT&&context.method==='listen'){const {reauthorize,...safe}=context;return account.rtcContractListen(owner,{...safe,authority:'bindle'});}return account.federationRPC({...context,authority:'bindle'});}},
+  dispatcher:{durableJournal:true,readOnly:context=>context.contract===RTC_SIGNALING_CONTRACT&&['listen','endpoints'].includes(context.method),retainResult:context=>context.contract!==RTC_SIGNALING_CONTRACT&&context.contract!==ICE_RELAY_CONTRACT,execute:async context=>{if(!await validateSubject(context.subject,context.epoch))fail('unauthorized','Application authorization is no longer active.');if(context.connection)await account.appConnectionCheck(owner,context.connection.id,context.connection.generation,context.clientId);if(context.resource===`${subject}/profile`&&context.contract===PROFILE&&context.method==='read'){if(Object.keys(context.args).length)fail('invalid_args','Profile read takes no arguments.');const current=await repository.get(owner),profile=await account.accountProfile(owner);return {entity:subject,handle:current.handle,name:profile.displayName||current.handle,avatar:profile.avatar||null};}if(context.contract===RTC_SIGNALING_CONTRACT&&context.method==='listen'){const {reauthorize,...safe}=context;return account.rtcContractListen(owner,{...safe,authority:'bindle'});}return account.federationRPC({...context,authority:'bindle'});}},
   // RTC-e: bound approvals changed (revocation, removal, narrowing): the occupant ends what is no longer approved.
-  boundChanged:async({fragment,clientId,values})=>{if(fragment!==RTC_SIGNALING_SLOT)return;await account.rtcAppChanged(owner,{clientId,purposes:values?(Array.isArray(values.purposes)?values.purposes:[]):null});},
+  boundChanged:async({fragment,clientId,values,at})=>{if(fragment!==RTC_SIGNALING_SLOT)return;await account.rtcAppChanged(owner,{clientId,purposes:values?(Array.isArray(values.purposes)?values.purposes:[]):null,...Number.isSafeInteger(at)?{at}:{}});},
   connections:{notificationCheck:(connection,clientId)=>account.appNotificationCheck(owner,connection,clientId),binding:clientId=>account.appConnectionBinding(owner,clientId),connect:async(client,expected,permissions)=>account.appBindleConnect(owner,client,expected?.generation,{...permissions,...client.integration?.status==='valid'&&typeof config.INTEGRATION_CLIENT_SNAPSHOT==='function'?{integration:{kind:'external',snapshot:await config.INTEGRATION_CLIENT_SNAPSHOT(client)}}:{},expectedNotificationGeneration:expected?.notificationGeneration}),check:(connection,clientId)=>account.appConnectionCheck(owner,connection.id,connection.generation,clientId)}
  };
 }

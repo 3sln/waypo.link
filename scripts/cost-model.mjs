@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { BILLING_PLANS } from '../packages/billing/catalog.mjs';
 import { ORGANIZATION_PLANS } from '../packages/billing/organizations.mjs';
+import { RELAY_PLAN_BYTES, RELAY_LIMITS } from '../packages/rtc/relay.mjs';
 
 export const rates = Object.freeze({
   r2GB: .015, r2A: 4.5 / 1e6, r2B: .36 / 1e6,
@@ -122,6 +123,37 @@ export function organizationEconomics(a = organizationAssumptions) {
       marginWithBackupCopy: (price-costs-storage)/price };
   });
 }
+// Hosted TURN relay (RTC-f, provisional, unsigned). Cloudflare Realtime TURN bills egress per GB; the price and the
+// shared monthly free tier are a planning snapshot NOT rechecked against a primary source in this slice (recheck
+// before any relay flag is enabled). The free tier belongs to the whole deployment and is not allocated per account.
+// Worst case per plan: the whole monthly allowance (RELAY_PLAN_BYTES, reserved per issued credential) is relayed
+// every month, on top of the typical activity profile. The reservation is an admission estimate, NOT a byte cap: a
+// TURN credential is a bearer token with no byte limit, so relayed bytes (and these margins) are bounded only if the
+// external spend authority enforces per-owner byte caps from the provider's usage feed, using the usernames the
+// occupant gives it at commit (relay-spend budget gate, rtc-signaling design §8.3; review M1).
+export const relayAssumptions = Object.freeze({ turnUSDPerGB: .05, deploymentFreeGBMonth: 1000, profile: 'typical',
+  envelopeBytes: RELAY_LIMITS.envelopeBytes, credentialSeconds: RELAY_LIMITS.ttlSeconds });
+export function relayEconomics(a = relayAssumptions, allowances = RELAY_PLAN_BYTES) {
+  return Object.keys(plans).map(plan => {
+    const price = plans[plan].annual, base = account(plan, a.profile), fee = price - netPayment(price);
+    const gbMonth = (allowances[plan] ?? 0) / 1e9, relay = gbMonth * 12 * a.turnUSDPerGB, costs = base.annualInfra + fee + relay;
+    return { plan, price, gbMonth, relayedMinutesMonth: gbMonth * 1e9 / a.envelopeBytes * a.credentialSeconds / 60,
+      infra: base.annualInfra, fee, relay, costs, contribution: price - costs, margin: price ? (price - costs) / price : null };
+  });
+}
+// Stress row (review M1): an abusive account holding `legs` relayed legs at once (the occupant's accountLegs limit) at
+// a realistic relayed throughput for a whole month, with NO spend-authority enforcement. The local allowance does not
+// bound this: it limits issuances, not bytes, and a credential's allocation may outlive its expiry (RTCf-4, open).
+// Throughput: about 2 Mbit/s each way for an HD video call, so 4 Mbit/s of relay egress per leg (planning value).
+export const relayStressAssumptions = Object.freeze({ legs: RELAY_LIMITS.accountLegs, egressMbpsPerLeg: 4, days: 30 });
+export function relayAbuseStress(a = relayStressAssumptions, r = relayAssumptions) {
+  const gbMonth = a.legs * a.egressMbpsPerLeg * 1e6 / 8 * a.days * 86400 / 1e9, usdMonth = gbMonth * r.turnUSDPerGB;
+  return { ...a, enforcement: 'none', gbMonth, usdMonth, usdYear: usdMonth * 12,
+    plans: Object.keys(plans).filter(plan => plans[plan].annual > 0).map(plan => {
+      const price = plans[plan].annual, base = account(plan, r.profile), costs = base.annualInfra + price - netPayment(price) + usdMonth * 12;
+      return { plan, price, costs, margin: (price - costs) / price, relayCostToPrice: usdMonth * 12 / price };
+    }) };
+}
 export function report() {
   const accounts = Object.keys(plans).flatMap(p=>Object.keys(profiles).map(s=>account(p,s)));
   const ratios = ['typical','heavy'].map(profile=>{
@@ -129,7 +161,7 @@ export function report() {
     return { profile, freeAnnualCost:free, paidPlans:Object.fromEntries(['paid','plus','ultra'].map(plan=>{const contribution=positive(account(plan,profile).annualContribution);return [plan,{freeAccountsAtZeroMargin:contribution/free,freeAccountsAtHalfContribution:contribution/free/2}];})) };
   });
   const cohorts = [{plan:'free',profile:'typical',count:1000},{plan:'paid',profile:'typical',count:100},{plan:'plus',profile:'typical',count:20},{plan:'ultra',profile:'typical',count:2}];
-  return { pricingDate:'2026-10-12', currency:'USD', launchPolicy: launchPolicy(), rates, included, rounding, accounts, fullOccupancyTypical: Object.keys(plans).map(p=>account(p,'typical',{occupancy:1})), ratios, organizations: organizationEconomics(),
+  return { pricingDate:'2026-10-12', currency:'USD', launchPolicy: launchPolicy(), rates, included, rounding, accounts, fullOccupancyTypical: Object.keys(plans).map(p=>account(p,'typical',{occupancy:1})), ratios, organizations: organizationEconomics(), relay: relayEconomics(), relayStress: relayAbuseStress(),
     fleets: [fleet(cohorts),fleet(cohorts,{supportPerAccountYear:.25,otherAnnual:120}),
       fleet(cohorts.map(c=>({...c,profile:'heavy'}))), fleet([{plan:'free',profile:'heavy',count:10000}])] };
 }

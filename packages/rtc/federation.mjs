@@ -70,6 +70,9 @@ export class RtcKeyRoster{
  async identity(p){return (await this.held(p))?.identity??null;}
  /** The peer issuer's declared `max_leg_certificate_seconds` as held (cache only), or null. */
  maxLegSeconds(p){const f=this.peekFeature(p?.iss);return f?f.max_leg_certificate_seconds:null;}
+ /** RTC-i (§4.1): true only when `p`'s issuer manifest is held fresh (cache only, never dials) and declares no valid
+  * rtc-signaling.v1, a public fact answered with `unsupported_peer`. Unknown (no fresh manifest) is false. */
+ unsupported(p){const d=this.dir();if(!this.usable(d,p))return false;let f=null;try{f=d.peekFeatures(p.iss);}catch{f=null;}return f!==null&&typeof f==='object'&&!validateRtcFeature(f[RTC_FEATURE],{issuer:p.iss,allowLoopback:this.allowLoopback});}
  peekFeature(iss,options){const d=this.dir(options);if(!d||typeof iss!=='string'||iss===this.issuer)return null;let f=null;try{f=d.peekFeatures(iss);}catch{f=null;}return f?validateRtcFeature(f[RTC_FEATURE],{issuer:iss,allowLoopback:this.allowLoopback}):null;}
  /** The validated rtc-signaling.v1 of `iss`, fetching its manifest under the directory budgets when not cached.
   * `control: true` (review F2): the control-only delivery path, through a directory not gated by RTC_FOREIGN_ENABLED;

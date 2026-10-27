@@ -20,19 +20,24 @@
 //   rtcAlarm()                                     account alarm hook: rtc.tick (expiry, retention, outbox drain)
 //   rtcDrain(owner)                                account deletion E4 hook (DRAINS): rtc.lifecycle `deletion` once, then
 //                                                  the outbox, so peers get control statements before the purge
-//   rtcFlush(owner)                                tests and operators (internal, never routed)
 //   rtcRosterDirectory({control})                  tests and operators (internal): the RTC directory (review F2)
 //   rtcContractListen(owner, context)              RTC-e: the contract's `listen` from the verified federation RPC
 //                                                  dispatch context, outside the account gate (a real long poll)
-//   rtcAppChanged(owner, {clientId, purposes})     RTC-e: the federation shard's bound-approval hook after a grant
+//   rtcAppChanged(owner, {clientId, purposes, at}) RTC-e: the federation shard's bound-approval hook after a grant
 //                                                  revocation, an app removal or bound narrowing: `purposes: null`
-//                                                  runs rtc.lifecycle `app-revoked`, a list runs `app-narrowed`
+//                                                  runs rtc.lifecycle `app-revoked`, a list runs `app-narrowed`. RTC-i
+//                                                  review L1: it first records {purposes, revision, at} for the client
+//                                                  (rtc/approval/), which contractActor intersects with any older
+//                                                  dispatch approval
 //   rtcAppRevoked(owner, {clientId?, all?})        RTC-e: the account's connection cascade (disconnect, removal,
 //                                                  sever) runs rtc.lifecycle `app-revoked` (internal)
 //   rtcResourceMethod(c, owner, context)           RTC-e: the RESOURCE_METHOD_HANDLERS entry for the signaling contract
 //                                                  (packages/runtime/account/storage.mjs): builds {kind:'app'} from the
 //                                                  verified dispatch context and calls rtcDispatch (`listen` here never
 //                                                  waits: it runs inside the account gate)
+//   rtcRelayResourceMethod(c, owner, context)      RTC-f: the RESOURCE_METHOD_HANDLERS entry for ice-relay/v1 (the
+//                                                  built-in relay occupant `${subject}/relay`): the same verified actor,
+//                                                  `credentials` → rtc.relay-credentials
 //
 // Ports (all built here; none is called inside a storage transaction, and nothing fetches another provider):
 //   keys          same-host principals: the peer writer's rtcPublicKeys, memoized 60 s. Foreign principals (RTC-e):
@@ -43,7 +48,9 @@
 //   signer        certificationSigner over this account (the person's or organization's ACTIVE certification key)
 //   linkSigner    the identity signing key (ticket metas)
 //   bound         config.RTC_BOUND_CHECK(input) -> boolean: FederationService.checkBound, wired by the adapter (RTC-e);
-//                 absent means nothing is approved, so every endpoint operation is refused (fail closed)
+//                 absent means nothing is approved, so every endpoint operation is refused (fail closed). Used only
+//                 outside the account gate (fan-out eligibility); a contract RPC's actor carries the approval from its
+//                 verified dispatch context instead (RTC-i bug 1: no call into the federation shard inside the gate)
 //   contacts      ContactEndpointService.inspect over this owner's contact links
 //   transport     foreignRtcTransport (RTC-e): same-host principals through sameHostRtcTransport over rtcPeer; other
 //                 issuers only through the adapter's SSRF-screened RTC_EGRESS ({send}), the RTC_FOREIGN_ISSUERS
@@ -52,6 +59,11 @@
 //                 existing Web Push transport (RTC-e doorbell)
 //   defer         a detached task on this controller (one at a time) running rtc.inbox and rtc.outbox-drain after the
 //                 current request has answered; the alarm (rtc.tick, also scheduled) is the durable fallback
+//   relay         RTC-f: RtcRelay over the service: the TURN adapter from turnAdapterFrom(config) (RTC_TURN_ADAPTER, or
+//                 CloudflareTurnAdapter from CLOUDFLARE_TURN_KEY_ID and the CLOUDFLARE_TURN_API_TOKEN secret), the
+//                 external spend authority config.RTC_RELAY_SPEND (none in production: the relay-spend budget gate),
+//                 the owner's plan from the billing entitlement, and `defer` (revocation on this controller's detached
+//                 task; the alarm's rtc.tick sweep is the fallback)
 //   hostLimits    config.WORK_AUTHORITY.consume (the host's shared fixed-window guard, as message postbacks use it),
 //                 keyed by an HMAC of the caller principal (ABUSE_HASH_KEY or KEY_ENCRYPTION_KEY; SHA-256 without one)
 import {createAppEngine,perform,read,AppQuery} from '../../app/engine.mjs';
@@ -67,15 +79,16 @@ import {IdentityDirectory} from '../../federation/directory.mjs';
 import {foreignIssuers,directoryHostLimiter} from './foreign-directory.mjs';
 import {createPushTransport} from '../../messaging/web-push.mjs';
 import {RtcKeyRoster,RtcDeliveryError,foreignRtcTransport,rtcEgress} from '../../rtc/federation.mjs';
-import {RTC_FEATURE,RTC_SIGNALING_CONTRACT} from '../../rtc/extension.mjs';
-import {RtcService,rtcProvider,sameHostRtcTransport,RTC_ENDPOINT_OPERATIONS,RTC_OWNER_OPERATIONS,RTC_WIDENING,RTC_SIGNALING_FLAG,RTC_LIMIT_VALUES,RtcIngest,RtcInbox,RtcTick,RtcLifecycle,RtcOutboxDrain,RTC_CONTRACT_OPERATIONS,RTC_FOREIGN_FLAG} from '../../app/domains/rtc.mjs';
+import {RTC_FEATURE,RTC_SIGNALING_CONTRACT,RTC_SIGNALING_SLOT} from '../../rtc/extension.mjs';
+import {RtcService,rtcProvider,sameHostRtcTransport,RTC_ENDPOINT_OPERATIONS,RTC_OWNER_OPERATIONS,RTC_WIDENING,RTC_SIGNALING_FLAG,RTC_LIMIT_VALUES,RtcIngest,RtcInbox,RtcTick,RtcLifecycle,RtcOutboxDrain,RTC_CONTRACT_OPERATIONS,RTC_FOREIGN_FLAG,RtcRelay,RtcRelaySweep,RTC_RELAY_OPERATIONS,RTC_RELAY_CONTRACT_OPERATIONS,RTC_TURN_FLAG,turnAdapterFrom} from '../../app/domains/rtc.mjs';
+import {ICE_RELAY_CONTRACT} from '../../rtc/extension.mjs';
 
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,MEMO_MS=60000;
-const WIRE=Object.freeze(Object.fromEntries([...RTC_ENDPOINT_OPERATIONS,...RTC_OWNER_OPERATIONS].map(O=>[O.operation,O])));
+const WIRE=Object.freeze(Object.fromEntries([...RTC_ENDPOINT_OPERATIONS,...RTC_OWNER_OPERATIONS,...RTC_RELAY_OPERATIONS].map(O=>[O.operation,O])));
 const plain=v=>v!==null&&typeof v==='object'&&!Array.isArray(v);
 const notFound=()=>{throw new StorageError('not_found','Not found.',404);};
 const memories=new WeakMap();
-const memory=c=>{let m=memories.get(c);if(!m){m={parties:new Map(),kicking:false,again:false,owner:null,directory:null,push:undefined};memories.set(c,m);}return m;};
+const memory=c=>{let m=memories.get(c);if(!m){m={parties:new Map(),kicking:false,again:false,owner:null,directory:null,push:undefined,relay:false};memories.set(c,m);}return m;};
 /** RTC-e: the foreign-issuer allowlist for RTC (same parser and rules as ORG_FOREIGN_ISSUERS; empty by default). */
 export const rtcForeignIssuers=config=>foreignIssuers(config,'RTC_FOREIGN_ISSUERS');
 const foreignOn=(config,owner)=>{try{return typeof owner==='string'&&flagsFor(config,{subject:{kind:'account',owner}}).enabled(RTC_FOREIGN_FLAG)===true;}catch{return false;}};
@@ -117,6 +130,7 @@ function kick(c){
  setTimeout(async()=>{
   try{const owner=await c.metadata.get('owner');if(owner)for(let i=0;i<8;i++){m.again=false;
    const inbox=await run(c,new RtcInbox({actor:system(owner),input:{limit:32}})),out=await run(c,new RtcOutboxDrain({actor:system(owner),input:{limit:64}}));
+   if(m.relay){m.relay=false;await run(c,new RtcRelaySweep({actor:system(owner)})).catch(()=>{m.relay=true;return c.scheduleAlarm(Date.now()+60000).catch(()=>null);});}// RTC-f: ended legs' credentials (the sweep re-arms the alarm while revocations remain; a failed pass does here)
    await rtcEngine(c).roster.run({limit:4}).catch(()=>null);// RTC-e: scheduled key refreshes, in the background
    if(!inbox.more&&!out.more&&!m.again)break;}}
   catch{/* the alarm retries */}
@@ -146,13 +160,17 @@ export function rtcEngine(c){
    identity:async p=>local(p)?(await partyRecord(c,p.sub))?.identity??null:roster.identity(p),
    handle:async p=>local(p)?(await partyRecord(c,p.sub))?.handle??null:null,// foreign handles are never shown (no verified binding held)
    aep:async owner=>(await partyRecord(c,owner))?.aep??0,
-   refresh:(p,kid,options)=>local(p)?false:roster.refresh(p,kid,options),live:principals=>roster.live(principals),track:p=>roster.track(p),warm:p=>roster.warm(p),maxLegSeconds:p=>roster.maxLegSeconds(p),
+   refresh:(p,kid,options)=>local(p)?false:roster.refresh(p,kid,options),unsupported:p=>local(p)?false:roster.unsupported(p),live:principals=>roster.live(principals),track:p=>roster.track(p),warm:p=>roster.warm(p),maxLegSeconds:p=>roster.maxLegSeconds(p),
   },
   signer:owner=>signerFor(c)(owner),
   linkSigner:async owner=>{const k=await c.signingKey(owner);return k?{kid:k.kid,privateKey:k.privateKey}:null;},
   bound:typeof config.RTC_BOUND_CHECK==='function'?{check:input=>config.RTC_BOUND_CHECK(input)}:null,
   contacts:{inspect:async link=>{const owner=await c.metadata.get('owner');let inspected=null;try{inspected=await c.endpoints?.inspect(link);}catch{inspected=null;}const g=inspected?.grant;return g&&g.owner===owner&&typeof g.id==='string'?{parent:g.id,quarantined:g.quarantined===true}:null;}},
   transport,pushTransport,defer:()=>kick(c),hostLimits:hostLimitsFor(config),allowLoopback});
+ // RTC-f: the built-in ice-relay/v1 occupant. Unreachable unless both flags are on for the owner AND both ports exist.
+ service.attachRelay(new RtcRelay({service,adapter:turnAdapterFrom(config),spend:typeof config.RTC_RELAY_SPEND?.reserve==='function'?config.RTC_RELAY_SPEND:null,
+  plan:async owner=>{try{return (await c.billing?.entitlement(owner))?.plan??'free';}catch{return 'free';}},
+  defer:()=>{m.relay=true;kick(c);},wake:(owner,time)=>c.scheduleAlarm(time)}));// review L3: pending revocations re-arm the alarm
  entry={service,roster,engine:createAppEngine({providers:{clock:{now:()=>Date.now()},random:cryptoRandom,audit:nullAudit,rtc:rtcProvider(service)}})};
  engines.set(c,entry);return entry;
 }
@@ -160,27 +178,68 @@ const run=(c,operation)=>{const owner=operation?.actor?.owner;if(typeof owner===
 const runOp=(c,operation)=>operation instanceof AppQuery?read(rtcEngine(c).engine,operation):perform(rtcEngine(c).engine,operation);
 const system=owner=>({kind:'system',owner});
 const enabled=(c,owner)=>{try{return flagsFor(c.config,{subject:{kind:'account',owner}}).enabled(RTC_SIGNALING_FLAG)===true;}catch{return false;}};
+/** RTC-f: the relay also needs RTC_TURN_ENABLED (class b: its `requires` is not evaluated from env, so both are read). */
+const relayEnabled=(c,owner)=>{try{return enabled(c,owner)&&flagsFor(c.config,{subject:{kind:'account',owner}}).enabled(RTC_TURN_FLAG)===true;}catch{return false;}};
 const hasState=async c=>(await c.metadata.list({prefix:'rtc/',limit:1})).size>0;
+/** RTC-i review L1: the account-local record of the last bound change the federation shard reported for a client
+ * (`rtc/approval/<SHA-256 of the client id>`): {clientId, purposes (a list, or null when no bound grant remains),
+ * revision (a local counter), at (the shard's clock when it read the remaining grants)}. One row per client that
+ * ever had a change; replaced, never appended. */
+const APPROVAL_PREFIX='rtc/approval/';
+const approvalKey=async clientId=>APPROVAL_PREFIX+base64url(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode('rtc-approval\0'+clientId))));
+/** The dispatch approval narrowed by the client's approval record when that record is at least as new as the
+ * approval (the approval's `at` is not later than the record's): a narrowing or revocation that committed after the
+ * RPC's authorization transaction but whose hook entered this account's gate first is never bypassed. A malformed
+ * record approves nothing (fail closed). An approval read after the record (a later approval or narrowing) stands. */
+function narrowedApproval(approval,at,record){
+ if(record===undefined||record===null)return approval;
+ if(!plain(record)||!Number.isSafeInteger(record.at)||!(record.purposes===null||Array.isArray(record.purposes)))return {values:{},versions:{}};
+ if(Number.isSafeInteger(at)&&at>record.at)return approval;
+ if(record.purposes===null)return {values:{},versions:{}};
+ const keep=new Set(record.purposes),values={};
+ for(const [name,list]of Object.entries(approval.values))values[name]=name==='purposes'&&Array.isArray(list)?list.filter(v=>keep.has(v)):list;
+ const lines=new Set(Array.isArray(values.purposes)?values.purposes:[]);
+ return {values,versions:Object.fromEntries(Object.entries(approval.versions).filter(([line])=>lines.has(line)))};
+}
 
 /** RTC-e: the {kind:'app'} actor from the VERIFIED federation RPC dispatch context (never from arguments): the token's
  * subject owner, client, the client's registered origin, the token's grant ids (required by checkBound), its epoch
  * and, for a DPoP-bound token, the key's jkt. Live checks as every built-in contract handler makes them. */
-async function contractActor(c,owner,context){
+async function contractActor(c,owner,context,{contract=RTC_SIGNALING_CONTRACT,resource='rtc',operations=RTC_CONTRACT_OPERATIONS,signaling=true}={}){
  const forbidden=()=>{throw new StorageError('forbidden','Real-time connection access denied.',403);};
  const origin=c.config.APP_ORIGIN,subject=`${origin}/entities/${owner}`;
- if(!plain(context)||context.authority!=='bindle'||context.contract!==RTC_SIGNALING_CONTRACT||context.subject!==subject||context.resource!==`${subject}/rtc`||context.resourceGeneration!==owner||!plain(context.connection)||typeof context.connection.id!=='string'||!Number.isSafeInteger(context.connection.generation)||context.epoch===undefined||context.epoch===null||typeof context.clientId!=='string'||!plain(context.args))forbidden();
- const operation=typeof context.method==='string'&&Object.hasOwn(RTC_CONTRACT_OPERATIONS,context.method)?RTC_CONTRACT_OPERATIONS[context.method]:null;if(!operation)throw new StorageError('unsupported_method','Unsupported signaling method.',400);
+ if(!plain(context)||context.authority!=='bindle'||context.contract!==contract||context.subject!==subject||context.resource!==`${subject}/${resource}`||context.resourceGeneration!==owner||!plain(context.connection)||typeof context.connection.id!=='string'||!Number.isSafeInteger(context.connection.generation)||context.epoch===undefined||context.epoch===null||typeof context.clientId!=='string'||!plain(context.args))forbidden();
+ const operation=typeof context.method==='string'&&Object.hasOwn(operations,context.method)?operations[context.method]:null;if(!operation)throw new StorageError('unsupported_method','Unsupported signaling method.',400);
  if(!Array.isArray(context.grants)||!context.grants.length||context.grants.length>256||context.grants.some(g=>typeof g!=='string'))forbidden();
  let appOrigin=null;try{appOrigin=new URL(typeof context.clientOrigin==='string'?context.clientOrigin:context.clientId).origin;}catch{appOrigin=null;}if(!appOrigin||appOrigin==='null')forbidden();
  if(typeof c.config.FEDERATION_IDENTITY_CHECK!=='function'||await c.config.FEDERATION_IDENTITY_CHECK(owner,context.epoch)!==true)throw new StorageError('unauthorized','Application authorization is no longer active.',401);
  await c.apps.check(owner,context.connection.id,context.connection.generation,context.clientId);
- return {operation,actor:{kind:'app',owner,clientId:context.clientId,origin:appOrigin,grants:[...context.grants],epoch:context.epoch,...typeof context.jkt==='string'?{jkt:context.jkt}:{}}};
+ // RTC-i (bug 1): this handler runs inside the owner's account gate, so it must never call into the federation shard
+ // (whose gate another RPC may hold while it waits on this account: tokenRecord's connection check). The bound
+ // approval of the signaling fragment comes with the verified dispatch context instead (FederationService rpc
+ // `bound`, computed in that RPC's own authorization transaction); without one nothing is approved (fail closed).
+ // RTC-i review L1: that approval is narrowed by the client's account-local approval record (rtcAppChanged), so a
+ // narrowing or revocation whose hook entered this gate before this RPC is never bypassed by an older snapshot.
+ // RTC-i review (relay actor): the ice-relay/v1 actor carries an EMPTY approval. Issuance needs a live leg of a session
+ // that signaling approval admitted (and narrowing or revocation ends such sessions); the signaling slot's approval
+ // is not the relay grant, and an empty one keeps any future approval check on this path closed and off the shard.
+ const bound=signaling&&plain(context.bound)&&Object.hasOwn(context.bound,RTC_SIGNALING_SLOT)?context.bound[RTC_SIGNALING_SLOT]:null;
+ let approval=plain(bound)&&plain(bound.values)&&plain(bound.versions)?{values:structuredClone(bound.values),versions:structuredClone(bound.versions)}:{values:{},versions:{}};
+ if(signaling){let record;try{record=await c.metadata.get(await approvalKey(context.clientId));}catch{record=false;}approval=narrowedApproval(approval,plain(bound)?bound.at:undefined,record===false?{}:record);}
+ return {operation,actor:{kind:'app',owner,clientId:context.clientId,origin:appOrigin,grants:[...context.grants],epoch:context.epoch,bound:approval,...typeof context.jkt==='string'?{jkt:context.jkt}:{}}};
 }
 /** RTC-e RESOURCE_METHOD_HANDLERS entry for `rtc-signaling/v1` (inside the account gate: `listen` never waits here;
  * the runtime dispatcher sends `listen` to rtcContractListen, outside the gate). */
 export async function rtcResourceMethod(c,owner,context){
  const {operation,actor}=await contractActor(c,owner,context);
  if(operation==='rtc.listen'){const input={...context.args,...context.args.wait!==undefined?{wait:0}:{}};return c.rtcListen(owner,{actor,input});}
+ return c.rtcDispatch(owner,{operation,actor,input:context.args});
+}
+
+/** RTC-f RESOURCE_METHOD_HANDLERS entry for `ice-relay/v1` on the built-in relay occupant (`${subject}/relay`, declared
+ * only while both flags are on and the relay is configured): the verified actor, then rtc.relay-credentials. */
+export async function rtcRelayResourceMethod(c,owner,context){
+ const {operation,actor}=await contractActor(c,owner,context,{contract:ICE_RELAY_CONTRACT,resource:'relay',operations:RTC_RELAY_CONTRACT_OPERATIONS,signaling:false});
  return c.rtcDispatch(owner,{operation,actor,input:context.args});
 }
 
@@ -191,6 +250,7 @@ export const methods={
   const blocked=await lifecycleBlocked(this,'rtcDispatch',{lifecycle:Operation.lifecycle??'active'},owner);if(blocked)throw new StorageError(blocked.code,blocked.message,blocked.status);
   // Uniform 404 while off for widening; the engine rechecks every gate (claim accept and send are checked inside).
   if(RTC_WIDENING.has(operation)&&!enabled(this,owner))notFound();
+  if(operation==='rtc.relay-credentials'&&!relayEnabled(this,owner))notFound();// RTC-f: the engine rechecks both
   await this.warm(owner);
   const result=await run(this,new Operation({actor:structuredClone(actor),...input===undefined?{}:{input:structuredClone(input)}}));
   try{if((await this.metadata.list({prefix:'rtc/outbox/',limit:1})).size)await this.scheduleAlarm(Date.now()+1000);}catch{/* the alarm retries */}
@@ -234,9 +294,12 @@ export const methods={
  async rtcDrain(owner){
   if(await this.metadata.get('owner')!==owner||!await hasState(this))return {pending:0};
   if(!await this.metadata.get('rtc/closed'))await run(this,new RtcLifecycle({actor:system(owner),input:{event:'deletion'}}));
-  const out=await run(this,new RtcOutboxDrain({actor:system(owner),input:{limit:64}}));return {pending:out.pending+(out.more?1:0)};
+  const out=await run(this,new RtcOutboxDrain({actor:system(owner),input:{limit:64}}));
+  // RTC-f: relay credentials of the ended legs are revoked before the purge; unrevoked ones keep the drain pending
+  // until they are revoked or expire (at most 300 s).
+  await run(this,new RtcRelaySweep({actor:system(owner)})).catch(()=>null);const relay=await rtcEngine(this).service.relay?.pending(owner).catch(()=>1)??0;
+  return {pending:out.pending+(out.more?1:0)+relay};
  },
- async rtcFlush(owner){return run(this,new RtcTick({actor:system(owner)}));},
  /** Tests and operators (internal, never routed): this writer's RTC directory as the roster sees it (review F2: with
   * `control: true`, the control-only delivery path). */
  rtcRosterDirectory(options){return rtcDirectory(this,options);},
@@ -244,8 +307,14 @@ export const methods={
   if(context?.method!=='listen')throw new StorageError('unsupported_method','Unsupported signaling method.',400);
   const {actor}=await contractActor(this,owner,context);return this.rtcListen(owner,{actor,input:context.args});
  },
- async rtcAppChanged(owner,{clientId,purposes}={}){
+ async rtcAppChanged(owner,{clientId,purposes,at}={}){
   if(await this.metadata.get('owner')!==owner||typeof clientId!=='string'||!clientId||clientId.length>2048||!(purposes===null||Array.isArray(purposes)&&purposes.length<=16&&purposes.every(p=>typeof p==='string')))return {ended:0};
+  // RTC-i review L1: record the change before anything else (inside this account's gate, so every contract RPC that
+  // enters the gate afterwards intersects its dispatch approval with it). A later-reported change never yields to an
+  // earlier one that arrives late. Without the shard's `at` (direct callers), this writer's clock stands in.
+  const when=Number.isSafeInteger(at)&&at>=0?at:Date.now(),path=await approvalKey(clientId);
+  await this.metadata.transaction(async tx=>{if(await tx.get('rtc/closed'))return;const prior=await tx.get(path);if(plain(prior)&&Number.isSafeInteger(prior.at)&&prior.at>when)return;
+   await tx.put(path,{clientId,purposes:purposes===null?null:[...purposes],revision:(plain(prior)&&Number.isSafeInteger(prior.revision)?prior.revision:0)+1,at:when});});
   if(!await hasState(this))return {ended:0};
   return run(this,new RtcLifecycle({actor:system(owner),input:purposes===null?{event:'app-revoked',clientId}:{event:'app-narrowed',clientId,purposes:[...purposes]}}));
  },
@@ -256,4 +325,4 @@ export const methods={
   let ended=0;for(const id of clients)ended+=(await run(this,new RtcLifecycle({actor:system(owner),input:{event:'app-revoked',clientId:id}}))).ended??0;return {ended};
  },
 };
-export const rpc={rtcDispatch:{lifecycle:'suspended'},rtcListen:{lifecycle:'suspended',gate:'none'},rtcPeer:{lifecycle:'suspended',gate:'none'},rtcPublicKeys:{gate:'none'},rtcFlush:{lifecycle:'suspended'},rtcContractListen:{lifecycle:'suspended',gate:'none'},rtcAppChanged:{lifecycle:'suspended'}};
+export const rpc={rtcDispatch:{lifecycle:'suspended'},rtcListen:{lifecycle:'suspended',gate:'none'},rtcPeer:{lifecycle:'suspended',gate:'none'},rtcPublicKeys:{gate:'none'},rtcContractListen:{lifecycle:'suspended',gate:'none'},rtcAppChanged:{lifecycle:'suspended'}};

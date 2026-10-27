@@ -48,6 +48,31 @@ The portal's visible idle file-offer polling can produce 86,400 requests per 30-
 
 Production evidence remains pending: provider billing reconciliation, measured workloads, actual payments/payouts, abuse controls, backup/restore at meaningful size and a funded free-service reserve. The implementation's 1 TB quota is not a claim of a tested 1 TB restoration or a one-blob upload; object and message size/count limits remain separate. Economics/operations reviewer ___ / Date ___ / Outcome ___.
 
+## Hosted relay (provisional)
+
+Provisional coordinator allowances, 2026-10-27 (RTC-f), not signed off. Prices are unchanged. Run `relayEconomics()` in `scripts/cost-model.mjs`; `tests/cost-model-relay.test.mjs` fails if a paid plan drops under a 50% margin with its whole relay allowance spent.
+
+TURN relay was not modelled before. The planning rate is US$0.05 per GB of Cloudflare Realtime TURN egress, with a deployment-wide monthly free tier (taken as 1,000 GB, not allocated per account and not counted here). **Neither figure was rechecked against a primary source in this slice; recheck both before any relay flag is enabled.** The built-in relay occupant reserves an envelope of 125 MB per issued credential (300 s at about 3.3 Mbit/s through the account's own relay, both directions, a relayed video call), and each plan gets a monthly allowance of reserved bytes:
+
+| Plan | Relay allowance/month | Relayed video at the envelope | Typical infra/year | Fee | Relay at full allowance/year | Margin |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Free | none | none | $0.13 | $0 | $0 | n/a |
+| Paid, $5 | 1 GB | about 40 min | $0.98 | $0.75 | $0.60 | 53.5% |
+| Plus, $35 | 10 GB | about 6.7 h | $7.62 | $2.25 | $6.00 | 54.7% |
+| Ultra, $250 | 100 GB | about 67 h | $43.26 | $13.00 | $60.00 | 53.5% |
+
+The margin uses the model's typical profile (20% occupancy), with the whole allowance relayed every month. At full storage occupancy the person plans are already under 50% without any relay (see the tables above), so a heavy-storage subscriber who also uses the full relay allowance is below the floor. A TURN price above about US$0.064/GB puts Paid under 50% at this allowance.
+
+What this does and does not bound:
+- **Relayed bytes are bounded only if the spend authority enforces caps using the usage it is given.** The allowance is an admission estimate per credential, not a byte cap. A TURN credential is a bearer token with no byte limit, so a client can move any number of bytes during its 300 s, and possibly longer if allocations outlive the credential (RTCf-4, open). Spec §10 forbids relying on client byte counts, so spend has to be capped at the relay. That is the external `RTC_RELAY_SPEND` authority, which no deployment has yet (the relay-spend budget gate, [RTC design](rtc-signaling.md) §8.3). The occupant gives it, at `commit`, the TURN usernames of each credential, their expiry, the owner and the leg, so it can attribute the provider's per-username usage and revoke an overrun. The margins in the table hold only under that enforcement.
+- **Stress row, no enforcement** (`relayAbuseStress()`): one abusive account holding 4 relayed legs at once (the occupant's limit) at 4 Mbit/s of relay egress each (about 2 Mbit/s each way, an HD video call) for a 30-day month relays 5,184 GB. At the planning rate that is about $259 a month, or $3,110 a year: more than one Ultra year ($250) every month, and 622 times the Paid price over a year. Every plan's margin is deeply negative (Paid −62,143%, Plus −8,815%, Ultra −1,167%). The local allowance does not change this, because it limits issuances, not bytes.
+- **Production gate:** before `RTC_TURN_ENABLED` is enabled anywhere, the spend authority must enforce per-owner byte caps (at or below these allowances) from the TURN provider's usage feed, attributing usage through the usernames it receives at `commit` and revoking credentials that overrun. A configured authority that answers `enforced: true` without this is not enough.
+- Per session, at most 3 GB (24 envelopes, about 2 h relayed) can be reserved; per account, at most 4 legs at once and 60 credentials an hour.
+- Free accounts get no hosted relay. They can assign a third-party relay occupant to the slot (RTC-7: each party funds its own relay); cross-entity sessions otherwise need the owner's opt-in to connect directly (RTC-6).
+- Organization plans have no relay allowance in this model.
+
+Economics reviewer ___ / Date ___ / Outcome ___.
+
 ## Organization tiers (provisional)
 
 Provisional coordinator pricing, 2026-10-23, not signed off. Run `organizationEconomics()` in `scripts/cost-model.mjs`; `tests/cost-model-organizations.test.mjs` fails if any tier drops under a 50% worst-case margin.

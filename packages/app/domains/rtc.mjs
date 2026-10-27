@@ -13,11 +13,15 @@
 //   RTC_WIDENING              operations that answer the uniform 404 while RTC_SIGNALING_ENABLED is off (the engine
 //                             also rechecks; claim accept and send of non-narrowing messages are checked inside)
 //   RTC_NEVER_GATED           narrowing and reads of existing state: never gated by any RTC flag
+//   RTC_RELAY_OPERATIONS      RTC-f: the ice-relay/v1 contract (`credentials` → rtc.relay-credentials) for an
+//                             application endpoint; widening, so it also needs RTC_TURN_ENABLED (checked by the occupant)
 export {RtcService,rtcProvider,sameHostRtcTransport,heldPurpose,sessionView,RTC_FRAGMENT,RTC_SIGNALING_FLAG,RTC_FOREIGN_FLAG,RTC_TICKETS_FLAG,PUSH_ORIGINS,
  RTC_ENDPOINT_OPERATIONS,RTC_OWNER_OPERATIONS,RTC_SYSTEM_OPERATIONS,RTC_NEVER_GATED,RTC_CONTRACT_OPERATIONS,
  RtcRegister,RtcUnregister,RtcOpen,RtcClaim,RtcSend,RtcRenew,RtcMintTicket,RtcListen,RtcEndpoints,
  RtcPolicy,RtcSetPolicy,RtcSetContactRtc,RtcBlock,RtcUnblock,RtcMute,RtcUnmute,RtcRevokeTicket,RtcEndSession,RtcRevokeEndpoint,RtcClearMissed,RtcSessions,RtcMissed,RtcBlocked,RtcTickets,RtcEndpointList,RtcExport,
- RtcIngest,RtcInbox,RtcTick,RtcOutboxDrain,RtcLifecycle} from '../../rtc/service.mjs';
+ RtcIngest,RtcInbox,RtcTick,RtcOutboxDrain,RtcLifecycle,RtcRelayCredentials,RtcRelaySweep,RTC_RELAY_OPERATIONS,RTC_RELAY_CONTRACT_OPERATIONS} from '../../rtc/service.mjs';
+// RTC-f: the built-in ice-relay/v1 occupant (RtcRelay over the entity's RtcService) and its quotas.
+export {RtcRelay,RTC_TURN_FLAG,RELAY_LIMITS,RELAY_PLAN_BYTES,ICE_RELAY_METHODS,turnAdapterFrom,relayConfigured,validateIceRelayResult,contractIceServers,legLive} from '../../rtc/relay.mjs';
 export {RTC_BOUNDS,SESSION_STATES,SESSION_EVENTS} from '../../rtc/sessions.mjs';
 export {LIMITS as RTC_LIMIT_VALUES,DEFAULT_POLICY as RTC_DEFAULT_POLICY} from '../../rtc/admission.mjs';
-export const RTC_WIDENING=Object.freeze(new Set(['rtc.register','rtc.open','rtc.renew','rtc.mint-ticket','rtc.unblock','rtc.unmute']));
+export const RTC_WIDENING=Object.freeze(new Set(['rtc.register','rtc.open','rtc.renew','rtc.mint-ticket','rtc.unblock','rtc.unmute','rtc.relay-credentials']));

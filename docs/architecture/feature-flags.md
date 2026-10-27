@@ -99,7 +99,7 @@ Columns:
 | `BROWSER_AUTOMATION_ENABLED` | b | — | **on** | — | — | — | env (on; `false` disables) | Kill switch for browser automation (wargame 3, provisional). Off makes every automation operation except revoke `not_found`; revoke is never gated. |
 | `BILLING_ENABLED` | b | — | off | — | — | — | env (on) | Polar secrets. Per-user billing would corrupt entitlement. |
 | `MAIL_ENABLED`, `PUSH_ENABLED` | b | — | off | — | — | — | env | Bindings or secrets. |
-| `RTC_TURN_ENABLED` | b | — | off | `RTC_SIGNALING_ENABLED` | — | — | env | Built-in relay occupant (RTC-f, not implemented). Requires signaling (review follow-up, provisional): relay credentials exist only for live signaling legs. New, not a rename of retired `BEAM_TURN_ENABLED`; stays off until the relay-spend budget gate. |
+| `RTC_TURN_ENABLED` | b | — | off | `RTC_SIGNALING_ENABLED` | — | — | env | Built-in `ice-relay/v1` relay occupant (RTC-f, implemented locally, provisional). Requires signaling (review follow-up, provisional): relay credentials exist only for live signaling legs; the occupant checks both flags itself (class b `requires` is not evaluated from env). Also needs a TURN adapter and the external `RTC_RELAY_SPEND` authority (none ships). New, not a rename of retired `BEAM_TURN_ENABLED`; stays off until the relay-spend budget gate. |
 | `FEDERATION_REFRESH_ENABLED` | b | — | on | — | — | — | env | Network and protocol metadata. No rollout use. |
 | `FEDERATION_ENTRY_ENABLED` | b | — | off | — | — | — | env | Selects a binding and embed-origin routing. |
 | `ONBOARDING_ENABLED` | b | — | off | — | — | — | env | Needs the `ONBOARDING_KEY` secret. |

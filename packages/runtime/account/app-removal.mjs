@@ -8,8 +8,17 @@ import {AppConnections} from '../../apps/connections.mjs';
 import {AppRemovalService,appRemovalProvider,REMOVAL_OPERATIONS,RemovalReminderTick,REMOVAL_RECORD,REMOVAL_NOTICE,removalOpen} from '../../app/domains/app-removal.mjs';
 import {removalCommitTx,drainRemovalCascades} from '../app-removal-commit.mjs';
 import {ownerFlags} from './flags.mjs';
+import {assertDeletionFenceOpen} from '../account-deletion.mjs';
 const engines=new WeakMap(),clockOf=c=>typeof c.config.LIFECYCLE_CLOCK==='function'?c.config.LIFECYCLE_CLOCK:Date.now;
 const drain=async(c,owner)=>{const result=await drainRemovalCascades(c,owner,{now:clockOf(c)()});if(result.pending&&result.wakeAt!==null)await c.scheduleAlarm(result.wakeAt);return result;};
+// RTC-i review M1: the owner and back-channel RPCs commit inside the account gate, then drain the durable cascade rows
+// OUTSIDE it, as the alarm does. The external revocation (APP_REMOVAL_REVOKE_EXTERNAL: the owner's federation shard
+// removalRevoke) runs the shard's boundSync hook, which calls this same account (rtcAppChanged, gated); and an RPC of
+// the app being removed may hold the shard transaction while it waits on this account (tokenRecord's connection
+// check). Awaiting the drain under the gate deadlocked both ways. The rows are durable and retried with backoff; a
+// failed pass here leaves them to the alarm.
+const underGate=async(c,operation)=>{const outcome=await c.gate.run(async()=>{try{await assertDeletionFenceOpen(c.metadata);return {value:await operation()};}catch(error){return {error};}});if(outcome.error)throw outcome.error;return outcome.value;};
+const drainAfter=async(c,owner)=>{try{await drain(c,owner);}catch{try{await c.scheduleAlarm(Date.now()+60000);}catch{/* the next alarm retries */}}};
 const boundStore=tx=>({get:k=>tx.get(k),put:(k,v)=>tx.put(k,v),delete:k=>tx.delete(k),list:o=>tx.list(o),transaction:fn=>fn(tx)});
 export function removalEngine(c){let entry=engines.get(c);if(!entry){let producer;const clock={now:()=>clockOf(c)()},service=new AppRemovalService({metadata:c.metadata,clock,random:cryptoRandom,
  enabled:(owner,clientId)=>typeof c.config.INTEGRATION_EVENT_PORTS?.signer?.sign==='function'&&ownerFlags(c.config,owner,clientId).enabled('APP_CLEAN_REMOVAL_ENABLED'),wake:t=>c.scheduleAlarm(t),
@@ -46,12 +55,13 @@ export class DeliverRemovalReminders extends AppAction{
  }return {attempted};}
 }
 export const methods={
- async appRemovalOwner(owner,{operation,input}={}){const Operation=[...REMOVAL_OPERATIONS,RemovalReminderList,RemovalRemaining,RemovalRemainingAction].find(O=>O.operation===operation&&O!==RemovalReminderTick);if(!Operation)throw Object.assign(Error('Not found.'),{code:'not_found',status:404});await this.warm(owner);const engine=removalEngine(this).engine,op=new Operation({actor:{kind:'owner',owner},input});const result=op instanceof AppQuery?await read(engine,op):await perform(engine,op);if(!(op instanceof AppQuery)){await drain(this,owner);await this.connectionsDrain(owner);await this.integrationEventsKick(owner);}return result;},
- async appRemovalComplete(owner,clientId,input){const Operation=REMOVAL_OPERATIONS.find(O=>O.operation==='app-removal.complete'),result=await perform(removalEngine(this).engine,new Operation({actor:{kind:'app',owner,clientId},input}));await drain(this,owner);await this.connectionsDrain(owner);await this.integrationEventsKick(owner);return result;},
+ async appRemovalOwner(owner,{operation,input}={}){const Operation=[...REMOVAL_OPERATIONS,RemovalReminderList,RemovalRemaining,RemovalRemainingAction].find(O=>O.operation===operation&&O!==RemovalReminderTick);if(!Operation)throw Object.assign(Error('Not found.'),{code:'not_found',status:404});const engine=removalEngine(this).engine,op=new Operation({actor:{kind:'owner',owner},input});const result=await underGate(this,async()=>{await this.warm(owner);if(op instanceof AppQuery)return read(engine,op);const out=await perform(engine,op);await this.connectionsDrain(owner);await this.integrationEventsKick(owner);return out;});if(!(op instanceof AppQuery))await drainAfter(this,owner);return result;},
+ async appRemovalComplete(owner,clientId,input){const Operation=REMOVAL_OPERATIONS.find(O=>O.operation==='app-removal.complete'),result=await underGate(this,async()=>{const out=await perform(removalEngine(this).engine,new Operation({actor:{kind:'app',owner,clientId},input}));await this.connectionsDrain(owner);await this.integrationEventsKick(owner);return out;});await drainAfter(this,owner);return result;},
  async appRemovalAlarm(){const owner=await this.metadata.get('owner');if(!owner)return;await drain(this,owner);const result=await perform(removalEngine(this).engine,new RemovalReminderTick({actor:{kind:'system',owner}}));await perform(removalEngine(this).engine,new DeliverRemovalReminders({actor:{kind:'system',owner}}));if(result.wakeAt!==null)await this.scheduleAlarm(result.wakeAt);
   // AU-S6: one bounded marker-sweep batch per alarm; reschedule while a pass is unfinished.
   const sweep=await removalEngine(this).producer.collectMarkers({limit:200});if(!sweep.done)await this.scheduleAlarm(Date.now()+1000);},
  // Local-only lookup for pinned back-channel admission; an unknown assertion must never trigger metadata fetches.
  async appRemovalAdmission(owner,id){if(await this.metadata.get('owner')!==owner)return null;const r=await this.metadata.get(REMOVAL_RECORD+id);if(!removalOpen(r)||r.entity!==owner||!r.confidential||!r.declaration.back_channel)return null;const c=await this.metadata.get('resource/'+r.connection);return c?.generation===r.generation?{removal:r.removal,clientId:r.client_id,snapshot:c.integration?.snapshot}:null;},
 };
-export const rpc={appRemovalOwner:{lifecycle:'suspended'},appRemovalComplete:{lifecycle:'suspended'},appRemovalAdmission:{lifecycle:'suspended'}};
+// Review M1: the two mutating entries take the account gate themselves (underGate) for the commit only.
+export const rpc={appRemovalOwner:{lifecycle:'suspended',gate:'none'},appRemovalComplete:{lifecycle:'suspended',gate:'none'},appRemovalAdmission:{lifecycle:'suspended'}};

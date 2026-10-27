@@ -280,7 +280,9 @@ export function compileContractVersion(root){
  const same=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
  const check=(s,v,depth=0)=>{
   if(depth>64)fail('artefact_unverifiable');if(typeof s==='boolean')return s;if(!object(s))fail('artefact_unverifiable');
-  for(const k of Object.keys(s))if(!annotations.has(k)&&!supported.has(k))fail('artefact_unverifiable');
+  // RTC-i: contract-level `x-bindle-brokerable` (contracts "Contract method metadata") is an annotation of the root
+  // only, and only a boolean; brokered registration is decided by the brokered contract pins, never by this compiler.
+  for(const k of Object.keys(s))if(!annotations.has(k)&&!supported.has(k)&&!(k==='x-bindle-brokerable'&&s===root&&typeof s[k]==='boolean'))fail('artefact_unverifiable');
   if(s.$ref!==undefined&&!check(reference(s.$ref),v,depth+1))return false;
   if(s.const!==undefined&&!same(s.const,v)||s.enum&&!s.enum.some(x=>same(x,v)))return false;
   const types=Array.isArray(s.type)?s.type:s.type?[s.type]:[];

@@ -20,13 +20,13 @@ import {jwkThumbprint} from '../../packages/identity/delegation.mjs';
 import {signMessage} from '../../packages/rtc/certificates.mjs';
 import {linkDigest} from '../../packages/rtc/messages.mjs';
 import {RTC_PURPOSE_REFERENCES} from '../../packages/rtc/purposes.mjs';
-import {RtcService,rtcProvider,sameHostRtcTransport,RTC_ENDPOINT_OPERATIONS,RTC_OWNER_OPERATIONS,RTC_SYSTEM_OPERATIONS,RTC_LIMIT_VALUES,RtcIngest,RtcInbox,RtcTick} from '../../packages/app/domains/rtc.mjs';
+import {RtcService,rtcProvider,sameHostRtcTransport,RTC_ENDPOINT_OPERATIONS,RTC_OWNER_OPERATIONS,RTC_SYSTEM_OPERATIONS,RTC_RELAY_OPERATIONS,RTC_LIMIT_VALUES,RtcIngest,RtcInbox,RtcTick} from '../../packages/app/domains/rtc.mjs';
 import {sdp as wireSdp,candidate as wireCandidate} from './rtc-wire-fixture.mjs';
 
 export const ISS='https://3sln.example',APP='https://app.example',OTHER_APP='https://other-app.example',DAY=86400000;
 export const [CALL,SCREEN,FILES,SYNC]=RTC_PURPOSE_REFERENCES.map(r=>r.artefact);
 export const REF=Object.fromEntries(RTC_PURPOSE_REFERENCES.map(r=>[r.artefact,{purpose:r.artefact,version:r.version,digest:r.digest}]));
-export const OPS=Object.fromEntries([...RTC_ENDPOINT_OPERATIONS,...RTC_OWNER_OPERATIONS,...RTC_SYSTEM_OPERATIONS].map(O=>[O.operation,O]));
+export const OPS=Object.fromEntries([...RTC_ENDPOINT_OPERATIONS,...RTC_OWNER_OPERATIONS,...RTC_SYSTEM_OPERATIONS,...RTC_RELAY_OPERATIONS].map(O=>[O.operation,O]));
 export const subOf=n=>`0a0a0a0a-0000-4000-8000-${n.toString(16).padStart(12,'0')}`;
 export const identityOf=sub=>`${ISS}/entities/${sub}`;
 export const fault=async promise=>{try{await promise;}catch(e){return {code:e.code,status:e.status,message:e.message};}return null;};
@@ -41,9 +41,10 @@ export const srflx=()=>({candidate:wireCandidate('srflx',{address:'198.51.100.9'
 
 /**
  * Builds the host. `entities` accounts (subOf(1..n)); `flags` names → boolean (RTC_SIGNALING_ENABLED and
- * RTC_TICKETS_ENABLED on by default; `host.flags.deny(sub, name)` turns one off for one entity).
+ * RTC_TICKETS_ENABLED on by default; `host.flags.deny(sub, name)` turns one off for one entity). `relay(a)` (RTC-f) returns
+ * the entity's RtcRelay, attached to its service.
  */
-export async function rtcHost({seed=1,entities=3,start=Date.UTC(2026,9,27,12),flags={},hold=false}={}){
+export async function rtcHost({seed=1,entities=3,start=Date.UTC(2026,9,27,12),flags={},hold=false,relay:relayFactory=null}={}){
  const clock=fakeClock(start),ids=seededRandom(createRandom(seed));
  const flagState={names:{RTC_SIGNALING_ENABLED:true,RTC_TICKETS_ENABLED:true,RTC_FOREIGN_ENABLED:false,...flags},deny:new Map()};
  const flagPort={for:ctx=>({enabled:name=>!flagState.deny.get(ctx?.subject?.owner)?.has(name)&&flagState.names[name]===true})};
@@ -77,6 +78,8 @@ export async function rtcHost({seed=1,entities=3,start=Date.UTC(2026,9,27,12),fl
   a.service=new RtcService({store:a.store,issuer:ISS,clock,random:ids,flags:flagPort,keys,signer:async()=>a.cert,linkSigner:async()=>a.link,bound,transport,defer:owner=>kicked.add(owner),hostLimits,contacts:{inspect:async link=>{const c=contacts.get(link);return c&&c.owner===a.sub&&!c.revoked?{parent:c.parent,quarantined:c.quarantined===true}:null;}}});
   a.audit=memoryAudit({clock});
   a.engine=createAppEngine({providers:{clock,random:ids,audit:a.audit,rtc:rtcProvider(a.service)}});
+  // RTC-f (tests/rtc-relay.test.mjs): `relay(a)` builds the entity's RtcRelay over a.service (rebuilt on restart).
+  if(relayFactory)a.relay=a.service.attachRelay(relayFactory(a));
  }
  async function add(n,{handle}={}){
   const sub=subOf(n),store=new SqliteMetadata(':memory:');await store.put('owner',sub);

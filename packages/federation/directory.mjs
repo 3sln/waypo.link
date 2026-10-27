@@ -158,7 +158,11 @@ export class IdentityDirectory {
   if(!plainObject(d)||d.issuer!==issuer||d.version!=='0'||!plainObject(d.features)||!onOrigin(d.features['directory.v1']?.directory_url,issuer))fail('invalid_manifest');
   for(const name of ['authorization_request_endpoint','authorization_endpoint','token_endpoint','rpc_endpoint','jwks_uri'])if(!onOrigin(d[name],issuer))fail('invalid_manifest');
   if(!Array.isArray(d.login_presentation)||!d.login_presentation.includes('redirect')||Object.keys(d.features).length>32||Object.values(d.features).some(v=>!plainObject(v)||new TextEncoder().encode(JSON.stringify(v)).length>4096))fail('invalid_manifest');
-  if(typeof d.preferences_contract!=='string'||!directoryURL(d.preferences_contract)||!Array.isArray(d.dpop_signing_alg_values_supported)||!d.dpop_signing_alg_values_supported.includes('ES256'))fail('invalid_manifest');
+  // RTC-i: protocol §2 makes the DPoP declaration optional (absent: no sender-constrained tokens), and nothing here
+  // uses it, so a floor manifest without it is valid. When it IS declared it must still be a list of algorithm
+  // names that includes ES256 (unchanged), so a malformed or ES256-less declaration is still refused.
+  const dpop=d.dpop_signing_alg_values_supported;
+  if(typeof d.preferences_contract!=='string'||!directoryURL(d.preferences_contract)||dpop!==undefined&&(!Array.isArray(dpop)||dpop.length>16||dpop.some(v=>typeof v!=='string'||!v||v.length>32)||!dpop.includes('ES256')))fail('invalid_manifest');
   // RTC-e: a caller may ask to keep named manifest features (each already bounded to 4 KiB above), e.g. rtc-signaling.v1;
   // nothing else of the manifest is kept.
   const directory=d.features['directory.v1'].directory_url,features={};for(const name of this.keepFeatures)if(plainObject(d.features[name]))features[name]=structuredClone(d.features[name]);

@@ -77,18 +77,28 @@ test('runtime: the bound-approval hook ends an application\'s RTC endpoints (app
 });
 
 test('manifest: rtc-signaling.v1 and the occupant declaration only with every flag and the adapter mounts',()=>{
- const config=(extra={})=>({APP_ORIGIN:ORIGIN,...BASE,RTC_FOREIGN_ISSUERS:JSON.stringify([PEER]),...extra});
+ const config=(extra={})=>({APP_ORIGIN:ORIGIN,...BASE,ARTEFACTS:{enabled:true},RTC_FOREIGN_ISSUERS:JSON.stringify([PEER]),...extra});
  const features=(c,mounts)=>federationDeclarations(c,{target:'authority',mounts}).features??{};
  const extensions=(c,mounts)=>federationDeclarations(c,{target:'authority',mounts}).extensions??[];
- assert.deepEqual(features(config({RTC_FOREIGN_ENABLED:'true'}),{rtc:true})['rtc-signaling.v1'],{endpoint:ORIGIN+'/bindle/rtc',max_leg_certificate_seconds:600});
- assert.equal(features(config(),{rtc:true})['rtc-signaling.v1'],undefined,'RTC_FOREIGN_ENABLED off');
+ const both={rtc:true,rtcOccupant:true};
+ assert.deepEqual(features(config({RTC_FOREIGN_ENABLED:'true'}),both)['rtc-signaling.v1'],{endpoint:ORIGIN+'/bindle/rtc',max_leg_certificate_seconds:600});
+ assert.equal(features(config(),both)['rtc-signaling.v1'],undefined,'RTC_FOREIGN_ENABLED off');
  assert.equal(features(config({RTC_FOREIGN_ENABLED:'true'}),{})['rtc-signaling.v1'],undefined,'not mounted');
- assert.equal(features(config({RTC_FOREIGN_ENABLED:'true',RTC_SIGNALING_ENABLED:'false'}),{rtc:true})['rtc-signaling.v1'],undefined,'signaling off');
+ assert.equal(features(config({RTC_FOREIGN_ENABLED:'true',RTC_SIGNALING_ENABLED:'false'}),both)['rtc-signaling.v1'],undefined,'signaling off');
+ // RTC-i (spec §3.1): only beside its prerequisites: extensions.v1 (the occupant row), artefact-versions.v1, directory.v1.
+ assert.equal(features(config({RTC_FOREIGN_ENABLED:'true'}),{rtc:true})['rtc-signaling.v1'],undefined,'no occupant mount, so no extensions.v1');
+ assert.equal(features(config({RTC_FOREIGN_ENABLED:'true',EXTENSIONS_ENABLED:'false'}),both)['rtc-signaling.v1'],undefined,'EXTENSIONS_ENABLED off');
+ assert.equal(features(config({RTC_FOREIGN_ENABLED:'true',ARTEFACT_VERSIONS_ENABLED:'false'}),both)['rtc-signaling.v1'],undefined,'ARTEFACT_VERSIONS_ENABLED off');
+ assert.equal(features(config({RTC_FOREIGN_ENABLED:'true',ARTEFACTS:undefined}),both)['rtc-signaling.v1'],undefined,'no artefact store mounted');
+ const full=features(config({RTC_FOREIGN_ENABLED:'true'}),both);
+ for(const f of ['extensions.v1','artefact-versions.v1'])assert.ok(full[f],`${f} declared beside rtc-signaling.v1`);
  // Review F7: with RTC_FOREIGN_ISSUERS empty (the default) or invalid, the feature is withheld whatever the flags.
- for(const list of [undefined,'[]','["http://x.example"]'])assert.equal(features(config({RTC_FOREIGN_ENABLED:'true',RTC_FOREIGN_ISSUERS:list}),{rtc:true})['rtc-signaling.v1'],undefined,`allowlist ${list}`);
- // The occupant entry is kept only beside a declared extensions.v1 (as the messaging-address row), which no slice
- // declares yet: until then it is never published, whatever the flags.
- for(const c of [config(),config({RTC_SIGNALING_ENABLED:'false'})])assert.ok(!extensions(c,{rtcOccupant:true}).some(e=>e.ref==='rtc'));
+ for(const list of [undefined,'[]','["http://x.example"]'])assert.equal(features(config({RTC_FOREIGN_ENABLED:'true',RTC_FOREIGN_ISSUERS:list}),both)['rtc-signaling.v1'],undefined,`allowlist ${list}`);
+ // RTC-i (RTCe-16 revised): the occupant row declares extensions.v1 itself, so its entry is published with the flags
+ // and the mount, and never without them.
+ assert.ok(extensions(config(),{rtcOccupant:true}).some(e=>e.ref==='rtc'),'occupant declared beside extensions.v1');
+ assert.ok(features(config(),{rtcOccupant:true})['extensions.v1']);
+ for(const [c,m] of [[config({RTC_SIGNALING_ENABLED:'false'}),{rtcOccupant:true}],[config({EXTENSIONS_ENABLED:'false'}),{rtcOccupant:true}],[config(),{}]]){assert.ok(!extensions(c,m).some(e=>e.ref==='rtc'));assert.equal(features(c,m)['extensions.v1'],undefined);}
 });
 
 test('runtime (review F2, F4): the RTC directory is withheld while RTC_FOREIGN_ENABLED is off except on the control path, and spends the host-wide budget',async t=>{

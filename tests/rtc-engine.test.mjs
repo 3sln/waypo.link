@@ -733,3 +733,20 @@ test('review L4: the export carries contact parents and ticket purposes and prin
  const [ticket]=await page('rtc-tickets');assert.deepEqual(ticket.purposes,[CALL]);assert.deepEqual(ticket.principal,h.principal(1));
  const text=JSON.stringify(ticket);assert.equal(text.includes(new URL(link).searchParams.get('bindle_meta')),false);assert.equal(ticket.jti,undefined);
 });
+
+// RTC-i review L2: the one `claimed` raised after a durable effect. A won claim whose session ends while its leg
+// certificate is being signed answers `claimed` (spec §7.2) although the claim record was committed. The answer is
+// final, not effect-free (packages/federation/runtime.mjs NO_EFFECT_CODES): no certificate is handed out, the record
+// keeps the claim, and a retry with the same leg key answers `claimed` again.
+test('late claim: a won claim whose session ended during signing answers claimed, finally and retry-stably',async()=>{
+ const h=await rtcHost();const a=h.device(1),b=h.device(2);await a.register();await b.register();
+ const {link}=await b.run('rtc.mint-ticket',{purposes:[CALL],uses:4,expires_in:3600});
+ const s=await a.open(h.principal(2),CALL,{basis:link});await a.invite(s);await h.pump();await b.listen();
+ const svc=h.account(2).service,certFor=svc.certFor.bind(svc);let ended=0;
+ svc.certFor=async input=>{const cert=await certFor(input);if(!ended++){const [[path,rec]]=await h.rows(2,'rtc/in/');await svc.store.transaction(async tx=>{await tx.put(path,{...rec,...await tx.get(path),state:'ended',endReason:'cancelled'});});}return cert;};
+ const leg=await (await import("./helpers/rtc-wire-fixture.mjs")).keyPair();
+ const first=await fault(b.run('rtc.claim',{...b.auth(),sid:s.sid,outcome:'accept',delegate:leg.jwk}));
+ assert.equal(first?.code,'claimed','the late case answers claimed');
+ const [[,rec]]=await h.rows(2,'rtc/in/');assert.equal(rec.claim?.jkt,leg.jkt,'the claim record is durable (not effect-free)');assert.equal(rec.mine?.certificate,null,'no certificate was stored');
+ assert.equal((await fault(b.run('rtc.claim',{...b.auth(),sid:s.sid,outcome:'accept',delegate:leg.jwk})))?.code,'claimed','a retry answers claimed again');
+});

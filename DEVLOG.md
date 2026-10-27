@@ -4951,6 +4951,7 @@ Reviewer: ___ Date: ___ Outcome: ___
 - **Update (same day):** the digest now covers ORG-10 relations (RL-1 to RL-17 and Q21, as OB-27 to OB-44) and AU-S6 (AP-12 to AP-14, plus the privacy.md "App storage summaries" bullet as RL-9), for 121 items in all. OB-11's passkey gap is marked closed in code: `organizationVerification` → `recoveryReissueBegin` `passkey_required`, and the identity-wargame2 test was re-run 1/1.
 - **Update 2 (same day, HEAD 6bbae45):** the digest now also covers UI quality pass 3, scalability fixes round 2, ORG-12d support adjudication and the operator/lifecycle wargame fixes, with their follow-ups: 27 new items (ID-11, OB-45 to OB-52, MC-9, AP-15, AP-16, UI-8 to UI-11, OL-7 to OL-17), 148 in all, two new highest-impact entries (AP-15, OB-45) and new unverified external assumptions. Documentation only; nothing signed off.
 - **Update 3 (2026-10-26, HEAD b09140b):** the digest now also covers break-glass and ownership outbox scaling, ORG-10a-g relations, the drift audit, test reliability fixes, the RTC signaling design and the Beam removal: 50 new items (OB-53 to OB-70, MC-11 to MC-15, RTC-1 to RTC-17, AMD-X1, AMD-R1 to AMD-R6, OL-18 to OL-20), 200 in all including the hand-added MC-10 and AP-17. It adds a section of four open scope questions (SQ-1 to SQ-4), three highest-impact entries (RTC-6, AMD-X1, SQ-1) and new unverified external assumptions. Documentation only; nothing signed off.
+- **Update 4 (2026-10-27, HEAD 6a192a3):** the digest now also covers RTC-a/b/c (AMD-RV1), the messaging extraction prep, the core-scope audit, the browser bug hunt (with the F14 owner decision) and its server follow-ups, RTC-d, RTC-g, RTC-e (AMD-RV2) and the RTC service follow-ups, with their review follow-ups: 69 new items (RTC sub-sections, MC-16 to MC-22, AP-18, AP-19, UI-12 to UI-15, OL-21 to OL-23), 273 in all with the four SQ questions, five new highest-impact entries (RTCe-4, RTCs-1, RTC-17, UI-13, OL-21) and the recorded production gates added to the unverified assumptions. Documentation only; nothing signed off.
 
 Reviewer: ___ Date: ___ Outcome: ___
 
@@ -7377,5 +7378,418 @@ Reviewer: ___ Date: ___ Outcome: ___
 - `build:assets`: passed.
 - `check:worker`: passed (dry run), with only the existing duplicate-key warnings ("Loading…", "Please wait…").
 - Not run: a real Durable Object round trip for `narrowBoundOptions`, which the source allowlist test covers only statically; the Worker runtime in a browser; real WebRTC; a real second provider over HTTPS; push. Nothing is production-verified.
+
+Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-27 — RTC-f relay occupant (flags off)
+
+**Implemented locally, provisional and unsigned.** Slice RTC-f of the [RTC signaling](docs/spec/rtc-signaling.md) plan ([design](docs/architecture/rtc-signaling.md) §8.1): the built-in `ice-relay/v1` occupant. It issues short-lived TURN credentials only for a live leg of the calling application's own session, revokes them on every end path, sweeps on the alarm, and enforces per-account and per-session quotas. It is unreachable unless `RTC_SIGNALING_ENABLED` and `RTC_TURN_ENABLED` are both on for the owner **and** the deployment supplies two ports: a TURN adapter and an external spend authority (`RTC_RELAY_SPEND`). No spend authority ships, so hosted relay stays off on every deployment (the relay-spend budget gate). No commit or deployment. No real secret was used: the Cloudflare adapter ran only with injected test doubles (fake `fetch`, fake provider). Every reading below is **provisional** (coordinator), not signed off by the user.
+
+**Changes:**
+- `packages/rtc/relay.mjs` (new):
+  - `RtcRelay`, one per entity writer, attached to its `RtcService` with `attachRelay`.
+  - `legLive`, `contractIceServers` (fits a provider's ICE servers to spec §3.3), `validateIceRelayResult` (the generic contract check, for any occupant), `RELAY_LIMITS`, `RELAY_PLAN_BYTES`, `turnAdapterFrom` and `relayConfigured`.
+  - Leases: `rtc/relay/<encoded session key>`, holding TURN usernames only. Allowance counters: `rtc/relay-use/m/<YYYY-MM>` and `rtc/relay-use/h`.
+- `packages/rtc/service.mjs`:
+  - the `relay` port (`attachRelay`);
+  - `end()` collects the ended record keys in `fx.relayEnded`, and `commit()` hands them to `relay.ended` after the transaction;
+  - `rtc.tick` runs `relay.sweep` and takes its `wakeAt`;
+  - two operations: `rtc.relay-credentials` (application endpoint) and `rtc.relay-sweep` (system, in `RTC_SYSTEM_OPERATIONS` and `RTC_NEVER_GATED`);
+  - `RTC_RELAY_OPERATIONS` and `RTC_RELAY_CONTRACT_OPERATIONS` (`credentials` → `rtc.relay-credentials`).
+- `packages/app/domains/rtc.mjs`: re-exports. `rtc.relay-credentials` is added to `RTC_WIDENING`.
+- `packages/runtime/account/rtc.mjs`:
+  - builds the `RtcRelay` (adapter from `turnAdapterFrom(config)`, `RTC_RELAY_SPEND`, the plan from `billing.entitlement`, `defer` → the detached pass);
+  - the detached pass runs `rtc.relay-sweep` when the end path asked for it;
+  - `rtcDispatch` answers the uniform 404 for the relay while `RTC_TURN_ENABLED` is off;
+  - `rtcDrain` sweeps and adds pending revocations to its `pending`;
+  - `contractActor` is parameterized by contract, resource and method table, and `rtcRelayResourceMethod` is new.
+- `packages/runtime/account/storage.mjs`: the `ice-relay/v1` entry in `RESOURCE_METHOD_HANDLERS`.
+- `packages/runtime/federation.mjs`:
+  - the `${subject}/relay` descriptor (`credentials` only), gated by `RTC_SIGNALING_ENABLED`, `EXTENSIONS_ENABLED`, `RTC_TURN_ENABLED` and `relayConfigured`;
+  - `retainResult` excludes the relay contract, so credentials are never kept in the RPC journal;
+  - a manifest occupant row `{slot: ice-relay/v1, role: occupant, ref: relay}` with the same gates. Like the signaling occupant row, it is inert until some slice declares `extensions.v1`.
+- `packages/runtime/export-contributors.mjs`: `rtc/relay/` (Transient) and `rtc/relay-use/` (Derived) are excluded with reasons.
+- `tests/helpers/rtc-fixture.mjs`: an optional `relay(a)` factory, rebuilt on restart, and the relay operation in `OPS`.
+- `scripts/cost-model.mjs`: `relayAssumptions` and `relayEconomics()`, plus a `relay` section in `report()`.
+- Docs:
+  - `docs/architecture/unit-economics.md`: new section "Hosted relay (provisional)";
+  - `docs/self-hosting.md`: the `RTC_TURN_ENABLED` row, a "Hosted relay" paragraph (the operator's TURN key and secret, the spend authority port), and a correction: `CLOUDFLARE_TURN_*` are read again;
+  - `docs/architecture/feature-flags.md`: the `RTC_TURN_ENABLED` row;
+  - spec §3.3 and §18: AMD-RL1;
+  - design: status, §3.1, §3.4, §8.1 and §8.3.
+
+**Readings (RTCf-1 to RTCf-14; none signed):**
+- **RTCf-1 Live leg.** A leg is live when:
+  - for the caller, the session has been opened and is ringing before `ring_until`, or is connected;
+  - for the callee, its accept claim won and the claimant is that leg's endpoint;
+  - in both cases, the leg is certified, the session is before `endsAt`, and at least 10 s of session life remain.
+  Everything else is the uniform `not_found`: another entity's session, another endpoint's or application's leg, an unclaimed or declined callee record, an ended session, or a ringing one past `ring_until` that has not been ticked yet. The check runs before the provider or the spend authority is called, and again in the transaction that records the issuance.
+- **RTCf-2 Endpoint binding (proposed AMD-RL1).** `sid` alone does not name a leg: both legs of an own-entity session share it, and an endpoint identifier alone never authorizes. The built-in occupant therefore also takes `endpoint` and, for a non-DPoP endpoint, `endpoint_secret`, bound exactly as in §9.1. Like `sid`, these are sent only to a built-in occupant. The contract `credentials({sid?}) → {ice_servers, expires_at}` stays generic.
+- **RTCf-3 What is stored and returned.** The credential is returned once and is never stored, logged or journaled; leases keep usernames only. The TTL is min(300 s, the session's remaining life). The result keeps `turn:`/`turns:` URLs only, at most 4 per entry and 4 entries. STUN is dropped because an endpoint under `relay` policy never uses it (§10), and a TURN allocation also yields a server-reflexive address.
+- **RTCf-4 Renewal.** A leg holds one credential at a time and may renew only within the last 60 s. An early renewal does **not** revoke the credential still in use, since that would cut the live allocation; the old credential lapses within 60 s, or is revoked at leg end. Open question for the production gate: whether Cloudflare allocations outlive a credential's expiry. If they do not, a long call needs an ICE restart about every 5 minutes.
+- **RTCf-5 Revocation on the end path.** Every session end goes through `RtcService.end`: hangup, cancel, decline answers, peer control statements, endpoint removal, owner end-session, `rtc.lifecycle` (`app-revoked`, `app-narrowed`, `deletion`), and the tick's timeout, expiry and gap failure. Its record keys reach `relay.ended` after the commit. The runtime revokes on the controller's detached pass, never inside the request; tests revoke at once. A claim decline ends a callee record without `end()`, but no callee leg exists before an accept, so nothing can be held.
+- **RTCf-6 Sweep.** `rtc.relay-sweep`, which also runs inside `rtc.tick`, compares each lease with its session record:
+  - it revokes every unexpired username of a dead leg;
+  - a failed revocation is kept and retried (the tick's `wakeAt`) until the credential expires;
+  - expired usernames are dropped without a call;
+  - dead, empty leases are deleted;
+  - an 'issuing' marker older than 60 s is cleared;
+  - usage months older than the previous month are pruned.
+  With either flag off, every lease counts as dead. This is a kill switch for relay spend; revocation itself is never gated.
+- **RTCf-7 Issuance race.** Liveness is checked again in the transaction that records the usernames. If the leg ended while the provider was being called, the credential is revoked at once, never returned, and the reservation is refunded. Residual: a crash between the provider call and the record leaves an unrecorded credential, which lapses within 300 s, as in Beam.
+- **RTCf-8 Budgets.**
+  - Each issuance reserves a 125 MB envelope: 300 s at about 3.3 Mbit/s through the entity's own relay, in both directions.
+  - Per leg (session record): 3 GB.
+  - Per account and month, by plan: Free 0, Paid 1 GB, Plus 10 GB, Ultra 100 GB.
+  - Per account: 4 legs holding credentials at once, 60 issuances an hour and 64 lease rows; at most 8 usernames per lease.
+  - The reservation is refunded when nothing issued can still carry traffic.
+  - These are admission estimates, not byte caps: a TURN credential does not limit bytes, and spec §10 forbids client-reported counts. The spend authority's `reserve` must answer `enforced: true` before the provider is called.
+- **RTCf-9 Plan source.** The plan comes from the account's billing entitlement. Organizations get no relay allowance, because none is modelled yet.
+- **RTCf-10 Refusals and failover.** Every refusal made before a credential exists is a no-effect outcome for the slot's ordered pre-dispatch failover, so a consumer moves on to the next occupant, for example a third-party relay:
+  - `not_found` 404;
+  - `relay_not_included` 403;
+  - `relay_quota`, `relay_limit` and `rate_limited` 429;
+  - `temporarily_unavailable` 503.
+  `relay_already_issued` and `relay_busy` (409) stop failover on purpose, because the leg already has, or is getting, credentials.
+- **RTCf-11 Reachability.** `rtc.relay-credentials` needs both flags, which the occupant checks itself; class (b) `requires` is not evaluated from env, which was confirmed again here. The account slice adds an early 404. The descriptor and the manifest row also need both ports. Results are never journaled.
+- **RTCf-12 Deletion.** `rtc.lifecycle` `deletion` ends every leg, so the credentials are revoked. `rtcDrain` then sweeps and reports unrevoked, unexpired usernames as pending, so E4 waits for at most 300 s.
+- **RTCf-13 Revoking only the relay grant.** There is no hook: if an app keeps signaling but loses only its `ice-relay` grant, federation refuses new calls and the credentials it holds lapse within 300 s. Revoking or narrowing the signaling slot ends the sessions, and so revokes the credentials.
+- **RTCf-14 Third-party relays.** These are other occupants of the same slot. The contract is unchanged, and `validateIceRelayResult` checks any occupant's result. The core has no consumer of the slot yet: neither the portal (a provider consumer) nor any app code.
+
+**Cost model (provisional, unsigned):**
+- TURN was not modelled before. The planning rate is US$0.05/GB egress, with a deployment-wide free tier. **Neither figure was rechecked against a primary source in this slice.**
+- With the whole allowance relayed every month on the typical profile, margins are Paid 53.5%, Plus 54.7% and Ultra 53.5%. Prices are unchanged.
+- At full storage occupancy, the person plans are already under 50% without any relay. This was a pre-existing fact, and it is stated in the document.
+- A TURN price above about US$0.064/GB puts Paid under 50%. `tests/cost-model-relay.test.mjs` guards the 50% floor.
+
+**Production gates (added; see design §8.3):**
+- an operator-supplied `RTC_RELAY_SPEND` that caps aggregate TURN spend at the relay (none ships);
+- a recheck of the TURN price and free tier;
+- production `CLOUDFLARE_TURN_KEY_ID` and `CLOUDFLARE_TURN_API_TOKEN` configuration, which is an operator concern documented in `docs/self-hosting.md` "Hosted relay";
+- verification against the real Cloudflare TURN API: issuance, revocation ending allocations, and allocation behaviour after credential expiry (RTCf-4);
+- sign-off of RTCf-1 to RTCf-14, AMD-RL1 and the allowances.
+No configured key, flag or screenshot counts as evidence for any of these.
+
+**Not done:** an owner view of relay usage, organization allowances, the portal as a provider consumer of the slot, and a hook for revoking only the `ice-relay` grant (RTCf-13).
+
+**Tests:**
+- `tests/rtc-relay.test.mjs` (new, **14**). All are engine level except one Node runtime reachability test. They use a fake TURN provider and a fake spend authority.
+  - classification;
+  - contract fitting and the generic result check;
+  - issuance for the caller and callee legs, renewal, and no credential ever stored;
+  - refusals for non-live, foreign, other-endpoint, other-app and other-owner legs, never reaching the provider or the spend authority;
+  - revocation on every end path: hangup by either side, unregister (the callee ends by control statement), owner revoke-endpoint, end-session, app revoked, app narrowed, cancel, decline, ring timeout, and the 24 h cap with the TTL equal to the remaining life;
+  - TURN and spend failures refunded, the end-during-issuance race, revocation failure retried until expiry, and a stale 'issuing' marker;
+  - quotas: plan allowance, month rollover and pruning, free, per-session bytes, concurrent legs, the hourly window and lease rows;
+  - refusals as no-effect failover outcomes;
+  - the flag matrix, a per-owner denial, the kill switch for both flags, an unconfigured relay and no relay attached;
+  - deletion, including the drain staying pending until expiry when revocation fails;
+  - export exclusions;
+  - adapter configuration, with the real `CloudflareTurnAdapter` over an injected `fetch`;
+  - **seeded chaos** (6 seeds × 160 steps; `RTC_RELAY_CHAOS_SEEDS`, `RTC_RELAY_CHAOS_STEPS`, `CHAOS_SEED`): calls, claims, issuance (mostly for live legs), foreign-leg attempts, issuance races with an end landing between the two transactions, every end path, clock jumps with ticks, flag flips, flaky revocation and restarts.
+    - Invariants: no credential is stored; storage and budget bounds hold; issuance happens only for a live leg and never outlives its session; after a healthy sweep, **no credential the provider still accepts belongs to a non-live leg**; after quiescing, nothing is live and no lease remains.
+    - The test also checks that it really exercised issuance, revocation and races. A typical run: 37 issued, 30 revoked, 14 races, 7 of them revoked mid-issuance.
+  - the runtime test: the descriptor matrix, journal exclusion and inert manifest row; dispatch through the account slice (plan refusal, then issuance); the contract route refusing another contract; revocation on the detached pass after an owner end; and `rtcDrain` revoking before the purge.
+- `tests/cost-model-relay.test.mjs` (new, **2**): paid margins of at least 50% with the full allowance, and doubling the price breaking the floor.
+- **Revert check** (scratch copy; each guard reverted alone, then both suites run with 3 chaos seeds): **52 guards**.
+  - The first pass caught 40. Three survivors were fixed by strengthening tests: refusals must not reach the provider or the spend authority, the configured-ports check, and the runtime detached revocation pass. All three are now caught, so **43 are caught**.
+  - **9 equivalent survivors**, each made unreachable by another guard and kept as defence in depth:
+    - the leg client check and the leg endpoint check (`endpointAuth` plus `ownSession` already bind both);
+    - `endsAt` in `legLive` (the 10 s minimum at issuance, and a TTL never past the session);
+    - the lease-leg mismatch and the usernames-per-lease cap (unreachable with one leg per record and the renewal window);
+    - "closed after deletion" (deletion already ended every leg and removed every endpoint);
+    - the slice's early 404 (the engine rechecks both flags);
+    - the relay resource name in `rtcRelayResourceMethod` (federation dispatches the relay contract only to a resource that declares it);
+    - the manifest row's TURN and ports condition (the row is inert until `extensions.v1` is declared).
+
+**Verification (local evidence only; scratch copy of the full working tree, including the concurrent conformance-peer and pending-signoffs edits):**
+- `npm test`: **4,034 tests, 4,034 passed, 0 failed**. This includes `rtc-relay` (14) and `cost-model-relay` (2).
+  - The first full run had 5 environment failures (`contact-preview` 4, `deletion-http` 1). The scratch copy had no built assets, because `.output` was not copied; both suites pass in the main checkout, and the rerun after `build:assets` was clean.
+  - The concurrent agent's in-progress `tests/rtc-conformance.test.mjs` hung in the scratch run. Its files were therefore left out of the copy, and its process (started by this run) was stopped. It is not part of these counts.
+- `test:worker`: **93 passed, 0 failed**.
+- `test:ui-state`: **538 passed, 0 failed**.
+- `test:rtc-ui`: **29 happy-dom/engine and 28 Playwright (Chromium and Firefox), all passed**.
+- `check:worker` (runs `build:assets`): passed (dry run), with only the existing duplicate-key warnings ("Loading…", "Please wait…").
+- Not run: the real Cloudflare TURN API, a real spend authority, real WebRTC through a relay, a Durable Object round trip for the relay contract, and the Worker runtime. Nothing is production-verified.
+
+Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-27 — RTC-f review follow-ups
+
+**Implemented locally, provisional and unsigned.** This round fixes the security review findings on the uncommitted [RTC-f relay occupant](#2026-10-27--rtc-f-relay-occupant-flags-off). Flags stay off and there was no commit or deployment. No real secret was used: only the injected TURN and spend-authority doubles ran. Every reading below is **provisional** (coordinator), not signed off by the user.
+
+**Findings and fixes:**
+- **M1 Spend authority could not cap real spend; the allowance is not a byte cap.**
+  - (a) `commit(reservation, {owner, usernames, expiresAt, ttl, bytes, session, sid, leg, endpoint, clientId})` now receives each credential's TURN usernames (never the credential), an upper bound of their expiry and the leg, so an external authority can attribute the provider's per-username usage and revoke overruns. `reserve` also receives `sid` and `leg`. This is documented in `docs/self-hosting.md` "Hosted relay" and in the design's RTC-f status and §8.3.
+  - (b) While a leg rings, its credential's TTL is capped at `ring_until − now`, and the 10 s minimum applies to that bound.
+  - (c) The cost model and unit economics now state plainly that relayed bytes are bounded **only** if the spend authority enforces caps using the usage it is given. A stress row, `relayAbuseStress()`, models an abusive account with 4 concurrent legs at 4 Mbit/s of relay egress each for 30 days, with no enforcement. That is 5,184 GB, about $259 a month or $3,110 a year, which puts every plan deeply negative. The local allowance does not change this, because it limits issuances, not bytes.
+  - (d) **Production gate (added):** before `RTC_TURN_ENABLED` is enabled anywhere, the spend authority must enforce per-owner byte caps from the TURN provider's usage feed, attributing usage through the usernames it receives at `commit` and revoking credentials that overrun. An authority that answers `enforced: true` without this does not pass the gate.
+- **M2 Refusal codes did not fail over through the federation runtime.** A write's error code outside the runtime's allow-list (`packages/federation/runtime.mjs`) becomes `indeterminate`, which stops ordered pre-dispatch failover, so the original RTCf-10 claim was false. The occupant now throws only codes that the runtime keeps **and** that the slot treats as no-effect (extensions `NO_EFFECT_CODES`), with the detail in the message:
+  - `not_found`;
+  - `forbidden`: not included in the plan (formerly `relay_not_included`);
+  - `rate_limited`: per-session bytes, the monthly allowance, concurrent legs, the hourly window, lease rows, usernames per lease, an issuance in flight, an already-issued credential, and an unavailable provider or spend authority (formerly `relay_limit`, `relay_quota`, `relay_busy`, `relay_already_issued` and `temporarily_unavailable`).
+  - **RTCf-10 revised (provisional):** busy and already-issued now let failover proceed, where the original reading stopped it. Both refusals are no-effect, and the only alternative code the runtime keeps, `conflict`, would record an "unknown" outcome. The cost is that a consumer which lost its credential may use a third-party relay for up to 4 minutes.
+  - The runtime allow-list was not changed. `temporarily_unavailable` is missing from it, although the slot treats that code as no-effect. If the coordinator adds it, the occupant could return the more accurate code for an unavailable provider.
+- **L1 TTL and expiry timing.** The TTL is recomputed after `spend.reserve`, just before `adapter.issue`. The recorded expiry is (time after `issue` returned) + TTL + `RELAY_EXPIRY_GRACE_MS` (5 s, for provider clock skew), so the sweep never drops a username the provider may still accept without revoking it. The deletion drain counts the same upper bound, so E4 waits for at most about 305 s plus provider latency. The renewal window subtracts the grace. The client is still told the conservative `expires_at` (time before `issue` + TTL).
+- **L2 Truncation could drop unexpired usernames.** Both `.slice(-L.usernames)` calls are gone.
+  - An issuance is admitted only when the lease has room for `L.servers` more usernames, the most one issuance can add (more is refused as unavailable and revoked).
+  - The recording transaction counts the new usernames against the cap and refuses (and revokes) any excess.
+  - Unrevoked usernames from a failed issuance are always kept. They are marked `orphan` (never handed out): the sweep revokes orphans even on a live leg, and an orphan never counts as the leg's current credential for the renewal window.
+- **L3 Retries and the kill switch depended on an alarm nothing scheduled.**
+  - `RtcRelay` takes a `wake(owner, time)` port, which the runtime wires to the writer's `scheduleAlarm`.
+  - The credentials catch path calls `defer` (a detached pass) and `wake` at min(expiry, now + `RELAY_RETRY_MS`) whenever it keeps an unrevoked username.
+  - The sweep re-arms itself through `wake` whenever revocations remain pending, including on a dead leg with no adapter. The runtime's detached pass also schedules a 60 s alarm if the sweep throws.
+  - **Kill switch (documented):** turning either flag off stops issuance at once. Held credentials are revoked at the next sweep, and lapse by their own expiry in any case, so the switch takes full effect within 300 s (`docs/self-hosting.md`).
+- **L4 A flag briefly off deleted leases and reset the per-leg budget.** The sweep still revokes every credential while a flag is off. It deletes a lease only when its leg is dead (record gone, ended or not live), never merely because a flag is off, so `reserved` survives a flag flip.
+- **Info: brokered occupants.** Core has no consumer of the `ice-relay/v1` slot yet (RTCf-14), so there is no natural per-occupant argument builder seam, and none was added. **Precondition, recorded:** before any consumer of the slot ships, the per-occupant argument builder must send `sid`, `endpoint` and `endpoint_secret` only to the built-in occupant, never to a brokered one, and must have a test.
+
+**Changes:**
+- `packages/rtc/relay.mjs`: everything above. New exports: `RELAY_EXPIRY_GRACE_MS`, and the `wake` constructor port.
+- `packages/runtime/account/rtc.mjs` (two small edits): `wake: (owner, time) => c.scheduleAlarm(time)` on the `RtcRelay`, and a 60 s alarm when the detached relay sweep throws.
+- `scripts/cost-model.mjs`: `relayStressAssumptions`, `relayAbuseStress()`, `relayStress` in `report()`, and the bounded-only-if comment.
+- Docs:
+  - `docs/architecture/unit-economics.md`: the bounded-only-if statement, the stress row and the production gate;
+  - `docs/self-hosting.md` "Hosted relay": the spend authority contract and the kill switch;
+  - `docs/architecture/rtc-signaling.md`: a small edit to the RTC-f status and §8.3.
+
+**Tests:**
+- `tests/rtc-relay.test.mjs`: **19** (was 14).
+  - New: M1(a) commit attribution; L1 slow authority and slow provider; L2 cap and no drop; L3 catch-path `defer` and `wake`, sweep re-arm, orphan revocation on a live leg, and the kill switch within 300 s; L4 budget kept across a flag flip.
+  - The refusals test was replaced by M2. It runs each refusal through the real `FederationController.prototype.dispatch`, with the journal, the error allow-list and the runtime's own relay `readOnly` and `retainResult`. It then records the outcome in the ordered `ice-relay/v1` slot and proves that failover reaches the next occupant. It also checks that a success stops the selection and is never journaled.
+  - M1(b) assertions were added to the credentials test.
+  - The runtime test now checks that the `wake` port arms the writer's alarm.
+  - The runtime test's manifest assertion was updated: the RTC-i signaling occupant row now declares `extensions.v1` (the concurrent agent's change), so the relay occupant row is no longer inert when both flags and both ports are present. The flags are still off by default.
+  - The seeded chaos test gained a slow authority and provider (L1), two usernames per issuance (L2), forced stuck revocations asserting the alarm re-arms (L3), and a ring_until bound on issued credentials (M1). A 30-seed run: 254 issued, 143 revoked, 53 races, 67 slow issuances, 11 stuck sweeps.
+- `tests/cost-model-relay.test.mjs`: **3** (was 2). New: the unenforced stress row is negative for every plan, and one unenforced month exceeds the highest annual price.
+- **Revert check:** each fix was reverted alone in `relay.mjs` and the suite rerun, 12 reverts in all: M1a, M1b, the two M2 codes, both L1 changes, L2, the L3 alarm, the L3 catch-path `defer`, the L3 catch-path `wake`, L4, and orphan revocation. All 12 are caught. The catch-path `defer` revert first survived, and the L3 test was tightened.
+
+**Verification (local evidence only):**
+- `node --test tests/rtc-relay.test.mjs tests/cost-model-relay.test.mjs`: **22 passed, 0 failed** (3 runs).
+- `npm run test:worker`: **93 passed, 0 failed**.
+- `npm run test:rtc-ui`: **29 happy-dom/engine and 28 Playwright, all passed**.
+- `npm run check:worker`: passed (dry run), with only the existing duplicate-key warnings. There is no `npm run check` script; `check:worker` is the existing check.
+- `npm test`: **4,067 tests: 4,042 passed, 5 failed**, with the rest cancelled or skipped by the hung conformance file. All 22 relay and cost-model-relay tests passed. All 5 failures are in the concurrent agent's in-flight RTC files: `tests/rtc-conformance.test.mjs` (many 90 s timeouts, and the file took about 29 min), plus one test each in `rtc-federation`, `rtc-bound-default` (×3, RTC-i bug 1) and `rtc-federation-runtime`. A rerun of those three files alone afterwards passed (25 of 25), so they were caught mid-edit. The background run was stopped at the 30 min tool limit, after node had printed its summary. None of those files was edited here.
+- Not run: a real spend authority or TURN provider, real WebRTC, the Worker runtime. Nothing is production-verified.
+
+Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-27 — RTC-i conformance peer: divergences and fixes
+
+**Implemented locally, provisional and unsigned.** A clean-room conformance peer (`tests/rtc-conformance-peer.mjs`, written only from the spec text and importing no 3sln.me code) drove the real Node provider (`tests/rtc-conformance.test.mjs`) and found 10 divergences from [rtc-signaling](docs/spec/rtc-signaling.md). Each one is fixed or decided below. Flags stay off; there was no commit, deployment or secret. Every decision is **provisional** (coordinator), not signed off by the user. The proposed spec amendments AMD-RI1 to AMD-RI5 are in spec §18, marked proposed and **not applied** to the normative text.
+
+**Divergences and decisions:**
+1. **§9.1: the default Node bound check hung every contract write (bug, fixed).**
+   - Root cause: a lock-order cycle between the owner's account gate and the owner's federation-shard gate.
+     - The contract handler runs inside the account gate (`federationRPC`). The default `RTC_BOUND_CHECK` called the shard's `checkBound`, and `boundApproval` called back into the same account (`appConnectionCheck`, gated) from inside the shard's store transaction. Each side waited on the other.
+     - A second form of the cycle existed between two concurrent RPCs. The shard's `tokenRecord` checks the connection against the account inside a shard transaction, so the shard→account order is established. Any account→shard call made inside the gate can deadlock against it.
+   - Fix:
+     - `FederationService.rpc` computes the token's bound approvals per fragment inside the RPC's own authorization transaction and puts them on the dispatch context (`bound`). It counts only grants of the token's subject, client and epoch that are bound to the token's connection, which `tokenRecord` has just checked live in the same transaction.
+     - `contractActor` (`packages/runtime/account/rtc.mjs`) copies the signaling slot's approval onto the app actor, never from arguments. A missing or malformed approval, or another fragment's, approves nothing.
+     - `RtcService.approved` evaluates that approval with `boundAllows` and never calls the shard. Stored endpoint records (fan-out, which runs outside the gate on the detached task or the alarm) still use the port.
+     - `boundApproval` now runs its connection checks after its store transaction, never inside it.
+   - The Worker adapter gets the same fix: the context travels through the same dispatcher.
+   - Regression: `tests/rtc-bound-default.test.mjs`, on the real Node provider with no seams. It covers single writes, four concurrent writes, an unapproved purpose refused, and a disconnected app refused. Reverting the actor's `bound` makes the single-write and concurrent tests time out, and an earlier attestation-only fix still failed the concurrent form in the conformance suite.
+2. **Contract-level `"x-bindle-brokerable": false` gave `artefact_unverifiable` (bug, fixed).**
+   - `compileContractVersion` accepts it as an annotation: at the root only, and boolean only. Anywhere else, or non-boolean, it still fails closed.
+   - Brokered registration is unchanged. It is decided by the brokered contract pins, and the RTC contract is not among them.
+   - Tests: `tests/rtc-bound-default.test.mjs`, plus a conformance probe with an operator-registered clean-room document carrying the marker.
+3. **§4.1: `open` toward an allowlisted issuer without `rtc-signaling.v1` answered `indeterminate` (bug, fixed).** It now answers `unsupported_peer`. Two problems were behind it:
+   - the occupant answered `temporarily_unavailable`;
+   - the runtime remapped unknown write codes.
+
+   `RtcKeyRoster.unsupported(p)` (cache only) is true when the issuer's fresh validated manifest declares no valid feature, and `open` then refuses with `unsupported_peer`. An unknown or invalid manifest stays `temporarily_unavailable`. The suite also asserts that no identity document is fetched from such an issuer. Proposed AMD-RI5 records the reading.
+4. **§7.2: the losing concurrent `claim` answered `indeterminate` (bug, fixed).**
+   - The federation dispatcher (`packages/federation/runtime.mjs`) turns any write error code outside its allow-list into `indeterminate`. The conformance peer's contract document was not a cause.
+   - The two literal lists are now one `NO_EFFECT_CODES` set, with `claimed` and `unsupported_peer` added. Both are raised only by the RTC occupant, before any session state is written.
+   - The one late `claimed` (a won claim whose session ended before its certificate was stored) is final as well.
+   - This is a list addition, not a change of mechanism. A code outside the set still cannot claim to be no-effect: it remains `indeterminate`. `temporarily_unavailable` stays out (open question below).
+5. **Protocol §2 floor: a manifest without the optional DPoP declaration could not be called (bug, fixed).**
+   - `IdentityDirectory` (`packages/federation/directory.mjs`) accepts a manifest without `dpop_signing_alg_values_supported`. When it is declared, it must still be a list of at most 16 algorithm names that includes `ES256`, as before.
+   - Consumers checked: the organization foreign directory and the RTC roster. Neither reads the DPoP value (the directory keeps only the directory URL and the named features), and organizations §3a step 3 asks only for the protocol §2 floor. Device authorization's ES256 requirement is a separate client-side check (`packages/sdk/src/device.mjs`), unchanged.
+6. **§8.2 RTCe-4: an unknown `aud` answers 404, not 202 (intentional, kept).** It is now proposed as **AMD-RI1**, and the spec status paragraph names it. The suite keeps it as a todo marked "plausibly intentional".
+7. **The manifest declared `rtc-signaling.v1` without `extensions.v1` (§3.1, RTCe-16; fixed, RTCe-16 revised).**
+   - The signaling occupant row now declares `extensions.v1` itself (flags `RTC_SIGNALING_ENABLED` and `EXTENSIONS_ENABLED`, mount `rtcOccupant`). The occupant's `extensions` entry is therefore published, as §3.2 and §15 expect.
+   - The `rtc-signaling.v1` row also requires `EXTENSIONS_ENABLED`, `ARTEFACT_VERSIONS_ENABLED`, the occupant mount and a mounted artefact store, so all three prerequisites are always declared beside it.
+   - Side effect: other rows' `extensions` entries (messaging-address; the RTC-f relay occupant) are now kept whenever this row declares `extensions.v1`. Their own flags and mounts still apply. A later row that also wants `extensions.v1` must take over this member, because a duplicate feature fails closed.
+8. **A batch naming two audiences got 400 (intentional, amendment proposed).**
+   - Decision: keep the implementation and propose **AMD-RI2**, which adds "every element names the same `aud`" to step 1.
+   - Justification:
+     - It makes the §8.1 sender rule decidable without any fetch.
+     - It depends only on the batch, never on which entities are hosted, so it is no oracle.
+     - It keeps per-writer routing simple (one addressed writer per batch).
+     - A conforming sender never produces such a batch.
+   - The suite keeps it as a todo marked "plausibly intentional".
+9. **§6.1 `to`: a message naming no leg of the session was delivered (spec gap, fixed, AMD-RI3 proposed).**
+   - The receiving provider drops, at step 7, a message whose `to` is neither the receiving side's leg nor `null` for `invite` or `cancel` (`applyPeerMessage`). Its `seq` is consumed, exactly as the other step-7 drops consume theirs.
+   - Our own endpoint's `send` already refused such messages.
+   - The suite now asserts both the drop and the consumed `seq`.
+10. **No `rtc-signaling/v1` contract artefact was shipped (decided: ship first-party).**
+    - While `RTC_SIGNALING_ENABLED` and `EXTENSIONS_ENABLED` are on:
+      - the §3.2 slot manifest (`RTC_SIGNALING_SLOT_MANIFEST`) is a built-in reviewed fragment in `federationSchemas`, and replaces an operator entry for the same id;
+      - the §9.1 contract (`docs/artefacts/rtc-signaling-v1.json`, carrying `"x-bindle-brokerable": false`) is a built-in reviewed contract in `configuredArtefactDocuments`. An operator entry for the same id takes precedence, and the cache revision now includes `RTC_SIGNALING_ENABLED`.
+    - Nothing is fetched and no host is trusted beyond these two ids. With the flags off nothing is added.
+    - Its result schemas list every member the occupant returns, because result shaping withholds unknown members.
+      - The `listen` event members are this provider's reading, proposed for the spec as **AMD-RI4**.
+      - The projected `context` lists only the properties of the registered purpose lines (`bytes`, `files`). A purpose line with new context properties needs a new contract version (open question).
+    - `docs/self-hosting.md` documents this.
+    - The document is not published (`public-contracts.mjs` and the lock file are unchanged), because the `spec.bindle.example` placeholders are not publishable.
+
+**Test seams the suite uses now:**
+- `DIRECTORY_DNS_LOOKUP` and `DIRECTORY_HTTPS_REQUEST`: the documented egress injection ports. Only DNS and the socket are replaced; the provider's own screening runs.
+- Operator configuration a deployment sets anyway:
+  - the RTC flags;
+  - `RTC_FOREIGN_ISSUERS`;
+  - one reviewed client in `FEDERATION_CLIENTS`;
+  - `TRUSTED_CLIENT_IP_HEADER`, which gives each test account its own signup address.
+- One throwaway provider registers the clean-room contract (with the marker) as an operator would, for divergence 2.
+- **Removed:** the injected `RTC_BOUND_CHECK`, and the `FEDERATION_SCHEMAS` / `FEDERATION_CONTRACTS` registrations in the shared world. The suite now runs on the default wiring and the shipped documents.
+
+**Not covered by the suite (unverified):**
+- timing uniformity of the §8.2 response;
+- glare (§7.3) and perfect-negotiation collisions;
+- the SAS (§11.3);
+- certification-key roster rotation under load;
+- account moves (§14);
+- Web Push doorbells;
+- relay credentials (RTC-f);
+- the values of the §13 limits;
+- real TLS and DNS. Both are simulated through the injection ports, so nothing here is evidence of interoperability over the network.
+
+**Changes:**
+- `packages/federation/service.mjs`: `boundUnion`, `dispatchBound`, the dispatch context `bound`, and `boundApproval` checks outside the transaction.
+- `packages/federation/runtime.mjs`: `NO_EFFECT_CODES`.
+- `packages/federation/integrations.mjs`: the root marker.
+- `packages/federation/directory.mjs`: DPoP optional.
+- `packages/rtc/service.mjs`: `approved` from the actor's approval; the `to` drop; `unsupported_peer`.
+- `packages/rtc/federation.mjs`: `RtcKeyRoster.unsupported`.
+- `packages/runtime/account/rtc.mjs`: the actor `bound`, the `keys.unsupported` port, and a header note.
+- `packages/runtime/federation.mjs`: the manifest rows and the built-in slot manifest.
+- `packages/runtime/artefact-pins.mjs`: the built-in contract.
+- New `docs/artefacts/rtc-signaling-v1.json`.
+- Docs: the spec status and §18 (AMD-RI1 to AMD-RI5), and `docs/self-hosting.md`.
+- Tests:
+  - new `tests/rtc-bound-default.test.mjs`;
+  - `tests/rtc-conformance.test.mjs`: fixed todos turned into assertions, seams removed;
+  - `tests/rtc-federation.test.mjs`: the actor's approval, including refusal cases;
+  - `tests/rtc-federation-runtime.test.mjs`: the manifest prerequisites.
+- Not edited: `packages/rtc/relay.mjs` and `tests/rtc-relay.test.mjs` (another agent's ownership); the conformance peer itself.
+
+**Open questions:**
+- **`temporarily_unavailable` from RTC writes.** It still becomes `indeterminate` through the runtime: spec §4.1 says `open` answers it, and the RTC-f review asked for it too. Adding it needs a per-adapter or per-contract no-effect declaration, because generic adapters raise it after partial effects. That was deliberately not done here.
+- **Contract versioning for purposes.** New purpose lines with `context` properties need a new contract version, or a shaping rule that keeps purpose-defined context members.
+- **The `ice-relay/v1` slot and contract** are still not shipped as first-party documents (RTC-f's surface). The same decision probably applies.
+- **The built-in slot manifest replaces an operator one, while an operator contract wins over the built-in one.** Which precedence should hold for first-party documents?
+- **AMD-RI1 to AMD-RI5** need protocol/security review.
+
+**Verification (local evidence only):**
+- `npm test`: **4092 tests, 4090 passed, 0 failed, 2 todo**. The conformance suite stays in the glob, and was not flaky in 4 full runs.
+- `npm run test:rtc-conformance`: **48 tests, 46 passed, 0 failed, 2 todo**. The todos are divergences 6 and 8, both intentional, with AMD-RI1 and AMD-RI2 proposed. It took about 110 s.
+- The same with `RTC_CONFORMANCE_STRICT=1`: **46 passed, 0 failed, 2 todo**. Every bug case now passes as an assertion.
+- `node --test tests/rtc-bound-default.test.mjs`: **4 passed**. With the fix reverted, 3 fail by timeout.
+- `npm run test:worker`: **93 passed**.
+- `npm run test:ui-state`: **538 passed**.
+- `npm run test:rtc-ui`: **29 happy-dom/engine and 28 Playwright tests, all passed**.
+- `npm run build:assets`: passed. There is no `npm run build` script, so `build:assets` is the build.
+- `npm run check:worker`: passed (dry run). There is no `npm run check` script.
+- Not run: real WebRTC, the Worker runtime against a real Durable Object (the federation-DO round trip of the dispatch `bound`), a real second provider over TLS. Nothing is production-verified.
+
+Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-27 — RTC-i review follow-ups
+
+**Implemented locally, provisional and unsigned.** This round fixes the security review findings on the uncommitted [RTC-i conformance fixes](#2026-10-27--rtc-i-conformance-peer-divergences-and-fixes). Flags stay off; there was no commit, deployment or secret. Every reading below is **provisional** (coordinator), not signed off by the user. Not edited: the RTC-f relay files (`packages/rtc/relay.mjs`, `tests/rtc-relay.test.mjs`, `tests/cost-model-relay.test.mjs`, `scripts/cost-model.mjs`, `docs/architecture/unit-economics.md`), which another agent owns. `packages/runtime/account/rtc.mjs` and `packages/rtc/service.mjs` were edited surgically and re-read before each edit.
+
+**Findings and fixes:**
+- **M1 App clean removal deadlocked on the account gate (older code; reproduced, fixed).**
+  - Reproduced first, on the real Node provider with no seams: force-removing an app that holds an RTC bound grant never answered (15 s timeout), with or without an RPC of that app in flight.
+  - Cause: `appRemovalOwner` and `appRemovalComplete` were gated account RPCs and awaited `drainRemovalCascades` inside the gate. On Node, the cascade's `APP_REMOVAL_REVOKE_EXTERNAL` is the owner's federation shard `removalRevoke`. After its store transaction, that runs `boundSync`, whose hook calls the same account's `rtcAppChanged`. That call is gated, and the gate is not re-entrant. The second cycle: an in-flight RPC's `tokenRecord` holds the shard transaction while it waits on the account gate (`appConnectionCheck`).
+  - `drainBrokeredEvents` → `brokeredFederationEvent` was already `gate:'none'`, so it was not a cycle by itself. It now also runs outside the gate, as part of the same drain.
+  - Fix (`packages/runtime/account/app-removal.mjs`):
+    - both RPCs are now `gate:'none'`;
+    - each takes the account gate itself (`underGate`, which checks the deletion fence like `invoke`, and never throws inside the gate) for the commit, the connection cascade and the integration kick only;
+    - the external cascade drain then runs **outside** the gate, as the alarm already runs it.
+  - Durability and retries are unchanged. The cascade rows are committed with the removal and keep their backoff and stuck-alert. A failed pass here arms a 60 s alarm (`drainAfter`), and the alarm's `appRemovalAlarm` drain is unchanged.
+  - The RPC still awaits the drain, so callers see the same completion as before, just not under the gate.
+  - The Worker uses the same methods: its gate is `blockConcurrencyWhile`, so the call back from the federation Durable Object no longer waits on a blocked account object.
+  - Tests (`tests/rtc-bound-default.test.mjs`, each bounded with a timeout):
+    - removal of an app with an RTC bound grant answers, the app's token stops working, and its RTC endpoints are gone;
+    - the same with six RPCs of that app in flight.
+    - Both timed out before the fix. The in-flight test cannot separate the two cycles before the fix, because the self-deadlock fires first; with the fix, both orders complete.
+- **L1 The dispatch approval snapshot could be bypassed by a racing narrowing or revocation (fixed: account-local approval record).**
+  - `rtcAppChanged` (inside the account gate) first records, per client, `rtc/approval/<SHA-256 of the client id>` = `{clientId, purposes (list or null), revision (local counter), at}`.
+    - `at` is the federation shard's clock inside the `boundSync` transaction that read the remaining grants. `boundChanged` now carries it; with no `at`, for direct callers, the writer's clock stands in.
+    - A late-arriving older change never replaces a newer record.
+  - The dispatch approval (`FederationService` `dispatchBound`) now carries `at`: the latest `bound.approvedAt` or `bound.narrowedAt` among the counted grants.
+  - `contractActor` intersects the dispatch approval with the record unless the approval is strictly newer than the record (a re-approval or later narrowing, which already reflects the change):
+    - `purposes: null` approves nothing;
+    - a list keeps only the listed purposes, and the versions of the lines kept;
+    - an equal time intersects (fail closed);
+    - a malformed or unreadable record approves nothing.
+  - No shard call is made from inside the gate.
+  - **Guarantee:** any contract operation that enters the account gate after the hook sees the narrowing.
+  - **Trade-offs (recorded):**
+    - A window remains between the shard commit and the hook entering the gate. An operation queued in the gate before the hook still uses its snapshot. `boundSync` is best effort, as before; if it fails, neither the record nor the lifecycle narrowing happens. The live check before RTC-i had a narrower window, but it deadlocked.
+    - Comparing `at` values relies on one clock, the shard's, on both sides. A re-approval committed in the same millisecond as a `boundSync` read is refused until the next change: fail closed.
+    - One row per client that ever had a change, replaced in place. It is excluded from exports as Derived (`packages/runtime/export-contributors.mjs`). Because it lives under `rtc/`, an account with only this row runs a cheap `rtc.tick` on its alarm.
+  - Tests:
+    - `tests/rtc-bound-default.test.mjs`, a deterministic race on the real Node provider: an RPC authorized for SYNC is held between the shard and the account, by a latch on the account's `federationRPC` entry, while the owner narrows the app to CALL through `/api/rtc/narrow-app`. Released, it is refused `forbidden`. Reverting the intersection makes this test fail.
+    - `tests/rtc-federation.test.mjs`: the record's cases (none, later narrowing, equal time, revocation, newer approval, missing approval time, malformed or unreadable record) and the `at` on `boundChanged`.
+- **L2 `claimed` was listed as no-effect but is raised once after durable effects (decided: keep the code, reword).**
+  - Decision: the late site (a won claim whose session ended while its certificate was signed, `packages/rtc/service.mjs` `claim`) keeps `claimed`, which matches spec §7.2: the client cannot use the claim, and its next step is a loser's.
+  - Why this is safe:
+    - The answer is final: no certificate is handed out, the session is over, and a retry answers `claimed` again. Journaling it as the write's result is therefore safe.
+    - A distinct code outside the set would become `indeterminate`, which invites a pointless retry. `not_found` would wrongly let slot failover proceed.
+    - For extension-slot failover, `claimed` (409) is already `unknown`, so it never moves a consumer to another occupant.
+  - The `NO_EFFECT_CODES` comment in `packages/federation/runtime.mjs` now states the real rule: at every raise site, either nothing durable was written, or what was written is terminal. It names this one exception precisely (the claim record, the leg-key thumbprint and the `claimed` pushes are durable). A pointer was added at the raise site.
+  - Test: `tests/rtc-engine.test.mjs` "late claim". The session is ended during signing; the claim answers `claimed`, the claim record is kept with no certificate, and a retry with the same leg key answers `claimed`.
+- **L3 Precedence of first-party documents was inconsistent (fixed: shipped wins while the flags are on).**
+  - While `RTC_SIGNALING_ENABLED` and `EXTENSIONS_ENABLED` are on, `configuredArtefactDocuments` puts the shipped `rtc-signaling/v1` contract, under both its plain id and its `/envelope`, in one source ahead of every other. This matches the built-in slot manifest, which already replaces an operator fragment. An operator that registers either key, or both, gets the shipped body under both. With either flag off, operator registrations apply as before.
+  - `docs/self-hosting.md` documents this. The RTC-i open question "which precedence should hold for first-party documents" is answered here (provisionally).
+  - Tests:
+    - `tests/rtc-bound-default.test.mjs` L3: every registration shape and the flags-off cases. It fails with the old source order.
+    - The conformance suite's divergence-2 probe now checks the clean-room marker document with `compileContractVersion`, its one non-black-box import. It also shows that an operator registration no longer displaces the shipped document, and calls are still served.
+- **L4 `rtcFlush` could self-deadlock on Node (fixed: deleted).** It was gated, ran `rtc.tick` → `processInbox` → fan-out `approved` → `RTC_BOUND_CHECK` → shard → `appConnectionCheck` (gated), and nothing called it (no route, test or doc). The method, its header line and its `rpc` entry are removed. The remaining gated RTC entries (`rtcDispatch`, `rtcAppChanged`) never reach the bound port: contract actors carry their approval, and fan-out runs only on the detached task and the alarm, outside the gate.
+- **Relay actor (decided).** `contractActor` for `ice-relay/v1` no longer copies the signaling slot's approval onto the relay actor. It carries an **empty** approval instead (`packages/runtime/account/rtc.mjs`; `relay.mjs` unchanged).
+  - Today the relay never evaluates an approval. Issuance needs a live leg of the caller's own session, and that session required signaling approval at `open` or `claim`. Narrowing or revocation ends such sessions (`rtc.lifecycle`), and so revokes the credentials.
+  - The signaling approval is not the relay grant, so carrying it was misleading.
+  - An empty approval keeps any future approval check on this path closed. It also keeps such a check off the shard: an absent approval would have fallen back to the port, a shard call inside the gate.
+  - The relay actor does not read the approval record.
+
+**Changes:**
+- `packages/runtime/account/app-removal.mjs`: `underGate`, `drainAfter`, both RPCs `gate:'none'`.
+- `packages/runtime/account/rtc.mjs`:
+  - `APPROVAL_PREFIX`, `approvalKey` and `narrowedApproval`;
+  - `contractActor` (record intersection, `signaling` option);
+  - `rtcAppChanged` (record, `at`);
+  - the relay actor's empty approval;
+  - `rtcFlush` removed;
+  - header notes.
+- `packages/federation/service.mjs`: `dispatchBound` carries `at`; `boundSync` reads `at` in its transaction and passes it to `boundChanged`.
+- `packages/runtime/federation.mjs`: `boundChanged` forwards `at`.
+- `packages/federation/runtime.mjs`: the `NO_EFFECT_CODES` comment.
+- `packages/rtc/service.mjs`: a comment at the late `claimed`.
+- `packages/runtime/artefact-pins.mjs`: the `firstParty` source.
+- `packages/runtime/export-contributors.mjs`: `rtc/approval/`.
+- `docs/self-hosting.md`: the precedence sentence.
+- Tests:
+  - `tests/rtc-bound-default.test.mjs`: M1 ×2, L1 race and L3 (4 new; `connect` takes purposes);
+  - `tests/rtc-federation.test.mjs`: the L1 record cases and `boundChanged` `at`;
+  - `tests/rtc-engine.test.mjs`: late claim;
+  - `tests/rtc-conformance.test.mjs`: the divergence-2 probe and header.
+
+**Verification (local evidence only):**
+- `npm test`: **4097 tests, 4095 passed, 0 failed, 2 todo**. This includes the conformance suite and this round's 5 new tests.
+- `RTC_CONFORMANCE_STRICT=1 npm run test:rtc-conformance`: **48 tests, 46 passed, 0 failed, 2 todo**. The todos are divergences 6 and 8, both intentional, with AMD-RI1 and AMD-RI2 proposed.
+- `npm run test:worker`: **93 passed**.
+- `npm run test:ui-state`: **538 passed**.
+- `npm run test:rtc-ui`: **29 happy-dom/engine and 28 Playwright tests, all passed**.
+- `npm run check:worker` (runs `build:assets`): passed (dry run).
+- App-removal and related suites:
+  - `npm run test:admin-deletion`: 28 + 4 + 16 passed;
+  - `npm run test:connections`: 24 + 13 passed;
+  - `npm run test:organizations`: 282 + 72 + 148 passed;
+  - `tests/browser/app-removal-engine.mjs` (6) and `tests/browser/app-removal-browser.mjs` (26) passed. Neither file is wired into a package script, so both were run directly.
+- Revert checks: reverting the L1 intersection fails the race test, and the old L3 source order fails the L3 test. Before the M1 fix, both M1 tests timed out.
+- Not run: the Worker runtime against real Durable Objects (the removal drain's call back from the federation object, and the dispatch `at`), real WebRTC, or a second provider over TLS. Nothing is production-verified.
 
 Reviewer: ___ Date: ___ Outcome: ___

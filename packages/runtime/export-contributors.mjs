@@ -111,7 +111,11 @@ const excluded={
  'rtc/dlv/':'Derived: RTC fan-out index.','rtc/dlg/':'Derived: certified RTC leg-key thumbprints (reuse refusal window).',
  'rtc/limit/':'Derived: RTC rate-limit windows (hashed keys).','rtc/aep/':'Derived: highest authority epochs seen from RTC peers (24 h).',
  'rtc/outbox/':'Transient: RTC signaling outbox.','rtc/outbox-seq':'Derived: RTC outbox sequence.','rtc/closed':'Transient: RTC deletion marker.',
- 'rtc/inq/':'Transient: RTC inbound signaling batches awaiting processing.','rtc/inq-meta':'Derived: RTC inbound queue counters.'
+ 'rtc/inq/':'Transient: RTC inbound signaling batches awaiting processing.','rtc/inq-meta':'Derived: RTC inbound queue counters.',
+ 'rtc/approval/':'Derived: the last bound RTC approval change the federation shard reported per app (RTC-i review L1).',
+ // RTC-f: relay leases hold only TURN usernames (never credentials) of live legs; revoked at leg end, dropped once expired.
+ 'rtc/relay/':'Transient: RTC relay credential leases (TURN usernames only, never credentials; at most 300 s past the leg).',
+ 'rtc/relay-use/':'Derived: RTC relay allowance counters (reserved bytes this month and last, one-hour issuance window).'
 };
 export const EXPORT_EXCLUDED_PREFIXES=Object.freeze(excluded);
 // Singleton keys match exactly, never as a prefix (review R4): `profile` must not claim `profile-other/...`.

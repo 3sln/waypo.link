@@ -6,6 +6,8 @@ A second update, at HEAD 6bbae45, adds everything after "2026-10-24 — Pending 
 
 A third update, at HEAD b09140b, adds everything after "2026-10-24 — Operator and lifecycle wargame fixes" that was not yet covered: "2026-10-24 — Break-glass and ownership outbox scaling"; "2026-10-24 — ORG-10a-c relations core (flags off)", "2026-10-24 — ORG-10d/e entity certificates and relation events (flags off)" and "2026-10-26 — ORG-10f/g relations routes and console (flags off)", with their review follow-ups; "2026-10-24 — Spec/implementation drift audit"; "2026-10-26 — Test reliability fixes"; "2026-10-26 — RTC signaling extension design"; and "2026-10-26 — Beam removed from core" with its review follow-ups. The new items are OB-53 to OB-70, MC-11 to MC-15, RTC-1 to RTC-17, AMD-X1, AMD-R1 to AMD-R6 and OL-18 to OL-20. A new section, "Open scope questions (core-scope audit 2026-10-26)", lists four owner questions (SQ-1 to SQ-4), and new unverified external assumptions are added at the end. MC-10 and AP-17, added by hand between the second and third updates, are the drift audit's findings 3 and 2. Three entries join the highest-impact list: RTC-6, AMD-X1 and SQ-1. Some earlier items now carry a dated update note (MC-1, MC-8).
 
+A fourth update, at HEAD 6a192a3, adds the entries after "2026-10-26 — Beam removed from core" that were not yet covered: "2026-10-26 — RTC-a/b/c validators, purposes and bound options (flags off)" and its review follow-ups (AMD-RV1); "2026-10-26 — Messaging extraction prep (no reset)" and its review follow-ups; "2026-10-26 — Core-scope audit"; "2026-10-27 — Browser bug hunt fixes (post Beam removal)" with its deferred items and the F14 owner decision, and "Bug hunt fixes: server review follow-ups"; "2026-10-27 — RTC-d sessions, admission and same-host transport" (RTCd-1 to RTCd-25); "RTC-g owner settings and portal ring" (RTCg-1 to RTCg-16 and follow-ups); "RTC-e foreign transport, endpoint and key roster" (RTCe-1 to RTCe-22, the review and verification follow-ups, AMD-RV2); and "RTC service follow-ups for the owner UI" (RTCs-1 to RTCs-8). The new items are RTCabc-1 to RTCabc-7, the RTC-d, RTC-g, RTC-e and RTCs items under "RTC signaling", MC-16 to MC-22, AP-18, AP-19, UI-12 to UI-15 and OL-21 to OL-23. Five entries join the highest-impact list: RTCe-4, RTCs-1, RTC-17 (with RTCe-22 and RTCs-7), UI-13 and OL-21. RTC-8, RTC-11, RTC-17 and AMD-X1 carry dated update notes, the SQ section's source note is refreshed, and the production gates the RTC entries record are added to the unverified assumptions at the end.
+
 How to read this file:
 
 - [DEVLOG.md](../../DEVLOG.md) is the source of record. This file only summarises it, and where the two differ, DEVLOG wins. Sign-offs go on the DEVLOG entry's `Reviewer / Date / Outcome` line, not here.
@@ -35,6 +37,11 @@ These items reverse an earlier stated position, carry legal or compliance weight
 15. **RTC-6 — Cross-user calls are relay-only by default.** Cross-entity sessions use the `relay` IP policy, and with hosted relay off they need an owner opt-in to connect directly, so cross-user calls do not work until the opt-in or a funded relay exists (RTC-7).
 16. **AMD-X1 — Bound consumer options in the extension system.** A proposed change to the extension system itself (a `bind` slot member in `crit`, `options` on slot requests, per-consumer approved values recorded in the grant). The rest of the RTC design depends on it.
 17. **SQ-1 — Confirm the irreversible BB-CUT message-data reset.** The only irreversible step in the roadmap: all existing local messages, contacts, conversations and blocks would be discarded when legacy messaging leaves core.
+18. **RTCe-4 — Uniform 404 instead of the spec's 202 at `POST /bindle/rtc`.** For an `aud` that names no active entity here, and while foreign RTC is off for the addressed entity, the route answers the uniform 404, which differs from spec §8.2 ("202 for every batch that passes step 1"). It needs a spec amendment (proposed, unsigned). The per-entity form also reveals the account's flag cohort to any sender. Its companion AMD-RV2 (refresh scheduling that may depend on step 2) is also an unsigned spec departure.
+19. **RTCs-1 — Declining an unanswered call is silent (with RTCg-5).** The engine now ends an unanswered incoming call without telling the caller, who sees the call ring out. This changes what "decline" means for RTC-8 and withdraws the earlier "send `revoked`" reading, so a caller cannot tell a decline from an unanswered ring.
+20. **RTC-17 — The caller's application origin is disclosed to the callee (with RTCe-22, RTCs-7).** It is now implemented in the owner view and the ring. This host cannot verify the origin, so a foreign caller's is shown as "reported by" its provider. If rejected, the field and the ring line go.
+21. **UI-13 — F14: the meta-CSP `sandbox` token.** A security-relevant edit the permission classifier refused. The token has no effect in a `<meta>` CSP, but removing it touches `CONTENT_CSP` and the activity content adapter together. Only the owner can decide.
+22. **OL-21 — `LINKS_ENABLED` replaces `BINDLEBOX_ENABLED` in core, with an env alias.** A flag rename with a retired-name alias and a carry rule (OL-22). A deployment's behaviour depends on the alias and on the old name's quarantine.
 
 ## Pricing and billing
 
@@ -1204,6 +1211,62 @@ Source for every item below: "2026-10-24 — Break-glass and ownership outbox sc
 - Safe alternative: none recorded.
 - Owner: ___
 
+**MC-16. App-originated items have their own activity families**
+- Decided: `packages/activity/app-messages.mjs` defines `app-message/<owner>/<id>` and `app-message-usage/<owner>`, with the record shape unchanged. `createAppNotification` writes only these families, never `message/` or `message-usage/`, and peer delivery still writes only `message/` (no dual path). The readers of both families are the messaging service, presentations, postbacks, notification eligibility, search, the retention scan, the storage quota (sum of both counters), shelving, the MCP item tools and the activity legacy adapter. The export `messages` contributor reads `message/` then `app-message/` with one projection. `notification-event/`, item-index and search IDs and the `messages/<owner>/…` blob names are kept. `packages/core/tags.mjs` is the old messaging tags module plus `ownerRules`, with the old paths re-exporting it.
+- Value: app messages keep `collection` placement and owner rules, so the legacy inbox, retention units and MCP still see them (BB-CUT inventory). The reset must delete peer blobs per record, never by blob prefix.
+- Why: it separates app items from peer history ahead of the Parley extraction, without a reset.
+- Source: "Messaging extraction prep (no reset)" (decision 1).
+- Safe alternative: none recorded.
+- Owner: ___
+
+**MC-17. `app-messages-v1` moves rows only after verification, and holds**
+- Decided: the move runs only for a `message/` row whose v1 admission attestation verifies against `APP_NOTIFICATION_PUBLIC_JWKS`, bound to issuer, owner and ID. Each move is one transaction that adjusts both counters by `size + presentationBytes`; an existing target is never overwritten; without a usable key set nothing moves. Unverifiable rows stay in `message/` as peer history. The warm path runs one 64-row slice per call until the marker exists; the alarm path runs one slice per alarm even after the marker (a rollback to pre-move code could write app rows into `message/`). After the marker, the alarm starts a new reconcile pass at most once a day. The pass does nothing while the account is `shelved` or while `export/active` exists, and a warm restore of `message/` rows deletes the marker, cursor and reconcile time.
+- Value: batches of 64 rows, one reconcile pass a day (`migration/app-messages-v1-reconciled-at`). The activity legacy adapter merges both families in item-ID order with one ID cursor (the old `a.`/`m.` cursors are still accepted). `MessagingService.receive` and `ContactDeliveryService` check the account caps against both counters (`storedItems`); only the legacy counter is written.
+- Why: review F2 (the marker is not a completion signal), F4 (export duplicates, adapter races), F5 (peer-delivery caps) and F6 (post-marker reconcile).
+- Source: "Messaging extraction prep (no reset)" (decision 1; review follow-ups F2, F4, F5, F6).
+- Safe alternative: none recorded.
+- Owner: ___
+
+**MC-18. The BB-CUT reset deletes only positively peer rows; unverifiable app-shaped rows are held**
+- Decided: the reset deletes only rows that are positively peer rows. Rows with the v1 purpose and a matching owner and ID that do not verify (unknown kid, changed issuer) are held and reported for operator review, never deleted. The reset runs its own full verify-and-move pass inside the reset step and never gates on the marker.
+- Value: release gate: keep retired kids in `APP_NOTIFICATION_PUBLIC_JWKS` (within its 8-key bound, since a larger set is rejected outright) and keep `APP_ORIGIN` unchanged until BB-CUT; any account with a non-zero count is reviewed first. Diagnostic: `migration/app-messages-v1-diag` holds `{unverifiedAppShaped, pending, completedAt}` from the last full pass.
+- Why: deleting a row that was really an app message after a key or origin change would be irreversible loss (review F3). This amends messaging-extraction §4; it does not confirm the reset (SQ-1).
+- Source: "Messaging extraction prep (no reset)" (review follow-ups F2, F3).
+- Safe alternative: none recorded.
+- Owner: ___
+
+**MC-19. Developer contact through the messaging occupant (`DEVELOPER_CONTACT_MODE`)**
+- Decided: `DEVELOPER_CONTACT_MODE` is `legacy` (default, unchanged) or `occupant`, as config rather than a flag because it selects a deployment's route. When the developer account's messaging-ingress occupant issues or rotates a messaging contact link with the developer policy, `account/links.mjs` records `developer-contact/occupant-v1`, the capability URL sealed with `KEY_ENCRYPTION_KEY` under its own purpose. In occupant mode `GET /api/developer-contact` hands out that link only if it still verifies, carries the developer policy and was issued by the seat that holds the slot today (otherwise `contact-unavailable` or `occupant-changed`), and answers `{mode:'occupant', intent:'send-message', …}` with no legacy grant. The pointer is recorded only when the mode is `occupant`; since the account cannot see its own handle, any account's occupant can leave a pointer there, and only the configured developer account's pointer is served. The console button "Write with your messaging app" uses the intent router and shows only when intents are available, with the en and es link copy otherwise. `cleanupDailyDeveloperGrants` is kept.
+- Value: as stated.
+- Why: it lets the developer contact go through whichever app holds the slot, without the legacy path.
+- Source: "Messaging extraction prep (no reset)" (decision 3; review I1, I2).
+- Safe alternative: keep the legacy path (the default).
+- Owner: ___
+
+**MC-20. Core-scope classification (provisional)**
+- Decided: Beam and legacy peer messaging are removed from core (class A). Kept in core (class B): the activity centre, notifications and push; device names; intents, links and the MCP/WebMCP adapters; Google Drive, the email bridge, the classifier and embeds; the loopback demo. Three owner questions (class C) are SQ-2 to SQ-4. Apps get the RTC signaling extension for calls and data transfer instead of a core feature.
+- Value: the audit ran at HEAD 2a4d521; the generic contact profile and sharing code was kept and the TURN pieces moved to `packages/rtc/`.
+- Why: the owner asked to keep core to account, identity and protocol plumbing plus generic Bindle contracts.
+- Source: "Core-scope audit (what belongs in 3sln.me core)".
+- Safe alternative: none recorded.
+- Owner: ___
+
+**MC-21. Contact-profile stale-write guard and withdraw-wins**
+- Decided: `GET /api/profile` returns an opaque `revision` (the first 16 bytes of a SHA-256 digest of the four profile fields, hex). `PUT /api/profile` accepts an optional `expectedRevision` and refuses a mismatch with `409 profile_stale`; a `PUT` without it stays unconditional. There is no stored counter and no migration. The client keeps fields editable while loading, disables Save with `aria-busy` until loaded, and after a stale refusal shows the latest profile with an explanation. A stale tab that withdraws disclosure (`discloseProfile:false`) is not refused: only the withdrawal is applied and newer fields are kept, also when it races a write. Stale saves that keep disclosure on are still refused.
+- Value: as stated. The withdraw-wins rule (L-1) is provisional.
+- Why: stale tabs silently overwrote newer contact data (F1), and a withdrawal must never be blocked.
+- Source: "Browser bug hunt fixes (post Beam removal)" (decision 1); "Bug hunt fixes: server review follow-ups" (L-1).
+- Safe alternative: none recorded.
+- Owner: ___
+
+**MC-22. Legacy app messages in the activity view**
+- Decided: with `ACTIVITY_V2_ENABLED` on, the activity view pages v1 app messages from `/api/activity/legacy` after the native feed ends, through a string cursor `legacy|<adapter cursor>|<offset>` that shares the Previous/Next stack. Legacy rows are always current and unarchived, appear only in the active feed and for filters they can match (app, read state, tag applied locally), open through the v1 message API and cannot be archived; search covers only their subject. The nav badge counts native unread items plus unread legacy app messages. Rows read from `app-message/` project as `verified:true` (the move required a verified attestation); rows still in `message/` stay `verified:false`.
+- Value: at most 4 adapter pages per render.
+- Why: legacy items were unreachable from the activity view (F3, F4).
+- Source: "Browser bug hunt fixes (post Beam removal)" (decisions 2 and 3).
+- Safe alternative: none recorded. Peer messages are still not shown by the activity view, so the badge no longer counts them while v2 is on; that gap predates this work and is deferred (UI-15).
+- Owner: ___
+
 ## App platform and AI budget
 
 **AP-1. Separate classifier budget (doubles exposure)**
@@ -1368,9 +1431,25 @@ Source for every item below: "2026-10-24 — Break-glass and ownership outbox sc
 - Safe alternative: keep it unsupported until built (current state).
 - Owner: ___
 
+**AP-18. The email bridge needs no messaging-app flag**
+- Decided: `EMAIL_BRIDGE_ENABLED` requires no other flag, and `bridgeConfig`, the bridge routes and `recognizedSlots` no longer consult a messaging-app flag. Delivery depends on the public-message-intake slot having an occupant; mail is held with `no-occupant` otherwise, as before. `PUBLIC_INTAKE_CONTRACT` moved to `packages/links/types.mjs`, and `federation/brokered.mjs` imports it from there.
+- Value: as stated.
+- Why: the bridge is core plumbing and must not depend on Parley's flag.
+- Source: "Messaging extraction prep (no reset)" (decision 2).
+- Safe alternative: none recorded.
+- Owner: ___
+
+**AP-19. Provider authorization page: bounded `lang` parameter and first-party schema text**
+- Decided: `/oauth/authorize?request_id=` accepts one bounded `lang` tag and still refuses every other parameter (documented in `docs/spec/federation-implementation.md`). First-party schema text goes through the catalogue only for a schema whose id is in a fixed set (`app-messages/v1`) and whose publisher is `https://3sln.me`; third-party schema text stays literal even if it matches a catalogue key.
+- Value: as stated.
+- Why: the spec constrains only the app ("redirects with only the returned `request_id`"), so the provider-side strictness was an implementation choice (F16).
+- Source: "Browser bug hunt fixes (post Beam removal)" (decision 5).
+- Safe alternative: keep refusing every extra parameter.
+- Owner: ___
+
 ### RTC signaling
 
-Source for every item below: "2026-10-26 — RTC signaling extension design", the [RTC signaling spec](../spec/rtc-signaling.md) and [design](../architecture/rtc-signaling.md) (revision 1, §9 and §18). This is design only: nothing is implemented, routed or tested, and one forked adversarial review found 7 High, 11 Medium and 6 Low issues, all applied. Every item is provisional, with a recommendation but no sign-off. Planned flags are `RTC_SIGNALING_ENABLED`, `RTC_FOREIGN_ENABLED` and `RTC_TICKETS_ENABLED` (class a, default off) and `RTC_TURN_ENABLED` (class b). The design lists release gates, among them sign-off of RTC-1 to RTC-17 and AMD-X1 and AMD-R1 to R6, an independent security review, a clean-room second provider and real-device WebRTC tests.
+Source for every item below: "2026-10-26 — RTC signaling extension design", the [RTC signaling spec](../spec/rtc-signaling.md) and [design](../architecture/rtc-signaling.md) (revision 1, §9 and §18). The design was reviewed by a forked adversarial review that found 7 High, 11 Medium and 6 Low issues, all applied. (At the design's writing nothing was implemented; the slices added since are listed in the sub-sections after AMD-R6, and are local only.) Every item is provisional, with a recommendation but no sign-off. Planned flags are `RTC_SIGNALING_ENABLED`, `RTC_FOREIGN_ENABLED` and `RTC_TICKETS_ENABLED` (class a, default off) and `RTC_TURN_ENABLED` (class b). The design lists release gates, among them sign-off of RTC-1 to RTC-17 and AMD-X1 and AMD-R1 to R6, an independent security review, a clean-room second provider and real-device WebRTC tests.
 
 **RTC-1. Shape on the extension system**
 - Decided: Recommended: adopt.
@@ -1434,6 +1513,7 @@ Source for every item below: "2026-10-26 — RTC signaling extension design", th
 - Why: A ring or busy signal reveals presence.
 - Source: "RTC signaling extension design" (design §9).
 - Safe alternative: a per-contact "show that I'm being rung" opt-in, to reconsider later.
+- Update (2026-10-27): the owner's decline of an unanswered invite is now a silent local end that tells the caller nothing (RTCg-5, RTCs-1). Only a device's own `claim` with `outcome: decline` (RTCd-7) sends a signed `decline`.
 - Owner: ___
 
 **RTC-9. Lifetimes**
@@ -1458,6 +1538,7 @@ Source for every item below: "2026-10-26 — RTC signaling extension design", th
 - Why: Abuse bounds.
 - Source: "RTC signaling extension design" (design §9).
 - Safe alternative: none recorded.
+- Update (2026-10-27): implemented in RTC-d. The per-caller-principal limit across entities is a host-wide window through `WORK_AUTHORITY` (RTCd-14), and the foreign directory budgets, `warms` limit and shedding values are in RTCe-17 and RTCe-19.
 - Owner: ___
 
 **RTC-12. Device delivery**
@@ -1506,6 +1587,7 @@ Source for every item below: "2026-10-26 — RTC signaling extension design", th
 - Why: It lets callees judge which app is calling.
 - Source: "RTC signaling extension design" (design §9).
 - Safe alternative: omit it for caller privacy.
+- Update (2026-10-27): implemented (RTCs-7), with a "reported by {provider}" label for foreign callers (RTCe-22). It is a highest-impact item.
 - Owner: ___
 
 **AMD-X1. Bound consumer options (extensions §2.1, §2.2, §5.2; wire profile)**
@@ -1514,6 +1596,7 @@ Source for every item below: "2026-10-26 — RTC signaling extension design", th
 - Why: Slot consumer options live only in declarations, and slot atomic fields and scope selections are shared by every consumer, so an app's purposes could not be approved per app.
 - Source: "RTC signaling extension design" (spec §18).
 - Safe alternative: one slot per purpose (rejected in spec §16).
+- Update (2026-10-27): implemented behind `EXTENSIONS_ENABLED` (RTCabc-5, RTCabc-6); extensions §13 carries the text, marked proposed and unsigned.
 - Owner: ___
 
 **AMD-R1. Certification key uses (organizations §3a.3; links §7.2 signature-domain table)**
@@ -1538,6 +1621,7 @@ Source for every item below: "2026-10-26 — RTC signaling extension design", th
 - Why: An optional wake path for native apps.
 - Source: "RTC signaling extension design" (spec §18).
 - Safe alternative: none recorded; the doorbell is optional.
+- Update (2026-10-27): not implemented; the Web Push doorbell is (RTCe-13), and `rtc-ring/v1` is listed in RTCe-open.
 - Owner: ___
 
 **AMD-R4. `rtc-purpose` artefact kind (artefacts §6.3)**
@@ -1562,6 +1646,476 @@ Source for every item below: "2026-10-26 — RTC signaling extension design", th
 - Why: User direction on 2026-10-26.
 - Source: "RTC signaling extension design" (spec §18).
 - Safe alternative: none recorded.
+- Owner: ___
+
+
+The sub-sections below add the implementation slices that followed the design. They are all local behaviour behind default-off flags (`RTC_SIGNALING_ENABLED`, `RTC_FOREIGN_ENABLED`, `RTC_TICKETS_ENABLED`, `RTC_TURN_ENABLED`) and the empty-by-default `RTC_FOREIGN_ISSUERS` allowlist. Nothing in them is verified against a real second provider, push service, relay, Durable Object or browser WebRTC stack. Their IDs are the DEVLOG's own (RTCd-n, RTCg-n, RTCe-n, RTCs-n), except RTC-a/b/c, whose DEVLOG entry numbers nothing: those items carry digest labels (RTCabc-n) and cite the DEVLOG bullet. Items with a label ending in `rev`, `resid`, `open` or `copy` are likewise digest labels for review fixes, residual risks, deferrals and copy that the DEVLOG records without an ID. Where one item covers several DEVLOG IDs, the title lists them. The production gates these entries record are collected under "Unverified external assumptions".
+
+#### RTC-a/b/c: validators, purposes and bound options
+
+Source for every item below: "RTC-a/b/c validators, purposes and bound options (flags off)", including its "Review follow-ups (2026-10-27, independent security review…)" (the spec changes are AMD-RV1).
+
+**RTCabc-1. SDP, candidate and batch readings (RTC-a)**
+- Decided: these are the coordinator's readings of spec §6.3, where the spec text was silent or looser.
+- Value:
+  - the invite `offer` and the accept `answer` are SDP strings; `to` is null for `invite` and `cancel`; the invite's `ring_until` must also be after `iat`;
+  - a srflx `raddr` is a host address, so cross-entity it must be unspecified, mDNS or absent; unknown candidate extension attributes are refused;
+  - any weak (sha-1, md5) fingerprint invalidates an SDP; outside `o=`, `c=` and `a=rtcp`, an `IN IP4/IP6` token or a dotted IPv4 literal anywhere in an SDP is refused;
+  - a batch's messages must share one (`iss`, `sub`, `aud`); duplicate carried links are refused.
+- Why: no address may leave a device before the claim (RTC-5), and an address-bearing field the spec forgot to list would leak one.
+- Source: "RTC-a/b/c validators, purposes and bound options" (provisional decisions and readings).
+- Safe alternative: none recorded.
+- Owner: ___
+
+**RTCabc-2. AMD-RV1: media-security rules added by the independent review**
+- Decided: the review's M1 and L1–L3 findings are fixed by stricter validation, and the spec is amended as AMD-RV1 (rtc-signaling §5, §6.3, §10, §11.3, §18). The amendment is proposed and unsigned.
+- Value:
+  - every `a=fingerprint` line must carry the same (algorithm, value) pair, compared case-insensitively, so the SAS covers what DTLS checks; an SDP whose only fingerprint is sha-384 or sha-512 is valid but gives no SAS input;
+  - `candidate`, `remote-candidates`, `end-of-candidates` and `IN IP4/IP6` are matched case-insensitively; the `o=` username and session id must be `-` or digits; `u=`, `e=` and `p=` lines are refused (beyond the review, which named only `u=`); unanchored dotted four-number runs and IPv6-like colon runs are refused. Firefox's `mozilla...THIS_IS_SDPARTA` username must be rewritten to `-` by the endpoint before sending;
+  - cross-entity, srflx and relay addresses must be public (a non-public IPv4/IPv6 list, including mapped, compatible and NAT64 forms, is refused; documentation ranges are allowed); under `public`, a srflx `raddr` must be unspecified, mDNS or absent, and only own-entity `all` may reveal the host base address; an mDNS name must be a UUID plus `.local`.
+- Why: a session-level versus media-level fingerprint split could make the SAS cover a different fingerprint than DTLS (M1), and the spec was less strict than the validators on the address points (L2).
+- Source: "RTC-a/b/c validators, purposes and bound options", "Review follow-ups" (M1, L1, L2).
+- Safe alternative: none recorded; the spec text before AMD-RV1.
+- Owner: ___
+
+**RTCabc-3. Signature and key rules (review L3 to L5)**
+- Decided: stricter signature and key handling in the RTC JWS profile.
+- Value:
+  - high-S ES256 signatures are refused and signing normalizes to low-S;
+  - a reused `seq` has "the same content" only when its payload bytes are identical (design §8.1): a second signature over the same bytes is a duplicate, a re-serialized payload with equal JSON is different content;
+  - `verifyControl` requires `expected.iss` and `expected.sub` as well as `aud` and `sid`;
+  - keys use the directory document shape, and only `use: 'cert'` with `state: 'active'` verifies a leg certificate or control statement; a `sig` key never does.
+- Why: signature malleability, ambiguous duplicates, and keeping the R4-H1 rule that signing keys cannot certify.
+- Source: "RTC-a/b/c validators, purposes and bound options", "Review follow-ups" (L3, L4, L5).
+- Safe alternative: none recorded.
+- Owner: ___
+
+**RTCabc-4. Purpose bodies and the unsigned growth table (RTC-b)**
+- Decided: purpose `categories` must be a sorted subset of the six known values, which is stricter than incremental authorization's "unknown values are ignored". `rtc-purpose` is not in `DEFAULT_KINDS`.
+- Value: until the AMD-R4 growth table is signed, only exactly pinned versions are usable, URL-only pins are refused (`artefact_unverifiable`) and heads never advance. The four candidate lines in `docs/artefacts/rtc-purposes/` are registered as operator documents and declare `personal-data`; their English and Spanish copy is a placeholder for review. The `rtc-purpose` references resolve only while `RTC_SIGNALING_ENABLED` is on (`rtcBoundArtefacts`).
+- Why: it follows the `relation` kind's precedent, and the purposes' copy is what an owner reads at consent.
+- Source: "RTC-a/b/c validators, purposes and bound options" (RTC-b; decisions); "Review follow-ups" (informational).
+- Safe alternative: none recorded.
+- Owner: ___
+
+**RTCabc-5. AMD-X1 implementation readings (RTC-c)**
+- Decided: these are the readings behind AMD-X1 (extensions §13, proposed and unsigned).
+- Value:
+  - `options` carries only bound members; an invalid bound request fails the whole authorization (`invalid_request`);
+  - the approval identity is `bound.revision` (brokered `bindle.grant` derivation deferred, because the only bound slot is non-brokerable);
+  - widening is a new consent (`grant-more` deltas and "already granted" labels for bound values are a follow-up); narrowing is immediate and reaches every active grant of that app (`federation.narrow-bound-options`);
+  - with `EXTENSIONS_ENABLED` off a pending bound request cannot be approved (`unsupported_fragment`); bound artefact lines are pinned from provider-held reviewed references only, never fetched by URL.
+- Why: the amendment text left these open.
+- Source: "RTC-a/b/c validators, purposes and bound options" (RTC-c; decisions).
+- Safe alternative: none recorded.
+- Owner: ___
+
+**RTCabc-6. AMD-X1 review rules: occupant read, incremental requests, stale consent (review L6 to L8)**
+- Decided: three guards on bound options.
+- Value:
+  - `federation.bound-approval` is system-only, and `boundApproval`/`checkBound` require the verified token's `grants` (a nonempty array of at most 256 ids), with no fallback to all of the consumer's grants; with connections mounted a grant counts only while its connection is live;
+  - `grant-more` for a fragment whose slot has `bind` is refused at admit with `unsupported_fragment` ("incremental requests cannot add them yet");
+  - an identical resubmission of an offered "already approved" bound selection is approved only while a live grant covers it (same epoch, live connection, same recorded versions); otherwise `stale_consent`, once, and the entry page falls back to the full consent review.
+- Why: the occupant read must not widen to grants the token does not carry, and a bound approval must not survive a changed version.
+- Source: "RTC-a/b/c validators, purposes and bound options", "Review follow-ups" (L6, L7, L8).
+- Safe alternative: none recorded.
+- Owner: ___
+
+**RTCabc-7. RTC flag shape**
+- Decided: four class-a/b flags, all default off.
+- Value: `RTC_SIGNALING_ENABLED` requires `EXTENSIONS_ENABLED` and `ARTEFACT_VERSIONS_ENABLED`; `RTC_FOREIGN_ENABLED` requires `RTC_SIGNALING_ENABLED` and `DIRECTORY_ENABLED`; `RTC_TICKETS_ENABLED` requires `RTC_SIGNALING_ENABLED`; `RTC_TURN_ENABLED` (class b) is a new flag, not a rename of `BEAM_TURN_ENABLED`, and requires `RTC_SIGNALING_ENABLED`. Class b env reads do not evaluate dependencies, so RTC-f must check both flags. In legacy env mode `siteGlobal` returns `RTC_SIGNALING_ENABLED='true'` even without its dependencies, as for other flags.
+- Why: gating by dependency keeps a half-enabled RTC unreachable.
+- Source: "RTC-a/b/c validators, purposes and bound options" (flags); "Review follow-ups" (informational).
+- Safe alternative: none recorded.
+- Owner: ___
+
+#### RTC-d: sessions, admission and same-host transport
+
+Source for every item below: "RTC-d sessions, admission and same-host transport (flags off)" and its "Review follow-ups (2026-10-27)". Behaviour is local; while `RTC_SIGNALING_ENABLED` is off every widening operation answers the uniform `not_found`, and narrowing is never gated.
+
+**RTCd-1. Session records**
+- Decided: the caller's provider keeps `rtc/out/<sid>` and the callee's keeps `rtc/in/<caller principal>/<sid>`. An own-entity session has both records in one writer; they end together and no control statement goes to oneself.
+- Value: as stated.
+- Why: a `sid` that another caller chose must never collide (§8.2 step 2).
+- Source: "RTC-d sessions, admission and same-host transport" (RTCd-1).
+- Safe alternative: none recorded.
+- Owner: ___
+
+**RTCd-2, RTCd-21, RTCd-22. Same-host transport is asynchronous, with a bounded inbound queue**
+- Decided: no request delivers across entities. A commit asks the adapter for a detached pass, with the alarm as the fallback. `rtc.ingest` checks step 1, stores the batch in `rtc/inq/` and answers `{accepted:true}`; `rtc.inbox` runs steps 2 to 8 later on the receiver, as of the batch's receipt time.
+- Value: the inbound queue overflows at 256 batches or 4 MiB, and `rtc.ingest` then answers `temporarily_unavailable` (503), which the sender retries (§8.3), rather than dropping silently. Passes are serialized per service, and peer calls use gate `none`.
+- Why: the first version ran the callee's whole ingest inside the sender's request, so timing was a presence oracle (review M2); a silent drop would lose at-least-once delivery.
+- Source: "RTC-d sessions, admission and same-host transport" (RTCd-2 revised, RTCd-21, RTCd-22; review M2).
+- Safe alternative: none recorded.
+- Owner: ___
+
+**RTCd-3. Replay window**
+- Decided: payload-bytes digests are kept for the last 128 accepted `seq` values per leg. A reused `seq` older than that is ignored as a duplicate. The sender's provider applies the same rule to its own endpoint; different bytes end the leg `failed` with a control statement, and an out-of-order `send` is refused with `invalid_args`.
+- Value: 128.
+- Why: bounded replay protection without buffering for the sender's own endpoint.
+- Source: "RTC-d sessions, admission and same-host transport" (RTCd-3).
+- Safe alternative: none recorded.
+- Owner: ___
+
+**RTCd-4, RTCd-5. Held invites and mutes**
+- Decided: invites through the `none` basis (off by default) and through a quarantined contact parent are recorded in the owner's missed and held list and never delivered to endpoints or alerted. Blocked invites are dropped and never listed. A mute of a principal, purpose or application delivers the invite without alert and never excludes an endpoint.
+- Value: as stated.
+- Why: §4.4 leaves the presentation to the provider, and silence must not reveal blocks or quarantine.
+- Source: "RTC-d sessions, admission and same-host transport" (RTCd-4, RTCd-5).
+- Safe alternative: none recorded.
+- Owner: ___
+
+**RTCd-6. Auto-accept projection**
+- Decided: the provider computes `auto_accept` per endpoint in the invite projection: own entity, the purpose allows `self`, the owner enabled it for that application, and the caller certificate's `client_id` is the endpoint's application. Nothing more is enforced at `claim`, because a provider cannot verify a user action there.
+- Value: as stated.
+- Why: auto-answer must be an owner choice per app, never a caller's.
+- Source: "RTC-d sessions, admission and same-host transport" (RTCd-6).
+- Safe alternative: none recorded.
+- Owner: ___
+
+**RTCd-7. Decline by a device claim**
+- Decided: a decline is a `claim` with `outcome: decline` followed by the leg's signed `decline` message. The callee record ends at the claim; that one message may still be sent. A decline claim and a `send` of only `end`, `cancel` or `decline` are narrowing.
+- Value: as stated. This is the device-level decline; the owner-level decline of an unanswered invite is silent (RTCg-5, RTCs-1).
+- Why: a device that answers has already revealed itself, and ending must never be gated.
+- Source: "RTC-d sessions, admission and same-host transport" (RTCd-7).
+- Safe alternative: none recorded.
+- Owner: ___
+
+**RTCd-8, RTCd-9, RTCd-20. Wire details the spec does not name**
+- Decided: the endpoint secret travels as an `endpoint_secret` member of the arguments, and a DPoP-registered endpoint refuses it. `open` takes `purpose` as the line URL, pins the provider's held reference, and an opened session with no invite times out after 120 s. `expires_at` from `register` and `open` is in Unix seconds, like certificate `exp`.
+- Value: as stated.
+- Why: §9.1 does not name these.
+- Source: "RTC-d sessions, admission and same-host transport" (RTCd-8, RTCd-9, RTCd-20).
+- Safe alternative: none recorded.
+- Owner: ___
+
+**RTCd-10. Tickets are stored apart from LinkService**
+- Decided: tickets live in `rtc/ticket/<jti>` with their own cap, not on LinkService `link/` parents. The link is `<issuer>/rtc/t/<jti>?bindle_meta=…`, signed with the identity signing key, and the owner host verifies the exact stored meta. Callback tickets also need `RTC_TICKETS_ENABLED` and are refused for own-entity sessions.
+- Value: 256 live tickets per owner.
+- Why: it kept RTC-d independent of the links code; moving tickets onto LinkService is left to the links owner.
+- Source: "RTC-d sessions, admission and same-host transport" (RTCd-10).
+- Safe alternative: tickets as LinkService parents.
+- Owner: ___
+
+**RTCd-11. No presence oracle through keys**
+- Decided: while RTC is on, `rtcPublicKeys` answers every active same-host entity with a certification key, creating it on first need, so `open` succeeds alike whether or not the callee ever registered. An unknown or deleted principal answers `temporarily_unavailable`.
+- Value: as stated.
+- Why: a callee with no certification key made `open` fail, which revealed registration; identity documents are public anyway.
+- Source: "RTC-d sessions, admission and same-host transport" (RTCd-11).
+- Safe alternative: none recorded.
+- Owner: ___
+
+**RTCd-12, RTCd-23, RTCd-25. Deletion, retired keys and moves**
+- Decided: account deletion (`rtcDrain`, and the purge's identity stage before the tombstone) ends every live session with control `revoked`, removes endpoints and closes the RTC family to new admissions. Session records pin the peer's certification keys (`peerKeys`, at most 8), so a control statement may verify against keys the peer used for the session even after it stops serving them, including a key revoked at a move. A deletion with reason `moved` still sends `revoked`; a `moved` control is not implemented.
+- Value: at most 8 pinned keys per session. A control can only end that one session with that party, so a compromised retired key can at worst end sessions early.
+- Why: the purge tombstoned the account before the drain, so deletion controls were dropped (review M1). §5.2 has no deletion reason.
+- Source: "RTC-d sessions, admission and same-host transport" (RTCd-12, RTCd-25); "Review follow-ups" (M1, RTCd-23).
+- Safe alternative: none recorded.
+- Owner: ___
+
+**RTCd-13. Authority-epoch rows are recorded only for admitted traffic**
+- Decided: an `aep` row is recorded only for an admitted invite or a live session's messages, so a dropped invite records nothing (§8.2 step 6 "live admission state").
+- Value: as stated.
+- Why: a dropped invite must leave no state that reveals the drop.
+- Source: "RTC-d sessions, admission and same-host transport" (RTCd-13).
+- Safe alternative: none recorded.
+- Owner: ___
+
+**RTCd-14. Limits are per callee writer, plus one host-wide caller window**
+- Decided: the per-(caller, callee), per-(issuer, callee), per-(issuer, link parent) and per-callee limits are counted in the callee's writer. The §13 limit per caller origin principal across its entities is one host-wide window through `WORK_AUTHORITY`, keyed by an HMAC of the principal, counted after verification and before the transaction. A limiter that throws drops the invite (fail closed). A retried copy of an existing session's invite returns before any limit.
+- Value: the RTC-11 numbers, with the per-writer count kept as defence in depth. For same-host callers the per-(issuer, callee) limit (20 an hour) binds before the held-request bound (32). A host without `WORK_AUTHORITY` counts per writer only.
+- Why: the per-writer count never bound a caller across callees (review L1).
+- Source: "RTC-d sessions, admission and same-host transport" (RTCd-14 corrected); "Review follow-ups" (L1).
+- Safe alternative: none recorded.
+- Owner: ___
+
+**RTCd-15, RTCd-16, RTCd-17. Event queue, long poll and gating**
+- Decided: an event that would exceed 256 events or 512 KiB is dropped, `gap` is set and the session ends `failed` with a control statement to the peer. `listen` waits in memory within one writer with gate `none`; push subscriptions are validated (HTTPS, a provisional list of recognized Web Push origins) and stored. `listen`, `endpoints` and owner reads of existing state are never gated; `unblock` and `unmute` are widening and gated.
+- Value: 256 events, 512 KiB.
+- Why: bounded per-leg memory, and state that stays narrowable and readable while the flag is off.
+- Source: "RTC-d sessions, admission and same-host transport" (RTCd-15, RTCd-16, RTCd-17).
+- Safe alternative: none recorded.
+- Owner: ___
+
+**RTCd-18, RTCd-19. Fan-out eligibility and the unimplemented capacity preference**
+- Decided: fan-out eligibility needs the federation bound check, which lives outside the writer, so it is evaluated before the transaction and re-read inside it. The §13 SHOULD "prefer `self` and principal-bound bases when ringing capacity is short" is not implemented: the callee's four ringing slots are first come.
+- Value: 4 ringing slots per callee.
+- Why: RTCd-19 is a deliberate omission, recorded so the SHOULD is not assumed met.
+- Source: "RTC-d sessions, admission and same-host transport" (RTCd-18, RTCd-19).
+- Safe alternative: implement the preference.
+- Owner: ___
+
+**RTCd-24. A full outbox can drop a control statement**
+- Decided: a control statement that finds even its reserve full is dropped, but the session still ends locally. The peer's acceptance of the revoked leg is then bounded by the leg certificate's lifetime (at most 900 s, §14).
+- Value: outbox caps 1,024 in total and 64 per peer, outbox rows keyed per peer; message batches stop 128 and 16 short of those caps, which are reserved for control statements. A `failed` reply to an extra or late callee leg is sent at most once per (sid, leg) and at most 4 times per session. A full outbox makes `send` fail with `rate_limited` and nothing is accepted.
+- Why: the outbox could be filled and drain was head-of-line blocked (review M3).
+- Source: "RTC-d sessions, admission and same-host transport" (RTCd-24); "Review follow-ups" (M3).
+- Safe alternative: none recorded.
+- Owner: ___
+
+**RTCd-rev. Review rules on claims and live IP policy (review L2, L3, L4; digest label)**
+- Decided: a repeat claim is allowed only while `claimUsable` (an accepted session still live, or a decline whose message has not been sent). `send` applies the stricter of the session's pinned IP policy and the owner's current one, so narrowing reaches a live session and widening never does. Export gains `rtc/contact/<parent>` parents and ticket `purposes` and `principal`; the ticket meta and `jti` are never exported.
+- Value: as stated.
+- Why: repeat claims on ended sessions, a narrowed policy ignored by live sessions, and missing export fields (review L2 to L4).
+- Source: "RTC-d sessions, admission and same-host transport", "Review follow-ups" (L2, L3, L4).
+- Safe alternative: none recorded.
+- Owner: ___
+
+#### RTC-g: owner settings and portal ring
+
+Source for every item below: "RTC-g owner settings and portal ring (flags off)" and its "Review follow-ups (2026-10-27)". The review's F1 option was chosen by the coordinator, not the user.
+
+**RTCg-1, RTCg-3. Owner actor only, and no master switch**
+- Decided: owner routes act only as the signed-in person (`{kind:'owner'}`), never as an actor from the body; an organization admin acting for an organization is not offered. RtcService has no owner on/off for calls: availability is the flag plus the owner's choices per basis (contact links, requests, approved apps), and the view is the "enable" surface.
+- Value: as stated.
+- Why: a master switch would be a new owner operation, and org acting needs a design.
+- Source: "RTC-g owner settings and portal ring" (RTCg-1, RTCg-3).
+- Safe alternative: add an owner-level calls switch (listed under "Missing interfaces", only if wanted).
+- Owner: ___
+
+**RTCg-2. Widening routes answer the uniform 404 while the flag is off**
+- Decided: while `RTC_SIGNALING_ENABLED` is off, `unblock`, `unmute` and any well-formed widening `set-policy` or `set-contact-rtc` answer exactly `{"error":"not_found"}` (404), byte-identical to an unknown `/api` path; a malformed one is still the ordinary 400. Every other `not_found` (unknown ticket, session, endpoint) maps to the same body. Reads answer with `enabled:false`.
+- Value: as stated.
+- Why: the flag state must not be visible, while state stays narrowable.
+- Source: "RTC-g owner settings and portal ring" (RTCg-2 and its information item).
+- Safe alternative: none recorded.
+- Owner: ___
+
+**RTCg-4. Portal ring eligibility**
+- Decided: the ring covers an incoming (`callee`) record that is ringing, not held, not claimed, not own-entity, for a purpose with `alert: true`, not muted by principal or purpose, before `ringUntil`, and `alert === true` once the field exists. Nothing rings while the flag is off, even for an invite still ringing from before. Suppressing the ring while an endpoint for the purpose was seen recently is not implemented.
+- Value: as stated.
+- Why: `lastSeen` is set when a listen starts, so a long poll and a background app that cannot alert look the same; suppressing could hide calls the owner never hears.
+- Source: "RTC-g owner settings and portal ring" (RTCg-4); "Review follow-ups" (F2).
+- Safe alternative: suppress on `lastSeen`, left to the coordinator.
+- Owner: ___
+
+**RTCg-5. Declining an unanswered invite is a silent local end (see RTCs-1)**
+- Decided: declining or ending an incoming record that no device has answered sends nothing to the caller, whose session rings out at `ring_until` (§12 "No presence oracle"; §4.4). The ring's Decline, the settings' Decline (ringing) and Remove (held) need no dialog, and the console hides the record in that tab until its deadline. Answered (claimed) and outgoing sessions keep "End" behind a confirmation, which does tell the other side. "Not now" hides the notice in this tab and sends nothing. The earlier reading (send `revoked`) is withdrawn.
+- Value: the wording "The caller is not told whether you declined or put this off: the call just rings out. Not now only hides this notice here."
+- Why: the first version sent `revoked`, a presence oracle (review F1). The engine now enforces the rule (RTCs-1).
+- Source: "RTC-g owner settings and portal ring" (RTCg-5; review F1, coordinator option (a)).
+- Safe alternative: tell the caller the call ended (the withdrawn reading), or a per-contact "show that I'm being rung" opt-in (RTC-8).
+- Owner: ___
+
+**RTCg-6, RTCg-14. What the ring shows before a claim**
+- Decided: the ring carries only `sid`, the verified caller principal, a handle only for an active account on this host (foreign handles wait for the roster), the purpose and its title, media and the ring deadline, and the owner's own apps registered for the purpose (`clientId` and verified origin). It never carries context, basis or callback links, endpoint labels or secrets. The caller's app origin was left out here and added later (RTCs-7, RTCe-22). A principal shows as `@handle` when this host verified it, else the issuer host and the first 8 characters of `sub`, marked `translate="no"`.
+- Value: the route tests pin the exact keys.
+- Why: §9.1 and §12 limit data before the claim.
+- Source: "RTC-g owner settings and portal ring" (RTCg-6, RTCg-14).
+- Safe alternative: none recorded.
+- Owner: ___
+
+**RTCg-7, RTCg-8. "Open in app" and ring delivery**
+- Decided: "Open in {app}" navigates in a new tab (`noopener noreferrer`) to the root of an endpoint's verified origin (https, or loopback http locally); the portal never claims. The ring polls `GET /api/rtc/ring` while the tab is visible on routes where it renders, shows at most 3 invites, and renders into its own polite live region so its arrival never rebuilds the console or moves focus.
+- Value: 10 s polling; errors back off 10 s × 2^n, capped at 300 s, ±10% jitter, never sooner than `Retry-After`; one tab per account polls (leader lease of 1.5 intervals over BroadcastChannel `bindle-rtc-ring`, a hello wait of about 250 ms, each tab polling alone without BroadcastChannel); polling stops while the answer is `idle` (no invite, endpoint, contact link or live call link for an alerting purpose) until something can ring again.
+- Why: polling cost and the web push doorbell dependency (the doorbell is RTCe-13); the ring must not take focus.
+- Source: "RTC-g owner settings and portal ring" (RTCg-7, RTCg-8; review F4, F5, F8).
+- Safe alternative: none recorded.
+- Owner: ___
+
+**RTCg-9, RTCg-10, RTCg-11, RTCg-12. Apps, automatic answers, contact links and requests**
+- Decided: the apps list is read-only and comes from the owner's federation grants on the signaling slot fragment. Automatic answers are per app through `rtc.set-policy` `autoAccept`, only for purposes with `auto_accept: "self"` that the app holds. Contact links get one form per active link (parent is the grant id) offering purposes whose `parties` is not `self`; unchecking everything removes the configuration. The `none` basis is per purpose whose `parties` is not `self`, off by default; requests never ring and wait in the held list. The privacy and requests forms each send only their own policy members.
+- Value: as stated. Review F7: `set-contact-rtc` with any purposes requires `parent` to be one of the owner's active contact links, otherwise the uniform 404; removing a configuration is allowed for any parent.
+- Why: the owner approves each way of being called separately.
+- Source: "RTC-g owner settings and portal ring" (RTCg-9 to RTCg-12; review F7).
+- Safe alternative: none recorded.
+- Owner: ___
+
+**RTCg-13, RTCg-15, RTCg-16. Confirmations, controls not offered, and network privacy defaults**
+- Decided: ending a session, revoking a call link, removing a device, blocking, clearing the whole missed list and narrowing an app run only from a matching `rtc-confirm` dialog; removing one missed entry, unblocking and declining from the ring do not ask. Mute and unmute have routes but no controls, call links are listed and revocable but only apps mint them (no QR code), and there is no command-palette entry. For other people `other` defaults to `relay` and offers `public`, and `all` is never offered; own devices default to `all` ("Direct") and offer `public` and `relay`.
+- Value: as stated.
+- Why: RTC-6 for the default; commands carry no feature gate and would reveal the view while off.
+- Source: "RTC-g owner settings and portal ring" (RTCg-13, RTCg-15, RTCg-16).
+- Safe alternative: none recorded.
+- Owner: ___
+
+**RTCg-copy. Owner-facing wording (digest label)**
+- Decided: the English and Spanish strings for the calls view and ring are provisional copy.
+- Value: Relay: "Relay only (recommended): The other person never sees your IP address; the relay does. The connection goes through the relay, which can be slower, and it cannot connect if neither you nor the app has a relay." Public: "Allow your public address…" (can reveal approximate location and internet provider). Relay operators: "A relay sees your IP address, that a connection happens and how much data it carries, but it cannot read calls or files." Contact links: "Who can call you … never written into the link". Requests: "Requests never ring: they wait in your missed and held list." SAS: "…if both of you see the same code, no provider or network in between can listen in. The app you use can still see the call." Block: "Their calls and requests are dropped without telling them and are not listed as missed."
+- Why: these are privacy and legal-adjacent statements; the review (F6) corrected the relay, SAS and local-address wording.
+- Source: "RTC-g owner settings and portal ring" (wording decisions; review F6).
+- Safe alternative: none recorded. Counsel has not reviewed this copy.
+- Owner: ___
+
+#### RTC-e: foreign transport, endpoint and key roster
+
+Source for every item below: "RTC-e foreign transport, endpoint and key roster (flags off)", its "Review follow-ups (2026-10-27, independent security review…)" and its "Verification follow-ups (2026-10-27, verification review of the fix round…)". Foreign issuers stay behind an empty allowlist until the Workers egress gate passes (security.md S4 unchecked; R2-M6 unmet).
+
+**RTCe-1, RTCe-2. Contract route and bound check**
+- Decided: the application actor `{kind:'app', owner, clientId, origin, grants, epoch, jkt?}` is built only from the verified dispatch context, with the token's grant ids required and the registered client's origin. `listen` and `endpoints` are reads and never journaled; RTC write results (leg certificates, ticket links) are not kept in the federation journal, so a retried `tx` answers `indeterminate`. While `RTC_SIGNALING_ENABLED` is off the `${subject}/rtc` descriptor is withdrawn, so even narrowing is unreachable through the contract (owners narrow through the RTC-g routes). `config.RTC_BOUND_CHECK` is `FederationController.checkBound` in the owner's shard on both adapters.
+- Value: on Workers it calls the federation DO from inside an account call; the DO is not gated, so this looks safe but is unverified on a real DO.
+- Why: §12 says ticket links are never retained.
+- Source: "RTC-e foreign transport, endpoint and key roster" (RTCe-1, RTCe-2).
+- Safe alternative: none recorded.
+- Owner: ___
+
+**RTCe-3, RTCe-4. One `aud` per batch, and the uniform 404 versus the spec's 202**
+- Decided: a batch whose elements name more than one `aud` is refused at the route (`rtc_batch_invalid`). While `RTC_FOREIGN_ENABLED` is off (site-wide or for the addressed entity), and for an `aud` that names no active entity here, `POST /bindle/rtc` answers the uniform 404. Step 2 to 8 outcomes stay a uniform 202 with an empty body. This **differs from §8.2's "202 for every batch that passes step 1"**, and the spec needs a matching amendment (proposed, unsigned; not applied to the text).
+- Value: the per-entity 404 reveals to any sender whether foreign RTC is enabled for that account (its flag cohort); it disappears when the flag is site-wide. Recorded, not changed.
+- Why: an identity's existence and lifecycle are public through its identity document, so the 404 reveals nothing steps 2 to 8 decide.
+- Source: "RTC-e foreign transport, endpoint and key roster" (RTCe-3, RTCe-4; RTCe-4 note in the review follow-ups).
+- Safe alternative: the spec's text, a uniform 202 for every addressed batch that passes step 1.
+- Owner: ___
+
+**RTCe-5, RTCe-16. The foreign allowlist and the manifest row**
+- Decided: `RTC_FOREIGN_ISSUERS` is a JSON array of https origins, at most 64, empty by default; any invalid entry empties it. It gates directory fetches, delivery and roster scheduling; a claimed sender on a non-allowlisted issuer is never fetched, its keys are never held and its batches drop silently at step 3. While it is empty or invalid, `/bindle/rtc` answers the same uniform 404 as flag-off and the manifest withholds `rtc-signaling.v1`. The manifest row (`endpoint` `/bindle/rtc`, `max_leg_certificate_seconds` 600) needs `RTC_SIGNALING_ENABLED`, `RTC_FOREIGN_ENABLED`, `DIRECTORY_ENABLED`, `mounts.rtc` and a non-empty valid allowlist. On Node the `rtc` mount is set when `RTC_EGRESS` exists; on Workers it is always set. The occupant `extensions` entry is kept only beside a declared `extensions.v1`, which no slice declares yet.
+- Value: 64 origins, 600 s.
+- Why: it keeps cross-provider reach off until the egress gate passes.
+- Source: "RTC-e foreign transport, endpoint and key roster" (RTCe-5, RTCe-16; review F7).
+- Safe alternative: none recorded.
+- Owner: ___
+
+**RTCe-6. Control statements bypass the foreign flag (corrected)**
+- Decided: outbound control-only batches are not gated by `RTC_FOREIGN_ENABLED` (narrowing). They need only the allowlist, `DIRECTORY_ENABLED` and the egress, and their endpoint lookup takes the roster's control path (a held feature first, else a manifest fetch under the directory budgets). This host's endpoint still refuses a peer's controls while the flag is off (uniform 404). With an empty allowlist nothing is delivered.
+- Value: as stated.
+- Why: the first version's lookup went through the flag-gated directory, so the kill switch suppressed `revoked`/`failed` controls (review F2).
+- Source: "RTC-e foreign transport, endpoint and key roster" (RTCe-6; review F2).
+- Safe alternative: none recorded.
+- Owner: ___
+
+**RTCe-7, RTCe-8. Delivery outcomes and invite re-send (corrected)**
+- Decided: 202 is delivered. A network error, 429 or 5xx is retried with per-peer backoff until the item's useful life (§8.3). Any other answer (400, 404, a redirect) and an off-allowlist target are permanent and the row is dropped. After the first 202 a foreign invite is re-sent unchanged (current certificate and links) at most twice, 3 s after the acceptance and 12 s later, never after a permanent refusal; the callee ignores copies of an existing session.
+- Value: 3 POSTs over a whole unanswered ring (before the fix, about 10).
+- Why: §8.3 SHOULD re-send for a held-key miss; unbounded re-sends multiplied traffic about 10× (review F6).
+- Source: "RTC-e foreign transport, endpoint and key roster" (RTCe-7, RTCe-8 corrected; review F6).
+- Safe alternative: none recorded.
+- Owner: ___
+
+**RTCe-9, AMD-RV2. Key refresh scheduling departs from the spec sentence**
+- Decided: for every claimed sender of a step-1-valid batch whose keys are not held, or which names a kid that is not held, a refresh is attempted before steps 2 to 8, never as a fetch on the request path. Whether it is queued, and in which lane, depends on the source network (plain claims), a live or ringing session with the sender (`live`), or a link basis of an invite in the same batch that verified at step 2 without spending (`linked`). This departs from the spec sentence "the schedule does not depend on step 2" and is proposed as **AMD-RV2**, unsigned and not applied to the text.
+- Value: only the sender's issuer can observe the difference, as the order of this host's directory GETs to it under load. Under load it could also infer whether a presented ticket or contact link is still live (within the step 3 exception, but recorded). The response and its timing never depend on steps 2 to 8.
+- Why: it stops an unauthenticated flood of claimed senders from starving honest callers (RTCe-19 values).
+- Source: "RTC-e foreign transport, endpoint and key roster" (RTCe-9 corrected; review F1).
+- Safe alternative: the spec sentence, which was the first implementation and was the cause of the starvation finding.
+- Owner: ___
+
+**RTCe-10, RTCe-11, RTCe-12. Key rotation, declared bound and no foreign handle**
+- Decided: a certification key published at least one directory freshness period before use is picked up by refresh-ahead and sessions continue. An abrupt rotation loses the messages signed with the unheld key, their `seq` gap ends the leg `failed` after 10 s, and both providers converge to `ended`. A peer's leg certificates are checked against its issuer's declared `max_leg_certificate_seconds` as held, else 900. No foreign handle is shown in invite projections.
+- Value: the operational rule is to publish a new certification key before signing with it.
+- Why: no verified directory binding is held for a foreign handle.
+- Source: "RTC-e foreign transport, endpoint and key roster" (RTCe-10, RTCe-11, RTCe-12).
+- Safe alternative: none recorded.
+- Owner: ___
+
+**RTCe-13. Web Push doorbell**
+- Decided: the doorbell reuses the host push transport (RFC 8291, `PUSH_ENABLED` and VAPID keys), is sent only to the subscription validated and stored at `register` after the admitting transaction commits, at most once per alerting invite per endpoint, with `Urgency: high`, the whole remaining ring seconds as TTL (nothing below 1 s), and the payload exactly `{"t":"rtc","endpoint":…}`. A subscription reported gone is removed. Pushes go out in parallel, at most 4 at a time, each with a 10 s timeout. The provisional WNS origin was dropped from `PUSH_ORIGINS`.
+- Value: concurrency 4, timeout 10 s.
+- Why: bounded by the invite limits; the host transport cannot deliver to WNS.
+- Source: "RTC-e foreign transport, endpoint and key roster" (RTCe-13; review F7).
+- Safe alternative: none recorded. Push delivery itself is unverified.
+- Owner: ___
+
+**RTCe-14, RTCe-21. Lifecycle triggers, and narrowing ends ringing invites silently**
+- Decided: `FederationService.boundSync` runs after `revoke`, `narrowBoundOptions` and the app-removal cascade and tells the runtime the union of the client's remaining active bound grants, so the account runs `rtc.lifecycle` `app-revoked` or `app-narrowed`. The connection cascade (disconnect, removal, sever) also runs `app-revoked`. Both are best effort, not durable; the occupant re-checks the live approval on every operation and at fan-out. `app-narrowed` and `app-revoked` also end an unanswered, not held, ringing callee record when every endpoint it was delivered to belongs to that app and the app no longer holds the purpose; the end is silent towards the caller. An invite also delivered to another app's endpoint, or for a purpose the app keeps, or delivered to no endpoint, keeps ringing.
+- Value: as stated.
+- Why: a revoked app must not leave ringing invites; silence towards the caller keeps §12 (supersedes the "observed, not changed" bullet of RTCs-8).
+- Source: "RTC-e foreign transport, endpoint and key roster" (RTCe-14; review follow-up (b), RTCe-21).
+- Safe alternative: none recorded.
+- Owner: ___
+
+**RTCe-15, RTCe-18. Successor index not wired; roster in memory**
+- Decided: `current` is identity and moved identities are refused as before (RTCd-25 applies). The roster and refresh queue are in memory per writer and lost on eviction (cache-only); directory pins persist in the account store beside the organization directory's, under the same no-rollback rules.
+- Value: roster bound 512 principals and 24 h; refresh queue 64 in total, 16 per issuer, 60 s negative cache.
+- Why: moves are identity-portability work.
+- Source: "RTC-e foreign transport, endpoint and key roster" (RTCe-15, RTCe-18).
+- Safe alternative: none recorded.
+- Owner: ___
+
+**RTCe-17, RTCe-20. Inbound shedding and the Node client address**
+- Decided: `POST /bindle/rtc` and the public relation endpoints share `admitSourceNetwork`: 600 batches a minute per source network (IPv4 /24 or IPv6 /48 of `CF-Connecting-IP`), or per (network, `CF-Worker` zone) under a network ceiling of 16× the per-network budget; it fails closed off loopback without an abuse store. The roster `source` is always the plain network pseudonym (an HMAC), so a zone never buys its own roster source. On Node the client address comes from `TRUSTED_CLIENT_IP_HEADER` only when the operator sets it (unset by default: the socket address); a value that is not one plain IP is `unknown`, client copies of `CF-Worker` are always dropped, and IPv4-mapped IPv6 addresses (any spelling) and `%zone` are normalized before bucketing. The operator's proxy must overwrite that header, never append; it applies to every Node route that reads `CF-Connecting-IP`.
+- Value: 600 per minute, ceiling 16×.
+- Why: per-network shedding before step 1; a forged zone buys at most 16× for the network it really comes from.
+- Source: "RTC-e foreign transport, endpoint and key roster" (RTCe-17, RTCe-20); "Review follow-ups" (F5); "Verification follow-ups" (V2, V3).
+- Safe alternative: none recorded. Not verified on real Cloudflare or behind a real proxy (see the production gates).
+- Owner: ___
+
+**RTCe-19. Directory fetch classes and host-wide budgets**
+- Decided: directory fetches have disjoint classes (`background`, `interactive`, `claimed`, `linked`), spent through per-writer buckets, the Node process-wide egress budget and, host-wide, `WORK_AUTHORITY` keyed `directory-host-v1/<feature>/<class>/<site>` (feature `rtc`, `org` or `other`). Each class also has a per-tenant share spent first. `interactive` has no host-wide class limit, only a tenant share, and `rtc.open` spends a per-owner `warms` limit before the caller-initiated fetch (only when the foreign callee's keys are not held). A failing limiter refuses the fetch (fail closed). Both the RTC and the organizations directories are wired.
+- Value: host class limits per minute and site: background 1,200, claimed 120, linked 240; tenant share `ceil(class/16)` (claimed 8, linked 15, background 75, growing with the roster-scaled budget up to 300); interactive tenant share 40 a minute; `warms` 20 an hour per owner; Node egress sub-budgets: `claimed` and `linked` each at most a quarter of the background group's minute and day windows and a third of the tenant allowance. Roster lanes: `live` and `linked` share 32 queued entries with at most 8 per issuer, a plain `claimed` lane has at most 64 queued, 16 per issuer, and 4 queued and 8 schedules a minute per source network per writer; at most one queued entry and 4 schedules a minute per link.
+- Why: an unauthenticated sender could starve all fetch classes, and a host-wide interactive cap lets a few accounts deny every other user. The cost of no interactive cap is that volume to one issuer scales with active accounts (about 20 new callees an hour per account).
+- Source: "RTC-e foreign transport, endpoint and key roster" (RTCe-19 new); "Review follow-ups" (F1, F3, F4); "Verification follow-ups" (V1, V2, V4; RTCe-19 amended).
+- Safe alternative: a host-wide interactive cap, rejected as a denial path.
+- Owner: ___
+
+**RTCe-22. A foreign caller's app origin is shown as "reported by" its provider**
+- Decided: the ring answer carries `callerOriginReportedBy`, the caller's provider host for a foreign caller and null for a same-host caller. The ring reads "Calling app (reported by {provider}): {host}" (es: "App que llama (según {provider}): {host}"); a same-host caller reads "Calling app: {host}".
+- Value: as stated.
+- Why: a malicious provider can certify any origin (RTCs-7). If RTC-17 is rejected at sign-off, the label goes with the line.
+- Source: "RTC-e foreign transport, endpoint and key roster", "Review follow-ups" (follow-up (a), RTCe-22).
+- Safe alternative: omit the origin for caller privacy (RTC-17's alternative).
+- Owner: ___
+
+**RTCe-resid. Residual risks recorded, not fixed (digest label)**
+- Decided: the entry records these as accepted for now.
+- Value:
+  - the RTC `claimed` class can still be exhausted host-wide by claims aimed at 16 or more writers (16 × 8 ≥ 120), and `linked` by public contact links of 16 or more writers (16 × 15 ≥ 240); live peers, `warm` and refresh-ahead are protected, and only plain first contact (a `request` basis, off by default) or link-verified first contact is delayed;
+  - every Worker-hosted peer provider reaching a writer from Cloudflare's shared egress network shares one plain-claim source and that network's 16× ceiling;
+  - interactive outbound volume grows with the number of active accounts;
+  - an attacker with many IPv6 /48s can still starve the plain claimed lane;
+  - the values (shares, `warms`, `priorityPerIssuer`) are provisional pending §13 load tests.
+- Why: closing them needs the load tests and production data.
+- Source: "RTC-e foreign transport, endpoint and key roster", "Review follow-ups" (production gates) and "Verification follow-ups" (residual risks).
+- Safe alternative: none recorded.
+- Owner: ___
+
+**RTCe-open. Not implemented in RTC-e (digest label)**
+- Decided: these were deliberately left out: the integration doorbell event `rtc-ring/v1` (AMD-R3), the successor index, a durable retry for the bound-approval hook, the `moved` control at move commit, and publishing the contract and slot artefacts. The narrowing route listed here was added by RTCs-8.
+- Value: as stated.
+- Why: each depends on another slice or a decision.
+- Source: "RTC-e foreign transport, endpoint and key roster" ("Not implemented").
+- Safe alternative: none recorded.
+- Owner: ___
+
+#### RTC service follow-ups for the owner UI
+
+Source for every item below: "RTC service follow-ups for the owner UI (flags off)". It closes the RTC-g production gates G1 and G2 locally and provisionally.
+
+**RTCs-1, RTCs-5. The engine enforces the silent decline (the silent-decline rule)**
+- Decided: every owner end of an unanswered incoming record is silent, whether or not `silent` was sent: no control statement, no batch and no missed entry, `rtc.end-session` takes an optional `silent: true` that needs `caller`. The route keeps an identical shape check. Declining therefore never tells the caller anything, even for an older client or another adapter.
+- Value: `silent` applies to a live callee record that is `ringing` with no claim, held or not; the answer is `{sid, state:'ended', silent:true}`. Before this change `rtc.end-session` without `silent` sent a `revoked` control to the caller of a ringing invite.
+- Why: that was an engine-level presence oracle (§12; §4.4: "a decline reveals that a callee device saw the invite"). The rule lives in the engine because the architecture is engine-first. The caller can only observe a claim, so spec §12 holds as written and no spec change is needed.
+- Source: "RTC service follow-ups for the owner UI" (RTCs-1, RTCs-5; RTCg-5).
+- Safe alternative: tell the caller (the withdrawn RTCg-5 reading), or a per-contact "show that I'm being rung" opt-in (RTC-8).
+- Owner: ___
+
+**RTCs-2, RTCs-3. The `declined` reason and the own-entity twin**
+- Decided: the silent end uses the existing local `declined` end reason: endpoints see `state: ended`, nothing carries the reason, and it stays out of the missed list. For an own-entity twin, "silently" means no control statement and no missed entry, but the owner's own calling device is told `ended`, because it is not another entity (§12 does not apply).
+- Value: as stated.
+- Why: an end with no state event would leave the owner's own device ringing until `ring_until`.
+- Source: "RTC service follow-ups for the owner UI" (RTCs-2, RTCs-3).
+- Safe alternative: none recorded.
+- Owner: ___
+
+**RTCs-4. `silent` on any other record is `invalid_args`, not a no-op**
+- Decided: `silent: true` against a claimed (answered) session, a record declined by a device claim, an outgoing record or one already ended is refused as `invalid_args`. An unknown record is `not_found`.
+- Value: a decline racing the claim or the ring-out shows the console's error and changes nothing.
+- Why: a claimed session must never end through `silent`.
+- Source: "RTC service follow-ups for the owner UI" (RTCs-4).
+- Safe alternative: a no-op returning the state.
+- Owner: ___
+
+**RTCs-6. Alert recomputation is one-way**
+- Decided: a callee record's `alert` is the admission decision AND no current mute of the principal, purpose or the caller's application, recomputed on every read. A mute set while an invite rings silences it at once; lifting a mute never turns `alert` on for an invite admitted while muted. An unreadable caller application fails closed (`callerOrigin` null, `alert` false).
+- Value: as stated.
+- Why: the callee's apps already received the invite with `alert: false`, so an unmute must not resurrect it.
+- Source: "RTC service follow-ups for the owner UI" (RTCs-6); closes gate G1 locally.
+- Safe alternative: none recorded.
+- Owner: ___
+
+**RTCs-7. The caller's application origin before claim (RTC-17)**
+- Decided: a callee record carries `callerOrigin`, the `client.origin` of the caller's verified leg certificate (new records store `callerClient {client_id, origin}`; older ones read it from the held certificate). The owner view and the ring show it as plain owner data (`translate="no"`), never as a link and never in place of the verified caller principal.
+- Value: this host cannot check the origin independently, so a malicious provider could name any origin (RTCe-22 labels foreign ones "reported by").
+- Why: §9.1's `listen` projection gives the callee's endpoints the origin before any claim, and RTC-17 (adopt, unsigned) discloses it to the callee.
+- Source: "RTC service follow-ups for the owner UI" (RTCs-7).
+- Safe alternative: omit it for caller privacy. If RTC-17 is rejected, `callerOrigin` and the ring line must be removed with it.
+- Owner: ___
+
+**RTCs-8. Narrowing an app's purposes**
+- Decided: `POST /api/rtc/narrow-app` `{clientId, purposes}` runs in the owner stage and is exempt from capacity admission. The fragment is fixed to the signaling slot, and narrowing applies to every active grant of the app for that slot, each keeping its intersection. A widening is a 400 `bound_options_widening` while the flag is on and the uniform 404 while off. The slot schema requires at least one purpose, so "remove all" stays the app access view's revoke; an app with one purpose lists it only. The console confirms through `rtc-confirm`, naming the app and listing "No longer approved" and "Still approved". The federation owner path (`FederationController.narrowBoundOptions`, `federationAuthority`, `federationRemote`, the Worker DO allowlist) was added.
+- Value: as stated.
+- Why: the RTC-g console had no way to narrow bound purposes.
+- Source: "RTC service follow-ups for the owner UI" (RTCs-8).
+- Safe alternative: none recorded. A real Durable Object round trip for `narrowBoundOptions` is unverified.
 - Owner: ___
 
 ## Region, legal and compliance
@@ -1744,6 +2298,43 @@ Source for every item below: "2026-10-26 — RTC signaling extension design", th
 - Value: 143 catalogue keys. The view shows channel kinds with ages and disputed, undeliverable and excluded badges, no addresses, and "decisions left today". Administrators keep the checkpointed check of the page they read. "Show more claims" and "Show more reservations" paginate the overview.
 - Why: ORG-12d needed an operator console, and the full-chain walk is boot-only.
 - Source: "ORG-12d support adjudication" (console; wargame 4 admin items).
+- Safe alternative: none recorded.
+- Owner: ___
+
+**UI-12. Background status polling for deletion and export**
+- Decided: a background check skips `/api/account/deletion` while `accountDeletionEnabled` is off and `/api/exports` while `accountExportEnabled` is off, unless the status was last seen pending (a deletion scheduled or executing, an export queued, generating or sealing). An explicit open or refresh always reads both. The timer runs only while something is pending, never while the page is hidden, and resumes on `visibilitychange`.
+- Value: back-off starts at 30 s, doubles after each unchanged check, up to 10 min; any change or an explicit open resets it.
+- Why: the bug hunt saw needless requests with both features off (F5), while a request started before a flag was turned off must stay visible and serviceable.
+- Source: "Browser bug hunt fixes (post Beam removal)" (decision 4).
+- Safe alternative: none recorded.
+- Owner: ___
+
+**UI-13. F14: the ignored `sandbox` token in the meta CSP (owner decision, not applied)**
+- Decided: nothing. Removing the `sandbox` token from the meta CSP was refused by the session's permission classifier as a security-weakening edit, so it is left for the owner. The token has no effect when delivered in a `<meta>` CSP and browsers log a warning; the iframe `sandbox` attribute is what isolates the content, and the review confirmed restored app messages render through the same sandboxed frame.
+- Value: removing it means changing `apps/web/src/bl/activity-content.mjs` and `CONTENT_CSP` in `packages/content/render.mjs` together, because `tests/browser/activity-contract.mjs` requires them to match. It is the only remaining console warning in the bug-hunt browser run.
+- Why: it is a security-relevant edit with no effect on isolation either way.
+- Source: "Browser bug hunt fixes (post Beam removal)" (Not done, F14); "Bug hunt fixes: server review follow-ups" (Owner decision).
+- Safe alternative: keep the token and accept the console warning (the current state).
+- Owner: ___
+
+**UI-14. Fixed HTML 404 page for unknown browser navigations**
+- Decided: a browser navigation (`GET` with `Accept: text/html`) that reaches the static-asset fallthrough and misses gets one fixed `NOT_FOUND_PAGE`, served `noindex` and `no-store` through `securePage`. Account-addressed paths and API routes are answered earlier, so the body is identical for every unknown path. Immutable `/assets/` misses and non-HTML requests keep the asset answer, and both variants send `Vary: Accept`. The uniform-404 rules in `public-unknown.mjs` are untouched.
+- Value: as stated.
+- Why: a bare 404 for a browser navigation was a poor experience (F18), and the page reveals nothing beyond the public asset set.
+- Source: "Browser bug hunt fixes (post Beam removal)" (decision 6); "Bug hunt fixes: server review follow-ups" (I-1).
+- Safe alternative: none recorded.
+- Owner: ___
+
+**UI-15. Bug-hunt follow-ups deferred as product questions**
+- Decided: these were deliberately not implemented.
+- Value:
+  - F7, splitting the console bundle;
+  - the landing tagline "Your files" is a product question now that Beam is gone;
+  - a Spanish locale for the landing page;
+  - branding of the consent header;
+  - with activity v2 on, peer messages are not reachable from the activity view (predates this work; see MC-22).
+- Why: they need product direction.
+- Source: "Browser bug hunt fixes (post Beam removal)" (follow-ups).
 - Safe alternative: none recorded.
 - Owner: ___
 
@@ -1970,9 +2561,33 @@ Source for every item below: "2026-10-26 — RTC signaling extension design", th
 - Safe alternative: none recorded.
 - Owner: ___
 
+**OL-21. `LINKS_ENABLED` replaces `BINDLEBOX_ENABLED` in core, with an env alias**
+- Decided: `LINKS_ENABLED` (class a, stateful) gates the links contract, key-delegation certificates and routes, the messaging-address descriptor and declaration, `MESSAGING_DESCRIBE` and the member-certificate fall-through. `BINDLEBOX_ENABLED` moved to `RETIRED_FLAGS` (`retiredOn 2026-10-26`, `replacement: 'LINKS_ENABLED'`), stays in the name lock, and a stored console record under the old name is quarantined. A new registry field `envAlias` makes `parseEnv` and `legacyValue` read the retired env name while the new name is unset (the new name always wins); only `LINKS_ENABLED` declares one.
+- Value: the core `wrangler.jsonc` and `wrangler.local.jsonc` set `LINKS_ENABLED: "false"`. Parley (`apps/bindlebox/*`) keeps reading its own raw `BINDLEBOX_ENABLED`.
+- Why: the links plumbing is core and must not hang on Parley's flag; the alias keeps existing deployments' env working.
+- Source: "Messaging extraction prep (no reset)" (decision 2).
+- Safe alternative: a plain rename without the alias, which would silently turn the links contract off in deployments that still set the old env name.
+- Owner: ___
+
+**OL-22. Retiring an aliased flag carries its record; a quarantined alias takes the outage path**
+- Decided: when `LINKS_ENABLED` has no record of its own and its `envAlias` (`BINDLEBOX_ENABLED`) is quarantined, the flag takes the outage path, as a quarantined record of its own would, so a console kill or allowlist under the old name is never widened by the old env name. `flags.retire` of a retired name whose `RETIRED_FLAGS.replacement` declares it as `envAlias`, while the replacement has no record, carries the record to the new name in the same audited commit. The record is re-validated at rev 1, and if its shape no longer fits the off record is written; the commit expects the new record to be absent. The audit and the result carry `carriedTo` and `carried`.
+- Value: as stated.
+- Why: the env alias widened a narrowed flag (review F1).
+- Source: "Messaging extraction prep (no reset)" (review follow-up F1).
+- Safe alternative: none recorded.
+- Owner: ___
+
+**OL-23. Export inventory gaps closed with reasoned exclusions**
+- Decided: `mcp/operation/`, `mcp/operation-expiry/`, `automation/session/`, `automation/confirmation/`, `classifier/usage/v1`, `app-notification-budget/`, `app-notification-receipt/`, `message-postback-prepared/`, `developer-contact/` and `link-gc-cursor/` now each have a reasoned exclusion, and `mcp/v1/*` gets none because it lives in the MCP shard stores, not the account store. The inventory test scans `packages/mcp/account.mjs`, `packages/automation/account.mjs` and `packages/activity/app-messages.mjs` and pins the new families.
+- Value: the `developer-contact/` exclusion text says exactly that only the configured developer account's pointer is served (MC-19).
+- Why: those families had no inventory entry because the scan missed constant-assigned and templated keys.
+- Source: "Messaging extraction prep (no reset)" (item 5; review I1).
+- Safe alternative: none recorded.
+- Owner: ___
+
 ## Open scope questions (core-scope audit 2026-10-26)
 
-These are owner questions about what stays in the 3sln.me core now that app experiences, starting with Beam, are leaving it. They are questions, not decisions: nothing is proposed as adopted, and nothing is implemented because of them. DEVLOG records the first as an open gate ("BB-CUT awaits explicit user confirmation of the irreversible message data reset") and the second in "Beam removed from core" ("Whether they belong in core is a pending user decision"). The third and fourth come from the audit and are not recorded in a DEVLOG entry as of HEAD b09140b.
+These are owner questions about what stays in the 3sln.me core now that app experiences, starting with Beam, are leaving it. They are questions, not decisions: nothing is proposed as adopted, and nothing is implemented because of them. DEVLOG records the first as an open gate ("BB-CUT awaits explicit user confirmation of the irreversible message data reset") and the second in "Beam removed from core" ("Whether they belong in core is a pending user decision"). The third and fourth come from the audit. As of HEAD 6a192a3 the DEVLOG entry "2026-10-26 — Core-scope audit" records all three audit questions and points to SQ-1 to SQ-4 here, with the audit's own classification as MC-20.
 
 **SQ-1. Confirm the irreversible BB-CUT message-data reset**
 - Question: confirm that when legacy messaging leaves core (BB-CUT, roadmap Wave 6), a `messaging-retired-v1` step discards all existing local messages, contacts, conversations and blocks instead of migrating them.
@@ -2028,7 +2643,7 @@ These need a real-provider check. Nothing below has been run against the live se
 - **Email bridge `Authentication-Results` trust.** On Cloudflare no authserv-id is configured, so all mail is treated as unauthenticated. Source: "App-platform wargame fixes".
 - **Directory and federation interoperability.** Unverified: production directory egress, independent-provider conformance, client-metadata resolution by other providers, and real external portability providers. Sources: "Organizations phase A: ORG-0…"; "Portability: redirect end/retarget…".
 - **TURN relay budget.** `BEAM_RELAY_BUDGET.release` was an optional port with no implementation in the repo (removed with Beam on 2026-10-26; the RTC relay occupant still needs an enforceable relay budget). Source: "Messaging, search and deletion wargame fixes".
-- **RTC signaling, end to end.** Nothing in the RTC design is implemented or run. Unverified: a clean-room second provider interoperating over real HTTPS, real-device WebRTC on restrictive NATs and under mobile background and foreground suspension, Web Push delivery per platform (a stored subscription is not delivery), abuse load tests at the RTC-11 limits, a privacy review of retention and logs, terms stating RTC is not a telephony or emergency service, and an independent security review. Source: "RTC signaling extension design" (design §8.3).
+- **RTC signaling, end to end.** The slices RTC-a to RTC-e and RTC-g and the owner-UI service follow-ups are implemented and tested locally behind default-off flags; the design's own end-to-end checks are not run. Unverified: a clean-room second provider interoperating over real HTTPS, real-device WebRTC on restrictive NATs and under mobile background and foreground suspension, Web Push delivery per platform (a stored subscription is not delivery), abuse load tests at the RTC-11 limits, a privacy review of retention and logs, terms stating RTC is not a telephony or emergency service, and an independent security review of the whole (the independent reviews so far covered the slices separately and are not a sign-off). Source: "RTC signaling extension design" (design §8.3); the RTC-a to RTC-e entries ("Not run" lines).
 - **Foreign relation transport and issuer fetching.** Relations (ORG-10) run only between organizations on one local host. Cross-provider transport, issuer fetching and the effect of OB-55's recognized-only refresh on a real issuer are ORG-11 work and unverified. Source: "ORG-10a-c relations core"; "ORG-10f/g relations routes and console".
 - **Relation console and routes.** The Chromium and Firefox relation checks run against local fixtures. The built-shell checks use routed API fixtures, and WebKit was unavailable (four skips). Source: "ORG-10f/g relations routes and console".
 - **Rollback and mixed-version behaviour of the Beam re-key.** MC-11's dual-write was tested against simulated pre-removal writes, not a real mixed deployment, and TURN credential revocation was tested only against a local adapter. Source: "Beam removed from core".
@@ -2041,3 +2656,13 @@ These need a real-provider check. Nothing below has been run against the live se
 - **WebKit.** The WebKit executable was unavailable, so four optional e2e checks were skipped and no WebKit result exists. Source: "UI quality pass 3"; "ORG-12d support adjudication".
 - **Browser platform behaviour.** Unverified: real WebAuthn at transfer-in intake, OS and PWA protocol installation for intents, and deployed `bintent` log redaction. Sources: "Portability: redirect end/retarget…"; "Intent links (INT-1 to INT-7, INT-9)…".
 - **Public suffix handling.** The admin-domain and issuer-bucket rules use suffix and two-label approximations without a public suffix list. Sources: "ORG-12a/12c…" (M4); "Conversations and bindlebox wargame fixes".
+- **Cloudflare headers for RTC shedding (production gate).** The per-network shedding at `POST /bindle/rtc` and the relation endpoints assumes that `CF-Connecting-IP` and `CF-Worker` behave as described: Cloudflare sets `CF-Worker` on Worker subrequests, never passes a client's copy through, and the networks Workers egress from are as assumed. Not verified on real Cloudflare; do it before relying on per-network shedding. Source: "RTC-e foreign transport, endpoint and key roster" (review follow-ups, production gates).
+- **`TRUSTED_CLIENT_IP_HEADER` for proxied Node (production gate).** A Node deployment behind a reverse proxy must set it to a header the proxy overwrites, never appends, and this must be verified per deployment; mapped IPv4-in-IPv6 spellings were tested only against local inputs. Without it every request shares the proxy's network budget, for every Node route that reads `CF-Connecting-IP`. Source: same, with "Verification follow-ups" (V3).
+- **Host-wide directory budgets on real Durable Objects (production gate).** The `WORK_AUTHORITY` guard call per directory GET, the per-tenant shares and the hot key per (feature, class, site) under load are untested on deployed Durable Objects. Source: "RTC-e foreign transport, endpoint and key roster" (production gates; RTCe-19).
+- **Load tests of the RTC budgets (production gate).** The RTC-11 limits, the roster lanes, the host and per-writer budget values, the tenant shares, `warms` and `priorityPerIssuer` are provisional until load-tested at the spec §13 limits. Source: "RTC-e foreign transport, endpoint and key roster" (production gates, residual risks).
+- **Workers egress and security.md S4 (production gate).** security.md S4 ("auth/grant/race/SSRF verification … complete") is unchecked and the Workers egress gate (R2-M6: DoH screening is not connection pinning) is unmet. Foreign RTC issuers stay behind the empty `RTC_FOREIGN_ISSUERS` allowlist, and cross-provider delivery and directory fetches are unverified on both adapters' real egress. Source: "RTC-e foreign transport, endpoint and key roster" (outbound gate).
+- **RTC on real Durable Objects.** Unverified on a real Cloudflare Durable Object: the detached task after the response and `blockConcurrencyWhile` timer behaviour (the alarm is the fallback), the federation-DO round trips for `checkBound` and for `narrowBoundOptions` (the latter is covered only by a static allowlist test), and the in-memory roster and refresh queue lost on eviction. Source: "RTC-d sessions, admission and same-host transport" (review follow-ups); "RTC-e foreign transport, endpoint and key roster"; "RTC service follow-ups for the owner UI".
+- **RTC owner console in real conditions.** The calls view and ring were checked in Chromium and Firefox and happy-dom against local fixtures and a local Node server. Not run: the Worker runtime in a browser, WebKit, a browser without `BroadcastChannel` (only a fake-channel unit test), real WebRTC, a second provider, push or a relay. The ring's English and Spanish privacy wording (RTCg-copy) has had no counsel review. Source: "RTC-g owner settings and portal ring"; "RTC service follow-ups for the owner UI".
+- **RTC silent decline at the provider (gates G1 and G2 closed locally).** The RTC-g gates (the portal ring needs `alert`; Decline and Remove need the engine's silent end) are closed by local evidence only. They stay provisional until RTCs-1 to RTCs-8 are signed off and the RTC release gates in the design and security.md are met. Source: "RTC-g owner settings and portal ring" (production gates); "RTC service follow-ups for the owner UI".
+- **Messaging extraction: rollout and the BB-CUT release gate.** Not run: `check:worker` and `test:e2e` for the review follow-ups, and a real mixed deployment of `app-messages-v1` (rollback to pre-move code, a retired key or changed `APP_ORIGIN` before BB-CUT). The retired-kid and `APP_ORIGIN` gate (MC-18) is not enforced by code. Source: "Messaging extraction prep (no reset)".
+- **Bug-hunt browser evidence.** The fixes were checked with Playwright in Chromium against a local Worker and a bug-hunt account copy; F11 was covered only by happy-dom, and the probes are not committed. Nothing was verified in production or against an external provider. Source: "Browser bug hunt fixes (post Beam removal)".

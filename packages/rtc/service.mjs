@@ -40,6 +40,9 @@
 //                alarm (rtc.tick) does both.
 //   pushTransport {send(subscription, payload, {urgency, ttl})} (RTC-e Web Push doorbell, spec §9.2): the host's push
 //                transport; absent means no doorbell. Called after the admitting transaction, never inside it.
+//   relay       (RTC-f, attachRelay) the entity's RtcRelay (packages/rtc/relay.mjs), the built-in ice-relay/v1 occupant:
+//                every session `end` hands the ended record keys to `relay.ended` after the commit (revocation of
+//                that leg's TURN credentials), and rtc.tick runs `relay.sweep`. Absent: no relay operation exists.
 //   hostLimits  {take(name, parts) -> boolean}: a host-wide fixed-window limiter shared by every entity writer on this
 //                host (review L1), for the §13 limit per caller origin principal across callee entities; the adapter
 //                keys it by a keyed hash of `parts`. Absent: only the per-callee-writer count applies (design §8.3 gate).
@@ -63,6 +66,7 @@ import {samePrincipal} from '../orgs/grants.mjs';
 import {delegatePublicJwk,jwkThumbprint,isJkt,originValid} from '../identity/delegation.mjs';
 import {parseLinkQuery,parseLinkMeta} from '../links/envelope.mjs';
 import {RTC_SIGNALING_SLOT} from './extension.mjs';
+import {boundAllows} from '../federation/extensions.mjs';
 import {RtcWireFault} from './jws.mjs';
 import {parseBatch,batchStep1,buildBatch,parseMessage,verifyMessage,validateMessageContent,candidateAllowedByPolicy,messageAllowedBeforeClaim,linkDigest,mediaValid,iatWithinWindow,RTC_LIMITS} from './messages.mjs';
 import {parseLegCertificate,verifyLegCertificate,signLegCertificate,parseControl,verifyControl,signControl,LEG_CERTIFICATE_SECONDS,LEG_CERTIFICATE_MAX_SECONDS} from './certificates.mjs';
@@ -126,8 +130,10 @@ export class RtcService{
   if(typeof store?.transaction!=='function'||typeof issuer!=='string'||typeof keys?.certification!=='function'||typeof keys?.identity!=='function'||typeof signer!=='function'||typeof transport?.deliver!=='function')throw new TypeError('RtcService needs a store, issuer, keys, signer and transport.');
   Object.assign(this,{store,issuer,clock,random,flags,keys,signer,linkSigner,bound,transport,contacts,defer,hostLimits,pushTransport,allowLoopback,crypto,maxLegSeconds,peerMaxLegSeconds});
   this.federationSubject=federationSubject??(owner=>`${issuer}/entities/${owner}`);
-  this.waiters=new Map();
+  this.waiters=new Map();this.relay=null;
  }
+ /** RTC-f: attaches the entity's relay occupant (constructed over this service). */
+ attachRelay(relay){this.relay=relay??null;return this.relay;}
  now(){return this.clock.now();}
  self(owner){return {iss:this.issuer,sub:owner};}
  flag(owner,name=RTC_SIGNALING_FLAG,clientId){try{return this.flags?.for({subject:{kind:'account',owner},...clientId?{client:{clientId}}:{}}).enabled(name)===true;}catch{return false;}}
@@ -147,9 +153,14 @@ export class RtcService{
  peerMax(p){if(p?.iss===this.issuer)return this.peerMaxLegSeconds;let v=null;try{v=this.keys.maxLegSeconds?.(party(p));}catch{v=null;}return Number.isSafeInteger(v)&&v>=120&&v<=this.peerMaxLegSeconds?v:this.peerMaxLegSeconds;}
  async ownAep(owner){try{const v=await this.keys.aep?.(owner);return Number.isSafeInteger(v)&&v>=0?v:0;}catch{return 0;}}
  /** AMD-X1 item 4: the live bound approval of `line` (at its pinned version) behind this app's verified token. */
- async approved({owner,clientId,grants,epoch},line){
-  const held=heldPurpose(line);if(!held||!this.bound)return false;
-  try{return await this.bound.check({subject:this.federationSubject(owner),clientId,fragment:RTC_FRAGMENT,grants,...epoch!==undefined?{epoch}:{},member:'purposes',value:line,reference:{version:held.ref.version,digest:held.ref.digest}})===true;}catch{return false;}
+ async approved({owner,clientId,grants,epoch,bound},line){
+  const held=heldPurpose(line);if(!held)return false;const reference={version:held.ref.version,digest:held.ref.digest};
+  // RTC-i (bug 1): an app actor from a contract RPC carries the bound approval computed in that RPC's authorization
+  // transaction (the adapter runs inside the owner's account gate and must not call the federation shard). Stored
+  // endpoint records (fan-out) carry none and use the port, outside any account gate.
+  if(bound!==undefined){try{return boundAllows({values:bound.values,versions:bound.versions,revision:'dispatch'},'purposes',line,{reference})===true;}catch{return false;}}
+  if(!this.bound)return false;
+  try{return await this.bound.check({subject:this.federationSubject(owner),clientId,fragment:RTC_FRAGMENT,grants,...epoch!==undefined?{epoch}:{},member:'purposes',value:line,reference})===true;}catch{return false;}
  }
  async requireApproved(app,line){if(!await this.approved(app,line))fail('forbidden','This purpose is not approved for this application.',403);}
 
@@ -198,6 +209,8 @@ export class RtcService{
   for(const id of fx.woken)this.wake(id);
   if(fx.drain)this.kick(owner,'outbox');
   if(fx.doorbells.length)await this.ring(fx.doorbells);
+  // RTC-f: the legs ended in this transaction lose their relay credentials (best effort; the sweep is the fallback).
+  if(fx.relayEnded?.length&&this.relay)await this.relay.ended(owner,fx.relayEnded).catch(()=>null);
   return out;
  }
  /**
@@ -358,6 +371,7 @@ export class RtcService{
   */
  async end(tx,fx,owner,rec,event,{now,reason,control,controlStatement=null,silent=false,twin=true}={}){
   if(!canTransition(rec.state,event))return false;const wasRinging=rec.state==='ringing';transition(rec,event,{now,reason});
+  if(fx)(fx.relayEnded??=[]).push(this.keyOf(rec));// RTC-f: revoke this leg's relay credentials after the commit
   if(!silent){const state=['timeout','expired'].includes(rec.endReason)?'expired':'ended';for(const id of this.audience(rec))await this.push(tx,fx,id,{type:'state',sid:rec.sid,state,...controlStatement?{control:controlStatement}:{}},now);}
   if(rec.role==='callee'){delete rec.callbackLink;delete rec.invite;if(wasRinging&&!rec.claim&&['timeout','cancelled','expired'].includes(rec.endReason)&&!rec.held)await this.addMissed(tx,{caller:rec.caller,line:rec.purpose.purpose,kind:'missed',at:now});}
   if(rec.role==='caller'){delete rec.basisLink;delete rec.callbackLink;delete rec.inviteCompact;delete rec.inviteRetry;}
@@ -411,7 +425,12 @@ export class RtcService{
    try{await this.keys.warm?.(to);}catch{/* answered below */}
   }
   const now=this.now(),peerKeys=await this.peerKeys(to),peerIdentity=await this.identity(to);
-  if(!peerKeys.length||!peerIdentity)fail('temporarily_unavailable','Real-time connections are temporarily unavailable.',503);
+  if(!peerKeys.length||!peerIdentity){
+   // RTC-i (§4.1): a callee issuer whose fresh manifest declares no rtc-signaling.v1 is refused with unsupported_peer
+   // (a public fact); anything else that left no keys is temporarily_unavailable.
+   let unsupported=false;try{unsupported=to.iss!==this.issuer&&this.keys.unsupported?.(party(to))===true;}catch{unsupported=false;}
+   if(unsupported)fail('unsupported_peer','That person\'s provider does not support real-time connections.',400);
+   fail('temporarily_unavailable','Real-time connections are temporarily unavailable.',503);}
   await this.store.transaction(async tx=>{await this.bindOwner(tx,owner);await this.endpointAuth(tx,app,input,now);});
   const sid=base64url(this.random.bytes(16)),policy=await this.store.transaction(readPolicy);
   const rec={v:1,sid,role:'caller',state:'ringing',own,caller:self,callee:to,peerIdentity,purpose:held.ref,media:[...input.media],createdAt:now,ringUntil:now+RING_MAX_MS,endsAt:now+SESSION_MAX_MS,
@@ -464,7 +483,8 @@ export class RtcService{
   });
   const cert=await this.certFor({owner,app,rec:won.rec,role:'callee',delegate:delegate.jwk,now});
   // Review L2: the certificate is handed out only while the claim can still be used (the session may have ended
-  // while it was signed outside the transaction).
+  // while it was signed outside the transaction). RTC-i review L2: that late refusal is `claimed` (spec §7.2) after the
+  // claim record was committed; it is final, not effect-free (packages/federation/runtime.mjs NO_EFFECT_CODES).
   await this.store.transaction(async tx=>{const rec=await tx.get(won.key);if(rec?.claim?.jkt===jkt&&rec.mine&&claimUsable(rec)){rec.mine.certificate=cert.certificate;rec.mine.exp=cert.exp;rec.mine.certSent=null;await tx.put(won.key,rec);}else fail('claimed','This session was already answered.',409);});
   // The callback ticket goes only to the endpoint that claimed the session (§4.3).
   return {certificate:cert.certificate,peer_keys:await this.peerKeys(won.rec.caller),...won.rec.callbackLink?{callback:won.rec.callbackLink}:{}};
@@ -686,6 +706,9 @@ export class RtcService{
  }
  /** A verified message from the peer leg, in order (step 8 delivery). */
  async applyPeerMessage(tx,fx,owner,rec,p,compact,now){
+  // RTC-i (AMD-RI3, proposed): `to` must name this side's leg (§6.1), or be null for invite and cancel. A message naming
+  // no leg of the session is dropped here, at step 7, after step 5 consumed its seq, as every other step-7 drop is.
+  if(p.to===null?!['invite','cancel'].includes(p.type):p.to!==rec.mine?.jkt)return;
   const certificate=!rec.theirs.delivered?rec.theirs.certificate:undefined;
   const deliver=async(sensitive=false)=>{const target=rec.role==='caller'?rec.mine.endpoint:rec.claim?.endpoint;if(!target)return;
    if(!await this.push(tx,fx,target,{type:'message',sid:rec.sid,message:compact,...certificate?{certificate}:{}},now,{sensitive})){await this.end(tx,fx,owner,rec,'fail',{now,control:{leg:null,reason:'failed'}});return;}
@@ -956,6 +979,8 @@ export class RtcService{
    for(const [key,row] of await tx.list({prefix:TICKET_PREFIX,limit:RTC_BOUNDS.tickets*4}))if(row.expiresAt+DAY<=now||row.revoked&&row.createdAt+DAY<=now)await tx.delete(key);
    await pruneLimits(tx,now);
   });
+  // RTC-f: the relay sweep on the alarm (revokes credentials of legs that are no longer live, drops expired leases).
+  if(this.relay){const swept=await this.relay.sweep(owner).catch(()=>null);if(swept?.wakeAt)wake=Math.min(wake,Math.max(swept.wakeAt,this.now()+1000));}
   // Review F1: the peers of live or ringing sessions go first in the key roster's refresh order.
   try{this.keys.live?.(live.filter(p=>p.iss!==this.issuer));}catch{/* best effort */}
   const drained=await this.drain(owner).catch(()=>({pending:1}));if(drained.pending||drained.more)wake=Math.min(wake,this.now()+1000);
@@ -1025,13 +1050,20 @@ export class RtcTick extends RtcSystem{static operation='rtc.tick';run({rtc}){re
 export class RtcInbox extends RtcSystem{static operation='rtc.inbox';run({rtc}){rtc.system(this.actor);return rtc.processInbox(this.actor.owner,{limit:Number.isSafeInteger(this.input?.limit)&&this.input.limit>0&&this.input.limit<=256?this.input.limit:16});}}
 export class RtcOutboxDrain extends RtcSystem{static operation='rtc.outbox-drain';run({rtc}){rtc.system(this.actor);return rtc.drain(this.actor.owner,{limit:Number.isSafeInteger(this.input?.limit)&&this.input.limit>0&&this.input.limit<=256?this.input.limit:32});}}
 export class RtcLifecycle extends RtcSystem{static operation='rtc.lifecycle';run({rtc}){return rtc.lifecycle(this.actor,this.input);}}
+// RTC-f: the built-in ice-relay/v1 occupant (packages/rtc/relay.mjs). `credentials` is the relay contract's one method;
+// the sweep is a system step (never wire-dispatchable, never gated).
+export class RtcRelayCredentials extends RtcAction{static operation='rtc.relay-credentials';run({rtc}){if(!rtc.relay)notFound();return rtc.relay.credentials(this.actor,this.input);}}
+export class RtcRelaySweep extends RtcSystem{static operation='rtc.relay-sweep';run({rtc}){const owner=rtc.system(this.actor);return rtc.relay?rtc.relay.sweep(owner):{revoked:0,pending:0,wakeAt:null};}}
 
 export const RTC_ENDPOINT_OPERATIONS=Object.freeze([RtcRegister,RtcUnregister,RtcOpen,RtcClaim,RtcSend,RtcRenew,RtcMintTicket,RtcListen,RtcEndpoints]);
 export const RTC_OWNER_OPERATIONS=Object.freeze([RtcPolicy,RtcSetPolicy,RtcSetContactRtc,RtcBlock,RtcUnblock,RtcMute,RtcUnmute,RtcRevokeTicket,RtcEndSession,RtcRevokeEndpoint,RtcClearMissed,RtcSessions,RtcMissed,RtcBlocked,RtcTickets,RtcEndpointList,RtcExport]);
-export const RTC_SYSTEM_OPERATIONS=Object.freeze([RtcIngest,RtcInbox,RtcTick,RtcOutboxDrain,RtcLifecycle]);
+export const RTC_SYSTEM_OPERATIONS=Object.freeze([RtcIngest,RtcInbox,RtcTick,RtcOutboxDrain,RtcLifecycle,RtcRelaySweep]);
+/** RTC-f: operations of the ice-relay/v1 contract (application endpoint actor), mapped from contract methods. */
+export const RTC_RELAY_OPERATIONS=Object.freeze([RtcRelayCredentials]);
+export const RTC_RELAY_CONTRACT_OPERATIONS=Object.freeze({credentials:'rtc.relay-credentials'});
 /** Operations that no RTC flag ever gates (design §3.2 narrowing, plus reads of existing state). Decline claims and
  * `send` of only end/cancel/decline are narrowing inside rtc.claim and rtc.send. */
-export const RTC_NEVER_GATED=Object.freeze(['rtc.unregister','rtc.end-session','rtc.revoke-endpoint','rtc.block','rtc.mute','rtc.revoke-ticket','rtc.clear-missed','rtc.listen','rtc.endpoints','rtc.policy','rtc.sessions','rtc.missed','rtc.blocked','rtc.tickets','rtc.endpoint-list','rtc.export','rtc.ingest','rtc.inbox','rtc.tick','rtc.outbox-drain','rtc.lifecycle']);
+export const RTC_NEVER_GATED=Object.freeze(['rtc.unregister','rtc.end-session','rtc.revoke-endpoint','rtc.block','rtc.mute','rtc.revoke-ticket','rtc.clear-missed','rtc.listen','rtc.endpoints','rtc.policy','rtc.sessions','rtc.missed','rtc.blocked','rtc.tickets','rtc.endpoint-list','rtc.export','rtc.ingest','rtc.inbox','rtc.tick','rtc.outbox-drain','rtc.lifecycle','rtc.relay-sweep']);
 /** The contract's method names (§9.1) → engine operations, for the RPC adapter (RTC-e). */
 export const RTC_CONTRACT_OPERATIONS=Object.freeze({register:'rtc.register',unregister:'rtc.unregister',endpoints:'rtc.endpoints',open:'rtc.open',claim:'rtc.claim',send:'rtc.send',renew:'rtc.renew',listen:'rtc.listen',mint_ticket:'rtc.mint-ticket'});
 export {DEFAULT_POLICY,iatWithinWindow};
