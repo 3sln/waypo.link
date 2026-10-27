@@ -37,6 +37,11 @@ const definitions=[
  ['external-storage',['drive/object/','drive/folder/'],'provider resource resourceId bucket prefix folderId key objectId fileId version size contentType'],
  ['billing',['billing/state','billing/ever-paid/'],'plan periodStart periodEnd cancelAtPeriodEnd customerId since paidAt validUntil currency annualAmount subscriptionId pendingChange'],
  ['lifecycle',['lifecycle/state-v1','lifecycle/paid-protection-v1','lifecycle/unpaid-origin-v1','retention/'],'phase deadlines notice lastActivityAt executeAfter graceDays usage exportOffered'],
+ // RTC-d (packages/rtc/service.mjs): the owner's RTC settings and history. Ticket rows export only their counters and
+ // dates, plus the non-secret purposes and principal binding (the meta is a bearer capability and `claims` is not
+ // projected); blocks and mutes name principals the owner chose; contact rows name their link parent.
+ ['rtc',['rtc/policy','rtc/block/','rtc/mute/','rtc/contact/','rtc/missed/'],'other self requests autoAccept principal at kind value purposes caller purpose parent'],
+ ['rtc-tickets',['rtc/ticket/'],'usesLeft revoked callback purposes principal'],
  ['quota',['quota/','hosted-usage','message-usage/','app-message-usage/'],'bytes messages objects limit storageBytes usage retention']
 ];
 export const EXPORT_CLAIMED_PREFIXES=Object.freeze(Object.fromEntries(definitions.flatMap(([name,prefixes])=>prefixes.map(prefix=>[prefix,name]))));
@@ -97,7 +102,16 @@ const excluded={
  'drive/oauth/':'Secret: OAuth callback state.', 'drive/folder-pending/':'Secret: folder creation and OAuth journal.', 'drive/pending/':'Transient: upload journal.', 'drive/retained/':'External mappings are projected by the external-storage port.', 'drive/usage/':'Derived: external quota counters.', 'drive/removed/':'Transient: removed-resource sweep markers.',
  'evbus/index/':'Derived: manifest index.', 'evbus/reader/':'Secret: reader cursor authority.', 'evbus/permit/':'Transient: history opt-in.', 'evbus/tx/':'Transient: publish journal.', 'evbus/rate/':'Derived: rate counters.', 'evbus/meter/':'Derived: quota meters.', 'evbus/wait/':'Transient: wait leases.',
  'conversation/outbox/':'Secret: delivery capabilities and pending tasks.', 'conversation/dead/':'Secret: retry-exhausted delivery tasks and capabilities.', 'conversation/sweep':'Transient: collection cursor.', 'conversation/receipt/':'Transient: replay receipts.', 'conversation/delivery/':'Transient: fanout delivery tracking.', 'conversation/inbox-message/':'Transient: inbound replay receipts.', 'conversation/pending/':'Transient: pending invitations.',
- 'google-drive/':'Secret: OAuth and callback state; external mapping uses a dedicated port.'
+ 'google-drive/':'Secret: OAuth and callback state; external mapping uses a dedicated port.',
+ // RTC-d: signaling state that is per device, per session or derived. Session records live at most 24 h after their
+ // end; SDP and candidates at most 60 s (spec §12).
+ 'rtc/ep/':'Secret: RTC endpoint registrations (hashed endpoint secrets or DPoP key bindings, Web Push keys); device-local and re-registered by apps.',
+ 'rtc/epq/':'Transient: RTC endpoint event queues (SDP and candidates kept at most 60 s).',
+ 'rtc/out/':'Transient: RTC caller session records (kept at most 24 h after the session ends).','rtc/in/':'Transient: RTC callee session records (kept at most 24 h after the session ends).',
+ 'rtc/dlv/':'Derived: RTC fan-out index.','rtc/dlg/':'Derived: certified RTC leg-key thumbprints (reuse refusal window).',
+ 'rtc/limit/':'Derived: RTC rate-limit windows (hashed keys).','rtc/aep/':'Derived: highest authority epochs seen from RTC peers (24 h).',
+ 'rtc/outbox/':'Transient: RTC signaling outbox.','rtc/outbox-seq':'Derived: RTC outbox sequence.','rtc/closed':'Transient: RTC deletion marker.',
+ 'rtc/inq/':'Transient: RTC inbound signaling batches awaiting processing.','rtc/inq-meta':'Derived: RTC inbound queue counters.'
 };
 export const EXPORT_EXCLUDED_PREFIXES=Object.freeze(excluded);
 // Singleton keys match exactly, never as a prefix (review R4): `profile` must not claim `profile-other/...`.

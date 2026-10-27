@@ -26,3 +26,32 @@ test('a newer status refresh supersedes a late background read from the same ses
 test('seeded two-tab deletion request/cancel/status schedules converge and never invent cancellation',async()=>{await forEachSeed(40,async random=>{const scheduler=createScheduler(random),server={status:{state:'none'}},routes={'GET /api/account/deletion':()=>structuredClone(server.status),'GET /api/exports':()=>({jobs:[]}),'POST /api/account/deletion':()=>{if(server.status.state==='scheduled')error('deletion_scheduled');server.status=structuredClone(scheduled);return server.status;},'POST /api/account/deletion/cancel':()=>{if(server.status.state!=='scheduled')error('deletion_in_progress',410);server.status={state:'cancelled'};return server.status;}},a=await client(null,{api:scheduler.wrap(fakeApi(routes),'tab-a')}),b=await client(null,{api:scheduler.wrap(fakeApi(routes),'tab-b')});try{await a.act('open');await b.act('open');await a.act('review',{operation:'deletion'});await a.act('deletion',{operationId,values:deletionValues});await b.act('refresh');const result=await scheduler.run([()=>a.act('cancel-deletion'),()=>b.act('cancel-deletion'),()=>b.act('check')]);assert.ok(result.every(r=>r.status==='fulfilled'));await a.act('refresh');await b.act('refresh');assert.equal((await a.snapshot()).accountData.deletion.state,server.status.state);assert.equal((await b.snapshot()).accountData.deletion.state,server.status.state);assert.equal(server.status.state,'cancelled');}finally{await a.dispose();await b.dispose();}});});
 
 test('concurrent retention/export 429 failures render a human alert without requiring export jobs',async t=>{const {Window}=await import('happy-dom'),window=new Window();t.after(()=>window.happyDOM.close());for(const key of ['document','HTMLElement','Node','Element'])globalThis[key]=window[key];const {dodo}=await import('../../apps/web/src/shared/stack.mjs'),{accountDataScreen}=await import('../../apps/web/src/ui/account-data.mjs');for(const retentionFails of [false,true])for(const exportsFail of [false,true]){const c=await client(t,{state:{data:{features:{...features,overQuotaRetentionEnabled:true}}},routes:{'GET /api/account/retention':()=>retentionFails?error('rate_limited',429):null,'GET /api/exports':()=>exportsFail?error('rate_limited',429):{jobs:[]}}});await c.act('open');const state=await c.snapshot(),root=document.createElement('div');assert.doesNotThrow(()=>dodo.reconcile(root,[accountDataScreen({...state,locale:'en',route:{kind:'home'},config:{}})]));if(retentionFails||exportsFail)assert.match(root.querySelector('[role=alert]').textContent,/Wait.*try again/);}});
+
+// Bug hunt F5 (2026-10-27): no status polling for disabled features or settled status; backoff; paused while hidden.
+test('F5 a background check skips disabled endpoints with nothing pending; an explicit open still reads both',async t=>{
+ const c=await client(t,{state:{data:{...initial.data,features:{}}}});await c.act('check');assert.deepEqual(c.api.calls.filter(x=>x.method==='GET').map(x=>x.path),[]);assert.equal((await c.snapshot()).accountData.phase,'ready');
+ await c.act('open');assert.deepEqual(c.api.calls.filter(x=>x.method==='GET').map(x=>x.path).sort(),['/api/account/deletion','/api/exports']);
+ const d=await client(t,{state:{data:{...initial.data,features:{accountExportEnabled:true}}}});await d.act('check');assert.deepEqual(d.api.calls.filter(x=>x.method==='GET').map(x=>x.path),['/api/exports'],'only the enabled endpoint is read');
+});
+test('F5 a pending export keeps being checked after its flag turns off, until it settles',async t=>{
+ let state='generating';const c=await client(t,{routes:{'GET /api/exports':()=>({jobs:[{...job,state}]})}});await c.act('check');
+ await patch(c,{data:{...initial.data,features:{}}});const before=c.api.calls.length;await c.act('check');assert.ok(c.api.calls.slice(before).some(x=>x.path==='/api/exports'));assert.equal(c.api.calls.slice(before).some(x=>x.path==='/api/account/deletion'),false);
+ state='ready';await c.act('check');const settled=c.api.calls.length;await c.act('check');assert.equal(c.api.calls.length,settled,'a settled export with the flag off is not polled');
+});
+test('F5 the status timer runs only while something is pending and the page is visible, with backoff',async t=>{
+ const timers=[];let visible=true,onVisible=null;let jobs=[{...job,state:'queued'}];
+ const c=await client(t,{routes:{'GET /api/exports':()=>({jobs})},browser:{visible:()=>visible,onVisibility:listener=>{onVisible=listener;return()=>{onVisible=null;};},delay:(callback,ms)=>{const timer={callback,ms,cancelled:false};timers.push(timer);return()=>{timer.cancelled=true;};}}});
+ const live=()=>timers.filter(x=>!x.cancelled);
+ const sub=c.engine.query(new AccountDataView()).subscribe({next:()=>{}});t.after(()=>sub.unsubscribe());await turn();
+ assert.equal(live().length,0,'nothing loaded yet, nothing to poll');
+ await c.act('check');await turn();assert.deepEqual(live().map(x=>x.ms),[30000]);
+ // Unrelated state updates keep the same timer instead of postponing it.
+ for(let i=0;i<3;i++){await patch(c,{notice:'n'+i});c.engine.feed.dispatchEvent(new Event('browser-state-updated'));await turn();}assert.equal(live().length,1);assert.equal(timers.length,1);
+ // Unchanged checks back off: 30 s, 60 s, 120 s.
+ await c.act('check');await turn();assert.equal(live().at(-1).ms,60000);await c.act('check');await turn();assert.equal(live().at(-1).ms,120000);assert.equal(live().length,1);
+ // Hidden pauses the timer; visible again resumes it.
+ visible=false;onVisible();assert.equal(live().length,0);visible=true;onVisible();assert.equal(live().length,1);
+ // A change resets the backoff; settling stops polling.
+ jobs=[{...job,state:'generating'}];await c.act('check');await turn();assert.equal(live().at(-1).ms,30000);
+ jobs=[{...job,state:'ready'}];await c.act('check');await turn();assert.equal(live().length,0);
+});

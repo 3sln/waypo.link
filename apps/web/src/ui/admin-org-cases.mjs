@@ -1,3 +1,4 @@
+import {present} from './attrs.mjs';
 import {h,icon,select} from './release-primitives.mjs';
 import {interfaceText as tx} from './interface-text.mjs';
 import {button,form,input,data,when,formatTime,errorText} from './admin-access.mjs';
@@ -122,8 +123,8 @@ export function consoleView(state){
  const mine=state.view===ORG_CASES_VIEW&&state.mode==='admin',base=flagsConsoleView(mine?{...state,view:'overview'}:state);
  function extend(node){if(!node||typeof node!=='object'||typeof node.tag!=='string')return node;const classes=node.$?.classes??[],nav=classes.includes('admin-nav'),screen=mine&&classes.includes('admin-screen'),item=mine&&classes.includes('admin-nav-item');
   const children=screen?[orgCasesView(state)]:node.args.map(arg=>Array.isArray(arg)?arg.map(extend):extend(arg));
-  if(nav&&state.mode==='admin')children.push(button(state,'Organization cases','navigate',{view:ORG_CASES_VIEW},'admin-nav-item'+(mine?' active':'')).attrs({'aria-current':mine?'page':null}));
-  return h(node.tag,...children).props(node.p).attrs({...node.$?.attrs,...item?{'aria-current':null}:{}}).classes(...(item?classes.filter(name=>name!=='active'):classes)).style(node.$?.styling).data(node.$?.dataset).on(node.hooks).key(screen?'screen:'+ORG_CASES_VIEW:node.k);
+  if(nav&&state.mode==='admin')children.push(button(state,'Organization cases','navigate',{view:ORG_CASES_VIEW},'admin-nav-item'+(mine?' active':'')).attrs(present({'aria-current':mine?'page':undefined})));
+  return h(node.tag,...children).props(node.p).attrs(present({...node.$?.attrs,...item?{'aria-current':undefined}:{}})).classes(...(item?classes.filter(name=>name!=='active'):classes)).style(node.$?.styling).data(node.$?.dataset).on(node.hooks).key(screen?'screen:'+ORG_CASES_VIEW:node.k);
  }
  return h('div',h('style',`.admin-org-cases{min-width:0}.admin-org-cases .panel{min-width:0;overflow-wrap:anywhere}.admin-org-cases .buttons{flex-wrap:wrap}.admin-org-cases .admin-facts dd{min-width:0;overflow-wrap:anywhere}.admin-org-cases .org-case-row{display:grid;gap:.5rem;padding:.75rem 0;border-bottom:1px solid var(--border,rgba(127,127,127,.25))}.admin-org-cases table{width:100%;border-collapse:collapse;display:block;overflow-x:auto}.admin-org-cases th,.admin-org-cases td{text-align:start;padding:.5rem;vertical-align:top}.admin-org-cases .org-case-timeline li{display:flex;flex-wrap:wrap;gap:.25rem}.admin-org-cases .button{min-height:44px}`).attrs({translate:'no'}),extend(base));
 }

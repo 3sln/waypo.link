@@ -132,7 +132,7 @@ function createBrowser(){
     async subscribePush(key){if(!key)throw new Error('Push delivery is not configured on this service.');if(!('serviceWorker'in navigator)||typeof Notification==='undefined')throw new Error('Push is unsupported in this browser.');if(await Notification.requestPermission()!=='granted')throw new Error('Allow browser notifications to enable push.');const registration=await navigator.serviceWorker.ready;return (await registration.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:decode64(key)})).toJSON();},
     captureFocus(){returnFocus=document.activeElement;returnFocusText=returnFocus?.textContent;},
     focusAccountContent(){requestAnimationFrame(()=>requestAnimationFrame(()=>{if(disposed)return;const target=document.getElementById('main-content')??document.querySelector('.auth-card h2');if(target){target.tabIndex=-1;target.focus();}}));},
-    modalFocus(){setTimeout(()=>document.querySelector('.modal input,.modal button')?.focus(),50);},
+    modalFocus(){setTimeout(()=>(document.querySelector('.modal input[type=search]')??document.querySelector('.modal input,.modal button'))?.focus(),50);},
     focusConnections(id){requestAnimationFrame(()=>document.getElementById(id)?.focus());},
     focusAccessConfirmation(){requestAnimationFrame(()=>document.getElementById('access-confirm-title')?.focus());},
     restoreFocus(){requestAnimationFrame(()=>requestAnimationFrame(()=>{const target=returnFocus?.isConnected&&returnFocus.textContent===returnFocusText&&returnFocus.getClientRects().length?returnFocus:[...document.querySelectorAll('button')].find(node=>node.textContent===returnFocusText&&node.getClientRects().length);target?.focus();}));},

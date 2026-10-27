@@ -1,3 +1,4 @@
+import {present} from './attrs.mjs';
 import { h, icon, fire, logo } from './release-primitives.mjs';
 import {createLocalization,catalogueForContributions} from '../shared/i18n.mjs';
 import { interfaceText as tx } from './interface-text.mjs';
@@ -105,7 +106,7 @@ export function frame(state,content,{nav=null}={}){
   h('header',h('div',logo({brand:{name:'3sln.me'}}),h('span','Host administration').classes('admin-title')).classes('admin-brand'),h('div',actor,h('select',h('option','English').props({value:'en',selected:state.locale==='en'}),h('option','Español').props({value:'es',selected:state.locale==='es'})).attrs({'aria-label':'Interface language'}).classes('language-switch').on({change:event=>fire(event.currentTarget,'set-locale',{values:{locale:event.target.value}})}),state.phase==='console'?button(state,[icon('logout'),state.mode==='boot'?'Sign out of boot':'Leave administration'],'sign-out',{},'button secondary',false):null).classes('admin-header-actions')).classes('admin-header'),
   bootBanner(state),nav,
   h('main',alerts(state),main).props({id:'admin-main',tabIndex:-1}).classes('admin-main')
- ).classes('admin-console',state.mode==='boot'?'boot-mode':'admin-mode').props({inert:Boolean(state.modal)}).attrs({'aria-hidden':state.modal?'true':null});
+ ).classes('admin-console',state.mode==='boot'?'boot-mode':'admin-mode').props({inert:Boolean(state.modal)}).attrs(present({'aria-hidden':state.modal?'true':undefined}));
 }
 const panel=(title,...children)=>h('section',h('h1',title).props({id:'admin-heading',tabIndex:-1}),...children).classes('panel','admin-access-panel');
 function setupView(state){

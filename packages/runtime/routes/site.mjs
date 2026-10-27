@@ -7,6 +7,7 @@ import {publicBadgePolicy,compileBadgeSprite} from '../../identity/badge-policy.
 import {publicArtifact,publicArtifacts} from '../../core/public-contracts.mjs';
 import {flagGlobal,flagEnabled,capability,json,privateHeaders,signupEnabled,securePage,brandPage,passthrough} from './shared.mjs';
 
+export const NOT_FOUND_PAGE='<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>Page not found</title></head><body><main><h1>Page not found</h1><p>No page matches this address. <a href="/">Go to the home page</a>.</p></main></body></html>';
 async function badgePresentation(env){
  const policy=publicBadgePolicy(env);if(!policy.path)return policy;
  const sprite=await compileBadgeSprite(env);return {...policy,path:policy.path+'?v='+sprite.digest};
@@ -86,8 +87,14 @@ export const stages={
    }
    const asset=await env.ASSETS.fetch(request);
    const immutable=path.startsWith('/assets/');
+   // Bug hunt F18: a browser navigation to a path that matches no page gets one fixed, minimal "not found" document
+   // instead of an empty body. Account-addressed paths (/users/…, API routes) are answered before this point, so the
+   // body is identical for every unknown path and reveals nothing beyond the public static asset set.
+   if(asset.status===404&&request.method==='GET'&&!immutable&&request.headers.get('Accept')?.includes('text/html'))return securePage(new Response(NOT_FOUND_PAGE,{status:404,headers:{'Content-Type':'text/html; charset=utf-8','Vary':'Accept'}}));
    const secured=await securePage(immutable?asset:await brandPage(asset,env),path==='/recovery-kdf-worker.mjs'||/^\/assets\/scripts\/recovery-kdf-worker\.[a-f0-9]{10}\.js$/.test(path),immutable);
    if(/^\/assets\/scripts\/(?:message-frame-controller|message-sanitizer)\.[a-f0-9]{10}\.js$/.test(path)||/^\/packages\/sdk\/src\/(?:define|callback|identity)\.mjs$/.test(path)||/^\/assets\/packages\/sdk\/src\/(?:define|callback|identity)\.[a-f0-9]{10}\.js$/.test(path)){const headers=new Headers(secured.headers);headers.set('Access-Control-Allow-Origin','*');if(!immutable)headers.set('Cache-Control','no-cache');return new Response(secured.body,{status:secured.status,headers});}
+   // The unknown-path response varies on Accept (page above vs plain asset 404), so caches must key on it.
+   if(asset.status===404&&!immutable){const headers=new Headers(secured.headers);headers.append('Vary','Accept');return new Response(secured.body,{status:secured.status,headers});}
    return secured;
  },
 };

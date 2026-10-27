@@ -316,6 +316,8 @@ export class AccountController {
     if(typeof this.orgsAlarm==='function')await this.orgsAlarm();
     // ORG-10f: relations.tick (anti-entropy, sweep, pre-purge, holds, drain) and the counterpart key refresh.
     if(typeof this.relationsAlarm==='function')await this.relationsAlarm();
+    // RTC-d: rtc.tick (ring and session expiry, retention, the signaling outbox); nothing runs without rtc/ state.
+    if(typeof this.rtcAlarm==='function')await this.rtcAlarm();
     await this.alarmMaintenance();
     }finally{if(Number.isSafeInteger(deletionWake))await armAlarm(this.metadata,deletionWake);if(Number.isSafeInteger(transferWake))await armAlarm(this.metadata,transferWake);}
   }

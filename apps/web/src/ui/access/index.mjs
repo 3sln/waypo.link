@@ -1,3 +1,4 @@
+import {present} from '../attrs.mjs';
 // CX-3 composable dodo projection; dispatch AccessAction(kind,detail) in the host engine.
 import {dodo as d} from '../../shared/stack.mjs';
 import {accessCopy} from './copy.mjs';
@@ -5,7 +6,7 @@ import {consentStyle} from '../consent-walkthrough.mjs';
 import {accessLink} from '../../bl/access.mjs';
 const h=d.h,literal=value=>h('bdi',String(value??'')).attrs({translate:'no',dir:'auto'}),host=value=>{try{return new URL(value).host;}catch{return '';}};
 const accessStyle=()=>h('style',`.access-view{max-width:960px;margin:auto}.access-view nav,.access-view .access-actions{display:flex;flex-wrap:wrap;gap:12px}.access-view a{color:inherit;display:inline-block;min-height:44px;padding:10px 0}.access-view button{min-height:44px;padding:10px 14px;cursor:pointer}.access-view dt{font-weight:650}.access-view dd{margin:4px 0 16px}.access-view .access-confirmation{border:3px solid var(--cx-ink);padding:16px;border-radius:10px;margin:16px 0}.access-view .access-row{border-top:1px solid var(--cx-line);padding-block:12px}.access-view button:disabled{cursor:default}.access-view small{display:block}.access-view .access-tier{border-inline-start:4px solid var(--cx-ink);padding-inline-start:10px;font-weight:650}.access-view [data-tier="3"],.access-view [data-tier="4"]{border-inline-start-width:6px}.access-view [data-tier="1"]{border-inline-start-width:2px}@media(prefers-reduced-motion:reduce){.access-view *{scroll-behavior:auto}}`).attrs({translate:'no'});
-const textBlock=value=>value?h('span',literal(value.text),value.languageNote?' '+value.languageNote:null).attrs({lang:value.lang??undefined}):null;
+const textBlock=value=>value?h('span',literal(value.text),value.languageNote?' '+value.languageNote:null).attrs(present({lang:value.lang??undefined})):null;
 export function accessView(model,{dispatch,onNavigate,onEdit,onReview}={}){
  if(!model)return null;const t=accessCopy(model.locale),route=model.route??{kind:'apps'},groups=model.groups??[],apps=model.apps??[],busEnabled=model.busEnabled===true;
  if(route.kind==='bus'&&!busEnabled)return null;

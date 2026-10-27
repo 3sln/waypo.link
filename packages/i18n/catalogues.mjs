@@ -3,6 +3,28 @@ const freeze=value=>{if(value&&typeof value==='object'){for(const child of Objec
 export const catalogues = freeze({
   "en": {
     "": {
+      // Browser bug hunt fixes (2026-10-27, provisional).
+      "Last active {date} · Expires {expiry}": "Last active {date} · Expires {expiry}",
+      "Earlier app message": "Earlier app message",
+      "Unverified app history": "Unverified app history",
+      "Earlier app messages could not be loaded. Refresh activity to try again.": "Earlier app messages could not be loaded. Refresh activity to try again.",
+      "Contact link copied.": "Contact link copied.",
+      "Paste the full link, including everything after the question mark.": "Paste the full link, including everything after the question mark.",
+      "Remove this saved contact?": "Remove this saved contact?",
+      "It disappears from your saved contacts. You can save it again later from its signed link.": "It disappears from your saved contacts. You can save it again later from its signed link.",
+      "Keep contact": "Keep contact",
+      "Review the contact you are removing, then confirm.": "Review the contact you are removing, then confirm.",
+      "Loading your contact profile…": "Loading your contact profile…",
+      "Your contact profile could not be loaded. Reload to try again before saving.": "Your contact profile could not be loaded. Reload to try again before saving.",
+      "Your contact profile is still loading. Try again when it has loaded.": "Your contact profile is still loading. Try again when it has loaded.",
+      "Your contact profile changed in another session. The latest version is shown; review it and save again.": "Your contact profile changed in another session. The latest version is shown; review it and save again.",
+      "A device name is required. Enter a name for this device.": "A device name is required. Enter a name for this device.",
+      "Create view": "Create view",
+      "Messages from connected apps": "Messages from connected apps",
+      "Choose the local message resource and explicitly approve apps to create messages for your own account. Login and other resource permissions do not grant this access.": "Choose the local message resource and explicitly approve apps to create messages for your own account. Login and other resource permissions do not grant this access.",
+      "App messages": "App messages",
+      "Creates text or HTML messages with tags in your own message stream. Notification channels remain under your control.": "Creates text or HTML messages with tags in your own message stream. Notification channels remain under your control.",
+      "S3 compatible": "S3 compatible",
       // ORG-10g relationship console (provisional, flags default off).
       "Export relationships": "Export relationships",
       "Relationship data downloaded. Keep this file private.": "Relationship data downloaded. Keep this file private.",
@@ -3067,6 +3089,28 @@ export const catalogues = freeze({
   },
   "es": {
     "": {
+      // Browser bug hunt fixes (2026-10-27, provisional).
+      "Last active {date} · Expires {expiry}": "Última actividad {date} · Vence {expiry}",
+      "Earlier app message": "Mensaje de app anterior",
+      "Unverified app history": "Historial de app sin verificar",
+      "Earlier app messages could not be loaded. Refresh activity to try again.": "No se pudieron cargar los mensajes de apps anteriores. Actualiza la actividad para intentarlo de nuevo.",
+      "Contact link copied.": "Enlace de contacto copiado.",
+      "Paste the full link, including everything after the question mark.": "Pega el enlace completo, incluido todo lo que va después del signo de interrogación.",
+      "Remove this saved contact?": "¿Quitar este contacto guardado?",
+      "It disappears from your saved contacts. You can save it again later from its signed link.": "Desaparece de tus contactos guardados. Puedes volver a guardarlo más tarde desde su enlace firmado.",
+      "Keep contact": "Conservar contacto",
+      "Review the contact you are removing, then confirm.": "Revisa el contacto que vas a quitar y confirma.",
+      "Loading your contact profile…": "Cargando tu perfil de contacto…",
+      "Your contact profile could not be loaded. Reload to try again before saving.": "No se pudo cargar tu perfil de contacto. Recarga para intentarlo de nuevo antes de guardar.",
+      "Your contact profile is still loading. Try again when it has loaded.": "Tu perfil de contacto aún se está cargando. Inténtalo de nuevo cuando termine de cargar.",
+      "Your contact profile changed in another session. The latest version is shown; review it and save again.": "Tu perfil de contacto cambió en otra sesión. Se muestra la versión más reciente; revísala y vuelve a guardar.",
+      "A device name is required. Enter a name for this device.": "El nombre del dispositivo es obligatorio. Escribe un nombre para este dispositivo.",
+      "Create view": "Crear vista",
+      "Messages from connected apps": "Mensajes de apps conectadas",
+      "Choose the local message resource and explicitly approve apps to create messages for your own account. Login and other resource permissions do not grant this access.": "Elige el recurso local de mensajes y aprueba expresamente qué apps pueden crear mensajes para tu propia cuenta. El inicio de sesión y otros permisos de recursos no conceden este acceso.",
+      "App messages": "Mensajes de apps",
+      "Creates text or HTML messages with tags in your own message stream. Notification channels remain under your control.": "Crea mensajes de texto o HTML con etiquetas en tu propio flujo de mensajes. Los canales de notificación siguen bajo tu control.",
+      "S3 compatible": "Compatible con S3",
       // ORG-10g relationship console (provisional, flags default off).
       "Export relationships": "Exportar relaciones",
       "Relationship data downloaded. Keep this file private.": "Datos de relaciones descargados. Mantén este archivo privado.",

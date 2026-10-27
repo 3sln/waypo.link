@@ -1,3 +1,4 @@
+import {present} from './attrs.mjs';
 import {clientPolicyLinks} from './legal.mjs';
 // Rendering for the provider-owned authorization entry page (slice A7). Pure projection of the entry model: the
 // page module supplies `dispatch`, the arming guard and the shared consent kit. Account handles appear only on
@@ -32,7 +33,7 @@ const duration=(seconds,t)=>{const {count,unit}=durationOf(seconds);return unit=
 export function entryView(model,ctx){
  const {t,host,armed,guard,dispatch,kit}=ctx,entry=model.entry,app=entry?isolate(entry.client.name):'',busy=model.busy;
  // Approval control: aria-disabled while unarmed (keeps focusability), inert while busy, no default focus.
- const approve=(text,action,{disabled=false,detail}={})=>h('button',text).props({type:'button',disabled:busy||disabled}).attrs({'aria-disabled':armed?undefined:'true'}).data({entryApprove:'true',consentApprove:detail}).classes('button','primary').on({click:guard(action)});
+ const approve=(text,action,{disabled=false,detail}={})=>h('button',text).props({type:'button',disabled:busy||disabled}).attrs(present({'aria-disabled':armed?undefined:'true'})).data({entryApprove:'true',consentApprove:detail}).classes('button','primary').on({click:guard(action)});
  const plain=(text,action,kind='secondary')=>h('button',text).props({type:'button',disabled:busy}).classes(...kind==='text-button'?['text-button']:['button',kind]).on({click:action});
  // One persistent live region for notices, placed after the controls so a notice never shifts them; errors are alerts.
  const status=[model.error?h('p',model.error).attrs({role:'alert'}).classes('alert','error'):null];

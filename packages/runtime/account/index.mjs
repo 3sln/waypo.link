@@ -46,8 +46,9 @@ import * as directory from './directory.mjs';
 import * as orgs from './orgs.mjs';
 import * as memberCertificates from './member-certificates.mjs';
 import * as relations from './relations.mjs';
+import * as rtc from './rtc.mjs';
 
-export const ACCOUNT_SLICES=Object.freeze({intents,views,messages,contacts,delivery,conversations,storage,billing,search,lifecycle,notifications,contactProfile,automation,identity,links,connections,events,integrations,integrationEvents,classifier,brokeredTokens,emailBridge,deletion,exports,retention,transferOut,appRemoval,transferIn,transferSuccessor,transferIntake,directory,orgs,memberCertificates,relations});
+export const ACCOUNT_SLICES=Object.freeze({intents,views,messages,contacts,delivery,conversations,storage,billing,search,lifecycle,notifications,contactProfile,automation,identity,links,connections,events,integrations,integrationEvents,classifier,brokeredTokens,emailBridge,deletion,exports,retention,transferOut,appRemoval,transferIn,transferSuccessor,transferIntake,directory,orgs,memberCertificates,relations,rtc});
 
 /** Installs every slice's methods; a name defined twice (by two slices, or by a slice and the core) is a programming error. */
 export function installAccountMethods(prototype,slices=ACCOUNT_SLICES){

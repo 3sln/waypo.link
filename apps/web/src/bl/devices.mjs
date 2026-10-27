@@ -43,4 +43,7 @@ export class RevokeAppAccess extends OwnerFlow {
  }
 }
 // Device naming keeps the account-epoch guard: a rename result never lands in another account.
-export class RenameDevice extends GuardedAction {mutation=true;async perform(r,ctx,d){const v=d.operationId?r.browser.consumeSubmission(d.operationId):d.values;await r.api.request('/api/auth/devices/rename',{sessionId:d.sessionId,label:v.label});publishGuarded(r,ctx,{data:await r.api.get('/api/account'),modal:null,notice:'Device name saved.',error:''});}}
+// A blank (or whitespace-only) name is refused here with a plain reason (bug hunt F9); after a successful save focus
+// returns to the Rename button that opened the dialog (F10).
+export const DEVICE_NAME_REQUIRED='A device name is required. Enter a name for this device.';
+export class RenameDevice extends GuardedAction {mutation=true;async perform(r,ctx,d){const v=d.operationId?r.browser.consumeSubmission(d.operationId):d.values,label=typeof v?.label==='string'?v.label.trim():'';if(!label)throw Error(DEVICE_NAME_REQUIRED);await r.api.request('/api/auth/devices/rename',{sessionId:d.sessionId,label});publishGuarded(r,ctx,{data:await r.api.get('/api/account'),modal:null,notice:'Device name saved.',error:''});r.browser.restoreFocus?.();}}

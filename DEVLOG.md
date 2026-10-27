@@ -6407,3 +6407,300 @@ This audit was done at the owner's request. The goal is to keep the core to acco
 Classification is provisional.
 
 Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-27 — RTC-d sessions, admission and same-host transport (flags off)
+
+**Implemented locally, provisional and unsigned.** Slice RTC-d of the [RTC signaling](docs/spec/rtc-signaling.md) plan ([design](docs/architecture/rtc-signaling.md) §8.1): the session engine, admission, tickets, the `rtc-signaling/v1` built-in occupant (`RtcService`), the same-host transport and the account storage slice. Everything is behind `RTC_SIGNALING_ENABLED` (default off): while it is off, nothing new is reachable, and every widening operation answers the uniform `not_found` (404). Existing state stays readable, narrowable and endable, and narrowing is never gated. There is no contract route for applications, foreign transport, relay occupant or owner UI (RTC-e to RTC-g). No commit or deployment. Every reading below is **provisional** (coordinator), not signed off by the user.
+
+**Modules (engine-first; every behaviour is an ngin Action or Query):**
+- `packages/rtc/sessions.mjs`: the state machine (`ringing` → `connected` → `ended`, with an explicit transition table where everything else is illegal), first claim, deadlines, and the per-leg ordering and replay window (§6.4). It also holds the design §3.4 bounds.
+- `packages/rtc/admission.mjs`: bases (§4.2), the owner policy (IP policy, `none` requests, auto-accept), block and mute, the RTC-11 fixed-window limits and the fan-out candidates. Limit rows are keyed by a SHA-256 of what they count, so they name no principal.
+- `packages/rtc/tickets.mjs` (extended): minting, verification at the owner host, and atomic use counting at §8.2 step 8 against the verified principal.
+- `packages/rtc/service.mjs`: `RtcService`, the outbox (control statements are stored unsigned and signed at drain time, outside any transaction), `sameHostRtcTransport`, and the operations:
+  - endpoint: `rtc.register`, `unregister`, `open`, `claim`, `send`, `renew`, `mint-ticket`, `listen`, `endpoints`;
+  - owner: `rtc.policy`, `set-policy`, `set-contact-rtc`, `block`, `unblock`, `mute`, `unmute`, `revoke-ticket`, `end-session`, `revoke-endpoint`, `clear-missed`, `sessions`, `missed`, `blocked`, `tickets`, `endpoint-list`, `export`;
+  - system (never wire-dispatchable): `rtc.ingest`, `tick`, `outbox-drain`, `lifecycle`.
+- `packages/app/domains/rtc.mjs`: re-exports and classification (`RTC_WIDENING`, `RTC_NEVER_GATED`, `RTC_CONTRACT_OPERATIONS`).
+- `packages/runtime/account/rtc.mjs`: the account slice.
+  - `rtcDispatch` takes endpoint and owner operations from a trusted adapter actor, whose owner must be the writer's owner.
+  - `rtcListen` runs the long poll with gate `none`, so it never holds the writer.
+  - `rtcPeer` is the same-host transport target (gate `none`, `rtc.ingest` only).
+  - `rtcPublicKeys` is the local key read for peers.
+  - `rtcAlarm` runs `rtc.tick`.
+  - `rtcDrain` is the deletion E4 hook.
+- Shared one-line hunks: the `rtc` provider row (`packages/app/providers.mjs`), the slice registration (`packages/runtime/account/index.mjs`), the `rtcAlarm` call in the account alarm (`packages/runtime/accounts.mjs`), `rtcDrain` in the deletion E4 `DRAINS` (`packages/runtime/account-deletion.mjs`), and the export contributors `rtc` and `rtc-tickets` plus reasoned exclusions for every other `rtc/` family (`packages/runtime/export-contributors.mjs`). The flag registry needed no change.
+
+**Spec readings and provisional decisions (RTCd-1 to RTCd-20; none signed):**
+- **RTCd-1 Records.** The caller's provider keeps `rtc/out/<sid>` and the callee's `rtc/in/<caller principal>/<sid>`, so a `sid` that another caller chose never collides (§8.2 step 2). An own-entity session has both records in one writer. They end together, and no control statement is sent to oneself.
+- **RTCd-2 Same-host transport.** It runs the full §8.2 path (step 1 shape, held keys, certificate, signature, ordering, epoch, policy, then atomic apply) on the receiving writer. *Revised by review M2 (see "Review follow-ups"):* no request delivers across entities. A commit that queued outbox rows asks the adapter for a pass (`defer`), which runs as a detached task after the request answered, with the alarm as the fallback. `rtc.ingest` checks step 1, stores the batch in the bounded inbound queue and answers at once; steps 2–8 run later on the receiver (`rtc.inbox`, also first in `rtc.tick`). So neither a sender's latency nor the ingest answer depends on the callee's blocks, endpoints, approvals or limits; two writers never call each other recursively; and peer calls use gate `none`, as relations do.
+- **RTCd-3 Replay window.** Payload-bytes digests are kept for the last 128 accepted `seq` values per leg. A reused `seq` older than that window is ignored as a duplicate: it can never be processed again. The sender's own provider applies the same rule to its endpoint's messages (different bytes end the leg `failed`, with a control statement to the peer). It does not buffer for its own endpoint: an out-of-order `send` is refused with `invalid_args`.
+- **RTCd-4 Held invites.** Invites through the `none` basis (opt-in, off by default) and through a quarantined contact parent are recorded in the owner's missed and held list and are never delivered to endpoints or alerted (§4.4 leaves the presentation to the provider). Blocked invites are dropped and never listed.
+- **RTCd-5 Mutes.** A mute of a principal, purpose or application delivers the invite without alert. It never excludes an endpoint.
+- **RTCd-6 Auto-accept.** The provider computes `auto_accept` per endpoint in the invite projection: own entity, the purpose allows `self`, the owner enabled it for that application, and the caller certificate's `client_id` is the endpoint's application. A provider cannot verify a user action at `claim`, so nothing more is enforced there.
+- **RTCd-7 Decline.** A decline is a `claim` with `outcome: decline` followed by the leg's signed `decline` message. The callee record ends at the claim, and that one message may still be sent. A decline claim and a `send` of only `end`, `cancel` or `decline` are narrowing.
+- **RTCd-8 Endpoint binding.** The secret travels as an `endpoint_secret` member of the arguments (§9.1 does not name the member). A DPoP-registered endpoint refuses the member.
+- **RTCd-9 `open`.** `purpose` is the line URL, and the provider pins its held reference. An opened session with no invite times out after 120 s.
+- **RTCd-10 Tickets.** They live in `rtc/ticket/<jti>`, not on LinkService `link/` parents, with their own cap of 256 live tickets. The link is `<issuer>/rtc/t/<jti>?bindle_meta=…`, signed with the identity signing key, and the owner host verifies the exact stored meta. Callback tickets also need `RTC_TICKETS_ENABLED` and are refused for own-entity sessions. Moving tickets onto LinkService is left to the links owner.
+- **RTCd-11 No presence oracle through keys.** While RTC is on, `rtcPublicKeys` answers every active same-host entity with a certification key, creating it on first need, so `open` succeeds alike whether or not the callee ever registered. Found by the runtime test: before the fix, a callee with no certification key made `open` fail. An unknown or deleted principal answers `temporarily_unavailable`, which is §4.1's outcome when keys cannot be obtained; identity documents are public anyway.
+- **RTCd-12 Deletion.** `rtcDrain` (E4) runs `rtc.lifecycle` `deletion` once and then delivers. It ends every live session with control `revoked` (§5.2 has no deletion reason), removes the endpoints and closes the RTC family to new admissions.
+- **RTCd-13 Epochs.** An `aep` row is recorded only for an admitted invite or a live session's messages, so a dropped invite records nothing (§8.2 step 6 "live admission state").
+- **RTCd-14 Limits and the held-request bound.** *Corrected by review L1:* the per-(caller, callee), per-(issuer, callee), per-(issuer, link parent) and per-callee limits are counted in the callee's writer. The §13 limit per caller origin principal **across its entities** was also counted per callee writer, so it never bound across callees; it is now one host-wide window in the shared `WORK_AUTHORITY` guard, keyed by an HMAC of the principal, and the per-writer count stays as defence in depth. For same-host callers, who share one issuer, the per-(issuer, callee) limit (20 per hour) binds before the held-request bound (32).
+- **RTCd-15 Queue overflow.** An event that would exceed 256 events or 512 KiB is dropped, `gap` is set, and the session ends `failed` with a control statement to the peer.
+- **RTCd-16 Long poll.** `listen` waits in memory within one writer, and the RPC is gate `none`. Push subscriptions are validated (HTTPS, a provisional list of recognized Web Push origins) and stored, but no push is sent; the doorbell is left to RTC-e.
+- **RTCd-17 Gating.** `listen`, `endpoints` and owner reads of existing state are never gated. `unblock` and `unmute` are widening, so they are gated.
+- **RTCd-18 Fan-out eligibility.** It needs the federation bound check, which lives outside the writer. It is evaluated before the transaction and re-read inside it.
+- **RTCd-19 Not implemented.** The §13 SHOULD "prefer `self` and principal-bound bases when ringing capacity is short" is not implemented; the callee's four ringing slots are first come.
+- **RTCd-20 Units.** `expires_at` from `register` and `open` is in Unix seconds, as certificate `exp` is.
+
+**Interfaces left for RTC-e to RTC-g:** listed in design §8.1 status. In short:
+- RTC-e: the adapter actor from the verified RPC context (the token's grant ids are required); `config.RTC_BOUND_CHECK` → `FederationService.checkBound` (absent: fail closed); a `foreign: true` transport; roster-fed `keys` with `refresh`; `rtc.ingest` behind `POST /bindle/rtc`; the `rtc.lifecycle` triggers from bound narrowing and grant revocation; the push doorbell.
+- RTC-f: live-leg checks over the session records, and revocation on `RtcService.end`.
+- RTC-g: the owner operations.
+
+**Tests (engine level unless noted):**
+- `tests/rtc-engine.test.mjs`, **35** tests over `tests/helpers/rtc-fixture.mjs`. The fixture is a loopback host with one SQLite store, certification key and engine per entity, and simulated devices that sign their own messages.
+- They cover:
+  - every legal and illegal transition;
+  - first claim;
+  - the ordering window;
+  - all-or-nothing limits;
+  - a cross-user call through a ticket;
+  - the relay-only default, opt-in `public`, and raw host candidates only between own devices;
+  - own-entity sessions (no echo, `target`, auto-accept projection, twin ends);
+  - illegal operations at the engine;
+  - decline;
+  - cancel crossing an accept, and an accept after a cancel (control `failed`);
+  - silent admission refusals (`none`, contact configuration, quarantine, block, principal-bound, purpose, revoked and exhausted tickets);
+  - exactly `uses` admitted under concurrent invites;
+  - approval and muting;
+  - budgets (open sessions, opens per hour, ringing, pair, issuer);
+  - duplicate versus re-signed versus re-serialized `seq` reuse;
+  - receiver reordering, duplication, loss and the 10 s gap;
+  - expiry (ring timeout and missed, the 60 s SDP bound, the 24 h cap, retention, idle endpoints, delegates);
+  - flag-off unreachability;
+  - ticket flag and callbacks only to the claimant;
+  - endpoint binding;
+  - renewal and delegate reuse;
+  - revocation paths;
+  - account deletion mid-session;
+  - export and inventory;
+  - the uniform ingest answer;
+  - forged and stolen keys;
+  - wrong leg key, bad signature, forged control and lower `aep`;
+  - a ticket accepted only as its exact stored meta;
+  - per-message silence within a batch;
+  - 256 messages per leg per minute;
+  - queue overflow;
+  - the long poll.
+- One **seeded chaos** test (8 seeds × 200 steps; `CHAOS_SEED`, `RTC_CHAOS_SEEDS`, `RTC_CHAOS_STEPS`) interleaves calls, listens, claims, cancels, candidates, ends, held deliveries with drop, duplication and reordering, clock jumps with ticks, restarts and receiver outages.
+  - After every step it checks: at most one claimant, who was notified; no SDP or candidate reaching anything but a claimed leg; and every storage bound.
+  - After quiescing it checks that every session is terminal, the outbox is empty, and records are gone 24 h after their end.
+- `tests/rtc-runtime.test.mjs` (Node runtime, **2** tests): two people's real account writers call each other through a ticket over `rtcPeer`. It also covers `rtcDrain`'s control statement reaching the peer, owner binding, system operations not being wire-dispatchable, and the uniform 404 for widening while off.
+
+**Revert check (scratch copy; each guard reverted alone, then `rtc-engine` and `rtc-runtime` run with 3 chaos seeds):**
+- **63 guards** were checked: the transition table, the claim rules, the replay window, endpoint binding and bounds, the flag gates, the bound approval and eligibility, every basis, block and quarantine, ticket spending, principal binding, liveness and the exact stored meta, all limits and bounds, the send rules (IP policy, own-leg signature, answer and claim, order, leg rate), certificate, signature, epoch and control verification at ingest, the late-answer control, fan-out (no echo, target, `claimed` notices, same-app auto-accept), callback delivery, delegate reuse, queue overflow, the 60 s bound, deletion closure, revocation controls, expiry, retention, the missed list, the block reason, the own-entity twin notice, the runtime owner binding, keys for every entity, non-wire system operations and the export contributor.
+- **59 made a suite fail.** The first pass had ten survivors. Six were fixed by strengthening tests, and a seventh guard targeted the wrong file and was corrected; all seven now fail when reverted:
+  - payload bytes versus signature: a duplicate must not end the leg;
+  - exact stored meta: a ticket without a recorded public key and with a leaked `jti`;
+  - leg rate;
+  - per-message silence;
+  - no echo without a target;
+  - same-app auto-accept;
+  - the block reason (the corrected guard).
+- **4 survivors are equivalent**: another guard makes each one unreachable on its own.
+  - `send` "only invite and cancel before the claim": `to` must name the peer leg, and none exists before the claim.
+  - Ingest delivering SDP or candidates only to a claimed leg: there is no claimant, and no callee leg before its seq 0 answer.
+  - Ingest's outer catch: per-message isolation already catches.
+  - The slice's early 404 for widening: the engine rechecks every gate.
+  All four are kept as defence in depth.
+
+**Verification (local evidence only):**
+- In the main checkout: `rtc-engine` **35**, `rtc-runtime` **2**, and the RTC-a/b/c suites with `extensions-bound-options` (**100** in total): all pass.
+- Scratch copy of HEAD 3db460b plus only this work. The main checkout had concurrent, uncommitted web-UI and activity edits by another agent, which were restored to HEAD in this copy.
+  - `check:worker`, which runs `build:assets`: passed, with the existing duplicate-key warnings in the i18n catalogues.
+  - `npm test`: **3,934 passed, 0 failed**.
+  - `test:worker`: **93 passed**.
+  - `test:ui-state`: **490 passed**.
+- The same set on a scratch copy of the full working tree, including that agent's in-flight edits: `npm test` **3,935**, `test:worker` **93**, `test:ui-state` **493**, `check:worker` passed.
+- Not run: e2e and browser probes (no UI in this slice), and nothing against a real second provider, push service or relay.
+
+Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-27 — Browser bug hunt fixes (post Beam removal)
+
+Status: **provisional and unsigned.** This entry fixes the findings of the browser bug hunt run against the local Worker at HEAD 3db460b. The evidence is Playwright probes and screenshots in a scratch directory; it is not committed. Every flag keeps its default. This is local behaviour only: nothing here was verified against production or an external provider.
+
+**Provisional decisions (need sign-off):**
+1. **F1: stale-write guard on the contact profile.** `GET /api/profile` now also returns an opaque content `revision`: the first 16 bytes of a SHA-256 digest of the four profile fields, written as hex. `PUT /api/profile` accepts an optional `expectedRevision`. When the stored content no longer matches it, the save is refused with `409 profile_stale`. The digest is computed outside the transaction, and inside it the stored content is compared again. There is no stored counter and no migration, and the v1 legacy-row rule is unchanged. A `PUT` without `expectedRevision` stays unconditional, so existing clients and tests keep working. This follows the existing `expectedRevision` pattern (`docs/spec/contact-tokens.md`).
+   - In the client, the profile form keeps its fields editable while the profile loads. Save is disabled and the form is `aria-busy` until it has loaded.
+   - Loaded values arrive as `defaultValue`, so a field the owner already typed in keeps that text.
+   - After a stale refusal, the latest profile is shown in a rebuilt form, with an explanation.
+2. **F3: legacy items in the activity view.** With `ACTIVITY_V2_ENABLED` on, the activity view pages v1 app messages from `/api/activity/legacy` after the native feed ends. They use the same Previous/Next stack, through a string cursor `legacy|<adapter cursor>|<offset>`. Each render reads at most 4 adapter pages.
+   - Legacy rows are always current and unarchived. They appear only in the active feed and for filters they can match: app, read state and tag are applied locally.
+   - A legacy row opens through the v1 message API and its existing detail view. It cannot be archived. Search covers only its subject.
+   - The nav badge counts native unread items (the per-app `unread` facet, which also counts archived unread items) plus unread legacy app messages from `/api/account`.
+   - Peer messages are not shown by the activity view, so the badge no longer counts them while v2 is on. This is an existing gap (see follow-ups).
+3. **F4: legacy rows marked verified.** Legacy rows read from `app-message/` now project as `verified:true`, because app-messages-v1 moves a row there only after its attestation verifies. Rows still in `message/` stay `verified:false`; the store holds no issuer keys to verify them.
+4. **F5: status polling.**
+   - A background `check` skips `/api/account/deletion` while `accountDeletionEnabled` is off, and `/api/exports` while `accountExportEnabled` is off. The exception is a status the console last saw as still pending: a deletion that is scheduled or executing, or an export that is queued, generating or sealing.
+   - An explicit open or refresh of account data always reads both. This keeps the earlier rule that a deletion or export started before a flag was turned off stays visible and serviceable.
+   - The timer runs only while something is pending. It never runs while the page is hidden, and it resumes on `visibilitychange`.
+   - It backs off from 30 s, doubling after each unchanged check, up to 10 min. Any change, or an explicit open, resets it. State updates keep the pending timer instead of restarting it.
+5. **F16: extra parameter on `/oauth/authorize?request_id=`.** The provider page now accepts one bounded `lang` tag and still refuses every other parameter. The spec constrains only the app ("redirects with only the returned `request_id`"), so the provider-side strictness was an implementation choice. This is now documented in `docs/spec/federation-implementation.md`, and `authorize.mjs` honours `lang`.
+   - First-party schema text is passed through the catalogue only for a schema whose id is in a fixed set (`app-messages/v1`) and whose publisher is `https://3sln.me`. Third-party schema text stays literal, even when it matches a catalogue key.
+6. **F18: 404 page.** A browser navigation (`GET` with `Accept: text/html`) to a path that reaches the static-asset fallthrough and misses gets one fixed `NOT_FOUND_PAGE`, served `noindex` and `no-store` through `securePage`. Account-addressed paths and API routes are answered earlier, so the body is identical for every unknown path. It reveals nothing beyond the public asset set, and the uniform-404 rules in `public-unknown.mjs` are untouched. Immutable `/assets/` misses and non-HTML requests keep the asset answer.
+
+**Fixed:**
+- **F2: literal `"null"` attributes.** dodo's `.attrs()` writes every key it is given, and removes an attribute only when its key is absent. So `null` rendered as `"null"`, and on a first render `undefined` rendered as `"undefined"` (the bug hunt saw only the `null` cases). Conditional attributes now go through `present()` (`apps/web/src/ui/attrs.mjs`), which drops absent keys. This covers 32 call sites in 16 view modules, and `localize.mjs` filters the same way. `vendor/` is unchanged.
+- **F6:** `ReadMessage` marks an unread message read once and patches `data.messages`, the incoming page and the badge locally. It no longer refetches the account, Views and incoming page. An already-read message is only fetched.
+- **F8:** the Spanish catalogue now has "Last active {date} · Expires {expiry}" and "S3 compatible", plus every new string added in this entry (21 keys, added to `en` and `es` together). A scan of the main views and dialogs in both locales found no other untranslated interface text.
+- **F9:** a blank or whitespace-only device name is refused in the engine with "A device name is required…". While a dialog is open, the shell alert region renders empty: the dialog shows its own alerts, so each error appears once. The region stays in place so the view and any live message frame are not rebuilt; an earlier version removed it, and that broke the message-action review in `message-submissions` e2e.
+- **F10:** focus returns to the opener after a successful submit:
+  - the contact profile save (captureFocus/restoreFocus);
+  - the sharing save and device rename (back to the button that opened the dialog);
+  - removing a saved contact (to the Saved contacts heading, because the row is gone).
+- **F11:** "Remove saved contact" now opens a confirmation dialog, like revoking a contact link. The Action refuses unless that dialog names the same contact.
+- **F12:** the add-contact placeholder now shows `?bindle_meta=…`, with the hint "Paste the full link, including everything after the question mark."
+- **F13:**
+  - The copy notice now reads "Contact link copied." in English and Spanish.
+  - The developer panel now follows the page h1.
+  - The static "not ready" text is no longer `role=status`.
+- **F15:** the inbox row now has an `aria-hidden` " · " between the app name and the origin. The `app-message` tag is shown as a labelled "App message" pill.
+- **F16:** the Spanish strings for the first-party app-messages consent schema were added.
+- **F17:** the command palette now focuses its search input when it opens (`modalFocus` prefers a dialog's search field). The palette command now reads "Create view". The View dialog titles keep the existing "New/Edit/Delete View" naming.
+- **F18:**
+  - The broken vectors link in `contact-delivery.md` is now a repository path, because `docs/architecture` is not published.
+  - Inline code and links in the docs now wrap, so the contact-tokens page no longer overflows at 360 px (measured 0 px).
+  - An env-killed flag card is plain text at page load. `role=alert` is kept for the live edit form.
+
+**Not done:**
+- **F14 (meta CSP `sandbox`) was not done.** Removing the token was refused by this session's permission classifier as a security-weakening edit, so it is left for the owner to decide. The token has no effect when delivered in a `<meta>` CSP, and browsers log a warning; the iframe `sandbox` attribute is what isolates the content.
+  - The browser adapter (`apps/web/src/bl/activity-content.mjs`) is parity-tested against `packages/content/render.mjs` `CONTENT_CSP` (`tests/browser/activity-contract.mjs`). Both files would have to change together.
+
+**Follow-ups (deferred, not implemented):**
+- F7: split the console bundle.
+- The landing tagline "Your files" is a product question now that Beam is gone.
+- A Spanish locale for the landing page.
+- Branding of the consent header.
+- With v2 on, peer messages are not reachable from the activity view. This predates this work; see decision 2.
+
+**Tests added or changed:**
+- `tests/browser/bughunt-views.mjs` (happy-dom, **10** tests), new and registered in `test:ui-state`:
+  - it fails if any attribute equals `"null"` or `"undefined"` across 12 main views, in both locales, with v2 on and off, on first render and through view changes and four dialogs;
+  - it fails if any untranslated Spanish interface text remains;
+  - it also covers the F1, F3, F9, F11/F12, F13, F15, F16 and F17/F18 view fixes.
+- `tests/browser/bughunt-engine.mjs` (engine, **6** tests), new and registered in `test:ui-state`: F1 load states and the stale refusal; F6; F9/F10; F10/F11; F13.
+- Changed, in the activity engine and account-data engine suites:
+  - `tests/browser/activity-engine.mjs`: +4 F3 tests, and its fixture now routes `/api/activity/legacy`;
+  - `tests/browser/account-data-engine.mjs`: +3 F5 tests.
+- Other new and changed tests:
+  - `tests/bughunt-server.test.mjs` (**2** tests), new: F16 query rules and the F18 404 page;
+  - `tests/contact-profile.test.mjs`: +1 F1 revision-guard test, including a write racing between the check and the transaction; the HTTP test also checks 409 `profile_stale`;
+  - `tests/app-messages-family.test.mjs`: +1 F4 test;
+  - `tests/browser/contact-profile.mjs`: now loads the profile before saving and confirms before removing;
+  - `tests/browser/activity-browser.mjs`: its fixture now routes `/api/activity/legacy`.
+
+**Local browser verification (Chromium, local Worker, `ACTIVITY_V2_ENABLED` on, bug-hunt account copy):**
+- No literal `null` or `undefined` attributes in 11 views (es).
+- 13 legacy rows reachable. Opening one shows the message and the badge drops from 12 to 11.
+- No `/api/account/deletion` or `/api/exports` request in 65 s with both features off.
+- F1, with `/api/profile` held: `aria-busy` was true and Save disabled. Text typed during the load survived the load. Save worked, and focus returned to Save.
+- F9: one alert. F10: focus returned to Rename after a rename.
+- F17: the palette focused its search input.
+- F18: a 404 with the page body; no overflow at 360 px.
+- F16: an extra `lang` passed the query check (the bogus id then failed lookup), and `x=1` was refused.
+- The only remaining console warning is the F14 meta-CSP `sandbox` warning.
+- Not covered by the browser run: F11, because the probe account had no saved contacts; happy-dom covers it.
+
+**Verification (main checkout, which also holds the RTC-d agent's concurrent edits; final run after every fix):**
+- `npm test`: **3,949 passed, 0 failed**.
+- `test:worker`: **93 passed**.
+- `test:ui-state`: **509 passed**.
+- `test:activity`: **25 + 14 passed**.
+- `build:assets`: passed.
+- `test:e2e`: **328 tests across 14 suites; 324 passed, 0 failed, 4 skipped** (skipped by the existing suites).
+- An intermediate e2e run failed `message-submissions` (the F9 alert region was removed instead of emptied) and three `ui-chaos` tests (an errored profile load left the form `aria-busy`). Both were fixed, and the full final run is the one above.
+- A scratch worktree at HEAD passed `message-submissions` **7/7**, which isolated the cause.
+
+Reviewer: ___ Date: ___ Outcome: ___
+
+### Review follow-ups (2026-10-27)
+
+**Implemented locally, provisional and unsigned.** These are fixes for the findings of an independent review of the uncommitted RTC-d work. Each review PoC is now a regression test. Flags stay off and nothing here is production-verified. Readings RTCd-2 and RTCd-14 above are revised in place.
+
+**Findings and fixes:**
+- **M1 Deletion controls were dropped.** The purge's identity stage tombstoned the account before the E4 drain, `rtcPublicKeys` answers null for an account that is not active, and `processControl` dropped a control when the sender had no held keys. The same happened on suspension, a move or the inactivity purge.
+  - Session records now pin the peer's certification keys (`peerKeys`, at most 8): at `open` (callee), at admission (caller), and on every verified message, which covers the answer and a rotation. `processControl` tries the held keys first, then the pinned ones.
+  - The purge's `identity` stage now runs `c.rtcDrain(owner)` (best effort, never blocking) before `connectionsSeverAccount` and the tombstone (`packages/runtime/lifecycle-storage.mjs`). The E4 `drain` stage still finishes delivery. The persisted stage plans are unchanged.
+- **M2 Timing was a presence oracle.** `commit` awaited `drain`, which ran the callee's whole ingest inside the sender's request.
+  - `commit` now only asks the adapter for a pass (`defer` port). The account slice runs `rtc.inbox` and `rtc.outbox-drain` as a detached task on the controller, one pass at a time, after the request has answered. The alarm stays the durable fallback.
+  - `rtc.ingest` checks step 1, stores the batch in the bounded inbound queue `rtc/inq/` and answers `{accepted:true}`. The new system operation `rtc.inbox` runs steps 2–8, and `rtc.tick` also runs it first. Passes are serialized per service.
+- **M3 The outbox could be filled, and drain was head-of-line blocked.**
+  - A `failed` reply to an extra or late callee leg is sent at most once per (sid, leg), and at most 4 times per session.
+  - Outbox rows are keyed per peer (`rtc/outbox/<peer>/<seq>`), and `rtc/outbox-seq` keeps `{seq, count}`. The caps are 1,024 in total and 64 per peer. Message batches stop 128 and 16 short of those caps, which are reserved for control statements.
+  - A drain pass pages past a held peer's contiguous rows.
+  - A full outbox makes `send` fail with `rate_limited`, the transaction is rolled back, and nothing is accepted.
+- **L1 The per-caller limit was not shared across entities.** It is now a host-wide window, through a `hostLimits` port that maps to `config.WORK_AUTHORITY.consume`. That is the shared fixed-window guard message postbacks already use, available on both Node and the Worker.
+  - The key is `rtc-caller-v1/<HMAC>` of the caller principal (`ABUSE_HASH_KEY` or `KEY_ENCRYPTION_KEY`; SHA-256 without either).
+  - It is counted after verification, before the transaction.
+  - A limiter that throws drops the invite (fail closed). A retried copy of an existing session's invite returns before any limit.
+  - The per-writer count is kept as defence in depth. A host without `WORK_AUTHORITY` counts per writer only, as before. Both reference hosts configure it.
+- **L2 Repeat claims were allowed on ended sessions.** `decideClaim` allows a repeat only while `claimUsable`: an accepted session that is still live, or a decline whose message has not been sent. `claim` also hands out the certificate only if that still holds after signing.
+- **L3 A narrowed IP policy was not applied to live sessions.** `send` applies the stricter of the session's pinned policy and the owner's current one. Widening never reaches a live session.
+- **L4 Export was missing fields.** `rtc/contact/<parent>` rows store `parent`, and ticket rows store the non-secret `purposes` and `principal`. The `rtc` and `rtc-tickets` projections export them (additive hunk in `packages/runtime/export-contributors.mjs`, with exclusions for `rtc/inq/` and `rtc/inq-meta`). The ticket meta and `jti` are still never exported.
+
+**New provisional readings (none signed):**
+- **RTCd-21 Asynchronous processing.** Queued batches are processed as of their receipt time (`row.at` is `now` for steps 2–8), so a short delay never changes the outcome, and `rtc.tick` processes them before its expiry pass.
+- **RTCd-22 Inbound queue overflow.** At 256 batches or 4 MiB, `rtc.ingest` answers `temporarily_unavailable` (503), which the sender retries (§8.3). The fill depends on volume, not on steps 2–8. It is not a silent drop, because that would lose at-least-once delivery.
+- **RTCd-23 Pinned-key fallback.** A control statement may verify against keys the peer used for this session even after it stops serving them, including a key revoked at a move. A control can only end that one session with that party (narrowing), so a compromised retired key can at worst end sessions early. Accepted as provisional.
+- **RTCd-24 Full outbox for controls.** A control statement that finds even the reserve full is dropped, but the session still ends locally. The peer's acceptance of the revoked leg is then bounded by the leg certificate's lifetime (at most 900 s, §14).
+- **RTCd-25 Deletion with reason `moved`.** The purge still sends `revoked`. A `moved` control at move commit is RTC-e or identity-portability work, and remains not implemented.
+
+**Tests (engine level unless noted; the PoCs from the review are the basis):**
+- `tests/rtc-engine.test.mjs`: **43** tests, 8 of them new.
+  - M2: no `bound.check` (callee admission) and no callee row during `send`; delivery reaches only the inbound queue; admission happens only on the receiver's own pass; the same answer when blocked; 503 when the queue is full.
+  - M3, forged legs: at most one reply per leg, and at most 4 per session.
+  - M3, head-of-line and overflow: 40 rows to a failing peer ahead of a healthy peer's invite, which is still delivered; a per-peer overflow answers `rate_limited`; the control reserve; the total cap.
+  - M1: the callee becomes keyless after `end-session`; a ringing session using the keys pinned at open; a key rotated between open and answer.
+  - L1: 32 invites from one caller across 8 callees admit 30; concurrent inbox passes count each batch once; a retried invite is counted once; the limiter fails closed.
+  - L2: engine and `decideClaim` units.
+  - L3: narrowing applies to a live session.
+  - L4: the export contributor projection.
+- The fixture's `pump()` now runs each entity's inbound queue, then its outbox. `flushNetwork()` drains first and processes receivers. `ingest()` runs ingest and then the receiver's queue, and `receive()` runs ingest only.
+- Existing tests that relied on synchronous delivery now drain explicitly (`held()` and `drainAll()`), and two loops pump between sends because of the per-peer cap.
+- The chaos invariants now also check the inbound-queue bound, the per-peer outbox bound, that the outbox and inbound counters match their rows, and that the inbound queue is empty at quiescence (20 seeds × 200 steps passed once, as well as the default 8).
+- `tests/rtc-runtime.test.mjs` (Node runtime): **5** tests, 3 of them new.
+  - The deletion control reaches the peer when the identity tombstone ran first and the peer's 60 s key memo lapsed (the review PoC).
+  - `purgeBatch` calls `rtcDrain` before the tombstone, and a failing drain never blocks it.
+  - The host-wide caller window is shared by two writers through the real `WORK_AUTHORITY`.
+
+**Revert check (scratch copy; each guard reverted alone, then `rtc-engine` and `rtc-runtime` run with 3 chaos seeds):**
+- **28 guards** were checked: every M1, M2, M3, L1, L2, L3 and L4 guard above, including the outbox counter decrement, serialized inbox passes and the slice's `WORK_AUTHORITY` wiring.
+- **27 made a suite fail.** The first pass had nine non-failures. Two were wrong patterns in the check script and were corrected. Six were fixed by strengthening the tests: serialized passes, one reply per leg, the total cap, the limiter failing closed, the retried invite, and `decideClaim`'s rule. All eight now fail when reverted.
+- **1 equivalent survivor**: the post-signing `claimUsable` check in `claim`. With `decideClaim` fixed, it is reachable only through a race in which the session ends while the certificate is being signed. It is kept as defence in depth.
+
+**Verification (local evidence only):**
+- In the main checkout: `rtc-engine` **43**, `rtc-runtime` **5**, and all `tests/rtc-*.test.mjs` with `extensions-bound-options` (**111** in total): all pass.
+- Scratch copy of the full working tree, including the other agent's in-flight web-UI, activity and contact-profile edits: `check:worker` (with `build:assets`) passed, with the existing duplicate-key warnings; `npm test` **3,949 passed, 0 failed**; `test:worker` **93 passed**. A first `npm test` before `build:assets` had 5 page-asset failures (`deletion-http`, `contact-preview`), which pass once assets exist.
+- Not run: e2e, browser probes (no UI in this slice), a real Cloudflare Durable Object (the detached task after the response and `blockConcurrencyWhile` timer behaviour are unverified there; the alarm is the fallback), and anything against a real second provider.
+
+Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-27 — Bug hunt fixes: server review follow-ups
+
+An independent review of the server-side bug-hunt changes found nothing critical, high or medium. It confirmed:
+- the `lang` parameter on authorization is bounded;
+- the profile revision is visible only to the owner;
+- the fixed 404 page cannot reveal whether an account exists;
+- restored app messages render through the same sandboxed frame;
+- `present()` never drops `sandbox`, `rel` or `referrerpolicy`.
+
+Two follow-ups were applied:
+- **I-1:** both unknown-path 404 variants (the HTML page and the plain asset miss) now send `Vary: Accept`. Test: `tests/bughunt-server.test.mjs`.
+- **L-1:** a stale tab that withdraws contact disclosure is no longer refused with `profile_stale`. Only the withdrawal is applied to the stored profile, so newer fields are kept. This also holds when the withdrawal races a write inside the transaction. Stale saves that keep disclosure on are still refused. Test: `tests/contact-profile.test.mjs`.
+
+**Owner decision (F14, not applied):** whether to remove the ignored `sandbox` token from the meta CSP. That means `apps/web/src/bl/activity-content.mjs` and `CONTENT_CSP` in `packages/content/render.mjs`, which a test requires to match. The edit was blocked as weakening security. The frame's `sandbox` attribute provides the isolation either way, and the token only causes a console warning.
+
+**Provisional:** the L-1 withdraw-wins rule.
+
+Reviewer: ___ Date: ___ Outcome: ___

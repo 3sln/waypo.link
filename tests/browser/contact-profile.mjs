@@ -39,6 +39,9 @@ test('saving the contact profile sends only the profile body and publishes the s
  const saved={displayName:'Ray',bio:'Builds things',avatar:'https://images.example/ray.png',discloseToContacts:true};
  const f=await fixture({submissions:{profile:{displayName:'Ray',bio:'Builds things',avatar:'https://images.example/ray.png',discloseToContacts:'on'}},api:{request:async()=>saved}});
  try{
+  // Bug hunt F1: a save is refused until the stored profile has loaded (it would otherwise overwrite it with blanks).
+  await f.act(new SaveProfile({operationId:'profile'}));assert.deepEqual(f.calls,[]);assert.match((await f.read()).error,/still loading/);
+  await f.write({contactBook:{directory:[],profile:{displayName:'',bio:'',avatar:'',discloseToContacts:false},profileStatus:'loaded'},error:''});
   await f.act(new SaveProfile({operationId:'profile'}));
   assert.deepEqual(f.calls,[{method:'PUT',path:'/api/profile',body:{displayName:'Ray',bio:'Builds things',avatar:'https://images.example/ray.png',discloseToContacts:true}}]);
   const state=await f.read();assert.deepEqual(state.contactBook.profile,saved);assert.equal(state.notice,'Contact profile saved.');assert.equal(state.busy,false);
@@ -60,8 +63,11 @@ test('redeeming a contact link saves it once, clears the add-contact secret, and
   let state=await f.read();assert.equal(state.addContactURL,null);assert.equal(f.store.addContactURL,null);assert.equal(state.notice,'Signed contact saved.');assert.equal(state.contactBook.directory.length,1);
   let root=render(contactBookSections(state));assert.match(root.textContent,/River/);assert.match(root.textContent,/<b>hi<\/b>/);assert.equal(root.querySelector('b'),null);assert.equal(buttons(root,'Remove saved contact').length,1);
   await f.act(new CopySavedContact({peer:'peer-1'}));assert.deepEqual(f.copied,[link]);
+  // Bug hunt F11: removal needs the confirmation dialog for this exact contact.
+  await f.act(new RemoveSavedContact({peer:'peer-1'}));assert.equal(f.calls.some(call=>call.method==='DELETE'),false);
+  await f.write({modal:{kind:'remove-saved-contact',contact:{peer:'peer-1',name:'River'}},error:''});
   await f.act(new RemoveSavedContact({peer:'peer-1'}));
-  assert.ok(f.calls.some(call=>call.method==='DELETE'&&call.path==='/api/contacts/directory/peer-1'));
+  assert.ok(f.calls.some(call=>call.method==='DELETE'&&call.path==='/api/contacts/directory/peer-1'));assert.equal((await f.read()).modal,null);
   state=await f.read();assert.deepEqual(state.contactBook.directory,[]);assert.equal(state.notice,'Saved contact removed.');
   root=render(contactBookSections(state));assert.equal(buttons(root,'Remove saved contact').length,0);
  }finally{release();await f.close();}

@@ -34,7 +34,11 @@ async function fixture(){
 test('profile, sharing and saved contacts over HTTP disclose only the redeemed link’s selected fields',async()=>{
  const f=await fixture();try{
   const set=await f.request('/api/profile',{method:'PUT',headers:f.owner.headers,input:{displayName:'Shared name',bio:'Private biography',avatar:'https://image.example/private.png',discloseToContacts:true}});assert.equal(set.status,200,JSON.stringify(set.value));
-  assert.deepEqual((await f.request('/api/profile',{headers:f.owner.headers})).value,{displayName:'Shared name',bio:'Private biography',avatar:'https://image.example/private.png',discloseToContacts:true});
+  {const {revision,...stored}=(await f.request('/api/profile',{headers:f.owner.headers})).value;assert.deepEqual(stored,{displayName:'Shared name',bio:'Private biography',avatar:'https://image.example/private.png',discloseToContacts:true});assert.match(revision,/^[a-f0-9]{32}$/);
+   // Bug hunt F1: a save naming a revision the stored profile no longer has is refused, and nothing changes.
+   const stale=await f.request('/api/profile',{method:'PUT',headers:f.owner.headers,input:{displayName:'',bio:'',avatar:'',discloseToContacts:true,expectedRevision:'0'.repeat(32)}});assert.equal(stale.status,409);assert.equal(stale.value.error,'profile_stale');
+   assert.equal((await f.request('/api/profile',{headers:f.owner.headers})).value.revision,revision);
+   const fresh=await f.request('/api/profile',{method:'PUT',headers:f.owner.headers,input:{...stored,expectedRevision:revision}});assert.equal(fresh.status,200);assert.equal(fresh.value.revision,revision,'the revision is derived from content');}
   assert.equal((await f.metadata(f.owner.account.id).get('profile')).displayName,'Shared name');
   const hidden=await f.contact({}),named=await f.contact({profileFields:['displayName']});assert.equal(named.status,200,JSON.stringify(named.value));
   assert.deepEqual(hidden.value.profileFields,[]);assert.deepEqual(named.value.profileFields,['displayName']);assert.equal(named.value.discloseProfile,true);assert.equal('beamEnabled' in named.value,false);
@@ -92,7 +96,7 @@ async function seedLegacy(db){
 
 test('v1 reads: legacy rows answer before any copy, and every write keeps both keys with one stamp',async t=>{
  const db=store(t),contacts=service(db,{inspect:async()=>({grant:grantRow(),endpoint:'https://portal.example/users/person/contact/'+GRANT})});await seedLegacy(db);
- assert.deepEqual(await contacts.profile(OWNER),{displayName:'Legacy name',bio:'Legacy bio',avatar:'',discloseToContacts:true});
+ {const {revision,...profile}=await contacts.profile(OWNER);assert.deepEqual(profile,{displayName:'Legacy name',bio:'Legacy bio',avatar:'',discloseToContacts:true});assert.match(revision,/^[a-f0-9]{32}$/);}
  assert.deepEqual(await contacts.contactInfo(OWNER,PEER,{grantId:GRANT}),{profile:{displayName:'Legacy name'}},'legacy beamEnabled is not surfaced');
  assert.deepEqual(await contacts.disclosed(OWNER,PEER,{grantId:GRANT}),{displayName:'Legacy name'});
  assert.deepEqual((await contacts.peerBindings(OWNER,PEER)).map(b=>b.grantId),[GRANT]);
@@ -257,4 +261,38 @@ test('contact revocation cleanup reclaims sharing and redemption rows under both
  for(const id of [fresh.id,legacy.id])await c.revokeContact(OWNER,id);
  t.mock.timers.tick(DEAD_PARENT_HOLD_MS+1000);await collectLinkState(c,OWNER);
  for(const prefix of ['contact-sharing/','contact-redeemed/','contact-redeemed-peer/','beam/grant/','beam/redeemed/','beam/redeemed-peer/'])assert.equal((await db.list({prefix})).size,0,prefix);
+});
+
+test('bug hunt F1: expectedRevision guards profile saves against stale and concurrent writes',async t=>{
+ const db=store(t),contacts=service(db,{inspect:async()=>({grant:grantRow(),endpoint:'https://portal.example/users/person/contact/'+GRANT})});await seedLegacy(db);
+ const loaded=await contacts.profile(OWNER),edit={displayName:'Edited',bio:'Legacy bio',avatar:'',discloseToContacts:true};
+ // Another session saves first; the save that still names the old revision is refused and changes nothing.
+ const other=await contacts.profile(OWNER,{...edit,displayName:'Other session',expectedRevision:loaded.revision});assert.equal(other.displayName,'Other session');assert.notEqual(other.revision,loaded.revision);
+ await assert.rejects(contacts.profile(OWNER,{...edit,expectedRevision:loaded.revision}),{code:'profile_stale',status:409});
+ assert.equal((await contacts.profile(OWNER)).displayName,'Other session');
+ // A write that lands between the revision check and the transaction is caught inside the transaction.
+ const current=await contacts.profile(OWNER),transaction=db.transaction.bind(db);let raced=false;
+ db.transaction=async fn=>{if(!raced){raced=true;await transaction(tx=>tx.put('beam/profile',{owner:OWNER,displayName:'Raced',bio:'',avatar:'',discloseToContacts:false}));}return transaction(fn);};
+ await assert.rejects(contacts.profile(OWNER,{...edit,expectedRevision:current.revision}),{code:'profile_stale'});db.transaction=transaction;
+ assert.equal((await contacts.profile(OWNER)).displayName,'Raced');
+ // Without expectedRevision the save is unconditional (existing clients); malformed revisions are refused.
+ assert.equal((await contacts.profile(OWNER,edit)).displayName,'Edited');
+ for(const expectedRevision of ['',1,'x'.repeat(32),null])await assert.rejects(contacts.profile(OWNER,{...edit,expectedRevision}),{code:'profile_invalid'});
+});
+
+test('bug hunt F1 review: a stale tab withdrawing disclosure applies only the withdrawal',async t=>{
+ const db=store(t),contacts=service(db,{inspect:async()=>({grant:grantRow(),endpoint:'https://portal.example/users/person/contact/'+GRANT})});await seedLegacy(db);
+ const stale=await contacts.profile(OWNER,{displayName:'Old',bio:'Old bio',avatar:'',discloseToContacts:true});
+ await contacts.profile(OWNER,{displayName:'Newer',bio:'Newer bio',avatar:'',discloseToContacts:true,expectedRevision:stale.revision});
+ // Withdrawal from the stale tab lands, but the stale tab's other fields do not overwrite the newer ones.
+ const after=await contacts.profile(OWNER,{displayName:'Old',bio:'Old bio',avatar:'',discloseToContacts:false,expectedRevision:stale.revision});
+ assert.equal(after.discloseToContacts,false);assert.equal(after.displayName,'Newer');assert.equal(after.bio,'Newer bio');
+ // A stale save that keeps disclosure on is still refused.
+ await assert.rejects(contacts.profile(OWNER,{displayName:'Old',bio:'Old bio',avatar:'',discloseToContacts:true,expectedRevision:stale.revision}),{code:'profile_stale'});
+ // Withdrawal racing a write inside the transaction also applies only the withdrawal.
+ const current=await contacts.profile(OWNER),transaction=db.transaction.bind(db);let raced=false;
+ await contacts.profile(OWNER,{displayName:'Newer',bio:'Newer bio',avatar:'',discloseToContacts:true});const fresh=await contacts.profile(OWNER);
+ db.transaction=async fn=>{if(!raced){raced=true;await transaction(tx=>tx.put('beam/profile',{owner:OWNER,displayName:'Raced',bio:'',avatar:'',discloseToContacts:true}));}return transaction(fn);};
+ const raced1=await contacts.profile(OWNER,{displayName:'Newer',bio:'Newer bio',avatar:'',discloseToContacts:false,expectedRevision:fresh.revision});db.transaction=transaction;
+ assert.equal(raced1.discloseToContacts,false);assert.equal(raced1.displayName,'Raced');void current;
 });

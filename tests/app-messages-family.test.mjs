@@ -197,3 +197,18 @@ test('F3/F6: unverifiable app-shaped rows are counted for review; the post-marke
  const later=await account.migrateAppMessageFamily(OWNER,{alarm:true,now:2000+86400001});assert.equal(later.reason,undefined);assert.equal(later.done,true);
  assert.equal(await db.get('migration/app-messages-v1-reconciled-at'),2000+86400001);
 });
+
+test('bug hunt F4: the legacy adapter marks moved app-message rows verified and leaves message/ rows unverified',async t=>{
+ const {ActivityStore}=await import('../packages/activity/store.mjs');
+ const db=await store(t),config=await keys(),activity=new ActivityStore({accountStore:db,clock:{now:()=>0},random:null});
+ // uuid(1) was moved after verification; uuid(2) still sits in message/ (unmoved or unverifiable); uuid(3) is a forged
+ // row in message/; uuid(4) exists in both families mid-move and must resolve to the verified app-family copy.
+ await db.put(appMessageKey(OWNER,uuid(1)),await appRow(config,uuid(1)));
+ await db.put(key('message',OWNER,uuid(2)),await appRow(config,uuid(2)));
+ await db.put(key('message',OWNER,uuid(3)),await appRow(config,uuid(3),{forge:true}));
+ const both=await appRow(config,uuid(4));await db.put(appMessageKey(OWNER,uuid(4)),both);await db.put(key('message',OWNER,uuid(4)),both);
+ await db.put(key('message',OWNER,uuid(5)),peerRow(uuid(5)));
+ const page=await activity.legacy(OWNER);
+ assert.deepEqual(page.items.map(i=>[i.id,i.verified]),[[uuid(1),true],[uuid(2),false],[uuid(3),false],[uuid(4),true]],'peer rows never project; only app-family rows are verified');
+ assert.equal(page.cursor,null);
+});

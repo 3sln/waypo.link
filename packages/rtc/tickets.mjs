@@ -57,3 +57,58 @@ export function canonicalBasisLink(target,{origin}={}){
 /** True when `link` is canonical and its digest equals `digest` (spec §4.2 `link_digest`, §4.3 `callback_digest`). */
 export async function linkMatchesDigest(link,digest,{origin,crypto=globalThis.crypto}={}){const canonical=canonicalBasisLink(link,{origin});return canonical!==null&&await linkDigest(canonical,crypto)===digest;}
 export {linkDigest};
+
+// ---- RTC-d: minting, verification at the owner host and atomic use counting (spec §4.3) ---------------------------
+// Provisional (coordinator), not signed off by the user. Minting is gated by RTC_TICKETS_ENABLED (and
+// RTC_SIGNALING_ENABLED); admission through an existing ticket keeps working until it expires, is exhausted or is
+// revoked, and revocation is never gated.
+//
+// Reading (DEVLOG RTC-d): tickets live in the RTC family of the owner's account writer (`rtc/ticket/<jti>`), not on
+// LinkService `link/` parents, with their own cap of 256 live tickets. The meta is a links §3 meta payload signed with
+// the owner's identity signing key (links §3.1 profile, `typ: bindle-link-meta+jwt`), and the link is
+// `<issuer>/rtc/t/<jti>?bindle_meta=<meta>`. The owner host verifies a presented ticket by its stored exact meta (as
+// links §3.3 does for stored claims) and, when the signer gave one, the public key recorded at mint. Moving tickets
+// onto LinkService records is left to the links owner (interface: mintTicketRecord / ticketFromLink).
+import {LINK_META_TYP,parseLinkMeta,parseLinkQuery,signLinkJWS,verifyLinkSignature} from '../links/envelope.mjs';
+import {base64url as b64} from '../core/records.mjs';
+
+export const TICKET_PATH='/rtc/t/',TICKET_KEY=jti=>`rtc/ticket/${jti}`,TICKET_PREFIX='rtc/ticket/';
+const ticketFault=(code='rtc_ticket_invalid')=>{throw Object.assign(new Error(code),{code});};
+/**
+ * Signs a ticket meta and returns {link, claims, record}. `signer` is {kid, privateKey, publicJwk?} (the owner's
+ * identity signing key). `now` is ms. The caller stores `record` under TICKET_KEY(jti) in the same transaction that
+ * counts the cap.
+ */
+export async function mintTicketRecord({issuer,sub,purposes,uses,expiresIn,principal=null,signer,now,callback=false,allowLoopback=false,crypto=globalThis.crypto}){
+ const lifetime=ticketLifetime(expiresIn);if(lifetime===null)ticketFault('invalid_args');
+ const jti=b64(crypto.getRandomValues(new Uint8Array(16))),iat=Math.floor(now/1000),aud=`${issuer}${TICKET_PATH}${jti}`;
+ const claims={bindle:'link-meta',v:1,type:RTC_TICKET_TYPE,iss:issuer,aud,jti,iat,exp:iat+Math.min(lifetime,callback?CALLBACK_MAX_SECONDS:TICKET_MAX_SECONDS),sub,purposes:[...purposes],uses,principal:principal===null?null:{iss:principal.iss,sub:principal.sub}};
+ validateTicketClaims(claims,{allowLoopback});if(callback)validateCallbackTicket(claims,{callee:principal,allowLoopback});
+ const meta=await signLinkJWS({header:{alg:'ES256',kid:signer.kid,typ:LINK_META_TYP},claims,privateKey:signer.privateKey,crypto});
+ const link=`${aud}?bindle_meta=${meta}`;if(canonicalBasisLink(link,{origin:issuer})===null)ticketFault();
+ return {link,claims,record:{jti,meta,claims,purposes:[...claims.purposes],principal:claims.principal,usesLeft:uses,revoked:false,callback,createdAt:now,expiresAt:claims.exp*1000,...signer.publicJwk?{publicJwk:{kty:'EC',crv:'P-256',x:signer.publicJwk.x,y:signer.publicJwk.y}}:{}}};
+}
+/**
+ * The stored record a presented ticket link names at its owner host, or null: the canonical form on `issuer`, a
+ * meta that parses, the exact stored meta, the stored signature check, `sub` equal to `owner`, the ticket type, and
+ * live (not revoked, not expired, not exhausted). Validity only: nothing is spent here (§4.3, §8.2 step 2).
+ */
+export async function ticketFromLink(tx,link,{issuer,owner,now,crypto=globalThis.crypto}){
+ try{
+  if(canonicalBasisLink(link,{origin:issuer})===null)return null;const query=parseLinkQuery(link);if(query.form!=='link')return null;
+  const meta=parseLinkMeta(query.meta),c=meta.claims;if(c.type!==RTC_TICKET_TYPE||c.iss!==issuer||c.sub!==owner||link.split('?')[0]!==c.aud)return null;
+  const row=await tx.get(TICKET_KEY(c.jti));if(!row||row.meta!==query.meta)return null;
+  if(row.publicJwk&&!await verifyLinkSignature(crypto,meta,{alg:'ES256',publicJwk:row.publicJwk}))return null;
+  return row.revoked||row.usesLeft<1||row.expiresAt<=now?null:row;
+ }catch{return null;}
+}
+/**
+ * Spends one use atomically (§8.2 step 8): only for a live ticket that admits `purpose` for the VERIFIED caller
+ * `principal`. Returns true when a use was spent. A ticket at zero uses, revoked or expired admits nothing, silently.
+ */
+export async function spendTicket(tx,jti,{purpose,principal,now}){
+ const row=await tx.get(TICKET_KEY(jti));if(!row||row.revoked||row.usesLeft<1||row.expiresAt<=now||!ticketAdmits(row.claims,{purpose,principal}))return false;
+ await tx.put(TICKET_KEY(jti),{...row,usesLeft:row.usesLeft-1,lastUsedAt:now});return true;
+}
+/** The owner's view of a ticket: never the link or the meta (a bearer capability). */
+export const ticketView=(row,now)=>({jti:row.jti,purposes:[...row.claims.purposes],uses:row.claims.uses,usesLeft:row.usesLeft,principal:row.claims.principal,expiresAt:row.expiresAt,revoked:row.revoked===true,callback:row.callback===true,live:!row.revoked&&row.usesLeft>0&&row.expiresAt>now});

@@ -6,6 +6,8 @@ import {consentKit} from './ui/authorize-entry-consent.mjs';
 import {startEntryPage} from './bl/authorize-entry-page.mjs';
 import {startApprovePage,createApproveBrowser} from './bl/approve.mjs';
 let preferredLocale=navigator.language;try{preferredLocale=JSON.parse(localStorage.getItem('personal-space-preferences'))?.locale??preferredLocale;}catch{}
+// An explicit `?lang=` (the only extra parameter /oauth/authorize?request_id= accepts) chooses the page language.
+{const lang=new URLSearchParams(location.search).get('lang');if(/^(?:en|es)(?:-|$)/i.test(lang??''))preferredLocale=lang;}
 // `?entry=` is the provider-owned authorization entry (slice A7); everything else is the provider request page.
 const entryPage=location.pathname==='/oauth/authorize'&&new URLSearchParams(location.search).has('entry');
 const {t,locale}=authorizeLocalization(preferredLocale);document.documentElement.lang=locale;

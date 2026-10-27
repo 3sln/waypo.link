@@ -1,3 +1,4 @@
+import {present} from './attrs.mjs';
 import {h,fire,checkbox,select} from './release-primitives.mjs';
 import {button,form,input,data,when} from './admin-access.mjs';
 import {consoleView as baseConsoleView} from './admin-console.mjs';
@@ -10,7 +11,9 @@ const mark=(text,cls='subtle')=>h('span',/^\d+$/.test(text)?data(text):text).cla
 const value=v=>v?'On':'Off';
 const dimensionNames={accounts:'Allowed accounts (handles or owner IDs)',clients:'Allowed client IDs',shards:'Shards (00–63)',countries:'Countries (ISO codes)',subdivisions:'Subdivisions (US-TX)'};
 const splitNames=[['accounts','A'],['clients','C'],['shards','S'],['countries','R'],['subdivisions','R']];
-export function envBanner(row){const state=row.env.state;if(state==='env-capability')return h('div',mark('Follows deployment'),data(String(row.env.raw??'—'),'code'));return state==='kill'||state==='invalid'?h('div',h('strong',state==='kill'?'KILL (env)':'Invalid env value'),h('p','This edit has no effect until the environment override is removed.')).attrs({role:'alert'}).classes('alert','error'):state==='ignored'?h('p','The legacy env value is ignored. Remove it after verification.').classes('alert','warning-note'):mark(state==='force-on-legacy'?'Force-on (legacy)':'Env unset');}
+// An env kill shown at page load (the flag list) is plain text; role=alert is kept for the live edit form, where the
+// override makes the owner's pending edit ineffective (bug hunt F18).
+export function envBanner(row,{live=false}={}){const state=row.env.state;if(state==='env-capability')return h('div',mark('Follows deployment'),data(String(row.env.raw??'—'),'code'));return state==='kill'||state==='invalid'?h('div',h('strong',state==='kill'?'KILL (env)':'Invalid env value'),h('p','This edit has no effect until the environment override is removed.')).attrs(live?{role:'alert'}:{}).classes('alert','error'):state==='ignored'?h('p','The legacy env value is ignored. Remove it after verification.').classes('alert','warning-note'):mark(state==='force-on-legacy'?'Force-on (legacy)':'Env unset');}
 /** Wargame 4 L5: stored records the deployed registry rejects. Each such flag follows its outage policy until retired. */
 export function quarantineNotice(list){const rows=list?.quarantined??[];if(!rows.length)return null;return h('div',h('strong','Quarantined flag records'),h('p','These stored records are not accepted by the deployed registry. Each one follows its outage policy; other flags are unaffected. Retire a record with the audited flags.retire action.'),h('ul',...rows.map(row=>h('li',data(row.name,'code'),mark(row.registered?'Invalid record':'Not in registry','warning'))))).attrs({role:'alert'}).classes('alert','warning-note').key('flag-quarantine');}
 export function flagList(state,experiments=false){const f=flagsState(state),list=(f.list?.flags??[]).filter(row=>!experiments||row.registry.experiment);return panel(h('div',heading(experiments?'Experiments':'Feature flags'),h('div',button(state,'Refresh','flags-load',{},'button secondary'),button(state,'Seed and cutover','flags-verify',{},'button secondary')).classes('buttons')).classes('page-heading'),
@@ -30,7 +33,7 @@ function ruleForm(state,row,rule,i,count){const prefix='rule-'+i+'-',dims=row.re
 function editView(state,row){const f=flagsState(state),draft=f.draft,dims=row.registry.dimensions;
  if(row.registry.class==='b')return panel(heading('Env-only capability','flag-editor-heading'),data(row.name,'h2'),envBanner(row),h('p','This capability follows deployment configuration because it controls a binding, protocol surface or safeguard.'),h('p','Effective global state'),data(String(row.global)));
  if(!draft)return panel(heading('Take control','flag-editor-heading'),data(row.name,'h2'),envBanner(row),h('p','Seed from the environment observed by the server, then verify before removing variables.'),h('div',button(state,'Seed flag','flags-preview',{action:'seed'},'button primary'),button(state,'Take control','flags-preview',{action:'take-control'},'button secondary')).classes('buttons'));
- return panel(heading('Edit flag','flag-editor-heading'),data(row.name,'h2'),h('p','Last change',data(' #'+draft.rev)),envBanner(row),form(state,[
+ return panel(heading('Edit flag','flag-editor-heading'),data(row.name,'h2'),h('p','Last change',data(' #'+draft.rev)),envBanner(row,{live:true}),form(state,[
   checkbox('on','Master switch',draft.on),select('fallthrough','Fallthrough',row.registry.narrowOnly?[[String(row.registry.safe),value(row.registry.safe)]]:[['false','Off'],['true','On']],String(draft.fallthrough)),
   row.registry.retainExisting?checkbox('retainExisting','Retain existing accounts',draft.retainExisting):null,
   dims.includes('A')?input('denyAccounts','Denied accounts (handles or owner IDs)','text',{value:(draft.deny.accounts??[]).join(', '),maxLength:40000}):null,
@@ -58,8 +61,8 @@ export function flagsView(state){const f=flagsState(state),row=f.list?.flags.fin
 export function consoleView(state){
  const extra=['flags','experiments'].includes(state.view),base=baseConsoleView(extra?{...state,view:'overview'}:state);
  function extend(node){if(!node||typeof node!=='object'||typeof node.tag!=='string')return node;const classes=node.$?.classes??[],nav=classes.includes('admin-nav'),screen=extra&&classes.includes('admin-screen');
-  const children=screen?[flagsView(state)]:node.args.map(arg=>Array.isArray(arg)?arg.map(extend):extend(arg));if(nav)children.push(...[['flags','Feature flags'],['experiments','Experiments']].map(([view,label])=>button(state,label,'navigate',{view},'admin-nav-item'+(state.view===view?' active':'')).attrs({'aria-current':state.view===view?'page':null})));
-  const oldNav=extra&&classes.includes('admin-nav-item');return h(node.tag,...children).props(node.p).attrs({...node.$?.attrs,...oldNav?{'aria-current':null}:{}}).classes(...(oldNav?classes.filter(name=>name!=='active'):classes)).style(node.$?.styling).data(node.$?.dataset).on(node.hooks).key(node.k);
+  const children=screen?[flagsView(state)]:node.args.map(arg=>Array.isArray(arg)?arg.map(extend):extend(arg));if(nav)children.push(...[['flags','Feature flags'],['experiments','Experiments']].map(([view,label])=>button(state,label,'navigate',{view},'admin-nav-item'+(state.view===view?' active':'')).attrs(present({'aria-current':state.view===view?'page':undefined}))));
+  const oldNav=extra&&classes.includes('admin-nav-item');return h(node.tag,...children).props(node.p).attrs(present({...node.$?.attrs,...oldNav?{'aria-current':undefined}:{}})).classes(...(oldNav?classes.filter(name=>name!=='active'):classes)).style(node.$?.styling).data(node.$?.dataset).on(node.hooks).key(node.k);
  }
  return h('div',h('style',`.admin-flags{min-width:0}.admin-flags .panel{min-width:0;overflow-wrap:anywhere}.admin-flags pre{white-space:pre-wrap;overflow-wrap:anywhere}.admin-flags .flag-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));gap:1rem}.admin-flags .input{max-width:100%;min-width:0}.admin-flags .buttons{flex-wrap:wrap}.admin-flags .admin-facts dd{min-width:0;overflow-wrap:anywhere}`).attrs({translate:'no'}),extend(base));
 }

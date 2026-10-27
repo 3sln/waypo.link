@@ -28,7 +28,9 @@ for(const browserName of ['chromium','firefox']){
  await page.goto(`${baseURL}/console?lang=${locale}&view=billing`);await page.emulateMedia({colorScheme});assert.equal(await page.evaluate(()=>matchMedia('(prefers-color-scheme:dark)').matches),colorScheme==='dark');await page.locator('.billing-availability').waitFor();await page.locator('.skip-link').focus();await check('.skip-link');await page.locator('.skip-link').evaluate(e=>e.blur());await check('.sidebar-storage, .sidebar-storage strong, .billing-availability, .breadcrumb, .workspace-footer');await page.screenshot({path:`${artifacts}/round2-billing-${browserName}-${locale}-${colorScheme}-${width}.png`,fullPage:true});
  // Navigate through the actual shell intent, keeping the same engine and owner.
  await page.locator('#app').evaluate(root=>root.dispatchEvent(new CustomEvent('3sln-intent',{bubbles:true,detail:{kind:'navigate',view:'contacts'}})));
- await page.locator('.saved-contacts').waitFor();await check('.saved-contacts .muted, .contact-profile-settings .field-help');await page.screenshot({path:`${artifacts}/round2-contacts-${browserName}-${locale}-${colorScheme}-${width}.png`,fullPage:true});
+ await page.locator('.saved-contacts').waitFor();
+ // The transient loading line is removed when the profile arrives; measuring a detached node reads empty styles, so wait for the settled form.
+ await page.locator('.contact-profile-settings form:not([aria-busy="true"])').waitFor();await check('.saved-contacts .muted, .contact-profile-settings .field-help');await page.screenshot({path:`${artifacts}/round2-contacts-${browserName}-${locale}-${colorScheme}-${width}.png`,fullPage:true});
  if(width===390){const box=await page.locator('.saved-contacts input').boundingBox();assert.ok(box.height>=44);}
  await page.waitForURL('**view=contacts**');await page.reload();await page.locator('.saved-contacts').waitFor();
  await page.goBack();await page.locator('.billing-availability').waitFor();
