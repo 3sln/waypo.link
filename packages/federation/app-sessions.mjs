@@ -62,12 +62,14 @@ export async function issueAppAccess(service,tx,family){
  const grants=await service.liveGrantIds(tx,family);await service.bounded(tx,'token',256,{count:row=>!row.member});
  const now=service.clock(),bound=family.access==='dpop',access_token=service.random(),expiresAt=Math.min(now+appAccessMs(service,family),family.expiresAt),expires_in=Math.floor((expiresAt-now)/1000);if(expires_in<1)fail('invalid_grant');
  const id=bound?await boundTokenId(service,access_token):await digest(service.crypto,`token\0${access_token}`);
- await tx.set(key('token',id),{issuer:service.issuer,audience:service.audience,subject:family.subject,epoch:family.epoch,...family.connection?{connection:structuredClone(family.connection)}:{},familyId:family.familyId,clientId:family.clientId,grants,expiresAt,...bound?{jkt:family.jkt}:{},...typeof family.codeHash==='string'&&!family.familyId?{codeHash:family.codeHash}:{}});
+ await tx.set(key('token',id),{issuer:service.issuer,audience:service.audience,subject:family.subject,epoch:family.epoch,...family.connection?{connection:structuredClone(family.connection)}:{},familyId:family.familyId,clientId:family.clientId,grants,expiresAt,...bound?{jkt:family.jkt,...publicJwk(family.jwk)?{jwk:publicJwk(family.jwk)}:{}}:{},...typeof family.codeHash==='string'&&!family.familyId?{codeHash:family.codeHash}:{}});
  const granted_fragments=[];for(const grant of grants){const record=await tx.get(key('grant',grant));granted_fragments.push({grant,fragment:record.fragment,digest:record.digest,fields:structuredClone(record.fields)});}
  return {access_token,token_type:bound?'DPoP':'Bearer',expires_in,issuer:service.issuer,subject:family.subject,client_id:family.clientId,audience:service.audience,grants,granted_fragments};
 }
 /** One family per approval. `options`: `familyId` (reserved by linked approval), `expiresAt` (a user-chosen absolute
  * limit; default none), `lineage` ({owner, lineageId}), `access: 'dpop'` (bound access tokens) and `grantType`. */
+/** The session key's public JWK as stored: an EC P-256 public key only (kty, crv, x, y), never private material. */
+const publicJwk=jwk=>jwk&&typeof jwk==='object'&&jwk.kty==='EC'&&jwk.crv==='P-256'&&typeof jwk.x==='string'&&typeof jwk.y==='string'&&/^[A-Za-z0-9_-]{43}$/.test(jwk.x)&&/^[A-Za-z0-9_-]{43}$/.test(jwk.y)?{kty:'EC',crv:'P-256',x:jwk.x,y:jwk.y}:null;
 export async function createAppSession(service,tx,authority,jkt,options={}){
  const now=service.clock(),ended=[];
  // At most eight live sessions per client and owner; the least recently used yields before the per-account bound is counted.
@@ -80,7 +82,7 @@ export async function createAppSession(service,tx,authority,jkt,options={}){
  const familyId=options.familyId??service.random();if(typeof familyId!=='string'||!/^[A-Za-z0-9_.-]{16,128}$/.test(familyId)||await tx.get(key('family',familyId)))fail('invalid_grant');
  const expiresAt=options.expiresAt==null?NO_EXPIRY:options.expiresAt;if(!Number.isSafeInteger(expiresAt)||expiresAt<=now)fail('invalid_grant');
  const rotationKey=base64url(service.crypto.getRandomValues(new Uint8Array(32))),refresh_token=service.random(),hash=await digest(service.crypto,`refresh\0${refresh_token}`);
- const family={...structuredClone(authority),issuer:service.issuer,audience:service.audience,familyId,expiresAt,idleExpiresAt:Math.min(now+appRefreshIdleMs(service),expiresAt),lastUsedAt:now,createdAt:now,jkt,rotationKey,status:'active',currentHash:hash,history:[hash],grantType:options.grantType??'authorization_code',...options.lineage?{lineage:{owner:options.lineage.owner,lineageId:options.lineage.lineageId}}:{},...options.access==='dpop'?{access:'dpop'}:{}};
+ const family={...structuredClone(authority),issuer:service.issuer,audience:service.audience,familyId,expiresAt,idleExpiresAt:Math.min(now+appRefreshIdleMs(service),expiresAt),lastUsedAt:now,createdAt:now,jkt,...jkt&&publicJwk(options.jwk)?{jwk:publicJwk(options.jwk)}:{},rotationKey,status:'active',currentHash:hash,history:[hash],grantType:options.grantType??'authorization_code',...options.lineage?{lineage:{owner:options.lineage.owner,lineageId:options.lineage.lineageId}}:{},...options.access==='dpop'?{access:'dpop'}:{}};
  await tx.set(key('family',familyId),family);await tx.set(key('refresh',hash),{familyId,used:false,expiresAt});
  await endLineage(service,ended);
  return {family,refresh_token,...expiresIn(family,now)};
@@ -98,6 +100,8 @@ export async function rotateBound(service,tx,{record,family,hash,token,proof}){
  const now=service.clock(),end=async()=>{await revokeFamily(service,tx,family);await endLineage(service,[family]);return {failure:'invalid_grant'};};
  // A valid token without its key neither renews nor revokes the session.
  if(!proof||proof.jkt!==family.jkt)fail('invalid_dpop_proof','A DPoP proof from the session key is required.');
+ // ORG-10f gate 4: a session created before its public key was recorded learns it from the proof that just proved it.
+ if(!family.jwk&&publicJwk(proof.jwk))family.jwk=publicJwk(proof.jwk);
  if(family.idleExpiresAt<=now)return end();
  if(record.used){
   const grace=!record.graceUsed&&now-record.usedAt<=APP_SESSION.grace&&record.nextHash===family.currentHash;

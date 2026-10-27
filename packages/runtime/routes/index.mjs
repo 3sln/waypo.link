@@ -20,7 +20,9 @@
 // is skipped for exempt paths and for protective changes, whose JSON body is read only when a rule matches.
 //
 // Routes of different modules in one stage must not overlap. Where they do, this order decides: `delivery`
-// answers contact-delivery bearer RPC on /bindle/rpc before `federation`, `memberCertificates` (ORG-4) answers only
+// answers contact-delivery bearer RPC on /bindle/rpc before `federation`, `relations` (ORG-10f) answers only entity
+// certificates on /oauth/token and the BindleEntity and relation-token schemes on /bindle/rpc before `memberCertificates`
+// and `federation`, `memberCertificates` (ORG-4) answers only
 // the jwt-bearer member grant on /oauth/token before `federation` and member holder-key status before `delegation`, and `beams` answers the methods of
 // /api/contacts/{redeem,directory} before `contacts`. `moved` (PORT-3) is first on purpose: its edge-stage router
 // answers per-identity paths of a moved identity (308 during the redirect period) before any per-identity route,
@@ -63,8 +65,9 @@ import * as orgs from './orgs.mjs';
 import * as memberCertificates from './member-certificates.mjs';
 import * as recoveryReissue from './recovery-reissue.mjs';
 import * as orgClaimAbort from './org-claim-abort.mjs';
+import * as relations from './relations.mjs';
 
-export const ROUTES=Object.freeze([moved,transferPages,directory,intents,recoveryReissue,orgClaimAbort,site,admin,identity,lifecycle,deletion,automation,conversations,beams,contacts,delivery,messages,views,storage,billing,search,notifications,memberCertificates,federation,links,delegation,incremental,events,appSessions,integrations,connections,emailBridge,exports,retention,appRemoval,orgs,transferIn]);
+export const ROUTES=Object.freeze([moved,transferPages,directory,intents,recoveryReissue,orgClaimAbort,site,admin,identity,lifecycle,deletion,automation,conversations,beams,contacts,delivery,messages,views,storage,billing,search,notifications,relations,memberCertificates,federation,links,delegation,incremental,events,appSessions,integrations,connections,emailBridge,exports,retention,appRemoval,orgs,transferIn]);
 export const STAGES=Object.freeze(['edge','public','anonymous','unauthenticated','api','session','beforeActivity','owner','pages']);
 for(const module of ROUTES)for(const name of Object.keys(module.stages??{}))if(!STAGES.includes(name))throw new TypeError(`Unknown route stage ${name}`);
 

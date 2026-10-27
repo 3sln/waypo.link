@@ -136,14 +136,41 @@ test('budgets: per connection, per integration, concurrency and a cool-down afte
  h=harness({budgets:{integrationPerMinute:2}});const other={...CONNECTION,id:'22222222-2222-4222-8222-222222222222'};
  await h.discover();await h.client.discover({subject:SUBJECT,connection:other,query:{contracts:[MODEL]}});
  await assert.rejects(h.client.discover({subject:SUBJECT,connection:{...other,id:'33333333-3333-4333-8333-333333333333'},query:{contracts:[MODEL]}}),code('discovery_rate_limited'),'one integration is protected across connections');
- let release;const gate=new Promise(r=>{release=r;});
- h=harness({budgets:{integrationConcurrency:1},answer:async()=>{await gate;return Response.json({v:1,items:[]});}});
- const first=h.discover();await new Promise(r=>setTimeout(r,10));await assert.rejects(h.discover({contracts:[MODEL],text:'b'}),code('discovery_rate_limited'));release();await first;
+ let release,held;const gate=new Promise(r=>{release=r;}),holding=new Promise(r=>{held=r;});
+ h=harness({budgets:{integrationConcurrency:1},answer:async()=>{held();await gate;return Response.json({v:1,items:[]});}});
+ const first=h.discover();
+ try{await holding;await assert.rejects(h.discover({contracts:[MODEL],text:'b'}),code('discovery_rate_limited'));}
+ finally{release();await first.catch(()=>{});}
+ await first;
  h=harness({budgets:{failureThreshold:2,cooldownMs:30000},answer:()=>new Response('{}',{status:500})});
  await assert.rejects(h.discover({contracts:[MODEL],text:'1'}),code('discovery_failed'));await assert.rejects(h.discover({contracts:[MODEL],text:'2'}),code('discovery_failed'));
  await assert.rejects(h.discover({contracts:[MODEL],text:'3'}),e=>e.code==='discovery_rate_limited'&&e.retryAfter===30);assert.equal(h.seen.length,2,'the cool-down sends nothing');
  h.clock.advance(30001);await assert.rejects(h.discover({contracts:[MODEL],text:'4'}),code('discovery_failed'));
  const durable={calls:0,consume:async()=>{durable.calls++;return false;}};h=harness();h.client.budget=new DiscoveryBudget({durable});await assert.rejects(h.discover(),code('discovery_rate_limited'));assert.equal(durable.calls,1);assert.equal(h.seen.length,0);
+});
+
+test('egress returns its only slot after every outcome and its deadline never fires after a settled exchange',async()=>{
+ const unhandled=[],onUnhandled=e=>unhandled.push(e);process.on('unhandledRejection',onUnhandled);
+ try{
+  let mode;const outcomes={ok:()=>Response.json({v:1}),status:()=>new Response('{}',{status:503}),redirect:()=>new Response(null,{status:302}),throws:()=>{throw new TypeError('network');},oversized:()=>new Response(new Uint8Array(70000)),stalled:()=>new Promise(()=>{})};
+  const egress=createIntegrationEgress({fetcher:async()=>outcomes[mode](),resolve:async host=>host==='private.example'?['10.0.0.1']:['93.184.216.34'],publicRouting:true,maxConcurrent:1,timeoutMs:30});
+  const send=(host='models.example')=>egress.send({url:`https://${host}/x`,body:'{}',maxBytes:65536}).then(v=>({status:v.status}),e=>({error:e.code}));
+  const expected={ok:{status:200},status:{status:503},redirect:{status:302},throws:{error:'egress_refused'},oversized:{error:'egress_refused'},stalled:{error:'egress_refused'}};
+  for(const name of Object.keys(outcomes)){mode=name;assert.deepEqual(await send(),expected[name],name);mode='ok';assert.deepEqual(await send(),{status:200},`the slot is free after ${name}`);}
+  assert.deepEqual(await send('private.example'),{error:'egress_refused'});assert.deepEqual(await send(),{status:200},'the slot is free after a refused address');
+  // A transport may ignore abort and reject only after its caller has timed out. The losing race promise
+  // must remain observed, and its late completion must not release a newer call's slot.
+  let rejectLate,entered,unblock;const late=new Promise((_,reject)=>{rejectLate=reject;}),holding=new Promise(r=>{entered=r;}),gate=new Promise(r=>{unblock=r;});let calls=0;
+  const delayed=createIntegrationEgress({publicRouting:true,maxConcurrent:1,timeoutMs:30,resolve:async()=>['93.184.216.34'],fetcher:async()=>{if(++calls===1)return late;entered();await gate;return Response.json({});}});
+  const request=()=>delayed.send({url:HOST+'/x',body:'{}',maxBytes:65536});
+  await assert.rejects(request(),code('egress_refused'));
+  const next=request();
+  try{await holding;rejectLate(new Error('late transport rejection'));await Promise.resolve();await assert.rejects(request(),code('egress_busy'));}
+  finally{unblock();await next.catch(()=>{});}
+  await next;
+  await new Promise(r=>setTimeout(r,90));// three deadlines' worth: no cleared timer may still reject
+  assert.deepEqual(unhandled,[]);
+ }finally{process.off('unhandledRejection',onUnhandled);}
 });
 
 test('review regressions: one tenant cannot cool an integration down for others; only unavailability counts (X7-R1, R7)',async()=>{
@@ -157,9 +184,18 @@ test('review regressions: one tenant cannot cool an integration down for others;
  for(let i=0;i<5;i++)(await budget.admit('tenant-5',origin))('neutral');(await budget.admit('tenant-5',origin))('ok');
  const h=harness({budgets:{failureThreshold:1},answer:()=>Response.json({error:'invalid_token'},{status:401})});
  await assert.rejects(h.discover({contracts:[MODEL],text:'a'}),code('discovery_rejected'));await assert.rejects(h.discover({contracts:[MODEL],text:'b'}),code('discovery_rejected'),'a 401 is about this connection, never a cool-down');
- let release;const gate=new Promise(r=>{release=r;});const busy=harness({budgets:{failureThreshold:1,integrationConcurrency:8},egressOptions:{maxConcurrent:1},answer:async()=>{await gate;return Response.json({v:1,items:[]});}});
- const first=busy.discover();await new Promise(r=>setTimeout(r,10));await assert.rejects(busy.discover({contracts:[MODEL],text:'x'}),code('egress_busy'));release();await first;
- await busy.discover({contracts:[MODEL],text:'y'});// local pressure was neutral: no cool-down
+ // Sequencing: each discover makes exactly one egress call, and egress takes its slot (active++) synchronously
+ // before resolving the host and calling the fetcher, so `holding` (signalled from inside the fetcher) proves the
+ // first call owns the only slot. A wall-clock sleep did not: admission and token minting are asynchronous (real
+ // WebCrypto), so under load the second call could reach egress first. The slot is released in egress's `finally`
+ // before `first` settles, so the last call is deterministic. The gate is always opened so a failed assertion never
+ // leaves `first` to be refused later by the egress deadline (an unhandled rejection after the test ended).
+ let release,held;const gate=new Promise(r=>{release=r;}),holding=new Promise(r=>{held=r;});const busy=harness({budgets:{failureThreshold:1,integrationConcurrency:8},egressOptions:{maxConcurrent:1,timeoutMs:10000},answer:async()=>{held();await gate;return Response.json({v:1,items:[]});}});
+ const first=busy.discover();
+ try{await holding;await assert.rejects(busy.discover({contracts:[MODEL],text:'x'}),code('egress_busy'));assert.equal(busy.seen.length,1,'a busy egress sends nothing');}
+ finally{release();await first.catch(()=>{});}
+ await first;
+ await busy.discover({contracts:[MODEL],text:'y'});assert.equal(busy.seen.length,2);// local pressure was neutral: no cool-down
  const lru=new DiscoveryBudget({clock:clock.now,maxKeys:24,budgets:{integrationPerMinute:2}});(await lru.admit('c0',origin))('ok');
  for(let i=1;i<20;i++){(await lru.admit('c'+i,'https://o'+i+'.example'))('ok');if(i%3===0)await lru.admit('cx'+i,origin).then(r=>r('ok'),()=>{});}
  await assert.rejects(lru.admit('late',origin),code('discovery_rate_limited'),'a hot per-integration window survives a burst of new keys');

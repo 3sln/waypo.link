@@ -130,6 +130,8 @@ export const relationEventMethods={
   cp.peerAep=Math.max(floor,e.aep);
   if(!narrowing&&e.aep<floor){await tx.put(K.cp(e.instance,origin),cp);return accepted;}
   // C8: while a full hold is active nothing widening from that counterpart is honoured; narrowing always is.
+  // Flags stop widening, never inbound revocation. Signature verification and the one 202 answer stay identical.
+  if(!narrowing&&(!this.flag(r.id)||this.foreign(sender)&&!this.flag(r.id,'ORG_FOREIGN_RELATIONS_ENABLED'))){await tx.put(K.cp(e.instance,origin),cp);return accepted;}
   const hold=await this.activeHold(tx,origin,now);
   if(!narrowing&&hold?.kind==='full'){await tx.put(K.cp(e.instance,origin),cp);return accepted;}
   if(type===RELATION_EVENT.introduction){await tx.put(K.cp(e.instance,origin),cp);await this.receiveIntroduction(tx,r,part,cp,sender,payload,now);return accepted;}

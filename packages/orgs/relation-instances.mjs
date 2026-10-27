@@ -58,6 +58,7 @@ import {K,pad,ik,party} from './relation-keys.mjs';
 import {relationEventMethods,RELATION_EVENT_OPERATIONS} from './relation-events.mjs';
 import {relationLifecycleMethods,RELATION_LIFECYCLE_OPERATIONS,RELATION_LIFECYCLE_SYSTEM_OPERATIONS} from './relation-lifecycle.mjs';
 import {relationAccessMethods,defaultWriteCapable,RELATION_ACCESS_SYSTEM_OPERATIONS} from './relation-access.mjs';
+import {relationUpgradeMethods,RELATION_UPGRADE_OPERATIONS} from './relation-upgrades.mjs';
 import {scopeValid} from '../identity/entity-certificates.mjs';
 
 export const ORG_RELATIONS_FLAG='ORG_RELATIONS_ENABLED',ORG_FOREIGN_RELATIONS_FLAG='ORG_FOREIGN_RELATIONS_ENABLED';
@@ -86,12 +87,15 @@ export function sameHostRelationTransport({issuer,dispatch}){
 /** The default own-pool resource port: the federation resource record in this organization's account store. */
 export const ownResources=async(tx,id)=>{if(typeof id!=='string'||isImportId(id))return null;const r=await tx.get('federation/resource/'+id);return r&&plain(r.contracts)&&!r.imported&&!r.grantor&&r.provider!=='relation'?{id,contracts:r.contracts,...plain(r.scoping)?{scoping:r.scoping}:{}}:null;};
 
+/** The default own-pool listing (relations.resources): own federation resource records, never imports. */
+export const ownPool=async tx=>{const out=[];for(const [key,r] of await tx.list({prefix:'federation/resource/',limit:512})){const id=key.slice('federation/resource/'.length),own=await ownResources(tx,id);if(own)out.push({id,label:typeof r.label==='string'?r.label:id,contracts:structuredClone(own.contracts),...own.scoping?{scoping:structuredClone(own.scoping)}:{}});}return out;};
+
 export class RelationService{
- constructor({organizations,documents,signer,counterparts,transport,resources=ownResources,issuer,clock,random,acceptEndpoint,certification,connections,successors,writeCapable=defaultWriteCapable,federationSubject,brokerEndpoint,allowLoopback=false}){
+ constructor({organizations,documents,signer,counterparts,transport,resources=ownResources,pool=ownPool,catalogue,issuer,clock,random,acceptEndpoint,certification,connections,successors,writeCapable=defaultWriteCapable,federationSubject,brokerEndpoint,allowLoopback=false,federationEvidence=false}){
   if(!organizations?.frame||!documents?.resolve||typeof signer!=='function'||!counterparts?.resolve||!transport)throw new TypeError('RelationService needs organizations, documents, signer, counterparts and transport.');
   Object.assign(this,{orgs:organizations,documents,signer,counterparts,transport,resources,issuer:issuer??organizations.issuer,clock:clock??organizations.clock,random:random??organizations.random});
   this.acceptEndpoint=acceptEndpoint??(p=>`${p.iss}/relations/accept`);
-  Object.assign(this,{certification,connections,successors,writeCapable,federationSubject,brokerEndpoint,allowLoopback});
+  Object.assign(this,{certification,connections,successors,writeCapable,federationSubject,brokerEndpoint,allowLoopback,federationEvidence:federationEvidence===true,pool,catalogueEntries:typeof catalogue==='function'?catalogue:async()=>[]});
   // Review M1: the organization's commits withdraw open invitations on a pending deletion or an issuer's removal.
   (organizations.commitHooks??=[]).push((tx,r,actor)=>this.onOrganizationCommit(tx,r,actor));
   this.statements=participationStatements({signer,keys:async p=>(await this.counterparts.resolve(p))?.keys??[],clock:this.clock,random:this.random});
@@ -183,9 +187,10 @@ export class RelationService{
  }
  /** relations.preview: the validated matrix as it applies to one slot, with lookalike warnings. */
  async preview(actor,input){
-  this.requireEnabled(actor);if(!plain(input)||Object.keys(input).some(k=>!['relation','slot'].includes(k)))fail('invalid_request','Unsupported relation request.',400);
+  this.requireEnabled(actor);if(!plain(input)||Object.keys(input).some(k=>!['relation','slot','counterparty'].includes(k))||input.counterparty!==undefined&&!validPrincipal(input.counterparty))fail('invalid_request','Unsupported relation request.',400);
   await this.requireAdmin(actor);const {pin,doc}=await this.resolveDoc(input.relation);
-  return this.adminRead(actor,async(r,tx)=>({pin,matrix:projectForSlot(doc,input.slot),warnings:await this.warnings(tx,doc,null)}));
+  // With a named counterparty, the "never seen before" warning is included (§8b.7 impersonation).
+  return this.adminRead(actor,async(r,tx)=>({pin,matrix:projectForSlot(doc,input.slot),warnings:await this.warnings(tx,doc,input.counterparty?party(input.counterparty):null)}));
  }
 
  // ---- instances -----------------------------------------------------------------------------------------------------
@@ -204,16 +209,43 @@ export class RelationService{
  }
  /** relations.list: this organization's participations (its own view only). */
  list(actor){return this.adminRead(actor,async(r,tx)=>({instances:[...(await tx.list({prefix:'rel/instance/',limit:RELATION_LIMITS.instances+64})).values()].map(p=>({instance:p.instance,relation:p.relation,slots:p.slots,state:p.state}))}));}
+ /** relations.catalogue (flag, admin): the 3sln.me catalogue (RL-14), "listed by 3sln.me", never a verified publisher. */
+ async catalogue(actor){this.requireEnabled(actor);await this.requireAdmin(actor);return {relations:structuredClone(await this.catalogueEntries())};}
+ /** relations.resources (admin): this organization's own grantable pool. Imports are never in it (spec §9.7). */
+ resourcesList(actor){return this.adminRead(actor,async(r,tx)=>({resources:await this.pool(tx)}));}
+ /** relations.invitations (admin): the open invitations this organization issued (withdraw from the console). */
+ invitations(actor){return this.adminRead(actor,async(r,tx)=>{const now=this.clock.now(),out=[];
+  for(const key of (await tx.list({prefix:'rel/inv-open/',limit:RELATION_LIMITS.inbound+64})).keys()){const inv=await tx.get(K.inv(key.slice(key.lastIndexOf('/')+1)));if(inv?.state==='open'&&inv.expiresAt>now)out.push({invitation:inv.jti,instance:inv.instance,slot:inv.slot,as:inv.as,invitee:party(inv.invitee),gives:(inv.grant??[]).map(e=>e.index),receive:inv.receive===true,createdAt:inv.createdAt,expiresAt:inv.expiresAt});}
+  return {invitations:out.sort((a,b)=>a.createdAt-b.createdAt)};});}
+ /** relations.overview (admin): everything the Relationships tab shows, in one read of this organization's own view. */
+ overview(actor){return this.adminRead(actor,async(r,tx)=>{
+  const now=this.clock.now(),instances=[];
+  for(const part of (await tx.list({prefix:'rel/instance/',limit:RELATION_LIMITS.instances+64})).values()){
+   const doc=(await tx.get(K.doc(part.relation.digest)))?.doc;
+   instances.push({instance:part.instance,relation:part.relation,title:typeof doc?.title==='string'?doc.title:null,slots:part.slots,state:part.state,counterparts:await this.counterpartViews(tx,part,now)});
+  }
+  const holds=[...(await tx.list({prefix:'rel/hold/',limit:BATCH})).values()].filter(h=>h.kind==='full'||h.until>now).map(h=>({counterpart:h.principal,kind:h.kind,aep:h.aep,cause:h.cause,since:h.since,...h.until?{until:h.until}:{}}));
+  const unreachable=[...(await tx.list({prefix:'rel/reach/',limit:BATCH})).values()].map(x=>({counterpart:x.principal,since:x.since,flagged:now-x.since>=30*DAY}));
+  const invitations=[];for(const key of (await tx.list({prefix:'rel/inv-open/',limit:RELATION_LIMITS.inbound+64})).keys()){const inv=await tx.get(K.inv(key.slice(key.lastIndexOf('/')+1)));if(inv?.state==='open'&&inv.expiresAt>now)invitations.push({invitation:inv.jti,instance:inv.instance,slot:inv.slot,as:inv.as,invitee:party(inv.invitee),createdAt:inv.createdAt,expiresAt:inv.expiresAt});}
+  const items=[...(await tx.list({prefix:'rel/inbound/',limit:RELATION_LIMITS.inbound})).values()].filter(i=>i.expiresAt>now).map(i=>({kind:'invitation',invitation:i.jti,meta:i.meta,from:i.from,instance:i.instance,relation:i.relation,slot:i.slot,receivedAt:i.receivedAt,expiresAt:i.expiresAt}));
+  const introductions=[...(await tx.list({prefix:'rel/intro/',limit:RELATION_LIMITS.inbound})).values()].filter(i=>i.expiresAt>now).map(i=>({kind:'introduction',introduction:i.id,proposer:i.proposer,instance:i.instance,slot:i.slot,candidate:i.candidate,receivedAt:i.receivedAt,expiresAt:i.expiresAt}));
+  const imports=[...(await tx.list({prefix:IMPORT_PREFIX,limit:512})).values()].map(row=>importView(row,now));
+  return {enabled:this.flag(actor.owner),billing:await this.stage(tx),closing:await this.closing(tx),instances,invitations:invitations.sort((a,b)=>a.createdAt-b.createdAt),inbound:{items,introductions},holds:{holds,unreachable},imports};
+ });}
+ /** The counterpart rows of one instance as relations.get and relations.overview show them. */
+ async counterpartViews(tx,part,now){
+  const out=(await this.counterpartsOf(tx,part.instance)).map(cp=>({principal:party(cp.principal),slot:cp.slot,as:cp.as,state:cp.state,
+   outgoing:{state:cp.grant?.state??null,generation:cp.grant?.generation??0,entries:structuredClone(cp.grant?.entries??[]),live:outgoingLive(part,cp,now),...cp.grant?.cause?{cause:cp.grant.cause}:{}},
+   incoming:{state:cp.acceptance?.state??null,generation:cp.acceptance?.generation??0,live:incomingLive(part,cp)},
+   peer:{grant:cp.peerGrant?.state??null,acceptance:cp.peerAcceptance?.state??null}}));
+  for(const c of out){const hold=await this.activeHold(tx,c.principal,now),reach=await tx.get(K.reach(c.principal));
+   if(hold)c.hold={kind:hold.kind,aep:hold.aep,cause:hold.cause,since:hold.since,...hold.until?{until:hold.until}:{}};if(reach)c.unreachable={since:reach.since,flagged:now-reach.since>=30*DAY};}
+  return out;
+ }
  /** relations.get: one instance in this organization's own view — counterparts it recognizes and the halves between them. */
  get(actor,input){return this.adminRead(actor,async(r,tx)=>{
   const part=typeof input?.instance==='string'?await tx.get(K.instance(input.instance)):null;if(!part)fail();const now=this.clock.now();
-  const counterparts=(await this.counterpartsOf(tx,part.instance)).map(cp=>({principal:party(cp.principal),slot:cp.slot,as:cp.as,state:cp.state,
-   outgoing:{state:cp.grant?.state??null,generation:cp.grant?.generation??0,entries:structuredClone(cp.grant?.entries??[]),live:outgoingLive(part,cp,now)},
-   incoming:{state:cp.acceptance?.state??null,generation:cp.acceptance?.generation??0,live:incomingLive(part,cp)},
-   peer:{grant:cp.peerGrant?.state??null,acceptance:cp.peerAcceptance?.state??null}}));
-  for(const c of counterparts){const hold=await this.activeHold(tx,c.principal,now),reach=await tx.get(K.reach(c.principal));
-   if(hold)c.hold={kind:hold.kind,aep:hold.aep,cause:hold.cause,since:hold.since,...hold.until?{until:hold.until}:{}};if(reach)c.unreachable={since:reach.since,flagged:now-reach.since>=30*DAY};}
-  return {instance:part.instance,relation:part.relation,slots:part.slots,state:part.state,counterparts};
+  return {instance:part.instance,relation:part.relation,slots:part.slots,state:part.state,counterparts:await this.counterpartViews(tx,part,now)};
  });}
 
  // ---- invitations ---------------------------------------------------------------------------------------------------
@@ -309,7 +341,7 @@ export class RelationService{
  });}
  retract(actor,input){return this.system(actor,async(r,now,tx)=>{const item=typeof input?.jti==='string'?await tx.get(K.inbound(input.jti)):null;if(item&&samePrincipal(item.from,input.from))await tx.delete(K.inbound(input.jti));return {received:true};});}
  /** relations.inbound: pending inbound invitations (admins only). */
- inbound(actor){return this.adminRead(actor,async(r,tx)=>{const now=this.clock.now();return {items:[...(await tx.list({prefix:'rel/inbound/',limit:RELATION_LIMITS.inbound})).values()].filter(i=>i.expiresAt>now).map(i=>({kind:'invitation',invitation:i.jti,from:i.from,instance:i.instance,relation:i.relation,slot:i.slot,receivedAt:i.receivedAt,expiresAt:i.expiresAt})),
+ inbound(actor){return this.adminRead(actor,async(r,tx)=>{const now=this.clock.now();return {items:[...(await tx.list({prefix:'rel/inbound/',limit:RELATION_LIMITS.inbound})).values()].filter(i=>i.expiresAt>now).map(i=>({kind:'invitation',invitation:i.jti,meta:i.meta,from:i.from,instance:i.instance,relation:i.relation,slot:i.slot,receivedAt:i.receivedAt,expiresAt:i.expiresAt})),
   introductions:[...(await tx.list({prefix:'rel/intro/',limit:RELATION_LIMITS.inbound})).values()].filter(i=>i.expiresAt>now).map(i=>({kind:'introduction',introduction:i.id,proposer:i.proposer,instance:i.instance,slot:i.slot,candidate:i.candidate,receivedAt:i.receivedAt,expiresAt:i.expiresAt}))};});}
  /** relations.decline (narrowing): drops an inbound item. Nothing is sent to the inviter. */
  decline(actor,input){return this.narrowing(actor,input,['item'],async(r,v,now,m,tx)=>{
@@ -609,6 +641,14 @@ export class RelationService{
   return {changed:out.changed+stale.length,more:out.more};
  }
 
+ /** relations.export: paged admin-readable relation records; never flags, session tokens, keys or proof caches.
+  * This is a portable inspection export. Restoring participations at another provider remains ORG-11b. */
+ exportRelations(actor,input={}){return this.adminRead(actor,async(r,tx)=>{
+  if(!plain(input)||Object.keys(input).some(k=>k!=='after')||input.after!==undefined&&(typeof input.after!=='string'||!input.after.startsWith('rel/')||input.after.length>4096))fail('invalid_request','Invalid export cursor.',400);
+  const rows=await tx.list({prefix:'rel/',...input.after?{startAfter:input.after}:{},limit:201}),page=[...rows].slice(0,200);
+  const allowed=/^rel\/(instance|cp|import|hold|doc|successor|origin|aep|confirmed)\//;
+  return {version:1,organization:this.self(r.id),records:page.filter(([key])=>allowed.test(key)).map(([key,value])=>({key,value})),next:rows.size>200?page.at(-1)?.[0]??null:null};
+ });}
  // ---- imports (ORG-10c) ---------------------------------------------------------------------------------------------
  /** relations.imports: admins see every import; other members only the imports they hold grants on (RL-13). */
  imports(actor,input){return this.metadata.transaction(async tx=>{
@@ -620,7 +660,7 @@ export class RelationService{
  });}
 }
 // ORG-10d and ORG-10e methods (one service, one writer; the modules own their records and rules).
-Object.assign(RelationService.prototype,relationEventMethods,relationLifecycleMethods,relationAccessMethods);
+Object.assign(RelationService.prototype,relationEventMethods,relationLifecycleMethods,relationAccessMethods,relationUpgradeMethods);
 
 // ---- engine operations ---------------------------------------------------------------------------------------------
 const CHANGED='relations-changed';
@@ -628,10 +668,15 @@ const CHANGED='relations-changed';
 export function relationsProvider(service){return class extends Provider{static deps=[];obtain(){return service;}release(){}};}
 class RelAction extends AppAction{static deps=['relations'];static changes=CHANGED;static entities=['organization'];}
 class RelQuery extends AppQuery{static deps=['relations'];static refreshOn=[CHANGED];static entities=['organization'];}
+export class RelationExport extends RelQuery{static operation='relations.export';static lifecycle='suspended';fetch({relations}){return relations.exportRelations(this.actor,this.input??{});}}
 export class RelationPreview extends RelQuery{static operation='relations.preview';fetch({relations}){return relations.preview(this.actor,this.input);}}
 export class RelationList extends RelQuery{static operation='relations.list';static lifecycle='suspended';fetch({relations}){return relations.list(this.actor);}}
 export class RelationGet extends RelQuery{static operation='relations.get';static lifecycle='suspended';fetch({relations}){return relations.get(this.actor,this.input);}}
 export class RelationInbound extends RelQuery{static operation='relations.inbound';static lifecycle='suspended';fetch({relations}){return relations.inbound(this.actor);}}
+export class RelationCatalogue extends RelQuery{static operation='relations.catalogue';fetch({relations}){return relations.catalogue(this.actor);}}
+export class RelationResources extends RelQuery{static operation='relations.resources';static lifecycle='suspended';fetch({relations}){return relations.resourcesList(this.actor);}}
+export class RelationInvitations extends RelQuery{static operation='relations.invitations';static lifecycle='suspended';fetch({relations}){return relations.invitations(this.actor);}}
+export class RelationOverview extends RelQuery{static operation='relations.overview';static lifecycle='suspended';fetch({relations}){return relations.overview(this.actor);}}
 export class RelationInboundPreview extends RelQuery{static operation='relations.inbound-preview';fetch({relations}){return relations.inboundPreview(this.actor,this.input);}}
 // Widening (flag, step-up).
 export class CreateRelation extends RelAction{static operation='relations.create';run({relations}){return relations.create(this.actor,this.input);}}
@@ -648,7 +693,7 @@ export class RedeemRelation extends RelSystem{static operation='relations.redeem
 export class OfferRelation extends RelSystem{static operation='relations.offer';run({relations}){return relations.offer(this.actor,this.input);}}
 export class RetractRelationOffer extends RelSystem{static operation='relations.retract';run({relations}){return relations.retract(this.actor,this.input);}}
 export class RelationSweep extends RelSystem{static operation='relations.sweep';run({relations}){return relations.sweep(this.actor);}}
-export const RELATION_OPERATIONS=Object.freeze([RelationPreview,RelationList,RelationGet,RelationInbound,RelationInboundPreview,CreateRelation,InviteRelation,AcceptRelation,WithdrawRelationInvitation,DeclineRelationItem,LeaveRelation,MuteRelationOrganization,...RELATION_EDGE_OPERATIONS,...RELATION_IMPORT_OPERATIONS,...RELATION_EVENT_OPERATIONS,...RELATION_LIFECYCLE_OPERATIONS]);
+export const RELATION_OPERATIONS=Object.freeze([RelationExport,RelationCatalogue,RelationResources,RelationInvitations,RelationOverview,RelationPreview,RelationList,RelationGet,RelationInbound,RelationInboundPreview,CreateRelation,InviteRelation,AcceptRelation,WithdrawRelationInvitation,DeclineRelationItem,LeaveRelation,MuteRelationOrganization,...RELATION_UPGRADE_OPERATIONS,...RELATION_EDGE_OPERATIONS,...RELATION_IMPORT_OPERATIONS,...RELATION_EVENT_OPERATIONS,...RELATION_LIFECYCLE_OPERATIONS]);
 export const RELATION_SYSTEM_OPERATIONS=Object.freeze([RedeemRelation,OfferRelation,RetractRelationOffer,RelationSweep,...RELATION_EDGE_SYSTEM_OPERATIONS,...RELATION_LIFECYCLE_SYSTEM_OPERATIONS,...RELATION_ACCESS_SYSTEM_OPERATIONS]);
 /** Narrowing operations, which no relations flag ever gates (design §8b.10). */
-export const RELATION_NEVER_GATED=Object.freeze(['relations.withdraw','relations.decline','relations.leave','relations.mute','relations.suspend','relations.end','relations.narrow','relations.ingest','relations.outbox-drain','relations.resync','relations.sweep','relations.list','relations.get','relations.inbound','relations.imports','relations.introductions','relations.holds','relations.tick','relations.lifecycle','relations.observe-counterpart','relations.purge-ready','relations.certify','relations.authorize','relations.edge-check']);
+export const RELATION_NEVER_GATED=Object.freeze(['relations.export','relations.withdraw','relations.decline','relations.leave','relations.mute','relations.suspend','relations.end','relations.narrow','relations.ingest','relations.outbox-drain','relations.resync','relations.sweep','relations.list','relations.get','relations.inbound','relations.imports','relations.overview','relations.invitations','relations.resources','relations.introductions','relations.holds','relations.tick','relations.lifecycle','relations.observe-counterpart','relations.purge-ready','relations.certify','relations.authorize','relations.edge-check']);

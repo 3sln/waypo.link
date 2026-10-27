@@ -47,7 +47,26 @@
 //                                                                    (never gated: the safe direction)
 //   POST   /api/orgs/{id}/break-glass-checkout {claim, disclosure, confirm, plan?, currency?, locale?}  the candidate's
 //                                                                    checkout; passes PaidCheckoutAllowed (routes/identity.mjs)
+// ORG-10f relations (design §8b.10; packages/app/domains/relations.mjs; provisional, behind ORG_RELATIONS_ENABLED):
+//   GET    /api/orgs/{id}/relations                                   admin: the Relationships tab (instances, edges both
+//                                                                    ways, open invitations, inbound items, holds, imports)
+//   POST   /api/orgs/{id}/relations     {operation, ...input}         widening (create | invite | accept | admit | resume |
+//                                                                    rebind | upgrade | confirm-counterpart; flag + fresh step-up),
+//                                                                    proposals and lookups (introduce | preview |
+//                                                                    inbound-preview; flag), narrowing (withdraw | decline |
+//                                                                    suspend | end | narrow | leave | mute; never gated)
+//   GET    /api/orgs/{id}/relations/export                           admin: export existing relation data (never gated)
+//   GET    /api/orgs/{id}/relations/imports                            imports: every import for admins, only those the
+//                                                                    member holds grants on for other members (RL-13)
+//   GET    /api/orgs/{id}/relations/catalogue                          admin, flag: the RL-14 catalogue
+//   GET    /api/orgs/{id}/relations/resources                          admin: the organization's own grantable pool
+//   POST   /api/orgs/{id}/relations/counterparty {handle}             admin, flag: resolve an organization handle
+// With ORG_RELATIONS_ENABLED off for the organization, widening, proposals and lookups answer the uniform 404; reading
+// existing relations, imports and every narrowing operation stay reachable, even during an ORGANIZATIONS_ENABLED
+// ramp-down (the safe direction). A body is exactly {operation} plus the operation's input: anything else (a `from`
+// above all) is refused by the writer; the sending organization is never taken from a request (production gate 1).
 import {json,body,accountHandle,flagEnabled,privateHeaders} from './shared.mjs';
+import {RELATION_ROUTE_OPERATIONS,RELATION_NARROWING} from '../../app/domains/relations.mjs';
 import {createAppEngine,perform,read} from '../../app/engine.mjs';
 import {systemClock,cryptoRandom,nullAudit} from '../../app/providers.mjs';
 import {actingAs} from '../../orgs/authority.mjs';
@@ -62,7 +81,7 @@ import {identityBackupPort} from '../identity-backup.mjs';
 // beforeActivity stage (routes/identity.mjs); its `ageConfirmed` is removed here before the writer sees the input.
 const paidInput=input=>{if(!input||typeof input!=='object'||Array.isArray(input))return input;const {ageConfirmed:_,...rest}=input;return rest;};
 
-const ROOT='/api/orgs',ROOT_EXTRA=/^\/api\/orgs\/(plans|checkout|break-glass)$/,ORG=/^\/api\/orgs\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:\/(audit|name|label|deletion|members|invitations|accept|leave|remove-member|member-grants|grant-decision|membership-policy|reconfirm|mute-requests|invitation-preview|invitation-revoke|membership|requests|connections|preferences|ownership|billing-checkout|transfer-recipient|transfer|claim|recovery-file|invitee|break-glass|break-glass-checkout))?$/;
+const ROOT='/api/orgs',ROOT_EXTRA=/^\/api\/orgs\/(plans|checkout|break-glass)$/,ORG=/^\/api\/orgs\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:\/(audit|name|label|deletion|members|invitations|accept|leave|remove-member|member-grants|grant-decision|membership-policy|reconfirm|mute-requests|invitation-preview|invitation-revoke|membership|requests|connections|preferences|ownership|billing-checkout|transfer-recipient|transfer|claim|recovery-file|invitee|break-glass|break-glass-checkout|relations|relations\/imports|relations\/catalogue|relations\/resources|relations\/counterparty|relations\/export))?$/;
 const BREAK_GLASS_ROUTE={start:'orgs.breakglass-start',accept:'orgs.breakglass-accept',cosign:'orgs.breakglass-cosign',uncosign:'orgs.breakglass-uncosign',withdraw:'orgs.breakglass-withdraw',object:'orgs.breakglass-object',abort:'orgs.breakglass-abort',contest:'orgs.breakglass-contest'};
 // Start-side steps follow ORG_BREAK_GLASS_ENABLED (with ORGANIZATIONS_ENABLED) at the route too; the writer re-checks.
 const BREAK_GLASS_GATED=new Set(['start','accept','cosign']);
@@ -76,7 +95,7 @@ const organizationBilling=env=>{const injected=env.ORGANIZATION_BILLING_CLIENT;r
 const POST_ACTIONS={name:'orgs.rename',label:'orgs.set-label',deletion:'orgs.schedule-deletion',invitations:'orgs.invite',accept:'orgs.accept',leave:'orgs.leave','remove-member':'orgs.remove-member','member-grants':'orgs.member-grants','grant-decision':'orgs.decide-grants','membership-policy':'orgs.membership-policy',reconfirm:'orgs.reconfirm','mute-requests':'orgs.mute-requests','invitation-preview':'orgs.invitation-preview','invitation-revoke':'orgs.invitation-revoke'};
 export function allowedMethods(path){
  if(path===ROOT)return ['GET','POST'];const extra=ROOT_EXTRA.exec(path);if(extra)return ['plans','break-glass'].includes(extra[1])?['GET']:['POST'];const match=ORG.exec(path);if(!match)return null;
- return !match[2]?['GET']:['audit','members','membership','requests','ownership'].includes(match[2])?['GET']:['connections','preferences','break-glass'].includes(match[2])?['GET','POST']:match[2]==='deletion'?['POST','DELETE']:['POST'];
+ return !match[2]?['GET']:['audit','members','membership','requests','ownership','relations/imports','relations/catalogue','relations/resources','relations/export'].includes(match[2])?['GET']:match[2]==='relations'?['GET','POST']:['connections','preferences','break-glass'].includes(match[2])?['GET','POST']:match[2]==='deletion'?['POST','DELETE']:['POST'];
 }
 const call=async(object,owner,request)=>object.orgsDispatch(owner,request);
 // Federation errors carry a code only; give them the statuses the federation HTTP adapter uses (packages/federation/http.mjs)
@@ -139,6 +158,44 @@ async function breakGlassItems(env,{id,object,actor}){
  }
  return {items};
 }
+/** Public handle and name of local organizations a relations view names (handles are public, directory.v1). */
+async function relationNames(env,values){
+ const cache=new Map(),lookup=async p=>{if(!p||p.iss!==env.APP_ORIGIN||typeof p.sub!=='string')return {handle:null,name:null};if(!cache.has(p.sub)){if(cache.size>=128)return {handle:null,name:null};cache.set(p.sub,(async()=>{try{const r=await accountHandle(env,p.sub).memberCertificateOrganizationName(p.sub);return {handle:typeof r?.handle==='string'?r.handle:null,name:typeof r?.name==='string'?r.name:null};}catch{return {handle:null,name:null};}})());}return cache.get(p.sub);};
+ const tag=async(row,field,prefix=field)=>{if(!row?.[field])return row;const n=await lookup(row[field]);return {...row,[prefix+'Handle']:n.handle,[prefix+'Name']:n.name};};
+ const out={...values};
+ if(Array.isArray(values.instances))out.instances=await Promise.all(values.instances.map(async i=>({...i,counterparts:await Promise.all((i.counterparts??[]).map(async c=>{const n=await lookup(c.principal);return {...c,handle:n.handle,name:n.name};}))})));
+ if(Array.isArray(values.invitations))out.invitations=await Promise.all(values.invitations.map(i=>tag(i,'invitee')));
+ if(values.inbound){out.inbound={items:await Promise.all((values.inbound.items??[]).map(i=>tag(i,'from'))),introductions:await Promise.all((values.inbound.introductions??[]).map(async i=>tag(await tag(i,'proposer'),'candidate')))};}
+ if(values.holds){out.holds={holds:await Promise.all((values.holds.holds??[]).map(h=>tag(h,'counterpart'))),unreachable:await Promise.all((values.holds.unreachable??[]).map(h=>tag(h,'counterpart')))};}
+ if(Array.isArray(values.imports))out.imports=await Promise.all(values.imports.map(i=>tag(i,'grantor')));
+ return out;
+}
+/** ORG-10f: the Relationships tab's thin adapter over relationsDispatch in the organization's writer. */
+async function relationsRoute(route,match){
+ const {request,env,id,object,actor}=route,org=match[1],sub=match[2],orgObject=org===id?object:accountHandle(env,org),as=actingAs(actor,{kind:'organization',id:org});
+ const ctx={subject:{kind:'account',owner:org}},orgsOn=flagEnabled(env,'ORGANIZATIONS_ENABLED',ctx,true),relationsOn=orgsOn&&flagEnabled(env,'ORG_RELATIONS_ENABLED',ctx,true);
+ const dispatch=(operation,input)=>orgObject.relationsDispatch(org,{operation,actor:as,...input===undefined?{}:{input}});
+ if(sub==='relations'&&request.method==='GET')return json(await relationNames(env,await dispatch('relations.overview')),200,privateHeaders);
+ if(sub==='relations/export'){const after=route.url?.searchParams.get('after');return json(await dispatch('relations.export',after?{after}:{}),200,privateHeaders);}
+ if(sub==='relations/imports')return json(await relationNames(env,await dispatch('relations.imports',{})),200,privateHeaders);
+ if(sub==='relations/resources'){if(!orgsOn)return json({error:'not_found'},404);return json(await dispatch('relations.resources'),200,privateHeaders);}
+ if(sub==='relations/catalogue'){if(!relationsOn)return json({error:'not_found'},404);return json(await dispatch('relations.catalogue'),200,privateHeaders);}
+ if(sub==='relations/counterparty'){
+  if(!relationsOn)return json({error:'not_found'},404);
+  // Handles are public (directory.v1); resolution is still offered only to an admin of this organization.
+  const input=await body(request,2048),view=await call(orgObject,org,{operation:'orgs.membership',actor:as});if(!(view?.powers??[]).includes('admin'))return json({error:'not_found'},404);
+  let handle;try{handle=normalizeHandle(String(input?.handle??'').trim().replace(/^@/,'').split('@')[0]);}catch{return json({error:'invalid_handle',message:'Enter a complete 3sln.me handle.'},400);}
+  const account=await env.IDENTITY_REPOSITORY?.findByHandle?.(handle);
+  if(!account||account.kind!=='organization'||account.status!=='active'||account.id===org||!env.APP_ORIGIN)return json({error:'counterparty_unavailable',message:'No active 3sln.me organization has that handle.'},404);
+  let name=null;try{name=(await accountHandle(env,account.id).memberCertificateOrganizationName(account.id))?.name??null;}catch{name=null;}
+  return json({counterparty:{iss:env.APP_ORIGIN,sub:account.id,handle:account.handle,name,identity:`${env.APP_ORIGIN}/identity/${account.id}`,origin:env.APP_ORIGIN,kind:'organization'}},200,privateHeaders);
+ }
+ // POST /relations {operation, ...input}
+ const raw=await body(request,65536);if(!raw||typeof raw!=='object'||Array.isArray(raw)||typeof raw.operation!=='string'||!Object.hasOwn(RELATION_ROUTE_OPERATIONS,raw.operation))return json({error:'invalid_request',message:'Unsupported relation request.'},400);
+ const {operation,...input}=raw;
+ if(!RELATION_NARROWING.has(operation)&&!relationsOn)return json({error:'not_found'},404);
+ return json(await dispatch(RELATION_ROUTE_OPERATIONS[operation],input),200,privateHeaders);
+}
 export const stages={
  async owner(route){const {request,env,url,path,id,object,actor,context}=route;
   const allow=allowedMethods(path);if(!allow)return;
@@ -149,6 +206,7 @@ export const stages={
   // Withdrawing, objecting to, blocking or declining an offer, and reading the ownership view, stay reachable too (the
   // writer checks the flag for offers, acceptance and checkouts).
   // Break-glass aborts, withdrawals, objections and contests are never gated (§12d.12); start-side steps check below.
+  if(match?.[2]?.startsWith('relations'))return relationsRoute(route,match);
   if(!cancel&&extra?.[1]!=='break-glass'&&!['leave','grant-decision','reconfirm','requests','connections','transfer','ownership','invitation-revoke','break-glass'].includes(match?.[2])&&!flagEnabled(env,'ORGANIZATIONS_ENABLED',{subject:{kind:'account',owner:match?.[1]??id}},true))return json({error:'not_found'},404);
   const self={principal:actor.principal,entity:actor.entity,authTime:actor.authTime,epoch:actor.epoch,aep:actor.aep??0,...actor.verification?{verification:actor.verification}:{}};
   if(extra?.[1]==='plans'){const billing=organizationBilling(env),creation=await creationEligibility(env,billing,actor);if(!billing.configured())return json({configured:false,server:null,plans:[],creation},200,privateHeaders);const currency=url?.searchParams?.get('currency')??'usd';if(!/^[a-z]{3}$/.test(currency))return json({error:'invalid_currency'},400);return json({configured:true,...await billing.plans(currency),creation},200,privateHeaders);}

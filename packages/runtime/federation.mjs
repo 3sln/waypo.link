@@ -65,6 +65,10 @@ export const MANIFEST_DECLARATIONS=Object.freeze([
  // EXT-X8: brokered-resources.v1 (integrations §12; it replaces the provisional top-level brokering_jwks_uri) only where
  // the adapter mounted integrations.v1 (`mounts.integrations`) AND preferences/v2 minting, severance draining and the
  // brokering JWKS route (`mounts.brokeredResources`); introspection_endpoint only with `mounts.brokeredIntrospection`.
+ // ORG-10f: relations.v1 (spec organizations §14) only where an adapter mounted the cross-provider relation transport
+ // (`mounts.relations`, ORG-11a). No adapter sets it yet: same-host relations need no manifest, and the join and events
+ // endpoints stay behind ORG_FOREIGN_RELATIONS_ENABLED, so the feature is never claimed on flags alone.
+ {flag:['ORG_RELATIONS_ENABLED','ORG_FOREIGN_RELATIONS_ENABLED'],mounted:c=>c.target==='authority'&&c.mounts.relations===true,declare:c=>({features:{'relations.v1':{accept_endpoint:c.issuer+'/relations/accept',join_endpoint:c.issuer+'/relations/join',events_endpoint:c.issuer+'/relations/events'}}})},
  {flag:['INTEGRATIONS_ENABLED','BROKERING_ENABLED'],mounted:c=>c.target==='authority'&&c.mounts.integrations===true&&c.mounts.brokeredResources===true,declare:c=>brokeredResourcesDeclaration(c.issuer,{introspection:c.mounts.brokeredIntrospection===true})},
 ]);
 /** Synchronous adapter over the same provider Query used by the engine harness. Mounts never come from query input. */
@@ -125,6 +129,10 @@ export function federationControllerOptions({config,repository,accounts,owner,ma
  };
  return {organizations:organizationAccountAuthority({account,owner,enabled:()=>ownerFlags(config,owner).enabled('ORGANIZATIONS_ENABLED')}),contractVersion:input=>configuredContractVersion(config,input),pinContract:target=>pinConfiguredContract(config,target),flagConfig:config,schemaHostProvider:()=>Object.keys(federationSchemas(config)).map(url=>new URL(url).host),issuer,clients:federationClients(config),routingKey:owner,crypto,manifestDeclarations:()=>federationDeclarations(config,{target:'controller',mounts:manifestMounts}),objectURLs:{...objectURLAuthority({issuer,secret:config.KEY_ENCRYPTION_KEY}),seal:value=>encryptSecret(value,config.KEY_ENCRYPTION_KEY),open:record=>decryptSecret(record,config.KEY_ENCRYPTION_KEY)},enabled:siteGlobal(config,'FEDERATION_ENABLED'),appSessions:appSessionPolicy(config),refreshEnabled:capability(config,'FEDERATION_REFRESH_ENABLED'),allowInsecureLocalhost:config.LOCAL_DEVELOPMENT==='true',dpop:federationDpopSecret(config)?{secret:federationDpopSecret(config)}:undefined,embedOrigin:componentsProfile(config)?.embedOrigin,clientMetadata:clientMetadataEnabled(config),
   incremental,integrations:siteGlobal(config,'INTEGRATIONS_ENABLED'),clientAuth:clientId=>account.connectionClientAuth(owner,clientId),
+  // ORG-10f (spec organizations §10): imported resources are projected in relay form with an entity certificate issued
+  // by the organization's own writer after its own hops (relations.certify); the shard passes its grant records and the
+  // writer checks the connection. Any refusal reports the member `unavailable`.
+  relationImports:{certify:input=>account.relationsCertify(owner,input)},
   brokering:{enabled:true,mint:input=>account.brokeredMint(owner,input),seq:input=>account.brokeredSeq(owner,input),event:input=>account.brokeredFederationEvent(owner,input)},
   deriveAppSession:appSessionDerivation({repository,owner}),
   appSessionLineage:async candidate=>candidate===subject?(await repository.get(owner))?.linkedLineage??[]:[],
@@ -144,6 +152,9 @@ export function federationControllerOptions({config,repository,accounts,owner,ma
    if(siteEnabled(config,'EVENT_BUSES_ENABLED',{subject:{kind:'account',owner}},true))descriptors.push(...await account.eventBusDescriptors(owner));
    if(ownerFlags(config,owner).enabled('INTEGRATIONS_ENABLED')&&ownerFlags(config,owner).enabled('EXTENSIONS_ENABLED'))descriptors.push(...await account.classifierDescriptors(owner));
    if(siteEnabled(config,'BINDLEBOX_ENABLED',{subject:{kind:'account',owner}},true))descriptors.push({id:`${subject}/links`,label:'Contact links',provider:'bindle',contracts:{[LINKS_CONTRACT]:['issue','revoke','rotate','evaluate','list','changes',...bridgeConfig(featureConfig(config,{subject:{kind:'account',owner}})).enabled?['consumerKey','accepted']:[]]},generation:owner});
+   // ORG-10f: an organization's imported resources (relation import mirrors kept by its writer), so its admins can
+   // assign them to fragments and approve them for applications; never dispatched here (provider 'relation').
+   if(ownerFlags(config,owner).enabled('ORGANIZATIONS_ENABLED')&&current.kind==='organization')descriptors.push(...await account.relationImportDescriptors(owner));
    descriptors.push({id:`${subject}/app-messages`,label:'Messages from this app',provider:'bindle',contracts:{[APP_NOTIFICATIONS]:['createOwn']},generation:owner,limits:{maxRequestBytes:16384,maxResultBytes:1024,txRetentionSeconds:86400}});descriptors.push({id:`${subject}/profile`,label:'Identity profile',provider:'identity',alias:'@profile',contracts:{[PROFILE]:['read']},generation:owner,preview:{entity:subject,handle:current.handle,name:profile.displayName||current.handle,avatar:profile.avatar||null}});return descriptors;
   },
   dispatcher:{durableJournal:true,execute:async context=>{if(!await validateSubject(context.subject,context.epoch))fail('unauthorized','Application authorization is no longer active.');if(context.connection)await account.appConnectionCheck(owner,context.connection.id,context.connection.generation,context.clientId);if(context.resource===`${subject}/profile`&&context.contract===PROFILE&&context.method==='read'){if(Object.keys(context.args).length)fail('invalid_args','Profile read takes no arguments.');const current=await repository.get(owner),profile=await account.beamProfile(owner);return {entity:subject,handle:current.handle,name:profile.displayName||current.handle,avatar:profile.avatar||null};}return account.federationRPC({...context,authority:'bindle'});}},

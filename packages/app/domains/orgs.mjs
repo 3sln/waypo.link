@@ -26,7 +26,7 @@ export class CancelOrganizationDeletion extends OrgAction{static operation='orgs
 export class InitializeOrganization extends OrgAction{static operation='orgs.initialize';static lifecycle='suspended';run({organizations}){return organizations.initialize(this.actor,this.input);}}
 export class ConfirmOrganization extends OrgAction{static operation='orgs.confirm';run({organizations}){return organizations.confirm(this.actor,this.input);}}
 export class ForgetOrganization extends OrgAction{static operation='orgs.forget';static lifecycle='suspended';run({organizations}){return organizations.forget(this.actor,this.input);}}
-export class OrganizationTick extends OrgAction{static operation='orgs.tick';static lifecycle='suspended';run({organizations}){return organizations.tick(this.actor);}}
+export class OrganizationTick extends OrgAction{static operation='orgs.tick';static lifecycle='suspended';run({organizations}){return typeof organizations.deletionTick==='function'?organizations.deletionTick(this.actor):organizations.tick(this.actor);}}
 // ORG-2/3: membershipEntry permits authenticated non-admins to reach private self/consent checks in the provider.
 export class InviteMember extends OrgAction{static operation='orgs.invite';static entities=['organization'];run({organizations}){return organizations.invite(this.actor,this.input);}}
 export class AcceptMembership extends OrgAction{static operation='orgs.accept';static entities=['organization'];static membershipEntry=true;run({organizations}){return organizations.accept(this.actor,this.input);}}

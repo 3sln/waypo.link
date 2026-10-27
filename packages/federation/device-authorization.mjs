@@ -116,7 +116,7 @@ export async function issueDeviceSession(service,{linkedRequestId,grant,proof}){
   await tx.delete(approvalKey(linkedRequestId));await service.consumeProof(tx,proof);
   await service.active(record.subject,record.epoch);if(service.connections&&(!record.connection||await service.connections.check(record.connection,record.clientId)!==true))fail('access_denied');
   const owner={subject:record.subject,epoch:record.epoch,clientId:record.clientId,grants:structuredClone(record.grants),...record.connection?{connection:structuredClone(record.connection)}:{}};
-  const session=await createAppSession(service,tx,owner,proof.jkt,{familyId:grant.familyId,expiresAt:grant.expiresAt,lineage:{owner:grant.owner,lineageId:grant.lineageId},access:'dpop',grantType:DEVICE_GRANT});
+  const session=await createAppSession(service,tx,owner,proof.jkt,{jwk:proof.jwk,familyId:grant.familyId,expiresAt:grant.expiresAt,lineage:{owner:grant.owner,lineageId:grant.lineageId},access:'dpop',grantType:DEVICE_GRANT});
   return {...await issueAppAccess(service,tx,session.family),refresh_token:session.refresh_token,refresh_expires_in:session.refresh_expires_in,refresh_idle_expires_in:session.refresh_idle_expires_in};
  });
 }

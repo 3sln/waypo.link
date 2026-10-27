@@ -1,6 +1,7 @@
 import {Query,Action} from '../shared/stack.mjs';
 import {OwnerFlow,snapshot,publish} from './owner-flow.mjs';
 import {breakGlassIntent} from './org-break-glass.mjs';
+import {RELATION_FIELDS,loadRelations,relationLandingOpen,relationsIntent,relationLanding} from './org-relations.mjs';
 export const organizationsEnabled=s=>(s.data?.features?.organizationsEnabled??s.session?.account?.consoleFeatures?.organizationsEnabled??s.config?.organizationsEnabled)===true;
 export const organizationsModel=s=>organizationsEnabled(s)&&!s.offline&&s.session?.account?.id&&s.organizationsConsole?.owner===s.session.account.id&&s.organizationsConsole?.session===s.session.sessionContext&&s.organizationsConsole?.generation===(s.beamGeneration??0)?s.organizationsConsole:null;
 const DECISIONS=['accept','reject','elevate','retract'];
@@ -20,7 +21,7 @@ const json=(value,fallback)=>{if(value===undefined||value==='')return fallback;i
 const fail=code=>{throw Object.assign(Error(code),{code});};
 const put=(r,ctx,p)=>publish(r,ctx,{organizationsConsole:{...base(snapshot(r)),...p}});
 // Everything read for one organization context. Switching context clears all of it before anything new is fetched.
-const privateFields={organization:null,membership:null,members:[],membersNext:null,requests:[],adminRequests:[],requestsNext:null,audit:[],invitation:null,membersUnavailable:false,connections:[],connectionsUnavailable:false,preferences:[],preferencesUnavailable:false,ownership:null,offerDraft:null,inviteeDraft:null,breakGlass:null,breakGlassWizard:null};
+const privateFields={organization:null,membership:null,members:[],membersNext:null,requests:[],adminRequests:[],requestsNext:null,audit:[],invitation:null,membersUnavailable:false,connections:[],connectionsUnavailable:false,preferences:[],preferencesUnavailable:false,ownership:null,offerDraft:null,inviteeDraft:null,breakGlass:null,breakGlassWizard:null,...RELATION_FIELDS};
 const UUID=/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/,TOKEN=/^[A-Za-z0-9_.-]{1,8192}$/;
 const refused=error=>error?.status===403||error?.status===404||error?.code==='not_found';
 // A definite refusal: the server answered and did not apply the change (validation, conflict, authority, rate limit).
@@ -101,6 +102,8 @@ export class OrganizationsIntent extends OwnerFlow{
   // M3: organizations whose recovery file another tab of this browser is saving right now (fresh heartbeat), so this
   // tab neither offers nor issues a replacement that would invalidate that copy.
   const elsewhere=()=>{try{return tabs?.active(m.owner)??[];}catch{return [];}},recoveryMarkers=()=>({unsavedRecovery:markers(),recoveryElsewhere:elsewhere()});
+  // ORG-10g: the Relationships tab reads and writes through the person's API with the same freshness checks.
+  const relApi={get:p=>checked(()=>r.api.get(p)),post:(p,b)=>checked(()=>r.api.request(p,b))},relEnv=id=>({r,m:base(snapshot(r)),v,d,a,org:id,admin:organizationPowers(base(snapshot(r))).includes('admin'),api:relApi,put:p=>put(r,ctx,p),focus:selector=>r.browser.focus?.(selector),landing:port.relationLanding??relationLanding,copy:text=>port.copy(text),download:(name,content)=>r.browser.download(name,content),audit:async()=>{const result=await call('audit',undefined,id);put(r,ctx,{audit:result.entries??[],error:null});}});
   const reload=async()=>{const list=await call('list',undefined,null);put(r,ctx,{organizations:list.organizations??[],pending:list.pending??[],offers:list.offers??[],...recoveryMarkers(),stale:false,error:null});};
   // `creation` (additive on GET /api/orgs/plans): 'allowlisted' | 'checkout' | 'unavailable', for this person only.
   const plans=async()=>{try{const result=await call('plans',undefined,null);put(r,ctx,{plans:result.configured?result:{configured:false,plans:[],creation:result.creation??null}});}catch{put(r,ctx,{plans:{configured:false,plans:[],creation:null}});}};
@@ -117,7 +120,7 @@ export class OrganizationsIntent extends OwnerFlow{
   // A context loads the person's own membership first (any member may read it); admin surfaces follow only when the
   // organization itself reports the admin power. Each admin surface fails closed on its own without hiding the rest.
   const details=async id=>{
-   put(r,ctx,{...privateFields,context:id,error:null});
+   const tab=base(snapshot(r)).context===id&&base(snapshot(r)).relationsTab===true;put(r,ctx,{...privateFields,context:id,error:null,relationsTab:tab});
    // L3: an organization that does not confirm the membership leaves no "Acting for" context behind.
    let membership;try{membership=await call('membership',undefined,id);}catch(error){if(refused(error)){put(r,ctx,{...privateFields,context:null,error:'not_found'});return;}throw error;}
    const powers=membership.powers??[],admin=powers.includes('admin'),privileged=admin||powers.includes('owner-of-record');
@@ -129,12 +132,12 @@ export class OrganizationsIntent extends OwnerFlow{
    // Billing, the offer, the claim and their decisions: loaded only for the owner of record and admins (other members
    // keep the ORG-5 read set; a read-only refusal explains itself on their next change).
    const ownership=async()=>{if(privileged)try{put(r,ctx,{ownership:await call('ownership',undefined,id)});}catch(error){if(!unavailable(error))throw error;}};
-   if(!admin){await ownership();return;}
+   if(!admin){await loadRelations({api:relApi,put:p=>put(r,ctx,p),id,admin:false});await ownership();return;}
    try{const result=await call('members',undefined,id);put(r,ctx,{members:result.members??[],membersNext:typeof result.next==='string'?result.next:null,adminRequests:result.requests??[],requestsNext:typeof result.requestsNext==='string'?result.requestsNext:null,membersUnavailable:false});}
    catch(error){if(error.code==='organization_deletion_pending')put(r,ctx,{membersUnavailable:'deletion_pending'});else if(refused(error))put(r,ctx,{membersUnavailable:true});else throw error;}
    try{const result=await call('connections',undefined,id);put(r,ctx,{connections:result.connections??[],connectionsUnavailable:false});}catch(error){if(unavailable(error))put(r,ctx,{connectionsUnavailable:true});else throw error;}
    try{const result=await call('preferences',undefined,id);put(r,ctx,{preferences:result.preferences??[],preferencesUnavailable:false});}catch(error){if(unavailable(error))put(r,ctx,{preferencesUnavailable:true});else throw error;}
-
+   await loadRelations({api:relApi,put:p=>put(r,ctx,p),id,admin:true});
    await ownership();
   };
   // H4: a change marks the view stale until the server's answer is known. A definite refusal applied nothing, so the
@@ -164,7 +167,7 @@ export class OrganizationsIntent extends OwnerFlow{
    if(a==='dismiss-entry'){port.invitation?.set(null);put(r,ctx,{entry:null,error:null});publish(r,ctx,{organizationInvitationPending:false});return;}
    // F-2: the console's own address (/console?view=organizations[&org=]): opens the view in the shell and the context
    // the address names. The address is a routing hint; the organization confirms the membership as for any selection.
-   if(a==='open'){publish(r,ctx,{view:'organizations'});put(r,ctx,{notice:null});await reload();await plans();if(m.recovery)return;if(d.org&&!UUID.test(d.org))fail('not_found');if(!d.org){put(r,ctx,{...privateFields,context:null,error:null});return;}await details(d.org);return;}
+   if(a==='open'){publish(r,ctx,{view:'organizations'});put(r,ctx,{notice:null});await reload();await plans();if(m.recovery)return;if(d.org&&!UUID.test(d.org))fail('not_found');if(!d.org){put(r,ctx,{...privateFields,context:null,error:null});return;}await details(d.org);if(base(snapshot(r)).context===d.org)await relationLandingOpen(relEnv(d.org));return;}
    // F-1 leave guard: the in-memory recovery step is the only copy of the new file. Leaving keeps the persisted
    // "not saved" marker, so the organization shows the unsaved state and offers a fresh file afterwards.
    if(a==='guard'){if(!m.recovery)return;const p=d.pending&&typeof d.pending==='object'?d.pending:{},pending=Object.fromEntries(Object.entries(p).filter(([k,value])=>/^[A-Za-z][A-Za-z0-9]{0,40}$/.test(k)&&k!=='force'&&(['number','boolean'].includes(typeof value)||typeof value==='string'&&value.length<=512)).slice(0,16));put(r,ctx,{leaveGuard:{...pending,kind:typeof p.kind==='string'?p.kind:'navigate'}});return;}
@@ -191,6 +194,7 @@ export class OrganizationsIntent extends OwnerFlow{
    }
    if(typeof a==='string'&&a.startsWith('bg-')){if(m.stale&&GUARDED.has(a))fail('reload_required');await breakGlassIntent({r,ctx,m:base(snapshot(r)),v,d,a,org,call,change,put:p=>put(r,ctx,p),leave,age,details,focus:selector=>r.browser.focus?.(selector)});return;}
    if(m.recovery)fail('recovery_required');if(m.stale&&GUARDED.has(a))fail('reload_required');
+   if(typeof a==='string'&&a.startsWith('rel-')){if(!org)fail('organization_required');await relationsIntent(relEnv(org));return;}
    if(a==='create'){
     const prior=r.browser.secret(creationKey),input={name:String(v.name??''),label:String(v.label??'organization'),...v.plan?{plan:String(v.plan)}:{}},attempt=prior??{request:port.id(),...input};if(prior&&(prior.name!==input.name||prior.label!==input.label))fail('reload_required');r.browser.storeSecret(creationKey,attempt);put(r,ctx,{stale:true});
     await created(await call('create',attempt,null));return;

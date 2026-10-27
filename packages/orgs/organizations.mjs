@@ -228,6 +228,8 @@ export class OrganizationService{
  scheduleDeletion(actor,input){return this.mutate(actor,input,[],{powers:['owner-of-record'],fresh:true},async(record,value,now,tx)=>{record.state='deletion-scheduled';record.deletion={requestedAt:now,notBefore:now+ORG_DELETION_DELAY_MS,by:party(actor.principal)};await this.audit(tx,record,'organization-deletion-scheduled',actor,{notBefore:record.deletion.notBefore});});}
  /** Never flag-gated: a ramp-down must not strand a pending deletion. Too late once due. */
  cancelDeletion(actor,input){return this.mutate(actor,input,[],{powers:['owner-of-record','admin'],states:['deletion-scheduled'],exposure:false},async(record,value,now,tx)=>{if(now>=record.deletion.notBefore)fail('organization_deletion_due','This deletion can no longer be cancelled.',409);record.state='active';record.deletion=null;await this.audit(tx,record,'organization-deletion-cancelled',actor);});}
+ // A distinct inherited port avoids OwnershipService.tick shadowing the deletion scheduler.
+ deletionTick(actor){return OrganizationService.prototype.tick.call(this,actor);}
  /** System step (account alarm): a scheduled deletion becomes due at `notBefore`, then is handed to the purge port. */
  async tick(actor){
   if(actor?.kind!=='system')fail('forbidden','System only.',403);

@@ -98,8 +98,11 @@ test('export end to end: create with step-up, alarm generation, HTTP download wi
  assert.equal((await f.app.resources.repository.get(owner)).audit.filter(e=>e.type==='export-created').length,1,'the owner security log records creation');
  // A new account counts as a recent security change: the export is ready only 72 hours later.
  offset=4*86400000;
- for(let i=0;i<60;i++){const status=await (await f.call('/api/exports/'+job.id,{jar,headers})).json();if(status.state==='ready')break;await controller.alarm();}
- const ready=await (await f.call('/api/exports/'+job.id,{jar,headers})).json();assert.equal(ready.state,'ready',JSON.stringify(ready));
+ // Each alarm advances generation by one contributor page or one seal step: 60 alarms for this account today, which
+ // was also the old loop bound (no headroom; one more contributor or a retried step would fail). The bound now only
+ // stops a stuck job; a terminal state ends the loop at once and the message says how many alarms ran.
+ let alarms=0,ready;for(;(ready=await (await f.call('/api/exports/'+job.id,{jar,headers})).json()).state!=='ready'&&!['failed','cancelled','expired'].includes(ready.state)&&alarms<1000;alarms++)await controller.alarm();
+ assert.equal(ready.state,'ready',`export not ready after ${alarms} alarms: ${JSON.stringify(ready)}`);
  const volumes=[];
  for(const volume of ready.volumes){
   const path=`/api/exports/${job.id}/volumes/${volume.n}.tar`,full=new Uint8Array(await (await f.call(path,{jar,headers})).arrayBuffer());assert.equal(full.length,volume.bytes);

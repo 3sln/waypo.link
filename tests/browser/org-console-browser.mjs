@@ -15,6 +15,7 @@ const api={captureContext:()=>({owner:'owner',sessionContext:'ctx'}),get(path){r
  if(path.startsWith('/api/orgs/'+privateId))throw Object.assign(Error('not_found'),{status:404,code:'not_found'});
  if(path==='/api/orgs'&&method==='POST')return {organization,recoveryFile:{fileName:'organization-recovery.json',content:JSON.stringify({privateKey:'fixture-private-key',recoveryToken:'token'}),recoveryToken:'token'}};
  const org=path.split('/')[3],suffix=path.split('/')[4]??'';
+ if(org===memberId&&suffix==='relations'&&path.endsWith('/relations/imports'))return {imports:[]};
  if(org===memberId&&!['membership','requests','grant-decision','leave','accept'].includes(suffix))throw Object.assign(Error('not_found'),{status:404,code:'not_found'});
  if(suffix==='membership')return view(org);
  if(suffix==='requests')return {requests:structuredClone(org===memberId?memberRequests:requests)};
@@ -91,7 +92,7 @@ for(const name of ['chromium','firefox'])for(const locale of ['en','es'])for(con
  await page.evaluate(()=>{window.calls=[];});await page.locator('nav select').selectOption(memberOrg);await settle(page);
  const own=page.locator('#org-membership').locator('..');assert.match(await own.textContent(),/https:\/\/provider\.example\/r\/9/);assert.match(await own.textContent(),es?/en pausa/:/on hold/);
  for(const panel of ['#org-members','#org-connections','#org-preferences','#org-audit'])assert.equal(await page.locator(panel).count(),0,panel);
- const memberCalls=(await calls(page)).map(c=>c.path);assert.deepEqual(memberCalls,['/api/orgs/'+memberOrg+'/membership','/api/orgs/'+memberOrg+'/requests','/api/orgs/'+memberOrg+'/break-glass'],'ORG-12e: members also read the role-filtered break-glass view');
+ const memberCalls=(await calls(page)).map(c=>c.path);assert.deepEqual(memberCalls,['/api/orgs/'+memberOrg+'/membership','/api/orgs/'+memberOrg+'/requests','/api/orgs/'+memberOrg+'/break-glass','/api/orgs/'+memberOrg+'/relations/imports'],'Members read only their membership, requests, role-filtered break-glass view and granted relationship imports');
  const pending=page.locator('#org-requests').locator('..').locator('article');assert.match(await pending.textContent(),/Reduce <i>access<\/i>/);assert.match(await pending.textContent(),es?/afecta a tu acceso/:/to your access/);
  // Keyboard: reach the server-advertised Reject button with Tab and activate it with Enter.
  await page.locator('#org-title').focus();assert.ok(await tabTo(page,'[data-org-action="decide-reject"]'),'decision reachable by keyboard');await page.keyboard.press('Enter');await settle(page);

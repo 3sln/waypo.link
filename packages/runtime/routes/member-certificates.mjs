@@ -57,7 +57,9 @@ async function token({request,env,local}){
   const admitted=await accountHandle(env,org).memberTokenAdmit(org,{assertion:params.get('assertion'),clientId:params.get('client_id'),dpop:proofs,htu:`${env.APP_ORIGIN}/oauth/token`,network});
   // Step 2 (the organization's federation shard): the DPoP-bound access token carrying ORG-3's `token.member`.
   if(typeof env.FEDERATION_AUTHORITY?.memberAccess!=='function')return invalidGrant(cors);
-  const minted=await env.FEDERATION_AUTHORITY.memberAccess(org,{clientId:admitted.context.client.client_id,jkt:admitted.context.jkt,expiresAt:admitted.exp*1000,connection:admitted.connection,member:admitted.member,...Number.isSafeInteger(admitted.capacity)?{capacity:admitted.capacity}:{}});
+  // ORG-10f gate 4: the proof's public key (verified against cnf.jkt in step 1; the shard re-checks its thumbprint).
+  const proofHeader=decode(proofs.split('.')[0]??''),jwk=proofHeader?.jwk&&typeof proofHeader.jwk==='object'?{kty:proofHeader.jwk.kty,crv:proofHeader.jwk.crv,x:proofHeader.jwk.x,y:proofHeader.jwk.y}:undefined;
+  const minted=await env.FEDERATION_AUTHORITY.memberAccess(org,{...jwk?{jwk}:{},clientId:admitted.context.client.client_id,jkt:admitted.context.jkt,expiresAt:admitted.exp*1000,connection:admitted.connection,member:admitted.member,...Number.isSafeInteger(admitted.capacity)?{capacity:admitted.capacity}:{}});
   if(minted?.token_type!=='DPoP'||typeof minted.access_token!=='string')return invalidGrant(cors);
   return json({access_token:minted.access_token,token_type:'DPoP',expires_in:Math.min(minted.expires_in,admitted.expiresIn),bindle_member:admitted.bindle_member},200,{...noStore,...cors});
  }catch{return invalidGrant(cors);}

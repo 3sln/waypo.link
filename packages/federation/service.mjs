@@ -297,7 +297,7 @@ export class FederationService {
       if((code.dpopJkt??null)!==(proof?.jkt??null))fail('invalid_dpop_proof','The DPoP proof does not match this authorization.');if(proof)await this.consumeProof(tx,proof);
       await this.active(code.subject,code.epoch);if(this.connections&&(!code.connection||await this.connections.check(code.connection,code.clientId)!==true))fail('unauthorized');
       const authority={subject:code.subject,epoch:code.epoch,clientId:code.clientId,grants:copy(code.grants),approvedFrom:code.approvedFrom??null,approvalChain:code.approvalChain??[],authTime:code.authTime??null,...code.connection?{connection:copy(code.connection)}:{}};
-      let refresh;if(this.refreshEnabled)refresh=code.dpopJkt?await createAppSession(this,tx,authority,code.dpopJkt):await this.createRefreshFamily(tx,authority);
+      let refresh;if(this.refreshEnabled)refresh=code.dpopJkt?await createAppSession(this,tx,authority,code.dpopJkt,{...proof?.jwk?{jwk:proof.jwk}:{}}):await this.createRefreshFamily(tx,authority);
       const response=await this.issueAccess(tx,refresh?.family??{...authority,codeHash:hash});await tx.set(key('code',hash),{used:true,clientId:code.clientId,subject:code.subject,...refresh?.family?.familyId?{familyId:refresh.family.familyId}:{},expiresAt:this.clock()+CODE_REPLAY_WINDOW_MS});await linkExchange(this,tx,code,refresh?.family);
       return {...response,...refresh?{refresh_token:refresh.refresh_token,refresh_expires_in:refresh.refresh_expires_in,...refresh.refresh_idle_expires_in!==undefined?{refresh_idle_expires_in:refresh.refresh_idle_expires_in}:{}}:{},...code.intent==='reauthenticate'&&Number.isSafeInteger(code.authTime)?{auth_time:Math.floor(code.authTime/1000)}:{}};
     });
@@ -380,7 +380,7 @@ export class FederationService {
           // ORG-10d relay form (spec organizations §10): the token is an entity certificate the organization issues after
           // its own hop evaluation (relations.certify); any refusal reports the member `unavailable`, never a reason.
           const entry={id:`${this.issuer}/resources/scoped/${await digest(this.crypto,`bindle-relation-reference-v1\0${clientId}\0${canonical({fragment,field:name,resource:id})}`)}`,label:resource.label,status:'unavailable',contracts,methods,grantor:`${resource.grantor?.iss}/identity/${resource.grantor?.sub}`,instance:resource.instance};
-          if(issue&&contracts.length&&resource.available===true&&this.relationImports)pending.push({relation:true,entry,field:name,resource:id,grants:permitted.map(g=>g.id)});
+          if(issue&&contracts.length&&resource.available===true&&this.relationImports)pending.push({relation:true,entry,field:name,resource:id,grants:permitted.map(g=>g.id),grantRecords:permitted.map(g=>copy(g))});
           list.push(entry);continue;
         }
         if(resource.provider==='brokered'){
@@ -411,7 +411,7 @@ export class FederationService {
     let seq=null;if(reader&&typeof this.brokering?.seq==='function'){try{const value=await this.brokering.seq({connection:reader});if(Number.isSafeInteger(value))seq=value;}catch{/* not an integration reader */}}
     const first=await this.store.transaction(async tx=>{const {token,grants}=await load(tx);if(token.attenuation)fail('forbidden');return {token:copy(token),grants:grants.map(g=>g.id).sort(),...await this.projectV2(tx,{subject:token.subject,clientId:token.clientId,grants,fragment,token,bearer,issue:true})};});
     for(const p of first.pending){
-      if(p.relation){try{const m=await this.relationImports.certify({subject:first.token.subject,clientId:first.token.clientId,grants:p.grants,field:p.field,resource:p.resource,jkt:first.token.jkt??null,delegate:first.token.jwk??null,member:first.token.member??null,connection:first.token.connection??null});
+      if(p.relation){try{const m=await this.relationImports.certify({subject:first.token.subject,clientId:first.token.clientId,clientOrigin:this.clients.get(first.token.clientId)?.origin??null,grants:p.grants,grantRecords:p.grantRecords,field:p.field,resource:p.resource,jkt:first.token.jkt??null,delegate:first.token.jwk??null,member:first.token.member??null,connection:first.token.connection??null});
         Object.assign(p.entry,{status:'available',contracts:Object.keys(m.methods),methods:m.methods,token:m.certificate,token_type:'BindleEntity',expires_at:m.exp,broker:{endpoint:m.broker.endpoint,origin:m.broker.origin,resource:m.broker.resource}});}
        catch{p.entry.status='unavailable';for(const k of ['token','token_type','expires_at','broker'])delete p.entry[k];}continue;}
       try{const m=await this.brokering.mint({clientId:first.token.clientId,record:p.record,fragment,field:p.field,methods:p.methods,...p.cv?{cv:p.cv}:{},...first.token.jkt?{jkt:first.token.jkt}:{}});

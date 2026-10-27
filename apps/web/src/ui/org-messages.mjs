@@ -123,3 +123,63 @@ export const orgError=(locale,code)=>Object.hasOwn(ORG_BREAK_GLASS_ERRORS,code)?
 export const orgNotice=(locale,code)=>Object.hasOwn(ORG_BREAK_GLASS_NOTICES,code)?ORG_BREAK_GLASS_NOTICES[code][locale==='es'?1:0]:localization(locale).t(ORG_NOTICES[code]??ORG_NOTICE_FALLBACK);
 /** Shell text owned by the organization console (signed-out invitation hint). */
 export const ORG_SIGNED_OUT_INVITATION='You’ve been invited to join an organization. Sign in or create an account, and you’ll come back to the invitation.';
+// ORG-10g Relationships tab: every code of the ORG-10f console contract, with its Spanish text here (the shared
+// catalogue is owned elsewhere). Codes not listed fall back to the console's own text, then to a generic message.
+export const ORG_RELATION_ERRORS=Object.freeze({
+ not_found:['This isn’t available. It may have ended, sharing with organizations may be off here, or you may not be an admin of this organization.','Esto no está disponible. Puede que haya terminado, que compartir con organizaciones esté desactivado aquí o que no seas administrador de esta organización.'],
+ invitation_invalid:['This invitation is no longer valid. Ask the other organization for a new one.','Esta invitación ya no es válida. Pide una nueva a la otra organización.'],
+ reauthentication_required:['Confirm it’s you to continue.','Confirma que eres tú para continuar.'],
+ relation_disclosure_changed:['The terms of this invitation changed. Review them again before accepting.','Las condiciones de esta invitación cambiaron. Revísalas de nuevo antes de aceptar.'],
+ relation_values_invalid:['Choose resources that belong to this organization and fit each entry. Imported resources can’t be shared onward, and an end date must be in the future.','Elige recursos de esta organización que encajen con cada apartado. Los recursos importados no se pueden volver a compartir y la fecha de fin debe ser futura.'],
+ relation_values_incomplete:['Every required entry needs at least one resource. To stop sharing a required entry, end the sharing instead.','Cada apartado obligatorio necesita al menos un recurso. Para dejar de compartir un apartado obligatorio, termina el uso compartido.'],
+ relation_slot_invalid:['That role isn’t part of this relation. Choose one of the listed roles.','Ese papel no forma parte de esta relación. Elige uno de los papeles indicados.'],
+ relation_slot_full:['That role is already taken in this relationship.','Ese papel ya está ocupado en esta relación.'],
+ relation_counterpart_exists:['This organization is already part of this relationship.','Esta organización ya forma parte de esta relación.'],
+ relation_invitation_empty:['This invitation would share nothing in either direction. Choose something to give or to receive.','Esta invitación no compartiría nada en ningún sentido. Elige algo que dar o recibir.'],
+ relation_invitation_pending:['An invitation to this organization is already waiting. Withdraw it or wait for an answer.','Ya hay una invitación pendiente para esta organización. Retírala o espera una respuesta.'],
+ relation_invitations_limited:['Too many invitations were sent. Try again later.','Se enviaron demasiadas invitaciones. Inténtalo más tarde.'],
+ relation_limit:['This organization has reached its limit of relationships.','Esta organización alcanzó su límite de relaciones.'],
+ relation_redeem_unavailable:['The other organization couldn’t be reached to complete this. Try again later.','No se pudo contactar con la otra organización para completar esto. Inténtalo más tarde.'],
+ relation_acceptance_conflict:['This invitation was answered at the same time elsewhere. Reload and check.','Esta invitación se respondió al mismo tiempo en otro lugar. Actualiza y compruébalo.'],
+ relation_party_invalid:['That organization can’t take part in this relationship.','Esa organización no puede participar en esta relación.'],
+ relation_party_unsupported:['That organization’s provider doesn’t support relationships yet.','El proveedor de esa organización aún no admite relaciones.'],
+ relation_foreign_unavailable:['Relationships with organizations on other providers aren’t available yet.','Las relaciones con organizaciones de otros proveedores aún no están disponibles.'],
+ relation_rebind_required:['Choose new resources for this sharing first: the organization moved.','Primero elige nuevos recursos para este uso compartido: la organización se trasladó.'],
+ relation_hold_changed:['This hold changed. Reload and review it again.','Esta retención cambió. Actualiza y revísala de nuevo.'],
+ relation_billing_lapsed:['The organization’s payment has lapsed, so nothing new can be shared. Pausing, ending and leaving stay available.','El pago de la organización está vencido, así que no se puede compartir nada nuevo. Pausar, terminar y salir siguen disponibles.'],
+ organization_deletion_pending:['The organization is scheduled for deletion, so nothing new can be shared.','La organización tiene programada su eliminación, así que no se puede compartir nada nuevo.'],
+ relation_introduction_invalid:['This introduction is no longer valid.','Esta presentación ya no es válida.'],
+ relation_introduction_empty:['There is nobody to introduce this organization to.','No hay nadie a quien presentar esta organización.'],
+ relation_mute_limit:['Too many organizations are muted. Unmute some first.','Hay demasiadas organizaciones silenciadas. Quita el silencio a algunas primero.'],
+ relation_unavailable:['Sharing with other organizations isn’t available for this organization right now.','Compartir con otras organizaciones no está disponible para esta organización ahora.'],
+ counterparty_unavailable:['No active 3sln.me organization has that handle.','Ninguna organización activa de 3sln.me tiene ese identificador.'],
+ invalid_request:['Some of the details aren’t valid. Check them and try again.','Algunos datos no son válidos. Revísalos e inténtalo de nuevo.'],
+ invitee_unrecognized:['Enter an organization handle, like @acme.','Escribe el identificador de una organización, como @acme.'],
+ review_required:['Review and confirm before continuing.','Revisa y confirma antes de continuar.'],
+ change_uncertain:['We couldn’t confirm whether that change was made. The page now shows the relationships as they are; check before trying again.','No pudimos confirmar si se hizo ese cambio. La página muestra ahora las relaciones tal como están; compruébalo antes de volver a intentarlo.'],
+ saved_stale:['The change was made, but the page couldn’t refresh. Reload to see the latest.','El cambio se hizo, pero la página no pudo actualizarse. Actualiza para ver lo más reciente.'],
+ copy_failed:['The code couldn’t be copied. Select it and copy it yourself.','No se pudo copiar el código. Selecciónalo y cópialo tú.'],
+ rate_limited:['Too many attempts. Wait a minute and try again.','Demasiados intentos. Espera un minuto e inténtalo de nuevo.'],
+ organization_required:['Choose an organization first.','Elige primero una organización.'],
+ unavailable:['Something went wrong and nothing was changed. Try again in a moment.','Algo salió mal y no se cambió nada. Inténtalo de nuevo en un momento.'],
+});
+export const ORG_RELATION_NOTICES=Object.freeze({
+ relation_exported:['Relationship data downloaded. Keep this file private.','Datos de relaciones descargados. Mantén este archivo privado.'],
+ relation_invited:['Invitation created. Send the code to the other organization.','Invitación creada. Envía el código a la otra organización.'],
+ relation_copied:['Invitation code copied.','Código de invitación copiado.'],
+ relation_withdrawn:['Invitation withdrawn. It no longer works.','Invitación retirada. Ya no funciona.'],
+ relation_accepted:['Accepted. The sharing starts once both sides confirm.','Aceptada. El uso compartido empieza cuando ambas partes lo confirman.'],
+ relation_declined:['Declined. The other organization isn’t told why.','Rechazada. A la otra organización no se le dice el motivo.'],
+ relation_muted:['Organization muted. Its invitations and introductions are now declined silently.','Organización silenciada. Sus invitaciones y presentaciones se rechazan ahora en silencio.'],
+ relation_suspended:['Paused. Every admin is told.','En pausa. Se avisa a todos los administradores.'],
+ relation_resumed:['Resumed.','Reanudado.'],
+ relation_ended:['Ended. This can’t be undone; sharing again needs a new invitation.','Terminado. No se puede deshacer; volver a compartir requiere una nueva invitación.'],
+ relation_narrowed:['Sharing narrowed.','Uso compartido reducido.'],
+ relation_left:['You left the relationship.','Saliste de la relación.'],
+ relation_introduced:['Introduction sent.','Presentación enviada.'],
+ relation_confirmed:['Confirmed. The hold is released.','Confirmado. Se levantó la retención.'],
+ relation_rebound:['New resources chosen. Sharing resumes with them.','Nuevos recursos elegidos. El uso compartido se reanuda con ellos.'],
+});
+/** Relationship-tab text for an error code (relation text, then the console's, then a generic message). */
+export const orgRelationError=(locale,code)=>Object.hasOwn(ORG_RELATION_ERRORS,code)?ORG_RELATION_ERRORS[code][locale==='es'?1:0]:orgError(locale,code);
+export const orgRelationNotice=(locale,code)=>Object.hasOwn(ORG_RELATION_NOTICES,code)?ORG_RELATION_NOTICES[code][locale==='es'?1:0]:orgNotice(locale,code);

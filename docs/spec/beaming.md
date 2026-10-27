@@ -1,5 +1,7 @@
 # Device and contact file beaming — provisional v1
 
+**Proposed supersession (2026-10-26, provisional, unsigned; AMD-R6 of [RTC signaling](rtc-signaling.md#18-amendments--proposed-unsigned)).** Once the generic RTC signaling extension ships, its spec supersedes this document's signaling contract, relay rules and nearby invitations, and the transfer experience (manifest review, streaming frames, save destinations, paid-sender rules) moves to a Beam application built on the `file-transfer/v1` purpose ([design §5–§6](../architecture/rtc-signaling.md#5-reuse-and-retirement-of-beam-code)). Until then this document governs the existing local Beam implementation unchanged.
+
 Design date: 2026-10-12. Human reviewer ___ / date ___ / outcome ___. Implementation and browser evidence belong in [DEVLOG](../../DEVLOG.md); this document defines required behavior and does not certify production readiness. The [security release gates](security.md) remain applicable and production release remains disabled. See [architecture and relay economics](../architecture/beaming.md).
 
 ## Product and authority

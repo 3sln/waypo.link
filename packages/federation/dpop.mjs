@@ -27,7 +27,9 @@ export async function verifyProof(crypto,proof,{typ=DPOP_TYP,htm,htu,now,window=
  if(!await crypto.subtle.verify({name:'ECDSA',hash:'SHA-256'},key,signature,text.encode(`${parts[0]}.${parts[1]}`)))fail('invalid_dpop_proof');
  // Nonce checks run last so a forged proof never learns nonce state.
  const fresh=nonce?await nonce(payload.nonce):null;if(!nonce&&payload.nonce!==undefined)fail('invalid_dpop_proof');
- return {jkt,jti:payload.jti,iat:payload.iat,nonceHash:fresh?.hash??null,expiresAt:Math.max(fresh?.expiresAt??0,(payload.iat+window)*1000)};
+ // ORG-10f production gate 4: the proof's PUBLIC key (only kty, crv, x, y; its thumbprint is `jkt`), so a session bound to
+ // it can record the key a relay entity certificate must name as its holder.
+ return {jkt,jwk:{kty:'EC',crv:'P-256',x:header.jwk.x,y:header.jwk.y},jti:payload.jti,iat:payload.iat,nonceHash:fresh?.hash??null,expiresAt:Math.max(fresh?.expiresAt??0,(payload.iat+window)*1000)};
 }
 /** Stateless HMAC nonces: `exp.random.mac`, purpose-separated, ≤ ttl. Single
  * use is enforced where the proof is consumed (consumeProof). */

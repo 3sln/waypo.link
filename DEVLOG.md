@@ -5906,3 +5906,124 @@ No commit or deployment. Production release stays disabled. No delivery to a rea
 - These counts supersede the earlier figures in this entry.
 
 Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-26 — Test reliability fixes
+
+**Scope:** completed the interrupted, uncommitted reliability work in resource-discovery, export-hooks and dx-integration tests. No product code changed; assertions remain strict. Decisions remain provisional pending review. The concurrent ORG-10f/g work and its routes were left untouched.
+
+**Root causes and changes:**
+- Discovery's 10 ms sleep did not establish ownership of the egress slot: budget admission and real WebCrypto token minting happen asynchronously. Both contention tests now wait for fetcher entry, release their gates in `finally`, and await the original request even on assertion failure. The final discovery must succeed on its first attempt; no busy retries were added. Each discovery makes one egress call. `active++` precedes DNS/fetch; the `send` race's `finally` clears the deadline and decrements `active` before its promise settles. `Promise.race` observes both the deadline and exchange rejection. An abandoned blocked request can reject at its deadline after a test fails; this is a test cleanup problem, not evidence of an unhandled deadline after successful exchange. No slot leak or deadline product bug was found.
+- Added direct egress coverage with one slot: success, provider failure status, redirect, thrown transport error, oversized streaming body, stalled transport timeout and private DNS refusal must all release the slot. A transport that ignores abort and rejects late stays observed and cannot release a newer request's slot. Waiting beyond the deadlines checks for stray unhandled rejections.
+- Export fixture cleanup previously registered directory removal before adapter shutdown. Node 24 skips later after hooks when an earlier hook throws (confirmed with an isolated controlled hook failure outside the repo), so a removal failure could leave a listening server and hang the file indefinitely. One cleanup hook now closes adapters/connections before removing their directories with bounded retries. Port reservation races retry on EADDRINUSE with cleanup already registered. Clients and CLI children prefer IPv4 to match the explicit 127.0.0.1 listener; tests have 180 s timeouts and CLI children have 120 s hard kill bounds. These close concrete hang paths; the historic 30-minute process was not ours and was neither inspected invasively nor killed, so its precise trigger is unconfirmed.
+- DX/export generation advances contributor pages and seal steps across alarms. The old DX limit of 60 had no growth headroom. Bounded loops now allow 1,000 steps, stop on terminal states and still require `ready`, reporting the step count and state on failure.
+- Searched all `tests/e2e/*.mjs`: all 90 `waitForFunction` calls already take functions (including the shared `SETTLED` function). No string predicates remained to convert; no browser implementation changed or browser verification was required for this search-only result.
+
+**Verification (local shared checkout; concurrent relations edits continued during these runs):**
+- Each affected file ran alone 20 times, sequentially: resource-discovery **200 passed / 0 failed** (10 per run), export-hooks **220 / 0** (11 per run), dx-integration **100 / 0** (5 per run): **520 passed across 60 runs**, no skipped/cancelled tests.
+- Full `npm test`, run 1: **3,790 passed, 1 failed**, 0 skipped/cancelled. The failure was the concurrent relations public-events test, `tests/orgs-relations-routes.test.mjs:167`, reading `peerGrant` from an undefined checkpoint.
+- Full `npm test`, run 2: **3,789 passed, 2 failed**, 0 skipped/cancelled. Both failures were in the concurrent relations owner-route tests at lines 56 and 75: `400 invalid_request` instead of `404 not_found` and `401 reauthentication_required` respectively (assertions at lines 60 and 88). The earlier public-events failure did not recur. All 26 affected reliability tests passed in both full runs; the full-suite green requirement remains unmet in the excluded, actively changing relations scope.
+- `npm run test:worker`: **93 passed, 0 failed**, 0 skipped/cancelled.
+- Scoped `git diff --check` passed. Verification logs are outside the repo at `/tmp/bindle-reliability/`. Nothing committed; no existing processes killed; no root scratch files created. No production capabilities or release gates changed.
+
+Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-26 — ORG-10f/g relations routes and console (flags off)
+
+**Implemented locally, provisional and unsigned.** Continuation of the interrupted ORG-10f/g work, following the ORG-10 design, ORG-10a–c and ORG-10d/e entries and their review follow-ups. The existing uncommitted relations changes were inspected and completed. `ORG_RELATIONS_ENABLED` and `ORG_FOREIGN_RELATIONS_ENABLED` remain default off; production release remains disabled. Engine operations run in each organization's account writer; routes and the vendored ngin/dodo console are adapters. No commit or deployment.
+
+**ORG-10f local adapter gates closed (production verification/sign-off remain open):**
+
+1. **Sender evidence:** signed events take the sender only from signature verification; offers, retractions and redemptions use the same-host router's bound organization. Owner inputs refuse a supplied `from`, public join refuses it, and even signed extra event members fail the exact event profile. Foreign transport remains unavailable.
+2. **Import preservation:** confirmed the real runtime resource-provider path returns the writer's relation mirrors, and the existing federation sync preserves `provider:'relation'` mirrors absent from provider output. Member views expose only imports held by that member's grants; narrowing can remove a member's only import entirely.
+3. **Alarms and dispatch scope:** every relation mutation arms the account alarm; `relations.tick` runs anti-entropy/sweep/drain and counterpart key refresh. Failed claims defer without permanently occupying the first refresh page. Missing/rotated-key events have a bounded untrusted retry inbox (64 × at most 32 KiB, five retries/5-minute retention); retry still passes signature, generation, epoch and live-edge checks. Background refresh observes identity-backed authority epochs and establishes RL-4 holds; outgoing issuance/events use the identity-backed epoch. RPC storage dispatch receives the composed scope, including full-object byte limits on ranged reads. Review caught duplicate resource references selecting a different matrix entry's scope; scope now comes from a live entry authorizing that method/arguments, with a named regression.
+4. **Public holder keys:** verified DPoP proofs supply only `{kty,crv,x,y}` to sessions/access records; refresh retains or safely backfills the public key. DPoP/member tokens can issue usable relay certificates from that stored public key. No private JWK material is stored by this change. Bearer-only access without a certified holder remains unavailable for relay imports.
+5. **Pre-purge publication:** configured `ORGANIZATION_PURGE` is held until `relations.purge-ready`. The regression verifies public identity/certification-key publication while final events cannot be delivered, then verifies handoff after readiness. It exposed an existing inherited `tick` collision: OwnershipService shadowed the deletion scheduler. `OrganizationTick` now uses a distinct inherited `deletionTick` port; ownership ticking is unchanged. Production purge is still an injected integration, not a verified production executor.
+6. **Authorization adapters:** direct entity RPC, DPoP-bound relation RPC and token exchange invoke `relations.authorize`, preserving its single credential failure. Storage runs under its assigned scope. Signed inbound revocation, narrowing, leaving and paged admin export remain reachable with both relation flags off; widening requires the flag, fresh step-up and unheld admin authority. Unknown public targets answer uniformly. `relations.v1` is declared only for an explicitly mounted foreign transport; no adapter advertises it on flags alone.
+
+**ORG-10g:** Relationships tab; one-question sharing wizard; resolved organization identity; scope/expiry choices; full gives/receives and actor/copy/proxy disclosures before acceptance; new-counterparty/new-relation/lookalike warnings; invitation acceptance landing; invitations and introductions in activity; edge suspend/resume/end/narrow/leave; imports and restricted member imports; admin confirmation bound to the RL-4 hold's loaded epoch; rebind after move; introductions/admission; relationship checklists before control change/deletion; keyboard-operable paged JSON export. English and Spanish text is recorded in `packages/i18n/catalogues.mjs` and follows existing console rendering. Browser checks cover Chromium/Firefox, en/es, light/dark, 390/1280 widths, focus, literal untrusted text, private-state fencing and readable errors. The original console browser fixture now expects the additional authorized member-import read.
+
+**Provisional decisions/reconciliation (no human approval):**
+
+- The shipped relation catalogue uses reserved `relations.3sln.example` pins (share, group, supply, accounting engagement), version 1, publisher explicitly unverified. URL selection only resolves those known pins. Arbitrary document fetch and cross-provider transport remain ORG-11.
+- **Upgrade alternative:** the earlier engine contained no upgrade operation and events do not carry per-edge pin migrations. A newer additive full pin now issues a replacement-instance invitation through existing consent/acceptance machinery; previous edges remain unchanged until an admin explicitly ends them. This is the design's “upgrade, or a new instance” alternative, **not** normative same-instance per-edge migration. Tests publish a synthetic newer version; no newer version is shipped in the catalogue. Same-instance upgrades and their dedicated activity queue remain unimplemented, and §8b states this limitation.
+- Export is a paged inspection export of whitelisted relation records, excluding sessions, proofs and key caches; it is not an authority-restoring import. Participation restoration and foreign interoperability remain ORG-11b/c.
+- Doorbell forwarding/entity bus readers, integration-hosted grantor token brokering and the entity-certificate status endpoint remain the previously recorded follow-ups. No external delivery, provider conformance, production custody, legal approval or release permission is inferred from local tests.
+- Delegated implementation review found the scope-selection, rotated-key inbox and refresh-queue issues above; they were corrected. This was implementation cross-review, not independent security sign-off. Every unsigned design decision remains provisional.
+
+**Verification (shared checkout; unrelated reliability-job changes preserved):**
+
+- `npm test`: **3,796 passed, 0 failed**, 0 skipped/cancelled.
+- `npm run test:organizations`: **503 passed, 0 failed**, 0 skipped/cancelled (271 runtime/core + 72 engine + 148 DOM/browser + 12 built-shell e2e).
+- `npm run test:worker`: **93 passed, 0 failed**, 0 skipped/cancelled.
+- `npm run test:ui-state`: **488 passed, 0 failed**, 0 skipped/cancelled.
+- `npm run test:e2e`: **327 passed, 0 failed, 4 skipped**, 0 cancelled (331 total across the main and isolated suites). The four skips are existing WebKit cases: its Playwright executable is unavailable on this host. Requested Chromium/Firefox relation matrices passed without skips.
+- `npm run check:worker`: passed (Wrangler dry-run; no deployment).
+- `git diff --check`: passed.
+- `npm run build:assets`: passed; public build `e28cf679a958cdfbc15d`, 262 addressed modules; islands build `5304f30b1d12f7b48826`.
+- Targeted relations runtime/ownership integration: **6 passed**; relations route matrix: **7 passed**; upgrade cases: **3 passed**; duplicate-resource scope review: **1 passed**; relations client engine: **15 passed**; relations Chromium/Firefox DOM: **18 passed**; built-Worker-shell relation UI: **2 passed** (routed API fixtures; real runtime same-host data/RPC behavior is tested separately).
+- Initial browser-run setup raced the concurrent asset rebuild and failed copying a disappearing asset before any test executed. Re-run after the build completed. Earlier development runs also caught the cold-cache delivery and original console exact-read expectation issues; only final results above supersede them.
+
+Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-26 — RTC signaling extension design
+
+**Design only:** [spec](docs/spec/rtc-signaling.md) and [design](docs/architecture/rtc-signaling.md), revision 1, plus a provisional supersession note at the top of [beaming](docs/spec/beaming.md). No code changed. Nothing is implemented, routed or production-verified, and no tests were run. Every item is **provisional** (coordinator), not signed off by the user.
+
+**Direction (user, 2026-10-26):** a generic, secure Bindle extension for cross-provider WebRTC signaling, for own devices or devices of different users, for any purpose. App experiences stay out of core: Beam's file transfer becomes an app on the primitive. Follow-up direction the same day: build it on the existing extension system ([extensions](docs/spec/extensions.md)), name gaps and propose the smallest addition, and reconcile with [beaming](docs/spec/beaming.md).
+
+**Design:**
+- **Building blocks, all existing mechanisms:**
+  - the `rtc-signaling.v1` feature (provider-to-provider endpoint);
+  - the exclusive `rtc-signaling/v1` slot, whose built-in occupant has a non-brokerable contract (`register`, `open`, `claim`, `send`, `listen`, …);
+  - an optional `ice-relay/v1` slot;
+  - `rtc-purpose` artefacts (media, alert, parties, auto-accept, context schema);
+  - an `rtc-ticket/v1` link type (nearby QR, call-me links, callbacks).
+- **One extension gap:** AMD-X1, bound consumer options. A slot member `bind` (in `crit`), `options` on slot fragment requests, and per-consumer approved values, with versions, recorded in the grant. These let each app's purposes be part of its approval.
+- **Security:**
+  - Per-session leg keys, certified by the entity's issuer with its certification key, sign every message end to end, and providers relay them unchanged.
+  - DTLS fingerprints are bound into the signed SDP. Endpoints can optionally verify the peer's keys directly, and a committed 6-digit SAS can detect provider substitution.
+  - The spec tabulates what each provider can still do.
+- **Privacy:**
+  - A uniform `202`, no request-path fetch except after a verified link, and no ringing or busy signal.
+  - No address leaves a device before the first claim; SDP never carries candidates; relay candidates carry no real `raddr`.
+  - Cross-entity sessions default to relay-only, and each party funds its own relay.
+  - Per-session keys, so endpoints cannot be linked across sessions; no device inventory crosses entities; SDP is deleted on delivery; session records are kept at most 24 h.
+- **Admission:** own entity, a contact link with owner-side RTC configuration, a ticket, or an opt-in request policy (off by default). A relation basis is reserved. Blocking, muting and quarantine are silent.
+- **Sessions:**
+  - fan-out to eligible endpoints, with an atomic first claim at the callee's writer;
+  - crossing invites resolved by the lower `sid`; perfect negotiation with the callee as the polite peer;
+  - limits of ring 120 s, session 24 h and leg certificate at most 900 s;
+  - moves and revocations end legs through signed control statements;
+  - multi-party is a non-goal.
+
+**Decisions for the user:** RTC-1 to RTC-17 (design §9). Notably:
+- RTC-1: the shape on the extension system.
+- RTC-2: AMD-X1.
+- RTC-3: leg-key signatures.
+- RTC-6: the relay-only default. With hosted relay off, cross-entity sessions need an opt-in to connect directly.
+- RTC-7: each party funds its own relay.
+- RTC-8: no presence signal.
+- RTC-14: Beam leaves core.
+- RTC-17: the caller's app origin is disclosed to the callee.
+
+Proposed amendments (unsigned): AMD-X1 and AMD-R1 to R6.
+
+**Implementation plan (design §8):**
+- **Slices:** RTC-a to RTC-i (validators, purposes, AMD-X1, engine and storage, foreign transport, relay, owner UI, the Beam reference app, a clean-room peer).
+- **Flags:** `RTC_SIGNALING_ENABLED`, `RTC_FOREIGN_ENABLED` and `RTC_TICKETS_ENABLED`, all class (a) and default off; `RTC_TURN_ENABLED`, class (b). Narrowing is never gated.
+- **Tests:** engine tests, seeded chaos with invariants C1 to C10, and adversarial and browser cases.
+- **Beam code:** the TURN adapter and the credential lifecycle are reused. Offers, mailbox, signals and invitations are replaced. The routes are retired after migration. The transfer UI and framing move to the app.
+- **Coordination:** the shared files (flags registry, providers, route index, `packages/runtime/federation.mjs`, `packages/federation/extensions.mjs` and `schema.mjs`, i18n) are under concurrent edits and change only by hand-off.
+
+**Review:** one forked adversarial round found 7 High, 11 Medium and 6 Low issues (design §10), all applied. The High findings:
+- ticket uses spent before verification;
+- a session lookup that could never match callee answers;
+- a relay-only rule that broke connectivity;
+- contradictory host-candidate rules;
+- cross-app auto-accept;
+- unbounded key refresh;
+- a long revocation window.
+
+The pending sign-off digest (docs/release/pending-signoffs.md) was not updated.
+
+Reviewer: ___ Date: ___ Outcome: ___

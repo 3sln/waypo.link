@@ -76,8 +76,13 @@ export function orgsEngine(c){
     rotateRecovery:async org=>{const current=(await c.identityKeyHistory(org,{purpose:'signing'})).find(k=>k.current);if(!current)return {rotated:false};await c.rotateIdentityKey(org,{purpose:'signing',expectedKid:current.kid});return {rotated:true};},
     index:async(person,input)=>{const stub=c.config.CONVERSATION_ACCOUNT?.(person);if(!stub)return false;const result=await stub.invoke({method:'orgsOwnershipIndexApply',args:[person,input]});return !result?.$fault&&result?.indexed===true;}
    },
-   ...typeof c.config.ORGANIZATION_PURGE==='function'?{purge:org=>c.config.ORGANIZATION_PURGE(org)}:{}});
+   // ORG-10f (design §8b.6 "deletion takes effect", production gate 5): the hand-off waits for the relations pre-purge
+   // step (leave every instance, relation-edge-ended for each half) to report relations.purge-ready, so the identity and
+   // its certification keys stay published until counterparts have been told or 72 h have passed.
+   ...typeof c.config.ORGANIZATION_PURGE==='function'?{purge:async org=>{if(typeof c.relationsPurgeGate==='function'&&!await c.relationsPurgeGate(org))return {handedOff:false};return c.config.ORGANIZATION_PURGE(org);}}:{}});
   entry={service,engine:createAppEngine({providers:{clock,random:cryptoRandom,audit:nullAudit,organizations:organizationsProvider(service)}})};engines.set(c,entry);
+  // ORG-10f: the relations service registers its organization commit hook (review M1) on this same service.
+  try{c.relationsEnsure?.();}catch{/* relations stay unavailable; redemption refuses on its own */}
  }
  return entry;
 }

@@ -7,6 +7,7 @@
 // organization's live grants to that client exist at the current authority epoch, the connection generation is live.
 // `expiresAt` (ms) is the certificate-bounded expiry; it is never extended and there is no refresh token or family.
 import {boundTokenId} from './app-sessions.mjs';
+import {thumbprint} from './dpop.mjs';
 import {fail} from './schema.mjs';
 
 const key=(kind,id)=>`federation/${kind}/${id}`;
@@ -31,6 +32,9 @@ export async function issueMemberAccess(service,input){
  const m=input.member;
  if(!plain(m)||!plain(m.principal)||typeof m.principal.sub!=='string'||!UUID.test(m.principal.sub)||!ID.test(m.membership_id??'')||!Number.isSafeInteger(m.generation)||!Number.isSafeInteger(m.aep)||m.aep<0||m.client!==input.clientId)refuse();
  if(!service.routingKey||!service.clients.has(input.clientId))refuse();
+ // ORG-10f production gate 4: the holder key's PUBLIC JWK (from the verified DPoP proof), kept only when its thumbprint
+ // is the token's jkt, so the relay projection can name it as an entity certificate's holder. Never private material.
+ let jwk=null;if(plain(input.jwk)){const k={kty:'EC',crv:'P-256',x:input.jwk.x,y:input.jwk.y};try{if(input.jwk.kty==='EC'&&input.jwk.crv==='P-256'&&await thumbprint(service.crypto,k)===input.jkt)jwk=k;}catch{jwk=null;}}
  const subject=`${service.issuer}/entities/${service.routingKey}`,now=service.clock(),expiresAt=Math.min(input.expiresAt,now+MEMBER_ACCESS_MAX_MS),expires_in=Math.floor((expiresAt-now)/1000);
  if(expires_in<1)refuse();
  const issued=await service.store.transaction(async tx=>{
@@ -54,7 +58,7 @@ export async function issueMemberAccess(service,input){
   for(const row of evict)await tx.delete(row.key);
   const access_token=service.random(),id=await boundTokenId(service,access_token);
   const member={principal:{iss:m.principal.iss??null,sub:m.principal.sub},membership_id:m.membership_id,generation:m.generation,aep:m.aep,...plain(m.addedUnder)?{addedUnder:structuredClone(m.addedUnder)}:{}};
-  await tx.set(key('token',id),{issuer:service.issuer,audience:service.audience,subject,epoch:input.epoch,connection:{id:input.connection.id,generation:input.connection.generation},clientId:input.clientId,grants,expiresAt,issuedAt:now,jkt:input.jkt,member});
+  await tx.set(key('token',id),{issuer:service.issuer,audience:service.audience,subject,epoch:input.epoch,connection:{id:input.connection.id,generation:input.connection.generation},clientId:input.clientId,grants,expiresAt,issuedAt:now,jkt:input.jkt,...jwk?{jwk}:{},member});
   return {access_token,token_type:'DPoP',expires_in};
  });
  return issued??refuse();

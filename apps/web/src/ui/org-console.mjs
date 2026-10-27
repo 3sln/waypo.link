@@ -6,6 +6,7 @@ import {offersPanel,creationPaymentPanel,ownershipPanel} from './org-ownership.m
 import {orgError,orgNotice,ORG_SIGNED_OUT_INVITATION} from './org-messages.mjs';
 import {breakGlassPanel,breakGlassBanners,breakGlassWaiting} from './org-break-glass.mjs';
 import {claimInterstitial} from './org-claim-interstitial.mjs';
+import {relationsPanel,relationsTabs,relationsChecklist} from './org-relations.mjs';
 const text=(s,en,es)=>s.locale==='es'?es:en;
 const plain=value=>h('bdi',String(value??'')).attrs({dir:'auto',translate:'no'});
 // Shell tokens (apps/web/styles.css :root): --forest, --muted, --line, --surface, --focus, --lime. Text and page colour
@@ -179,7 +180,7 @@ export default function organizations(s){
   m.preferencesUnavailable?h('p',t('Preferences are not available for this organization on this host.','Las preferencias no están disponibles para esta organización en este servidor.')).classes('org-status').attrs({role:'status'}):!(m.preferences??[]).length?h('p',t('This organization has no saved preferences yet. They appear after an app asks the organization for them.','Esta organización aún no tiene preferencias guardadas. Aparecen cuando una app se las pide a la organización.')):null,
   ...(m.preferencesUnavailable?[]:(m.preferences??[]).map(p=>h('article',h('h3',plain(p.schema?.title??p.fragment)),p.schema?.description?h('p',plain(p.schema.description)):null,p.affectedApps?.length?h('p',t('Used by: ','Usado por: '),plain(p.affectedApps.map(app=>app.name??app.client).join(', '))):null,
    form([...Object.entries(p.schema?.fields??{}).map(([name,f])=>preferenceField(p,name,f)),check('confirm',t('Save these values for the organization and its apps','Guardar estos valores para la organización y sus apps'))],'preference',t('Save preferences','Guardar preferencias'),{fragment:p.fragment})).key(p.fragment)))):null;
- const ctx={s,t,h,form,input,check,panel,plain,when,btn};
+ const ctx={s,t,h,form,input,check,panel,plain,when,btn},relTab=!!(org&&m?.relationsTab);
  const error=m?.error?h('p',orgError(s.locale,m.error)).attrs({role:'alert'}):null;
  const notice=m?.notice?h('p',orgNotice(s.locale,m.notice)).classes('org-status').attrs({role:'status','aria-live':'polite'}):null;
  // L7: each option carries the handle (or else the kind), so organizations with the same name can be told apart.
@@ -193,17 +194,19 @@ export default function organizations(s){
   h('header',h('h1',t('Organizations','Organizaciones')).props({id:'org-title',tabIndex:-1}),h('p',t('Create organizations, join them, and act for them. Your personal space stays separate.','Crea organizaciones, únete a ellas y actúa en su nombre. Tu espacio personal sigue separado.'))),
   s.stepUp?h('p',t('Confirm it’s you above to continue. The organization console is paused until you confirm or cancel.','Confirma que eres tú arriba para continuar. La consola de la organización queda en pausa hasta que confirmes o canceles.')).classes('org-status','org-modal-note').attrs({role:'status'}):null,
   // L2: while the shell's step-up card is open, the rest of the console is inert (the pending request holds it).
-  h('div',contextBar,error,notice,guard,recovery,...unsaved,join,...(m?.context?breakGlassBanners(m,ctx):[]),
+  h('div',contextBar,error,notice,guard,recovery,...unsaved,join,...(m?.context?breakGlassBanners(m,ctx):[]),org?relationsTabs(m,ctx):null,
   h('div',
-   offersPanel(m,ctx),breakGlassWaiting(m,ctx),
+   // ORG-10g: the Relationships tab replaces the organization's own panels while it is selected.
+   ...(relTab?[relationsPanel(m,ctx)]:[offersPanel(m,ctx),breakGlassWaiting(m,ctx),
    !m?.context&&m?.creation?creationPaymentPanel(m,ctx):null,
    createPanel,acceptPanel,
    org?panel('org-details',plain(org.name),h('p',kindLabel(org.label),org.handle?[' · ',plain('@'+org.handle)]:null,' · ',t('your role: ','tu rol: '),powers.includes('owner-of-record')?t('owner of record','propietario registrado'):admin?t('admin','administración'):t('member','miembro')),
     deleting?h('p',t('Deletion is scheduled for ','La eliminación está programada para el '),when(org.deletion?.notBefore),t('. Member management is paused; apps can still be suspended or disconnected.','. La gestión de miembros está en pausa; las apps aún se pueden suspender o desconectar.')).classes('org-status').attrs({role:'status'}):null,
+    deleting?relationsChecklist(m,ctx,'deletion'):null,
     deleting&&privileged&&org.state==='deletion-scheduled'?form([check('confirm',t('Cancel the scheduled deletion','Cancelar la eliminación programada'))],'cancel-deletion',t('Cancel deletion','Cancelar eliminación')):null,
     admin&&!deleting?form([input('name',t('Display name','Nombre visible'),org.name,{required:true,maxLength:80})],'rename',t('Rename','Renombrar')):null,admin&&!deleting?form([kindSelect(org.label)],'label',t('Save kind','Guardar tipo')):null,
     h('details',h('summary',t('Leave this organization','Salir de esta organización')),form([check('confirm',t('I want to leave this organization','Quiero salir de esta organización'))],'leave',t('Leave','Salir')))):null,
-   org?ownershipPanel(m,ctx):null,org?breakGlassPanel(m,ctx):null,
+   org?ownershipPanel(m,ctx):null,org&&m?.ownership?relationsChecklist(m,ctx,'transfer'):null,org?breakGlassPanel(m,ctx):null,
    membership,
    admin?panel('org-members',t('Members and access','Miembros y acceso'),
     m.membersUnavailable==='deletion_pending'?h('p',t('Member management is paused while deletion is scheduled. Cancel the deletion to manage members again.','La gestión de miembros está en pausa mientras la eliminación está programada. Cancela la eliminación para volver a gestionar miembros.')).classes('org-status').attrs({role:'status'}):m.membersUnavailable?h('p',t('The member list is not available.','La lista de miembros no está disponible.')).classes('org-status').attrs({role:'status'}):null,
@@ -214,7 +217,7 @@ export default function organizations(s){
     others.length?h('div',h('h3',t('Other pending requests (admin view)','Otras solicitudes pendientes (vista de administración)')),h('ul',...others.map(q=>h('li',subjectOf(q),' · ',q.state==='elevated'?t('waiting for the owner','pendiente del propietario'):t('waiting for the member','pendiente del miembro')).key(q.id)))):null,
     h('details',h('summary',t('Decide a request from a notice','Decidir una solicitud de un aviso')),form([input('request',t('Request reference from your notice','Referencia de la solicitud de tu aviso'),'',{required:true,autoComplete:'off'}),h('label',h('span',t('Decision','Decisión')),h('select',...['accept','reject','elevate','retract'].map(value=>h('option',tt(DECISION_LABELS[value])).props({value}))).props({name:'decision'})),check('confirm',t('Confirm this decision','Confirmar esta decisión'))],'decide',t('Submit decision','Enviar decisión'),m?.context?{org:m.context}:{}))):null,
    connections,preferences,
-   org&&privileged?panel('org-audit',t('Activity log','Registro de actividad'),btn(t('Load activity','Cargar actividad'),'audit'),(m?.audit??[]).length?h('ul',...m.audit.map((entry,i)=>h('li',h('strong',tt(AUDIT[entry.action]??[t('Organization activity','Actividad de la organización'),t('Organization activity','Actividad de la organización')])),entry.at?[' · ',when(entry.at)]:null,auditWho(entry),entry.reason?[' · ',t('reason: ','motivo: '),plain(entry.reason)]:null).key(String(entry.seq??i)))):null):null
+   org&&privileged?panel('org-audit',t('Activity log','Registro de actividad'),btn(t('Load activity','Cargar actividad'),'audit'),(m?.audit??[]).length?h('ul',...m.audit.map((entry,i)=>h('li',h('strong',tt(AUDIT[entry.action]??[t('Organization activity','Actividad de la organización'),t('Organization activity','Actividad de la organización')])),entry.at?[' · ',when(entry.at)]:null,auditWho(entry),entry.reason?[' · ',t('reason: ','motivo: '),plain(entry.reason)]:null).key(String(entry.seq??i)))):null):null])
   // H4: a refused change rebuilds every form from the refreshed server state (formEpoch), discarding rejected input.
   ).props({id:'org-main',tabIndex:-1}).key('org-main:'+(m?.formEpoch??0))).props({inert:!!s.stepUp}).classes(...s.stepUp?['org-paused']:[]).attrs(s.stepUp?{'aria-hidden':'true'}:{})).classes('org-console').attrs({'aria-busy':String(busy)});
 }
