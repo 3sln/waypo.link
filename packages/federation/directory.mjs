@@ -1,4 +1,4 @@
-// ORG-7, organizations §3a. The directory hook for identity/keys.resolveIdentityKey, links and BindleBox.
+// ORG-7, organizations §3a. The directory hook for identity/keys.resolveIdentityKey, links and Parlay.
 // resolve is CACHE ONLY: request verification never discovers issuers or refreshes membership-dependent state.
 // Background callers dispatch RefreshDirectoryIdentity after their own membership/invitation admission. Pins use
 // a durable serializable transaction port (get/set); caches are bounded, disposable, never served past freshness.

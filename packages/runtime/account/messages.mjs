@@ -1,36 +1,29 @@
-// AccountController slice 2, Messages and collections (docs/architecture/app-engine.md §12): message reads, updates, pages, presentations and postbacks.
+// AccountController slice 2, activity items and collections (docs/architecture/app-engine.md §12): reads, updates, pages,
+// presentations and postbacks of stored v1 app messages. Peer messages left the core on 2026-10-27 (DEVLOG "Messaging
+// removed from core; Parlay rename; BB-CUT reset"); the `/api/messages*` names are kept for the app-message API.
 // `methods` are installed on AccountController.prototype (`this` is the controller); `rpc` lists the methods
 // `invoke` accepts and the placement policy it applies to each (packages/runtime/account/index.mjs).
 import {messagePostbackPrepare,messagePostbackDispatch,messagePostbackAvailability} from '../message-postbacks.mjs';
 import {messageWithPresentation,messagePresentation} from '../message-presentations.mjs';
 import {key} from '../../core/records.mjs';
-import {itemPage,migrateAppMessages,APP_MESSAGES_MARKER,APP_MESSAGES_CURSOR,APP_MESSAGES_RECONCILED} from '../../activity/app-messages.mjs';
-const RECONCILE_INTERVAL=86400000;
-import {appNotificationPublicKeys} from '../app-notifications.mjs';
+import {itemPage} from '../../activity/app-messages.mjs';
+import {resetLegacyMessaging,MESSAGING_RESET_MARKER} from '../messaging-reset.mjs';
 import {StorageError} from '../../storage/policy.mjs';
 import {storageState} from '../storage-quota.mjs';
 import {armAlarm} from '../account-deletion.mjs';
 import {enqueueSearchEvent,searchRevisionKey,planBudget} from '../../search/index.mjs';
 
 export const methods={
-  /** One bounded `app-messages-v1` slice (packages/activity/app-messages.mjs). The warm path stops at the marker; the
-   * alarm path keeps reconciling after it, starting a new post-marker pass at most once a day (review F6), and
-   * reschedules itself only while the marker is missing. Nothing runs while the account is shelved (its rows are in
-   * the archive; the restore clears the marker, review F2) or while an export is active (DX-2 pinning; a row moving
-   * between the `messages` contributor's two phases would repeat an archive path, review F4).
-   * Errors never escape: a failed slice is retried by the alarm. */
-  async migrateAppMessageFamily(owner,{alarm=false,limit=64,now=Date.now()}={}){
-    try{
-      const marked=await this.metadata.get(APP_MESSAGES_MARKER)!==undefined;
-      if(!alarm&&marked)return {done:true,moved:0,unverified:0};
-      if(alarm&&marked&&await this.metadata.get(APP_MESSAGES_CURSOR)===undefined){const last=await this.metadata.get(APP_MESSAGES_RECONCILED);if(Number.isSafeInteger(last)&&now-last<RECONCILE_INTERVAL)return {done:true,moved:0,unverified:0,reason:'reconciled'};}
-      let keys=null;try{keys=appNotificationPublicKeys(this.config);}catch{keys=null;}
-      const result=await migrateAppMessages(this.metadata,{owner,issuer:this.config.APP_ORIGIN,keys,limit,holds:['shelved','export/active']});
-      if(result.done&&marked)await this.metadata.put(APP_MESSAGES_RECONCILED,now);
-      // Shelved: the restore re-arms the pass. Export: retried once the export ends (its own alarms keep running).
-      if(!result.done&&result.reason!=='keys-unavailable'&&result.hold!=='shelved'&&await this.metadata.get(APP_MESSAGES_MARKER)===undefined)await this.scheduleAlarm(Date.now()+(alarm&&!result.hold?1000:60000));
-      return result;
-    }catch(error){try{await this.scheduleAlarm(Date.now()+60000);}catch{}return {done:false,moved:0,unverified:0,reason:error?.code??'unavailable'};}
+  /** The item-index and search effects of dropping one legacy `message/` row (../messaging-reset.mjs `dropLegacyItem`),
+   * shared by the BB-CUT reset and the shelved-archive restore in `warm` (review M1). */
+  legacyItemEffects(owner){return {item:async(tx,row)=>{this.itemIndex?.remove(row.id);if(row.owner===owner)await this.queueMessageSearch(tx,row,'tombstone');}};},
+  /** One bounded slice of the BB-CUT reset (../messaging-reset.mjs). Deleted legacy items get the full item cleanup in
+   * the same transaction. Reschedules itself until the marker exists; errors retry from the alarm. */
+  async resetLegacyMessaging(owner,{alarm=false,limit=256}={}){
+    if(await this.metadata.get(MESSAGING_RESET_MARKER)!==undefined)return {done:true,deleted:0};
+    const result=await resetLegacyMessaging(this.metadata,{limit,owner,effects:this.legacyItemEffects(owner)});
+    if(!result.done)await this.scheduleAlarm(Date.now()+(alarm?1000:60000));
+    return result;
   },
   async migrateItemIndex(owner){
     if(!this.itemIndex)return;
@@ -38,7 +31,6 @@ export const methods={
     if(!this.itemIndex.buildFilterIndexes())await armAlarm(this.metadata,Date.now()+1000);
     // Catalog progress never depends on extraction capacity. A full search
     // queue must not roll back the owner's authoritative inbox browse index.
-    // Both item families are indexed: legacy messages, then activity's app messages (one cursor, itemPage).
     if(!await this.metadata.get('item-index-ready')){
       const page=await itemPage(options=>this.metadata.list(options),owner,{cursor:await this.metadata.get('item-index-migration'),limit:200}),rows=page.rows;
       await this.metadata.transaction(async tx=>{
@@ -72,17 +64,17 @@ export const methods={
       if(rows.size||!await tx.get('search-backfill-ready'))await tx.setAlarm(Date.now()+60000);
     });
   },
-  async messagePage(owner,options={}){await this.warm(owner);if(!this.itemIndex)return {items:await this.messages.list(owner,options),cursor:null};if(!await this.metadata.get('item-index-ready')||!this.itemIndex.filterIndexesReady())throw new StorageError('temporarily_unavailable','Your inbox index is being upgraded. Try again shortly.',503);return this.itemIndex.page(owner,options);},
-  async collections(owner,name){await this.warm(owner);return name===undefined?this.messages.collections(owner):this.messages.createCollection(owner,name);},
-  async content(owner,id){const record=await this.messages.read(owner,id);if(record.blobRef){const blob=await this.blobs.get(record.blobRef);if(!blob)throw Object.assign(new Error('Message content is temporarily unavailable.'),{code:'temporarily_unavailable',status:503});return {...record,bytes:new Uint8Array(await blob.arrayBuffer())};}return record;},
+  async messagePage(owner,options={}){await this.warm(owner);if(!this.itemIndex)return {items:await this.items.list(owner,options),cursor:null};if(!await this.metadata.get('item-index-ready')||!this.itemIndex.filterIndexesReady())throw new StorageError('temporarily_unavailable','Your inbox index is being upgraded. Try again shortly.',503);return this.itemIndex.page(owner,options);},
+  async collections(owner,name){await this.warm(owner);return name===undefined?this.items.collections(owner):this.items.createCollection(owner,name);},
+  async content(owner,id){const record=await this.items.read(owner,id);if(record.blobRef){const blob=await this.blobs.get(record.blobRef);if(!blob)throw Object.assign(new Error('Message content is temporarily unavailable.'),{code:'temporarily_unavailable',status:503});return {...record,bytes:new Uint8Array(await blob.arrayBuffer())};}return record;},
   async message(owner,id,options){return messageWithPresentation(this,owner,id,options);},
   async messagePresentation(owner,id,input){return messagePresentation(this,owner,id,input);},
   async messagePostbackPrepare(owner,id,input,epoch){return messagePostbackPrepare(this,owner,id,input,epoch);},
   async messagePostbackDispatch(owner,id,token){return messagePostbackDispatch(this,owner,id,token);},
   async postbackAvailability(owner,id,record,originalDigest){return messagePostbackAvailability(this,owner,id,record,originalDigest);},
   async messageBytes(owner,id){const {bytes,mimeType}=await this.content(owner,id);return {bytes:Array.from(bytes),mimeType};},
-  async updateMessage(owner,id,actions){return this.messages.update(owner,id,actions);},
-  async deleteMessage(owner,id){return this.messages.delete(owner,id);},
+  async updateMessage(owner,id,actions){return this.items.update(owner,id,actions);},
+  async deleteMessage(owner,id){return this.items.delete(owner,id);},
 };
 
 export const rpc={

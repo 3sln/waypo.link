@@ -2,10 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {createTestEngine,OWNER,OTHER} from './helpers/app-engine.mjs';
-import {createTestEngine as mailboxEngine} from './bindlebox/helpers/engine.mjs';
-import {organizationProviders} from '../packages/bindlebox-engine/domains/views.mjs';
-import {TAG_CATEGORIES} from '../packages/bindlebox-engine/domains/tags.mjs';
-import {base64url} from '../packages/bindlebox-protocol/index.mjs';
+import {createTestEngine as mailboxEngine} from './parlay/helpers/engine.mjs';
+import {organizationProviders} from '../packages/messaging-engine/domains/views.mjs';
+import {TAG_CATEGORIES} from '../packages/messaging-engine/domains/tags.mjs';
+import {base64url} from '../packages/messaging-protocol/index.mjs';
 import {AppConnections,builtInManifestValid,RECOGNIZED_SLOTS} from '../packages/apps/connections.mjs';
 import * as C from '../packages/app/domains/connections.mjs';
 import * as X from '../packages/runtime/account/classifier.mjs';
@@ -17,7 +17,7 @@ import {RESOURCE_METHOD_HANDLERS} from '../packages/runtime/account/storage.mjs'
 import {federationControllerOptions,federationSchemas} from '../packages/runtime/federation.mjs';
 import {ACCOUNT_SLICES,accountRPC} from '../packages/runtime/account/index.mjs';
 import {stages as incrementalRoutes} from '../packages/runtime/routes/incremental.mjs';
-import {CLASSIFIER_SLOT as BOX_CLASSIFIER_SLOT} from '../packages/bindlebox-engine/domains/classify.mjs';
+import {CLASSIFIER_SLOT as BOX_CLASSIFIER_SLOT} from '../packages/messaging-engine/domains/classify.mjs';
 
 const ORIGIN='https://3sln.example',VERSION='clef-flash-evaluation-2026-10-20',owner={kind:'owner',owner:OWNER},system={kind:'system',owner:OWNER};
 const HELLO_COST=X.classifierCostMicroUSD(X.classifierRequest({text:'Hello',hints:[]}));
@@ -43,7 +43,7 @@ async function fixture(t,options={}){
 
 test('classifier uses the versioned artifact, valid X4 manifest and registered contract handler',async()=>{
  const artifact=JSON.parse(await readFile(new URL('../docs/artefacts/slots/item-classifier-v1.json',import.meta.url)));
- assert.deepEqual(X.CLASSIFIER_SLOT_MANIFEST,artifact);assert.deepEqual(RECOGNIZED_SLOTS[artifact.id],artifact);assert.equal(BOX_CLASSIFIER_SLOT,artifact.id);assert.deepEqual(JSON.parse(await readFile(new URL('../apps/bindlebox/slots/item-classifier-v1.json',import.meta.url))),artifact);assert.equal(artifact.id,'https://3sln.me/artefacts/slots/item-classifier/v1');assert.equal(validateSlotManifest(artifact).status,'valid');assert.equal(builtInManifestValid(X.CLASSIFIER_INTEGRATION.manifest),true);
+ assert.deepEqual(X.CLASSIFIER_SLOT_MANIFEST,artifact);assert.deepEqual(RECOGNIZED_SLOTS[artifact.id],artifact);assert.equal(BOX_CLASSIFIER_SLOT,artifact.id);assert.deepEqual(JSON.parse(await readFile(new URL('../docs/artefacts/slots/item-classifier-v1.json',import.meta.url))),artifact);assert.equal(artifact.id,'https://3sln.me/artefacts/slots/item-classifier/v1');assert.equal(validateSlotManifest(artifact).status,'valid');assert.equal(builtInManifestValid(X.CLASSIFIER_INTEGRATION.manifest),true);
  assert.deepEqual(X.CLASSIFIER_CATEGORIES,TAG_CATEGORIES);assert.equal(RESOURCE_METHOD_HANDLERS[X.CLASSIFIER_CONTRACT],X.classifierResourceMethod);assert.ok(Object.isFrozen(X.CLASSIFIER_SLOT_MANIFEST.fields.occupants));
 });
 test('flags default off; a connection is never created or preassigned by a status read',async t=>{
@@ -93,8 +93,8 @@ test('suspension, vacate, entitlement changes and consent races discard in-fligh
   release(response());await assert.rejects(decision,{code:'forbidden'});assert.equal(f.modelCalls.length,1);assert.equal((await f.global.metadata.get('classifier/day')).microUSD,HELLO_COST);
  }
 });
-test('BindleBox consumes only calibrated evidence and records suspected tags; a model-version change recalibrates',async t=>{
- const f=await fixture(t);await f.occupy();const port={decide:input=>f.decide(input)},box=mailboxEngine({providers:organizationProviders({BINDLEBOX_ENABLED:true,classifier:port})});t.after(()=>box.dispose());
+test('Parlay consumes only calibrated evidence and records suspected tags; a model-version change recalibrates',async t=>{
+ const f=await fixture(t);await f.occupy();const port={decide:input=>f.decide(input)},box=mailboxEngine({providers:organizationProviders({PARLAY_ENABLED:true,classifier:port})});t.after(()=>box.dispose());
  await box.run('classify.settings',{input:{consent:true,pin:{...f.ai.evidence,thresholds:{social:.9}}}});const rules=await box.run('rules.list');await box.run('rules.replace',{input:{rules:rules.map(r=>({...r,enabled:false}))}});
  const put=id=>box.store.put('item/'+id,{id,origin:'channel',kind:'channel',subject:'',receivedAt:10,state:'inbox',tags:[],asserted:{automation:[]},message:{parts:[{mimeType:'text/plain',dataBase64url:base64url(new TextEncoder().encode('Hello friend'))}]}});
  await put('calibrated');const result=await box.run('classify.item',{id:'calibrated'});assert.equal(result.status,'complete');assert.deepEqual(result.item.tags,['sys:suspected.social']);assert.equal(result.item.automated['sys:suspected.social'].classifier.version,VERSION);assert.equal(result.item.quarantined,undefined);

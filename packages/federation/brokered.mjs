@@ -1,6 +1,6 @@
 import {siteGlobal} from '../flags/read.mjs';
 // EXT-X7 brokered resource records and provider-to-integration resource calls (docs/spec/integrations.md §4.3–§4.5,
-// §5.3, §5.6, §7.1; docs/spec/bindlebox.md §2.2; extensibility-design X7). Engine-first: `brokeredResourcesProvider`
+// §5.3, §5.6, §7.1; docs/spec/messaging.md §2.2; extensibility-design X7). Engine-first: `brokeredResourcesProvider`
 // is the owner-scoped resource over the account store; the Actions/Queries below are the operations. Everything is
 // refused with `not_found` unless INTEGRATIONS_ENABLED is on; records, `describe` and the severance hooks also need
 // BROKERING_ENABLED. Nothing here mints consumer tokens or emits events: X8 drains the severance rows written here
@@ -33,7 +33,7 @@ import {RESOURCE_SCOPING} from '../storage/scoping.mjs';
 import {contractReferences} from './integrations.mjs';
 import {resourceId,DISCOVERY_LIMITS} from './resource-discovery.mjs';
 
-export const MAILBOX_CONTRACT='https://spec.bindle.example/bindlebox/v1/contracts/mailbox';
+export const MAILBOX_CONTRACT='https://spec.bindle.example/messaging/v1/contracts/mailbox';
 export const BROKERED_LIMITS=Object.freeze({perConnection:64,perAccount:256,assignments:16,callBytes:16384,severance:1024,overflow:512,probe:8,candidates:100,hintCoalesceMs:60000,failuresToDegrade:3});
 /** Provider features that consume a slot through a brokered record (extensions §5.3), by slot: the feature `ref` is
  * the token's `bindle.feature` and the only provider consumer a record for that slot may name. */
@@ -140,7 +140,7 @@ function scope(p,actor){
    h.failures++;const change=!h.degraded&&h.failures>=BROKERED_LIMITS.failuresToDegrade?'degraded':null;if(change)h.degraded=true;m.health[connectionId]=h;
    if(Object.keys(m.health).length>BROKERED_LIMITS.candidates)delete m.health[Object.keys(m.health)[0]];await t.put(META,m);return change;});
  }
- /** A provider-feature brokered call (bindlebox §2.2) or the scoping `describe` (§5.6), bounded and envelope-checked. */
+ /** A provider-feature brokered call (messaging §2.2) or the scoping `describe` (§5.6), bounded and envelope-checked. */
  async function brokeredCall(c,record,{purpose,contract,method,grant,feature,pool='owner'}){
   if(c.manifest.resources?.dpop==='required')unavailable();// The provider consumer holds no DPoP key (§5.4).
   const url=p.discovery.endpoint(c,'rpc_endpoint');if(resourceId(record.resource,url.href)!==record.resource)unavailable();
@@ -240,7 +240,7 @@ function scope(p,actor){
     await sever(t,rows);return counts;});
    return {checked:mine.records.length,pruned:mine.pruned,...changes,...recovered?{health:recovered}:{}};
   },
-  /** C1b: the messaging occupant's `describe` (bindlebox §2.2) through the brokered record its seat names, as the
+  /** C1b: the messaging occupant's `describe` (messaging §2.2) through the brokered record its seat names, as the
    * `messaging-address` provider feature. `seat` is the occupancy port's answer ({seat, connection, clientId,
    * generation, resource, cnx}); every link of seat -> record -> connection is re-checked here, so a seat pointing at
    * another connection's record, a stale generation, a detached or unavailable record or a DPoP-required integration

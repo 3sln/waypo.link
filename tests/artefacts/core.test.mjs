@@ -33,7 +33,7 @@ test('strict JSON bounds, own prototype names and parser generalization preserve
  assert.throws(()=>strictJSON('"é"',{maxBytes:3}),fault('too_large'));assert.equal(strictJSON('"é"',{maxBytes:4}),'é');
  assert.throws(()=>strictJSON('[[0]]',{maxDepth:1}),fault('malformed'));assert.deepEqual(strictJSON('[[0]]',{maxDepth:2}),[[0]]);
  assert.throws(()=>strictJSON('{"a":[0,1]}',{maxMembers:2}),fault('too_large'));
- const old=await import('../../packages/bindlebox-protocol/encoding.mjs');assert.throws(()=>old.strictJSON('-1'));assert.equal(strictJSON('-1'),-1);
+ const old=await import('../../packages/messaging-protocol/encoding.mjs');assert.throws(()=>old.strictJSON('-1'));assert.equal(strictJSON('-1'),-1);
  for(const s of ['{}','[0,true,"x"]','{"__proto__":3}'])assert.equal(jcs(strictJSON(s)),old.jcs(old.strictJSON(s)));
 });
 test('refusing JCS never silently drops or coerces non-JSON values',()=>{

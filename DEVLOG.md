@@ -8387,3 +8387,326 @@ Spikes in progress:
 - docs/architecture/extension-catalogue-spike.md
 
 Reviewer ___ / date ___ / outcome ___
+
+## 2026-10-27 — signaling.v1 spec rev 2 (offer and pairing bases)
+
+**Spec revision only.** [signaling](docs/spec/signaling.md) moves from revision 1 to revision 2. It applies the [establishment-modes spike](docs/architecture/signaling-modes-spike.md) (2026-10-27): change requests CR-1 to CR-13 and decisions SMS-1 to SMS-8. Only docs/spec/signaling.md and this entry were edited. No code changed, no tests were run, and there was no commit. intents.md, device-authorization.md, messaging.md, activity.md, links.md and security.md are not edited: their changes stay proposed amendments or references in spec §20. Every decision is **provisional** (coordinator) and unsigned. The owner allowed provisional adoption without sign-off, so the decisions are adopted on that basis and sign-off stays blank.
+
+**Source decisions, all provisional and unsigned (spike §5):**
+- **SMS-1.** One signaling mechanism with explicit establishment bases. No second mechanism.
+- **SMS-2.** Invite-style establishment is a reverse dial using a principal-bound, single-use `offer`, carried in an app-level invitation. Callbacks and `callback_digest` are withdrawn.
+- **SMS-3.** Always-on establishment is an owner `pairing` record. Own-entity, it extends `self`; cross-entity, it is the relation basis. Standing acceptance is limited to provider features and service entities.
+- **SMS-4.** Headless clients enroll through device authorization. The approval page may offer a pairing bound to the new client session.
+- **SMS-5.** Intents route viewer-initiated handoffs only. Incoming events never use the chooser.
+- **SMS-6.** The chooser shows a ranked short list from owner-local and verified signals, with one action to expand, and a confirm page for a single candidate.
+- **SMS-7.** Ringing is an advisory presentation hint, with delivery policy and fallback in 3sln.me, and is never guaranteed.
+- **SMS-8.** Parlay's call invite is a Bindle Messaging message with `application/vnd.bindle.messaging.call-invite+json` (the spike's current identifier, after the concurrent rename).
+
+**What changed in the spec:**
+- **Bases (spec §5.2, §5.6).** Admission gains `offer` and `pairing` beside `self`, `link` and `none`. Each basis fixes admission, routing and acceptance (summary table in §5.6). S1 and S2 are answered (§19.4).
+- **`offer` basis (spec §5.7; CR-1, CR-2).**
+  - New methods: `offer` (widening; 1 to 16 principals, 10 to 900 s) and `revoke_offer` (narrowing).
+  - The wire carries `offer_digest`, with the token in a new batch `offers` member.
+  - The offer is checked at step 7 and spent atomically at step 8, only when its principal equals the verified leg principal. A wrong principal admits nothing and spends nothing.
+  - Offers are stored hashed, never delivered to endpoints, and excluded from export.
+  - `callback_digest` and the callback design are removed. The offer is carried inside an app message, and the minting app claims automatically.
+- **Pairing record (spec §5.8; CR-5).**
+  - Members: `id`, `revision`, `kind`, `local`, `peer`, `accept: "auto"`, `label`, `created_via`, `expires_at`.
+  - Created by owner action only. It stays pending until the approvals exist.
+  - Own-entity, it extends `self` across apps, which solves I3. Cross-entity, it is `{"relation": "pairing"}`, and both owners' records are required.
+  - Revoked by removal, by clearing the approval or grant, or by revoking the bound client session. Exported as owner data.
+- **Routing (spec §5.4; CR-3).** Case 4 (offer: the minting endpoint, else the minting app) and case 5 (pairing: the paired app, narrowed to the bound client session). Neither has a handoff. **Reading added:** an own-entity pairing invite must name `target`, so that each invite still reaches exactly one app.
+- **Acceptance (spec §5.5, §10.3; CR-4, CR-11).** The projection gains `offer_match` and `paired`. Standing acceptance is restricted to provider features and service entities. Different apps of the owner auto-connect only under an explicit own-entity pairing. Grouping by registrable domain is not used for signaling.
+- **Kind `bases` (spec §3.4, §20.1.1; CR-6).** An optional, frozen subset, enforced by both providers.
+- **Discovery (spec §10.2; CR-7).** `endpoints({pairing})` returns own-entity paired endpoints with `client_id`, never across entities.
+- **Limits (spec §13.1; CR-8).**
+  - Offer invites are bounded by their offer.
+  - Reference values: 64 live offers per entity, 120 mints per app per hour, and a pairing window of 30 per hour per (pairing, endpoint pair), with at most two live sessions.
+  - Both join the pending reserve.
+  - **Reading added:** offer invites still count against the per-(initiator, recipient) window, and a wrong or unknown offer counts as an unbased invite.
+- **Glare (spec §8.3; CR-9).** It also covers crossing pairing invites.
+- **Owner hook and handoff (spec §11.3, §11.4; CR-10).** They never apply to `offer` or `pairing` invites.
+- **Daemon enrolment (spec §5.9).**
+  - Headless clients enroll through device authorization, with code entry by default and a QR code optional.
+  - **Finding:** device authorization §7 item 4 revokes a device grant when the approving browser session signs out.
+  - **AMD-SG-D1** (spec §20.11, proposed, unsigned, device-authorization.md not edited): the owner may mark a standing device grant that survives sign-out and is revoked explicitly from Devices.
+- **Intents scope (spec §5.6, §20.10).** Intents are for user-initiated handoff only, never for routing incoming events. The short-list requirement stays an intents amendment, **AMD-INT-R1** (replacing rev 1 §20.1.11): ranking obligations, single-candidate confirmation, the scope rule, and the `start-call` candidate kind. The choice history is **on by default and owner-deletable** (provisional).
+- **Calling stays out (spec §11.3, §20.12; CR-12).** Signaling stays call-free, and §20.12 is references only:
+  - the call-invite message type belongs to the Bindle Messaging spec (docs/spec/messaging.md, after the concurrent bindlebox.md rename), owned by the Parlay app;
+  - the ring hint is a separate proposal on the 3sln.me notice contract (app-to-owner notices; "Bindle Notices" in the extension-catalogue spike), not signaling text.
+- **Decisions and tests (spec §19, §21; CR-13).**
+  - New SG-23 to SG-30. SG-2, SG-5, SG-16, SG-17, SG-20 and SG-22 are revised in place. SG-21 is superseded by SG-23.
+  - Conformance tests for offers (spent once under concurrency, a wrong principal admits nothing unspent, minter routing despite a different intents default), pairings (pending until approvals, device-auth revocation ends paired sessions with `revoked`, the relation basis without a record gets the uniform `202`), `bases` enforcement, and an engine-level seeded chaos test.
+- **Appendices.** A.4 maps every CR and SMS item. B updates RTC-4, RTC-11, AMD-R5, RTCd-6 and RTCg-9 to 12. C adds the pairing and offer families, the device-authorization page work, and the AMD-INT-R1 work, and reorders the plan.
+- **Consistency fix.** A leftover rev 1 sentence in §5.4 ("records a 'no handler' activity item") now reads as an owner-hook entry, matching §11.3.
+
+**Open owner questions (spec §19.5; provisional answers adopted, unsigned):**
+1. Reverse dial for calls: the callee's app opens the session, and the caller's app answers automatically. Recommended: yes.
+2. Pairing replaces open standing acceptance for app endpoints: yes.
+3. A standing device grant survives the approving browser's sign-out (AMD-SG-D1): yes.
+4. A 16-person mesh is enough for Parlay v1.
+5. Choice history is on by default.
+6. A ring opens the app's call screen directly. This is notice-contract scope, not signaling.
+7. Parlay may not ring through its own push: all rings go through the provider.
+
+**Still open:** the drain-rate residual and the unenforceable `context` address rule. The links §6 re-scope timing now matters only for AMD-SG-L1b (minting and delivery-off). Code for everything (nothing is implemented to this text). docs/architecture/rtc-signaling.md and the pending-signoffs digest are not updated.
+
+Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-27 — signaling.v1 spec rev 2.1 (rev 2 review fixes)
+
+**Spec revision only.** [signaling](docs/spec/signaling.md) moves from revision 2 to revision 2.1, answering an independent review of revision 2 (findings H1 to H4, M1 to M7, L1 to L8; spec Appendix A.5 maps each one to its fix). Only docs/spec/signaling.md and this entry were edited. No code changed, no tests were run, and there was no commit. messaging.md, intents.md, device-authorization.md and security.md are not edited. Every decision is **provisional** (coordinator) and unsigned, adopted under the owner's permission to adopt provisional decisions without sign-off. Sign-off stays blank.
+
+**Decisions (spec §19.2; all provisional and unsigned):**
+- **SG-31 Offers (H1, M1, L1 to L4).**
+  - Only the minting endpoint gets `offer_match`. The minting app's other endpoints get `offer_match: false` and claim only after a user action.
+  - Before any automatic claim, the endpoint MUST check that `basis.offer_digest` equals the digest of an offer token it holds outstanding, and that the verified initiator is that offer's principal. The check is keyed on the digest the app computes from its own token, not on `context`.
+  - The principal is compared read-only at §9.2 step 7 and re-confirmed atomically at step 8. Limit classification follows the principal match, so a borrowed live offer counts as an unbased invite.
+  - Revoking (by the app, by narrowing or by the owner) or expiring an offer silently ends the pending unclaimed sessions it admitted.
+  - New: a per-app live-offer cap (reference 32), and owner controls to list and revoke live offers.
+  - Key warming at `offer` is **issuer-level only**: no per-principal identity or key fetch. A per-principal fetch would leak the invitation to a third-party issuer before the invited party acts, and would amplify up to 16 times per call. A refresh lane for invites that name a live offer covers the cost.
+  - Mint `expires_in` covers the invitation's remaining lifetime plus a skew margin (reference 60 s).
+  - Offer tokens and the batch `offers` and `links` members are never logged.
+- **SG-32 Pairings (H2, H4, M2, M3, L6).**
+  - **Coverage:** `client_id` plus the endpoint's recorded client session, checked on both sides and in both roles. It applies to routing, `target`, the §5.1 item 7 initiator check, `endpoints({pairing})` and the `auto_connect`/`paired` projection.
+  - **New `opens` member** (`local`, `peer`, `both`). A pairing made through device authorization defaults to the interactive app opening.
+  - **`endpoints({pairing})`** answers only the opening side. It labels endpoints with the provider's Devices names, never `register` labels, and drops `last_seen` for other apps' endpoints.
+  - **Deletion.** Clearing deletes a pairing; only creation yields a pending one. An approval page that would activate a pending pairing names it, and a pending pairing is deleted after 7 days. This resolves the §13.4/§14.2 inconsistency.
+  - **Blocks.** A principal or provider block deletes matching pairings, ending their claimed sessions with `revoked`.
+  - **Creation and moves.** Creation checks `parties`. A kind version that adds disclosure needs re-confirmation. On a move, offers and pairings are deleted at the source; an imported pairing starts pending.
+- **SG-33 Pairing limits (H3).**
+  - Own-entity pairings keep the per-(pairing, endpoint pair) window and the two-session cap.
+  - Cross-entity pairings are keyed per pairing `id` at the recipient: 30 per hour per local covered endpoint (at most 240), and at most 2 × the local covered endpoints live.
+  - A pairing sub-budget of pending, connected and `data` capacity (reference: half of each).
+  - The pending reserve is split into a `self` share and a cross-entity share (offer, relation-basis pairing, principal-bound links), with a reference of 2 each.
+  - The §21 test is fixed to match.
+- **SG-34 Cross-entity creation, enforcement and calls (M4, L7, M7).**
+  - Creation needs fresh authentication.
+  - A handle is shown only under a verified binding; otherwise the full principal and issuer.
+  - Wording comes from the kind's sensitivity categories.
+  - Expiry is mandatory: default 90 days, at most 1 year, renewable.
+  - Disclosure that against a non-conforming peer provider only the recipient's own record is enforced (this corrects the "both records required" overstatement).
+  - **Recommended:** leave `pairing` out of call kinds' `bases` in v1, so that no cross-person call is answered automatically. Same-owner pairing for non-call kinds stays.
+  - A call's audio/video choice lives in the app message body (the Bindle Messaging call-invite), not in signaling params. The §20.12 call kind is now valid under rev 2: `profiles: {"webrtc": {}}`, bases `["offer", "link"]`, answer `params` `{offer}`.
+- **SG-35 Glare (L5).** Crossing sessions are ranked by SHA-256 over both initiator leg key thumbprints, never by the `sid` the peer chose. Equal ranks cancel both.
+- **Revised in place:**
+  - **SG-24, SG-25, SG-27:** cross-references to SG-31, SG-33 and SG-34.
+  - **SG-28 (M5, M6):**
+    - A device-authorization pairing goes live only after the owner compares a short code in the paired app. The code is derived from the client's `dpop_jkt`, and the confirmation page is reached through `approval_required`.
+    - The post-approval notification names the pairing and the standing mark.
+    - Providers MAY restrict which clients are offered the mark.
+    - AMD-SG-D1's standing mark is exempt only from the approving session's own sign-out, its natural expiry and session-count eviction. Global sign-out, remote revocation and a credential change still revoke.
+    - Devices shows last-refresh and network-change signals.
+  - **SG-29 (L8, AMD-INT-R1):** choice history is scoped per (person, acting entity) and disclosed at first use. The provider's own review is removed from ranking and from the fallback order, to avoid self-preferencing. This changes the existing intents §13 consent case "once records nothing".
+  - **SG-30 (M7):** the media note.
+
+**New owner questions (spec §19.5, provisional answers adopted, unsigned):**
+8. Leave `pairing` out of the call kind's bases in v1. Recommended: yes.
+9. Cross-entity pairings always expire. Recommended: yes.
+
+**Readings added (not in the review, provisional):**
+- endpoints record the registering client session;
+- a pairing `state` member;
+- the dpop_jkt-derived confirmation code with no new method;
+- no standing mark where the approval skipped code typing;
+- reconnection backoff replacing the `last_seen` trigger.
+
+**Follow-ups:**
+- **docs/spec/messaging.md must align** with spec §20.12 when the call-invite §5.5 is written: no `profiles.webrtc.media` and no `params.media`, bases `["offer", "link"]`, and an invitation lifetime within the offer's skew margin. Another agent owns that file, so it was not edited.
+- The intents §13 test change and the AMD-SG-D1 text apply only if those amendments are adopted.
+- Still open: the drain-rate residual, the unenforceable `context` address rule, and the peer-provider residual of cross-entity pairings.
+- Code for everything; the pending-signoffs digest is not updated.
+
+Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-27 — Messaging removed from core; Parlay rename; BB-CUT reset
+
+Owner direction: "Messaging should be entirely torn out of core"; messaging belongs to the Parlay app, built in this monorepo for now. User decision SQ-1 (2026-10-27): "Confirmed, drop the data, nobody is actually using 3sln.me yet; destructive cleanup is fine for now." Implemented locally only; nothing is deployed or production-verified. Every decision below not quoted from the user is **provisional** (coordinator) and unsigned. The RTC/signaling code, routes and UI were not edited (signaling is being redesigned separately); `docs/spec/signaling.md` was not touched.
+
+**1. Renames (phase 1).**
+- `apps/bindlebox` → `apps/parlay`; `packages/bindlebox-engine` → `packages/messaging-engine`; `packages/bindlebox-protocol` → `packages/messaging-protocol`; `tests/bindlebox` → `tests/parlay`; `scripts/bindlebox.mjs` → `scripts/parlay.mjs`; `test:bindlebox[:web]` → `test:parlay[:web]`; `tests/intents-parley.test.mjs` → `intents-parlay`, `tests/browser/intent-parley-browser.mjs` → `intent-parlay-browser`. Product name "Parlay" (owner's working name; the earlier clash notes still apply) replaces BindleBox/Parley in code, UI text (`APP_BRAND`) and docs.
+- **Spec:** `docs/spec/bindlebox.md` is now **Bindle Messaging** at `docs/spec/messaging.md`. The legacy core messaging spec moved to `apps/parlay/docs/legacy/messaging.md`, beside `contact-tokens.md`, `contact-delivery.md` and `conversations.md` (moved from `docs/spec/`, each with a "retired from core" banner). They were removed from the public docs list (`scripts/public-docs.mjs`); Bindle Messaging was **not** added to it (publication decision left to the owner).
+- **Wire identifiers** (nothing is published): `https://spec.bindle.example/bindlebox/v1…` → `…/messaging/v1…`; `application/vnd.bindlebox.*` → `application/vnd.bindle.messaging.*`; `bindlebox-*` signing and typ domains → `bindle-messaging-*`; app-internal `bindlebox-session|boundary|shell` → `parlay-*`; archive prefix `bindlebox/v1/` → `parlay/v1/`. The signed protocol vectors were regenerated (`tests/parlay/vectors/generate.mjs`) and the ingress slot digest pin in `apps/parlay/integration.json` updated.
+- **Flags/config:** the app's `BINDLEBOX_ENABLED`, `_SERVICES`, `_EGRESS`, `_KEY_ENCRYPTION_KEY`, `_CLIENT_ID`, `_ADAPTER_MODULE`, `_DATA_DIRECTORY`, `_LOCAL_TEST_KEY_HOLDER` are now `PARLAY_*`. `apps/parlay/env.mjs` (`parlayEnv`) reads the retired `BINDLEBOX_<X>` only while `PARLAY_<X>` is unset (new name wins), in the Worker entry and Durable Objects and the Node CLI. The app keeps no flag records, so the alias cannot widen a quarantined record. In the core registry nothing changed: `BINDLEBOX_ENABLED` stays in `RETIRED_FLAGS` (replacement `LINKS_ENABLED`, `envAlias` with the review-F1 quarantine rule) and no core flag names Parlay. *(Provisional: the brief asked for aliases "via registry RETIRED_FLAGS/envAlias"; the only BINDLEBOX flag in the core registry was already retired that way, and the app cannot import the core registry under its import boundary, so the app-side alias mirrors the registry rule.)*
+
+**2. Moved (core code that was activity or links, not messaging).**
+- `MessagingService` minus peer `receive` → `packages/activity/items.mjs` `ItemService` (collections, rules, tag labels, item read/update/delete); the controller field is `items`, the engine provider `items` (catalogue row updated). `messaging/message-metadata.mjs` → `packages/activity/item-metadata.mjs`.
+- Shim importers re-pointed to the real homes (`core/tags`, `content/*`, `links/envelope`, `links/replay`, `runtime/lifecycle-notices`, `links/preview`); `jstools.config.mjs` `publicSources` lost `packages/messaging/{form-policy,tags}.mjs`.
+- The controller holds the identity key registry directly (`this.keys`, formerly `ContactTokenService.keys`).
+
+**3. Deleted from core.**
+- Packages `packages/messaging/` (contact tokens, endpoints, delivery, wire, tag policy, `MessagingService`, shims) and `packages/conversations/`.
+- Runtime: account slices `delivery`, `conversations`; route modules `delivery` (`/bindle/rpc` contact-delivery dispatcher, signed-link POST), `conversations`; `runtime/contact-links.mjs`, `runtime/contact-preview.mjs` (shims), `runtime/beam-retirement.mjs`.
+- Contacts slice reduced to `contacts` (contact parents), `developerContactTier`, `developerContactLink`, `signLinkResponse`. Removed: `createContact`, `createContactLink`, `contactURL`, intake, rotation, quarantine, bearer mints, `authorLinkEnvelope`, `contactMetadata`, `inspectContactLink`, `linkAudienceDecide`. Contact-profile slice reduced to `accountProfile`, `contactSharing`, `contactProfile`; redemption and saved contacts removed (SQ-2).
+- Routes removed: `/api/contacts*` (except `PUT /api/contacts/:jti/sharing`), `/api/contact-links`, `/api/links/envelope`, `/api/conversations*`, `/api/contacts/redeem`, `/api/contacts/directory*`, `/api/contacts/profile/:peer`, `PATCH /api/incoming` (conversation organization, engine op `incoming.update`), `POST /api/messages`. On a contact path the core keeps the HTML landing (preview and handoff), the contact-profile representation and the messaging-address descriptor; intake JSON, JSON inspection and token mints are 406 before any lookup, POST is 405 (`Allow: GET, HEAD, OPTIONS`), and any `bindle_data` is 400.
+- Developer contact: occupant mode only. `DEVELOPER_CONTACT_MODE`, the legacy `developer-contact/v1|v2` grants and `cleanupDailyDeveloperGrants` were removed.
+- Activity/runtime: conversation grouping in the item index and the built-in Conversations View; `conversationText`/conversation MIME in `content/render.mjs` and search extraction; the conversation-indexed metadata wrapper; the conversation gate exception in `invoke`; the contact lane of `MessageReceiptBudget` (only v1 app intake admits now; stored `contacts` stays empty for state compatibility); the `app-messages-v1` move and its markers; the second item family (`message/`) from every reader (`itemPrefixes`, `itemRecord`, `storedItems`, quota, retention, shelving, export, the activity legacy adapter, which now projects `app-message/` rows as verified only).
+- Export: `messages` exports `app-message/` only; `contacts`, `contact-grants`, `contact-redemptions`, `saved-contacts` and `conversations` contributors removed; `profile` and `contact-sharing` read the neutral keys; exclusions for removed families dropped (`migration/` and `export/` kept).
+- Terms gate (`identity/age-policy.mjs`): removed the conversation, contact-link, contact, redeem and envelope paths.
+- Config: `CONVERSATION_PEER_ORIGINS` removed from the Node adapter.
+- `conversation-v1.json` stays published immutable but is listed as **withdrawn** in the contract registry.
+- Web UI, i18n strings and browser/e2e suites: see "UI" below.
+
+**4. Links: type-neutral contact parent (provisional; proposed links amendment AMD-L1, unsigned).**
+- `packages/links/parents.mjs`: a contact parent is the LinkService record `link/<jti>/`; live = owned by the link's `sub`, not revoked, unexpired. Cap `LINK_RECORD_CAP` = 1,000 live parents per owner (now LinkService's default `maxLinks`); revoked/expired records are reclaimed after 30 days.
+- `links/contact-profile.mjs`: profile and per-link sharing only, sharing keyed by parent `jti` and refused (`contact_not_found`, 404) unless the parent is live; the public profile verifies the link through LinkService. The Beam-era dual write, legacy keys, redemption and saved contacts are gone.
+- `links/audience.mjs`: no longer imports messaging (`DELIVERY_LIMITS`, `contactIntake` went with delivery). It keeps the bounded decision (`decideLinkAudience`), opener response signing (now for the bound link types) and link-state maintenance: expired decisions, sharing rows whose parent LinkService reclaimed, and replay rows of conditional parents. Legacy decisions on `contact-grant/` parents, JSON inspection, delivery admission, dead-parent reclamation and tombstones were removed.
+- `identity/keys.mjs` `referencedSigningKids` counts only `link/` records (contact grants are gone).
+- `docs/spec/links.md` carries AMD-L1: §6/§10 move to Bindle Messaging and the legacy record; the contact parent, its liveness and cap; the representations core keeps. Reviewer ___ / date ___ / outcome ___.
+
+**5. Data reset (BB-CUT, `messaging-retired-v1`).** `packages/runtime/messaging-reset.mjs`: a plain, bounded (256 rows a slice), idempotent delete on warm and on the alarm, marker `migration/messaging-retired-v1` written last. It deletes every row under `message/`, `message-usage/`, `message-receipt/`, `contact-grant/`, `contact-grant-tombstone/`, `contact-name/`, `contact-url/`, `contact-author-day/`, `contact-delivery-receipt/`, `contact-delivery/`, `conversation/` (rooms, history, events, outboxes, receipts, blocks, dead letters), `contact-redeemed/`, `contact-redeemed-peer/`, `saved-contact/`, `beam/`, `developer-contact/v1|v2`, `migration/app-messages-v1*` and `migration/beam-retired-v1*`. For each deleted `message/` row it runs the shared item cleanup `dropLegacyItem` (content and presentation blobs under `messages/<owner>/` to the existing garbage queue, postback preparations and notification event deleted, item-index removal, search tombstone), in the same transaction. It keeps `app-message/` items, collections, rules, tag labels, Views, `profile` (a legacy-only `beam/profile` is copied there first), link records and replay rows, the live link families `contact-sharing/`, `link-audience/` and `link-gc-cursor/`, keys, notification, billing and lifecycle state. A shelved archive restored after the reset drops its `message/` rows with the same cleanup. (Prefix list and cleanup as corrected by the review fixes below.) This replaces the verify-and-move design (messaging-extraction §4, reviews F2/F3); the JWKS/`APP_ORIGIN` release gate no longer applies. *(Provisional: the reset also drops any app row the old move never reached; accepted under SQ-1.)*
+
+**6. Public-message-intake slot: one document.** `docs/artefacts/slots/public-message-intake-v1.json` (field `occupant`, consumers `provider` only, as the removed core copy; Bindle Messaging §9 was changed to match, see review fixes M2) is the only copy; `PUBLIC_INTAKE_MANIFEST` imports it and Parlay pins its digest. The same for `messaging-ingress-v1.json`; `apps/parlay/slots/` was removed (its classifier copy duplicated `docs/artefacts/slots/item-classifier-v1.json`). Intake behaviour is unchanged: the email bridge checks the slot, forwards to the occupant or holds, and the auto-reply stays one fixed text whatever the occupancy. The email bridge stays a 3sln.me feature.
+
+**7. Provisional decisions (unsigned).**
+- SQ-2: contacts move with the messaging app; core keeps the contact profile and per-link sharing on the contact parent.
+- The contact-parent shape and cap (AMD-L1).
+- Collections, Views, rules, tags, the item index and `/api/messages*` stay as activity surfaces for v1 app messages (see couplings).
+- Keep `conversation-v1.json` published as withdrawn.
+- RTC compatibility port (below; admission semantics in the review fixes, L6).
+- Public-message-intake consumers stay provider-only; application consumers deferred (review fixes, M2).
+
+**8. Remaining couplings and open items.**
+- **RTC** (not edited): `runtime/account/rtc.mjs` resolves contact-link admission through `c.endpoints.inspect(link)`; the controller now exposes a frozen compatibility port with that shape over LinkService verification (contact parents carry no quarantine; only unconditional contact-type links, review fixes L6). The RTC owner route validates `set-contact-rtc` parents through the `contacts` RPC, which now lists contact parents. RTC code and comments still name ContactEndpointService, `contact-grant` and `packages/messaging/web-push.mjs`, and use the cross-account invoker `CONVERSATION_ACCOUNT` (also used by developer contact, relations, orgs and delegation status); `docs/spec/rtc-signaling.md` links to the legacy contact and messaging docs (links re-pointed only).
+- **Collections** remain core as the placement that v1 app messages, MCP grants (`inbox:<collection>`) and retention units name; replacing them needs the MCP authority change (SQ-4) and an activity retention unit.
+- Activity code keeps `message-*` module and route names (`/api/messages*`, `message-postbacks`, `message-presentations`, `message-views`, `message-receipt-budget`); search ids stay `message:<id>`; the receipt budget's configuration schema still has an inert `contact` scope; owner rules still accept an inert `grantId` match; stored Views may still name the inert `conversation` type; the unused `incoming_preferences` SQL table is still created.
+- `links/preview.mjs` still parses legacy `?sig=` links (they never verify now) and its copy says "Send a private message"; `CONTACT_LINK_TYPE` (legacy, unbound) is still exported; `identity/link-response.mjs` still defaults to the legacy type (core callers pass the bound types).
+- Legal text (`docs/legal/privacy.md`, `terms.md`) still describes core messaging; editing it needs owner and legal sign-off (messaging-extraction §2.8.1 lists the lines).
+- The notification engine's text and preferences are still message-centric (`collections`).
+- Semantic search corpus (SQ-3) and MCP/automation (SQ-4) remain open.
+
+**Tests.** New: `tests/messaging-cut.test.mjs` (reset slices, marker order and keepers; item index and search tombstones; seeded reset under failed commits and lost acknowledgements; archive restore; removed routes answer without a lookup; the single intake/ingress slot document and Parlay's pins; seeded email-bridge occupancy flips keeping one invariant reply and nothing held; the env aliases), `tests/activity-items.test.mjs` (the activity half of the old messaging suite), `tests/contact-profile.test.mjs` (rewritten: parents, sharing liveness, public profile, export, link-state collection, seeded sharing/revocation chaos, the bug-hunt revision cases), `tests/helpers/items-fixture.mjs`, `tests/deletion-fence-race.test.mjs` (the fence half of the old delivery race suite). Adapted to core links (LinkService parents instead of contact grants): rotation-honouring (seeded chaos rewritten), recovery-rotation, recovery-reissue, recovery-identity-runtime, identity-keys, link-response, engine-links, core-links, core-links-http, links-http, links-wargame3, contact-preview, rtc-owner-routes, engine-public-unknown, public-unknown helper, developer-contact(-occupant), engine-storage-chaos (item admission under faults), scaling-audit, mcp-wargame3, tags, engine-tags, engine-views, engine-item-index, message-views, message-receipt-budget, engine-account-export, dx-integration, export and retention suites, worker app-engine/security. Deleted (covered only removed core messaging): contact-endpoints(-links), contact-delivery(-spec, -precheck), contact-tags, contact-quarantine-silence, contact-grant-reclaim, contacts-redeem-oracle, conversation-content, conversation-event-metadata, conversation-quarantine-acceptance, conversations(-http, -audit, -portable, -receipt-index, -scale-review, -wargame3), engine-delivery, node-contact, app-messages-family, messaging (split), deletion-delivery-race (split), worker/contact, worker/conversations, worker/message-budget, e2e/mcp-conversations, browser/mcp-conversations, `tests/link-helpers.mjs`, `tests/helpers/messaging-fixture.mjs`; four "legacy room" cases in `tests/parlay/conversations-scale.test.mjs` that exercised the deleted core ConversationService.
+
+**UI (apps/web; delegated, same change).**
+- Removed: the Conversations view and its module, commands and keys; the Contact links view (`g c`) with create-link, intake, rotate, QR/share, quarantine and revoke dialogs; saved contacts, redeem and the directory; the console composer and envelope/delivery; conversation cards and the `PATCH /api/incoming` organization; the "From contact link" rule field; dead legacy inbox code; about 98 orphaned CSS rules; 225 i18n strings used only by removed UI (23 added; en/es parity 3016/3016).
+- The contact profile editor and per-link sharing ("Sharing on your contact links", keyed by parent jti, `PUT /api/contacts/:jti/sharing`) and the occupant-only developer contact now live in **Account & security**.
+- The contact-link landing checks the link with the contact-profile representation only; signed in, "Open in your messaging app" and "Add to contacts" go through the intent router; refused links (400/404/406/410) are final, other failures offer a retry. Landing copy no longer promises contact-link management ("Hear from the apps you choose").
+- Browser and e2e suites were rewritten or adapted (`tests/browser/contact-links.mjs`, `contact-profile.mjs` rewritten with engine-level and seeded cases; `tests/e2e/links-worker`, `links-conditional` rewritten; ui-chaos, ui-adversarial, worker-flow, signup-views, setup-contact-native and others adapted).
+- Open: the intent router still registers the built-in contacts handler for `send-message`/`add-contact` (`packages/intents/registered.mjs` `registeredIntentHandlers`, the `/i/contact` route, `INTENT_BUILTINS`); choosing it returns to a console that now only shows "open this link in your messaging app". It should be removed or pointed at the messaging app (intents change, not made here). No browser e2e covers a valid-link landing because the console no longer issues links (mocked-route e2e and engine tests do).
+
+**Verification (local evidence only; shared checkout while a spec agent edited `docs/spec/signaling.md`), final tree:**
+- `npm test`: **3,944 tests, 3,942 passed, 0 failed, 2 todo** (baseline before this change: 4,133 / 4,131 / 2 todo; the drop is the deleted legacy suites).
+- `test:worker`: **80 passed** (was 93; three legacy Worker suites deleted).
+- `test:parlay` (renamed from `test:bindlebox`): **223 passed** (was 227; four cases exercised the deleted core ConversationService). `test:parlay:web`: 41 passed (subagent run).
+- `test:ui-state`: **538 passed**. `test:connections`: 37 passed. `test:admin-deletion`: 48 passed. `test:rtc-ui`: 69 passed. `test:organizations`: 515 passed.
+- `test:e2e`: **324: 320 passed, 0 failed, 4 skipped** (after `build:assets`). The subagent's first full run had 9 failures (stale expectations and one real bug, a retry button on refused links, fixed); all passed alone and on rerun.
+- `RTC_CONFORMANCE_STRICT=1 npm run test:rtc-conformance`: **48: 46 passed, 0 failed, 2 todo** (pre-existing todos).
+- `build:assets`: passes (262 public modules, import-map graph verified). `check:worker`: passes (wrangler dry run).
+- Five browser files are run by no script and were not run (`app-removal-browser`, `app-removal-engine`, `intent-browser`, `intent-engine`, `recovery-reissue-rotation`); they were checked not to use removed code.
+- `docs/legal` was not edited.
+
+**Review fixes (independent read-only review of this change; each finding verified in code before fixing).** Local behaviour only.
+- **M1, archive restore cleanup.** A shelved archive restored after the reset now drops each legacy `message/` row through the same routine as the reset (`dropLegacyItem` in `packages/runtime/messaging-reset.mjs`, effects from the controller's `legacyItemEffects`): content and presentation blobs to the garbage queue, postback preparations and the notification event deleted, item-index entry removed (shelving had left it), search tombstone queued, all in the restore transaction. Before, it only queued `blobRef`, leaving ghost inbox entries and queryable search documents.
+- **M2, intake consumers (provisional, unsigned).** `docs/artefacts/slots/public-message-intake-v1.json` is back to `consumers: ["provider"]`, what the removed core copy said; only the field name (`occupant`) and the title/description text differ from that copy, and the review found the field name harmless (the email bridge reads the stored `occupants` array). An integration manifest declaring itself a consumer of this slot is again `unsupported_consumer`. Bindle Messaging §9 now says application consumers (third-party channel bridges such as SMS) are deferred until a concrete bridge needs them; no such bridge exists, and admitting one opens a new ingress path into the owner's mailbox that needs its own review. Parlay's digest pin moved to `sha256-L5we14UJ7y3mtyzB8L3IsCXeyFoeNEG-u3oV26PMI5c` (no other vector names it). With this, §6's "intake behaviour is unchanged" holds. Reviewer ___ / date ___ / outcome ___.
+- **L1, live families.** `contact-sharing/`, `link-audience/` and `link-gc-cursor/` were removed from the reset prefixes: the new core writes all three. Legacy rows there are reclaimed by the existing link-state alarm sweep (a sharing row whose `link/<jti>` is not this owner's is deleted; decisions expire within a day; cursors only resume a scan).
+- **L2, alarm isolation.** The alarm-path slice has its own try/catch (re-arm in an hour); quota cleanup, blob GC, the MCP sweep, link state, index/search and shelving continue. Malformed rows no longer fail a slice: a row that is not an object, lacks this owner or id, or has an id too long for a search document is still deleted, and only the effects it cannot name are skipped.
+- **L3, profile.** Before `beam/` is deleted, `beam/profile` is copied to `profile` when `profile` is absent (known fields only, type-checked; an insecure avatar is dropped). An existing `profile` always wins.
+- **L4, full cleanup.** The reset now also queues presentation-revision blobs and deletes postback preparations, and queues only refs under `messages/<owner>/` (a foreign ref, corrupt data, is never deleted from the shared bucket).
+- **L5, scans.** `contactParents` and `ContactProfiles.sharingRows` page through every row with `startAfter` (`scanAll`, pages of 2,048) instead of truncating; the false parents.mjs comment and the unused `contactParentKeys` were removed.
+- **L6, RTC compatibility port (provisional, unsigned).** `endpoints.inspect` admits only a contact-type link (`RTC_CONTACT_LINK_TYPES`: the Parlay contact type and the legacy core type) with no audience condition; anything else answers null, which `rtc.mjs` folds like other failures. `set-contact-rtc` refuses (uniform 404) a parent the port would never admit. Residual: pre-cut, a conditional contact link was admitted as an RTC basis without evaluating its policy; it is now refused, because evaluating the policy needs the caller principal, which the port does not receive. Admitting conditional links again needs the RTC port to pass the sender (signaling redesign). Old RTC contact configs keyed by legacy grant ids stay inert. `packages/rtc` was not edited. Reviewer ___ / date ___ / outcome ___.
+- **L7, dead links.** `apps/web/console.html` linked the deleted `/docs/spec/contact-tokens.html`; it now links the published "Messages from connected apps" page. A link scan re-pointed the `docs/release` review records from `spec/bindlebox.md` to `spec/messaging.md`, from the deleted contact-tokens, contact-delivery and conversations specs to `apps/parlay/docs/legacy/`, and from `apps/bindlebox/web/README.md` to `apps/parlay/web/README.md`. Left as they are: `docs/spec/signaling.md` still links `contact-tokens.md` (not edited, by instruction), and quoted proposed spec text in `docs/architecture/signaling-modes-spike.md` uses spec-relative links (as it did before this change).
+- **L8, registry comments.** The flags registry comments no longer say "until BB-CUT". Open item: the `BINDLEBOX_ENABLED` env alias of `LINKS_ENABLED` (and Parlay's `BINDLEBOX_*` fallback) is still honoured, and removing it is open.
+- **Tests.** `tests/messaging-cut.test.mjs`: one shared "dropped with full cleanup" assertion for both the reset and the restore (including a foreign ref); presentation and preparation cleanup in the reset and its seeded fault run; L1 (a sharing row written between slices survives); L3; L2 (corrupt rows finish the reset over the alarm, and a reset that throws on every pass still lets blob GC run without entering the maintenance backoff); L5 (2,118 parents and sharing rows); M2 (provider-only, and an app consumer declaration is refused). `tests/rtc-owner-routes.test.mjs`: L6 (unconditional, conditional, foreign and revoked links through the port, and the route refusing a conditional parent). Mutation check: reverting the restore cleanup or the alarm try/catch fails the new tests.
+- **Verification (review fixes, final tree):** `npm test` **3,950 tests: 3,947 passed, 1 failed, 2 todo**. The failure, `tests/member-certificates.test.mjs` "revocation … status privacy", is a pre-existing flake unrelated to this change: it asserts that the owner view's JSON never contains `eyJ`, and random key thumbprints can contain that string. It passed 3/3 on rerun. `test:worker` 80/80, `test:parlay` 223/223, `test:parlay:web` 41/41, `build:assets` passes, `test:e2e` **324: 320 passed, 0 failed, 4 skipped**, `test:rtc-ui` 69/69, `RTC_CONFORMANCE_STRICT=1 test:rtc-conformance` **48: 46 passed, 0 failed, 2 todo** (pre-existing todos).
+
+Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-27 — Device sign-in doc scope fix; local clients and pairing consent spike; Bindle/3sln.me doc split direction
+
+**Owner direction (2026-10-27).**
+- Keep Bindle specs separate from 3sln.me docs.
+- Publish every spec and spec extension with the 3sln.me artefacts, so cross-references resolve.
+- Fix the device sign-in docs so the confusion between them cannot recur.
+- Cover every sign-in use case securely, including CLIs, daemons and local web apps (`localhost:*`, `*.localhost`). Treat these as integrations in their own right that declare their own preference fragments.
+- In a pairing, every app connection needs the user's consent, not only the daemon's.
+
+**Doc fix (applied).**
+- `docs/spec/device-login.md`: the header wrongly called [device authorization](docs/spec/device-authorization.md) its "successor". It now says the doc is 3sln.me's own sign-in policy (passkeys, sessions, and session handoff to another browser, which yields a provider session) and that device authorization does not replace it.
+- `docs/spec/device-authorization.md` §1: the out-of-scope bullet cross-links device-login and states the difference (provider session vs app grant).
+- The wrong note came from the "Coordinator" row of `docs/architecture/linked-approval.md` §14.
+
+**Spike.** [docs/architecture/local-clients-spike.md](docs/architecture/local-clients-spike.md), decisions LC-1 to LC-14 (provisional, unsigned):
+- It separates the sign-in mechanism (M1–M6) from the use case (U1–U6).
+- Local clients:
+  - a per-installation DPoP key thumbprint `client_id` (RFC 9278);
+  - a self-asserted local manifest, pinned at approval;
+  - always shown as "unverified app on your device"; never inherits another client's approvals;
+  - a 30-day idle limit;
+  - a loopback code+PKCE+DPoP flow for CLIs and local web apps, with the device grant for headless clients;
+  - all behind a proposed `LOCAL_CLIENTS_ENABLED` flag, default off.
+- Pairing stays a per-edge owner record, under rules P1–P4: each party holds its own grant, one consent per edge, explicit activation, and the pairing is shown on both parties' rows. A slot assignment and an RPC resource were rejected (§4).
+- Change requests: CR-L1 to CR-L10 against signaling.md, CR-A1 to CR-A7 against the auth docs. None is applied.
+- Open owner questions: 4, each with a recommended answer (spike §6).
+
+**Doc split (planned, not applied).** Bindle core stays in `docs/spec/`; Bindle extensions (signaling, messaging, organizations) go to `docs/spec/extensions/`; 3sln.me reference-service docs go to `docs/3sln/`; superseded specs are kept so links still resolve. Every current spec gets published under its group, with a build check against links to unpublished specs. Mixed docs (security.md, auth.md) get split. Publication currently omits 15 specs, including extensions, intents, links, events and signaling.
+
+Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-27 — Owner direction: manifest declarations (features, slots, ref)
+
+**Owner direction (2026-10-27).**
+- `features` is the same thing as extensions, minus namespacing and atomicity: remove it.
+- Anything optional is by definition an extension, not core. Core is the conformance floor plus the extension mechanism.
+- No slot exists outside an extension spec. Anyone wanting a slot publishes an extension.
+- Extension-level options plus per-slot options is acceptable, but question whether slots add anything over extension URL plus options.
+- `ref` / local ids are not ratified without a concrete use case. Users should see useful descriptions (for example from spec metadata), never a local name.
+
+**Coordinator analysis.**
+- Current state:
+  - Bindle core defines no slots. Messaging owns intake and ingress, Signaling owns signaling and ice-relay, and `item-classifier` is 3sln.me's own.
+  - The extensions spec never shows `ref` to users. An earlier coordinator reply said consent shows it; that was wrong.
+- What `ref` currently does:
+  - lets several provider features consume one slot, carried as the `bindle.feature` credential claim;
+  - gives a stable entry identity so approvals survive manifest edits;
+  - lets a provider offer several built-in occupants.
+- What a slot adds over a plain preference fragment:
+  - owner-only assignment;
+  - resource values with a cardinality rule;
+  - per-consumer approval with no occupancy oracle;
+  - rules on who may consume (provider features, apps or both).
+
+**Proposal (provisional, unsigned; not applied).** Extensions revision 3:
+- Remove `features` from protocol §2.
+- The manifest `extensions` array becomes `{spec, options}` for providers and integrations alike, with the spec URL as the identity.
+- The slot rules become a generic "assignable" marking on preference fragments, defined by extension specs and enforced generically by providers.
+- No `ref`, local ids or slot list in the generic mechanism. Per-feature identity, where an extension needs it (for example separate email and SMS bridges), is defined by that extension's options schema.
+- User-facing text comes from the extension spec's published metadata.
+- Planned order: draft it before the signaling implementation, so signaling.v1 is built in the new shape.
+
+Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-27 — Owner direction: remove slots; classifier scope; surfacing candidates
+
+**Owner direction (2026-10-27).**
+- Remove slots.
+- Selection policy becomes a general preference-field attribute, not anything slot-specific.
+- Provider features and extensions may consume fragments the way apps do.
+- The classifier should be a generic AI resource: a contract for item and media classification that the messaging app uses and 3sln.me implements as a Workers AI wrapper. Message categories belong to the messaging app.
+- The owner asked how the provider surfaces newly possible features or replacements without bothering the user.
+
+**Coordinator proposals (provisional, unsigned; not applied).**
+- **Email bridge to Parlay without slots:**
+  - The Messaging extension publishes an `intake` fragment with one provider-consumable resource field (max 1, contract `public-intake/v1`).
+  - Enabling the bridge is a grant request on that fragment. On one consent screen the owner picks among the pool resources that satisfy the contract, which sets the value and grants `deliver` on that resource only.
+  - Switching apps needs re-approval. An emptied field makes the bridge hold mail and send its fixed auto-reply.
+- **Classifier, current state:** a paid built-in (plans paid/plus/ultra; 200 calls a day, 2,000 a month, semantic budget ledger) wrapping Workers AI `clef-flash`. It has three problems:
+  - eleven message categories and their prompts are hard-coded in the provider under the generic `decision-model/v1` name;
+  - it is published as the 3sln.me `item-classifier/v1` slot;
+  - core `packages/core/tags.mjs` holds a messaging classification enum.
+- **Classifier, proposal:**
+  - a generic `item-classification/v1` contract, where the caller supplies a bounded label set with descriptions and gets a score per label;
+  - 3sln.me implements it as a paid Workers AI wrapper that keeps its untrusted-data framing;
+  - remove the slot and the core enum; Parlay owns its categories.
+  - Caller-supplied labels need a security review.
+- **Surfacing candidates (3sln.me policy):**
+  - Offer a resource in the connect flow only when an empty field has a waiting consumer, or when a disabled feature becomes possible.
+  - Replacements for already-filled fields stay passive (the settings page and a collapsed "also works with").
+  - Fields with no consumer are not surfaced.
+  - Notify only when something in use breaks.
+  - Each (field, resource) pair is asked once and a dismissal is permanent. No preselection, no provider ranking or self-preferencing. Wording comes from spec metadata. Only contracts verified at connection count.
+- **Bindle floor (goes into extensions revision 3):**
+  - no assignment or switch without an owner action;
+  - no disclosure to an app of which other apps fill a field;
+  - suggestions MAY be made, from verified contracts only.
+
+Reviewer: ___ Date: ___ Outcome: ___

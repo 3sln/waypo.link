@@ -44,7 +44,7 @@ const engines=new WeakMap();
 export const linksEnabled=(config,ctx)=>flagsFor(config,ctx).enabled('LINKS_ENABLED');
 /** The controller's LinkService: current-key minting through `signingKey`, verification through the registry history. */
 export function linkService(c){
- return new LinkService({store:c.store,issuer:c.config.APP_ORIGIN,keys:c.tokens.keys,signingKey:owner=>c.signingKey(owner),decide:input=>decideLinkAudience(c,input),verifyAuthor:input=>verifyAuthorProof(input.proof,{...input,...authorPorts(c)}),policies:linkPolicyRegistry(c.config)});
+ return new LinkService({store:c.store,issuer:c.config.APP_ORIGIN,keys:c.keys,signingKey:owner=>c.signingKey(owner),decide:input=>decideLinkAudience(c,input),verifyAuthor:input=>verifyAuthorProof(input.proof,{...input,...authorPorts(c)}),policies:linkPolicyRegistry(c.config)});
 }
 // Host ports for author proofs. Same-host principals only: an active account and its CURRENT signing key (a key
 // rotation revokes delegations, so a certificate under a retired key proves nothing). Status from the author's own
@@ -67,14 +67,13 @@ function linksEngine(c){
  return engine;
 }
 const run=(c,Operation,params)=>{if(['links.issue','links.rotate'].includes(Operation.operation)&&!ownerFlags(c.config,params.actor?.owner,params.actor?.clientId).enabled('LINKS_ENABLED'))throw new StorageError('not_found','Not found.',404);const operation=new Operation(params);return operation instanceof AppQuery?read(linksEngine(c),operation):perform(linksEngine(c),operation);};
-// The occupant-issued developer link (DEVELOPER_CONTACT_MODE=occupant). The URL is a capability, so it is sealed.
+// The occupant-issued developer link (the only developer-contact route since 2026-10-27). The URL is a capability, so it is sealed.
 export const DEVELOPER_OCCUPANT_POINTER='developer-contact/occupant-v1';
 function developerLinkRecord(c,owner,record){return record?.owner===owner&&record.type===MESSAGING_CONTACT_LINK_TYPE&&record.claims?.audience?.policy===developerPolicy(c.config)&&record.issuer?.kind==='app'&&typeof record.issuer.clientId==='string';}
 async function recordDeveloperOccupantLink(c,owner,result){
- // Review I1: only a deployment that serves the occupant link records it. The account cannot see its own handle, so
- // any account's occupant may still leave a pointer here; GET /api/developer-contact reads only the configured
- // developer account's (DEVELOPER_CONTACT_HANDLE with the developer system badge), and export excludes the family.
- if(c.config?.DEVELOPER_CONTACT_MODE!=='occupant')return false;
+ // Review I1: the account cannot see its own handle, so any account's occupant may leave a pointer here;
+ // GET /api/developer-contact reads only the configured developer account's (DEVELOPER_CONTACT_HANDLE with the
+ // developer system badge), and export excludes the family.
  if(typeof result?.jti!=='string'||typeof result.link!=='string')return false;
  const record=await c.metadata.get(key('link',result.jti));if(!developerLinkRecord(c,owner,record))return false;
  const sealed=await encryptSecret({url:result.link},c.config.KEY_ENCRYPTION_KEY,DEVELOPER_OCCUPANT_POINTER);
@@ -83,7 +82,7 @@ async function recordDeveloperOccupantLink(c,owner,result){
 const owned=(owner,input)=>{if(input!==undefined&&(input===null||typeof input!=='object'||Array.isArray(input)))throw new StorageError('invalid_request','Unsupported link request.');return {actor:{kind:'owner',owner},...input===undefined?{}:{input}};};
 
 export const methods={
-  // Owner views and revocation of app-issued links (bindlebox §4.2 occupant replacement: show and revoke).
+  // Owner views and revocation of app-issued links (messaging §4.2 occupant replacement: show and revoke).
   async listLinks(owner,input){await this.warm(owner);return run(this,LinkList,owned(owner,input));},
   async linkChanges(owner,input){await this.warm(owner);return run(this,LinkChanges,owned(owner,input));},
   async revokeLink(owner,jti){await this.warm(owner);return run(this,RevokeLink,{actor:{kind:'owner',owner},id:jti});},
@@ -99,7 +98,7 @@ export const methods={
    if(['links.issue','links.rotate'].includes(operation)&&actor.kind==='app')try{await recordDeveloperOccupantLink(this,owner,result);}catch{}
    return result;
   },
-  /** The developer link issued by this account's CURRENT messaging-ingress occupant (DEVELOPER_CONTACT_MODE=occupant),
+  /** The developer link issued by this account's CURRENT messaging-ingress occupant (the developer-contact route),
    * verified now: live, unrevoked, the developer policy, and issued by the seat that holds the slot today. */
   async developerOccupantLink(owner){
    const unavailable={available:false,reason:'contact-unavailable'};
@@ -118,7 +117,7 @@ export const methods={
    if(!developerLinkRecord(this,owner,record)||record.revoked||!(record.claims.exp*1000>Date.now()))return {state:'unavailable'};
    return decideLinkAudience(this,{parent:jti,policy:record.claims.audience.policy,principal});
   },
-  // Public messaging-address handoff (bindlebox §2.3): the descriptor for one of this owner's verified links.
+  // Public messaging-address handoff (messaging §2.3): the descriptor for one of this owner's verified links.
   async linkDescriptor(owner,url){
    if(!ownerFlags(this.config,owner).enabled('LINKS_ENABLED'))throw new StorageError('not_found','Not found.',404);
    if(await this.metadata.get('owner')!==owner)throw new StorageError('recipient_unavailable','The recipient is unavailable.',503);

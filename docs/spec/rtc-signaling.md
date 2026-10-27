@@ -169,7 +169,7 @@ Lifetime (`exp − iat`) is at most 30 days. At §8.2 step 2 the callee provider
 
 **Callback.** An invite MAY carry `callback`: a one-use ticket minted by the caller's provider, with `principal` set to the callee and `exp` at most 24 h after `iat`, so the callee can ring back. Like a link basis, only its digest is in the signed invite and the link travels beside the message; the callee provider delivers it only to the endpoint that claims the session.
 
-A ticket is a bearer capability: its URL is subject to the secrecy rules of [contact endpoints](contact-tokens.md#url-secrecy-and-browser-handling). Shown as a QR code, it proves nothing about proximity.
+A ticket is a bearer capability: its URL is subject to the secrecy rules of [contact endpoints](../../apps/parlay/docs/legacy/contact-tokens.md#url-secrecy-and-browser-handling). Shown as a QR code, it proves nothing about proximity.
 
 ### 4.4 Acceptance and alerting
 
@@ -411,7 +411,7 @@ A provider cannot stop a peer connection that already exists. Ending a leg (§7.
 - **Limits.** Values are provider policy (the reference host's are in the design, RTC-11); the kinds of limit are not. A callee provider MUST limit, after verification: invites per (caller origin principal, callee); invites per caller origin principal across its entities; invites per (sending issuer, callee) and per (sending issuer, link parent), because one issuer can mint any number of principals; concurrently ringing sessions and invites per callee; and messages per leg. When ringing capacity is short it SHOULD prefer `self` and principal-bound ticket bases over bearer-link bases. Excess invites are dropped silently at §8.2 step 7, still answered `202`. A caller provider MUST limit open sessions and `open` calls per entity, and refuses its own application with `rate_limited`.
 - **Blocking.** An owner blocks an origin principal. Blocked invites are dropped silently and never recorded as missed.
 - **Muting.** An owner mutes a principal, a purpose or an application. Muted invites are delivered without alert or recorded as missed.
-- **Quarantine.** An invite admitted through a quarantined contact parent is answered and processed exactly as through an active one up to step 7, then held as a quarantined request without alert or ring. This follows the quarantine silence of [contact endpoints](contact-tokens.md#live-grants-limits-and-metadata-trust).
+- **Quarantine.** An invite admitted through a quarantined contact parent is answered and processed exactly as through an active one up to step 7, then held as a quarantined request without alert or ring. This follows the quarantine silence of [contact endpoints](../../apps/parlay/docs/legacy/contact-tokens.md#live-grants-limits-and-metadata-trust).
 - **Requests (`none` basis).** Never alerting, limited as above, with a bounded number held per callee; excess are dropped silently.
 - **Revocation.** Revoking a link, removing RTC from a contact link or exhausting a ticket stops new admissions at once. Sessions already connected continue until ended.
 

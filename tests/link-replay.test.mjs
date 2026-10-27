@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { LinkReplayRecord } from '../packages/messaging/link-replay.mjs';
+import { LinkReplayRecord } from '../packages/links/replay.mjs';
 import { SqliteMetadata } from '../apps/node/resources.mjs';
 
 const ISS='https://3sln.example',hash=i=>String(i).padStart(43,'A');

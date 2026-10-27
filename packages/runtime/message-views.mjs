@@ -24,8 +24,7 @@ export function normalizeIncomingQuery(value={}){
 }
 export function defaultMessageViews(){return [
  {version:1,id:'all',name:'All messages',revision:1,builtin:true,filter:{version:1},sort:'activity-desc'},
- {version:1,id:'unread',name:'Unread',revision:1,builtin:true,filter:{version:1,read:false},sort:'activity-desc'},
- {version:1,id:'conversations',name:'Conversations',revision:1,builtin:true,filter:{version:1,types:['conversation']},sort:'activity-desc'}
+ {version:1,id:'unread',name:'Unread',revision:1,builtin:true,filter:{version:1,read:false},sort:'activity-desc'}
  ];}
 function definition(input,update=false){if(!fields(input,['name','filter','sort',...update?['expectedRevision']:['operationId']])||!update&&input.operationId!==undefined&&!isUUIDv4(input.operationId)||typeof input.name!=='string'||!input.name.trim()||input.name.length>100||/[\x00-\x1f\x7f]/.test(input.name)||update&&(!Number.isSafeInteger(input.expectedRevision)||input.expectedRevision<1))invalid();return {name:input.name,filter:normalizeIncomingFilter(input.filter),sort:incomingSort(input.sort)};}
 const path=owner=>'message-views/v1/'+owner;
@@ -61,13 +60,3 @@ export class MessageViews{
  async resolve(owner,input){const query=normalizeIncomingQuery(input);if(query.view===undefined)return query;const view=(await this.list(owner)).find(v=>v.id===query.view);if(!view)throw new StorageError('view_not_found','This View no longer exists.',404);if(view.revision!==query.viewRevision)throw new StorageError('view_conflict','This View changed. Reload it before paging.',409);return {...query,filter:storedFilter(view.filter),sort:incomingSort(view.sort)};}
 }
 
-export function normalizeIncomingUpdate(value){
- if(!fields(value,['id','expectedRevision','expectedActivityRevision','tags','addTags','removeTags','classification','read'])||typeof value.id!=='string'||value.id.length>1024||!value.id.startsWith('conversation:')||!Number.isSafeInteger(value.expectedRevision)||value.expectedRevision<1||!['tags','addTags','removeTags','classification','read'].some(k=>Object.hasOwn(value,k)))invalid();
- const out={id:value.id,expectedRevision:value.expectedRevision};
- if(value.expectedActivityRevision!==undefined){if(!Number.isSafeInteger(value.expectedActivityRevision)||value.expectedActivityRevision<0)invalid();out.expectedActivityRevision=value.expectedActivityRevision;}
- if(value.read===true&&out.expectedActivityRevision===undefined)invalid();
- for(const f of ['tags','addTags','removeTags'])if(value[f]!==undefined){if(!validTagList(value[f],{suspected:f!=='addTags'}))invalid();out[f]=[...value[f]];}
- if(value.classification!==undefined){if(!CLASSIFICATIONS.includes(value.classification))invalid();out.classification=value.classification;}
- if(value.read!==undefined){if(typeof value.read!=='boolean')invalid();out.read=value.read;}
- return out;
-}

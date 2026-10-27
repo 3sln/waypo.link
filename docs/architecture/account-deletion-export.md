@@ -66,7 +66,7 @@ The export holds everything the account holds for its owner, plus what the syste
 | `identity` (identity port) | id, handle, aliases and assignment; createdAt; status; terms version and acceptance time; verified email and its time; email-login setting; passkeys (id, label, createdAt, lastUsed, backedUp); password present (yes/no); sessions (label, source, created, last used, expiry); **security log** (`account.audit`, last 100); linked-approval lineage summary; public name certificate | password hash, recovery hash, session and CSRF hashes, challenges, email tokens |
 | `keys` | public keys and key IDs | private signing and encryption keys. Those leave only through the separately protected identity backup ([identity-backup.mjs](../../packages/runtime/identity-backup.mjs)); the manifest links to that workflow. |
 | `messages`, `collections`, `tags`, `rules`, `views`, `activity`, `notifications` | message metadata and body payloads, collections, labels, rules, views, activity items, notification preferences | push endpoint URLs and keys (capability URLs); unsubscribe tokens |
-| `contacts`, `contact-grants`, `conversations`, `links` | contacts, names, issued contact grants (recipient, created, revoked), conversation items authored or received, link records; the contact profile (`profile`), saved contacts (`saved-contact/`), contact sharing grants (`contact-sharing/`) and contact redemption bindings (`contact-redeemed/`) | shared secrets, return capabilities and bootstrap material ([contact-delivery §161](../spec/contact-delivery.md)) |
+| `contacts`, `contact-grants`, `conversations`, `links` | contacts, names, issued contact grants (recipient, created, revoked), conversation items authored or received, link records; the contact profile (`profile`), saved contacts (`saved-contact/`), contact sharing grants (`contact-sharing/`) and contact redemption bindings (`contact-redeemed/`) | shared secrets, return capabilities and bootstrap material ([contact-delivery §161](../../apps/parlay/docs/legacy/contact-delivery.md)) |
 | `resources` (hosted) | resource descriptors, logical keys, versions, content types, sizes, payload bytes | private physical bucket keys (`blobRef`) |
 | `connections`, `integrations`, `events` | connection records (provider, label, scope, created, status), event-bus descriptors and retained history, integration assignments | OAuth tokens, S3 keys, any vault secret |
 | `external-storage` | **references only**: provider, resource ID, bucket/prefix or Drive folder ID, and the **host-held logical-key → provider-object mapping** with versions | external bytes (never copied, §1.5) |
@@ -74,7 +74,7 @@ The export holds everything the account holds for its owner, plus what the syste
 | `billing` | plan, status, period start/end, `cancelAtPeriodEnd`, ever-paid marker (yes/no and since), Polar customer ID, and a link to the Polar portal for invoices | Polar credentials |
 | `lifecycle`, `quota` | lifecycle phase and deadlines, storage usage, retention-episode state (D092) | — |
 | `features` | evaluated value and reason for every class (a) flag, and the experiment variant for this owner (`flags.for(ctx)`). Assignment is derived, not stored, so it is exported as evaluated at export time. | other owners' buckets |
-| `apps-held` | a list of connected apps (BindleBox included) that may hold copies, each with "export it there" guidance | the apps' data |
+| `apps-held` | a list of connected apps (Parlay included) that may hold copies, each with "export it there" guidance | the apps' data |
 
 **Inventory completeness test.** An engine test enumerates every metadata key prefix the account writes (the table above, plus the `key('…')` families in [core/records.mjs](../../packages/core/records.mjs)). It fails unless each prefix is either claimed by a contributor or listed in `EXPORT_EXCLUDED_PREFIXES` with a reason:
 - derived: search vectors, item index, usage counters, the `contact-redeemed-peer/` index;
@@ -184,7 +184,7 @@ Pinned rows stay in `blob-garbage/` and are retried after expiry or cancellation
 - **Connected external storage** (Google Drive, S3, WebDAV). The export contains references and the **host-held mapping** only. It never copies external bytes; they stay in the owner's storage (privacy §8).
   - The Drive mapping is exactly the "independently restorable private manifest" the [executor design](../release/account-lifecycle-executor-design.md) needs before host mappings may be deleted.
   - This export is therefore also the evidence that lets the inactivity purge stop holding accounts with external connectors. That wiring is a later decision; it is not part of this design.
-- **BindleBox and other connected apps.** The export lists them under `apps-held`. BindleBox's own `archive.export` stays in BindleBox; the console links to it when `BINDLEBOX_ENABLED` is on for the owner.
+- **Parlay and other connected apps.** The export lists them under `apps-held`. Parlay's own `archive.export` stays in Parlay; the console links to it when `PARLAY_ENABLED` is on for the owner.
 
 ### 1.6 Download
 
@@ -379,7 +379,7 @@ Two Node gaps must close first (R1-M9):
 - `FileBucket.get` reads the whole file and offers no `body` stream and no `range`. It gains `get(key, {range:{offset,length}})` returning `{size, body: ReadableStream}`, read with `fs.createReadStream({start, end})`.
 - The `digest` provider replaces `crypto.DigestStream` (§1.2).
 
-Node has no Vectorize, email bridge or BindleBox, so E5 and E5b are no-ops there, while the MCP SQLite shards are erased at E3.
+Node has no Vectorize, email bridge or Parlay, so E5 and E5b are no-ops there, while the MCP SQLite shards are erased at E3.
 
 ### 2.4 Others' contact links and delivered messages
 
@@ -408,7 +408,7 @@ Node has no Vectorize, email bridge or BindleBox, so E5 and E5b are no-ops there
 | Polar orders (anonymized if Q3) | Polar | tax law | listed |
 | DO point-in-time recovery (up to 30 days), mail-provider logs and suppression lists, push-service state | providers | — | "Backups" paragraph; be specific in the final text |
 | Data others or apps hold; external storage | third parties | outside our control | listed (connected storage), add recipients' copies |
-| BindleBox mailbox data | BindleBox's `MailboxObject` (separate Worker, same operator) | **open, R1-M12**: today it marks its authorization inactive on `connection-revoked` but keeps the mailbox | not covered; needs a decision |
+| Parlay mailbox data | Parlay's `MailboxObject` (separate Worker, same operator) | **open, R1-M12**: today it marks its authorization inactive on `connection-revoked` but keeps the mailbox | not covered; needs a decision |
 
 The legal owner, not this slice, should make the three wording additions to privacy.md. Until then, this table is the reconciliation record.
 
@@ -677,7 +677,7 @@ Counts: **4 High, 12 Medium, 11 Low.** 26 are resolved in the text above; 1 is o
 
 **R1-H4. First-party stores outside the executor keep personal data. Resolved** (§2.3 E3, E5b).
 - *Scenario:* An owner used the email bridge and an MCP client, then deletes the account. `EmailBridgeObject` `owner/<uuid>` keeps its holding queue (inbound mail content), settings, dedup and reply ledger. `McpAuthorizationObject` shard rows keep MCP grants and tokens. Both are operated by us under privacy §8, and neither is touched by any stage.
-- *Fix:* `mcp.eraseSubject` at E3, and a new E5b `emailBridge.erase`. BindleBox is split out as R1-M12.
+- *Fix:* `mcp.eraseSubject` at E3, and a new E5b `emailBridge.erase`. Parlay is split out as R1-M12.
 
 ### Medium
 
@@ -730,12 +730,12 @@ Counts: **4 High, 12 Medium, 11 Low.** 26 are resolved in the text above; 1 is o
 - *Scenario:* DX-2, DX-3 and DX-5 create files inside FF-5a's `routes/**` and FF-5b's `account/**`. The checkout block in `account/billing.mjs` had no owner. The Node range read sits in FF-4's `apps/node/resources.mjs`. "The FF-1 owner adds rows" refers to a slice that has already landed.
 - *Fix:* explicit carve-outs agreed before starting; coordinator hunks after FF-4, FF-5a and FF-5b; registry rows as a coordinator hunk after FF-2; and until FF-4 lands, DX engine code uses FF-3's `flags` provider.
 
-**R1-M12. BindleBox data survives deletion. Open.**
-- *Scenario:* BindleBox runs on our infrastructure under the same operator. On `connection-revoked` its `MailboxObject` marks the authorization inactive (`apps/bindlebox/worker/integration.mjs`) but keeps every message. After account deletion the owner's mail persists, while privacy §8 says content is kept "until you delete it". §1.5 treats BindleBox as a third-party app ("apps-held").
+**R1-M12. Parlay data survives deletion. Open.**
+- *Scenario:* Parlay runs on our infrastructure under the same operator. On `connection-revoked` its `MailboxObject` marks the authorization inactive (`apps/parlay/worker/integration.mjs`) but keeps every message. After account deletion the owner's mail persists, while privacy §8 says content is kept "until you delete it". §1.5 treats Parlay as a third-party app ("apps-held").
 - *Proposed fix (needs a product and legal decision):* either
-  - (a) BindleBox treats a terminal `connection-revoked` with `reason:'account-deleted'` as an erasure trigger, after its own export window, and E4 waits for its acknowledgement; or
-  - (b) privacy.md names BindleBox as a separately governed app with its own deletion control.
-- This is disputed because BindleBox's controller status and product boundary are not decided here.
+  - (a) Parlay treats a terminal `connection-revoked` with `reason:'account-deleted'` as an erasure trigger, after its own export window, and E4 waits for its acknowledgement; or
+  - (b) privacy.md names Parlay as a separately governed app with its own deletion control.
+- This is disputed because Parlay's controller status and product boundary are not decided here.
 
 ### Low
 
@@ -822,7 +822,7 @@ Local implementation only; no deployment, secrets, publication or production ver
 | DX-4 registration/runtime guards | done-before | Billing account facade guards purchases and handles fenced paid events through BillingClosure. |
 | DX-4 operator alert transport | deferred | Existing structured-log alert remains; no operator destination/transport is configured. |
 | DX-4 Q3 Polar sandbox verification | deferred | Requires external service verification; no secrets or live actions authorized in DX-10. |
-| R1-M12 | done-before (decision) | DEVLOG 2026-10-22 resolves Parley as a regular storage app; operatorApps remains a no-op. BindleBox hot-state erasure is a separate app-enablement dependency. |
+| R1-M12 | done-before (decision) | DEVLOG 2026-10-22 resolves Parlay as a regular storage app; operatorApps remains a no-op. Parlay hot-state erasure is a separate app-enablement dependency. |
 
 Previously recorded deviations remain provisional: 72-hour new-account security delay, recovery epoch bumps, same-email reverify semantics, expectedEmail, current-terms waiver, sharded write crash recovery and non-atomic channel/identity checks; durable export intents/alternating buffers/lease epochs; conservative ambiguous billing cancellation handling and broader renewable-status revocation. Existing worker deletion parity tests now run under workerd; this does not establish production provider conformance.
 

@@ -1,5 +1,5 @@
 import {present} from './attrs.mjs';
-import {tagDisplay} from '../../../../packages/messaging/tags.mjs';
+import {tagDisplay} from '../../../../packages/core/tags.mjs';
 import {h,interfaceText} from './release-primitives.mjs';
 // Tags are IDs: system labels are catalogue source text; owner labels/unknown IDs stay literal and isolated.
 export function tagPill(id,state){if(id?.namespace==='app'){const app=state?.incoming?.facets?.apps?.find(a=>a.principal===id.app),label=typeof id.label==='string'?id.label:id.id;return h('span',h('span','App tag'),': ',h('bdi',label).attrs({translate:'no',dir:'auto'})).attrs({title:`${app?.origin??id.app} · ${id.id}`,'data-tag-namespace':'app','data-tag-app':id.app}).classes('pill','app-tag');}// `app-message` marks v1 app messages (an internal routing tag, bug hunt F15): show it with a readable label.

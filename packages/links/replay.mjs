@@ -1,7 +1,7 @@
 import { fail, digest, boundedString } from '../core/records.mjs';
 
 // Core links: bounded single-use record for audience responses (links §7.2). Moved from
-// packages/messaging/link-replay.mjs (slice C1a), which re-exports it. Storage is
+// the legacy packages/messaging/link-replay.mjs (slice C1a; removed with core messaging on 2026-10-27). Storage is
 // the injected runtime metadata port (Durable Object storage or Node
 // SqliteMetadata): transaction(tx => tx.get/put/delete/list({prefix,limit})).
 // Callers insert only after §8 steps 1–7 succeed and apply per-IP and

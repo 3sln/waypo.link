@@ -1,7 +1,7 @@
 // AccountController slice 1, Views and tags (docs/architecture/app-engine.md §12): views, incoming, tag rules and labels (engine facades).
 // `methods` are installed on AccountController.prototype (`this` is the controller); `rpc` lists the methods
 // `invoke` accepts and the placement policy it applies to each (packages/runtime/account/index.mjs).
-import {SavedViews,CreateView,UpdateView,DeleteView,IncomingPage,UpdateIncoming} from '../../app/domains/views.mjs';
+import {SavedViews,CreateView,UpdateView,DeleteView,IncomingPage} from '../../app/domains/views.mjs';
 import {TagRules,ReplaceRules,RestoreDefaultRule,TagLabels,SetTagLabel} from '../../app/domains/tags.mjs';
 
 export const methods={
@@ -10,7 +10,6 @@ export const methods={
   async createView(owner,input){return this.dispatch(owner,{operation:CreateView.operation,input});},
   async updateView(owner,id,input){return this.dispatch(owner,{operation:UpdateView.operation,id,input});},
   async deleteView(owner,id,input){return this.dispatch(owner,{operation:DeleteView.operation,id,input});},
-  async updateIncoming(owner,input){return this.dispatch(owner,{operation:UpdateIncoming.operation,input});},
   async queryIncoming(owner,input={}){return this.dispatch(owner,{operation:IncomingPage.operation,input});},
   async tagLabels(owner){return this.dispatch(owner,{operation:TagLabels.operation});},
   async setTagLabel(owner,input){return this.dispatch(owner,{operation:SetTagLabel.operation,input});},
@@ -28,5 +27,4 @@ export const rpc={
  updateView:{},
  deleteView:{},
  queryIncoming:{},
- updateIncoming:{},
 };

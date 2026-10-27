@@ -9,7 +9,7 @@ import {movedAuthorization} from './moved.mjs';
 // HTTP routes of slice 13c, Federation and the MCP authority (docs/architecture/app-engine.md §12): the embed origin, federation protocol and authorization entry, MCP OAuth and owner MCP routes.
 // Stage handlers and route-module shape: packages/runtime/routes/index.mjs.
 import {accountCookiesEnabled,selectedAccountMember,parseAccountCookies,hasAccountVault,removedAccountCookies,accountFault,readAccountMember,defaultAccountOwner,removedMemberCookie,accountCookieName} from '../account-cookies.mjs';
-import {CONTACT_INTENTS} from '../contact-preview.mjs';
+import {CONTACT_INTENTS} from '../../links/preview.mjs';
 import {IdentityAction} from '../../identity/index.mjs';
 import {handleMcpPublic,handleMcpOwner,mcpPublicPath,mcpOwnerPath} from '../../mcp/http.mjs';
 import {handleFederation} from '../../federation/http.mjs';

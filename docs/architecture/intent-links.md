@@ -33,13 +33,13 @@ Sign-off: reviewer ___ / date ___ / outcome ___.
 | `web+bindle://send-message?contact-url=…` and `web+bindle://add-contact?contact-url=…` ([links §6.4](../spec/links.md#64-contact-intents-and-link-previews)) | A closed list of two intents, hard-coded into the spec. Platform handler registration only. | Two registered kinds among many; the scheme form `web+bindle://intent?bintent=…` carries any kind. |
 | `intents.v1` with `bindle_intent` on the provider's `login_endpoint` (GET query) | The capability lands in the provider's query logs. The provider acts itself, through its console. | `intent-links.v1` with a form-POST `endpoint`; the provider routes to a handler the viewer chose, or to its own built-in handler. |
 | `/console#contact=<link>&intent=…` on 3sln.me's contact page | 3sln.me-only. | The contact page hands off through `/i`, with the same fragment discipline. |
-| Parley-minted links (none yet) | A link to `parley.example/c/…` dies when the viewer, or the minter, uses another app. | Parley mints `open-conversation` intent links on the user's provider. |
+| Parlay-minted links (none yet) | A link to `parley.example/c/…` dies when the viewer, or the minter, uses another app. | Parlay mints `open-conversation` intent links on the user's provider. |
 
 ## 3. The link
 
 ### 3.1 Example
 
-Alice's Parley mints a link to a conversation, hosted on her provider's intent endpoint. The decoded intent (368 bytes):
+Alice's Parlay mints a link to a conversation, hosted on her provider's intent endpoint. The decoded intent (368 bytes):
 
 ```json
 {"bintent":1,
@@ -47,7 +47,7 @@ Alice's Parley mints a link to a conversation, hosted on her provider's intent e
          "digest":"sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"},
  "data":{"conversation":"0b6f3c1e-5d2a-4f7b-9a41-2c8e6d1f0a93",
          "creator":{"iss":"https://3sln.example","sub":"7d0c2b8e-1f4a-4c6d-8e2b-5a9f3c1d7e60"},
-         "profile":"https://spec.bindle.example/bindlebox/v1"}}
+         "profile":"https://spec.bindle.example/messaging/v1"}}
 ```
 
 The link (the digest is a placeholder):
@@ -63,7 +63,7 @@ A contact intent carries a whole contact link in `data.contact` and is a **capab
 - **Base64url JSON** (the user's choice) keeps the URL copy-paste safe and the JSON readable to tooling. The JSON text is the artefacts §3 canonical form (JCS, plain integers) and the base64url is canonical, so one unsigned intent has exactly one encoding (R1-M3).
 - **A pinned kind reference** (URL, version, digest) means a link minted today shows the same purpose and disclosure in ten years, whatever the publisher does to the URL. Additive later versions are handled by projection (spec §5).
 - **No app, no route, no return URL.** That is what makes the link app-agnostic and removes the open-redirect surface.
-- **No minter in unsigned links.** An unsigned "from Parley" or "from Alice" would be a phishing primitive. Attribution exists only when signed.
+- **No minter in unsigned links.** An unsigned "from Parlay" or "from Alice" would be a phishing primitive. Attribution exists only when signed.
 - **Size budget.** A typical maximal contact link is about 4,190 characters (a 4,096-character `bindle_meta` plus origin and path). The `contact-link` field admits 4,352 characters; as an unsigned intent that is 4,535 bytes of JSON and 6,047 base64url characters, and signed about 6,420 characters with a short `kid`. Hence the 4,480-byte `data`, 4,608-byte object (5,120-byte signed payload), 6,400-character unsigned and 7,168-character signed value, and 8,192-character URL bounds (spec §3.5). Links §2 permits longer contact links (and legacy `sig` links up to 18,000 characters); those cannot ride in an intent, and the legacy bridge keeps them on the built-in path (R1-M2).
 
 ### 3.3 Query or fragment
@@ -127,11 +127,11 @@ Draft bodies (version 1). Each is wrapped in an artefact envelope at its line UR
              "profile":{"title":{"en":"Messaging standard"},"categories":[],"display":"origin"}}}}
 ```
 
-`open-conversation` admits nobody to anything. The handler shows the conversation only if the viewer is already a participant under [BindleBox §6](../spec/bindlebox.md#6-conversations). The `creator` is shown as an unverified claim ("Started by alice@3sln.example, according to the link") until the handler resolves it.
+`open-conversation` admits nobody to anything. The handler shows the conversation only if the viewer is already a participant under [Parlay §6](../spec/messaging.md#6-conversations). The `creator` is shown as an unverified claim ("Started by alice@3sln.example, according to the link") until the handler resolves it.
 
 ## 5. Handler declarations
 
-Parley's client metadata gains:
+Parlay's client metadata gains:
 
 ```json
 "bindle_integration": {"v": 1,
@@ -184,21 +184,21 @@ Engine-first: `ReceiveIntent` (steps 1–2 of spec §6, pure, stateless and fetc
 
 - **no handler**: "None of your apps can do this yet", with a link to the catalogue (later) and the kind's summary;
 - **ignored kind**: a neutral page with **Undo**;
-- **valid default and no widening**: direct handoff, with no 3sln.me page, whenever the delivering navigation was user-activated or came from outside the browser (spec §7.3 fetch-metadata rule). "Always" means no interstitial (*Provisional (coordinator), not signed off by the user*, Q2); the handler still confirms any action (spec §8). The one-control "Continue to Parley" interstitial remains only as the spec §7.3 anti-bounce guard, for navigations the viewer did not activate (a script-submitted cross-site POST, no fetch metadata, framed or prefetch) and past the direct-handoff rate limit;
+- **valid default and no widening**: direct handoff, with no 3sln.me page, whenever the delivering navigation was user-activated or came from outside the browser (spec §7.3 fetch-metadata rule). "Always" means no interstitial (*Provisional (coordinator), not signed off by the user*, Q2); the handler still confirms any action (spec §8). The one-control "Continue to Parlay" interstitial remains only as the spec §7.3 anti-bounce guard, for navigations the viewer did not activate (a script-submitted cross-site POST, no fetch metadata, framed or prefetch) and past the direct-handoff rate limit;
 - otherwise the **chooser and consent** page.
 
 ### 6.3 The chooser and consent page
 
 Built with the 3sln stack, using the [consent experience](consent-experience.md) components: its persistent header, risk tiers, arming delay and progressive disclosure.
 
-- **Header:** "A link wants to: *Open a conversation*" — the kind title, with "described by `spec.bindle.example`" (the line URL's host, never the body's `publisher`) and a reviewed mark only for kinds 3sln.me reviewed (initially the three registered kinds). An unreviewed kind's heading is provider text ("A link of a type 3sln.me hasn't checked") with the publisher's title quoted below it; a kind published by a candidate handler's own site reads "described by Parley's own site" and is raised one tier (R1-H2).
+- **Header:** "A link wants to: *Open a conversation*" — the kind title, with "described by `spec.bindle.example`" (the line URL's host, never the body's `publisher`) and a reviewed mark only for kinds 3sln.me reviewed (initially the three registered kinds). An unreviewed kind's heading is provider text ("A link of a type 3sln.me hasn't checked") with the publisher's title quoted below it; a kind published by a candidate handler's own site reads "described by Parlay's own site" and is raised one tier (R1-H2).
 - **Sender:** "From: unknown sender" (unsigned) or "Made by `alice@3sln.example`" (signed and verified). A failed signature adds "This link's signature couldn't be checked."
 - **Risk chip** from `effect`, raised by categories, using the existing tiers: `view` low, `save` and `join` medium, `send` high; `money`, `identity` and `send-as-you` raise one tier, as in the consent experience.
 - **"This link includes"**: one row per present field, under its `display` rule ("Contact link from `3sln.example`", "Started by someone at `3sln.example` (according to the link)" — a handle only when 3sln.me already holds a verified binding, never by fetching — and "Conversation: included"). Hosts use the A-label form when mixed-script or confusable.
-- **Handler list:** radio rows with the app name (reviewed) or the verified origin as primary label (unreviewed), plus "Parley will receive the details above." Nothing is preselected without a default, and the order is 3sln.me's (reviewed first, then recently used), never a manifest's claim.
+- **Handler list:** radio rows with the app name (reviewed) or the verified origin as primary label (unreviewed), plus "Parlay will receive the details above." Nothing is preselected without a default, and the order is 3sln.me's (reviewed first, then recently used), never a manifest's claim.
 - **Account:** with several signed-in accounts, the chosen account is named on the page; organizations never appear as the viewer (spec §6). An "Acting as" control appears only for a member of an organization with installed handlers for this kind, and switching it replaces the handler list (§6.7).
-- **Actions:** primary **Just once**, secondary **Always use Parley for links like this**. Both are armed after the consent experience's standard delay, so a click-through from a hostile page cannot land on them.
-- **Overflow:** "Don't offer Parley for these links" (handler exclusion), and "Ignore links like this" (ignored kind).
+- **Actions:** primary **Just once**, secondary **Always use Parlay for links like this**. Both are armed after the consent experience's standard delay, so a click-through from a hostile page cannot land on them.
+- **Overflow:** "Don't offer Parlay for these links" (handler exclusion), and "Ignore links like this" (ignored kind).
 
 The built-in console handler (until a messaging app occupies the messaging slot) gets the same page. When it is the only candidate, its own send-message or add-contact prompt shows the same rows and the once/always choice, so the viewer sees one screen, not two.
 
@@ -209,7 +209,7 @@ Under account settings: one row per kind line the viewer has met, with the defau
 ### 6.5 Handlers 3sln.me ships
 
 - **Built-in:** `send-message` and `add-contact` (the console contact flows), declared in a provider-authored manifest.
-- **Parley** (an ordinary app, organizations design §1c): `send-message`, `add-contact`, `open-conversation`, through its own manifest, with no special treatment.
+- **Parlay** (an ordinary app, organizations design §1c): `send-message`, `add-contact`, `open-conversation`, through its own manifest, with no special treatment.
 
 ### 6.6 Minting API
 
@@ -230,13 +230,13 @@ Under account settings: one row per kind line the viewer has met, with the defau
 
 ### 7.1 Contact links, end to end
 
-1. Alice's Parley issues a contact link through `links.issue` on her provider (unchanged).
+1. Alice's Parlay issues a contact link through `links.issue` on her provider (unchanged).
 2. Alice shares either the contact link itself (its page offers "Message" and "Save" as intents) or an intent link `…/i#bintent=<send-message, contact>`.
 3. Bob, on `alt.example`, opens it. The landing hands off to `alt.example`'s endpoint by form POST.
 4. `alt.example` asks Bob the first time: "Message a contact · from unknown sender · Contact link from `3sln.example` · open with Courier (`courier.example`)". Bob chooses **Always**.
 5. Courier opens with the fragment, strips it, verifies the contact link with `3sln.example` (links §8), and composes. Nothing is sent until Bob sends; delivery carries Bob's author proof (links §6.1).
 
-Neither Parley nor Courier appears in the link. Alice can switch to another messaging app, and Bob to another handler, and the link keeps working.
+Neither Parlay nor Courier appears in the link. Alice can switch to another messaging app, and Bob to another handler, and the link keeps working.
 
 ### 7.2 Migration from today's contact links
 
@@ -254,7 +254,7 @@ Existing contact links are unchanged: they are links, not intents, and keep `bin
 
 - The intent link on `/i` carries no account, so it works for as long as 3sln.me serves `/i`, whoever minted it and wherever they moved.
 - Data that points at the moved identity (a contact link on `/users/<handle>/contact/…`) follows the redirect for the redirect period, and keeps working at the destination if it imported the link's records ([identity portability §5](identity-portability.md#5-redirects-what-3slnme-redirects)).
-- After the redirect lapses, old contact links die (they are capabilities tied to the old host), so apps should re-mint after a move. Parley shows "Your contact link moved, share the new one" when the user's issuer changes.
+- After the redirect lapses, old contact links die (they are capabilities tied to the old host), so apps should re-mint after a move. Parlay shows "Your contact link moved, share the new one" when the user's issuer changes.
 - If a link host disappears entirely, any Bindle-aware software can still lift the `bintent` value out of the URL and send it to the viewer's provider (spec §10, tooling).
 
 ## 8. Threat model
@@ -299,7 +299,7 @@ Existing contact links are unchanged: they are links, not intents, and keep `bin
 | INT-6 | UI: landing, chooser and consent, settings | `apps/web/src/bl/intent-*.mjs`, `apps/web/src/ui/intent-*`, DOM and browser tests | INT-5 |
 | INT-7 | Contact page migration M2–M3 | `packages/runtime/contact-preview.mjs`, `apps/web/src/bl/contact-link.mjs`, `apps/web/manifest.webmanifest` (links owner) | INT-5 |
 | INT-8 | `signIntent` in the links contract (later) | The links-contract module (links owner) | INT-1, ORG certification keys |
-| INT-9 | Parley declarations, route and handler confirmations | Parley's app files (Parley owner) | INT-3 |
+| INT-9 | Parlay declarations, route and handler confirmations | Parlay's app files (Parlay owner) | INT-3 |
 
 ### 10.1.1 Local slice status (2026-10-23)
 
@@ -307,7 +307,7 @@ INT-1–INT-7 and INT-9 have local implementations and dedicated codec, engine, 
 
 The integration file has one INT-3 hook wrapping declaration validation and safe snapshot adoption. Intent records use the existing account metadata provider and an INT account RPC adapter; a separate provider catalogue entry is unnecessary. Disconnect/undeclare invalidates candidates immediately, and the account adapter reconciles the stored default before every intent operation, including settings reads. Cleanup does not depend on flag targeting. Flow receipts contain a digest and deadlines, never the intent value or data, and are bounded to 64 per account; browser payloads expire after one hour.
 
-Oversized legacy contact links use a migration-only fragment and built-in-only consent path, without becoming a new-format intent or reaching app handlers. The static PWA registration stays legacy; its served manifest switches to `/i#%s` only while the intent flag is globally enabled. Parley uses the existing `apps/bindlebox` application. Its handler confirms independently, and the provider built-in refuses foreign-host contact actions until verification is available.
+Oversized legacy contact links use a migration-only fragment and built-in-only consent path, without becoming a new-format intent or reaching app handlers. The static PWA registration stays legacy; its served manifest switches to `/i#%s` only while the intent flag is globally enabled. Parlay uses the existing `apps/parlay` application. Its handler confirms independently, and the provider built-in refuses foreign-host contact actions until verification is available.
 
 Kind resolution uses the existing operator-configured artefact store and its bounded fetch port, with no ambient network fetch of arbitrary publisher URLs. External publisher discovery, deployed log-redaction verification, actual OS/PWA installation behaviour and production release gates remain unverified. Browser suites exercise protocol substitutions and handler confirmations locally; they do not certify third-party handlers. DEVLOG reconciliation is left to the coordinator because this workstream was instructed not to edit DEVLOG.md. Final local verification: 71 focused codec/engine/flag/boundary checks, 12 intent client-engine checks, 12 contact/transport checks, the 292-test UI-state gate, DOM smoke, asset build and Worker dry run passed. The resumed sandbox refuses loopback listeners (`listen EPERM`), so its full core run finished with 2,695 passes, nine listener failures and a native Node assertion in the export-hooks suite; Worker/browser/e2e reruns are blocked by that environment. Before the sandbox changed, Worker (80 tests), intent browser matrices and the full e2e (214 passes, four skips) passed; those earlier runs do not verify every final resumed edit.
 
@@ -363,7 +363,7 @@ Revision 3: all answered as *Provisional (coordinator), not signed off by the us
 - Record I1–I8 as provisional decisions with empty reviewer, date and outcome. Record I9–I12 (revision 3) as Provisional (coordinator), not signed off by the user, with empty reviewer, date and outcome.
 - AMD-I2 changes links §6.4 (links owner); AMD-I3 registers the `intent` kind (artefacts owner); AMD-I4 adds the `intents` manifest member (federation owner); AMD-I5 gives certification keys a second use (organizations author).
 - `bindle_intent` log redaction, still pending for production, extends to `bintent`.
-- messaging-app.md §6.1 lists the landing page and intents under core. M2 changes the 3sln.me contact page, so the BindleBox owner should confirm the split still holds.
+- messaging-app.md §6.1 lists the landing page and intents under core. M2 changes the 3sln.me contact page, so the Parlay owner should confirm the split still holds.
 
 ## Review round 1
 
@@ -377,7 +377,7 @@ Independent adversarial security and UX review, 2026-10-22, against spec revisio
 
 **R1-H3. A retired certification key and a self-asserted `iat` forge attribution.** *Scenario:* after a rotation, or after Alice moves away from `old.example`, the old provider still holds its certification private key. It signs a new intent with `iat` before the retirement, and revision 1 accepted "`retired` when `iat` precedes its retirement". The result is "Made by alice@old.example" forever. This also contradicted organizations §3a.3 (certificates verify only against `active` keys, and certification keys never cross a move) and identity portability §8.2 (an artifact naming an earlier host fails). *Fix (spec §3.3, §13):* only an `active` key at the minter's current issuer gives attribution. Rotation or a move ends attribution, and the link degrades to unsigned. Fixed.
 
-**R1-H4. The handler route is the real boundary, and revision 1 left it unguarded.** *Scenario:* any page can navigate, open as a popup, or frame `https://parley.example/bindle/intent#bintent=<send-message to attacker>&bintent_iss=https://evil.example`, skipping provider consent entirely. It can then clickjack the compose confirmation, or rely on Parley's starting sign-in at the hinted `evil.example`, a look-alike provider that harvests credentials. *Fix (spec §8):* provider consent is stated not to be a security boundary for handlers. Handlers treat routed and direct intents identically, send `frame-ancestors 'none'`, arm confirmations after a delay, and name the acting identity. They use `bintent_iss` only to choose among issuers they already have a session with. Fixed. Handler conformance is unverifiable by the provider; the residual is a careless handler, contained by exclusion or disconnection.
+**R1-H4. The handler route is the real boundary, and revision 1 left it unguarded.** *Scenario:* any page can navigate, open as a popup, or frame `https://parley.example/bindle/intent#bintent=<send-message to attacker>&bintent_iss=https://evil.example`, skipping provider consent entirely. It can then clickjack the compose confirmation, or rely on Parlay's starting sign-in at the hinted `evil.example`, a look-alike provider that harvests credentials. *Fix (spec §8):* provider consent is stated not to be a security boundary for handlers. Handlers treat routed and direct intents identically, send `frame-ancestors 'none'`, arm confirmations after a delay, and name the acting identity. They use `bintent_iss` only to choose among issuers they already have a session with. Fixed. Handler conformance is unverifiable by the provider; the residual is a careless handler, contained by exclusion or disconnection.
 
 **R1-H5. "Always" plus no page enabled drive-by handoffs.** *Scenario:* a hostile page runs `location = "https://3sln.me/i?bintent=…"` (SameSite=Lax cookies ride on top-level GETs), or auto-submits the cross-site POST, or a remembered-provider landing auto-continues. The viewer lands in their default handler with attacker data, repeatedly and without a click: it is a setup for confirmation clickjacking and pure harassment. *Fix (spec §7.3, §10; design §6.1, §6.2):* direct handoff happens only for navigations with `Sec-Fetch-Site: none` or `same-origin`, or `cross-site` with `Sec-Fetch-User: ?1`, and within a per-account rate limit. Otherwise the provider shows a one-control armed interstitial. Link hosts never auto-submit to a remembered provider; a single "Continue with…" click supplies the activation. Q2 remains the user's decision, now with these conditions. Fixed.
 

@@ -29,7 +29,8 @@ const rows=[
  ['EXTENSIONS_ENABLED','a','G A C',{stateful:true,envParse:'boolean'}],
  // Core links contract, key-delegation certificates and the messaging-address descriptor (messaging extraction prep,
  // 2026-10-26). Formerly BINDLEBOX_ENABLED, which named the separate messaging app; that name is retired below and its
- // raw env value is still honoured through envAlias until BB-CUT (the new name wins when both are set).
+ // raw env value is still honoured through envAlias (the new name wins when both are set). BB-CUT (2026-10-27) kept the
+ // alias; removing it is an open item (DEVLOG "Messaging removed from core; Parlay rename; BB-CUT reset", review fixes).
  ['LINKS_ENABLED','a','G A S P',{stateful:true,envParse:'boolean',envAlias:'BINDLEBOX_ENABLED'}],
  // The email bridge needs no messaging-app flag: delivery waits for any occupant of the public-message-intake slot.
  ['EMAIL_BRIDGE_ENABLED','a','G A S P',{risk:'crit',stateful:true,retainExisting:false,retentionReason:'Holding queues and opt-in live in the external email-bridge store; no account-local predicate.',envParse:'boolean'}],
@@ -126,7 +127,7 @@ export const RETIRED_FLAGS=freeze({
  BEAM_ENABLED:{retiredOn:'2026-10-26',reason:'Beam removed from the core'},
  BEAM_TURN_ENABLED:{retiredOn:'2026-10-26',reason:'Beam removed from the core'},
  BEAM_STUN_ENABLED:{retiredOn:'2026-10-26',reason:'Beam removed from the core'},
- // Peer messaging leaves the core (Parley). Core links and delegation moved to LINKS_ENABLED (env alias kept until BB-CUT).
+ // Peer messaging leaves the core (Parlay). Core links and delegation moved to LINKS_ENABLED (env alias kept past BB-CUT; removal is open).
  BINDLEBOX_ENABLED:{retiredOn:'2026-10-26',reason:'Renamed to LINKS_ENABLED; the messaging app reads its own switch',replacement:'LINKS_ENABLED'}
 });
 export function getFlag(name){if(typeof name!=='string'||!Object.hasOwn(FLAGS,name))throw Object.assign(new TypeError(`Unknown flag: ${String(name)}`),{code:'unknown_flag'});return FLAGS[name];}

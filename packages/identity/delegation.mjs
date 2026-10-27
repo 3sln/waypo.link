@@ -1,11 +1,11 @@
-// Core feature key-delegation.v1, provider side (docs/spec/bindlebox.md §3.2–§3.4; messaging-extraction.md slice C3;
+// Core feature key-delegation.v1, provider side (docs/spec/messaging.md §3.2–§3.4; messaging-extraction.md slice C3;
 // messaging-app.md §4). The provider certifies an app-held per-user P-256 delegate key with a short-lived compact JWS
 // signed by the owner's current identity signing key (packages/identity/keys.mjs). Engine-first: DelegationRegistry is
 // the provider resource, and the Actions/Queries below are the operations over it. New issuance needs
 // LINKS_ENABLED; owner reads, status and revocations remain available during rollout changes.
 //
-// Core may not import BindleBox (tests/bindlebox/import-boundary.test.mjs), so the certificate encoding is written
-// here against packages/bindlebox-protocol/certificate.mjs (parseDelegation/verifyDelegation) and pinned to it by the
+// Core may not import Parlay (tests/parlay/import-boundary.test.mjs), so the certificate encoding is written
+// here against packages/messaging-protocol/certificate.mjs (parseDelegation/verifyDelegation) and pinned to it by the
 // cross-test in tests/key-delegation.test.mjs: header exactly {alg:'ES256', kid, typ:'bindle-key-delegation+jwt'},
 // payload exactly {bindle, v, iss, sub, delegate, jkt, purposes, client, cnx, since, jti, iat, exp}.
 //
@@ -20,7 +20,7 @@
 //   - Lifetime: host-configured seconds (`DELEGATION_CERTIFICATE_SECONDS`, default and maximum 86400, minimum 300);
 //     an app may ask for less. The 24 h value is a provisional default pending the user's answer (DEVLOG 2026-10-20).
 //   - Certifying a new jkt revokes every other active jkt of the owner in the same transaction (all certified
-//     purposes are BindleBox purposes), so at most one delegate key signs for a principal. A revoked jkt is never
+//     purposes are Parlay purposes), so at most one delegate key signs for a principal. A revoked jkt is never
 //     certified again, and an active jkt never moves to another client or connection incarnation.
 //   - Renewal re-certifies the same active jkt with the same `since`; while the stored certificate has at least half
 //     its lifetime left and nothing it names changed, the stored one is returned without signing.
@@ -40,7 +40,7 @@
 // by the delegate key over UTF-8 `bindle-key-delegation-pop-v1\n` followed by the JSON text
 // `{"aud":<issuer>,"client_id":<occupant clientId>,"iat":<iat>,"jkt":<jkt>,"sub":<owner>}` (members in this order,
 // JSON.stringify escaping), with `iat` (Unix seconds) within 120 s of the provider clock. The prefix differs from every
-// bindlebox-* signing domain and from JWS input, so a PoP is never a valid envelope, receipt or certificate.
+// bindle-messaging-* signing domain and from JWS input, so a PoP is never a valid envelope, receipt or certificate.
 //
 // Records (the owner's account store): `key-delegation/<owner>/<jkt>/`, history bounded at DELEGATION_HISTORY_LIMIT
 // (oldest revoked pruned first; a pruned jkt keeps a permanent tombstone so it is never certified again); a bounded audit ring
@@ -54,8 +54,8 @@ import { keyState } from './keys.mjs';
 import { MESSAGING_INGRESS_SLOT } from '../links/types.mjs';
 import {createFlags} from '../flags/evaluate.mjs';
 
-// Placeholder identifiers under spec.bindle.example, equal to bindlebox-protocol PURPOSES (cross-tested).
-const SPEC = 'https://spec.bindle.example/bindlebox/v1';
+// Placeholder identifiers under spec.bindle.example, equal to messaging-protocol PURPOSES (cross-tested).
+const SPEC = 'https://spec.bindle.example/messaging/v1';
 export const DELEGATION_PURPOSES = Object.freeze({ author: `${SPEC}/purposes/author`, receipt: `${SPEC}/purposes/receipt`, archive: `${SPEC}/purposes/archive` });
 export const DELEGATION_TYP = 'bindle-key-delegation+jwt';
 export const POP_DOMAIN = 'bindle-key-delegation-pop-v1\n';

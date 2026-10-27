@@ -1,8 +1,11 @@
 # Contact delivery wire decision
 
+> **Superseded (2026-10-27).** Legacy peer messaging, contact grants, contact delivery and Conversation v1 left the 3sln.me core (DEVLOG "Messaging removed from core; Parlay rename; BB-CUT reset"). This document is historical rationale; the current design is [Parlay](messaging-app.md) and [Bindle Messaging](../spec/messaging.md). Code paths named here may no longer exist.
+
+
 Status: provisional design; no runtime or publication claim. Reviewer ___ / date ___ / outcome ___.
 
-The proposed [wire specification](../spec/contact-delivery.md) gives signed contact URL POST and contact-authorized RPC one envelope, one live parent authority, and one receipt namespace. The complete [candidate JSON definition](artefacts/contact-delivery-v1.schema.json) deliberately lives outside the public artefact catalog. Root review, implementation, conformance tests, and explicit registry publication remain gates. Conversation v2 remains unpublished.
+The proposed [wire specification](../../apps/parlay/docs/legacy/contact-delivery.md) gives signed contact URL POST and contact-authorized RPC one envelope, one live parent authority, and one receipt namespace. The complete [candidate JSON definition](artefacts/contact-delivery-v1.schema.json) deliberately lives outside the public artefact catalog. Root review, implementation, conformance tests, and explicit registry publication remain gates. Conversation v2 remains unpublished.
 
 ## Recommendation and boundaries
 

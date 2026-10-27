@@ -1,6 +1,8 @@
 # Passkeys, sessions and device approval
 
-Supersession: [Device authorization](device-authorization.md) is the proposed successor for interoperable device grants. This document describes the existing provider-local device sign-in.
+Scope: this document is the 3sln.me reference service's own sign-in policy: passkeys, browser sessions, and **session handoff**, where a signed-in browser approves another browser (for example a TV or a borrowed laptop) and that browser receives an ordinary 3sln.me provider session. No app is involved and no app grant is issued. It is not part of the Bindle specification.
+
+It is **not** superseded by [device authorization](device-authorization.md), which covers a different use case: a client application (a command-line tool, a daemon, a TV or console app) obtaining an app grant limited to the preference fragments and methods it requested, through the OAuth device grant with DPoP. The two flows MAY share a verification page and code format; their results differ: a provider session here, an app grant there. (An earlier revision of this note wrongly called device authorization this document's successor.)
 
 
 Status: implemented platform-independent account policy under the user's request for multiple passkeys, device management and TV/new-device approval. Worker persistence, HTTP routes, cookie delivery and UI verification are separate integration evidence recorded in DEVLOG.md. This is an issuer-local login flow, not a claim of OAuth device-grant interoperability.

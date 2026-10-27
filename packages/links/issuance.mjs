@@ -1,5 +1,5 @@
 // Core links: issuance, stored exact-claims verification, challenge rotation and the links contract service
-// (docs/spec/links.md §3.3, §7.1; docs/spec/bindlebox.md §4.2; extraction plan slice C1a).
+// (docs/spec/links.md §3.3, §7.1; docs/spec/messaging.md §4.2; extraction plan slice C1a).
 //
 // Keys. New metas are always signed with the owner's CURRENT identity signing key from the registry
 // (packages/identity/keys.mjs), never with a kid a caller or a stored parent names. Verification goes through the
@@ -7,13 +7,15 @@
 // key (rotation never breaks issued links) and stops verifying once that key is revoked or pruned. A fresh
 // signature can therefore never be produced under a retired key, and a revoked key verifies nothing.
 //
-// LinkService holds the app-declared link types of ./types.mjs on `link/<jti>/` records. The legacy core contact
-// type stays on `contact-grant` parents (ContactEndpointService) until cutover and uses the helpers below.
+// LinkService holds the link types of ./types.mjs on `link/<jti>/` records, which are also the type-neutral contact
+// parents of ./parents.mjs. The legacy core contact type and its `contact-grant` parents were removed with core
+// messaging on 2026-10-27.
 import { fail, key, canonical, boundedString } from '../core/records.mjs';
 import { keyState, verifiableSigningKey } from '../identity/keys.mjs';
 import { parseLinkQuery, parseLinkMeta, verifyLinkSignature, signLinkJWS, exactMembers, base64urlRandom, LINK_META_TYP } from './envelope.mjs';
 import { linkBinding } from './types.mjs';
 import { UUID } from '../core/primitives.mjs';
+import { LINK_RECORD_CAP } from './parents.mjs';
 
 /** The kid/alg new metas must carry: the owner's current registry signing key. Without a registry-held current
  * key (externally registered keys only) the caller's `fallback` is used, which callers check is itself active. */
@@ -53,7 +55,7 @@ export class LinkService {
    * `policies`: the operator registry URIs (packages/links/policies.mjs). `verifyAuthor({owner, jti, principal, proof,
    * issuer, now})`: the host's author-proof check (./author-proof.mjs with host ports); without it `evaluate` is
    * always `unavailable` (fail closed, C1b). */
-  constructor({ store, issuer, keys, signingKey, decide, verifyAuthor, policies = [], crypto = globalThis.crypto, clock = () => Date.now(), maxLinks = 1000, changeRetention = 1024, evaluationsPerLink = 60, evaluationsPerOwner = 600 }) {
+  constructor({ store, issuer, keys, signingKey, decide, verifyAuthor, policies = [], crypto = globalThis.crypto, clock = () => Date.now(), maxLinks = LINK_RECORD_CAP, changeRetention = 1024, evaluationsPerLink = 60, evaluationsPerOwner = 600 }) {
     let origin; try { origin = new URL(issuer); } catch { fail('invalid_link_service'); }
     if (typeof store?.transaction !== 'function' || origin.origin !== issuer || typeof signingKey !== 'function' || !Array.isArray(policies) || !Number.isSafeInteger(maxLinks) || maxLinks < 1 || !Number.isSafeInteger(changeRetention) || changeRetention < 1) fail('invalid_link_service');
     if (![evaluationsPerLink, evaluationsPerOwner].every(value => Number.isSafeInteger(value) && value > 0)) fail('invalid_link_service');

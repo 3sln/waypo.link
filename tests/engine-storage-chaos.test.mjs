@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 import { AccountController } from '../packages/runtime/accounts.mjs';
 import { MESSAGE_RECEIPT_DEFAULTS } from '../packages/runtime/message-receipt-budget.mjs';
 import { SqliteMetadata, SerialGate } from '../apps/node/resources.mjs';
-import { conversationInbox } from '../packages/conversations/runtime.mjs';
+import { appMessageKey, appMessageUsageKey } from '../packages/activity/app-messages.mjs';
 import { forEachSeed, injectFaults } from './helpers/chaos.mjs';
 
 const BASE = Number(process.env.CHAOS_SEED ?? 1);
@@ -22,7 +22,7 @@ class MemoryBucket {
   async delete(keys) { for (const key of Array.isArray(keys) ? keys : [keys]) this.objects.delete(key); }
 }
 const fault = message => Object.assign(new Error(message), { code: 'injected_fault' });
-// Metadata port with switchable faults: a failing `message/` row write inside a
+// Metadata port with switchable faults: a failing `app-message/` row write inside a
 // transaction (rolls it back) and a lost acknowledgement after a commit.
 function faultyMetadata(db, plan) {
   return new Proxy(db, { get(target, prop) {
@@ -30,7 +30,7 @@ function faultyMetadata(db, plan) {
       let wroteMessage = false;
       const result = await target.transaction(tx => operation(new Proxy(tx, { get(t, p) {
         if (p !== 'put') return t[p];
-        return async (k, v) => { if (typeof k === 'string' && k.startsWith('message/')) { wroteMessage = true; if (plan.metadataWrite()) throw fault('metadata write failed'); } return t.put(k, v); };
+        return async (k, v) => { if (typeof k === 'string' && k.startsWith('app-message/')) { wroteMessage = true; if (plan.metadataWrite()) throw fault('metadata write failed'); } return t.put(k, v); };
       } })));
       if (wroteMessage && plan.ackLost()) throw fault('commit acknowledgement lost');
       return result;
@@ -49,18 +49,31 @@ async function fixture(t, random) {
   const controller = new AccountController({ metadata: faultyMetadata(db, plan), gate: new SerialGate(), blobs, archives: new MemoryBucket(), config: { APP_ORIGIN: ORIGIN, KEY_ENCRYPTION_KEY: Buffer.alloc(32, 7).toString('base64'), WORK_LIMITS_ENABLED: 'false', STORAGE_WRITE_ENABLED: 'false', MESSAGE_RECEIPT_LIMITS: generous() } });
   await controller.warm(OWNER);
   const collection = (await controller.collections(OWNER))[0];
-  const link = await controller.createContact(OWNER, 'n.abc', { name: 'Chaos', collections: [collection.id], mimeTypes: ['text/plain'], expiresAt: Date.now() + 86400000, maxMessages: 1000 });
-  const { token } = await controller.mintContact(OWNER, link.url);
-  const receive = (keyName, text) => controller.receive(OWNER, token, { collection: collection.id, mimeType: 'text/plain', bytes: [...new TextEncoder().encode(text)], idempotencyKey: keyName });
-  const room = { id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', source: { origin: 'https://source.example', owner: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee' }, title: 'Room', collection: collection.id };
-  const conversationEvent = (eventId, text) => controller.gate.run(() => conversationInbox(controller, OWNER, room, { eventId, conversationId: room.id, source: room.source, threadId: eventId, text, tags: [], createdAt: 1 }));
-  return { db, bucket, blobs, plan, controller, receive, conversationEvent };
+  // Item admission with the commit protocol of v1 app intake (runtime/app-notifications.mjs): an idempotency receipt,
+  // a durable quota reservation, the blob upload outside SQL, then metadata, usage, index and receipt in one store
+  // transaction, and the reservation released either way. Legacy peer `receive` left the core on 2026-10-27; this
+  // drives the same quota, blob and store-adapter paths under the fault plans.
+  const receive = async (keyName, text) => {
+    const receiptKey = 'test-admission-receipt/' + keyName, prior = await controller.metadata.get(receiptKey);if (prior) return { id: prior.id, accepted: true };
+    const bytes = new TextEncoder().encode(text), id = crypto.randomUUID();
+    const reservation = await controller.quota.reserve(OWNER, { id, bytes: bytes.length, blobRef: `messages/${OWNER}/${id}`, kind: 'message' });controller.messageReservation = reservation;
+    try {
+      await controller.blobs.put(reservation.blobRef, bytes);
+      return await controller.store.transaction(async tx => {
+        const done = await tx.get(receiptKey);if (done) return { id: done.id, accepted: true };
+        const usage = await tx.get(appMessageUsageKey(OWNER)) || { bytes: 0, messages: 0 };await tx.set(appMessageUsageKey(OWNER), { bytes: usage.bytes + bytes.length, messages: usage.messages + 1 });
+        await tx.set(appMessageKey(OWNER, id), { id, owner: OWNER, collection: collection.id, deliveryCollection: collection.id, mimeType: 'text/plain', size: bytes.length, bytes, receivedAt: Date.now(), readAt: null, tags: [], grantId: null });
+        await tx.set(receiptKey, { id });return { id, accepted: true };
+      });
+    } finally { controller.messageReservation = null; await controller.quota.release(id); }
+  };
+  return { db, bucket, blobs, plan, controller, receive };
 }
 // Consistency that must hold after any fault plan: every listed message has
 // exactly its bytes, accounting matches, and no blob escapes both a message
 // and a durable reservation.
 async function consistent(f, sent) {
-  const list = await f.controller.messages.list(OWNER, { limit: 1000 }), usage = await f.controller.quota.usage(OWNER);
+  const list = await f.controller.items.list(OWNER, { limit: 1000 }), usage = await f.controller.quota.usage(OWNER);
   for (const m of list) {
     const { bytes } = await f.controller.content(OWNER, m.id);
     assert.ok(sent.has(new TextDecoder().decode(bytes)), 'stored bytes are bytes a sender sent');
@@ -92,35 +105,6 @@ test('blob/metadata fault plans: a received message is all-or-nothing and retrie
     fired.metadataWrite += f.plan.fired.metadataWrite; fired.ackLost += f.plan.fired.ackLost; fired.blob += f.blobs.calls.filter(c => c.fault).length;
   }, { base: BASE });
   assert.ok(fired.metadataWrite && fired.ackLost && fired.blob, `every fault kind was exercised ${JSON.stringify(fired)}`);
-});
-
-test('conversation events under faults: deleted history never reappears on redelivery and retries converge', async t => {
-  t.diagnostic(`CHAOS_SEED base ${BASE}`);
-  const uuid = i => `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`;
-  await forEachSeed(6, async random => {
-    const f = await fixture(t, random), events = Array.from({ length: 8 }, (_, i) => uuid(i)), text = id => `event ${id}`, sent = new Set(events.map(id => JSON.stringify({ eventId: id, conversationId: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', source: { origin: 'https://source.example', owner: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee' }, threadId: id, text: text(id), tags: [], createdAt: 1 })));
-    const accepted = new Map(), deleted = new Set();
-    f.plan.on = true;
-    for (let step = 0; step < 40; step++) {
-      const id = random.pick(events);
-      if (accepted.has(id) && !deleted.has(id) && random.chance(0.3)) {
-        try { await f.controller.deleteMessage(OWNER, accepted.get(id)); deleted.add(id); } catch (error) { assert.ok(['injected_fault', 'timeout', 'not_found'].includes(error.code), error.message); if (error.code === 'not_found') deleted.add(id); }
-      } else {
-        try { const { id: messageId } = await f.conversationEvent(id, text(id)); if (accepted.has(id)) assert.equal(messageId, accepted.get(id)); accepted.set(id, messageId); }
-        // A stale reservation whose cleanup fails again is a transient conflict; it must not outlive the faults.
-        catch (error) { assert.ok(['injected_fault', 'timeout', 'conflict'].includes(error.code), `unexpected ${error.code}: ${error.message}`); }
-      }
-      const { list } = await consistent(f, sent);
-      for (const gone of deleted) assert.ok(!list.some(m => m.id === accepted.get(gone)), 'a deleted conversation message reappeared');
-      // A delete whose acknowledgement was lost may still have committed; settle it before tracking.
-      for (const [eventId, messageId] of accepted) if (!list.some(m => m.id === messageId)) deleted.add(eventId);
-    }
-    f.plan.on = false;
-    for (const id of events) await f.conversationEvent(id, text(id));
-    await assert.rejects(f.conversationEvent(events[0], 'a different body under a used event id'), { code: 'conversation_replay_conflict' });
-    const { list } = await consistent(f, sent);
-    assert.equal(list.length, events.length - deleted.size, 'every surviving event exactly once, deleted ones never revived');
-  }, { base: BASE });
 });
 
 test('a committed message whose blob later disappears reports temporarily unavailable, never other bytes', async t => {

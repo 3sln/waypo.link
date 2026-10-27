@@ -1,16 +1,19 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {MemoryMessagingStore,ContactTokenService,ContactEndpointService,MessagingService} from '../packages/messaging/index.mjs';
-import {contactTagPolicy} from '../packages/messaging/tag-policy.mjs';
-import {SYSTEM_TAGS,TAG_CATEGORIES,validTagId,validIntakeTagIds,escapeLegacyTag,migrateTags,tagDisplay,seedDefaultRules,defaultRules,heuristicSuspectedTags,normalizeAutomatedResult,classificationOf} from '../packages/messaging/tags.mjs';
-import {normalizeIncomingFilter,normalizeIncomingUpdate} from '../packages/runtime/message-views.mjs';
+import {MemoryMessagingStore,key} from '../packages/core/records.mjs';
+import {ItemService} from '../packages/activity/items.mjs';
+import {initialTags,applyRules,ownerRules} from '../packages/core/tags.mjs';
+import {appMessageKey} from '../packages/activity/app-messages.mjs';
+import {SYSTEM_TAGS,TAG_CATEGORIES,validTagId,validIntakeTagIds,escapeLegacyTag,migrateTags,tagDisplay,seedDefaultRules,defaultRules,heuristicSuspectedTags,normalizeAutomatedResult,classificationOf} from '../packages/core/tags.mjs';
+import {normalizeIncomingFilter} from '../packages/runtime/message-views.mjs';
 import {catalogues} from '../packages/i18n/catalogues.mjs';
 const owner='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',origin='https://space.example',enc=new TextEncoder();
+// Items admitted with tags, the way v1 app intake stores them (placement, initial tags, owner rules against the original
+// metadata). `policy` stands in for the admission's tag allowlist: required tags always, optional ones when offered.
+// The legacy contact-intake fixture (ContactEndpointService, `receive`) left the core with messaging on 2026-10-27.
 async function fixture(policy={requiredTags:['spam'],optionalTags:['bug']}){
- const store=new MemoryMessagingStore(),tokens=new ContactTokenService({store,issuer:origin}),pair=await crypto.subtle.generateKey({name:'ECDSA',namedCurve:'P-256'},true,['sign','verify']);await tokens.registerKey(owner,{kid:'one',alg:'ES256',publicJwk:await crypto.subtle.exportKey('jwk',pair.publicKey)});
- const endpoints=new ContactEndpointService({tokens,signer:()=>pair.privateKey}),messages=new MessagingService({store,tokens:endpoints}),collection=await messages.createCollection(owner,'All messages');
- const link=await endpoints.create(owner,{kid:'one',handle:'n.abc',collections:[collection.id],mimeTypes:['text/plain'],expiresAt:Date.now()+86400000,...policy});let n=0;
- const send=async(tags=[])=>{const {token}=await endpoints.mint(link.url);return (await messages.receive(token,{collection:collection.id,mimeType:'text/plain',bytes:enc.encode('hello '+n),idempotencyKey:'k'+n++,senderMetadata:{tags}})).id;};
+ const store=new MemoryMessagingStore(),messages=new ItemService({store}),collection=await messages.createCollection(owner,'All messages');let n=0;
+ const send=async(tags=[])=>store.transaction(async tx=>{const id='m'+String(n++).padStart(4,'0'),now=Date.now(),deliveryTags=[...policy.requiredTags,...tags.filter(tag=>policy.optionalTags.includes(tag))],message=initialTags({id,owner,collection:collection.id,deliveryCollection:collection.id,mimeType:'text/plain',size:5,receivedAt:now,readAt:null,deliveryTags,quarantined:false,grantId:null},deliveryTags,{source:'intake'},now);await applyRules(message,await ownerRules(tx,owner),{now,active:async c=>(await tx.get(key('collection',owner,c)))?.active});await tx.set(appMessageKey(owner,id),message);return id;});
  return {store,messages,send,read:id=>messages.read(owner,id),classify:(id,labels,source='classifier')=>messages.applyAutomatedTags(owner,id,{source,version:'v1',...source==='classifier'?{model:'@cf/cloudflare/clef-flash'}:{},labels})};
 }
 test('tag IDs: reserved sys: namespace, look-alikes rejected, legacy escaping, localized system labels, literal user labels',()=>{
@@ -22,18 +25,15 @@ test('tag IDs: reserved sys: namespace, look-alikes rejected, legacy escaping, l
  assert.equal(catalogues.es['']['Suspected Spam'],'Posible spam');
  assert.deepEqual(tagDisplay('sys:suspected.social'),{id:'sys:suspected.social',label:'Suspected Social',system:true,suspected:true});
  assert.deepEqual(tagDisplay('t.abc',{'t.abc':'{name} <b>'}),{id:'t.abc',label:'{name} <b>',system:false,suspected:false});assert.equal(tagDisplay('__proto__',{}).label,'__proto__');
- // Signed (legacy) claims hold user tags only.
- assert.throws(()=>contactTagPolicy({requiredTags:['sys:spam'],optionalTags:[]}),{code:'invalid_contact_tags'});
 });
 test('legacy classification folds into system tags lazily and idempotently',()=>{
  const legacy={id:'m',tags:['sys:spam','a'],deliveryTags:['sys:spam'],classification:'work',receivedAt:5},m=migrateTags(legacy);
  assert.deepEqual(m.tags,['sys_spam','a','sys:work']);assert.deepEqual(m.deliveryTags,['sys_spam']);assert.equal(m.classification,'work');assert.deepEqual(m.tagProvenance['sys:work'],{source:'migration',at:5});assert.equal(migrateTags(m),m);assert.equal(legacy.tags[0],'sys:spam');
  assert.equal(classificationOf(['sys:automation','sys:work'],{'sys:automation':{source:'app'}}),'work');assert.equal(classificationOf(['sys:automation','sys:work']),'automation');
 });
-test('contact link tags are applied as-is, never rewritten to suspected and never promoted',async()=>{
+test('admitted tags are applied as-is, never rewritten to suspected and never promoted',async()=>{
  const f=await fixture(),id=await f.send(['bug']),m=await f.read(id);
  assert.deepEqual(m.tags,['spam','bug']);assert.equal(m.tagProvenance.spam.source,'intake');assert.equal(m.quarantined,false);assert(!m.tags.some(t=>t.startsWith('sys:')));
- await assert.rejects(f.send(['sys:suspected.spam']),{code:'forbidden_tags'});await assert.rejects(f.send(['sys:spam']),{code:'forbidden_tags'});
  const rules=await f.messages.rules(owner);assert.equal(rules.filter(r=>r.default).length,TAG_CATEGORIES.length);assert(rules.every(r=>r.enabled));
 });
 test('classifier applies only suspected tags; default rules finalize them once with provenance and recoverable quarantine',async()=>{
@@ -83,7 +83,6 @@ test('classification compatibility writes map to system tags; Views accept regis
  m=await f.messages.update(owner,id,{classification:'work',tags:['mine']});assert.deepEqual(m.tags,['mine','sys:work']);m=await f.messages.update(owner,id,{tags:[]});assert.deepEqual(m.tags,['sys:work']);
  m=await f.messages.update(owner,id,{classification:'unclassified'});assert.deepEqual(m.tags,[]);assert.equal(m.classification,'unclassified');
  assert.deepEqual(normalizeIncomingFilter({version:1,tagsAll:['sys:spam','a']}),{version:1,tagsAll:['a','sys:spam']});assert.throws(()=>normalizeIncomingFilter({version:1,tagsAll:['sys:bogus']}),{code:'invalid_view'});
- assert.throws(()=>normalizeIncomingUpdate({id:'conversation:x',expectedRevision:1,addTags:['sys:suspected.spam']}),{code:'invalid_view'});assert.deepEqual(normalizeIncomingUpdate({id:'conversation:x',expectedRevision:1,removeTags:['sys:suspected.spam']}).removeTags,['sys:suspected.spam']);
 });
 test('owner index re-projects legacy rows so classification and escaped tags reach the tag index',async t=>{
  const {SqliteMetadata}=await import('../apps/node/resources.mjs'),{AccountItemIndex}=await import('../packages/runtime/item-index.mjs'),metadata=new SqliteMetadata(':memory:');t.after(()=>metadata.close());

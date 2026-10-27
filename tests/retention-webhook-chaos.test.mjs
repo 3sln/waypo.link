@@ -22,7 +22,7 @@ test('seeded real billing webhook replay, same-period toggle, skew, upload and k
    const billing=new BillingService({config,metadata:scheduler.wrap(f.metadata,'billing-store'),client,now:clock.now});
    const system={kind:'system',owner:OWNER},owner={kind:'owner',owner:OWNER},produce=()=>f.perform(new ProduceRetention({actor:system})),episode=()=>f.metadata.get(OVER_QUOTA_EPISODE);
    const initial={size:6000000000,version:'original',blobRef:'content-must-survive'},message={id:'m',owner:OWNER,collection:'inbox',size:10,blobRef:'message-must-survive'};
-   await f.metadata.put('resource/r',{id:'r',owner:OWNER,provider:'hosted'});await f.metadata.put('hosted/r/original',initial);await f.metadata.put('hosted-usage',{bytes:initial.size,objects:1});await f.metadata.put(key('collection',OWNER,'inbox'),{id:'inbox',owner:OWNER,name:'Inbox'});await f.metadata.put(key('message',OWNER,'m'),message);await f.metadata.put(key('message-usage',OWNER),{bytes:10,messages:1});
+   await f.metadata.put('resource/r',{id:'r',owner:OWNER,provider:'hosted'});await f.metadata.put('hosted/r/original',initial);await f.metadata.put('hosted-usage',{bytes:initial.size,objects:1});await f.metadata.put(key('collection',OWNER,'inbox'),{id:'inbox',owner:OWNER,name:'Inbox'});await f.metadata.put(key('app-message',OWNER,'m'),message);await f.metadata.put(key('app-message-usage',OWNER),{bytes:10,messages:1});
    await billing.reconcile(OWNER);
    const event=n=>({owner:OWNER,id:'event-'+n,bodyHash:'a'.repeat(64),type:'subscription.updated',eventTimestamp:clock.now()});
    Object.assign(subscription,{product_id:'paid-product',amount:500,modified_at:new Date(start).toISOString()});const first=event(0);await billing.applyWebhook(first);await produce();const original=await episode();assert.equal(original.deadlineAt,start+30*DAY);
@@ -47,7 +47,7 @@ test('seeded real billing webhook replay, same-period toggle, skew, upload and k
     const transitions=await f.metadata.list({prefix:BILLING_TRANSITION_PREFIX});assert.equal(transitions.size,expectedTransitions);assert.equal(new Set([...transitions.values()].map(t=>t.causalEventId)).size,expectedTransitions);
     const replay=await billing.applyWebhook(notification);assert.equal(replay.duplicate,true);assert.equal((await f.metadata.list({prefix:BILLING_TRANSITION_PREFIX})).size,expectedTransitions);
    }
-   assert.deepEqual(await f.metadata.get('hosted/r/original'),initial);assert.deepEqual(await f.metadata.get(key('message',OWNER,'m')),message);assert.equal((await f.metadata.list({prefix:'hosted/r/'})).size,13);assert.equal((await f.metadata.get('hosted-usage')).bytes,initial.size+12);assert.equal(await f.metadata.get('deletion/fence-v1'),undefined);
+   assert.deepEqual(await f.metadata.get('hosted/r/original'),initial);assert.deepEqual(await f.metadata.get(key('app-message',OWNER,'m')),message);assert.equal((await f.metadata.list({prefix:'hosted/r/'})).size,13);assert.equal((await f.metadata.get('hosted-usage')).bytes,initial.size+12);assert.equal(await f.metadata.get('deletion/fence-v1'),undefined);
   }finally{await f.dispose();}
  });
 });

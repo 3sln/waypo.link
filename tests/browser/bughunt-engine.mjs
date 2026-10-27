@@ -1,6 +1,6 @@
 // Browser bug hunt fixes (DEVLOG 2026-10-27) driven through the real ngin engine and Actions: F1 contact profile
 // load state and stale-write handling, F6 opening a message without refetching, F9/F10 device naming and focus,
-// F10 sharing focus, F11 confirmed removal and F13 copy notice. Activity (F3) and account data (F5) engine checks live
+// F10 sharing focus and F13 copy notice (F11 saved-contact removal left the core with messaging). Activity (F3) and account data (F5) engine checks live
 // in activity-engine.mjs and account-data-engine.mjs.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -10,7 +10,7 @@ const window=new Window({url:'https://space.example/console'}),names=['document'
 const previous=Object.fromEntries(names.map(name=>[name,globalThis[name]]));for(const name of names)globalThis[name]=window[name];
 const {Engine,Provider}=await import('../../apps/web/src/shared/stack.mjs');
 const {default:StateProvider}=await import('../../apps/web/src/providers/browser-state.mjs');
-const {LoadContactBook,SaveProfile,UpdateContactSharing,RemoveSavedContact,PROFILE_STALE}=await import('../../apps/web/src/bl/contact-book.mjs');
+const {LoadContactProfile,SaveProfile,UpdateContactSharing,PROFILE_STALE}=await import('../../apps/web/src/bl/contact-profile.mjs');
 const {RenameDevice,DEVICE_NAME_REQUIRED}=await import('../../apps/web/src/bl/devices.mjs');
 const {CopyDeveloperContact}=await import('../../apps/web/src/bl/incoming.mjs');
 const {ReadMessage}=await import('../../apps/web/src/bl/release.mjs');
@@ -23,34 +23,34 @@ async function fixture({get,request,submissions={},secrets={}}={}){
  const browser={consumeSubmission:id=>submissions[id],secret:key=>store[key],storeSecret:(key,value)=>{store[key]=value;},copy:async value=>effects.push(['copy',value]),captureFocus:()=>effects.push(['captureFocus']),restoreFocus:()=>effects.push(['restoreFocus']),focus:selector=>effects.push(['focus',selector]),setCaptchaAction(){},installCaptcha(){}};
  const engine=new Engine({providers:{state:StateProvider,api:Provider.fromSingleton(api),browser:Provider.fromSingleton(browser),portalContributions:Provider.fromSingleton({}),recoveryFile:Provider.fromSingleton({})}});
  const write=patch=>engine.container.use({state:{write:true}},({state})=>state.transition(next=>Object.assign(next,patch))),read=()=>engine.container.use(['state'],({state})=>state.snapshot());
- await write({loading:false,locale:'en',view:'contacts',route:{kind:'home'},config:{},session:{account:{id:OWNER},sessionContext:'ctx'},beamGeneration:1,data:{contacts:[],collections:[],devices:[]}});
+ await write({loading:false,locale:'en',view:'security',route:{kind:'home'},config:{},session:{account:{id:OWNER},sessionContext:'ctx'},beamGeneration:1,data:{contacts:[],collections:[],devices:[]}});
  return {engine,calls,effects,write,read,act:action=>within(engine.dispatch(action).next('complete'),action.constructor.name),close:()=>engine.dispose()};
 }
 
-test('F1 the contact book reports loading, then loaded; a failed load is an error state that keeps Save off',async()=>{
+test('F1 the contact profile reports loading, then loaded; a failed load is an error state that keeps Save off',async()=>{
  let finish;const f=await fixture({get:path=>path==='/api/profile'?new Promise(resolve=>finish=resolve):[]});
  try{
-  const pending=f.act(new LoadContactBook());while(!finish)await new Promise(resolve=>setTimeout(resolve,0));
-  assert.equal((await f.read()).contactBook.profileStatus,'loading');
+  const pending=f.act(new LoadContactProfile());while(!finish)await new Promise(resolve=>setTimeout(resolve,0));
+  assert.equal((await f.read()).contactProfile.status,'loading');
   finish({displayName:'Stored',bio:'',avatar:'',discloseToContacts:false,revision:REVISION});await pending;
-  const book=(await f.read()).contactBook;assert.equal(book.profileStatus,'loaded');assert.equal(book.profile.displayName,'Stored');
+  const book=(await f.read()).contactProfile;assert.equal(book.status,'loaded');assert.equal(book.profile.displayName,'Stored');
   // A later reload while loaded does not flip the form back to loading.
-  finish=null;const again=f.act(new LoadContactBook());while(!finish)await new Promise(resolve=>setTimeout(resolve,0));assert.equal((await f.read()).contactBook.profileStatus,'loaded');finish({displayName:'Stored',revision:REVISION});await again;
+  finish=null;const again=f.act(new LoadContactProfile());while(!finish)await new Promise(resolve=>setTimeout(resolve,0));assert.equal((await f.read()).contactProfile.status,'loaded');finish({displayName:'Stored',revision:REVISION});await again;
  }finally{await f.close();}
  const g=await fixture({get:path=>{if(path==='/api/profile')throw Object.assign(Error('Unavailable'),{status:503});return [];}});
- try{await g.act(new LoadContactBook());const s=await g.read();assert.equal(s.contactBook.profileStatus,'error');assert.equal(s.error,'Unavailable');await g.act(new SaveProfile({values:{displayName:'x',bio:'',avatar:''}}));assert.equal(g.calls.some(c=>c.method==='PUT'),false,'no save before a successful load');}finally{await g.close();}
+ try{await g.act(new LoadContactProfile());const s=await g.read();assert.equal(s.contactProfile.status,'error');assert.equal(s.error,'Unavailable');await g.act(new SaveProfile({values:{displayName:'x',bio:'',avatar:''}}));assert.equal(g.calls.some(c=>c.method==='PUT'),false,'no save before a successful load');}finally{await g.close();}
 });
 
 test('F1 a save names the loaded revision; a stale refusal shows the latest profile and asks for a fresh review',async()=>{
  let stored={displayName:'Other session',bio:'',avatar:'',discloseToContacts:false,revision:'b'.repeat(32)};
  const f=await fixture({get:path=>path==='/api/profile'?stored:[],request:async(path,body)=>{if(body.expectedRevision!==stored.revision)throw Object.assign(Error('Your contact profile changed in another session. Reload it and try again.'),{code:'profile_stale',status:409});stored={...body,revision:'c'.repeat(32)};delete stored.expectedRevision;return stored;}});
  try{
-  await f.write({contactBook:{directory:[],profile:{displayName:'Loaded',bio:'',avatar:'',discloseToContacts:false,revision:REVISION},profileStatus:'loaded',profileEpoch:0}});
+  await f.write({contactProfile:{profile:{displayName:'Loaded',bio:'',avatar:'',discloseToContacts:false,revision:REVISION},status:'loaded',epoch:0}});
   await f.act(new SaveProfile({values:{displayName:'Mine',bio:'',avatar:''}}));
   assert.deepEqual(f.calls.find(c=>c.method==='PUT').body,{displayName:'Mine',bio:'',avatar:'',discloseToContacts:false,expectedRevision:REVISION});
-  let s=await f.read();assert.equal(s.error,PROFILE_STALE);assert.notEqual(s.notice,'Contact profile saved.');assert.equal(s.contactBook.profile.displayName,'Other session');assert.equal(s.contactBook.profileEpoch,1,'the form is rebuilt to show the latest values');
+  let s=await f.read();assert.equal(s.error,PROFILE_STALE);assert.notEqual(s.notice,'Contact profile saved.');assert.equal(s.contactProfile.profile.displayName,'Other session');assert.equal(s.contactProfile.epoch,1,'the form is rebuilt to show the latest values');
   await f.write({error:''});await f.act(new SaveProfile({values:{displayName:'Mine',bio:'',avatar:''}}));
-  s=await f.read();assert.equal(s.notice,'Contact profile saved.');assert.equal(s.contactBook.profile.displayName,'Mine');assert.equal(s.contactBook.profile.revision,'c'.repeat(32));
+  s=await f.read();assert.equal(s.notice,'Contact profile saved.');assert.equal(s.contactProfile.profile.displayName,'Mine');assert.equal(s.contactProfile.profile.revision,'c'.repeat(32));
   assert.deepEqual(f.effects.slice(-2),[['captureFocus'],['restoreFocus']],'focus returns to the control that submitted');
  }finally{await f.close();}
 });
@@ -78,14 +78,11 @@ test('F9 and F10 a blank device name is refused with a plain reason; a saved nam
  }finally{await f.close();}
 });
 
-test('F10 and F11 sharing restores focus; removing a saved contact needs its confirmation dialog, then focuses the list',async()=>{
- const f=await fixture({submissions:{share:{'profile:bio':'on'}},get:path=>path==='/api/account'?{contacts:[]}:path==='/api/contacts/directory'?[]:{displayName:'',revision:REVISION}});
+test('F10 sharing restores focus to the control that opened the dialog',async()=>{
+ const f=await fixture({submissions:{share:{'profile:bio':'on'}},get:path=>path==='/api/account'?{contacts:[{id:'g1',active:true,profileFields:['bio']}]}:{displayName:'',revision:REVISION}});
  try{
-  await f.write({modal:{kind:'contact-permissions',contact:{id:'g1'}}});await f.act(new UpdateContactSharing({id:'g1',operationId:'share'}));assert.deepEqual(f.effects.at(-1),['restoreFocus']);
-  await f.act(new RemoveSavedContact({peer:'peer-1'}));assert.equal(f.calls.some(c=>c.method==='DELETE'),false);assert.match((await f.read()).error,/confirm/);
-  await f.write({modal:{kind:'remove-saved-contact',contact:{peer:'peer-2'}},error:''});await f.act(new RemoveSavedContact({peer:'peer-1'}));assert.equal(f.calls.some(c=>c.method==='DELETE'),false,'the dialog must name the same contact');
-  await f.write({modal:{kind:'remove-saved-contact',contact:{peer:'peer-1'}},error:''});await f.act(new RemoveSavedContact({peer:'peer-1'}));
-  const s=await f.read();assert.ok(f.calls.some(c=>c.method==='DELETE'&&c.path==='/api/contacts/directory/peer-1'));assert.equal(s.modal,null);assert.equal(s.notice,'Saved contact removed.');assert.deepEqual(f.effects.at(-1),['focus','.saved-contacts h2']);
+  await f.write({data:{contacts:[{id:'g1',active:true,profileFields:[]}],collections:[],devices:[]},modal:{kind:'contact-permissions',contact:{id:'g1'}}});await f.act(new UpdateContactSharing({id:'g1',operationId:'share'}));assert.deepEqual(f.effects.at(-1),['restoreFocus']);
+  const s=await f.read();assert.equal(s.modal,null);assert.equal(s.notice,'Contact sharing permissions saved.');assert.equal(f.calls.some(c=>/\/api\/contacts\/directory/.test(c.path)),false);
  }finally{await f.close();}
 });
 

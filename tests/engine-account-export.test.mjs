@@ -73,7 +73,7 @@ test('range authorization charges the requested bytes and notices each distinct 
 
 test('native digest provider authenticates packed and referenced payload bytes; expiry deletes exact keys and pins',async t=>{
  const f=await fixture(t);const small=new Uint8Array([1,2,3]),big=new Uint8Array(256*1024+1).fill(7),smallRef=`messages/${OWNER}/m1`,bigRef=`objects/${OWNER}/r1/v1`;
- await f.blobs.put(smallRef,small);await f.blobs.put(bigRef,big);await f.metadata.put(key('message',OWNER,'m1'),{id:'m1',owner:OWNER,blobRef:smallRef,size:small.length,mimeType:'application/octet-stream'});await f.metadata.put('hosted/r1/logical',{key:'../../logical',version:'v1',blobRef:bigRef,size:big.length});
+ await f.blobs.put(smallRef,small);await f.blobs.put(bigRef,big);await f.metadata.put(key('app-message',OWNER,'m1'),{id:'m1',owner:OWNER,blobRef:smallRef,size:small.length,mimeType:'application/octet-stream'});await f.metadata.put('hosted/r1/logical',{key:'../../logical',version:'v1',blobRef:bigRef,size:big.length});
  const job=await f.create();await f.ready(job.id);const record=await f.metadata.get('export/job/'+job.id);assert.equal(record.payloads.count,2);assert.ok(record.parts.some(p=>p.packed));assert.equal((await f.metadata.list({prefix:'export/pin/'})).size,2);
  const index=record.parts.filter(p=>p.path.startsWith('payloads/'));const rows=(await Promise.all(index.map(async p=>new TextDecoder().decode(f.archives.rows.get(p.key))))).join('').trim().split('\n').map(JSON.parse);
  assert.equal(rows[0].sha256,await f.ports.digest.sha256(small));assert.equal(rows[1].sha256,await f.ports.digest.sha256(big));assert.ok(!JSON.stringify(rows).includes(bigRef));assert.equal(rows[1].source.key,'../../logical');
@@ -90,8 +90,8 @@ test('projections exclude authentication, connector and contact capabilities fro
  const job=await f.create();await f.ready(job.id);for(const [key,value]of f.archives.rows)assert.ok(!new TextDecoder().decode(value).includes(secret),key);
 });
 
-test('inventory covers every literal messaging key family and seeded persisted account prefixes',async t=>{
- const roots=['packages/runtime/account','packages/messaging','packages/conversations','packages/activity','packages/events','packages/apps','packages/links'],prefixes=new Set(),files=[];
+test('inventory covers every literal account key family and seeded persisted account prefixes',async t=>{
+ const roots=['packages/runtime/account','packages/activity','packages/events','packages/apps','packages/links'],prefixes=new Set(),files=[];
  for(const root of roots)for(const file of await readdir(new URL('../'+root+'/',import.meta.url)))if(file.endsWith('.mjs'))files.push(root+'/'+file);
  files.push(...['accounts','account-lifecycle','lifecycle-runner','storage-quota','storage-write-budget','message-receipt-budget','message-postbacks','message-presentations','app-notifications','integration-events'].map(f=>'packages/runtime/'+f+'.mjs'),'packages/storage/google-drive.mjs','packages/identity/keys.mjs',
   // Account-store writers outside the roots above (core-scope audit, 2026-10-26).
@@ -102,30 +102,31 @@ test('inventory covers every literal messaging key family and seeded persisted a
  // Computed key-family maps (as opposed to literal writes) are part of the
  // inventory as well: key rotations, bus rows and external version mappings.
  for(const prefix of ['identity-encryption-key/','encryption-key','identity-key-retained/','identity-key-pruned/','evbus/rec/','evbus/reader/','evbus/permit/','evbus/tx/','evbus/rate/','evbus/meter/','evbus/wait/','drive/object/','drive/retained/',
-  // Contact profile families written through CONTACT_KEYS (packages/links/contact-profile.mjs), their legacy Beam-era keys and the beam-retired-v1 marker.
-  'profile','saved-contact/','contact-sharing/','contact-redeemed/','contact-redeemed-peer/','beam/profile','beam/directory/','beam/grant/','beam/redeemed/','beam/redeemed-peer/','migration/beam-retired-v1',
-  // Activity's app-message families and their migration (messaging extraction prep), and the audit's export gaps.
-  'app-message/','app-message-usage/','migration/app-messages-v1','migration/app-messages-v1-cursor','mcp/operation/','mcp/operation-expiry/','automation/session/','automation/confirmation/','classifier/usage/v1','app-notification-budget/','app-notification-receipt/','message-postback-prepared/','developer-contact/v2','developer-contact/occupant-v1','link-gc-cursor/developer-daily'])prefixes.add(prefix);
+  // Contact profile families written through CONTACT_KEYS (packages/links/contact-profile.mjs), link-state rows written
+  // through computed paths, and the BB-CUT reset marker (packages/runtime/messaging-reset.mjs).
+  'profile','contact-sharing/','link-audience/','link-replay/','migration/messaging-retired-v1',
+  // Activity's app-message families and the audit's export gaps.
+  'app-message/','app-message-usage/','mcp/operation/','mcp/operation-expiry/','automation/session/','automation/confirmation/','classifier/usage/v1','app-notification-budget/','app-notification-receipt/','message-postback-prepared/','developer-contact/occupant-v1'])prefixes.add(prefix);
  const missing=exportInventory([...prefixes]).filter(v=>!v.contributor&&!v.reason);assert.deepEqual(missing,[]);
- const f=await fixture(t);await f.metadata.put('message/'+OWNER+'/id/',{owner:OWNER,id:'id'});await f.metadata.put('vault/oauth',{token:'secret'});const keys=[...(await f.metadata.list()).keys()].filter(k=>k!=='item-index-ready');assert.deepEqual(exportInventory(keys).filter(v=>!v.contributor&&!v.reason),[]);
+ const f=await fixture(t);await f.metadata.put('app-message/'+OWNER+'/id/',{owner:OWNER,id:'id'});await f.metadata.put('vault/oauth',{token:'secret'});const keys=[...(await f.metadata.list()).keys()].filter(k=>k!=='item-index-ready');assert.deepEqual(exportInventory(keys).filter(v=>!v.contributor&&!v.reason),[]);
  assert.deepEqual(exportInventory(['new-unreviewed-domain/'])[0],{prefix:'new-unreviewed-domain/'});
 });
 
 test('payload pin budget and missing contributor ports fail closed',async t=>{
- const f=await fixture(t),ref=`messages/${OWNER}/m1`;await f.blobs.put(ref,new Uint8Array(4));await f.metadata.put(key('message',OWNER,'m1'),{id:'m1',owner:OWNER,blobRef:ref,size:4});f.ports.quota=async()=>3;
+ const f=await fixture(t),ref=`messages/${OWNER}/m1`;await f.blobs.put(ref,new Uint8Array(4));await f.metadata.put(key('app-message',OWNER,'m1'),{id:'m1',owner:OWNER,blobRef:ref,size:4});f.ports.quota=async()=>3;
  const job=await f.create();await assert.rejects(f.ready(job.id),{code:'export_pin_budget'});assert.equal((await f.op(E.ExportStatus,{id:job.id})).state,'failed');assert.equal((await f.metadata.list({prefix:'export/pin/'})).size,0);assert.equal(f.archives.rows.size,0);
  const digest=createExportDigest();assert.equal(await digest.sha256(new TextEncoder().encode('abc')),'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad');assert.equal(EXPORT_PART_BYTES,16*1024**2);
  const contributors=createExportContributors({accountStore:f.metadata,flags:f.flags});await assert.rejects(contributors[0].page({owner:OWNER,limit:32}),{code:'export_contributor_unavailable'});
 });
 
 test('object sizes come from the digest read, and missing or foreign payloads fail without retained objects',async t=>{
- const f=await fixture(t),ref=`messages/${OWNER}/m1`;await f.blobs.put(ref,new Uint8Array(4));await f.metadata.put(key('message',OWNER,'m1'),{id:'m1',owner:OWNER,blobRef:ref,size:1});const job=await f.create();await f.ready(job.id);const record=await f.metadata.get('export/job/'+job.id);assert.equal(record.payloads.bytes,4);const pin=[...(await f.metadata.list({prefix:'export/pin/'})).values()][0];assert.equal(pin.size,4);
- for(const foreign of [false,true]){const g=await fixture(t);await g.metadata.put(key('message',OWNER,'bad'),{id:'bad',owner:OWNER,blobRef:`messages/${foreign?OTHER:OWNER}/bad`,size:1});const j=await g.create();await assert.rejects(g.ready(j.id),{code:foreign?'export_payload_invalid':'export_payload_missing'});assert.equal(g.archives.rows.size,0);assert.equal((await g.metadata.list({prefix:'export/pin/'})).size,0);}
+ const f=await fixture(t),ref=`messages/${OWNER}/m1`;await f.blobs.put(ref,new Uint8Array(4));await f.metadata.put(key('app-message',OWNER,'m1'),{id:'m1',owner:OWNER,blobRef:ref,size:1});const job=await f.create();await f.ready(job.id);const record=await f.metadata.get('export/job/'+job.id);assert.equal(record.payloads.bytes,4);const pin=[...(await f.metadata.list({prefix:'export/pin/'})).values()][0];assert.equal(pin.size,4);
+ for(const foreign of [false,true]){const g=await fixture(t);await g.metadata.put(key('app-message',OWNER,'bad'),{id:'bad',owner:OWNER,blobRef:`messages/${foreign?OTHER:OWNER}/bad`,size:1});const j=await g.create();await assert.rejects(g.ready(j.id),{code:foreign?'export_payload_invalid':'export_payload_missing'});assert.equal(g.archives.rows.size,0);assert.equal((await g.metadata.list({prefix:'export/pin/'})).size,0);}
 });
 
 test('message history spans multiple digest passes without repeating metadata or dropping payloads',async t=>{
  const f=await fixture(t),ref=`messages/${OWNER}/m1`,history=[];await f.blobs.put(ref,new Uint8Array([0]));for(let n=1;n<=32;n++){const blobRef=ref+'/presentations/p'+n;await f.blobs.put(blobRef,new Uint8Array([n]));history.push({revision:n,blobRef,size:1,mimeType:'text/plain'});}
- await f.metadata.put(key('message',OWNER,'m1'),{id:'m1',owner:OWNER,blobRef:ref,size:1,presentation:{revision:32,history}});const job=await f.create();await f.ready(job.id);const record=await f.metadata.get('export/job/'+job.id);assert.equal(record.payloads.count,33);assert.equal(record.counts.messages.rows,1);assert.equal((await f.metadata.list({prefix:'export/pin/'})).size,33);
+ await f.metadata.put(key('app-message',OWNER,'m1'),{id:'m1',owner:OWNER,blobRef:ref,size:1,presentation:{revision:32,history}});const job=await f.create();await f.ready(job.id);const record=await f.metadata.get('export/job/'+job.id);assert.equal(record.payloads.count,33);assert.equal(record.counts.messages.rows,1);assert.equal((await f.metadata.list({prefix:'export/pin/'})).size,33);
  const rows=(await Promise.all(record.parts.filter(p=>p.path.startsWith('payloads/')).map(p=>f.archives.get(p.key).then(o=>o.text())))).join('').trim().split('\n').map(JSON.parse);assert.equal(new Set(rows.map(row=>row.path)).size,33);assert.ok(rows.every(row=>row.volume===2));
 });
 
@@ -141,7 +142,7 @@ test('duplicate paths in separate pages fail, while abandoned old cleanup cannot
 });
 
 test('the shared E6 system operation erases every recorded key in bounded batches without identity or notice ports',async t=>{
- const f=await fixture(t),ref=`messages/${OWNER}/m1`;await f.blobs.put(ref,new Uint8Array([1]));await f.metadata.put(key('message',OWNER,'m1'),{id:'m1',owner:OWNER,blobRef:ref,size:1});const job=await f.create();await f.ready(job.id);assert.ok(f.archives.rows.size>2);await f.metadata.put('deletion/fence-v1',{owner:OWNER});f.ports.identitySecurity=null;f.ports.notice=undefined;
+ const f=await fixture(t),ref=`messages/${OWNER}/m1`;await f.blobs.put(ref,new Uint8Array([1]));await f.metadata.put(key('app-message',OWNER,'m1'),{id:'m1',owner:OWNER,blobRef:ref,size:1});const job=await f.create();await f.ready(job.id);assert.ok(f.archives.rows.size>2);await f.metadata.put('deletion/fence-v1',{owner:OWNER});f.ports.identitySecurity=null;f.ports.notice=undefined;
  let result;for(let n=0;n<100;n++){result=await f.op(E.CancelExport,{actor:f.system,input:{budget:2}});if(result.done)break;}assert.equal(result.done,true);assert.equal(f.archives.rows.size,0);assert.equal(await f.metadata.get('export/active'),undefined);assert.equal((await f.metadata.list({prefix:'export/pin/'})).size,0);assert.equal((await f.metadata.list({prefix:'export/pins/'})).size,0);assert.equal((await f.metadata.list({prefix:'export/path/'})).size,0);assert.equal((await f.op(E.ExportStatus,{id:job.id})).state,'cancelled');
 });
 

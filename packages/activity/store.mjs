@@ -187,23 +187,17 @@ export class ActivityStore{
    return {deleted:true};
   });
  }
- /** v1 app messages as activity rows (read-only adapter), at most 200 records per page: activity's own `app-message/`
-  * family (moved there only after verification, so `verified:true`) and any rows still in the legacy `message/` store
-  * (not yet moved by app-messages-v1, or unverifiable, which project as `verified:false`), merged in item-ID order. A move keeps the item ID, so a page sequence running while
-  * app-messages-v1 moves rows neither skips nor repeats one (review F4). Cursor: the last item ID (the pre-move
-  * legacy cursor is the same shape); an `a.`/`m.` prefix from the interim per-family cursor is accepted and ignored. */
+ /** v1 app messages as activity rows (read-only adapter), at most 200 records per page, from activity's own
+  * `app-message/` family in item-ID order (`verified:true`: admission verified the issuer attestation). The legacy
+  * `message/` family and its unverified projection were removed with core messaging (BB-CUT reset, 2026-10-27).
+  * Cursor: the last item ID; an `a.`/`m.` prefix from the interim per-family cursor is accepted and ignored. */
  async legacy(owner,query={}){
   if(!plain(query)||Object.keys(query).some(k=>k!=='cursor')||query.cursor!==undefined&&(typeof query.cursor!=='string'||!/^(?:[am]\.)?(?:[a-f0-9-]{36})?$/.test(query.cursor)))fail('invalid_args','Choose a valid activity page.');
   const after=(query.cursor??'').replace(/^[am]\./,''),LIMIT=200;
   return this.transaction(async tx=>{
-   // Each family is read from the same ID; only IDs up to the smallest last ID of a full family page are complete.
-   const scan=async family=>{const prefix=key(family,owner),rows=[...(await tx.list({prefix,...after?{startAfter:key(family,owner,after)+'\uffff'}:{},limit:LIMIT})).entries()].map(([path,value])=>({id:decodeURIComponent(path.slice(prefix.length).split('/')[0]),value}));return {rows,full:rows.length===LIMIT};};
-   const app=await scan(APP_MESSAGE),legacy=await scan('message'),bounds=[app,legacy].filter(f=>f.full).map(f=>f.rows.at(-1).id).sort(),bound=bounds[0]??null;
-   // `app-message/` rows were moved there only after their attestation verified against the issuer's keys
-   // (app-messages-v1), so they project as verified; a row still in `message/` stays unverified history.
-   const byId=new Map();for(const [family,verified]of [[app,true],[legacy,false]])for(const row of family.rows)if((bound===null||row.id<=bound)&&!byId.has(row.id))byId.set(row.id,{value:row.value,verified});
-   const ids=[...byId.keys()].sort(),page=ids.slice(0,LIMIT),more=bound!==null||ids.length>LIMIT,last=page.at(-1);
-   return {items:page.map(id=>byId.get(id)).filter(({value})=>value?.owner===owner).map(({value,verified})=>activityFromAppMessage(value,{verified})).filter(Boolean),cursor:more&&last&&/^[a-f0-9-]{36}$/.test(last)?last:null};
+   const prefix=key(APP_MESSAGE,owner),rows=[...(await tx.list({prefix,...after?{startAfter:key(APP_MESSAGE,owner,after)+'\uffff'}:{},limit:LIMIT+1})).entries()].map(([path,value])=>({id:decodeURIComponent(path.slice(prefix.length).split('/')[0]),value}));
+   const page=rows.slice(0,LIMIT),last=page.at(-1)?.id;
+   return {items:page.filter(({value})=>value?.owner===owner).map(({value})=>activityFromAppMessage(value,{verified:true})).filter(Boolean),cursor:rows.length>LIMIT&&last&&/^[a-f0-9-]{36}$/.test(last)?last:null};
   });
  }
  /** Pending notification work for ACT-2: each group resolves to its latest still-eligible member. */

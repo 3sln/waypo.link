@@ -10,7 +10,7 @@ const window=new Window({url:'https://space.example/console'}),names=['document'
 const previous=Object.fromEntries(names.map(name=>[name,globalThis[name]]));for(const name of names)globalThis[name]=window[name];
 const {Engine,Provider}=await import('../../apps/web/src/shared/stack.mjs');
 const {default:StateProvider}=await import('../../apps/web/src/providers/browser-state.mjs');
-const {SaveProfile,PROFILE_WITHDRAWN_STALE}=await import('../../apps/web/src/bl/contact-book.mjs');
+const {SaveProfile,PROFILE_WITHDRAWN_STALE}=await import('../../apps/web/src/bl/contact-profile.mjs');
 const {OwnerFlow}=await import('../../apps/web/src/bl/owner-flow.mjs');
 const {ConfirmOwner}=await import('../../apps/web/src/bl/step-up.mjs');
 test.after(async()=>{await window.happyDOM.close();for(const name of names)globalThis[name]=previous[name];});
@@ -30,14 +30,14 @@ test('B1 a stale save that only withdrew sharing says so, keeps the newer fields
  // The server applied only the withdrawal (L-1): the answer keeps the newer stored fields with sharing off.
  const f=await fixture({request:async()=>({displayName:'Newer',bio:'Newer bio',avatar:'',discloseToContacts:false,revision:'d'.repeat(32)})});
  try{
-  await f.write({notice:'Contact link created.',contactBook:{directory:[],profile:{displayName:'Old',bio:'',avatar:'',discloseToContacts:true,revision:REVISION},profileStatus:'loaded',profileEpoch:2}});
+  await f.write({notice:'View saved.',contactProfile:{profile:{displayName:'Old',bio:'',avatar:'',discloseToContacts:true,revision:REVISION},status:'loaded',epoch:2}});
   await f.act(new SaveProfile({values:{displayName:'Mine',bio:'',avatar:'',discloseToContacts:undefined}}));
   const s=await f.read();assert.equal(s.error,PROFILE_WITHDRAWN_STALE);assert.equal(s.notice,'','never "saved" over text that was not stored');
-  assert.equal(s.contactBook.profile.displayName,'Newer');assert.equal(s.contactBook.profile.discloseToContacts,false);assert.equal(s.contactBook.profileEpoch,3,'the form shows the stored values');
+  assert.equal(s.contactProfile.profile.displayName,'Newer');assert.equal(s.contactProfile.profile.discloseToContacts,false);assert.equal(s.contactProfile.epoch,3,'the form shows the stored values');
  }finally{await f.close();}
  // A save the server stored as sent is still a plain success.
  const g=await fixture({request:async(path,body)=>({...body,expectedRevision:undefined,revision:'e'.repeat(32)})});
- try{await g.write({contactBook:{directory:[],profile:{displayName:'Old',bio:'',avatar:'',discloseToContacts:true,revision:REVISION},profileStatus:'loaded',profileEpoch:0}});await g.act(new SaveProfile({values:{displayName:'Mine',bio:'',avatar:''}}));const s=await g.read();assert.equal(s.notice,'Contact profile saved.');assert.equal(s.error??'','');}finally{await g.close();}
+ try{await g.write({contactProfile:{profile:{displayName:'Old',bio:'',avatar:'',discloseToContacts:true,revision:REVISION},status:'loaded',epoch:0}});await g.act(new SaveProfile({values:{displayName:'Mine',bio:'',avatar:''}}));const s=await g.read();assert.equal(s.notice,'Contact profile saved.');assert.equal(s.error??'','');}finally{await g.close();}
 });
 
 class Export extends OwnerFlow {async perform(r,ctx){const job=await r.api.request('/api/exports',{purpose:'owner'});r.state.transition(next=>Object.assign(next,{notice:'exported:'+job.id}));}}
@@ -58,7 +58,7 @@ test('B4 identity step_up_required opens the owner confirmation; confirming retr
 
 test('B9 a failed action clears the previous success notice so the two never show together',async()=>{
  const f=await fixture({request:async()=>{throw Object.assign(Error('Use an HTTPS avatar URL.'),{code:'profile_invalid',status:400});}});
- try{await f.write({notice:'Contact profile saved.',contactBook:{directory:[],profile:{displayName:'',bio:'',avatar:'',discloseToContacts:false,revision:REVISION},profileStatus:'loaded',profileEpoch:0}});
+ try{await f.write({notice:'Contact profile saved.',contactProfile:{profile:{displayName:'',bio:'',avatar:'',discloseToContacts:false,revision:REVISION},status:'loaded',epoch:0}});
   await f.act(new SaveProfile({values:{displayName:'',bio:'',avatar:'http://x.example/a.png'}}));const s=await f.read();assert.equal(s.error,'Use an HTTPS avatar URL.');assert.equal(s.notice,'');}finally{await f.close();}
  class Fails extends OwnerFlow {async perform(r){await r.api.request('/api/nope',{});}}
  const g=await fixture({request:async()=>{throw Object.assign(Error('Nope.'),{status:409,code:'conflict'});}});

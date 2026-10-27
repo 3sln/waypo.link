@@ -10,8 +10,10 @@ import {launch,screenshot} from './browser.mjs';
 
 // Real Node identity/runtime + real Chromium. A local wrangler Worker cannot bootstrap the
 // protected developer identity (it needs a configured email or push provider), so the
-// developer-contact link and conditional opener flows run on the Node adapter with a
-// loopback-only captured mailer. No debug routes are added.
+// developer-contact panel runs on the Node adapter with a loopback-only captured mailer. No debug routes are added.
+// Developer contact is occupant-only since messaging left the core (2026-10-27): the link belongs to the developer's
+// messaging app. This host runs no messaging app, so the service answers unavailable and the console says so; the
+// eligible hand-off (`send-message` intent) is covered at engine level in tests/browser/contact-links.mjs.
 const password='Private conditional browser password 2026!',secret=Buffer.alloc(32,61).toString('base64url');
 let browser;const servers=[];
 test.before(async()=>{browser=await launch();});
@@ -40,26 +42,18 @@ async function person(t,s,{signedIn=true}={}){
 }
 async function developerLink(page,s){await page.goto(s.origin+'/console');await page.locator('.app-shell').waitFor();return page.evaluate(async()=>{const session=await (await fetch('/api/session')).json();return (await fetch('/api/developer-contact',{headers:{'X-Bindle-Account':session.account.id,'X-Bindle-Session-Context':session.sessionContext}})).json();});}
 
-test('developer contact: eligible account sees the single conditional link, discloses before signing, then sends an authored message',async t=>{
- const s=await server(),alice=await person(t,s),signs=[];alice.page.on('request',request=>{if(request.url().endsWith('/api/links/respond'))signs.push(request.url());});
- const developer=await developerLink(alice.page,s);assert.equal(developer.available,true,JSON.stringify(developer));assert.deepEqual(developer.eligibility,{state:'eligible',tier:'free'});assert.match(developer.url,/\?bindle_meta=/);
- await alice.page.getByRole('button',{name:'Contact links',exact:true}).click();await alice.page.locator('.developer-eligibility.eligibility-eligible').waitFor();await screenshot(alice.page,'links-developer-contact-eligible');
- await alice.page.goto(developer.url);await alice.page.locator('section.contact-signed-in').getByRole('button',{name:'Send a message',exact:true}).click();
- await alice.page.locator('section.contact-handoff .contact-disclosure').waitFor();assert.match(await alice.page.locator('.contact-disclosure').textContent(),new RegExp(new URL(s.origin).host.replace('.','\\.')));assert.equal(signs.length,0,'nothing is signed before the click');assert.equal(/bindle|contact=/.test(new URL(alice.page.url()).search+new URL(alice.page.url()).hash),false);
- await screenshot(alice.page,'links-conditional-disclosure');
- await alice.page.locator('section.contact-handoff').getByRole('button',{name:/^Continue as /}).click();await alice.page.getByLabel('Your message').waitFor();assert.equal(signs.length,1);
- await alice.page.getByLabel('Subject').fill('Feedback on links');await alice.page.getByLabel('Your message').fill('Conditional links work for me.');await alice.page.locator('input[name=selectedTags][value="topic:feature"]').check();
- await alice.page.getByRole('button',{name:'Send message',exact:true}).click();await alice.page.locator('.contact-sent').getByText('Your message is on its way.').waitFor();await screenshot(alice.page,'links-conditional-eligible-sent');
- const ray=await s.app.resources.repository.findByHandle('ray'),stored=(await s.app.resources.accounts.get(ray.id).messages.list(ray.id)).find(m=>m.senderMetadata?.subject==='Feedback on links');assert.ok(stored);assert.deepEqual(stored.deliveryTags,['contact:developer','topic:feature','priority:free']);assert.equal(stored.delivery.author.principal.subject,alice.account.id);
- // Signed out: the same link offers sign-in or sign-up and signs nothing.
- const visitor=await person(t,s,{signedIn:false});await visitor.page.goto(developer.url);await visitor.page.locator('a.contact-intent').first().waitFor();await visitor.page.getByRole('button',{name:'Sign in or sign up with 3sln.me',exact:true}).waitFor();assert.equal(await visitor.page.locator('textarea').count(),0);
- const before=visitor.page.url();await visitor.page.locator('input[name=handle]').fill('someone@unreachable.example');await visitor.page.getByRole('button',{name:'Find my provider',exact:true}).click();await visitor.page.locator('[role=alert],.alert').first().waitFor();assert.equal(visitor.page.url(),before,'discovery failure never redirects');await visitor.page.locator('a.contact-intent').first().waitFor();await screenshot(visitor.page,'links-conditional-signed-out');
+test('developer contact without a messaging app is shown as unavailable in Account & security and signs nothing',async t=>{
+ const s=await server(),alice=await person(t,s),signs=[];alice.page.on('request',request=>{if(/\/api\/links\/(respond|envelope)$/.test(request.url()))signs.push(request.url());});
+ const developer=await developerLink(alice.page,s);assert.deepEqual(developer,{available:false,reason:'contact-unavailable'});
+ await alice.page.getByRole('button',{name:'Account & security',exact:true}).click();const panel=alice.page.locator('.developer-contact-panel');
+ await panel.getByText('The developer contact link is unavailable right now.').waitFor();assert.equal(await panel.getByRole('button',{name:'Write with your messaging app',exact:true}).count(),0);assert.equal(await panel.getByRole('button',{name:'Open developer contact',exact:true}).count(),0);
+ await panel.getByRole('button',{name:'Check eligibility again',exact:true}).click();await panel.getByText('The developer contact link is unavailable right now.').waitFor();assert.equal(await alice.page.locator('[role=alert]').count(),0);
+ assert.equal(signs.length,0);await screenshot(alice.page,'links-developer-contact-unavailable');
 });
 
-test('developer contact: when only paid accounts qualify, a free account sees a policy-level ineligible state and cannot send',async t=>{
- const s=await server({DEVELOPER_CONTACT_ACTIVE_THRESHOLD:'1'}),bob=await person(t,s),developer=await developerLink(bob.page,s);
- assert.equal(developer.available,true,JSON.stringify(developer));assert.equal(developer.eligibility.state,'ineligible');assert.equal(developer.eligibility.reason,'paid-required');
- await bob.page.goto(developer.url);await bob.page.locator('section.contact-signed-in').getByRole('button',{name:'Send a message',exact:true}).click();await bob.page.locator('section.contact-handoff').getByRole('button',{name:/^Continue as /}).click();await bob.page.locator('.contact-ineligible').waitFor();assert.match(await bob.page.locator('.contact-ineligible').textContent(),/paid accounts/);assert.equal(await bob.page.getByLabel('Your message').count(),0);
- await screenshot(bob.page,'links-conditional-ineligible');
- await bob.page.goto(s.origin+'/console');await bob.page.locator('.app-shell').waitFor();await bob.page.getByRole('button',{name:'Contact links',exact:true}).click();await bob.page.locator('.developer-eligibility.eligibility-ineligible').waitFor();await screenshot(bob.page,'links-developer-contact-ineligible');
+test('the contact profile saves on the Node adapter and reloads with its stored values in Spanish',async t=>{
+ const s=await server(),bob=await person(t,s);await bob.page.goto(s.origin+'/console?view=security&lang=es');const profile=bob.page.locator('.contact-profile-settings');await profile.locator('form[aria-busy=false]').waitFor();
+ await profile.locator('input[name=displayName]').fill('Bob');await profile.locator('input[name=discloseToContacts]').check();await profile.locator('button[type=submit]').click();await bob.page.getByText('Perfil de contacto guardado.').waitFor();
+ await bob.page.reload();await profile.locator('form[aria-busy=false]').waitFor();assert.equal(await profile.locator('input[name=displayName]').inputValue(),'Bob');assert.equal(await profile.locator('input[name=discloseToContacts]').isChecked(),true);
+ await profile.getByText('Ninguna de tus apps ha creado todavía un enlace de contacto.').waitFor();assert.equal(await bob.page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);await screenshot(bob.page,'links-contact-profile-es');
 });

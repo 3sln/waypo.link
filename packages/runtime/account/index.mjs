@@ -16,8 +16,6 @@ import * as intents from './intents.mjs';
 import * as views from './views.mjs';
 import * as messages from './messages.mjs';
 import * as contacts from './contacts.mjs';
-import * as delivery from './delivery.mjs';
-import * as conversations from './conversations.mjs';
 import * as storage from './storage.mjs';
 import * as billing from './billing.mjs';
 import * as search from './search.mjs';
@@ -48,7 +46,7 @@ import * as memberCertificates from './member-certificates.mjs';
 import * as relations from './relations.mjs';
 import * as rtc from './rtc.mjs';
 
-export const ACCOUNT_SLICES=Object.freeze({intents,views,messages,contacts,delivery,conversations,storage,billing,search,lifecycle,notifications,contactProfile,automation,identity,links,connections,events,integrations,integrationEvents,classifier,brokeredTokens,emailBridge,deletion,exports,retention,transferOut,appRemoval,transferIn,transferSuccessor,transferIntake,directory,orgs,memberCertificates,relations,rtc});
+export const ACCOUNT_SLICES=Object.freeze({intents,views,messages,contacts,storage,billing,search,lifecycle,notifications,contactProfile,automation,identity,links,connections,events,integrations,integrationEvents,classifier,brokeredTokens,emailBridge,deletion,exports,retention,transferOut,appRemoval,transferIn,transferSuccessor,transferIntake,directory,orgs,memberCertificates,relations,rtc});
 
 /** Installs every slice's methods; a name defined twice (by two slices, or by a slice and the core) is a programming error. */
 export function installAccountMethods(prototype,slices=ACCOUNT_SLICES){

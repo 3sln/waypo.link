@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {messagePresentationSummary} from '../packages/messaging/presentation-summary.mjs';
+import {messagePresentationSummary} from '../packages/content/presentation-summary.mjs';
 const summary=(html,extra={})=>messagePresentationSummary({mimeType:'text/html',bytes:new TextEncoder().encode(html),appNotification:{origin:'https://app.example'},...extra});
 test('bounded heuristic excludes script, hidden/footer content and editable/hidden field values',async()=>{const r=await summary('<h1>Hello</h1><p>Visible</p><script>secret-script</script><footer>secret-footer</footer><div hidden>secret-hidden</div><form><input value="secret-input"><textarea>secret-textarea</textarea><button>Send</button></form>');assert.equal(r.title,'Hello');assert.match(r.text,/Visible/);assert(!r.text.includes('secret'));assert.deepEqual(r.actions,[]);});
 test('normal button-only forms and marked links yield only bounded advisory locators, no endpoints/hidden values',async()=>{const r=await summary('<form action="/yes"><input type="hidden" name="cap" value="secret"><button>Yes</button><button>No</button></form><a data-bindle-action href="/view">View</a>');assert.equal(r.actions.length,2);assert.deepEqual(r.actions[0],{kind:'form',formId:0,buttonId:0,label:'Yes',reviewRequired:true});assert(!JSON.stringify(r).includes('secret'));assert(!JSON.stringify(r).includes('https://'));});

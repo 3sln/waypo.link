@@ -7,8 +7,8 @@
 //                      is exactly 400 {"error":"invalid_grant"} with no-store (R2-H1); success is the DPoP-bound
 //                      member-context token with `bindle_member` and no refresh token. Confidential-client
 //                      authentication (client_assertion) is not supported yet and gets the same uniform failure.
-//   GET  {identityURI}/delegations/{jkt}   member holder-key status (BindleBox §3.4 semantics) while the directory is
-//                      on; a jkt this registry does not know falls through to the BindleBox route (or the unknown 404).
+//   GET  {identityURI}/delegations/{jkt}   member holder-key status (Parlay §3.4 semantics) while the directory is
+//                      on; a jkt this registry does not know falls through to the Parlay route (or the unknown 404).
 //   GET  /api/member-certificates                 the member's consents and holder keys (never flag-gated once readable)
 //   POST /api/member-certificates/revoke          {consent} | {jkt} | {all:true}
 //   GET|POST /api/member-certificates/settings/{org}   the organization's certificate lifetime (admin to change)

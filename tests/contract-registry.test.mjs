@@ -17,7 +17,9 @@ test('registry publishes exact existing JSON definitions and separates submissio
  for(const artifact of publicArtifacts){const original=await readFile(artifact.source,'utf8'),emitted=await readFile(join(out,artifact.path),'utf8');assert.equal(emitted,original);assert.equal(artifactIdentifier(artifact,JSON.parse(emitted)),artifact.id);if(artifact.kind==='manifest-profile')assert(JSON.parse(emitted).declaration.$schema);else if(!['preferences-fragment','slot-manifest'].includes(artifact.kind))assert(JSON.parse(emitted).$schema);assert(html.includes('href="'+artifact.path+'"'));assert(index.contracts.concat(index.schemas,index.fragments,index.profiles,index.slots).some(entry=>entry.schema===artifact.path&&entry.id===artifact.id));}
  await assert.rejects(access(join(out,'artefacts/contracts/obsolete/v1.json')));await assert.rejects(access(join(out,'artefacts/contracts/conversation/v2.json')));await assert.rejects(access(join(out,'artefacts/automation-v1.json')));
  assert.match(html,/not a complete resource RPC contract/);assert.match(await readFile(join(out,'docs/index.html'),'utf8'),/href="\/artefacts\/contracts\/">Contract registry/);
- const conversation=await readFile(join(out,'docs/spec/conversations.html'),'utf8');assert.match(conversation,/href="\/artefacts\/conversation-v1.json"/);assert(!conversation.includes('href="../artefacts/'));
+ // Conversation v1 was withdrawn with core messaging (2026-10-27): the immutable schema stays listed as withdrawn; its
+ // legacy spec is no longer a public document.
+ await assert.rejects(access(join(out,'docs/spec/conversations.html')));assert.equal(index.schemas[0].status,'withdrawn');
  const agent=await readFile(join(out,'llms.txt'),'utf8');for(const artifact of publicArtifacts)assert(agent.includes(artifact.path));
 });
 

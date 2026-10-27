@@ -2,7 +2,7 @@
 // docs/spec/identity-portability.md §5.2, §10, §11), plus the thin HTTP adapters of PORT-2's engine
 // (packages/identity/transfer-out.mjs, dispatched through packages/runtime/account/transfer-out.mjs).
 //
-// Redirects (edge stage, so they precede every per-identity route, including the BindleBox descriptor):
+// Redirects (edge stage, so they precede every per-identity route, including the Parlay descriptor):
 //   /users/<handle>[/...] and /identity/<sub>[/...] of an identity in status `moved` whose redirect window is live
 //   answer `308` to `redirect_base` + the path as received (without its leading `/`) + `?` + the raw query, byte for
 //   byte. Only exact, non-normalized paths with RFC 3986 query characters are redirected (spec §10, IP-R1-L1); anything

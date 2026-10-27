@@ -1,5 +1,5 @@
 import {siteGlobal,siteEnabled,flagsFor} from '../flags/read.mjs';
-// BRIDGE (implementation-roadmap Wave 7; public-email-bridge.md; messaging-app.md §13; bindlebox.md §9): the provider's
+// BRIDGE (implementation-roadmap Wave 7; public-email-bridge.md; messaging-app.md §13; messaging.md §9): the provider's
 // public email bridge as ngin Actions/Queries over injected providers. The same operations run at every placement:
 // the Worker email handler and EmailBridgeObject, the Node adapter and the tests; only the provider set differs.
 //

@@ -2,7 +2,7 @@ import { fail, base64url, fromBase64url, textEncoder, digest, boundedString, can
 import { CONTACT_LINK_TYPE } from './types.mjs';
 
 // Core links: the generic Bindle link envelope (docs/spec/links.md §2–§5; extraction plan slice C1a moved it from
-// packages/messaging/bindle-links.mjs, which re-exports it). Single shared parser: edge routing, account storage
+// the legacy packages/messaging/bindle-links.mjs, removed with core messaging on 2026-10-27). Single shared parser: edge routing, account storage
 // and providers MUST all use this module; never mix URLSearchParams decisions with it.
 export const LINK_META_TYP = 'bindle-link-meta+jwt';
 export const LINK_DATA_TYP = 'bindle-link-data+jwt';

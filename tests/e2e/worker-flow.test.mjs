@@ -48,7 +48,7 @@ async function finishRecoveryDownload(page){
   await page.getByRole('button',{name:'Test unlock',exact:true}).click();
   await page.getByRole('heading',{name:'Your way back in is ready.'}).waitFor();
   await page.getByLabel('I saved my recovery file in a safe place.').check();await page.getByRole('button',{name:'Open my space',exact:true}).click();
-  await page.getByRole('heading',{name:'Messages & conversations'}).waitFor();return recovery;
+  await page.getByRole('heading',{name:'Messages',exact:true}).waitFor();return recovery;
 }
 // Private requests name the tab's account member, as the console does (multi-account sessions).
 async function ownerAPI(page,path,body,method='POST'){
@@ -68,13 +68,9 @@ test('real passkey signup, confirmation gate, sign out and assertion login',asyn
   await finishRecoveryDownload(page);await screenshot(page,'live-passkey-inbox-desktop');
   const assigned=(await (await context.request.get(`${baseURL}/api/session`)).json()).account;assertAssignedIdentity(assigned);const handle=assigned.handle;
   await signOut(page);await page.getByLabel('Your handle').fill(handle);
-  await page.getByRole('button',{name:'Sign in with a passkey',exact:true}).click();await page.getByRole('heading',{name:'Messages & conversations'}).waitFor();
+  await page.getByRole('button',{name:'Sign in with a passkey',exact:true}).click();await page.getByRole('heading',{name:'Messages',exact:true}).waitFor();
   const session=await (await context.request.get(`${baseURL}/api/session`)).json();assert.equal(session.account.handle,handle);assert.equal(session.account.id,assigned.id);assert.equal(session.account.passkeyCount,1);
   const cookies=await context.cookies();assert.ok(cookies.some(c=>c.httpOnly&&c.sameSite==='Strict'));
-  await page.getByRole('button',{name:'Contact links',exact:true}).click();await page.getByRole('button',{name:'New contact link',exact:true}).click();
-  await page.getByLabel('Name this link').fill('Friends');await page.getByRole('button',{name:'Create contact link',exact:true}).click();
-  await page.getByLabel('Contact URL',{exact:true}).waitFor();await page.getByRole('button',{name:'Close dialog'}).click();
-  await page.getByRole('heading',{name:'Friends',exact:true}).waitFor();await screenshot(page,'live-contacts-desktop');
   await page.getByRole('button',{name:'Resources',exact:true}).click();await screenshot(page,'live-resources-desktop');
   await page.getByRole('button',{name:'Account & security',exact:true}).click();await screenshot(page,'live-security-desktop');
   await page.setViewportSize({width:390,height:844});await screenshot(page,'live-security-mobile');
@@ -94,7 +90,7 @@ test('real passkey signup, confirmation gate, sign out and assertion login',asyn
   }
 
 });
-test('real password setup resumes, recovery rotates, contacts constrain messages, and private APIs never cache',async t=>{
+test('real password setup resumes, recovery rotates, the contact profile saves, and private APIs never cache',async t=>{
   const {page,context}=await setup(t);
   await page.getByRole('button',{name:'Password',exact:true}).click();assert.equal(await page.getByLabel('Your handle').count(),0);
   await completeSignupQuestions(page);await page.getByLabel('Password',{exact:true}).fill('Test only long password 2026!');await page.getByRole('button',{name:'Create my account'}).click();
@@ -116,27 +112,12 @@ test('real password setup resumes, recovery rotates, contacts constrain messages
   await page.getByRole('button',{name:'Notifications',exact:true}).click();await screenshot(page,'live-notifications-desktop');
   await page.getByRole('button',{name:'Messages',exact:true}).first().click();
   const account=await ownerAPI(page,'/api/account',null,'GET');assert.equal(account.cache,'private, no-store');
-  const collection=account.body.collections[0].id;
-  const contact=await ownerAPI(page,'/api/contacts',{name:'Adversarial test',collections:[collection],mimeTypes:['text/html'],expiresAt:Date.now()+3600000,maxMessages:1,maxMessageBytes:65536,maxBytes:65536});assert.equal(contact.status,200);
-  const share=new URL(contact.body.url);assert.ok(share.pathname.includes('/contact/'));assert.ok(share.searchParams.get('sig'));assert.equal((await context.request.get(share.href,{headers:{Accept:'application/vnd.bindle.contact-token+jwt'}})).status(),406);
-  assert.equal((await ownerAPI(page,'/api/profile',{displayName:'Actual scoped recipient',bio:'Private biography',avatar:'https://images.example/private.png',discloseToContacts:true},'PUT')).status,200);
-  assert.equal((await ownerAPI(page,`/api/contacts/${contact.body.id}/sharing`,{profileFields:['displayName']},'PUT')).status,200);
-  const sharedProfile=await context.request.get(share.href,{headers:{Accept:'application/vnd.bindle.contact-profile+json'}});assert.equal(sharedProfile.status(),200);assert.deepEqual((await sharedProfile.json()).profile,{displayName:'Actual scoped recipient'});
-  await page.goto(share.href);await page.getByRole('heading',{name:/^Send a message to \u2068?Actual scoped recipient\u2069?\.$/}).waitFor();assert.equal(await page.locator('.contact-profile-bio').count(),0);assert.equal(await page.getByRole('link',{name:'View shared avatar',exact:true}).count(),0);assert.equal(new URL(page.url()).search,'');await screenshot(page,'live-contact-scoped-profile');
-  assert.equal((await ownerAPI(page,'/api/profile',{displayName:'Actual scoped recipient',bio:'Private biography',avatar:'https://images.example/private.png',discloseToContacts:false},'PUT')).status,200);
-  const disabledProfile=await context.request.get(share.href,{headers:{Accept:'application/vnd.bindle.contact-profile+json'}});assert.equal((await disabledProfile.json()).profile,null);await page.goto(share.href);await page.getByRole('heading',{name:/^Send a message to /}).waitFor();assert.equal(await page.locator('.contact-recipient-profile').count(),0);await page.goto(baseURL+'/console');await page.getByRole('button',{name:'Messages',exact:true}).first().waitFor();
-  // Identity-authored delivery: the signed-in sender's provider signs, the page posts credentialless multipart.
-  const send=async input=>page.evaluate(async({url,input})=>{const bytes=new TextEncoder().encode(input.text),sha256=btoa(String.fromCharCode(...new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)))).replaceAll('+','-').replaceAll('/','_').replaceAll('=',''),session=await (await fetch('/api/session')).json();const signed=await fetch('/api/links/envelope',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':session.csrfToken,'X-Bindle-Account':session.account.id,'X-Bindle-Session-Context':session.sessionContext},body:JSON.stringify({link:url,mimeType:input.mimeType,subject:'',optionalTags:[],byteLength:bytes.byteLength,sha256,operationId:input.operationId,createdAt:input.createdAt})});if(!signed.ok)return {status:signed.status,body:await signed.json()};const {envelope}=await signed.json(),form=new FormData();form.append('envelope',new Blob([JSON.stringify(envelope)],{type:'application/json'}));form.append('message',new Blob([bytes],{type:input.mimeType}));const response=await fetch(url,{method:'POST',body:form,credentials:'omit'});return {status:response.status,body:await response.json()};},{url:share.href,input});
-  const input={mimeType:'text/html',text:'<h1>Safe heading</h1><img src="https://leak.example/pixel"><script>parent.__messageExecuted=true</script>',operationId:crypto.randomUUID(),createdAt:Date.now()};
-  assert.ok([400,415].includes((await send({...input,mimeType:'image/png',operationId:crypto.randomUUID()})).status));
-  const accepted=await send(input);assert.equal(accepted.status,202,JSON.stringify(accepted.body));assert.deepEqual((await send(input)).body.receipt,accepted.body.receipt);
-  assert.equal((await send({...input,operationId:crypto.randomUUID()})).status,429);
-  await page.reload();await page.getByRole('button',{name:/New message/}).click();
-  const frame=page.locator('iframe[title]');await frame.waitFor();assert.equal(await frame.getAttribute('sandbox'),'allow-scripts');
-  const child=await (await frame.elementHandle()).contentFrame();await child.waitForFunction(()=>window.__fixtureMessageShadow?.querySelector('h1')?.textContent==='Safe heading');
-  assert.equal(await child.evaluate(()=>document.querySelector('iframe,form')!==null),false);
-  assert.equal(await page.evaluate(()=>Boolean(window.__messageExecuted)),false);await screenshot(page,'live-inert-message-desktop');
-  await ownerAPI(page,`/api/contacts/${contact.body.id}`,{},'DELETE');assert.notEqual((await send(input)).status,202);
+  // Messaging left the core (2026-10-27): the console keeps only the optional contact profile, edited in Account & security.
+  await page.getByRole('button',{name:'Account & security',exact:true}).click();const profile=page.locator('.contact-profile-settings');await profile.locator('form[aria-busy=false]').waitFor();
+  assert.match(await profile.textContent(),/None of your apps has created a contact link yet\./);
+  await profile.getByLabel('Display name',{exact:true}).fill('Actual scoped recipient');await profile.getByLabel('Enable the profile fields allowed by each contact link',{exact:true}).check();await profile.getByRole('button',{name:'Save contact profile',exact:true}).click();await page.getByText('Contact profile saved.').waitFor();await screenshot(page,'live-contact-profile-desktop');
+  const stored=await ownerAPI(page,'/api/profile',null,'GET');assert.equal(stored.status,200);assert.equal(stored.body.displayName,'Actual scoped recipient');assert.equal(stored.body.discloseToContacts,true);assert.match(stored.cache,/no-store/);
+  for(const [path,method] of [['/api/contacts','POST'],['/api/contact-links','POST'],['/api/links/envelope','POST'],['/api/conversations','GET'],['/api/contacts/redeem','POST']])assert.ok([404,405,406].includes(await page.evaluate(async({path,method})=>{const session=await (await fetch('/api/session')).json();return (await fetch(path,{method,headers:{'Content-Type':'application/json','X-CSRF-Token':session.csrfToken,'X-Bindle-Account':session.account.id,'X-Bindle-Session-Context':session.sessionContext},...method==='GET'?{}:{body:'{}'}})).status;},{path,method})),`${method} ${path} left the core`);
   const urls=await publicAssetCache(page);assert.ok(urls.every(url=>!new URL(url).pathname.startsWith('/api/')));
-  await page.setViewportSize({width:390,height:844});await screenshot(page,'live-inbox-mobile');
+  await page.getByRole('button',{name:'Messages',exact:true}).first().click();await page.setViewportSize({width:390,height:844});await screenshot(page,'live-inbox-mobile');
 });

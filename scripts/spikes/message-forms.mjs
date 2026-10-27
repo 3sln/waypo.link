@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import {chromium} from 'playwright';
 import {existsSync,mkdirSync,writeFileSync} from 'node:fs';
-import {CONTENT_CSP} from '../../packages/messaging/content.mjs';
+import {CONTENT_CSP} from '../../packages/content/render.mjs';
 const out=process.env.MESSAGE_FORMS_OUTPUT??'/tmp/3sln-message-forms';mkdirSync(out,{recursive:true});
 const installed='/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const browser=await chromium.launch({headless:true,...existsSync(installed)?{executablePath:installed}:{}});

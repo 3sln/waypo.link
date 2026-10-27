@@ -1,5 +1,8 @@
 # Unified messages and configurable Views
 
+> **Update (2026-10-27).** Peer messages and conversations left the core with legacy messaging (DEVLOG "Messaging removed from core; Parlay rename; BB-CUT reset"). Views, the incoming catalog and rules remain for activity items (v1 app messages); the conversation card, its organization overlay (`PATCH /api/incoming`) and the built-in Conversations View were removed. Parlay keeps its own copy.
+
+
 Provisional architecture, 2026-10-13. User direction: messages and conversations belong to one user-owned logical store; Views are filtered projections, not destination inboxes or containers. Contact grants apply required tags and permit a bounded optional selection. Human product/protocol reviewer: __________  Date: __________  Outcome: __________.
 
 ## Model and visible behavior

@@ -14,7 +14,7 @@ import { AccountController } from '../packages/runtime/accounts.mjs';
 test('a store bound to one owner refuses every other owner during the lease, whoever dispatches', async t => {
   const e = await createTestEngine(); t.after(() => e.dispose());
   await e.metadata.put('owner', OWNER);
-  assert.equal((await e.read(new SavedViews({ actor: ownerActor() }))).views.length, 3);
+  assert.equal((await e.read(new SavedViews({ actor: ownerActor() }))).views.length, 2);
   await assert.rejects(e.read(new SavedViews({ actor: ownerActor(OTHER) })), { code: 'forbidden', status: 403 });
   await assert.rejects(e.read(new TagRules({ actor: ownerActor(OTHER) })), { code: 'forbidden' });
   await assert.rejects(e.perform(new CreateView({ actor: ownerActor(OTHER), input: { name: 'x', filter: { version: 1 } } })), { code: 'forbidden' });

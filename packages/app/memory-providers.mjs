@@ -7,7 +7,7 @@ import { memoryAudit } from './providers.mjs';
 import { ACCOUNT_OPERATIONS } from './operations.mjs';
 import { EDGE_OPERATIONS } from './edge-operations.mjs';
 import { accountProviders } from './account.mjs';
-import { MessagingService } from '../messaging/index.mjs';
+import { ItemService } from '../activity/items.mjs';
 import { AccountItemIndex } from '../runtime/item-index.mjs';
 import { SqliteMetadata } from '../../apps/node/resources.mjs';
 import { AdminStorage } from '../identity/admin-store.mjs';
@@ -49,14 +49,14 @@ export function seededRandom(random) {
   const bytes = n => Uint8Array.from({ length: n }, () => random.int(256));
   return { seed: random.seed, bytes, uuid() { const b = bytes(16); b[6] = b[6] & 0x0f | 0x40; b[8] = b[8] & 0x3f | 0x80; const h = [...b].map(x => x.toString(16).padStart(2, '0')).join(''); return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`; } };
 }
-/** The MessagingService store contract over account metadata: AccountController's adapter without its
+/** The ItemService store contract over account metadata: AccountController's adapter without its
  * search/index/blob side effects, which belong to domains this harness does not compose yet. */
 export const metadataStore = metadata => ({ transaction: operation => metadata.transaction(tx => operation({ get: key => tx.get(key), set: (key, value) => tx.put(key, value), delete: key => tx.delete(key), list: async prefix => [...await tx.list({ prefix })].map(([key, value]) => ({ key, value })) })) });
 
-// Built over whatever accountStore resolves to, so faults and schedulers on the store reach messaging too.
+// Built over whatever accountStore resolves to, so faults and schedulers on the store reach the item service too.
 const MessagingProvider = Provider.fromLazySingleton(async ({ accountStore, clock, random }) => {
   const [store, time, ids] = [await accountStore.obtain(), await clock.obtain(), await random.obtain()];
-  return new MessagingService({ store: metadataStore(store), tokens: null, clock: time.now, crypto: { randomUUID: ids.uuid, subtle: crypto.subtle, getRandomValues: array => crypto.getRandomValues(array) } });
+  return new ItemService({ store: metadataStore(store), clock: time.now, crypto: { randomUUID: ids.uuid, subtle: crypto.subtle, getRandomValues: array => crypto.getRandomValues(array) } });
 }, undefined, { deps: ['accountStore', 'clock', 'random'] });
 
 // Each lease pins a fresh committed snapshot; the evaluator stays synchronous
@@ -89,7 +89,7 @@ export async function createMemoryEngine({ db = ':memory:', seed = Number(proces
   const audit = memoryAudit({ clock });
   const flagStore=decorate('flagStore',new AdminStorage(metadata));
   // The production account composition over in-process resources; `providers` overrides by name.
-  const engine = createAppEngine({ providers: { ...accountProviders({ accountStore: decorate('accountStore', metadata), itemIndex: decorate('itemIndex', itemIndex), messaging: MessagingProvider, clock, random: seededRandom(ids), audit }), config:Object.freeze({...config}),flagStore,flags:MemoryFlagsProvider,flagStats:MemoryFlagStatsProvider,...providers }, interceptors });
+  const engine = createAppEngine({ providers: { ...accountProviders({ accountStore: decorate('accountStore', metadata), itemIndex: decorate('itemIndex', itemIndex), items: MessagingProvider, clock, random: seededRandom(ids), audit }), config:Object.freeze({...config}),flagStore,flags:MemoryFlagsProvider,flagStats:MemoryFlagStatsProvider,...providers }, interceptors });
   // Every engineFeed fact the registered operations declare, in order: what UI and reactions would see.
   const events = [], record = event => events.push({ type: event.type, ...event.detail });
   for (const fact of FACTS) engine.feed.addEventListener(fact, record);

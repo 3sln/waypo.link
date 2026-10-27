@@ -15,11 +15,11 @@ test('Views normalize a bounded AND grammar and reject executable/ambiguous filt
 });
 test('saved Views use CAS, bounded definitions and deletion never erases underlying messages',async t=>{
  const {index,views,metadata}=fixture(t);index.upsert(message('one'));
- assert.deepEqual((await views.list(owner)).map(v=>v.id),['all','unread','conversations']);
+ assert.deepEqual((await views.list(owner)).map(v=>v.id),['all','unread']);
  const view=await views.mutate(owner,'create',null,{name:'<literal custom label>',filter:{version:1,tagsAll:['work']}});
  const changes=await Promise.allSettled([views.mutate(owner,'update',view.id,{name:'First',filter:{version:1},expectedRevision:1}),views.mutate(owner,'update',view.id,{name:'Second',filter:{version:1},expectedRevision:1})]);assert.equal(changes.filter(v=>v.status==='fulfilled').length,1);assert.equal(changes.find(v=>v.status==='rejected').reason.code,'view_conflict');
  await assert.rejects(views.resolve(owner,{view:view.id,viewRevision:1}),{code:'view_conflict'});
- await views.mutate(owner,'delete',view.id,{expectedRevision:2});assert(index.get('one'));assert.equal((await views.list(other)).length,3);
+ await views.mutate(owner,'delete',view.id,{expectedRevision:2});assert(index.get('one'));assert.equal((await views.list(other)).length,2);
  await views.mutate(owner,'delete','all',{expectedRevision:1});assert.equal((await new MessageViews(metadata).list(owner)).some(v=>v.id==='all'),false);
 });
 test('indexed filters paginate beyond the old 100-item snapshot and keep scopes independent',async t=>{
@@ -39,13 +39,6 @@ test('cursors are authenticated, owner/filter-bound and explicitly stale after i
  index.upsert(message('m1',{receivedAt:1,readAt:2000}));await assert.rejects(index.incomingPage(owner,{cursor:page.cursor}),{code:'cursor_stale'});
  const stable=await index.incomingPage(owner,{limit:1});index.upsert(message('m1',{receivedAt:1,readAt:2000}));assert((await index.incomingPage(owner,{cursor:stable.cursor})).items.length);
  const reopened=new AccountItemIndex(index.sql);assert((await reopened.incomingPage(owner,{cursor:stable.cursor})).items.length);
-});
-test('conversation events become one stable card and deletion/read changes recompute retained projection',async t=>{
- const {index}=fixture(t),conversation={id:'room',source:{origin:'https://peer.example',owner:other},title:'Thread'};
- index.upsert(message('e1',{conversation,receivedAt:10,tags:['first']}));index.upsert(message('e2',{conversation,receivedAt:20,readAt:30,tags:['latest']}));index.upsert(message('plain',{receivedAt:15}));
- let cards=(await index.incomingPage(owner,{})).items;assert.equal(cards.length,2);const card=cards[0];assert.equal(card.type,'conversation');assert.equal(card.eventCount,2);assert.equal(card.receivedAt,10);assert.equal(card.activityAt,20);assert.equal(card.readAt,null);assert.deepEqual(card.tags,['first']);
- index.upsert(message('e1',{conversation,receivedAt:10,readAt:40,tags:['first']}));assert.equal((await index.incomingPage(owner,{filter:{version:1,types:['conversation'],read:false}})).items.length,0);
- index.remove('e2');cards=(await index.incomingPage(owner,{filter:{version:1,types:['conversation']}})).items;assert.equal(cards[0].id,card.id);assert.equal(cards[0].eventCount,1);assert.equal(cards[0].activityAt,10);assert.deepEqual(cards[0].tags,['first']);index.remove('e1');assert.equal((await index.incomingPage(owner,{filter:{version:1,types:['conversation']}})).items.length,0);
 });
 test('bounded legacy backfill resumes, deduplicates live updates and rolls back with original metadata',async t=>{
  const {index,metadata}=fixture(t);
@@ -80,35 +73,8 @@ test('actual Node owner routes enforce session, Origin, CSRF, methods and strict
   const updated=await request('/api/views/'+view.id,{method:'PUT',headers,body:{...body,name:'Revised',expectedRevision:1}});assert.equal(updated.status,200);
   assert.equal((await request('/api/incoming?view='+view.id+'&viewRevision=1',{headers})).status,409);
   assert.equal((await request('/api/views/'+view.id,{method:'DELETE',headers,body:{expectedRevision:2}})).status,200);
-  const controller=app.resources.accounts.get(session.account.id);controller.itemIndex.upsert(message('http-event',{owner:session.account.id,conversation:{id:'http-room',source:{origin:'https://peer.example',owner:other}}}));
-  const incoming=await(await request('/api/incoming',{headers})).json(),card=incoming.items[0],change={id:card.id,expectedRevision:card.organizationRevision,expectedActivityRevision:card.activityRevision,read:true,tags:['owner:chosen']};
-  assert.equal((await request('/api/incoming',{method:'PATCH',headers:{...headers,'X-CSRF-Token':'wrong'},body:change})).status,403);
-  const organized=await request('/api/incoming',{method:'PATCH',headers,body:change});assert.equal(organized.status,200);assert.deepEqual((await organized.json()).tags,['owner:chosen']);
-  assert.equal((await request('/api/incoming',{method:'PATCH',headers,body:change})).status,409);
+  // Conversation organization (PATCH /api/incoming) left the core with messaging on 2026-10-27.
+  assert.equal((await request('/api/incoming',{method:'PATCH',headers,body:{}})).status,405);
 
  }finally{await app?.close();await rm(directory,{recursive:true,force:true});}
-});
-test('conversation owner tags and classification survive new events, deletions, restart and stale edits',async t=>{
- const {index,metadata}=fixture(t),conversation={id:'persistent-room',source:{origin:'https://peer.example',owner:other}};
- index.upsert(message('start',{conversation,receivedAt:10,tags:['initial']}));let card=(await index.incomingPage(owner,{})).items[0];
- card=await metadata.transaction(()=>index.updateIncoming(owner,{id:card.id,expectedRevision:card.organizationRevision,tags:['owner:project'],classification:'work'}));
- const before=index.page(owner,{collection:'legacy-private'}).items.map(m=>({id:m.id,tags:m.tags,collection:m.collection}));
- index.upsert(message('reply',{conversation,receivedAt:20,tags:['sender:new'],classification:'spam'}));card=(await index.incomingPage(owner,{filter:{version:1,tagsAll:['owner:project'],classifications:['work']}})).items[0];assert(card);assert.equal(card.eventCount,2);assert.equal(card.organizationRevision,2);
- assert.deepEqual(index.page(owner,{collection:'legacy-private'}).items.filter(m=>m.id==='start').map(m=>({id:m.id,tags:m.tags,collection:m.collection})),before,'organization is not a legacy permission/membership edit');
- assert.throws(()=>index.updateIncoming(owner,{id:card.id,expectedRevision:1,tags:['stale']}),{code:'item_conflict'});
- index.remove('start');index.remove('reply');assert.equal((await index.incomingPage(owner,{})).items.length,0);
- const reopened=new AccountItemIndex(metadata.sql);reopened.upsert(message('later',{conversation,receivedAt:30,tags:['different']}));card=(await reopened.incomingPage(owner,{})).items[0];assert.deepEqual(card.tags,['owner:project','sys:work']);assert.equal(card.classification,'work');assert.equal(card.organizationRevision,2);
- assert.throws(()=>reopened.updateIncoming(other,{id:card.id,expectedRevision:2,tags:['cross-owner']}),{code:'not_found'});
-});
-test('conversation mark-read uses a local seen-event watermark, preserves newer arrivals and sends no receipt',async t=>{
- const {index,metadata}=fixture(t),conversation={id:'read-room',source:{origin:'https://peer.example',owner:other}};
- index.upsert(message('first',{conversation,receivedAt:10}));index.upsert(message('second',{conversation,receivedAt:10}));let card=(await index.incomingPage(owner,{})).items[0];
- card=await metadata.transaction(()=>index.updateIncoming(owner,{id:card.id,expectedRevision:card.organizationRevision,expectedActivityRevision:card.activityRevision,read:true},500));assert.equal(card.readAt,500);assert.equal((await index.incomingPage(owner,{filter:{version:1,read:false}})).items.length,0);
- const readCard=card;index.upsert(message('late-arrival',{conversation,receivedAt:1}));card=(await index.incomingPage(owner,{})).items[0];assert.equal(card.readAt,null,'arrival order protects late/equal timestamp events');
- assert.throws(()=>index.updateIncoming(owner,{id:card.id,expectedRevision:card.organizationRevision,expectedActivityRevision:readCard.activityRevision,read:true}),{code:'item_conflict'});
- index.remove('late-arrival');card=(await index.incomingPage(owner,{})).items[0];assert.equal(card.readAt,500,'removal of the unseen event restores the seen retained projection');
- card=await metadata.transaction(()=>index.updateIncoming(owner,{id:card.id,expectedRevision:card.organizationRevision,read:false}));assert.equal(card.readAt,null);
- card=await metadata.transaction(()=>index.updateIncoming(owner,{id:card.id,expectedRevision:card.organizationRevision,expectedActivityRevision:card.activityRevision,read:true},600));assert.equal(card.readAt,600);
- assert.equal(index.get('first').readAt,null,'legacy event flags are separate; card action emits no remote/shared receipt');
- const priorRevision=card.organizationRevision;await assert.rejects(metadata.transaction(async()=>{index.updateIncoming(owner,{id:card.id,expectedRevision:priorRevision,tags:['rollback']});throw Error('rollback');}),/rollback/);card=(await index.incomingPage(owner,{})).items[0];assert.equal(card.organizationRevision,priorRevision);assert(!card.tags.includes('rollback'));
 });

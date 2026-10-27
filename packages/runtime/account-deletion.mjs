@@ -101,7 +101,7 @@ export async function deletionBlocksMaintenance(reader){
 export async function alarmFenced(reader){return await reader.get(FENCE_KEY)!==undefined||await reader.get(PURGE_KEY)!==undefined||await reader.get(TOMBSTONE_KEY)!==undefined;}
 
 /** D1: an ungated orchestration admitted before the deletion fence must not write after it. Re-checked inside the
- * account gate (`gated`) and inside the writing transaction (contact delivery, conversation inbox). `reader` is the
+ * account gate (`gated`) and inside the writing transaction (for example audience decisions). `reader` is the
  * metadata store or a transaction. */
 export async function assertLifecycleOpen(reader){
  if(await reader.get(TOMBSTONE_KEY)!==undefined)fail('account_deleted','This account was deleted.',410);

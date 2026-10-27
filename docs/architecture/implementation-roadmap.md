@@ -1,13 +1,13 @@
 # Integrated implementation roadmap
 
-Status: working plan, 2026-10-20. It merges the slice plans of [extensibility](extensibility-design.md), [BindleBox extraction](messaging-extraction.md) and [app](messaging-app.md), [linked approval](linked-approval.md), [activity center](activity-center.md) and [app engine §12](app-engine.md). Decisions are recorded in [DEVLOG](../../DEVLOG.md). Where this plan and a design's own slice list differ, this plan wins.
+Status: working plan, 2026-10-20. It merges the slice plans of [extensibility](extensibility-design.md), [Parlay extraction](messaging-extraction.md) and [app](messaging-app.md), [linked approval](linked-approval.md), [activity center](activity-center.md) and [app engine §12](app-engine.md). Decisions are recorded in [DEVLOG](../../DEVLOG.md). Where this plan and a design's own slice list differ, this plan wins.
 
 ## Conventions
 
 - **Slice prefixes:**
   - EXT-X# (extensibility)
   - AMD-C# (spec amendments)
-  - BB-C# / BB-B# (BindleBox core prep / app)
+  - BB-C# / BB-B# (Parlay core prep / app)
   - BB-CUT (extraction cutover)
   - BRIDGE (email bridge)
   - ENG-# (app-engine §12)
@@ -17,7 +17,7 @@ Status: working plan, 2026-10-20. It merges the slice plans of [extensibility](e
   - `npm test`, `test:worker`, `test:ui-state`, `test:dom`, `build:assets`, `check:worker`, `test:e2e`;
   - an engine-harness suite for every registered operation;
   - for UI streams, browser checks at 320, 390 and 1440 px in en and es.
-- **Engine-first:** all new logic is ngin Actions/Queries over providers. Messaging domains are built engine-first inside BindleBox, never migrated into core (ENG-2/3/4/5 are cancelled).
+- **Engine-first:** all new logic is ngin Actions/Queries over providers. Messaging domains are built engine-first inside Parlay, never migrated into core (ENG-2/3/4/5 are cancelled).
 - **Append-only registries** (integrator-owned; slices append their own lines only):
   - `packages/runtime/routes/index.mjs`, `packages/runtime/account/index.mjs`;
   - `RESOURCE_METHOD_HANDLERS` in `packages/runtime/account/storage.mjs` (one contract handler per slice; handlers own method validation and authorization);
@@ -26,14 +26,14 @@ Status: working plan, 2026-10-20. It merges the slice plans of [extensibility](e
   - `packages/i18n/catalogues.mjs`;
   - the flag tables in `wrangler*.jsonc` and `apps/node`;
   - after EXT-X2 lands, the declaration registry in `packages/runtime/federation.mjs`.
-- **Flags, all default off:** `EXTENSIONS_ENABLED`, `INTEGRATIONS_ENABLED`, `BROKERING_ENABLED`, `DEVICE_AUTHORIZATION_ENABLED`, `ACTIVITY_V2_ENABLED`, `BINDLEBOX_ENABLED`. Core never imports BindleBox code before cutover.
+- **Flags, all default off:** `EXTENSIONS_ENABLED`, `INTEGRATIONS_ENABLED`, `BROKERING_ENABLED`, `DEVICE_AUTHORIZATION_ENABLED`, `ACTIVITY_V2_ENABLED`, `PARLAY_ENABLED`. Core never imports Parlay code before cutover.
 - **Agent tags:** [A] suits a fully autonomous coding agent; [S] needs a security-focused agent plus cross-review.
 
 ## Waves
 
 **Wave 0, stabilize** (integrator, [S]):
 - commit LA1a and step-up;
-- add the flags and the `tests/bindlebox/*.test.mjs` glob;
+- add the flags and the `tests/parlay/*.test.mjs` glob;
 - add a resource-method dispatch registry seam in `account/storage.mjs`;
 - apply AMD-C1–C11 to the specs;
 - set the linked-approval app credential cap to 30 d / 7 d idle, with fresh sign-in only.
@@ -66,7 +66,7 @@ The linked-approval decisions are recorded in [§15](linked-approval.md#15-open-
 - LA6 SDK device helper [A]: `packages/sdk/src/device.mjs`.
 - LA4 approval page, mock-first [A]: `apps/web/src/{bl,ui}/approve.mjs`.
 - BB-C2 records and content move [A]: `packages/core/records.mjs`, `packages/content/*` with re-exports; `dispatcher.mjs` → `runtime/lifecycle-notices.mjs`.
-- BB-B0 then B1, skeleton and protocol: B0 [A], B1 [S]. `packages/bindlebox-engine/*`, `packages/bindlebox-protocol/*`, `tests/bindlebox/*` with harness and network simulator, an import-boundary test, `scripts/bindlebox.mjs`.
+- BB-B0 then B1, skeleton and protocol: B0 [A], B1 [S]. `packages/messaging-engine/*`, `packages/messaging-protocol/*`, `tests/parlay/*` with harness and network simulator, an import-boundary test, `scripts/parlay.mjs`.
 
 **Wave 2:**
 - LA2 federation device grant [S] (no `client-metadata.mjs` edits).
@@ -96,7 +96,7 @@ The linked-approval decisions are recorded in [§15](linked-approval.md#15-open-
 - EXT-X7 discovery and brokered records [S].
 - EXT-X10 built-in classifier and Drive manifest [A].
 - BB-B6 archive and app switch [S].
-- BB-B9 BindleBox web UI [A].
+- BB-B9 Parlay web UI [A].
 
 **Wave 5:**
 - EXT-X8 preferences/v2 and severance [S]; write-capable contracts require introspection.
@@ -120,7 +120,7 @@ The linked-approval decisions are recorded in [§15](linked-approval.md#15-open-
 3. `routes/identity.mjs`: W0, then LA3. Delegation status goes in a new `routes/delegation.mjs`.
 4. `account/identity.mjs`: C0 and C3 run as one sequential IDKEYS stream.
 5. `apps/worker/index.mjs` and `apps/node/*`: one owner per wave (LA1 in W1, BB-CUT in W6, the integrator otherwise).
-6. Message records: ACT-1 owns the core halves after BB-C2's move. BindleBox copies and never edits originals. Peer records are reset (pending user confirmation). `/api/collections` is deleted at cutover.
+6. Message records: ACT-1 owns the core halves after BB-C2's move. Parlay copies and never edits originals. Peer records are reset (pending user confirmation). `/api/collections` is deleted at cutover.
 7. `dispatcher.mjs` and `apps/worker/email.mjs` stay in core.
 8. `client-metadata.mjs`: owned by X3. Metadata-document clients get no device grant.
 9. App connections: X4 owns connections; ACT owns notification/push; MCP account tools come after cutover.

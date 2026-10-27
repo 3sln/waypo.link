@@ -15,20 +15,17 @@ const definitions=[
  // Removal history with the owner's keep choices and deletion jobs for app-attributed data (never the stored continuation position).
  ['app-removals',['app-removal/record/','storage/producer-keep/','storage/producer-deletion/'],'removal entity client_id connection mode generation started_at cleanup_by committed_at access_ends_by concluded_at outcome result reminders action resource active supersededAt includeChanged includeKept complete stopped stoppedAt totalDeleted skipped passes at'],
  ['intent-choices',['intent-memory/'],'kind default excluded ignored'],
- // v1 app messages moved to activity's app-message/ family (messaging extraction prep) and export in the same section,
- // with the same projection, so the archive shape is unchanged.
- ['messages',['message/','app-message/'],'collection mimeType size receivedAt readAt tags classification quarantined senderMetadata conversation grantId revision presentation'],
+ // v1 app messages (activity's app-message/ family). The legacy peer `message/` family was deleted by the BB-CUT reset
+ // (DEVLOG 2026-10-27); the section keeps its name so the archive shape is unchanged.
+ ['messages',['app-message/'],'collection mimeType size receivedAt readAt tags classification quarantined revision presentation'],
  ['collections',['collection/'],'active'],['tags',['tag-labels/'],'labels'],['rules',['rules/','rule-defaults/'],'actions filter conditions enabled origin automatic updatedAt'],
  ['views',['message-views/'],'filter sort'],['activity',['activity-item/'],'app item activity source content occurredAt readAt tags collection'],
  ['notifications',['notification-preferences/','push-subscription/','activity-push-policy/','activity-push-app/','activity-push-device/'],'enabled email push collections quietHours rules previewConsent consent preferences'],
- ['contacts',['contact-name/'],''],['contact-grants',['contact-grant/'],'recipient active quarantined claims revokedAt'],
- // Contact profile families (packages/links/contact-profile.mjs). In release v1 (beam-retired-v1) the legacy row of
- // each pair is authoritative and every write keeps both, so these export the legacy prefixes; beam-retired-v2 moves
- // them to the neutral prefixes when it deletes the legacy rows.
- ['profile',['beam/profile'],'displayName bio avatar discloseToContacts'],
- ['contact-sharing',['beam/grant/'],''],['contact-redemptions',['beam/redeemed/'],'peer grantId'],
- ['saved-contacts',['beam/directory/'],''],
- ['conversations',['conversation/room/','conversation/history/','conversation/event/'],'source collection members permissions eventId threadId replyTo body content author occurredAt'],
+ // Contact profile families (packages/links/contact-profile.mjs): the owner's profile and per-link sharing keyed by
+ // contact parent. Legacy contacts, contact grants, redemptions, saved contacts and conversations left the core with
+ // messaging and were deleted by the BB-CUT reset (DEVLOG 2026-10-27).
+ ['profile',['profile'],'displayName bio avatar discloseToContacts'],
+ ['contact-sharing',['contact-sharing/'],''],
  ['links',['link/','link-change/'],'target recipient active revokedAt resource key methods scope'],
  ['resources',['resource/','hosted/'],'provider builtin contracts capabilities verifiedAt key version size contentType modifiedAt'],
  ['connections',['resource/'],'provider clientId scope fragments resources methods integration connectedAt disconnectedAt'],
@@ -42,7 +39,7 @@ const definitions=[
  // projected); blocks and mutes name principals the owner chose; contact rows name their link parent.
  ['rtc',['rtc/policy','rtc/block/','rtc/mute/','rtc/contact/','rtc/missed/'],'other self requests autoAccept principal at kind value purposes caller purpose parent'],
  ['rtc-tickets',['rtc/ticket/'],'usesLeft revoked callback purposes principal'],
- ['quota',['quota/','hosted-usage','message-usage/','app-message-usage/'],'bytes messages objects limit storageBytes usage retention']
+ ['quota',['quota/','hosted-usage','app-message-usage/'],'bytes messages objects limit storageBytes usage retention']
 ];
 export const EXPORT_CLAIMED_PREFIXES=Object.freeze(Object.fromEntries(definitions.flatMap(([name,prefixes])=>prefixes.map(prefix=>[prefix,name]))));
 const excluded={
@@ -58,14 +55,13 @@ const excluded={
  'signing-key':'Secret: private keys leave only through the protected identity backup.',
  'identity-keys/':'Secret: private identity key material; public keys use the keys port.',
  'identity-encryption-key/':'Secret: encrypted private keys; public keys use the keys port.', 'encryption-key':'Secret: private-key pointer.', 'identity-key-retained/':'Key history is projected by the keys port.', 'identity-key-pruned/':'Derived: key pruning tombstones.',
- 'contact-key/':'Secret: contact signing key.', 'contact-url/':'Secret: encrypted contact capability URL.',
+ 'contact-key/':'Secret: identity key registry rows (public keys use the keys port).',
  'vault/':'Secret: integration credentials.', 'resource-secret/':'Secret: connector credentials.',
  'activity-budget/':'Derived: abuse accounting.', 'activity-event/':'Transient: activity outbox.', 'push-session-ended/':'Transient: ended-session markers for push subscription binding.', 'activity-receipt/':'Transient: mutation receipts.',
  'activity-rev/':'Derived: activity index.', 'activity-tags/':'Derived: tag index.', 'activity-usage/':'Derived: quota counters.',
  'activity-push-bucket/':'Derived: push budgets.', 'activity-push-budget/':'Derived: push budgets.', 'activity-push-channel/':'Derived: channel readiness.',
  'activity-push-group/':'Transient: push coalescing.', 'activity-push-job/':'Transient: delivery queue.',
- 'contact-author-day/':'Derived: anti-abuse counts.', 'contact-delivery-receipt/':'Transient: replay fence.', 'contact-grant-tombstone/':'Derived: reclaimed contact parent IDs that must never verify again.',
- 'message-receipt/':'Transient: message idempotency.', 'notification-email-budget/':'Derived: email budgets.',
+ 'notification-email-budget/':'Derived: email budgets.',
  'message-receipt-budget/':'Derived: message ingress budgets.', 'message-postback/':'Secret: prepared form submissions.', 'message-postback-budget':'Derived: submission abuse accounting.',
  // Export inventory gaps found by the core-scope audit (messaging extraction prep, 2026-10-26). MCP authorization rows
  // (`mcp/v1/*`) live in the MCP shard stores, not in the account store, so they have no account export entry.
@@ -77,14 +73,11 @@ const excluded={
  'app-notification-budget/':'Derived: per-connection app message rate accounting.',
  'app-notification-receipt/':'Transient: app message replay receipts (48-hour retention).',
  'message-postback-prepared/':'Secret: prepared form-submission capabilities (encrypted scope).',
- 'developer-contact/':'Secret: developer-contact pointers (legacy mode: the developer account\'s system grant; occupant mode: the last developer-policy link this account\'s messaging-ingress occupant issued, with its capability URL sealed, recorded on any account but served only for the configured developer account); the links themselves are exported under links and contact-grants.',
- 'link-gc-cursor/':'Transient: link and contact-parent sweep cursors.',
+ 'developer-contact/':'Secret: the developer-contact pointer: the last developer-policy link this account\'s messaging-ingress occupant issued, with its capability URL sealed (read only on the configured developer account).',
+ 'link-gc-cursor/':'Transient: link-state sweep cursors.', 'link-audience/':'Derived: cached audience decisions (at most one UTC day).', 'link-replay/':'Transient: audience-response replay rows (at most 420 s).', 'migration/':'Derived: storage migration markers (including the BB-CUT reset marker).', 'export/':'Transient: exports and download authority.',
  'notification-event/':'Transient: notification queue.', 'notification-job/':'Transient: delivery queue.', 'notification-unsubscribe/':'Secret: unsubscribe capabilities.',
  'search-queue-usage/':'Derived: search usage.', 'search-vector-revision/':'Derived: search vectors.',
  'search':'Derived: search indexes, queues and maintenance cursors.', 'item-index':'Derived: SQLite item index.',
- 'beam/':'Legacy: retired Beam storage (offers, usage, mailbox, nearby invitations); beam-retired-v1 deletes it. Its generic contact rows are claimed above.',
- 'contact-redeemed-peer/':'Derived: peer index of contact redemption bindings.', 'beam/redeemed-peer/':'Derived: peer index of contact redemption bindings (legacy twin).',
- 'profile':'Forward copy of beam/profile (beam-retired-v1); exported from the legacy row until beam-retired-v2.', 'contact-sharing/':'Forward copy of beam/grant/ (beam-retired-v1); exported from the legacy row until beam-retired-v2.', 'contact-redeemed/':'Forward copy of beam/redeemed/ (beam-retired-v1); exported from the legacy row until beam-retired-v2.', 'saved-contact/':'Forward copy of beam/directory/ (beam-retired-v1); exported from the legacy row until beam-retired-v2.', 'migration/':'Derived: storage migration markers.', 'export/':'Transient: exports and download authority.',
  'deletion/':'Transient: deletion workflow and cancel-only capabilities; lifecycle projection carries owner deadlines.',
  'transfer-out/':'Transient: identity transfer-out workflow (PORT-2), dispute-token hashes and custody markers; the move record is published by the destination.',
  'blob-garbage/':'Transient: physical deletion journal.', 'blob-garbage-cursor':'Transient: garbage continuation.',
@@ -101,7 +94,6 @@ const excluded={
  'billing/pending':'Transient: checkout intent.', 'billing/sync':'Derived: provider synchronization health.',
  'drive/oauth/':'Secret: OAuth callback state.', 'drive/folder-pending/':'Secret: folder creation and OAuth journal.', 'drive/pending/':'Transient: upload journal.', 'drive/retained/':'External mappings are projected by the external-storage port.', 'drive/usage/':'Derived: external quota counters.', 'drive/removed/':'Transient: removed-resource sweep markers.',
  'evbus/index/':'Derived: manifest index.', 'evbus/reader/':'Secret: reader cursor authority.', 'evbus/permit/':'Transient: history opt-in.', 'evbus/tx/':'Transient: publish journal.', 'evbus/rate/':'Derived: rate counters.', 'evbus/meter/':'Derived: quota meters.', 'evbus/wait/':'Transient: wait leases.',
- 'conversation/outbox/':'Secret: delivery capabilities and pending tasks.', 'conversation/dead/':'Secret: retry-exhausted delivery tasks and capabilities.', 'conversation/sweep':'Transient: collection cursor.', 'conversation/receipt/':'Transient: replay receipts.', 'conversation/delivery/':'Transient: fanout delivery tracking.', 'conversation/inbox-message/':'Transient: inbound replay receipts.', 'conversation/pending/':'Transient: pending invitations.',
  'google-drive/':'Secret: OAuth and callback state; external mapping uses a dedicated port.',
  // RTC-d: signaling state that is per device, per session or derived. Session records live at most 24 h after their
  // end; SDP and candidates at most 60 s (spec §12).
@@ -119,7 +111,7 @@ const excluded={
 };
 export const EXPORT_EXCLUDED_PREFIXES=Object.freeze(excluded);
 // Singleton keys match exactly, never as a prefix (review R4): `profile` must not claim `profile-other/...`.
-export const EXPORT_SINGLETON_KEYS=Object.freeze(new Set(['profile','beam/profile']));
+export const EXPORT_SINGLETON_KEYS=Object.freeze(new Set(['profile']));
 const matches=(key,prefix)=>EXPORT_SINGLETON_KEYS.has(prefix)?key===prefix:key.startsWith(prefix);
 export function exportInventory(prefixes){return prefixes.map(prefix=>{const claimed=Object.keys(EXPORT_CLAIMED_PREFIXES).filter(p=>matches(prefix,p)).sort((a,b)=>b.length-a.length)[0];if(claimed)return {prefix,contributor:EXPORT_CLAIMED_PREFIXES[claimed]};const excluded=Object.keys(EXPORT_EXCLUDED_PREFIXES).filter(p=>matches(prefix,p)).sort((a,b)=>b.length-a.length)[0];return {prefix,...excluded?{reason:EXPORT_EXCLUDED_PREFIXES[excluded]}:{}};});}
 const stable=value=>{if(typeof value!=='string'||!/^[A-Za-z0-9_-]{1,100}$/.test(value))fault('invalid_export_id','A stable archive identifier is required.',409);return value;};
@@ -146,9 +138,8 @@ export function createExportContributors({accountStore,identity,keys,grants,exte
   result.push({name,version:1,prefixes,async page({owner,cursor,limit}){
    const index=cursor?.index??0,prefix=prefixes[index],pageLimit=name==='messages'?Math.min(limit,15):limit,rows=EXPORT_SINGLETON_KEYS.has(prefix)?new Map([...await accountStore.list({prefix,startAfter:cursor?.after??'',limit:pageLimit})].filter(([key])=>key===prefix)):await accountStore.list({prefix,startAfter:cursor?.after??'',limit:pageLimit}),payloads=[],out=[];
    for(const [key,row]of rows){
-    // A saved contact's `owner` is the link owner (the other account), so it is not filtered by owner.
-    if(name!=='saved-contacts'&&row?.owner!==undefined&&row.owner!==owner||name==='connections'&&row?.kind!=='app-connection'||name==='resources'&&row?.kind==='app-connection')continue;
-    const id=decodeURIComponent(key.split('/').filter(Boolean).at(-1)),value=name==='contacts'&&typeof row==='string'?{id,name:row}:name==='contact-sharing'?{id,profileFields:Array.isArray(row?.profileFields)?[...row.profileFields]:[]}:name==='saved-contacts'?{contact:row?.owner,grantId:row?.grantId,expiresAt:row?.expiresAt}:projection(row,names);out.push({schemaVersion:1,record:value});
+    if(row?.owner!==undefined&&row.owner!==owner||name==='connections'&&row?.kind!=='app-connection'||name==='resources'&&row?.kind==='app-connection')continue;
+    const id=decodeURIComponent(key.split('/').filter(Boolean).at(-1)),value=name==='contact-sharing'?{id,profileFields:Array.isArray(row?.profileFields)?[...row.profileFields]:[]}:projection(row,names);out.push({schemaVersion:1,record:value});
     if(row?.blobRef&&name==='messages')payloads.push({entryId:stable(row.id),kind:'message',source:{message:row.id,part:0},ref:row.blobRef,path:exportPath(`data/messages/${stable(row.id)}/0.bin`),size:row.size,contentType:row.mimeType});
     if(name==='messages')for(const part of row.presentation?.history??[])if(part.blobRef)payloads.push({entryId:stable(row.id)+'_'+part.revision,kind:'message',source:{message:row.id,part:part.revision},ref:part.blobRef,path:exportPath(`data/messages/${stable(row.id)}/${part.revision}.bin`),size:part.size,contentType:part.mimeType??'application/octet-stream'});
     if(row?.blobRef&&key.startsWith('hosted/')){const resource=key.split('/')[1];payloads.push({entryId:stable(row.version),kind:'object',source:{resource,key:row.key,version:row.version},ref:row.blobRef,path:exportPath(`data/objects/${stable(resource)}/${stable(row.version)}.bin`),size:row.size,contentType:row.contentType});}

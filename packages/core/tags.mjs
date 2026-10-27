@@ -1,6 +1,6 @@
-// Core tags (moved from packages/messaging/tags.mjs, messaging extraction prep 2026-10-26; that file re-exports this
-// one until BB-CUT). Activity, views, search, MCP and the owner rules engine import it from here, so app-originated
-// items never depend on the legacy peer-messaging package. The messaging app keeps its own copy (packages/bindlebox-*).
+// Core tags (moved from the legacy packages/messaging/tags.mjs, messaging extraction prep 2026-10-26; that package was
+// removed with core messaging on 2026-10-27). Activity, views, search, MCP and the owner rules engine import it from here, so app-originated
+// items never depend on the legacy peer-messaging package. The messaging app keeps its own copy (packages/messaging-{engine,protocol}).
 import {fail,boundedString,canonical,key} from './records.mjs';
 // Tags are stable identifiers; labels are presentation. `sys:` is host-reserved.
 // See docs/architecture/tags.md for provenance, promotion and migration rules.

@@ -1,4 +1,4 @@
-// Generalized from bindlebox-protocol/encoding.mjs; its nonnegative-number profile and callers stay unchanged.
+// Generalized from messaging-protocol/encoding.mjs; its nonnegative-number profile and callers stay unchanged.
 // Artefacts §3: no normalization, duplicate names, noncharacters, lone surrogates or non-decimal safe integers.
 export class StrictJSONFault extends Error {constructor(code='malformed'){super(code);this.name='StrictJSONFault';this.code=code;}}
 const bad=(code)=>{throw new StrictJSONFault(code);};

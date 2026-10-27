@@ -8,6 +8,8 @@ import { createNodeServer } from '../apps/node/server.mjs';
 import { IdentityService } from '../packages/identity/service.mjs';
 import { identityBackupPort } from '../packages/runtime/identity-backup.mjs';
 import { verifyIdentityBackup, verifyNameAssignment } from '../packages/recovery/identity-backup.mjs';
+import { linkService } from '../packages/runtime/account/links.mjs';
+import { MESSAGING_CONTACT_LINK_TYPE } from '../packages/links/types.mjs';
 
 const origin = 'http://localhost:8788';
 const password = 'Portable recovery runtime test password!';
@@ -87,13 +89,11 @@ test('durable signed recovery adopts the existing signer and preserves valid and
   }
   const snapshot = await f.request('/api/account', undefined, owner.headers, 'GET');
   assert.equal(snapshot.status, 200);
-  const options = { collections: [snapshot.value.collections[0].id], mimeTypes: ['text/plain'], expiresAt: Date.now() + 86400000 };
-  const active = await f.request('/api/contacts', { ...options, name: 'Keep active' }, owner.headers);
-  const revoked = await f.request('/api/contacts', { ...options, name: 'Already revoked' }, owner.headers);
-  assert.equal(active.status, 200, active.value.error);
-  assert.equal(revoked.status, 200, revoked.value.error);
-  assert.equal((await f.request('/api/contacts/' + revoked.value.id, undefined, owner.headers, 'DELETE')).status, 200);
-  const inspect = async url => f.app.fetch(new Request(url, { headers: { Accept: 'application/json' } }));
+  // Contact parents through the core links service (legacy contact grants left the core on 2026-10-27).
+  const links = () => linkService(f.app.resources.accounts.get(accountId)), issue = async () => { const r = await links().issue(accountId, { type: MESSAGING_CONTACT_LINK_TYPE, claims: { resource: 'contact', kinds: ['one-off'], mimeTypes: ['text/plain'], maxMessages: 5, maxBytes: 4096, maxMessageBytes: 1024 }, expiresAt: Date.now() + 86400000, handle: assignedHandle }); return { value: { id: r.jti, url: r.link } }; };
+  const active = await issue(), revoked = await issue();
+  await links().revoke(accountId, revoked.value.id);
+  const inspect = async url => f.app.fetch(new Request(url, { headers: { Accept: 'application/vnd.bindle.contact-profile+json' } }));
   assert.equal((await inspect(active.value.url)).status, 200);
   assert.equal((await inspect(revoked.value.url)).status,404);
   const beforeKeys = digest(await f.app.resources.accounts.get(accountId).identityKeychain(accountId, { create: false }));

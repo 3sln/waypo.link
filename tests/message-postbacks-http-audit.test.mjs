@@ -12,8 +12,8 @@ import {SqliteMetadata,SerialGate} from '../apps/node/resources.mjs';
 import {appNotificationSigner} from '../packages/runtime/app-notifications.mjs';
 import {federationEpoch} from '../packages/runtime/federation.mjs';
 import {key,digest} from '../packages/core/records.mjs';
-import {parseMessageForms} from '../packages/messaging/form-parser.mjs';
-import {messageFormFingerprint} from '../packages/messaging/form-policy.mjs';
+import {parseMessageForms} from '../packages/content/form-parser.mjs';
+import {messageFormFingerprint} from '../packages/content/form-policy.mjs';
 
 const issuer='https://provider.example', app='https://app.example';
 const source='<form method="post" action="/submit"><input type="hidden" name="proof" value="bounded-app-proof"><input name="reply"><button>Send</button></form>';
@@ -33,8 +33,8 @@ async function fixture(t){
  await db.put('resource/'+connectionId,{id:connectionId,owner,kind:'app-connection',transport:'bindle',status:'active',clientId:app+'/client',appOrigin:app,generation:1,notifications:{enabled:true,generation:1}});
  const payload={version:1,purpose:'bindle-app-notification-admission-v1',issuer,owner,id,clientId:app+'/client',origin:app,name:'Fixture app',connectionId,connectionGeneration:1,notificationGeneration:1,bodyDigest:sourceDigest};
  const signer=await appNotificationSigner(config);blobs.set(blobRef,bytes);
- await db.put(key('message',owner,id),{id,owner,collection,mimeType:'text/html',size:bytes.length,blobRef,tags:[],readAt:null,quarantined:false,appNotification:{...payload,attestation:{alg:'ES256',kid,keysURL:issuer+'/.well-known/bindle/app-notification-keys.json',signature:await signer.sign(payload)}}});
- await db.put(key('message-usage',owner),{bytes:bytes.length,messages:1});
+ await db.put(key('app-message',owner,id),{id,owner,collection,mimeType:'text/html',size:bytes.length,blobRef,tags:[],readAt:null,quarantined:false,appNotification:{...payload,attestation:{alg:'ES256',kid,keysURL:issuer+'/.well-known/bindle/app-notification-keys.json',signature:await signer.sign(payload)}}});
+ await db.put(key('app-message-usage',owner),{bytes:bytes.length,messages:1});
  const formDigest=await digest(crypto,messageFormFingerprint(parseMessageForms(source,app)[0]));
  const input=()=>({requestId:crypto.randomUUID(),expectedRevision:0,sourceDigest,formId:0,formDigest,fields:[['proof','bounded-app-proof'],['reply','Private submitted text']]});
  const env={...config,ABUSE:{consume:async()=>true},IDENTITY_REPOSITORY:{get:async value=>value===owner?account:null},IDENTITY_ENGINE:async()=>new Engine({providers:{identity:Provider.fromSingleton({repository:{get:async id=>id===owner?account:null},config:{termsVersion:'2026-10-11'},requireCurrentTerms:IdentityService.prototype.requireCurrentTerms,authorized:async context=>{identityCalls.push(context);if(context.sessionToken!=='owner-session')throw new IdentityFault('unauthorized');return {account,session:{csrfToken:'owner-csrf'}};},owner:async(_input,context)=>{identityCalls.push(context);if(context.sessionToken!=='owner-session'||account.status!=='active')throw new IdentityFault('unauthorized');return {account,csrfToken:'owner-csrf'};}})}}),ACCOUNTS:{get:value=>{lookups.push(value);assert.equal(value,owner);return {invoke:async call=>{rpc.push(call);return controller.invoke(call);}};}}};

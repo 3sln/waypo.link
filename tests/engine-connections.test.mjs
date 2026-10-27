@@ -18,7 +18,7 @@ import {SqliteMetadata,SerialGate} from '../apps/node/resources.mjs';
 import {forEachSeed,concurrently,tally,fakeClock} from './helpers/chaos.mjs';
 
 const OWNER='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',OTHER='bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',ISSUER='https://3sln.example';
-const MAILBOX='https://spec.bindle.example/bindlebox/v1/contracts/mailbox',MODEL='https://spec.bindle.example/contracts/decision-model/v1';
+const MAILBOX='https://spec.bindle.example/messaging/v1/contracts/mailbox',MODEL='https://spec.bindle.example/contracts/decision-model/v1';
 const ALL=Object.values(DELEGATION_PURPOSES).sort();
 const multi=(name,selection,extra={})=>({id:`https://spec.bindle.example/slots/${name}/v1`,title:name,description:'Test slot.',publisher:'https://spec.bindle.example',fields:{occupants:{title:'Occupants',type:'resource',cardinality:{min:0,max:3},contracts:[MODEL]}},slot:{v:1,field:'occupants',selection,consumers:['application','provider'],...extra}});
 const ORDERED=multi('ordered-test','ordered'),BROADCAST=multi('broadcast-test','broadcast'),CHOICE=multi('choice-test','consumer-choice');
@@ -342,7 +342,7 @@ test('migration: legacy records read as active/disconnected, are migrated on fir
  assert.equal(reapproved.state,'active');assert.equal(reapproved.integration.kind,'external');
 });
 
-test('the recognized slots include the BindleBox ingress and canonical classifier manifests', ()=>{
+test('the recognized slots include the Parlay ingress and canonical classifier manifests', ()=>{
  assert.deepEqual(Object.keys(RECOGNIZED_SLOTS),[MESSAGING_INGRESS_SLOT,'https://3sln.me/artefacts/slots/item-classifier/v1']);
  assert.equal(MESSAGING_INGRESS_MANIFEST.slot.selection,'exclusive');assert.deepEqual(MESSAGING_INGRESS_MANIFEST.slot.consumers,['provider']);
  assert.ok(C.CONNECTION_OWNER_OPERATIONS.every(name=>C.CONNECTION_OPERATIONS.some(O=>O.operation===name)));

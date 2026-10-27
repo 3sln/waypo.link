@@ -5,7 +5,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {world,rawMail,text,CONFIG,DOMAIN,OWNER,OTHER,ORIGIN,AUTHSERV,NOW} from './email-bridge-helpers.mjs';
 import {BRIDGE_LIMITS,GENERIC_REFUSAL,BRIDGE_OPERATIONS,invariantText,followupText,parseEmail,authResults,headerMailbox,mailbox,MIME_LIMITS,REPLY_SUBJECT,bridgeConfig} from '../packages/email-bridge/index.mjs';
-import {parseProvenance,intakeDigest} from '../packages/bindlebox-protocol/index.mjs';
+import {parseProvenance,intakeDigest} from '../packages/messaging-protocol/index.mjs';
 
 const REJECT={action:'reject',reason:GENERIC_REFUSAL};
 const replyBody=r=>text(r.raw).split('\r\n\r\n')[1].replace(/\r\n/g,' ').trim();
@@ -16,7 +16,7 @@ test('flags: EMAIL_BRIDGE_ENABLED is required and default off; no directory look
   await assert.rejects(w.bridge.settings(OWNER),{code:'not_found'});assert.deepEqual(await w.bridge.drain(OWNER),{delivered:0,held:true,reason:'disabled'});
  }
  assert.equal(bridgeConfig({}).enabled,false);
- // Messaging extraction prep: the bridge depends on the public-intake slot having an occupant, not on Parley's flag.
+ // Messaging extraction prep: the bridge depends on the public-intake slot having an occupant, not on Parlay's flag.
  for(const config of [CONFIG,{...CONFIG,BINDLEBOX_ENABLED:'false'},{...CONFIG,LINKS_ENABLED:'false'}])assert.equal(bridgeConfig(config).enabled,true);
  for(const name of ['bridge.receive','bridge.admit','bridge.drain','bridge.accepted','bridge.reply-outcome','bridge.settings','bridge.configure','bridge.status','bridge.suppress'])assert.ok(BRIDGE_OPERATIONS[name],name);
 });

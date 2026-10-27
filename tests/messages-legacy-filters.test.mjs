@@ -19,14 +19,14 @@ async function controller(indexed){
   {...base,id:'00000003',receivedAt:3},// legacy shape: neither readAt nor quarantined stored
   {...base,id:'00000004',receivedAt:2,readAt:9},
  ];
- await c.store.transaction(async tx=>{for(const row of rows)await tx.set(key('message',owner,row.id),row);});
+ await c.store.transaction(async tx=>{for(const row of rows)await tx.set(key('app-message',owner,row.id),row);});
  return {c,db,collection};
 }
 for(const indexed of [true,false])test(`legacy filters normalize missing fields and keep [] for wrong types (${indexed?'SQL index':'scan fallback'})`,async()=>{
  const {c,db,collection}=await controller(indexed);
  try{
   if(indexed)assert.equal(await db.get('item-index-ready'),true);else assert.equal(c.itemIndex,null);
-  const ids=async filter=>(await c.messages.list(owner,filter)).map(m=>m.id);
+  const ids=async filter=>(await c.items.list(owner,filter)).map(m=>m.id);
   assert.deepEqual(await ids({}),['00000001','00000002','00000003','00000004']);
   // A missing readAt is unread, exactly like readAt:null.
   assert.deepEqual(await ids({unread:true}),['00000001','00000003']);
@@ -36,10 +36,10 @@ for(const indexed of [true,false])test(`legacy filters normalize missing fields 
   assert.deepEqual(await ids({quarantined:true}),['00000002']);
   assert.deepEqual(await ids({collection,unread:true,quarantined:false}),['00000001','00000003']);
   // Wrong-typed filters match nothing; they never fault the legacy array.
-  for(const filter of [{unread:'true'},{unread:1},{quarantined:'false'},{collection:7},{collection:'x'.repeat(201)},{collection,unread:null}])assert.deepEqual(await c.messages.list(owner,filter),[],JSON.stringify(filter).slice(0,60));
+  for(const filter of [{unread:'true'},{unread:1},{quarantined:'false'},{collection:7},{collection:'x'.repeat(201)},{collection,unread:null}])assert.deepEqual(await c.items.list(owner,filter),[],JSON.stringify(filter).slice(0,60));
   // The legacy array has no cursor contract: a stray cursor is ignored rather than decoded.
   assert.deepEqual(await ids({cursor:'not-a-cursor'}),['00000001','00000002','00000003','00000004']);
-  await assert.rejects(c.messages.list(owner,{limit:0}),{code:'invalid_limit'});
+  await assert.rejects(c.items.list(owner,{limit:0}),{code:'invalid_limit'});
  }finally{await c.engine.dispose();db.close();}
 });
 test('the v2 message page keeps rejecting wrong-typed filters',async()=>{

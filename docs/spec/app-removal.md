@@ -74,7 +74,7 @@ The revocation commit is one local transaction in the entity's single writer. It
 | Slot occupancy | The connection is vacated from every slot (§9.1). |
 | Provider consumers of the app's resources | Disabled for those resources (extensions §5.3). |
 | Resources the app contributed ([resource contributions](resource-contributions.md)) | `withdrawn`. |
-| Key delegations and other provider-certified purposes for the app | Revoked; their status endpoints answer `revoked` (cascade, drained after the commit). Status answers already cached by verifiers stay valid for at most the status window (BindleBox §3.4, 300 s), which counts toward `access_ends_by` (§4.3, RR1-M4). |
+| Key delegations and other provider-certified purposes for the app | Revoked; their status endpoints answer `revoked` (cascade, drained after the commit). Status answers already cached by verifiers stay valid for at most the status window (Parlay §3.4, 300 s), which counts toward `access_ends_by` (§4.3, RR1-M4). |
 | Event-bus subscriptions, doorbells and publish or read grants | Deleted ([events §8](events.md#8-revocation-and-lifecycle)). |
 | App notification channels and activity posting rights | Disabled. |
 | Member context of the app at an organization entity ([organizations §7](organizations.md#7-member-context-for-applications)) | Refused from the commit: the organization's provider rejects every member-certificate presentation naming this `client`. Member certificates are issued by members' home providers, not by this provider, so they are not revoked; they simply stop being accepted here (RR1-M4). |

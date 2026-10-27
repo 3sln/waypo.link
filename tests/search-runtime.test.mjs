@@ -13,7 +13,7 @@ const create = async (config = {}) => {
   const blobs = { get: async () => ({ size: bytes.length, arrayBuffer: async () => bytes.buffer.slice(0) }), delete: async () => {} };
   const controller = new AccountController({ metadata, sql: metadata.sql, gate: new SerialGate(), blobs, archives: { get: async () => null }, config: { APP_ORIGIN: 'https://app.example', LOCAL_DEVELOPMENT: 'true', BILLING_ENABLED: 'false', ...config } });
   const message = { id, owner, collection: 'inbox', mimeType: 'text/plain', receivedAt: Date.now(), readAt: null, size: bytes.length, tags: ['work'], classification: 'work', quarantined: false, blobRef: 'body', revision: 1 };
-  await metadata.put(key('message', owner, id), message); controller.itemIndex.upsert(message);
+  await metadata.put(key('app-message', owner, id), message); controller.itemIndex.upsert(message);
   await metadata.put('owner', owner); await metadata.put('lastOwnerActiveAt', Date.now());
   // Semantic admission needs a paid plan or a 7-day-old account (DEVLOG 2026-10-23); this fixture is an established free account.
   await metadata.put('account/created-at', Date.now() - 8 * 86400000);
@@ -25,7 +25,7 @@ test('runtime search never treats a stale item catalog as source authority after
   try {
     await controller.search.ingest({ owner, id: `message:${id}`, revision: 1, operation: 'upsert' });
     assert.equal((await controller.search.search(owner, { text: 'Violet' })).items.length, 1);
-    await metadata.delete(key('message', owner, id));
+    await metadata.delete(key('app-message', owner, id));
     assert.ok(controller.itemIndex.get(id)); // Deliberately stale derived projection.
     assert.deepEqual((await controller.search.search(owner, { text: 'Violet' })).items, []);
     // A new service/controller must still refuse the old indexed content.
@@ -38,7 +38,7 @@ test('shelved authority does not convert queued upserts into deletion tombstones
   const { metadata, controller } = await create();
   try {
     await metadata.transaction(tx => enqueueSearchEvent(tx, { owner, id: `message:${id}`, source: { kind: 'message', id }, revision: 1 }));
-    await metadata.delete(key('message', owner, id)); await metadata.put('shelved', true);
+    await metadata.delete(key('app-message', owner, id)); await metadata.put('shelved', true);
     await controller.alarm();
     const pending = await controller.searchOutbox.peek(owner, 10);
     assert.equal(pending.length, 1); assert.equal(pending[0].operation, 'upsert');
@@ -76,7 +76,7 @@ test('large legacy catalogs and search backfill advance on bounded alarms withou
     await metadata.transaction(async tx => {
       for(let index=0;index<450;index++){
         const messageId=`bbbbbbbb-bbbb-4bbb-8bbb-${index.toString(16).padStart(12,'0')}`;
-        await tx.put(key('message',owner,messageId),{...message,id:messageId});
+        await tx.put(key('app-message',owner,messageId),{...message,id:messageId});
       }
     });
     await controller.warm(owner);

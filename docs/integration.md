@@ -2,7 +2,7 @@
 
 Bindle is an open implementation draft for identity, preference fragments and resource contracts. The current repository contains a working local identity/messaging application; federated OAuth login and general fragment consent are not yet a released interoperability service. Production publication is gated by release-status.json.
 
-Start with [the protocol](spec/protocol.md), [authentication](spec/auth.md), [baseline contracts](spec/contracts.md), [object storage](spec/storage.md), [contact endpoints](spec/contact-tokens.md), [messaging](spec/messaging.md), and [device login](spec/device-login.md).
+Start with [the protocol](spec/protocol.md), [authentication](spec/auth.md), [baseline contracts](spec/contracts.md), [object storage](spec/storage.md), [links](spec/links.md), [messages from connected apps](spec/app-messages.md), and [device login](spec/device-login.md).
 
 ## App login
 
@@ -136,13 +136,13 @@ Resources have identifiers and exact contract URLs; a display name is not confor
 
 Storage capabilities describe read/write/range/presigning support. Object listing is absent; apps maintain directory/index objects. Do not assume every Google Drive, WebDAV or S3-compatible connection supports safe conditional writes. Object URLs are bearer capabilities for one object and operation. The result reports mode and revocation: native provider URLs can remain valid until expiry after grant revocation, while provider-proxy URLs perform live grant checks. Users approve temporary-link powers explicitly; callers must send the returned requiredHeaders and must not infer revocation behavior from the storage provider name.
 
-## Contact endpoints
+## Contact links
 
-The primary shared contact capability is a signed endpoint URL. HTML GET opens the host's composer, a token MIME Accept header yields a short-lived API bearer, and intentional multipart POST to the signed URL delivers a message. Signed URLs and returned bearers need safe handling and log redaction. MIME/size/count limits are live, revocable and separate from permission to read messages. Delivery tags are not part of the signed link: each link has revisioned, owner-editable server-side intake configuration (automatic tags and a sender-selectable optional allowlist), and a side-effect-free metadata request to the link reports the accepted optional tags, intake revision and limits. Legacy `?sig=` endpoints seed intake from their signed tags. Every link delivery needs a verified author proof; anonymous submission is refused with `author_required`. See [links](spec/links.md). Raw sender annotations grant no authority. Legacy collection restrictions remain enforced for compatibility; they are not configurable Views.
+A contact link is a signed capability URL on the owner's provider ([links](spec/links.md)). Since 2026-10-27 the reference host keeps only the generic link plumbing: issuance through the links contract by the owner's messaging app, verification, the landing page with its preview and handoff, the contact-profile representation and the messaging-address descriptor. Peer messaging itself (composer, intake, delivery, conversations, saved contacts) is the job of a messaging app that occupies the messaging-ingress slot, such as Parlay; its interop profile is the draft Bindle Messaging extension. Signed URLs need safe handling and log redaction.
 
-## Messages, conversations and Views
+## App messages and Views
 
-The user-facing model is one logical store of messages and conversations. Saved Views filter that store by metadata; an item can appear in multiple Views without duplicate storage. Renaming or deleting a View does not modify retained messages. Views never determine app permissions, and changing their filters cannot expand a resource grant. The owner-facing `/api/views` and `/api/incoming` implementation is separate from the existing scoped app/MCP APIs; it is not yet a new published Bindle RPC contract. See [messaging](spec/messaging.md) for the implemented boundary.
+Messages from connected apps ([app messages](spec/app-messages.md)) live in the owner's activity store. Saved Views filter that store by metadata; an item can appear in multiple Views without duplicate storage. Renaming or deleting a View does not modify retained items. Views never determine app permissions, and changing their filters cannot expand a resource grant. The owner-facing `/api/views` and `/api/incoming` implementation is separate from the existing scoped app/MCP APIs; it is not a published Bindle RPC contract.
 
 ## Self-hosting and extension
 

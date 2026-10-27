@@ -4,7 +4,9 @@ import { mkdtemp,rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createNodeServer } from '../apps/node/server.mjs';
-import { injectPreview,oembed,contactIntent,canonicalContactLink,BINDLE_INTENT_SCHEME } from '../packages/runtime/contact-preview.mjs';
+import { injectPreview,oembed,contactIntent,canonicalContactLink,BINDLE_INTENT_SCHEME } from '../packages/links/preview.mjs';
+import { linkService } from '../packages/runtime/account/links.mjs';
+import { MESSAGING_CONTACT_LINK_TYPE } from '../packages/links/types.mjs';
 
 // Default HTML representation of contact links: previews, intents and robots (real Node adapter).
 const origin='http://localhost:8793';
@@ -16,12 +18,13 @@ test.before(async()=>{
  const signup=await post('/api/auth/signup',{method:'password',password:'Private preview account password!',ageConfirmed:18,termsAccepted:true,termsVersion:'2026-10-11',turnstileToken:'local-browser-test-token'}),pending=await signup.json(),setup={Cookie:signup.headers.get('Set-Cookie').split(';')[0]};
  const recovery=await (await post('/api/auth/recovery/download',{pendingToken:pending.pendingToken},setup)).json(),active=await post('/api/auth/recovery/confirm',{pendingToken:pending.pendingToken,recoveryToken:recovery.recoveryToken,downloadConfirmed:true},setup);
  const session=await active.json(),headers={Origin:origin,Cookie:active.headers.getSetCookie().find(c=>c.startsWith('bindle_session=')).split(';')[0],'X-CSRF-Token':session.csrfToken};
- owner={id:session.account.id,call:(path,value,method='POST')=>fetchURL(path,{method,headers:{...headers,...value===undefined?{}:{'Content-Type':'application/json'}},...value===undefined?{}:{body:JSON.stringify(value)}})};
+ owner={id:session.account.id,handle:session.account.handle,call:(path,value,method='POST')=>fetchURL(path,{method,headers:{...headers,...value===undefined?{}:{'Content-Type':'application/json'}},...value===undefined?{}:{body:JSON.stringify(value)}})};
 });
 test.after(async()=>{await app?.close();if(directory)await rm(directory,{recursive:true,force:true});});
 const html=async(url,status=200)=>{const response=await fetchURL(url,{headers:{Accept:'text/html'}});assert.equal(response.status,status);return {response,text:await response.text()};};
 const metaContent=(text,name)=>new RegExp(`<meta (?:property|name)="${name}" content="([^"]*)">`).exec(text)?.[1];
-const link=async(extra={})=>(await (await owner.call('/api/contact-links',{name:'Preview',mimeTypes:['text/plain'],expiresAt:Date.now()+86400000,maxMessages:5,maxMessageBytes:4096,...extra})).json());
+// Contact parents through the core links service (legacy /api/contact-links left the core with messaging on 2026-10-27).
+const link=async({expiresAt=Date.now()+86400000,audience}={})=>{const r=await linkService(app.resources.accounts.get(owner.id)).issue(owner.id,{type:MESSAGING_CONTACT_LINK_TYPE,claims:{resource:'contact',kinds:['one-off'],mimeTypes:['text/plain'],maxMessages:5,maxBytes:65536,maxMessageBytes:4096},expiresAt,...audience?{audience}:{},handle:owner.handle});return {url:r.link,id:r.jti};};
 
 test('generic card for links without profile disclosure: robots, Open Graph, oEmbed discovery and both web+bindle intents; unrelated params never reflected',async()=>{
  const issued=await link(),before=JSON.stringify([...await app.resources.accounts.get(owner.id).metadata.list()]);
@@ -45,7 +48,7 @@ test('owner-permitted profile appears escaped in the page, the previews and oEmb
 });
 
 test('revoked, expired, conditional-with-data and malformed links fall back to the generic card; oEmbed is link-only',async()=>{
- const issued=await link();await owner.call(`/api/contacts/${issued.id}`,undefined,'DELETE');
+ const issued=await link();await linkService(app.resources.accounts.get(owner.id)).revoke(owner.id,issued.id);
  const {text}=await html(issued.url,404);assert.equal(metaContent(text,'og:url'),origin);assert.equal(text.includes('data-bindle-intent'),false);assert.equal(text.includes('application/json+oembed'),false);
  const embedded=await (await fetchURL(`/oembed?format=json&url=${encodeURIComponent(issued.url)}`)).json();assert.equal(embedded.title,'Send a private message on 3sln.me');assert.equal(embedded.type,'link');assert.equal(embedded.thumbnail_url,origin+'/branding/3sln-avatar.png');
  assert.equal((await fetchURL(`/oembed?format=xml&url=${encodeURIComponent(issued.url)}`)).status,501);assert.equal((await fetchURL('/oembed?format=json')).status,400);assert.equal((await fetchURL('/oembed',{method:'POST'})).status,405);

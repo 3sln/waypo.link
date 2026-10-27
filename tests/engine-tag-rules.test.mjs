@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { createTestEngine, ownerActor, OTHER } from './helpers/app-engine.mjs';
 import { createScheduler, forEachSeed } from './helpers/chaos.mjs';
 import { TagRules, ReplaceRules, DeleteRule, RestoreDefaultRule, TagLabels, SetTagLabel } from '../packages/app/domains/tags.mjs';
-import { TAG_CATEGORIES } from '../packages/messaging/tags.mjs';
+import { TAG_CATEGORIES } from '../packages/core/tags.mjs';
 
 const BASE = Number(process.env.CHAOS_SEED ?? 1), actor = ownerActor();
 const custom = (id, tag = 'work') => ({ id, enabled: true, match: { tagsAll: [tag] }, actions: { addTags: ['reviewed'] } });

@@ -230,4 +230,4 @@ export function withOrganizationsSurface(render){return s=>{
  // ORG-12e: an open claim against an organization this person owns takes the whole screen until stopped or set aside.
  // A pending step-up shows the shell instead, which renders the step-up card the stop needs.
  if(!s.stepUp){const gate=claimInterstitial(s);if(gate)return gate;}
- const navigation=[...(s.navigation??[['inbox','inbox','Messages'],['contacts','link','Contact links'],['resources','storage','Resources'],['rules','rules','Rules'],['notifications','bell','Notifications'],['security','shield','Account & security'],['settings','rules','Preferences & shortcuts']]),['organizations','apps','Organizations']];return render({...s,navigation});};}
+ const navigation=[...(s.navigation??[['inbox','inbox','Messages'],['resources','storage','Resources'],['rules','rules','Rules'],['notifications','bell','Notifications'],['security','shield','Account & security'],['settings','rules','Preferences & shortcuts']]),['organizations','apps','Organizations']];return render({...s,navigation});};}

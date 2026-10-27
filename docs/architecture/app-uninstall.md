@@ -20,7 +20,7 @@ Relayed by the coordinator; recorded here as the user's direction. DEVLOG sign-o
 | UD-2 | **Settings kept.** The app's saved settings stay after removal, with delete offered in "What's left". Answers open question 3. |
 | UD-3 | **`subject-deleted` is not sent to apps already removed.** Answers open question 4. |
 
-Related decisions already recorded: Parley is a regular app that stores data in the user's object-storage resource, and must purge its own hot state on the standard signal (DEVLOG 2026-10-22, R1-M12 gap). Disconnect, severance and revocation are always available regardless of flags ([feature flags](feature-flags.md)).
+Related decisions already recorded: Parlay is a regular app that stores data in the user's object-storage resource, and must purge its own hot state on the standard signal (DEVLOG 2026-10-22, R1-M12 gap). Disconnect, severance and revocation are always available regardless of flags ([feature flags](feature-flags.md)).
 
 ## 2. Decisions
 
@@ -51,7 +51,7 @@ Related decisions already recorded: Parley is a regular app that stores data in 
 | Account deletion E2–E4 ([account deletion](account-deletion-export.md#23-execution-order-and-crash-safety)) | E2 severs, E4 drains outboxes up to 72 h. §2.4 says integrations get severance "with `reason:'account-deleted'`", but the SET wire has no reason member. | `subject-deleted` closes that gap without adding a reason to `connection-revoked`. |
 | Suppressions (`packages/federation/suppression.mjs`) | Keyed by entity and app principal. | None: survive by construction. Confirm the access view stays reachable after removal. |
 | Storage | No per-object producer attribution. The contract has no `list`. | Remaining-data view needs a ledger (§6.3). |
-| Parley/BindleBox | Marks its authorization inactive on `connection-revoked`, keeps the MailboxObject. | Must purge on `subject-deleted` (§7.4). |
+| Parlay/Parlay | Marks its authorization inactive on `connection-revoked`, keeps the MailboxObject. | Must purge on `subject-deleted` (§7.4). |
 
 ## 4. Why a manifest member and not an intent kind
 
@@ -221,15 +221,15 @@ Members' data held in the organization's resources stays the organization's.
 
 A member's account deletion ends the membership, which sends `member-removed` to organization integrations holding member context. It never sends `subject-deleted` for the organization. Deleting the organization entity sends `subject-deleted` to the organization's connections once organization deletion exists.
 
-### 7.4 Parley (acceptance criteria)
+### 7.4 Parlay (acceptance criteria)
 
-Parley keeps hot state in its per-user MailboxObject: metadata, receipts, replay frontiers, outbox and obligations, peer sets, Views and rules, the encrypted delegate key, and up to 64 MiB of bodies while storage is unavailable ([messaging app](messaging-app.md)). Before `BINDLEBOX_ENABLED`:
+Parlay keeps hot state in its per-user MailboxObject: metadata, receipts, replay frontiers, outbox and obligations, peer sets, Views and rules, the encrypted delegate key, and up to 64 MiB of bodies while storage is unavailable ([messaging app](messaging-app.md)). Before `PARLAY_ENABLED`:
 
-1. **Subject deleted.** On a verified `subject-deleted` SET, Parley deletes that user's MailboxObject state (`deleteAll`), cancels its alarms and drops pending obligations without sending. Engine test: after the event, the MailboxObject holds no keys for the subject within one alarm cycle.
+1. **Subject deleted.** On a verified `subject-deleted` SET, Parlay deletes that user's MailboxObject state (`deleteAll`), cancels its alarms and drops pending obligations without sending. Engine test: after the event, the MailboxObject holds no keys for the subject within one alarm cycle.
 2. **Idempotent and silent.** A redelivered SET is answered 202 with no work. A SET for an unknown subject is answered 202 with no fetch, in the same response class.
-3. **No storage writes.** Parley never tries to delete objects under `bindlebox/v1/` after revocation. Hosted storage is deleted by the provider; external storage stays the user's.
-4. **Clean removal page.** Parley declares `removal`, with options "Keep my archive in my storage" (default), "Delete Parley's files from my storage" (deletes the `bindlebox/v1/` prefix it indexed), and "Download an export". Then it purges its MailboxObject and returns `completed` with a result.
-5. **Force removal.** On `connection-revoked` with `terminal: true`, Parley stops processing and purges MailboxObject state for generations below the floor within 30 days, unless a reconnect with a higher generation arrives first.
+3. **No storage writes.** Parlay never tries to delete objects under `parlay/v1/` after revocation. Hosted storage is deleted by the provider; external storage stays the user's.
+4. **Clean removal page.** Parlay declares `removal`, with options "Keep my archive in my storage" (default), "Delete Parlay's files from my storage" (deletes the `parlay/v1/` prefix it indexed), and "Download an export". Then it purges its MailboxObject and returns `completed` with a result.
+5. **Force removal.** On `connection-revoked` with `terminal: true`, Parlay stops processing and purges MailboxObject state for generations below the floor within 30 days, unless a reconnect with a higher generation arrives first.
 
 ### 7.5 Identity portability
 
@@ -254,7 +254,7 @@ If the source's post-redirect cleanup reuses the deletion executor (`purgeBatch`
 
 ### 7.6 Reinstall
 
-While a removal is open the app's logins are ordinary (UD-1); only a second connection for the same client is refused, as always. After the commit: a new generation, fresh consent, suppressions kept, leftover settings and files usable again only through new grants. Parley's archive root pointer survives in the owner's preference values, so a reinstall can find the archive once storage access is granted again.
+While a removal is open the app's logins are ordinary (UD-1); only a second connection for the same client is refused, as always. After the commit: a new generation, fresh consent, suppressions kept, leftover settings and files usable again only through new grants. Parlay's archive root pointer survives in the owner's preference values, so a reinstall can find the archive once storage access is granted again.
 
 ## 8. Threat model
 
@@ -285,7 +285,7 @@ All slices run `npm test`. UI slices add DOM and browser verification. Owners ar
 **Local implementation status, 2026-10-22 (AU workstream; unsigned).** AU-S1–AU-S5 now have wire codecs,
 engine Actions/Queries, the transactional revocation and durable federation cascade, owner/front/back-channel
 API routes, purpose-separated signing and durable assertion replay protection, and subject-deletion enqueue/delivery.
-The account alarm records the three reminder notices without changing authority. Parley's AU-S9 obligations 1–5
+The account alarm records the three reminder notices without changing authority. Parlay's AU-S9 obligations 1–5
 have local purge/cleanup operations and a removal page; archive delete/export choices require configured live-grant
 service ports and are hidden otherwise. No external cleanup service or production conformance is claimed.
 
@@ -340,10 +340,10 @@ Validation is recorded with the AU-2 handoff; the prior pass's counts below are 
 The clean-removal flag does not retain enrollment: pending records, reminders and reversal operations explicitly
 ignore it, including an env kill. Organization entities are refused; the tested policy hook describes the 24 h delay.
 Local validation: core 2,605 passed; Worker 80 passed; UI-state 292 passed; DOM smoke passed; asset build and
-Worker dry run passed; full e2e 214 passed with 4 WebKit skips; Parley removal page Chromium/Firefox 2 passed.
+Worker dry run passed; full e2e 214 passed with 4 WebKit skips; Parlay removal page Chromium/Firefox 2 passed.
 Focused coverage includes wire/route admission, durable nonce replay, commit rollback, flags-off revocation,
-removal/completion/force/reconnect/deletion schedules and Parley terminal-purge/reconnect schedules. Initial gate
-failures from an incomplete concurrent asset snapshot, an in-flight Parley provider/binding edit and a concurrent
+removal/completion/force/reconnect/deletion schedules and Parlay terminal-purge/reconnect schedules. Initial gate
+failures from an incomplete concurrent asset snapshot, an in-flight Parlay provider/binding edit and a concurrent
 identity-file syntax edit were resolved or rerun; no portability source was edited by this workstream.
 These are implementation notes, not reviewer or user sign-off. Reviewer ___ / date ___ / outcome ___.
 
@@ -358,7 +358,7 @@ These are implementation notes, not reviewer or user sign-off. Reviewer ___ / da
 | AU-S6 | Producer summary (aggregates) and the "What's left" query and actions | `packages/storage/producer-summary.mjs`, a write hook in the hosted and gateway adapters, export inclusion, `tests/engine-producer-summary.test.mjs` | AU-S2 |
 | AU-S7 | Console UX: Remove dialog, open-removal row, return page, What's left, activity entries | `apps/web/src/bl/app-removal.mjs`, `apps/web/src/ui/connections/removal*.mjs`, `tests/browser/app-removal.*` | AU-S4, AU-S6 |
 | AU-S8 | Fixture app and conformance: an app with a removal page, both channels, stalling and malicious modes | `tests/fixtures/removal-app.mjs`, `tests/app-removal-conformance.test.mjs` | AU-S4 |
-| AU-S9 | Parley purge handler and removal page (§7.4) | Owned by the messaging-app agent, in Parley's package | AU-S5, AU-S8 |
+| AU-S9 | Parlay purge handler and removal page (§7.4) | Owned by the messaging-app agent, in Parlay's package | AU-S5, AU-S8 |
 | AU-S10 | Privacy and deletion-doc wording (§10) | `docs/legal/privacy.md`, `docs/architecture/account-deletion-export.md` §2.4 (coordinator or legal owner) | — |
 
 AU-S1 and AU-S5 can start at once. AU-S5 does not depend on clean removal.
@@ -435,9 +435,9 @@ Independent adversarial review, 2026-10-22, of revision 1 of this note and of th
 
 ### High
 
-**RR1-H1. `subject-deleted` would reach nobody for inactivity purges and admin closures.** *Scenario:* an account is frozen for inactivity. `lifecycle-runner.mjs:125` calls `connectionsSeverAccount(…'lifecycle-frozen')`, and `#severAllTx` (`apps/connections.mjs`) sets every connection to `disconnected` with a terminal revocation. Months later the purge reaches E2. Spec §8.2 sent the event only to connections "not `disconnected` at the deletion's severance commit", which is now the empty set. Admin closure does the same at `identity/admin.mjs:278`. Two of the three deletion bases the spec promises would never signal, and Parley's MailboxObject (R1-M12) would survive. *Fix (applied):* recipients are connections live when account-level severance began, including those the provider severed for account suspension, freeze or closure in the same lifecycle; tombstones record that reason (spec §8.2, AR-2, AU-S5). Removed apps stay excluded (UD-3).
+**RR1-H1. `subject-deleted` would reach nobody for inactivity purges and admin closures.** *Scenario:* an account is frozen for inactivity. `lifecycle-runner.mjs:125` calls `connectionsSeverAccount(…'lifecycle-frozen')`, and `#severAllTx` (`apps/connections.mjs`) sets every connection to `disconnected` with a terminal revocation. Months later the purge reaches E2. Spec §8.2 sent the event only to connections "not `disconnected` at the deletion's severance commit", which is now the empty set. Admin closure does the same at `identity/admin.mjs:278`. Two of the three deletion bases the spec promises would never signal, and Parlay's MailboxObject (R1-M12) would survive. *Fix (applied):* recipients are connections live when account-level severance began, including those the provider severed for account suspension, freeze or closure in the same lifecycle; tombstones record that reason (spec §8.2, AR-2, AU-S5). Removed apps stay excluded (UD-3).
 
-**RR1-H2. The cleanup period let the app take in new data and act as the owner. Re-assessed under UD-1: accepted, with disclosure.** *Scenario (revision 1):* during a 24-hour window Parley stays the messaging-ingress occupant, so new incoming mail keeps flowing to it. It keeps its delegate key and can author messages as the user, and it keeps posting notifications. None of that is cleanup. Under UD-1 the app now also keeps gaining grants with no end, for as long as the owner does not act. The user chose this explicitly ("Until then the app operates normally"), and the exposure equals what existed before removal was requested. A stopgap considered here (pausing slot dispatch, provider consumers and delegation renewal) is withdrawn as contrary to UD-1. *Fix (applied):* force removal always available and primary after the reminder (spec §5, §6.7); consent and grant-more pages for the app say a removal is pending, with ⟦Remove now⟧ beside the approval (spec §6.4; open question 2); reminders at `cleanup_by`, +24 h and +7 days. *Revision 3:* the consent-page line adopted (Provisional (coordinator), not signed off by the user, AU-14). *Residual:* an owner who ignores the badge leaves the app fully authorized indefinitely.
+**RR1-H2. The cleanup period let the app take in new data and act as the owner. Re-assessed under UD-1: accepted, with disclosure.** *Scenario (revision 1):* during a 24-hour window Parlay stays the messaging-ingress occupant, so new incoming mail keeps flowing to it. It keeps its delegate key and can author messages as the user, and it keeps posting notifications. None of that is cleanup. Under UD-1 the app now also keeps gaining grants with no end, for as long as the owner does not act. The user chose this explicitly ("Until then the app operates normally"), and the exposure equals what existed before removal was requested. A stopgap considered here (pausing slot dispatch, provider consumers and delegation renewal) is withdrawn as contrary to UD-1. *Fix (applied):* force removal always available and primary after the reminder (spec §5, §6.7); consent and grant-more pages for the app say a removal is pending, with ⟦Remove now⟧ beside the approval (spec §6.4; open question 2); reminders at `cleanup_by`, +24 h and +7 days. *Revision 3:* the consent-page line adopted (Provisional (coordinator), not signed off by the user, AU-14). *Residual:* an owner who ignores the badge leaves the app fully authorized indefinitely.
 
 **RR1-H3. Organization clean removal: one admin can trigger app-side destruction of organization data, and a leaked request opens the destructive page for any member.** *Scenario:* a compromised admin account starts clean removal of the ERP and picks "delete all records" at erp.example, which acts with the ERP's organization-wide credentials. ORG-D10 says critical actions are delayed and notified, but §7.3 treated this as an ordinary non-GM change. Separately, spec §6.3 step 7 asked the app to check the session "is for `sub`", but for an organization `sub` is the organization, so any member with a member-context session at the ERP who obtains the request URL (shared screen, chat paste, history) passes. *Fix (applied in part):* `bindle.actor` in the request; the app requires a member-context session for exactly that member and applies its own authorization (spec §6.2, §6.3, §9.6). Clean start is a provider-policy critical action; 3sln.me proposal is second-admin approval or a 24-hour notified delay (§7.3, AR-11). Force removal stays immediate. *Open:* the gate itself (open question 1). *Revision 3:* a 24 h notified delay to admins (Provisional (coordinator), not signed off by the user, AU-13).
 
@@ -445,7 +445,7 @@ Independent adversarial review, 2026-10-22, of revision 1 of this note and of th
 
 **RR1-M1. `subject-deleted` arrived while brokered tokens were still live.** *Scenario:* E2 severs and enqueues the event; E4 dispatches it within seconds. A brokered read token minted a minute earlier is valid for up to 300 s plus leeway at a third-party, read-only hosting integration that does not introspect (integrations §5.3, AMD-C8). The app, now told the user is gone, can do a last read sweep there. Data at external storage is not wiped by deletion anyway, so the harm is limited, but spec §8.2's "cannot act on it with live credentials" was false. *Fix (applied):* do not dispatch before the latest `access_ends_by` (spec §8.2, §5.5).
 
-**RR1-M2. Users stranded mid-export.** *Scenario (revision 1):* the user picks "Download an export" at Parley; the export streams from storage with Parley's tokens; the deadline auto-revokes at minute 15 and the export breaks halfway, with "expired" shown. UD-1 removes the deadline, but two paths remained: a public app's `in-progress` was treated as `completed` (immediate revocation), and an app could return `completed` before its reads finished. *Fix (applied):* `in-progress` keeps the removal open for every app; apps must finish dependent reads before `completed` (spec §6.4, §6.5, §6.7); forcing during a pending cleanup discloses that cleanup may be interrupted (spec §7.1).
+**RR1-M2. Users stranded mid-export.** *Scenario (revision 1):* the user picks "Download an export" at Parlay; the export streams from storage with Parlay's tokens; the deadline auto-revokes at minute 15 and the export breaks halfway, with "expired" shown. UD-1 removes the deadline, but two paths remained: a public app's `in-progress` was treated as `completed` (immediate revocation), and an app could return `completed` before its reads finished. *Fix (applied):* `in-progress` keeps the removal open for every app; apps must finish dependent reads before `completed` (spec §6.4, §6.5, §6.7); forcing during a pending cleanup discloses that cleanup may be interrupted (spec §7.1).
 
 **RR1-M3. Forged front-channel returns.** *Scenario:* the removal id travels in the readable JWS payload of `removal_request`. Analytics or session-replay scripts on the app's removal page capture the full URL before it is scrubbed. Whoever holds the id can make the owner's browser load `return_uri?removal=…&outcome=completed&result=…` from any page. The GET is top-level, so SameSite=Lax cookies are sent. That commits early and attaches the attacker's text, attributed to the app. Under UD-1 this cuts short a long-running cleanup the owner is waiting for. *Fix (applied):* bind returns to the starting browser with a `__Host-` cookie, and have an unbound return ask the owner before committing (spec §6.5). The app itself can always end its own cleanup; that is inherent.
 
@@ -453,7 +453,7 @@ Independent adversarial review, 2026-10-22, of revision 1 of this note and of th
 
 **RR1-M5. Clean removal from `suspended` re-armed the app, now indefinitely.** *Scenario:* the owner, or an operator after a client breach, suspends an app, then picks "clean up first". Revision 1 restored authority for the window; under UD-1 that becomes until completion or force. *Fix (applied):* clean removal is not offered from a security suspension; from an owner suspension, start is a disclosed resume (spec §6.1, §6.9).
 
-**RR1-M6. Receivers that drop the connection on terminal revocation can never match `subject-deleted`.** *Scenario:* the normal order is `connection-revoked` (terminal) then `subject-deleted`. An app that deletes its connection row on the first, but keeps user data keyed by (`iss`, `sub`), sees an unknown connection on the second and, per §8.3, answers 202 without processing. *Fix (applied):* receivers resolve by (`iss`, `sub`) and keep that mapping for 30 days (spec §8.3). Parley's §7.4 item 5 is consistent with this.
+**RR1-M6. Receivers that drop the connection on terminal revocation can never match `subject-deleted`.** *Scenario:* the normal order is `connection-revoked` (terminal) then `subject-deleted`. An app that deletes its connection row on the first, but keeps user data keyed by (`iss`, `sub`), sees an unknown connection on the second and, per §8.3, answers 202 without processing. *Fix (applied):* receivers resolve by (`iss`, `sub`) and keep that mapping for 30 days (spec §8.3). Parlay's §7.4 item 5 is consistent with this.
 
 **RR1-M7. The producer ledger cost a write per object and created a file-name log per app.** *Scenario:* every gateway put, including Drive and Dropbox writes that today never touch the account store (`storage/providers.mjs`), would add a durable row `{resource, key, client_id, …}`. That is a new hot-path write serialized in the owner's single writer, and a new record of file names linked to apps, missing from privacy §8 and the export. *Fix (applied):* aggregates per (resource, producer site, top-level prefix), flushed at most once a minute or every 64 writes, bounded, with no keys stored, included in the export and listed in the privacy text. Deletion lists the prefix with the adapters' internal `list` (§6.3, §10, AU-S6).
 

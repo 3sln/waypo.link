@@ -51,7 +51,7 @@ function rawReads(source){const list=tokens(source),reads=[];for(let i=0;i<list.
  // Binding patterns: const {FLAG[: alias]} = env (including nested patterns).
  if(['const','let','var'].includes(v)&&next==='{'){let end=i+1,depth=0;do{if(list[end].value==='{')depth++;if(list[end].value==='}')depth--;end++;}while(end<list.length&&depth);if(list[end]?.value==='=')for(let j=i+2;j<end-1;j++)if(names.has(list[j].value))reads.push({name:list[j].value,at:list[j].at});}
  }return reads.map(r=>({...r,line:source.slice(0,r.at).split('\n').length}));}
-async function sources(dir){const files=[];for(const entry of await readdir(new URL('../'+dir+'/',import.meta.url),{withFileTypes:true})){const path=dir+'/'+entry.name;if(path==='apps/bindlebox'||path.startsWith('packages/bindlebox-'))continue;if(entry.isDirectory())files.push(...await sources(path));else if(/\.[cm]?js$/.test(path)&&!path.endsWith('.test.mjs'))files.push(path);}return files;}
+async function sources(dir){const files=[];for(const entry of await readdir(new URL('../'+dir+'/',import.meta.url),{withFileTypes:true})){const path=dir+'/'+entry.name;if(path==='apps/parlay'||/^packages\/messaging-(engine|protocol)\//.test(path))continue;if(entry.isDirectory())files.push(...await sources(path));else if(/\.[cm]?js$/.test(path)&&!path.endsWith('.test.mjs'))files.push(path);}return files;}
 
 test('raw-env guard recognizes dot, optional, bracket and destructured reads, excludes writes/comments/strings',()=>{
  assert.equal(rawReads(`env.ACTIVITY_V2_ENABLED; config?.ACTIVITY_V2_ENABLED; env['ACTIVITY_V2_ENABLED']; const {ACTIVITY_V2_ENABLED: activity}=env;`).length,4);

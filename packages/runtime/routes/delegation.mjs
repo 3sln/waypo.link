@@ -1,5 +1,5 @@
 // FF-5a: legacy mount visibility is preserved; after console adoption owner reads/reversal ignore targeting.
-// HTTP routes of slice C3, key-delegation.v1 (docs/spec/bindlebox.md §3.4; messaging-extraction.md C3): the public
+// HTTP routes of slice C3, key-delegation.v1 (docs/spec/messaging.md §3.4; messaging-extraction.md C3): the public
 // delegation status endpoint receivers query, and owner views and revocation. Mounted only with LINKS_ENABLED;
 // with the flag off nothing here answers, so the paths stay 404 and no allowlist reveals them.
 //
@@ -46,7 +46,7 @@ export const stages={
   if(result.status!=='active'&&!Number.isSafeInteger(result.revokedHour))return answer(request,{error:'not_found'},404,{'Cache-Control':'no-store'});
   return answer(request,statusBody(result),200,{'Cache-Control':statusCacheControl(result)});
  },
- // Owner views and revocation (bindlebox §3.2: the owner can revoke any delegate key, a client's keys, or all).
+ // Owner views and revocation (messaging §3.2: the owner can revoke any delegate key, a client's keys, or all).
  async owner({request,env,path,object,id}){
   if(!flagReadable(env,'LINKS_ENABLED',true)||!path.startsWith('/api/delegations'))return;
   if(path==='/api/delegations'){const refused=only(request,'GET');if(refused)return refused;return json(await object.listDelegations(id));}

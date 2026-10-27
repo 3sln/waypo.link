@@ -55,7 +55,7 @@ test('a certificate has exactly the profile members, the member typ, the current
   const signing = await f.keys.current(ALICE, { purpose: 'signing' });
   assert.notEqual(signing.kid, parsed.header.kid); assert.equal(await verifyMemberSignature(parsed, signing.publicJwk), false);
   assert.equal(issued.status, `${ISSUER}/identity/${ALICE}/delegations/${key.jkt}`); assert.equal(issued.aep, 0);
-  // Domains differ from BindleBox's profile and PoP.
+  // Domains differ from Parlay's profile and PoP.
   assert.notEqual(MEMBER_CERTIFICATE_TYP, DELEGATION_TYP); assert.notEqual(MEMBER_POP_DOMAIN, POP_DOMAIN);
   assert.deepEqual(await f.status(key.jkt), { status: 'active', final: false });
   // A second issuance reuses the certification key (no churn); concurrent first uses keep exactly one key.
@@ -154,7 +154,7 @@ test('revocation: by consent, by key (an app only its own), all; status privacy;
   await f.issue(a); await f.issue(b); await f.issue(c, { actor: f.app(EVIL), client: EVIL });
   const view = await f.list();
   assert.equal(view.consents.length, 2); assert.deepEqual(view.consents.find(x => x.client.origin === ERP.origin).keys.map(k => k.jkt).sort(), [a.jkt, b.jkt].sort());
-  assert.ok(!JSON.stringify(view).includes('eyJ'), 'no certificate bytes in the owner view');
+  assert.doesNotMatch(JSON.stringify(view), /eyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]*\./, 'no certificate bytes (compact JWS) in the owner view; a bare eyJ can occur in random thumbprints');
   await assert.rejects(f.revokeKey({ jkt: c.jkt }, f.app(ERP)), code('not_found'), 'an app sees only its own keys');
   assert.deepEqual(await f.revokeKey({ jkt: b.jkt }, f.app(ERP)), { revoked: 1 });
   assert.equal((await f.status(b.jkt)).final, true);

@@ -1,6 +1,6 @@
-// The few wire helpers the provider bridge shares with the messaging spec (bindlebox.md §9). Core must not import
-// BindleBox packages (extraction import boundary), so these come from core modules or are restated here and pinned
-// against the BindleBox receiver by tests/email-bridge-handoff.test.mjs.
+// The few wire helpers the provider bridge shares with the messaging spec (messaging.md §9). Core must not import
+// Parlay packages (extraction import boundary), so these come from core modules or are restated here and pinned
+// against the Parlay receiver by tests/email-bridge-handoff.test.mjs.
 import {jcs} from '../links/author-proof.mjs';
 import {PUBLIC_INTAKE_SLOT,PUBLIC_INTAKE_CONTRACT} from '../links/types.mjs';
 export {jcs};

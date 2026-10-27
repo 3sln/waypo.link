@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {parseLinkQuery,parseLinkMeta,parseLinkData,strictJSON,metaDigest,verifyLinkSignature,replayDigest,LINK_LIMITS} from '../packages/messaging/bindle-links.mjs';
+import {parseLinkQuery,parseLinkMeta,parseLinkData,strictJSON,metaDigest,verifyLinkSignature,replayDigest,LINK_LIMITS} from '../packages/links/envelope.mjs';
 import {base64url} from '../packages/core/records.mjs';
 const vector=JSON.parse(readFileSync(new URL('../docs/architecture/artefacts/bindle-links.vectors.json',import.meta.url),'utf8'));
 const owner={alg:'ES256',publicJwk:vector.ownerPublicJwk},audience={alg:'ES256',publicJwk:vector.audiencePublicJwk};

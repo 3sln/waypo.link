@@ -1,4 +1,4 @@
-import {normalizeMessageForm,messageFormFingerprint} from '../../../../packages/messaging/form-policy.mjs';
+import {normalizeMessageForm,messageFormFingerprint} from '../../../../packages/content/form-policy.mjs';
 // This controller runs only in an opaque sandbox. No message markup is parsed
 // in the account document; all proposals require separate parent-side review.
 export async function frameController(normalizeMessageForm,messageFormFingerprint) {

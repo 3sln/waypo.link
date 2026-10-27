@@ -89,7 +89,7 @@ test('export end to end: create with step-up, alarm generation, HTTP download wi
  const controller=f.app.resources.accounts.get(owner),blobs=new FileBucket(join(f.directory,'blobs'));
  // A small (packed) and a large (streamed from BLOBS) message payload; the large one exercises the Node range reader.
  const small=new TextEncoder().encode('hello export'),large=Uint8Array.from({length:300*1024},(_,i)=>i%251);
- for(const [id,bytes] of [['m-small',small],['m-large',large]]){const ref=`messages/${owner}/${id}`;await blobs.put(ref,bytes);await controller.metadata.put(recordKey('message',owner,id),{id,owner,collection:'inbox',mimeType:'text/plain',size:bytes.length,receivedAt:Date.now(),blobRef:ref});}
+ for(const [id,bytes] of [['m-small',small],['m-large',large]]){const ref=`messages/${owner}/${id}`;await blobs.put(ref,bytes);await controller.metadata.put(recordKey('app-message',owner,id),{id,owner,collection:'inbox',mimeType:'text/plain',size:bytes.length,receivedAt:Date.now(),blobRef:ref});}
  const headers=f.as(body),post=(path,value,extra={})=>f.call(path,{jar,method:'POST',value,headers:{...headers,...extra}});
  // Creation needs a fresh step-up; without it the route refuses.
  {const refused=await post('/api/exports',{operationId:crypto.randomUUID()});assert.equal((await refused.json()).error,'step_up_required');}

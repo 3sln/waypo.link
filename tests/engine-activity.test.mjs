@@ -195,7 +195,7 @@ test('the v1 adapter qualifies legacy tags under the verified app without normal
  const row=activityFromAppMessage({id:p.id,owner:OWNER,readAt:null,appNotification:p});
  assert.deepEqual(row.tags.map(t=>[t.namespace,t.id??t.value]),[['app','receipt'],['app-legacy','Paid Plan'],['app-legacy','sys:spam']]);
  assert.equal(activityFromAppMessage({id:'x',owner:OWNER}),null,'unattributed messages are not app activity');
- await f.metadata.put(key('message',OWNER,p.id),{id:p.id,owner:OWNER,readAt:null,appNotification:p});
+ await f.metadata.put(key('app-message',OWNER,p.id),{id:p.id,owner:OWNER,readAt:null,appNotification:p});
  assert.deepEqual((await f.owner.legacy()).items.map(i=>i.id),[p.id]);
 });
 

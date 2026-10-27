@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { createTestEngine, OWNER, OTHER, ownerActor } from './helpers/app-engine.mjs';
 import { tally } from './helpers/chaos.mjs';
-import { ViewsProvider, SavedViews, CreateView, UpdateView, DeleteView, IncomingPage, UpdateIncoming } from '../packages/app/domains/views.mjs';
+import { ViewsProvider, SavedViews, CreateView, UpdateView, DeleteView, IncomingPage } from '../packages/app/domains/views.mjs';
 
 const definition = (name = 'Work', extra = {}) => ({ name, filter: { version: 1, tagsAll: ['work'] }, sort: 'activity-desc', ...extra });
 async function fixture(t, options) {
@@ -70,11 +70,11 @@ test('an operation ID cannot be replayed for a different definition, and distinc
 
 test('a retry at the View limit returns the original, and receipts stay bounded', async t => {
   const { e, create, custom } = await fixture(t), ids = [];
-  for (let i = 0; i < 61; i++) { const operationId = randomUUID(); ids.push(operationId); await e.perform(create(definition('View ' + i, { operationId }))); }
+  for (let i = 0; i < 62; i++) { const operationId = randomUUID(); ids.push(operationId); await e.perform(create(definition('View ' + i, { operationId }))); }
   const original = (await custom()).at(-1);
-  assert.deepEqual(await e.perform(create(definition('View 60', { operationId: ids.at(-1) }))), original);
+  assert.deepEqual(await e.perform(create(definition('View 61', { operationId: ids.at(-1) }))), original);
   await assert.rejects(e.perform(create(definition('Extra', { operationId: randomUUID() }))), { code: 'view_limit' });
-  assert.equal((await custom()).length, 61);
+  assert.equal((await custom()).length, 62);
   // Deleting and recreating churns receipts; only the most recent 64 are kept.
   const remove = view => e.perform(new DeleteView({ actor: ownerActor(), id: view.id, input: { expectedRevision: 1 } }));
   for (const view of await custom()) await remove(view);
@@ -119,13 +119,13 @@ test('mutations announce one fact each on the engine feed, and a live Views quer
   await e.perform(create(definition('Other owner'), OTHER));
   await new Promise(resolve => setTimeout(resolve, 5));
   assert.deepEqual(e.events.map(event => [event.type, event.operation, event.owner]), [['views-changed', 'views.create', OWNER], ['views-changed', 'views.update', OWNER], ['views-changed', 'views.create', OTHER]]);
-  // Built-ins (3), then the create; the update keeps the count; the other owner's fact is ignored.
-  assert.equal(seen[0], 3); assert.equal(seen.at(-1), 4);
+  // Built-ins (2), then the create; the update keeps the count; the other owner's fact is ignored.
+  assert.equal(seen[0], 2); assert.equal(seen.at(-1), 3);
   // One boot read plus one refetch per fact for this owner; the other owner's fact causes none.
   assert.deepEqual(reads.filter(owner => owner === OWNER).length, 3); assert.equal(reads.includes(OTHER), false);
 });
 
-test('incoming pages resolve saved Views through the co-transactional item index, and organization commits once', async t => {
+test('incoming pages resolve saved Views through the co-transactional item index', async t => {
   const { e, create } = await fixture(t);
   const message = i => ({ id: `m${i}`, owner: OWNER, receivedAt: 1000 + i, readAt: null, collection: 'inbox', tags: i % 2 ? ['work'] : [], classification: 'unclassified', mimeType: 'text/plain', size: 4 });
   for (let i = 0; i < 6; i++) e.itemIndex.upsert(message(i));
@@ -136,22 +136,9 @@ test('incoming pages resolve saved Views through the co-transactional item index
   assert.deepEqual([...page.items, ...rest.items].map(item => item.id).sort(), ['m1', 'm3', 'm5']);
   await assert.rejects(e.read(new IncomingPage({ actor: ownerActor(), input: { view: view.id, viewRevision: 2 } })), { code: 'view_conflict' });
   await assert.rejects(e.read(new IncomingPage({ actor: ownerActor(OTHER), input: { view: view.id, viewRevision: 1 } })), { code: 'view_not_found' });
-  // Conversation organization is validated before readiness and conflicts on a stale revision.
-  await assert.rejects(e.perform(new UpdateIncoming({ actor: ownerActor(), input: { id: 'm1', expectedRevision: 1, tags: ['x'] } })), { code: 'invalid_view' });
-  await assert.rejects(e.perform(new UpdateIncoming({ actor: ownerActor(), input: { id: 'conversation:missing', expectedRevision: 1, tags: ['x'] } })), { code: 'not_found' });
-  // Two owners' tabs organize one conversation from the same revision: exactly one commits.
-  e.itemIndex.upsert({ ...message(9), conversation: { id: 'c1', source: { origin: 'https://3sln.example', owner: OTHER } } });
-  const [card] = (await e.read(new IncomingPage({ actor: ownerActor(), input: { filter: { version: 1, types: ['conversation'] } } }))).items;
-  const organize = tags => new UpdateIncoming({ actor: ownerActor(), input: { id: card.id, expectedRevision: card.organizationRevision, tags } });
-  const results = await e.all([organize(['first']), organize(['second'])]);
-  assert.deepEqual(tally(results, () => 'saved'), { saved: 1, item_conflict: 1 });
-  const [after] = (await e.read(new IncomingPage({ actor: ownerActor(), input: { filter: { version: 1, types: ['conversation'] } } }))).items;
-  assert.deepEqual(after.tags, results.find(r => r.status === 'fulfilled').value.tags);
-  assert.equal(e.events.filter(event => event.type === 'incoming-changed').length, 1);
 });
 
 test('an index that is still upgrading answers temporarily_unavailable before resolving the View', async t => {
   const { e } = await fixture(t, { incomingReady: false });
   await assert.rejects(e.read(new IncomingPage({ actor: ownerActor(), input: { view: 'missing', viewRevision: 1 } })), { code: 'temporarily_unavailable', status: 503 });
-  await assert.rejects(e.perform(new UpdateIncoming({ actor: ownerActor(), input: { id: 'conversation:x', expectedRevision: 1, tags: [] } })), { code: 'temporarily_unavailable' });
 });

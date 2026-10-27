@@ -1,20 +1,21 @@
-// Core links: the link-type table (docs/architecture/messaging-extraction.md C1; docs/spec/bindlebox.md §4.2).
-// Core may not import BindleBox, so app link types are named here by URI. Each binding maps one link type to
+// Core links: the link-type table (docs/architecture/messaging-extraction.md C1; docs/spec/messaging.md §4.2).
+// Core may not import Parlay, so app link types are named here by URI. Each binding maps one link type to
 // the slot whose current occupant may issue, list, evaluate and revoke it through the links contract, plus the
-// exact type-specific meta member set the provider validates before signing. The legacy core contact type is
-// issued only by ContactEndpointService on `contact-grant` parents and has no app binding: no app may mint it.
+// exact type-specific meta member set the provider validates before signing. CONTACT_LINK_TYPE names the legacy core
+// contact type, whose issuer (ContactEndpointService on `contact-grant` parents) left the core with messaging on
+// 2026-10-27; it has no binding, so nothing mints or verifies it any more.
 import { boundedString, mimeValid } from '../core/records.mjs';
 
 export const CONTACT_LINK_TYPE = 'https://spec.bindle.example/links/contact/v1';
-// Placeholder identifiers under spec.bindle.example until publication authority is agreed (bindlebox-protocol/constants.mjs).
+// Placeholder identifiers under spec.bindle.example until publication authority is agreed (messaging-protocol/constants.mjs).
 export const MESSAGING_INGRESS_SLOT = 'https://spec.bindle.example/slots/messaging-ingress/v1';
-export const MESSAGING_CONTACT_LINK_TYPE = 'https://spec.bindle.example/bindlebox/v1/links/contact';
+export const MESSAGING_CONTACT_LINK_TYPE = 'https://spec.bindle.example/messaging/v1/links/contact';
 export const LINKS_CONTRACT = 'https://spec.bindle.example/contracts/links/v1';
 
 const KINDS = ['conversation-init', 'one-off'];
 const kindsValid = kinds => Array.isArray(kinds) && kinds.length > 0 && kinds.length <= KINDS.length && kinds.every((kind, i) => KINDS.includes(kind) && (i === 0 || kinds[i - 1] < kind));
 const intIn = (value, min, max) => Number.isSafeInteger(value) && value >= min && value <= max;
-// bindlebox.md §4.1: the common members plus sub/resource/kinds/mime/quota members; `audience` is provider-built.
+// messaging.md §4.1: the common members plus sub/resource/kinds/mime/quota members; `audience` is provider-built.
 const messagingContact = Object.freeze({
   slot: MESSAGING_INGRESS_SLOT,
   // Links stay on the provider origin under the contact path, so the landing route and an app switch keep them.
@@ -29,16 +30,16 @@ export const LINK_TYPE_BINDINGS = Object.freeze(Object.assign(Object.create(null
 export const linkBinding = type => (typeof type === 'string' && Object.hasOwn(LINK_TYPE_BINDINGS, type) ? LINK_TYPE_BINDINGS[type] : null);
 
 // BB-C1b: the slot handoff. The `messaging-address` provider consumer feature resolves a link of a bound type to the
-// current occupant of the binding's slot (bindlebox.md §2.1, §2.3). Placeholders under spec.bindle.example.
+// current occupant of the binding's slot (messaging.md §2.1, §2.3). Placeholders under spec.bindle.example.
 export const PUBLIC_INTAKE_SLOT = 'https://spec.bindle.example/slots/public-message-intake/v1';
 /** The public-intake contract an occupant of PUBLIC_INTAKE_SLOT serves (`deliver`). Core consumers (brokered records, the
  * email bridge) depend on the slot and this contract, never on a particular messaging app or its flag. */
 export const PUBLIC_INTAKE_CONTRACT = 'https://spec.bindle.example/contracts/public-intake/v1';
-export const MESSAGING_PROFILE = 'https://spec.bindle.example/bindlebox/v1';
-export const DESCRIPTOR_MEDIA_TYPE = 'application/vnd.bindlebox.ingress+json';
-/** The provider's consumer entry for the manifest `extensions` (bindlebox.md §2.1); declared only through the
+export const MESSAGING_PROFILE = 'https://spec.bindle.example/messaging/v1';
+export const DESCRIPTOR_MEDIA_TYPE = 'application/vnd.bindle.messaging.ingress+json';
+/** The provider's consumer entry for the manifest `extensions` (messaging.md §2.1); declared only through the
  * EXT-X2 registry row in packages/runtime/federation.mjs, under LINKS_ENABLED and a mounted handoff. */
 export const MESSAGING_ADDRESS_DECLARATION = Object.freeze({ slot: MESSAGING_INGRESS_SLOT, role: 'consumer', ref: 'messaging-address', purpose: 'Tells people who hold your contact links where to deliver.' });
-/** Link type -> slot, the reviewed registration table (bindlebox.md §4.2: "a small table from link type to slot"). */
+/** Link type -> slot, the reviewed registration table (messaging.md §4.2: "a small table from link type to slot"). */
 export const LINK_SLOT_TABLE = Object.freeze(Object.entries(LINK_TYPE_BINDINGS).map(([type, binding]) => Object.freeze({ type, slot: binding.slot })));
 export const linkSlot = type => linkBinding(type)?.slot ?? null;

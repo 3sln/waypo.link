@@ -10,7 +10,7 @@ A device-authorization client runs where a browser redirect back to the client i
 
 Out of scope:
 
-- **Provider-local cross-device sign-in.** Extending a provider's own login session to another browser (for example a TV signing into the provider's console) does not involve a client and is provider policy. A provider MAY share its verification page and code namespace between that flow and this grant. It keeps session semantics: a derived login session SHOULD never outlive the session that approved it (§7 item 6).
+- **Provider-local cross-device sign-in (session handoff).** Extending a provider's own login session to another browser (for example a TV signing into the provider's console) does not involve a client and is provider policy; 3sln.me's version is [device sign-in](device-login.md). This specification does not replace it: a session handoff yields a provider session, while this grant yields an app grant to a client. A provider MAY share its verification page and code namespace between that flow and this grant. It keeps session semantics: a derived login session SHOULD never outlive the session that approved it (§7 item 6).
 - **Browser-based clients.** A client running in a web page uses the redirect, popup or FedCM transports in [auth](auth.md#presentation-transports-and-key-binding). Providers reject device-authorization requests sent by browsers (§4.1).
 - **Confidential clients.** v0 defines only public clients (`token_endpoint_auth_method` `none`). Confidential device clients need a later profile.
 

@@ -1,5 +1,5 @@
 import {ownerFlags} from './flags.mjs';
-// EXT-X10. One immutable slot artifact for the host occupant and BindleBox consumer. No automatic connection,
+// EXT-X10. One immutable slot artifact for the host occupant and Parlay consumer. No automatic connection,
 // assignment, threshold or model fallback. The built-in registry offers this definition; the integrator supplies
 // the recognized slot pin and gateway discovery. X4 alone writes connections/occupancy. The contract stays unpublished pending its publisher.
 // Provisional deviation: pre-dispatch failover until X4 passes pinned pure/read contracts into slot validation.

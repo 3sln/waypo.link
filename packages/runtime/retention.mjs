@@ -51,8 +51,8 @@ export async function retentionInventory(tx,owner,{rowLimit=RETENTION_BOUNDS.inv
   return {units:list(),truncated:false,bytesKnown:true,source:'aggregate'};
  }
  for await(const [path,o]of pages(tx,'hosted/')){if(more())return unknown('row-limit');const u=units.get('resource:'+path.split('/')[1]);if(!u||!int(o?.size))return unknown('scan-membership');u.bytes+=o.size;}
- // Both item families: legacy messages and activity's v1 app messages (still placed in a collection until BB-CUT).
- for(const prefix of [key('message',owner),key('app-message',owner)])for await(const [,m]of pages(tx,prefix)){if(more())return unknown('row-limit');const u=units.get('collection:'+m.collection);if(m.owner!==owner||!u||!int(m.size))return unknown('scan-membership');u.bytes+=m.size;}
+ // Activity's v1 app messages, placed in a collection (remaining coupling after BB-CUT).
+ for(const prefix of [key('app-message',owner)])for await(const [,m]of pages(tx,prefix)){if(more())return unknown('row-limit');const u=units.get('collection:'+m.collection);if(m.owner!==owner||!u||!int(m.size))return unknown('scan-membership');u.bytes+=m.size;}
  for(const u of units.values())if(!int(u.bytes))return unknown('scan-overflow');
  return {units:list(),truncated:false,bytesKnown:true,source:'scan'};
 }

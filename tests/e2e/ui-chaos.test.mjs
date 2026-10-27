@@ -91,7 +91,7 @@ test('superseded View responses arriving out of order never replace the newer Vi
 
 test('a refresh failure after a successful mutation still reports the success and does not invite a duplicate',async t=>{
  const c=await chaosConsole(browser,t,{handlers:{'POST /api/collections':async(route,{model,body})=>{model.data.collections=[...model.data.collections,{id:'c'+model.data.collections.length,name:body.name}];return route.fulfill({json:{id:'created'}});}}});const {page}=c;
- await page.getByRole('button',{name:'Contact links',exact:true}).click();
+ await page.getByRole('button',{name:'Rules',exact:true}).click();
  // Collection creation lives in the legacy modal; open it the way the inbox toolbar does.
  await page.evaluate(()=>document.getElementById('app').dispatchEvent(new CustomEvent('3sln-intent',{bubbles:true,detail:{kind:'open-modal',modal:{kind:'collection'}}})));
  await page.getByRole('dialog').waitFor();await page.getByRole('dialog').locator('input').first().fill('Receipts');
@@ -107,14 +107,14 @@ test('a restored back-forward cache entry reloads into fresh state instead of a 
  // Chromium under automation never enters the bfcache; the exact lifecycle events it would fire are replayed.
  const reloaded=page.waitForEvent('framenavigated');
  await page.evaluate(()=>{window.dispatchEvent(new PageTransitionEvent('pagehide',{persisted:true}));window.dispatchEvent(new PageTransitionEvent('pageshow',{persisted:true}));});
- await reloaded;await page.getByRole('heading',{name:'Messages & conversations'}).waitFor();
+ await reloaded;await page.getByRole('heading',{name:'Messages',exact:true}).waitFor();
  assert.ok(c.count('GET','/api/session')>sessions,'session is re-read after restore');
 });
 
 test('back and forward during a pending request leave no stale or stuck state',async t=>{
  const c=await chaosConsole(browser,t,{incoming:{all:messages(5)}});const {page}=c;
  const held=c.hold('GET','/api/views');await page.getByRole('button',{name:'Messages',exact:true}).click();await held;
- await page.goto(baseURL+'/docs/');await page.goBack();await page.getByRole('heading',{name:'Messages & conversations'}).waitFor();await page.getByText('Message 4',{exact:true}).waitFor();
+ await page.goto(baseURL+'/docs/');await page.goBack();await page.getByRole('heading',{name:'Messages',exact:true}).waitFor();await page.getByText('Message 4',{exact:true}).waitFor();
  await page.goForward();await page.goBack();await page.getByText('Message 4',{exact:true}).waitFor();await c.settled();assert.equal(await c.stuck(),0);
 });
 
@@ -203,19 +203,6 @@ test('reading a message: a double click marks it read once, and a 401 mid-read e
  assert.equal(await page.getByText(/Private (subject|body)/).count(),0,'no private message content after expiry');
 });
 
-test('intake editing: a conflict reloads the current tags, a 503 keeps the dialog, and a refresh failure after saving still reports the save',async t=>{
- const contact={id:'33333333-4444-4555-8666-777777777777',name:'Chaos link',active:true,form:'link',maxMessages:5,messagesUsed:0,expiresAt:Date.now()+86400000};let revision=1;
- const c=await chaosConsole(browser,t,{data:{contacts:[contact],tagLabels:{revision:1,labels:{work:'Work'}}},handlers:{
-  'GET ^/api/contacts/[^/]+/intake$':route=>route.fulfill({json:{revision,autoTags:[],optionalTags:[],labels:{}}}),
-  'PUT ^/api/contacts/[^/]+/intake$':(route,{body})=>{if(body.revision!==revision)return route.fulfill({status:409,json:{error:'intake_conflict',message:'Conflict.'}});revision++;return route.fulfill({json:{revision}});}}});const {page}=c;
- await page.getByRole('button',{name:'Contact links',exact:true}).click();await page.getByRole('button',{name:'Edit tags',exact:true}).click();await page.getByRole('dialog').waitFor();
- revision=2;await page.getByRole('dialog').locator('form button[type=submit]').click();await page.getByRole('dialog').getByText('These tags changed in another window. Review the current settings and save again.',{exact:true}).waitFor();await c.settled();
- const held=c.hold('PUT',/\/intake$/);await page.getByRole('dialog').locator('form button[type=submit]').click({clickCount:3});const gate=await held;await c.busy();await c.release(gate,{kind:503});await page.getByRole('dialog').getByText('The service is temporarily unavailable.').waitFor();await c.settled();
- assert.equal(await page.getByRole('dialog').count(),1);assert.equal(c.count('PUT',/\/intake$/),2,'conflict + one held attempt, extra clicks absorbed');
- c.inject('GET','/api/account',503);await page.getByRole('dialog').locator('form button[type=submit]').click();await page.getByRole('dialog').waitFor({state:'detached'});await c.settled();
- assert.ok((await c.notices()).some(text=>text.includes('Tags updated')),'saved tags are reported even though the refresh failed');assert.equal(revision,3);
-});
-
 const plans=[{id:'free',name:'Free',storageBytes:500000000,annualAmount:0},{id:'paid',name:'Paid',storageBytes:5000000000,annualAmount:500},{id:'plus',name:'Plus',storageBytes:100000000000,annualAmount:3500},{id:'ultra',name:'Ultra',storageBytes:1000000000000,annualAmount:25000}].map(plan=>({...plan,currency:'usd',dailyActivityUnits:10000,hourlyActivityUnits:2000,priceDigest:'digest-'+plan.id,price:{currency:'usd',amount:plan.annualAmount,exponent:2,source:'polar',taxBehavior:'checkout',available:true}}));
 const billing=(extra={})=>({plan:'free',enabled:true,configured:true,server:'sandbox',currencies:['usd'],selectedCurrency:'usd',plans,...extra});
 const storage={plan:'free',planName:'Free',storageBytes:500000000,usedBytes:1000,reservedBytes:0,remainingBytes:499999000,overLimit:false,messagesBytes:1000,objectsBytes:0,messageCount:1,objectCount:0};
@@ -243,50 +230,37 @@ test('billing plan change (mocked): a lost or unreadable reply is shown as unkno
 test('rapid navigation while billing loads never shows billing data elsewhere and leaves no loading state',async t=>{
  const c=await chaosConsole(browser,t,{data:{storage},handlers:{'GET /api/billing':route=>route.fulfill({json:billing()})}});const {page}=c;
  const held=c.hold('GET','/api/billing');await page.getByRole('button',{name:'Storage & billing',exact:true}).click();const gate=await held;
- for(const name of seeded(0xb111).shuffle(['Rules','Contact links','Resources','Notifications']))await page.getByRole('button',{name,exact:true}).click();
+ for(const name of seeded(0xb111).shuffle(['Rules','Resources','Notifications','Preferences & shortcuts']))await page.getByRole('button',{name,exact:true}).click();
  await page.getByRole('button',{name:'Messages',exact:true}).click();await c.release(gate);await c.settled();
- assert.equal(await page.locator('.plan-card').count(),0,'billing cards are not rendered on another view');assert.equal(await page.getByRole('heading',{name:'Messages & conversations'}).count(),1);
+ assert.equal(await page.locator('.plan-card').count(),0,'billing cards are not rendered on another view');assert.equal(await page.getByRole('heading',{name:'Messages',exact:true}).count(),1);
  await page.getByRole('button',{name:'Storage & billing',exact:true}).click();await page.locator('.plan-card').first().waitFor();await c.settled();
 });
 
-test('console contact send: triple-click sends one envelope, a lost delivery reply is retried with the same operation, and intake faults offer a reload',async t=>{
- const invitation='/users/reader/contact/44444444-1111-4111-8111-111111111111?sig=fixture.signed.endpoint',signed=[],deliveries=[];let intakeFailures=1;
- const c=await chaosConsole(browser,t,{goto:null,handlers:{'POST /api/links/envelope':(route,{body})=>{signed.push(body);return route.fulfill({json:{envelope:{payload:{operationId:body.operationId,createdAt:body.createdAt,content:{mimeType:body.mimeType,byteLength:body.byteLength,sha256:body.sha256}},proof:{alg:'ES256',kid:'k',signature:'s'}}}});}}});const {page,context}=c;
- await context.route(url=>new URL(url).pathname===new URL(baseURL+invitation).pathname,async route=>{const request=route.request();
-  if(request.method()==='GET'){if(intakeFailures-->0)return route.fulfill({status:503,json:{error:'unavailable',message:'The service is temporarily unavailable.'}});return route.fulfill({contentType:'application/vnd.bindle.contact-intake+json',json:{version:1,form:'legacy',intakeRevision:null,optionalTags:[],kinds:['one-off'],mimeTypes:['text/plain'],maxMessageBytes:65536,maxMessages:5,maxBytes:65536,quotaScope:'parent',expiresAt:Date.now()+3600000,conditional:false}});}
-  const envelope=JSON.parse(/name="envelope"[^\r]*\r\nContent-Type: application\/json\r\n\r\n([^\r\n]+)/.exec(request.postData())[1]);deliveries.push(envelope.payload.operationId);
-  if(deliveries.length===1)return route.abort('connectionreset');return route.fulfill({status:202,json:{receipt:{payload:{messageId:'message'},proof:{}}}});});
- await page.goto(`${baseURL}/console#contact=${encodeURIComponent(baseURL+invitation)}&intent=send-message`);
- await page.getByRole('alert').first().waitFor();await c.settled();const reload=page.getByRole('button',{name:/Reload|Try again/});await reload.first().click();
- await page.getByLabel('Your message').waitFor();await page.getByLabel('Your message').fill('Chaos note');
- await page.getByRole('button',{name:'Send message',exact:true}).click({clickCount:3});await page.getByRole('alert').first().waitFor();await c.settled();
- assert.equal(signed.length,1,'triple click signs one envelope');assert.equal(deliveries.length,1);assert.equal(await page.getByRole('heading',{name:'Your message is on its way.'}).count(),0,'no success after a lost reply');
- await page.getByRole('button',{name:'Send message',exact:true}).click();await page.getByRole('heading',{name:'Your message is on its way.'}).waitFor();
- assert.equal(deliveries.length,2);assert.equal(deliveries[0],deliveries[1],'the retry reconciles the same operation');
-});
-
-test('saving a signed contact: a double submit redeems once and a failed refresh still reports the saved contact',async t=>{
- let redeems=0;
+test('saving the contact profile: a triple submit saves once, and a stale refusal shows the latest profile without claiming success',async t=>{
+ let stored={displayName:'Stored',bio:'',avatar:'',discloseToContacts:false,revision:'a'.repeat(32)},puts=0;
  const c=await chaosConsole(browser,t,{handlers:{
-  'GET /api/contacts/directory':route=>route.fulfill({json:{contacts:[]}}),'GET /api/profile':route=>route.fulfill({json:{displayName:'',bio:'',discloseToContacts:false}}),
-  'POST /api/contacts/redeem':route=>{redeems++;return route.fulfill({json:{saved:true}});}}});const {page}=c;
- await page.evaluate(()=>document.getElementById('app').dispatchEvent(new CustomEvent('3sln-intent',{bubbles:true,detail:{kind:'navigate',view:'contacts'}})));
- const url=page.getByLabel('Signed contact URL',{exact:true});await url.waitFor();await c.requests('GET','/api/contacts/directory',1);await url.fill(baseURL+'/users/reader/contact/44444444-1111-4111-8111-111111111111?sig=fixture.signed.endpoint');
- const form=url.locator('xpath=ancestor::form');const held=c.hold('POST','/api/contacts/redeem');await form.locator('button[type=submit]').click({clickCount:3});const gate=await held;await c.busy();await form.locator('button[type=submit]').click({force:true});
- c.inject('GET','/api/contacts/directory',503);await c.release(gate);await page.getByText('Signed contact saved.').waitFor();await c.settled();
- assert.equal(redeems,1,'one redeem for repeated submits');assert.ok((await c.alerts()).some(text=>/saved, but the latest information could not be loaded/.test(text)),'the stale refresh is reported separately');
+  'GET /api/profile':route=>route.fulfill({json:stored}),'GET /api/developer-contact':route=>route.fulfill({json:{available:false,reason:'contact-unavailable'}}),
+  'PUT /api/profile':(route,{body})=>{puts++;if(body.expectedRevision!==stored.revision)return route.fulfill({status:409,json:{error:'profile_stale',code:'profile_stale',message:'Your contact profile changed in another session.'}});const {expectedRevision,...rest}=body;stored={...rest,revision:'b'.repeat(32)};return route.fulfill({json:stored});}}});const {page}=c;
+ await page.getByRole('button',{name:'Account & security',exact:true}).click();await page.locator('.contact-profile-settings form[aria-busy=false]').waitFor();
+ const name=page.locator('.contact-profile-settings input[name=displayName]'),submit=page.locator('.contact-profile-settings form button[type=submit]');assert.equal(await name.inputValue(),'Stored');
+ await name.fill('Mine');const held=c.hold('PUT','/api/profile');await submit.click({clickCount:3});const gate=await held;await c.busy();await submit.click({force:true});await c.release(gate);await page.getByText('Contact profile saved.').waitFor();await c.settled();
+ assert.equal(puts,1,'one save for repeated submits');assert.equal(stored.displayName,'Mine');
+ // Another session changes the profile; this tab's next save is refused and the form shows the latest values.
+ stored={...stored,displayName:'Other session',revision:'c'.repeat(32)};await name.fill('Mine again');await submit.click();await c.settled();
+ assert.ok((await c.alerts()).some(text=>/changed in another session/.test(text)),'the stale refusal is explained');assert.equal(await name.inputValue(),'Other session');assert.equal(puts,2);assert.equal((await c.notices()).filter(text=>/Contact profile saved/.test(text)).length,0);
 });
 
-test('public contact page: a failing link description is reported honestly, offers no compose path, and Try again recovers without the stripped capability',async t=>{
- const invitation='/users/reader/contact/44444444-1111-4111-8111-111111111111?sig=fixture.signed.endpoint';let failures=1;
+test('public contact page: a failing link check is reported honestly, offers no compose path, and Try again recovers without the stripped capability',async t=>{
+ const invitation='/users/reader/contact/44444444-1111-4111-8111-111111111111?sig=fixture.signed.endpoint';let failures=1,checks=0;
  const c=await chaosConsole(browser,t,{signedIn:false,goto:null});const {page,context}=c;
- await context.route(url=>new URL(url).pathname===new URL(baseURL+invitation).pathname,route=>{if(route.request().resourceType()==='document')return route.continue();
+ await context.route(url=>new URL(url).pathname===new URL(baseURL+invitation).pathname,route=>{if(route.request().resourceType()==='document')return route.continue();checks++;
+  assert.equal(route.request().headers().accept,'application/vnd.bindle.contact-profile+json');
   if(failures-->0)return route.fulfill({status:503,json:{error:'unavailable',message:'The service is temporarily unavailable.'}});
-  return route.fulfill({contentType:'application/vnd.bindle.contact-intake+json',json:{version:1,form:'legacy',intakeRevision:null,optionalTags:[],kinds:['one-off'],mimeTypes:['text/plain'],maxMessageBytes:65536,maxMessages:5,maxBytes:65536,quotaScope:'parent',expiresAt:Date.now()+3600000,conditional:false}});});
- await page.goto(baseURL+invitation);await page.getByText('The service is temporarily unavailable.').waitFor();await c.settled();
- assert.equal(await page.getByLabel('Your message').count(),0,'no compose path without a verified description');assert.equal((await c.notices()).length,0);
- assert.equal(await page.getByText('Up to 64 KB',{exact:true}).count(),0,'no limits are shown that were never described');
+  return route.fulfill({contentType:'application/vnd.bindle.contact-profile+json',json:{identityURI:baseURL+'/users/reader',profile:{displayName:'Reader'}}});});
+ await page.goto(baseURL+invitation);await page.getByText('This contact link could not be checked right now. Try again shortly.').waitFor();await c.settled();
+ assert.equal(await page.locator('textarea').count(),0,'no compose path');assert.equal(await page.locator('a.contact-intent').count(),0,'no hand-off before the link is verified');assert.equal((await c.notices()).length,0);
  // The signed capability is removed from the address bar on load, so only an in-page retry can recover.
  assert.equal(new URL(page.url()).search,'','capability no longer in the URL');await page.getByRole('button',{name:'Try again',exact:true}).click({clickCount:2});
- await page.getByText('Up to 64 KB',{exact:true}).waitFor();await c.settled();assert.equal((await c.alerts()).length,0);
+ await page.getByRole('heading',{name:/^Send a message to \u2068?Reader\u2069?\.$/}).waitFor();await page.locator('a.contact-intent').first().waitFor();await c.settled();assert.equal((await c.alerts()).length,0);assert.ok(checks>=2,'the in-page retry asked again');
+ assert.equal(c.count('POST',/\/api\/links\//),0);
 });

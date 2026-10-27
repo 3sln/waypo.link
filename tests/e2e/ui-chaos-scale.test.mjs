@@ -30,11 +30,12 @@ test('a 5,000-message inbox renders one bounded page, grows by pages, and each p
 test('long handles, names, subjects and tags never overflow the viewport at 390px or 320px',async t=>{
  const long=(prefix,length)=>(prefix+'-'.repeat(1)+'x'.repeat(length)).slice(0,length),handle=long('n.long',32);
  const items=messages(20,{seed:9,tags:6,tagLength:64}).map((item,index)=>({...item,subject:long('Subject'+index,200)}));
- const contacts=[{id:'55555555-1111-4111-8111-111111111111',name:long('Contact',120),active:true,form:'link',maxMessages:5,messagesUsed:0,expiresAt:Date.now()+86400000,intake:{autoTags:[long('auto',64)],optionalTags:[long('optional',64),long('second',64)]}}];
+ // Snapshot contacts are contact parents (links the owner's apps created); the long values are app-supplied.
+ const contacts=[{id:'55555555-1111-4111-8111-111111111111',type:'https://spec.bindle.example/links/contact/v1',slot:'messaging-ingress',active:true,createdAt:Date.now()-86400000,expiresAt:Date.now()+86400000,conditional:true,issuer:{kind:'app',clientId:'https://'+long('app',120)+'.example/client'},profileFields:['displayName','bio','avatar'],discloseProfile:true}];
  const views=[...builtinViews(),{id:'long',name:long('View',100),revision:1,filter:{version:1},sort:'activity-desc'}];
  const c=await chaosConsole(browser,t,{account:{id:'11111111-2222-4333-8444-555555555555',handle,status:'active'},views,incoming:{all:items},data:{contacts}});const {page}=c;
  for(const width of [390,320]){await page.setViewportSize({width,height:900});
-  for(const name of ['Messages','Contact links']){await page.evaluate(view=>document.getElementById('app').dispatchEvent(new CustomEvent('3sln-intent',{bubbles:true,detail:{kind:'navigate',view}})),name==='Messages'?'inbox':'contacts');await c.settled();assert.ok(await overflow(page)<=0,`${name} fits ${width}px (overflow ${await overflow(page)}px)`);}
+  for(const name of ['Messages','Account & security']){await page.evaluate(view=>document.getElementById('app').dispatchEvent(new CustomEvent('3sln-intent',{bubbles:true,detail:{kind:'navigate',view}})),name==='Messages'?'inbox':'security');await c.settled();assert.ok(await overflow(page)<=0,`${name} fits ${width}px (overflow ${await overflow(page)}px)`);}
  }
 });
 
@@ -53,7 +54,7 @@ test('repeated navigation, dialogs and message opens do not grow retained DOM, l
  const c=await chaosConsole(browser,t,{incoming:{all:items},handlers:{'GET ^/api/messages/[^/]+$':(route,{url})=>route.fulfill({json:{message:{...items.find(item=>url.pathname.endsWith(item.id)),text:'Body'},render:{kind:'text'}}}),'PATCH ^/api/messages/[^/]+$':route=>route.fulfill({json:{ok:true}})}});const {page,context}=c;
  const m=await metrics(context,page),random=seeded(0x3e3);
  const navigate=view=>page.evaluate(view=>document.getElementById('app').dispatchEvent(new CustomEvent('3sln-intent',{bubbles:true,detail:{kind:'navigate',view}})),view);
- const round=async()=>{for(const view of random.shuffle(['contacts','rules','resources','notifications','settings','security']))await navigate(view);await navigate('inbox');await page.locator('.message-row').first().waitFor();
+ const round=async()=>{for(const view of random.shuffle(['rules','resources','notifications','settings','security']))await navigate(view);await navigate('inbox');await page.locator('.message-row').first().waitFor();
   await page.getByRole('button',{name:'New View',exact:true}).first().click();await page.getByRole('dialog').waitFor();await page.keyboard.press('Escape');await page.getByRole('dialog').waitFor({state:'detached'});
   await page.locator('.message-row').nth(Math.floor(random.next()*items.length)).click();await page.getByText('Body',{exact:true}).waitFor();await page.getByRole('button',{name:'Close',exact:true}).click();await c.settled();};
  for(let i=0;i<5;i++)await round();const baseline=await m.read({gc:true});

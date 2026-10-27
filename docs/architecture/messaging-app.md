@@ -1,4 +1,7 @@
-# BindleBox: peer-to-peer messaging as a Bindle app
+# Parlay: peer-to-peer messaging as a Bindle app
+
+> **Update (2026-10-27).** The app is now **Parlay** (owner's working name, provisional) and its interop spec is **Bindle Messaging** ([spec](../spec/messaging.md)). Legacy core messaging was removed and its data reset (BB-CUT; DEVLOG "Messaging removed from core; Parlay rename; BB-CUT reset"). Paths: `apps/parlay`, `packages/messaging-protocol`, `packages/messaging-engine`, `tests/parlay`; switches `PARLAY_*` with the retired `BINDLEBOX_*` names read as aliases.
+
 
 Status: **provisional design**, 2026-10-20. Sources:
 
@@ -7,7 +10,7 @@ Status: **provisional design**, 2026-10-20. Sources:
 - core [activity](../spec/activity.md) and the [activity center](activity-center.md);
 - the [messaging scaling spike](../release/messaging-scaling-spike.md).
 
-Nothing here is implemented, and no production gate in [security](../spec/security.md) changes. The interop draft is [BindleBox interop v1](../spec/bindlebox.md), the extraction plan is [messaging extraction](messaging-extraction.md), and the wargame record is [messaging app review](../release/messaging-app-review.md).
+Nothing here is implemented, and no production gate in [security](../spec/security.md) changes. The interop draft is [Bindle Messaging interop v1](../spec/messaging.md), the extraction plan is [messaging extraction](messaging-extraction.md), and the wargame record is [messaging app review](../release/messaging-app-review.md).
 
 Sign-off (all unsigned, so every decision is provisional):
 
@@ -23,11 +26,11 @@ Sign-off (all unsigned, so every decision is provisional):
 
 ## 1. Name
 
-The app needs a product name, and the interop profile needs an identifier that other apps can implement. Using one name for both avoids a second vocabulary: other implementations are "BindleBox-compatible".
+The app needs a product name, and the interop profile needs an identifier that other apps can implement. Using one name for both avoids a second vocabulary: other implementations are "Parlay-compatible".
 
 | Candidate | Rationale | Concern |
 | --- | --- | --- |
-| **BindleBox** | Pairs the bindle (a carried bundle) with a mailbox. Short, product-like and clearly part of the Bindle family. The user's own candidate. | Ties the app to the Bindle brand, which suits a reference app. |
+| **Parlay** | Pairs the bindle (a carried bundle) with a mailbox. Short, product-like and clearly part of the Bindle family. The user's own candidate. | Ties the app to the Bindle brand, which suits a reference app. |
 | Bindle Inbox | Descriptive and instantly understood. | Generic. "Inbox" contradicts the earlier no-inboxes, Views-only decision. |
 | Bindle Post | "Post" means mail, and the phrase works as a protocol name ("Bindle Post v1"). | Weak as an app name. Ambiguous with social-media posts. |
 | Satchel | Bag metaphor next to "bindle". Warm. | Existing companies use it. Does not say "messages". |
@@ -36,11 +39,11 @@ The app needs a product name, and the interop profile needs an identifier that o
 | Missive | Means a letter. Distinctive. | An existing email client is called Missive. |
 | Waymark | Travellers' marks, a nod to the bindle's heritage. | Abstract. Nobody will guess it means messaging. |
 
-**Recommendation: BindleBox.** It is distinctive, has no obvious conflict with a known product, says "messages" and stays in the brand. No trademark search has been done; that is a publication gate. Identifiers use a `bindlebox` path segment, so a rename before publication is a search and replace.
+**Recommendation: Parlay.** It is distinctive, has no obvious conflict with a known product, says "messages" and stays in the brand. No trademark search has been done; that is a publication gate. Identifiers use a `bindlebox` path segment, so a rename before publication is a search and replace.
 
 ## 2. Scope and boundary
 
-BindleBox owns **peer-to-peer messaging**:
+Parlay owns **peer-to-peer messaging**:
 
 - messaging contacts and contact links of the messaging type;
 - authored one-off messages;
@@ -60,28 +63,28 @@ Core (the Bindle spec and 3sln.me) keeps:
 - storage resources, preferences and grants;
 - the SMTP entry point of the public email bridge and its auto-reply (§13).
 
-The boundary rule is stated in [activity](../spec/activity.md) "Limits and scope": BindleBox MAY submit its own app-attributed activity ("New message from alice") under ordinary connection consent. Core MUST NOT accept peer envelopes through an activity backdoor or mirror peer bodies.
+The boundary rule is stated in [activity](../spec/activity.md) "Limits and scope": Parlay MAY submit its own app-attributed activity ("New message from alice") under ordinary connection consent. Core MUST NOT accept peer envelopes through an activity backdoor or mirror peer bodies.
 
-BindleBox is an ordinary app/integration. It uses grants, fragments, slots and brokered resources, with no private provider API. 3sln.me may bundle a default instance on its own origin ([extraction](messaging-extraction.md) §5), and an import-boundary test proves the instance cannot reach provider internals.
+Parlay is an ordinary app/integration. It uses grants, fragments, slots and brokered resources, with no private provider API. 3sln.me may bundle a default instance on its own origin ([extraction](messaging-extraction.md) §5), and an import-boundary test proves the instance cannot reach provider internals.
 
 ## 3. Topology
 
 ```
- Sender browser        Sender's BindleBox (app origin)             Recipient's provider (address)
+ Sender browser        Sender's Parlay (app origin)             Recipient's provider (address)
  ──────────────        ───────────────────────────────             ──────────────────────────────
  compose ─POST /send─▶ edge ─▶ MailboxObject (per-user single writer)
          ◀── SSE ────         │ outbox: event + one obligation per
                               │ recipient; alarm drains outside txns
                               ├─(1) GET link, Accept: ingress ───────▶ verifies link envelope; asks the
                               │◀──────── ingress descriptor ──────────  messaging slot occupant (cached)
-                              └─(2) POST envelope (or batch) ────────▶ Recipient's BindleBox ingress
+                              └─(2) POST envelope (or batch) ────────▶ Recipient's Parlay ingress
                                 ◀───── signed custody receipt ───────   verifies, admits, stores
 ```
 
 - **Provider** (for example 3sln.me): the user's stable address. Handles, links and the directory live here. As a consumer of the messaging slot (§5), it introduces callers to the occupant. It is not in the message path.
-- **BindleBox instance**: an edge tier plus one **MailboxObject** per user, the single writer for that user's messaging state (a Durable Object on Workers, a serialized controller on Node).
+- **Parlay instance**: an edge tier plus one **MailboxObject** per user, the single writer for that user's messaging state (a Durable Object on Workers, a serialized controller on Node).
 - **User storage resource** (`object-storage/v1`): the user-owned canonical archive (§8).
-- **Peers**: other providers and BindleBox-compatible apps, reached over HTTPS under SSRF controls.
+- **Peers**: other providers and Parlay-compatible apps, reached over HTTPS under SSRF controls.
 
 This is the NOTES.md principle that the provider introduces and the parties then talk directly. The provider pays nothing per message. Switching apps changes only what the introduction returns.
 
@@ -96,7 +99,7 @@ Today one provider-custodied P-256 identity key per account signs everything. It
 - conversation v1 payloads;
 - admission receipts (provisionally).
 
-See `packages/runtime/account/identity.mjs` (`signingKey`) and the signature-domain table in [links §7.2](../spec/links.md). As an app, BindleBox must produce author proofs attributable to the user's identity without ever holding that key.
+See `packages/runtime/account/identity.mjs` (`signingKey`) and the signature-domain table in [links §7.2](../spec/links.md). As an app, Parlay must produce author proofs attributable to the user's identity without ever holding that key.
 
 ### 4.2 Options
 
@@ -119,9 +122,9 @@ See `packages/runtime/account/identity.mjs` (`signingKey`) and the signature-dom
    - `iat`/`exp`, with `exp - iat ≤ 24 h`.
 
    It is a feature, not a slot. Slots carry no authorization rules ([extensions §2.1](../spec/extensions.md)).
-2. **Purposes are published profile URIs.** BindleBox defines `…/bindlebox/v1/purposes/author`, `…/purposes/receipt` and `…/purposes/archive`.
+2. **Purposes are published profile URIs.** Parlay defines `…/parlay/v1/purposes/author`, `…/purposes/receipt` and `…/purposes/archive`.
    - They are certified **only to the current messaging-ingress occupant**. Certifying a new key revokes the previous one, so two apps never sign concurrently for one principal (reviews P-3, S-12). A provider can also revoke every delegation of a breached `client_id`.
-   - The provider certifies only purposes its own policy recognizes, and only after an explicit owner consent screen ("Let BindleBox sign messages and delivery receipts as you").
+   - The provider certifies only purposes its own policy recognizes, and only after an explicit owner consent screen ("Let Parlay sign messages and delivery receipts as you").
    - Profiles verified against the identity key never accept a delegate key: link metas, audience responses, delegation certificates and conversation v1. A stolen delegate key therefore cannot forge them. The `typ` header separates JWS profiles, and domain prefixes separate the rest (added to the [links §7.2](../spec/links.md) table).
 3. **Renewal and revocation.**
    - The app renews at half the lifetime, and the provider renews only while the connection is live.
@@ -139,7 +142,7 @@ See `packages/runtime/account/identity.mjs` (`signingKey`) and the signature-dom
    - The delegate private key is encrypted at rest in MailboxObject storage under an app key-encryption key. It never reaches the browser.
    - Rotation means a new key, a new certificate and a new `since`. Routine rotation waits until no unresolved obligation is signed by the old key. On compromise, unresolved obligations are re-signed by the new key as new events with `resendOf`.
    - On reinstall or an app switch the new app generates its own key. Delegate keys never move between apps.
-7. **Receipts** are signed by the recipient app's delegate key (receipt purpose). This replaces the provisional "admission receipt signed by the account identity key" (S16 in [contact delivery](../spec/contact-delivery.md)).
+7. **Receipts** are signed by the recipient app's delegate key (receipt purpose). This replaces the provisional "admission receipt signed by the account identity key" (S16 in [contact delivery](../../apps/parlay/docs/legacy/contact-delivery.md)).
 8. **The identity key still signs** delegation certificates, link metas (through core issuance, §6) and audience responses, all provider-side.
 
 **Dependency.** Cross-host verification needs the core **directory and identity-document profile**, which is still unimplemented. Until it exists, an instance verifies only principals whose provider exposes a directory to it; for the bundled instance that means 3sln.me principals. Every other author receives `author_unverifiable`, matching today's same-host restriction.
@@ -148,9 +151,9 @@ See `packages/runtime/account/identity.mjs` (`signingKey`) and the signature-dom
 
 This section follows [extensions](../spec/extensions.md), [integrations](../spec/integrations.md) and [extensibility design](extensibility-design.md), all at revision 2. Manifest entries are claims of the form `{slot, digest?, role, ref, purpose?, required?, options?}`. Brokered resources use provider-minted 300 s tokens with bounded-delay severance.
 
-| Slot | Selection | Consumers | Occupant | BindleBox's role |
+| Slot | Selection | Consumers | Occupant | Parlay's role |
 | --- | --- | --- | --- | --- |
-| `…/slots/messaging-ingress/v1` (BindleBox spec §2.1) | `exclusive` | `provider` only | The user's **mailbox resource**, a brokered resource implementing `…/bindlebox/v1/contracts/mailbox` (`describe`, effect `read`; `linkRevoked`) | Occupant (`ref: mailbox`) |
+| `…/slots/messaging-ingress/v1` (Bindle Messaging spec §2.1) | `exclusive` | `provider` only | The user's **mailbox resource**, a brokered resource implementing `…/parlay/v1/contracts/mailbox` (`describe`, effect `read`; `linkRevoked`) | Occupant (`ref: mailbox`) |
 | `…/slots/public-message-intake/v1` (spec §9, published by the messaging spec as in extensibility design §7.1) | `exclusive` | `provider`, `application` | The same mailbox resource, also implementing `…/contracts/public-intake/v1` (`deliver`) | Occupant. The 3sln.me `email-bridge` feature is a provider consumer. |
 | `…/slots/item-classifier/v1` (extensions §2; extensibility design §7.2) | `ordered` | `application`, `provider` | Decision-model resource: a 3sln.me built-in over Workers AI, or third party | **Consumer** (`ref: triage`), optional (§12) |
 
@@ -168,7 +171,7 @@ This section follows [extensions](../spec/extensions.md), [integrations](../spec
 
 The app receives integration SET events (integrations §6.2) at its `events_endpoint`:
 
-| Event | Meaning for BindleBox |
+| Event | Meaning for Parlay |
 | --- | --- |
 | `connection-revoked`, `credential-revoked`, `resource-detached` | Severance or occupant removal |
 | `preferences-updated` | Storage or classifier changes |
@@ -189,13 +192,13 @@ Identity keys are resolved through the directory, and link changes are polled wi
 | `key-delegation.v1` | The app cannot sign, so the user can neither send nor issue receipts. Only local organization works. |
 | The directory profile | Only same-provider principals verify. |
 
-BindleBox checks all of these at installation and shows exactly which capabilities work.
+Parlay checks all of these at installation and shows exactly which capabilities work.
 
 ## 6. Contact links: core envelope, app type
 
 ### 6.1 Split
 
-| Concern | Core (`links.md`, provider) | BindleBox (spec §4) |
+| Concern | Core (`links.md`, provider) | Parlay (spec §4) |
 | --- | --- | --- |
 | Raw-query parser, `bindle_*` reservation, limits, JWS profile, exact stored claims, `md`, tooling rules (links §2–§5) | ✓ | |
 | Link issuance and revocation for app-declared link types, signed with the identity key | ✓: a provider-hosted `…/contracts/links/v1` resource (`issue`, `revoke`, `evaluate`) requested by fragment | requests issuance |
@@ -209,14 +212,14 @@ Links stay on the provider origin (`https://3sln.example/users/alice/contact/<id
 
 ### 6.2 Flow
 
-1. **Issue.** BindleBox calls `links.issue({type, claims})`. The provider validates the common members, stores the exact header and claims, and signs with the identity key. BindleBox stores the parent record: exact claims, intake, quotas and receipts.
-2. **Resolve.** The sender GETs the link with `Accept: application/vnd.bindlebox.ingress+json`. The provider verifies the envelope (links §8 steps 1–2) and returns the descriptor (spec §2.3), with an expiry of at most 1 h. With no occupant it returns uniform `recipient_unavailable`.
+1. **Issue.** Parlay calls `links.issue({type, claims})`. The provider validates the common members, stores the exact header and claims, and signs with the identity key. Parlay stores the parent record: exact claims, intake, quotas and receipts.
+2. **Resolve.** The sender GETs the link with `Accept: application/vnd.bindle.messaging.ingress+json`. The provider verifies the envelope (links §8 steps 1–2) and returns the descriptor (spec §2.3), with an expiry of at most 1 h. With no occupant it returns uniform `recipient_unavailable`.
 3. **Intake.** The sender fetches optional tags from `{ingress}/intake` (spec §4.4).
 4. **Deliver.** The sender POSTs the authored envelope to the ingress with `Authorization: BindleLink <bindle_meta>`. The recipient app first checks the edge index (§11), then verifies the meta against the owner's identity key resolved through the directory, compares it against its stored exact claims, and then verifies the author.
 
 No bearer is minted. The meta goes straight to the app that holds the parent record, and the contact-delivery bearer profile is deleted.
 
-Conditional links (`audience`) keep core semantics. GET evaluation happens at the provider. At delivery, the app calls `links.evaluate({jti, principal})`, reusing decisions as links §7.5 permits. Developer contact remains one conditional link, issued for the developer account's BindleBox occupant.
+Conditional links (`audience`) keep core semantics. GET evaluation happens at the provider. At delivery, the app calls `links.evaluate({jti, principal})`, reusing decisions as links §7.5 permits. Developer contact remains one conditional link, issued for the developer account's Parlay occupant.
 
 ## 7. Conversations
 
@@ -292,7 +295,7 @@ The canonical, portable copy lives in a storage resource the user controls. The 
 
 | State | Where |
 | --- | --- |
-| Bodies ≥ 4 KiB | User storage resource, prefix `bindlebox/v1/`, staged before admission commits |
+| Bodies ≥ 4 KiB | User storage resource, prefix `parlay/v1/`, staged before admission commits |
 | Small bodies, metadata, receipts and replay frontiers, outbox and obligations, peer sets and incarnations, parent link records, Views, rules, overlays, event log | MailboxObject SQLite |
 | Canonical archive: immutable segments plus a signed compare-and-swap manifest with a writer lease (spec §10). Conversation secrets and link metas are excluded until segment encryption exists; a new occupant regains them through `rejoin` and `links.list`. | User storage resource |
 
@@ -417,21 +420,21 @@ The order puts the cheapest refusal first (contact-delivery S4, spike §9, revie
 3. **Author.** Delegation and author proof, with status checks where spec §3.4 requires them. Directory lookups go through a bounded-cardinality cache with pinned continuity.
 4. **Admission transaction** in the mailbox: live parent or peer and incarnation, receipt budgets, the replay frontier and gaps, storage, the custody receipt, the index, the edge-index update and the activity outbox.
 
-Receipt budgets carry over unchanged from [messaging](../spec/messaging.md) "Reference-service receipt limits" as BindleBox policy. Conversation events, edits, retractions, proposals, hellos and invitations each have their own bounded allowance. Unknown authors allocate no pending rows. Quarantine has a finite byte, count and age allowance.
+Receipt budgets carry over unchanged from [messaging](../../apps/parlay/docs/legacy/messaging.md) "Reference-service receipt limits" as Parlay policy. Conversation events, edits, retractions, proposals, hellos and invitations each have their own bounded allowance. Unknown authors allocate no pending rows. Quarantine has a finite byte, count and age allowance.
 
 ## 12. Views, tags, rules and the classifier slot
 
-**Views, tags and rules move into BindleBox** with their current semantics:
+**Views, tags and rules move into Parlay** with their current semantics:
 
 - [message views](message-views.md), including the conversation overlays;
 - [tags](tags.md) for suspected tags, provenance and default promotion;
 - owner rules, including single-transaction `deleteRule`.
 
-Core keeps the generic identifier and label validation and the reusable rule machinery for activity. BindleBox starts from a copy and the two diverge ([extraction](messaging-extraction.md) §2).
+Core keeps the generic identifier and label validation and the reusable rule machinery for activity. Parlay starts from a copy and the two diverge ([extraction](messaging-extraction.md) §2).
 
-**The classifier is a slot.** BindleBox is an optional `application` consumer of `item-classifier/v1` (extensibility design §7.2), calling `decide`.
+**The classifier is a slot.** Parlay is an optional `application` consumer of `item-classifier/v1` (extensibility design §7.2), calling `decide`.
 
-**Occupant available.** BindleBox invokes the first available occupant directly through the brokered resource. The slot's `any-error` failover *permits* advancing after any error. BindleBox deliberately advances **only** after failures that prove the occupant received nothing, the pre-dispatch class of extensions §3.3. Crafted content that makes one classifier time out therefore cannot push the same text to the next occupant (review S-7). The input is normative and minimal:
+**Occupant available.** Parlay invokes the first available occupant directly through the brokered resource. The slot's `any-error` failover *permits* advancing after any error. Parlay deliberately advances **only** after failures that prove the occupant received nothing, the pre-dispatch class of extensions §3.3. Crafted content that makes one classifier time out therefore cannot push the same text to the next occupant (review S-7). The input is normative and minimal:
 
 - bounded text, at most 2,000 tokens, after deterministic redaction of one-time codes, `bindle_meta`/`bindle_data` values, signed URLs, bearer-like strings and conversation secrets;
 - automation hints;
@@ -439,7 +442,7 @@ Core keeps the generic identifier and label validation and the reusable rule mac
 
 **What gets classified.** By default only bridged email and first-contact one-offs are classified. Conversations are classified only when the owner turns that on per conversation, because their senders never agreed to third-party processing. Typed results map to `sys:suspected.*` tags through the internal `applyAutomatedTags` boundary. The model never authorizes a final tag, quarantine or deletion.
 
-**No occupant, consent not given, or `requiresConsent`.** BindleBox shows **no** AI classification setting, "Suspected" model tag or label. Deterministic header hints on bridged email remain, labelled as header hints, and never finalize a tag.
+**No occupant, consent not given, or `requiresConsent`.** Parlay shows **no** AI classification setting, "Suspected" model tag or label. Deterministic header hints on bridged email remain, labelled as header hints, and never finalize a tag.
 
 **Disclosure** (extensions §5.1, §9.5). Consent names each occupant's origin and states: "may receive minimized text of new messages when the classifiers before it are unavailable."
 
@@ -464,7 +467,7 @@ Messages from accepted peers and established conversations are never auto-reject
 
 **Threshold pinning.** Thresholds are pinned to the occupant's `{model, version, schema}`, which `decide` results carry as evidence.
 
-- When an occupant reports a model, version or schema different from the pinned one, BindleBox **does not silently carry the thresholds over**. It enters calibration mode: "very likely" auto-rejection is suspended, and every item at or above `T_high` is treated as "could be spam" until the new version has a pinned threshold.
+- When an occupant reports a model, version or schema different from the pinned one, Parlay **does not silently carry the thresholds over**. It enters calibration mode: "very likely" auto-rejection is suspended, and every item at or above `T_high` is treated as "could be spam" until the new version has a pinned threshold.
 - A pinned threshold comes from the host's published calibration for that model version (the 3sln.me built-in classifier publishes one), or from the owner explicitly accepting the defaults for it.
 - An owner occupant change behaves the same way.
 - Rules use a new `minProbability` match field. It reads the stored evidence only, and applies only to `classifier` evidence.
@@ -503,13 +506,13 @@ Requests over limits are refused before classification, with the ordinary `rate_
 
 ## 13. Email bridge handoff (shared slice X12)
 
-The provider keeps SMTP intake, MIME bounds, provenance signing, the reply gates and the auto-reply ([public email bridge](public-email-bridge.md), none of it built yet). The 3sln.me `email-bridge` feature is a provider **consumer** of `public-message-intake/v1`, and the BindleBox mailbox is the occupant (extensibility design §7.1, spec §9).
+The provider keeps SMTP intake, MIME bounds, provenance signing, the reply gates and the auto-reply ([public email bridge](public-email-bridge.md), none of it built yet). The 3sln.me `email-bridge` feature is a provider **consumer** of `public-message-intake/v1`, and the Parlay mailbox is the occupant (extensibility design §7.1, spec §9).
 
 1. **Accept.** The provider accepts or refuses at SMTP time using only owner settings and account eligibility. Unknown, disabled and ineligible handles receive the identical generic refusal and **no reply**. SMTP behaviour MUST NOT vary with occupancy, occupant availability or delivery outcome (extensions §9.8, no occupancy oracle).
 2. **Hold and deliver.** Accepted mail enters the bridge's bounded per-owner holding queue (count, byte and 30-day age limits). The bridge mints a brokered token and calls the occupant's `deliver` with `tx = UUIDv5(ref, contract, entity, ingress fingerprint)`.
    - With no occupant, or an unavailable one, mail waits in the queue and is delivered when one is assigned. Otherwise it expires visibly in the owner's account.
    - An indeterminate outcome at a removed occupant is reported to the owner as unknown and is never re-sent to the new occupant (extensibility design §7.1 step 5).
-3. **Store.** BindleBox verifies the provenance (spec §9), then stores the message as an email-origin receipt or pending invitation with the sender unverified.
+3. **Store.** Parlay verifies the provenance (spec §9), then stores the message as an email-origin receipt or pending invitation with the sender unverified.
 4. **Auto-reply: one invariant text.** The reply is free marketing and is kept, but its content does not depend on occupancy or disposition (reviews S-5, P-16): "This address receives messages through Bindle. Your email was received. The recipient reads Bindle messages in their messaging app, and email replies may not reach them. To start a conversation, get Bindle: <link>."
    - It is sent only for accepted mail and only when every gate passes: platform DMARC-valid `reply()`, RFC 3834 suppression, a per-sender 30-day cooldown, per-sender-domain and per-handle caps, and a dedicated lowest-priority global budget that can never starve security mail or invitation acknowledgements.
    - The owner can switch it off.
@@ -523,24 +526,24 @@ Intents were considered and rejected for this path: intents are browser handoffs
 
 ## 14. Notifications through core activity
 
-BindleBox never pushes on its own. Under its connection and an explicit activity method grant ([activity](../spec/activity.md) "Authority and submission"), it keeps **one activity item per conversation** (and one for "new contact messages"). It updates the item with `Replace` as messages arrive, with:
+Parlay never pushes on its own. Under its connection and an explicit activity method grant ([activity](../spec/activity.md) "Authority and submission"), it keeps **one activity item per conversation** (and one for "new contact messages"). It updates the item with `Replace` as messages arrive, with:
 
 - the subject "3 new messages from alice@3sln.example";
 - no body;
 - app tags `conversation`, `contact`, `invitation` or `delivery-problem`.
 
-When the item reaches the 32-revision cap, BindleBox retracts it and starts a new one.
+When the item reaches the 32-revision cap, Parlay retracts it and starts a new one.
 
 This respects activity's rule that distinct admitted items remain distinct and quota-accounted, and that collapse affects notifications only. A busy mailbox costs a few items a day, not one per message (review P-9).
 
-A replacement connection does not inherit mutation authority. After a reinstall or app switch, earlier items are orphaned and stay until the owner archives them. BindleBox says so in its settings.
+A replacement connection does not inherit mutation authority. After a reinstall or app switch, earlier items are orphaned and stay until the owner archives them. Parlay says so in its settings.
 
 ## 15. Moderation and abuse
 
 Each scope is distinct (spike §15):
 
 - **Owner:** block a principal (all conversations and links), mute, quarantine, leave, revoke a link.
-- **BindleBox host:** abuse refusal per source principal or host, with an explicit sender outcome `rejected(not_authorized)` that never states the private reason.
+- **Parlay host:** abuse refusal per source principal or host, with an explicit sender outcome `rejected(not_authorized)` that never states the private reason.
 - **Provider:** account suspension removes the occupant binding and stops delegation.
 
 Reports carry only evidence the owner deliberately selects, never the full history, credentials or participant lists. Rejection alerts to the owner are coalesced (at most one summary per hour) so an attack is not reflected back at its victim. No receipt-of-receipt, bounce-of-bounce or alert loops.
@@ -556,7 +559,7 @@ Reports carry only evidence the owner deliberately selects, never the full histo
 | Sender uninstalls with obligations queued | The uninstalled app's delegation is revoked, so it stops sending. Its signed manifest lease lets a later occupant import the `outbox` segment and resume within the deadlines. Earlier activity items are orphaned (§14). |
 | Recipient switches apps | The owner pre-selects the same storage resource in the switch flow. The new occupant takes the archive writer lease (which fences the old app), verifies the signed manifest, imports control state first (blocks, tombstones, replay, frontiers), then peers, stream heads, outbox and items. It sends `rejoin` to every peer, regaining secrets and fresh incarnations, and shows the owner the links issued under the old app with bulk revoke and reissue. Traffic is admitted as soon as control state is restored. Intake configuration and quota counters carry over in the archive. |
 | Recipient's provider lacks `extensions.v1` or the messaging slot | No descriptor exists. The sender sees "This person's provider doesn't support Bindle messaging" before composing. |
-| Own provider lacks `key-delegation.v1` | BindleBox cannot sign. Sending, receipts and archive signing are unavailable, and installation says so. |
+| Own provider lacks `key-delegation.v1` | Parlay cannot sign. Sending, receipts and archive signing are unavailable, and installation says so. |
 | Directory profile missing (cross-host) | The descriptor's `verifies` and the sender's own capability are checked before composing: "Messages between example.org and 3sln.me can't be verified yet." Nothing is sent and then refused. |
 | Sender's delegation lapses mid-queue | The drain renews before sending. If renewal fails, obligations pause as `retry_scheduled(authorization)` and the owner is told to reconnect. They expire at the normal deadline. |
 | Partial multicast response | Per-context outcomes apply. Missing entries are `unknown` and are reconciled individually. |
@@ -570,9 +573,9 @@ Reports carry only evidence the owner deliberately selects, never the full histo
 
 | Party | Learns |
 | --- | --- |
-| Sender's BindleBox | Content, recipients, timing and outcomes |
+| Sender's Parlay | Content, recipients, timing and outcomes |
 | Recipient's provider | That a link was resolved, and by whom when the request is authenticated; never content |
-| Recipient's BindleBox | Content, the sender principal, timing and size; per batch, only its own recipients |
+| Recipient's Parlay | Content, the sender principal, timing and size; per batch, only its own recipients |
 | Storage provider | Encrypted segments (later) or plaintext (now), plus sizes |
 | Classifier occupant | Minimized text of classified items |
 | Push service, through core activity | Content-free or minimal subject per the activity center |
@@ -581,7 +584,7 @@ Logs carry no bodies, capabilities, link metas or full recipient lists. Status i
 
 ## 17. Engine-first
 
-BindleBox is engine-first from its first commit. It has its own ngin engine, provider catalogue, owner-scoped domain providers, harness, multi-party network simulator and CLI ([extraction](messaging-extraction.md) §7). It follows the conventions of [app engine](app-engine.md) §4 without importing 3sln.me's composition.
+Parlay is engine-first from its first commit. It has its own ngin engine, provider catalogue, owner-scoped domain providers, harness, multi-party network simulator and CLI ([extraction](messaging-extraction.md) §7). It follows the conventions of [app engine](app-engine.md) §4 without importing 3sln.me's composition.
 
 ## 18. Spike checklist: P0 answers
 
@@ -601,11 +604,11 @@ P1 items (real-adapter queue recovery, browser verification of counts and resets
 
 ## 19. Open questions for the user
 
-1. **Name:** BindleBox?
+1. **Name:** Parlay?
 2. **Delegation lifetime:** certificates of at most 24 h, with status checks required for lasting-effect records and receipts but not for plain messages? The alternative is shorter certificates and more renewals.
 3. **Marketing auto-reply:** one invariant reply to every gated sender of accepted public email, regardless of occupancy (§13). This is required by extensions §9.8; the owner can opt out. Acceptable?
 4. **Conversation gate:** keep the shared secret (option A, the earlier preference), or drop it for identity plus bilateral admission (option C)?
-5. **Bundled instance:** offer BindleBox as an opt-in default occupant at signup (recommended), or require explicit installation?
+5. **Bundled instance:** offer Parlay as an opt-in default occupant at signup (recommended), or require explicit installation?
 6. **Public native ingress:** should the handle accept Bindle-native messages from strangers in v1, or only bridged email (recommended: email only)?
 7. **Auto-rejection thresholds** (§12.1): are the provisional `T_high` 0.97 and `T_low` 0.70, with calibration mode on model change, acceptable?
 8. **Reset:** accept discarding all existing local messages, contacts and conversations at cutover ([extraction](messaging-extraction.md) §4)?

@@ -19,7 +19,7 @@ Publication is blocked until each is built, handled manually with a documented p
 
 | Commitment | Where | Current state |
 |---|---|---|
-| Account deletion on request | Privacy §8–9, Terms §10 | Implemented behind `ACCOUNT_DELETION_ENABLED` (off): self-serve with 14/30-day grace and admin-assisted. Enabling is blocked on R1-M12 (BindleBox data on deletion) and the Polar sandbox check. |
+| Account deletion on request | Privacy §8–9, Terms §10 | Implemented behind `ACCOUNT_DELETION_ENABLED` (off): self-serve with 14/30-day grace and admin-assisted. Enabling is blocked on R1-M12 (Parlay data on deletion) and the Polar sandbox check. |
 | Data export on request; export before closure and over-quota removal | Privacy §9, Terms §7, §10 | Implemented behind `ACCOUNT_EXPORT_ENABLED` (off), including closure-window export sessions. The over-quota hook (DX-9) is pending. Device grants and S3/WebDAV mappings are not exported yet. |
 | Removing a confirmed email (erasure) | Privacy §9 | Implemented behind `EMAIL_REMOVAL_ENABLED` (off). A waiver is required when no other notice channel remains. |
 | Age confirmation by country, region blocking | Privacy §3, §10; Terms §2 | Implemented locally with trusted-location age attestation and separate, reversible EU/EEA/UK launch blocks for representative obligations; blocked locations receive USD-only billing selection. Production verification and counsel approval remain pending. Research: [age research](../release/age-requirements.md), [representative spike](../release/eu-uk-representative-spike.md). |

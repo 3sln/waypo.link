@@ -38,9 +38,8 @@ export function createsContentOrGrant(path,method,input={}){
  if(path==='/api/profile')return input.discloseToContacts!==false;
  if(/^\/api\/contacts\/[^/]+\/sharing$/.test(path))return !withdrawsSharing(input);
  if(path==='/api/email-bridge')return input.enabled===true||input.autoReply===true;
- if(/^\/api\/conversations\/[^/]+\/[^/]+\/action$/.test(path))return ['post','invite','policy','permissions','accept'].includes(input.operation);
  if(/^\/api\/events\/buses\/[^/]+\/features$/.test(path))return input.read===true||input.publish===true;
- return /^\/api\/(?:views\/[^/]+|rules\/[^/]+\/restore|collections|views|rules|tags\/labels|contact-links|contacts(?:\/redeem)?|links\/(?:respond|envelope)|resources|integrations\/google\/(?:start|complete)|integrations\/records|conversations|automation\/grant|apps\/[^/]+\/grants|connections|mcp\/approve|events\/buses)$/.test(path)||/^\/api\/(?:resources\/[^/]+\/(?:objects|upload)|messages\/[^/]+\/(?:reply|postbacks\/prepare)|events\/buses\/[^/]+\/history|integrations\/records\/[^/]+\/reconfirm)$/.test(path);
+ return /^\/api\/(?:views\/[^/]+|rules\/[^/]+\/restore|collections|views|rules|tags\/labels|links\/respond|resources|integrations\/google\/(?:start|complete)|integrations\/records|automation\/grant|apps\/[^/]+\/grants|connections|mcp\/approve|events\/buses)$/.test(path)||/^\/api\/(?:resources\/[^/]+\/(?:objects|upload)|messages\/[^/]+\/postbacks\/prepare|events\/buses\/[^/]+\/history|integrations\/records\/[^/]+\/reconfirm)$/.test(path);
 }
 export class TermsRequestAllowed extends Query {static deps=['identity'];constructor(context,input){super();this.context=context;this.input=input;}async fetch({identity}){if(createsContentOrGrant(this.input.path,this.input.method,this.input.document)){const {account}=await identity.authorized(this.context);identity.requireCurrentTerms(account);}return true;}}
 

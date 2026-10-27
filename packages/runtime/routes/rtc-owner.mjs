@@ -25,6 +25,7 @@
 import {json,body,flagEnabled} from './shared.mjs';
 import {RTC_WIDENING,RTC_FRAGMENT,heldPurpose} from '../../app/domains/rtc.mjs';
 import {REGISTERED_PURPOSES} from '../../rtc/purposes.mjs';
+import {rtcContactBasis} from '../../links/parents.mjs';
 
 const ACTIONS=Object.freeze(['set-policy','set-contact-rtc','block','unblock','mute','unmute','revoke-ticket','end-session','revoke-endpoint','clear-missed','narrow-app']);
 /** Narrowing actions: never refused for capacity (protective, as withdrawing contact sharing is). */
@@ -152,10 +153,11 @@ export const stages={
    const input=await body(request,16384);
    if(action==='end-session')return json(await endSession(call,input));
    if(action==='narrow-app')return await narrowApp(env,context,input,enabled);
-   // Review F7: a contact-link configuration names one of this owner's active contact links (the account's contact-grant
-   // list); an unknown or inactive parent is the uniform 404. Removing a configuration (no purposes) stays available
-   // for any parent, so a revoked link's leftover configuration can always be cleared.
-   if(action==='set-contact-rtc'&&Array.isArray(input?.purposes)&&input.purposes.length&&!(await object.contacts(id)).some(c=>c.id===input.parent&&c.active===true))return unknown();
+   // Review F7: a contact-link configuration names one of this owner's active contact links (the account's contact
+   // parents); an unknown or inactive parent is the uniform 404, and so is one RTC never admits as a basis (review L6:
+   // not a contact-type link, or conditional). Removing a configuration (no purposes) stays available for any parent,
+   // so a revoked link's leftover configuration can always be cleared.
+   if(action==='set-contact-rtc'&&Array.isArray(input?.purposes)&&input.purposes.length&&!(await object.contacts(id)).some(c=>c.id===input.parent&&c.active===true&&rtcContactBasis(c)))return unknown();
    return json(await call('rtc.'+action,input));
   }catch(error){
    // The uniform 404: a widening change while off, and any unknown target, answer exactly like an unknown path.

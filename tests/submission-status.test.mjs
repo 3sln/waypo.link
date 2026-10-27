@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {submissionStatus} from '../packages/messaging/submission-status.mjs';
+import {submissionStatus} from '../packages/content/submission-status.mjs';
 
 test('submission status accepts two navigation links without executable action fields', () => {
   const value = {type:'success', message:'Saved.', actions:[

@@ -78,8 +78,8 @@ test('an inbox above the scan limit gets exact unit bytes from the item-index ag
  try{
   a=await account({...base(now),OVER_QUOTA_RETENTION_ENABLED:'true',retentionInventoryRowLimit:4},directory);const {c,owner}=a;await seedLapse(c,owner,now);
   const resource=(await c.metadata.get('builtin/hosted-resource-v1')).id;c.itemIndex.upsertObject(resource,{size:600000000,key:'dataset',version:'immutable',blobRef:'private'});
-  const inbox=(await c.messages.collections(owner))[0];let bytes=0;for(let n=0;n<12;n++){const m={id:'00000000-0000-4000-8000-'+String(n).padStart(12,'0'),owner,collection:inbox.id,size:100+n,receivedAt:now+n,unread:true,blobRef:'m'+n};bytes+=m.size;await c.metadata.put(key('message',owner,m.id),m);c.itemIndex.upsert(m);}
-  await c.metadata.put(key('message-usage',owner),{bytes,messages:12});await c.metadata.put('hosted-usage',{bytes:600000000,objects:1});
+  const inbox=(await c.items.collections(owner))[0];let bytes=0;for(let n=0;n<12;n++){const m={id:'00000000-0000-4000-8000-'+String(n).padStart(12,'0'),owner,collection:inbox.id,size:100+n,receivedAt:now+n,unread:true,blobRef:'m'+n};bytes+=m.size;await c.metadata.put(key('app-message',owner,m.id),m);c.itemIndex.upsert(m);}
+  await c.metadata.put(key('app-message-usage',owner),{bytes,messages:12});await c.metadata.put('hosted-usage',{bytes:600000000,objects:1});
   const state=await(await a.get()).json();assert.equal(state.inventorySource,'aggregate');assert.equal(state.inventoryBytesKnown,true);assert.equal(state.units.find(u=>u.kind==='collection').bytes,bytes);
   assert.equal((await a.post('/api/account/retention/keep',{episodeId:state.episode.id,revision:0,keepSelection:['resource:'+resource]})).status,409);
   const saved=await(await a.post('/api/account/retention/keep',{episodeId:state.episode.id,revision:0,keepSelection:['collection:'+inbox.id]})).json();assert.equal(saved.keepSelectionFit,'fits');

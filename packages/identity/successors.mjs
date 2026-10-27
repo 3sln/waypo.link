@@ -1,6 +1,6 @@
 // PORT-5: verifier adoption of identity moves (docs/spec/identity-portability.md rev 3.2 §5.1, §7, §8; design §2.7,
 // §4, §10.1). Engine-first: `SuccessorRegistry` is the verifier's provider resource (catalogued as `successors`) and
-// the `successors.*` Actions/Queries at the end are its operations. Organizations and BindleBox call this port; their
+// the `successors.*` Actions/Queries at the end are its operations. Organizations and Parlay call this port; their
 // owners wire it. PORT-4 (packages/identity/transfer-in.mjs) reuses the fetch client and the attestation-key pins.
 //
 // What this module owns:
@@ -787,7 +787,7 @@ export class SuccessorRegistry {
 }
 
 // ---- engine operations ----------------------------------------------------------------------------------------
-// Actors are built by trusted adapters: `system` (background jobs, the organizations and BindleBox ports), `operator`
+// Actors are built by trusted adapters: `system` (background jobs, the organizations and Parlay ports), `operator`
 // (the human who owns the relationship confirms or dismisses pending successors) and `public` (presentation intake).
 const CHANGED = 'successors-changed';
 const ORIGIN = value => { if (!exactMembers(value, ['iss', 'sub']) || !httpsOrigin(value.iss) || !isUUID(value.sub)) fault('invalid_request', 'Name the identity by its origin principal.'); return { iss: value.iss, sub: value.sub }; };

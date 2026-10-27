@@ -1,5 +1,8 @@
 # Label-agnostic tags and suspected classification
 
+> **Update (2026-10-27).** Tags and owner rules remain core for activity items (packages/core/tags.mjs). Contact-intake tags left the core with legacy messaging; Parlay keeps its own copy (DEVLOG "Messaging removed from core; Parlay rename; BB-CUT reset").
+
+
 Provisional architecture, 2026-10-14. User direction (2026-10-14): automated tagging produces “Suspected <X>” tags (Suspected Spam, Suspected Social, Suspected Promotional, Suspected Recruitment, …); the owner's rules finalize them, with default rules such as Suspected Spam → Spam; tags are label agnostic so labels can be localized. Clarifications the same day: the suspected convention applies only to AI-model and other automated/heuristic tagging, never to tags a contact link applies; contact-link auto tags and sender-selectable optional tags are mutable per-link intake configuration (not signed grant claims). Human product reviewer: __________  Date: __________  Outcome: __________.
 
 ## Identifiers, not labels
@@ -82,7 +85,7 @@ One model: the `classification` enum (`unclassified`, `personal`, `work`, `spam`
 
 ## Bindle specification surface
 
-Only a short rule is added to [the messaging specification](../spec/messaging.md): tags are opaque identifiers and labels are presentation; a host may reserve a namespace prefix for host-defined tags whose meaning and localized labels it documents; senders cannot introduce host-reserved tags except IDs the recipient explicitly allowed; automated suggestions must stay distinguishable from recipient-final tags. The specific `sys:` registry, defaults and provenance values are 3sln.me service behavior, not Bindle wire requirements. No SDK API is specified.
+Only a short rule is added to [the messaging specification](../../apps/parlay/docs/legacy/messaging.md): tags are opaque identifiers and labels are presentation; a host may reserve a namespace prefix for host-defined tags whose meaning and localized labels it documents; senders cannot introduce host-reserved tags except IDs the recipient explicitly allowed; automated suggestions must stay distinguishable from recipient-final tags. The specific `sys:` registry, defaults and provenance values are 3sln.me service behavior, not Bindle wire requirements. No SDK API is specified.
 
 ## Review record
 

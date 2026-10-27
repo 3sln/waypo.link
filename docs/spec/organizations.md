@@ -89,7 +89,7 @@ This document adds no new principal type, token transport, RPC transport or auth
 
 ## 3a. Identity documents and key discovery (`directory.v1`)
 
-This section is the directory/identity-document profile that [contact delivery](contact-delivery.md#authorship-and-signatures), [links §7.3](links.md#73-verifying-the-audience-identity) and [BindleBox §3.3](bindlebox.md#33-verifying-an-author) depend on. It is specified here because organizations need it first. It MAY later move to a companion document unchanged. It is read-only discovery over keys the provider has already established. Nothing here creates, rotates or repairs keys.
+This section is the directory/identity-document profile that [contact delivery](../../apps/parlay/docs/legacy/contact-delivery.md#authorship-and-signatures), [links §7.3](links.md#73-verifying-the-audience-identity) and [Parlay §3.3](messaging.md#33-verifying-an-author) depend on. It is specified here because organizations need it first. It MAY later move to a companion document unchanged. It is read-only discovery over keys the provider has already established. Nothing here creates, rotates or repairs keys.
 
 ### 3a.1 Declaration and naming
 
@@ -250,7 +250,7 @@ Issuance rules for the home provider:
 - It issues only on the strength of an authenticated member session at the home provider, or of a client grant the member approved for this (`aud`, `client`). Either must be listed to the member, with the holder keys it has certified, and revocable by the member at any time. Revoking it makes the status of those keys `revoked` (R2-M2).
 - `client.origin` MUST be the origin the home provider observed for the requesting document (the embedder origin of its own frame, the `Origin` of the request, or the exact registered redirect URI the certificate is delivered to), never a value taken from request parameters. The certificate MUST be delivered only to documents of that origin, by the same rules as an authorization code (auth) (R2-M3).
 - It refuses a holder key that is, or was, an identity key of the account.
-- It answers `GET <identity URI>/delegations/<jkt>` with the status semantics of [BindleBox §3.4](bindlebox.md#34-delegation-status-assumed), applied to member certificates.
+- It answers `GET <identity URI>/delegations/<jkt>` with the status semantics of [Parlay §3.4](messaging.md#34-delegation-status-assumed), applied to member certificates.
 
 **Request proof.** With each request, the client presents the certificate and a proof made by the holder key:
 
@@ -857,11 +857,11 @@ The common contract between organization providers is §3a plus §9. Between an 
 | AMD-O7 | links | The organization-invitation and relation-invitation link types. Signature-domain table rows for both, for `bindle-relation-participation+jwt`, for `bindle-relation-event+jwt` (revision 4.5), and for the `BindleMember` and `BindleEntity` proofs. (Revision 2's offer type and `bindle-entity-client+jwt` are withdrawn.) |
 | AMD-O8 | security, "Grants and resource authority" | Replace "A future organization owner is a separate principal…" with a pointer to §6. |
 | AMD-O9 | contracts, "Useful follow-ons" | Replace the organizations sentence with a pointer here. |
-| AMD-O10 | protocol §2; contact delivery; links §7.3; BindleBox §3.3 | The `directory.v1` feature and §3a as the shared directory profile, replacing the "unwritten profile" references. The identity document `kind`. Entity client metadata (`events_endpoint`, key set) under identity-level `features` (**TBD**). *(Revision 4.5: for relations, the events endpoint is issuer-level, in `relations.v1` (§9.9, §14), and identity documents carry none.)* |
+| AMD-O10 | protocol §2; contact delivery; links §7.3; Parlay §3.3 | The `directory.v1` feature and §3a as the shared directory profile, replacing the "unwritten profile" references. The identity document `kind`. Entity client metadata (`events_endpoint`, key set) under identity-level `features` (**TBD**). *(Revision 4.5: for relations, the events endpoint is issuer-level, in `relations.v1` (§9.9, §14), and identity documents carry none.)* |
 | AMD-O11 | protocol §3 | The field member `scope: "member"` (phase B). |
 | AMD-O13 | protocol §3, §6; contracts | Versioned integrity references (URL plus `version` plus `digest`, additive versions, provider caching) as defined by the [artefact references](../architecture/artefact-references.md) design. They replace "a fragment URL identifies an immutable version" for every artefact class that adopts them. Owned by that design. |
 | AMD-O14 | protocol §1; the contract registry | Relation documents as a public artefact class (`/artefacts/relations/`), next to fragments, slots, buses and contracts. |
-| AMD-O12 | `key-delegation.v1` (currently proposed in BindleBox §3.2) | Generalize the core feature to three certificate profiles: `bindle-key-delegation+jwt` (BindleBox, unchanged), `bindle-member-certificate+jwt` (§5.2, purposes `member-access` and `member-accept`) and `bindle-entity-certificate+jwt` (§9.5, purpose `relation-access`). Add rows for both, and for the `BindleMember` DPoP proof, to the links §7.2 signature-domain table. The current implementation's "one active delegate key per principal" rule and its messaging-occupant check (`packages/identity/delegation.mjs`) apply to the BindleBox profile only. Member certificates instead allow several active keys, at least one per (`aud`, `client`) issuance grant (§5.2), or a member's second organization, client or device would revoke the first (R2-M5). |
+| AMD-O12 | `key-delegation.v1` (currently proposed in Parlay §3.2) | Generalize the core feature to three certificate profiles: `bindle-key-delegation+jwt` (Parlay, unchanged), `bindle-member-certificate+jwt` (§5.2, purposes `member-access` and `member-accept`) and `bindle-entity-certificate+jwt` (§9.5, purpose `relation-access`). Add rows for both, and for the `BindleMember` DPoP proof, to the links §7.2 signature-domain table. The current implementation's "one active delegate key per principal" rule and its messaging-occupant check (`packages/identity/delegation.mjs`) apply to the Parlay profile only. Member certificates instead allow several active keys, at least one per (`aud`, `client`) issuance grant (§5.2), or a member's second organization, client or device would revoke the first (R2-M5). |
 
 ## 16. Conformance tests (minimum)
 
@@ -895,7 +895,7 @@ The common contract between organization providers is §3a plus §9. Between an 
   - *(revision 4.4)* a change of control without the recovery file increases the authority epoch exactly once, when it takes effect, and one that is aborted or closed leaves it unchanged; a counterpart then refuses the organization's entity certificates that carry the earlier `aep`;
   - a verifier capping effective lifetime treats an older certificate as expired with the uniform error (R4-M3);
   - identity documents contain only the permitted members, and unknown and suspended identities give an identical 404;
-  - wrong `typ` (including a BindleBox delegation certificate), wrong `aud`, a lifetime above the verifier's local policy, a retired or revoked signing key, a holder key equal to an identity key, and a replayed proof `jti` all fail;
+  - wrong `typ` (including a Parlay delegation certificate), wrong `aud`, a lifetime above the verifier's local policy, a retired or revoked signing key, a holder key equal to an identity key, and a replayed proof `jti` all fail;
   - a key rotation with continuity is accepted silently, and one without continuity counts as an authority reset;
   - a document reviving a retired, revoked or superseded kid, or rolling back to an ancestor key, is rejected and is not treated as a reset (R2-H3);
   - the home provider binds `client.origin` to the observed requester origin and lists every issuance grant and holder key to the member (R2-M2, R2-M3);

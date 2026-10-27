@@ -1,14 +1,14 @@
 // Tags domain (docs/architecture/tags.md): owner tag rules and the tag label
 // registry. Migration slice 1 of docs/architecture/app-engine.md, with Views.
-// The rules engine itself (packages/messaging/tags.mjs) stays pure; MessagingService
+// The rules engine itself (packages/core/tags.mjs) stays pure; ItemService
 // owns the transactions, and this provider narrows it to one owner.
 import {StorageError} from '../../storage/policy.mjs';
 import {AppAction,AppQuery,OwnerScopedProvider} from '../engine.mjs';
 
 export class TagRulesProvider extends OwnerScopedProvider {
- // accountStore is declared for the owner binding check in OwnerScopedProvider; MessagingService owns the transactions.
- static deps=['accountStore','messaging'];
- scope({messaging},owner){return {rules:()=>messaging.rules(owner),replace:rules=>messaging.setRules(owner,rules),remove:id=>messaging.deleteRule(owner,id),restoreDefault:id=>messaging.restoreDefaultRule(owner,id),labels:()=>messaging.tagLabels(owner),setLabel:input=>messaging.setTagLabel(owner,input)};}
+ // accountStore is declared for the owner binding check in OwnerScopedProvider; ItemService owns the transactions.
+ static deps=['accountStore','items'];
+ scope({items},owner){return {rules:()=>items.rules(owner),replace:rules=>items.setRules(owner,rules),remove:id=>items.deleteRule(owner,id),restoreDefault:id=>items.restoreDefaultRule(owner,id),labels:()=>items.tagLabels(owner),setLabel:input=>items.setTagLabel(owner,input)};}
 }
 
 /** The owner's rules. Not a pure read: the first read seeds the versioned defaults (one transaction, idempotent). */

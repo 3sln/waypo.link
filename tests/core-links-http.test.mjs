@@ -9,6 +9,7 @@ import { join } from 'node:path';
 import { createNodeServer } from '../apps/node/server.mjs';
 import { fromBase64url, strictText } from '../packages/core/records.mjs';
 import { MESSAGING_CONTACT_LINK_TYPE, MESSAGING_INGRESS_SLOT } from '../packages/links/types.mjs';
+import { linkService } from '../packages/runtime/account/links.mjs';
 
 const APP = 'https://box.example/app';
 const kidOf = url => JSON.parse(strictText(fromBase64url(new URL(url).searchParams.get('bindle_meta').split('.')[0]))).kid;
@@ -30,9 +31,8 @@ test('flag off: owner link routes are not mounted and the app-actor entry refuse
     for (const [path, value] of [['/api/links'], ['/api/links/changes'], [`/api/links/${crypto.randomUUID()}/revoke`, {}]]) assert.equal((await s.owner(path, value)).status, 404, path);
     assert.equal((await s.owner('/api/links', {})).status, 404, 'no allowlist reveals the path');
     await assert.rejects(s.controller().linkOperation(s.id, { actor: { kind: 'app', owner: s.id, clientId: APP, handle: s.handle }, operation: 'links.issue', input: {} }), { code: 'not_found' });
-    // Existing contact links are unaffected.
-    const created = await s.owner('/api/contact-links', { name: 'Friends', mimeTypes: ['text/plain'], expiresAt: Date.now() + 86400000, maxMessages: 3, maxBytes: 65536, maxMessageBytes: 16384 });
-    assert.equal(created.status, 200, await created.clone().text());
+    // The legacy owner contact-link route left the core with messaging on 2026-10-27.
+    assert.equal((await s.owner('/api/contact-links', { name: 'Friends' })).status, 404);
   } finally { await s.close(); }
 });
 
@@ -55,17 +55,17 @@ test('flag on: occupant app issues, owner lists and revokes over HTTP; contact l
     assert.equal((await s.owner(`/api/links/${issued.jti}/revoke`, { all: true })).status, 400);
     const changes = await (await s.owner('/api/links/changes?since=0')).json();
     assert.deepEqual(changes.changes.map(change => change.change), ['issued', 'revoked']);
-    // Contact links: the current key mints; rotation keeps old links; a rotated challenge moves to the new key.
-    const contact = await (await s.owner('/api/contact-links', { name: 'Friends', mimeTypes: ['text/plain'], expiresAt: Date.now() + 86400000, maxMessages: 3, maxBytes: 65536, maxMessageBytes: 16384 })).json();
-    const before = kidOf(contact.url);
+    // Contact links: the current key mints; rotation keeps old links; revoking the old key ends them.
+    const issue = async resource => c.linkOperation(s.id, { actor, operation: 'links.issue', input: { type: MESSAGING_CONTACT_LINK_TYPE, claims: { resource, kinds: ['one-off'], mimeTypes: ['text/plain'], maxMessages: 3, maxBytes: 65536, maxMessageBytes: 16384 }, expiresAt: Date.now() + 86400000 } });
+    const contact = await issue('p2'), before = kidOf(contact.link);
     const rotated = await c.rotateIdentityKey(s.id, { purpose: 'signing', expectedKid: before });
-    assert.equal((await c.endpoints.inspect(contact.url)).form, 'link');
-    const fresh = await (await s.owner('/api/contact-links', { name: 'New', mimeTypes: ['text/plain'], expiresAt: Date.now() + 86400000, maxMessages: 3, maxBytes: 65536, maxMessageBytes: 16384 })).json();
-    assert.equal(kidOf(fresh.url), rotated.kid);
-    const landing = await s.fetchURL(contact.url, { headers: { Accept: 'application/json' } });
-    assert.notEqual(landing.status, 401, 'the landing still verifies a retired-key link');
+    assert.equal((await linkService(c).verify(contact.link)).record.jti, contact.jti);
+    const fresh = await issue('p3');
+    assert.equal(kidOf(fresh.link), rotated.kid);
+    const landing = await s.fetchURL(contact.link, { headers: { Accept: 'application/vnd.bindle.contact-profile+json' } });
+    assert.equal(landing.status, 200, 'the landing still verifies a retired-key link');
     await c.revokeIdentityKey(s.id, { purpose: 'signing', kid: before, reason: 'compromise' });
-    await assert.rejects(c.endpoints.inspect(contact.url), { code: 'link_invalid' });
-    assert.equal((await c.endpoints.inspect(fresh.url)).form, 'link');
+    await assert.rejects(linkService(c).verify(contact.link), { code: 'link_invalid' });
+    assert.equal((await linkService(c).verify(fresh.link)).record.jti, fresh.jti);
   } finally { await s.close(); }
 });

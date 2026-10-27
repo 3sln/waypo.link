@@ -95,7 +95,7 @@ test('Worker enforces request byte bounds and JSON content type', async () => {
   assert.equal((await request('/api/auth/signup', { method: 'POST', raw: '{invalid', headers: { Origin: origin } })).status, 400);
   assert.equal((await request('/api/auth/signup', { method: 'POST', raw: JSON.stringify({ oversized: 'x'.repeat(100001) }), headers: { Origin: origin } })).status, 413);
   for (const value of [null, [], 'text', 1]) assert.equal((await request('/api/auth/signup', { method: 'POST', value, headers: { Origin: origin } })).status, 400);
-  assert.equal((await request('/api/contacts', { method: 'OPTIONS' })).status, 405);
+  assert.equal((await request('/api/profile', { method: 'OPTIONS' })).status, 405);
 });
 
 test('actual Durable Object races preserve unique handles/emails and reject stale CAS writes', async () => {
@@ -111,12 +111,13 @@ test('actual Durable Object races preserve unique handles/emails and reject stal
   assert.equal(await directory.compareAndSwap((await directory.findByEmail(email)).id, 0, { ...winning, revision: 2 }), false);
 });
 
-test('R2 cold shelving retains credentials/capabilities hot and restores message/resource metadata with an alarm', async () => {
+test('R2 cold shelving retains credentials/capabilities hot and restores item/resource metadata with an alarm', async () => {
   const owner = crypto.randomUUID(); const object = accounts.get(accounts.idFromName(owner));
-  const messageKey = `message/${owner}/test`; const resourceKey = 'resource/test';
-  await object.seed(owner, [[messageKey, { id: 'test', owner, blobRef: 'immutable-existing-object', size: 4 }], [resourceKey, { id: 'test', owner, secret: { ciphertext: 'encrypted-only' } }], ['signing-key', { encrypted: { ciphertext: 'private-encrypted' } }], ['contact-grant/test', { active: true }]]);
+  // Activity items (app-message/) shelve; legacy peer `message/` rows were reset at BB-CUT (DEVLOG 2026-10-27).
+  const messageKey = `app-message/${owner}/test/`; const resourceKey = 'resource/test';
+  await object.seed(owner, [[messageKey, { id: 'test', owner, blobRef: 'immutable-existing-object', size: 4 }], [resourceKey, { id: 'test', owner, secret: { ciphertext: 'encrypted-only' } }], ['signing-key', { encrypted: { ciphertext: 'private-encrypted' } }], ['link/test/', { owner, revoked: false }]]);
   await object.evictCold();
-  const cold = new Map(await object.rows()); assert.equal(cold.get('shelved'), true); assert.equal(cold.has(messageKey), false); assert.equal(cold.has(resourceKey), false); assert(cold.has('signing-key')); assert(cold.has('contact-grant/test'));
+  const cold = new Map(await object.rows()); assert.equal(cold.get('shelved'), true); assert.equal(cold.has(messageKey), false); assert.equal(cold.has(resourceKey), false); assert(cold.has('signing-key')); assert(cold.has('link/test/'));
   assert(await archives.get(`accounts/${owner}.json`));
   const warm = new Map(await object.restoreCold(owner)); assert.equal(warm.has('shelved'), false); assert.equal(warm.get(messageKey).owner, owner); assert.equal(warm.get(resourceKey).owner, owner); assert(await object.alarmAt());
 });

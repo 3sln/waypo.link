@@ -369,7 +369,7 @@ These disclosures MUST be visible without expanding a collapsed section. A discl
 | `preferences-updated` and the revocation events ([integrations §6.2](integrations.md#62-event-types)) | Provider → one integration control plane: configuration snapshots and severance | **Not a bus, and never published to one.** Buses reuse its transport (SETs over RFC 8935 with signing, retries and the outbox) and add one event type, `bus-advanced`. Configuration and revocation never travel on a bus. |
 | [Activity](activity.md) | App → human. Signed notification items with push routing, read state and retention policy | **Separate.** Bus records are machine data with no read state, no notification and no push to devices. A bus record never becomes activity automatically. An app that wants to tell the owner something publishes activity under its own activity grant. The provider exposes no "activity bus", which would let apps read the owner's notifications. |
 | RPC transaction journal | Idempotency for mutations | **Reused unchanged** as publish deduplication (§4.1). |
-| BindleBox send-queue SSE | App-internal progress channel | Unrelated. App-internal transports are not buses. |
+| Parlay send-queue SSE | App-internal progress channel | Unrelated. App-internal transports are not buses. |
 
 ## 12. Interoperability without support
 

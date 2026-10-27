@@ -1,8 +1,6 @@
 import {systemBadge} from '../identity/system-bootstrap.mjs';
 import {StorageError} from '../storage/policy.mjs';
-import {key,canonical} from '../core/records.mjs';
 import {BILLING_STATE_KEY,entitlementFromState} from '../billing/catalog.mjs';
-import {UUID} from '../core/primitives.mjs';
 import {developerPolicy,evaluateRegisteredPolicy} from '../links/policies.mjs';
 export const DEVELOPER_CONTACT_TAGS=Object.freeze({free:['contact:developer','priority:free'],paid:['contact:developer','priority:paid'],plus:['contact:developer','priority:plus'],ultra:['contact:developer','priority:ultra']});
 export async function developerContactTier(controller,owner){
@@ -17,7 +15,6 @@ export async function developerContactTier(controller,owner){
 // (links §7, architecture bindle-links "Developer contact"). The operator policy registry
 // (packages/links/policies.mjs, slice C1a) holds its policy; nobody else can name or parameterize a policy.
 export {DEVELOPER_CONTACT_POLICY,developerPolicy,linkPolicyRegistry} from '../links/policies.mjs';
-const OPTIONAL=Object.freeze(['topic:bug','topic:feature','topic:general']),LABELS=Object.freeze({'topic:bug':{en:'Bug report',es:'Informe de error'},'topic:feature':{en:'Feature idea',es:'Idea de función'},'topic:general':{en:'General question',es:'Pregunta general'}});
 // Same-host principals only; the decision depends on nothing the audience supplies beyond the principal.
 export function evaluateLinkPolicy(controller,policy,principal){return evaluateRegisteredPolicy({origin:controller.config.APP_ORIGIN,config:controller.config,policy,principal,evaluators:{[developerPolicy(controller.config)]:subject=>developerEvaluation(controller,subject)}});}
 // The developer-contact evaluator of the registry: billing tier first, then the active-population mode.
@@ -29,38 +26,12 @@ async function developerEvaluation(controller,principal){
  if(!population||!Number.isSafeInteger(population.observedAt)||!Number.isSafeInteger(population.validUntil)||population.observedAt>now||population.validUntil<=now||population.validUntil>population.observedAt+60000||!['all-active','paid-only'].includes(population.mode))return {state:'unavailable'};
  return population.mode==='paid-only'?{eligible:false,reason:'paid-required',tier:'free'}:{eligible:true,tier:'free',tags:['priority:free'],final:false};
 }
-// Expired legacy daily grants are reclaimed in bounded passes; messages and receipts stay.
-export async function cleanupDailyDeveloperGrants(controller,owner,now=Date.now()){
- // Review #4: a wrapping cursor over contact-grant/ (128 rows a call) instead of one 1,001-row read.
- const cursorKey='link-gc-cursor/developer-daily',prefix=key('contact-grant'),cursor=await controller.metadata.get(cursorKey);let rows=await controller.metadata.list({prefix,...cursor?{startAfter:cursor}:{},limit:128});if(!rows.size&&cursor)rows=await controller.metadata.list({prefix,limit:128});
- if(rows.size===128)await controller.metadata.put(cursorKey,[...rows.keys()].at(-1));else await controller.metadata.delete(cursorKey);
- let cleaned=0;for(const [path,grant]of rows){if(cleaned>=50)break;if(grant.owner!==owner||grant.internalKind!=='developer-contact/v1'||grant.claims.exp*1000>now)continue;await controller.metadata.transaction(async tx=>{const current=await tx.get(path);if(current?.internalKind!=='developer-contact/v1'||current.owner!==owner||current.id!==grant.id||current.claims.exp*1000>now)return;await tx.delete(path);await tx.delete(`contact-name/${grant.id}`);await tx.delete(`contact-url/${grant.id}`);if(typeof current.internalPointer==='string'&&current.internalPointer.startsWith('developer-contact/v1/')){const pointer=await tx.get(current.internalPointer);if(pointer?.version===1&&pointer.owner===owner&&pointer.grantId===current.id)await tx.delete(current.internalPointer);}});cleaned++;}
- return cleaned;
-}
-/** BB-CUT switch (messaging extraction prep, 2026-10-26). `legacy` (default): the core contact grant below.
- * `occupant`: the link the developer account's messaging-ingress occupant (Parley) issued through the links contract with
- * the developer policy (account/links.mjs `developerOccupantLink`); the console hands it off as a `send-message` intent
- * to the sender's own messaging app. Config, not a flag: it selects a deployment's route, not a per-account rollout. */
-export const DEVELOPER_CONTACT_MODES=Object.freeze(['legacy','occupant']);
-export const developerContactMode=config=>config?.DEVELOPER_CONTACT_MODE==='occupant'?'occupant':'legacy';
-// Runs on the developer account outside its gate; creation and renewal take the gate.
-// A revoked link stays revoked (no silent re-creation); a link near expiry is renewed.
-export async function developerContactLink(controller,owner,handle,now=Date.now()){
- if(developerContactMode(controller.config)==='occupant')return controller.developerOccupantLink(owner);
- const pointer='developer-contact/v2',current=async()=>{const record=await controller.metadata.get(pointer);return record?.version===2&&UUID.test(record.grantId)?await controller.metadata.get(key('contact-grant',record.grantId)):null;};
- let grant=await current();
- if(grant&&!grant.active)return {available:false,reason:'contact-unavailable'};
- if(!grant||grant.claims.exp*1000<=now+7*86400000)grant=await controller.gated(async()=>{
-  const latest=await current();if(latest&&(!latest.active||latest.claims.exp*1000>now+7*86400000))return latest;
-  await cleanupDailyDeveloperGrants(controller,owner,now);const collection=(await controller.messages.collections(owner)).find(value=>value.active);if(!collection)return null;
-  const issued=await controller.createSystemContactLink(owner,handle,{collections:[collection.id],mimeTypes:['text/plain','text/html'],expiresAt:now+365*86400000,maxMessages:5,maxBytes:65536,maxMessageBytes:16384,kinds:['one-off'],audience:{policy:developerPolicy(controller.config)},requiredTags:['contact:developer'],optionalTags:[...OPTIONAL],tagLabels:structuredClone(LABELS)},'Developer contact');
-  // A renewed parent shares the per-author daily quota family of the link it replaces (no doubled allowance).
-  if(latest){const path=key('contact-grant',issued.id);await controller.metadata.transaction(async tx=>{const fresh=await tx.get(path);if(fresh)await tx.put(path,{...fresh,quotaFamily:latest.quotaFamily??latest.id});});}
-  await controller.metadata.put(pointer,{version:2,grantId:issued.id});return controller.metadata.get(key('contact-grant',issued.id));
- });
- if(!grant?.active)return {available:false,reason:'contact-unavailable'};
- return {available:true,grantId:grant.id,url:await controller.contactURL(owner,grant.id),expiresAt:grant.claims.exp*1000,policy:developerPolicy(controller.config)};
-}
+// Developer contact (DEVLOG 2026-10-27 "Messaging removed from core; Parlay rename; BB-CUT reset"): the link the developer
+// account's messaging-ingress occupant issued through the links contract with the developer policy
+// (account/links.mjs `developerOccupantLink`); the console hands it off as a `send-message` intent to the sender's own
+// messaging app. The legacy core contact grant (`developer-contact/v1|v2`, daily grants) and the
+// DEVELOPER_CONTACT_MODE switch were removed with core messaging; the BB-CUT reset deleted their rows.
+export async function developerContactLink(controller,owner){return controller.developerOccupantLink(owner);}
 
 export async function developerContactRoutes({path,request,env,owner,accountHandle,json,limit,remoteIP}){
  if(path!=='/api/developer-contact')return null;
@@ -71,12 +42,7 @@ export async function developerContactRoutes({path,request,env,owner,accountHand
  if(recipient?.status!=='active'||!badge||badge.role!=='developer'||badge.handle!==recipientHandle)return json({available:false,reason:'developer-unavailable'});
  const receiver=accountHandle(env,recipient.id),link=await receiver.developerContactLink(recipient.id,recipient.handle);
  if(!link.available)return json({available:false,reason:link.reason??'contact-unavailable'});
- // Occupant mode: eligibility under the same bounded policy reuse, then a `send-message` intent handoff in the console.
- if(link.mode==='occupant'){
-  const decision=await receiver.developerLinkDecide(recipient.id,link.jti,{issuer:env.APP_ORIGIN,subject:owner.account.id});
-  return json({available:true,mode:'occupant',intent:'send-message',url:link.url,expiresAt:link.expiresAt,policy:link.policy,recipientBadge:badge,eligibility:{state:decision.state,...decision.reason?{reason:decision.reason}:{},...decision.tier?{tier:decision.tier}:{}}});
- }
- // Eligibility is the link's own host policy, reused within its bounded window.
- const decision=await receiver.linkAudienceDecide(recipient.id,link.grantId,{issuer:env.APP_ORIGIN,subject:owner.account.id});
- return json({available:true,url:link.url,expiresAt:link.expiresAt,policy:link.policy,recipientBadge:badge,eligibility:{state:decision.state,...decision.reason?{reason:decision.reason}:{},...decision.tier?{tier:decision.tier}:{}}});
+ // Eligibility under the link's own bounded policy reuse, then a `send-message` intent handoff in the console.
+ const decision=await receiver.developerLinkDecide(recipient.id,link.jti,{issuer:env.APP_ORIGIN,subject:owner.account.id});
+ return json({available:true,mode:'occupant',intent:'send-message',url:link.url,expiresAt:link.expiresAt,policy:link.policy,recipientBadge:badge,eligibility:{state:decision.state,...decision.reason?{reason:decision.reason}:{},...decision.tier?{tier:decision.tier}:{}}});
 }

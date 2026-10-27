@@ -4,6 +4,11 @@ import {validateIntegrationManifest} from '../federation/integrations.mjs';
 import {validateSlotManifest,validateExtensions,createSlotOperation} from '../federation/extensions.mjs';
 import {MESSAGING_INGRESS_SLOT} from '../links/types.mjs';
 import classifierSlot from '../../docs/artefacts/slots/item-classifier-v1.json' with {type:'json'};
+// The Bindle Messaging spec's published slot documents (docs/spec/messaging.md §2.1, §9). One copy each: the provider
+// pins these exact documents, and the messaging app's integration manifest pins their digests (DEVLOG 2026-10-27; the
+// former core copy of the intake slot differed from the app's in field name and consumers).
+import messagingIngressSlot from '../../docs/artefacts/slots/messaging-ingress-v1.json' with {type:'json'};
+import publicIntakeSlot from '../../docs/artefacts/slots/public-message-intake-v1.json' with {type:'json'};
 import {REMOVAL_RECORD,REMOVAL_OPEN,removalOpen} from '../app/domains/app-removal.mjs';
 export class AppConnectionError extends Error{constructor(code,message,status=400){super(message);Object.assign(this,{code,status});}}
 const fail=(code,message,status)=>{throw new AppConnectionError(code,message,status);};
@@ -27,11 +32,11 @@ const BLOCKED=['suspended','purge-review','purging'];
 // Slots whose occupant holds key-delegation.v1 certificates (packages/identity/delegation.mjs): a change of occupant,
 // generation, ingress or consented purposes revokes or reconciles them through a cascade row (review KD-4).
 export const DELEGATION_SLOTS=Object.freeze([MESSAGING_INGRESS_SLOT]);
-// Provider-recognized slot manifests (trusted pins, exact URL). The messaging-ingress manifest is bindlebox.md §2.1.
-export const MESSAGING_INGRESS_MANIFEST=Object.freeze({id:MESSAGING_INGRESS_SLOT,title:'Receives messages',description:'The one app that receives peer messages, contact links and bridged email for you.',publisher:'https://spec.bindle.example',fields:{occupants:{title:'Messaging app',type:'resource',cardinality:{min:0,max:1},contracts:['https://spec.bindle.example/bindlebox/v1/contracts/mailbox']}},slot:{v:1,field:'occupants',selection:'exclusive',consumers:['provider'],supersedes:null}});
+// Provider-recognized slot manifests (trusted pins, exact URL).
 const freeze=v=>{if(v&&typeof v==='object'){Object.values(v).forEach(freeze);Object.freeze(v);}return v;};
+export const MESSAGING_INGRESS_MANIFEST=freeze(messagingIngressSlot);
 export const ITEM_CLASSIFIER_MANIFEST=freeze(classifierSlot);
-export const PUBLIC_INTAKE_MANIFEST=freeze({id:'https://spec.bindle.example/slots/public-message-intake/v1',title:'Receives public messages',description:'Receives bridged public requests with provider provenance.',publisher:'https://spec.bindle.example',fields:{occupants:{title:'Public intake app',type:'resource',cardinality:{min:0,max:1},contracts:['https://spec.bindle.example/contracts/public-intake/v1']}},slot:{v:1,field:'occupants',selection:'exclusive',consumers:['provider'],supersedes:null}});
+export const PUBLIC_INTAKE_MANIFEST=freeze(publicIntakeSlot);
 export const RECOGNIZED_SLOTS=Object.freeze({[MESSAGING_INGRESS_SLOT]:MESSAGING_INGRESS_MANIFEST,[classifierSlot.id]:ITEM_CLASSIFIER_MANIFEST});
 export const recognizedSlots=config=>siteGlobal(config,'EMAIL_BRIDGE_ENABLED')?{...RECOGNIZED_SLOTS,[PUBLIC_INTAKE_MANIFEST.id]:PUBLIC_INTAKE_MANIFEST}:RECOGNIZED_SLOTS;
 const pad=n=>String(n).padStart(16,'0');

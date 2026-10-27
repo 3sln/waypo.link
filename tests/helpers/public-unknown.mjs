@@ -20,23 +20,17 @@ const url=name=>{const sub=ids[name],aud=`${origin}/users/person/contact/${resou
 const postbackKey=btoa('k'.repeat(32));
 async function prepared(name){const owner=ids[name],nonce='A'.repeat(43),expiresAt=Date.now()+120000,material=await crypto.subtle.importKey('raw',new TextEncoder().encode('k'.repeat(32)),'HKDF',false,['deriveKey']),key=await crypto.subtle.deriveKey({name:'HKDF',hash:'SHA-256',salt:new TextEncoder().encode('bindle/form-dispatch/v1'),info:new TextEncoder().encode('message-postback-dispatch-v1')},material,{name:'HMAC',hash:'SHA-256',length:256},false,['sign']),mac=base64url(new Uint8Array(await crypto.subtle.sign('HMAC',key,new TextEncoder().encode(canonical({purpose:'message-postback-dispatch-v1',issuer:origin,owner,messageId:resource,nonce,expiresAt})))));return [owner,nonce,expiresAt,mac].join('.');}
 const post=(path,body={},headers={})=>({url:origin+path,method:'POST',body:JSON.stringify(body),headers:{'Content-Type':'application/json',...headers}});
+// Legacy messaging representations (intake metadata, JSON inspection, token mints, signed-link POST delivery, the
+// contact-delivery RPC and Conversation v1 routes) left the core on 2026-10-27; they now answer uniformly without any
+// identity lookup (406 or 405), so they are no longer target surfaces.
 export const targetSurfaces=[
- ...['text/plain','application/json','application/vnd.bindle.contact-profile+json','application/vnd.bindle.contact-intake+json','application/vnd.bindle.contact-token+jwt; profile="contact-delivery-v1"','text/html',DESCRIPTOR_MEDIA_TYPE].map(accept=>({name:'contact '+accept,request:name=>({url:url(name),headers:{Accept:accept}})})),
- {name:'contact HEAD',request:name=>({url:url(name),method:'HEAD',headers:{Accept:'application/json'}})},
- {name:'signed delivery unsupported media',request:name=>({url:url(name),method:'POST',body:'unused',headers:{'Content-Type':'text/plain'}})},
- {name:'signed delivery ambiguous credentials',request:name=>({url:url(name),method:'POST',body:'unused',headers:{Authorization:'Bearer ignored','Content-Type':'multipart/form-data; boundary=fixture'}})},
- {name:'signed delivery',request:name=>({url:url(name),method:'POST',body:'unused',headers:{'Content-Type':'multipart/form-data; boundary=fixture'}})},
+ ...['application/vnd.bindle.contact-profile+json','text/html',DESCRIPTOR_MEDIA_TYPE].map(accept=>({name:'contact '+accept,request:name=>({url:url(name),headers:{Accept:accept}})})),
+ {name:'contact HEAD',request:name=>({url:url(name),method:'HEAD',headers:{Accept:'application/vnd.bindle.contact-profile+json'}})},
  {name:'oEmbed',request:name=>({url:origin+'/oembed?url='+encodeURIComponent(url(name))})},
  {name:'avatar',request:name=>({url:url(name).replace('/contact/'+resource,'/contact/'+resource+'/avatar')})},
- {name:'legacy contact',request:name=>({url:origin+'/users/person/contact/'+resource+'?sig='+token('JWT',{sub:ids[name]}),headers:{Accept:'application/json'}})},
  {name:'descriptor HEAD',request:name=>({url:url(name),method:'HEAD',headers:{Accept:DESCRIPTOR_MEDIA_TYPE}})},
  {name:'oEmbed HEAD',request:name=>({url:origin+'/oembed?url='+encodeURIComponent(url(name)),method:'HEAD'})},
  {name:'avatar HEAD',request:name=>({url:url(name).replace('/contact/'+resource,'/contact/'+resource+'/avatar'),method:'HEAD'})},
- {name:'delivery RPC',request:name=>post('/bindle/rpc',{}, {Authorization:'Bearer '+token('bindle-contact-delivery+jwt',{sub:ids[name]})})},
- {name:'conversation identity',request:name=>({url:origin+'/api/conversations/identity/'+ids[name]})},
- ...['invitations','inbox'].map(part=>({name:'conversation '+part,request:name=>post('/api/conversations/'+part+'/'+ids[name],{},{Authorization:'Bearer '+'a'.repeat(43)})})),
- {name:'conversation join',request:name=>post(`/api/conversations/${ids[name]}/${resource}/join`,{envelope:{payload:{id:resource,source:{owner:ids[name],origin}}}})},
- ...['GET','POST'].map(method=>({name:'conversation bearer '+method,request:name=>({url:`${origin}/api/conversations/${ids[name]}/${resource}`,method,...method==='POST'?{body:'{}'}:{},headers:{Authorization:'Bearer '+'a'.repeat(43),'Content-Type':'application/json'}})})),
  {name:'delegation',request:name=>({url:origin+'/identity/'+ids[name]+'/delegations/'+'A'.repeat(43)})},
  {name:'delegation HEAD',request:name=>({url:origin+'/identity/'+ids[name]+'/delegations/'+'A'.repeat(43),method:'HEAD'})},
  {name:'authorization request',request:()=>post('/api/oauth/requests',{identity:'person@unknown.example',clientId:'app'},{Origin:'https://caller.example'})},

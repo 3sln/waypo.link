@@ -63,24 +63,20 @@ export class MessageReceiptBudget{
   const plan=entitlementFromState(state,now,this.config).plan;
   return {now,stored,plan,limits:this.limits[plan]};
  }
- async parent(tx,owner,parent,now){
-  if(typeof parent!=='string'||!uuid.test(parent))fail('invalid_message','A contact parent is required.',400);
-  const grant=await tx.get(key('contact-grant',parent));
-  if(!grant?.active||grant.owner!==owner||grant.id!==parent||grant.claims?.sub!==owner||!Number.isSafeInteger(grant.claims?.exp)||grant.claims.exp<=Math.floor(now/1000))fail('unauthorized','The contact link is not active.',401);
- }
- async status(owner){return this.metadata.transaction(async tx=>{const {now,stored,plan,limits}=await this.context(tx,owner);return {enabled:true,plan,unit:'admitted-new-message-attempts',window:'fixed-utc',windows:report(currentWindows(stored?.windows,now),limits.owner,now),contactLimits:structuredClone(limits.contact)};});}
- async admit(owner,{parent,bytes,source='contact'}={}){
-  if(!['contact','conversation','app-notification'].includes(source)||source!=='contact'&&parent!==undefined)fail('invalid_message','Invalid receipt source.',400);
+ async status(owner){return this.metadata.transaction(async tx=>{const {now,stored,plan,limits}=await this.context(tx,owner);return {enabled:true,plan,unit:'admitted-new-message-attempts',window:'fixed-utc',windows:report(currentWindows(stored?.windows,now),limits.owner,now)};});}
+ // The per-contact-parent lane left the core with messaging (DEVLOG 2026-10-27); v1 app intake is the only source. The
+ // stored `contacts` member stays (always empty) so existing state keeps validating.
+ async admit(owner,{parent,bytes,source='app-notification'}={}){
+  if(source!=='app-notification'||parent!==undefined)fail('invalid_message','Invalid receipt source.',400);
   if(!integer(bytes)||bytes>maxMessageBytes)fail('invalid_message','Messages are limited to one MiB.',400);
   return this.metadata.transaction(async tx=>{
-   const {now,stored,plan,limits}=await this.context(tx,owner);if(source==='contact')await this.parent(tx,owner,parent,now);
+   const {now,stored,plan,limits}=await this.context(tx,owner);
    const state=stored?structuredClone(stored):{version:1,owner,last:now,windows:windowsAt(now),contacts:{}};
    const day=Math.floor(now/MESSAGE_RECEIPT_WINDOWS.day);
-   for(const [id,windows]of Object.entries(state.contacts))if(windows.day.epoch<day)delete state.contacts[id];
-   if(source==='contact'&&!Object.hasOwn(state.contacts,parent)&&Object.keys(state.contacts).length>=MESSAGE_RECEIPT_MAX_PARENTS){const expiry=Math.min(...Object.values(state.contacts).map(w=>(w.day.epoch+1)*MESSAGE_RECEIPT_WINDOWS.day));fail('message_receipt_capacity','Contact receipt admission is temporarily full.',429,Math.max(1,Math.ceil((expiry-now)/1000)));}
-   const ownerWindows=currentWindows(state.windows,now),contactWindows=currentWindows(state.contacts[parent],now);
+   state.contacts={};
+   const ownerWindows=currentWindows(state.windows,now);
    let retryAfter=0;
-   const entries=[['owner',ownerWindows],...(source==='contact'?[['contact',contactWindows]]:[])];
+   const entries=[['owner',ownerWindows]];
    for(const [scope,windows]of entries)for(const name of names){
     const row=windows[name],limit=limits[scope][name];
     if(!limit.messages||!limit.bytes)fail('message_receipt_disabled','Message receipt is disabled by the configured allowance.',429);
@@ -90,8 +86,8 @@ export class MessageReceiptBudget{
    }
    if(retryAfter)fail('message_receipt_limited','The message receipt allowance has been reached. Try again later.',429,Math.max(1,retryAfter));
    for(const [,windows]of entries)for(const name of names){windows[name].messages++;windows[name].bytes+=bytes;}
-   state.last=now;state.windows=ownerWindows;if(source==='contact')state.contacts[parent]=contactWindows;
-   if(new TextEncoder().encode(JSON.stringify(state)).byteLength>MESSAGE_RECEIPT_MAX_STATE_BYTES)fail('message_receipt_capacity','Contact receipt admission is temporarily full.',429,Math.max(1,Math.ceil(((day+1)*MESSAGE_RECEIPT_WINDOWS.day-now)/1000)));
+   state.last=now;state.windows=ownerWindows;
+   if(new TextEncoder().encode(JSON.stringify(state)).byteLength>MESSAGE_RECEIPT_MAX_STATE_BYTES)fail('message_receipt_capacity','Receipt admission is temporarily full.',429,Math.max(1,Math.ceil(((day+1)*MESSAGE_RECEIPT_WINDOWS.day-now)/1000)));
    await tx.put(MESSAGE_RECEIPT_STATE,state);
    return {plan,unit:'admitted-new-message-attempts'};
   });

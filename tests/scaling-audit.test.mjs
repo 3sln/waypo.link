@@ -5,6 +5,7 @@ import {StorageQuota,storageState} from '../packages/runtime/storage-quota.mjs';
 import {AccountItemIndex} from '../packages/runtime/item-index.mjs';
 import {BILLING_STATE_KEY} from '../packages/billing/index.mjs';
 import {key} from '../packages/core/records.mjs';
+import {appMessageKey,appMessageUsageKey} from '../packages/activity/app-messages.mjs';
 import {AccountController} from '../packages/runtime/accounts.mjs';
 import {SqliteMetadata,SerialGate,FileBucket} from '../apps/node/resources.mjs';
 import application from '../packages/runtime/http.mjs';
@@ -34,13 +35,20 @@ async function controllerFixture(){
   const controller=new AccountController({metadata,gate:new SerialGate(),blobs,archives:{},config:{APP_ORIGIN:'https://3sln.example',KEY_ENCRYPTION_KEY:Buffer.alloc(32,47).toString('base64')},sql:metadata.sql});
   const invoke=async(method,...args)=>{const result=await controller.invoke({method,args:[owner,...args]});assert.equal(result.$fault,undefined,JSON.stringify(result));return result;};
   const collection=(await invoke('collections'))[0].id;
-  const contact=await invoke('createContact','alice',{name:'Audit contact',collections:[collection],mimeTypes:['text/plain'],expiresAt:Date.now()+3600000});
-  const minted=await invoke('mintContact',contact.url);
-  return {controller,metadata,stored,deleted,checks,invoke,collection,token:minted.token,close:()=>metadata.close()};
+  return {controller,metadata,stored,deleted,checks,invoke,collection,close:()=>metadata.close()};
+}
+// One stored item through the controller's side-effecting store, the way v1 app intake commits it
+// (runtime/app-notifications.mjs): reserve, upload the blob outside SQL, commit metadata, index and usage together,
+// then release the reservation. Legacy peer `receive` left the core with messaging on 2026-10-27.
+async function admit(f,text){
+  const c=f.controller,bytes=new TextEncoder().encode(text),id=crypto.randomUUID();
+  const reservation=await c.quota.reserve(owner,{id,bytes:bytes.length,blobRef:`messages/${owner}/${id}`,kind:'message'});c.messageReservation=reservation;
+  try{await c.blobs.put(reservation.blobRef,bytes);await c.store.transaction(async tx=>{const usage=await tx.get(appMessageUsageKey(owner))||{bytes:0,messages:0};usage.bytes+=bytes.length;usage.messages++;await tx.set(appMessageUsageKey(owner),usage);await tx.set(appMessageKey(owner,id),{id,owner,collection:f.collection,mimeType:'text/plain',size:bytes.length,bytes,receivedAt:Date.now(),readAt:null,tags:[],grantId:null});});return {id};}
+  finally{c.messageReservation=null;await c.quota.release(id);}
 }
 
 test('audit: aggregate quota binds owner and expires paid storage without deleting committed usage',async()=>{
-  const f=fixture();await f.metadata.put(key('message-usage',owner),{bytes:250000000,messages:10});await f.metadata.put('hosted-usage',{bytes:300000000,objects:10});
+  const f=fixture();await f.metadata.put(key('app-message-usage',owner),{bytes:250000000,messages:10});await f.metadata.put('hosted-usage',{bytes:300000000,objects:10});
   await f.metadata.put(BILLING_STATE_KEY,{owner:other,source:'polar',plan:'pro',validUntil:f.now+1000});
   const mismatch=await f.quota.usage(owner);assert.equal(mismatch.plan,'free');assert.equal(mismatch.overLimit,true);assert.equal(mismatch.usedBytes,550000000);
   await f.metadata.put(BILLING_STATE_KEY,{owner,source:'polar',plan:'plus',validUntil:f.now+1000});assert.equal((await f.quota.usage(owner)).plan,'paid');
@@ -106,19 +114,17 @@ test('audit: Unicode hosted keys remain pageable and cursor cannot change resour
 });
 test('audit: actual Node message upload reserves before blob effect, outside SQL and commits metadata/index/usage together',async()=>{
   const f=await controllerFixture();try{
-    const input={collection:f.collection,mimeType:'text/plain',bytes:Array.from(new TextEncoder().encode('audit payload')),idempotencyKey:'audit-upload'};
-    const receipt=await f.invoke('receive',f.token,input);assert.equal(f.checks.length,1);assert.equal((await f.controller.storageUsage(owner)).reservedBytes,0);
+    const receipt=await admit(f,'audit payload');assert.equal(f.checks.length,1);assert.equal((await f.controller.storageUsage(owner)).reservedBytes,0);
     assert.equal(f.controller.itemIndex.page(owner).items[0].id,receipt.id);assert.equal((await f.controller.storageUsage(owner)).usedBytes,13);assert.equal(new TextDecoder().decode((await f.controller.content(owner,receipt.id)).bytes),'audit payload');
-    const duplicate=await f.invoke('receive',f.token,input);assert.equal(duplicate.id,receipt.id);assert.equal(f.checks.length,1);
     await f.invoke('deleteMessage',receipt.id);assert.equal((await f.controller.storageUsage(owner)).usedBytes,0);assert.equal(f.controller.itemIndex.page(owner).items.length,0);assert.equal(f.stored.size,0);
   }finally{f.close();}
 });
 test('audit: Node metadata commit failure rolls back SQL index and usage, then releases the uncommitted blob',async()=>{
   const f=await controllerFixture();try{
     const commit=f.controller.quota.commit.bind(f.controller.quota);f.controller.quota.commit=async(...args)=>{await commit(...args);throw new Error('injected post-index commit failure');};
-    const result=await f.controller.invoke({method:'receive',args:[owner,f.token,{collection:f.collection,mimeType:'text/plain',bytes:[97],idempotencyKey:'audit-rollback'}]});assert(result.$fault);
+    await assert.rejects(admit(f,'a'),/injected post-index commit failure/);
     assert.equal(f.checks.length,1);assert.equal(f.stored.size,0);assert.equal(f.deleted.length,1);assert.equal(f.controller.itemIndex.page(owner).items.length,0);
-    const usage=await f.controller.storageUsage(owner);assert.equal(usage.usedBytes,0);assert.equal(usage.reservedBytes,0);assert.equal((await f.metadata.list({prefix:'message-receipt/'})).size,0);
+    const usage=await f.controller.storageUsage(owner);assert.equal(usage.usedBytes,0);assert.equal(usage.reservedBytes,0);
   }finally{f.close();}
 });
 test('audit: actual hosted objects share inbox quota and preserve reads/shrinks/deletes after downgrade',async()=>{
@@ -126,7 +132,7 @@ test('audit: actual hosted objects share inbox quota and preserve reads/shrinks/
     const resource=await f.invoke('addResource',{provider:'hosted',name:'Audit storage'}),call=(method,args)=>f.controller.hostedOperation(resource,method,args);
     const created=await call('put',{key:'📁/one',dataBase64:Buffer.from('one').toString('base64'),condition:{absent:true}});assert.equal(f.checks.length,1);
     const disconnect=await f.controller.invoke({method:'deleteResource',args:[owner,resource.id]});assert.equal(disconnect.$fault?.code,'resource_not_empty');assert(await f.metadata.get('resource/'+resource.id));
-    await f.metadata.put(key('message-usage',owner),{bytes:500000000,messages:1});
+    await f.metadata.put(key('app-message-usage',owner),{bytes:500000000,messages:1});
     assert.equal((await f.controller.storageUsage(owner)).overLimit,true);
     const before=f.checks.length;await assert.rejects(call('put',{key:'two',dataBase64:'eA==',condition:{absent:true}}),{code:'account_quota_exceeded'});assert.equal(f.checks.length,before,'over-quota growth must be refused before upload');
     assert.equal(Buffer.from((await call('get',{key:'📁/one'})).dataBase64,'base64').toString(),'one');
@@ -154,8 +160,8 @@ test('audit: Node failed atomic blob rename cleans its untracked temporary file'
 test('audit: large-account alarms use bounded metadata pages and retain content beyond legacy snapshot bounds',async()=>{
   const f=await controllerFixture();try{
     await f.metadata.transaction(async tx=>{
-      for(let i=0;i<2005;i++){const message={id:crypto.randomUUID(),owner,collection:f.collection,receivedAt:i,readAt:null,quarantined:false,mimeType:'text/plain',size:1,blobRef:`messages/${owner}/seed_${i}`};await tx.put(key('message',owner,message.id),message);f.controller.itemIndex.upsert(message);}
-      await tx.put(key('message-usage',owner),{bytes:2005,messages:2005});await tx.put('lastOwnerActiveAt',0);
+      for(let i=0;i<2005;i++){const message={id:crypto.randomUUID(),owner,collection:f.collection,receivedAt:i,readAt:null,quarantined:false,mimeType:'text/plain',size:1,blobRef:`messages/${owner}/seed_${i}`};await tx.put(key('app-message',owner,message.id),message);f.controller.itemIndex.upsert(message);}
+      await tx.put(key('app-message-usage',owner),{bytes:2005,messages:2005});await tx.put('lastOwnerActiveAt',0);
     });
     const list=f.metadata.list.bind(f.metadata),limits=[];f.metadata.list=async options=>{assert(options?.prefix,'alarm must not scan every account record');assert(Number.isSafeInteger(options.limit)&&options.limit<=2001,'alarm metadata pages must be bounded');limits.push(options.limit);return list(options);};
     await f.controller.alarm();assert(limits.includes(2001));assert.equal((await f.metadata.get('cold-index-mode')).mode,'indexed-sqlite');assert.equal(await f.metadata.get('shelved'),undefined);assert.equal((await f.controller.storageUsage(owner)).messageCount,2005);assert.equal(f.controller.itemIndex.page(owner,{limit:200}).items.length,200);assert((await f.metadata.getAlarm())>Date.now());
@@ -202,9 +208,9 @@ test('audit: actual Node billing actions enforce owner session, exact Origin and
   }finally{await app?.close();await rm(directory,{recursive:true,force:true});}
 });
 
-test('Ultra decimal1TB quota combines hosted and inbox bytes and preserves reads/shrinks on downgrade',async()=>{const f=fixture();await f.metadata.put(BILLING_STATE_KEY,{owner,source:'polar',catalogVersion:2,plan:'ultra',validUntil:f.now+1000});await f.metadata.put(key('message-usage',owner),{bytes:600000000000,messages:1});await f.metadata.put('hosted-usage',{bytes:399999999999,objects:1});assert.equal((await f.quota.usage(owner)).storageBytes,1000000000000);await f.quota.check(owner,{bytes:1});await assert.rejects(f.quota.check(owner,{bytes:2}),{code:'account_quota_exceeded'});f.advance(1001);const expired=await f.quota.usage(owner);assert.equal(expired.plan,'free');assert.equal(expired.usedBytes,999999999999);await assert.rejects(f.quota.check(owner,{bytes:1}),{code:'account_quota_exceeded'});assert.equal(await f.quota.check(owner,{bytes:1,replacedBytes:2}),true);});
-test('runtime Ultra inbox writes can exceed the previous100GB hard ceiling within combined quota',async()=>{const f=await controllerFixture();try{await f.metadata.put(BILLING_STATE_KEY,{owner,source:'polar',catalogVersion:2,plan:'ultra',validUntil:Date.now()+3600000});await f.metadata.put(key('message-usage',owner),{bytes:100000000001,messages:1});const result=await f.invoke('receive',f.token,{collection:f.collection,mimeType:'text/plain',bytes:new TextEncoder().encode('Ultra message'),idempotencyKey:'ultra-over100GB'});assert(result.id);assert.equal(f.stored.size,1);assert.equal((await f.controller.quota.usage(owner)).messagesBytes,100000000014);}finally{f.close();}});
+test('Ultra decimal1TB quota combines hosted and inbox bytes and preserves reads/shrinks on downgrade',async()=>{const f=fixture();await f.metadata.put(BILLING_STATE_KEY,{owner,source:'polar',catalogVersion:2,plan:'ultra',validUntil:f.now+1000});await f.metadata.put(key('app-message-usage',owner),{bytes:600000000000,messages:1});await f.metadata.put('hosted-usage',{bytes:399999999999,objects:1});assert.equal((await f.quota.usage(owner)).storageBytes,1000000000000);await f.quota.check(owner,{bytes:1});await assert.rejects(f.quota.check(owner,{bytes:2}),{code:'account_quota_exceeded'});f.advance(1001);const expired=await f.quota.usage(owner);assert.equal(expired.plan,'free');assert.equal(expired.usedBytes,999999999999);await assert.rejects(f.quota.check(owner,{bytes:1}),{code:'account_quota_exceeded'});assert.equal(await f.quota.check(owner,{bytes:1,replacedBytes:2}),true);});
+test('runtime Ultra inbox writes can exceed the previous100GB hard ceiling within combined quota',async()=>{const f=await controllerFixture();try{await f.metadata.put(BILLING_STATE_KEY,{owner,source:'polar',catalogVersion:2,plan:'ultra',validUntil:Date.now()+3600000});await f.metadata.put(key('app-message-usage',owner),{bytes:100000000001,messages:1});const result=await admit(f,'Ultra message');assert(result.id);assert.equal(f.stored.size,1);assert.equal((await f.controller.quota.usage(owner)).messagesBytes,100000000014);}finally{f.close();}});
 
-test('message deletion commits blob ownership before any physical delete and GC retries after an interrupted effect',async()=>{const f=await controllerFixture();try{const accepted=await f.invoke('receive',f.token,{collection:f.collection,mimeType:'text/plain',bytes:new TextEncoder().encode('Retain deletion ownership'),idempotencyKey:'crash-delete'}),id=accepted.id;let interrupted=true;const original=f.controller.blobs.delete;f.controller.blobs.delete=async ref=>{assert.equal(await f.metadata.get(key('message',owner,id)),undefined);assert([...await f.metadata.list({prefix:'blob-garbage/'})].some(([,value])=>value===ref));if(interrupted)throw Error('Interrupted after logical commit');return original(ref);};await f.invoke('deleteMessage',id);assert.equal(f.stored.size,1);assert.equal((await f.metadata.list({prefix:'blob-garbage/'})).size,1);interrupted=false;await f.controller.collectBlobGarbage();assert.equal(f.stored.size,0);assert.equal((await f.metadata.list({prefix:'blob-garbage/'})).size,0);}finally{f.close();}});
+test('message deletion commits blob ownership before any physical delete and GC retries after an interrupted effect',async()=>{const f=await controllerFixture();try{const accepted=await admit(f,'Retain deletion ownership'),id=accepted.id;let interrupted=true;const original=f.controller.blobs.delete;f.controller.blobs.delete=async ref=>{assert.equal(await f.metadata.get(key('app-message',owner,id)),undefined);assert([...await f.metadata.list({prefix:'blob-garbage/'})].some(([,value])=>value===ref));if(interrupted)throw Error('Interrupted after logical commit');return original(ref);};await f.invoke('deleteMessage',id);assert.equal(f.stored.size,1);assert.equal((await f.metadata.list({prefix:'blob-garbage/'})).size,1);interrupted=false;await f.controller.collectBlobGarbage();assert.equal(f.stored.size,0);assert.equal((await f.metadata.list({prefix:'blob-garbage/'})).size,0);}finally{f.close();}});
 
 test('live Node login tolerates provider outage without extending or erasing a verified paid deadline',async()=>{const directory=await mkdtemp(join(tmpdir(),'3sln-billing-login-')),origin='http://localhost:8789';let app;try{app=await createNodeServer({directory,config:{APP_ORIGIN:origin,BILLING_ENABLED:'false',STORAGE_WRITE_FREE_PER_DAY:'1'}});const post=(path,value)=>app.fetch(new Request(origin+path,{method:'POST',headers:{Origin:origin,'Content-Type':'application/json'},body:JSON.stringify(value)}));const pending=await(await post('/api/auth/signup',{handle:'billing_outage',method:'password',password:'offline billing outage test password',ageConfirmed:18,termsAccepted:true,termsVersion:'2026-10-11',turnstileToken:'local-browser-test-token'})).json(),file=await(await post('/api/auth/recovery/download',{pendingToken:pending.pendingToken})).json(),activation=await post('/api/auth/recovery/confirm',{pendingToken:pending.pendingToken,recoveryToken:file.recoveryToken,downloadConfirmed:true}),session=await activation.json();assert.equal(activation.status,200);const controller=app.resources.accounts.get(session.account.id),deadline=Date.now()+86400000,verified={owner:session.account.id,source:'polar',catalogVersion:3,origin,server:'sandbox',metadataPrefix:'3sln_me_',catalogMode:'static',organizationId:'org',productId:'paid-product',subscriptionId:'subscription',customerId:'customer',currency:'usd',annualAmount:500,plan:'paid',verifiedPlan:{id:'paid',name:'Paid',storageBytes:5000000000,activityHour:2000,activityDay:10000},validUntil:deadline};await controller.metadata.put('billing/state',verified);Object.assign(controller.config,{BILLING_ENABLED:'true',POLAR_SERVER:'sandbox',POLAR_ACCESS_TOKEN:'offline',POLAR_WEBHOOK_SECRET:'offline',POLAR_PRODUCT_ID_PAID:'paid-product',POLAR_PRODUCT_ID_PLUS:'plus-product',POLAR_PRODUCT_ID_ULTRA:'ultra-product'});controller.billing.clientOverride={products:{get:async()=>{throw Error('provider outage');}},customers:{getStateExternal:async()=>{throw Error('provider outage');}}};await controller.metadata.delete('billing/sync-attempt');const login=await post('/api/auth/login/password',{handle:session.account.handle,password:'offline billing outage test password',turnstileToken:'local-browser-test-token'});assert.equal(login.status,200);assert(login.headers.get('Set-Cookie'));const result=await login.json();assert.equal(result.billingSync.checked,false);assert.equal((await controller.metadata.get('billing/state')).validUntil,deadline);assert.equal((await controller.billing.entitlement(session.account.id)).storageBytes,5000000000);}finally{await app?.close();await rm(directory,{recursive:true,force:true});}});

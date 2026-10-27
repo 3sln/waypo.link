@@ -17,7 +17,7 @@ test('engine CLI: scripted dispatch with named results, expectations, facts and 
     { op: 'views.create', input: { name: 'Work', filter: { version: 1, tagsAll: ['work'] } }, as: 'work' },
     { op: 'views.update', id: { $: 'work.id' }, input: { name: 'Renamed', filter: { version: 1 }, expectedRevision: 1 }, expect: { revision: 2, name: 'Renamed' } },
     { op: 'views.update', id: { $: 'work.id' }, input: { name: 'Stale', filter: { version: 1 }, expectedRevision: 1 }, expectFault: 'view_conflict' },
-    { op: 'views.list', owner: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', expect: { views: [{ id: 'all', builtin: true }, { id: 'unread' }, { id: 'conversations' }] } },
+    { op: 'views.list', owner: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', expect: { views: [{ id: 'all', builtin: true }, { id: 'unread' }] } },
     { events: true }, { audit: true },
   ]));
   assert.equal(status, 0, stderr + JSON.stringify(lines));

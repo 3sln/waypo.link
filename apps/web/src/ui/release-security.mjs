@@ -3,6 +3,8 @@ import {devicesEnabled} from '../bl/devices.mjs';
 import {transferConsoleLinks} from './transfer-console-links.mjs';
 import {devicesPanel,devicesApps,devicesDialog} from './devices.mjs';
 import { h,icon,badge,date,field,checkbox,pageHeader,helpers,interfaceText } from './release-primitives.mjs';
+import {contactProfilePanel} from './contact-profile.mjs';
+import {developerContact} from './release-developer-contact.mjs';
 import {recoveryFilePanel,recoveryReissueDialog,recoveryReissueView} from './recovery-reissue.mjs';
 export default function securityView(state){
   const {btn,date,form}=helpers(state),a=state.data?.account??state.session?.account??{},credentials=state.data?.credentials??[],devices=state.data?.devices??[];
@@ -14,7 +16,7 @@ export default function securityView(state){
       h('p','Your recovery file protects your UUID and keys. Name certificates are separate public files.').classes('field-help'),
       btn('Download canonical name certificate',{kind:'download-name-certificate',handle:a.handle},'button secondary'),
       a.paidHandle?btn('Download custom name certificate',{kind:'download-name-certificate',handle:a.paidHandle},'button secondary'):null).classes('panel'),
-    recoveryFilePanel(state),transferConsoleLinks(state),
+    recoveryFilePanel(state),transferConsoleLinks(state),contactProfilePanel(state),
     h('section',h('h2','Your permanent custom handle'),
       h('p','If you have ever had a verified paid subscription, you can claim one custom handle—even after cancellation.').classes('muted'),
       h('p','This choice is permanent. Your custom handle cannot be changed, transferred or reassigned, even after cancellation or account deletion.').classes('security-note'),
@@ -33,7 +35,8 @@ export default function securityView(state){
     devicesEnabled(state)?devicesApps(state):state.config?.integrationsEnabled?h('section',h('h2',state.locale==='es'?'Acceso de apps':'Apps with access'),h('p',state.locale==='es'?'Revisa qué puede hacer cada app y retira su acceso.':'Review what each app can do and remove its access.').classes('muted'),btn(state.locale==='es'?'Ver acceso':'Review access',{kind:'navigate',view:'access'},'button secondary')).classes('panel'):h('section',h('h2','Apps with access'),...(state.data.grants??[]).filter(g=>g.active).map(grant=>h('div',h('strong',grant.client),h('p',(grant.methods??[]).join(', ')),btn('Revoke access',{kind:'revoke-grant',id:grant.id},'text-button danger')).classes('credential-row')),
       // Bug hunt round 3, B8: these legacy grants are not the connected apps' access, so the panel no longer claims that
       // no app has access; it points to Connected apps, where that access is listed and revoked.
-      h('p','Manage app connections and the separate agent logins they can use.').classes('muted'),btn('Connected apps',{kind:'navigate',view:'connected-apps'},'button secondary')).classes('panel')
+      h('p','Manage app connections and the separate agent logins they can use.').classes('muted'),btn('Connected apps',{kind:'navigate',view:'connected-apps'},'button secondary')).classes('panel'),
+    developerContact(state)
     ).classes('settings-grid'));
 }
 export function securityDialog(state){

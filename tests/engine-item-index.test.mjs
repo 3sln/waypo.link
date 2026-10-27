@@ -1,5 +1,5 @@
 // Engine-level incoming catalog: AccountItemIndex over in-memory SQLite driven
-// by seeded upserts, moves and removals of plain and conversation messages.
+// by seeded upserts, moves and removals of items.
 // After every step the paged catalog must equal a model computed from the
 // current messages: counts, unread state, activity order, no gaps or repeats.
 // Seeded: rerun a failure with CHAOS_SEED=<seed>.
@@ -31,7 +31,8 @@ test('incoming catalog matches a model of its members after every seeded mutatio
         const id = `m${String(random.int(16)).padStart(2, '0')}`;
         if (model.has(id) && random.chance(0.25)) { index.remove(id); model.delete(id); }
         else {
-          const conversation = random.chance(0.5) ? conversationOf(random.int(3)) : null;
+          // Conversation grouping left the core with messaging on 2026-10-27: every item is its own catalog entry.
+          const conversation = null;
           const message = { id, owner: OWNER, receivedAt: 1000 + random.int(20), readAt: random.chance(0.5) ? null : 5000, collection: 'inbox', tags: random.shuffle(['a', 'b', 'c']).slice(0, random.int(3)), classification: 'unclassified', mimeType: 'text/plain', size: 1,
             ...conversation ? { conversation: { id: conversation, source: SOURCE, eventId: id } } : {} };
           index.upsert(message); model.set(id, message);

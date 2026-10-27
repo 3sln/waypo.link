@@ -42,7 +42,7 @@ test('failed known-key reads never mark a connector verified or fall back to enu
 
 test('persisted list capability cannot restore storage enumeration through MCP',async()=>{
   let dispatched=false;
-  const account={warm:async()=>{},messages:{collections:async()=>[]},metadata:{list:async()=>new Map([['resource/r',{id:'r',owner:'owner',provider:'hosted',status:'connected',capabilities:{read:true,list:true}}]])},federationRPC:async()=>{dispatched=true;}};
+  const account={warm:async()=>{},items:{collections:async()=>[]},metadata:{list:async()=>new Map([['resource/r',{id:'r',owner:'owner',provider:'hosted',status:'connected',capabilities:{read:true,list:true}}]])},federationRPC:async()=>{dispatched=true;}};
   const collections=await mcpCollections(account,'owner');
   assert.equal(collections[0].tools.includes('items_list'),false);
   assert.equal(collections[0].tools.includes('item_read'),true);

@@ -1,8 +1,8 @@
-// Core links: the `messaging-address` slot handoff (slice BB-C1b; docs/spec/bindlebox.md §2.1–§2.3; links §6.4;
+// Core links: the `messaging-address` slot handoff (slice BB-C1b; docs/spec/messaging.md §2.1–§2.3; links §6.4;
 // messaging-app.md §5 "Endpoints come from the occupant, never the slot").
 //
 // A sender who holds a contact link (from the landing page, an intent `web+bindle://send-message?contact-url=…`, or
-// a QR code) GETs the link at the owner host with `Accept: application/vnd.bindlebox.ingress+json`. The provider
+// a QR code) GETs the link at the owner host with `Accept: application/vnd.bindle.messaging.ingress+json`. The provider
 //   1. verifies the link itself (LinkService.verify: links §8 steps 1–2, exact stored claims, retired-key history);
 //   2. reads the CURRENT occupant of the slot the link type is bound to (./types.mjs), through the occupancy port;
 //   3. obtains that occupant's `describe` result through the provider's own consumer port (never from the sender or

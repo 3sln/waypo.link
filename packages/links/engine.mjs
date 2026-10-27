@@ -1,4 +1,4 @@
-// Core links: links-contract engine operations (docs/spec/bindlebox.md §4.2; extraction plan slice C1a).
+// Core links: links-contract engine operations (docs/spec/messaging.md §4.2; extraction plan slice C1a).
 //
 // Engine-first: LinkService is the provider resource; the Actions/Queries below are the operations a messaging app
 // reaches through an app actor (wired in C1b through the links contract resource) and the owner through

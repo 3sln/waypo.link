@@ -83,7 +83,7 @@ export const account={
    if(!Operation)notFound();
    return run(this,Operation,{actor:{kind:'system',owner},...input===undefined?{}:{input:shape(input)}});
   },
-  // The occupant's `describe`, validated against bindlebox §2.3, for links/handoff.mjs. The occupancy port answers
+  // The occupant's `describe`, validated against messaging §2.3, for links/handoff.mjs. The occupancy port answers
   // first (account status, severance, exclusive selection); the seat it names must still be the one whose record is
   // described. Any failure is recipient_unavailable upstream. A changed ingress is recorded on the seat (C1b).
   async integrationsMessagingDescribe({owner,slot,occupant}={}){

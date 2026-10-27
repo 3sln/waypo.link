@@ -1,15 +1,14 @@
 import {producerIndexedMetadata} from '../storage/producer-index.mjs';
-import {conversationIndexedMetadata} from '../conversations/index.mjs';
 import {intentIndexedMetadata} from '../intents/index.mjs';
 import {sweepMcpJournal} from '../mcp/account.mjs';
 import {capability,flagsFor,writerConfig,withWriterFlags,recordFlag} from './account/flags.mjs';
 import {validateHostAlias,configuredReservedName} from '../identity/badge-policy.mjs';
 import {onboardingAlias,sameOnboardingIdentity} from '../identity/onboarding.mjs';
 import {cleanupPostbackPreparations,erasePostbackPreparations} from './message-postbacks.mjs';
-import {messagePresentationSummary} from '../messaging/presentation-summary.mjs';
+import {messagePresentationSummary} from '../content/presentation-summary.mjs';
 import {erasePresentations} from './message-presentations.mjs';
 import {appNotificationAllowed} from './app-notifications.mjs';
-import {isItemKey,itemPrefixes,APP_MESSAGES_PASS_KEYS} from '../activity/app-messages.mjs';
+import {isItemKey,itemPrefixes} from '../activity/app-messages.mjs';
 import {ActivePopulationStorage,recordOwnerPopulation} from './active-population.mjs';
 import {createAppEngine,operate,operationPolicy} from '../app/engine.mjs';
 import {systemClock,cryptoRandom,nullAudit} from '../app/providers.mjs';
@@ -20,11 +19,8 @@ import {loadOrganization} from '../orgs/roster.mjs';
 import {accountProviders} from '../app/account.mjs';
 import {SavedViews} from '../app/domains/views.mjs';
 import {TagRules,TagLabels} from '../app/domains/tags.mjs';
-import {linkPolicyRegistry} from './developer-contact.mjs';
-import {admitLinkAudience,collectLinkState} from './contact-links.mjs';
+import {collectLinkState} from '../links/audience.mjs';
 import {sameSystemIdentity} from '../identity/system-bootstrap.mjs';
-import {ContactDeliveryService} from '../messaging/contact-delivery-service.mjs';
-import {localAuthorResolver} from '../messaging/contact-delivery.mjs';
 import {WaitlistService} from './waitlist.mjs';
 import {accountRemovalProtection} from '../identity/lifecycle-protection.mjs';
 import {consumeSignupCapacity,signupCapacityStatus} from './signup-capacity.mjs';
@@ -36,7 +32,10 @@ import {lifecycleMethods,lifecycleBlocked,lifecycleActivity,lifecycleTick} from 
 import {armAlarm,alarmFenced,assertLifecycleOpen,assertDeletionFenceOpen} from './account-deletion.mjs';
 import {collectGarbageRef} from './export-pins.mjs';
 import {ContactProfiles} from '../links/contact-profile.mjs';
-import {ContactTokenService,ContactEndpointService,MessagingService,NotificationService} from '../../packages/messaging/index.mjs';
+import {ItemService} from '../activity/items.mjs';
+import {NotificationService} from '../activity/notifications.mjs';
+import {IdentityKeyRegistry} from '../identity/keys.mjs';
+import {dropLegacyItem} from './messaging-reset.mjs';
 import {key} from '../../packages/core/records.mjs';
 import {indexDeviceExpiry,sweepDeviceExpiry,IdentityShardStorage} from './identity-shards.mjs';
 import {StorageError} from '../storage/policy.mjs';
@@ -48,6 +47,8 @@ import {AccountItemIndex} from './item-index.mjs';
 import {BillingService} from '../billing/index.mjs';
 import {SearchService,SqliteSearchIndex,MetadataSearchOutbox,DurableSemanticBudget,SearchMutationGate} from '../search/index.mjs';
 import {installAccountMethods,accountRPC} from './account/index.mjs';
+import {linkService} from './account/links.mjs';
+import {rtcContactBasis} from '../links/parents.mjs';
 import {archiveDigest} from './account/support.mjs';
 
 export class IdentityRepository {
@@ -189,8 +190,7 @@ function restore(value){if(value&&Object.hasOwn(value,'$bytes'))return Uint8Arra
 
 export class AccountController {
   constructor({metadata,gate,blobs,archives,config,sql,sqlTransaction}){
-    // Conversation due/dead-peer projections cover every account-store writer (scale round 2 review M1).
-    metadata=conversationIndexedMetadata(producerIndexedMetadata(intentIndexedMetadata(metadata)));
+    metadata=producerIndexedMetadata(intentIndexedMetadata(metadata));
     this.flagConfig=config;config=writerConfig(config);
     const work=flagsFor(config).envState('WORK_LIMITS_ENABLED').raw,write=flagsFor(config).envState('STORAGE_WRITE_ENABLED').raw;
     if(work!==undefined&&!['true','false',true,false].includes(work))throw new TypeError('Invalid logical activity admission configuration.');
@@ -212,19 +212,27 @@ export class AccountController {
       for(const {key,blobRef}of garbage){try{await collectGarbageRef(this,key,blobRef);}catch{/* Ownership was committed with logical deletion; GC can retry after a crash. */}}
       return result;
     }};
-    this.store=store;this.tokens=new ContactTokenService({store,issuer:config.APP_ORIGIN,allowInsecureLocalhost:config.LOCAL_DEVELOPMENT==='true'});
-    this.endpoints=new ContactEndpointService({tokens:this.tokens,linkPolicies:linkPolicyRegistry(config),signer:async({owner,kid})=>{const signer=await this.signingKey(owner);if(signer.kid!==kid)throw new Error('Signing key unavailable');return signer.privateKey;}});
-    // Identity-authored link delivery (links §6.1). Cross-account identity lookups run outside the account gate.
-    this.delivery=new ContactDeliveryService({store,issuer:config.APP_ORIGIN,allowInsecureLocalhost:config.LOCAL_DEVELOPMENT==='true',maxStoredBytes:1_000_000_000_000,maxStoredMessages:1_000_000,parents:{verify:credential=>this.endpoints.verifyCredential(credential),live:async(tx,verified)=>{await assertLifecycleOpen(tx);return this.endpoints.liveCredential(tx,verified);}},intake:(id,tx)=>this.endpoints.intakeOf(id,tx),resolve:localAuthorResolver({issuer:config.APP_ORIGIN,lookup:(subject,kid)=>this.identityKey(subject,kid)}),admissionKey:async()=>{const owner=await this.metadata.get('owner');return this.signingKey(owner);},audience:{admit:(tx,input)=>admitLinkAudience(tx,input)}});
-    this.messages=new MessagingService({store,tokens:this.endpoints,clock:systemClock.now,crypto:{randomUUID:cryptoRandom.uuid,subtle:crypto.subtle,getRandomValues:array=>crypto.getRandomValues(array)},maxStoredBytes:1_000_000_000_000,maxStoredMessages:1_000_000,...this.itemIndex?{indexedList:async(owner,options)=>{await this.warm(owner);if(!await this.metadata.get('item-index-ready')||!this.itemIndex.filterIndexesReady())throw new StorageError('temporarily_unavailable','Your inbox index is being upgraded. Try again shortly.',503);return this.itemIndex.page(owner,options,{legacy:true}).items;}}:{}});
+    // The identity key registry (packages/identity/keys.mjs): LinkService verifies stored metas through its history.
+    this.store=store;this.keys=new IdentityKeyRegistry({store});
+    // Activity items (v1 app messages), their placement, owner rules and tag labels (packages/activity/items.mjs).
+    this.items=new ItemService({store,clock:systemClock.now,crypto:{randomUUID:cryptoRandom.uuid,subtle:crypto.subtle,getRandomValues:array=>crypto.getRandomValues(array)},maxStoredBytes:1_000_000_000_000,maxStoredMessages:1_000_000,...this.itemIndex?{indexedList:async(owner,options)=>{await this.warm(owner);if(!await this.metadata.get('item-index-ready')||!this.itemIndex.filterIndexesReady())throw new StorageError('temporarily_unavailable','Your inbox index is being upgraded. Try again shortly.',503);return this.itemIndex.page(owner,options,{legacy:true}).items;}}:{}});
     this.notifications=new NotificationService({store,messageAllowed:appNotificationAllowed});
-    this.contactProfiles=new ContactProfiles({metadata,endpoints:this.endpoints});
+    this.contactProfiles=new ContactProfiles({metadata,links:{verify:url=>linkService(this).verify(url)}});
+    // RTC compatibility port (remaining coupling, DEVLOG 2026-10-27): runtime/account/rtc.mjs resolves a contact-link
+    // admission basis through `c.endpoints.inspect(link)` -> {grant:{id, owner, quarantined}}, the shape of the removed
+    // ContactEndpointService. It now resolves the contact parent (packages/links/parents.mjs) through LinkService
+    // verification (revoked, expired, owner-mismatched and badly signed links refuse); contact parents carry no
+    // quarantine. RTC code is not edited here (signaling redesign). Review L6, the old admission semantics: only a
+    // contact-type link is a contact basis (RTC_CONTACT_LINK_TYPES; an app's other link types never are), and a
+    // conditional link is refused, because its audience policy needs the caller principal, which this port does not
+    // receive. A refusal is null, which rtc.mjs folds like any other failure.
+    this.endpoints=Object.freeze({inspect:async url=>{const {record,conditional}=await linkService(this).verify(url);if(!rtcContactBasis(record)||conditional)return null;return {grant:{id:record.jti,owner:record.owner,quarantined:false}};}});
     // Account placement of the application engine (docs/architecture/app-engine.md): migrated domains are
     // Actions/Queries over these providers, reached through `dispatch`. The remaining services above are
     // wrapped as providers slice by slice. One engine per controller, so per DO instance / Node account.
-    // `messaging` is still the pre-built instance over the side-effecting store above (search, item index, blobs);
+    // `items` is the pre-built item service over the side-effecting store above (search, item index, blobs);
     // the harness builds it lazily over accountStore without those effects until slice 2 owns them.
-    this.engine=createAppEngine({providers:{flags:{for:ctx=>flagsFor(this.config,ctx)},config:this.config,billing:this.billing,...accountProviders({accountStore:metadata,itemIndex:this.itemIndex,messaging:this.messages,clock:systemClock,random:cryptoRandom,audit:nullAudit})}});
+    this.engine=createAppEngine({providers:{flags:{for:ctx=>flagsFor(this.config,ctx)},config:this.config,billing:this.billing,...accountProviders({accountStore:metadata,itemIndex:this.itemIndex,items:this.items,clock:systemClock,random:cryptoRandom,audit:nullAudit})}});
   }
   /** Runs one registered account operation as the given owner. Only {operation, id, input} cross the RPC
    * boundary (cloned, so a Node caller's object is never shared); the actor is the authenticated owner this
@@ -248,7 +256,7 @@ export class AccountController {
     // Fanout runs outside the account gate: a recipient may concurrently submit
     // to this source while its own account gate is held. Receiver writes retain
     // their own serialization, including the source's local inbox.
-    if(policy.gate==='none'||method==='conversationPublicIdentity'&&await this.metadata.get('signing-key')){try{return await withWriterFlags(this,this.flagConfig,()=>this[method](...args));}catch(error){return {$fault:{code:error.code||'invalid_request',message:error.code?error.message:method.startsWith('conversation')?'Conversation delivery could not be completed.':'The account operation could not be completed.',status:error.status,...Number.isSafeInteger(error.retryAfter)&&error.retryAfter>0?{retryAfter:error.retryAfter}:{}}};}}
+    if(policy.gate==='none'){try{return await withWriterFlags(this,this.flagConfig,()=>this[method](...args));}catch(error){return {$fault:{code:error.code||'invalid_request',message:error.code?error.message:'The account operation could not be completed.',status:error.status,...Number.isSafeInteger(error.retryAfter)&&error.retryAfter>0?{retryAfter:error.retryAfter}:{}}};}}
     const result=await this.gate.run(async()=>{try{if(policy.lifecycle!=='purging')await assertDeletionFenceOpen(this.metadata);if(policy.warm===true)await this.warm(args[0]);return await withWriterFlags(this,this.flagConfig,()=>this[method](...args));}catch(error){return {$fault:{code:error.code||'invalid_request',message:error.code?error.message:'The account operation could not be completed.',status:error.status,...Number.isSafeInteger(error.retryAfter)&&error.retryAfter>0?{retryAfter:error.retryAfter}:{}}};}});
     // Qualifying owner/app activity resets the inactivity clock outside the account gate.
     if(!result?.$fault)await lifecycleActivity(this,method,args,policy);
@@ -266,17 +274,20 @@ export class AccountController {
         if(snapshot.size>8388608)throw new Error('Account archive exceeds bounds');
         const envelope=await snapshot.json();
         if(envelope.version!==1||envelope.owner!==owner||!Array.isArray(envelope.rows)||envelope.rows.length>2200||envelope.digest!==await archiveDigest(JSON.stringify(envelope.rows)))throw new Error('Account archive integrity check failed');
-        const rows=restore(envelope.rows);if(rows.some(row=>!Array.isArray(row)||row.length!==2||typeof row[0]!=='string'||!isItemKey(row[0])&&!row[0].startsWith('resource/')||!row[1]||row[1].owner!==owner))throw new Error('Account archive record invalid');
-        // Restored legacy `message/` rows may include app rows the app-messages-v1 pass never saw (review F2): clear its
-        // marker, cursor and reconcile time in the same transaction so the next warm runs a full pass again.
-        await this.metadata.transaction(async tx=>{for(const [k,v]of rows){await tx.put(k,v);if(isItemKey(k))this.itemIndex?.upsert(v);}if(rows.some(([k])=>k.startsWith('message/')))for(const k of APP_MESSAGES_PASS_KEYS)await tx.delete(k);await tx.delete('shelved');});
+        const restored=restore(envelope.rows);if(restored.some(row=>!Array.isArray(row)||row.length!==2||typeof row[0]!=='string'||!isItemKey(row[0])&&!row[0].startsWith('message/')&&!row[0].startsWith('resource/')||!row[1]||row[1].owner!==owner))throw new Error('Account archive record invalid');
+        // BB-CUT (DEVLOG 2026-10-27): legacy peer `message/` rows in an archive shelved before the reset are dropped, not
+        // restored. Review M1: each gets the reset's own cleanup (`dropLegacyItem`: blob and presentation blobs to the
+        // garbage queue, postback preparations and notification event deleted, item-index entry removed, search
+        // tombstone) in the restore transaction; shelving kept their index and search entries.
+        const rows=restored.filter(([k])=>!k.startsWith('message/')),dropped=restored.filter(([k])=>k.startsWith('message/'));
+        const effects=this.legacyItemEffects(owner);
+        await this.metadata.transaction(async tx=>{for(const [k,v]of rows){await tx.put(k,v);if(isItemKey(k))this.itemIndex?.upsert(v);}for(const [,v]of dropped)await dropLegacyItem(tx,v,{owner,effects});await tx.delete('shelved');});
       }
       const storedOwner=await this.metadata.get('owner');if(storedOwner!==undefined&&storedOwner!==owner)throw new StorageError('forbidden','Account owner mismatch.',403);await this.ensureBuiltinStorage(owner);await this.migrateItemIndex(owner);
-      // beam-retired-v1 never fails a request: on any error the alarm path retries it (review R3).
-      try{await this.retireBeamStorage();}catch{try{await this.scheduleAlarm(Date.now()+60000);}catch{}}
-      // app-messages-v1 (messaging extraction prep): moves verified app rows into activity's family; never fails a request.
-      try{await this.migrateAppMessageFamily(owner);}catch{try{await this.scheduleAlarm(Date.now()+60000);}catch{}}
-      if(!(await this.messages.collections(owner)).length)await this.messages.createCollection(owner,'Inbox');
+      // BB-CUT reset (`messaging-retired-v1`, DEVLOG 2026-10-27): deletes legacy messaging rows in bounded slices until its
+      // marker exists; never fails a request (the alarm path continues it).
+      try{await this.resetLegacyMessaging(owner);}catch{try{await this.scheduleAlarm(Date.now()+60000);}catch{}}
+      if(!(await this.items.collections(owner)).length)await this.items.createCollection(owner,'Inbox');
       await this.scheduleAlarm(Date.now()+7*86400000);await this.billingRefresh(owner);
     }
   }
@@ -287,7 +298,7 @@ export class AccountController {
   }
   async populationActivity(owner){const stored=await this.metadata.get('owner');if(stored&&stored!==owner)throw new StorageError('wrong_owner','Owner mismatch',403);return {lastActiveAt:await this.metadata.get('lastOwnerActiveAt'),status:(await this.metadata.get('lifecycle'))?.status};}
   async touch(owner) {await this.warm(owner);const now=Date.now();await recordOwnerPopulation(this,owner,{now});const prior=await this.metadata.get('lastOwnerActiveAt');if(Number.isSafeInteger(prior)&&prior>=now-900000)return;await this.metadata.put('lastOwnerActiveAt',now);await this.metadata.put('lifecycle',{status:'active'});await this.scheduleAlarm(now+7*86400000);}
-  async snapshot(owner){await this.warm(owner);return {...await this.messageSnapshot(owner),...await this.owned(owner),collections:await this.messages.collections(owner),contacts:await this.contacts(owner),resources:await this.resources(owner),notificationPreferences:await this.notifications.preferences(owner),pushDevices:await this.notifications.subscriptions(owner),storage:await this.storageUsage(owner),work:this.workBudget?await this.workBudget.status(owner):null,messageReceiptAdmission:await this.messageReceiptBudget.status(owner),retention:await this.metadata.transaction(tx=>accountRemovalProtection(tx,owner,{config:this.config})),lifecycle:await this.metadata.get('lifecycle')||{status:'active'}};}
+  async snapshot(owner){await this.warm(owner);return {...await this.messageSnapshot(owner),...await this.owned(owner),collections:await this.items.collections(owner),contacts:await this.contacts(owner),resources:await this.resources(owner),notificationPreferences:await this.notifications.preferences(owner),pushDevices:await this.notifications.subscriptions(owner),storage:await this.storageUsage(owner),work:this.workBudget?await this.workBudget.status(owner):null,messageReceiptAdmission:await this.messageReceiptBudget.status(owner),retention:await this.metadata.transaction(tx=>accountRemovalProtection(tx,owner,{config:this.config})),lifecycle:await this.metadata.get('lifecycle')||{status:'active'}};}
   /** Views, rules and labels for the snapshot, read through the same engine Queries as their routes. */
   async owned(owner){const actor={kind:'owner',owner};return {views:(await operate(this.engine,new SavedViews({actor}))).views,rules:await operate(this.engine,new TagRules({actor})),tagLabels:await operate(this.engine,new TagLabels({actor}))};}
   async messageSnapshot(owner){const page=await this.messagePage(owner,{limit:100});return {messages:page.items,messageCursor:page.cursor};}
@@ -324,13 +335,11 @@ export class AccountController {
   async alarmMaintenance(){
     await cleanupPostbackPreparations(this);
     const populationOwner=await this.metadata.get('owner');if(populationOwner)await recordOwnerPopulation(this,populationOwner,{retry:true});
-    const conversationOwner=await this.metadata.get('owner');if(conversationOwner&&flagsFor(this.config).background('EVENT_BUSES_ENABLED')&&(await this.metadata.list({prefix:'evbus/bus/',limit:1})).size){const swept=await this.eventBusSweep(conversationOwner);if(swept.more||(await this.metadata.list({prefix:'evbus/bus/',limit:1})).size)await this.scheduleAlarm(Date.now()+(swept.more?1000:600000));}if(conversationOwner){if(flagsFor(this.config).background('BROKERING_ENABLED')&&capability(this.config,'BROKERED_INTROSPECTION_MOUNTED'))await this.brokeredSeveranceDrain(conversationOwner);await this.integrationEventsAlarm(conversationOwner);const revalidated=await this.integrationsRevalidateDue(conversationOwner);if(revalidated.revalidated||revalidated.pending)await this.scheduleAlarm(Date.now()+3600000);await this.conversationDrain(conversationOwner,{limit:16});}
+    const maintenanceOwner=await this.metadata.get('owner');if(maintenanceOwner&&flagsFor(this.config).background('EVENT_BUSES_ENABLED')&&(await this.metadata.list({prefix:'evbus/bus/',limit:1})).size){const swept=await this.eventBusSweep(maintenanceOwner);if(swept.more||(await this.metadata.list({prefix:'evbus/bus/',limit:1})).size)await this.scheduleAlarm(Date.now()+(swept.more?1000:600000));}if(maintenanceOwner){if(flagsFor(this.config).background('BROKERING_ENABLED')&&capability(this.config,'BROKERED_INTROSPECTION_MOUNTED'))await this.brokeredSeveranceDrain(maintenanceOwner);await this.integrationEventsAlarm(maintenanceOwner);const revalidated=await this.integrationsRevalidateDue(maintenanceOwner);if(revalidated.revalidated||revalidated.pending)await this.scheduleAlarm(Date.now()+3600000);}
     const retry=await this.metadata.get('maintenance/alarm-retry');if(!retryReady(retry)){await armAlarm(this.metadata,retry?.paused?Date.now()+7*86400000:retryTime(retry));return;}try{await this.gate.run(async()=>{
-      // DEVLOG 2026-10-26: Beam left the core; `beam-retired-v1` copies its generic contact rows (legacy rows kept for one
-      // release) and deletes the Beam-only rows, revoking TURN usernames within its batch budget.
-      await this.retireBeamStorage({alarm:true});
-      // app-messages-v1: the alarm keeps reconciling one slice after the marker (a rollback could write app rows to message/).
-      {const migrationOwner=await this.metadata.get('owner');if(migrationOwner)await this.migrateAppMessageFamily(migrationOwner,{alarm:true});}
+      // BB-CUT reset (`messaging-retired-v1`): one bounded slice per alarm until its marker exists. Review L2: isolated, so
+      // a slice that keeps failing never stops the maintenance below; it retries on a later alarm.
+      {const resetOwner=await this.metadata.get('owner');if(resetOwner){try{await this.resetLegacyMessaging(resetOwner,{alarm:true});}catch{try{await this.scheduleAlarm(Date.now()+3600000);}catch{/* the weekly alarm retries */}}}}
       await this.quota.cleanup();await this.collectBlobGarbage();const mcpJournalWake=await sweepMcpJournal(this.metadata);if(mcpJournalWake!==null)await this.scheduleAlarm(mcpJournalWake);const owner=await this.metadata.get('owner');if(!owner)return;await collectLinkState(this,owner);
       if(await this.metadata.get('shelved')){await this.scheduleAlarm(Date.now()+7*86400000);return;}
       // A scheduled deletion freezes the shelved state and semantic backfill (R1-H2); vector purges may continue.
@@ -341,8 +350,7 @@ export class AccountController {
       const semanticPending=await this.metadata.get('search-semantic-backfill');if(semanticPending&&!semanticPending.paused||await this.metadata.get('search-vector-purge')){await this.scheduleAlarm(Date.now()+7*86400000);return;}
       if(deletionPending){await this.scheduleAlarm(Date.now()+7*86400000);return;}
       const last=await this.metadata.get('lastOwnerActiveAt')||0;if(Date.now()-last<7*86400000){await this.scheduleAlarm(last+7*86400000);return;}
-      // Both item families shelve together (legacy messages and activity's app messages share the 2,000-row bound).
-      const [legacyPrefix,appPrefix]=itemPrefixes(owner),legacyRows=await this.metadata.list({prefix:legacyPrefix,limit:2001}),appRows=legacyRows.size>2000?new Map():await this.metadata.list({prefix:appPrefix,limit:2001-legacyRows.size}),messageRows=new Map([...legacyRows,...appRows]),resourceRows=await this.metadata.list({prefix:'resource/',limit:201});if(messageRows.size>2000||resourceRows.size>200){await this.metadata.put('cold-index-mode',{mode:'indexed-sqlite',reason:'paged-metadata-shelving-pending'});await this.scheduleAlarm(Date.now()+7*86400000);return;}const all=new Map([...messageRows,...resourceRows]);
+      const [itemPrefix]=itemPrefixes(owner),messageRows=await this.metadata.list({prefix:itemPrefix,limit:2001}),resourceRows=await this.metadata.list({prefix:'resource/',limit:201});if(messageRows.size>2000||resourceRows.size>200){await this.metadata.put('cold-index-mode',{mode:'indexed-sqlite',reason:'paged-metadata-shelving-pending'});await this.scheduleAlarm(Date.now()+7*86400000);return;}const all=new Map([...messageRows,...resourceRows]);
       // Keep signing/public capability records hot, so invalid bearers cannot
       // trigger an archive restore. Only cold content metadata/resources move.
       const rows=[...all].filter(([k])=>isItemKey(k)||k.startsWith('resource/'));

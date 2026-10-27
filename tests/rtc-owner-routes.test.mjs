@@ -5,6 +5,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtemp,rm} from 'node:fs/promises';
+import {linkService} from '../packages/runtime/account/links.mjs';
+import {MESSAGING_CONTACT_LINK_TYPE} from '../packages/links/types.mjs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {createNodeServer} from '../apps/node/server.mjs';
@@ -37,9 +39,13 @@ async function host(t,flags){
   return {handle:session.account.handle,id,cookie:r.headers.get('Set-Cookie').split(';')[0],csrf:session.csrfToken,principal:{iss:ORIGIN,sub:id},identity:`${ORIGIN}/identity/${id}`,
    app:(operation,input)=>object.rtcDispatch(id,{operation,actor,input}),listen:input=>object.rtcListen(id,{actor,input})};
  };
- /** One active contact link of `user` (the account's real contact-grant list), for set-contact-rtc. */
- const contact=async user=>{const collection=(await call(user,'GET','/api/account')).body.collections[0].id,r=await call(user,'POST','/api/contacts',{name:'RTC link',collections:[collection],mimeTypes:['text/plain'],expiresAt:Date.now()+3600000});assert.equal(r.status,200,JSON.stringify(r.body));return r.body.id;};
- return {app,env,fetch,call,person,contact};
+ /** One active contact link of `user`: a contact parent issued through the core links service (the account's
+  * `contacts` list, packages/links/parents.mjs), for set-contact-rtc. Legacy contact grants left the core on 2026-10-27. */
+ const service=user=>linkService(app.resources.accounts.get(user.id));
+ const issue=(user,extra={})=>service(user).issue(user.id,{type:MESSAGING_CONTACT_LINK_TYPE,claims:{resource:'contact',kinds:['one-off'],mimeTypes:['text/plain'],maxMessages:5,maxBytes:4096,maxMessageBytes:1024},expiresAt:Date.now()+3600000,handle:user.handle,...extra});
+ const contact=async user=>(await issue(user)).jti;
+ const revoke=(user,jti)=>service(user).revoke(user.id,jti);
+ return {app,env,fetch,call,person,contact,issue,revoke};
 }
 /** A rings B for a call through B's ticket; B's app endpoint hears it and does not answer. */
 async function ring(a,b){
@@ -211,13 +217,25 @@ test('F4: the ring answer says `idle` only while nothing could ring the portal',
  void a;
 });
 
+test('review L6: the RTC compatibility port admits only an unconditional contact-type link as a contact basis',async t=>{
+ const h=await host(t,ON),a=await h.person('rtc_l6_a'),b=await h.person('rtc_l6_b');
+ const plain=await h.issue(a),conditional=await h.issue(a,{audience:{}}),theirs=await h.issue(b),controller=h.app.resources.accounts.get(a.id);
+ assert.deepEqual(await controller.endpoints.inspect(plain.link),{grant:{id:plain.jti,owner:a.id,quarantined:false}},'an unconditional contact link');
+ assert.equal(await controller.endpoints.inspect(conditional.link),null,'a conditional link: its audience policy needs the caller, which the port does not receive');
+ await assert.rejects(controller.endpoints.inspect(theirs.link),'another owner\'s link never verifies here');
+ // The owner route refuses to configure a parent the port would never admit, with the uniform 404.
+ uniform(await h.call(a,'POST','/api/rtc/set-contact-rtc',{parent:conditional.jti,purposes:[CALL.artefact]}),'a conditional link');
+ assert.equal((await h.call(a,'POST','/api/rtc/set-contact-rtc',{parent:plain.jti,purposes:[CALL.artefact]})).status,200);
+ await h.revoke(a,plain.jti);await assert.rejects(controller.endpoints.inspect(plain.link),'a revoked link');
+});
+
 test('F7: set-contact-rtc names one of the owner\'s active contact links; anything else is the uniform 404',async t=>{
  const h=await host(t,ON),a=await h.person('rtc_f7_a'),b=await h.person('rtc_f7_b');
  for(let i=0;i<5;i++)uniform(await h.call(a,'POST','/api/rtc/set-contact-rtc',{parent:'not-a-real-link-'+i,purposes:[CALL.artefact]}),'an invented parent');
  const mine=await h.contact(a),theirs=await h.contact(b);
  uniform(await h.call(a,'POST','/api/rtc/set-contact-rtc',{parent:theirs,purposes:[CALL.artefact]}),'another owner\'s link');
  assert.equal((await h.call(a,'POST','/api/rtc/set-contact-rtc',{parent:mine,purposes:[CALL.artefact]})).status,200);
- assert.equal((await h.call(a,'DELETE',`/api/contacts/${mine}`)).status,200);
+ await h.revoke(a,mine);
  uniform(await h.call(a,'POST','/api/rtc/set-contact-rtc',{parent:mine,purposes:[CALL.artefact]}),'a revoked link');
  assert.equal((await h.call(a,'POST','/api/rtc/set-contact-rtc',{parent:mine,purposes:[]})).status,200,'a leftover configuration can always be removed');
  assert.deepEqual((await h.call(a,'GET','/api/rtc/settings')).body.contacts,[],'nothing invented was stored');

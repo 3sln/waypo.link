@@ -3,11 +3,14 @@
 // Seeded: rerun a failure with CHAOS_SEED=<seed>.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseLinkQuery, strictJSON as linkJSON } from '../packages/messaging/bindle-links.mjs';
-import { strictJSON as deliveryJSON } from '../packages/messaging/contact-delivery.mjs';
-import { MemoryMessagingStore, ContactTokenService, ContactEndpointService, MessagingService, signContactToken } from '../packages/messaging/index.mjs';
+import { parseLinkQuery, strictJSON as linkJSON } from '../packages/links/envelope.mjs';
+import { MemoryMessagingStore } from '../packages/core/records.mjs';
+import { LinkService } from '../packages/links/issuance.mjs';
+import { IdentityKeyRegistry } from '../packages/identity/keys.mjs';
+import { MESSAGING_CONTACT_LINK_TYPE } from '../packages/links/types.mjs';
+import { signLinkJWS } from '../packages/links/envelope.mjs';
 import { fromBase64url, strictText } from '../packages/core/records.mjs';
-import { LinkReplayRecord } from '../packages/messaging/link-replay.mjs';
+import { LinkReplayRecord } from '../packages/links/replay.mjs';
 import { prepareLinkResponse, signLinkResponse, verifyLinkResponse } from '../packages/identity/link-response.mjs';
 import { SqliteMetadata } from '../apps/node/resources.mjs';
 import { createRandom, forEachSeed, injectFaults, fakeClock, concurrently, tally } from './helpers/chaos.mjs';
@@ -96,7 +99,7 @@ test('strict JSON parsers: seeded differential against JSON.parse, bounded depth
     for (let i = 0; i < 400; i++) {
       const text = mutateJSON(random);
       let reference; try { reference = { value: JSON.parse(text) }; } catch { reference = null; }
-      for (const [parse, code] of [[linkJSON, 'invalid_json'], [deliveryJSON, 'invalid_envelope']]) {
+      for (const [parse, code] of [[linkJSON, 'invalid_json']]) {
         let parsed; try { parsed = { value: parse(text) }; } catch (error) { assert.ok([code, 'too_large'].includes(error.code), `${error.code} for ${JSON.stringify(text)}`); outcomes.refused++; continue; }
         outcomes.accepted++;
         assert.ok(reference, `strict parser accepted invalid JSON ${JSON.stringify(text)}`);
@@ -107,7 +110,6 @@ test('strict JSON parsers: seeded differential against JSON.parse, bounded depth
   assert.ok(outcomes.accepted > 100 && outcomes.refused > 100, JSON.stringify(outcomes));
   for (const deep of ['['.repeat(10000), '{"a":'.repeat(10000), `${'['.repeat(18)}${']'.repeat(18)}`]) {
     assert.throws(() => linkJSON(deep), { code: 'invalid_json' });
-    assert.throws(() => deliveryJSON(deep), { code: 'invalid_envelope' });
   }
 });
 
@@ -115,18 +117,18 @@ test('strict JSON parsers: seeded differential against JSON.parse, bounded depth
 // replay row the bounded record accepts at that same instant.
 const ORIGIN = 'https://3sln.example', BOB = '55555555-5555-4555-8555-555555555555', OWNER = '11111111-1111-4111-8111-111111111111';
 async function responseFixture() {
-  const clock = fakeClock(1800000000000), store = new MemoryMessagingStore(), tokens = new ContactTokenService({ store, issuer: ORIGIN, clock: clock.now });
+  // A conditional link from the core links service (the legacy ContactEndpointService left the core on 2026-10-27).
+  const clock = fakeClock(1800000000000), store = new MemoryMessagingStore(), keys = new IdentityKeyRegistry({ store, clock: clock.now });
   const ownerKey = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']);
-  await tokens.registerKey(OWNER, { kid: 'one', alg: 'ES256', publicJwk: await crypto.subtle.exportKey('jwk', ownerKey.publicKey) });
-  const endpoints = new ContactEndpointService({ tokens, signer: async () => ownerKey.privateKey });
-  const messages = new MessagingService({ store, tokens: endpoints, clock: clock.now }), collection = await messages.createCollection(OWNER, 'Inbox');
-  const issued = await endpoints.createLink(OWNER, { handle: 'alice', kid: 'one', collections: [collection.id], mimeTypes: ['text/plain'], expiresAt: clock.now() + 86400000, audience: {} });
+  await keys.register(OWNER, { kid: 'one', alg: 'ES256', publicJwk: await crypto.subtle.exportKey('jwk', ownerKey.publicKey) });
+  const service = new LinkService({ store, issuer: ORIGIN, keys, signingKey: async () => ({ kid: 'one', privateKey: ownerKey.privateKey }), clock: clock.now });
+  const issued = await service.issue(OWNER, { type: MESSAGING_CONTACT_LINK_TYPE, claims: { resource: 'contact', kinds: ['one-off'], mimeTypes: ['text/plain'], maxMessages: 5, maxBytes: 65536, maxMessageBytes: 4096 }, expiresAt: clock.now() + 86400000, audience: {}, handle: 'alice' }).then(r => ({ url: r.link }));
   const bob = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']), bobJwk = await crypto.subtle.exportKey('jwk', bob.publicKey);
   const account = { active: true, handle: 'bob', key: { kid: 'bob-key', alg: 'ES256', active: true, purpose: 'signing', publicJwk: { kty: 'EC', crv: 'P-256', x: bobJwk.x, y: bobJwk.y } } };
-  const base = (await signLinkResponse({ meta: prepareLinkResponse(issued.url), principal: { iss: ORIGIN, sub: BOB, handle: 'bob@3sln.example' }, key: { kid: 'bob-key', privateKey: bob.privateKey }, clock: clock.now })).data;
-  const inspected = await endpoints.inspect(`${issued.url}&bindle_data=${base}`, { allowData: true });
+  const base = (await signLinkResponse({ meta: prepareLinkResponse(issued.url, { types: [MESSAGING_CONTACT_LINK_TYPE] }), principal: { iss: ORIGIN, sub: BOB, handle: 'bob@3sln.example' }, key: { kid: 'bob-key', privateKey: bob.privateKey }, clock: clock.now, types: [MESSAGING_CONTACT_LINK_TYPE] })).data;
+  const inspected = await service.verify(`${issued.url}&bindle_data=${base}`, { allowData: true });
   const [h, p] = base.split('.'), header = JSON.parse(strictText(fromBase64url(h))), claims = JSON.parse(strictText(fromBase64url(p)));
-  const resign = changes => signContactToken({ header, claims: { ...claims, ...changes }, privateKey: bob.privateKey });
+  const resign = changes => signLinkJWS({ header, claims: { ...claims, ...changes }, privateKey: bob.privateKey });
   const verify = data => verifyLinkResponse({ meta: inspected.meta, data, origin: ORIGIN, resolve: async () => structuredClone(account), clock: clock.now });
   return { clock, inspected, claims, resign, verify };
 }

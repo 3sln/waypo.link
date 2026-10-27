@@ -1,4 +1,4 @@
-// Core links: host-verifiable author proof for links-contract `evaluate` (docs/spec/links.md §7.5; bindlebox.md
+// Core links: host-verifiable author proof for links-contract `evaluate` (docs/spec/links.md §7.5; messaging.md
 // §3.3, §4.6; core-links review finding 1, closed by slice BB-C1b).
 //
 // `evaluate` decides a policy for a principal. Before C1b the occupant named that principal and the host trusted it,
@@ -12,19 +12,19 @@
 //     certifies the author purpose for the proof's jkt, is valid now and since createdAt, and verifies under the
 //     principal's identity key resolved by the HOST (`resolveKey`; same-host principals only until the directory
 //     profile exists, every other issuer is unverifiable);
-//   - the envelope signature verifies under the certified delegate key over the bindlebox envelope domain;
+//   - the envelope signature verifies under the certified delegate key over the Bindle Messaging envelope domain;
 //   - the host's delegation status port answers `active` for that jkt (a revoked delegate key proves nothing).
 // A proof is reusable within its window only for the same (link, principal) pair, which is exactly the evaluation an
 // honest occupant needs; budgets in LinkService bound the rest.
 //
-// Core may not import BindleBox (tests/bindlebox/import-boundary.test.mjs). The envelope domain, the JCS reading and
-// the certificate shape are written here against packages/bindlebox-protocol and pinned to it by
+// Core may not import Parlay (tests/parlay/import-boundary.test.mjs). The envelope domain, the JCS reading and
+// the certificate shape are written here against packages/messaging-protocol and pinned to it by
 // tests/core-links-handoff.test.mjs, which verifies proofs produced by the protocol library's own signers.
 import { fail, base64url, fromBase64url, textEncoder, strictText } from '../core/records.mjs';
 import { UUID } from '../core/primitives.mjs';
 import { DELEGATION_PURPOSES, DELEGATION_TYP, delegatePublicJwk, jwkThumbprint } from '../identity/delegation.mjs';
 
-export const ENVELOPE_DOMAIN = 'bindlebox-envelope-v1\n';
+export const ENVELOPE_DOMAIN = 'bindle-messaging-envelope-v1\n';
 export const AUTHOR_PROOF_LIMITS = Object.freeze({ maxBytes: 65536, windowMs: 86400000, skewMs: 60000, maxCompact: 8192, maxCertificateSeconds: 86400 });
 const LINK_KINDS = ['conversation-init', 'one-off'];
 const ES256 = { name: 'ECDSA', hash: 'SHA-256' }, P256 = { name: 'ECDSA', namedCurve: 'P-256' };
@@ -34,7 +34,7 @@ const invalid = () => fail('author_proof_invalid');
 const unavailable = () => fail('author_proof_unavailable');
 const exact = (value, names) => plain(value) && Object.keys(value).length === names.length && names.every(name => Object.hasOwn(value, name));
 
-/** RFC 8785 over the I-JSON the bindlebox profile admits (safe integers, well-formed strings, plain objects). */
+/** RFC 8785 over the I-JSON the Bindle Messaging profile admits (safe integers, well-formed strings, plain objects). */
 export function jcs(value, depth = 0) {
   if (depth > 32) invalid();
   if (value === null || value === true || value === false) return String(value);

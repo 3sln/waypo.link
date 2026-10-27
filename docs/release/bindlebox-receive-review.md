@@ -7,7 +7,7 @@ Date: 2026-10-20.
 - Stores: `packages/bindlebox-engine/store/{mailbox,edge-index}.mjs`.
 - Tests: `tests/bindlebox/{receive-fixtures,receive,contacts,intake,delegation}.test.mjs`, which run on the seeded network simulator.
 
-Design sources: [spec](../spec/bindlebox.md) §3.3–§3.4, §4, §6.7, §7.1, §7.4, §8 and §9, and [architecture](../architecture/messaging-app.md) §8, §11 and §12.1.
+Design sources: [spec](../spec/messaging.md) §3.3–§3.4, §4, §6.7, §7.1, §7.4, §8 and §9, and [architecture](../architecture/messaging-app.md) §8, §11 and §12.1.
 
 **Method.** One independent security-reviewer subagent reviewed the code read-only, using executable probes. The implementer fixed every confirmed finding and added a regression test for each one.
 

@@ -89,7 +89,7 @@ export function allowedMethods(path){
  if(path.startsWith('/api/auth/'))return ['POST'];
  return null;
 }
-// Terms gates: new content, saved views/rules, contact links, conversations, storage connections,
+// Terms gates: new content, saved views/rules, contact profile sharing, link responses, storage connections,
 // uploads, app grants and authorization changes. GET/HEAD, export, deletion, revoke, cleanup,
 // security settings, billing cancellation and sign-out remain accessible.
 export {createsContentOrGrant} from '../../identity/age-policy.mjs';

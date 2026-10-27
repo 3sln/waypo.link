@@ -6,7 +6,7 @@
 //   {bindle:'member-certificate', v:1, iss, sub, identity, aud, purposes, client:{client_id, origin}, cnf:{jkt},
 //    delegate, aep, jti, iat, exp}
 // signed with an `active` CERTIFICATION key of the identity (`use:"cert"`, provider-held, never in a recovery file
-// or export; R4-H1), never with the identity signing key. The typ differs from BindleBox's `bindle-key-delegation+jwt`
+// or export; R4-H1), never with the identity signing key. The typ differs from Parlay's `bindle-key-delegation+jwt`
 // and from intents' `bindle-intent+jwt`, so no profile accepts another's JWS.
 //
 // Engine-first: MemberCertificateIssuer is the provider resource in the PERSON's account single writer; the
@@ -38,7 +38,7 @@
 //     (MEMBER_CERTIFICATE_DEFAULT_SECONDS), host-configurable down to 60 s; a same-host organization's own setting
 //     (`orgLifetime(aud)`) and a shorter client request are honoured.
 //   - `aep` comes from the identity record (packages/identity/authority-epoch.mjs). No readable epoch, no certificate.
-//   - Status (`GET <identity URI>/delegations/<jkt>`, BindleBox §3.4 semantics): {status:'active'} only for an active
+//   - Status (`GET <identity URI>/delegations/<jkt>`, Parlay §3.4 semantics): {status:'active'} only for an active
 //     key whose consent is active in the same generation and whose `aep` is current; a persisted revocation answers
 //     {status:'revoked', revokedHour}; unknown keys and subjects answer exactly {status:'revoked'}. The first observed
 //     mismatch (consent gone, epoch moved) is persisted, so nothing revives a key. Issuance commits re-check the fence.
@@ -47,7 +47,7 @@
 // Proof of possession: `proof = {iat, signature}`, `signature` the base64url raw ES256 signature by the holder key over
 // UTF-8 `bindle-member-certificate-pop-v1\n` followed by the JSON text
 // `{"aud":<aud>,"client_id":<client_id>,"iat":<iat>,"iss":<issuer>,"jkt":<jkt>,"sub":<owner>}` (this member order),
-// `iat` within 120 s. The prefix differs from every JWS signing input and from the BindleBox PoP domain.
+// `iat` within 120 s. The prefix differs from every JWS signing input and from the Parlay PoP domain.
 import { Provider } from '../../vendor/ngin/index.js';
 import { AppAction, AppQuery } from '../app/engine.mjs';
 import { AppFault } from '../app/faults.mjs';

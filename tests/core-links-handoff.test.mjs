@@ -1,12 +1,12 @@
 // BB-C1b descriptor and slot handoff, end to end in process: the core links contract (LinkService + links engine,
 // app actors admitted through the occupancy port) issues a contact link for the messaging-ingress occupant; the
 // provider's `messaging-address` handoff resolves the link to the occupant's ingress; a same-host sender delivers to
-// that ingress; the BindleBox occupant admits it through B2's receive path, and conditional links are evaluated by
+// that ingress; the Parlay occupant admits it through B2's receive path, and conditional links are evaluated by
 // the host on a host-verified author proof. Also: occupant replacement (the previous app loses link authority; links
 // are inherited provisionally per DEVLOG), the links contract resource method and the manifest declaration row.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { MemoryMessagingStore } from '../packages/messaging/index.mjs';
+import { MemoryMessagingStore } from '../packages/core/records.mjs';
 import { IdentityKeyRegistry } from '../packages/identity/keys.mjs';
 import { encodeDelegationCertificate, jwkThumbprint } from '../packages/identity/delegation.mjs';
 import { LinkService } from '../packages/links/issuance.mjs';
@@ -21,11 +21,11 @@ import { MANIFEST_DECLARATIONS, federationDeclarations } from '../packages/runti
 import { createAppEngine, perform, read } from '../packages/app/engine.mjs';
 import { memoryAudit } from '../packages/app/providers.mjs';
 import { fakeClock } from './helpers/chaos.mjs';
-import { createTestEngine, memoryStore } from './bindlebox/helpers/engine.mjs';
-import { ContactsDomain, ReceiveDomain } from '../packages/bindlebox-engine/store/mailbox.mjs';
-import { createEdgeIndex, flushEdgeOutbox } from '../packages/bindlebox-engine/store/edge-index.mjs';
-import { ReceiveDeliver, handleIngress } from '../packages/bindlebox-engine/domains/receive.mjs';
-import * as B from '../packages/bindlebox-protocol/index.mjs';
+import { createTestEngine, memoryStore } from './parlay/helpers/engine.mjs';
+import { ContactsDomain, ReceiveDomain } from '../packages/messaging-engine/store/mailbox.mjs';
+import { createEdgeIndex, flushEdgeOutbox } from '../packages/messaging-engine/store/edge-index.mjs';
+import { ReceiveDeliver, handleIngress } from '../packages/messaging-engine/domains/receive.mjs';
+import * as B from '../packages/messaging-protocol/index.mjs';
 
 const ISSUER = 'https://3sln.example', POLICY = 'https://3sln.example/policies/developer-contact/v1', DAY = 86400000;
 const BOB = 'b0b00000-0000-4000-8000-000000000002', ALICE = 'a11ce000-0000-4000-8000-000000000001', CAROL = 'ca401000-0000-4000-8000-000000000003';
@@ -61,7 +61,7 @@ async function world({ seed = Number(process.env.CHAOS_SEED ?? 1) } = {}) {
   const describers = { [BOX_A.clientId]: () => describeBody(BOX_A.origin), [BOX_B.clientId]: () => describeBody(BOX_B.origin) };
   const handoff = new LinkHandoff({ service, occupant, clock: clock.now, describe: async ({ occupant: o }) => { calls.describe++; return describers[o.clientId](); } });
   const actor = (box, generation = seat.value.generation) => ({ kind: 'app', owner: BOB, clientId: box.clientId, handle: 'bob', generation });
-  // The occupant's providerLink: what the BindleBox app shell sends over the links contract (bindlebox §4.2).
+  // The occupant's providerLink: what the Parlay app shell sends over the links contract (messaging §4.2).
   const providerLink = (box, generation) => ({
     async issue({ type, claims }) { const { sub, audience, ...members } = claims; assert.equal(sub, BOB); return perform(core, new IssueLink({ actor: actor(box, generation), input: { type, claims: members, expiresAt: clock.now() + 30 * DAY, ...(audience ? { audience: audience.policy ? { policy: audience.policy } : {} } : {}) } })); },
     revoke: ({ jti }) => perform(core, new RevokeLink({ actor: actor(box, generation), id: jti })),
@@ -88,7 +88,7 @@ async function world({ seed = Number(process.env.CHAOS_SEED ?? 1) } = {}) {
   return { clock, stores, registries, revoked, decisions, calls, seat, service, core, handoff, describers, actor, providerLink, parties, mailbox, send, hostPorts };
 }
 
-test('pins: core proof verification, certificates and descriptors match the BindleBox protocol library', async () => {
+test('pins: core proof verification, certificates and descriptors match the Parlay protocol library', async () => {
   const w = await world();
   assert.equal(ENVELOPE_DOMAIN, B.DOMAINS.envelope);
   assert.deepEqual(LINK_SLOT_TABLE, [{ type: MESSAGING_CONTACT_LINK_TYPE, slot: MESSAGING_INGRESS_SLOT }]);
@@ -184,7 +184,7 @@ test('occupant replacement: the previous app loses link authority, the new one i
   await assert.rejects(read(w.core, new LinkList({ actor: w.actor(BOX_A, 1) })), { code: 'forbidden' });
   await assert.rejects(perform(w.core, new RevokeLink({ actor: w.actor(BOX_A, 1), id: plain.jti })), { code: 'forbidden' });
   const boxB = await w.mailbox(BOX_B, 2);
-  // Box B lists A's links with the generation that issued them (bindlebox §4.2: offer bulk revoke and reissue).
+  // Box B lists A's links with the generation that issued them (messaging §4.2: offer bulk revoke and reissue).
   const listed = await read(w.core, new LinkList({ actor: w.actor(BOX_B, 2) }));
   assert.deepEqual(listed.links.map(link => [link.jti, link.occupantGeneration]).sort(), [[plain.jti, 1], [conditional.jti, 1]].sort());
   // The descriptor now points at B (the cache is keyed on the seat); a stale generation of B is refused.

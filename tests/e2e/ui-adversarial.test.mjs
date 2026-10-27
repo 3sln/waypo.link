@@ -4,7 +4,9 @@ import {launch,baseURL,waitForApp,screenshot,publicAssetCache,completeSignupQues
 
 // Real Chromium renders actual application assets. API interception is restricted
 // to explicitly labeled fault-injection cases; worker-flow covers real endpoints.
-const INTAKE='application/vnd.bindle.contact-intake+json',intake=()=>({version:1,form:'legacy',intakeRevision:null,optionalTags:[],kinds:['one-off'],mimeTypes:['text/plain'],maxMessageBytes:65536,maxMessages:5,maxBytes:65536,quotaScope:'parent',expiresAt:Date.now()+3600000,conditional:false});
+// Contact-link landing pages ask only for the contact-profile representation; it also verifies the link (messaging left
+// the core on 2026-10-27, so there is no intake description, composer or delivery).
+const PROFILE='application/vnd.bindle.contact-profile+json';
 let browser;
 test.before(async()=>{browser=await launch();});
 test.after(async()=>{await browser?.close();});
@@ -15,7 +17,7 @@ async function pageWithAccount(t,overrides={}){
   await page.route('**/api/config',route=>route.fulfill({json:{environment:'Adversarial browser fixture',termsVersion:'2026-10-11',providers:{}}}));
   await page.route('**/api/session',route=>route.fulfill({json:{account,csrfToken:'fixture-csrf'}}));
   await page.route('**/api/account',route=>route.fulfill({json:{account,collections:[{id:'inbox',name:'Inbox'}],messages:[],contacts:[],rules:[],resources:[],grants:[],...overrides}}));
-  await page.route('**/api/views',route=>route.fulfill({json:{views:[{id:'all',name:'All messages',builtin:true,revision:1,filter:{version:1},sort:'activity-desc'}]}}));await page.route('**/api/incoming?*',route=>route.fulfill({json:{items:overrides.messages??[],cursor:null,indexRevision:1}}));await waitForApp(page);await page.getByRole('heading',{name:'Messages & conversations'}).waitFor();
+  await page.route('**/api/views',route=>route.fulfill({json:{views:[{id:'all',name:'All messages',builtin:true,revision:1,filter:{version:1},sort:'activity-desc'}]}}));await page.route('**/api/incoming?*',route=>route.fulfill({json:{items:overrides.messages??[],cursor:null,indexRevision:1}}));await waitForApp(page);await page.getByRole('heading',{name:'Messages',exact:true}).waitFor();
   return {page,context};
 }
 test('public landing and mobile layout fit viewport',async t=>{
@@ -62,7 +64,7 @@ test('offline clears private message state and cache excludes private endpoints'
 test('incomplete message metadata does not break rendering',async t=>{
   const {page}=await pageWithAccount(t,{messages:[{id:'message',mimeType:'text/plain',size:8,receivedAt:null}]});
   await page.getByRole('button',{name:/Text message/}).waitFor();
-  assert.ok(await page.getByRole('heading',{name:'Messages & conversations'}).isVisible());
+  assert.ok(await page.getByRole('heading',{name:'Messages',exact:true}).isVisible());
 });
 test('authenticated mobile navigation and forms fit viewport',async t=>{
   const {page}=await pageWithAccount(t);await page.setViewportSize({width:390,height:844});
@@ -72,7 +74,7 @@ test('authenticated mobile navigation and forms fit viewport',async t=>{
   assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
 });
 test('hostile HTML is readable in the sandbox without script execution or external requests',async t=>{
-  const {renderMessage}=await import('../../packages/messaging/content.mjs');
+  const {renderMessage}=await import('../../packages/content/render.mjs');
   const message={id:'12345678-1234-1234-1234-123456789abc',mimeType:'text/html',size:100,receivedAt:Date.now(),tags:[],readAt:1};
   const {page}=await pageWithAccount(t,{messages:[message]});let leaked=false;
   page.on('request',request=>{if(request.url().includes('leak.example'))leaked=true;});
@@ -93,29 +95,6 @@ test('installed public shell reloads offline without cached account responses',a
   await context.setOffline(true);await page.reload();await page.getByText(/You’re offline/).waitFor();await page.locator('.auth-card').waitFor();
   assert.equal(await page.getByRole('button',{name:'Sign in with a passkey',exact:true}).isDisabled(),true);await screenshot(page,'offline-shell');
 });
-test('console contact composer re-signs the same operation after a failed response, signs nothing on GET and never sends anonymously',async t=>{
-  const context=await browser.newContext();t.after(()=>context.close());const page=await context.newPage();page.setDefaultTimeout(8000);
-  const account={id:'11111111-2222-4333-8444-555555555555',handle:'n.reader',status:'active',termsVersion:'2026-10-11',hasPassword:true,passkeyCount:0};
-  await page.route('**/api/config',route=>route.fulfill({json:{environment:'Adversarial browser fixture',termsVersion:'2026-10-11',providers:{}}}));
-  await page.route('**/api/session',route=>route.fulfill({json:{authenticated:true,account,csrfToken:'fixture-csrf',sessionContext:'fixture'}}));
-  await page.route('**/api/account',route=>route.fulfill({json:{account,collections:[{id:'inbox',name:'Inbox'}],messages:[],contacts:[],rules:[],resources:[],grants:[],views:[]}}));
-  await page.route('**/api/views',route=>route.fulfill({json:{views:[{id:'all',name:'All messages',builtin:true,revision:1,filter:{version:1},sort:'activity-desc'}]}}));await page.route('**/api/incoming?*',route=>route.fulfill({json:{items:[],cursor:null,indexRevision:1}}));
-  const invitation=`/users/reader/contact/11111111-1111-1111-1111-111111111111?sig=fixture.signed.endpoint`,signed=[],deliveries=[];
-  await page.route('**/api/links/envelope',async route=>{const input=route.request().postDataJSON();signed.push(input);await route.fulfill({json:{envelope:{payload:{operationId:input.operationId,createdAt:input.createdAt,content:{mimeType:input.mimeType,byteLength:input.byteLength,sha256:input.sha256}},proof:{alg:'ES256',kid:'k',signature:'s'}}}});});
-  await page.route(`**${invitation}`,route=>{
-    const request=route.request();
-    if(request.method()==='GET'&&request.headers().accept==='application/vnd.bindle.contact-intake+json')return route.fulfill({json:{version:1,form:'legacy',intakeRevision:null,optionalTags:[],kinds:['one-off'],mimeTypes:['text/plain'],maxMessageBytes:65536,maxMessages:5,maxBytes:65536,quotaScope:'parent',expiresAt:Date.now()+3600000,conditional:false},contentType:'application/vnd.bindle.contact-intake+json'});
-    if(request.method()!=='POST')return route.continue();
-    const multipart=request.postData();assert.ok(request.headers()['content-type'].startsWith('multipart/form-data; boundary='));assert.equal(request.headers().cookie,undefined);
-    const envelope=JSON.parse(/name="envelope"[^\r]*\r\nContent-Type: application\/json\r\n\r\n([^\r\n]+)/.exec(multipart)[1]);assert.equal(/name="(collection|idempotencyKey|mimeType)"/.test(multipart),false);deliveries.push(envelope);
-    return route.fulfill(deliveries.length===1?{status:503,json:{error:'admission_unavailable',message:'Try again'}}:{status:202,json:{receipt:{payload:{messageId:'message'},proof:{}}}});
-  });
-  await page.goto(`${baseURL}/console#contact=${encodeURIComponent(baseURL+invitation)}&intent=send-message`);await page.getByLabel('Your message').waitFor();assert.equal(deliveries.length,0);assert.equal(signed.length,0);assert.equal(new URL(page.url()).hash,'');
-  await page.getByLabel('Your message').fill('A short note');await page.getByRole('button',{name:'Send message',exact:true}).click();await page.getByRole('alert').first().waitFor();
-  await page.getByRole('button',{name:'Send message',exact:true}).click();await page.getByRole('heading',{name:'Your message is on its way.'}).waitFor();
-  assert.equal(deliveries.length,2);assert.equal(deliveries[0].payload.operationId,deliveries[1].payload.operationId);assert.equal(signed[0].createdAt,signed[1].createdAt);assert.equal(signed[0].link,'http://'+new URL(baseURL).host+invitation);
-});
-
 test('identity email availability does not claim reminder delivery',async t=>{
  const {page}=await pageWithAccount(t,{account:{id:'notification-fixture',handle:'redteam',verifiedEmail:'reader@example.test'},notificationPreferences:{enabled:true,push:{enabled:false},email:{enabled:true,delayMinutes:60,repeatHours:24,maxReminders:3},collections:[],excludeTags:[]}});
  await page.route('**/api/config',route=>route.fulfill({json:{emailEnabled:true,notificationEmailEnabled:false,providers:{}}}));await page.reload();await page.getByRole('button',{name:'Notifications',exact:true}).click();
@@ -180,12 +159,12 @@ test('contact profile is literal scoped optional metadata with no automatic avat
   await page.route('**/api/account',route=>route.fulfill({json:{account:{id:'owner-fixture',handle:'owner'},collections:[],messages:[],contacts:[],rules:[],resources:[]}}));
   await page.route('**'+invitation,route=>{
    const accept=route.request().headers().accept;
-   if(accept===INTAKE)return route.fulfill(scenario==='expired'?{status:401,json:{error:'unauthorized'}}:{json:intake(),contentType:INTAKE});
-   if(accept==='application/vnd.bindle.contact-profile+json'){profiles++;return route.fulfill(scenario==='failure'?{status:503,body:'Unavailable'}:{json:{identityURI:'https://forged.example',profile:scenario==='disabled'?null:scenario==='long'?{displayName:'Z'.repeat(100)}:scenario==='partial'?{bio:'Sign in',unknown:'not shared'}:{displayName:'<img src=x onerror=alert(1)>',bio:'Sign in',avatar:'https://images.example/avatar.png'}},contentType:'application/vnd.bindle.contact-profile+json'});}
+   if(accept===PROFILE){profiles++;return route.fulfill(scenario==='expired'?{status:404,json:{error:'not_found'}}:scenario==='failure'?{status:503,body:'Unavailable'}:{json:{identityURI:'https://forged.example',profile:scenario==='disabled'?null:scenario==='long'?{displayName:'Z'.repeat(100)}:scenario==='partial'?{bio:'Sign in',unknown:'not shared'}:{displayName:'<img src=x onerror=alert(1)>',bio:'Sign in',avatar:'https://images.example/avatar.png'}},contentType:'application/vnd.bindle.contact-profile+json'});}
    return route.continue();
   });
   await page.goto(baseURL+invitation);await page.getByText(/^Identidad del contacto: \u2068?reader@[^\s]+?\u2069?$/).waitFor();assert.equal(new URL(page.url()).search,'');
-  if(scenario==='expired'){await page.getByText('Este enlace de contacto ha caducado, se ha revocado o no es válido.').first().waitFor();assert.equal(profiles,0);assert.equal(await page.locator('a.contact-intent').count(),0);}
+  if(scenario==='expired'){await page.getByText('Este enlace de contacto ha caducado, se ha revocado o no es válido.').first().waitFor();assert.equal(profiles,1);assert.equal(await page.locator('a.contact-intent').count(),0);assert.equal(await page.getByRole('button',{name:'Intentar de nuevo',exact:true}).count(),0,'a refused link is final');}
+  else if(scenario==='failure'){await page.getByText('No se pudo comprobar este enlace de contacto en este momento. Inténtalo de nuevo en breve.').first().waitFor();assert.equal(await page.locator('a.contact-intent').count(),0);await page.getByRole('button',{name:'Intentar de nuevo',exact:true}).waitFor();}
   else{await page.locator(scenario==='shared'?'section.contact-signed-in':'section.contact-signin').waitFor();assert.equal(await page.locator('textarea').count(),0);if(scenario==='shared'||scenario==='partial'){await page.getByText('Compartido por este enlace de contacto',{exact:true}).waitFor();assert.equal(await page.locator('.contact-profile-bio').textContent(),'Sign in','User biography must not be translated');}if(scenario==='long'){await page.getByRole('heading',{name:new RegExp('^Envía un mensaje a \u2068?'+'Z'.repeat(100)+'\u2069?\\.$')}).waitFor();await screenshot(page,'contact-profile-long-es-320');}if(scenario==='shared'){await page.getByRole('heading',{name:/^Envía un mensaje a \u2068?<img src=x onerror=alert\(1\)>\u2069?\.$/}).waitFor();assert.equal(await page.locator('.contact-recipient-profile strong').textContent(),'<img src=x onerror=alert(1)>');assert.equal(await page.locator('.contact-recipient-profile img').count(),0);const avatar=page.getByRole('link',{name:'Ver avatar compartido',exact:true});assert.equal(await avatar.getAttribute('rel'),'noreferrer noopener');await screenshot(page,'contact-profile-shared-es-320');}else assert.equal(await page.getByRole('link',{name:'Ver avatar compartido',exact:true}).count(),0);}
   assert.equal(avatarRequests,0);assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);assert.equal(await page.locator('[href*="forged.example"]').count(),0);
  }
@@ -207,7 +186,7 @@ test('public pages follow system theme with readable controls and preserve the C
   await page.locator('.auth-card .button.primary').hover();await assertContrast('.auth-card .button.primary');assert.equal(await page.evaluate(()=>window.themeCaptchaRenders),renders,'Changing device theme must preserve the challenge');
  }
  const invitation='/users/theme-owner/contact/11111111-1111-1111-1111-111111111111?sig=theme-private';const token=`e30.${Buffer.from(JSON.stringify({collections:['inbox'],mimeTypes:['text/plain']})).toString('base64url')}.signature`;
- await page.route('**'+invitation,route=>{const accept=route.request().headers().accept;if(accept===INTAKE)return route.fulfill({json:intake(),contentType:accept});if(accept==='application/vnd.bindle.contact-profile+json')return route.fulfill({json:{profile:{displayName:'Destinatario',bio:'Perfil compartido'}},contentType:accept});return route.continue();});
+ await page.route('**'+invitation,route=>{const accept=route.request().headers().accept;if(accept===PROFILE)return route.fulfill({json:{profile:{displayName:'Destinatario',bio:'Perfil compartido'}},contentType:accept});return route.continue();});
  await page.goto(baseURL+invitation);await page.getByRole('heading',{name:/^Envía un mensaje a \u2068?Destinatario\u2069?\.$/}).waitFor();await assertContrast('.contact-recipient-profile strong');await assertContrast('.contact-profile-bio');await assertContrast('.auth-card .button.primary');await screenshot(page,'system-theme-dark-contact-es-320');
  for(const path of ['/recovery/setup','/mcp/consent']){await page.goto(baseURL+path);await page.locator('.auth-card,.mcp-consent').first().waitFor();assert.equal(await page.evaluate(()=>getComputedStyle(document.documentElement).colorScheme),'dark');assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);await screenshot(page,'system-theme-dark-'+(path.includes('recovery')?'recovery':'mcp')+'-320');}
  await page.route('**/api/session',route=>route.fulfill({json:{account:{id:'theme-owner',handle:'owner'}}}));await page.route('**/api/account',route=>route.fulfill({json:{account:{id:'theme-owner',handle:'owner'},collections:[],messages:[],contacts:[],rules:[],resources:[]}}));await page.goto(baseURL+'/console?signup');await page.locator('.app-shell').waitFor();assert.equal(await page.evaluate(()=>getComputedStyle(document.documentElement).colorScheme),'dark');assert.equal(await page.locator('.sidebar .logo img').evaluate(node=>node.currentSrc.includes('ondark')),true,'Console follows the system theme with its matching logo');

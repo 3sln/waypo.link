@@ -38,7 +38,7 @@ export function workerLifecycleConfig(env){
 /** DX-3 account deletion ports (account-deletion-export.md §6). Built for every account object, independent of
  * LIFECYCLE_ENABLED; new requests still need ACCOUNT_DELETION_ENABLED. DX-1 exports and DX-4 billing closure are
  * composed per account (packages/runtime/account/deletion.mjs). The notices port (DX-5) is not wired yet, so a
- * request with a notice channel holds before commit. R1-M12 is undecided: operatorApps is null (no BindleBox
+ * request with a notice channel holds before commit. R1-M12 is undecided: operatorApps is null (no Parlay
  * notification), which keeps the inactivity purge unchanged; the deletion flag stays off until it is decided. */
 export function workerDeletionConfig(env){
  const repository=repositoryOf(env),admin=env.ADMIN_AUTHORITY?remoteAdminStore((method,args)=>env.ADMIN_AUTHORITY.get(env.ADMIN_AUTHORITY.idFromName('admin-v1')).invoke(method,args)):null;

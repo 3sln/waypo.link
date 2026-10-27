@@ -4,9 +4,9 @@ Status: **design spike, 2026-10-27. Documentation only.** Nothing here is implem
 
 It answers the open spike items of [signaling](../spec/signaling.md) §5.6 and §19.4 (S1, S2 and I3), against **revision 1 as read on 2026-10-27**. Another agent is revising that draft at the same time, so section numbers cited here may shift. The change requests in §1.6 are written against rev 1 for a rev 2.
 
-Inputs: [signaling](../spec/signaling.md), [intents](../spec/intents.md) and its [design](intent-links.md), [notifications](../spec/notifications.md), [activity](../spec/activity.md), the [activity center](activity-center.md), [BindleBox interop](../spec/bindlebox.md) and its [architecture](messaging-app.md), [device authorization](../spec/device-authorization.md), [device login](../spec/device-login.md), and the owner's direction of 2026-10-27, quoted in the brief.
+Inputs: [signaling](../spec/signaling.md), [intents](../spec/intents.md) and its [design](intent-links.md), [notifications](../spec/notifications.md), [activity](../spec/activity.md), the [activity center](activity-center.md), [Bindle Messaging interop](../spec/messaging.md) and its [architecture](messaging-app.md), [device authorization](../spec/device-authorization.md), [device login](../spec/device-login.md), and the owner's direction of 2026-10-27, quoted in the brief.
 
-**Naming.** The brief calls the messaging app "Parlay". [open-items](../release/open-items.md) D2 records the app name as open, and says Parley and Parlay were rejected over name clashes. Here "Parlay" means "the BindleBox messaging app, whatever it ends up being called". The media type and kind identifiers use the current `bindlebox` path segment, so they change with D2.
+**Naming.** The brief calls the messaging app "Parlay". [open-items](../release/open-items.md) D2 records the app name as open, and says Parlay and Parlay were rejected over name clashes. Here "Parlay" means "the Parlay messaging app, whatever it ends up being called". The media type and kind identifiers use the current `bindlebox` path segment, so they change with D2.
 
 **Example only.** The bridle fleet (`../bridle`: a desktop daemon tethered to a phone PWA over WebRTC, paired today by trust on first use) is used here only to test the design. Nothing in this spike builds it.
 
@@ -18,7 +18,7 @@ Inputs: [signaling](../spec/signaling.md), [intents](../spec/intents.md) and its
 2. **Intents route user-initiated handoffs, never incoming events.** "Call this contact" from a contact card or a web page is an intent. An incoming call is not: the message already landed in a specific app, it is time-critical, and no person is on a provider page to choose. Intents routing stays only for unsolicited signaling invites (the `link` and `none` bases).
 3. **The intents chooser gets a ranked short list.** Ranking uses only owner-local and provider-observed signals (defaults, past choices, approvals, use from this device, recency, publisher match, review). It shows at most three candidates, with one action to expand to every capable connected app and a second to browse a catalogue. A single candidate gets a confirm page. Nothing about the list ever leaves the provider.
 4. **Ringing is a best-effort presentation hint on an activity item, and never a guarantee.** It needs a small Bindle activity amendment, because apps on any provider must be able to request it portably. Delivery policy, the per-device fallback ladder and the platform feature detection belong to 3sln.me. Today the only real "incoming call" notification on the web is an unshipped Chromium/Edge experiment (§3.1), so the ladder's normal outcome is an ordinary or persistent notification.
-5. **Parlay's call invite is a BindleBox message** with media type `application/vnd.bindlebox.call-invite+json`. It carries the media, an expiry, the caller principal (which must equal the envelope author) and per-recipient offers. The proposed BindleBox text is in §4.
+5. **Parlay's call invite is a Parlay message** with media type `application/vnd.bindle.messaging.call-invite+json`. It carries the media, an expiry, the caller principal (which must equal the envelope author) and per-recipient offers. The proposed Parlay text is in §4.
 
 ## 1. Session establishment modes
 
@@ -36,7 +36,7 @@ Rev 1 already gives one channel: per-session leg keys certified by each side's i
 ### 1.2 Invite-style: a Parlay call
 
 **The problem with a caller-initiated signaling invite.** The obvious design: the caller sends a call-invite message and also opens a signaling invite to the callee. It fails on several points against rev 1:
-- **Admission.** The invite needs a basis at the callee's provider: a contact link with signaling configuration (§5.3), or requests (`none`), which are held and never delivered. Messaging contacts in BindleBox are an app link type, not the core contact parents that §5.3 configures. So two contacts who already message each other would still need a second, signaling-specific admission.
+- **Admission.** The invite needs a basis at the callee's provider: a contact link with signaling configuration (§5.3), or requests (`none`), which are held and never delivered. Messaging contacts in Parlay are an app link type, not the core contact parents that §5.3 configures. So two contacts who already message each other would still need a second, signaling-specific admission.
 - **Routing.** For another entity, the invite goes to the owner's intents routing handler for the kind (§5.4 case 3). That may not be the app that showed the message, so the ring and the answer would land in different apps.
 - **Timing.** `answer_by` is at most 120 s, and nothing is stored after it. A ring that must reach a phone in Doze, or a person who opens the app 30 s later, is fragile. Messaging already does store-and-forward and expiry.
 - **Two rings.** The message and the signaling invite each want to alert the person.
@@ -44,7 +44,7 @@ Rev 1 already gives one channel: per-session leg keys certified by each side's i
 **Recommendation: reverse dial with an offer.** The ring is the message. Signaling starts only when the callee answers, and it runs from callee to caller:
 
 1. **The caller places a call.** The caller's Parlay calls a new signaling method, `offer` (§1.6 CR-1), on its own provider. The provider checks the slot grant, the session handler approval for the call kind and the limits. It then mints one opaque offer per callee principal, each **bound to that principal, the kind and the profile, single use and short-lived**. It stores only hashes. The offer records the minting endpoint and app.
-2. **The caller sends the call-invite message.** It is an ordinary BindleBox `conversation-record` (`type: "message"`) or `one-off`, with body media type `application/vnd.bindlebox.call-invite+json` (§4). The body carries `expiresAt`, the media, the caller principal and the per-recipient offers. Messaging handles admission (the conversation credential, or the contact link and intake), custody and delivery, as for any message.
+2. **The caller sends the call-invite message.** It is an ordinary Parlay `conversation-record` (`type: "message"`) or `one-off`, with body media type `application/vnd.bindle.messaging.call-invite+json` (§4). The body carries `expiresAt`, the media, the caller principal and the per-recipient offers. Messaging handles admission (the conversation credential, or the contact link and intake), custody and delivery, as for any message.
 3. **The callee's Parlay receives the message.** If it has not expired, and the conversation is an accepted one (not a first-contact request, §4.4), Parlay renders an incoming-call card. It asks the callee's 3sln.me provider for a best-effort ring (§3), as an activity item with the ring hint and the same expiry.
 4. **The callee taps Answer.** The tap happens in Parlay's own interface, because answering needs `getUserMedia` and a page. The callee's Parlay calls `open` on the callee's own provider with `to` = the caller principal, `kind` = the call kind, `profile: "webrtc"` and `basis: {offer: <token>}`. The callee's SDP offer carries the media the callee chose, a subset of the invite's (for example, audio only). The callee is now the signaling **initiator**.
 5. **The caller's provider admits by the offer.** It verifies the offer at §9.2 step 7 (live, unspent, same kind line, admitted version, same profile). At step 8 it spends the offer atomically, and checks that the offer's principal equals the **verified** principal in the callee's leg certificate. It routes the invite to the minting endpoint, or, if that endpoint is gone, to the minting app's other eligible endpoints of the caller's entity, with late delivery. The projection says `basis: "offer"` and `offer_match: true`.
@@ -55,7 +55,7 @@ Rev 1 already gives one channel: per-session leg keys certified by each side's i
 **Properties:**
 - **No presence oracle in either direction.** A callee who does not answer sends nothing; the offer expires. The caller learns that the callee answered only when the callee answered. The caller's endpoint auto-accepts only the one principal it called, for the one kind, before expiry. That reveals nothing the caller did not already disclose by calling.
 - **The same app on both legs, by construction.** The offer routes back to the minting app, whatever the caller's intents default is. On the callee side, the app that rendered the message is the app that dials.
-- **Cross-app interop.** The callee may use a different BindleBox-compatible app. It needs only an approval for the BindleBox call kind and the signaling slot.
+- **Cross-app interop.** The callee may use a different Parlay-compatible app. It needs only an approval for the Parlay call kind and the signaling slot.
 - **Other devices of the callee.** Every device has the message and may ring. The first device to answer spends the offer. A second device's `open` is admitted nothing and ends silently at `answer_by`. Parlay's occupant, the callee's server-side mailbox shared by all the callee's devices, tells the other devices that the call was answered and retracts the ring item (§3.7). That is app-internal.
 - **Missed calls** are a local rendering of an expired invite with no answer. There is no provider list (§3.6 of signaling still holds).
 - **Group calls** are a mesh of two-party sessions (§8.6): one offer per callee principal, up to 16 (§4.3). Larger calls are a conferencing service reached with ordinary sessions.
@@ -164,7 +164,7 @@ All of these are proposals against rev 1, and all are unsigned.
 | CR-9 | §8.3 | **Glare** also covers two `pairing` invites that cross for the same kind line between the same endpoint pair. |
 | CR-10 | §11.3, §11.4 | **The owner hook and handoff** never apply to `offer` or `pairing` invites. |
 | CR-11 | §5.5, §19.4 I3 | **I3 for mode (b) is solved by explicit pairing.** Grouping clients by registrable domain stays unneeded for signaling. It remains in intents only for exclusions. |
-| CR-12 | §1, §11.3 | **Cross-references:** the call semantics are in BindleBox §5.5 (proposed, §4 here), and the ring is in the activity hint (§3). Signaling stays call-free. |
+| CR-12 | §1, §11.3 | **Cross-references:** the call semantics are in Parlay §5.5 (proposed, §4 here), and the ring is in the activity hint (§3). Signaling stays call-free. |
 | CR-13 | §19.2, §19.4, §21 | **Decisions and tests.** New SG rows for the bases, the pairing and the offer. Answer S1 and S2. Tests: offer spent exactly once under concurrency; offer with a wrong principal admits nothing, silently, and is not spent; offer routed to the minter despite a different intents default; pairing pending until both approvals exist; revoking a device-auth client session ends paired sessions with `revoked`; relation basis with no pairing record gets the uniform `202`; `bases` enforcement. |
 
 ## 2. Intents routing
@@ -283,7 +283,7 @@ Sources retrieved on 2026-10-27, unless stated. "BCD" is MDN browser-compat-data
 
 ### 3.2 API shape: a ring hint on an activity item
 
-Parlay already notifies only through core activity (BindleBox architecture §14). A call ring is therefore an **activity item with a presentation hint**. It is not a new channel, and it is not a signaling feature.
+Parlay already notifies only through core activity (Parlay architecture §14). A call ring is therefore an **activity item with a presentation hint**. It is not a new channel, and it is not a signaling feature.
 
 Proposed activity binding members (activity amendment, §3.8):
 
@@ -403,13 +403,13 @@ These are proposed reference values for 3sln.me, for product and security review
 
 Activity says that apps "MUST NOT select devices, sounds, lock-screen previews, or policy overrides". The ring hint keeps to that: it asks for a presentation class, and the recipient's policy decides everything else.
 
-## 4. Proposed BindleBox addition: the call-invite media type
+## 4. Proposed Parlay addition: the call-invite media type
 
-The text below is written as a proposed new **§5.5** of [BindleBox interop](../spec/bindlebox.md). It is **not applied to bindlebox.md**. It depends on signaling rev 2 CR-1 (offers) and CR-6 (`bases`).
+The text below is written as a proposed new **§5.5** of [Bindle Messaging interop](../spec/messaging.md). It is **not applied to messaging.md**. It depends on signaling rev 2 CR-1 (offers) and CR-6 (`bases`).
 
 > ### 5.5 Structured bodies: call invitations (proposed, unsigned)
 >
-> A call invitation is an ordinary message whose body has media type `application/vnd.bindlebox.call-invite+json`. It travels as a `one-off` or a `conversation-record` of `type: "message"`, under every rule of §5 to §8. It is a request to connect, carried by messaging. The connection itself uses [signaling](signaling.md). Providers attach no meaning to it.
+> A call invitation is an ordinary message whose body has media type `application/vnd.bindle.messaging.call-invite+json`. It travels as a `one-off` or a `conversation-record` of `type: "message"`, under every rule of §5 to §8. It is a request to connect, carried by messaging. The connection itself uses [signaling](signaling.md). Providers attach no meaning to it.
 >
 > #### 5.5.1 Body
 >
@@ -427,7 +427,7 @@ The text below is written as a proposed new **§5.5** of [BindleBox interop](../
 > | `session` | `{kind, profile, offers}`, defined below. |
 >
 > `session`:
-> - `kind`: an artefact reference `{artefact, version, digest}` to a signaling session kind. This profile registers `https://spec.bindle.example/bindlebox/v1/sessions/call`.
+> - `kind`: an artefact reference `{artefact, version, digest}` to a signaling session kind. This profile registers `https://spec.bindle.example/messaging/v1/sessions/call`.
 > - `profile`: `"webrtc"`.
 > - `offers`: 1 to 16 entries `{principal: {iss, sub}, offer: <signaling offer token>}`, one per invited principal, unique principals, never including `caller`. In a `conversation-record`, every listed principal MUST be a genesis participant.
 >
@@ -437,7 +437,7 @@ The text below is written as a proposed new **§5.5** of [BindleBox interop](../
 >
 > #### 5.5.2 The call session kind
 >
-> `…/bindlebox/v1/sessions/call` is an intent kind with a `session` member (signaling §20.1):
+> `…/parlay/v1/sessions/call` is an intent kind with a `session` member (signaling §20.1):
 > - `effect: "join"`, `capability: false`, `max_bytes: 64`;
 > - data `{call}` (`uuid`, required, display `presence`);
 > - `session` `{"v": 1, "parties": "any", "profiles": {"webrtc": {"media": ["audio", "video"]}}, "bases": ["offer", "pairing", "link"]}`.
@@ -492,7 +492,7 @@ The text below is written as a proposed new **§5.5** of [BindleBox interop](../
 | SMS-5 | Intents route viewer-initiated handoffs only; incoming events never use the chooser (§2.1, AMD-INT-R1 item 4). | Reviewer ___ Date ___ Outcome ___ |
 | SMS-6 | The chooser shows a ranked short list from owner-local and verified signals, with one action to expand, and a confirm page for one candidate (§2.2, AMD-INT-R1 items 1 to 3). | Reviewer ___ Date ___ Outcome ___ |
 | SMS-7 | Ringing is an advisory activity presentation hint (Bindle), with delivery policy and fallback in 3sln.me; it is never guaranteed (§3). | Reviewer ___ Date ___ Outcome ___ |
-| SMS-8 | Parlay's call invite is a BindleBox message with `application/vnd.bindlebox.call-invite+json` (§4). | Reviewer ___ Date ___ Outcome ___ |
+| SMS-8 | Parlay's call invite is a Parlay message with `application/vnd.bindle.messaging.call-invite+json` (§4). | Reviewer ___ Date ___ Outcome ___ |
 
 ## 6. Open questions for the owner
 
@@ -509,7 +509,7 @@ The text below is written as a proposed new **§5.5** of [BindleBox interop](../
 1. **Record this spike** in DEVLOG as provisional and unsigned (the coordinator's step). Feed CR-1 to CR-13 to the signaling rev 2 author, once rev 1 settles.
 2. **Signaling rev 2:** the `offer` basis and the `pairing` record (CR-1 to CR-11), with engine-level tests first. Covered at the ngin engine level: offer spend races; principal mismatch; minter routing against a different intents default; pairing pending and revocation; device-auth revocation cascading into paired sessions; plus a seeded chaos test of concurrent offers, claims and revocations. All behind the existing default-off signaling flags.
 3. **Device authorization:** resolve Q3, then add the pairing control to the approval page (provider policy; no protocol change unless the lineage changes).
-4. **BindleBox §5.5** (§4) and the call session kind, in the protocol package's validation and vectors, behind `BINDLEBOX_ENABLED`.
+4. **Parlay §5.5** (§4) and the call session kind, in the protocol package's validation and vectors, behind `PARLAY_ENABLED`.
 5. **Activity AMD-ACT-R1**, then the 3sln.me ring policy, ladder and budgets in the activity center. Verify in real browsers on Android Chrome, desktop Chrome or Edge, Firefox, Safari on macOS and an iOS Home Screen app. Test the flagged `scenario` in Chromium only as an experiment. Record what each platform actually did. A populated push key or a screenshot is not delivery evidence.
 6. **Intents AMD-INT-R1** and the 3sln.me short-list chooser, with DOM and browser tests for ranking labels, expansion, the single-candidate confirm page and history deletion.
 7. **Keep production disabled** under the [security](../spec/security.md) gates throughout. Nothing here changes a gate.

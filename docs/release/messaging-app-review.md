@@ -5,7 +5,7 @@ Date: 2026-10-20.
 Reviewed:
 
 - [BindleBox architecture](../architecture/messaging-app.md);
-- [BindleBox interop v1](../spec/bindlebox.md);
+- [BindleBox interop v1](../spec/messaging.md);
 - [messaging extraction plan](../architecture/messaging-extraction.md).
 
 Method: two independent reviewer subagents, a security/abuse red team and a product/interop wargame, each reading the full drafts and their context. Neither reviewer edited any file. The lead designer then revised all three documents and checked them against [extensions](../spec/extensions.md), [integrations](../spec/integrations.md) and [extensibility design](../architecture/extensibility-design.md) revision 2 as finalized, and against the [scaling spike](messaging-scaling-spike.md) checklist.

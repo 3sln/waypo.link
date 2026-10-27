@@ -248,7 +248,7 @@ await generateServiceWorker(result,{out:outputRoot,privateAssets,publicAssets:['
 console.log(`Public build ${result.buildId}: ${result.modules.size} individually addressed modules, 3 isolated worker modules, 2 standalone SDK entries, complete import-map graph verified.`);
 console.log(`Islands build ${embedBuildId}: ${embedGraph.length} modules under /${EMBED_ROOT}/, standalone island worker, import-map graph verified; shell ${shellBytes} bytes gzip (design budget 2048).`);
 
-// BindleBox has its own default-off host and asset binding.
-await mkdir(resolve('.output/bindlebox-public'),{recursive:true});
-await checkModules({entryPoints:['apps/bindlebox/web/boot.mjs'],outfile:resolve('.output/bindlebox-public/app.mjs'),bundle:true,format:'esm',platform:'browser',target:'es2022',minify:config.minifyJs!==false});
-await cp('apps/bindlebox/web/styles.css',resolve('.output/bindlebox-public/styles.css'));
+// Parlay has its own default-off host and asset binding.
+await mkdir(resolve('.output/parlay-public'),{recursive:true});
+await checkModules({entryPoints:['apps/parlay/web/boot.mjs'],outfile:resolve('.output/parlay-public/app.mjs'),bundle:true,format:'esm',platform:'browser',target:'es2022',minify:config.minifyJs!==false});
+await cp('apps/parlay/web/styles.css',resolve('.output/parlay-public/styles.css'));

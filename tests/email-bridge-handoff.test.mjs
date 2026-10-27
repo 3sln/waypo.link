@@ -4,16 +4,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {world,rawMail,text,bridgeKey,CONFIG,DOMAIN,OWNER,ORIGIN,PRINCIPAL,RESOURCE,NOW} from './email-bridge-helpers.mjs';
-import {createTestEngine,memoryStore as boxStore} from './bindlebox/helpers/engine.mjs';
+import {createTestEngine,memoryStore as boxStore} from './parlay/helpers/engine.mjs';
 import {fakeClock} from './helpers/chaos.mjs';
-import {ContactsDomain,ReceiveDomain} from '../packages/bindlebox-engine/store/mailbox.mjs';
-import {createBridgeProvider,BridgeReceive as BoxReceive} from '../packages/bindlebox-engine/domains/bridge.mjs';
+import {ContactsDomain,ReceiveDomain} from '../packages/messaging-engine/store/mailbox.mjs';
+import {createBridgeProvider,BridgeReceive as BoxReceive} from '../packages/messaging-engine/domains/bridge.mjs';
 import {handleEmail,runOwnerOperation,runSenderMethod,memoryStore,GENERIC_REFUSAL,invariantText,bridgeObjectName} from '../packages/email-bridge/index.mjs';
 
-async function bindlebox(t,{clock,key,enabled=true}){
+async function parlay(t,{clock,key,enabled=true}){
  const egress={fetch:async()=>{throw new Error('egress forbidden');},send:async()=>{throw new Error('egress forbidden');}};
  const providerLink={async consumerKey({consumer,keyId}){return consumer===ORIGIN&&keyId===key.keyId?{keyId,publicJwk:key.publicJwk}:null;}};
- const e=createTestEngine({owner:OWNER,clock,store:boxStore([['owner',OWNER]]),providers:{contacts:ContactsDomain,receive:ReceiveDomain,bridge:createBridgeProvider({BINDLEBOX_ENABLED:enabled}),providerLink,classifier:{decide:async()=>({labels:{spam:0},evidence:{model:'m',version:'1',schema:'s'}})},egress,userStorage:null}});
+ const e=createTestEngine({owner:OWNER,clock,store:boxStore([['owner',OWNER]]),providers:{contacts:ContactsDomain,receive:ReceiveDomain,bridge:createBridgeProvider({PARLAY_ENABLED:enabled}),providerLink,classifier:{decide:async()=>({labels:{spam:0},evidence:{model:'m',version:'1',schema:'s'}})},egress,userStorage:null}});
  t.after(()=>e.dispose());
  if(enabled)await e.run('receive.configure',{input:{principal:PRINCIPAL,ingress:'https://hub.box.example/ingress'}});
  const call=async({body,seat})=>{const tx=JSON.parse(text(body)).tx;try{return {status:200,json:{version:'0',tx,result:await e.perform(new BoxReceive({actor:{kind:'ingress',owner:OWNER},input:{body,consumer:ORIGIN,resource:seat.resource}}))}};}catch(error){return {status:error.status??400,json:{error:{code:error.code}}};}};
@@ -21,7 +21,7 @@ async function bindlebox(t,{clock,key,enabled=true}){
 }
 
 test('handoff to BB-B7: provenance verifies with the bridge key, the item is channel-origin and unverified, duplicates and re-signed retries store once',async t=>{
- const clock=fakeClock(NOW),key=await bridgeKey(),box=await bindlebox(t,{clock,key});
+ const clock=fakeClock(NOW),key=await bridgeKey(),box=await parlay(t,{clock,key});
  const w=await world({clock,key,call:box.call});await w.enable();
  await w.receive(rawMail());await w.receive(rawMail({from:'mallory@evil.example',messageId:'<z@x>'}),{from:'mallory@evil.example'});
  assert.equal((await w.bridge.drain(OWNER)).delivered,2);
@@ -41,8 +41,8 @@ test('handoff to BB-B7: provenance verifies with the bridge key, the item is cha
  assert.equal((await box.items()).length,2);
 });
 
-test('handoff to a disabled BindleBox bridge: the occupant answers refused; the reply that was already decided is unaffected',async t=>{
- const clock=fakeClock(NOW),key=await bridgeKey(),box=await bindlebox(t,{clock,key});await box.run('bridge.configure',{input:{enabled:false}});
+test('handoff to a disabled Parlay bridge: the occupant answers refused; the reply that was already decided is unaffected',async t=>{
+ const clock=fakeClock(NOW),key=await bridgeKey(),box=await parlay(t,{clock,key});await box.run('bridge.configure',{input:{enabled:false}});
  const w=await world({clock,key,call:box.call});await w.enable();await w.receive(rawMail());await w.bridge.drain(OWNER);
  assert.equal((await w.bridge.status(OWNER)).items[0].disposition,'refused');assert.equal(w.replies.length,1);assert.equal((await box.items()).length,0);
 });
@@ -101,8 +101,8 @@ test('Worker owner ports: signer from EMAIL_BRIDGE_SIGNING_JWK, brokered occupan
  await assert.rejects(obj.operate('bridge.admit','ca401000-0000-4000-8000-000000000003',{}),{code:'forbidden'},'one owner per object');
 });
 
-test('wire pins: the core restatement of the intake contract, slot and digest equals the BindleBox protocol (import boundary kept)',async()=>{
- const W=await import('../packages/email-bridge/wire.mjs'),B=await import('../packages/bindlebox-protocol/index.mjs');
+test('wire pins: the core restatement of the intake contract, slot and digest equals the Parlay protocol (import boundary kept)',async()=>{
+ const W=await import('../packages/email-bridge/wire.mjs'),B=await import('../packages/messaging-protocol/index.mjs');
  assert.equal(W.INTAKE_CONTRACT,B.INTAKE_CONTRACT);assert.equal(W.INTAKE_SLOT,B.INTAKE_SLOT);
  const message={parts:[{mimeType:'text/plain',dataBase64url:W.base64url(new TextEncoder().encode('héllo'))}]};
  assert.equal(await W.intakeDigest(message),await B.intakeDigest(message));assert.equal(W.base64url(new Uint8Array([251,255])),B.base64url(new Uint8Array([251,255])));
@@ -119,8 +119,8 @@ test('Worker email handler: every outcome waits for the same response floor (tim
 });
 
 
-test('BindleBox explicit acceptance calls the provider follow-up once; classification/rescue never sends it',async t=>{
- const clock=fakeClock(NOW),key=await bridgeKey(),box=await bindlebox(t,{clock,key}),w=await world({clock,key,call:box.call});
+test('Parlay explicit acceptance calls the provider follow-up once; classification/rescue never sends it',async t=>{
+ const clock=fakeClock(NOW),key=await bridgeKey(),box=await parlay(t,{clock,key}),w=await world({clock,key,call:box.call});
  box.providerLink.accepted=({jti})=>w.bridge.accepted(OWNER,jti);
  await w.enable();await w.receive(rawMail());await w.bridge.drain(OWNER);
  await box.run('intake.drain');const [item]=await box.items();assert.equal(item.state,'request');assert.equal(w.mails.length,0);

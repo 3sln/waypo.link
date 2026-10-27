@@ -115,4 +115,4 @@ A conformance claim MUST identify which presentation, submission, archive, exter
 
 The reference service already contains strict text validation, a reduced-format renderer, the experimental archive validator, bounded rich-message parsing, prepared cookie-free form dispatch, local retained results, and privacy-controlled notification summaries. This is implementation status, not proof of deployment or universal client conformance. The reference service implements browser-local motion preferences and a five-second styling-motion limit, with controlled Chrome evidence; this does not establish universal client or animated-media conformance.
 
-See [messages and Views](messaging.md), [connected-app messages](app-messages.md), [contact authorization](contact-tokens.md), and [security boundaries](security.md). These content semantics do not enlarge any of their grants.
+See [messages and Views](../../apps/parlay/docs/legacy/messaging.md), [connected-app messages](app-messages.md), [contact authorization](../../apps/parlay/docs/legacy/contact-tokens.md), and [security boundaries](security.md). These content semantics do not enlarge any of their grants.

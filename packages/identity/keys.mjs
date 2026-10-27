@@ -12,7 +12,7 @@
 //   retired  replaced by rotation. The record keeps `active: true`, so provider-stored artifacts it signed earlier
 //            (contact grants, link metas, whose exact claims the provider holds) stay verifiable, but nothing can be
 //            minted under them any more (no private key). Bearers minted from such a parent are new issuance and are
-//            signed with the current key (PORT-9; packages/messaging/contact-endpoints.mjs). Fresh-signature verifiers
+//            signed with the current key (PORT-9). Fresh-signature verifiers
 //            (link responses, author proofs, delegation certificates, bearers) accept the current key only.
 //   revoked  `active: false`: everything signed by it stops verifying. Revoking the current key clears its pointer;
 //            the next ensure creates an unrelated key with no continuity, because a revoked key cannot vouch.
@@ -42,8 +42,8 @@
 //
 // Old-key honouring (identity portability P11, PORT-9; docs/spec/identity-portability.md §7.1). A retired signing key
 // is never pruned while it is *referenced*: named by a live stored record whose exact header the provider re-serves
-// (`contact-grant/<jti>/` parents, active and unexpired, by `header.kid` or `endpoint.header.kid`; `link/<jti>/`
-// records, unrevoked and unexpired, by `header.kid`), or bound to an issued recovery file (below). When every
+// (`link/<jti>/` records, unrevoked and unexpired, by `header.kid`; legacy `contact-grant/` parents left the core
+// with messaging on 2026-10-27), or bound to an issued recovery file (below). When every
 // non-current record is referenced, a signing rotation refuses with `key_history_full` and changes nothing.
 // Descriptors carry `created` and `retired` in Unix seconds (spec §7.1, AMD-P10) beside the millisecond fields.
 //
@@ -117,7 +117,6 @@ const kidList = (value, max = 8) => Array.isArray(value) && value.length <= max 
  * recovery binding. Records of other owners and expired, revoked or inactive records do not count (see header). */
 export async function referencedSigningKids(tx, owner, now) {
   const kids = new Set(), live = exp => Number.isSafeInteger(exp) && exp * 1000 > now, add = kid => { if (boundedString(kid)) kids.add(kid); };
-  for (const { value: grant } of await tx.list(key('contact-grant'))) if (grant?.owner === owner && grant.active === true && live(grant.claims?.exp)) { add(grant.header?.kid); add(grant.endpoint?.header?.kid); }
   for (const { value: link } of await tx.list(key('link'))) if (link?.owner === owner && link.revoked !== true && live(link.claims?.exp)) add(link.header?.kid);
   for (const kid of (await tx.get(key(BINDING, owner)))?.kids ?? []) add(kid);
   return kids;

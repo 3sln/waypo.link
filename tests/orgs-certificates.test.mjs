@@ -144,7 +144,7 @@ test('uniform failure (R2-H1): every rejection is the same invalid_grant, with e
     'forged signature naming a non-member': await forge({ ...parsed.payload, sub: BOB, identity: identityOf(BOB) }),
     'forged signature naming an unknown subject': await forge({ ...parsed.payload, sub: 'ffffffff-ffff-4fff-8fff-ffffffffffff', identity: identityOf('ffffffff-ffff-4fff-8fff-ffffffffffff') }),
     'signed by the identity signing key (R4-H1)': { certificate: await jws({ alg: 'ES256', kid: signingKid, typ: parsed.header.typ }, parsed.payload, signingKey.privateKey), key: good.key },
-    'BindleBox delegation typ': { certificate: await jws({ ...parsed.header, typ: DELEGATION_TYP }, parsed.payload, otherKey.privateKey), key: good.key },
+    'Parlay delegation typ': { certificate: await jws({ ...parsed.header, typ: DELEGATION_TYP }, parsed.payload, otherKey.privateKey), key: good.key },
     'wrong audience (another organization on the same host)': await w.certify(ALICE, o2),
     'genuine non-member certificate': await w.certify(BOB, o),
     'wrong client (not connected)': await w.certify(ALICE, o, { client: { client_id: 'https://stranger.example/client.json', origin: 'https://stranger.example' } }),

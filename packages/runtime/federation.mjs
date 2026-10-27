@@ -59,7 +59,7 @@ export const MANIFEST_DECLARATIONS=Object.freeze([
  // branch, DPoP RPC and cancellation (runtime/device-grant.mjs). DPoP algorithms and revocation_endpoint are already
  // base authority members whenever that mount is possible.
  {flag:'DEVICE_AUTHORIZATION_ENABLED',mounted:c=>c.target==='authority'&&c.mounts.deviceAuthorization===true,declare:c=>{const {device_authorization_endpoint,grant_types_supported,features}=deviceManifest(c.issuer);return {device_authorization_endpoint,grant_types_supported,features};}},
- // BB-C1b: the `messaging-address` provider consumer of messaging-ingress (bindlebox §2.1). Only where the adapter
+ // BB-C1b: the `messaging-address` provider consumer of messaging-ingress (messaging §2.1). Only where the adapter
  // mounted the descriptor handoff with an occupancy port AND a describe port (`mounts.messagingAddress`); the entry
  // is kept only beside a declared extensions.v1 (EXTENSIONS_ENABLED), never on flags alone.
  {flag:['LINKS_ENABLED','EXTENSIONS_ENABLED'],mounted:c=>c.target==='authority'&&c.mounts.messagingAddress===true,declare:()=>({extensions:[{...MESSAGING_ADDRESS_DECLARATION}]})},

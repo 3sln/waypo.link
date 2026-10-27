@@ -15,7 +15,7 @@ import {AccountController} from '../packages/runtime/accounts.mjs';
 import {key} from '../packages/core/records.mjs';
 import {SearchService,MemorySearchIndex,MetadataSearchOutbox,enqueueSearchEvent,messageSearchDocument,searchEventKey} from '../packages/search/index.mjs';
 import {MAX_SEARCH_TAGS} from '../packages/search/schema.mjs';
-import {MAX_USER_TAGS,SYSTEM_TAGS} from '../packages/messaging/tags.mjs';
+import {MAX_USER_TAGS,SYSTEM_TAGS} from '../packages/core/tags.mjs';
 import {FederationController,federationMetadata} from '../packages/federation/runtime.mjs';
 import {federationControllerOptions,federationEpoch} from '../packages/runtime/federation.mjs';
 import {APP_NOTIFICATIONS,APP_NOTIFICATION_PREFERENCES} from '../packages/federation/app-notifications.mjs';
@@ -42,11 +42,11 @@ test('a message with 32 user tags plus a system tag does not wedge the search ou
  const metadata=new SqliteMetadata(':memory:'),bytes=new TextEncoder().encode('Violet project private text'),{controller}=controllerFor(metadata,bytes);
  try{
   await metadata.put('owner',owner);await metadata.put('lastOwnerActiveAt',Date.now());
-  for(const id of [poisonId,otherId]){const m=message(id);await metadata.put(key('message',owner,id),m);controller.itemIndex.upsert(m);}
+  for(const id of [poisonId,otherId]){const m=message(id);await metadata.put(key('app-message',owner,id),m);controller.itemIndex.upsert(m);}
   const tags=Array.from({length:32},(_,i)=>`t${i}`);
-  await controller.messages.update(owner,poisonId,{tags,classification:'work'});
-  assert.equal((await controller.messages.read(owner,poisonId)).tags.length,33);
-  await controller.messages.update(owner,otherId,{read:true});
+  await controller.items.update(owner,poisonId,{tags,classification:'work'});
+  assert.equal((await controller.items.read(owner,poisonId)).tags.length,33);
+  await controller.items.update(owner,otherId,{read:true});
   const result=await controller.searchDrain(owner,{limit:10});
   assert.equal(result.processed,2);assert.equal(result.rejected,undefined,'a messaging-valid item was rejected by search');
   assert.deepEqual(await controller.searchOutbox.peek(owner,10),[]);
@@ -76,7 +76,7 @@ test('drain acknowledges, tombstones and reports a deterministically invalid doc
 test('the account records an operator signal when drain rejects a document',async()=>{
  const metadata=new SqliteMetadata(':memory:'),bytes=new TextEncoder().encode('x'),{controller,logs}=controllerFor(metadata,bytes);
  try{
-  await metadata.put('owner',owner);const m=message(otherId);await metadata.put(key('message',owner,otherId),m);
+  await metadata.put('owner',owner);const m=message(otherId);await metadata.put(key('app-message',owner,otherId),m);
   await metadata.transaction(tx=>enqueueSearchEvent(tx,{owner,id:'message:'+otherId,source:{kind:'message',id:otherId},revision:1}));
   controller.searchDocument=async(o,id,{revision})=>({id,owner:o,type:'message',source:{kind:'message',id:otherId},revision,title:'x'.repeat(501),text:'',createdAt:1,acl:{readers:[o]}});
   const result=await controller.searchDrain(owner,{limit:10});
@@ -90,11 +90,11 @@ test('a full search outbox does not block message deletion, and the tombstone re
  const metadata=new SqliteMetadata(':memory:'),bytes=new TextEncoder().encode('x'),{controller}=controllerFor(metadata,bytes);
  try{
   await metadata.put('owner',owner);
-  const m={...message(otherId),size:1};await metadata.put(key('message',owner,otherId),m);await metadata.put(key('message-usage',owner),{bytes:1,messages:1});
+  const m={...message(otherId),size:1};await metadata.put(key('app-message',owner,otherId),m);await metadata.put(key('app-message-usage',owner),{bytes:1,messages:1});
   await metadata.transaction(async tx=>{for(let i=0;i<1000;i++)await enqueueSearchEvent(tx,{owner,id:`message:p${i}`,source:{kind:'message',id:`p${i}`}},{maxQueue:1000});});
   await assert.rejects(metadata.transaction(tx=>enqueueSearchEvent(tx,{owner,id:'message:new',source:{kind:'message',id:'new'}},{maxQueue:1000})),{code:'search_queue_full'},'upserts stay bounded');
-  await controller.messages.delete(owner,otherId);
-  assert.equal(await metadata.get(key('message',owner,otherId)),undefined);
+  await controller.items.delete(owner,otherId);
+  assert.equal(await metadata.get(key('app-message',owner,otherId)),undefined);
   assert.equal((await metadata.get(searchEventKey(owner,'message:'+otherId)))?.operation,'tombstone');
   // A pending upsert is replaced by the tombstone without adding a queue row.
   const usage=async()=>(await metadata.get(key('search-queue-usage',owner))).count,before=await usage();

@@ -1,12 +1,12 @@
 // Developer contact through the developer account's messaging-ingress occupant (messaging extraction prep, 2026-10-26).
-// With DEVELOPER_CONTACT_MODE=occupant, GET /api/developer-contact hands out the developer-policy link that the occupant
-// issued through the links contract, and the console hands it to the sender's own messaging app as a `send-message`
-// intent. The legacy grant stays the default until BB-CUT.
+// GET /api/developer-contact hands out the developer-policy link that the occupant issued through the links contract, and
+// the console hands it to the sender's own messaging app as a `send-message` intent. Since 2026-10-27 this is the only
+// route: the legacy core grant and the DEVELOPER_CONTACT_MODE switch left the core with messaging.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {AccountController} from '../packages/runtime/accounts.mjs';
 import {SqliteMetadata,SerialGate} from '../apps/node/resources.mjs';
-import {developerContactLink,developerContactRoutes,developerContactMode,DEVELOPER_CONTACT_POLICY} from '../packages/runtime/developer-contact.mjs';
+import {developerContactLink,developerContactRoutes,DEVELOPER_CONTACT_POLICY} from '../packages/runtime/developer-contact.mjs';
 import {DEVELOPER_OCCUPANT_POINTER} from '../packages/runtime/account/links.mjs';
 import {MESSAGING_CONTACT_LINK_TYPE,MESSAGING_INGRESS_SLOT} from '../packages/links/types.mjs';
 import {key} from '../packages/core/records.mjs';
@@ -27,10 +27,6 @@ async function world({mode='occupant'}={}){
  return {accounts,directory,seat,make,developer,actor,issue,route,close:()=>closers.forEach(close=>close())};
 }
 
-test('mode switch: legacy is the default; only the exact value occupant selects the occupant route',()=>{
- assert.equal(developerContactMode({}),'legacy');assert.equal(developerContactMode({DEVELOPER_CONTACT_MODE:'Occupant'}),'legacy');assert.equal(developerContactMode({DEVELOPER_CONTACT_MODE:'occupant'}),'occupant');
-});
-
 test('occupant mode: the occupant-issued developer link is recorded sealed, verified live and handed out; other links are ignored',async()=>{const w=await world();try{const d=w.developer;
  assert.deepEqual(await developerContactLink(d.controller,d.id,d.handle),{available:false,reason:'contact-unavailable'},'nothing until the occupant issues a developer link');
  await w.issue({audience:undefined});assert.equal(await d.controller.metadata.get(DEVELOPER_OCCUPANT_POINTER),undefined,'a link without the developer policy is not the developer link');
@@ -49,7 +45,7 @@ test('occupant mode: the occupant-issued developer link is recorded sealed, veri
  await d.controller.revokeLink(d.id,issued.jti);assert.deepEqual(await developerContactLink(d.controller,d.id,d.handle),{available:false,reason:'contact-unavailable'});
 }finally{w.close();}});
 
-test('occupant mode route: eligibility under the developer policy and a send-message intent; the legacy route is unchanged',async()=>{const w=await world();try{const s=await w.make('n.abc');
+test('occupant route: eligibility under the developer policy and a send-message intent; no legacy route remains',async()=>{const w=await world();try{const s=await w.make('n.abc');
  assert.deepEqual((await w.route(s)).value,{available:false,reason:'contact-unavailable'});
  const issued=await w.issue(),result=(await w.route(s)).value;
  assert.deepEqual(result,{available:true,mode:'occupant',intent:'send-message',url:issued.link,expiresAt:result.expiresAt,policy:DEVELOPER_CONTACT_POLICY,recipientBadge:result.recipientBadge,eligibility:{state:'eligible',tier:'free'}});assert.equal(result.recipientBadge.role,'developer');
@@ -57,13 +53,12 @@ test('occupant mode route: eligibility under the developer policy and a send-mes
  const decisions=await w.developer.controller.metadata.list({prefix:`link-audience/${issued.jti}/`});assert.equal(decisions.size,1);
  assert.deepEqual(await w.developer.controller.developerLinkDecide(w.developer.id,crypto.randomUUID(),{issuer:origin,subject:s.id}),{state:'unavailable'});
 }finally{w.close();}
- // Legacy (default) mode keeps the core grant and the original response shape.
- const legacy=await world({mode:null});try{const s=await legacy.make('n.abd'),result=(await legacy.route(s)).value;
-  assert.equal(result.available,true);assert.equal(Object.hasOwn(result,'mode'),false);assert.equal(Object.hasOwn(result,'intent'),false);assert.deepEqual(result.eligibility,{state:'eligible',tier:'free'});
-  assert.ok(await legacy.developer.controller.metadata.get('developer-contact/v2'));assert.equal((await legacy.developer.controller.metadata.list({prefix:'contact-grant/'})).size,1);
-  // An occupant-issued developer link does not change the legacy route.
-  await legacy.issue();assert.equal((await legacy.route(s)).value.url,result.url);
- }finally{legacy.close();}
+ // Without the mode switch (removed with core messaging) the occupant route is still the only route: no core grant.
+ const plain=await world({mode:null});try{const s=await plain.make('n.abd');
+  assert.deepEqual((await plain.route(s)).value,{available:false,reason:'contact-unavailable'});
+  assert.equal((await plain.developer.controller.metadata.list({prefix:'contact-grant/'})).size,0);
+  const issued=await plain.issue();assert.equal((await plain.route(s)).value.url,issued.link);
+ }finally{plain.close();}
 });
 
 test('occupant mode fails closed when links are off for the account or the sealed pointer cannot be opened',async()=>{const w=await world();try{const d=w.developer;
@@ -73,9 +68,4 @@ test('occupant mode fails closed when links are off for the account or the seale
  await d.controller.metadata.put(DEVELOPER_OCCUPANT_POINTER,pointer);d.controller.config.LINKS_ENABLED='false';
  assert.deepEqual(await developerContactLink(d.controller,d.id,d.handle),{available:false,reason:'contact-unavailable'});
  assert.equal((await d.controller.metadata.get(key('link',pointer.jti))).revoked,false,'turning links off never revokes the link');
-}finally{w.close();}});
-
-test('review I1: a deployment in legacy mode records no occupant pointer, even for a developer-policy link',async()=>{const w=await world({mode:null});try{
- const issued=await w.issue();assert.equal(typeof issued.jti,'string');
- assert.equal(await w.developer.controller.metadata.get(DEVELOPER_OCCUPANT_POINTER),undefined);
 }finally{w.close();}});

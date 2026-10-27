@@ -4,7 +4,7 @@ Status: **design candidate, 2026-10-22, revision 3.3.** Revision 3.3 (2026-10-23
 
 Protocol/security/interop sign-off: reviewer ___ / date ___ / outcome ___.
 
-This document extends [protocol](protocol.md), [auth](auth.md), the `directory.v1` profile in [organizations §3a](organizations.md#3a-identity-documents-and-key-discovery-directoryv1), [links](links.md), [recovery identity](recovery-identity.md) and [BindleBox](bindlebox.md). It replaces the sentence of protocol §1 that leaves "domain/key continuity and cross-provider identity migration" to a future specification. It defines interoperability rules only. How a provider presents a move, what it charges, how long it redirects and how long it keeps data are provider policy.
+This document extends [protocol](protocol.md), [auth](auth.md), the `directory.v1` profile in [organizations §3a](organizations.md#3a-identity-documents-and-key-discovery-directoryv1), [links](links.md), [recovery identity](recovery-identity.md) and [Parlay](messaging.md). It replaces the sentence of protocol §1 that leaves "domain/key continuity and cross-provider identity migration" to a future specification. It defines interoperability rules only. How a provider presents a move, what it charges, how long it redirects and how long it keeps data are provider policy.
 
 ## 1. Model
 
@@ -154,7 +154,7 @@ Attesting is one atomic commit at the source. In it, the source MUST:
 - record the move and stop treating the identity as active: it issues no certificate, signs no new artifact with the identity's keys, and accepts no authorization or token request for it;
 - mark every certification key (`use:"cert"`) of the identity `revoked`;
 - revoke every session, client session, refresh token and access token of the identity. Grants and tokens never migrate (protocol §1);
-- revoke every key delegation it certified for the identity (for example [BindleBox §3.2](bindlebox.md)), so that delegation status answers `revoked` from the source itself (§10);
+- revoke every key delegation it certified for the identity (for example [Parlay §3.2](messaging.md)), so that delegation status answers `revoked` from the source itself (§10);
 - conclude every open app removal as forced and sever every connection, with terminal `connection-revoked`. It MUST NOT emit `subject-deleted` ([app removal §8](app-removal.md), AR-9), at commit, at the end of the redirect period, or in any later cleanup; a moved identity is not deleted, and apps keep its state;
 - destroy its custody copies of the identity's private keys, so that it can sign nothing for the identity afterwards;
 - refuse every later recovery, credential reset or reactivation of the identity;
@@ -371,7 +371,7 @@ The source MUST NOT reassign the identity's handles (identity names) or reuse it
 | AMD-P5 | links §3.2, §7.2, §7.3 | Imported links at redirected URLs (§11). Signature-domain rows for `bindle-identity-move+jwt` (identity signing key) and `bindle-move-attestation+jwt` (provider attestation key, never an identity key). §7.3 resolves audiences through the successor index. |
 | AMD-P6 | recovery identity, "Return, compromise and missing state" | A recovery file is never transfer authority by itself (§6.1). "Another provider cannot claim the original provider's name namespace without an authenticated migration protocol" becomes "names never move; identities move under identity portability". |
 | AMD-P7 | identity names, "Rollback and deletion" | A moved identity's names stay claimed forever, as for deletion. They resolve to a redirect only during the source's redirect period. |
-| AMD-P8 | BindleBox §3.3; contact delivery | Receivers key peers by origin principal. An author whose `(issuer, subject)` is unknown, and whose identity document carries `moves`, is verified under §8.6 before it is matched to an existing peer. |
+| AMD-P8 | Parlay §3.3; contact delivery | Receivers key peers by origin principal. An author whose `(issuer, subject)` is unknown, and whose identity document carries `moves`, is verified under §8.6 before it is matched to an existing peer. |
 | AMD-P9 | app removal §8 (AR-9) | Already proposed there: no `subject-deleted` for a move, its redirect end or later cleanup. §6.3 here adopts it. |
 | AMD-P10 | organizations §3a.3 (owned by the organizations author) | Signing keys gain an OPTIONAL `retired` member (Unix seconds), required with `created` for keys in a moved identity's key history (§7.1). "`retired` keys verify only artifacts that the issuer itself stores and re-serves" gains §7.1's second case: artefacts the verifier recorded, or that are anchored, before the retirement. |
 | AMD-P11 | links §3.2, §3.3; contact endpoints; contact delivery | "`kid` MUST identify an active key" becomes: an active key, or a retired key of the link subject when the exact stored header and claims were recorded before that key's retirement (§7.1). Contact-delivery bearers are signed with the subject's current key, not the parent link's `kid`. |

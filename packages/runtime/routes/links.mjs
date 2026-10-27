@@ -4,8 +4,8 @@
 // the paths stay 404 and no allowlist reveals them. The contact landing, inspection, oEmbed and audience-response
 // routes stay in their current modules until the cutover moves them here.
 //
-// BB-C1b: the `messaging-address` descriptor (bindlebox §2.3). `GET <contact link>` with exactly
-// `Accept: application/vnd.bindlebox.ingress+json` answers the current occupant's ingress descriptor. It runs in the
+// BB-C1b: the `messaging-address` descriptor (messaging §2.3). `GET <contact link>` with exactly
+// `Accept: application/vnd.bindle.messaging.ingress+json` answers the current occupant's ingress descriptor. It runs in the
 // `edge` stage because the contacts module answers every contact path in `public`; it therefore checks the app origin
 // itself, matches only that exact media type (everything else falls through untouched), and exists only with
 // LINKS_ENABLED. Responses are no-store, no-referrer, credentialless CORS, never vary on cookies, and every

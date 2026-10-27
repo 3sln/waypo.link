@@ -39,7 +39,7 @@ Scores: ✓ passes, ~ weak, ✗ fails.
 | group | ✓ | ✓ | ✗ | ✓ | ✗ | ~ | In SCIM a Group is a set of users with no authority or resources of its own. Messaging uses "group conversation". **Reserve it** for a future set of members inside one organization ([design §6.3](organizations-design.md#63-grants-not-roles)). |
 | unit | ~ | ✗ | ~ | ✓ | ✗ | ✓ | An LDAP organizational unit or ERP business unit is a node in *one* hierarchy, which contradicts the idea of peer units. |
 | party | ✓ | ✗ | ✓ | ✓ | ✓ | ✓ | The ERP party model (Person or Organization) matches Bindle's *entity* exactly, and "party to an agreement" fits relationships. But "Switch party" reads as a celebration or a political party. Worth knowing as an alignment, not as a word to use. |
-| principal | ✓ | ✗ | ~ | ~ | ✓ | ✗ | Generic security jargon. BindleBox already uses it for `(iss, sub)`. |
+| principal | ✓ | ✗ | ~ | ~ | ✓ | ✗ | Generic security jargon. Parlay already uses it for `(iss, sub)`. |
 | domain | ~ | ~ | ✗ | ✗ | ✗ | ✗ | Collides with DNS, Active Directory and the host part of handles. |
 | realm | ~ | ✗ | ~ | ✗ | ✓ | ✓ | An authentication namespace in Keycloak and Kerberos. |
 | space | ~ | ✓ | ✗ | ✓ | ~ | ✓ | A place (Matrix spaces, Confluence spaces). |

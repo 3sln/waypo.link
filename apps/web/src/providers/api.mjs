@@ -16,6 +16,17 @@ function restoreSelection(storage){try{const value=JSON.parse(storage?.getItem(s
 // a non-GET request may already have reached the service, so its outcome is reported as unknown.
 function transportFailure(error,method){if(error?.name==='AbortError'||error?.name==='TimeoutError')return error;return Object.assign(new Error(method==='GET'?'The service could not be reached. Check your connection and try again.':'The connection was interrupted before the service replied. Check whether your request went through before trying again.'),{code:'network_unavailable',cause:error});}
 function persistSelection(storage,owner,sessionContext){try{if(owner&&sessionContext)storage?.setItem(selectionKey,JSON.stringify({owner,sessionContext}));else storage?.removeItem(selectionKey);}catch{}}
+// Reads a contact-profile representation: the permitted fields, null when none are shared, or undefined when the
+// answer is not a readable profile representation (wrong type, oversized, malformed).
+async function readContactProfile(response){
+  if(response.headers.get('content-type')?.split(';')[0].trim().toLowerCase()!=='application/vnd.bindle.contact-profile+json'||Number(response.headers.get('content-length'))>8192){await response.body?.cancel();return undefined;}
+  const reader=response.body?.getReader();if(!reader)return undefined;const decoder=new TextDecoder('utf-8',{fatal:true});let text='',bytes=0,complete=false;
+  try{for(;;){const {done,value}=await reader.read();if(done){complete=true;break;}bytes+=value.byteLength;if(bytes>8192)return undefined;text+=decoder.decode(value,{stream:true});}text+=decoder.decode();}catch{return undefined;}finally{if(!complete)await reader.cancel().catch(()=>{});reader.releaseLock();}
+  let value;try{value=JSON.parse(text);}catch{return undefined;}if(!value||typeof value!=='object')return undefined;value=value.profile;if(!value||typeof value!=='object'||Array.isArray(value))return null;
+  const profile={};for(const [key,max] of [['displayName',100],['bio',500]])if(Object.hasOwn(value,key)&&typeof value[key]==='string'&&value[key].trim()&&value[key].length<=max)profile[key]=value[key];
+  if(Object.hasOwn(value,'avatar')&&typeof value.avatar==='string'&&value.avatar.length<=2048)try{const url=new URL(value.avatar);if(url.protocol==='https:'&&!url.username&&!url.password)profile.avatar=url.href;}catch{}
+  return Object.keys(profile).length?profile:null;
+}
 // A request that never answers must not hold the console busy forever (no stuck spinners).
 export function createAPI({storage=null,timeout=60000}={}){const restored=restoreSelection(storage);return {
   csrf:null,account:restored?.owner??null,sessionContext:restored?.sessionContext??null,contextGeneration:0,
@@ -32,23 +43,20 @@ export function createAPI({storage=null,timeout=60000}={}){const restored=restor
   },
   // Public capability requests never carry cookies, account headers or a referrer.
   async contactPublic(endpoint,init={}){let response;try{response=await fetch(endpoint,{...init,credentials:'omit',cache:'no-store',redirect:'error',referrerPolicy:'no-referrer'});}catch(error){throw transportFailure(error,init.method??'GET');}return this.parse(response,{csrf:false,method:init.method??'GET'});},
-  async contactIntake(endpoint,locale){return this.contactPublic(endpoint,{headers:{Accept:'application/vnd.bindle.contact-intake+json',...locale?{'Accept-Language':locale}:{}}});},
-  async contactInspect(endpoint,data){if(!/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(data))throw new Error('This eligibility response is invalid.');return this.contactPublic(endpoint+'&bindle_data='+data,{headers:{Accept:'application/json'}});},
-  // Exactly two parts: the signed envelope and the exact document bytes (contact-delivery v1).
-  async contactDeliver(endpoint,envelope,bytes){if(endpoint.includes('bindle_data'))throw new Error('This contact link is invalid.');const body=new FormData();body.append('envelope',new Blob([JSON.stringify(envelope)],{type:'application/json'}),'envelope.json');body.append('message',new Blob([bytes],{type:envelope.payload.content.mimeType}),'message');return this.contactPublic(endpoint,{method:'POST',headers:{'Idempotency-Key':envelope.payload.operationId},body});},
-  async contactProfile(endpoint){
+  // The owner-permitted profile of a contact link, or null when none is shared or the link cannot be described.
+  async contactProfile(endpoint){try{const result=await this.contactLanding(endpoint);return result.valid?result.profile:null;}catch{return null;}},
+  // The contact-link landing description (links §9): the profile representation also verifies the link. A refused link
+  // (400/404/406/410) is {valid:false}; a verified link is {valid:true,profile} (profile null when nothing is shared).
+  // Any other answer is a retryable failure. Credentialless, no referrer, bounded size and time.
+  async contactLanding(endpoint){
     const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),5000);
     try{
-      const response=await fetch(endpoint,{signal:controller.signal,headers:{Accept:'application/vnd.bindle.contact-profile+json'},credentials:'omit',cache:'no-store',redirect:'error',referrerPolicy:'no-referrer'});
-      if(!response.ok||response.headers.get('content-type')?.split(';')[0].trim().toLowerCase()!=='application/vnd.bindle.contact-profile+json'){await response.body?.cancel();return null;}
-      if(Number(response.headers.get('content-length'))>8192){await response.body?.cancel();return null;}
-      const reader=response.body?.getReader();if(!reader)return null;const decoder=new TextDecoder('utf-8',{fatal:true});let text='',bytes=0,complete=false;
-      try{for(;;){const {done,value}=await reader.read();if(done){complete=true;break;}bytes+=value.byteLength;if(bytes>8192){await reader.cancel();return null;}text+=decoder.decode(value,{stream:true});}text+=decoder.decode();}finally{if(!complete)await reader.cancel().catch(()=>{});reader.releaseLock();}
-      const value=JSON.parse(text)?.profile;if(!value||typeof value!=='object'||Array.isArray(value))return null;
-      const profile={};for(const [key,max] of [['displayName',100],['bio',500]])if(Object.hasOwn(value,key)&&typeof value[key]==='string'&&value[key].trim()&&value[key].length<=max)profile[key]=value[key];
-      if(Object.hasOwn(value,'avatar')&&typeof value.avatar==='string'&&value.avatar.length<=2048)try{const url=new URL(value.avatar);if(url.protocol==='https:'&&!url.username&&!url.password)profile.avatar=url.href;}catch{}
-      return Object.keys(profile).length?profile:null;
-    }catch{return null;}finally{clearTimeout(timeout);}
+      let response;try{response=await fetch(endpoint,{signal:controller.signal,headers:{Accept:'application/vnd.bindle.contact-profile+json'},credentials:'omit',cache:'no-store',redirect:'error',referrerPolicy:'no-referrer'});}catch(error){if(controller.signal.aborted)throw Object.assign(new Error('The service did not respond in time. Please try again.'),{code:'request_timeout'});throw transportFailure(error,'GET');}
+      if([400,404,406,410].includes(response.status)){await response.body?.cancel();return {valid:false};}
+      if(!response.ok){await response.body?.cancel();const retry=Number(response.headers.get('Retry-After'));throw Object.assign(new Error(response.status===429?'Too many requests. Wait a moment, then try again.':'This contact link could not be checked right now. Try again shortly.'),{status:response.status,...response.status===429?{code:'rate_limited'}:{},...Number.isSafeInteger(retry)&&retry>0&&retry<=86400?{retryAfter:retry}:{}});}
+      const profile=await readContactProfile(response);if(profile===undefined)throw new Error('This contact link could not be checked right now. Try again shortly.');
+      return {valid:true,profile};
+    }finally{clearTimeout(timeout);}
   },
   // A successful status with an unreadable body is not a rejection: a mutation may have been applied,
   // so it carries no status (callers treat status<500 as a definite refusal) and says so.

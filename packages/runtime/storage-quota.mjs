@@ -8,9 +8,9 @@ const TTL=20*60*1000;
 function count(value){if(!Number.isSafeInteger(value)||value<0)throw new StorageError('temporarily_unavailable','Storage accounting is unavailable.',503);return value;}
 export async function storageState(tx,owner,now=Date.now(),config){
  const billing=await tx.get(BILLING_STATE_KEY);const entitlement=entitlementFromState(billing?.owner===owner?billing:null,now,config);
- // Item usage spans both families: legacy messages and activity's v1 app messages (app-message-usage/).
- const legacy=await tx.get(key('message-usage',owner))||{bytes:0,messages:0},app=await tx.get(key('app-message-usage',owner))||{bytes:0,messages:0};
- const messages={bytes:count(legacy.bytes)+count(app.bytes),messages:count(legacy.messages)+count(app.messages)};
+ // Item usage: activity's v1 app messages (app-message-usage/); the legacy peer family was reset at BB-CUT.
+ const app=await tx.get(key('app-message-usage',owner))||{bytes:0,messages:0};
+ const messages={bytes:count(app.bytes),messages:count(app.messages)};
  const objects=await tx.get('hosted-usage')||{bytes:0,objects:0};
  const pending=await tx.get(SUMMARY)||{growthBytes:0,uploadBytes:0,count:0};
  const usedBytes=count(messages.bytes)+count(objects.bytes),reservedBytes=count(pending.growthBytes);

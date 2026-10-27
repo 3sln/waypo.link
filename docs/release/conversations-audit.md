@@ -22,4 +22,4 @@ Residual limitations and release gates remain:
 - Per-account source retention and pending queues are bounded, but a sustained operational load/cost review, control-history retention policy and provider-level rate limits still require recorded release approval.
 - User-requested hard blocks, local quarantine overrides, and independent recipient controls must be assessed against the final implemented UI and policy surface; absence of a tested control must not be described as implemented.
 
-The [conversation specification](../spec/conversations.md), [architecture draft](../architecture/conversations.md) and `DEVLOG.md` must preserve the distinction between tested local behavior, configured external adapters and production-verified capabilities.
+The [conversation specification](../../apps/parlay/docs/legacy/conversations.md), [architecture draft](../architecture/conversations.md) and `DEVLOG.md` must preserve the distinction between tested local behavior, configured external adapters and production-verified capabilities.

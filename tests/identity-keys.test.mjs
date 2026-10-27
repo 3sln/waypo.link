@@ -8,8 +8,8 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { MemoryMessagingStore } from '../packages/core/records.mjs';
-import { ContactTokenService, IdentityKeyRegistry as ReexportedRegistry } from '../packages/messaging/contact-tokens.mjs';
-import { IdentityKeyRegistry, createIdentityKeyEngine, performKeyAction, readKeyQuery, EnsureIdentityKey, RotateIdentityKey, RevokeIdentityKey, RegisterIdentityKey, IdentityKeyByKid, CurrentIdentityKey, IdentityKeyHistory, verifyKeyContinuity, resolveIdentityKey, KEY_HISTORY_LIMIT } from '../packages/identity/keys.mjs';
+import { IdentityKeyRegistry, createIdentityKeyEngine, performKeyAction, readKeyQuery, EnsureIdentityKey, RotateIdentityKey, RevokeIdentityKey, RegisterIdentityKey, IdentityKeyByKid, CurrentIdentityKey, IdentityKeyHistory, verifyKeyContinuity, resolveIdentityKey, KEY_HISTORY_LIMIT, verifiableSigningKey } from '../packages/identity/keys.mjs';
+import { mintableSigningKey } from '../packages/links/issuance.mjs';
 import { encryptSecret, decryptSecret } from '../packages/runtime/secrets.mjs';
 import { createScheduler, forEachSeed, fakeClock } from './helpers/chaos.mjs';
 import { createNodeServer } from '../apps/node/server.mjs';
@@ -42,14 +42,14 @@ test('ensure is idempotent per purpose and the engine reports changes on engineF
   await assert.rejects(f.act(EnsureIdentityKey, { purpose: 'delegate' }), code('invalid_purpose'));
 });
 
-test('signing rotation: the old key signs the new one, kid lookup still finds the retired key, stored grants survive', async () => {
-  const f = fixture(), tokens = new ContactTokenService({ store: f.store, issuer: ISSUER, clock: f.clock.now });
+test('signing rotation: the old key signs the new one, kid lookup still finds the retired key, stored artifacts survive', async () => {
+  const f = fixture();
   const { kid: oldKid } = await f.act(EnsureIdentityKey, { purpose: 'signing' }), oldSigner = await f.keys.privateKey(OWNER, 'signing');
-  await f.store.transaction(tx => tx.set(`collection/${OWNER}/inbox/`, { active: true }));
-  const { grant } = await tokens.createGrant(OWNER, { kid: oldKid, collections: ['inbox'], mimeTypes: ['text/plain'], expiresAt: f.clock.now() + 86400000 });
-  const encode = value => Buffer.from(JSON.stringify(value)).toString('base64url'), input = `${encode(grant.header)}.${encode(grant.claims)}`;
-  const token = `${input}.${Buffer.from(await signWith(oldSigner.privateKey, new TextEncoder().encode(input))).toString('base64url')}`;
-  assert.equal((await tokens.verify(token)).claims.jti, grant.id);
+  // A provider-stored artifact signed before the rotation (the legacy contact-grant fixture left the core with messaging
+  // on 2026-10-27; stored link metas verify the same way, through verifiableSigningKey).
+  const input = new TextEncoder().encode('stored artifact'), signature = await signWith(oldSigner.privateKey, input);
+  const verifies = async () => { const record = await f.store.transaction(tx => verifiableSigningKey(tx, OWNER, oldKid)); return Boolean(record && await verifyWith(record.publicJwk, signature, input)); };
+  assert.equal(await verifies(), true);
   await assert.rejects(f.act(RotateIdentityKey, { purpose: 'signing', expectedKid: 'stale' }), code('key_conflict'));
   const rotated = await f.act(RotateIdentityKey, { purpose: 'signing', expectedKid: oldKid });
   assert.equal(rotated.previous, oldKid); assert.notEqual(rotated.kid, oldKid);
@@ -59,7 +59,7 @@ test('signing rotation: the old key signs the new one, kid lookup still finds th
   assert.equal(await verifyKeyContinuity({ signer: old, next }), true);
   assert.equal(await verifyKeyContinuity({ signer: next, next }), false, 'the new key cannot vouch for itself');
   assert.equal((await f.keys.privateKey(OWNER, 'signing')).kid, rotated.kid);
-  assert.equal((await tokens.verify(token)).claims.jti, grant.id, 'provider-stored grants signed before rotation stay valid');
+  assert.equal(await verifies(), true, 'provider-stored artifacts signed before rotation stay valid');
   assert.deepEqual((await f.ask(IdentityKeyHistory, { purpose: 'signing' })).map(k => [k.kid, k.state]), [[oldKid, 'retired'], [rotated.kid, 'active']]);
   // Tampering with any bound field breaks continuity.
   for (const change of [{ kid: crypto.randomUUID() }, { predecessor: crypto.randomUUID() }, { publicJwk: old.publicJwk }, { purpose: 'encryption' }]) assert.equal(await verifyKeyContinuity({ signer: old, next: { ...next, ...change } }), false);
@@ -85,16 +85,16 @@ test('encryption rotation is vouched for by the signing key and retains the old 
 });
 
 test('revocation is monotonic, stops stored artifacts verifying, and revoking the current key clears it', async () => {
-  const f = fixture(), tokens = new ContactTokenService({ store: f.store, issuer: ISSUER, clock: f.clock.now });
+  const f = fixture();
   const { kid: k0 } = await f.act(EnsureIdentityKey, { purpose: 'signing' }), { kid: k1 } = await f.act(RotateIdentityKey, { purpose: 'signing', expectedKid: k0 });
-  await f.store.transaction(tx => tx.set(`collection/${OWNER}/inbox/`, { active: true }));
   await assert.rejects(f.act(RevokeIdentityKey, { purpose: 'signing', kid: k0, reason: 'because' }), code('invalid_key'));
   await assert.rejects(f.act(RevokeIdentityKey, { purpose: 'signing', kid: 'missing' }), code('not_found'));
   await assert.rejects(f.act(RevokeIdentityKey, { purpose: 'encryption', kid: k0 }), code('not_found'), 'a signing kid is unknown under encryption');
   const revoked = await f.act(RevokeIdentityKey, { purpose: 'signing', kid: k0, reason: 'compromise' });
   assert.equal(revoked.state, 'revoked'); assert.equal(revoked.verifiable, false);
   assert.equal((await f.act(RevokeIdentityKey, { purpose: 'signing', kid: k0 })).revokedAt, revoked.revokedAt, 'idempotent');
-  await assert.rejects(tokens.createGrant(OWNER, { kid: k0, collections: ['inbox'], mimeTypes: ['text/plain'], expiresAt: f.clock.now() + 86400000 }), code('invalid_key'));
+  assert.equal(await f.store.transaction(tx => verifiableSigningKey(tx, OWNER, k0)), null, 'a revoked key verifies no stored artifact');
+  assert.equal(await f.store.transaction(tx => mintableSigningKey(tx, OWNER, k0)), false, 'and mints nothing');
   await assert.rejects(f.act(RotateIdentityKey, { purpose: 'signing', expectedKid: k0 }), code('key_conflict'));
   await f.act(RevokeIdentityKey, { purpose: 'signing', kid: k1 });
   assert.equal(await f.keys.privateKey(OWNER, 'signing'), null); assert.equal(await f.ask(CurrentIdentityKey, { purpose: 'signing' }), null);
@@ -102,8 +102,8 @@ test('revocation is monotonic, stops stored artifacts verifying, and revoking th
   const replacement = await f.act(EnsureIdentityKey, { purpose: 'signing' }), described = await f.ask(IdentityKeyByKid, { purpose: 'signing', kid: replacement.kid });
   assert.equal(replacement.created, true); assert.equal(described.predecessor, null); assert.equal(described.continuity, null, 'a revoked key never vouches for its replacement');
   assert.equal((await f.ask(IdentityKeyByKid, { purpose: 'signing', kid: k1 })).state, 'revoked', 'never resurrected');
-  // Legacy delegate keeps its behaviour.
-  await tokens.revokeKey(OWNER, replacement.kid); assert.equal((await f.ask(IdentityKeyByKid, { purpose: 'signing', kid: replacement.kid })).verifiable, false);
+  // Revoking the replacement through the registry (formerly the legacy ContactTokenService delegate).
+  await f.act(RevokeIdentityKey, { purpose: 'signing', kid: replacement.kid }); assert.equal((await f.ask(IdentityKeyByKid, { purpose: 'signing', kid: replacement.kid })).verifiable, false);
 });
 
 test('purposes never cross: lookups, private-key usages and registry prefixes are separate', async () => {
@@ -141,7 +141,6 @@ test('custody: private keys exist only sealed; public records and descriptors ca
   await assert.rejects(f.act(RegisterIdentityKey, { kid: 'legacy', alg: 'ES256', publicJwk: await crypto.subtle.exportKey('jwk', pair.privateKey) }), code('invalid_key'));
   await f.act(RegisterIdentityKey, { kid: 'legacy', alg: 'ES256', publicJwk: { ...await crypto.subtle.exportKey('jwk', pair.publicKey), extra: 'x' } });
   assert.deepEqual(Object.keys((await f.ask(IdentityKeyByKid, { purpose: 'signing', kid: 'legacy' })).publicJwk).sort(), ['crv', 'kty', 'x', 'y']);
-  assert.equal(ReexportedRegistry, IdentityKeyRegistry, 'contact-tokens re-exports the registry');
 });
 
 test('history is bounded: signing prunes revoked then retired records, encryption refuses instead of dropping keys', async () => {

@@ -58,8 +58,9 @@ test('contact profiles are bounded optional projections and never carry redirect
  globalThis.fetch=async()=>{throw new Error('Failed');};assert.equal(await api.contactProfile('/private'),null);
 });
 
-test('contact description appears before optional profile and discards a late changed-context profile',async()=>{
- const f=fixture();try{f.browser.route=()=>({kind:'contact',recipient:'numeric-alias'});f.secrets.contactEndpoint='/users/numeric-alias/contact/id?sig=private';f.api.contactIntake=async()=>({version:1,form:'legacy',mimeTypes:['text/plain'],optionalTags:[],kinds:['one-off'],maxMessageBytes:1024,conditional:false});let resolve;f.api.contactProfile=()=>new Promise(done=>{resolve=done;});await f.act(new InitializeSpace());assert.equal((await f.query.peek()).loading,false);assert.ok((await f.query.peek()).contactPage.intake);assert.equal((await f.query.peek()).contactPage.profile,null);{const peek=await f.query.peek();assert.equal(peek.contactPage.link,'/users/numeric-alias/contact/id?sig=private');assert.equal(JSON.stringify({...peek,contactPage:{...peek.contactPage,link:null}}).includes('sig=private'),false);}f.secrets.contactEndpoint='/different?sig=other';resolve({displayName:'Wrong recipient'});await new Promise(done=>setTimeout(done,0));assert.equal((await f.query.peek()).contactPage.profile,null);}finally{await f.close();}
+test('the contact landing is verified by the profile representation and discards a late changed-context answer',async()=>{
+ const f=fixture();try{f.browser.route=()=>({kind:'contact',recipient:'numeric-alias'});f.secrets.contactEndpoint='/users/numeric-alias/contact/id?bindle_meta=private';let answers=0;f.api.contactLanding=async endpoint=>{answers++;assert.equal(endpoint,'/users/numeric-alias/contact/id?bindle_meta=private');return {valid:true,profile:{displayName:'River'}};};await f.act(new InitializeSpace());let peek=await f.query.peek();assert.equal(peek.loading,false);assert.equal(answers,1);assert.equal(peek.contactPage.checked,true);assert.deepEqual(peek.contactPage.profile,{displayName:'River'});assert.equal(peek.contactPage.link,'/users/numeric-alias/contact/id?bindle_meta=private');assert.equal(JSON.stringify({...peek,contactPage:{...peek.contactPage,link:null}}).includes('bindle_meta=private'),false);}finally{await f.close();}
+ const g=fixture();try{g.browser.route=()=>({kind:'contact',recipient:'numeric-alias'});g.secrets.contactEndpoint='/users/numeric-alias/contact/id?bindle_meta=private';let resolve;g.api.contactLanding=()=>new Promise(done=>{resolve=done;});const booting=g.act(new InitializeSpace());while(!resolve)await new Promise(done=>setTimeout(done,0));g.secrets.contactEndpoint='/different?bindle_meta=other';resolve({valid:true,profile:{displayName:'Wrong recipient'}});await booting;const peek=await g.query.peek();assert.equal(peek.contactPage.checked,false);assert.equal(peek.contactPage.profile,null);assert.equal(JSON.stringify(peek).includes('Wrong recipient'),false);}finally{await g.close();}
 });
 
 
@@ -113,9 +114,9 @@ test('signup step navigation records history and restores earlier steps without 
 
 // Bug hunt round 3 (DEVLOG 2026-10-27).
 test('round 3 B2: a reloaded contact page without its captured link explains instead of waiting forever',async()=>{
- const f=fixture();try{f.browser.route=()=>({kind:'contact',recipient:'river'});let described=0;f.api.contactIntake=async()=>{described++;return {};};
+ const f=fixture();try{f.browser.route=()=>({kind:'contact',recipient:'river'});let described=0;f.api.contactLanding=async()=>{described++;return {valid:true,profile:null};};
   await f.act(new InitializeSpace());const state=await f.query.peek();
-  assert.equal(state.error,'This contact link is incomplete. Open the original link again.');assert.equal(described,0,'nothing to describe without the capability');assert.equal(state.contactPage?.intake??null,null);
+  assert.equal(state.error,'This contact link is incomplete. Open the original link again.');assert.equal(described,0,'nothing to describe without the capability');assert.equal(state.contactPage?.checked??null,null);
  }finally{await f.close();}
 });
 test('round 3 B3: opening a dialog clears the previous success notice so it is not shown inside the dialog',async()=>{

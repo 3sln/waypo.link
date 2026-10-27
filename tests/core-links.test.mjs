@@ -1,19 +1,15 @@
-// Core links (slice BB-C1a): the moved envelope/replay/audience/preview modules, current-key minting across an
-// identity key rotation, revoked keys, the links contract service and its engine operations with owner and app
-// actors. Seeded: rerun a failure with CHAOS_SEED=<seed>.
+// Core links (slice BB-C1a): the envelope/replay modules, current-key minting across an identity key rotation, revoked
+// keys, the links contract service and its engine operations with owner and app actors. The legacy contact-grant link
+// cases (ContactEndpointService, re-export shims) left the core with messaging on 2026-10-27. Seeded: rerun a failure
+// with CHAOS_SEED=<seed>.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as envelope from '../packages/links/envelope.mjs';
-import * as legacyEnvelope from '../packages/messaging/bindle-links.mjs';
 import * as replay from '../packages/links/replay.mjs';
-import * as legacyReplay from '../packages/messaging/link-replay.mjs';
 import * as preview from '../packages/links/preview.mjs';
-import * as legacyPreview from '../packages/runtime/contact-preview.mjs';
 import * as profile from '../packages/links/profile.mjs';
 import * as audience from '../packages/links/audience.mjs';
-import * as contactLinks from '../packages/runtime/contact-links.mjs';
-import { MemoryMessagingStore, ContactTokenService, ContactEndpointService, MessagingService, signContactToken } from '../packages/messaging/index.mjs';
-import { key, fromBase64url, strictText } from '../packages/core/records.mjs';
+import { MemoryMessagingStore, key, fromBase64url, strictText } from '../packages/core/records.mjs';
 import { IdentityKeyRegistry } from '../packages/identity/keys.mjs';
 import { LinkService, currentLinkKey } from '../packages/links/issuance.mjs';
 import { linksProvider, IssueLink, RevokeLink, RotateLinkChallenge, EvaluateLink, LinkList, LinkChanges } from '../packages/links/engine.mjs';
@@ -32,14 +28,6 @@ const kidOf = url => decoded(metaOf(url).split('.')[0]).kid;
 const PROOF = { stub: true }, STUB_AUTHOR = async ({ principal }) => ({ principal });
 const claims = (extra = {}) => ({ resource: 'parent-1', kinds: ['one-off'], mimeTypes: ['text/plain'], maxMessages: 5, maxBytes: 65536, maxMessageBytes: 16384, ...extra });
 
-test('moved modules: every legacy path re-exports the exact core-links bindings (no parser differential)', () => {
-  for (const [moved, legacy] of [[envelope, legacyEnvelope], [replay, legacyReplay], [preview, legacyPreview]]) {
-    assert.deepEqual(Object.keys(legacy).sort(), Object.keys(moved).sort());
-    for (const name of Object.keys(moved)) assert.equal(legacy[name], moved[name], name);
-  }
-  for (const name of ['linkAudienceDecide', 'admitLinkAudience', 'inspectContactLink', 'signOwnLinkResponse', 'collectLinkState']) assert.equal(contactLinks[name], audience[name], name);
-  assert.equal(envelope.CONTACT_LINK_TYPE, CONTACT_LINK_TYPE);
-});
 
 test('link JWS signer: seeded round trips verify, and every single-character mutation is refused', async t => {
   t.diagnostic(`CHAOS_SEED base ${Number(process.env.CHAOS_SEED ?? 1)}`);
@@ -49,9 +37,6 @@ test('link JWS signer: seeded round trips verify, and every single-character mut
     for (let round = 0; round < 12; round++) {
       const iat = 1800000000 + random.int(1000), meta = { bindle: 'link-meta', v: 1, type: MESSAGING_CONTACT_LINK_TYPE, iss: ISSUER, aud: `${ISSUER}/users/alice/contact/${crypto.randomUUID()}`, jti: crypto.randomUUID(), iat, exp: iat + 1 + random.int(86400), sub: OWNER, ...claims({ maxMessages: 1 + random.int(100) }) };
       const value = await envelope.signLinkJWS({ header: { alg: 'ES256', kid: `k${random.int(9)}`, typ: envelope.LINK_META_TYP }, claims: meta, privateKey: pair.privateKey });
-      // Same canonical bytes as the pre-C1a contact-token signer: stored inputs stay comparable.
-      const legacy = await signContactToken({ header: { alg: 'ES256', kid: decoded(value.split('.')[0]).kid, typ: envelope.LINK_META_TYP }, claims: meta, privateKey: pair.privateKey });
-      assert.equal(value.split('.').slice(0, 2).join('.'), legacy.split('.').slice(0, 2).join('.'));
       const parsed = envelope.parseLinkMeta(value);
       assert.equal(await envelope.verifyLinkSignature(crypto, parsed, { alg: 'ES256', publicJwk }), true);
       assert.deepEqual(envelope.parseLinkQuery(`${meta.aud}?bindle_meta=${value}`), { form: 'link', meta: value });
@@ -78,55 +63,8 @@ test('replay record through the core-links path: single use, principal cap, refu
 });
 
 // A registry-held identity key (as AccountController holds it) plus the contact endpoint service over one store.
-async function contactWorld() {
-  let now = 1800000000000; const clock = () => now, store = new MemoryMessagingStore();
-  const tokens = new ContactTokenService({ store, issuer: ISSUER, clock }), registry = new IdentityKeyRegistry({ store, clock, seal: value => structuredClone(value), open: value => value });
-  await registry.ensure(OWNER, 'signing');
-  const endpoints = new ContactEndpointService({ tokens, linkPolicies: [POLICY], signer: async ({ owner, kid }) => { const signer = await registry.privateKey(owner, 'signing'); if (signer?.kid !== kid) throw new Error('Signing key unavailable'); return signer.privateKey; } });
-  const messages = new MessagingService({ store, tokens: endpoints, clock }), collection = await messages.createCollection(OWNER, 'Inbox');
-  const create = async (extra = {}) => { const current = await registry.current(OWNER, { purpose: 'signing' }); return endpoints.createLink(OWNER, { handle: 'alice', kid: current?.kid ?? 'none', collections: [collection.id], mimeTypes: ['text/plain'], expiresAt: now + 86400000, maxMessages: 3, ...extra }); };
-  return { store, tokens, registry, endpoints, create, now: clock, advance: ms => { now += ms; } };
-}
 
-test('contact links across an identity key rotation: old links verify, new links and rotated challenges use the current key, a revoked key verifies nothing', async () => {
-  const w = await contactWorld(), first = (await w.registry.current(OWNER, { purpose: 'signing' })).kid;
-  const plain = await w.create(), conditional = await w.create({ audience: { policy: POLICY } });
-  assert.equal(kidOf(plain.url), first);
-  const rotated = await w.registry.rotate(OWNER, { purpose: 'signing', expectedKid: first });
-  assert.equal((await w.endpoints.inspect(plain.url)).form, 'link', 'a retired key keeps its stored links valid');
-  const fresh = await w.create();
-  assert.equal(kidOf(fresh.url), rotated.kid, 'new links are minted with the current key');
-  // A caller naming the retired key cannot mint under it.
-  const collection = (await w.store.transaction(tx => tx.get(key('contact-grant', plain.grant.id)))).claims.collections[0];
-  const stale = await w.endpoints.createLink(OWNER, { handle: 'alice', kid: first, collections: [collection], mimeTypes: ['text/plain'], expiresAt: w.now() + 86400000, maxMessages: 3 });
-  assert.equal(kidOf(stale.url), rotated.kid, 'a stale caller kid is replaced by the current key');
-  const challenged = await w.endpoints.rotateChallenge(OWNER, conditional.grant.id);
-  assert.equal(kidOf(challenged.url), rotated.kid, 'challenge rotation re-signs with the current key');
-  await assert.rejects(w.endpoints.inspect(conditional.url), { code: 'link_invalid' }, 'the previous meta stops verifying');
-  assert.equal((await w.endpoints.inspect(challenged.url)).conditional, true);
-  await w.registry.revoke(OWNER, { purpose: 'signing', kid: first, reason: 'compromise' });
-  await assert.rejects(w.endpoints.inspect(plain.url), { code: 'link_invalid' }, 'a revoked key verifies nothing');
-  assert.equal((await w.endpoints.inspect(fresh.url)).form, 'link');
-  // A forged meta under the revoked key with the exact stored claims is still refused.
-  const grant = await w.store.transaction(tx => tx.get(key('contact-grant', plain.grant.id)));
-  assert.equal(grant.endpoint.header.kid, first);
-  // Revoking the current key clears the pointer: issuance refuses until a new key exists.
-  await w.registry.revoke(OWNER, { purpose: 'signing', kid: rotated.kid });
-  assert.equal(await currentLinkKey(w.registry, OWNER, null), null);
-  await assert.rejects(w.create(), { code: 'invalid_key' });
-  await assert.rejects(w.endpoints.inspect(fresh.url), { code: 'link_invalid' });
-});
 
-test('externally registered keys (pre-registry fixtures) keep minting under the caller kid only while active', async () => {
-  const store = new MemoryMessagingStore(), tokens = new ContactTokenService({ store, issuer: ISSUER });
-  const pair = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']);
-  await tokens.registerKey(OWNER, { kid: 'one', alg: 'ES256', publicJwk: await crypto.subtle.exportKey('jwk', pair.publicKey) });
-  const endpoints = new ContactEndpointService({ tokens, signer: async () => pair.privateKey }), messages = new MessagingService({ store, tokens: endpoints });
-  const collection = await messages.createCollection(OWNER, 'Inbox'), options = { handle: 'alice', kid: 'one', collections: [collection.id], mimeTypes: ['text/plain'], expiresAt: Date.now() + 86400000 };
-  assert.equal(kidOf((await endpoints.createLink(OWNER, options)).url), 'one');
-  await tokens.revokeKey(OWNER, 'one');
-  await assert.rejects(endpoints.createLink(OWNER, options), { code: 'invalid_key' });
-});
 
 // The links contract service and engine over one account store.
 async function linksWorld({ enabled = true, occupant, changeRetention, decide } = {}) {
@@ -277,9 +215,4 @@ test('review regressions: revoked links free the cap, app-supplied principals ar
   w.clock.advance(31 * 86400000); await small.issue(OWNER, input); await small.issue(OWNER, input);
   await assert.rejects(small.issue(OWNER, input), { code: 'link_limit' }, 'reclaim at the cap drops revoked records, live ones still count');
   assert.equal((await w.store.transaction(tx => tx.list(key('link')))).filter(row => row.value.revoked).length, 0);
-  // Contact endpoints: the key rotates between grant creation and the endpoint commit.
-  const cw = await contactWorld(), first = (await cw.registry.current(OWNER, { purpose: 'signing' })).kid;
-  const original = cw.endpoints.signer; cw.endpoints.signer = async input => { const key = await original(input); await cw.registry.rotate(OWNER, { purpose: 'signing', expectedKid: first }); return key; };
-  await assert.rejects(cw.create(), { code: 'invalid_key' });
-  assert.equal((await cw.tokens.list(OWNER)).length, 0, 'no endpoint-less grant remains');
 });

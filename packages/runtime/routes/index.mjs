@@ -19,12 +19,11 @@
 // path) and `admission` ({protective: [{match(path, method), test(change)}], exempt(path)}): capacity admission
 // is skipped for exempt paths and for protective changes, whose JSON body is read only when a rule matches.
 //
-// Routes of different modules in one stage must not overlap. Where they do, this order decides: `delivery`
-// answers contact-delivery bearer RPC on /bindle/rpc before `federation`, `relations` (ORG-10f) answers only entity
+// Routes of different modules in one stage must not overlap. Where they do, this order decides: `relations` (ORG-10f) answers only entity
 // certificates on /oauth/token and the BindleEntity and relation-token schemes on /bindle/rpc before `memberCertificates`
 // and `federation`, `memberCertificates` (ORG-4) answers only
-// the jwt-bearer member grant on /oauth/token before `federation` and member holder-key status before `delegation`, and `contactProfile` answers the methods of
-// /api/contacts/{redeem,directory} before `contacts`. `moved` (PORT-3) is first on purpose: its edge-stage router
+// the jwt-bearer member grant on /oauth/token before `federation` and member holder-key status before `delegation`, and `contactProfile` answers
+// PUT /api/contacts/{id}/sharing before `contacts`. `moved` (PORT-3) is first on purpose: its edge-stage router
 // answers per-identity paths of a moved identity (308 during the redirect period) before any per-identity route,
 // and falls through for every other identity. Append-only otherwise: one import and one entry per slice; a slice
 // adds routes to its own module.
@@ -39,10 +38,8 @@ import * as identity from './identity.mjs';
 import * as lifecycle from './lifecycle.mjs';
 import * as deletion from './deletion.mjs';
 import * as automation from './automation.mjs';
-import * as conversations from './conversations.mjs';
 import * as contactProfile from './contact-profile.mjs';
 import * as contacts from './contacts.mjs';
-import * as delivery from './delivery.mjs';
 import * as messages from './messages.mjs';
 import * as views from './views.mjs';
 import * as storage from './storage.mjs';
@@ -69,7 +66,7 @@ import * as relations from './relations.mjs';
 import * as rtcOwner from './rtc-owner.mjs';
 import * as rtc from './rtc.mjs';
 
-export const ROUTES=Object.freeze([moved,transferPages,directory,intents,recoveryReissue,orgClaimAbort,site,admin,identity,lifecycle,deletion,automation,conversations,contactProfile,contacts,delivery,messages,views,storage,billing,search,notifications,relations,memberCertificates,federation,links,delegation,incremental,events,appSessions,integrations,connections,emailBridge,exports,retention,appRemoval,orgs,transferIn,rtcOwner,rtc]);
+export const ROUTES=Object.freeze([moved,transferPages,directory,intents,recoveryReissue,orgClaimAbort,site,admin,identity,lifecycle,deletion,automation,contactProfile,contacts,messages,views,storage,billing,search,notifications,relations,memberCertificates,federation,links,delegation,incremental,events,appSessions,integrations,connections,emailBridge,exports,retention,appRemoval,orgs,transferIn,rtcOwner,rtc]);
 export const STAGES=Object.freeze(['edge','public','anonymous','unauthenticated','api','session','beforeActivity','owner','pages']);
 for(const module of ROUTES)for(const name of Object.keys(module.stages??{}))if(!STAGES.includes(name))throw new TypeError(`Unknown route stage ${name}`);
 

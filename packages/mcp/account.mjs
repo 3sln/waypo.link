@@ -39,7 +39,7 @@ export async function sweepMcpJournal(metadata,now=Date.now(),limit=100){
 }
 export async function mcpCollections(account,owner){
  await account.warm(owner);
- const inbox=(await account.messages.collections(owner)).filter(c=>c.active).map(c=>({id:`inbox:${c.id}`,name:c.name,kind:'inbox',tools:['collections_list','items_list','item_read','item_write','item_delete']}));
+ const inbox=(await account.items.collections(owner)).filter(c=>c.active).map(c=>({id:`inbox:${c.id}`,name:c.name,kind:'inbox',tools:['collections_list','items_list','item_read','item_write','item_delete']}));
  const resources=[...(await account.metadata.list({prefix:'resource/',limit:202})).values()],storage=resources.filter(r=>r.kind!=='app-connection'),legacyDefaultAllowance=storage.filter(r=>r.builtin===true&&r.provider==='hosted'&&r.owner===owner).length===1?1:0;
  if(resources.length>200+legacyDefaultAllowance||storage.length>100+legacyDefaultAllowance)fail('resource_limit','This account has too many sources.',429);
  return [...inbox,...resources.filter(r=>r.owner===owner&&r.kind!=='app-connection'&&r.status==='connected').map(r=>({id:`resource:${r.id}`,name:r.name,kind:'storage',tools:['collections_list',...r.capabilities?.read?['item_read']:[],...r.capabilities?.write?['item_write']:[],...(r.provider==='hosted'||r.capabilities?.delete)?['item_delete']:[]]}))];
@@ -88,7 +88,7 @@ export async function mcpOperation(account,owner,clientId,tool,args,{itemRead=fa
  let result;
  try{
   // MCP edits are owner-delegated but keep distinct provenance (docs/architecture/tags.md).
-  if(tool==='item_write')result=await account.messages.update(owner,args.key,args.actions,{source:'mcp',clientId});
+  if(tool==='item_write')result=await account.items.update(owner,args.key,args.actions,{source:'mcp',clientId});
   else result=await account.deleteMessage(owner,args.key);
  }catch(error){
   // Deterministic refusals (validation, not found) cannot have taken effect: record them so a retry is not wedged.

@@ -1,5 +1,5 @@
 // IDKEYS-2 (BB-C3) key-delegation.v1, provider side (packages/identity/delegation.mjs): certificates issued here
-// verify with packages/bindlebox-protocol exactly; lifetime cap; purpose limits; occupant-only issuance (failing
+// verify with packages/messaging-protocol exactly; lifetime cap; purpose limits; occupant-only issuance (failing
 // closed without the port); proof of possession; rotation revoking the predecessor; revocation selectors; bounded
 // history and audit; status privacy; seeded concurrency (tests/helpers/chaos.mjs); and the status endpoint's flag gate
 // and cache semantics on the real Node adapter.
@@ -14,7 +14,7 @@ import { DelegationRegistry, delegationsProvider, IssueDelegation, RenewDelegati
 import { createAppEngine, perform, read } from '../packages/app/engine.mjs';
 import { memoryAudit } from '../packages/app/providers.mjs';
 import { MESSAGING_INGRESS_SLOT } from '../packages/links/types.mjs';
-import * as B from '../packages/bindlebox-protocol/index.mjs';
+import * as B from '../packages/messaging-protocol/index.mjs';
 import { encryptSecret, decryptSecret } from '../packages/runtime/secrets.mjs';
 import { createScheduler, forEachSeed, fakeClock } from './helpers/chaos.mjs';
 import { createNodeServer } from '../apps/node/server.mjs';
@@ -49,7 +49,7 @@ async function protocolVerify(f, certificate, { purpose = DELEGATION_PURPOSES.au
 }
 const decode = part => JSON.parse(Buffer.from(part, 'base64url').toString('utf8'));
 
-test('cross-test: issued certificates verify with packages/bindlebox-protocol exactly', async () => {
+test('cross-test: issued certificates verify with packages/messaging-protocol exactly', async () => {
   const f = fixture(), key = await delegateKey();
   assert.deepEqual(DELEGATION_PURPOSES, B.PURPOSES); assert.equal(DELEGATION_TYP, B.JWS_TYPES.delegation); assert.equal(MESSAGING_INGRESS_SLOT, B.INGRESS_SLOT);
   const issued = await f.run(IssueDelegation, f.app(), await request(f, key));
@@ -88,7 +88,7 @@ test('lifetime: host-configurable with 24 h as the maximum; apps may ask for les
 
 test('purposes: only recognized, consented, ascending purposes; the certificate carries exactly those', async () => {
   const f = fixture(), key = await delegateKey();
-  for (const purposes of [[], ['https://spec.bindle.example/bindlebox/v1/purposes/admin'], [...ALL].reverse(), [DELEGATION_PURPOSES.author, DELEGATION_PURPOSES.author], 'author'])
+  for (const purposes of [[], ['https://spec.bindle.example/messaging/v1/purposes/admin'], [...ALL].reverse(), [DELEGATION_PURPOSES.author, DELEGATION_PURPOSES.author], 'author'])
     await assert.rejects(f.run(IssueDelegation, f.app(), await request(f, key, { purposes })), code('invalid_request'), JSON.stringify(purposes));
   f.seat.value = { ...f.seat.value, purposes: AUTHOR };
   await assert.rejects(f.run(IssueDelegation, f.app(), await request(f, key, { purposes: ALL })), code('forbidden'));
@@ -102,7 +102,7 @@ test('purposes: only recognized, consented, ascending purposes; the certificate 
     await assert.rejects(g.run(IssueDelegation, g.app(), input), code('invalid_request'));
 });
 
-test('purpose separation: an identity key is never certified as a delegate, and the PoP is no JWS or bindlebox domain', async () => {
+test('purpose separation: an identity key is never certified as a delegate, and the PoP is no JWS or Bindle Messaging domain', async () => {
   const f = fixture();
   await f.keys.ensure(OWNER, 'signing');
   // The app cannot hold the identity private key, but even a crafted request naming the identity public key fails:

@@ -1,11 +1,11 @@
-// Engine-level tag promotion: classifier/heuristic evidence, default and owner
+// Engine-level tag promotion over activity items (tests/helpers/items-fixture.mjs): classifier/heuristic evidence, default and owner
 // rules, owner overrides and suppression, asserted on the owner's message view.
 // Seeded: rerun a failure with CHAOS_SEED=<seed>.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { isSuspectedTag, isSystemTag, MAX_USER_TAGS } from '../packages/messaging/tags.mjs';
+import { isSuspectedTag, isSystemTag, MAX_USER_TAGS } from '../packages/core/tags.mjs';
 import { forEachSeed } from './helpers/chaos.mjs';
-import { messagingFixture, OWNER } from './helpers/messaging-fixture.mjs';
+import { itemsFixture as messagingFixture, OWNER } from './helpers/items-fixture.mjs';
 
 const BASE = Number(process.env.CHAOS_SEED ?? 1);
 const classifier = (labels, version = 'c1') => ({ source: 'classifier', version, labels: labels.map(tag => ({ tag, probability: 0.9 })) });

@@ -1,6 +1,6 @@
 # Self-host Personal Space
 
-The same portable HTTP application and account controllers run behind Node and Cloudflare adapters. Identity, messaging, contact capabilities, notification policy and storage drivers are shared. Check the capabilities advertised by your installation before enabling integrations; configured credentials alone do not establish working delivery or provider compatibility.
+The same portable HTTP application and account controllers run behind Node and Cloudflare adapters. Identity, links, activity, notification policy and storage drivers are shared (peer messaging is the separate Parlay app since 2026-10-27). Check the capabilities advertised by your installation before enabling integrations; configured credentials alone do not establish working delivery or provider compatibility.
 
 ## Node 24
 
@@ -141,7 +141,7 @@ These switches now gate implemented local features. They default off without con
 | `ACTIVITY_V2_ENABLED` (N) | `false` (off) | Activity center v2. |
 | `RTC_SIGNALING_ENABLED`, `RTC_FOREIGN_ENABLED`, `RTC_TICKETS_ENABLED` (N) | `false` (off) | Reserved for the proposed [RTC signaling](spec/rtc-signaling.md) extension (design: [rtc-signaling](architecture/rtc-signaling.md) §3.3). Only the wire validators, the `rtc-purpose` kind and bound consumer options (AMD-X1, behind `EXTENSIONS_ENABLED`) exist today; turning these on enables nothing yet. `RTC_SIGNALING_ENABLED` requires `EXTENSIONS_ENABLED` and `ARTEFACT_VERSIONS_ENABLED`; `RTC_FOREIGN_ENABLED` also requires `DIRECTORY_ENABLED`. With `RTC_SIGNALING_ENABLED` and `EXTENSIONS_ENABLED` on, the signaling slot manifest and the `rtc-signaling/v1` contract (`docs/artefacts/rtc-signaling-v1.json`) are first-party reviewed documents, so no `FEDERATION_SCHEMAS` or `FEDERATION_CONTRACTS` entry is needed (while both flags are on, the shipped documents win over an operator `FEDERATION_SCHEMAS` or `FEDERATION_CONTRACTS` entry for the same id, for the contract's plain id and its `/envelope` alike, so an operator entry for these ids is ignored; with either flag off, operator entries apply as before). The manifest then declares `extensions.v1` beside the built-in occupant, and `rtc-signaling.v1` only beside `directory.v1`, `extensions.v1` and `artefact-versions.v1` (RTC-i, provisional). |
 | `RTC_TURN_ENABLED` (N) | `false` (off) | Environment capability for the built-in `ice-relay/v1` relay occupant (RTC-f, implemented locally, provisional). It requires `RTC_SIGNALING_ENABLED`, and both are checked by the occupant, because a class (b) flag's `requires` is not evaluated from the environment. Even with both on, nothing is offered until both relay ports below are configured. A new flag, not a rename of the retired `BEAM_TURN_ENABLED`. See "Hosted relay" below. |
-| `LINKS_ENABLED` (N) | `false` (off) | Core links contract, key-delegation certificates and the messaging-address descriptor. Formerly `BINDLEBOX_ENABLED`, whose raw value is still read while `LINKS_ENABLED` is unset (until BB-CUT). The messaging app (Parley) reads its own `BINDLEBOX_ENABLED` in its own deployment. |
+| `LINKS_ENABLED` (N) | `false` (off) | Core links contract, key-delegation certificates and the messaging-address descriptor. Formerly `BINDLEBOX_ENABLED` (retired 2026-10-26), whose raw value is still read while `LINKS_ENABLED` is unset; a quarantined record under the old name is never widened. The messaging app (Parlay) reads its own `PARLAY_ENABLED` (retired alias `BINDLEBOX_ENABLED`) in its own deployment. |
 
 ### Onboarding, administration and identities
 
@@ -153,11 +153,9 @@ These switches now gate implemented local features. They default off without con
 | `ADMIN_ENABLED` (N) | Node: on only when boot is configured | Keeps the administration console mounted. |
 | `ADMIN_CLAIMS_ENABLED` | off | Shows claim-token onboarding when admin-minted claims exist, even without `ONBOARDING_ENABLED`. |
 | `SYSTEM_BOOTSTRAP_KEY` (N) | unset | Verifies system-identity invitations; also needs `RECOVERY_SIGNING_KEY` and a working setup channel. |
-| `DEVELOPER_CONTACT_HANDLE` | `ray` | Local handle the developer-contact link delivers to. Reference-service feature. |
-| `DEVELOPER_CONTACT_MODE` | `legacy` | `legacy` issues the core contact grant. `occupant` hands out the developer-policy link that the developer account's messaging-ingress occupant issued through the links contract, and the console opens it as a `send-message` intent. `occupant` needs `LINKS_ENABLED`. Provisional until BB-CUT. |
+| `DEVELOPER_CONTACT_HANDLE` | `ray` | Local handle whose messaging-ingress occupant's developer-policy link `GET /api/developer-contact` hands out (the only route since 2026-10-27; the legacy core grant and `DEVELOPER_CONTACT_MODE` were removed). Reference-service feature. |
 | `DEVELOPER_CONTACT_ACTIVE_THRESHOLD` | `1500` | Active-owner count at or above which free owners lose developer contact. |
 | `DEVELOPER_CONTACT_POLICY` | built-in `.example` URI | Policy URI embedded in the developer-contact link. |
-| `CONVERSATION_PEER_ORIGINS` (N) | empty | Comma-separated origins allowed for conversation peers. |
 
 ### Federation, embedding and app metadata
 

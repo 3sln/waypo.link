@@ -1,6 +1,6 @@
 # Message notifications — implementation draft
 
-Status: preferences, subscriptions, transactional events, leased jobs, reminders, and unsubscribe logic are implemented in the core. Web Push/email transport, service-worker installation and real-device/browser delivery are adapter responsibilities with separate verification. Decision sign-off: reviewer ___ / date ___ / outcome ___. See [messaging](messaging.md), [security](security.md), and [DEVLOG](../../DEVLOG.md).
+Status: preferences, subscriptions, transactional events, leased jobs, reminders, and unsubscribe logic are implemented in the core. Web Push/email transport, service-worker installation and real-device/browser delivery are adapter responsibilities with separate verification. Decision sign-off: reviewer ___ / date ___ / outcome ___. See [messaging](../../apps/parlay/docs/legacy/messaging.md), [security](security.md), and [DEVLOG](../../DEVLOG.md).
 
 ## Preferences and subscriptions
 

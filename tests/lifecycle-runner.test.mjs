@@ -6,7 +6,7 @@ import {PAID_LIFECYCLE_PROTECTION} from '../packages/identity/lifecycle-protecti
 import {lifecycleIdentityPort,lifecycleAdminHoldPort} from '../packages/identity/lifecycle-tombstone.mjs';
 import {LifecycleSweep} from '../packages/runtime/lifecycle-scheduler.mjs';
 import {lifecycleMode} from '../packages/runtime/lifecycle-runner.mjs';
-import {dispatchLifecycleNotice} from '../packages/messaging/dispatcher.mjs';
+import {dispatchLifecycleNotice} from '../packages/runtime/lifecycle-notices.mjs';
 
 // Deterministic-clock integration of the lifecycle executor with the real
 // portable AccountController, Node SQLite metadata and identity repository.
@@ -209,7 +209,7 @@ test('review follow-ups: an unenforced period restarts notices; tombstones hold 
  assert.equal(f.notices(),sent+1);assert.equal(f.blobs.map.has(`objects/${owner}/res/v1`),true);assert.equal((await f.repository.get(owner)).status,'active');
  // After deletion, turning the flag off does not revive the account or its maintenance.
  const g=await fixture(t);await toSuspended(g);await noticeEpisode(g,SUSPENDED_SPACING);await jumpTo(g,(await g.controller.lifecycle.status(owner)).deadline);await g.tick();g.advance(60000);assert.equal((await g.tick()).action,'deleted');
- g.controller.config.LIFECYCLE_ENABLED='false';assert.equal((await g.invoke('touch')).$fault.code,'account_deleted');assert.equal((await g.invoke('receive',{})).$fault.code,'account_deleted');
+ g.controller.config.LIFECYCLE_ENABLED='false';assert.equal((await g.invoke('touch')).$fault.code,'account_deleted');assert.equal((await g.invoke('snapshot')).$fault.code,'account_deleted');
  await g.controller.alarm();assert.deepEqual([...(await g.db.list()).keys()].sort(),['lifecycle/tombstone-v1','owner']);
  // A verified billing webhook reaches a suspended account, and recorded payment lifts the fence in the same request.
  const h=await fixture(t);await toSuspended(h);assert.notEqual((await h.invoke('billingWebhookVerified',{})).$fault?.code,'account_suspended');

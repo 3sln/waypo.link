@@ -2,7 +2,7 @@
 
 Status: provisional design. No runtime or publication claim. The coordinator owns the DEVLOG entry. Architecture/security/product sign-off: reviewer ___ / date ___ / outcome ___.
 
-Normative draft: [links](../spec/links.md). Independent review: [bindle-links-review](../release/bindle-links-review.md). Builds on [contact endpoints](../spec/contact-tokens.md), [contact delivery](../spec/contact-delivery.md), [delivery wire decision](contact-delivery-wire.md) and [conversation/identity design](conversation-contact-design.md).
+Normative draft: [links](../spec/links.md). Independent review: [bindle-links-review](../release/bindle-links-review.md). Builds on [contact endpoints](../../apps/parlay/docs/legacy/contact-tokens.md), [contact delivery](../../apps/parlay/docs/legacy/contact-delivery.md), [delivery wire decision](contact-delivery-wire.md) and [conversation/identity design](conversation-contact-design.md).
 
 ## Decisions
 

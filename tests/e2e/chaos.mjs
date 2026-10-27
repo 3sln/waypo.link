@@ -79,7 +79,7 @@ export async function chaosConsole(browser,t,{account={id:OWNER_A,handle:'n.chao
   alerts:()=>page.locator('[role=alert]').allTextContents(),
   notices:()=>page.locator('.alert.success').allTextContents()
  };
- if(goto){await page.goto(baseURL+goto);await page.locator(signedIn?'.app-shell, .user-summary':'.auth-card, .signup-wizard').first().waitFor();if(signedIn)await page.getByRole('heading',{name:'Messages & conversations'}).waitFor();}
+ if(goto){await page.goto(baseURL+goto);await page.locator(signedIn?'.app-shell, .user-summary':'.auth-card, .signup-wizard').first().waitFor();if(signedIn)await page.getByRole('heading',{name:'Messages',exact:true}).waitFor();}
  return api;
 }
 /** Seeded message rows for the incoming projection. */

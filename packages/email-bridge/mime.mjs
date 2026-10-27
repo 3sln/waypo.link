@@ -1,4 +1,4 @@
-// BRIDGE inbound parsing (public-email-bridge.md "MIME, storage and privacy", "Safe response"; bindlebox.md §9): a
+// BRIDGE inbound parsing (public-email-bridge.md "MIME, storage and privacy", "Safe response"; messaging.md §9): a
 // bounded stream read, one strict pass over RFC 5322 headers and MIME structure, conservative automation hints and
 // the transport's authentication results as PROVENANCE only. Nothing here renders, fetches, executes or unpacks; every
 // limit is enforced while reading and an over-limit or ambiguous message is refused whole, never truncated.

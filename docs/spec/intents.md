@@ -279,7 +279,7 @@ The provider's consent is a routing and disclosure control, **not a security bou
 
 For a kind with `capability: true`:
 
-- link hosts, handling providers and handlers apply the URL-secrecy rules of [contact endpoints](contact-tokens.md#url-secrecy-and-browser-handling), as links §8 does for `bindle_meta`: redaction from logs, `no-store`, `no-referrer`, no service-worker caching;
+- link hosts, handling providers and handlers apply the URL-secrecy rules of [contact endpoints](../../apps/parlay/docs/legacy/contact-tokens.md#url-secrecy-and-browser-handling), as links §8 does for `bindle_meta`: redaction from logs, `no-store`, `no-referrer`, no service-worker caching;
 - minters MUST use the fragment placement, and the query placement is refused (§3.4; revision 3);
 - link previews never show data, and show a kind title only under §10.
 

@@ -1,5 +1,7 @@
 // FF-5a: legacy mount visibility is preserved; after console adoption owner reads/reversal ignore targeting.
-// HTTP routes of slice 2, Messages and collections (docs/architecture/app-engine.md §12): prepared postback dispatch, message pages, collections, message reads, updates, presentations and downloads.
+// HTTP routes of slice 2, activity items and collections (docs/architecture/app-engine.md §12): prepared postback dispatch,
+// pages, collections, reads, updates, presentations and downloads of stored v1 app messages (the /api/messages* names
+// are kept). Legacy peer submission left the core on 2026-10-27.
 // Stage handlers and route-module shape: packages/runtime/routes/index.mjs.
 import {federationEpoch} from '../federation.mjs';
 import {verifyPreparedPostbackToken} from '../message-postbacks.mjs';
@@ -11,7 +13,7 @@ export function allowedMethods(path){
  if(/^\/api\/activity\/[a-f0-9-]{36}$/.test(path))return ['GET','PATCH','DELETE'];
  if(path==='/api/messages/page')return ['GET'];
  if(path==='/api/collections')return ['GET','POST'];
- if(path==='/api/messages')return ['GET','POST'];
+ if(path==='/api/messages')return ['GET'];
  if(/^\/api\/messages\/[^/]+$/.test(path))return ['GET','PATCH','DELETE'];
  if(/^\/api\/messages\/[^/]+\/download$/.test(path))return ['GET'];
  if(/^\/api\/messages\/[^/]+\/(presentation|postbacks|postbacks\/prepare)$/.test(path))return ['POST'];
