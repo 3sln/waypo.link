@@ -226,12 +226,18 @@ test('uniform 404: unknown, malformed, inactive and disabled targets answer the 
  await W.provider(B).add(9);const gone=W.provider(B).entity(2);gone.gone=true;results.push(await answer(buildBatch({messages:[await msg(identityURI(gone.principal))]})));
  // The entity's own RTC_FOREIGN_ENABLED off (here site-wide off) is the same answer before the body is read.
  env.RTC_FOREIGN_ENABLED='false';results.push(await answer(accepted));env.RTC_FOREIGN_ENABLED='true';
- // RTC_FOREIGN_ENABLED off for the addressed entity only (an account-scoped rule), while on site-wide.
- const offOwner=b.entity.sub;env.flags={for:ctx=>({version:1,evaluate:name=>({value:!(name==='RTC_FOREIGN_ENABLED'&&ctx?.subject?.owner===offOwner),reason:'rule'}),envState:()=>({state:'managed'}),global:()=>true})};
- results.push(await answer(accepted));delete env.flags;
  for(const r of results)assert.deepEqual(r,results[0]);assert.equal(results[0][0],404);assert.equal(results[0][1],'{"error":"not_found"}');
  // A valid batch for a known entity: 202 with an empty body, whatever steps 2–8 later decide.
  const ok=await answer(accepted);assert.equal(ok[0],202);assert.equal(ok[1],'');
+ // RTC wargame L3: RTC_FOREIGN_ENABLED off for the addressed entity only (an account-scoped rule), while on site-wide,
+ // answers exactly as a valid batch does (202, dropped unprocessed), so the entity's own flags are never observable.
+ const offOwner=b.entity.sub;env.flags={for:ctx=>({version:1,evaluate:name=>({value:!(name==='RTC_FOREIGN_ENABLED'&&ctx?.subject?.owner===offOwner),reason:'rule'}),envState:()=>({state:'managed'}),global:()=>true})};
+ assert.deepEqual(await answer(accepted),ok);
+ // Wargame review R1: a step-1-invalid batch (a stale iat) for that flag-off entity answers the same 400 as for a
+ // flag-on one: step 1 runs before anything per-account.
+ const stale=buildBatch({messages:[await signMessage({bindle:'rtc-message',v:1,iss:A,sub:a.entity.sub,aud:identityURI(b.principal),sid:s.sid,leg:leg.jkt,to:null,seq:1,iat:seconds(now)-86400,type:'cancel',body:{}},leg.privateKey)]});
+ const offStale=await answer(stale);delete env.flags;const onStale=await answer(stale);
+ assert.deepEqual(offStale,onStale);assert.equal(onStale[0],400);assert.equal(onStale[1],'{"error":"rtc_batch_invalid"}');
 });
 
 test('Web Push doorbell: one content-free push per alerting invite per endpoint, high urgency, TTL within the ring; never for muted invites; gone subscriptions are removed',async()=>{

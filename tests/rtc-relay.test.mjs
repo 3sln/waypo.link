@@ -152,8 +152,10 @@ test('credentials are refused for non-live, foreign, other-endpoint, other-app a
 
 test('revocation on every end path: hangup, cancel, decline, unregister, revoke-endpoint, end-session, app revoked or narrowed, ring timeout, peer control, expiry',async()=>{
  const h=await relayHost({entities:3});
+ // RTC wargame M3 allows 8 live endpoints per application: each scenario unregisters the previous scenario's devices.
+ const used=[],dev=n=>{const d=h.device(n);used.push(d);return d;},tidy=async()=>{for(const d of used.splice(0))if(d.endpoint)await fault(d.run('rtc.unregister',d.auth()));await h.pump();};
  // RTC-11 allows 6 invites per (caller, callee) in 10 min: each scenario starts in a fresh window.
- const both=async()=>{h.clock.advance(11*MIN);const x=await connected(h,{a:h.device(1),b:h.device(2)});return {...x,ua:usernames(await creds(x.a,x.s)),ub:usernames(await creds(x.b,x.c))};};
+ const both=async()=>{await tidy();h.clock.advance(11*MIN);const x=await connected(h,{a:dev(1),b:dev(2)});return {...x,ua:usernames(await creds(x.a,x.s)),ub:usernames(await creds(x.b,x.c))};};
  const paths={
   'hangup (caller)':async x=>{await x.a.end(x.s);await h.pump();},
   'hangup (callee)':async x=>{await x.b.end(x.c);await h.pump();},
@@ -174,11 +176,11 @@ test('revocation on every end path: hangup, cancel, decline, unregister, revoke-
   cancel:async r=>{await r.a.cancel(r.s);},
   decline:async r=>{const c=await r.b.claim(r.s.sid,'decline');await r.b.decline(c);await h.pump();},
   'ring timeout':async r=>{h.clock.advance(121000);await h.tick(1);},
- })){h.clock.advance(11*MIN);const r=await ringing(h,{a:h.device(1),b:h.device(2)});const u=usernames(await creds(r.a,r.s));await end(r);
+ })){await tidy();h.clock.advance(11*MIN);const r=await ringing(h,{a:dev(1),b:dev(2)});const u=usernames(await creds(r.a,r.s));await end(r);
   // At the ring timeout the ringing leg's credential has already lapsed (its TTL is capped at ring_until, review M1).
   if(label==='ring timeout')assert.ok(!h.turn.live().some(v=>u.includes(v)),label);else assert.ok(revokedAll(h,u),label);}
  // The 24 h session cap: a renewal near the end, then expiry through rtc.tick.
- h.clock.advance(11*MIN);const x=await connected(h,{a:h.device(1),b:h.device(2)});h.clock.advance(86400000-200000);const u=usernames(await creds(x.a,x.s));
+ await tidy();h.clock.advance(11*MIN);const x=await connected(h,{a:dev(1),b:dev(2)});h.clock.advance(86400000-200000);const u=usernames(await creds(x.a,x.s));
  assert.equal(h.turn.creds.get(u[0]).ttl,200,'TTL = the session\'s remaining life');h.clock.advance(200000);await h.tick(1);
  const rec=(await h.rows(1,'rtc/out/')).find(([,v])=>v.sid===x.s.sid)[1];assert.equal(rec.state,'ended');assert.equal(rec.endReason,'expired');
  assert.ok(!h.turn.live().some(v=>u.includes(v)),'at expiry the credential has lapsed with the session');

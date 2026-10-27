@@ -36,6 +36,11 @@ export const needsConfirmation=(action,input)=>action==='end-session'?input?.sil
 export const RTC_UNAVAILABLE='This setting is not available right now.';
 export const RTC_REVIEW='Review the change in the dialog, then confirm.';
 export const RTC_DECLINED='Declined. The caller is not told; the call rings out.';
+/** Wargame M2/M6: the notice for a provider block and a bulk revocation differs from the per-person or per-link one. */
+const noticeFor=(action,input)=>action==='block'&&typeof input?.issuer==='string'?'Provider blocked. Calls and requests from everyone there are dropped without telling them.'
+ :action==='unblock'&&typeof input?.issuer==='string'?'Provider unblocked.'
+ :action==='mute'&&input?.kind==='origin'?'App muted. Its calls still arrive but no longer ring.'
+ :action==='revoke-ticket'&&input&&!Object.hasOwn(input,'jti')?'Call links revoked.':NOTICES[action];
 const NOTICES=Object.freeze({'set-policy':'Call settings saved.','set-contact-rtc':'Contact link call settings saved.',block:'Blocked. Their calls and requests are dropped without telling them.',unblock:'Unblocked.',mute:'Muted.',unmute:'Unmuted.','revoke-ticket':'Call link revoked.','end-session':'Session ended.','revoke-endpoint':'Device removed from calls.','clear-missed':'Removed from the list.','narrow-app':'App access narrowed. Its calls and connections for the removed purposes ended.'});
 export const RTC_NARROW_NONE='Keep at least one purpose. To remove the app completely, use Manage app access.';
 export const RTC_NARROW_SAME='Uncheck the purposes this app should no longer use.';
@@ -112,8 +117,8 @@ export class RtcOwnerAction extends GuardedAction {
   const before=d.ring?rtcRingInvites(snapshot(r)):[];
   await r.api.request('/api/rtc/'+d.action,d.input??{}).catch(friendly);
   if(silent&&typeof d.input.sid==='string')declineLocally(r,ctx,d.input.sid,d.until);
-  await reloadAfter(r,ctx,silent?RTC_DECLINED:NOTICES[d.action]);
-  if(confirmed)r.browser.restoreFocus?.();else if(d.ring)focusAfterRing(r,d.input?.sid,before);else if(PANEL_HEADING[d.action])r.browser.focus?.(PANEL_HEADING[d.action]);
+  await reloadAfter(r,ctx,silent?RTC_DECLINED:noticeFor(d.action,d.input));
+  if(confirmed)r.browser.restoreFocus?.();else if(d.ring)focusAfterRing(r,typeof d.sid==='string'?d.sid:d.input?.sid,before);else if(PANEL_HEADING[d.action])r.browser.focus?.(PANEL_HEADING[d.action]);
  }
 }
 

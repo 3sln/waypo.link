@@ -44,8 +44,20 @@ function renderer(locale,{seen,missing}={}){
  return {root,ringRoot,render:state=>{dodo.reconcile(root,[app(state)]);const ringTree=rtcRing(state);dodo.reconcile(ringRoot,ringTree?[localize(ringTree)]:[]);return root;}};
 }
 const literalAttributes=root=>[...root.querySelectorAll('*')].flatMap(node=>[...node.attributes].filter(a=>a.value==='null'||a.value==='undefined').map(a=>`${node.tagName.toLowerCase()}[${a.name}="${a.value}"]`));
-const MODALS=[...['end-session','revoke-ticket','revoke-endpoint','block','clear-missed','narrow-app'].map(action=>({kind:'rtc-confirm',action,input:{}})),{kind:'rtc-confirm',action:'narrow-app',input:{clientId:APP,purposes:[CALL]}}];
-const STATES=[{},{status:'loading'},{status:'error'},{rtc:{...structuredClone(SETTINGS),apps:[]},ring:[]},{rtc:null},{ring:[{...invite,callerOriginReportedBy:'beta.example'}]}];
+const MODALS=[...['end-session','revoke-ticket','revoke-endpoint','block','clear-missed','narrow-app'].map(action=>({kind:'rtc-confirm',action,input:{}})),{kind:'rtc-confirm',action:'narrow-app',input:{clientId:APP,purposes:[CALL]}},
+ // Wargame M2/M6: the provider block and the bulk revocations have their own wording.
+ {kind:'rtc-confirm',action:'block',input:{issuer:'https://far.example'}},{kind:'rtc-confirm',action:'revoke-ticket',input:{clientId:APP}},{kind:'rtc-confirm',action:'revoke-ticket',input:{clientId:null}},{kind:'rtc-confirm',action:'revoke-ticket',input:{all:true}}];
+// Wargame M2/M6: call links from a known app, a removed app and no known app (legacy); a blocked provider; every mute kind.
+const spam={...structuredClone(full),blockedIssuers:[{issuer:'https://far.example',at:now}],
+ muted:[{kind:'principal',value:foreign,at:now},{kind:'purpose',value:CALL,at:now},{kind:'app',value:APP,at:now},{kind:'issuer',value:'https://spam.example',at:now},{kind:'origin',value:'https://dialer.example',at:now},
+  // Review R3: app and origin mutes for callers on another provider name it (`issuer`).
+  {kind:'origin',value:'https://dialer.example',issuer:'https://far.example',at:now},{kind:'app',value:APP,issuer:'https://far.example',at:now}],
+ tickets:[{jti:'t1',purposes:[CALL],uses:3,usesLeft:2,principal:null,expiresAt:now+86400000,revoked:false,callback:false,live:true,clientId:APP,origin:'https://app.example'},
+  {jti:'t3',purposes:[CALL],uses:1000,usesLeft:1000,principal:null,expiresAt:now+86400000,revoked:false,callback:false,live:true,clientId:'https://gone.example/client',origin:'https://gone.example'},
+  {jti:'t4',purposes:[CALL],uses:5,usesLeft:5,principal:null,expiresAt:now+86400000,revoked:false,callback:false,live:true,clientId:null,origin:null},
+  {jti:'t5',purposes:[CALL],uses:1,usesLeft:0,principal:null,expiresAt:now+86400000,revoked:true,callback:false,live:false,clientId:APP,origin:'https://app.example'}]};
+const farInvite={...invite,sid:'f'.repeat(22),caller:foreign,callerHandle:null,callerOrigin:'https://dialer.example',callerOriginReportedBy:'far.example',callerProvider:'https://far.example'};
+const STATES=[{},{status:'loading'},{status:'error'},{rtc:{...structuredClone(SETTINGS),apps:[]},ring:[]},{rtc:null},{ring:[{...invite,callerOriginReportedBy:'beta.example'}]},{rtc:spam,ring:[farInvite]}];
 
 test('every state, dialog and the ring render in English and Spanish without "null" or "undefined" attributes',()=>{
  for(const locale of ['en','es']){
@@ -85,7 +97,7 @@ test('every control is a native, keyboard-reachable button, link or input; destr
  const click=label=>{const b=[...view.querySelectorAll('button')].find(x=>x.textContent===label);assert.ok(b,label);b.click();return events.at(-1);};
  assert.deepEqual(click('End'),{kind:'open-modal',modal:{kind:'rtc-confirm',action:'end-session',input:{sid:'s'.repeat(22),caller:peer}}});
  assert.deepEqual(click('Revoke'),{kind:'open-modal',modal:{kind:'rtc-confirm',action:'revoke-ticket',input:{jti:'t1'}}});
- assert.equal([...view.querySelectorAll('.rtc-tickets button')].length,1,'an ended link has no revoke');
+ assert.equal([...view.querySelectorAll('.rtc-tickets .rtc-row button')].length,1,'an ended link has no revoke');
  assert.deepEqual(click('Clear the list'),{kind:'open-modal',modal:{kind:'rtc-confirm',action:'clear-missed',input:{}}});
  assert.deepEqual(click('Remove from list'),{kind:'rtc-action',action:'clear-missed',input:{id:'m1'}});
  assert.deepEqual(click('Unblock'),{kind:'rtc-action',action:'unblock',input:{principal:foreign}});
@@ -206,4 +218,56 @@ test('narrowing: an app with several purposes offers checked boxes and a review 
  for(const node of holder.querySelectorAll('li'))assert.ok(node.querySelector('[translate=no]'),'purpose titles are owner data');
  const intents=[];holder.addEventListener('3sln-intent',event=>intents.push(event.detail));[...holder.querySelectorAll('button')].find(b=>b.textContent==='Approve fewer purposes').click();
  assert.deepEqual(intents.at(-1),{kind:'rtc-action',action:'narrow-app',input:{clientId:APP,purposes:[CALL]}});
+});
+
+test('wargame M2: call links are grouped by the app that created them, with per-app and all-links revocation',()=>{
+ const {render}=renderer('en'),root=render(fixture({rtc:spam})),events=[];root.addEventListener('3sln-intent',event=>events.push(event.detail));
+ const groups=[...root.querySelectorAll('.rtc-tickets .rtc-ticket-app')];
+ assert.deepEqual(groups.map(g=>g.querySelector('h3').textContent),['Caller','gone.example','Unknown app'],'the approved app by name, a removed app by origin, legacy links as unknown');
+ assert.equal(groups[0].querySelector('h3 [translate=no]').textContent,'Caller','app names are owner data');assert.equal(groups[2].querySelector('h3 [translate=no]'),null,'"Unknown app" is interface text');
+ assert.match(groups[1].textContent,/Created by an app you no longer approve/);assert.match(groups[2].textContent,/Created before call links recorded which app made them/);
+ assert.equal(groups[0].querySelectorAll('.rtc-row').length,2,'live and revoked links of one app stay together');
+ const press=(scope,label)=>{const b=[...scope.querySelectorAll('button')].find(x=>x.textContent===label);assert.ok(b,label);b.click();return events.at(-1);};
+ assert.deepEqual(press(groups[0],'Revoke all from this app'),{kind:'open-modal',modal:{kind:'rtc-confirm',action:'revoke-ticket',input:{clientId:APP}}});
+ assert.deepEqual(press(groups[2],'Revoke all from unknown apps'),{kind:'open-modal',modal:{kind:'rtc-confirm',action:'revoke-ticket',input:{clientId:null}}});
+ assert.deepEqual(press(root.querySelector('.rtc-tickets'),'Revoke all call links'),{kind:'open-modal',modal:{kind:'rtc-confirm',action:'revoke-ticket',input:{all:true}}});
+ // No bulk control without a live link.
+ const ended=render(fixture({rtc:{...spam,tickets:[spam.tickets[3]]}}));assert.deepEqual([...ended.querySelectorAll('.rtc-tickets button')].map(b=>b.textContent),[]);
+ for(const [input,title,confirm] of [[{clientId:APP},/Revoke every call link from this app\?/,'Revoke links'],[{clientId:null},/Revoke every call link from unknown apps\?/,'Revoke links'],[{all:true},/Revoke all call links\?/,'Revoke all'],[{jti:'t1'},/Revoke this call link\?/,'Revoke call link']]){
+  const dialog=render(fixture({rtc:spam,modal:{kind:'rtc-confirm',action:'revoke-ticket',input}})).querySelector('[role=dialog]');assert.match(dialog.textContent,title);
+  [...dialog.querySelectorAll('button')].find(b=>b.textContent===confirm).click();assert.deepEqual(events.at(-1),{kind:'rtc-action',action:'revoke-ticket',input});}
+});
+
+test('wargame M6: blocked providers and every mute are listed and removable; the ring offers a provider block only for a foreign caller',()=>{
+ const {render,ringRoot}=renderer('en'),root=render(fixture({rtc:spam,ring:[farInvite,invite]})),events=[];root.addEventListener('3sln-intent',event=>events.push(event.detail));ringRoot.addEventListener('3sln-intent',event=>events.push(event.detail));
+ const panel=root.querySelector('.rtc-blocked');assert.match(panel.querySelector('h2').textContent,/Blocked and muted/);
+ assert.deepEqual([...panel.querySelectorAll('h3')].map(x=>x.textContent),['People','Providers','Muted']);
+ const rows=[...panel.querySelectorAll('.rtc-row')].map(r=>r.textContent);
+ assert.ok(rows.includes('far.exampleUnblock'),'a blocked provider by host');
+ for(const text of ['Person far.example · 990e8400','Purpose Call','App Caller','Provider spam.example','Calling app dialer.example'])assert.ok(rows.some(r=>r.startsWith(text)),text);
+ const unblock=[...panel.querySelectorAll('.rtc-row')].find(r=>r.textContent==='far.exampleUnblock').querySelector('button');unblock.click();assert.deepEqual(events.at(-1),{kind:'rtc-action',action:'unblock',input:{issuer:'https://far.example'}});
+ const unmute=[...panel.querySelectorAll('.rtc-row')].find(r=>r.textContent.startsWith('Calling app')).querySelector('button');unmute.click();assert.deepEqual(events.at(-1),{kind:'rtc-action',action:'unmute',input:{kind:'origin',value:'https://dialer.example'}});
+ // Review R3: a scoped mute names its provider (interface text around owner data) and unmutes in that scope; a foreign
+ // client_id is shown as asserted, never matched to one of the owner's own apps.
+ const scoped=[...panel.querySelectorAll('.rtc-row')].filter(r=>/reported by/.test(r.textContent));
+ assert.deepEqual(scoped.map(r=>r.textContent),['Calling app dialer.example (reported by far.example)Unmute',`App ${APP} (reported by far.example)Unmute`]);
+ assert.equal(scoped[0].querySelector('.rtc-mute-provider').getAttribute('translate'),null,'the provider label is interface text');
+ scoped[0].querySelector('button').click();assert.deepEqual(events.at(-1),{kind:'rtc-action',action:'unmute',input:{kind:'origin',value:'https://dialer.example',issuer:'https://far.example'}});
+ scoped[1].querySelector('button').click();assert.deepEqual(events.at(-1),{kind:'rtc-action',action:'unmute',input:{kind:'app',value:APP,issuer:'https://far.example'}});
+ const empty=render(fixture()).querySelector('.rtc-blocked');assert.match(empty.textContent,/No provider is blocked\./);assert.match(empty.textContent,/Nothing is muted\./);
+ // The ring: a foreign caller (callerProvider) gets "Block this provider"; a same-host caller never does. "reported by" stays.
+ render(fixture({rtc:spam,ring:[farInvite,invite]}));
+ const [far,near]=[...ringRoot.querySelectorAll('.rtc-ring')];
+ assert.match(far.textContent,/Calling app \(reported by far\.example\): dialer\.example/);
+ const labels=n=>[...n.querySelectorAll('button')].map(b=>b.textContent);
+ assert.deepEqual(labels(far),['Decline','Not now','Block caller','Block this provider','Mute this app']);
+ assert.deepEqual(labels(near),['Decline','Not now','Block caller','Mute this app'],'no provider block for a caller on this host');
+ const press=(n,label)=>{[...n.querySelectorAll('button')].find(b=>b.textContent===label).click();return events.at(-1);};
+ assert.deepEqual(press(far,'Block this provider'),{kind:'open-modal',modal:{kind:'rtc-confirm',action:'block',input:{issuer:'https://far.example'}}});
+ assert.deepEqual(press(far,'Mute this app'),{kind:'rtc-action',action:'mute',input:{kind:'origin',value:'https://dialer.example',issuer:'https://far.example'},ring:true,sid:'f'.repeat(22)},'review R3: scoped to the caller\'s provider');
+ assert.deepEqual(press(near,'Mute this app').input,{kind:'origin',value:invite.callerOrigin},'a same-host caller\'s app mute is unscoped');
+ const dialog=render(fixture({rtc:spam,modal:{kind:'rtc-confirm',action:'block',input:{issuer:'https://far.example'}}})).querySelector('[role=dialog]');
+ assert.match(dialog.textContent,/Block this provider\?/);assert.match(dialog.textContent,/including people you know there/);assert.equal(dialog.querySelector('strong [translate=no]').textContent,'far.example');
+ [...dialog.querySelectorAll('button')].find(b=>b.textContent==='Block provider').click();assert.deepEqual(events.at(-1),{kind:'rtc-action',action:'block',input:{issuer:'https://far.example'}});
+ render(fixture({ring:[{...farInvite,callerOrigin:null,callerOriginReportedBy:null}]}));assert.deepEqual(labels(ringRoot.querySelector('.rtc-ring')),['Decline','Not now','Block caller','Block this provider'],'no app mute without a calling app origin');
 });

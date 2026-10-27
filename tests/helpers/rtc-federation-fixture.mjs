@@ -93,12 +93,12 @@ async function provider(W,origin,i,{allow,flags,maxAge,entities,ids,directoryLim
   if(m){const e=[...P.entities.values()].find(x=>x.sub===m[1]&&!x.gone);if(!e)return json({error:'not_found'},404);return json(P.documentPatch?.(P.document(e))??P.document(e),200,P.maxAge);}
   return json({error:'not_found'},404);
  };
- P.env={APP_ORIGIN:origin,RTC_SIGNALING_ENABLED:'true',RTC_FOREIGN_ENABLED:'true',DIRECTORY_ENABLED:'true',EXTENSIONS_ENABLED:'true',ARTEFACT_VERSIONS_ENABLED:'true',ABUSE_HASH_KEY:'rtc-federation-test',RTC_FOREIGN_ISSUERS:JSON.stringify(allow),
+ P.env={APP_ORIGIN:origin,RTC_CLOCK:W.clock,RTC_SIGNALING_ENABLED:'true',RTC_FOREIGN_ENABLED:'true',DIRECTORY_ENABLED:'true',EXTENSIONS_ENABLED:'true',ARTEFACT_VERSIONS_ENABLED:'true',ABUSE_HASH_KEY:'rtc-federation-test',RTC_FOREIGN_ISSUERS:JSON.stringify(allow),
   ABUSE:{consume:async(key,{windowMs,limit})=>{const now=W.clock.now(),row=P.abuse.get(key),live=row&&row.resetAt>now?row:{count:0,resetAt:now+windowMs};if(live.count>=limit)return false;P.abuse.set(key,{count:live.count+1,resetAt:live.resetAt});return true;}},
   IDENTITY_REPOSITORY:{get:async id=>{const e=[...P.entities.values()].find(x=>x.sub===id);return e&&!e.gone?{status:'active'}:null;}},
   ACCOUNTS:{get:id=>({invoke:async({method,args})=>{// Like a real writer, a gone (suspended, deleting) entity's object still answers; the route must refuse first.
    const e=[...P.entities.values()].find(x=>x.sub===id);if(method!=='rtcPeer'||!e)return {$fault:{code:'not_found',message:'Not found.',status:404}};
-   try{return await perform(e.engine,new RtcIngest({actor:{kind:'system',owner:id},input:{batch:args[1].input.batch,...typeof args[1].input.source==='string'?{source:args[1].input.source}:{}}}));}catch(error){return {$fault:{code:error.code,message:error.message,status:error.status}};}}})}};
+   try{return await perform(e.engine,new RtcIngest({actor:{kind:'system',owner:id},input:{batch:args[1].input.batch,...typeof args[1].input.source==='string'?{source:args[1].input.source}:{},...args[1].input.dark===true?{dark:true}:{}}}));}catch(error){return {$fault:{code:error.code,message:error.message,status:error.status}};}}})}};
  const flagPort={for:()=>({enabled:name=>P.flags[name]===true})};
  const bound={async check({subject,clientId,fragment,grants:list,member,value,reference}){
   const values={purposes:[]},versions={};

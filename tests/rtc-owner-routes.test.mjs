@@ -84,7 +84,7 @@ test('owner routes with RTC on: settings, policy, contact links, blocks, mutes, 
  // The ring: only pre-claim data, the caller's handle because this host verified it, and the owner's own apps.
  const {sid}=await ring(a,b);
  const rung=(await h.call(b,'GET','/api/rtc/ring')).body.invites;assert.equal(rung.length,1);
- assert.deepEqual(Object.keys(rung[0]).sort(),['apps','caller','callerHandle','callerOrigin','callerOriginReportedBy','media','purpose','ringUntil','sid','title']);
+ assert.deepEqual(Object.keys(rung[0]).sort(),['apps','caller','callerHandle','callerOrigin','callerOriginReportedBy','callerProvider','media','purpose','ringUntil','sid','title']);
  assert.equal(rung[0].callerOrigin,'https://app.example','the calling app\'s verified origin (spec §9.1, RTC-17)');
  assert.equal(rung[0].callerOriginReportedBy,null,'a same-host caller\'s origin is certified by this host: unlabelled (RTCs follow-up (a))');
  assert.deepEqual([rung[0].sid,rung[0].callerHandle,rung[0].purpose,rung[0].caller],[sid,a.handle,CALL.artefact,a.principal]);assert.deepEqual(rung[0].apps,[{clientId:'https://app.example/client',origin:'https://app.example'}]);

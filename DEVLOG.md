@@ -4953,6 +4953,7 @@ Reviewer: ___ Date: ___ Outcome: ___
 - **Update 3 (2026-10-26, HEAD b09140b):** the digest now also covers break-glass and ownership outbox scaling, ORG-10a-g relations, the drift audit, test reliability fixes, the RTC signaling design and the Beam removal: 50 new items (OB-53 to OB-70, MC-11 to MC-15, RTC-1 to RTC-17, AMD-X1, AMD-R1 to AMD-R6, OL-18 to OL-20), 200 in all including the hand-added MC-10 and AP-17. It adds a section of four open scope questions (SQ-1 to SQ-4), three highest-impact entries (RTC-6, AMD-X1, SQ-1) and new unverified external assumptions. Documentation only; nothing signed off.
 - **Update 4 (2026-10-27, HEAD 6a192a3):** the digest now also covers RTC-a/b/c (AMD-RV1), the messaging extraction prep, the core-scope audit, the browser bug hunt (with the F14 owner decision) and its server follow-ups, RTC-d, RTC-g, RTC-e (AMD-RV2) and the RTC service follow-ups, with their review follow-ups: 69 new items (RTC sub-sections, MC-16 to MC-22, AP-18, AP-19, UI-12 to UI-15, OL-21 to OL-23), 273 in all with the four SQ questions, five new highest-impact entries (RTCe-4, RTCs-1, RTC-17, UI-13, OL-21) and the recorded production gates added to the unverified assumptions. Documentation only; nothing signed off.
 - **Update 5 (2026-10-27, HEAD 67329c9):** the digest now also covers RTC-f (AMD-RL1) and the RTC-i conformance peer (AMD-RI1 to AMD-RI5), with their review follow-ups: 22 new items (RTC-f and RTC-i sub-sections: RTCf-1 to RTCf-14 in eight items plus RTCf-rev and RTCf-open, RTCi-1 to RTCi-11 plus RTCi-open), 295 in all. AMD-RI1/AMD-RI2 and the RTCe-16 revision are recorded on the existing RTCe items, and RTCf-10 carries its revision. Three new highest-impact entries (RTCf-rev, RTCf-8/RTCf-9, RTCi-8); entry 18 now names AMD-RI1. The relay spend authority, TURN price, TURN API and real-Durable-Object gates are added to the unverified assumptions. Documentation only; nothing signed off.
+- **Update 6 (2026-10-27, HEAD ce28f79, uncommitted tree):** the digest now also covers the RTC wargame entries (engine/route findings, M2/M6 ticket lifecycle and spam controls, and their review follow-ups; AMD-RW1 to AMD-RW6): 24 new items (RTC wargame sub-section: 21 decision items from RTCw-H1 to RTCw-M6-5 with AMD-RW1 and AMD-RW2, plus RTCw-info, RTCw-copy, RTCw-resid and RTCw-open), 319 in all. RTCi-11 is revised in place (the relay actor carries the narrowed signaling approval), and RTC-11, RTCd-4/RTCd-5, RTCd-10, RTCd-11, RTCd-14, RTCd-18/RTCd-19, RTCg-13/RTCg-15/RTCg-16 and RTCe-3/RTCe-4 carry dated revision notes (new windows, ringing reserve, per-app endpoint and ticket caps, the 202-with-dark-ingest answer for a per-account flag-off). Four new highest-impact entries (provider block and scoped mutes, app-bound tickets, the new limit values, AMD-RW1 cross-application visibility); entry 18 now records the per-account 202. The flag-cohort drain-rate residual and the wargame's local-only evidence are added to the unverified assumptions. Documentation only; nothing signed off.
 
 Reviewer: ___ Date: ___ Outcome: ___
 
@@ -7792,5 +7793,293 @@ Reviewer: ___ Date: ___ Outcome: ___
   - `tests/browser/app-removal-engine.mjs` (6) and `tests/browser/app-removal-browser.mjs` (26) passed. Neither file is wired into a package script, so both were run directly.
 - Revert checks: reverting the L1 intersection fails the race test, and the old L3 source order fails the L3 test. Before the M1 fix, both M1 tests timed out.
 - Not run: the Worker runtime against real Durable Objects (the removal drain's call back from the federation object, and the dispatch `at`), real WebRTC, or a second provider over TLS. Nothing is production-verified.
+
+Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-27 — RTC wargame findings and fixes (engine/route)
+
+**Implemented locally, provisional and unsigned.** A read-only wargame of the RTC engine and route layer confirmed each finding below with an engine test. This entry covers the engine and route findings (H1, M1, M3, M4, M5, L1 to L5 and two information items). M2 (ticket client and lifecycle) and M6 (issuer and origin block and mute, with its UI) were fixed concurrently by a second agent under a separate entry; the two agents' write sets did not overlap except for small, separately owned edits in `packages/rtc/service.mjs`. Every RTC flag stays off by default. There was no commit, deployment or secret. Every decision is **provisional** (coordinator), not signed off by the user. The proposed spec amendments AMD-RW1 to AMD-RW3 are in spec §18, marked proposed and **not applied** to the normative text. The wargame tests are ported, inverted, to `tests/rtc-wargame.test.mjs` (14 tests).
+
+**Findings and decisions:**
+1. **H1. Control statements for unanswered invites revealed admission and block status (spec §12 MUST; fixed).**
+   - Three paths sent a control statement for an incoming record that no device had answered: a §6.4 `fail` on the caller leg (a reused `seq` with different bytes, or a buffer overflow), the 10 s gap timeout in `rtc.tick`, and `rtc.lifecycle` `deletion` (`revoked`). A caller that posts its own signed messages could therefore tell an admitted invite from a dropped one (blocked, unconfigured, over a limit), with or without a callee device.
+   - Fix: for a `silentEndable` record (incoming, ringing, unclaimed, held or not) all three paths end it with no control statement. The owner's endpoints still get `state: ended`; the caller's session rings out at `ring_until`. Claimed and connected sessions are unchanged.
+   - Route: `POST /bindle/rtc` refuses at step 1 (`400 rtc_batch_invalid`) a batch with any element whose `iss` is this host's origin. Same-host traffic travels only through the sender's own provider and the internal `rtcPeer` path, which applies §6 and §6.3 to its own endpoints first. Proposed **AMD-RW2**.
+   - L4 (receiver-side pre-claim rule): the callee provider now enforces §6.3 itself. Before the claim, a message from the caller leg other than `invite` or `cancel` is dropped at step 7, after step 5 consumed its `seq`, as other step-7 drops are (AMD-RI3 reading). Before this change the drop was implicit in the delivery switch; now it is explicit and never depends on the caller's provider.
+   - Tests: W5 (the oracle probe, admitted vs blocked vs no device: identical caller observations), the buffer-overflow path, W6a (gap), W6b (deletion; a claimed session is still told), and the route refusal.
+2. **M1. Own-device sessions shared cross-entity limits (fixed).**
+   - A same-host caller holding a contact link could spend the per-(issuer, callee) window, which `self` invites shared, and so silence the owner's own device-to-device invites for an hour (W1).
+   - Fix (`admission.mjs` `inviteLimits`): a `self` invite counts only against a new per-entity `self` window (120 per hour, provisional) and skips the host-wide per-caller limiter. A same-host caller's (issuer, callee) and (issuer, parent) windows are per-principal shares (this host's principals are verified accounts; the per-callee window of 60 per hour bounds their total). A foreign issuer's windows stay issuer-wide.
+   - Ringing reserve (§13 SHOULD): bearer-link invites (contact links, tickets without a principal) ring up to `calleeRinging` (4); `self` and principal-bound ticket invites may also use `calleeRingingReserve` (2) above it.
+   - The existing budgets test now expects the held-request cap (32) to bind for 40 same-host callers, instead of the shared issuer window (20). The chaos invariant allows 4 + 2 ringing.
+   - Proposed **AMD-RW3** (the issuer windows apply to cross-entity invites; a provider may count its own principals as shares).
+3. **M3. One application could squat the fan-out and the endpoint cap and see every invite (fixed).**
+   - Fix: `register` refuses more than `endpointsPerApp` (8) live endpoints per application within the entity's 32. Fan-out (`admission.mjs` `fanoutOrder`) takes at most 8 per application, round-robin across applications, the caller's own application (the certificate's `client_id`) first in each round, then the others by their most recently active endpoint, at most 16 in all.
+   - Spec text on cross-application visibility (every approved application sees every invite of that purpose fanned out to it and may claim it; approval is consent; mute or narrow to opt out) is proposed as **AMD-RW1**.
+   - Tests: W4 (one squatter, two other applications, five applications in all; round-robin counts), `fanoutOrder`. The existing endpoint-binding test now fills the 32 across four applications; the relay revocation test unregisters each scenario's devices.
+4. **M4. `send`, `renew` and relay credentials did not re-check the bound purpose (spec §9.1; fixed).**
+   - Fix: `renew` and `send` (unless every message is `end`, `cancel` or `decline`) call `requireApproved` for the session's purpose. A contract RPC's actor carries its per-RPC approval narrowed by the account-local approval record, so no shard call is made; stored-endpoint paths keep the port.
+   - Relay: `rtc.relay-credentials` reads the session's purpose in a short transaction and checks it before anything is reserved (`packages/rtc/relay.mjs`, minimal edit).
+   - **RTCi-11 revised:** the `ice-relay/v1` actor now carries the **signaling** slot's approval from the same token's dispatch context, narrowed by the same approval record, instead of an empty one. A relay token without the signaling grant still carries an empty approval, so the check stays closed and off the shard. The relay grant itself is still not evaluated as a purpose approval.
+   - Tests: W2 (shard narrowed with the hook lost: renew and candidates refused `forbidden`, `end` still accepted; a narrowed per-RPC approval is refused with zero port calls), relay credentials refused after narrowing with nothing recorded.
+5. **M5. Eligibility checks ran before block, basis and limits (cost amplification; fixed).**
+   - Fix: `admitInvite` now runs a local pass first (closed, duplicate, block, epoch, basis configuration, ticket liveness, the L1 sid check, ringing and connected capacity, then `takeLimits`). Only an invite that passed it reaches the host-wide limiter, the handle read and the eligibility checks, which are cached per (client, grants, epoch) within the invite. A second transaction re-runs the local checks (without counting) atomically with the ticket spend, the record and the fan-out. Held requests skip eligibility (they are not fanned out).
+   - Limits are now counted before eligibility; an invite dropped by the second pass (a race) has still counted, which §13 allows ("after verification").
+   - Test: W7 with the shard-call count: 0 for unconfigured and for blocked invites; 2 for an admitted invite over 12 endpoints of two application grants.
+6. **L1. A sid collision redirected the callee's fan-out index (fixed, no spec change).**
+   - Fix: an invite whose `sid` is already in `rtc/dlv/<endpoint>/<sid>` of any live endpoint for another usable session (live, or a decline not yet sent) is dropped silently (`sidTaken`, in both passes). Keying the index by caller was rejected because it would change the `claim` and `send` lookups and the index layout for no further gain.
+   - Test: W8 (the colliding invite from a second caller is not admitted; the callee endpoint still sends and renews on its live call).
+7. **L2. Missed-list flooding evicted real history (fixed).** `addMissed` folds rows with the same (caller, purpose, kind) into one newest row with a `count`, so a repeating caller never evicts other callers. The owner view is unchanged (`count` is kept in the row and the export). Test: one caller's five missed invites are one row beside another caller's.
+8. **L3. The route answered 404 by the addressed account's RTC flags, and `open` depended on the callee's flag (fixed).**
+   - Route: 404 now means only that `aud` names no active entity (RTCe-4 / AMD-RI1) or that the deployment-wide flags or allowlist are off (unchanged: the endpoint stays unreachable then). A batch for an active entity whose own flags are off is answered `202` and dropped unprocessed.
+   - *Correction (review R1, 2026-10-27):* this did not hide the per-account flag. The flag-off branch answered 202 before step 1 ran, while a flag-on entity answered 400 for a step-1-invalid batch, and only a flag-on entity's queue could fill and answer 503. Fixed in "2026-10-27 — RTC wargame review follow-ups" (R1).
+   - `rtcPublicKeys` creates the entity's certification key whatever its own RTC flags say, so a same-host `open` toward it succeeds alike; its writer still drops new admissions while its flag is off. Only RTC engines whose own flag is on read it.
+   - The federation uniform-404 test now asserts that an account-scoped flag-off answers exactly as a valid batch does.
+9. **L5. The ticket cap count and ticket list read at most 1,024 rows (fixed in `service.mjs`).** `pruneTickets` reads every ticket row and, while more than `tickets × 3` (768) dead rows (revoked, used up or expired) are kept, deletes the oldest dead ones first. It runs before every cap check (`mint_ticket` and the callback ticket at `open`), so every row fits one 1,024-row read and short-lived tickets can no longer push live ones out of the count (`tickets.mjs` `ticketQuotaOk`, owned by the ticket agent, is unchanged). Test: 1,000 one-second tickets, then live minting stays within the cap, rows stay at most 1,024 and the owner's list sees every live ticket.
+10. **Information: `open` with a handle (decided: documented as unsupported).** The runtime keys port has no `resolveHandle`, because this host has no handle-to-principal index the account writer can read without a fetch. `open` with a handle string therefore answers `not_found` on the runtime (the engine fixture wires one for tests). Spec §9.1 allows a handle; this host supports principals only until a handle index exists. Recorded as a divergence, no amendment.
+11. **Information: an application can undo `revoke-endpoint` by registering again (decided: documented, no change).** Endpoint revocation removes one device instance; it is not an application ban. To stop an application, the owner narrows or revokes its grant (which ends its sessions and endpoints) or, after M6, blocks its origin; muting an application only removes the alert. The owner UI wording is the M6 agent's.
+
+**Files:**
+- `packages/rtc/service.mjs`: register per-app cap; renew/send approval; `pruneTickets`; `admitInvite` two-pass rewrite, `sidTaken`; H1 silent ends (processMessage, tick, lifecycle); L4 step-7 drop; `addMissed` folding.
+- `packages/rtc/admission.mjs`: `self` limit, `inviteLimits`, `fanoutOrder`. `packages/rtc/sessions.mjs`: `endpointsPerApp`, `calleeRingingReserve`.
+- `packages/rtc/relay.mjs`: the purpose check before issuance.
+- `packages/runtime/account/rtc.mjs`: relay actor approval (RTCi-11 revised); `rtcPublicKeys` key creation.
+- `packages/runtime/routes/rtc.mjs`: same-host `iss` refusal; 202-and-drop for per-account flags.
+- `docs/spec/rtc-signaling.md` §18: AMD-RW1 to AMD-RW3 (proposed).
+- Tests: `tests/rtc-wargame.test.mjs` (new, 14); updated `tests/rtc-engine.test.mjs` (budgets, endpoint binding, deletion, review M1, chaos invariant), `tests/rtc-federation.test.mjs` (uniform 404), `tests/rtc-relay.test.mjs` (device tidy-up).
+
+**Verification (local evidence only; the M2/M6 agent's work in progress was in the tree):**
+- The original wargame tests (`w1` to `w8`, which assert the findings) now all fail, as expected.
+- `npm test`: **4122 tests, 4120 passed, 0 failed, 2 todo** (includes the conformance suite).
+- `RTC_CONFORMANCE_STRICT=1 npm run test:rtc-conformance`: **48 tests, 46 passed, 0 failed, 2 todo** (divergences 6 and 8, intentional).
+- `npm run test:worker`: **93 passed**. `npm run test:ui-state`: **542 passed**. `npm run test:rtc-ui`: **33 engine and 36 browser tests passed**.
+- `npm run build:assets` and `npm run check:worker` (dry run): passed.
+- Not run: the Worker runtime against real Durable Objects, real WebRTC, a second provider over TLS. Nothing is production-verified. The limit and bound values (`self` 120/h, 8 per application, ringing reserve 2) are provisional provider policy.
+
+**Open:** AMD-RW1 to AMD-RW3 need protocol and security review; handle support for `open` (item 10); whether `mint_ticket` needs its own rate limit beyond the caps (the ticket agent's area); the RTCi-11 revision needs the digest updated.
+
+Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-27 — RTC wargame M2/M6: ticket lifecycle and spam controls
+
+**Implemented locally, provisional and unsigned.** These are fixes for two findings of the read-only RTC wargame. **M2:** tickets outlived the app that minted them, and one app could squat the 256-ticket cap. **M6:** spam controls were easy to evade. Every RTC flag stays off by default. Another agent was fixing the engine and route findings (M1, M3 and others) in `packages/rtc/service.mjs`, `admission.mjs`, `sessions.mjs`, `routes/rtc.mjs` and `tests/rtc-wargame.test.mjs` at the same time. This round's edits to `service.mjs` and `admission.mjs` are small and surgical. No commit or deployment.
+
+**Modules:**
+- `packages/rtc/tickets.mjs`:
+  - The ticket record gains `clientId` and `origin`, the minting app from the endpoint actor. Neither enters the signed meta or the link.
+  - `ticketView` shows both.
+  - New: `TICKET_APP_QUOTA` (64), `ticketClient`, `ticketLive`, `liveTicketCounts`, `ticketQuotaOk`, `revokeTicketsWhere`, `revokeTicketsFor` (the lifecycle rules) and `ticketRevokeTarget` (owner input).
+- `packages/rtc/admission.mjs`:
+  - New key `K.issuerBlock`, under `rtc/block-iss/` and outside `rtc/block/`.
+  - `ISSUER_BLOCKS_MAX` (256).
+  - `isBlocked(tx, principal, {self})` adds the provider block and the own-entity exemption.
+  - `blockTarget`, `blockKey`, `blockCovers`, `putBlock` and `issuerBlocks`.
+  - The mute kinds gain `issuer` and `origin`. `isMuted` takes `origin` and `own`.
+- `packages/rtc/service.mjs` (surgical edits):
+  - `mintTicket` and `open{callback}` record the app and check `ticketQuotaOk`.
+  - `lifecycle` calls `revokeTicketsFor`.
+  - `revokeTicket` accepts the bulk targets.
+  - `block` and `unblock` take `{principal}` or `{issuer}` (`blockInput`).
+  - `mute` validates the new kinds.
+  - `admitInvite` and `sessions` pass `self`, `origin` and `own`.
+  - `blocked()` adds `issuers`, and `exportRecords` adds `blockedIssuers`.
+  - No new operation classes: the existing `rtc.block`, `rtc.unblock`, `rtc.mute`, `rtc.unmute` and `rtc.revoke-ticket` carry the new inputs, so their narrowing or widening classification (`RTC_WIDENING`, `RTC_NEVER_GATED`, the route's capacity exemptions) is unchanged.
+- `packages/runtime/routes/rtc-owner.mjs`:
+  - The settings read adds `blockedIssuers`.
+  - The ring adds `callerProvider`: the caller's issuer origin when it is not this host, else null.
+  - `ringable` also honours `issuer` and `origin` mutes.
+  - Still a thin adapter: the engine validates every input.
+- UI:
+  - `apps/web/src/ui/rtc-ring.mjs`: "Block this provider", only for a foreign caller, behind its confirmation; and "Mute this app" (origin mute, no dialog). The "reported by" wording is kept.
+  - `apps/web/src/ui/rtc-settings.mjs`:
+    - Call links are grouped by the minting app, with "Revoke all from this app", "Revoke all from unknown apps" and "Revoke all call links".
+    - The blocked panel becomes "Blocked and muted", with People, Providers and Muted lists, each removable.
+    - New confirmation texts for a provider block and for bulk revocation.
+  - `apps/web/src/bl/rtc-settings.mjs`: notices for these actions; focus after an app mute from the ring.
+  - `apps/web/styles.css`: `.rtc-group` joins the existing bordered-group rule.
+  - `packages/i18n/catalogues.mjs`: 36 English and 36 Spanish strings.
+- `tests/rtc-owner-routes.test.mjs`: the pinned ring keys gain `callerProvider` (one-line change).
+
+**Decisions (provisional, unsigned):**
+- **RTCw-M2-1 Attribution.** A ticket records the minting app's `clientId` and verified origin from the endpoint actor (`mint_ticket`, and the caller's `open{callback}`). They are owner-visible data, never in the link or meta.
+- **RTCw-M2-2 Per-app quota.** At most 64 live tickets per app (callbacks included), inside the account cap of 256.
+  - The cap is unchanged.
+  - Residual: four approved apps together can still fill the cap. The owner sees each app's links and can revoke them per app.
+  - Revoked, exhausted and expired tickets free the quota at once.
+- **RTCw-M2-3 Lifecycle.**
+  - `app-revoked` revokes every ticket that app minted.
+  - `app-narrowed` revokes each of the app's tickets that names any removed purpose. The whole ticket goes, because a link never admits less than it shows and the meta is signed.
+  - `deletion` revokes every ticket.
+  - Revocation is narrowing and never gated.
+  - Revoked rows stay listed until the existing prune (a day after creation).
+- **RTCw-M2-4 Legacy tickets** (no `clientId`, minted before this change; flags were always off, so none should exist outside development):
+  - They are attributed to no app, and the console lists them as "Unknown app" with "Revoke all from unknown apps".
+  - No app event revokes them, because attribution is impossible.
+  - They count only against the account cap.
+  - They still expire at most 30 days after minting.
+  - Rejected: revoking every legacy ticket on any app event (it punishes unrelated links), and attributing them to the app that next mints (wrong).
+- **RTCw-M2-5 Owner bulk revoke.**
+  - `rtc.revoke-ticket` takes exactly one of `{jti}`, `{clientId}` (null for legacy) or `{all:true}`.
+  - Bulk forms answer `{revoked:true, count}`. An unknown `jti` answers the uniform 404.
+  - Each form runs only from its confirmation dialog.
+- **RTCw-M6-1 Provider block.**
+  - An owner blocks a whole caller provider: `rtc.block {issuer}`, an https origin.
+  - It is checked at the same admission step as a principal block, so a blocked provider's invites are dropped silently, never recorded as missed, and answered exactly like any other batch (202, same body, no oracle).
+  - Blocking ends that provider's ringing invites silently, like a principal block.
+  - At most 256 provider blocks, separate from the 1,000 principal blocks. Re-blocking a stored provider is idempotent.
+- **RTCw-M6-2 Provider and app-origin mutes.**
+  - New mute kinds: `issuer` (a provider) and `origin` (the calling app's origin from the caller leg certificate, as the caller's provider certified it).
+  - Mutes still deliver without alert. They are re-evaluated on every session read, so a mute set while an invite rings silences the portal ring.
+  - As before, unmuting does not make an already-admitted silent invite alert.
+  - The existing `app` (client_id) mute is kept.
+- **RTCw-M6-3 Own-entity rule.**
+  - This host's own issuer can never be a provider block or provider mute target: the service answers `invalid_args`.
+  - The owner's own principal can never be blocked.
+  - Defence in depth at admission: an invite from the owner's own entity is never blocked (by principal or provider) and never muted by provider or app origin, whatever rows are stored, so a block can never break own-device sessions.
+  - Rationale: every own-device session is same-issuer. This host's principals are real verified accounts, so they are blocked one by one, and a provider block is needed only for foreign issuers, which can mint principals at will.
+  - The ring offers "Block this provider" only when `callerProvider` is not null, that is, for a foreign caller.
+  - Same-host app-origin mutes apply to other people's calls only.
+- **RTCw-M6-4 Ring controls.**
+  - "Block this provider" sits beside "Block caller" and opens the same kind of confirmation. "One tap" is read as one tap to the dialog, as for Block caller (RTCg-13).
+  - "Mute this app" needs no dialog, like other mutes, and moves focus to the next invite.
+  - Neither appears for a caller on this host (provider) or for an invite without an origin (app mute).
+- **RTCw-M6-5 Settings.** Provider blocks and every mute are listed with Unblock or Unmute. Both are widening, so they answer the uniform 404 while RTC is off; the view is hidden then anyway. RTCg-15 ("mute has no controls") is partly superseded: unmute is listed and an app mute is offered in the ring. Muting a person, a purpose or an app from settings is still not offered.
+
+**Spec reconciliation (proposed, unsigned, not applied to the spec text):**
+- **AMD-RW4:** spec §13 "Blocking" also lets an owner block a caller provider (issuer origin), applied at the same step and as silently as a principal block. It never applies to the callee's own provider or entity.
+- **AMD-RW5:** spec §13 "Muting" also lets an owner mute a provider or a calling-app origin.
+- **AMD-RW6:** spec §4.3 tickets: a provider MAY record the minting application and SHOULD revoke an application's tickets when its grant is revoked, and those naming a removed purpose when it is narrowed.
+- Coordinator note: renumbered from AMD-RW1 to RW3 to avoid colliding with the engine/route entry's AMD-RW1 to RW3, and added to spec §18 as proposed rows.
+
+**Tests:**
+- `tests/rtc-tickets-spam.test.mjs` (**11**, engine level) covers:
+  - the wargame W3 PoC ported and inverted: one app stops at 64 while other apps keep minting and keep callbacks; removing the app revokes its tickets; the leaked tickets ring nobody; another app's ticket still rings;
+  - the quota with four apps against the cap, callbacks counting, expiry and revocation freeing the quota;
+  - narrowing, with exactly the tickets that name a removed purpose revoked, and deletion;
+  - legacy tickets;
+  - owner revocation forms, strict targets and never being gated;
+  - in the two- and three-provider world:
+    - a provider block covers known and never-seen principals, ends ringing invites, answers 202 as for everyone, records no missed entry, and unblocking restores;
+    - provider and origin mutes, with read-time re-evaluation;
+  - the own-entity rule, with stored self and own-issuer rows that do not break own-device alerting;
+  - bounds and gates;
+  - route helpers;
+  - a **seeded chaos test** (3 seeds × 220 steps) over mint, single, per-app and all revocation, app removal, re-approval, narrowing, principal block and unblock, and ticket invites, checking after every step:
+    - the live set matches the model;
+    - the per-app quota and the cap hold;
+    - no live ticket belongs to a removed app or names a lost purpose;
+    - each invite is admitted exactly when the model says.
+- `tests/browser/rtc-settings.mjs`: **15** (was 12), happy-dom. Grouping, the bulk intents and dialogs, the provider and mute lists, the ring's controls only for a foreign caller, en and es coverage, and no null or undefined attributes.
+- `tests/browser/rtc-settings-engine.mjs`: **18** (was 15). The provider block and bulk revocations run only from their dialog with their own notices; a mismatched dialog is refused; unblock and unmute need no dialog; an app mute from the ring moves focus to the next invite.
+- `tests/browser/rtc-settings-browser.mjs`: **36** (was 28). Eight new runs (Chromium and Firefox × en/es × 360 dark and 1280 light) cover:
+  - focus order through the ring's five controls;
+  - the provider dialog taking focus, naming the provider, trapping Tab and returning focus;
+  - the ring and dialog fitting the viewport;
+  - focus order through the grouped call links;
+  - WCAG contrast of at least 4.5 for the new headings, help text and buttons;
+  - no horizontal scroll and no page errors.
+- **Revert check** (scratch copy): 21 guards were reverted one at a time, and every one makes a suite fail. They are:
+  - the app-revoked, narrowed and deletion rules;
+  - recording `clientId`;
+  - the quota at mint and at callback;
+  - the lifecycle call;
+  - the provider check at admission and the `self` argument;
+  - the self exemption;
+  - the own-issuer refusal at block and at mute;
+  - the own-entity mute exemption and the mute call-site arguments;
+  - the provider bound;
+  - the self-principal refusal;
+  - ending ringing invites on block;
+  - the route's `callerProvider`;
+  - the ring button;
+  - the dialog wording.
+
+**Verification (local evidence only).** Run on the shared working tree, which includes the other agent's concurrent engine and route edits:
+- `npm test`: **4,122 tests, 4,120 passed, 0 failed, 2 todo**.
+- `test:worker`: **93 passed**.
+- `test:ui-state`: **542 passed**.
+- `test:rtc-ui`: **33** happy-dom/engine and **36** Playwright tests, all passed.
+- `check:worker` (runs `build:assets`): passed (dry run).
+- `test:e2e` (`styles.css` is shared): **324 passed, 0 failed**.
+- Coordination note: one concurrent rewrite of `admitInvite` dropped this round's two call-site arguments (`isBlocked … {self}` and the `isMuted` `origin`/`own`). They were re-applied, and the revert check covers both.
+- Not run: the Worker runtime in a browser, real WebRTC, a real second provider over TLS, push or relay. Nothing is production-verified.
+
+Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-27 — RTC wargame review follow-ups
+
+**Implemented locally, provisional and unsigned.** These fix a review of the two uncommitted wargame entries above ("RTC wargame findings and fixes (engine/route)" and "RTC wargame M2/M6"). The reviewer proved R1 and R2 with two tests; both are ported to `tests/rtc-wargame.test.mjs`, inverted so they assert the fix. Every RTC flag stays off by default. There was no commit, deployment or secret. Every decision below is **provisional** (coordinator), not signed off by the user. The AMD-RW3 and AMD-RW5 revisions in spec §18 are proposed and **not applied** to the normative text.
+
+**Findings and decisions:**
+1. **R1. The L3 fix still leaked the per-account flag (fixed).**
+   - Cause: the route answered 202 for a flag-off entity before step 1 ran. A flag-on entity answered 400 for a step-1-invalid batch (for example a stale `iat`). Only a flag-on entity's inbound queue could fill and answer 503.
+   - Fix, part 1 (`packages/runtime/routes/rtc.mjs`): the route runs `batchStep1` itself (issuer and crypto only, no per-account state) after the active-entity lookup and before the per-account flag branch. A step-1-invalid batch now answers 400 whatever the entity's flags, and never reaches the writer. The writer still re-runs step 1 (defence in depth).
+   - Fix, part 2 (503): a step-1-valid batch for a flag-off entity goes to its writer as a `dark` ingest (`rtcPeer` → `rtc.ingest {dark:true}`). It takes a slot in the same bounded queue, counted at the same byte size, so a full queue answers 503 alike. Only its size is stored, not its body, and `inboxPass` removes it without processing.
+   - Residual: a dark row drains faster than a processed one. A sender could compare drain rates under a sustained flood, but it controls processing cost on both sides only coarsely. This is recorded, not fixed.
+   - Consequence: a flag-off account's writer now stores short-lived `rtc/inq/` rows (at most 256 rows and 4 MiB, drained by the detached task) and may schedule its RTC alarm.
+   - The route reads its clock from `env.RTC_CLOCK` (test only; production uses the system clock, as the writer does). The federation fixture sets it.
+   - The item 8 overclaim in the engine/route entry is corrected in place.
+   - Tests: R1 inverted (a stale batch gives the same 400 flag-on and flag-off; a fresh one gives the same 202; only step-1-valid batches reach the writer; the dark row holds no body and drains); the queue fills to 503 identically for flag-on and flag-off entities; the federation uniform test now also sends a stale batch to a flag-off entity.
+2. **R2. Same-host shares could exhaust the per-callee window and drop the reserve class (fixed).**
+   - Fix (`admission.mjs` `inviteLimits`, `LIMITS`):
+     - A `preferred` invite counts against `pair`, `caller`, its ticket's `issuerParent` and a new per-callee `preferred` window (60 per hour). It never counts against `callee` or `issuerCallee`. A `preferred` invite is one on a principal-bound ticket, callback tickets included, presented by the principal the ticket names. A `self` invite keeps its own `self` window.
+     - A non-preferred same-host invite also counts against a new per-callee `sameHost` window (40 per hour), so all same-host principals together leave foreign callers at least 20 of the 60 `callee` slots.
+   - Extension beyond the request: `preferred` is also exempt from the foreign issuer-wide `issuerCallee` window. Otherwise one bearer-link user of a large provider could drop every bound-ticket friend on that provider.
+   - Hardening found while fixing (`service.mjs`): `preferred` (both the window and the ringing reserve) used to need only *a* principal on the ticket. It now needs `samePrincipal(ticket.claims.principal, sender)`. A leaked bound link presented by anyone else spends the ordinary windows and is refused at the spend.
+   - Tests: R2 inverted (the same three attackers stay within `sameHost`, and the bound-ticket friend is admitted); a limit-window test (40 same-host, then 20 foreign, then `preferred` still open); the leaked-link test.
+3. **R3. A foreign provider could get a genuine app muted for everyone (fixed).**
+   - Cause: a foreign leg certificate's `client.origin` and `client_id` are only what its provider asserts.
+   - Fix (`admission.mjs` `muteKey`, `isMuted`; `service.mjs` `mute`):
+     - `app` and `origin` mutes take an optional `issuer`. A foreign issuer stores the mute under key kind `app@` or `origin@` with the value `[issuer, value]`, and it covers only callers of that provider.
+     - Absent, null or this host's own issuer stores the unscoped key, which now covers same-host callers only.
+     - `issuer` is refused for other kinds and must be an origin. Unmute takes the same scope.
+     - `rtc.blocked` lists each mute with `issuer` (null for unscoped).
+   - Owner route: `ringable` takes this host's issuer and applies the same scoping. It also no longer treats an `issuer` mute as covering this host's own callers.
+   - UI:
+     - The ring's "Mute this app" sends `issuer: callerProvider` for a foreign caller.
+     - Settings mute rows add "(reported by {provider})" for scoped rows, and Unmute keeps the scope.
+     - A scoped `app` row shows the asserted client_id raw, never matched to the owner's own approved apps.
+     - New en and es strings.
+   - **I2 (in R3):** fan-out `prefer` applies only to a same-host caller's client_id.
+   - Stored rows: the RTC flags have never been on, so the rule is simply that an unscoped `app` or `origin` row means this host. A pre-existing unscoped row therefore stops covering foreign callers; the owner can re-mute from the ring. No migration.
+   - Tests:
+     - R3 in a three-provider world: C asserts A's genuine app and is muted by origin and by client_id; A's genuine app still alerts; unscoped mutes never cover A; unmuting restores; strict input.
+     - Same-host: an unscoped origin mute covers a neighbour on this host.
+     - I2: fan-out order for foreign and same-host callers.
+     - happy-dom: the scoped rows, the unmute input and the ring mute input.
+     - Playwright: the scoped row text, Tab reaching its Unmute and the provider label contrast of at least 4.5, all in Chromium and Firefox × en/es × 360 dark and 1280 light.
+4. **I1 (done).** `limitsOpen` is a read-only pre-check. Pass 1 runs it before `sidTaken` and the capacity scan, and `takeLimits` still decides atomically.
+5. **I3 (recorded).** `rtcPublicKeys` creates an entity's certification key even when the entity's own RTC flags are off (L3). The cost is bounded by callers' `opens` window (60 per hour per caller) and one key per entity.
+6. **I5 (done, value changed).** `mint_ticket` has a per-app, per-account `mint` window of 120 per hour, counted after the quota check. It also counts for the callback ticket at `open{callback}`, as the quota does.
+   - Why 120, not the suggested 30: the window must stay above the per-app quota of 64, so an app can fill its quota in one burst (for example pairing). It still bounds churn of short-lived tickets.
+   - The L5 test now moves the clock an hour every 100 mints.
+   - Test: I5 (stops at 120; another app is unaffected; the window resets).
+7. **I6 (done).** "Revoke all from unknown apps" opens its own confirmation, "Revoke every call link from unknown apps?", in en and es. It no longer says "this app".
+
+**Spec (proposed, unsigned, not applied):** AMD-RW3 now adds a SHOULD for a per-callee window bounding same-host shares (reference value 40 of 60). It also gives principal-bound ticket invites their own window, outside the per-callee and issuer windows. AMD-RW5 now scopes mutes by calling-app origin and by `client_id` to the provider that asserted them, except for the callee's own provider's callers, and adds that a provider SHOULD NOT prefer a foreign caller's asserted `client_id` in fan-out.
+
+**Files:**
+- Routes: `packages/runtime/routes/rtc.mjs` (step 1, dark ingest) and `packages/runtime/routes/rtc-owner.mjs` (`ringable`).
+- Account adapter: `packages/runtime/account/rtc.mjs` (passes `dark` through).
+- Engine: `packages/rtc/admission.mjs` (`LIMITS`, `inviteLimits`, `limitsOpen`, `muteKey`, `isMuted`) and `packages/rtc/service.mjs` (dark ingest and inbox, `preferred`, I1, I2, mute scope, mint limit).
+- UI: `apps/web/src/ui/rtc-ring.mjs`, `apps/web/src/ui/rtc-settings.mjs` and `packages/i18n/catalogues.mjs` (3 en, 3 es).
+- Spec: `docs/spec/rtc-signaling.md` §18.
+- Tests:
+  - `tests/rtc-wargame.test.mjs`: 23 (was 14).
+  - `tests/rtc-federation.test.mjs`: uniform test extended.
+  - `tests/rtc-tickets-spam.test.mjs`: route helper and M6 mute test updated for scoping.
+  - Fixture: `tests/helpers/rtc-federation-fixture.mjs` (`RTC_CLOCK`, `dark`).
+  - Browser: `tests/browser/rtc-settings.mjs` and `tests/browser/rtc-settings-browser.mjs`.
+- Revert check: each guard reverted one at a time (route dark ingest, the flag-off early return, `preferred` window, `sameHost` window, the named-principal check, mute scope, I2) fails a new test. Removing only the route's step 1 leaves R1 equal (the writer's step 1 answers 400 alike), so the R1 test also counts writer calls.
+
+**Verification (local evidence only):**
+- `npm test`: **4,131 tests, 4,129 passed, 0 failed, 2 todo**.
+- `RTC_CONFORMANCE_STRICT=1 npm run test:rtc-conformance`: **48 tests, 46 passed, 0 failed, 2 todo** (intentional divergences 6 and 8).
+- `test:worker`: **93 passed**. `test:ui-state`: **542 passed**.
+- `test:rtc-ui`: **33** happy-dom/engine and **36** Playwright tests passed.
+- `build:assets` and `check:worker` (dry run): passed.
+- Not run: the Worker runtime against real Durable Objects, real WebRTC, a real second provider over TLS. Nothing is production-verified. The values (`preferred` 60/h, `sameHost` 40/h, `mint` 120/h) are provisional provider policy.
+
+**Open:** the dark-row drain-rate residual (R1); whether to exempt `preferred` from `issuerCallee` (decided here, provisionally); AMD-RW3 and AMD-RW5 revisions need protocol and security review.
 
 Reviewer: ___ Date: ___ Outcome: ___

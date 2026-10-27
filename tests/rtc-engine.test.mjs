@@ -4,7 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {rtcHost,CALL,SYNC,FILES,SCREEN,REF,ISS,APP,OTHER_APP,DAY,subOf,identityOf,fault,rejects,relay,host as hostCandidate,rawHost,srflx,sdp,payloadOf} from './helpers/rtc-fixture.mjs';
-import {transition,canTransition,decideClaim,offerSeq,newLeg,gapExpired,dueEvent,SESSION_STATES,SESSION_EVENTS,ORDER_LIMITS,RTC_BOUNDS} from '../packages/rtc/sessions.mjs';
+import {transition,canTransition,decideClaim,offerSeq,newLeg,gapExpired,dueEvent,SESSION_STATES,SESSION_EVENTS,ORDER_LIMITS,RTC_BOUNDS,RING_MAX_MS} from '../packages/rtc/sessions.mjs';
 import {takeLimits,LIMITS} from '../packages/rtc/admission.mjs';
 import {signRtcJws,RTC_MESSAGE_TYP} from '../packages/rtc/jws.mjs';
 import {buildBatch,linkDigest} from '../packages/rtc/messages.mjs';
@@ -278,11 +278,12 @@ test('budgets: caller open sessions and opens per hour, callee ringing, pair lim
  assert.equal((await record(h,2,'rtc/in/')).length-pairStart,LIMITS.pair.max);
  // 60 opens per hour per caller entity.
  h.clock.advance(61*MIN);let refused=0;for(let i=0;i<70;i++){const r=await fault(a.open(h.principal(2),CALL,{basis:link}).then(async s=>{await a.invite(s);await a.cancel(s);await h.pump();}));if(r?.code==='rate_limited')refused++;else assert.equal(r,null);}assert.equal(refused,10);
- // Held requests are bounded per callee (32) and per sending issuer (20 per hour); on one host every caller shares the
- // issuer, so the issuer limit binds first. Excess is dropped silently.
+ // Held requests are bounded per callee (32) and per sending issuer (20 per hour). RTC wargame M1: a same-host
+ // caller's issuer window is a per-principal share (this host's principals are verified accounts), so 40 same-host
+ // callers are bounded by the held cap. Excess is dropped silently.
  await h.run(2,'rtc.set-policy',{input:{requests:[CALL]}});const callers=[];for(let n=5;n<5+40;n++){await h.add(n);const d=h.device(n);await d.register();callers.push(d);}
  for(const d of callers){const s=await d.open(h.principal(2),CALL);await d.invite(s);}await h.pump();
- assert.equal((await record(h,2,'rtc/in/')).filter(r=>r.held&&r.state==='ringing').length,Math.min(LIMITS.issuerCallee.max,RTC_BOUNDS.heldRequests));
+ assert.equal((await record(h,2,'rtc/in/')).filter(r=>r.held&&r.state==='ringing').length,RTC_BOUNDS.heldRequests);
 });
 
 test('sequence reuse: duplicate bytes ignored, another signature is the same content, different bytes end the leg',async()=>{
@@ -375,7 +376,11 @@ test('endpoint binding: the secret or the DPoP key, never the identifier alone',
  assert.equal((await a.run('rtc.endpoints')).endpoints.length,2);assert.equal((await other.run('rtc.endpoints')).endpoints.length,0);
  // No secret, push key or queue is ever in a read.
  const list=await h.run(1,'rtc.endpoint-list');assert.equal(JSON.stringify(list).includes(out.endpoint_secret),false);
- for(let i=0;i<RTC_BOUNDS.endpoints-2;i++)await h.device(1).register();assert.equal((await fault(h.device(1).register())).code,'rate_limited');
+ // RTC wargame M3: at most 8 live endpoints per application, 32 per entity across applications.
+ for(let i=0;i<RTC_BOUNDS.endpointsPerApp-2;i++)await h.device(1).register();assert.equal((await fault(h.device(1).register())).code,'rate_limited','8 per application');
+ const appDevice=n=>h.device(1,{grant:h.grant(1,{clientId:`https://app${n}.example/c`,origin:`https://app${n}.example`})});
+ for(let n=1;n<RTC_BOUNDS.endpoints/RTC_BOUNDS.endpointsPerApp;n++)for(let i=0;i<RTC_BOUNDS.endpointsPerApp;i++)await appDevice(n).register();
+ assert.equal((await fault(appDevice(99).register())).code,'rate_limited','32 per entity');
 });
 
 test('leg keys: renewal keeps cnf, a delegate is never certified twice',async()=>{
@@ -400,7 +405,11 @@ test('revocation mid-session: unregister, revoke-endpoint, end-session and app r
 test('account deletion mid-session: peers are told, nothing new is admitted, the purge leaves nothing behind',async()=>{
  const h=await rtcHost();const {a,b,s}=await connected(h);const ringing=await a.open(h.principal(2),CALL,{basis:(await b.run('rtc.mint-ticket',{purposes:[CALL],uses:5,expires_in:600})).link});await a.invite(ringing);await h.pump();
  const out=await h.run(2,'rtc.lifecycle',{actor:h.system(2),input:{event:'deletion'}});assert.equal(out.ended,2);await h.pump();
- await a.listen();assert.equal(a.events.filter(e=>e.type==='state'&&e.state==='ended').length,2);
+ // RTC wargame H1 (§12): only the connected session is told; the unanswered invite ends silently towards the caller,
+ // whose session rings out at ring_until.
+ await a.listen();assert.equal(a.events.filter(e=>e.type==='state'&&e.state==='ended').length,1);
+ assert.equal((await record(h,1,'rtc/out/')).find(r=>r.sid===ringing.sid).state,'ringing');
+ h.clock.advance(RING_MAX_MS+1);await h.tick(1);
  assert.equal((await record(h,1,'rtc/out/')).every(r=>r.state==='ended'),true);
  assert.equal((await h.rows(2,'rtc/ep/')).length,0);assert.equal((await fault(b.register())).status,404,'nothing new after the deletion step');
  // The purge removes the store; later messages to the deleted entity are dropped after their useful life.
@@ -509,7 +518,8 @@ async function invariants(h,devices,wins){
   const outs=list('rtc/out/'),ins=list('rtc/in/');
   // C6: storage bounds.
   assert.ok(outs.filter(r=>r.state!=='ended').length<=RTC_BOUNDS.callerOpen,'caller open bound');
-  assert.ok(ins.filter(r=>r.state==='ringing'&&!r.held).length<=RTC_BOUNDS.calleeRinging,'callee ringing bound');
+  // RTC wargame M1: bearer-link invites ring up to calleeRinging; self and principal-bound tickets use the reserve too.
+  assert.ok(ins.filter(r=>r.state==='ringing'&&!r.held).length<=RTC_BOUNDS.calleeRinging+RTC_BOUNDS.calleeRingingReserve,'callee ringing bound');
   assert.ok(ins.filter(r=>r.state==='connected').length<=RTC_BOUNDS.calleeConnected,'callee connected bound');
   assert.ok(list('rtc/ep/').length<=RTC_BOUNDS.endpoints&&list('rtc/ep/').every(ep=>ep.q.count<=RTC_BOUNDS.queueEvents&&ep.q.bytes<=RTC_BOUNDS.queueBytes),'endpoint and queue bounds');
   assert.ok(list('rtc/outbox/').length<=RTC_BOUNDS.outbox&&list('rtc/missed/').length<=RTC_BOUNDS.missed,'outbox and missed bounds');
@@ -654,9 +664,10 @@ test('review M1: a peer\'s control statement verifies against the keys pinned on
  await h.pump();await a.listen();
  const out=(await record(h,1,'rtc/out/'))[0];assert.equal(out.state,'ended');assert.equal(out.endReason,'revoked');
  assert.equal(payloadOf(a.events.find(e=>e.type==='state'&&e.state==='ended').control).reason,'revoked');
- // A ringing session: the caller holds only the keys pinned at open.
+ // A ringing session: the caller holds only the keys pinned at open. RTC wargame H1: the callee claimed it (its answer
+ // not sent yet), since an unanswered invite now ends silently towards the caller.
  const c=h.device(3);await c.register();const {link}=await c.run('rtc.mint-ticket',{purposes:[CALL],uses:1,expires_in:3600});
- const ringing=await a.open(h.principal(3),CALL,{basis:link});await a.invite(ringing);await h.pump();
+ const ringing=await a.open(h.principal(3),CALL,{basis:link});await a.invite(ringing);await h.pump();await c.listen();await c.claim(ringing.sid);
  await h.run(3,'rtc.lifecycle',{actor:h.system(3),input:{event:'deletion'}});h.account(3).keyless=true;await h.pump();
  assert.equal((await record(h,1,'rtc/out/')).find(r=>r.sid===ringing.sid).endReason,'revoked','verified with the keys pinned at open');
  // A key rotated between open and answer: the keys that verified the answer are pinned too.

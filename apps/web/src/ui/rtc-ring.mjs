@@ -6,7 +6,8 @@
 // registered for that purpose. Never the invite
 // context, links or anything from the caller's provider. Nothing renders while RTC_SIGNALING_ENABLED is off. The
 // ring root in release.mjs is a polite live region, so a new invite is announced without taking focus.
-// Provisional wording (DEVLOG 2026-10-27 RTC-g), not signed off by the user.
+// Provisional wording (DEVLOG 2026-10-27 RTC-g, and "RTC wargame M2/M6" for the provider block and app mute), not
+// signed off by the user.
 import {h,icon,helpers,interfaceText} from './release-primitives.mjs';
 import {rtcEnabled,rtcRingInvites,rtcRingSurface} from '../bl/rtc-settings.mjs';
 import {purposeTitle,principalLabel} from './rtc-settings.mjs';
@@ -35,7 +36,14 @@ export function rtcRing(state,{now=Date.now()}={}){
    // Decline is the silent local end (review F1): the caller is told nothing and rings out.
    h('div',btn('Decline',{kind:'rtc-action',action:'end-session',input:{sid:i.sid,caller:i.caller,silent:true},ring:true,until:i.ringUntil},'button secondary'),
     btn('Not now',{kind:'dismiss-rtc-ring',sid:i.sid},'text-button'),
-    btn('Block caller',{kind:'open-modal',modal:{kind:'rtc-confirm',action:'block',input:{principal:i.caller}}},'text-button danger')).classes('buttons'),
+    btn('Block caller',{kind:'open-modal',modal:{kind:'rtc-confirm',action:'block',input:{principal:i.caller}}},'text-button danger'),
+    // Wargame M6 (provisional): a caller on another provider can be blocked with that whole provider (an allowlisted
+    // provider can mint new identities at will), and the calling app muted by its origin. Never offered for a caller
+    // on this host (`callerProvider` is null then; this host is never a provider block target).
+    typeof i.callerProvider==='string'&&i.callerProvider?btn('Block this provider',{kind:'open-modal',modal:{kind:'rtc-confirm',action:'block',input:{issuer:i.callerProvider}}},'text-button danger'):null,
+    // Review R3: a foreign caller's app origin is only what its provider asserted, so the mute is scoped to that
+    // provider (`issuer`) and never silences the genuine app for callers elsewhere.
+    typeof i.callerOrigin==='string'&&i.callerOrigin?btn('Mute this app',{kind:'rtc-action',action:'mute',input:{kind:'origin',value:i.callerOrigin,...typeof i.callerProvider==='string'&&i.callerProvider?{issuer:i.callerProvider}:{}},ring:true,sid:i.sid},'text-button'):null).classes('buttons'),
    h('p','The caller is not told whether you declined or put this off: the call just rings out. Not now only hides this notice here.').classes('field-help')
   ).attrs({'aria-label':'Incoming call'}).classes('panel','rtc-ring').key(i.sid);
  })).attrs({role:'region','aria-label':'Incoming calls'}).classes('rtc-ring-stack');

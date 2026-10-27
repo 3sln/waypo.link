@@ -133,4 +133,8 @@ export const RTC_BOUNDS=Object.freeze({
  // Review M3: per-peer outbox rows, the share of both caps kept for control statements (message batches stop short of
  // it), and control replies (`failed` for a late or extra callee leg) per session. Review M2: the inbound queue.
  outboxPeer:64,outboxControlReserve:128,outboxPeerControlReserve:16,controlReplies:4,inbox:256,inboxBytes:4194304,
+ // RTC wargame (provisional): live endpoints per application within `endpoints` (M3); ringing capacity kept above
+ // `calleeRinging` for `self` and principal-bound ticket invites (M1, §13 SHOULD); missed rows per (caller, purpose,
+ // kind) are folded into one (L2).
+ endpointsPerApp:8,calleeRingingReserve:2,
 });

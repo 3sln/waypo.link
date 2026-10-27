@@ -205,7 +205,7 @@ function narrowedApproval(approval,at,record){
 /** RTC-e: the {kind:'app'} actor from the VERIFIED federation RPC dispatch context (never from arguments): the token's
  * subject owner, client, the client's registered origin, the token's grant ids (required by checkBound), its epoch
  * and, for a DPoP-bound token, the key's jkt. Live checks as every built-in contract handler makes them. */
-async function contractActor(c,owner,context,{contract=RTC_SIGNALING_CONTRACT,resource='rtc',operations=RTC_CONTRACT_OPERATIONS,signaling=true}={}){
+async function contractActor(c,owner,context,{contract=RTC_SIGNALING_CONTRACT,resource='rtc',operations=RTC_CONTRACT_OPERATIONS}={}){
  const forbidden=()=>{throw new StorageError('forbidden','Real-time connection access denied.',403);};
  const origin=c.config.APP_ORIGIN,subject=`${origin}/entities/${owner}`;
  if(!plain(context)||context.authority!=='bindle'||context.contract!==contract||context.subject!==subject||context.resource!==`${subject}/${resource}`||context.resourceGeneration!==owner||!plain(context.connection)||typeof context.connection.id!=='string'||!Number.isSafeInteger(context.connection.generation)||context.epoch===undefined||context.epoch===null||typeof context.clientId!=='string'||!plain(context.args))forbidden();
@@ -220,12 +220,12 @@ async function contractActor(c,owner,context,{contract=RTC_SIGNALING_CONTRACT,re
  // `bound`, computed in that RPC's own authorization transaction); without one nothing is approved (fail closed).
  // RTC-i review L1: that approval is narrowed by the client's account-local approval record (rtcAppChanged), so a
  // narrowing or revocation whose hook entered this gate before this RPC is never bypassed by an older snapshot.
- // RTC-i review (relay actor): the ice-relay/v1 actor carries an EMPTY approval. Issuance needs a live leg of a session
- // that signaling approval admitted (and narrowing or revocation ends such sessions); the signaling slot's approval
- // is not the relay grant, and an empty one keeps any future approval check on this path closed and off the shard.
- const bound=signaling&&plain(context.bound)&&Object.hasOwn(context.bound,RTC_SIGNALING_SLOT)?context.bound[RTC_SIGNALING_SLOT]:null;
+ // RTC wargame M4 (revises RTCi-11): the ice-relay/v1 actor carries the SIGNALING slot's approval behind the same
+ // token, narrowed by the same approval record, because relay issuance now re-checks the session's purpose live
+ // (§9.1). A token without the signaling grant carries an empty approval, so the check stays closed and off the shard.
+ const bound=plain(context.bound)&&Object.hasOwn(context.bound,RTC_SIGNALING_SLOT)?context.bound[RTC_SIGNALING_SLOT]:null;
  let approval=plain(bound)&&plain(bound.values)&&plain(bound.versions)?{values:structuredClone(bound.values),versions:structuredClone(bound.versions)}:{values:{},versions:{}};
- if(signaling){let record;try{record=await c.metadata.get(await approvalKey(context.clientId));}catch{record=false;}approval=narrowedApproval(approval,plain(bound)?bound.at:undefined,record===false?{}:record);}
+ {let record;try{record=await c.metadata.get(await approvalKey(context.clientId));}catch{record=false;}approval=narrowedApproval(approval,plain(bound)?bound.at:undefined,record===false?{}:record);}
  return {operation,actor:{kind:'app',owner,clientId:context.clientId,origin:appOrigin,grants:[...context.grants],epoch:context.epoch,bound:approval,...typeof context.jkt==='string'?{jkt:context.jkt}:{}}};
 }
 /** RTC-e RESOURCE_METHOD_HANDLERS entry for `rtc-signaling/v1` (inside the account gate: `listen` never waits here;
@@ -239,7 +239,7 @@ export async function rtcResourceMethod(c,owner,context){
 /** RTC-f RESOURCE_METHOD_HANDLERS entry for `ice-relay/v1` on the built-in relay occupant (`${subject}/relay`, declared
  * only while both flags are on and the relay is configured): the verified actor, then rtc.relay-credentials. */
 export async function rtcRelayResourceMethod(c,owner,context){
- const {operation,actor}=await contractActor(c,owner,context,{contract:ICE_RELAY_CONTRACT,resource:'relay',operations:RTC_RELAY_CONTRACT_OPERATIONS,signaling:false});
+ const {operation,actor}=await contractActor(c,owner,context,{contract:ICE_RELAY_CONTRACT,resource:'relay',operations:RTC_RELAY_CONTRACT_OPERATIONS});
  return c.rtcDispatch(owner,{operation,actor,input:context.args});
 }
 
@@ -267,7 +267,8 @@ export const methods={
  async rtcPeer(owner,{operation,input}={}){
   if(operation!=='rtc.ingest'||!plain(input)||await this.metadata.get('owner')!==owner)notFound();
   // Review F1: the route's pseudonymous source network rides with the batch (the roster caps plain claims per network).
-  const result=await run(this,new RtcIngest({actor:system(owner),input:{batch:input.batch,...typeof input.source==='string'?{source:input.source}:{}}}));
+  // Review R1: `dark` (the route's flag-off entity) takes a queue slot and is removed unprocessed.
+  const result=await run(this,new RtcIngest({actor:system(owner),input:{batch:input.batch,...typeof input.source==='string'?{source:input.source}:{},...input.dark===true?{dark:true}:{}}}));
   // The batch is only queued here (the answer never waits on steps 2–8); the detached task processes it, and the
   // alarm is the durable fallback, which a session's next deadline also needs.
   try{if(await hasState(this))await this.scheduleAlarm(Date.now()+1000);}catch{/* the alarm retries */}
@@ -278,7 +279,10 @@ export const methods={
   const a=await this.config.IDENTITY_ACCOUNT(subject);if(a?.status!=='active')return null;
   // No presence oracle (spec §12): every active entity answers with a certification key while RTC is on, whether or
   // not it ever registered an endpoint, so `open` succeeds alike. The key is created here on first need.
-  if(enabled(this,subject))try{await signerFor(this)(subject);}catch{/* a moved identity has none */}
+  // RTC wargame L3: created whatever this entity's own RTC flags say (targeting included), so `open` toward it never
+  // depends on, or reveals, its per-account state; its writer drops new admissions while its flag is off. Only RTC
+  // engines whose own flag is on read this (peers' `open` and verification), so nothing changes with RTC off.
+  try{await signerFor(this)(subject);}catch{/* a moved identity has none */}
   const certification=(await certificationKeyList(this.metadata,subject)).filter(k=>k.state==='active').slice(0,8).map(k=>({kid:k.kid,use:'cert',alg:'ES256',jwk:{kty:'EC',crv:'P-256',x:k.publicJwk.x,y:k.publicJwk.y},state:'active'}));
   return {identity:a.identityUri??`${this.config.APP_ORIGIN}/identity/${subject}`,certification,handle:typeof a.handle==='string'?a.handle:null,aep:Number.isSafeInteger(a.aep)?a.aep:0};
  },

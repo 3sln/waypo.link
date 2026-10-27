@@ -23,7 +23,8 @@ const peer={iss:O,sub:'550e8400-e29b-41d4-a716-446655440002'},far={iss:'https://
 const rtc={...structuredClone(SETTINGS),owner:OWNER,generation:1,status:'loaded',contacts:[{parent:'c1',purposes:[CALL]}],
  sessions:[{sid:'s'.repeat(22),role:'callee',state:'connected',own:false,peer,peerHandle:'river_with_a_rather_long_handle',purpose:CALL,media:['audio','video','data'],createdAt:now-60000,ringUntil:now,endsAt:now+86400000,held:false,claimed:true}],
  missed:[{id:'m1',caller:far,callerHandle:null,purpose:CALL,kind:'held',at:now-3600000}],blocked:[{principal:far,at:now,handle:null}],
- tickets:[{jti:'t1',purposes:[CALL],uses:3,usesLeft:2,principal:null,expiresAt:now+86400000,revoked:false,callback:false,live:true}],
+ blockedIssuers:[{issuer:'https://a-very-long-blocked-provider-name.example',at:now}],muted:[{kind:'issuer',value:'https://spam.example',at:now},{kind:'origin',value:'https://a-rather-long-dialer-application.example',at:now},{kind:'origin',value:'https://a-rather-long-dialer-application.example',issuer:'https://a-very-long-provider-name.example',at:now}],
+ tickets:[{jti:'t1',purposes:[CALL],uses:3,usesLeft:2,principal:null,expiresAt:now+86400000,revoked:false,callback:false,live:true,clientId:APP,origin:'https://app.example'},{jti:'t2',purposes:[CALL],uses:1000,usesLeft:1000,principal:null,expiresAt:now+86400000,revoked:false,callback:false,live:true,clientId:null,origin:null}],
  endpoints:[{endpoint:'ep_'+'a'.repeat(22),clientId:APP,origin:'https://app.example',label:'Laptop',purposes:[CALL],lastSeen:now}]};
 const invite={sid:'r'.repeat(22),caller:peer,callerHandle:'river_with_a_rather_long_handle',callerOrigin:'https://a-rather-long-calling-application-name.example',purpose:CALL,title:{en:'Call',es:'Llamada'},media:['audio','video'],ringUntil:now+600000,apps:[{clientId:APP,origin:'https://app.example'}]};
 const account={id:OWNER,handle:'n.fixture',termsVersion:'2026-10-11',consoleFeatures:{rtcSignalingEnabled:true}};
@@ -38,6 +39,7 @@ const render=()=>{dodo.reconcile(root,[app(state)]);const r=rtcRing(state);dodo.
 const onIntent=event=>{const d=event.detail;window.intents.push(d);if(d.kind==='open-modal'){opener=document.activeElement;state={...state,modal:d.modal};render();requestAnimationFrame(()=>document.querySelector('[role=dialog] button')?.focus());}if(d.kind==='close-modal'){state={...state,modal:null};render();opener?.focus();}
  if(d.kind==='review-rtc-narrow'){const app=state.rtc.apps.find(a=>a.clientId===d.clientId),data=new FormData(d.form);opener=document.activeElement;state={...state,modal:{kind:'rtc-confirm',action:'narrow-app',input:{clientId:d.clientId,purposes:app.purposes.filter(l=>data.get('keep:'+l)==='on')}}};render();requestAnimationFrame(()=>document.querySelector('[role=dialog] button')?.focus());}};
 root.addEventListener('3sln-intent',onIntent);ringRoot.addEventListener('3sln-intent',onIntent);
+window.ringFar=()=>{state={...state,rtcRing:{...state.rtcRing,invites:[{...invite,sid:'f'.repeat(22),caller:far,callerHandle:null,callerOriginReportedBy:'a-very-long-provider-name.example',callerProvider:far.iss}]}};render();};
 window.ring=on=>{const n=on===true?1:Number(on)||0;state={...state,rtcRing:{...state.rtcRing,invites:Array.from({length:n},(_,k)=>({...invite,sid:String.fromCharCode(114+k).repeat(22)}))}};render();};
 render();window.ready=true;`;
 test.before(async()=>{server=createServer(async(req,res)=>{try{const u=new URL(req.url,'http://127.0.0.1'),path=u.pathname;if(path==='/'){res.setHeader('Content-Type','text/html');res.end('<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/apps/web/styles.css"></head><body><div id="app"></div><script type="module" src="/boot.mjs"></script></body></html>');return;}
@@ -123,6 +125,56 @@ for(const name of ['chromium','firefox'])for(const locale of ['en','es'])for(con
   await page.keyboard.press('Enter');await settle(page);await dialog.waitFor();
   await dialog.locator('button',{hasText:locale==='es'?'Aprobar menos fines':'Approve fewer purposes'}).click();
   assert.deepEqual(await page.evaluate(()=>window.intents.filter(i=>i.kind==='rtc-action').at(-1)),{kind:'rtc-action',action:'narrow-app',input:{clientId:'https://app.example/client',purposes:[CALL]}});
+  assert.deepEqual(errors,[]);
+ }finally{await page.close();}
+});
+
+// RTC wargame M6 and M2: the ring's provider block and app mute for a foreign caller, and the settings' call links by
+// app, blocked providers and mutes, by keyboard, at phone and desktop widths in both schemes and languages: focus order
+// through the ring's controls, the provider dialog taking and returning focus, contrast and no horizontal scroll.
+for(const name of ['chromium','firefox'])for(const locale of ['en','es'])for(const [width,colorScheme] of [[360,'dark'],[1280,'light']])test(`RTC wargame M2/M6 ${name} ${locale} ${width} ${colorScheme}`,async()=>{
+ const page=await browsers[name].newPage({viewport:{width,height:800},colorScheme}),errors=[];page.on('pageerror',e=>errors.push(e.message));
+ const t=(en,es)=>locale==='es'?es:en;
+ try{
+  await page.goto(`${origin}/?locale=${locale}`);await page.waitForFunction(()=>window.ready);await page.evaluate(()=>window.ringFar());await settle(page);
+  const ring=page.locator('.rtc-ring');assert.match(await ring.innerText(),locale==='es'?/según a-very-long-provider-name\.example/:/reported by a-very-long-provider-name\.example/);
+  // Focus order: Decline, Not now, Block caller, Block this provider, Mute this app.
+  const decline=ring.locator('button').first();await decline.focus();const order=[await decline.innerText()];
+  for(let i=0;i<4;i++){await page.keyboard.press('Tab');order.push(await page.evaluate(()=>document.activeElement.textContent));}
+  assert.deepEqual(order,[t('Decline','Rechazar'),t('Not now','Ahora no'),t('Block caller','Bloquear a quien llama'),t('Block this provider','Bloquear este proveedor'),t('Mute this app','Silenciar esta app')]);
+  const box=await ring.boundingBox();assert.ok(box&&box.x>=0&&box.x+box.width<=width+0.5,'the ring fits');
+  for(const label of [t('Block this provider','Bloquear este proveedor'),t('Mute this app','Silenciar esta app')]){const b=ring.locator('button',{hasText:label});const c=await b.boundingBox();assert.ok(c&&c.x>=0&&c.x+c.width<=width+0.5&&c.height>=20,`${label} is inside the viewport with a usable target`);}
+  assert.ok(await contrast(page,'.rtc-ring button.danger')>=4.5,'danger text contrast in the ring');
+  // The provider block opens its confirmation with focus inside, names the provider, traps Tab and returns focus.
+  const provider=ring.locator('button',{hasText:t('Block this provider','Bloquear este proveedor')});await provider.focus();await page.keyboard.press('Enter');await settle(page);
+  const dialog=page.locator('[role=dialog]');await dialog.waitFor();assert.equal(await dialog.evaluate(d=>d.contains(document.activeElement)),true,'focus moves into the dialog');
+  const text=await dialog.innerText();assert.match(text,locale==='es'?/¿Bloquear este proveedor\?/:/Block this provider\?/);assert.match(text,/a-very-long-provider-name\.example/);
+  const d=await dialog.boundingBox();assert.ok(d&&d.x>=0&&d.x+d.width<=width+0.5,'the dialog fits');
+  for(let i=0;i<5;i++){await page.keyboard.press('Tab');assert.equal(await dialog.evaluate(n=>n.contains(document.activeElement)),true,'Tab stays inside the dialog');}
+  await dialog.locator('button',{hasText:t('Cancel','Cancelar')}).focus();await page.keyboard.press('Enter');await settle(page);
+  assert.equal(await provider.evaluate(e=>document.activeElement===e),true,'Cancel returns focus to Block this provider');
+  await page.keyboard.press('Enter');await settle(page);await dialog.waitFor();await dialog.locator('button',{hasText:t('Block provider','Bloquear proveedor')}).click();
+  assert.deepEqual(await page.evaluate(()=>window.intents.filter(i=>i.kind==='rtc-action').at(-1)),{kind:'rtc-action',action:'block',input:{issuer:'https://a-very-long-provider-name.example'}});
+  await dialog.locator('button',{hasText:t('Cancel','Cancelar')}).click();await settle(page);// the fixture keeps the dialog open after an intent
+  await ring.locator('button',{hasText:t('Mute this app','Silenciar esta app')}).click();
+  assert.deepEqual(await page.evaluate(()=>window.intents.at(-1)),{kind:'rtc-action',action:'mute',input:{kind:'origin',value:'https://a-rather-long-calling-application-name.example',issuer:'https://a-very-long-provider-name.example'},ring:true,sid:'f'.repeat(22)});
+  await page.evaluate(()=>window.ring(0));await settle(page);
+  // Settings: call links grouped by app with bulk revokes; blocked providers and mutes listed with their controls.
+  const tickets=page.locator('.rtc-tickets');assert.deepEqual(await tickets.locator('.rtc-ticket-app h3').allInnerTexts(),['Caller',t('Unknown app','App desconocida')]);
+  const all=tickets.locator('button',{hasText:t('Revoke all call links','Revocar todos los enlaces de llamada')});await all.focus();
+  const ticketOrder=[];for(let i=0;i<4;i++){await page.keyboard.press('Tab');ticketOrder.push(await page.evaluate(()=>document.activeElement.textContent));}
+  assert.deepEqual(ticketOrder,[t('Revoke','Revocar'),t('Revoke all from this app','Revocar todos los de esta app'),t('Revoke','Revocar'),t('Revoke all from unknown apps','Revocar todos los de apps desconocidas')],'focus follows the reading order through the groups');
+  const blocked=page.locator('.rtc-blocked');assert.match(await blocked.innerText(),/a-very-long-blocked-provider-name\.example/);
+  assert.equal(await blocked.locator('.rtc-row').count(),5,'one person, one provider, three mutes');
+  // Review R3: the scoped mute row names its provider; keyboard order reaches its Unmute after the unscoped row's.
+  const scoped=blocked.locator('.rtc-row').last();assert.match(await scoped.innerText(),locale==='es'?/según a-very-long-provider-name\.example/:/reported by a-very-long-provider-name\.example/);
+  const unmutes=blocked.locator('.rtc-row button',{hasText:t('Unmute','Dejar de silenciar')});const count=await unmutes.count();
+  await unmutes.nth(count-2).focus();await page.keyboard.press('Tab');assert.equal(await scoped.locator('button').evaluate(e=>document.activeElement===e),true,'Tab reaches the scoped row\'s Unmute');
+  await page.keyboard.press('Enter');assert.deepEqual(await page.evaluate(()=>window.intents.at(-1)),{kind:'rtc-action',action:'unmute',input:{kind:'origin',value:'https://a-rather-long-dialer-application.example',issuer:'https://a-very-long-provider-name.example'}});
+  const ratio=await contrast(page,'.rtc-blocked .rtc-mute-provider');assert.ok(ratio>=4.5,`provider label contrast ${ratio?.toFixed(2)} in ${colorScheme}`);
+  for(const selector of ['.rtc-blocked h3','.rtc-blocked .field-help','.rtc-tickets .rtc-ticket-app .field-help','.rtc-tickets .rtc-ticket-app h3','.rtc-blocked .rtc-row button']){const ratio=await contrast(page,selector);assert.ok(ratio>=4.5,`${selector} contrast ${ratio?.toFixed(2)} in ${colorScheme}`);}
+  const rows=await page.locator('.rtc-blocked .rtc-row, .rtc-tickets .rtc-row').evaluateAll(ns=>ns.map(n=>n.getBoundingClientRect()).map(r=>[r.left,r.right]));assert.ok(rows.every(([l,r])=>l>=0&&r<=width+0.5),'rows stay inside the viewport');
+  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,'no horizontal scroll');
   assert.deepEqual(errors,[]);
  }finally{await page.close();}
 });

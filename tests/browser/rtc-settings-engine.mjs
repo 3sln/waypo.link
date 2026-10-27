@@ -273,3 +273,34 @@ test('narrowing: the apps form opens the confirmation with the purposes still ch
  const g=await fixture({request:()=>{throw Object.assign(Error('Not found'),{status:404});}});
  try{await loaded(g);const input={clientId:APP,purposes:[CALL]};await g.write({modal:{kind:'rtc-confirm',action:'narrow-app',input}});await g.act(new rtc.RtcOwnerAction({action:'narrow-app',input}));assert.equal((await g.read()).error,rtc.RTC_UNAVAILABLE);}finally{await g.close();}
 });
+
+test('wargame M2/M6: a provider block and bulk call-link revocation run only from their dialog, with their own notices',async()=>{
+ const f=await fixture();
+ try{
+  await loaded(f);
+  const cases=[['block',{issuer:'https://far.example'},'Provider blocked. Calls and requests from everyone there are dropped without telling them.'],['revoke-ticket',{clientId:APP},'Call links revoked.'],['revoke-ticket',{clientId:null},'Call links revoked.'],['revoke-ticket',{all:true},'Call links revoked.']];
+  for(const [action,input,notice] of cases){
+   await f.write({modal:null,error:'',notice:''});await f.act(new rtc.RtcOwnerAction({action,input}));
+   assert.equal((await f.read()).error,rtc.RTC_REVIEW,JSON.stringify(input)+' without its dialog');assert.equal(f.calls.length,0);
+   // A dialog for one app never confirms another app's (or every) revocation, nor a person's block a provider's.
+   const other=action==='block'?{principal:peer}:input.all?{clientId:APP}:{all:true};
+   await f.write({modal:{kind:'rtc-confirm',action,input:other},error:''});await f.act(new rtc.RtcOwnerAction({action,input}));assert.equal((await f.read()).error,rtc.RTC_REVIEW);assert.equal(f.calls.length,0);
+   await f.write({modal:{kind:'rtc-confirm',action,input},error:''});await f.act(new rtc.RtcOwnerAction({action,input}));const s=await f.read();
+   assert.deepEqual(f.calls[0],{method:'POST',path:`/api/rtc/${action}`,body:input});assert.equal(s.notice,notice);assert.equal(s.error,'');assert.deepEqual(f.effects.at(-1),['restoreFocus']);f.calls.length=0;
+  }
+  // Unblocking a provider and unmuting need no dialog (widening; the route answers the uniform 404 while RTC is off).
+  await f.act(new rtc.RtcOwnerAction({action:'unblock',input:{issuer:'https://far.example'}}));assert.equal((await f.read()).notice,'Provider unblocked.');assert.deepEqual(f.effects.at(-1),['focus','#rtc-blocked-title']);f.calls.length=0;
+  await f.act(new rtc.RtcOwnerAction({action:'unmute',input:{kind:'origin',value:'https://dialer.example'}}));assert.deepEqual(f.calls[0].body,{kind:'origin',value:'https://dialer.example'});assert.equal((await f.read()).notice,'Unmuted.');
+ }finally{await f.close();}
+});
+
+test('wargame M6: muting the calling app from the ring needs no dialog and moves focus to the next invite',async()=>{
+ const f=await fixture({get:p=>p==='/api/rtc/ring'?{invites:[inviteOf(A),inviteOf(B)]}:structuredClone(SETTINGS)});
+ try{
+  await f.act(new rtc.LoadRtcRing());f.calls.length=0;
+  await f.act(new rtc.RtcOwnerAction({action:'mute',input:{kind:'origin',value:'https://dialer.example'},ring:true,sid:A}));
+  assert.deepEqual(f.calls.map(c=>`${c.method} ${c.path}`),['POST /api/rtc/mute','GET /api/rtc/settings','GET /api/rtc/ring']);assert.deepEqual(f.calls[0].body,{kind:'origin',value:'https://dialer.example'});
+  const s=await f.read();assert.equal(s.notice,'App muted. Its calls still arrive but no longer ring.');assert.equal(s.error,'');
+  assert.deepEqual(f.effects.at(-1),['focus',`[id="rtc-ring-${B}"]`],'focus moves to the next invite');
+ }finally{await f.close();}
+});

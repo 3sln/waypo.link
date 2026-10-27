@@ -96,17 +96,56 @@ function missedPanel(state,m){
    h('span',btn('Remove from list',{kind:'rtc-action',action:'clear-missed',input:{id:x.id}},'text-button'),confirmButton(state,'Block','block',{principal:x.caller})).classes('buttons')).classes('rtc-row').key(x.id))).classes('rtc-rows'),confirmButton(state,'Clear the list','clear-missed',{},'button secondary'))
    :h('p','No missed calls or held requests.').classes('field-help'));
 }
-function blockedPanel(state,m){
- const {btn}=helpers(state);
- return section('blocked','Blocked people','Calls and requests from these people are dropped without telling them.',
-  m.blocked.length?h('ul',...m.blocked.map(b=>h('li',literal(principalLabel(b.principal,b.handle)),btn('Unblock',{kind:'rtc-action',action:'unblock',input:{principal:b.principal}},'text-button')).classes('rtc-row').key(b.principal.iss+b.principal.sub))).classes('rtc-rows'):h('p','Nobody is blocked.').classes('field-help'));
+const hostOf=origin=>{try{return new URL(origin).host;}catch{return String(origin??'');}};
+/** Wargame M6: what a mute names, as the owner reads it (owner data marked translate="no"). Review R3: an app or
+ * calling-app mute for callers on another provider names that provider (`issuer`); without one it means this host. */
+function muteLabel(m,x,locale){
+ if(x.kind==='principal')return [h('span','Person'),' ',literal(principalLabel(x.value,null))];
+ if(x.kind==='purpose')return [h('span','Purpose'),' ',literal(purposeTitle(m,x.value,locale))];
+ if(x.kind==='issuer')return [h('span','Provider'),' ',literal(hostOf(x.value))];
+ const provider=typeof x.issuer==='string'&&x.issuer?[' ',h('span',interfaceText('(reported by {provider})',{provider:hostOf(x.issuer)})).classes('rtc-mute-provider')]:[];
+ // A foreign app's client_id is shown as asserted, never matched against this owner's own approved apps.
+ if(x.kind==='app')return [h('span','App'),' ',literal(provider.length?x.value:appLabel(m.apps.find(a=>a.clientId===x.value)??{clientId:x.value})),...provider];
+ return [h('span','Calling app'),' ',literal(hostOf(x.value)),...provider];
 }
-function ticketsPanel(state,m){
+/** Blocked people, blocked providers (wargame M6) and every mute, each removable (unblock and unmute are widening:
+ * they are offered only while RTC is on, like the view itself). */
+function blockedPanel(state,m){
+ const {btn}=helpers(state),locale=state.locale??'en',issuers=Array.isArray(m.blockedIssuers)?m.blockedIssuers:[],muted=Array.isArray(m.muted)?m.muted:[];
+ return section('blocked','Blocked and muted','Calls and requests from blocked people and providers are dropped without telling them. Muted calls still arrive but never ring.',
+  h('h3','People').props({id:'rtc-blocked-people'}),
+  m.blocked.length?h('ul',...m.blocked.map(b=>h('li',literal(principalLabel(b.principal,b.handle)),btn('Unblock',{kind:'rtc-action',action:'unblock',input:{principal:b.principal}},'text-button')).classes('rtc-row').key(b.principal.iss+b.principal.sub))).classes('rtc-rows'):h('p','Nobody is blocked.').classes('field-help'),
+  h('h3','Providers').props({id:'rtc-blocked-providers'}),
+  h('p','Blocking a provider drops calls from everyone whose identity comes from it, including people you know there.').classes('field-help'),
+  issuers.length?h('ul',...issuers.map(b=>h('li',literal(hostOf(b.issuer)),btn('Unblock',{kind:'rtc-action',action:'unblock',input:{issuer:b.issuer}},'text-button')).classes('rtc-row').key('iss:'+b.issuer))).classes('rtc-rows'):h('p','No provider is blocked.').classes('field-help'),
+  h('h3','Muted').props({id:'rtc-blocked-muted'}),
+  muted.length?h('ul',...muted.map(x=>h('li',h('span',...muteLabel(m,x,locale)),btn('Unmute',{kind:'rtc-action',action:'unmute',input:{kind:x.kind,value:x.value,...typeof x.issuer==='string'&&x.issuer?{issuer:x.issuer}:{}}},'text-button')).classes('rtc-row').key('mute:'+x.kind+':'+JSON.stringify([x.issuer??null,x.value])))).classes('rtc-rows'):h('p','Nothing is muted.').classes('field-help'));
+}
+/** Wargame M2: the app that created a call link, or null for a link created before links recorded it (unknown app). */
+function ticketApp(m,t){
+ if(typeof t.clientId!=='string'||!t.clientId)return null;
+ const app=m.apps.find(a=>a.clientId===t.clientId);return {clientId:t.clientId,label:app?appLabel(app):hostOf(t.origin??t.clientId),approved:Boolean(app)};
+}
+function ticketRow(state,m,t){
  const {date}=helpers(state),locale=state.locale??'en';
- return section('tickets','Call links','Apps you approved can create call links for you, for example to pair a nearby device. Anyone holding a live link can ring you for its purposes until it is used up, expires or is revoked.',
-  m.tickets.length?h('ul',...m.tickets.map(t=>h('li',h('span',h('strong',literal(t.purposes.map(l=>purposeTitle(m,l,locale)).join(', '))),' ',badge(t.revoked?'Revoked':t.live?'Live':'Ended',t.live?'good':'')),
-   h('span',interfaceText('{left} of {uses} uses left',{left:t.usesLeft,uses:t.uses}),' · ',interfaceText('Expires {date}',{date:date(t.expiresAt)}),t.principal?' · ':null,t.principal?'One person only':null).classes('field-help'),
-   t.live?confirmButton(state,'Revoke','revoke-ticket',{jti:t.jti}):null).classes('rtc-row').key(t.jti))).classes('rtc-rows'):h('p','You have no call links.').classes('field-help'));
+ return h('li',h('span',h('strong',literal(t.purposes.map(l=>purposeTitle(m,l,locale)).join(', '))),' ',badge(t.revoked?'Revoked':t.live?'Live':'Ended',t.live?'good':'')),
+  h('span',interfaceText('{left} of {uses} uses left',{left:t.usesLeft,uses:t.uses}),' · ',interfaceText('Expires {date}',{date:date(t.expiresAt)}),t.principal?' · ':null,t.principal?'One person only':null).classes('field-help'),
+  t.live?confirmButton(state,'Revoke','revoke-ticket',{jti:t.jti}):null).classes('rtc-row').key(t.jti);
+}
+/** Call links grouped by the app that created them (wargame M2), with a bulk revoke per app and for all of them. */
+function ticketsPanel(state,m){
+ const groups=new Map();for(const t of m.tickets){const app=ticketApp(m,t),key=app?.clientId??'';const g=groups.get(key)??{app,tickets:[]};g.tickets.push(t);groups.set(key,g);}
+ const anyLive=m.tickets.some(t=>t.live);
+ return section('tickets','Call links','Apps you approved can create call links for you, for example to pair a nearby device. Anyone holding a live link can ring you for its purposes until it is used up, expires or is revoked. Removing an app revokes the links it created.',
+  m.tickets.length?h('div',
+   anyLive?h('div',confirmButton(state,'Revoke all call links','revoke-ticket',{all:true},'button secondary')).classes('buttons'):null,
+   ...[...groups.values()].map(({app,tickets})=>h('article',
+    h('h3',app?literal(app.label):h('span','Unknown app')),
+    h('p',app?(app.approved?'Created by this app.':'Created by an app you no longer approve.'):'Created before call links recorded which app made them.').classes('field-help'),
+    h('ul',...tickets.map(t=>ticketRow(state,m,t))).classes('rtc-rows'),
+    tickets.some(t=>t.live)?confirmButton(state,app?'Revoke all from this app':'Revoke all from unknown apps','revoke-ticket',{clientId:app?.clientId??null},'text-button danger'):null
+   ).classes('rtc-group','rtc-ticket-app').key('app:'+(app?.clientId??''))))
+   .classes('rtc-list'):h('p','You have no call links.').classes('field-help'));
 }
 function verifyPanel(){
  return section('verify','Check who you are talking to',null,
@@ -127,6 +166,11 @@ const CONFIRM=Object.freeze({
  'revoke-ticket':['Revoke this call link?','Nobody can start a new call with this link. Calls already connected continue until they end.','Revoke call link'],
  'revoke-endpoint':['Remove this device from calls?','The app on this device stops receiving calls and its sessions end. It can listen again while the app keeps its access.','Remove device'],
  block:['Block this person?','Their calls and requests are dropped without telling them and are not listed as missed. You can unblock them here later.','Block'],
+ 'block-issuer':['Block this provider?','Calls and requests from everyone whose identity comes from this provider are dropped without telling them, including people you know there. You can unblock it in Calls & connections.','Block provider'],
+ 'revoke-app-tickets':['Revoke every call link from this app?','Nobody can start a new call with the links this app created. Calls already connected continue until they end.','Revoke links'],
+ // Review I6: links from before call links recorded their app have no app to name.
+ 'revoke-unknown-tickets':['Revoke every call link from unknown apps?','Nobody can start a new call with the links created before call links recorded which app made them. Calls already connected continue until they end.','Revoke links'],
+ 'revoke-all-tickets':['Revoke all call links?','Nobody can start a new call with any of your call links. Apps can create new ones later. Calls already connected continue until they end.','Revoke all'],
  'clear-missed':['Clear the missed and held list?','Every entry is removed from this list. Nobody is told.','Clear list'],
  'narrow-app':['Approve fewer purposes for this app?','The app can no longer ring you or connect your devices for these purposes. Its calls and connections for them end now, and its devices stop listening for them. Approving them again needs a new request from the app.','Approve fewer purposes'],
 });
@@ -137,9 +181,11 @@ function narrowSummary(state,input){
  return h('div',h('p',h('strong',literal(appLabel(app)))),h('p','No longer approved').classes('rtc-label'),h('ul',...removed.map(l=>h('li',literal(purposeTitle(m,l,locale))).key(l))),
   h('p','Still approved').classes('rtc-label'),h('ul',...kept.map(l=>h('li',literal(purposeTitle(m,l,locale))).key(l)))).classes('rtc-narrow-summary');
 }
+/** Which confirmation text an action and input take (wargame M2/M6: provider blocks and bulk link revocation). */
+const confirmKey=(action,input)=>action==='block'&&typeof input?.issuer==='string'?'block-issuer':action==='revoke-ticket'&&input?.all===true?'revoke-all-tickets':action==='revoke-ticket'&&input&&Object.hasOwn(input,'clientId')?(input.clientId===null?'revoke-unknown-tickets':'revoke-app-tickets'):action;
 /** The confirmation dialog for destructive RTC actions (modal kind `rtc-confirm`), for release-dialogs.mjs. */
 export function rtcDialog(state){
  const m=state.modal;if(m?.kind!=='rtc-confirm'||!Object.hasOwn(CONFIRM,m.action))return null;
- const {btn}=helpers(state),[title,text,label]=CONFIRM[m.action];
- return {title,body:h('div',h('p',text),m.action==='narrow-app'?narrowSummary(state,m.input):null,h('div',btn(label,{kind:'rtc-action',action:m.action,input:m.input},'button danger-button'),btn('Cancel',{kind:'close-modal'},'button secondary')).classes('buttons')).classes('rtc-confirm')};
+ const {btn}=helpers(state),[title,text,label]=CONFIRM[confirmKey(m.action,m.input)];
+ return {title,body:h('div',h('p',text),m.action==='block'&&typeof m.input?.issuer==='string'?h('p',h('strong',literal(hostOf(m.input.issuer)))):null,m.action==='narrow-app'?narrowSummary(state,m.input):null,h('div',btn(label,{kind:'rtc-action',action:m.action,input:m.input},'button danger-button'),btn('Cancel',{kind:'close-modal'},'button secondary')).classes('buttons')).classes('rtc-confirm')};
 }

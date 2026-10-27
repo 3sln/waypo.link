@@ -71,8 +71,8 @@ import {RtcWireFault} from './jws.mjs';
 import {parseBatch,batchStep1,buildBatch,parseMessage,verifyMessage,validateMessageContent,candidateAllowedByPolicy,messageAllowedBeforeClaim,linkDigest,mediaValid,iatWithinWindow,RTC_LIMITS} from './messages.mjs';
 import {parseLegCertificate,verifyLegCertificate,signLegCertificate,parseControl,verifyControl,signControl,LEG_CERTIFICATE_SECONDS,LEG_CERTIFICATE_MAX_SECONDS} from './certificates.mjs';
 import {registeredPurpose,REGISTERED_PURPOSES,validateInviteForPurpose,partiesAdmit,mediaWithin,projectContext} from './purposes.mjs';
-import {RTC_TICKET_TYPE,canonicalBasisLink,mintTicketRecord,ticketFromLink,ticketAdmits,spendTicket,ticketView,purposeLinesValid,principalValid,TICKET_KEY,TICKET_PREFIX,TICKET_MAX_USES} from './tickets.mjs';
-import {K,readPolicy,ipPolicyFor,policyWidens,isBlocked,isMuted,MUTE_KINDS,muteValue,takeLimits,pruneLimits,basisKind,alertAllowed,candidateEndpoints,DEFAULT_POLICY} from './admission.mjs';
+import {RTC_TICKET_TYPE,canonicalBasisLink,mintTicketRecord,ticketFromLink,ticketAdmits,spendTicket,ticketView,purposeLinesValid,principalValid,TICKET_KEY,TICKET_PREFIX,TICKET_MAX_USES,ticketQuotaOk,revokeTicketsFor,revokeTicketsWhere,ticketRevokeTarget} from './tickets.mjs';
+import {K,readPolicy,ipPolicyFor,policyWidens,isBlocked,isMuted,MUTE_KINDS,blockTarget,blockKey,blockCovers,putBlock,issuerBlocks,takeLimits,limitsOpen,pruneLimits,basisKind,muteKey,SCOPED_MUTE_KINDS,alertAllowed,candidateEndpoints,fanoutOrder,inviteLimits,DEFAULT_POLICY} from './admission.mjs';
 import {transition,canTransition,isLive,dueEvent,recordExpired,decideClaim,claimUsable,offerSeq,payloadDigest,newLeg,gapExpired,RTC_BOUNDS,ORDER_LIMITS,SESSION_MAX_MS,RING_MAX_MS} from './sessions.mjs';
 
 export const RTC_SIGNALING_FLAG='RTC_SIGNALING_ENABLED',RTC_FOREIGN_FLAG='RTC_FOREIGN_ENABLED',RTC_TICKETS_FLAG='RTC_TICKETS_ENABLED';
@@ -184,8 +184,10 @@ export class RtcService{
   const bind=secret===null?{jkt:app.jkt}:{secretHash:await digest(this.crypto,'rtc-endpoint\0'+secret)};
   await this.store.transaction(async tx=>{
    await this.bindOwner(tx,owner);if(await tx.get(CLOSED_KEY))notFound();
-   let live=0;for(const ep of (await tx.list({prefix:K.endpointPrefix,limit:RTC_BOUNDS.endpoints*2})).values())if(ep.expiresAt>now)live++;
-   if(live>=RTC_BOUNDS.endpoints)limited();
+   // RTC wargame M3: at most RTC_BOUNDS.endpointsPerApp live endpoints per application within the entity's 32, so one
+   // application cannot hold the entity cap (and the fan-out) against another.
+   let live=0,app_=0;for(const ep of (await tx.list({prefix:K.endpointPrefix,limit:RTC_BOUNDS.endpoints*2})).values())if(ep.expiresAt>now){live++;if(ep.clientId===app.clientId)app_++;}
+   if(live>=RTC_BOUNDS.endpoints||app_>=RTC_BOUNDS.endpointsPerApp)limited();
    await tx.put(K.endpoint(id),{v:1,id,clientId:app.clientId,origin:app.origin,purposes:[...input.purposes],label:input.label??null,push:input.push?structuredClone(input.push):null,bind,grants:[...app.grants],...app.epoch!==undefined?{epoch:app.epoch}:{},createdAt:now,lastSeen:now,expiresAt:now+RTC_BOUNDS.endpointIdleMs,q:{next:1,count:0,bytes:0},gap:false});
   });
   return {endpoint:id,...secret?{endpoint_secret:secret}:{},expires_at:seconds(now+RTC_BOUNDS.endpointIdleMs)};// Unix seconds, as certificate `exp`
@@ -351,7 +353,7 @@ export class RtcService{
  async inboxPass(owner,{limit=16}={}){
   const rows=await this.store.transaction(tx=>tx.list({prefix:K.inboxPrefix,limit}));let processed=0;
   for(const [key,row] of rows){
-   try{const elements=await batchStep1(parseBatch(row.batch),{issuer:this.issuer,now:seconds(row.at),parseCertificate:parseLegCertificate,parseControl,allowLoopback:this.allowLoopback,crypto:this.crypto});await this.process(owner,elements,row.at,{source:row.source});}catch{/* steps 2–8 are silent */}
+   if(!row.dark)try{const elements=await batchStep1(parseBatch(row.batch),{issuer:this.issuer,now:seconds(row.at),parseCertificate:parseLegCertificate,parseControl,allowLoopback:this.allowLoopback,crypto:this.crypto});await this.process(owner,elements,row.at,{source:row.source});}catch{/* steps 2–8 are silent */}
    await this.store.transaction(async tx=>{if(!await tx.get(key))return;await tx.delete(key);const m=await tx.get(K.inboxMeta)??{seq:0,count:0,bytes:0};await tx.put(K.inboxMeta,{seq:m.seq,count:Math.max(0,m.count-1),bytes:Math.max(0,m.bytes-(row.bytes??0))});});
    processed++;
   }
@@ -380,9 +382,13 @@ export class RtcService{
   return true;
  }
  async addMissed(tx,{caller,line,kind,at}){
+  // RTC wargame L2: one row per (caller, purpose, kind), moved to the newest position with a count, so one caller
+  // repeating invites never evicts other callers' history from the 100-row list.
+  const rows0=await tx.list({prefix:K.missedPrefix,limit:RTC_BOUNDS.missed*2});let count=1;
+  for(const [key,row] of rows0)if(row?.kind===kind&&row.purpose===line&&samePrincipal(row.caller,caller)){count+=Number.isSafeInteger(row.count)?row.count:1;await tx.delete(key);}
   const rows=await tx.list({prefix:K.missedPrefix,limit:RTC_BOUNDS.missed+1});
   if(rows.size>=RTC_BOUNDS.missed){const over=rows.size-RTC_BOUNDS.missed+1;let i=0;for(const key of rows.keys()){if(i++>=over)break;await tx.delete(key);}}
-  const id=base64url(this.random.bytes(12));await tx.put(K.missed(at,id),{id,caller:party(caller),purpose:line,kind,at});
+  const id=base64url(this.random.bytes(12));await tx.put(K.missed(at,id),{id,caller:party(caller),purpose:line,kind,at,...count>1?{count}:{}});
  }
  async delegateFree(tx,jkt){return !await tx.get(K.delegate(jkt));}
  async recordDelegate(tx,jkt,sid,now){await tx.put(K.delegate(jkt),{sid,until:now+SESSION_MAX_MS+RTC_BOUNDS.delegateMs});}
@@ -438,7 +444,7 @@ export class RtcService{
    ip:ipPolicyFor(policy,{crossEntity:!own}),peerKeys:pinKeys(peerKeys),basisLink:basis,...basis?{basisDigest:await linkDigest(basis,this.crypto)}:{},...input.target?{target:input.target}:{},controls:[],inviteSent:false};
   let callback=null;
   if(input.callback===true){const signer=await this.linkSigner?.(owner);if(!signer)fail('temporarily_unavailable','Real-time connections are temporarily unavailable.',503);
-   callback=await mintTicketRecord({issuer:this.issuer,sub:owner,purposes:[held.ref.purpose],uses:1,expiresIn:86400,principal:to,signer,now,callback:true,allowLoopback:this.allowLoopback,crypto:this.crypto});
+   callback=await mintTicketRecord({issuer:this.issuer,sub:owner,purposes:[held.ref.purpose],uses:1,expiresIn:86400,principal:to,signer,now,callback:true,clientId:app.clientId,origin:app.origin,allowLoopback:this.allowLoopback,crypto:this.crypto});
    rec.callbackLink=callback.link;rec.callbackDigest=await linkDigest(callback.link,this.crypto);}
   const cert=await this.certFor({owner,app,rec,role:'caller',delegate:delegate.jwk,now});rec.mine.certificate=cert.certificate;rec.mine.exp=cert.exp;
   await this.store.transaction(async tx=>{
@@ -447,13 +453,25 @@ export class RtcService{
    if(!await this.delegateFree(tx,jkt))invalid('This leg key was already used.');
    let open=0;for(const r of (await tx.list({prefix:K.outPrefix,limit:4096})).values())if(isLive(r))open++;
    if(open>=RTC_BOUNDS.callerOpen||!await takeLimits(tx,[{name:'opens',parts:[owner]}],now,this.crypto))limited();
-   if(callback){if((await this.liveTickets(tx,now))>=RTC_BOUNDS.tickets)limited();await tx.put(TICKET_KEY(callback.record.jti),callback.record);}
+   if(callback){await this.pruneTickets(tx,now);if(!await ticketQuotaOk(tx,{now,clientId:app.clientId,cap:RTC_BOUNDS.tickets}))limited();
+   // Review I5: a per-app mint rate (admission.mjs LIMITS.mint), counted only for a mint the quota allows.
+   if(!await takeLimits(tx,[{name:'mint',parts:[app.clientId]}],now,this.crypto))limited();await tx.put(TICKET_KEY(callback.record.jti),callback.record);}
    await tx.put(K.out(sid),rec);await this.recordDelegate(tx,jkt,sid,now);
   });
   if(to.iss!==this.issuer)this.track(to);// RTC-e: the roster keeps the callee's keys current for the session's life
   return {sid,certificate:cert.certificate,expires_at:cert.exp,peer_keys:peerKeys,...callback?{callback:callback.link}:{}};
  }
- async liveTickets(tx,now){let n=0;for(const row of (await tx.list({prefix:TICKET_PREFIX,limit:RTC_BOUNDS.tickets*4})).values())if(!row.revoked&&row.usesLeft>0&&row.expiresAt>now)n++;return n;}
+ /** RTC wargame L5: keeps the ticket rows countable. Every row is read (paged); while more than RTC_BOUNDS.tickets*3
+  * dead rows (revoked, used up or expired) are kept, the oldest dead rows are deleted first. With at most
+  * RTC_BOUNDS.tickets live rows, every row then fits one 1,024-row read (the cap count, the owner's list and export),
+  * so short-lived or used-up tickets can never push a live one out of the count. Run before every cap check. */
+ async pruneTickets(tx,now){
+  let after;const dead=[];
+  for(;;){const page=await tx.list({prefix:TICKET_PREFIX,limit:BATCH,...after?{startAfter:after}:{}});
+   for(const [key,row] of page){after=key;if(!(!row?.revoked&&row?.usesLeft>0&&row?.expiresAt>now))dead.push([key,row?.createdAt??0]);}
+   if(page.size<BATCH)break;}
+  const over=dead.length-RTC_BOUNDS.tickets*3;if(over>0){dead.sort((a,b)=>a[1]-b[1]);for(const [key] of dead.slice(0,over))await tx.delete(key);}
+ }
 
  // ---- claim (§7.2) --------------------------------------------------------------------------------------------------
  async claim(actor,input){
@@ -495,6 +513,9 @@ export class RtcService{
   const app=this.app(actor),owner=app.owner;this.requireFlag(owner,app.clientId);exact(input,['endpoint','sid'],['endpoint_secret']);
   const now=this.now(),found=await this.store.transaction(async tx=>{await this.bindOwner(tx,owner);const ep=await this.endpointAuth(tx,app,input,now);return this.ownSession(tx,ep,input.sid);});
   if(!found||!isLive(found.rec)||!found.rec.mine?.certificate)notFound();
+  // RTC wargame M4 (§9.1 "every method checks ... the bound purposes live"): the session's purpose must still be
+  // approved behind this token (the actor's per-RPC approval; no shard call), whether or not the narrowing hook ran.
+  await this.requireApproved(app,found.rec.purpose.purpose);
   const cert=await this.certFor({owner,app,rec:found.rec,role:found.rec.role,delegate:found.rec.mine.delegate,now});
   await this.store.transaction(async tx=>{const rec=await tx.get(found.key);if(rec&&isLive(rec)&&rec.mine?.jkt===found.rec.mine.jkt){rec.mine.certificate=cert.certificate;rec.mine.exp=cert.exp;rec.mine.certSent=null;await tx.put(found.key,rec);}else notFound();});
   return {certificate:cert.certificate};
@@ -517,6 +538,9 @@ export class RtcService{
   const now=this.now(),nowS=seconds(now);
   const found=await this.store.transaction(async tx=>{await this.bindOwner(tx,owner);const ep=await this.endpointAuth(tx,app,input,now);const s=await this.ownSession(tx,ep,input.sid);return s&&{...s,policy:await readPolicy(tx)};});
   if(!found||!found.rec.mine?.certificate)notFound();
+  // RTC wargame M4: everything but the narrowing `end`, `cancel` and `decline` needs the session's purpose still
+  // approved behind this token (§9.1).
+  if(parsed.some(m=>!['end','cancel','decline'].includes(m.payload.type)))await this.requireApproved(app,found.rec.purpose.purpose);
   const rec0=found.rec,certificate={payload:parseLegCertificate(rec0.mine.certificate,{allowLoopback:this.allowLoopback}).payload},crossEntity=!rec0.own,held=heldPurpose(rec0.purpose.purpose);
   // Review L3: the stricter of the policy pinned at open or claim and the owner's current one, so narrowing the IP
   // policy applies to live sessions at once (widening never does).
@@ -582,8 +606,10 @@ export class RtcService{
   if(!purposeLinesValid(input.purposes)||!Number.isSafeInteger(input.uses)||input.uses<1||input.uses>TICKET_MAX_USES||!(input.principal===undefined||input.principal===null||principalValid(input.principal,this.allowLoopback)))invalid();
   for(const line of input.purposes){if(!heldPurpose(line))invalid('Unknown purpose.');await this.requireApproved(app,line);}
   const signer=await this.linkSigner?.(owner);if(!signer)fail('temporarily_unavailable','Real-time connections are temporarily unavailable.',503);
-  const now=this.now();let minted;try{minted=await mintTicketRecord({issuer:this.issuer,sub:owner,purposes:input.purposes,uses:input.uses,expiresIn:input.expires_in,principal:input.principal??null,signer,now,allowLoopback:this.allowLoopback,crypto:this.crypto});}catch{invalid();}
-  await this.store.transaction(async tx=>{await this.bindOwner(tx,owner);if(await tx.get(CLOSED_KEY))notFound();if(await this.liveTickets(tx,now)>=RTC_BOUNDS.tickets)limited();await tx.put(TICKET_KEY(minted.record.jti),minted.record);});
+  const now=this.now();let minted;try{minted=await mintTicketRecord({issuer:this.issuer,sub:owner,purposes:input.purposes,uses:input.uses,expiresIn:input.expires_in,principal:input.principal??null,signer,now,clientId:app.clientId,origin:app.origin,allowLoopback:this.allowLoopback,crypto:this.crypto});}catch{invalid();}
+  await this.store.transaction(async tx=>{await this.bindOwner(tx,owner);if(await tx.get(CLOSED_KEY))notFound();await this.pruneTickets(tx,now);if(!await ticketQuotaOk(tx,{now,clientId:app.clientId,cap:RTC_BOUNDS.tickets}))limited();
+   // Review I5: a per-app mint rate (admission.mjs LIMITS.mint), counted only for a mint the quota allows.
+   if(!await takeLimits(tx,[{name:'mint',parts:[app.clientId]}],now,this.crypto))limited();await tx.put(TICKET_KEY(minted.record.jti),minted.record);});
   return {link:minted.link};
  }
 
@@ -597,7 +623,11 @@ export class RtcService{
   * read as held (`keys.certification`).
   */
  async ingest(actor,input){
-  const owner=this.system(actor);exact(input,['batch'],['source']);const now=this.now();
+  const owner=this.system(actor);exact(input,['batch'],['source','dark']);const now=this.now();
+  // Wargame review R1: `dark` marks a batch the federation route accepted for an entity whose own RTC flags are off. It
+  // passes the same step 1 and takes a slot in the same bounded queue (so 202 and 503 arise exactly as for a flag-on
+  // entity), but only its size is kept and it is removed unprocessed.
+  if(input.dark!==undefined&&input.dark!==true)fail('rtc_batch_invalid','The batch is invalid.',400);
   // RTC-e review F1: the route's pseudonymous source network (never an address), kept with the queued batch so plain
   // claims can be capped per source network at the roster. Anything else is dropped.
   const source=typeof input.source==='string'&&/^[A-Za-z0-9_:.-]{1,128}$/.test(input.source)?input.source:null;
@@ -607,7 +637,7 @@ export class RtcService{
   await this.store.transaction(async tx=>{
    const m=await tx.get(K.inboxMeta)??{seq:0,count:0,bytes:0};
    if(m.count+1>RTC_BOUNDS.inbox||m.bytes+bytes>RTC_BOUNDS.inboxBytes)fail('temporarily_unavailable','Real-time connections are temporarily unavailable.',503);
-   const seq=m.seq+1;await tx.put(K.inboxMeta,{seq,count:m.count+1,bytes:m.bytes+bytes});await tx.put(K.inbox(seq),{batch:text,at:now,bytes,...source?{source}:{}});
+   const seq=m.seq+1;await tx.put(K.inboxMeta,{seq,count:m.count+1,bytes:m.bytes+bytes});await tx.put(K.inbox(seq),input.dark?{dark:true,at:now,bytes}:{batch:text,at:now,bytes,...source?{source}:{}});
   });
   this.kick(owner,'inbox');
   return {accepted:true};
@@ -692,8 +722,15 @@ export class RtcService{
    if(batchCert&&rec.theirs)rec.theirs.certificate=certCompact;// a renewal replaces the held certificate
    if(!await this.legRate(tx,rec.theirs,now))return;
    const r=offerSeq(rec.theirs.order,{seq:p.seq,digest:d,compact:m.compact,now});
-   if(r.action==='fail')await this.end(tx,fx,owner,rec,'fail',{now,control:{leg:rec.theirs.jkt,reason:'failed'}});
-   for(const item of r.ready){if(rec.state==='ended')break;await this.applyPeerMessage(tx,fx,owner,rec,parseMessage(item.compact,{allowLoopback:this.allowLoopback}).payload,item.compact,now);}
+   // RTC wargame H1 (§12): an unanswered incoming record ends without any control statement (the caller's session
+   // rings out), so a failed leg never tells the caller that its invite was admitted.
+   if(r.action==='fail')await this.end(tx,fx,owner,rec,'fail',{now,...silentEndable(rec)?{}:{control:{leg:rec.theirs.jkt,reason:'failed'}}});
+   for(const item of r.ready){if(rec.state==='ended')break;const q=parseMessage(item.compact,{allowLoopback:this.allowLoopback}).payload;
+    // RTC wargame L4 (§6.3, a step-7 rule): before the claim only `invite` and `cancel` travel. The callee provider
+    // enforces it itself, never relying on the caller's provider (a caller endpoint holding its leg key can post its
+    // own signed messages): anything else is dropped here, after step 5 consumed its seq, as other step-7 drops are.
+    if(side==='callee'&&!rec.claim&&!messageAllowedBeforeClaim(q.type))continue;
+    await this.applyPeerMessage(tx,fx,owner,rec,q,item.compact,now);}
    await tx.put(key,rec);
   });
  }
@@ -745,42 +782,70 @@ export class RtcService{
    if(linkType==='contact'){try{contact=await this.contacts?.inspect(presented);}catch{contact=null;}if(!contact||typeof contact.parent!=='string')return;}
   }
   const callbackLink=body.callback_digest?await linkFor(body.callback_digest):null;if(body.callback_digest&&(!callbackLink||canonicalBasisLink(callbackLink,{origin:sender.iss})===null))return;
-  // Eligibility needs the federation grant check, which is outside this writer: done before the transaction, re-read
-  // inside it (an endpoint removed meanwhile drops out).
-  const candidates=await this.store.transaction(tx=>candidateEndpoints(tx,{line,now}));
-  const eligible=new Set();for(const ep of candidates)if(await this.approved({owner,clientId:ep.clientId,grants:ep.grants,epoch:ep.epoch},line))eligible.add(ep.id);
-  let handle=null;try{handle=await this.keys.handle?.(sender)??null;}catch{handle=null;}
-  const callerClient=verified.payload.client;
+  const callerClient=verified.payload.client,key=K.in(sender,p.sid);
+  // RTC wargame M5: the local checks run first and the federation eligibility check (a port call per application
+  // grant) only for an invite that passed them, so a blocked, unconfigured, over-limit or over-capacity invite costs
+  // no shard call. `gate` is the local part: closed, duplicate, block, epoch, basis configuration, ticket liveness,
+  // sid collision (L1), capacity; with `count` it also counts the §13 limits. Pass 1 counts (limits count after
+  // verification, whatever happens next); pass 2 re-checks everything atomically with the spend and the fan-out.
+  const gate=async(tx,{count})=>{
+   if(await tx.get(CLOSED_KEY))return null;
+   if(await tx.get(key))return null;// a retried copy is ignored
+   if(await isBlocked(tx,sender,{self}))return null;// dropped silently, never recorded as missed (a principal or, M6, its provider)
+   if(!await this.epochOk(tx,sender,verified.payload.aep,now,{record:false}))return null;
+   const policy=await readPolicy(tx);let ticket=null,quarantined=false,parent=null;
+   if(basis==='request'&&!policy.requests.includes(line))return null;// `none` is off by default
+   if(linkType==='ticket'){ticket=await ticketFromLink(tx,presented,{issuer:this.issuer,owner,now,crypto:this.crypto});if(!ticket)return null;parent='ticket:'+ticket.jti;}
+   if(linkType==='contact'){const config=await tx.get(K.contact(contact.parent));if(!config?.purposes?.includes(line))return null;quarantined=contact.quarantined===true;parent='contact:'+contact.parent;}
+   // RTC wargame L1: a sid that another live incoming session already delivered to one of this entity's endpoints is
+   // refused (silently), so the fan-out index rtc/dlv/<endpoint>/<sid> never changes owner.
+   // RTC wargame M1 (§13 SHOULD): bearer-link invites ring up to RTC_BOUNDS.calleeRinging; `self` and principal-bound
+   // ticket invites also use the reserve above it, so bearer-link holders cannot take all ringing capacity. Review R2:
+   // the same class has its own limit window (admission.mjs inviteLimits).
+   // A principal-bound ticket is preferred only for the principal it names (the verified sender), so a leaked bound
+   // link presented by anyone else spends the ordinary windows (and is then refused at the spend).
+   const preferred=basis==='self'||plain(ticket?.claims?.principal)&&samePrincipal(ticket.claims.principal,sender),limits=inviteLimits({sender,issuer:this.issuer,own,parent,preferred:preferred&&!own});
+   // Review I1: an invite already over a limit is dropped before the sid scan and the capacity scan (read-only).
+   if(count&&!await limitsOpen(tx,limits,now,this.crypto))return null;
+   if(await this.sidTaken(tx,key,p.sid,now))return null;
+   let ringing=0,connected=0,heldCount=0;for(const r of (await tx.list({prefix:K.inPrefix,limit:4096})).values()){if(r.state==='ringing'&&!r.held)ringing++;if(r.state==='connected')connected++;if(r.held&&r.state==='ringing')heldCount++;}
+   const holdIt=quarantined||basis==='request',ringCap=RTC_BOUNDS.calleeRinging+(preferred?RTC_BOUNDS.calleeRingingReserve:0);
+   if(holdIt?heldCount>=RTC_BOUNDS.heldRequests:ringing>=ringCap||connected>=RTC_BOUNDS.calleeConnected)return null;
+   // Limits (§13, RTC-11): every kind counts after verification; excess is dropped silently. M1: `self` invites have
+   // their own budget (admission.mjs inviteLimits).
+   if(count&&!await takeLimits(tx,limits,now,this.crypto))return null;
+   return {policy,ticket,quarantined,holdIt};
+  };
+  const first=await this.store.transaction(tx=>gate(tx,{count:true}));if(!first)return;
   // §13 invites per caller origin principal ACROSS callee entities (review L1): one host-wide window shared by every
   // writer on this host, counted after verification like the others; a limiter that fails drops the invite (closed).
-  if(this.hostLimits){let ok=false;try{ok=await this.hostLimits.take('caller',[sender.iss,sender.sub])===true;}catch{ok=false;}if(!ok)return;}
+  // M1: an own-device invite is not a cross-entity invite and spends only the entity's `self` budget.
+  if(this.hostLimits&&!own){let ok=false;try{ok=await this.hostLimits.take('caller',[sender.iss,sender.sub])===true;}catch{ok=false;}if(!ok)return;}
+  let handle=null;try{handle=await this.keys.handle?.(sender)??null;}catch{handle=null;}
+  // Eligibility needs the federation grant check, which is outside this writer: done between the passes, re-read
+  // inside pass 2 (an endpoint removed meanwhile drops out). M5: one check per (client, grants, epoch) per invite.
+  const eligible=new Set();
+  if(!first.holdIt){const memo=new Map();
+   for(const ep of await this.store.transaction(tx=>candidateEndpoints(tx,{line,now}))){
+    const id=JSON.stringify([ep.clientId,[...ep.grants].sort(),ep.epoch??null]);
+    if(!memo.has(id))memo.set(id,await this.approved({owner,clientId:ep.clientId,grants:ep.grants,epoch:ep.epoch},line));
+    if(memo.get(id))eligible.add(ep.id);}}
   return this.commit(owner,async(tx,fx)=>{
-   if(await tx.get(CLOSED_KEY))return;
-   const key=K.in(sender,p.sid);if(await tx.get(key))return;// a retried copy (or a sid another caller chose) is ignored
-   if(await isBlocked(tx,sender))return;// dropped silently, never recorded as missed
-   if(!await this.epochOk(tx,sender,verified.payload.aep,now,{record:false}))return;
-   const policy=await readPolicy(tx);let ticket=null,quarantined=false,parent=null;
-   if(basis==='request'&&!policy.requests.includes(line))return;// `none` is off by default
-   if(linkType==='ticket'){ticket=await ticketFromLink(tx,presented,{issuer:this.issuer,owner,now,crypto:this.crypto});if(!ticket)return;parent='ticket:'+ticket.jti;}
-   if(linkType==='contact'){const config=await tx.get(K.contact(contact.parent));if(!config?.purposes?.includes(line))return;quarantined=contact.quarantined===true;parent='contact:'+contact.parent;}
-   // Limits (§13, RTC-11): every kind counts after verification; excess is dropped silently.
-   const items=[{name:'pair',parts:[sender.iss,sender.sub]},{name:'caller',parts:[sender.iss,sender.sub]},{name:'issuerCallee',parts:[sender.iss]},{name:'callee',parts:[]}];
-   if(parent)items.push({name:'issuerParent',parts:[sender.iss,parent]});
-   let ringing=0,connected=0,heldCount=0;for(const r of (await tx.list({prefix:K.inPrefix,limit:4096})).values()){if(r.state==='ringing'&&!r.held)ringing++;if(r.state==='connected')connected++;if(r.held&&r.state==='ringing')heldCount++;}
-   const holdIt=quarantined||basis==='request';
-   if(holdIt?heldCount>=RTC_BOUNDS.heldRequests:ringing>=RTC_BOUNDS.calleeRinging||connected>=RTC_BOUNDS.calleeConnected)return;
-   if(!await takeLimits(tx,items,now,this.crypto))return;
+   const g=await gate(tx,{count:false});if(!g)return;const {policy,ticket,quarantined,holdIt}=g;
    // Step 8, atomically: spend a ticket use against the VERIFIED principal (§4.3), create the session, fan out.
    if(ticket&&!await spendTicket(tx,ticket.jti,{purpose:line,principal:sender,now}))return;
    await this.epochOk(tx,sender,verified.payload.aep,now);
-   const muted=await isMuted(tx,{principal:sender,purpose:line,clientId:callerClient.client_id}),alert=alertAllowed({purposeBody:held.body,basis,muted,quarantined});
+   const muted=await isMuted(tx,{principal:sender,purpose:line,clientId:callerClient.client_id,origin:callerClient.origin,own,issuer:this.issuer}),alert=alertAllowed({purposeBody:held.body,basis,muted,quarantined});
    const rec={v:1,sid:p.sid,role:'callee',state:'ringing',own,caller:sender,callee:self,peerIdentity:verified.payload.identity,purpose:held.ref,media:[...body.media],createdAt:now,ringUntil:Math.min(body.ring_until*1000,now+RING_MAX_MS),endsAt:p.iat*1000+SESSION_MAX_MS,
     theirs:{jkt:p.leg,certificate:certCompact,order:newLeg(),rate:null,delivered:true},mine:null,delivered:[],claim:null,basis,alert,held:holdIt,callerClient:{client_id:callerClient.client_id,origin:callerClient.origin},controls:[],peerKeys:pinKeys(keys),...callbackLink?{callbackLink}:{}};
    offerSeq(rec.theirs.order,{seq:0,digest:d,compact:m.compact,now});
    if(holdIt){await tx.put(key,rec);await this.addMissed(tx,{caller:sender,line,kind:'held',at:now});return true;}
    let targets=(await candidateEndpoints(tx,{line,now})).filter(ep=>eligible.has(ep.id));
    if(own){const out=await tx.get(K.out(p.sid));const mineEp=out?.mine?.endpoint;targets=targets.filter(ep=>ep.id!==mineEp);if(out?.target)targets=targets.filter(ep=>ep.id===out.target);}
-   targets=targets.slice(0,RTC_BOUNDS.fanout);
+   // RTC wargame M3: at most RTC_BOUNDS.endpointsPerApp per application, round-robin across applications, the caller's
+   // own application first (admission.mjs fanoutOrder).
+   // Review I2: only a same-host caller's client_id is certified by this host, so only it is preferred.
+   targets=fanoutOrder(targets,{prefer:sender.iss===this.issuer?callerClient.client_id:null,max:RTC_BOUNDS.fanout});
    const projection={caller:party(sender),handle,origin:callerClient.origin,client_id:callerClient.client_id,purpose:structuredClone(held.ref),media:[...body.media],context:projectContext(body.context,held.body,held.body),basis,alert};
    for(const ep of targets){
     const auto=own&&held.body.auto_accept==='self'&&(policy.autoAccept[ep.clientId]??[]).includes(line)&&callerClient.client_id===ep.clientId;
@@ -790,6 +855,14 @@ export class RtcService{
    }
    await tx.put(key,rec);return true;
   });
+ }
+ /** RTC wargame L1: whether `sid` is already in the fan-out index of any of this entity's live endpoints for a session
+  * other than `key` that can still be used (live, or a decline whose message is not sent yet). */
+ async sidTaken(tx,key,sid,now){
+  for(const ep of (await tx.list({prefix:K.endpointPrefix,limit:RTC_BOUNDS.endpoints*2})).values()){
+   if(!(ep?.expiresAt>now))continue;const dl=await tx.get(K.delivered(ep.id,sid));if(!dl||dl.key===key)continue;
+   const rec=await tx.get(dl.key);if(rec&&(isLive(rec)||claimUsable(rec)))return true;}
+  return false;
  }
  async processControl(owner,selfIdentity,parsed,now){
   const c=parsed.payload,sender={iss:c.iss,sub:c.sub};if(c.aud!==selfIdentity)return;
@@ -833,24 +906,33 @@ export class RtcService{
    return {parent:input.parent,purposes:[...input.purposes].sort()};
   });
  }
+ /** Wargame M6: `{principal}` or `{issuer}` (a whole caller provider; never this host's own issuer, and never the
+  * owner's own principal: admission.mjs blockTarget and the own-entity rule there). */
+ blockInput(actor,input,{block}){const self=this.self(this.owner(actor)),target=blockTarget(input,{issuer:this.issuer,validPrincipal:p=>principalValid(p,this.allowLoopback)&&!(block&&samePrincipal(p,self)),validOrigin:o=>originValid(o,this.allowLoopback)});if(!target)invalid();return target;}
  async block(actor,input){
-  exact(input,['principal']);if(!principalValid(input.principal,this.allowLoopback))invalid();
+  const target=this.blockInput(actor,input,{block:true});
   return this.ownerTx(actor,async(tx,fx,owner,now)=>{
-   if(!await tx.get(K.block(input.principal))){if((await tx.list({prefix:K.blockPrefix,limit:RTC_BOUNDS.blocks})).size>=RTC_BOUNDS.blocks)limited();await tx.put(K.block(input.principal),{principal:party(input.principal),at:now});}
-   // Ringing invites from a blocked principal end silently, never recorded as missed.
-   for(const [key,rec] of await tx.list({prefix:K.inPrefix,limit:4096}))if(rec.state==='ringing'&&samePrincipal(rec.caller,input.principal)){await this.end(tx,fx,owner,rec,'block',{now});await tx.put(key,rec);}
+   if(!await putBlock(tx,target,now,{principalMax:RTC_BOUNDS.blocks}))limited();
+   // Ringing invites from a blocked principal (or provider) end silently, never recorded as missed.
+   for(const [key,rec] of await tx.list({prefix:K.inPrefix,limit:4096}))if(rec.state==='ringing'&&!rec.own&&blockCovers(target,rec.caller)){await this.end(tx,fx,owner,rec,'block',{now});await tx.put(key,rec);}
    return {blocked:true};
   });
  }
- async unblock(actor,input){exact(input,['principal']);if(!principalValid(input.principal,this.allowLoopback))invalid();return this.ownerTx(actor,async(tx,fx,owner)=>{if(!this.flag(owner))notFound();await tx.delete(K.block(input.principal));return {blocked:false};});}
+ async unblock(actor,input){const target=this.blockInput(actor,input,{block:false});return this.ownerTx(actor,async(tx,fx,owner)=>{if(!this.flag(owner))notFound();await tx.delete(blockKey(target));return {blocked:false};});}
  async mute(actor,input,on=true){
-  exact(input,['kind','value']);if(!MUTE_KINDS.includes(input.kind)||input.kind==='principal'&&!principalValid(input.value,this.allowLoopback)||input.kind==='purpose'&&!heldPurpose(input.value)||input.kind==='app'&&(typeof input.value!=='string'||!input.value||input.value.length>2048))invalid();
-  return this.ownerTx(actor,async(tx,fx,owner,now)=>{const key=K.mute(input.kind,muteValue(input.kind,input.value));
-   if(on){if(!await tx.get(key)){if((await tx.list({prefix:K.mutePrefix,limit:RTC_BOUNDS.mutes})).size>=RTC_BOUNDS.mutes)limited();await tx.put(key,{kind:input.kind,value:structuredClone(input.value),at:now});}}
+  exact(input,['kind','value'],['issuer']);if(!MUTE_KINDS.includes(input.kind)||input.kind==='principal'&&!principalValid(input.value,this.allowLoopback)||input.kind==='purpose'&&!heldPurpose(input.value)||input.kind==='app'&&(typeof input.value!=='string'||!input.value||input.value.length>2048)||(input.kind==='issuer'||input.kind==='origin')&&!originValid(input.value,this.allowLoopback)||input.kind==='issuer'&&input.value===this.issuer)invalid();
+  // Review R3: an `app` or `origin` mute names the provider that asserted it (`issuer`; absent, null or this host's
+  // issuer: this host). The other kinds take no `issuer`.
+  if(input.issuer!==undefined&&input.issuer!==null&&(!SCOPED_MUTE_KINDS.includes(input.kind)||!originValid(input.issuer,this.allowLoopback)))invalid();
+  const scope=SCOPED_MUTE_KINDS.includes(input.kind)&&typeof input.issuer==='string'&&input.issuer!==this.issuer?input.issuer:null;
+  return this.ownerTx(actor,async(tx,fx,owner,now)=>{const key=muteKey(input.kind,input.value,scope);
+   if(on){if(!await tx.get(key)){if((await tx.list({prefix:K.mutePrefix,limit:RTC_BOUNDS.mutes})).size>=RTC_BOUNDS.mutes)limited();await tx.put(key,{kind:input.kind,value:structuredClone(input.value),...scope?{issuer:scope}:{},at:now});}}
    else {if(!this.flag(owner))notFound();await tx.delete(key);}
    return {muted:on};});
  }
- async revokeTicket(actor,input){exact(input,['jti']);if(typeof input.jti!=='string'||!/^[A-Za-z0-9_-]{1,128}$/.test(input.jti))invalid();return this.ownerTx(actor,async tx=>{const row=await tx.get(TICKET_KEY(input.jti));if(!row)notFound();await tx.put(TICKET_KEY(input.jti),{...row,revoked:true});return {revoked:true};});}
+ /** Wargame M2: one ticket `{jti}`, or in bulk every live ticket of one app `{clientId}` (null: legacy, no known app) or
+  * `{all: true}` (tickets.mjs ticketRevokeTarget). Narrowing; never gated. */
+ async revokeTicket(actor,input){let target;try{target=ticketRevokeTarget(input);}catch{invalid();}return this.ownerTx(actor,async(tx,fx,owner,now)=>{if(target.match)return {revoked:true,count:await revokeTicketsWhere(tx,target.match,now)};const row=await tx.get(TICKET_KEY(target.jti));if(!row)notFound();await tx.put(TICKET_KEY(target.jti),{...row,revoked:true,revokedAt:row.revokedAt??now});return {revoked:true};});}
  async endSession(actor,input){
   exact(input,['sid'],['caller','silent']);if(typeof input.sid!=='string'||!SID.test(input.sid)||input.caller!==undefined&&!principalValid(input.caller,this.allowLoopback))invalid();
   if(input.silent!==undefined&&(input.silent!==true||input.caller===undefined))invalid();
@@ -878,15 +960,15 @@ export class RtcService{
  sessions(actor){return this.ownerRead(actor,async tx=>{const out=[];for(const prefix of [K.outPrefix,K.inPrefix])for(const rec of (await tx.list({prefix,limit:4096})).values())if(isLive(rec)){
   if(rec.role!=='callee'){out.push(sessionView(rec));continue;}
   const client=callerClientOf(rec,this.allowLoopback);
-  out.push(sessionView(rec,{alert:rec.alert===true&&client!==null&&!await isMuted(tx,{principal:rec.caller,purpose:rec.purpose.purpose,clientId:client.client_id}),callerOrigin:client?.origin??null}));
+  out.push(sessionView(rec,{alert:rec.alert===true&&client!==null&&!await isMuted(tx,{principal:rec.caller,purpose:rec.purpose.purpose,clientId:client.client_id,origin:client.origin,own:rec.own===true,issuer:this.issuer}),callerOrigin:client?.origin??null}));
  }return {sessions:out};});}
  missed(actor){return this.ownerRead(actor,async tx=>({missed:[...(await tx.list({prefix:K.missedPrefix,limit:RTC_BOUNDS.missed*2})).values()].reverse().map(r=>({id:r.id,caller:r.caller,purpose:r.purpose,kind:r.kind,at:r.at}))}));}
- blocked(actor){return this.ownerRead(actor,async tx=>({blocked:[...(await tx.list({prefix:K.blockPrefix,limit:RTC_BOUNDS.blocks})).values()].map(r=>({principal:r.principal,at:r.at})),muted:[...(await tx.list({prefix:K.mutePrefix,limit:RTC_BOUNDS.mutes})).values()].map(r=>({kind:r.kind,value:r.value,at:r.at}))}));}
+ blocked(actor){return this.ownerRead(actor,async tx=>({blocked:[...(await tx.list({prefix:K.blockPrefix,limit:RTC_BOUNDS.blocks})).values()].map(r=>({principal:r.principal,at:r.at})),issuers:await issuerBlocks(tx),muted:[...(await tx.list({prefix:K.mutePrefix,limit:RTC_BOUNDS.mutes})).values()].map(r=>({kind:r.kind,value:r.value,issuer:typeof r.issuer==='string'?r.issuer:null,at:r.at}))}));}
  tickets(actor){return this.ownerRead(actor,async(tx,now)=>({tickets:[...(await tx.list({prefix:TICKET_PREFIX,limit:RTC_BOUNDS.tickets*4})).values()].map(r=>ticketView(r,now))}));}
  endpointList(actor){return this.ownerRead(actor,async(tx,now)=>({endpoints:[...(await tx.list({prefix:K.endpointPrefix,limit:RTC_BOUNDS.endpoints*2})).values()].filter(ep=>ep.expiresAt>now).map(ep=>({endpoint:ep.id,clientId:ep.clientId,origin:ep.origin,label:ep.label,purposes:[...ep.purposes],lastSeen:ep.lastSeen}))}));}
  /** rtc.export: the owner's portable RTC settings and history (policy, blocks, mutes, contact configuration, ticket
   * views and missed invites). Never endpoint secrets, push keys, queues, sessions, SDP, candidates or ticket links. */
- exportRecords(actor){return this.ownerRead(actor,async(tx,now)=>({version:1,policy:await readPolicy(tx),blocked:[...(await tx.list({prefix:K.blockPrefix,limit:RTC_BOUNDS.blocks})).values()],muted:[...(await tx.list({prefix:K.mutePrefix,limit:RTC_BOUNDS.mutes})).values()],
+ exportRecords(actor){return this.ownerRead(actor,async(tx,now)=>({version:1,policy:await readPolicy(tx),blocked:[...(await tx.list({prefix:K.blockPrefix,limit:RTC_BOUNDS.blocks})).values()],blockedIssuers:await issuerBlocks(tx),muted:[...(await tx.list({prefix:K.mutePrefix,limit:RTC_BOUNDS.mutes})).values()],
   contacts:[...(await tx.list({prefix:K.contactPrefix,limit:4096}))].map(([key,v])=>({parent:v.parent??decodeURIComponent(key.slice(K.contactPrefix.length)),purposes:v.purposes})),tickets:[...(await tx.list({prefix:TICKET_PREFIX,limit:RTC_BOUNDS.tickets*4})).values()].map(r=>ticketView(r,now)),missed:[...(await tx.list({prefix:K.missedPrefix,limit:RTC_BOUNDS.missed*2})).values()]}));}
 
  // ---- lifecycle and expiry (§14, §7.1, §12) -------------------------------------------------------------------------
@@ -917,7 +999,8 @@ export class RtcService{
    const affected=rec=>input.event==='deletion'||rec.mine?.clientId===input.clientId&&(input.event==='app-revoked'||!input.purposes.includes(rec.purpose.purpose));
    const lost=input.event!=='deletion';
    for(const prefix of [K.outPrefix,K.inPrefix])for(const [key,rec] of await tx.list({prefix,limit:4096})){
-    if(isLive(rec)&&affected(rec)){await this.end(tx,fx,owner,rec,'revoke',{now,control:{leg:null,reason:'revoked'}});await tx.put(key,rec);ended++;continue;}
+    // RTC wargame H1 (§12): an unanswered incoming record ends silently towards the caller (no `revoked`).
+    if(isLive(rec)&&affected(rec)){await this.end(tx,fx,owner,rec,'revoke',{now,...silentEndable(rec)?{}:{control:{leg:null,reason:'revoked'}}});await tx.put(key,rec);ended++;continue;}
     // RTCs follow-up (b): an unanswered invite that was ringing ONLY through this app's endpoints, for a purpose the app
     // no longer holds, ends here, silently towards the caller (no control statement, not missed; spec §12): the
     // owner's portal and devices stop ringing, and the caller's session rings out at ring_until as for any decline.
@@ -926,6 +1009,8 @@ export class RtcService{
      if(only){await this.end(tx,fx,owner,rec,'revoke',{now,reason:'revoked'});await tx.put(key,rec);ended++;}
     }
    }
+   // Wargame M2: the app's tickets go with it (tickets.mjs revokeTicketsFor; legacy tickets of no known app stay).
+   await revokeTicketsFor(tx,input,now);
    for(const ep of [...(await tx.list({prefix:K.endpointPrefix,limit:RTC_BOUNDS.endpoints*2})).values()]){
     if(input.event==='deletion'||input.event==='app-revoked'&&ep.clientId===input.clientId){await this.removeEndpoint(tx,fx,ep,now,'revoked');continue;}
     if(input.event==='app-narrowed'&&ep.clientId===input.clientId){const kept=ep.purposes.filter(l=>input.purposes.includes(l));if(!kept.length)await this.removeEndpoint(tx,fx,ep,now,'revoked');else if(kept.length!==ep.purposes.length)await tx.put(K.endpoint(ep.id),{...ep,purposes:kept});}
@@ -951,7 +1036,8 @@ export class RtcService{
     const due=dueEvent(rec,now);
     if(due){await this.end(tx,fx,owner,rec,due,{now});await tx.put(key,rec);soon(rec.endedAt+86400000);continue;}
     const legs=[rec.mine?.order,rec.theirs?.order].filter(Boolean);
-    if(legs.some(l=>gapExpired(l,now))){await this.end(tx,fx,owner,rec,'fail',{now,control:{leg:rec.theirs?.jkt??null,reason:'failed'}});await tx.put(key,rec);continue;}
+    // RTC wargame H1 (§12): a gap on an unanswered incoming record ends it without a control statement.
+    if(legs.some(l=>gapExpired(l,now))){await this.end(tx,fx,owner,rec,'fail',{now,...silentEndable(rec)?{}:{control:{leg:rec.theirs?.jkt??null,reason:'failed'}}});await tx.put(key,rec);continue;}
     // Review F6: at most INVITE_RESEND_DELAYS.length re-sends, and only after the first 202 (inviteOutcome).
     if(rec.role==='caller'&&rec.state==='ringing'&&!rec.theirs&&rec.inviteCompact&&rec.inviteRetry?.acked===true){
      {

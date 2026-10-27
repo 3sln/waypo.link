@@ -6,12 +6,16 @@
 //
 //   GET  /api/rtc/settings   the owner's settings and lists in one read: policy, held purposes, contact-link RTC
 //                            configuration, apps with bound RTC purposes (from the owner's federation grants), live
-//                            sessions, missed and held invites, blocks and mutes, tickets and endpoints
+//                            sessions, missed and held invites, blocks (people and, wargame M6, providers) and
+//                            mutes, tickets (with the minting app, wargame M2) and endpoints
 //   GET  /api/rtc/ring       incoming invites the portal may ring for (see `ringable`): only what spec §9.1 lets a
 //                            callee see before a claim (verified caller, a handle only when this host holds it, the
 //                            calling app's verified origin (RTC-17), purpose, media, ring deadline) plus this owner's
 //                            own apps registered for the purpose
-//   POST /api/rtc/{action}   one owner operation `rtc.{action}` with the JSON body as its input
+//   POST /api/rtc/{action}   one owner operation `rtc.{action}` with the JSON body as its input. Wargame M2/M6:
+//                            `block`/`unblock` take {principal} or {issuer}; `mute`/`unmute` also take the kinds
+//                            `issuer` and `origin`; `revoke-ticket` takes {jti}, {clientId} or {all:true}. The
+//                            engine validates each (packages/rtc/admission.mjs, tickets.mjs).
 //   POST /api/rtc/narrow-app {clientId, purposes}: narrows an app's approved RTC purposes (FederationService
 //                            narrowBoundOptions on the signaling slot; never gated, see narrowApp)
 //
@@ -46,6 +50,9 @@ async function handleOf(env,principal){
 /** RTCs follow-up (a): the host of the caller's provider when the caller is on another provider and a caller origin
  * is shown. That origin is only what the caller's provider certified (it may be malicious), so the ring labels it as
  * reported by that provider; a same-host caller's origin was certified by this host and stays unlabelled (null). */
+/** Wargame M6: the caller's provider (issuer origin) when it is not this host, so the ring can offer "Block this
+ * provider"; null for a same-host caller (this host's own issuer is never a provider block target). */
+export const callerProvider=(env,s)=>typeof s.peer?.iss==='string'&&s.peer.iss!==env.APP_ORIGIN?s.peer.iss:null;
 export function callerOriginReporter(env,s){if(typeof s.callerOrigin!=='string'||s.peer?.iss===env.APP_ORIGIN)return null;try{return new URL(s.peer.iss).host;}catch{return null;}}
 /** The owner's apps holding an active grant on the signaling slot, with their approved bound purposes (AMD-X1). */
 async function rtcApps(env,context){
@@ -63,11 +70,13 @@ async function rtcApps(env,context){
  * `alert` for incoming records, re-evaluated on every read against the current mutes (principal, purpose and the
  * caller's application), so a record without `alert === true` never rings.
  */
-export function ringable(s,{purposes,muted,now}){
+export function ringable(s,{purposes,muted,now,issuer}){
  if(s.role!=='callee'||s.state!=='ringing'||s.held||s.claimed||s.own||!(s.ringUntil>now))return false;
  if(s.alert!==true)return false;
  if(purposes.find(p=>p.id===s.purpose)?.alert!==true)return false;
- return !muted.some(m=>m.kind==='purpose'&&m.value===s.purpose||m.kind==='principal'&&m.value?.iss===s.peer.iss&&m.value?.sub===s.peer.sub);
+ // Review R3: an origin mute covers only callers of the provider that asserted the origin (`m.issuer`; null: this host,
+ // `issuer`), as the engine's isMuted does.
+ return !muted.some(m=>m.kind==='purpose'&&m.value===s.purpose||m.kind==='principal'&&m.value?.iss===s.peer.iss&&m.value?.sub===s.peer.sub||m.kind==='issuer'&&m.value===s.peer.iss&&s.peer.iss!==issuer||m.kind==='origin'&&typeof s.callerOrigin==='string'&&m.value===s.callerOrigin&&(typeof m.issuer==='string'?m.issuer:issuer)===s.peer.iss);
 }
 /**
  * Whether nothing can ring this owner's portal (review F4): no ringing incoming invite, no registered endpoint (which
@@ -125,7 +134,7 @@ export const stages={
     return json({enabled:enabled===true,policy,purposes:heldPurposes(),contacts:contacts.contacts.map(c=>({parent:c.parent,purposes:[...c.purposes]})),apps,
      sessions:await Promise.all(sessions.sessions.map(async s=>({...s,peerHandle:await named(s.peer)}))),
      missed:await Promise.all(missed.missed.map(async m=>({...m,callerHandle:await named(m.caller)}))),
-     blocked:await Promise.all(blocked.blocked.map(async b=>({...b,handle:await named(b.principal)}))),muted:blocked.muted,
+     blocked:await Promise.all(blocked.blocked.map(async b=>({...b,handle:await named(b.principal)}))),blockedIssuers:blocked.issuers??[],muted:blocked.muted,
      tickets:tickets.tickets,endpoints:endpoints.endpoints});
    }
    if(path==='/api/rtc/ring'){
@@ -133,7 +142,7 @@ export const stages={
     if(!enabled)return json({invites:[]});
     const [sessions,blocked,endpoints]=await Promise.all([call('rtc.sessions'),call('rtc.blocked'),call('rtc.endpoint-list')]),purposes=heldPurposes(),now=Date.now();
     const invites=[];
-    for(const s of sessions.sessions)if(ringable(s,{purposes,muted:blocked.muted,now}))invites.push({sid:s.sid,caller:{iss:s.peer.iss,sub:s.peer.sub},callerHandle:await handleOf(env,s.peer),callerOrigin:typeof s.callerOrigin==='string'?s.callerOrigin:null,callerOriginReportedBy:callerOriginReporter(env,s),purpose:s.purpose,title:structuredClone(purposes.find(p=>p.id===s.purpose).title),media:[...s.media],ringUntil:s.ringUntil,
+    for(const s of sessions.sessions)if(ringable(s,{purposes,muted:blocked.muted,now,issuer:env.APP_ORIGIN}))invites.push({sid:s.sid,caller:{iss:s.peer.iss,sub:s.peer.sub},callerHandle:await handleOf(env,s.peer),callerOrigin:typeof s.callerOrigin==='string'?s.callerOrigin:null,callerOriginReportedBy:callerOriginReporter(env,s),callerProvider:callerProvider(env,s),purpose:s.purpose,title:structuredClone(purposes.find(p=>p.id===s.purpose).title),media:[...s.media],ringUntil:s.ringUntil,
      apps:[...new Map(endpoints.endpoints.filter(e=>e.purposes.includes(s.purpose)).map(e=>[e.clientId,{clientId:e.clientId,origin:e.origin}])).values()]});
     // `idle` only when nothing could ring (the extra reads run only without endpoints and invites).
     const idle=!invites.length&&!endpoints.endpoints.length&&ringIdle({invites,endpoints:endpoints.endpoints,...await Promise.all([call('rtc.export'),call('rtc.tickets')]).then(([c,t])=>({contacts:c.contacts,tickets:t.tickets})),purposes});

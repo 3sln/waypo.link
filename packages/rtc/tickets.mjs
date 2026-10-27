@@ -79,14 +79,14 @@ const ticketFault=(code='rtc_ticket_invalid')=>{throw Object.assign(new Error(co
  * identity signing key). `now` is ms. The caller stores `record` under TICKET_KEY(jti) in the same transaction that
  * counts the cap.
  */
-export async function mintTicketRecord({issuer,sub,purposes,uses,expiresIn,principal=null,signer,now,callback=false,allowLoopback=false,crypto=globalThis.crypto}){
+export async function mintTicketRecord({issuer,sub,purposes,uses,expiresIn,principal=null,signer,now,callback=false,clientId=null,origin=null,allowLoopback=false,crypto=globalThis.crypto}){
  const lifetime=ticketLifetime(expiresIn);if(lifetime===null)ticketFault('invalid_args');
  const jti=b64(crypto.getRandomValues(new Uint8Array(16))),iat=Math.floor(now/1000),aud=`${issuer}${TICKET_PATH}${jti}`;
  const claims={bindle:'link-meta',v:1,type:RTC_TICKET_TYPE,iss:issuer,aud,jti,iat,exp:iat+Math.min(lifetime,callback?CALLBACK_MAX_SECONDS:TICKET_MAX_SECONDS),sub,purposes:[...purposes],uses,principal:principal===null?null:{iss:principal.iss,sub:principal.sub}};
  validateTicketClaims(claims,{allowLoopback});if(callback)validateCallbackTicket(claims,{callee:principal,allowLoopback});
  const meta=await signLinkJWS({header:{alg:'ES256',kid:signer.kid,typ:LINK_META_TYP},claims,privateKey:signer.privateKey,crypto});
  const link=`${aud}?bindle_meta=${meta}`;if(canonicalBasisLink(link,{origin:issuer})===null)ticketFault();
- return {link,claims,record:{jti,meta,claims,purposes:[...claims.purposes],principal:claims.principal,usesLeft:uses,revoked:false,callback,createdAt:now,expiresAt:claims.exp*1000,...signer.publicJwk?{publicJwk:{kty:'EC',crv:'P-256',x:signer.publicJwk.x,y:signer.publicJwk.y}}:{}}};
+ return {link,claims,record:{jti,meta,claims,purposes:[...claims.purposes],principal:claims.principal,usesLeft:uses,revoked:false,callback,clientId:typeof clientId==='string'&&clientId?clientId:null,origin:typeof origin==='string'&&origin?origin:null,createdAt:now,expiresAt:claims.exp*1000,...signer.publicJwk?{publicJwk:{kty:'EC',crv:'P-256',x:signer.publicJwk.x,y:signer.publicJwk.y}}:{}}};
 }
 /**
  * The stored record a presented ticket link names at its owner host, or null: the canonical form on `issuer`, a
@@ -110,5 +110,56 @@ export async function spendTicket(tx,jti,{purpose,principal,now}){
  const row=await tx.get(TICKET_KEY(jti));if(!row||row.revoked||row.usesLeft<1||row.expiresAt<=now||!ticketAdmits(row.claims,{purpose,principal}))return false;
  await tx.put(TICKET_KEY(jti),{...row,usesLeft:row.usesLeft-1,lastUsedAt:now});return true;
 }
-/** The owner's view of a ticket: never the link or the meta (a bearer capability). */
-export const ticketView=(row,now)=>({jti:row.jti,purposes:[...row.claims.purposes],uses:row.claims.uses,usesLeft:row.usesLeft,principal:row.claims.principal,expiresAt:row.expiresAt,revoked:row.revoked===true,callback:row.callback===true,live:!row.revoked&&row.usesLeft>0&&row.expiresAt>now});
+/** The owner's view of a ticket: never the link or the meta (a bearer capability). `clientId` and `origin` name the
+ * minting app (both null for a legacy record, which the console shows as an unknown app; wargame M2). */
+export const ticketView=(row,now)=>({jti:row.jti,purposes:[...row.claims.purposes],uses:row.claims.uses,usesLeft:row.usesLeft,principal:row.claims.principal,expiresAt:row.expiresAt,revoked:row.revoked===true,callback:row.callback===true,live:ticketLive(row,now),clientId:ticketClient(row),origin:ticketClient(row)&&typeof row.origin==='string'?row.origin:null});
+
+// ---- RTC wargame M2: the minting app, a per-app quota and revocation with the app (2026-10-27) ----------------------
+// Provisional (coordinator), not signed off by the user. A ticket records the app (`clientId`, verified origin) that
+// minted it, from the endpoint actor; nothing about it enters the signed meta or the link. Rules:
+// - Quota: at most TICKET_APP_QUOTA live tickets per app (mint_ticket and open{callback} alike), inside the account
+//   cap (RTC_BOUNDS.tickets), so one app can no longer squat every other app's minting.
+// - Lifecycle: `app-revoked` revokes every ticket that app minted; `app-narrowed` revokes each of its tickets that
+//   names a purpose the app no longer holds (the whole ticket: a link never admits less than it shows); `deletion`
+//   revokes every ticket. Revocation is narrowing and never gated.
+// - Legacy records (minted before this change, no `clientId`) are attributed to no app: `ticketClient` is null, the
+//   console lists them as "Unknown app" with their own bulk revoke, no app event revokes them, and they count only
+//   against the account cap. They expire within 30 days of minting at most.
+export const TICKET_APP_QUOTA=64;
+/** The app that minted a ticket, or null for a legacy record without one. */
+export const ticketClient=row=>typeof row?.clientId==='string'&&row.clientId?row.clientId:null;
+/** Live: not revoked, not exhausted, not expired. */
+export const ticketLive=(row,now)=>Boolean(row)&&row.revoked!==true&&row.usesLeft>0&&row.expiresAt>now;
+const SCAN=1024;
+/** {total, app}: live tickets of the account, and of the app `clientId` among them. */
+export async function liveTicketCounts(tx,{now,clientId=null}){
+ let total=0,app=0;for(const row of (await tx.list({prefix:TICKET_PREFIX,limit:SCAN})).values())if(ticketLive(row,now)){total++;if(clientId!==null&&ticketClient(row)===clientId)app++;}
+ return {total,app};
+}
+/** Whether app `clientId` may store one more ticket: under the account `cap` and under its own `quota`. */
+export async function ticketQuotaOk(tx,{now,clientId,cap,quota=TICKET_APP_QUOTA}){const {total,app}=await liveTicketCounts(tx,{now,clientId});return total<cap&&app<quota;}
+/** Marks every live ticket `match(row)` selects revoked; returns how many. */
+export async function revokeTicketsWhere(tx,match,now){
+ let n=0;for(const [key,row] of await tx.list({prefix:TICKET_PREFIX,limit:SCAN}))if(ticketLive(row,now)&&match(row)){await tx.put(key,{...row,revoked:true,revokedAt:now});n++;}
+ return n;
+}
+/** rtc.lifecycle's ticket step: the tickets an event takes away (see the rules above). Returns how many. */
+export function revokeTicketsFor(tx,{event,clientId,purposes},now){
+ if(event==='deletion')return revokeTicketsWhere(tx,()=>true,now);
+ if(event==='app-revoked')return revokeTicketsWhere(tx,row=>ticketClient(row)===clientId,now);
+ if(event==='app-narrowed')return revokeTicketsWhere(tx,row=>ticketClient(row)===clientId&&row.claims.purposes.some(l=>!purposes.includes(l)),now);
+ return 0;
+}
+/**
+ * The owner's revoke-ticket target, exactly one of: `{jti}` (one ticket, any state), `{clientId}` (every live ticket
+ * that app minted; `clientId: null` selects the legacy tickets of no known app) or `{all: true}` (every live ticket).
+ * Returns {jti} | {match}; throws `invalid_args` for anything else.
+ */
+export function ticketRevokeTarget(input){
+ const bad=()=>ticketFault('invalid_args'),keys=plain(input)?Object.keys(input):null;
+ if(!keys||keys.length!==1)bad();
+ if(keys[0]==='jti'){if(typeof input.jti!=='string'||!JTI.test(input.jti))bad();return {jti:input.jti};}
+ if(keys[0]==='clientId'){if(!(input.clientId===null||typeof input.clientId==='string'&&input.clientId&&input.clientId.length<=2048))bad();const id=input.clientId;return {match:row=>ticketClient(row)===id};}
+ if(keys[0]==='all'){if(input.all!==true)bad();return {match:()=>true};}
+ return bad();
+}

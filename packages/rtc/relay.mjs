@@ -194,6 +194,11 @@ export class RtcRelay{
   if(!this.enabled(owner,app.clientId))notFound();
   if(!plain(input)||Object.keys(input).some(k=>!['sid','endpoint','endpoint_secret'].includes(k))||typeof input.sid!=='string'||typeof input.endpoint!=='string')fail('invalid_args','A session and an endpoint are required.',400);
   if(!this.configured())unavailable();
+  // RTC wargame M4 (§9.1 every method checks the bound purposes live): the session's purpose must still be approved
+  // for this application under the signaling grant (the actor's per-RPC approval, no shard call); read outside the
+  // issuing transaction, which re-checks the leg.
+  const purpose=await this.store.transaction(async tx=>{await svc.bindOwner(tx,owner);const ep=await svc.endpointAuth(tx,app,input,this.now()),found=await svc.ownSession(tx,ep,input.sid);return found?.rec?.purpose?.purpose??null;});
+  if(!purpose)notFound();await svc.requireApproved(app,purpose);
   const allowance=await this.allowance(owner);
   const now=this.now();
   const lease0=await this.store.transaction(async tx=>{

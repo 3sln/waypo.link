@@ -436,7 +436,7 @@ input[type=checkbox][required]:user-invalid{outline:3px solid #c5221f;outline-of
 .rtc-choice>span{display:flex;flex-direction:column;gap:3px;min-width:0}
 .rtc-purpose-choice>span{display:flex;flex-direction:column;gap:2px}
 .rtc-list{display:grid;gap:14px}
-.rtc-contact,.rtc-app{border-top:1px solid var(--line);padding-top:14px;min-width:0}
+.rtc-contact,.rtc-app,.rtc-group{border-top:1px solid var(--line);padding-top:14px;min-width:0}
 .rtc-label{font-weight:600;font-size:13px;margin:12px 0 4px}
 .rtc-rows{list-style:none;margin:0;padding:0}
 .rtc-row{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;padding:10px 0;border-top:1px solid var(--line);overflow-wrap:anywhere}
