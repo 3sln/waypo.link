@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { parseLinkQuery, strictJSON as linkJSON } from '../packages/messaging/bindle-links.mjs';
 import { strictJSON as deliveryJSON } from '../packages/messaging/contact-delivery.mjs';
 import { MemoryMessagingStore, ContactTokenService, ContactEndpointService, MessagingService, signContactToken } from '../packages/messaging/index.mjs';
-import { fromBase64url, strictText } from '../packages/messaging/store.mjs';
+import { fromBase64url, strictText } from '../packages/core/records.mjs';
 import { LinkReplayRecord } from '../packages/messaging/link-replay.mjs';
 import { prepareLinkResponse, signLinkResponse, verifyLinkResponse } from '../packages/identity/link-response.mjs';
 import { SqliteMetadata } from '../apps/node/resources.mjs';

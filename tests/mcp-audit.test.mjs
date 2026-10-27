@@ -4,7 +4,7 @@ import {mkdtemp,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {McpAuthorization} from '../packages/mcp/service.mjs';
-import {MemoryMessagingStore,digest} from '../packages/messaging/store.mjs';
+import {MemoryMessagingStore,digest} from '../packages/core/records.mjs';
 import {nodeResources} from '../apps/node/resources.mjs';
 import {handleMcpPublic} from '../packages/mcp/http.mjs';
 const origin='http://localhost:8788',client={id:'reviewer.example',name:'Audit fixture',redirectUris:['https://reviewer.example/callback']};

@@ -5,7 +5,7 @@ import {APP_NOTIFICATIONS,ACTIVITY_CONTRACT} from '../../federation/app-notifica
 import {createAppNotification,activityResourceMethod} from '../app-notifications.mjs';
 import {RESOURCE_SCOPING,storageScopeOptions} from '../../storage/scoping.mjs';
 import {retryReady,retryFailure} from '../cleanup-retry.mjs';
-import {key,canonical} from '../../messaging/store.mjs';
+import {key,canonical} from '../../core/records.mjs';
 import {encryptSecret,decryptSecret} from '../secrets.mjs';
 import {S3Adapter,WebDAVAdapter} from '../../storage/adapters.mjs';
 import {producerAttribution,producerMarkers,stripProducerMarkers,assertLiveProducer} from '../../storage/producer-summary.mjs';

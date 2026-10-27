@@ -8,7 +8,8 @@ import {world,uuid,p,rejects,freshStats,storedSizes,A,B,C,E,DAY,ORG} from './hel
 import {forEachSeed} from './helpers/chaos.mjs';
 import {OWNERSHIP,billingStanding} from '../packages/orgs/ownership.mjs';
 import {organizationPowers} from '../packages/orgs/authority.mjs';
-import {principalKey,memberPowers} from '../packages/orgs/grants.mjs';
+import {principalKey} from '../packages/core/principals.mjs';
+import {memberPowers} from '../packages/orgs/grants.mjs';
 import {ORG_MUTED_LIMIT} from '../packages/orgs/memberships.mjs';
 import {ORG_KEYS,ORG_ROW_BYTES,ORG_RETENTION_MS,openRequest} from '../packages/orgs/roster.mjs';
 import {OrganizationBilling} from '../packages/billing/organizations.mjs';

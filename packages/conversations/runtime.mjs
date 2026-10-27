@@ -1,6 +1,6 @@
 import {ConversationService,ConversationError,INVITE_MIME,EVENT_MIME,participant,memberId,uuid} from './index.mjs';
 import {encryptSecret,decryptSecret} from '../runtime/secrets.mjs';
-import {key,digest,canonical} from '../messaging/store.mjs';
+import {key,digest,canonical} from '../core/records.mjs';
 import {assertLifecycleOpen} from '../runtime/account-deletion.mjs';
 const failure=(code,status=400)=>{throw new ConversationError(code,code,status);};
 // Wargame 3 C4: a history row is a reference to its inbox message; MessagingService.delete removes it with the message.

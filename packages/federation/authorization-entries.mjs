@@ -8,7 +8,7 @@
 // Every mutation also carries the per-entry page token, which only a reader of the provider view holds.
 // Storage is sharded by entry ID (review M5): an entry and its selections live on the shard named by the ID's first
 // character, so every retry reaches the same records; creation budgets live on the caller's own shard.
-import {digest,base64url,boundedString,canonical} from '../messaging/store.mjs';
+import {digest,base64url,boundedString,canonical} from '../core/records.mjs';
 import {fail,object,exact,https} from './schema.mjs';
 import {verifyProof,EMBED_PROOF_TYP,jktPattern} from './dpop.mjs';
 import {componentsDeclaration,COMPONENTS_PROFILE} from './components-profile.mjs';

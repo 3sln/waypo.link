@@ -72,7 +72,7 @@ test('independent work audit: federation reads do not create durable outcome jou
 
 import { StorageQuota } from '../packages/runtime/storage-quota.mjs';
 import { AccountController } from '../packages/runtime/accounts.mjs';
-import { key } from '../packages/messaging/store.mjs';
+import { key } from '../packages/core/records.mjs';
 
 test('independent work audit: abandoned upload cleanup backs off and pauses after eight failed deletes without releasing ownership', async () => {
   const metadata = new SqliteMetadata(':memory:'); let time = now, deletes = 0;

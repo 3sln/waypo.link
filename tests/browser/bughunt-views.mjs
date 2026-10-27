@@ -129,3 +129,13 @@ test('F17 and F18 small copy and live-region fixes',()=>{
  const listed=document.createElement('div');dodo.reconcile(listed,[envBanner({env:{state:'kill'}})]);assert.equal(listed.querySelector('[role=alert]'),null,'page-load banner is plain text');assert.match(listed.textContent,/KILL \(env\)/);
  const live=document.createElement('div');dodo.reconcile(live,[envBanner({env:{state:'kill'}},{live:true})]);assert.ok(live.querySelector('[role=alert]'),'the live edit form keeps the alert');
 });
+
+// Bug hunt round 3 (DEVLOG 2026-10-27), B8: the security page's app panel lists only legacy grants, so it must not
+// claim that no app has access while Connected apps lists a connection; it points there instead, in both languages.
+test('round 3 B8 the security app panel points to Connected apps instead of claiming no app has access',()=>{
+ for(const locale of ['en','es']){const {render}=renderer(locale),root=render(fixture({locale,view:'security'})),text=root.textContent;
+  assert.doesNotMatch(text,/No apps have access to your resources/);
+  const label=locale==='es'?createLocalization({locale}).t('Connected apps'):'Connected apps',button=[...root.querySelectorAll('main button, button')].find(b=>b.textContent.trim()===label&&b.closest('.panel'));
+  assert.ok(button,`${locale}: a Connected apps button in the panel`);
+  const intents=[];root.addEventListener('3sln-intent',e=>intents.push(e.detail));button.click();assert.deepEqual(intents.map(i=>[i.kind,i.view]),[['navigate','connected-apps']]);}
+});

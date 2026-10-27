@@ -6,11 +6,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {relationsHost,rejects,fault,ISS,STORE,LEDGER} from './helpers/relations-world.mjs';
-import {principalKey} from '../packages/orgs/grants.mjs';
+import {principalKey} from '../packages/core/principals.mjs';
 import {encodeEntityCertificate,parseEntityCertificate,ENTITY_PURPOSE,ENTITY_CERTIFICATE_TYP} from '../packages/identity/entity-certificates.mjs';
 import {federationRelationImports} from '../packages/orgs/relation-access.mjs';
 import {jwkThumbprint} from '../packages/identity/delegation.mjs';
-import {digest,base64url} from '../packages/messaging/store.mjs';
+import {digest,base64url} from '../packages/core/records.mjs';
 import {FederationService,MemoryFederationStore} from '../packages/federation/index.mjs';
 import {PREFERENCES_V2} from '../packages/federation/service.mjs';
 

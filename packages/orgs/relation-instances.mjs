@@ -43,7 +43,7 @@ import {AppAction,AppQuery} from '../app/engine.mjs';
 import {AppFault} from '../app/faults.mjs';
 import {jcs,plain} from '../core/strict-json.mjs';
 import {digest} from '../core/records.mjs';
-import {principalKey,samePrincipal} from './grants.mjs';
+import {principalKey,samePrincipal} from '../core/principals.mjs';
 import {organizationPowers} from './authority.mjs';
 import {memberPowers} from './grants.mjs';
 import {rosterOf} from './roster.mjs';

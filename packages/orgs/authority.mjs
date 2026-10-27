@@ -19,7 +19,8 @@
 // A person acting as themselves resolves to powers ['owner'] (the whole owner interface of their own account), which
 // is exactly what the implicit owner meant before. Organization entities resolve powers from the organization record
 // (phase A: the owner of record and the initial admin; ORG-2 replaces the initial admin with membership grants).
-import {principalKey,memberPowers} from './grants.mjs';
+import {principalKey} from '../core/principals.mjs';
+import {memberPowers} from './grants.mjs';
 import {AppFault} from '../app/faults.mjs';
 
 const UUID=/^[a-f0-9-]{36}$/;

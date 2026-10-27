@@ -116,6 +116,8 @@ export class OrganizationsIntent extends OwnerFlow{
    if(result.payment?.required){put(r,ctx,{stale:false,creation:{request:result.payment.request,org:result.payment.org,name:result.payment.name??null,plan:result.payment.plan??null,checkout:result.payment.checkout?.url??null}});await plans();return;}
    // L3: the new organization is named in the context bar at once (no "Acting for …" placeholder before the list reloads).
    const listed=base(snapshot(r)).organizations.filter(o=>o.id!==result.organization.id);put(r,ctx,{creation:null,organizations:[...listed,{...result.organization,role:'owner-of-record',powers:['admin','owner-of-record'],available:true}]});if(result.recoveryFile)await keepRecovery(result.recoveryFile,result.organization.id);r.browser.storeSecret(creationKey,null);await reload();await details(result.organization.id);
+   // Bug hunt round 3, B7: the create form is gone, so focus moves to the recovery-file step instead of the page body.
+   if(result.recoveryFile)r.browser.focus?.('#org-recovery');
   };
   // A context loads the person's own membership first (any member may read it); admin surfaces follow only when the
   // organization itself reports the admin power. Each admin surface fails closed on its own without hiding the rest.

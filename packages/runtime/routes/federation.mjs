@@ -18,6 +18,12 @@ import {SHELL_TEMPLATE,SHELL_BUILD,shellBuild,shellConfig,fillShell,shellPolicy}
 import {AVATAR,avatarOrigins,readAvatarSource,reencodeAvatar} from '../../federation/embed-avatar.mjs';
 import {handleObjectURL} from '../../storage/object-http.mjs';
 import {UUID as uuidPattern} from '../../core/primitives.mjs';
+/** A fixed, script-free page for an authorization request that already ended (bug hunt round 3, B5). */
+export function authorizationEndedPage(language){
+ const es=/^es\b/i.test(String(language??'').trim());
+ return es?'<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>Esta solicitud ya terminó</title></head><body><main><h1>Esta solicitud ya terminó</h1><p>Esta solicitud de autorización caducó o ya se completó. Vuelve a la app e inicia sesión de nuevo si lo necesitas. <a href="/console">Ir a tu cuenta</a>.</p></main></body></html>'
+  :'<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>This request has ended</title></head><body><main><h1>This request has ended</h1><p>This authorization request expired or was already completed. Return to the app and sign in again if you need to. <a href="/console">Go to your account</a>.</p></main></body></html>';
+}
 import {flagGlobal,capability,json,lifecycleUnknown,body,cookie,sessionToken,pseudonym,subnet,subnet64,identity,securePage,brandPage,passthrough} from './shared.mjs';
 
 const encoder=new TextEncoder();
@@ -69,6 +75,9 @@ export const stages={
     // Contact intents (links §6.4, core feature `intents.v1`): this host accepts `bindle_intent` on its console entry.
     // Entry routes and the components profile are advertised only while this adapter mounts them (review F8).
     if(response&&path==='/.well-known/bindle/manifest.json'&&request.method==='GET'&&response.ok){const manifest=await response.json(),entries=env.FEDERATION_ENTRIES?env.FEDERATION_ENTRIES.manifest({components:await embedShellMounted(env)}):{};return json({...manifest,features:{...manifest.features,...entries.features,...intentFeature(env),...flagGlobal(env,'IDENTITY_TRANSFER_IN_ENABLED')&&env.TRANSFER_IN_INTAKE?{'portability.v1':{...manifest.features?.['portability.v1'],transfer_in_endpoint:env.APP_ORIGIN+'/bindle/portability/transfer-in'}}:{},'intents.v1':{intents:[...CONTACT_INTENTS],login_endpoint:`${env.APP_ORIGIN}/console`}},...entries.profiles?{profiles:{...manifest.profiles,...entries.profiles}}:{}},200,{'Access-Control-Allow-Origin':'*'});}
+    // Bug hunt round 3, B5: Back from the app (or an old tab) onto a completed or expired authorization request is a
+    // browser navigation; it gets a readable page instead of the raw JSON error. API clients keep the JSON answer.
+    if(response&&path==='/oauth/authorize'&&request.method==='GET'&&response.status===400&&request.headers.get('Accept')?.includes('text/html'))return passthrough(securePage(new Response(authorizationEndedPage(new URL(request.url).searchParams.get('lang')??request.headers.get('Accept-Language')),{status:400,headers:{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store',Vary:'Accept'}})));
     if(response)return path==='/oauth/authorize'&&response.headers.get('Content-Type')?.includes('text/html')?passthrough(securePage(await brandPage(response,env))):response;
     return json({error:'not_found'},404);
    }

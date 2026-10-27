@@ -1,5 +1,5 @@
 import test from 'node:test';import assert from 'node:assert/strict';
-import {AccountController} from '../packages/runtime/accounts.mjs';import {SqliteMetadata,SerialGate} from '../apps/node/resources.mjs';import {developerContactTier,developerContactLink,developerContactRoutes,evaluateLinkPolicy,cleanupDailyDeveloperGrants,DEVELOPER_CONTACT_POLICY} from '../packages/runtime/developer-contact.mjs';import {key} from '../packages/messaging/store.mjs';import {BILLING_STATE_KEY} from '../packages/billing/catalog.mjs';import {authored} from './link-helpers.mjs';
+import {AccountController} from '../packages/runtime/accounts.mjs';import {SqliteMetadata,SerialGate} from '../apps/node/resources.mjs';import {developerContactTier,developerContactLink,developerContactRoutes,evaluateLinkPolicy,cleanupDailyDeveloperGrants,DEVELOPER_CONTACT_POLICY} from '../packages/runtime/developer-contact.mjs';import {key} from '../packages/core/records.mjs';import {BILLING_STATE_KEY} from '../packages/billing/catalog.mjs';import {authored} from './link-helpers.mjs';
 const owner=crypto.randomUUID(),beneficiary=crypto.randomUUID(),origin='https://developer.example';
 // A same-host world: developer and senders are real AccountControllers wired through the identity and account ports.
 async function world(){

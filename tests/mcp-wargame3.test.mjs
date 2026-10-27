@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import {mkdtemp,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {digest,key} from '../packages/messaging/store.mjs';
+import {digest,key} from '../packages/core/records.mjs';
 import {nodeResources} from '../apps/node/resources.mjs';
 import {handleMcpPublic} from '../packages/mcp/http.mjs';
 import {mcpOperation,sweepMcpJournal,MCP_JOURNAL_TTL_MS,MCP_JOURNAL_EXPIRY} from '../packages/mcp/account.mjs';

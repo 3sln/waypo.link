@@ -5,7 +5,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {AccountController} from '../packages/runtime/accounts.mjs';
 import {SqliteMetadata,SerialGate} from '../apps/node/resources.mjs';
-import {key,digest} from '../packages/messaging/store.mjs';
+import {key,digest} from '../packages/core/records.mjs';
 import {publicMessageMetadata} from '../packages/messaging/message-metadata.mjs';
 import {migrateTags} from '../packages/messaging/tags.mjs';
 const owner='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';

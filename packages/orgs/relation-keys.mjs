@@ -1,7 +1,7 @@
 // Store keys shared by the relation modules (packages/orgs/relation-*.mjs), so the ORG-10d/10e method modules and the
 // ORG-10b/10c service use one layout without importing each other. Organization account store; see
 // packages/orgs/relation-instances.mjs for the record shapes.
-import {principalKey} from './grants.mjs';
+import {principalKey} from '../core/principals.mjs';
 
 export const pad=n=>String(Math.max(0,Math.min(Math.floor(n),999999999999999))).padStart(15,'0');
 export const ik=instance=>encodeURIComponent(instance);

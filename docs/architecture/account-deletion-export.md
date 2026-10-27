@@ -76,7 +76,7 @@ The export holds everything the account holds for its owner, plus what the syste
 | `features` | evaluated value and reason for every class (a) flag, and the experiment variant for this owner (`flags.for(ctx)`). Assignment is derived, not stored, so it is exported as evaluated at export time. | other owners' buckets |
 | `apps-held` | a list of connected apps (BindleBox included) that may hold copies, each with "export it there" guidance | the apps' data |
 
-**Inventory completeness test.** An engine test enumerates every metadata key prefix the account writes (the table above, plus the `key('…')` families in [messaging/store.mjs](../../packages/messaging/store.mjs)). It fails unless each prefix is either claimed by a contributor or listed in `EXPORT_EXCLUDED_PREFIXES` with a reason:
+**Inventory completeness test.** An engine test enumerates every metadata key prefix the account writes (the table above, plus the `key('…')` families in [core/records.mjs](../../packages/core/records.mjs)). It fails unless each prefix is either claimed by a contributor or listed in `EXPORT_EXCLUDED_PREFIXES` with a reason:
 - derived: search vectors, item index, usage counters, the `contact-redeemed-peer/` index;
 - transient: challenges, leases, journals;
 - secret: grants' secrets, vault.

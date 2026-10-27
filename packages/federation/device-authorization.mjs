@@ -10,7 +10,7 @@ import {siteGlobal} from '../flags/read.mjs';
 // (app-sessions.mjs): DPoP-bound refresh and access tokens, no absolute lifetime unless the user chose one, a sliding
 // idle limit, and the approval lineage checked on every refresh and every RPC.
 import {AppAction} from '../app/engine.mjs';
-import {digest,boundedString,canonical} from '../messaging/store.mjs';
+import {digest,boundedString,canonical} from '../core/records.mjs';
 import {fail,object,https} from './schema.mjs';
 import {verifyProof,DPOP_TYP,jktPattern} from './dpop.mjs';
 import {metadataClientHost} from './client-metadata.mjs';

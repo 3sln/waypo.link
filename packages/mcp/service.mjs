@@ -1,6 +1,6 @@
 import {collectAppMetadata,validateAppMetadataConfig} from '../apps/metadata.mjs';
 import {siteEnabled} from '../flags/read.mjs';
-import {base64url,digest,boundedString} from '../messaging/store.mjs';
+import {base64url,digest,boundedString} from '../core/records.mjs';
 export const MCP_LAYOUT='mcp-auth-v1-64';
 export const MCP_SHARDS=64;
 import {TOOLS} from '../automation/catalog.mjs';

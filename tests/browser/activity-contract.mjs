@@ -4,7 +4,7 @@ import StateProvider from '../../apps/web/src/providers/browser-state.mjs';
 import {LoadIncoming} from '../../apps/web/src/bl/incoming.mjs';
 import {createTestEngine,OWNER,ownerActor} from '../helpers/app-engine.mjs';
 import {ActivityFeed,ActivityItem,CreateActivity,MarkActivity,ArchiveActivity,ReplaceActivity,RetractActivity} from '../../packages/app/domains/activity.mjs';
-import {ACTIVITY_PUSH_OWNER_OPERATIONS as Push} from '../../packages/messaging/notifications.mjs';
+import {ACTIVITY_PUSH_OWNER_OPERATIONS as Push} from '../../packages/activity/notifications.mjs';
 import {canonical} from '../../packages/core/primitives.mjs';
 import {base64url} from '../../packages/core/records.mjs';
 

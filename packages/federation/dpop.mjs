@@ -1,6 +1,6 @@
 // RFC 9449 DPoP proofs, RFC 7638 thumbprints and stateless single-use server nonces. ES256 (P-256) only.
 // Proof signatures are verified outside storage transactions; consumeProof() records nonce and jti inside one.
-import {base64url,digest} from '../messaging/store.mjs';
+import {base64url,digest} from '../core/records.mjs';
 import {fail} from './schema.mjs';
 export const DPOP_TYP='dpop+jwt',EMBED_PROOF_TYP='bindle-embed+jwt';
 const text=new TextEncoder();

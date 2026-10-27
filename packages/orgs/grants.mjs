@@ -1,7 +1,7 @@
 // ORG-3: pure, fail-closed live intersection. Times on grants are Unix seconds; the injected clock is ms.
 const live=(value,now)=>value?.state==='live'&&(value.expires_at===undefined||value.expires_at>now/1000);
-export const principalKey=principal=>encodeURIComponent(JSON.stringify([principal?.iss??null,principal?.sub]));
-export const samePrincipal=(a,b)=>principalKey(a)===principalKey(b);
+// principalKey and samePrincipal live in core (core-scope step 1); re-exported for packages/rtc and older importers.
+export {principalKey,samePrincipal} from '../core/principals.mjs';
 export function memberPowers(member,now){return live(member,now)&&!member.hold?(member.grants??[]).filter(g=>g.power==='admin'&&(g.expires_at===undefined||g.expires_at>now/1000)&&(g.notBefore??0)<=now).map(g=>g.power):[];}
 /** Each ceiling is a contract -> method[] map. Governance is deliberately absent from this output. */
 export function effectiveAuthority({member,application,resource,connections=[],imported,now}={}){

@@ -1,5 +1,5 @@
 import {objectKey} from '../storage/policy.mjs';
-import {canonical,digest,base64url,boundedString} from '../messaging/store.mjs';
+import {canonical,digest,base64url,boundedString} from '../core/records.mjs';
 import {exact,object,fail} from './schema.mjs';
 const CONTRACT='https://3sln.me/artefacts/contracts/object-storage/v1';
 const key=(kind,id)=>`federation/${kind}/${id}`;

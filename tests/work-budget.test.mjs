@@ -7,7 +7,7 @@ import {join} from 'node:path';
 import {AccountWorkBudget,WORK_LAYOUT,workPartitionLimit,workShard,workLimits} from '../packages/runtime/work-budget.mjs';
 import {FixedWindowGuard,AccountController} from '../packages/runtime/accounts.mjs';
 import {SqliteMetadata,SerialGate} from '../apps/node/resources.mjs';
-import {key} from '../packages/messaging/store.mjs';
+import {key} from '../packages/core/records.mjs';
 import {createNodeServer} from '../apps/node/server.mjs';
 const OWNER='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const OTHER='bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';

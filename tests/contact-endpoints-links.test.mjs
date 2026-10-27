@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { MemoryMessagingStore, ContactTokenService, ContactEndpointService, MessagingService, signContactToken } from '../packages/messaging/index.mjs';
-import { key, fromBase64url, strictText } from '../packages/messaging/store.mjs';
+import { key, fromBase64url, strictText } from '../packages/core/records.mjs';
 import { CONTACT_LINK_TYPE } from '../packages/messaging/bindle-links.mjs';
 import { intakeDeliveryTags } from '../packages/messaging/tag-policy.mjs';
 

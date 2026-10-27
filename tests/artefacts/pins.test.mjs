@@ -8,7 +8,7 @@ import {createExtensionsProvider,PinSlotManifest} from '../../packages/federatio
 import {createEventBusesProvider,PinBusManifest} from '../../packages/federation/event-buses.mjs';
 import {createAppEngine,perform} from '../../packages/app/engine.mjs';
 import {versionRecord,versionDigest} from '../../packages/core/artefacts.mjs';
-import {canonical,digest} from '../../packages/messaging/store.mjs';
+import {canonical,digest} from '../../packages/core/records.mjs';
 import {forEachSeed,createScheduler,fakeClock} from '../helpers/chaos.mjs';
 import {manifest as busManifest} from '../event-bus-fixture.mjs';
 const ID='https://pins.example/preferences',code=code=>error=>error.code===code;

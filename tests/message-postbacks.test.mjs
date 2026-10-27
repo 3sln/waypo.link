@@ -6,7 +6,7 @@ import {join} from 'node:path';
 import {AccountController} from '../packages/runtime/accounts.mjs';
 import {SqliteMetadata,SerialGate} from '../apps/node/resources.mjs';
 import {appNotificationSigner} from '../packages/runtime/app-notifications.mjs';
-import {key,digest} from '../packages/messaging/store.mjs';
+import {key,digest} from '../packages/core/records.mjs';
 import {parseMessageForms} from '../packages/messaging/form-parser.mjs';
 import {messageFormFingerprint,validateMessageFormFields} from '../packages/messaging/form-policy.mjs';
 import {messagePostback,postbackOutcome,verifyPreparedPostbackToken} from '../packages/runtime/message-postbacks.mjs';

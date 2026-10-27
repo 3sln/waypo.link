@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { createNodeServer } from '../apps/node/server.mjs';
 import { authored } from './link-helpers.mjs';
 import { rpcDeliveryRequest } from '../packages/messaging/contact-delivery-wire.mjs';
-import { base64url,digest } from '../packages/messaging/store.mjs';
+import { base64url,digest } from '../packages/core/records.mjs';
 
 // Real Node adapter: links routing (links §2, §6–§8), authored delivery and the D10 cutover.
 const origin='http://localhost:8791',INTAKE='application/vnd.bindle.contact-intake+json',DELIVERY='application/vnd.bindle.contact-token+jwt; profile="contact-delivery-v1"';

@@ -1,4 +1,4 @@
-import {canonical,base64url,fromBase64url,digest,boundedString} from '../messaging/store.mjs';
+import {canonical,base64url,fromBase64url,digest,boundedString} from '../core/records.mjs';
 import {isUUID} from '../core/primitives.mjs';
 export const INVITE_MIME='application/vnd.3sln.conversation-invite+json';
 export const EVENT_MIME='application/vnd.3sln.conversation-event+json';

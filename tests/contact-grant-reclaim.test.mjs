@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import {AccountController} from '../packages/runtime/accounts.mjs';
 import {SqliteMetadata,SerialGate} from '../apps/node/resources.mjs';
 import {collectDeadParents,collectLinkState,DEAD_PARENT_HOLD_MS} from '../packages/links/audience.mjs';
-import {key} from '../packages/messaging/store.mjs';
+import {key} from '../packages/core/records.mjs';
 import {authored} from './link-helpers.mjs';
 
 const OWNER='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';

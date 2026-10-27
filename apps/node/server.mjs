@@ -11,7 +11,7 @@ import {bootConfigured} from '../../packages/identity/boot.mjs';
 import {IdentityService} from '../../packages/identity/service.mjs';
 import {systemBootstrapPort} from '../../packages/identity/system-bootstrap.mjs';
 import {paidSignupEnabled,setupBillingPort} from '../../packages/billing/signup.mjs';
-import {createPushTransport} from '../../packages/messaging/web-push.mjs';
+import {createPushTransport} from '../../packages/activity/web-push.mjs';
 import {identityBackupPort} from '../../packages/runtime/identity-backup.mjs';
 import http from 'node:http';
 import { Readable } from 'node:stream';

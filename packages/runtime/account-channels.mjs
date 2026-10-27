@@ -17,8 +17,8 @@
 //     invoke(owner, method, args) reaches the owner's account object; `$fault` results and malformed state throw,
 //     and IdentityService#emailRemove turns a throw into `notice_channels_unavailable` (503), never into "no channel".
 import {AccountLifecycle} from './account-lifecycle.mjs';
-import {key} from '../messaging/store.mjs';
-import {livePushRows} from '../messaging/notifications.mjs';
+import {key} from '../core/records.mjs';
+import {livePushRows} from '../activity/notifications.mjs';
 import {isUUID as uuid} from '../core/primitives.mjs';
 
 export const SECURITY_NOTICE_EVENTS=Object.freeze(['email-removed','export-created','export-downloaded','recovery-reissued','recovery-reissue-started','recovery-reissue-cancelled','passkey-added','passkey-removed','email-changed','sessions-revoked','sessions-evicted','password-changed']);

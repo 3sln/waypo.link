@@ -16,7 +16,7 @@
 // recognition and on an observed move), because relation events and entity certificates verify only against keys
 // already held (spec §9.9 step 3, §9.5). A claimed event sender is enqueued as 'claimed' exactly as a claimed member
 // certificate would be, so the schedule never depends on participation (RL-R1-H1).
-import {principalKey as memberPrincipalKey} from './grants.mjs';
+import {principalKey as memberPrincipalKey} from '../core/principals.mjs';
 
 export const MEMBER_REFRESH_PREFIX='org/cert/refresh/',MEMBER_REFRESH_INDEX='org/cert/refresh-of/',MEMBER_REFRESH_SIZE='org/cert/refresh-size',MEMBER_REFRESH_CLAIMED_INDEX='org/cert/refresh-claimed/';
 /** Bound of request-path ('claimed') entries; member entries may use the roster size on top of it. */

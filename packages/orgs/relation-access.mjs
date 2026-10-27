@@ -35,7 +35,7 @@ import {plain} from '../core/strict-json.mjs';
 import {digest} from '../core/records.mjs';
 import {verifyProof,DPOP_TYP} from '../federation/dpop.mjs';
 import {parseEntityCertificate,verifyEntitySignature,entityHolderKey,signEntityCertificate,pairwiseActor,ENTITY_CERTIFICATE_SECONDS,ENTITY_SKEW_SECONDS,ENTITY_WRITE_AGE_SECONDS,ENTITY_WRITE_FUTURE_SECONDS} from '../identity/entity-certificates.mjs';
-import {principalKey,samePrincipal} from './grants.mjs';
+import {principalKey,samePrincipal} from '../core/principals.mjs';
 import {validPrincipal} from './memberships.mjs';
 import {edgeEntries} from './relation-documents.mjs';
 import {outgoingLive,incomingLive,requiredSatisfied,relationScopeAllows,composeRelationScope} from './relation-edges.mjs';

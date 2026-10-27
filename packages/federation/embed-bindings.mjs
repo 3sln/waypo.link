@@ -2,7 +2,7 @@
 // A claim is minted only for an attested entry's approval, is redeemable once with a proof from the entry's
 // embedJkt, and yields a credential that becomes active only when the paired code is exchanged. None of these
 // values is accepted at the token, revocation or RPC endpoints (distinct hash domains).
-import {digest} from '../messaging/store.mjs';
+import {digest} from '../core/records.mjs';
 import {fail,exact} from './schema.mjs';
 import {APP_SESSION} from './app-sessions.mjs';
 export const EMBED={claim:120000,pending:600000,session:600000,perClient:8,live:64,perPartition:4,streams:2};

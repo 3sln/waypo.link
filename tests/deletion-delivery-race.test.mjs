@@ -9,7 +9,7 @@ import {SqliteMetadata,SerialGate} from '../apps/node/resources.mjs';
 import {createFlags} from '../packages/flags/evaluate.mjs';
 import {FENCE_KEY} from '../packages/runtime/account-deletion.mjs';
 import {PURGE_KEY,TOMBSTONE_KEY} from '../packages/runtime/lifecycle-storage.mjs';
-import {key} from '../packages/messaging/store.mjs';
+import {key} from '../packages/core/records.mjs';
 import {authored} from './link-helpers.mjs';
 
 const origin='https://race.example',owner='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',DAY=86400000,KEK=Buffer.alloc(32,9).toString('base64');

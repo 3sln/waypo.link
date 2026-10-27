@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import {bgWorld,rejects,A,B,C,E,DAY,ORG,p,OP1,OP2,OP3,OP4} from './helpers/break-glass-world.mjs';
 import {uuid} from './helpers/org-world.mjs';
 import {BREAK_GLASS,BREAK_GLASS_TRANSITIONS,breakGlassTransition,breakGlassDisclosureDigest,ledgerDecision,BreakGlassService} from '../packages/orgs/break-glass.mjs';
-import {principalKey} from '../packages/orgs/grants.mjs';
+import {principalKey} from '../packages/core/principals.mjs';
 import {OWNERSHIP} from '../packages/orgs/ownership.mjs';
 import {organizationProcessingFee} from '../packages/billing/organizations.mjs';
 import {SqliteMetadata} from '../apps/node/resources.mjs';

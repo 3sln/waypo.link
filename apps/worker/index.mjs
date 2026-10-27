@@ -21,7 +21,7 @@ import {identityBackupPort} from '../../packages/runtime/identity-backup.mjs';
 import {ShardedIdentityRepository} from '../../packages/runtime/identity-shards.mjs';
 import application from '../../packages/runtime/http.mjs';
 import { mailTransport } from './email.mjs';
-import { createPushTransport } from '../../packages/messaging/web-push.mjs';
+import { createPushTransport } from '../../packages/activity/web-push.mjs';
 import { createIdentityEngine, createWebAuthnAdapter, MemoryLinkedLimits } from '../../packages/identity/index.mjs';
 import {accountChannelsPort} from '../../packages/runtime/account-channels.mjs';
 import {adminDeletionPorts} from '../../packages/runtime/admin-deletion-ports.mjs';

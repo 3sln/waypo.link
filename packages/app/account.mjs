@@ -4,7 +4,7 @@
 import {VIEW_PROVIDERS} from './domains/views.mjs';
 import {TAG_PROVIDERS} from './domains/tags.mjs';
 import {ACTIVITY_PROVIDERS} from './domains/activity.mjs';
-import {ACTIVITY_PUSH_PROVIDERS} from '../messaging/notifications.mjs';
+import {ACTIVITY_PUSH_PROVIDERS} from '../activity/notifications.mjs';
 export function accountProviders({accountStore,itemIndex,messaging,clock,random,audit}){
  return {accountStore,itemIndex,messaging,clock,random,audit,...VIEW_PROVIDERS,...TAG_PROVIDERS,...ACTIVITY_PROVIDERS,...ACTIVITY_PUSH_PROVIDERS};
 }

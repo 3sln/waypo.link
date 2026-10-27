@@ -1,7 +1,7 @@
 import {publicMessageMetadata as metadata} from './message-metadata.mjs';
 import {validTagList,contactIntake,intakeDeliveryTags} from './tag-policy.mjs';
 import {validTagIds,isSuspectedTag,validateTagActions,changeTags,applyRules,initialTags,migrateTags,seedDefaultRules,stampRules,normalizeAutomatedResult,validUserTagId,validTagLabel,ownerRules} from '../core/tags.mjs';
-import { fail, key, boundedString, mimeValid, digest, canonical } from './store.mjs';
+import { fail, key, boundedString, mimeValid, digest, canonical } from '../core/records.mjs';
 import { validateContent } from './content.mjs';
 import { validateSenderMetadata } from './contact-endpoints.mjs';
 // Item reads, updates and deletes resolve either family: legacy peer messages (`message/`) or activity's v1 app messages

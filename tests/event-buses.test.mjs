@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {webcrypto} from 'node:crypto';
-import {MemoryMessagingStore} from '../packages/messaging/store.mjs';
+import {MemoryMessagingStore} from '../packages/core/records.mjs';
 import {pinSchema,validateSchema} from '../packages/federation/schema.mjs';
 import {validateSlotManifest,slotDigest} from '../packages/federation/extensions.mjs';
 import {publicArtifacts} from '../packages/core/public-contracts.mjs';

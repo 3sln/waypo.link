@@ -36,7 +36,7 @@ import {createNodeClientMetadataFetch} from '../../packages/federation/node-clie
 import {nodeDirectoryEgress} from '../../packages/federation/node-directory-fetch.mjs';
 import {adminClientBlocked} from '../../packages/identity/admin.mjs';
 import {metadataClientHost,clientSite} from '../../packages/federation/client-metadata.mjs';
-import {digest} from '../../packages/messaging/store.mjs';
+import {digest} from '../../packages/core/records.mjs';
 import {ENTRY_SHARDS,entryShard,remoteShard} from '../../packages/federation/authorization-entries.mjs';
 import {AdminStorage,narrowAdminStore} from '../../packages/identity/admin-store.mjs';
 import {MemoryLinkedLimits} from '../../packages/identity/linked-approval.mjs';
@@ -57,7 +57,7 @@ import {createExportAdapterPorts} from '../../packages/runtime/account/exports.m
 import {exportNoticePort,exportGrantsPort} from '../../packages/runtime/export-ports.mjs';
 import {lifecycleMode} from '../../packages/runtime/lifecycle-runner.mjs';
 import {LifecycleSweep} from '../../packages/runtime/lifecycle-scheduler.mjs';
-import {createPushTransport} from '../../packages/messaging/web-push.mjs';
+import {createPushTransport} from '../../packages/activity/web-push.mjs';
 
 export class SerialGate {
  constructor(){this.tail=Promise.resolve();}

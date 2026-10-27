@@ -5,7 +5,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {webcrypto} from 'node:crypto';
 import {frameKey,openStore} from '../apps/embed/src/keys.mjs';
-import {MemoryMessagingStore} from '../packages/messaging/store.mjs';
+import {MemoryMessagingStore} from '../packages/core/records.mjs';
 import {AuthorizationEntries} from '../packages/federation/authorization-entries.mjs';
 import {handleAuthorizationEntry,ENTRY_TOKEN_HEADER} from '../packages/runtime/federation-entry-http.mjs';
 import {incrementalRunner,handleIncrementalToken,incrementalMountable} from '../packages/runtime/incremental-authorization.mjs';

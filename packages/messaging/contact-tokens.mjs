@@ -1,5 +1,5 @@
 import {contactTagPolicy} from './tag-policy.mjs';
-import { fail, key, canonical, base64url, fromBase64url, textEncoder, strictText, boundedString, mimeValid } from './store.mjs';
+import { fail, key, canonical, base64url, fromBase64url, textEncoder, strictText, boundedString, mimeValid } from '../core/records.mjs';
 import { IdentityKeyRegistry, IDENTITY_ALGORITHMS as algorithms, importAlgorithm, verifiableSigningKey } from '../identity/keys.mjs';
 // The identity key registry moved to packages/identity/keys.mjs (slice C0); re-exported for existing importers.
 export { IdentityKeyRegistry, verifiableSigningKey } from '../identity/keys.mjs';

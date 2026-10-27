@@ -14,7 +14,7 @@ import {collectLinkState,DEAD_PARENT_HOLD_MS} from '../packages/links/audience.m
 import {ContactProfiles,CONTACT_KEYS,LEGACY_CONTACT_KEYS,contactGrantKeys} from '../packages/links/contact-profile.mjs';
 import {retireBeamStorage,BEAM_RETIRED_MARKER,BEAM_ONLY_PREFIXES} from '../packages/runtime/beam-retirement.mjs';
 import {exportInventory,createExportContributors} from '../packages/runtime/export-contributors.mjs';
-import {key} from '../packages/messaging/store.mjs';
+import {key} from '../packages/core/records.mjs';
 import {ROUTES,routeMethods} from '../packages/runtime/routes/index.mjs';
 import {admission} from '../packages/runtime/routes/contact-profile.mjs';
 import {createsContentOrGrant} from '../packages/identity/age-policy.mjs';
@@ -295,4 +295,18 @@ test('bug hunt F1 review: a stale tab withdrawing disclosure applies only the wi
  db.transaction=async fn=>{if(!raced){raced=true;await transaction(tx=>tx.put('beam/profile',{owner:OWNER,displayName:'Raced',bio:'',avatar:'',discloseToContacts:true}));}return transaction(fn);};
  const raced1=await contacts.profile(OWNER,{displayName:'Newer',bio:'Newer bio',avatar:'',discloseToContacts:false,expectedRevision:fresh.revision});db.transaction=transaction;
  assert.equal(raced1.discloseToContacts,false);assert.equal(raced1.displayName,'Raced');void current;
+});
+
+test('bug hunt round 3 B1: a stale save with sharing already off is refused, not treated as a withdrawal',async t=>{
+ const db=store(t),contacts=service(db,{inspect:async()=>({grant:grantRow(),endpoint:'https://portal.example/users/person/contact/'+GRANT})});await seedLegacy(db);
+ const loaded=await contacts.profile(OWNER,{displayName:'Loaded',bio:'',avatar:'',discloseToContacts:false});
+ await contacts.profile(OWNER,{displayName:'Other tab',bio:'',avatar:'',discloseToContacts:false,expectedRevision:loaded.revision});
+ // The switch was off in the stale tab and is still off: nothing to withdraw, so the edits must not be dropped silently.
+ await assert.rejects(contacts.profile(OWNER,{displayName:'Stale tab',bio:'',avatar:'',discloseToContacts:false,expectedRevision:loaded.revision}),{code:'profile_stale',status:409});
+ assert.equal((await contacts.profile(OWNER)).displayName,'Other tab');
+ // Inside the transaction too: a write that withdrew sharing first leaves nothing for the stale withdrawal to apply.
+ await contacts.profile(OWNER,{displayName:'Shared',bio:'',avatar:'',discloseToContacts:true});const fresh=await contacts.profile(OWNER),transaction=db.transaction.bind(db);let raced=false;
+ db.transaction=async fn=>{if(!raced){raced=true;await transaction(tx=>tx.put('beam/profile',{owner:OWNER,displayName:'Raced off',bio:'',avatar:'',discloseToContacts:false}));}return transaction(fn);};
+ await assert.rejects(contacts.profile(OWNER,{displayName:'Mine',bio:'',avatar:'',discloseToContacts:false,expectedRevision:fresh.revision}),{code:'profile_stale'});db.transaction=transaction;
+ assert.equal((await contacts.profile(OWNER)).displayName,'Raced off');
 });

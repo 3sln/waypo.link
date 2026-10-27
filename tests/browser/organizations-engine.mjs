@@ -215,3 +215,7 @@ test('L4: a reopened invitation for a joined organization is recognized from the
  const c=await client(t,{state:{organizationsConsole:{...model,organizations:[],context:null}},port:{call:async a=>a==='invitation-preview'?{organization:{name:'Example',label:'team'},member:true}:reply(a)}});
  await c.act('entry',{org,invitation:'d'.repeat(64)});const m=(await c.snapshot()).organizationsConsole;assert.equal(m.entry.preview.member,true);assert.ok(m.organizations.some(o=>o.id===org),'the person\'s own list loads with the entry');
  await c.act('select',{org,closeEntry:true});const s=await c.snapshot();assert.equal(s.organizationsConsole.entry,null);assert.equal(s.organizationsConsole.context,org);assert.equal(s.organizationInvitationPending,false);});
+// Bug hunt round 3 (DEVLOG 2026-10-27), B7: the create form disappears, so focus moves to the recovery-file step.
+test('B7: creating an organization focuses its recovery-file step, never the page body',async t=>{const focus=[],browser=fakeBrowser({download(){},focus:s=>focus.push(s)});
+ const c=await client(t,{state:{organizationsConsole:null},browser,port:{call:async a=>createdReply(a)}});
+ await c.act('create',{values:{name:'Example',label:'team'}});assert.ok((await c.snapshot()).organizationsConsole.recovery,'the recovery step is shown');assert.equal(focus.at(-1),'#org-recovery');});

@@ -1,4 +1,4 @@
-import { fail, key, canonical, fromBase64url, strictText, textEncoder, boundedString } from './store.mjs';
+import { fail, key, canonical, fromBase64url, strictText, textEncoder, boundedString } from '../core/records.mjs';
 import { signContactToken } from './contact-tokens.mjs';
 import { parseLinkQuery, parseLinkMeta, exactMembers, httpsURI, randomToken, base64urlRandom, LINK_META_TYP, CONTACT_LINK_TYPE } from '../links/envelope.mjs';
 // Issuance half (slice C1a): new-form metas are minted with the owner's current registry key (packages/links/issuance.mjs).

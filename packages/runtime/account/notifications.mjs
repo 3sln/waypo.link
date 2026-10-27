@@ -6,10 +6,10 @@ import {key} from '../../core/records.mjs';
 // `invoke` accepts and the placement policy it applies to each (packages/runtime/account/index.mjs).
 import {appNotificationCheck} from '../app-notifications.mjs';
 import {mcpCollections as accountMcpCollections,mcpOperation as accountMcpOperation} from '../../mcp/account.mjs';
-import {ACTIVITY_PUSH_OWNER_OPERATIONS} from '../../messaging/notifications.mjs';
+import {ACTIVITY_PUSH_OWNER_OPERATIONS} from '../../activity/notifications.mjs';
 import {operate} from '../../app/engine.mjs';
 import {accountChannelState,accountSecurityNotice} from '../account-channels.mjs';
-import {createPushTransport} from '../../messaging/web-push.mjs';
+import {createPushTransport} from '../../activity/web-push.mjs';
 // DX-6: the push transport this account reaches its own devices with (the lifecycle's when configured).
 const pushOf=c=>c.config.LIFECYCLE_PUSH??(c.securityPush??=createPushTransport(c.config));
 

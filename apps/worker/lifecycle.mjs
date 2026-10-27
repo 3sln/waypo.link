@@ -15,7 +15,7 @@ import {createExportAdapterPorts} from '../../packages/runtime/account/exports.m
 import {exportNoticePort,exportGrantsPort} from '../../packages/runtime/export-ports.mjs';
 import {flagsFor} from '../../packages/flags/read.mjs';
 import {mailTransport} from './email.mjs';
-import {createPushTransport} from '../../packages/messaging/web-push.mjs';
+import {createPushTransport} from '../../packages/activity/web-push.mjs';
 import {transferIdentityPort,createTransferNotices,attestorFromJwk,transferDueIndex,sweepTransferDue} from '../../packages/identity/transfer-out.mjs';
 import {transferInIdentityPort} from '../../packages/identity/transfer-in.mjs';
 import {transferInRecoveryPort} from '../../packages/identity/recovery-reissue.mjs';

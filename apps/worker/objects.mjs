@@ -24,7 +24,7 @@ import {workerLifecycleConfig,workerDeletionConfig,workerTransferOutConfig} from
 import {organizationOwnerChannels} from '../../packages/identity/owner-channels.mjs';
 import {mailTransport} from './email.mjs';
 import {lifecycleIdentityPort} from '../../packages/identity/lifecycle-tombstone.mjs';
-import {createPushTransport} from '../../packages/messaging/web-push.mjs';
+import {createPushTransport} from '../../packages/activity/web-push.mjs';
 
 // The Cloudflare adapter supplies persistence, serialization, alarms and buckets.
 // Every policy method is the same portable controller used by the Node adapter.

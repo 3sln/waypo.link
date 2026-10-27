@@ -21,9 +21,9 @@ import {relationsHost,ISS,STORE,LEDGER,PO,BUS} from './helpers/relations-world.m
 import {createRandom} from '../packages/app/memory-providers.mjs';
 import {validateRelationBody,edgeEntries} from '../packages/orgs/relation-documents.mjs';
 import {outgoingLive,incomingLive,edgeAllows,RELATION_EVENT} from '../packages/orgs/relation-edges.mjs';
-import {principalKey} from '../packages/orgs/grants.mjs';
+import {principalKey} from '../packages/core/principals.mjs';
 import {parseEntityCertificate} from '../packages/identity/entity-certificates.mjs';
-import {digest,base64url} from '../packages/messaging/store.mjs';
+import {digest,base64url} from '../packages/core/records.mjs';
 
 const ALL={[STORE]:['get','list','put','delete'],[LEDGER]:['get','list','put','delete'],[PO]:['status','acknowledge','cancel'],[BUS]:['read','subscribe','unsubscribe']};
 const EXPECTED=new Set(['not_found','invitation_invalid','relation_slot_full','relation_counterpart_exists','relation_invitation_pending','relation_invitation_limit','relation_invitation_empty','relation_values_incomplete','relation_values_invalid','relation_redeem_unavailable','relation_limit','relation_acceptance_conflict','relation_slot_invalid',

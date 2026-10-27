@@ -7,7 +7,7 @@ import {siteGlobal} from '../flags/read.mjs';
 // decline (incremental.mjs). Owner operations are engine Actions/Queries over the `incremental` provider, behind the
 // default-off INCREMENTAL_AUTH_ENABLED flag. No route is mounted here.
 import {AppAction,AppQuery,ownerOf} from '../app/engine.mjs';
-import {boundedString,canonical} from '../messaging/store.mjs';
+import {boundedString,canonical} from '../core/records.mjs';
 import {fail,object,https} from './schema.mjs';
 export const REQUEST_KINDS=Object.freeze(['grant-more','configure']);
 export const SUPPRESSION_SCOPES=Object.freeze(['app','kind','fragment','field']);

@@ -8,7 +8,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {nodeResources} from '../apps/node/resources.mjs';
 import {McpAuthorization} from '../packages/mcp/service.mjs';
-import {MemoryMessagingStore,digest} from '../packages/messaging/store.mjs';
+import {MemoryMessagingStore,digest} from '../packages/core/records.mjs';
 
 const origin='https://app.example',client={id:'app.example',name:'Registered app',redirectUris:[origin+'/callback'],origins:[origin],metadataSources:{webAppManifest:origin+'/manifest'}};
 async function inspect(extra){

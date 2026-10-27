@@ -4,7 +4,7 @@
 // approval; a sliding refresh idle limit (180 d, host-configurable); every refresh rotates with reuse detection and a
 // one-time 30 s same-key grace; every refresh re-checks the live grant, account, connection and approval lineage.
 // Access tokens: 15 min Bearer, 60 min DPoP-bound (host-configurable, never longer than those ceilings).
-import {base64url,digest} from '../messaging/store.mjs';
+import {base64url,digest} from '../core/records.mjs';
 import {fail,exact} from './schema.mjs';
 const MINUTE=60000,DAY=86400000;
 /** `idle` is the paired embed-credential idle limit (embed-bindings.mjs). Refresh and access defaults sit beside it. */

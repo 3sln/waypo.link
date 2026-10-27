@@ -23,3 +23,18 @@ test('F18 an unknown page path gets the same minimal not-found document; assets 
  // Review I-1: both unknown-path variants vary on Accept so a shared cache never serves one for the other.
  assert.match((await page('/nope')).headers.get('Vary')||'',/Accept/);assert.match((await page('/nope.json',{accept:'*/*'})).headers.get('Vary')||'',/Accept/);
 });
+
+// Bug hunt round 3 (DEVLOG 2026-10-27), B5: Back from the app onto a completed or expired authorization request.
+test('round 3 B5 a browser navigation to an ended authorization request gets a readable page; API clients keep JSON',async()=>{
+ const {stages:federation,authorizationEndedPage}=await import('../packages/runtime/routes/federation.mjs');
+ const env={FEDERATION_ENABLED:'true',APP_ORIGIN:'https://space.example',LOCAL_DEVELOPMENT:'true',ABUSE_HASH_KEY:'k'.repeat(32),ABUSE:{consume:async()=>true},
+  FEDERATION_AUTHORITY:{clients:[],inspect:async()=>{throw Object.assign(Error('Authorization request expired or completed.'),{code:'invalid_request'});}},ASSETS:{fetch:async()=>new Response('<html></html>',{headers:{'Content-Type':'text/html'}})}};
+ const get=async(query,headers)=>{const path='/oauth/authorize',url=new URL(`https://space.example${path}?${query}`);let response=await federation.public({request:new Request(url,{headers}),env,path,local:true,url});if(response?.passthrough)response=await response.passthrough;return response;};
+ const page=await get(`request_id=${id}`,{Accept:'text/html,application/xhtml+xml'});
+ assert.equal(page.status,400);assert.match(page.headers.get('Content-Type'),/text\/html/);assert.equal(page.headers.get('Cache-Control'),'no-store');assert.ok(page.headers.get('Content-Security-Policy'));
+ const body=await page.text();assert.match(body,/This request has ended/);assert.doesNotMatch(body,/<script/i);
+ assert.match(await (await get(`request_id=${id}&lang=es`,{Accept:'text/html'})).text(),/Esta solicitud ya terminó/);
+ assert.match(await (await get(`request_id=${id}`,{Accept:'text/html','Accept-Language':'es-MX,es;q=0.9'})).text(),/lang="es"/);
+ const api=await get(`request_id=${id}`,{Accept:'application/json'});assert.equal(api.status,400);assert.equal((await api.json()).error,'invalid_request');
+ assert.match(authorizationEndedPage(undefined),/lang="en"/);
+});

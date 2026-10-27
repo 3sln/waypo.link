@@ -110,3 +110,16 @@ test('retired device decisions navigate to approval without submitting URL or ty
  test('session outages retain signed-in shell until a definitive unauthorized response',async()=>{const f=fixture({authenticated:true});try{await f.act(new InitializeSpace());f.api.get=async()=>{throw Object.assign(new Error('Temporary outage'),{status:500});};await f.act(new RecheckSession());assert.equal((await f.query.peek()).session.account.handle,'river');assert.equal((await f.query.peek()).reconnecting,true);f.api.get=async()=>{throw Object.assign(new Error('Signed out'),{status:401});};await f.act(new RecheckSession());assert.equal((await f.query.peek()).session,null);}finally{await f.close();}});
  test('signup locale from the URL is saved for subsequent visits',async()=>{const f=fixture();f.browser.route=()=>({kind:'home',locale:'es'});try{await f.act(new InitializeSpace());assert.equal((await f.query.peek()).locale,'es');assert.equal(f.preferences[0].locale,'es');}finally{await f.close();}});
 test('signup step navigation records history and restores earlier steps without clearing choices',async()=>{const f=fixture(),history=[];f.browser.signupHistory=(step,replace)=>history.push({step,replace});try{await f.act(new PatchContactState({auth:'signup',signupStep:'method',config:{signupEnabled:true,signupContactRequired:false}}));await f.act(new SignupNext({values:{}}));const next=(await f.query.peek()).signupStep;assert.notEqual(next,'method');assert.equal(history.at(-1).step,next);await f.act(new NavigateSpace({kind:'signup-history',step:'method'}));assert.equal((await f.query.peek()).signupStep,'method');await f.act(new NavigateSpace({kind:'signup-history',step:'invalid'}));assert.equal((await f.query.peek()).signupStep,'method');}finally{await f.close();}});
+
+// Bug hunt round 3 (DEVLOG 2026-10-27).
+test('round 3 B2: a reloaded contact page without its captured link explains instead of waiting forever',async()=>{
+ const f=fixture();try{f.browser.route=()=>({kind:'contact',recipient:'river'});let described=0;f.api.contactIntake=async()=>{described++;return {};};
+  await f.act(new InitializeSpace());const state=await f.query.peek();
+  assert.equal(state.error,'This contact link is incomplete. Open the original link again.');assert.equal(described,0,'nothing to describe without the capability');assert.equal(state.contactPage?.intake??null,null);
+ }finally{await f.close();}
+});
+test('round 3 B3: opening a dialog clears the previous success notice so it is not shown inside the dialog',async()=>{
+ const f=fixture({authenticated:true});try{await f.act(new InitializeSpace());await f.act(new PatchContactState({notice:'Contact profile saved.'}));
+  await f.act(new NavigateSpace({kind:'open-modal',modal:{kind:'collection'}}));const state=await f.query.peek();assert.equal(state.modal.kind,'collection');assert.equal(state.notice,'');
+ }finally{await f.close();}
+});

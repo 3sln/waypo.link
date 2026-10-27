@@ -3,7 +3,7 @@ import {consentContracts} from '../../consent/contracts.mjs';
 // X11 owner transport. Identity, member selection and CSRF are resolved by the shared router.
 import {flagGlobal,flagReadable,flagEnabled,json,body} from './shared.mjs';
 import {federationSchemas} from '../federation.mjs';
-import {digest,canonical} from '../../messaging/store.mjs';
+import {digest,canonical} from '../../core/records.mjs';
 const fail=(code,message,status=409)=>{throw Object.assign(Error(message),{code,status});};
 const paths=['/api/connections/owner','/api/connections/setup','/api/connections/client-metadata'];
 export const allowedMethods=path=>paths.includes(path)?['POST']:null;

@@ -2,7 +2,7 @@
 // JSON, exact envelope shape, JCS digests and domain-separated ES256 proofs.
 // Every link delivery is identity-authored (links.md §6.1); there is no
 // author:null branch. Pure: no storage, network or HTTP framing.
-import { fail, canonical, digest, fromBase64url, base64url, textEncoder, mimeValid } from './store.mjs';
+import { fail, canonical, digest, fromBase64url, base64url, textEncoder, mimeValid } from '../core/records.mjs';
 import { validTagIds } from './tags.mjs';
 import { isUUID as uuid } from '../core/primitives.mjs';
 

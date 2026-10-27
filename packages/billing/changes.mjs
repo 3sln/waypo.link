@@ -1,5 +1,5 @@
 import {BillingError,BILLING_STATE_KEY,assertOwner,validPlanParameters,entitlementFromState,metadataPrefix} from './catalog.mjs';
-import {canonical,digest} from '../messaging/store.mjs';
+import {canonical,digest} from '../core/records.mjs';
 import {isUUIDv4 as uuid} from '../core/primitives.mjs';
 import {AppAction} from '../app/engine.mjs';
 const LOCK='billing/change-lock',LAST='billing/change-last',PREFIX='billing/change/',GRACE=900000;

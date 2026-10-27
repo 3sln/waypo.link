@@ -120,8 +120,8 @@ test('M1: an open invitation never redeems while the inviter is deleting, held, 
  await rejects(A.system('relations.redeem',{invitation:inv.invitation,statement:stmt,from:B.principal}),'invitation_invalid');await A.metadata.put('org/record-v1',rec);
  // An issuing admin who leaves (or is removed or held) takes that admin's open invitations along.
  const X=A.people[1];await A.run('orgs.invite',A.admin,{invitee:{iss:ISS,sub:X},grants:[{power:'admin'}]}).then(i=>A.run('orgs.accept',X,{invitation:i.invitation})).catch(()=>{});
- const x=await A.get('org/member/'+(await import('../packages/orgs/grants.mjs')).principalKey({iss:ISS,sub:X}));
- await A.metadata.put('org/member/'+(await import('../packages/orgs/grants.mjs')).principalKey({iss:ISS,sub:X}),{...x,grants:[{power:'admin',grantedAt:0}]});
+ const x=await A.get('org/member/'+(await import('../packages/core/principals.mjs')).principalKey({iss:ISS,sub:X}));
+ await A.metadata.put('org/member/'+(await import('../packages/core/principals.mjs')).principalKey({iss:ISS,sub:X}),{...x,grants:[{power:'admin',grantedAt:0}]});
  const byX=await A.run('relations.invite',X,{instance:await mk(A),slot:'recipient',invitee:C.principal,values:{0:[{resource:r}]}});
  await A.run('orgs.leave',X,{});// the issuing admin leaves: that admin's open invitations go
  const xr=await A.get('rel/inv/'+byX.jti);assert.equal(xr.state,'withdrawn');assert.equal(xr.reason,'issuer-no-longer-admin');
@@ -162,7 +162,7 @@ test('L3: sweeps are indexed and resumable: expiry past 256 old rows, retention,
 
 test('L4: the import authority takes the application ceiling from the approved grant, never from the caller',async()=>{const h=await host();try{
  const [A,B]=h.list,r=await res(A,'f');await h.relate(A,B,{give:{0:[{resource:r}]}});const imp=(await B.imports())[0].resources[0].id;
- const pk=(await import('../packages/orgs/grants.mjs')).principalKey,m=await B.get('org/member/'+pk({iss:ISS,sub:B.member}));
+ const pk=(await import('../packages/core/principals.mjs')).principalKey,m=await B.get('org/member/'+pk({iss:ISS,sub:B.member}));
  await B.run('orgs.member-grants',null,{membership:m.id,grants:[{resource:imp,methods:{[STORE]:['get','list','put']}}]});const gen=(await B.get('org/member/'+pk({iss:ISS,sub:B.member}))).generation;
  await rejects(B.run('relations.import-authority',B.member,{resource:imp,application:{[STORE]:['get','list','put','delete']}}),'invalid_request');
  const grant={id:'g',active:true,clientId:'https://app.example/client',connection:{id:'c1',generation:1},fields:['f'],methods:{f:{[STORE]:['get']}},resources:{f:[imp]}};

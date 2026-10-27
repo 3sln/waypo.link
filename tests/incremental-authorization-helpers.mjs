@@ -2,7 +2,7 @@
 // sessions), a CX-1 consent provider, a fixture-only registrable-domain resolver and a movable clock. Hosts are
 // reserved .example names.
 import {webcrypto,createHash} from 'node:crypto';
-import {MemoryMessagingStore,canonical,base64url} from '../packages/messaging/store.mjs';
+import {MemoryMessagingStore,canonical,base64url} from '../packages/core/records.mjs';
 import {createIncrementalProvider} from '../packages/federation/incremental.mjs';
 import {createConsentProvider} from '../packages/consent/index.mjs';
 import {createTestEngine} from './helpers/app-engine.mjs';

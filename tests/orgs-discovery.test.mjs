@@ -13,7 +13,7 @@ import {MembershipService,requestDecisions} from '../packages/orgs/memberships.m
 import {ORG_RECORD,ORG_JOINED_LIMIT} from '../packages/orgs/organizations.mjs';
 import {readOrganization,loadOrganization} from '../packages/orgs/roster.mjs';
 import {accountActor,personActor} from '../packages/orgs/authority.mjs';
-import {principalKey} from '../packages/orgs/grants.mjs';
+import {principalKey} from '../packages/core/principals.mjs';
 import {organizationsProvider,ORG_OPERATIONS,ORG_SYSTEM_OPERATIONS} from '../packages/app/domains/orgs.mjs';
 import {OrganizationDiscovery,organizationDiscoveryProvider,DiscoverOrganizations,AcceptOrganizationInvitation,LeaveOrganizationEverywhere} from '../packages/orgs/discovery.mjs';
 import {AppFault} from '../packages/app/faults.mjs';

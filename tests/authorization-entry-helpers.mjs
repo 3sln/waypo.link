@@ -8,7 +8,7 @@ import {AuthorizationEntries} from '../packages/federation/authorization-entries
 import {DPOP_TYP} from '../packages/federation/dpop.mjs';
 import {handleAuthorizationEntry,handleEmbedAPI} from '../packages/runtime/federation-entry-http.mjs';
 import {handleFederation} from '../packages/federation/http.mjs';
-import {base64url,digest} from '../packages/messaging/store.mjs';
+import {base64url,digest} from '../packages/core/records.mjs';
 export const issuer='https://provider.example',embedOrigin='https://embed.provider.example',clientId='https://app.example/client',redirectUri='https://app.example/callback',appOrigin='https://app.example';
 export const fragment='https://schema.example/settings/v1';
 const schema={id:fragment,title:'Settings',description:'Shared settings',publisher:'https://schema.example',fields:{theme:{title:'Theme',type:'enum',values:['dark','light']}}};

@@ -1,5 +1,5 @@
 import {siteGlobal} from '../flags/read.mjs';
-import {digest} from '../messaging/store.mjs';
+import {digest} from '../core/records.mjs';
 import {validateIntegrationManifest} from '../federation/integrations.mjs';
 import {validateSlotManifest,validateExtensions,createSlotOperation} from '../federation/extensions.mjs';
 import {MESSAGING_INGRESS_SLOT} from '../links/types.mjs';

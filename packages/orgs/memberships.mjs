@@ -4,7 +4,8 @@
 // Adapters MUST supply authenticated principal/evidence; no certificate, key or step-up assertion comes from input.
 import {OrganizationService,ORG_RECORD} from './organizations.mjs';
 import {organizationPowers,requireFresh} from './authority.mjs';
-import {principalKey,samePrincipal,memberPowers,normalizeMemberGrants,effectiveAuthority,memberResourceProjection} from './grants.mjs';
+import {principalKey,samePrincipal} from '../core/principals.mjs';
+import {memberPowers,normalizeMemberGrants,effectiveAuthority,memberResourceProjection} from './grants.mjs';
 import {invitationProposal,signOrganizationInvitation} from './invitations.mjs';
 import {attachRoster,rosterOf,loadOrganization,openRequest,ORG_KEYS,ORG_ROSTER_VERSION,ORG_RETENTION_MS,ORG_OUTBOX_EXPIRY_MS,ORG_SWEEP_BATCH,ORG_ADMIN_DELAY_MS} from './roster.mjs';
 import {enqueueMemberKeyRefresh} from './key-refresh.mjs';

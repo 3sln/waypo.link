@@ -9,7 +9,7 @@ import {brokeredResourceId,account as x8} from '../packages/federation/introspec
 import {FederationController,federationRemote} from '../packages/federation/runtime.mjs';
 import {stages} from '../packages/runtime/routes/connections.mjs';
 import {GOOGLE_DRIVE_SETUP_FRAGMENT} from '../packages/storage/google-drive-integration.mjs';
-import {digest,canonical} from '../packages/messaging/store.mjs';
+import {digest,canonical} from '../packages/core/records.mjs';
 
 async function prepared(t){const f=await brokeredProvider(t,{introspection:true}),r=await f.register('https://models.example/r/fast'),id=brokeredResourceId(SUBJECT,r.id);await f.configure({theme:'dark',model:[id],store:[]});const token=await f.authorize({resources:{model:[id],store:[]}});return {...f,r,id,token};}
 test('X8 adapter composition declares only mounted capabilities and moves the provisional key URL',async t=>{

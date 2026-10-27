@@ -1,6 +1,6 @@
 import {siteGlobal} from '../flags/read.mjs';
 import {AppAction,AppQuery} from '../app/engine.mjs';
-import {canonical} from '../messaging/store.mjs';
+import {canonical} from '../core/records.mjs';
 import {fail,object,strings,pinSchema,pinVersioned} from './schema.mjs';
 import {validateSlotManifest,validateExtensionDigest,slotDigest} from './extensions.mjs';
 

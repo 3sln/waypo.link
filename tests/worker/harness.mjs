@@ -9,7 +9,7 @@ import path from 'node:path';
 const harness = `
 import worker, { AdminAuthority, IdentityDirectory, AccountObject, AbuseGuard, McpAuthorizationObject, FederationObject, PlanCatalogObject, LifecycleScheduler, EventBusWaiter, EmailBridgeObject } from './apps/worker/index.mjs';
 import {createWorkerArgon2Hasher}from'./apps/worker/password.mjs';
-import {createPushTransport}from'./packages/messaging/web-push.mjs';
+import {createPushTransport}from'./packages/activity/web-push.mjs';
 export {AdminAuthority,McpAuthorizationObject,PlanCatalogObject,LifecycleScheduler,EventBusWaiter,EmailBridgeObject};
 export class TestDirectory extends IdentityDirectory {
   async pushVector(config,subscription,payload){let sent;const transport=createPushTransport(config,{fetcher:async(url,options)=>{sent=options;return new Response(null,{status:201});}}),result=await transport.send(subscription,payload);return {accepted:result.accepted,encrypted:!Buffer.from(sent.body).includes(Buffer.from(payload.proof)),encoding:new Headers(sent.headers).get('Content-Encoding'),redirect:sent.redirect};}

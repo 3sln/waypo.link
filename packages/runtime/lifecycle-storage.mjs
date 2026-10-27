@@ -1,4 +1,4 @@
-import {key} from '../messaging/store.mjs';
+import {key} from '../core/records.mjs';
 
 // Account-local storage effects of the lifecycle executor: irreversible hosted
 // purge after the final grace period, and suspension-time cold tiering. Every

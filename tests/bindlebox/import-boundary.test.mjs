@@ -28,5 +28,5 @@ test('boundary parser catches re-exports and literal dynamic imports and permits
  for(const source of ['import"../runtime/accounts.mjs";','export{AccountController}from"../runtime/accounts.mjs";','const load=()=>import("../runtime/accounts.mjs");'])assert.equal((await scan({stdin:{contents:source,sourcefile:'probe.mjs',resolveDir:resolve(root,'packages/bindlebox-engine')}})).length,1);
  assert.equal(violation('packages/core/probe.mjs','../bindlebox-engine/engine.mjs')?.includes('imports BindleBox'),true);
  for(const path of ['../core/primitives.mjs','../content/render.mjs','../sdk/src/index.mjs','../../vendor/ngin/index.js','../../vendor/dodo/index.js','some-npm-package','node:crypto'])assert.equal(violation('packages/bindlebox-engine/probe.mjs',path),null,path);
- for(const path of ['../links/envelope.mjs','../core/engine.mjs','../app/engine.mjs','../messaging/store.mjs'])assert.ok(violation('packages/bindlebox-engine/probe.mjs',path),path);
+ for(const path of ['../links/envelope.mjs','../core/engine.mjs','../app/engine.mjs','../core/records.mjs'])assert.ok(violation('packages/bindlebox-engine/probe.mjs',path),path);
 });

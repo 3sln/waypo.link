@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { MemoryMessagingStore, ContactTokenService, ContactEndpointService, MessagingService, CONTACT_TOKEN_MIME, signContactToken, validateSenderMetadata } from '../packages/messaging/index.mjs';
-import { key, fromBase64url, strictText } from '../packages/messaging/store.mjs';
+import { key, fromBase64url, strictText } from '../packages/core/records.mjs';
 
 async function fixture(alg='EdDSA',issuer='https://3sln.example',allowInsecureLocalhost=false) {
   let now=1800000000000; const clock=()=>now; const store=new MemoryMessagingStore();

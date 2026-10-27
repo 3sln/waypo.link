@@ -1,5 +1,5 @@
 import {toolCatalog,TOOLS,validateTool,boundedToolResult} from './catalog.mjs';
-import {canonical,digest} from '../messaging/store.mjs';
+import {canonical,digest} from '../core/records.mjs';
 import {mcpOperation,mcpCollections} from '../mcp/account.mjs';
 import {capability} from '../flags/read.mjs';
 const fail=(code,message,status=403)=>{throw Object.assign(new Error(message),{code,status});};

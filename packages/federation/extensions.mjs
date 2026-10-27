@@ -1,6 +1,6 @@
 import {siteGlobal} from '../flags/read.mjs';
 import {AppAction,AppQuery} from '../app/engine.mjs';
-import {canonical,digest,boundedString} from '../messaging/store.mjs';
+import {canonical,digest,boundedString} from '../core/records.mjs';
 import {fail,object,https,strings,pinVersioned,validateSchema,validateFields,validateValue} from './schema.mjs';
 
 // `bind` is AMD-X1 (bound consumer options; docs/spec/extensions.md §2.1, proposed and unsigned). A processor built

@@ -5,7 +5,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {collectAppMetadata,parseBindleAppManifest,discoverWebAppManifest,metadataPolicy,validateAppMetadataConfig} from '../packages/apps/metadata.mjs';
 import {nodeResources} from '../apps/node/resources.mjs';
-import {digest} from '../packages/messaging/store.mjs';
+import {digest} from '../packages/core/records.mjs';
 const origin='https://app.example',client={id:'app.example',name:'Registered app',redirectUris:[origin+'/callback'],origins:[origin]},policy=metadataPolicy(client);
 const json=value=>new Response(JSON.stringify(value),{headers:{'Content-Type':'application/manifest+json'}});
 test('declared application metadata is useful without network and remains public presentation',async()=>{
@@ -41,7 +41,7 @@ test('MCP review pins presentation metadata and reconnect shows fresh metadata w
  await resources.mcp.approve(owner,{requestId,permissions:[{collectionId:collections[0].id,tools:['items_list']}]});const [connection]=await account.appConnections(owner);assert.equal(connection.name,review.client.name);assert.deepEqual(connection.metadata,review.client.metadata);assert.equal(connection.metadata.description,'Owner-reviewed label');assert.deepEqual(connection.contracts,[]);
 });
 test('concurrent MCP consent reads share one metadata fetch and durable snapshot survives later reads',async()=>{
- const {McpAuthorization}=await import('../packages/mcp/service.mjs');const {MemoryMessagingStore}=await import('../packages/messaging/store.mjs');
+ const {McpAuthorization}=await import('../packages/mcp/service.mjs');const {MemoryMessagingStore}=await import('../packages/core/records.mjs');
  const store=new MemoryMessagingStore();let calls=0,release,started;const wait=new Promise(resolve=>{release=resolve;}),fetching=new Promise(resolve=>{started=resolve;});
  const registered={...client,metadataSources:{webAppManifest:origin+'/manifest'}};
  const service=new McpAuthorization({metadata:{transaction:fn=>store.transaction(fn)},config:{APP_ORIGIN:'https://identity.example',APP_METADATA_DISCOVERY_ENABLED:'true',MCP_CLIENTS:JSON.stringify([registered]),APP_METADATA_FETCH:async()=>{calls++;started();await wait;return json({name:'Fetched once'});}}});

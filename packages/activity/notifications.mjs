@@ -1,11 +1,11 @@
-import { fail, key, boundedString, base64url, digest, fromBase64url } from './store.mjs';
+import { fail, key, boundedString, base64url, digest, fromBase64url } from '../core/records.mjs';
 import { UUID_V4, canonical } from '../core/primitives.mjs';
 import {Provider} from '../../vendor/ngin/index.js';
 import {AppAction,AppQuery,ownerOf} from '../app/engine.mjs';
 import {AppFault} from '../app/faults.mjs';
-import {activityState} from '../activity/store.mjs';
+import {activityState} from './store.mjs';
 // Notification events name an item ID; the item lives in either family (legacy message/ or activity's app-message/).
-import {itemRecord} from '../activity/app-messages.mjs';
+import {itemRecord} from './app-messages.mjs';
 
 export const defaultNotificationPreferences = () => ({
   enabled: true, push: { enabled: false, preview: false },

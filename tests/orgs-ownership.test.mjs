@@ -11,7 +11,8 @@ import {OwnershipService,OWNERSHIP,billingStanding,organizationEntitlementPort} 
 import {ORG_RECORD} from '../packages/orgs/organizations.mjs';
 import {readOrganization} from '../packages/orgs/roster.mjs';
 import {queuedEffects} from '../packages/orgs/ownership-effects.mjs';
-import {principalKey,memberPowers} from '../packages/orgs/grants.mjs';
+import {principalKey} from '../packages/core/principals.mjs';
+import {memberPowers} from '../packages/orgs/grants.mjs';
 import {organizationsProvider,ORG_OPERATIONS,ORG_SYSTEM_OPERATIONS} from '../packages/app/domains/orgs.mjs';
 import {OrganizationBilling} from '../packages/billing/organizations.mjs';
 import {fakeOrgPolar,ORG_POLAR_CONFIG} from './helpers/org-polar.mjs';

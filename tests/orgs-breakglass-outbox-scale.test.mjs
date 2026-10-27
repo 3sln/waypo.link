@@ -9,7 +9,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {bgWorld,rejects,A,B,C,E,p} from './helpers/break-glass-world.mjs';
 import {uuid,freshStats,storedSizes,ORG} from './helpers/org-world.mjs';
-import {principalKey} from '../packages/orgs/grants.mjs';
+import {principalKey} from '../packages/core/principals.mjs';
 import {OWNERSHIP} from '../packages/orgs/ownership.mjs';
 import {ADMIN_KEYS,ORG_INLINE_ADMINS} from '../packages/orgs/admin-index.mjs';
 import {EFFECT_KEYS,loadEffect,pendingEffects} from '../packages/orgs/ownership-effects.mjs';

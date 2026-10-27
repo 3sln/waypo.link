@@ -37,7 +37,7 @@ import {armAlarm,alarmFenced,assertLifecycleOpen,assertDeletionFenceOpen} from '
 import {collectGarbageRef} from './export-pins.mjs';
 import {ContactProfiles} from '../links/contact-profile.mjs';
 import {ContactTokenService,ContactEndpointService,MessagingService,NotificationService} from '../../packages/messaging/index.mjs';
-import {key} from '../../packages/messaging/store.mjs';
+import {key} from '../../packages/core/records.mjs';
 import {indexDeviceExpiry,sweepDeviceExpiry,IdentityShardStorage} from './identity-shards.mjs';
 import {StorageError} from '../storage/policy.mjs';
 import {StorageQuota} from './storage-quota.mjs';

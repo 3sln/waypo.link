@@ -5,7 +5,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {nodeResources} from '../apps/node/resources.mjs';
 import {handleMcpPublic} from '../packages/mcp/http.mjs';
-import {digest} from '../packages/messaging/store.mjs';
+import {digest} from '../packages/core/records.mjs';
 import application from '../packages/runtime/http.mjs';
 import {McpShardController} from '../packages/mcp/runtime.mjs';
 const origin='http://localhost:8788',client={id:'agent.example',name:'Example agent',redirectUris:['https://agent.example/callback'],origins:['https://agent.example']};

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createIncrementalProvider,incrementalMembers,IncrementalAdmit,IncrementalBegin,IncrementalDecide,IncrementalAbandon} from '../../packages/federation/incremental.mjs';
 import {contractUpgradeDelta,resolvedContractMethod} from '../../packages/consent/reviewed-contracts.mjs';
-import {MemoryMessagingStore} from '../../packages/messaging/store.mjs';
+import {MemoryMessagingStore} from '../../packages/core/records.mjs';
 import {fixture,engine,grantMoreInput,calRequest,tasks,subject,CAL,CALENDAR,registrableDomain} from '../incremental-authorization-helpers.mjs';
 import {forEachSeed,createScheduler} from '../helpers/chaos.mjs';
 const hash=n=>'sha256-'+String(n).repeat(42)+'A',ref=n=>({version:n,digest:hash(n)});

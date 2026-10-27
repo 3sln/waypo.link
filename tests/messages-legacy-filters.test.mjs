@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {SqliteMetadata,SerialGate} from '../apps/node/resources.mjs';
 import {AccountController} from '../packages/runtime/accounts.mjs';
-import {key} from '../packages/messaging/store.mjs';
+import {key} from '../packages/core/records.mjs';
 
 // DEVLOG 2026-10-23 review follow-ups: the SQL-indexed legacy array and the scan fallback (custom stores
 // without SQL) must agree on filter normalization, and wrong-typed filters keep the legacy empty-array answer.

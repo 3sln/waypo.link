@@ -11,7 +11,7 @@ import {AccountController} from '../packages/runtime/accounts.mjs';
 import {SqliteMetadata,SerialGate} from '../apps/node/resources.mjs';
 import {appNotificationSigner} from '../packages/runtime/app-notifications.mjs';
 import {federationEpoch} from '../packages/runtime/federation.mjs';
-import {key,digest} from '../packages/messaging/store.mjs';
+import {key,digest} from '../packages/core/records.mjs';
 import {parseMessageForms} from '../packages/messaging/form-parser.mjs';
 import {messageFormFingerprint} from '../packages/messaging/form-policy.mjs';
 

@@ -3,7 +3,7 @@ import {pinConfiguredContract} from '../artefact-pins.mjs';
 import {federationSchemas} from '../federation.mjs';
 import {clientSite} from '../../federation/client-metadata.mjs';
 import {consentContracts} from '../../consent/contracts.mjs';
-import {digest,canonical} from '../../messaging/store.mjs';
+import {digest,canonical} from '../../core/records.mjs';
 // IA-2 owner routes (docs/spec/incremental-authorization.md §9.2): list, add and remove the owner's request
 // suppressions for one app. Mounted only with INCREMENTAL_AUTH_ENABLED and the adapter's INCREMENTAL_AUTHORIZATION port
 // (runtime/incremental-authorization.mjs); otherwise nothing answers and no allowlist reveals the path. The access

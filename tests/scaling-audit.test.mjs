@@ -4,7 +4,7 @@ import {DatabaseSync} from 'node:sqlite';
 import {StorageQuota,storageState} from '../packages/runtime/storage-quota.mjs';
 import {AccountItemIndex} from '../packages/runtime/item-index.mjs';
 import {BILLING_STATE_KEY} from '../packages/billing/index.mjs';
-import {key} from '../packages/messaging/store.mjs';
+import {key} from '../packages/core/records.mjs';
 import {AccountController} from '../packages/runtime/accounts.mjs';
 import {SqliteMetadata,SerialGate,FileBucket} from '../apps/node/resources.mjs';
 import application from '../packages/runtime/http.mjs';

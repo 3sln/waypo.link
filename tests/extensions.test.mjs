@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {webcrypto,createHash} from 'node:crypto';
 import {validateSchema,pinSchema} from '../packages/federation/schema.mjs';
-import {canonical,MemoryMessagingStore} from '../packages/messaging/store.mjs';
+import {canonical,MemoryMessagingStore} from '../packages/core/records.mjs';
 import {createTestEngine} from './helpers/app-engine.mjs';
 import {validateSlotManifest,validateExtensions,slotDigest,validateExtensionDigest,pinSlotManifest,createSlotOperation,nextSlotDispatch,recordSlotOutcome,slotOperationResult,createExtensionsProvider,SlotManifest,ExtensionDeclarations,SlotSelection,PinSlotManifest} from '../packages/federation/extensions.mjs';
 

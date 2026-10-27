@@ -19,7 +19,7 @@
 //   org/outbox/fanout/<seq12>                      a pending member outbox event addressed to the admins by fan-out.
 // The record's `roster` summary gains `admins` (the org/admin/ row count) and `ix` (this layout's version).
 // Every reader verifies the membership row itself; an index only bounds which rows are read.
-import {principalKey} from './grants.mjs';
+import {principalKey} from '../core/principals.mjs';
 
 export const ADMIN_INDEX_VERSION=3;
 export const ADMIN_KEYS=Object.freeze({admin:'org/admin/',unbounded:'org/admin-unbounded/',from:'org/admin-from/',ended:'org/admin-ended/',fanout:'org/outbox/fanout/'});

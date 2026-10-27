@@ -13,7 +13,7 @@ import {LinkService} from '../packages/links/issuance.mjs';
 import {fakeClock} from './helpers/chaos.mjs';
 import {key as recordKey} from '../packages/core/records.mjs';
 import {collectLinkState,DEAD_PARENT_HOLD_MS} from '../packages/links/audience.mjs';
-import {key} from '../packages/messaging/store.mjs';
+import {key} from '../packages/core/records.mjs';
 
 const ORIGIN='https://provider.example',OWNER='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',PEER='cccccccc-cccc-4ccc-8ccc-cccccccccccc',DAY=86400000;
 const b64=v=>Buffer.from(typeof v==='string'?v:JSON.stringify(v)).toString('base64url');

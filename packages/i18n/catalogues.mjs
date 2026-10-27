@@ -180,6 +180,8 @@ export const catalogues = freeze({
       "Your contact profile could not be loaded. Reload to try again before saving.": "Your contact profile could not be loaded. Reload to try again before saving.",
       "Your contact profile is still loading. Try again when it has loaded.": "Your contact profile is still loading. Try again when it has loaded.",
       "Your contact profile changed in another session. The latest version is shown; review it and save again.": "Your contact profile changed in another session. The latest version is shown; review it and save again.",
+      // Bug hunt round 3 (2026-10-27, provisional).
+      "Profile sharing is now off. Your other changes were not saved because your contact profile changed in another session; the latest version is shown.": "Profile sharing is now off. Your other changes were not saved because your contact profile changed in another session; the latest version is shown.",
       "A device name is required. Enter a name for this device.": "A device name is required. Enter a name for this device.",
       "Create view": "Create view",
       "Messages from connected apps": "Messages from connected apps",
@@ -3428,6 +3430,8 @@ export const catalogues = freeze({
       "Your contact profile could not be loaded. Reload to try again before saving.": "No se pudo cargar tu perfil de contacto. Recarga para intentarlo de nuevo antes de guardar.",
       "Your contact profile is still loading. Try again when it has loaded.": "Tu perfil de contacto aún se está cargando. Inténtalo de nuevo cuando termine de cargar.",
       "Your contact profile changed in another session. The latest version is shown; review it and save again.": "Tu perfil de contacto cambió en otra sesión. Se muestra la versión más reciente; revísala y vuelve a guardar.",
+      // Bug hunt round 3 (2026-10-27, provisional).
+      "Profile sharing is now off. Your other changes were not saved because your contact profile changed in another session; the latest version is shown.": "Compartir el perfil está desactivado. Tus otros cambios no se guardaron porque tu perfil de contacto cambió en otra sesión; se muestra la versión más reciente.",
       "A device name is required. Enter a name for this device.": "El nombre del dispositivo es obligatorio. Escribe un nombre para este dispositivo.",
       "Create view": "Crear vista",
       "Messages from connected apps": "Mensajes de apps conectadas",

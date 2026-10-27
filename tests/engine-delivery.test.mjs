@@ -3,7 +3,7 @@
 // asserted as invariants on observable state. Seeded: rerun a failure with CHAOS_SEED=<seed>.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { key } from '../packages/messaging/store.mjs';
+import { key } from '../packages/core/records.mjs';
 import { DELIVERY_LIMITS } from '../packages/messaging/contact-delivery.mjs';
 import { createScheduler, forEachSeed, concurrently, tally } from './helpers/chaos.mjs';
 import { messagingFixture as fixture, OWNER, GRANT, SENDER, KID, SENDER_JWK, DAY, START, pair } from './helpers/messaging-fixture.mjs';

@@ -1,6 +1,6 @@
 import {BILLING_STATE_KEY,entitlementFromState,assertOwner} from '../billing/catalog.mjs';
 import {StorageError} from '../storage/policy.mjs';
-import {key} from '../messaging/store.mjs';
+import {key} from '../core/records.mjs';
 import {UUID as uuid} from '../core/primitives.mjs';
 
 export const MESSAGE_RECEIPT_STATE='message-receipt-budget/v1';

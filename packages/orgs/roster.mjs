@@ -21,7 +21,7 @@
 // The pre-release single-value shape (memberships, invitations, grantRequests and memberOutbox inside the record) is
 // not migrated: organizations are behind ORGANIZATIONS_ENABLED and unreleased.
 import {AppFault} from '../app/faults.mjs';
-import {principalKey} from './grants.mjs';
+import {principalKey} from '../core/principals.mjs';
 import {readOwnershipOutbox} from './ownership-effects.mjs';
 import {ADMIN_INDEX_VERSION,ADMIN_KEYS,ORG_INLINE_ADMINS,isAdminRow,indexAdmin,rebuildAdminIndexes,seqKey as fanoutSeq} from './admin-index.mjs';
 

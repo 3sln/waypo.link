@@ -40,7 +40,7 @@ import {BreakGlassService} from '../../orgs/break-glass.mjs';
 import {OrganizationBilling} from '../../billing/organizations.mjs';
 import {organizationsProvider,ORG_OPERATIONS,InitializeOrganization,ConfirmOrganization,OrganizationTick,MembershipSweep,MembershipOutboxDrain,ObserveMemberAuthority,MemberSnapshot,membershipEnginePort,OWNERSHIP_OPERATIONS,OrganizationBillingSync,OrganizationBillingWebhook,OwnershipTick,OwnershipDrain,OwnershipIndex,ResolveLapseClaim,BREAK_GLASS_OPERATIONS,BreakGlassLiveness,BreakGlassSecurityChange,BreakGlassAbortToken,ResolveBreakGlass,BreakGlassProposalCancel,BreakGlassFileRecovery,BreakGlassCase,BreakGlassLedger,BreakGlassHint,BreakGlassHints,BreakGlassSignal,BreakGlassSignals} from '../../app/domains/orgs.mjs';
 import {StorageError} from '../../storage/policy.mjs';
-import {key} from '../../messaging/store.mjs';
+import {key} from '../../core/records.mjs';
 import {OWNER_NOTICE_KIND_LIST} from '../../identity/owner-channels.mjs';
 // The adapters build ORGANIZATION_OWNER_CHANNELS with organizationOwnerChannels (packages/identity/owner-channels.mjs).
 

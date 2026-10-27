@@ -12,7 +12,7 @@ import {join} from 'node:path';
 import {createHash} from 'node:crypto';
 import {SqliteMetadata,SerialGate} from '../apps/node/resources.mjs';
 import {AccountController} from '../packages/runtime/accounts.mjs';
-import {key} from '../packages/messaging/store.mjs';
+import {key} from '../packages/core/records.mjs';
 import {SearchService,MemorySearchIndex,MetadataSearchOutbox,enqueueSearchEvent,messageSearchDocument,searchEventKey} from '../packages/search/index.mjs';
 import {MAX_SEARCH_TAGS} from '../packages/search/schema.mjs';
 import {MAX_USER_TAGS,SYSTEM_TAGS} from '../packages/messaging/tags.mjs';

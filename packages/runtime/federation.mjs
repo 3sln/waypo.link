@@ -13,7 +13,7 @@ import {APP_NOTIFICATIONS,ACTIVITY_CONTRACT,ACTIVITY_METHODS} from '../federatio
 import {RESOURCE_SCOPING,storageScopeOptions} from '../storage/scoping.mjs';
 import {IdentityService} from '../identity/service.mjs';
 import {normalizeHandle} from '../identity/handles.mjs';
-import {digest,canonical} from '../messaging/store.mjs';
+import {digest,canonical} from '../core/records.mjs';
 import {PROFILE,PREFERENCES} from '../federation/service.mjs';
 import {objectURLAuthority} from '../storage/object-urls.mjs';
 import {encryptSecret,decryptSecret} from './secrets.mjs';

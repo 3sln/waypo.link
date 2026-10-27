@@ -19,7 +19,7 @@ import {siteGlobal} from '../flags/read.mjs';
 // registrableDomain) are trusted composition data; their contracts are documented on createIncrementalProvider.
 // Behind INCREMENTAL_AUTH_ENABLED (default off); nothing here is routed (runtime/incremental-authorization.mjs).
 import {AppAction,operations} from '../app/engine.mjs';
-import {digest,base64url,boundedString,canonical} from '../messaging/store.mjs';
+import {digest,base64url,boundedString,canonical} from '../core/records.mjs';
 import {fail,object,https,validateValue} from './schema.mjs';
 import {EVENT_BUS_CONTRACT} from './event-buses.mjs';
 import {consumeProof} from './dpop.mjs';

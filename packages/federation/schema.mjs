@@ -1,6 +1,6 @@
 import {artefactURL} from '../core/artefacts.mjs';
 import {objectKey} from '../storage/policy.mjs';
-import { canonical, digest, boundedString } from '../messaging/store.mjs';
+import { canonical, digest, boundedString } from '../core/records.mjs';
 export class FederationFault extends Error { constructor(code,message=code){super(message);this.name='FederationFault';this.code=code;} }
 export const fail=(code,message)=>{throw new FederationFault(code,message);};
 export const object=value=>value!==null&&typeof value==='object'&&!Array.isArray(value);

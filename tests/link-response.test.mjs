@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { MemoryMessagingStore, ContactTokenService, ContactEndpointService, MessagingService, signContactToken } from '../packages/messaging/index.mjs';
-import { fromBase64url, strictText } from '../packages/messaging/store.mjs';
+import { fromBase64url, strictText } from '../packages/core/records.mjs';
 import { replayDigest } from '../packages/messaging/bindle-links.mjs';
 import { LinkReplayRecord } from '../packages/messaging/link-replay.mjs';
 import { prepareLinkResponse, signLinkResponse, verifyLinkResponse } from '../packages/identity/link-response.mjs';

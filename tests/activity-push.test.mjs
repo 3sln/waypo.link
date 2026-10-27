@@ -9,7 +9,7 @@ import {canonical} from '../packages/core/primitives.mjs';
 import {base64url,key,digest} from '../packages/core/records.mjs';
 import {ACCOUNT_OPERATIONS} from '../packages/app/operations.mjs';
 import {CreateActivity,ReplaceActivity,MarkActivity,ArchiveActivity} from '../packages/app/domains/activity.mjs';
-import {ACTIVITY_PUSH_OWNER_OPERATIONS,ACTIVITY_PUSH_LIMITS,ClaimActivityPush,AuthorizeActivityPush,FinishActivityPush,dispatchActivityPush,activityDestinationHint,activityQuiet,nextDigestAt,defaultNotificationPreferences} from '../packages/messaging/notifications.mjs';
+import {ACTIVITY_PUSH_OWNER_OPERATIONS,ACTIVITY_PUSH_LIMITS,ClaimActivityPush,AuthorizeActivityPush,FinishActivityPush,dispatchActivityPush,activityDestinationHint,activityQuiet,nextDigestAt,defaultNotificationPreferences} from '../packages/activity/notifications.mjs';
 
 const ISSUER='https://provider.example',HOUR=3600000,MINUTE=60000;
 async function signer(){
@@ -258,7 +258,7 @@ test('review R2/R5/R6/R7/R10: no re-notify on replacement, channel boundary, qui
  const first=await cal.create({collapseKey:'a'});await f.dispatch();assert.equal(f.sent.length,1);
  at.advance(ACTIVITY_PUSH_LIMITS.groupCooldown);await cal.replace(first.item,1,{collapseKey:'b'});await f.dispatch();assert.equal(f.sent.length,1,'a replacement never re-notifies by default');
  // R5: the account push channel turned off then on again does not release activity admitted meanwhile.
- const {NotificationService}=await import('../packages/messaging/notifications.mjs'),{metadataStore}=await import('./helpers/app-engine.mjs');
+ const {NotificationService}=await import('../packages/activity/notifications.mjs'),{metadataStore}=await import('./helpers/app-engine.mjs');
  const legacy=new NotificationService({store:metadataStore(f.metadata),clock:()=>at.now()}),prefs=defaultNotificationPreferences();
  await legacy.setPreferences(OWNER,prefs);at.advance(1);const meanwhile=await cal.create();prefs.push.enabled=true;await legacy.setPreferences(OWNER,structuredClone(prefs));at.advance(1);
  await f.dispatch();assert.equal(f.sent.length,1);assert.equal((await f.explain(meanwhile.item)).reason,'before_opt_in');

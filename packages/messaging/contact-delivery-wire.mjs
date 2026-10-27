@@ -1,6 +1,6 @@
 // Contact-delivery v1 transport framing. Both parsers yield the same
 // `{envelope, body}` semantic operation; neither consults credentials.
-import { fail, strictText, textEncoder, mimeValid } from './store.mjs';
+import { fail, strictText, textEncoder, mimeValid } from '../core/records.mjs';
 import { strictJSON, validateEnvelope, checkBody, decodeBody, DELIVERY_LIMITS, CONTACT_DELIVERY_CONTRACT } from './contact-delivery.mjs';
 
 const malformed = () => fail('invalid_multipart');

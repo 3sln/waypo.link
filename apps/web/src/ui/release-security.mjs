@@ -31,7 +31,9 @@ export default function securityView(state){
       btn('Add email address',{kind:'open-modal',modal:{kind:'email'}},'button secondary',!state.config.emailEnabled),!state.config.emailEnabled?h('p','Email linking is not enabled on this service.').classes('field-help'):null).classes('panel'),
     // CX-3: with integrations on, the access views own grant review and revocation; this panel only links there.
     devicesEnabled(state)?devicesApps(state):state.config?.integrationsEnabled?h('section',h('h2',state.locale==='es'?'Acceso de apps':'Apps with access'),h('p',state.locale==='es'?'Revisa qué puede hacer cada app y retira su acceso.':'Review what each app can do and remove its access.').classes('muted'),btn(state.locale==='es'?'Ver acceso':'Review access',{kind:'navigate',view:'access'},'button secondary')).classes('panel'):h('section',h('h2','Apps with access'),...(state.data.grants??[]).filter(g=>g.active).map(grant=>h('div',h('strong',grant.client),h('p',(grant.methods??[]).join(', ')),btn('Revoke access',{kind:'revoke-grant',id:grant.id},'text-button danger')).classes('credential-row')),
-      (state.data.grants??[]).some(g=>g.active)?null:h('p','No apps have access to your resources.').classes('muted')).classes('panel')
+      // Bug hunt round 3, B8: these legacy grants are not the connected apps' access, so the panel no longer claims that
+      // no app has access; it points to Connected apps, where that access is listed and revoked.
+      h('p','Manage app connections and the separate agent logins they can use.').classes('muted'),btn('Connected apps',{kind:'navigate',view:'connected-apps'},'button secondary')).classes('panel')
     ).classes('settings-grid'));
 }
 export function securityDialog(state){

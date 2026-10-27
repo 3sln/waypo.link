@@ -1,4 +1,4 @@
-import {fail,boundedString} from './store.mjs';
+import {fail,boundedString} from '../core/records.mjs';
 import {validTagIds,isSystemTag,escapeLegacyTag,validIntakeTagIds} from './tags.mjs';
 // Tag lists carry stable IDs (docs/architecture/tags.md); unknown `sys:` IDs are invalid.
 export function validTagList(tags){return validTagIds(tags);}

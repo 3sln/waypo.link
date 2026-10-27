@@ -36,7 +36,7 @@ import {RELATION_EVENT,RELATION_EVENT_TYPES,RELATION_EVENT_PAST_S,RELATION_EVENT
 import {edgeEntries,slotOf} from './relation-documents.mjs';
 import {identityURI} from './relation-invitations.mjs';
 import {RELATION_LIMITS} from './relation-invitations.mjs';
-import {principalKey,samePrincipal} from './grants.mjs';
+import {principalKey,samePrincipal} from '../core/principals.mjs';
 import {validPrincipal} from './memberships.mjs';
 import {K,party} from './relation-keys.mjs';
 

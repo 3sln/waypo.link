@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { createHarness } from './harness.mjs';
 import { authored } from '../link-helpers.mjs';
 import { multipartDeliveryBody, rpcDeliveryRequest } from '../../packages/messaging/contact-delivery-wire.mjs';
-import { base64url } from '../../packages/messaging/store.mjs';
+import { base64url } from '../../packages/core/records.mjs';
 
 // Actual Worker adapter: identity-authored delivery on legacy and new-form links (links §6.1, §10).
 const DELIVERY='application/vnd.bindle.contact-token+jwt; profile="contact-delivery-v1"',INTAKE='application/vnd.bindle.contact-intake+json';

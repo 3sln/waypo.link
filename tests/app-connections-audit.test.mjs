@@ -11,7 +11,7 @@ import {mkdtemp,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {nodeResources} from '../apps/node/resources.mjs';
-import {digest} from '../packages/messaging/store.mjs';
+import {digest} from '../packages/core/records.mjs';
 const origin='http://localhost:8788',oauthClient={id:'audit-app.example',name:'Audit app',redirectUris:['https://audit-app.example/callback']};
 async function durable(t){const directory=await mkdtemp(join(tmpdir(),'app-connection-audit-')),config={APP_ORIGIN:origin,LOCAL_DEVELOPMENT:'true',MCP_ENABLED:'true',MCP_CLIENTS:JSON.stringify([oauthClient]),KEY_ENCRYPTION_KEY:Buffer.alloc(32,11).toString('base64'),WORK_LIMITS_ENABLED:'false'},resources=await nodeResources({directory,config}),owner=crypto.randomUUID();await resources.repository.create({id:owner,handle:'app_audit',status:'active',termsVersion:'2026-10-11',revision:1});t.after(async()=>{resources.close();await rm(directory,{recursive:true,force:true});});const account=resources.accounts.get(owner),source=await account.addResource(owner,{provider:'hosted',name:'Retained files'});return {resources,owner,account,source};}
 async function pending(f){const verifier='z'.repeat(43),request=await f.resources.mcp.begin({client_id:oauthClient.id,redirect_uri:oauthClient.redirectUris[0],response_type:'code',code_challenge:await digest(crypto,verifier),code_challenge_method:'S256',state:'audit',scope:'mcp:collections_list mcp:item_read',resource:origin+'/mcp'});await f.resources.mcp.inspect(f.owner,request.requestId);return {...request,verifier};}

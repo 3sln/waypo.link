@@ -15,7 +15,7 @@ import {organizationsProvider,ORG_OPERATIONS,ORG_SYSTEM_OPERATIONS} from '../../
 import {RelationService,relationsProvider,sameHostRelationTransport,RELATION_OPERATIONS,RELATION_SYSTEM_OPERATIONS} from '../../packages/orgs/relation-instances.mjs';
 import {relationDocuments,relationEnvelope,pinKey} from '../../packages/orgs/relation-documents.mjs';
 import {digestJSON} from '../../packages/core/artefacts.mjs';
-import {principalKey} from '../../packages/orgs/grants.mjs';
+import {principalKey} from '../../packages/core/principals.mjs';
 import {signRelationEvent,relationEventPayload} from '../../packages/orgs/relation-events.mjs';
 import {signCompact} from '../../packages/orgs/relation-statements.mjs';
 import {dueMemberKeyRefreshes,removeMemberKeyRefresh} from '../../packages/orgs/key-refresh.mjs';

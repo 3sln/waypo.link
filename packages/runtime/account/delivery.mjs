@@ -3,7 +3,7 @@
 // `invoke` accepts and the placement policy it applies to each (packages/runtime/account/index.mjs).
 import {contactIntake,intakeDeliveryTags} from '../../messaging/tag-policy.mjs';
 import {validateSenderMetadata} from '../../messaging/index.mjs';
-import {key,boundedString,mimeValid} from '../../messaging/store.mjs';
+import {key,boundedString,mimeValid} from '../../core/records.mjs';
 import {StorageError} from '../../storage/policy.mjs';
 import {validateContent} from '../../messaging/content.mjs';
 

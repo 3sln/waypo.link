@@ -7,7 +7,7 @@ import {syncEventReaders} from './event-readers.mjs';
 import {APP_NOTIFICATIONS,ACTIVITY_METHODS,originBoundContract,hasAdmissionMethod,notificationInput} from './app-notifications.mjs';
 import {FederationObjectURLs} from './object-urls.mjs';
 import {objectKey} from '../storage/policy.mjs';
-import { digest, base64url, boundedString, canonical } from '../messaging/store.mjs';
+import { digest, base64url, boundedString, canonical } from '../core/records.mjs';
 import { fail, exact, https, strings, object, pinSchema, validateValue } from './schema.mjs';
 import {boundSlot,boundSchema,validateBoundRequest,approveBoundOptions,boundCovers,boundAllows,narrowBoundOptions as narrowBound} from './extensions.mjs';
 import {DPOP_TYP,verifyProof,dpopNonces,consumeProof,jktPattern} from './dpop.mjs';

@@ -17,7 +17,7 @@
 // generation rises, so an application approval of the earlier resource stops applying until re-approved.
 import {AppQuery} from '../app/engine.mjs';
 import {digest} from '../core/records.mjs';
-import {principalKey} from './grants.mjs';
+import {principalKey} from '../core/principals.mjs';
 import {effectiveAuthority} from './grants.mjs';
 
 export const IMPORT_PREFIX='rel/import/',IMPORT_ID_PREFIX='rel/import-id/',IMPORT_ID=/^imp_[A-Za-z0-9_-]{32}$/;

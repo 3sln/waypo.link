@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { MemoryMessagingStore, ContactTokenService, MessagingService, NotificationService, signContactToken, contactURL, renderMessage, inspectWebArchive, WEB_ARCHIVE_MIME, defaultNotificationPreferences } from '../packages/messaging/index.mjs';
-import { base64url, textEncoder, key } from '../packages/messaging/store.mjs';
+import { base64url, textEncoder, key } from '../packages/core/records.mjs';
 
 const bytes = value => textEncoder.encode(value);
 const rejects = (operation, code) => assert.rejects(operation, error => error.code === code);

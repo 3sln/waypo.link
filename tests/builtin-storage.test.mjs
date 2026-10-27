@@ -6,7 +6,7 @@ import {join} from 'node:path';
 import {createNodeServer} from '../apps/node/server.mjs';
 import {IdentityCrypto} from '../packages/identity/crypto.mjs';
 import {nodeResources} from '../apps/node/resources.mjs';
-import {key} from '../packages/messaging/store.mjs';
+import {key} from '../packages/core/records.mjs';
 import {mcpCollections} from '../packages/mcp/account.mjs';
 const origin='https://provider.example',contract='https://3sln.me/artefacts/contracts/object-storage/v1';
 async function fixture(t){const directory=await mkdtemp(join(tmpdir(),'builtin-storage-'));const config={APP_ORIGIN:origin,LOCAL_DEVELOPMENT:'true',BILLING_ENABLED:'false',WORK_LIMITS_ENABLED:'false'};let resources=await nodeResources({directory,config});const owner=crypto.randomUUID();await resources.repository.create({id:owner,handle:'builtin_fixture',status:'active',revision:1});t.after(async()=>{resources.close();await rm(directory,{recursive:true,force:true});});return {owner,directory,config,get resources(){return resources;},get account(){return resources.accounts.get(owner);},async restart(){resources.close();resources=await nodeResources({directory,config});},async invoke(method,...args){const result=await resources.accounts.get(owner).invoke({method,args:[owner,...args]});if(result?.$fault)throw Object.assign(new Error(result.$fault.message),result.$fault);return result;}};}

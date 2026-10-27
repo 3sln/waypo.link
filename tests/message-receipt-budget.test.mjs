@@ -5,7 +5,7 @@ import {MessageReceiptBudget,MESSAGE_RECEIPT_DEFAULTS,MESSAGE_RECEIPT_STATE,MESS
 import {AccountController} from '../packages/runtime/accounts.mjs';
 import {SqliteMetadata,SerialGate} from '../apps/node/resources.mjs';
 import {conversationInbox} from '../packages/conversations/runtime.mjs';
-import {key} from '../packages/messaging/store.mjs';
+import {key} from '../packages/core/records.mjs';
 import application from '../packages/runtime/http.mjs';
 
 const OWNER='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',OTHER='bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';

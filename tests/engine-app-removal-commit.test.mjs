@@ -43,7 +43,7 @@ test('selected entry replay and pending device approval stay refused after remov
  await post(p,`${issuer}/api/oauth/entries/${entryId}/select`,{nonce:view.entry.nonce},headers);
  const decided=await post(p,`${issuer}/api/oauth/entries/${entryId}/decision`,{nonce:view.entry.nonce,approved:[]},headers);assert.equal(decided.status,400);assert.equal((await service.store.transaction(tx=>tx.list('federation/code/'))).length,0);
  const linkedRequestId='cccccccc-cccc-4ccc-8ccc-cccccccccccc',client=service.clients.get(clientId),context={sessionToken:session.token,csrfToken:session.csrf,origin:issuer};
- const {digest}=await import('../packages/messaging/store.mjs'),requestId=`${owner}.${await digest(service.crypto,`device-owner-request\0${linkedRequestId}`)}`,entryHash=await digest(service.crypto,`device-entry\0${linkedRequestId}`);
+ const {digest}=await import('../packages/core/records.mjs'),requestId=`${owner}.${await digest(service.crypto,`device-owner-request\0${linkedRequestId}`)}`,entryHash=await digest(service.crypto,`device-entry\0${linkedRequestId}`);
  await service.store.transaction(tx=>tx.set('federation/request/'+requestId,{clientId,requestId,status:'pending',entry:{entryHash,intent:'login',delivery:'redirect'},requests:[],expiresAt:p.clock()+600000}));await revokeRemovalFederation(service,input);
  await assert.rejects(deviceConsentApprove(service,context,{owner,linkedRequestId,client,requests:[],approved:[]}),{code:'invalid_request'});
  await assert.rejects(issueDeviceSession(service,{linkedRequestId,grant:{owner,clientId,expiresAt:null},proof:{}}),{code:'access_denied'});

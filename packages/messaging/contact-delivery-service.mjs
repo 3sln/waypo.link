@@ -12,7 +12,7 @@
 //    decision the host recorded before admission and throws audience_ineligible / audience_unavailable.
 // Adapters whose resolve() must not run inside the owner transaction call prepare(), set
 // `prepared.fence = await resolve(...)` immediately before commit(), and then commit().
-import { fail, key, boundedString } from './store.mjs';
+import { fail, key, boundedString } from '../core/records.mjs';
 import { contactIntake } from './tag-policy.mjs';
 import { validTagIds, validIntakeTagIds, initialTags, addTag, applyRules } from './tags.mjs';
 import { ownerRules } from './messages.mjs';

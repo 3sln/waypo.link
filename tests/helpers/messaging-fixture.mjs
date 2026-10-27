@@ -4,7 +4,7 @@
 // message list, the accounting the quotas enforce, receipts and outbox events.
 import assert from 'node:assert/strict';
 import { MemoryMessagingStore, MessagingService } from '../../packages/messaging/index.mjs';
-import { fail, key } from '../../packages/messaging/store.mjs';
+import { fail, key } from '../../packages/core/records.mjs';
 import { createAuthoredEnvelope, localAuthorResolver, localIdentityDescriptor } from '../../packages/messaging/contact-delivery.mjs';
 import { ContactDeliveryService } from '../../packages/messaging/contact-delivery-service.mjs';
 import { fakeClock } from './chaos.mjs';

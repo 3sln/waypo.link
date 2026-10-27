@@ -7,7 +7,7 @@ import {handleFederation} from '../packages/federation/http.mjs';
 import {AppConnections} from '../packages/apps/connections.mjs';
 import {APP_NOTIFICATIONS, notificationInput} from '../packages/federation/app-notifications.mjs';
 import {appNotificationCheck, appNotificationPublicKeys, appNotificationSigner} from '../packages/runtime/app-notifications.mjs';
-import {canonical, fromBase64url} from '../packages/messaging/store.mjs';
+import {canonical, fromBase64url} from '../packages/core/records.mjs';
 import application from '../packages/runtime/http.mjs';
 import {readFile} from 'node:fs/promises';
 import {publicArtifacts} from '../packages/core/public-contracts.mjs';

@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createECDH,randomBytes} from 'node:crypto';
 import webpush from 'web-push';
-import {createPushTransport} from '../packages/messaging/web-push.mjs';
+import {createPushTransport} from '../packages/activity/web-push.mjs';
 
 function fixture(){const vapid=webpush.generateVAPIDKeys(),user=createECDH('prime256v1');user.generateKeys();const auth=randomBytes(16);return {config:{PUSH_ENABLED:'true',APP_ORIGIN:'https://3sln.example',VAPID_PUBLIC_KEY:vapid.publicKey,VAPID_PRIVATE_KEY:vapid.privateKey},subscription:{endpoint:'https://fcm.googleapis.com/wp/opaque-device-endpoint',keys:{p256dh:user.getPublicKey().toString('base64url'),auth:auth.toString('base64url')}}};}
 

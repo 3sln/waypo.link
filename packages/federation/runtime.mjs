@@ -9,7 +9,7 @@ import {appSessionInventory} from './session-inventory.mjs';
 import {incrementalPort} from './incremental-ports.mjs';
 import {FederationService} from './service.mjs';
 import {fail} from './schema.mjs';
-import {canonical,digest} from '../messaging/store.mjs';
+import {canonical,digest} from '../core/records.mjs';
 import {AppQuery} from '../app/engine.mjs';
 import {validateExtensions} from './extensions.mjs';
 import {providerLegalMetadata} from './legal.mjs';

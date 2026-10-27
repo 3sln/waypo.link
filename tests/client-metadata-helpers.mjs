@@ -7,7 +7,7 @@ import {federationAuthority,federationClients,federationClientDirectory} from '.
 import {AuthorizationEntries} from '../packages/federation/authorization-entries.mjs';
 import {handleAuthorizationEntry} from '../packages/runtime/federation-entry-http.mjs';
 import {handleFederation} from '../packages/federation/http.mjs';
-import {base64url} from '../packages/messaging/store.mjs';
+import {base64url} from '../packages/core/records.mjs';
 export const issuer='https://provider.example',appOrigin='https://app.example',clientId='https://app.example/bindle-client.json',redirectUri='https://app.example/callback';
 export const reviewedId='https://reviewed.example/client',reviewedOrigin='https://reviewed.example';
 export const metadata=(overrides={})=>({client_id:clientId,client_name:'Example App',redirect_uris:[redirectUri],token_endpoint_auth_method:'none',grant_types:['authorization_code','refresh_token'],response_types:['code'],...overrides});

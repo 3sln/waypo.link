@@ -77,7 +77,7 @@ import {base64url} from '../../core/records.mjs';
 import {siteGlobal} from '../../flags/read.mjs';
 import {IdentityDirectory} from '../../federation/directory.mjs';
 import {foreignIssuers,directoryHostLimiter} from './foreign-directory.mjs';
-import {createPushTransport} from '../../messaging/web-push.mjs';
+import {createPushTransport} from '../../activity/web-push.mjs';
 import {RtcKeyRoster,RtcDeliveryError,foreignRtcTransport,rtcEgress} from '../../rtc/federation.mjs';
 import {RTC_FEATURE,RTC_SIGNALING_CONTRACT,RTC_SIGNALING_SLOT} from '../../rtc/extension.mjs';
 import {RtcService,rtcProvider,sameHostRtcTransport,RTC_ENDPOINT_OPERATIONS,RTC_OWNER_OPERATIONS,RTC_WIDENING,RTC_SIGNALING_FLAG,RTC_LIMIT_VALUES,RtcIngest,RtcInbox,RtcTick,RtcLifecycle,RtcOutboxDrain,RTC_CONTRACT_OPERATIONS,RTC_FOREIGN_FLAG,RtcRelay,RtcRelaySweep,RTC_RELAY_OPERATIONS,RTC_RELAY_CONTRACT_OPERATIONS,RTC_TURN_FLAG,turnAdapterFrom} from '../../app/domains/rtc.mjs';

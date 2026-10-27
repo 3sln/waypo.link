@@ -51,7 +51,7 @@ import {lifecycleBlocked} from '../lifecycle-runner.mjs';
 import {accountActor} from '../../orgs/authority.mjs';
 import {ORG_RECORD} from '../../orgs/organizations.mjs';
 import {loadOrganization} from '../../orgs/roster.mjs';
-import {principalKey} from '../../orgs/grants.mjs';
+import {principalKey} from '../../core/principals.mjs';
 import {organizationsProvider,ObserveMemberAuthority} from '../../app/domains/orgs.mjs';
 import {RelationService,relationsProvider,sameHostRelationTransport,RELATION_OWNER_OPERATIONS,RedeemRelation,OfferRelation,RetractRelationOffer,IngestRelationEvent,RelationTick,RelationOutboxDrain,RelationLifecycleEvent,RelationPurgeReady,ObserveRelationCounterpart,CertifyRelationAccess,AuthorizeRelationAccess,ORG_RELATIONS_FLAG,ORG_FOREIGN_RELATIONS_FLAG} from '../../app/domains/relations.mjs';
 import {relationDocuments} from '../../orgs/relation-documents.mjs';

@@ -21,7 +21,7 @@
 // Deleting the legacy rows and reading the neutral keys alone is the follow-up `beam-retired-v2`, after a release.
 import {isUUID as uuid} from '../core/primitives.mjs';
 import {StorageError} from '../storage/policy.mjs';
-import {key} from '../messaging/store.mjs';
+import {key} from '../core/records.mjs';
 import {MAX_STORED_GRANTS} from '../messaging/contact-tokens.mjs';
 import {PROFILE_FIELDS,effectiveSharingFields} from './sharing-fields.mjs';
 export {PROFILE_FIELDS};
@@ -82,10 +82,12 @@ export class ContactProfiles {
    // Withdrawing disclosure is protective and is never refused as stale: on a stale revision only the withdrawal is
    // applied to the stored profile, so the stale tab cannot overwrite newer fields but the privacy action still lands.
    const withdraw=discloseToContacts===false;let expected=null,diverged=false;
-   if(expectedRevision!==undefined){expected=profileView(await readPair(this.metadata,'profile'));if(await profileRevision(expected)!==expectedRevision){if(!withdraw)stale();diverged=true;}}
+   // Only an actual withdrawal is exempt: when the stored profile already discloses nothing, a stale save with the
+   // switch off would otherwise be answered 200 while silently dropping the stale tab's edits (bug hunt round 3, B1).
+   if(expectedRevision!==undefined){expected=profileView(await readPair(this.metadata,'profile'));if(await profileRevision(expected)!==expectedRevision){if(!withdraw||!expected.discloseToContacts)stale();diverged=true;}}
    await this.metadata.transaction(async tx=>{
     const current=profileView(await readPair(tx,'profile'));
-    if(expected&&(diverged||!sameProfile(current,expected))){if(!withdraw)stale();await putPair(tx,'profile','',{...current,discloseToContacts:false,owner,updatedAt:this.clock()});return;}
+    if(expected&&(diverged||!sameProfile(current,expected))){if(!withdraw||!current.discloseToContacts)stale();await putPair(tx,'profile','',{...current,discloseToContacts:false,owner,updatedAt:this.clock()});return;}
     await putPair(tx,'profile','',row);
    });
   }

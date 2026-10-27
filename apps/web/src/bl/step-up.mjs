@@ -8,7 +8,9 @@ export function freshAPI(r,ctx){const invoke=async(method,args)=>{
  const initial=snapshot(r),owner=initial.session?.account?.id,session=initial.session?.sessionContext,generation=initial.beamGeneration??0;
  const live=()=>snapshot(r).session?.account?.id===owner&&snapshot(r).session?.sessionContext===session&&(snapshot(r).beamGeneration??0)===generation&&!snapshot(r).offline;
  try{return await r.api[method](...args);}catch(error){
-  if(error.code!=='reauthentication_required'||args[3]?.dispatchToken||!owner||!live())throw error;
+  // Both codes ask for the same password/passkey confirmation: identity `privileged()` (exports, account deletion)
+  // answers `step_up_required`, the older access checks `reauthentication_required` (bug hunt round 3, B4).
+  if(!['reauthentication_required','step_up_required'].includes(error.code)||args[3]?.dispatchToken||!owner||!live())throw error;
   if(waiting.has(r.browser))throw error;
   const id=crypto.randomUUID(),options=await r.api.request('/api/auth/step-up/begin',{});if(!live())throw Error('Account changed.');
   const confirmed=new Promise((resolve,reject)=>waiting.set(r.browser,{id,live,resolve,reject}));

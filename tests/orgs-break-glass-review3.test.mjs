@@ -4,7 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {bgWorld,A,E,DAY,p,OP1,OP2} from './helpers/break-glass-world.mjs';
 import {uuid} from './helpers/org-world.mjs';
-import {principalKey} from '../packages/orgs/grants.mjs';
+import {principalKey} from '../packages/core/principals.mjs';
 
 const H=3600000;
 

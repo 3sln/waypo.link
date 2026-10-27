@@ -8,7 +8,7 @@ import {mkdtemp,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {nodeResources} from '../apps/node/resources.mjs';
-import {digest} from '../packages/messaging/store.mjs';
+import {digest} from '../packages/core/records.mjs';
 import {federationEpoch} from '../packages/runtime/federation.mjs';
 import {authorityGrantEpoch} from '../packages/runtime/grant-epoch.mjs';
 import {McpAuthorization} from '../packages/mcp/service.mjs';

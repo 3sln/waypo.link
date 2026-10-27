@@ -116,7 +116,7 @@ test('item 7: member-context token() counts only live rows and its expired-row c
 test('item 5: the runtime membership port judges expiry by the writer\'s injected clock and reads the split roster', async () => {
   const { membershipPort } = await import('../packages/runtime/account/member-certificates.mjs');
   const { ORG_KEYS } = await import('../packages/orgs/roster.mjs');
-  const { principalKey } = await import('../packages/orgs/grants.mjs');
+  const { principalKey } = await import('../packages/core/principals.mjs');
   const metadata = new SqliteMetadata(':memory:'); let now = Date.now() + 365 * 86400000;
   try {
     const sub = uuid(5), expires = Math.floor(Date.now() / 1000) + 86400;

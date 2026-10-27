@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHarness} from './harness.mjs';
-import {digest} from '../../packages/messaging/store.mjs';
+import {digest} from '../../packages/core/records.mjs';
 test('actual Worker MCP OAuth enforces owner CSRF, exact audience/PKCE, granular tools and revocation',async t=>{
  const h=await createHarness();t.after(()=>h.close());const {result:owner,cookie}=await h.signup();const headers={Origin:h.origin,Cookie:cookie,'X-CSRF-Token':owner.csrfToken};
  const create=await h.request('/api/resources',{method:'POST',headers,value:{name:'Agent documents',provider:'hosted'}});assert.equal(create.status,200);const source=await create.json(),collectionId=`resource:${source.id}`;

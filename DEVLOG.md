@@ -8083,3 +8083,307 @@ Reviewer: ___ Date: ___ Outcome: ___
 **Open:** the dark-row drain-rate residual (R1); whether to exempt `preferred` from `issuerCallee` (decided here, provisionally); AMD-RW3 and AMD-RW5 revisions need protocol and security review.
 
 Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-27 — Bug hunt round 3 (browser)
+
+Status: **provisional and unsigned.** A third browser bug hunt ran against a local Worker started the way `scripts/run-browser-checks.mjs` starts one. That instance alone had these flags on: `ORGANIZATIONS_ENABLED`, `ACCOUNT_EXPORT_ENABLED`, `ACCOUNT_DELETION_ENABLED`, `LINKS_ENABLED`, `FEDERATION_ENABLED`, `EXTENSIONS_ENABLED`, `ARTEFACT_VERSIONS_ENABLED`, `RTC_SIGNALING_ENABLED` and `RTC_TICKETS_ENABLED`. For one organization run it also had a local `ORGANIZATIONS_PAID_ALLOWLIST`. No committed config changed and every default is unchanged.
+- **Method:** Playwright probe scripts in a scratch directory (not committed). The journeys were:
+  - real UI signup with a password and the recovery file;
+  - account settings and the contact profile;
+  - links and saved contacts between two accounts;
+  - connected apps: consent from a route-fulfilled fixture app, preference revocation and disconnect;
+  - export and account deletion;
+  - the organization console.
+- **Matrix:** Chromium and Firefox, en and es, at 360 px dark and 1280 px light.
+- **Checks:** back/forward and reload, double submit, stale tabs, error text, untranslated text, overflow, labels and focus, console errors, CSP violations and payloads.
+- **Known items not re-reported:** F7, the "Your files" tagline, the Spanish landing page, consent header branding and F14.
+- **Scope change mid-session:** the RTC owner settings and ring were dropped from this hunt on coordinator instruction, because they may leave core. A finding there and its fix were withdrawn (see R1 below). No RTC file is changed.
+- Local behaviour only: nothing here is production-verified or provider-verified.
+
+**Findings and fixes:**
+- **B4 (High): export and account deletion always failed for a normal session.**
+  - Symptom: `POST /api/exports` and `POST /api/account/deletion` answer `step_up_required` (identity `privileged()`). The console's step-up wrapper (`freshAPI` in `apps/web/src/bl/step-up.mjs`) only recognised `reauthentication_required`, so the owner saw "The service refused the request. Refresh your account and try again." with no way forward.
+  - The account-data browser fixture faked `reauthentication_required`, so the mismatch had stayed hidden.
+  - Fix: `freshAPI` now treats both codes as the same password/passkey confirmation. It opens "Confirm it's you" and retries the request once.
+  - Verified locally in Chromium and Firefox: export queued after confirmation; deletion scheduled.
+- **B1 (Medium): a stale contact-profile save could be answered "saved" while the edits were dropped.**
+  - Cause: the L-1 rule ("a stale tab withdrawing disclosure applies only the withdrawal") keyed on `discloseToContacts:false` in the request. Sharing is off by default, so almost every stale save counted as a "withdrawal". The server then kept the newer stored fields, answered 200, and the client showed "Contact profile saved." over text that was not stored.
+  - Server fix (`packages/links/contact-profile.mjs`): the exemption applies only when the stored profile still discloses, both before the transaction and inside it. Otherwise a stale save is refused with `409 profile_stale`.
+  - Client fix (`apps/web/src/bl/contact-book.mjs`): when the answer's fields differ from what was sent (the withdrawal-only case), the client shows the stored profile in a rebuilt form. It says "Profile sharing is now off. Your other changes were not saved because your contact profile changed in another session; the latest version is shown." New en/es catalogue entry.
+  - Refines the provisional L-1 reading. Withdraw-wins itself is unchanged.
+- **B2 (Low): a reloaded contact-link page waited on "Checking this contact link…" forever.**
+  - The capability leaves the address bar on first open, so a reload has nothing to describe.
+  - Fix: `InitializeSpace` now shows the existing "This contact link is incomplete. Open the original link again." (`apps/web/src/bl/release.mjs`).
+- **B3 (Low): a success notice from an earlier action appeared inside the next dialog.**
+  - Examples: "Contact profile saved." inside Sharing permissions; "Contact sharing permissions saved." inside the revoke confirmation.
+  - Fix: `open-modal` clears `notice` as it already cleared `error`.
+- **B5 (Low): Back from the app to a completed authorization showed raw JSON.**
+  - Symptom: `{"error":"invalid_request","message":"Authorization request expired or completed."}`.
+  - Fix: a browser navigation (`GET`, `Accept: text/html`) to `/oauth/authorize` that answers 400 now gets a fixed, script-free page through `securePage`. The page is "This request has ended", in English, or in Spanish for `lang=es` or `Accept-Language: es`. It is `no-store` and sends `Vary: Accept`.
+  - API clients keep the JSON. The uniform 404 for unknown identities is untouched (`packages/runtime/routes/federation.mjs`, `authorizationEndedPage`).
+- **B7 (Low, a11y): creating an organization dropped focus to the page body.**
+  - The create form is replaced, and the page stayed scrolled mid-way through the "stay on this page" recovery-file step.
+  - Fix: focus moves to `#org-recovery` after creation, including after a step-up retry.
+- **B8 (Low): the security page said "No apps have access to your resources." while Connected apps listed an app with storage access.**
+  - That panel shows only legacy grants (`data.grants`), not connected apps or preference grants.
+  - Fix: the false claim is gone. The panel now uses existing en/es strings and a "Connected apps" button.
+- **B9 (Low): a failure left an earlier success notice beside the new error.**
+  - Example: "Your contact profile changed…" shown with "Contact profile saved."
+  - Fix: `GuardedAction` and `OwnerFlow` clear a notice that was already there when the action started. A partial success the action published itself, such as one of two revocations, stays beside the error.
+
+**Withdrawn (out of scope after the scope change; not fixed, provisional):**
+- **R1 (Medium, RTC):** a stale "Calls & connections" tab could overwrite newer settings. Examples: undo another tab's relay-only choice, or drop another app's automatic answers, because `set-policy` and `set-contact-rtc` carry no revision.
+- A client reread-and-compare guard was written and tested, then reverted unchanged on instruction. If RTC stays in core, the durable fix is a server revision on the owner routes.
+
+**Deferred (provisional, not fixed):**
+- **D1 (Low):** the organization console requests `/break-glass` and `/connections` while those features are off. The expected 404s appear as console errors (three each per load).
+- **D2 (Low, perf):** "Open my space" after signup runs a full re-initialization, so `/api/account`, `/api/session`, `/api/views`, `/api/incoming`, `/api/account/deletion` and `/api/exports` are read two or three times. A plain console load reads each once (17 requests). The 1.6 MB console bundle is F7.
+- **D3 (Info, product question):** after "Disconnect app", that app's preference grant is still listed under "Bindle preference connections". Calls and preference reads are refused ("The app was disconnected"), so this is presentation only.
+- **D4 (Low, a11y):** in the organization console, static text such as "Status: Paid (operator allowlist)" and "App connections are not available…" is `role=status`, the same pattern F13 fixed elsewhere. Organization-owned view; left to that workstream.
+- **D5 (Cosmetic):** the "Calls & connections" nav item reuses the Conversations icon. RTC is out of scope.
+- No legal text needed changes; no legal drafts are proposed.
+
+**Checked and clean (local):**
+- Back/forward and reload across 15 console views keep the view.
+- Double clicks sent one request each: profile save, link creation, consent "Allow", preference revocation, export and deletion.
+- No CSP violations or literal `null`/`undefined` attributes.
+- No unlabeled controls on the views and the consent page.
+- No horizontal page overflow at 360 px in either locale.
+- No untranslated interface text found by a catalogue-based scan of 15 views, the new-link dialog, the deletion review and the step-up prompt (es, Chromium and Firefox).
+- The organization recovery-file leave guard and the "Recovery file not saved" marker both work.
+
+**Tests added or changed (each fails with its fix reverted; checked one by one):**
+- `tests/contact-profile.test.mjs`: +1 (B1 server, including a write racing inside the transaction).
+- `tests/bughunt-server.test.mjs`: +1 (B5: HTML vs JSON, es, CSP, no script).
+- `tests/browser/bughunt3-engine.mjs`, new, registered in `test:ui-state`: 3 engine tests:
+  - B1 client;
+  - B4: `step_up_required` opens the confirmation and retries exactly once;
+  - B9: including the partial-success case.
+- `tests/browser/release-state.mjs`: +2 (B2, B3).
+- `tests/browser/organizations-engine.mjs`: +1 (B7).
+- `tests/browser/bughunt-views.mjs`: +1 (B8, en and es).
+- Browser re-runs of every repro against the fixed build passed in Chromium and Firefox (scratch `verify.mjs`).
+
+**Verification (main checkout, after the RTC revert):**
+- `npm test`: **4,133 tests, 4,131 passed, 0 failed, 2 todo**.
+- `test:ui-state`: **549 passed, 0 failed**.
+- `test:rtc-ui`: **33 + 36 passed**, run unchanged as a no-regression check.
+- `build:assets`: passed.
+- `test:e2e`: **328 tests across 14 suites; 324 passed, 0 failed, 4 skipped** (the existing WebKit skips).
+- `check:worker`: passed (dry run only).
+
+**Environment limits:**
+- Headless Playwright Chromium and Firefox on macOS. Not covered: WebKit, real devices, screen readers, real passkeys (password step-up only), real email or push delivery.
+- Organization billing is not configured, so creation was exercised only through the local allowlist.
+- In Firefox, Playwright occasionally dropped the first fill right after a file download. It did not reproduce in 5 instrumented runs and is treated as an automation flake; the probe refills once.
+
+Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-27 — Generic signaling.v1 spec draft (replaces calling-shaped RTC)
+
+**Spec draft only.** It adds the new [signaling](docs/spec/signaling.md) spec, revision 0, and a status note at the top of [rtc-signaling](docs/spec/rtc-signaling.md). No code changed and no tests were run. There was no commit. Nothing in the draft is implemented. The local code still implements `rtc-signaling.v1` behind flags that are all off. Every decision below is **provisional** (coordinator), not signed off by the owner.
+
+**Owner direction (2026-10-27, verbatim):** "I only intended for a general signaling mechanism, app to app, user to user, provider to provider, etc; something flexible enough for all use cases, but I didn't intend to build actual calling into bindle, that's an app level concern." And: "Core bindle should be about identity, preferences, intents, and resources; a hub for connecting things together."
+
+**Supersession:** docs/spec/rtc-signaling.md is superseded by the signaling.v1 draft, **pending sign-off**. Until sign-off it stays the reference for the flags-off code. Its only edit is the status note. docs/architecture/rtc-signaling.md and the pending-signoffs digest were not updated.
+
+**Design in brief:**
+- **The channel.** `signaling.v1` is a signed session channel with profiles: `webrtc` (Annex A) and `data` (bounded, opaque, post-claim only). It has one feature, one exclusive slot with `consumers: ["application","provider"]`, and the unchanged `ice-relay/v1` slot.
+- **Kinds and routing.** What a session is for is an intent kind with a `session` member. Invites go to the owner's chosen handler app for that kind. There is no `rtc-purpose` kind, no AMD-X1, and no cross-app visibility.
+- **No calling concepts in the provider.** Its only presentation is provider-source activity items: held, no handler, unanswered. Interruption is activity notification policy. "Open in app" is an intents handoff.
+- **Admission and links.** Admission is `self`, a contact link with owner-side signaling configuration, or `none`. The ticket link type is dropped, and callbacks are one-use, principal-bound contact links.
+- **Security and privacy carried over:**
+  - end-to-end leg-key signatures;
+  - the uniform `202` with no presence oracle;
+  - admission before reach, and first claim;
+  - no address or candidate before the claim, with the SDP and candidate rules and IP policy in the WebRTC annex;
+  - ordering and replay;
+  - live approval checks, and links dying with their app;
+  - principal and provider blocks;
+  - separate own-device and principal-bound windows, and cheap checks first;
+  - silent ends on every pre-claim path;
+  - the same-host `iss` refusal;
+  - deletion, moves and export.
+- **Guardrails:** no offline delivery, a 120 s answer window, a 24 h cap, delete after delivery, no history, no multi-party.
+- **Traceability.** Appendix A maps each RTC fix to its new section. Appendix B lists every RTC-n, RTCabc, RTCd, RTCe, RTCs, RTCf, RTCg, RTCi and RTCw item and AMD-* as kept, changed or dropped.
+- **Migration plan.** Appendix C covers files, flags, tests and storage families. No data migration is needed: the flags have no env default and appear in no config, and rows exist only in local development stores.
+- **Findings recorded:**
+  - `rtc/block-iss/` (provider blocks) is neither exported nor excluded in `packages/runtime/export-contributors.mjs`. This is pre-existing and not fixed here.
+  - The bug hunt round 3 finding R1 (no revision on owner settings) is carried into the draft as compare-and-swap.
+
+**Decisions (provisional; each needs the owner's sign-off):**
+- SG-1: a generic channel with profiles. `webrtc` is first, then `data`. Reviewer ___ Date ___ Outcome ___
+- SG-2: session kinds are intent kinds, and invites route to the owner's chosen handler (AMD-SG-I1). The slim `signaling-purpose` kind with AMD-X1 was evaluated and rejected (spec §19.1); it stays the fallback. Reviewer ___ Date ___ Outcome ___
+- SG-3: kind authorization is a session handler approval in intents memory, checked live and locally. The routing handler is the default, else the sole approved handler, else the activity chooser. Reviewer ___ Date ___ Outcome ___
+- SG-4: provider presentation only through activity items (AMD-SG-A1). Held and unanswered items are never interruptive. Reviewer ___ Date ___ Outcome ___
+- SG-5: admission through contact links with owner-side configuration (AMD-SG-L1). Tickets are dropped, and `mint_link` is interim. Reviewer ___ Date ___ Outcome ___
+- SG-6: application and provider consumers. Provider features act as built-in handlers for an entity. Reviewer ___ Date ___ Outcome ___
+- SG-7: the guardrails and caps (`data` ≤ 8 KiB per message and 1 MiB per leg; `seq` ≤ 4,095). Reviewer ___ Date ___ Outcome ___
+- SG-8: AMD-RI1 to RI5, RV2 and RW2, and the per-entity-enablement rule, applied to the text. Reviewer ___ Date ___ Outcome ___
+- SG-9: the abuse limit kinds, including the own-device, principal-bound and same-host windows, the pending reserve, cheap checks first, and per-app caps and quotas. Reviewer ___ Date ___ Outcome ___
+- SG-10: principal and provider blocks with the own-entity exemption. Mutes are dropped for activity rules, scoped to the asserting provider. Reviewer ___ Date ___ Outcome ___
+- SG-11: SAS out of core. Fingerprint binding kept, and `media` only as a `webrtc` parameter. Reviewer ___ Date ___ Outcome ___
+- SG-12: the initiator's app origin is disclosed, as "reported by" for foreign providers (RTC-17). Reviewer ___ Date ___ Outcome ___
+- SG-13: decline reasons `declined` and `unsupported`. `busy` is dropped. Reviewer ___ Date ___ Outcome ___
+- SG-14: `ice-relay/v1` unchanged, with AMD-RL1 and the RTC-f rules. Reviewer ___ Date ___ Outcome ___
+- SG-15: new identifiers rather than reusing `rtc-signaling.v1`. Reviewer ___ Date ___ Outcome ___
+- SG-16: auto-connect as an owner setting per app and per `self` kind, same `client_id` only. Reviewer ___ Date ___ Outcome ___
+
+**Proposed amendments (unsigned; none applied to its target document):**
+- AMD-SG-I1 (intents: session kinds, session handler approvals, addressed delivery, session handoff). Written in full in spec §20.1. intents.md is not edited.
+- AMD-SG-A1 (activity: provider-feature source items).
+- AMD-SG-L1 (links: signaling configuration and delivery-off contact parents). It depends on the links §6 re-scope.
+- AMD-SG-K1, P1, E1 and N1, which replace AMD-R1 to R3 and add a notifications rule.
+- Proposed withdrawal of AMD-X1 (extensions §13; extensions.md is not edited), AMD-R4, AMD-R5 and AMD-RW1.
+
+**Questions for the owner:** spec §19.3, items 1 to 8.
+
+Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-27 — Core-scope step 1: re-home core code out of messaging
+
+Step 1 of the core-scope audit's extraction order (see "Core-scope audit" above and the audit's §4). Imports and file moves only: **no behaviour, storage key, wire format or flag changed**. Implemented locally; nothing is production-verified. Decisions below are **provisional** (coordinator), not signed off.
+
+**Moves:**
+- **`packages/messaging/store.mjs` deleted.** It was only `export * from '../core/records.mjs'`. Every importer now imports `packages/core/records.mjs` directly: federation (14 files, including the `MemoryFederationStore` alias in `federation/index.mjs`), apps, automation, billing, conversations, links, mcp, runtime, `apps/node/resources.mjs`, the messaging package's own modules (`./store.mjs` → `../core/records.mjs`, including the `MemoryMessagingStore`/`MessagingFault` re-export in `messaging/index.mjs`) and the tests. Its `publicSources` entry in `jstools.config.mjs` was removed; no public (browser) module imported it. The BindleBox import-boundary probe now uses `../core/records.mjs` as its forbidden-core example.
+- **`messaging/notifications.mjs` → `packages/activity/notifications.mjs`** and **`messaging/web-push.mjs` → `packages/activity/web-push.mjs`** (the audit's "core notifications module beside activity"). Content is byte-identical except the three relative import paths. Importers updated: `app/account.mjs`, `runtime/account-channels.mjs`, `runtime/account/{notifications,app-removal,rtc}.mjs` (import line only), `apps/node/{resources,server}.mjs`, `apps/worker/{index,lifecycle,objects}.mjs`, the Worker test harness bundle entry, and the tests. `messaging/index.mjs` keeps re-exporting `NotificationService` and `defaultNotificationPreferences` from the new path. The account-export inventory test already scans `packages/activity/`, so its key-family coverage is unchanged. The `activityPush` provider description and two doc links now name the new path.
+- **`principalKey` and `samePrincipal` → new `packages/core/principals.mjs`** (audit §2.2: generic helpers, move to core). The encoding is unchanged; it is part of stored keys (`org/member/…`, `rel/cp/…`). Orgs modules, `runtime/account/relations.mjs` and the tests import core directly. `orgs/grants.mjs` keeps `export {principalKey,samePrincipal} from '../core/principals.mjs'` for `packages/rtc`, which was out of scope for this step (another agent owns it).
+
+**Assessed and not forced: `links/contact-profile.mjs`.**
+- Its `key` import moved to `core/records.mjs` (generic).
+- It still imports `MAX_STORED_GRANTS` from `messaging/contact-tokens.mjs`. This is not just a constant: the profile, sharing and redeemed bindings are liveness-checked against messaging's `contact-grant/<id>` parent rows (`active`, `quarantined`, `claims.exp`) and bounded by that table's cap. Moving the constant alone would hide the coupling, not remove it.
+- The `contact-delivery` coupling the brief mentions is in `links/audience.mjs` (`DELIVERY_LIMITS` from `messaging/contact-delivery.mjs`, `contactIntake` from `messaging/tag-policy.mjs`), not in contact-profile. It was left alone for the same reason.
+- **What BB-CUT needs:** decide SQ-2 (saved contacts in core or per app); give links its own contact-parent record and cap (the links §6 re-scope, "contact link with owner-side per-feature configuration"), and point contact-profile and audience at it instead of `contact-grant/`; then re-home `DELIVERY_LIMITS` and `contactIntake` with the delivery policy they describe.
+
+**Remaining couplings (inventory for later steps; nothing changed here):**
+- `packages/rtc/{admission,federation,service}.mjs` import `principalKey`/`samePrincipal` from `orgs/grants.mjs` (re-export). A comment in `rtc/service.mjs` still names `packages/messaging/web-push.mjs`.
+- `orgs/certificates.mjs` defines `memberPrincipalKey` with the same encoding as `principalKey` (a duplicate that could re-export core).
+- The audit's other step-1 shims are still in `packages/messaging/`: `tags`, `form-policy`, `form-parser`, `content`, `presentation-summary`, `submission-status`, `bindle-links`, `link-replay`, `dispatcher`. Importers include `apps/web` (5 files: `tags`, `form-policy`), `scripts/message-frame-controller.mjs`, `tests/e2e/message-frame.test.mjs` and `runtime/account/contacts.mjs` (`content`). `messaging/form-policy.mjs` and `messaging/tags.mjs` stay in `publicSources` while apps/web imports them. They were left for a separate pass because apps/web was being edited concurrently.
+- `runtime/account/contacts.mjs` imports `MAX_STORED_GRANTS` and `contactIntake` from messaging; `app/memory-providers.mjs` imports `MessagingService` from `messaging/index.mjs`.
+- The Beam leftover `runtime/account/contact-profile.mjs` → `rtc/turn.mjs` (audit step 1) was not touched.
+- The notification engine is re-homed but its text and preferences are still message-centric (`collections`, `excludeTags`, `messagePushPayload`); rewriting them around activity is spec work, not a move.
+
+**Verification (local evidence only; shared checkout while a bug-hunt agent edited apps/web and a spec agent edited docs):**
+- `npm test`: **4,133 tests, 4,131 passed, 0 failed, 2 todo**.
+- `test:worker`: **93 passed**.
+- `test:ui-state`: **549 passed**.
+- `test:bindlebox`: **227 passed**.
+- `build:assets`: passes (267 public modules, import-map graph verified).
+- `check:worker`: passes (wrangler dry run).
+- `test:e2e`: **324 passed, 0 failed, 4 skipped** (328), after `build:assets`. A first run had one failure: `admin-console.test.mjs` timed out waiting for the Handle field on its cold first step (the walkthrough runs first). The test passed when run alone, and a full rerun passed. Treated as a timing flake; this change touches no admin-console code.
+
+Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-27 — signaling.v1 spec rev 1 (review fixes)
+
+**Spec revision only.** [signaling](docs/spec/signaling.md) moves from revision 0 to revision 1. It answers an independent review of revision 0, and folds in owner direction that arrived during the revision. No code changed and no tests were run. There was no commit. Only docs/spec/signaling.md and this entry were edited: intents.md, links.md, activity.md, notifications.md and security.md are not edited, and their changes stay proposed amendments in spec §20. Every decision is **provisional** (coordinator) and unsigned. The owner said provisional decisions may be adopted for now without sign-off. They are adopted on that basis, and sign-off stays blank.
+
+**Owner direction during the revision (2026-10-27, relayed by the coordinator):**
+1. The foundation stays: the signed channel, admission, claim, the WebRTC annex and relay. Calling and use semantics move to the app layer. The messaging app (Parlay) implements calling: a call invite is a message with a JSON media type, specified in the messaging/BindleBox spec. Presentational parts, including the "no handler" activity item, go, or shrink to a minimal hook.
+2. Intents as the handoff is right in principle, but may not fit every case. There are probably two establishment modes: (a) invite-style, a user-facing request that an app surfaces; (b) always-on, where own endpoints or pre-authorised peers wire up when an app opens (for example agent daemons and a phone remote-control interface). This needs a spike. Intents routing is not final.
+3. Intents routing needs a robust short-list: likely candidates first, an expansion to all capable apps, and confirm-only with one candidate. This is an intents requirement.
+
+**How the owner direction was applied:**
+- **Presentation (spec §11.3).** Signaling creates no activity items. AMD-SG-A1 and AMD-SG-N1 are withdrawn. What remains is a minimal **owner hook**: an owner-only list of held invites and invites with no eligible endpoint. It holds minimal facts, never interrupts, notifies or pushes, is deleted by `answer_by`, and offers hand off, dismiss (silent), block and allow-later.
+- **Establishment modes (spec §5.6, §19.1, §19.4).** Intents routing is marked the leading candidate for mode (a), provisional. Mode (b) is described as a separate path, with the rev 1 mechanisms that approach it (own-entity `target`, auto-connect, standing acceptance, principal-bound links, separate windows). It lists the questions the spike must answer. No mode (b) path may be added before the spike. Spike questions S1 and S2.
+- **Chooser short-list (spec §20.1.11).** Written as an intents requirement amending intents §7.3 for every chooser, not as a signaling rule.
+
+**Review findings and resolutions:**
+- **H1** (the user-action rule blocks provider features, service entities, headless servers and conferencing). Added **standing acceptance**: an owner setting per (handler, kind) for cross-entity kinds, off by default. Its page must disclose that it makes the entity's availability visible to any admitted initiator. Provider features accept only under it, within their declared policy. Spec §4.1–§4.3, §5.5, §10.3 `standing_accept`, §20.1.4.
+- **H2** (`data` cost and scope). Caps are 4 KiB per message and 64 KiB per leg. `data` is a message type of the `data` profile only, never in `webrtc` sessions. An aggregate per-entity `data` byte budget is a required limit kind. Replay state keeps only payload hashes. A production gate needs the enforced budget, a cost-model row, and the custody statement reconciled. **AMD-SG-S1** (§20.9) is the proposed security.md "Trust boundaries" sentence on hosted signaling copies. **Reference discrepancy:** the review cited security.md "around line 224", but security.md has 85 lines. The hosted-copy position is the security.md "Trust boundaries" paragraph (plaintext trust under v0) together with DEVLOG 2026-10-12 line 224 ("Direct WebRTC data channels avoid hosted payload copies"). AMD-SG-S1 reconciles both. The cost-model row is still to be written (code). Spec §1.2, §3.5, §7.2, §7.3, §9.2, §13.1.
+- **H3** (AMD-SG-L1 underspecified and in conflict with links §6). Split it:
+  - **L1a (now):** owner-side configuration on existing contact parents, replacing `rtc/contact/`. It is **forbidden on conditional parents**, rather than evaluating audience policy against the certificate principal. Reasons: policy evaluation would put host policy, and the unwired links §7.3 foreign path, into federation verification; its per-principal-day quota does not map to `uses`; and `principal` already gives an exact local alternative. The links §6.3 representation, the composer and the previews are unchanged and disclose nothing.
+  - **L1b (deferred, unavailable):** `mint_link`, minted and signaling-only parents, delivery-off and callbacks.
+  - Spec §5.3, §10.2, §20.3.
+- **M1.** `claim` accept and `mint_link` are added to the live-approval list. A decline stays ungated. Spec §10.1.
+- **M2.** Narrowing revokes only parents whose `minted_by` is that app. Owner-configured parents lose the kind and are never revoked, and an empty configuration is removed. **Reading added:** the kind is removed only when no approved handler for it remains, because otherwise invites still route to the remaining handler. Spec §14.2 step 5.
+- **M3.** Callback verification is written into deferred §20.3.2:
+  - the link is canonical and its digest matches;
+  - its owner equals the verified initiator origin principal, and otherwise the callback is dropped silently;
+  - retention at both providers is defined;
+  - the callback is revoked on an unclaimed end and counted in the per-app quota.
+- **M4.** When a second handler is approved and no default exists, the sole handler is promoted to the explicit default in the same transaction. The page says so and offers the switch. Spec §20.1.5.
+- **M5.** A recipient resolves kind versions only from its store, a mirror, or a background fetch whose triggering does not depend on recipient state. Spec §3.4, §9.2 step 7.
+- **M6.** The spec states that AMD-SG-I1 adds an authority record to intents, and writes explicit amendments to intents §1, §5 and §9.5. For organization entities, a person authorized through the owner interface approves (organizations §6.3). For hosted service entities, whoever operates that entity's owner interface approves. Spec §4.3, §20.1, §20.1.4, §20.1.10.
+- **M7.** Appendix C now has:
+  - the lifecycle hooks: approval removal or clearing, and a connection ending, call §14.2. They replace `narrowBoundOptions` and the grant-changed path;
+  - the `intent-choices` export fields;
+  - `SIGNALING_ENABLED` requiring `INTENT_APP_HANDLERS_ENABLED`. **Deviation:** the `ACTIVITY_V2_ENABLED` requirement the review asked for is dropped, because under the owner's later direction signaling creates no activity items. It returns only if an activity mirror is adopted.
+- **M8.** Superseded by the owner direction: there are no activity items. The owner hook never interrupts, folds foreign initiators per issuer (local ones per principal), and labels the chooser as triggered by an incoming request. Spec §11.3, §11.4.
+- **M9.** Moot for signaling, which creates no items. A system evidence profile, plus a provider-feature source, is written as the precondition for any later activity mirror. Spec §20.2.
+- **L1.** `target` is restricted to the initiating app's own endpoints. Spec §5.4, §10.2.
+- **L2.** Glare auto-accept requires the surviving invite to be within the endpoint's own outgoing one: the same kind line and profile, with params within. Spec §8.3.
+- **L3.** Endpoints MUST NOT put addresses in `context`, and providers cannot enforce it. The overclaims in §1.2 item 6 and §12.3 are fixed. Spec §1.2, §7.2, §12.3.
+- **L4.** Own-entity `open` calls count against the `self` window, not `opens`. This is a **code change**: today `opens` (60/h) binds before `self` (120/h). The principal-bound windows are aligned with `inviteLimits` (`pair`, `caller`, `issuerParent`, `preferred`). Spec §13.1, Appendix B RTC-11, C.1.
+- **L5.** Support for session kinds and approvals is a local requirement. The `intent-links.v1` dependency is removed from the feature row, and peers never check it. Spec §3.1, §20.1.8, §20.5.
+- **L6.** Each routing case fixes a handoff target. An own-entity invite whose approved initiating app has no eligible endpoint hands off to that app. Spec §5.4.
+- **L7.** The drain-rate residual for dark batches is recorded, with a SHOULD to pace dark drops. It is not closed. Spec §9.2.
+- **L8.** New normative rule: no relay credential without a per-owner byte cap enforced from the relay provider's usage data. **AMD-SG-S2** (§20.9) is the proposed security.md gate. Spec §16.7.
+- **L9.** §9.2 step 2 now only verifies the link, with no fetch and no spend. Configuration is evaluated at step 7 and the use spent at step 8. The colliding-offers rule is restored in §16.6.
+- **L10.** Appendix C adds the following, and spec §12.6 states the `rtc/block-iss/` export gap and requires the new block family to be exported:
+  - `apps/node/resources.mjs` and `apps/worker/objects.mjs` (`RTC_BOUND_CHECK`, `RTC_EGRESS`, `RTC_FOREIGN_ISSUERS`);
+  - `apps/worker/federation.mjs` and `apps/worker/index.mjs` (`rtcOccupant`);
+  - `packages/runtime/routes/index.mjs` and `packages/runtime/account/index.mjs`;
+  - `scripts/cost-model.mjs`;
+  - the two test helpers;
+  - `apps/web/styles.css`;
+  - the `rtc/inbound` limiter scope.
+
+**Provisional answers to the rev 0 owner questions (spec §19.3; unsigned):**
+1. Intents routing (A), with M4 and M6. B stays the documented fallback. Narrowed by the later owner direction: A is the leading candidate for mode (a) only, pending the spike.
+2. Never interrupt by default, and drop "unanswered". "Held" and "no handler" are kept. Under the later owner direction they survive only as owner-hook entries, and the provider never interrupts at all.
+3. `mint_link` and callbacks are unavailable until the links re-scope, with no interim ticket type. Owner-side configuration on existing parents ships now, with the H3 audience fix.
+4. `data` is acceptable with the H2 changes.
+5. The media bound is dropped. Only the structural `m=` type check (audio, video, application) remains.
+6. Disclose the app origin, labelled "reported by" for foreign initiators.
+7. The uniform 404 for an unknown identity.
+8. A hosted service entity is enough for provider to provider, given H1.
+
+**New provisional decisions:** SG-17 (standing acceptance), SG-18 (no configuration on conditional parents), SG-19 (kind resolution sources), SG-20 (`target`, glare and the handoff target), SG-21 (two establishment modes; mode (b) waits for the spike) and SG-22 (the intents chooser short-list as an intents requirement). SG-1 to SG-16 are revised in place in spec §19.2. Each needs sign-off.
+
+**Still open (spec §19.4):**
+- S1: do intents fit every mode (a) case?
+- S2: the shape of mode (b);
+- I3: a vendor's native and web clients under different `client_id`s. Grouping by verified registrable domain, as intents §7.4 does for exclusions, is one option;
+- the timing of the links §6 re-scope, for L1b;
+- whether to accept the drain-rate residual and the unenforceable `context` address rule.
+
+Also still to do: the cost-model `data` row and the aggregate budget's reference value, and code for everything (nothing is implemented to this text). docs/architecture/rtc-signaling.md and the pending-signoffs digest are not updated.
+
+Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-27 — Owner direction: core scope, Parlay, signaling consumers
+
+**Owner direction (recorded by the coordinator, 2026-10-27; the decisions listed under "provisional" below are unsigned).**
+- **Core Bindle** is identity, preferences, intents, resources and hub connectivity. Event buses stay in core.
+- **Messaging** comes out of core entirely and moves into the messaging app, kept in this monorepo for now.
+  - The 3sln.me email auto-response to 3sln.me addresses stays (free marketing). When the messaging app fills the intake slot, mail is forwarded to it.
+- **Calling** is app-level and belongs to the messaging app.
+  - A call invite is an ordinary message with a JSON media type: audio and/or video, and it expires.
+  - The existing RTC call-handling work moves into the app rather than being discarded.
+  - The 3sln.me notification layer gains an opportunistic, never-guaranteed ringing-style notification that apps can request.
+- **Generic signaling stays** as a foundation, with two kinds of consumers:
+  - invite-style (the messaging app's calls);
+  - always-on, auto-wiring (for example a fleet of agent harness daemons, enrolled by QR/device sign-in and remote-controlled from a phone).
+  - How sessions are established in each mode needs a spike.
+- **Intents** are the handoff mechanism. Routing must show a short list of likely candidates, expandable to every capable app; a single candidate only needs confirming.
+- **Organizations plus relations** become one cohesive extension spec if they can be cleanly sharded; otherwise they stay together in core.
+- **The commands/automation system** (apps contribute commands; the provider exposes them as MCP, user commands, etc.) becomes an extension. Providers declare the extensions they support in their manifest.
+- **The activity feed** is a 3sln.me feature, not a Bindle spec.
+- **The email bridge's placement** needs a spike.
+
+**Naming.**
+- The spec name "Bindle Messaging" is the user's decision of 2026-10-20 (see that entry).
+- The app name "Parlay" is used by the owner and adopted provisionally. The earlier clash notes still apply ("Parley" is taken by existing messaging products; "Parlay" reads as a betting term).
+- The mechanical rename of the BindleBox spec, apps/bindlebox, the bindlebox-* packages and the BINDLEBOX_* flags (retired as aliases) is folded into the messaging tear-out.
+
+**Provisional (coordinator), unsigned:**
+- The messaging tear-out removes code first and leaves existing message rows in storage, inert. Deleting that data is the separate, irreversible BB-CUT reset, and still requires explicit owner confirmation (SQ-1).
+- **User decision (2026-10-27), SQ-1 confirmed:** "Confirmed, drop the data, nobody is actually using 3sln.me yet; destructive cleanup is fine for now." The BB-CUT message-data reset is authorised. The tear-out may delete legacy messaging rows (messages, contacts, conversations, blocks) instead of leaving them inert.
+- Saved contacts move with the messaging app (SQ-2), provisionally.
+
+Spikes in progress:
+- docs/architecture/signaling-modes-spike.md
+- docs/architecture/extension-catalogue-spike.md
+
+Reviewer ___ / date ___ / outcome ___

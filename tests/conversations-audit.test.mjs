@@ -6,10 +6,10 @@ import {join} from 'node:path';
 import {SqliteMetadata,nodeResources} from '../apps/node/resources.mjs';
 import {ConversationService,memberId,sign,INVITE_MIME} from '../packages/conversations/index.mjs';
 import {encryptSecret,decryptSecret} from '../packages/runtime/secrets.mjs';
-import {digest,base64url} from '../packages/messaging/store.mjs';
+import {digest,base64url} from '../packages/core/records.mjs';
 import {httpConversationTransport} from '../packages/conversations/http.mjs';
 import {conversationInbox} from '../packages/conversations/runtime.mjs';
-import {key} from '../packages/messaging/store.mjs';
+import {key} from '../packages/core/records.mjs';
 async function group(t){/* One fixed clock for every peer: invitation expiry and retry times never depend on test speed. */const now=Date.UTC(2026,9,14,12);const directory=await mkdtemp(join(tmpdir(),'3sln-conversation-audit-')),services=new Map(),identities=new Map(),inboxes=new Map(),databases=[];const encryption=Buffer.alloc(32,17).toString('base64');let failPeer;
  async function peer(origin){const owner=crypto.randomUUID(),keys=await crypto.subtle.generateKey({name:'ECDSA',namedCurve:'P-256'},true,['sign','verify']),identity={privateKey:keys.privateKey,publicJwk:await crypto.subtle.exportKey('jwk',keys.publicKey)},metadata=new SqliteMetadata(join(directory,owner+'.sqlite'));databases.push(metadata);const self={origin,owner},inbox=[];inboxes.set(owner,inbox);identities.set(memberId(self),identity);const service=new ConversationService({metadata,owner,origin,seal:v=>encryptSecret(v,encryption),open:v=>decryptSecret(v,encryption),identity:async()=>identity,transport:async(kind,target,input)=>{if(target.owner===failPeer)throw new Error('simulated transport failure');const receiver=services.get(memberId(target));return kind==='invite'?receiver.invitation(input):receiver.receive(kind,input);},inbox:async(_,event)=>inbox.push(event),clock:()=>now});services.set(memberId(self),service);return service;}
  const a=await peer('https://authority.example'),b=await peer('https://member.example'),c=await peer('https://other.example');const room=await a.create({title:'Audit room',collection:crypto.randomUUID()});

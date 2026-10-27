@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
-import { MemoryMessagingStore } from '../packages/messaging/store.mjs';
+import { MemoryMessagingStore } from '../packages/core/records.mjs';
 import { SearchService, MemorySearchIndex, MemoryVectorIndex, SqliteSearchIndex, nodeSqlPort, enqueueSearchEvent, MetadataSearchOutbox, extractSearchText, validateDocument, normalizeQuery, planBudget, WorkersAIEmbeddingAdapter, VectorizeSearchIndex } from '../packages/search/index.mjs';
 
 const doc = (id, overrides = {}) => ({ id, owner: 'alice', source: { kind: 'message', id }, revision: 1, type: 'message', title: 'Project note', text: 'The violet launch is ready', tags: ['work'], classification: 'work', createdAt: 100, acl: { readers: ['alice'] }, ...overrides });

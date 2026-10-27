@@ -1,6 +1,6 @@
 import {ProducerSummaryService,producerSummaryProvider,RemovalRemaining,RemovalRemainingAction} from '../../storage/producer-summary.mjs';
-import {createPushTransport} from '../../messaging/web-push.mjs';
-import {key} from '../../messaging/store.mjs';
+import {createPushTransport} from '../../activity/web-push.mjs';
+import {key} from '../../core/records.mjs';
 // AU-S2/S4 account adapter. Actors and browser binding evidence are constructed by trusted HTTP adapters.
 import {createAppEngine,perform,read,AppQuery,AppAction} from '../../app/engine.mjs';
 import {cryptoRandom,nullAudit} from '../../app/providers.mjs';

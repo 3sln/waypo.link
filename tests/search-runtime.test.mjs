@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { SqliteMetadata, SerialGate } from '../apps/node/resources.mjs';
 import { AccountController } from '../packages/runtime/accounts.mjs';
-import { key } from '../packages/messaging/store.mjs';
+import { key } from '../packages/core/records.mjs';
 import { enqueueSearchEvent } from '../packages/search/index.mjs';
 import { semanticShard } from '../packages/runtime/semantic-routing.mjs';
 

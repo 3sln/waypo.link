@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {MemoryMessagingStore} from '../packages/messaging/index.mjs';
-import {fail,key,canonical,digest,base64url} from '../packages/messaging/store.mjs';
+import {fail,key,canonical,digest,base64url} from '../packages/core/records.mjs';
 import {strictJSON,validateEnvelope,payloadDigest,signingInput,verifyProof,verifyAuthor,localAuthorResolver,localIdentityDescriptor,createAuthoredEnvelope,semanticEnvelope,DELIVERY_DOMAIN,GENESIS_DOMAIN,ADMISSION_DOMAIN,CONVERSATION_V2_CONTRACT} from '../packages/messaging/contact-delivery.mjs';
 import {parseMultipartDelivery,parseRPCDelivery,multipartDeliveryBody,rpcDeliveryRequest} from '../packages/messaging/contact-delivery-wire.mjs';
 import {ContactDeliveryService,CONTACT_DELIVERY_STATUS} from '../packages/messaging/contact-delivery-service.mjs';

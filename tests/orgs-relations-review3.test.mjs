@@ -9,7 +9,7 @@ import {federationControllerOptions} from '../packages/runtime/federation.mjs';
 import {importResourceId} from '../packages/runtime/account/relations.mjs';
 import {FederationService,MemoryFederationStore} from '../packages/federation/index.mjs';
 import {issueMemberAccess} from '../packages/federation/member-access.mjs';
-import {principalKey} from '../packages/orgs/grants.mjs';
+import {principalKey} from '../packages/core/principals.mjs';
 import {relationsHost,ISS,STORE} from './helpers/relations-world.mjs';
 import {RELATION_EVENT} from '../packages/orgs/relation-edges.mjs';
 
