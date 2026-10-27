@@ -2,6 +2,8 @@
 
 This records the former Plus/Pro catalog and earlier operating limits. Use [current unit economics](unit-economics.md) and the current calculator for the active Paid/Plus/Ultra catalog.
 
+(Beam removed 2026-10-26: its mentions below are historical; see [RTC signaling](rtc-signaling.md#5-reuse-and-retirement-of-beam-code).)
+
 # Annual plan unit economics
 
 Pricing verified against official pages on **2026-10-12**, USD, decimal GB. These are transparent planning calculations, not production measurements or a guarantee against a large invoice. The requested plans remain **500 MB free, 5 GB/$5 yearly, 100 GB/$30 yearly**. Human approval of operating limits is pending; see D037 and the current review entry in [DEVLOG](../../DEVLOG.md). Nothing here enables billing or production release.

@@ -6,7 +6,7 @@ import {FlagsRuntime} from '../packages/runtime/flags.mjs';
 import {nodeResources} from '../apps/node/resources.mjs';import {deviceAuthorizationEnabled,deviceGrantMountable} from '../packages/runtime/device-grant.mjs';
 import {eventBusesEnabled} from '../packages/events/limits.mjs';import {brokeringFlag,integrationsFlag} from '../packages/federation/brokered.mjs';import {brokeringEnabled} from '../packages/federation/signing.mjs';
 import {recognizedSlots,RECOGNIZED_SLOTS} from '../packages/apps/connections.mjs';import {bridgeConfig} from '../packages/email-bridge/engine.mjs';import {billingEnabled} from '../packages/billing/catalog.mjs';
-import {BeamService} from '../packages/beaming/index.mjs';import {AccountStorageWriteBudget} from '../packages/runtime/storage-write-budget.mjs';
+import {AccountStorageWriteBudget} from '../packages/runtime/storage-write-budget.mjs';
 import {ConsentModel} from '../packages/consent/effects.mjs';
 import {fakeClock,forEachSeed,createScheduler} from './helpers/chaos.mjs';
 const owner='00000000-0000-4000-8000-000000000001',other='00000000-0000-4000-8000-000000000002',client='https://client.example/app',origin='https://host.example',values=[undefined,'',true,false,'true','false','invalid',null,0,1];
@@ -18,11 +18,10 @@ const engine=config=>createAppEngine({providers:{config,clock:fakeClock(),random
 
 test('remaining domain read sites preserve legacy parsing, including booleans, exact strings and default-on enforcement',async()=>{
  for(const value of values){
-  const env={EVENT_BUSES_ENABLED:value,BROKERING_ENABLED:value,INTEGRATIONS_ENABLED:value,EMAIL_BRIDGE_ENABLED:value,BINDLEBOX_ENABLED:value,BILLING_ENABLED:value,DEVICE_AUTHORIZATION_ENABLED:value,BEAM_ENABLED:value,BEAM_STUN_ENABLED:value,BEAM_TURN_ENABLED:value,APP_ORIGIN:origin};
+  const env={EVENT_BUSES_ENABLED:value,BROKERING_ENABLED:value,INTEGRATIONS_ENABLED:value,EMAIL_BRIDGE_ENABLED:value,BINDLEBOX_ENABLED:value,BILLING_ENABLED:value,DEVICE_AUTHORIZATION_ENABLED:value,APP_ORIGIN:origin};
   for(const config of [env,{...env,flags:createFlags({snapshot:snapshot({},0),env})}]){
    for(const [fn,expected]of [[eventBusesEnabled,bool],[brokeringFlag,bool],[integrationsFlag,bool],[brokeringEnabled,strict],[billingEnabled,strict],[deviceAuthorizationEnabled,bool]])assert.equal(fn(config),expected(value),fn.name+' '+String(value));
    assert.equal(bridgeConfig(config).enabled,bool(value),'bridge '+String(value));assert.equal(Object.keys(recognizedSlots(config)).length>Object.keys(RECOGNIZED_SLOTS).length,bool(value),'intake slot '+String(value));
-   const beams=new BeamService({config,metadata:{get:async()=>null},entitlement:async()=>({plan:'free'})}),status=await beams.status(owner);assert.equal(status.enabled,strict(value));assert.equal(status.stunEnabled,strict(value));
   }
   assert.equal(new AccountStorageWriteBudget({metadata:{},config:{STORAGE_WRITE_ENABLED:value}}).enabled,value!==false&&value!=='false');
  }

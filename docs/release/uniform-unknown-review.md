@@ -77,7 +77,7 @@ Engine and public boundaries:
 
 Tests:
 
-- [tests/beaming-runtime.test.mjs](../../tests/beaming-runtime.test.mjs)
+- `tests/beaming-runtime.test.mjs` (Beam removed 2026-10-26)
 - [tests/contact-preview.test.mjs](../../tests/contact-preview.test.mjs)
 - [tests/core-links-handoff-http.test.mjs](../../tests/core-links-handoff-http.test.mjs)
 - [tests/engine-public-unknown.test.mjs](../../tests/engine-public-unknown.test.mjs)

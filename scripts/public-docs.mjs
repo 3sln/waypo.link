@@ -28,7 +28,6 @@ export const publicDocumentation=Object.freeze([
  ['Reference service','docs/spec/mcp-service.md','Agent connections'],
  ['Reference service','docs/spec/browser-automation.md','Browser automation'],
  ['Reference service','docs/spec/omni-search.md','Search'],
- ['Reference service','docs/spec/beaming.md','File transfers'],
  ['Reference service','docs/spec/notifications.md','Notifications'],
  ['Hosting and providers','docs/deployment/client-build.md','Client builds'],
  ['Hosting and providers','docs/deployment/federation.md','Provider federation configuration'],
@@ -37,7 +36,6 @@ export const publicDocumentation=Object.freeze([
  ['Hosting and providers','docs/deployment/email.md','Email configuration'],
  ['Hosting and providers','docs/deployment/identity-backups.md','Identity authority and signup configuration'],
  ['Hosting and providers','docs/deployment/billing.md','Billing configuration'],
- ['Hosting and providers','docs/deployment/beaming.md','File transfer configuration'],
 ].map(([group,source,title])=>Object.freeze({group,source,title})));
 const sources=new Set(publicDocumentation.map(page=>page.source));
 const internalSections=/^(?:Sign-off checkpoints|Evidence and review|Evidence and gates|Verification and remaining release gates|Release verification|Current live verification|Operator provisioning history|Local verification history|Validation)$/i;

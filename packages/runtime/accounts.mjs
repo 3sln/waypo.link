@@ -34,8 +34,7 @@ import {retryReady,retryTime,retryFailure} from './cleanup-retry.mjs';
 import {lifecycleMethods,lifecycleBlocked,lifecycleActivity,lifecycleTick} from './lifecycle-runner.mjs';
 import {armAlarm,alarmFenced,assertLifecycleOpen,assertDeletionFenceOpen} from './account-deletion.mjs';
 import {collectGarbageRef} from './export-pins.mjs';
-import {BeamService} from '../beaming/index.mjs';
-import {BeamContacts} from '../beaming/contacts.mjs';
+import {ContactProfiles} from '../links/contact-profile.mjs';
 import {ContactTokenService,ContactEndpointService,MessagingService,NotificationService} from '../../packages/messaging/index.mjs';
 import {key} from '../../packages/messaging/store.mjs';
 import {indexDeviceExpiry,sweepDeviceExpiry,IdentityShardStorage} from './identity-shards.mjs';
@@ -218,7 +217,7 @@ export class AccountController {
     this.delivery=new ContactDeliveryService({store,issuer:config.APP_ORIGIN,allowInsecureLocalhost:config.LOCAL_DEVELOPMENT==='true',maxStoredBytes:1_000_000_000_000,maxStoredMessages:1_000_000,parents:{verify:credential=>this.endpoints.verifyCredential(credential),live:async(tx,verified)=>{await assertLifecycleOpen(tx);return this.endpoints.liveCredential(tx,verified);}},intake:(id,tx)=>this.endpoints.intakeOf(id,tx),resolve:localAuthorResolver({issuer:config.APP_ORIGIN,lookup:(subject,kid)=>this.identityKey(subject,kid)}),admissionKey:async()=>{const owner=await this.metadata.get('owner');return this.signingKey(owner);},audience:{admit:(tx,input)=>admitLinkAudience(tx,input)}});
     this.messages=new MessagingService({store,tokens:this.endpoints,clock:systemClock.now,crypto:{randomUUID:cryptoRandom.uuid,subtle:crypto.subtle,getRandomValues:array=>crypto.getRandomValues(array)},maxStoredBytes:1_000_000_000_000,maxStoredMessages:1_000_000,...this.itemIndex?{indexedList:async(owner,options)=>{await this.warm(owner);if(!await this.metadata.get('item-index-ready')||!this.itemIndex.filterIndexesReady())throw new StorageError('temporarily_unavailable','Your inbox index is being upgraded. Try again shortly.',503);return this.itemIndex.page(owner,options,{legacy:true}).items;}}:{}});
     this.notifications=new NotificationService({store,messageAllowed:appNotificationAllowed});
-    this.beams=new BeamService({metadata,config,entitlement:owner=>this.billing.entitlement(owner)});this.beamContacts=new BeamContacts({metadata,endpoints:this.endpoints});
+    this.contactProfiles=new ContactProfiles({metadata,endpoints:this.endpoints});
     // Account placement of the application engine (docs/architecture/app-engine.md): migrated domains are
     // Actions/Queries over these providers, reached through `dispatch`. The remaining services above are
     // wrapped as providers slice by slice. One engine per controller, so per DO instance / Node account.
@@ -270,6 +269,8 @@ export class AccountController {
         await this.metadata.transaction(async tx=>{for(const [k,v]of rows){await tx.put(k,v);if(k.startsWith('message/'))this.itemIndex?.upsert(v);}await tx.delete('shelved');});
       }
       const storedOwner=await this.metadata.get('owner');if(storedOwner!==undefined&&storedOwner!==owner)throw new StorageError('forbidden','Account owner mismatch.',403);await this.ensureBuiltinStorage(owner);await this.migrateItemIndex(owner);
+      // beam-retired-v1 never fails a request: on any error the alarm path retries it (review R3).
+      try{await this.retireBeamStorage();}catch{try{await this.scheduleAlarm(Date.now()+60000);}catch{}}
       if(!(await this.messages.collections(owner)).length)await this.messages.createCollection(owner,'Inbox');
       await this.scheduleAlarm(Date.now()+7*86400000);await this.billingRefresh(owner);
     }
@@ -318,7 +319,9 @@ export class AccountController {
     const populationOwner=await this.metadata.get('owner');if(populationOwner)await recordOwnerPopulation(this,populationOwner,{retry:true});
     const conversationOwner=await this.metadata.get('owner');if(conversationOwner&&flagsFor(this.config).background('EVENT_BUSES_ENABLED')&&(await this.metadata.list({prefix:'evbus/bus/',limit:1})).size){const swept=await this.eventBusSweep(conversationOwner);if(swept.more||(await this.metadata.list({prefix:'evbus/bus/',limit:1})).size)await this.scheduleAlarm(Date.now()+(swept.more?1000:600000));}if(conversationOwner){if(flagsFor(this.config).background('BROKERING_ENABLED')&&capability(this.config,'BROKERED_INTROSPECTION_MOUNTED'))await this.brokeredSeveranceDrain(conversationOwner);await this.integrationEventsAlarm(conversationOwner);const revalidated=await this.integrationsRevalidateDue(conversationOwner);if(revalidated.revalidated||revalidated.pending)await this.scheduleAlarm(Date.now()+3600000);await this.conversationDrain(conversationOwner,{limit:16});}
     const retry=await this.metadata.get('maintenance/alarm-retry');if(!retryReady(retry)){await armAlarm(this.metadata,retry?.paused?Date.now()+7*86400000:retryTime(retry));return;}try{await this.gate.run(async()=>{
-      if(flagsFor(this.config).background('BEAM_ENABLED')){await this.beamTurnSweep();await this.beams.cleanup();const beamExpiry=[];for(const prefix of ['beam/offer/','beam/mailbox/','beam/invite/','beam/nearby/'])for(const r of (await this.metadata.list({prefix,limit:129})).values())beamExpiry.push(r.expiresAt);if(beamExpiry.length)await this.scheduleAlarm(Math.min(...beamExpiry));}
+      // DEVLOG 2026-10-26: Beam left the core; `beam-retired-v1` copies its generic contact rows (legacy rows kept for one
+      // release) and deletes the Beam-only rows, revoking TURN usernames within its batch budget.
+      await this.retireBeamStorage({alarm:true});
       await this.quota.cleanup();await this.collectBlobGarbage();const mcpJournalWake=await sweepMcpJournal(this.metadata);if(mcpJournalWake!==null)await this.scheduleAlarm(mcpJournalWake);const owner=await this.metadata.get('owner');if(!owner)return;await collectLinkState(this,owner);
       if(await this.metadata.get('shelved')){await this.scheduleAlarm(Date.now()+7*86400000);return;}
       // A scheduled deletion freezes the shelved state and semantic backfill (R1-H2); vector purges may continue.

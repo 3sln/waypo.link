@@ -111,7 +111,7 @@ The linked-approval decisions are recorded in [§15](linked-approval.md#15-open-
 
 **Wave 7:**
 - BRIDGE [S] in `packages/email-bridge/*`.
-- Post-cutover engine work [A]: ENG-8 search, then ENG-11 beaming, then ENG-9 lifecycle. ENG-13a/b/c only after LA and EXT stop editing identity and federation files.
+- Post-cutover engine work [A]: ENG-8 search, then ENG-11 beaming (now the contact-profile slice; Beam removed 2026-10-26), then ENG-9 lifecycle. ENG-13a/b/c only after LA and EXT stop editing identity and federation files.
 
 ## Conflict resolutions
 
@@ -126,7 +126,7 @@ The linked-approval decisions are recorded in [§15](linked-approval.md#15-open-
 9. App connections: X4 owns connections; ACT owns notification/push; MCP account tools come after cutover.
 10. `federation/service.mjs` and `http.mjs`: X5 (W1), then ACT (W2), then X8 (W5). New federation modules are engine-first.
 11. Manifest builders: X2 creates the registry, and others append to it.
-12. Beaming, search and lifecycle engine migrations come after cutover; ACT hooks export/erase into lifecycle.
+12. Beaming (now contact profile; Beam removed 2026-10-26), search and lifecycle engine migrations come after cutover; ACT hooks export/erase into lifecycle.
 13. `contact-delivery*`: copied in B1, deleted at cutover.
 14. App credential lifetime: superseded by the later user decision: no absolute lifetime, 180-day idle expiry, 15 min bearer / 60 min DPoP access tokens, one fresh step-up at approval.
 15. `bl/release.mjs` edits are serialized: W0, LA4, LA5, ACT-3, BB-CUT.

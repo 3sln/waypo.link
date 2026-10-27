@@ -2,6 +2,7 @@
 import {Query} from '../shared/stack.mjs';
 import {OwnerFlow,snapshot,publish} from './owner-flow.mjs';
 import {clearBrowserAccount,accountReset} from './account-context.mjs';
+import {GuardedAction,publish as publishGuarded} from './guarded-action.mjs';
 export const devicesEnabled=state=>state.config?.deviceAuthorizationEnabled===true;
 export function deviceInventory(state){
  const devices=Array.isArray(state.data?.devices)?state.data.devices:[],grants=state.mcpGrants?.bindle??state.data?.grants??[];
@@ -41,3 +42,5 @@ export class RevokeAppAccess extends OwnerFlow {
   r.browser.restoreFocus?.();try{if(grants.some(g=>g.session)){await reload(r,ctx,'App sign-in revoked.');return;}const result=await r.api.get('/api/grants'),next=snapshot(r);if(next.mcpGrants&&next.mcpGrants.requestId!==ticket)return;publish(r,ctx,{...next.mcpGrants?{mcpGrants:{...next.mcpGrants,bindle:result.grants??[]}}:{data:{...next.data,grants:result.grants??[]}}});}catch{publish(r,ctx,{error:savedStale});}
  }
 }
+// Device naming keeps the account-epoch guard: a rename result never lands in another account.
+export class RenameDevice extends GuardedAction {mutation=true;async perform(r,ctx,d){const v=d.operationId?r.browser.consumeSubmission(d.operationId):d.values;await r.api.request('/api/auth/devices/rename',{sessionId:d.sessionId,label:v.label});publishGuarded(r,ctx,{data:await r.api.get('/api/account'),modal:null,notice:'Device name saved.',error:''});}}

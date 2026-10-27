@@ -113,11 +113,16 @@ export const relationEventMethods={
   const accepted={accepted:true},me=this.self(r.id),parsed=parseRelationEvent(input?.event,{now,audience:identityURI(me)});
   if(!parsed)fail('relation_event_invalid','Invalid relation event.',400);
   const e=parsed.payload,sender={iss:e.iss,sub:e.sub};
-  const key=await this.cachedKey(sender,parsed.header.kid);if(!key)await this.scheduleRefresh(tx,r.id,sender,now);
+  const key=await this.cachedKey(sender,parsed.header.kid);
   // Step 2 (no fetch).
   const origin=await this.originOf(tx,sender),current=await this.currentOf(tx,origin);
   const part=await tx.get(K.instance(e.instance)),cp=part?await tx.get(K.cp(e.instance,origin)):null;
   const counterpart=Boolean(samePrincipal(current,sender)&&part&&cp&&cp.state!=='ended');
+  // Review R3-L1 (provisional deviation from spec §9.9 step 3, which schedules the refresh whatever step 2 decided): a
+  // missing key schedules one background refresh only for a sender recognized in the instance it names, so strangers
+  // cannot fill the bounded claimed queue and evict or delay a counterpart's refresh. On this host the refresh is a
+  // local read; ORG-11 must revisit before foreign issuers are fetched (a fetch only for counterparts reveals them).
+  if(!key&&counterpart)await this.scheduleRefresh(tx,r.id,sender,now);
   // Step 3 (cache-only key; the same work whatever step 2 decided).
   const signed=counterpart&&key&&(key.identity===undefined||key.identity===identityURI(sender))?await verifyRelationEvent(parsed,key):await dummyVerify();
   if(!counterpart||!signed)return accepted;

@@ -29,7 +29,6 @@ const rows=[
  ['BINDLEBOX_ENABLED','a','G A S P',{stateful:true,envParse:'boolean'}],
  ['EMAIL_BRIDGE_ENABLED','a','G A S P',{risk:'crit',requires:['BINDLEBOX_ENABLED'],stateful:true,retainExisting:false,retentionReason:'Holding queues and opt-in live in the external email-bridge store; no account-local predicate.',envParse:'boolean'}],
  ['SEMANTIC_SEARCH_ENABLED','a','G A S P V',{experiment:{metrics:['search_result_opened']},capabilities:['AI','SEARCH_VECTORS']}],
- ['BEAM_ENABLED','a','G A S P V',{stateful:true,experiment:{metrics:['beam_completed']}}],
  ['DEVICE_AUTHORIZATION_ENABLED','a','G A C',{risk:'crit',stateful:true,retainExisting:false,retentionReason:'Linked requests and lineages live in identity stores; session authorization is independent of federation.',envParse:'boolean'}],
  ['APP_METADATA_DISCOVERY_ENABLED','a','G C',{}],
  ['ACCOUNT_EXPORT_ENABLED','a','G A S P',{risk:'crit',stateful:true,envParse:'boolean',
@@ -85,8 +84,7 @@ const rows=[
  ['WORK_LIMITS_ENABLED','b','',{safe:true,envParse:'work-authority',envDefaults:{node:'true'}}],
  ['STORAGE_WRITE_ENABLED','b','',{safe:true,envParse:'boolean',envDefaults:{node:'true'}}],
  ['REDIRECT_EXTENSION_ENABLED','b','',{requires:['BILLING_ENABLED'],envParse:'boolean'}],
- ['BILLING_ENABLED','b','',{}],['MAIL_ENABLED','b','',{}],['PUSH_ENABLED','b','',{}],['BEAM_TURN_ENABLED','b','',{}],
- ['BEAM_STUN_ENABLED','b','',{envDefaults:{node:'true'}}],
+ ['BILLING_ENABLED','b','',{}],['MAIL_ENABLED','b','',{}],['PUSH_ENABLED','b','',{}],
  ['FEDERATION_REFRESH_ENABLED','b','',{safe:true,envDefault:true,envParse:'not-false'}],
  // Browser automation kill switch (wargame 3). It shipped always-on, so it stays default on; env 'false' refuses tool
  // discovery, grants, prepare, confirm and invoke. Revoking a session grant is never gated (the safe direction).
@@ -105,7 +103,12 @@ export const FLAG_NAMES=Object.freeze(Object.keys(FLAGS));
 /** Wargame 4 L5: names removed from the registry. A deployment may still store a console record for one; that record is
  * quarantined (only that flag falls back) until an operator runs the audited critical `flags.retire`. Removing a flag
  * means moving it here with the date; tests/flags-registry-removals.test.mjs guards the move. */
-export const RETIRED_FLAGS=Object.freeze({});
+export const RETIRED_FLAGS=freeze({
+ // Beam (device-to-device file transfer) was removed from the 3sln.me core.
+ BEAM_ENABLED:{retiredOn:'2026-10-26',reason:'Beam removed from the core'},
+ BEAM_TURN_ENABLED:{retiredOn:'2026-10-26',reason:'Beam removed from the core'},
+ BEAM_STUN_ENABLED:{retiredOn:'2026-10-26',reason:'Beam removed from the core'}
+});
 export function getFlag(name){if(typeof name!=='string'||!Object.hasOwn(FLAGS,name))throw Object.assign(new TypeError(`Unknown flag: ${String(name)}`),{code:'unknown_flag'});return FLAGS[name];}
 export function validateRegistry(entries=FLAGS){
  const seen=new Set(),active=new Set();

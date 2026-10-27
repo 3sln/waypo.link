@@ -1,4 +1,5 @@
 // FF-5b owns account/**; keep this workstream's tests inside that boundary.
+import {SEMANTIC_MIN_ACCOUNT_AGE_MS} from './search.mjs';
 import test from 'node:test';import assert from 'node:assert/strict';
 import {AccountController} from '../accounts.mjs';
 import {SqliteMetadata,SerialGate} from '../../../apps/node/resources.mjs';
@@ -67,7 +68,7 @@ test('classifier engine gates both owner and verified client; dependency kills a
 test('global protocol mounts ignore audience rules and region; writer stateful flags reject region rules',()=>{
  const flags=port({FEDERATION_ENABLED:record({fallthrough:true}),DEVICE_AUTHORIZATION_ENABLED:record({rules:[{when:{accounts:[other]},serve:{value:true}}]}),INCREMENTAL_AUTH_ENABLED:record({rules:[{when:{clients:[client]},serve:{value:true}}]})}),config={flags,APP_ORIGIN:'https://host.example',FEDERATION_ENTRY_ENABLED:'true',KEY_ENCRYPTION_KEY:'key'};
  assert.equal(deviceGrantMountable(config),true);assert.equal(incrementalMountable(config),true);assert(federationDeclarations(config,{target:'authority',mounts:{deviceAuthorization:true}}).grant_types_supported.includes('urn:ietf:params:oauth:grant-type:device_code'));assert.equal(ownerFlags(config,owner).enabled('DEVICE_AUTHORIZATION_ENABLED'),false);
- assert.throws(()=>validateSnapshot(snapshot({BEAM_ENABLED:record({rules:[{when:{countries:['US']},serve:{value:true}}]})})),{code:'invalid_snapshot'});
+ assert.throws(()=>validateSnapshot(snapshot({ACTIVITY_V2_ENABLED:record({rules:[{when:{countries:['US']},serve:{value:true}}]})})),{code:'invalid_snapshot'});
  const regional=port({SIGNUP_ENABLED:record({rules:[{when:{countries:['US']},serve:{value:true}}]})});assert.equal(regional.for({region:{country:'US'}}).enabled('SIGNUP_ENABLED'),true);assert.equal(regional.for({region:{country:'unknown'}}).enabled('SIGNUP_ENABLED'),false);
 });
 
@@ -108,16 +109,10 @@ test('seeded interleaved writer contexts retain their own snapshot and owner dur
 });
 
 
-test('beam writer evaluates owner rollout with env unset and keeps existing offers readable after console off',async t=>{
- const f=await account(t,{flags:{BEAM_ENABLED:record({rules:[{when:{accounts:[owner]},serve:{value:true}}]})},env:{BEAM_MONTHLY_DELIVERY_BYTES:'10000',BEAM_MONTHLY_OFFERS:'20'}});f.controller.billing.entitlement=async()=>({plan:'paid'});
- assert.equal((await f.invoke('beamStatus')).enabled,true);
- const actor={account:owner,device:'sender'},recipient={account:other,device:'receiver'},input={recipient:other,devices:['receiver'],files:[{id:'file',name:'file.txt',size:10,type:'text/plain'}]},offer=await f.invoke('beamCreate',actor,input);assert.equal(offer.$fault,undefined);
- await f.runtime.publish(snapshot({BEAM_ENABLED:record({on:false})},2));assert.equal((await f.invoke('beamStatus')).enabled,false);assert.equal((await f.invoke('beamRaw',offer.id)).id,offer.id);
- assert.equal((await f.invoke('beamCreate',actor,input)).$fault?.code,'beam_disabled');assert.equal((await f.invoke('beamAction',offer.id,recipient,'reject',{})).state,'rejected');
-});
-
 test('semantic writer changes configuration with targeting without changing consent or purge access',async t=>{
  const env={AI:{run:async()=>{}},SEARCH_VECTORS:{query:async()=>[],upsert:async()=>{},deleteByIds:async()=>{}},SEMANTIC_SPEND:{reserve:async()=>{}}},f=await account(t,{flags:{SEMANTIC_SEARCH_ENABLED:record({rules:[{when:{accounts:[owner]},serve:{value:true}}]})},env});
+ // The semantic admission age gate needs a paid plan or an account at least SEMANTIC_MIN_ACCOUNT_AGE_MS old (search.mjs).
+ await f.db.put('account/created-at',Date.now()-SEMANTIC_MIN_ACCOUNT_AGE_MS-1000);
  assert.equal((await f.invoke('searchPreferences')).configured,true);assert.equal((await f.invoke('updateSearchPreferences',{enabled:true})).enabled,true);
  await f.runtime.publish(snapshot({SEMANTIC_SEARCH_ENABLED:record({on:false})},2));const status=await f.invoke('searchPreferences');assert.equal(status.enabled,true,'stored consent survives ramp-down');assert.equal(status.available,false);assert.equal(status.configured,false);
  assert.equal((await f.invoke('updateSearchPreferences',{enabled:false})).enabled,false,'opt-out still works');assert.equal((await f.db.get('search-vector-purge')).owner,owner);
@@ -145,10 +140,10 @@ test('opaque device and incremental runner Actions use the global component; dom
 test('retention predicates page beyond inactive rows and exclude foreign, expired and completed state',async t=>{
  const f=await account(t),e=engine({accountStore:f.db});for(let i=0;i<70;i++)await f.db.put('evbus/bus/'+String(i).padStart(3,'0'),{owner,state:'deleted'});await f.db.put('evbus/bus/last',{owner,state:'active'});
  await f.db.put('activity-item/'+owner+'/expired',{owner,state:'active',expiresAt:start-1});await f.db.put('activity-item/'+owner+'/foreign',{owner:other,state:'active'});
- await f.db.put('beam/offer/completed',{sender:owner,state:'complete',expiresAt:start+100000});await f.db.put('link/revoked',{owner,revoked:true});
- let state=await read(e,new AccountFeatureState({actor:{kind:'system',owner}}));assert.equal(Object.entries(state).find(([name])=>name==='EVENT_BUSES_ENABLED')[1],true);for(const name of ['ACTIVITY_V2_ENABLED','BEAM_ENABLED','BINDLEBOX_ENABLED'])assert.equal(state[name],false);
- await f.db.put('activity-item/'+owner+'/live',{owner,state:'active',expiresAt:null});await f.db.put('beam/offer/live',{sender:owner,state:'offered',expiresAt:start+100000});await f.db.put('key-delegation/'+owner+'/live',{owner,state:'active'});
- state=await read(e,new AccountFeatureState({actor:{kind:'system',owner}}));for(const name of ['ACTIVITY_V2_ENABLED','BEAM_ENABLED','BINDLEBOX_ENABLED'])assert.equal(state[name],true);
+ await f.db.put('activity-item/'+owner+'/completed',{owner,state:'completed',expiresAt:start+100000});await f.db.put('link/revoked',{owner,revoked:true});
+ let state=await read(e,new AccountFeatureState({actor:{kind:'system',owner}}));assert.equal(Object.entries(state).find(([name])=>name==='EVENT_BUSES_ENABLED')[1],true);for(const name of ['ACTIVITY_V2_ENABLED','BINDLEBOX_ENABLED'])assert.equal(state[name],false);
+ await f.db.put('activity-item/'+owner+'/live',{owner,state:'active',expiresAt:null});await f.db.put('key-delegation/'+owner+'/live',{owner,state:'active'});
+ state=await read(e,new AccountFeatureState({actor:{kind:'system',owner}}));for(const name of ['ACTIVITY_V2_ENABLED','BINDLEBOX_ENABLED'])assert.equal(state[name],true);
 });
 
 test('incremental boolean true preserves its former boolean read site',()=>{

@@ -23,7 +23,7 @@ import * as billing from './billing.mjs';
 import * as search from './search.mjs';
 import * as lifecycle from './lifecycle.mjs';
 import * as notifications from './notifications.mjs';
-import * as beams from './beams.mjs';
+import * as contactProfile from './contact-profile.mjs';
 import * as automation from './automation.mjs';
 import * as identity from './identity.mjs';
 import * as links from './links.mjs';
@@ -47,7 +47,7 @@ import * as orgs from './orgs.mjs';
 import * as memberCertificates from './member-certificates.mjs';
 import * as relations from './relations.mjs';
 
-export const ACCOUNT_SLICES=Object.freeze({intents,views,messages,contacts,delivery,conversations,storage,billing,search,lifecycle,notifications,beams,automation,identity,links,connections,events,integrations,integrationEvents,classifier,brokeredTokens,emailBridge,deletion,exports,retention,transferOut,appRemoval,transferIn,transferSuccessor,transferIntake,directory,orgs,memberCertificates,relations});
+export const ACCOUNT_SLICES=Object.freeze({intents,views,messages,contacts,delivery,conversations,storage,billing,search,lifecycle,notifications,contactProfile,automation,identity,links,connections,events,integrations,integrationEvents,classifier,brokeredTokens,emailBridge,deletion,exports,retention,transferOut,appRemoval,transferIn,transferSuccessor,transferIntake,directory,orgs,memberCertificates,relations});
 
 /** Installs every slice's methods; a name defined twice (by two slices, or by a slice and the core) is a programming error. */
 export function installAccountMethods(prototype,slices=ACCOUNT_SLICES){

@@ -91,11 +91,11 @@ test('Node HTTP caps metadata churn and ingest; GET, deletion, logout and contac
   const denied=await request(`/api/messages/${message.id}`,'PATCH',{tags:['denied']},headers);assert.equal(denied.status,429);assert.equal((await denied.json()).error,'rate_limited');assert.deepEqual((await controller.messages.read(session.account.id,message.id)).tags,['first']);
   assert.equal((await post(await authored(sign,contact.url,{text:'over limit'}))).status,429);assert.equal((await controller.metadata.get('storage/reservations')).count,0);
   assert.equal((await request(`/api/messages/${message.id}`,'GET',undefined,headers)).status,200);assert.equal((await request(contact.url,'GET',undefined,{Accept:'application/json'})).status,200);assert.deepEqual(await controller.metadata.get('storage-write/v1'),record);
-  assert.equal((await request('/api/search/preferences','PUT',{enabled:true,consent:true,beamEnabled:false},headers)).status,429);
+  assert.equal((await request('/api/search/preferences','PUT',{enabled:true,consent:true},headers)).status,429);
   assert.equal((await request('/api/search/preferences','PUT',{enabled:false},headers)).status,200);
   assert.equal((await request('/api/profile','PUT',{displayName:'',bio:'',avatar:'',discloseToContacts:false},headers)).status,200);
   assert.equal((await request(`/api/contacts/${contact.id}/quarantine`,'POST',{quarantined:true},headers)).status,200);
-  assert.equal((await request(`/api/contacts/${contact.id}/beam`,'PUT',{beamEnabled:true,profileFields:[]},headers)).status,429);
+  assert.equal((await request(`/api/contacts/${contact.id}/sharing`,'PUT',{profileFields:['displayName']},headers)).status,429);
   assert.deepEqual(await controller.metadata.get('storage-write/v1'),record);
   await app.close();app=await createNodeServer({directory,config});assert.equal((await request('/api/rules','PUT',{rules:[]},headers)).status,429);
   assert.equal((await request(`/api/messages/${message.id}`,'DELETE',undefined,headers)).status,200);assert.equal((await request(`/api/contacts/${contact.id}`,'DELETE',undefined,headers)).status,200);assert.equal((await request('/api/auth/logout','POST',{},headers)).status,200);

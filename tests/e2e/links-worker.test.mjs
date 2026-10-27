@@ -21,7 +21,7 @@ test('owner labels a tag, issues a new-form link and edits its intake without re
  const labels=(await owner(page,'/api/tags/labels')).body,clients=Object.keys(labels.labels).find(id=>labels.labels[id]==='Clients');assert.match(clients,/^t\./);
  await page.getByRole('button',{name:'Contact links',exact:true}).click();await page.getByRole('button',{name:'New contact link',exact:true}).click();
  await page.getByLabel('Name this link').fill('Project inbox');await page.getByRole('button',{name:'Create contact link',exact:true}).click();
- const url=await page.getByLabel('Contact URL').inputValue();assert.match(url,/\/contact\/[a-f0-9-]{36}\?bindle_meta=/);await page.getByRole('button',{name:'Close dialog'}).click();
+ const url=await page.getByLabel('Contact URL',{exact:true}).inputValue();assert.match(url,/\/contact\/[a-f0-9-]{36}\?bindle_meta=/);await page.getByRole('button',{name:'Close dialog'}).click();
  const card=page.locator('.contact-card').filter({hasText:'Project inbox'});await card.getByRole('button',{name:'Edit tags',exact:true}).click();await page.getByRole('heading',{name:'Edit this link’s tags.'}).waitFor();
  await page.locator(`select[name="tag:${clients}"]`).selectOption('auto');await page.getByLabel('Other optional tags, separated by commas').fill('topic:bug');await screenshot(page,'links-intake-editor');
  await page.getByRole('button',{name:'Save tags',exact:true}).click();await page.getByText('Tags updated. Future messages use them; the link itself is unchanged.').waitFor();

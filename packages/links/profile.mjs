@@ -1,4 +1,4 @@
-// Core links: contact-profile representation and Accept selection (moved from packages/beaming/profile.mjs, slice C1a).
+// Core links: contact-profile representation and Accept selection (extraction slice C1a).
 // The intake and contact-delivery bearer representations are legacy and go at cutover (extraction plan §2.6).
 export const CONTACT_PROFILE_MIME='application/vnd.bindle.contact-profile+json';
 export const CONTACT_INTAKE_MIME='application/vnd.bindle.contact-intake+json',CONTACT_DELIVERY_TOKEN='application/vnd.bindle.contact-token+jwt;profile=contact-delivery-v1';

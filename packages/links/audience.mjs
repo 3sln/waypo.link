@@ -9,6 +9,7 @@ import {DELIVERY_LIMITS} from '../messaging/contact-delivery.mjs';
 import {prepareLinkResponse,signLinkResponse,verifyLinkResponse} from '../identity/link-response.mjs';
 import {evaluateLinkPolicy} from '../runtime/developer-contact.mjs';
 import {UUID} from '../core/primitives.mjs';
+import {CONTACT_KEYS,LEGACY_CONTACT_KEYS,contactGrantKeys} from './contact-profile.mjs';
 import {assertLifecycleOpen} from '../runtime/account-deletion.mjs';
 const DAY=86400000,CONTACT_PATH=/^\/users\/(?:[a-z0-9][a-z0-9_-]{2,31}|n\.[0-9abcdefghjkmnpqrstvwxyz]{1,9})\/contact\/[a-f0-9-]{36}$/;
 const local=c=>c.config.LOCAL_DEVELOPMENT==='true';
@@ -98,8 +99,9 @@ export async function collectDeadParents(c,owner,{limit=64,scan=256,batch=64,now
    const legacy=[...await tx.list({prefix:legacyPrefix,limit:batch+1})],remaining=receipts.length>batch||legacy.length>batch;
    const stale=[...receipts.slice(0,batch),...legacy.slice(0,batch)].map(([name])=>name);if(stale.length)await tx.delete(stale);
    if(remaining)return false;
-   const redeemed=await tx.get(`beam/redeemed/${grant.id}`);
-   await tx.delete([path,`contact-name/${grant.id}`,`contact-url/${grant.id}`,`beam/grant/${grant.id}`,`beam/redeemed/${grant.id}`,...UUID.test(redeemed?.peer??'')?[`beam/redeemed-peer/${redeemed.peer}/${grant.id}`]:[],replayBase+'count']);
+   // Sharing and redemption rows under both the neutral and the legacy Beam-era keys (contact-profile.mjs).
+   const redeemed=await tx.get(CONTACT_KEYS.redeemed+grant.id)??await tx.get(LEGACY_CONTACT_KEYS.redeemed+grant.id);
+   await tx.delete([path,`contact-name/${grant.id}`,`contact-url/${grant.id}`,...contactGrantKeys(grant.id,redeemed?.peer),replayBase+'count']);
    // Round 3 L5: the tombstone carries the parent's signed exp, so it can be collected once no meta or bearer for
    // this ID could verify on expiry alone (collectTombstones).
    await tx.put(key('contact-grant-tombstone',grant.id),{owner,reclaimedAt:now,...Number.isSafeInteger(current.claims?.exp)?{exp:current.claims.exp}:{}});reclaimed++;return true;

@@ -176,9 +176,10 @@ export const relationAccessMethods={
   if(c&&write&&(seconds-c.iat>ENTITY_WRITE_AGE_SECONDS||c.iat>seconds+ENTITY_WRITE_FUTURE_SECONDS))ok=false;
   const presented=c?{iss:c.iss,sub:c.sub}:null,key=presented?await this.cachedKey(presented,parsed.header.kid):null;
   const result=await this.system(actor,async(r,_,tx)=>{
-   if(presented&&!key)await this.scheduleRefresh(tx,r.id,presented,now);
    // Step 1, the edge (no fetch): the presented issuer is the origin principal's current one.
    const origin=presented?await this.originOf(tx,presented):null,current=origin?await this.currentOf(tx,origin):null;
+   // Review R3-L1: a missing key schedules a refresh only for a counterpart recognized in the named instance.
+   if(presented&&!key&&samePrincipal(current,presented)&&typeof c.instance==='string'){const known=await tx.get(K.cp(c.instance,origin));if(known&&known.state!=='ended')await this.scheduleRefresh(tx,r.id,presented,now);}
    let good=ok&&Boolean(origin)&&samePrincipal(current,presented);
    const part=good?await tx.get(K.instance(c.instance)):null,cp=part?await tx.get(K.cp(c.instance,origin)):null;if(!outgoingLive(part,cp,now))good=false;
    // Step 2 (cache-only key; dummy verification otherwise).

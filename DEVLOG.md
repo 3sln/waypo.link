@@ -5963,6 +5963,31 @@ Reviewer: ___ Date: ___ Outcome: ___
 - Targeted relations runtime/ownership integration: **6 passed**; relations route matrix: **7 passed**; upgrade cases: **3 passed**; duplicate-resource scope review: **1 passed**; relations client engine: **15 passed**; relations Chromium/Firefox DOM: **18 passed**; built-Worker-shell relation UI: **2 passed** (routed API fixtures; real runtime same-host data/RPC behavior is tested separately).
 - Initial browser-run setup raced the concurrent asset rebuild and failed copying a disappearing asset before any test executed. Re-run after the build completed. Earlier development runs also caught the cold-cache delivery and original console exact-read expectation issues; only final results above supersede them.
 
+
+**Review follow-ups (2026-10-26; independent review of ORG-10f/g requested by the coordinator; implemented locally, provisional and unsigned).** The review found no Critical, High or Medium issues and four Low items; its repro is `scratchpad/rel-review/rel-review3-repros.test.mjs` (R3-1). The regressions are in `tests/orgs-relations-review3.test.mjs` (8 tests), which is added to `test:organizations`, with two expectations updated in the access and events suites. In a scratch copy of the tree I reverted each of 13 guards, and each mutation made its suite fail. No Beam file was touched.
+- **R3-L1: the cold-key inbox could be filled by anyone.**
+  - `relationsPeer` buffers a cold-key event only when its claimed sender's origin principal (successor view) is a counterpart, in any state but ended, in the instance the event names. That is a local check, and the answer is the same 202 either way.
+  - Inbox rows are keyed by claimed sender: at most 8 per sender and 64 in all.
+  - The R3-1 flood (70 strangers and a recognized sender naming a foreign instance) now buffers nothing. A recognized sender with arbitrary keys fills at most 8 rows, and a genuine rotated-key narrowing is still buffered and applied.
+- **R3-L1, claimed refreshes.** `relations.ingest` and `relations.authorize` now schedule a background key refresh for a missing key only for a sender recognized in the named instance. The runtime's background run also drops any request-path (`claimed`) queue row of a sender recognized nowhere in the organization's view, without a fetch. The engine's earlier policy had starved the counterpart's refresh behind strangers' rows.
+  - **Provisional deviation (flagged for spec review):** spec §9.9 step 3, and invariant C7's last clause in design §8b.10, schedule the refresh "exactly as for a non-counterpart". On this host a refresh is a local read, so nothing reaches an issuer. ORG-11 must revisit this before foreign issuers are fetched, because a fetch made only for counterparts would reveal them to the claimed issuer.
+- **R3-L2: stale import mirrors were never removed.** When `FederationService` has a `relationImports` port (the runtime always does), the provider's relation descriptors (`relationImportDescriptors`) are the source of truth for `provider:'relation'` rows. A relation row the provider no longer lists is deleted. Without the port, relation rows are kept (the engine-level M2 test). This supersedes item 2 above ("the existing federation sync preserves `provider:'relation'` mirrors absent from provider output").
+- **R3-L3: four guards that survived mutation now have tests:**
+  - the mirror sync through the real runtime provider path (`federationControllerOptions(...).resourceProvider` → `relationImportDescriptors`): added, then removed when stale;
+  - the `relationsJoin` body-key check (a `from` or any extra member is `invitation_invalid`);
+  - the member-access holder JWK, kept only when its thumbprint is the token's `jkt`;
+  - the ingest flag gate: while `ORG_RELATIONS_ENABLED` is off, widening events are dropped and narrowing still applies.
+- **R3-L4: the counterpart key refresh.**
+  - `refreshKeys` resumes a cursor over `rel/cp/` (1,024 rows a run, then it wraps), so every counterpart is reached. The test places 1,100 ended rows before the real counterpart.
+  - Key-cache rows not refreshed for a whole cache period are pruned; they belong to principals that are no longer counterparts. Ended counterpart records themselves are kept, because an ended pair is final per instance (ORG-10a–c M7 reading).
+  - **The bound chosen:** `KEY_CACHE_MS` drops from 1 h to **300 s**, refreshed at half-life. A revoked or rotated counterpart certification key therefore stops verifying here within about 300 s, plus at most one background run, which matches design §8b.4's key-revocation bound. Same-host refreshes are local reads, so the cost is a bounded number of local reads per alarm run (at most 128).
+
+**Verification after the follow-ups (shared checkout, with the concurrent Beam removal in progress; local evidence only):**
+- Relation suites (`orgs-relation-*` and `orgs-relations*`): **114 passed, 0 failed**.
+- `npm run test:organizations`: **514 passed, 0 failed**, 0 skipped (suites of 282, 72, 148 and 12).
+- `npm run test:worker`: **93 passed, 0 failed**.
+- `npm test`: **3,787 passed, 0 failed**, 0 skipped, 0 cancelled. The total is lower than ORG-10f/g's 3,796 because Beam suites were removed concurrently. An earlier run, made while that removal was midway, had 26 failures, all in Beam, contact and links suites. With this round's four changed files restored to HEAD in a scratch copy, those suites still failed. None was a relation suite.
+
 Reviewer: ___ Date: ___ Outcome: ___
 
 ## 2026-10-26 — RTC signaling extension design
@@ -6025,5 +6050,94 @@ Proposed amendments (unsigned): AMD-X1 and AMD-R1 to R6.
 - a long revocation window.
 
 The pending sign-off digest (docs/release/pending-signoffs.md) was not updated.
+
+Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-26 — Beam removed from core
+
+**Direction (user, 2026-10-26):** app-level experiences such as device-to-device file transfer belong in apps, not in the 3sln.me core. The generic cross-provider WebRTC signaling extension ([spec](docs/spec/rtc-signaling.md), [design](docs/architecture/rtc-signaling.md)) replaces it; it is designed, not implemented. **Supersedes D048** (paid WebRTC beaming). Implemented locally; nothing is production-verified. Every decision below is **provisional** (coordinator), not signed off by the user.
+
+**Removed:**
+- `packages/beaming/` (offers, mailbox, signals, nearby invitations and QR, ICE issuance, funding), `packages/runtime/account/beams.mjs`, `packages/runtime/routes/beams.mjs` and every `/api/beams/*` route.
+- The Beam UI: `apps/web/src/{bl,ui,providers}/*beaming.mjs`, the `file-beaming` portal module (nav "Beam files", `beaming.open`, `g f`), the `beam-invite` fragment, `.beam-*` styles and 76 Beam-only strings per locale (en, es).
+- Tests: `beam-ice-retry`, `beam-turn-lifecycle`, `beaming-nonparticipant`, `beaming-runtime`, `beaming-security`, `tests/browser/beaming*.mjs`, `tests/e2e/beaming.test.mjs`. Their contact, profile and TURN cases were ported (below).
+- Config: the Beam keys in `wrangler.jsonc` and `wrangler.local.jsonc`, and `BEAM_MONTHLY_*` in `apps/node/server.mjs`.
+
+**Kept and moved (generic contact code):**
+- `packages/links/contact-profile.mjs` (`ContactProfiles`): the contact profile, per-link profile sharing, redemption bindings with the peer index, saved contacts, disclosure and the public contact profile. Federation's embed view, the public contact profile, contact revocation and the contacts list all use it.
+- Account slice `packages/runtime/account/contact-profile.mjs`; routes `packages/runtime/routes/contact-profile.mjs`, mounted where `beams` was, before `contacts`.
+- RPC renames: `beamProfile`→`accountProfile`, `beamContactEnable`→`contactSharing`, `beamContactRedeem`→`contactRedeem`, `beamContactRemember`→`savedContactRemember`, `beamDirectory`→`savedContacts`, `beamContactForget`→`savedContactForget`, `beamContactInfo`→`contactInfo`, `beamDisclosed`→`contactDisclosed`. `contactProfile` is unchanged.
+- Route rename: `PUT /api/contacts/{id}/beam` became `PUT /api/contacts/{id}/sharing`, body `{profileFields}` (or `discloseProfile`). The other paths are unchanged.
+- UI: saved contacts, the contact profile and the sharing dialog now live in the Contacts view (`apps/web/src/{bl,ui}/contact-book.mjs`, state `contactBook`). The account-epoch guard is now `bl/guarded-action.mjs`, still keyed on `beamGeneration`. `RenameDevice` moved to `bl/devices.mjs`.
+- Saved contacts (`saved-contact/`) stay for now. **Whether they belong in core is a pending user decision.**
+
+**Decisions (provisional):**
+- **Re-key with read fallback.** The new keys and the legacy keys they replace:
+
+  | New key | Legacy key |
+  | --- | --- |
+  | `profile` | `beam/profile` |
+  | `contact-sharing/<grantId>` | `beam/grant/` |
+  | `contact-redeemed/<grantId>` | `beam/redeemed/` |
+  | `contact-redeemed-peer/<peer>/<grantId>` | `beam/redeemed-peer/` |
+  | `saved-contact/<linkOwner>` | `beam/directory/` |
+
+  *Revised by review follow-up R1 (below):* for release v1 every write keeps both keys with one `updatedAt` stamp, the legacy row stays authoritative, and legacy rows are not deleted until `beam-retired-v2`. Revocation cleanup (`links/audience.mjs`) deletes both generations.
+- **`beam-retired-v1`** (`packages/runtime/beam-retirement.mjs`): an idempotent account step that runs in bounded batches (64) on warm and on the alarm. It does three things:
+  - copies the generic rows forward without deleting them (`beamEnabled` is not copied), and prunes a neutral copy whose legacy twin was deleted (revised by R1);
+  - deletes `beam/offer/`, `beam/usage`, `beam/mailbox/`, `beam/invite/` and `beam/nearby/`; on the alarm path only, it first revokes unexpired TURN usernames, within the batch budget (revised by R3);
+  - writes the marker `migration/beam-retired-v1` after a clean full cycle. The marker stops only the warm-path calls.
+- **Contact `beamEnabled` dropped, not converted.** Contact RTC configuration will be designed with RTC.
+- **Export gap fixed.** `beam/` was excluded as transient, so the profile, saved contacts and sharing grants were missing from account export. New contributors: `profile`, `contact-sharing`, `contact-redemptions` and `saved-contacts` (the encrypted link URL is not exported). During v1 they export the authoritative legacy rows, and the neutral copies are listed as excluded forward copies (revised by R1); `profile` and `beam/profile` match exactly (R4). `contact-redeemed-peer/` and `migration/` are excluded as derived.
+- **TURN building blocks.** `packages/rtc/turn.mjs` (`CloudflareTurnAdapter`, `RtcError`) and `packages/rtc/relay-credentials.mjs` (lease, issue, revoke, sweep, reservation cap, generalized from Beam's ICE lifecycle) are tested and unused. Nothing else of RTC is built.
+- **Flags retired.** `BEAM_ENABLED`, `BEAM_TURN_ENABLED` and `BEAM_STUN_ENABLED` moved to `RETIRED_FLAGS` (`retiredOn 2026-10-26`), guarded by `tests/flags-registry-removals.test.mjs`; they stay in the lock fixture. Flag tests that sampled `BEAM_ENABLED` now use `ACTIVITY_V2_ENABLED`, `EVENT_BUSES_ENABLED` or `SEMANTIC_SEARCH_ENABLED`. Two tests that ran three concurrent experiments now run two, because only two experiment flags remain.
+- **Contact routes no longer require a current device session,** which only Beam needed. Other owner contact routes never required one.
+- **The peer index is kept** with a bounded `peerBindings(owner, peer)` lookup that no route uses yet. It was Beam's permission lookup and could be dropped later.
+
+**Docs:** [beaming](docs/spec/beaming.md) is now a superseded stub. Its contact-profile rules moved to [contact-tokens](docs/spec/contact-tokens.md) "Contact profile, sharing and saved contacts". The Beam architecture doc, deployment doc and walkthrough images are deleted. rtc-signaling §5 and §6, self-hosting, feature-flags, app-engine, account-deletion-export, messaging-extraction, pending-signoffs (MC-1: the Beam exception is moot) and the other references are updated.
+
+**Tests added:**
+- `tests/contact-profile.test.mjs` (15 after the review follow-ups): HTTP profile, sharing, redeem, directory and disclosure; the route registry; the read fallback; the disclosure allowlist; saved-contact bounds; revocation cleanup of both key generations through `collectLinkState`; `beam-retired-v1` batching, marker, idempotence and revocation; the warm migration; and the export inventory and pages.
+- `tests/rtc-relay-credentials.test.mjs` (9).
+- `tests/browser/contact-profile.mjs` (8).
+- Adapted: `links-wargame3`, `contact-quarantine-silence`, `contact-preview`, `work-budget`, `classifier-occupant`, `core-links`, `engine-account-export`, the flag suites, `release-state`, the e2e `ui-chaos`, `ui-quality-round2`/`round3`, `worker-flow` and `links-worker`.
+
+**Review follow-ups (2026-10-26; independent review requested by the coordinator; implemented locally, provisional and unsigned).** The review found nothing blocking and no regression in the contact hardening. Every fix has a regression test that fails when reverted.
+- **R1 (Medium): rollback reversibility.** "A newer row under the new key wins" was backwards for the only state in which both rows can exist: a rollback to, or a mixed deployment with, the pre-removal code, which uses only `beam/` keys. Before the fix, a withdrawn disclosure written by rolled-back code was silently re-enabled by a stale neutral copy. Rolled-back code also could not see a moved redemption binding, so a second peer could bind the same link.
+  - **Coordinator decision:** dual-write both keys for one release, and keep legacy rows in v1.
+  - **Writes and deletes.** Every write stamps the same `updatedAt` on both rows in one transaction, and every delete removes both. The legacy sharing row keeps its stored `beamEnabled`, so a rollback reads it unchanged.
+  - **Reads (`pickRow`).** The legacy row decides whether a row exists. Its content wins unless both rows are stamped and the neutral one is strictly newer.
+    - **Deviation from the coordinator's wording:** an unstamped legacy row is never treated as older than a migrated copy. It was written by pre-removal code, so it is either the copy's source or a later rollback write.
+    - A neutral row whose legacy twin is missing was deleted by pre-removal code and reads as absent. v1 never creates one without the other.
+  - **`beam-retired-v1`** copies and prunes from a stored cursor. The alarm path keeps reconciling one slice per alarm even after the marker, so rollback writes made after the marker are still copied.
+  - **Export.** During v1, export reads the legacy rows, so dual rows are exported once.
+  - **Follow-up `beam-retired-v2`,** after a release, not implemented: reconcile once more, delete the legacy rows, read only the neutral keys, and move the export contributors to them.
+  - **Tests:** "R1 rollback: …" (two tests), the v1 reads and dual-write test, and the export test.
+- **R3 (Low): conflicting sharing body.** A body with both `discloseProfile:false` and `profileFields` disclosed fields while being classified as protective and terms-exempt.
+  - Such bodies are now refused (`contact_sharing_invalid`).
+  - Capacity admission, the terms gate and the service share `packages/links/sharing-fields.mjs` (`effectiveSharingFields`, `withdrawsSharing`). A body is protective only when it is a well-formed change that discloses no field.
+- **TURN revocation off the request path (Low).** Before the fix, TURN revocation was unbounded and ran on the request path.
+  - The warm path never calls the TURN provider. With TURN configured, it leaves offers that still hold live credentials for the alarm.
+  - The alarm path revokes within the batch budget.
+  - The warm call is wrapped in try/catch and falls back to an alarm a minute later.
+- **R4 (Low): exact singleton keys.** `profile` and `beam/profile` match only exactly in the export inventory and pages (`EXPORT_SINGLETON_KEYS`).
+- **Pre-existing failure fixed.** The semantic writer test in `packages/runtime/account/flags.test.mjs` failed because the semantic admission gate needs a paid plan or an account at least 7 days old. The fixture now backdates `account/created-at`. `npm test` now also runs `'packages/**/*.test.mjs'`, which adds `packages/runtime/account/flags.test.mjs` and `packages/runtime/routes/flags.test.mjs`.
+
+**Verification (shared checkout, concurrent relations work in flight; local evidence only):**
+- `npm test`: **3,796 passed, 0 failed**.
+- `test:worker`: **93 passed**.
+- `test:ui-state`: **486 passed**.
+- `test:organizations`: **514 passed**.
+- `test:e2e`: **324 passed, 0 failed, 4 skipped** (328).
+- `build:assets` and `check:worker` (dry run) succeeded.
+- At that point the semantic writer test in `packages/runtime/account/flags.test.mjs`, which was then outside `npm test`, failed the same way at HEAD 54124aa. It is fixed in the review follow-ups.
+
+**Verification after the review follow-ups:**
+- `npm test`, which now includes `packages/**/*.test.mjs`: **3,823 passed, 0 failed**.
+- `test:worker`: **93 passed**.
+- `test:ui-state`: **486 passed**.
+- `test:organizations`: **514 passed**.
+- Contact suites (`contact-profile`, `rtc-relay-credentials`, `links-wargame3`, `contact-quarantine-silence`, `engine-account-export`): **52 passed**.
+- `test:e2e`, `build:assets` and `check:worker` were not rerun; the follow-ups changed no web UI.
 
 Reviewer: ___ Date: ___ Outcome: ___

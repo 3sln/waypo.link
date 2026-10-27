@@ -2,7 +2,7 @@
 // engine, not provider conformance or production authentication.
 import {createMemoryEngine,OWNER} from '../../packages/app/memory-providers.mjs';
 import {adminFlagsRoutes} from '../../packages/runtime/admin-flags-http.mjs';
-export const beam='BEAM_ENABLED',search='SEMANTIC_SEARCH_ENABLED';
+export const activity='ACTIVITY_V2_ENABLED',search='SEMANTIC_SEARCH_ENABLED';
 export async function flagFixture(options={}){
  const f=await createMemoryEngine(options),owner=OWNER,actor={kind:'admin',owner,expect:{['principal/'+owner]:1}};
  await f.flagStore.commit({expect:{['principal/'+owner]:null,'boot/principal':null,'boot/sessions':null},writes:{['principal/'+owner]:{active:true},'boot/principal':{active:true},'boot/sessions':{sessions:[]}}});

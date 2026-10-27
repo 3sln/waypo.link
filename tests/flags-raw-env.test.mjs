@@ -54,10 +54,10 @@ function rawReads(source){const list=tokens(source),reads=[];for(let i=0;i<list.
 async function sources(dir){const files=[];for(const entry of await readdir(new URL('../'+dir+'/',import.meta.url),{withFileTypes:true})){const path=dir+'/'+entry.name;if(path==='apps/bindlebox'||path.startsWith('packages/bindlebox-'))continue;if(entry.isDirectory())files.push(...await sources(path));else if(/\.[cm]?js$/.test(path)&&!path.endsWith('.test.mjs'))files.push(path);}return files;}
 
 test('raw-env guard recognizes dot, optional, bracket and destructured reads, excludes writes/comments/strings',()=>{
- assert.equal(rawReads(`env.BEAM_ENABLED; config?.BEAM_ENABLED; env['BEAM_ENABLED']; const {BEAM_ENABLED: beam}=env;`).length,4);
- assert.equal(rawReads('env.BEAM_ENABLED = value; const x={BEAM_ENABLED: true}; // env.BEAM_ENABLED\n "env.BEAM_ENABLED";').length,0);
- assert.equal(rawReads('`text ${env.BEAM_ENABLED} nested ${`text ${env.SIGNUP_ENABLED}`} end`').length,2);
- assert.equal(rawReads("const pattern=/['\"]env.BEAM_ENABLED/; env.SIGNUP_ENABLED;").length,1);
+ assert.equal(rawReads(`env.ACTIVITY_V2_ENABLED; config?.ACTIVITY_V2_ENABLED; env['ACTIVITY_V2_ENABLED']; const {ACTIVITY_V2_ENABLED: activity}=env;`).length,4);
+ assert.equal(rawReads('env.ACTIVITY_V2_ENABLED = value; const x={ACTIVITY_V2_ENABLED: true}; // env.ACTIVITY_V2_ENABLED\n "env.ACTIVITY_V2_ENABLED";').length,0);
+ assert.equal(rawReads('`text ${env.ACTIVITY_V2_ENABLED} nested ${`text ${env.SIGNUP_ENABLED}`} end`').length,2);
+ assert.equal(rawReads("const pattern=/['\"]env.ACTIVITY_V2_ENABLED/; env.SIGNUP_ENABLED;").length,1);
 });
 test('registry flags have no raw reads outside the env parser and adapter capability derivation',async t=>{
  const violations=[],remaining=[];

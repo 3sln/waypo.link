@@ -4,7 +4,7 @@ Design date: 2026-10-26, revision 1. **Docs only:** no code changed, nothing is 
 
 ## 1. Direction and summary
 
-User direction (2026-10-26): spec a Bindle extension for cross-provider WebRTC signaling, generic and secure, usable between devices of one user or of different users, for any purpose (calls, data transfer and so on), as flexible as possible without compromising security or privacy. App-level experiences stay out of the 3sln.me core: Beam's file-transfer experience moves to an app, and the core provides the primitive. Follow-up direction the same day: build it on the extension system already specified in [extensions](../spec/extensions.md), name any gap explicitly and propose the smallest addition, and reconcile with the existing [beaming spec](../spec/beaming.md).
+User direction (2026-10-26): spec a Bindle extension for cross-provider WebRTC signaling, generic and secure, usable between devices of one user or of different users, for any purpose (calls, data transfer and so on), as flexible as possible without compromising security or privacy. App-level experiences stay out of the 3sln.me core: Beam's file-transfer experience moves to an app, and the core provides the primitive. Follow-up direction the same day: build it on the extension system already specified in [extensions](../spec/extensions.md), name any gap explicitly and propose the smallest addition, and reconcile with the existing [beaming spec](../spec/beaming.md). Further direction (2026-10-26): Beam was removed from the core outright the same day rather than kept until an application ships (§5, §6); [beaming](../spec/beaming.md) is now a superseded stub.
 
 The design in one paragraph: an application asks for the **`rtc-signaling/v1` slot** (exclusive, provider built-in occupant, non-brokerable contract) with the **purposes** it wants approved, bound per application by the one extension-system addition, **AMD-X1**. Purposes are `rtc-purpose` **artefacts** (media, alerting, parties, auto-accept, a context schema). To call, an endpoint gets a **per-session leg key certified by its own issuer** and signs every signaling message with it. Providers relay those messages unchanged to each other through the **`rtc-signaling.v1` feature endpoint**, verifying them with no request-path fetch and answering a uniform `202`. The callee provider admits an invite only on a **basis** (own entity, a contact link with RTC enabled, an **`rtc-ticket` link**, or an opt-in request policy), fans it out to eligible endpoints, and lets the **first claim** win. No SDP address or candidate leaves a device before that claim, and cross-entity sessions default to **relay-only**, with each party using **its own relay** (the optional `ice-relay/v1` slot). DTLS fingerprints are bound into the signed messages, with optional direct key verification and a committed **SAS** for users who want detection of provider substitution.
 
@@ -40,7 +40,7 @@ All behavior is drivable through the ngin Engine. HTTP routes and UI are thin ad
 | `packages/rtc/admission.mjs` | Bases, contact-link RTC configuration, ticket uses, block/mute/quarantine, limits. |
 | `packages/rtc/service.mjs` | `RtcService` and its ngin Actions and Queries (§3.2). |
 | `packages/rtc/federation.mjs` | Batch build/parse, `sameHostRtcTransport` (local delivery through the same verification path) and the foreign transport (outbox, retries, manifest endpoint resolution through the successor index). |
-| `packages/rtc/relay.mjs` | Built-in `ice-relay/v1` occupant. Wraps `packages/beaming/turn.mjs` `CloudflareTurnAdapter` and generalizes Beam's D1/D2 credential lifecycle (§5). |
+| `packages/rtc/relay.mjs` | Built-in `ice-relay/v1` occupant. Wraps the `CloudflareTurnAdapter` now at `packages/rtc/turn.mjs` and the credential lease, revoke and sweep logic now at `packages/rtc/relay-credentials.mjs` (both moved from Beam on 2026-10-26, tested but not yet used), generalizing Beam's former D1/D2 credential lifecycle (§5). |
 | `packages/rtc/tickets.mjs` | The `rtc-ticket/v1` link type on the existing links service (`packages/links/`), atomic use counting. |
 | `packages/app/domains/rtc.mjs` | Engine domain: re-exports and classifies operations (owner, endpoint, system, narrowing), as `packages/app/domains/relations.mjs` does. |
 | `packages/runtime/account/rtc.mjs` | Durable storage slice in the account writer: sessions, endpoints, queues, replay windows, limits. |
@@ -64,7 +64,7 @@ All behavior is drivable through the ngin Engine. HTTP routes and UI are thin ad
 | `RTC_SIGNALING_ENABLED` | (a), stateful | off | The slot occupant declaration, contract widening operations, owner widening settings, same-provider sessions. |
 | `RTC_FOREIGN_ENABLED` | (a), stateful, `requires: ['RTC_SIGNALING_ENABLED']`, risk crit | off | The `rtc-signaling.v1` feature declaration in `packages/runtime/federation.mjs`, outbound foreign delivery and the `/bindle/rtc` endpoint (answers the uniform `404` when off). |
 | `RTC_TICKETS_ENABLED` | (a) | off | Minting `rtc-ticket` links. Admission through existing tickets keeps working until they expire or are revoked. |
-| `RTC_TURN_ENABLED` | (b), env capability | off | The built-in relay occupant. Replaces `BEAM_TURN_ENABLED` at migration. Hosted relay stays off until the beaming relay-budget gate is met. |
+| `RTC_TURN_ENABLED` | (b), env capability | off | The built-in relay occupant. A new flag: `BEAM_TURN_ENABLED` was retired on 2026-10-26 with Beam, not renamed. Hosted relay stays off until an enforceable relay-spend budget gate (formerly the Beam relay-budget gate) is met. |
 
 ### 3.4 Storage layout and bounds
 
@@ -101,29 +101,31 @@ File names travel inside the data channel after the claim, never in `context`, s
 
 ## 5. Reuse and retirement of Beam code
 
+Beam was removed from the core on 2026-10-26 (user direction; provisional, unsigned). Nothing of RTC beyond the two relay building blocks below exists yet. What happened to each Beam component:
+
 | Beam component | Fate |
 | --- | --- |
-| `packages/beaming/turn.mjs` (`CloudflareTurnAdapter`) | **Reused** by `packages/rtc/relay.mjs`. Its host allowlist and response validation stay. |
-| Relay lifecycle in `packages/runtime/account/beams.mjs` (`iceIssued`, issuing lease, ≤ 4 re-issues, revocation on terminal states and sweep, reservation cap) | **Generalized** into the relay occupant: usernames persisted per leg, revoked at leg end and by `rtc.relay-sweep`, renewals bounded per leg, reservation from the entity's own budget only. |
-| Offer state machine, sender-owned record, recipient mailbox, atomic first-accept | **Replaced** by RTC sessions: the caller's record and the callee's record each live in their own entity's writer; the callee writer decides the claim. |
-| Signal records with role and monotonic sequence (`beam_signal_sequence`) | **Replaced** by leg-signed messages with per-leg `seq` and a 32-message buffer. |
-| Nearby invitations (`/api/beams/invites*`, QR SVG) | **Replaced** by one-use `rtc-ticket` links; the local QR renderer is reused for ticket QR codes. |
-| Contact beam permission (`beamEnabled`, `beam/redeemed-peer/<peer>/<grantId>` index) in `packages/beaming/contacts.mjs` | **Migrated**: `beamEnabled` becomes contact RTC configuration with `file-transfer/v1`. RTC admission does not use redemption bindings (review R6); the peer index stays in contacts for profile-field disclosure, which is not RTC. |
-| Paid-sender eligibility and monthly offer/byte allowances (`beamFunding`) | **Moves to the Beam app** as its own policy. The core keeps only the relay budget. |
-| `/api/beams/*` routes, `packages/beaming/http.mjs`, `packages/runtime/routes/beams.mjs` | **Retired** after the Beam app ships and migration ends; kept behind `BEAM_ENABLED` until then. |
-| Browser data-channel framing `3sln-beam-v1`, save sinks, Blob fallback | **Moves to the Beam app** as the `file-transfer/v1` data-channel profile. |
-| `apps/web/src/bl/beaming.mjs`, `apps/web/src/ui/release-beaming.mjs` | **Move to the Beam app.** No file-transfer UI remains in core. |
+| `packages/beaming/turn.mjs` (`CloudflareTurnAdapter`) | **Moved** to `packages/rtc/turn.mjs`, tested but unused until `packages/rtc/relay.mjs` wraps it. Its host allowlist and response validation stay. |
+| Relay lifecycle in the former `packages/runtime/account/beams.mjs` (`iceIssued`, issuing lease, ≤ 4 re-issues, revocation on terminal states and sweep, reservation cap) | **Moved** to `packages/rtc/relay-credentials.mjs` as a tested but unused building block; to be **generalized** into the relay occupant: usernames persisted per leg, revoked at leg end and by `rtc.relay-sweep`, renewals bounded per leg, reservation from the entity's own budget only. |
+| Offer state machine, sender-owned record, recipient mailbox, atomic first-accept | **Deleted.** RTC sessions replace them: the caller's record and the callee's record each live in their own entity's writer; the callee writer decides the claim. |
+| Signal records with role and monotonic sequence (`beam_signal_sequence`) | **Deleted.** Leg-signed messages with per-leg `seq` and a 32-message buffer replace them. |
+| Nearby invitations (`/api/beams/invites*`, QR SVG) | **Deleted.** One-use `rtc-ticket` links replace them; ticket QR codes will need a local QR renderer again. |
+| Contact beam permission (`beamEnabled`) | **Dropped, not converted.** Stored grants are copied to `contact-sharing/<grantId>` without `beamEnabled` by the `beam-retired-v1` account step (legacy rows kept for one release for rollback safety). Contact RTC configuration is designed with RTC (spec §4.3). |
+| Contact profile, sharing, saved contacts and the `contact-redeemed-peer/<peer>/<grantId>` index | **Kept** as generic contact code in `packages/links/contact-profile.mjs` (`ContactProfiles`). RTC admission does not use redemption bindings (review R6). The peer index is kept with a bounded `peerBindings` lookup that no route uses yet (it was Beam's permission lookup); disclosure itself reads the binding by grant ID. Whether saved contacts belong in core is a pending user decision. |
+| Paid-sender eligibility and monthly offer/byte allowances (`beamFunding`, `BEAM_MONTHLY_*`) | **Deleted from core.** A future Beam app may keep its own policy. The core keeps only the relay budget. |
+| `/api/beams/*` routes, `packages/beaming/http.mjs`, `packages/runtime/routes/beams.mjs`, `BEAM_ENABLED`, `BEAM_STUN_ENABLED`, `BEAM_TURN_ENABLED` | **Deleted** on 2026-10-26; the flags moved to `RETIRED_FLAGS`. |
+| Browser data-channel framing `3sln-beam-v1`, save sinks, Blob fallback, `apps/web/src/bl/beaming.mjs`, `apps/web/src/ui/release-beaming.mjs` | **Deleted from core.** A future Beam app can recover them from git history (last full commit `54124aa`) as the `file-transfer/v1` data-channel profile. No file-transfer UI remains in core. |
 
 ## 6. Beam as a reference application
 
-Beam becomes a separately registered application (working name `apps/beam/`, its own origin) that:
+Future work. Beam can return as a separately registered application (working name `apps/beam/`, its own origin) that:
 
 1. Requests the `rtc-signaling/v1` slot with `purposes: [file-transfer/v1, device-sync/v1]` and `ice-relay/v1` optionally.
-2. Uses `open` with `context: {files, bytes}`; the receiving Beam endpoint shows the sender and counts, the user accepts, and the file manifest (names, sizes, selection) is exchanged and confirmed in the data channel under the existing `3sln-beam-v1` framing, which becomes the purpose's documented data-channel profile.
+2. Uses `open` with `context: {files, bytes}`; the receiving Beam endpoint shows the sender and counts, the user accepts, and the file manifest (names, sizes, selection) is exchanged and confirmed in the data channel under the former `3sln-beam-v1` framing (recoverable from git history), which becomes the purpose's documented data-channel profile.
 3. Uses own-device sessions with `target` for "send to my laptop", and one-use tickets with QR for nearby pairing.
 4. Enforces paid-sender and allowance rules itself, server-side, if it keeps them.
 
-Migration: the core ships RTC behind its flags; the Beam app ships against it; contact `beamEnabled` grants are converted; the legacy routes stay until no client uses them; then they and `BEAM_ENABLED` are removed. [beaming](../spec/beaming.md) carries a superseded-on-ship note (AMD-R6). Its streaming rules move to the Beam app's documentation, and its manifest review rules become the app's own.
+Migration: none is needed for RTC, because Beam was removed from the core on 2026-10-26 before RTC was built, so file transfer is unavailable until such an app ships. Contact `beamEnabled` grants were dropped, not converted. The `beam-retired-v1` account step re-keys the kept contact rows and deletes Beam-only state. [beaming](../spec/beaming.md) is a superseded stub; its full text, including the streaming and manifest review rules a Beam app would adopt as its own, is in git history (last full commit `54124aa`).
 
 ## 7. Core UI surfaces (no file-transfer UI)
 
@@ -134,7 +136,7 @@ These are 3sln.me presentation choices, not spec requirements.
 | Consent for the slot | Within the existing consent page: the purposes requested, per purpose its title (attributed to the host of its `id`), media, whether it can ring you, who it can connect with; each purpose individually approvable; no preselection. |
 | Settings → Connections & calls | Per application: approved purposes with ring on/off, auto-accept for own-device purposes, revoke. IP privacy: relay-only for other people (default), direct for own devices. Requests from people without a link (off by default). Blocked people. Relay source (the `ice-relay` slot assignment). |
 | Devices | Per device, its RTC endpoints by application, last seen, revoke. |
-| Contact link editor | "Can call or connect with you", with purposes (replaces the Beam toggle). |
+| Contact link editor | "Can call or connect with you", with purposes (the former Beam toggle was dropped on 2026-10-26). |
 | Call links | Create, show QR, copy, revoke `rtc-ticket` links; uses left and expiry. |
 | Incoming ring | A portal notification for an alerting invite whose application has no endpoint currently listening: caller (verified identity, handle only when verified), purpose, the application that will handle it, and Decline, Block, Open. Open navigates to the application's verified origin. The call experience itself is always the application's. |
 | Activity | Missed and held invites, with clear, block and allow; active sessions with End. |
@@ -152,7 +154,7 @@ These are 3sln.me presentation choices, not spec requirements.
 | RTC-e | Foreign transport, federation endpoint, key roster | `packages/rtc/federation.mjs`, `packages/runtime/routes/rtc.mjs`, `tests/rtc-federation.test.mjs` | d |
 | RTC-f | Relay occupant | `packages/rtc/relay.mjs`, `tests/rtc-relay.test.mjs` | d |
 | RTC-g | Owner UI and portal ring | `apps/web/src/bl/rtc-settings.mjs`, `apps/web/src/ui/rtc-settings.mjs`, `apps/web/src/ui/rtc-ring.mjs`, `tests/browser/rtc-settings.mjs` | d |
-| RTC-h | Beam reference app and migration | `apps/beam/**`, later removal of `packages/beaming/http.mjs` and Beam routes | d–f |
+| RTC-h | Beam reference app (future work; Beam core code was already removed 2026-10-26) | `apps/beam/**` | d–f |
 | RTC-i | Clean-room conformance peer (second provider) | `tests/rtc-conformance-peer.mjs` | e |
 
 Coordinator-owned shared hunks: `packages/flags/registry.mjs` (four flags), `packages/app/providers.mjs` (domain row), `packages/runtime/routes/index.mjs` (mount), `packages/runtime/federation.mjs` (feature declaration), `packages/i18n/catalogues.mjs` (strings), and the published contract and slot artefacts. These files are under concurrent edits; RTC slices touch them only by hand-off.
@@ -197,7 +199,7 @@ Each is provisional (coordinator), not signed off by the user.
 | RTC-11 | Reference-host limits (spec §13 fixes only the kinds): per (caller, callee) 6 invites / 10 min; per caller principal 30 invites / h across all entities; per (sending issuer, callee) 20 invites / h and per (sending issuer, link parent) 60 / h; per callee 4 ringing sessions and 60 invites / h; 32 held requests per callee; per caller entity 8 open sessions and 60 `open` / h; per leg 256 messages / min. | Adopt as starting values; tune with load tests. | Reviewer ___ Date ___ Outcome ___ |
 | RTC-12 | Device delivery: long poll required; Web Push and integration doorbells optional; WebSocket deferred. | Adopt; a hibernating WebSocket profile is a likely later 3sln.me addition. | Reviewer ___ Date ___ Outcome ___ |
 | RTC-13 | Multi-party is a non-goal; no group member in v1. | Adopt. | Reviewer ___ Date ___ Outcome ___ |
-| RTC-14 | Beam leaves core and becomes a reference app; Beam routes retired after migration. | Adopt. | Reviewer ___ Date ___ Outcome ___ |
+| RTC-14 | Beam leaves core and may return as a reference app. Revised 2026-10-26: Beam code and routes were removed outright, without waiting for the app. | Adopt. | Reviewer ___ Date ___ Outcome ___ |
 | RTC-15 | Retention: session records ≤ 24 h after end; missed list ≤ 30 days; no SDP or candidate retention. | Adopt. | Reviewer ___ Date ___ Outcome ___ |
 | RTC-16 | Core shows a portal ring notification only as a fallback; the application owns the call experience. | Adopt. | Reviewer ___ Date ___ Outcome ___ |
 | RTC-17 | The caller's application origin (`client.origin`) is disclosed to the callee in the leg certificate. | Adopt; it lets callees judge which app is calling. Alternative: omit for caller privacy. | Reviewer ___ Date ___ Outcome ___ |

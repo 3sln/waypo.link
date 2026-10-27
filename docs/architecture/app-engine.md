@@ -82,7 +82,7 @@ that is not catalogued. Each row records:
 | | `audit` | `nullAudit` today. A durable sink is an open question (§13). | `memoryAudit` |
 | | `egress`, `mail`, `push`, `billingProvider` (Polar), `ai` (Workers AI and Vectorize) | the existing ports (`createWorkerFormFetch`, mailer, `createPushTransport`, Polar SDK, `WorkersAIEmbeddingAdapter`) | recording fakes |
 | Domain | `views`, `incoming`, `tagRules` (scoped), `messaging` | built over the platform providers above | the same classes |
-| | `identity`, `contacts`, `delivery`, `conversations`, `storageQuota`, `billing`, `search`, `lifecycle`, `notifications`, `beams`, `apps`, `automation`, `federation`, `admin` | the existing service classes, wrapped slice by slice (§12) | the same classes over test platform providers |
+| | `identity`, `contacts`, `delivery`, `conversations`, `storageQuota`, `billing`, `search`, `lifecycle`, `notifications`, `contactProfile` (formerly `beams`; Beam was removed 2026-10-26), `apps`, `automation`, `federation`, `admin` | the existing service classes, wrapped slice by slice (§12) | the same classes over test platform providers |
 
 Rules:
 
@@ -402,7 +402,7 @@ which an integrator applies:
 
 - Move the remaining owner routes out of `packages/runtime/http.mjs` into
   per-domain modules `packages/runtime/routes/<domain>.mjs`.
-  `automationRoutes`/`beamRoutes` already follow this pattern.
+  The `automation` and `contact-profile` route modules already follow this pattern.
 - Move per-domain `AccountController` methods into
   `packages/runtime/account/<domain>.mjs`, exporting `{methods, rpc}`. `rpc`
   declares lifecycle access, gate placement, activity and warming for `invoke`.
@@ -443,7 +443,7 @@ domain slices do not edit each other's files.
 | 8: Search | `search.mjs` | `search.mjs` |
 | 9: Lifecycle and retention | `lifecycle.mjs` | `lifecycle.mjs` |
 | 10: Notifications and app connections | `notifications.mjs` | `notifications.mjs` |
-| 11: Beaming | `beams.mjs` | `beams.mjs` |
+| 11: Contact profile (formerly Beaming) | `contact-profile.mjs` | `contact-profile.mjs` |
 | 12: Automation | `automation.mjs` | `automation.mjs` |
 | 13a: Edge identity and sessions | `identity.mjs` | `identity.mjs` |
 | 13b: Administration and signup admission | `admin.mjs` | — |
@@ -452,7 +452,7 @@ domain slices do not edit each other's files.
 Slice 0 also owns `packages/app/memory-providers.mjs`, the thin test wrapper and
 CLI. Existing domain implementation files remain assigned by the table below.
 The registries preserve cross-cutting route order; in particular delivery bearer
-RPC precedes federation RPC, and beam contact routes precede generic contacts.
+RPC precedes federation RPC, and contact-profile routes (formerly beam contact routes) precede generic contacts.
 
 Each slice owns `packages/app/domains/<domain>.mjs`, the
 `tests/engine-<domain>*.test.mjs` suites it creates or converts, and the files
@@ -471,7 +471,7 @@ listed below. No two slices own the same file.
 | 8 | Search | Phase 0 | `packages/search/*`, `packages/runtime/semantic-*.mjs`, `apps/worker/semantic-budget.mjs` |
 | 9 | Lifecycle and retention (fence becomes an interceptor; alarms become `system` dispatches) | 2–8 | `packages/runtime/{lifecycle-runner,lifecycle-scheduler,lifecycle-storage,account-lifecycle,cleanup-retry,active-population}.mjs`, `packages/identity/lifecycle*.mjs`, `apps/worker/lifecycle.mjs` |
 | 10 | Notifications, push, app connections and MCP account tools | Phase 0 | `packages/messaging/{notifications,web-push}.mjs`, `packages/runtime/app-notifications.mjs`, `packages/apps/*`, `packages/mcp/account.mjs` |
-| 11 | Beaming | Phase 0 | `packages/beaming/*` |
+| 11 | Contact profile, sharing and saved contacts (formerly Beaming; Beam removed from core 2026-10-26) | Phase 0 | `packages/links/contact-profile.mjs` |
 | 12 | Automation | Phase 0 | `packages/automation/*` |
 | 13a | Edge engine and identity (`createEdgeEngine`, `accounts` router, sessions) | 0 | `apps/worker/{index,objects,password,secrets}.mjs`, `apps/node/{server,resources}.mjs`, `packages/identity/{index,service,webauthn,crypto}.mjs`, `packages/runtime/{account-session-http,account-cookies,identity-shards,secrets}.mjs` |
 | 13b | Admin, boot, abuse, waitlist, signup capacity | 13a | `packages/identity/admin*.mjs`, `packages/runtime/{admin-http,waitlist,signup-*}.mjs`, `packages/core/abuse-policy.mjs` |

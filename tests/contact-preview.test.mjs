@@ -36,7 +36,7 @@ test('generic card for links without profile disclosure: robots, Open Graph, oEm
 
 test('owner-permitted profile appears escaped in the page, the previews and oEmbed; the avatar URL is a link-scoped redirect',async()=>{
  const issued=await link();assert.equal((await owner.call('/api/profile',{displayName:'Ray "<img src=x onerror=alert(1)>"',bio:'Private biography',avatar:'https://images.example/ray.png',discloseToContacts:true},'PUT')).status,200);
- assert.equal((await owner.call(`/api/contacts/${issued.id}/beam`,{profileFields:['displayName','avatar'],beamEnabled:false},'PUT')).status,200);
+ assert.equal((await owner.call(`/api/contacts/${issued.id}/sharing`,{profileFields:['displayName','avatar']},'PUT')).status,200);
  const {text}=await html(issued.url);const title=metaContent(text,'og:title');
  assert.equal(title,'Send a private message to Ray &quot;&lt;img src=x onerror=alert(1)&gt;&quot;');assert.equal(text.includes('<img src=x'),false);assert.equal(text.includes('Private biography'),false,'bio is not part of previews');
  const image=metaContent(text,'og:image').replaceAll('&amp;','&');assert.ok(image.startsWith(`${issued.url.split('?')[0]}/avatar?bindle_meta=`));

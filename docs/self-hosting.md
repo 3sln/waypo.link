@@ -185,8 +185,6 @@ These switches now gate implemented local features. They default off without con
 | `BILLING_ENABLED` (N) | Node: `false`; hosted: `true` | Polar billing; see [billing](deployment/billing.md). |
 | `POLAR_SERVER`, `POLAR_CATALOG_MODE`, `POLAR_METADATA_PREFIX`, `POLAR_ORGANIZATION_ID`, `POLAR_PRODUCT_ID_PAID`, `POLAR_PRODUCT_ID_PLUS`, `POLAR_PRODUCT_ID_ULTRA` (N) | Node: `sandbox`, `static`, `3sln_me_`, empty | Polar configuration. |
 | `POLAR_ACCESS_TOKEN`, `POLAR_WEBHOOK_SECRET` (N) | empty | Polar secrets. |
-| `BEAM_ENABLED`, `BEAM_STUN_ENABLED`, `BEAM_TURN_ENABLED`, `BEAM_MONTHLY_DELIVERY_BYTES`, `BEAM_MONTHLY_OFFERS` (N) | Node: off, on, off, 1 GB, 20 | File transfers; see [beaming](deployment/beaming.md). |
-| `CLOUDFLARE_TURN_KEY_ID`, `CLOUDFLARE_TURN_API_TOKEN` (N) | empty | TURN relay credentials (the token is a secret). |
 
 ### Budgets, search and lifecycle
 
@@ -230,7 +228,6 @@ All 61 entries in `packages/flags/registry.mjs` are listed below. Class **a** is
 | `BINDLEBOX_ENABLED` | a | false | false | false |
 | `EMAIL_BRIDGE_ENABLED` | a | false | false | false |
 | `SEMANTIC_SEARCH_ENABLED` | a | false | true | false |
-| `BEAM_ENABLED` | a | false | true | false |
 | `DEVICE_AUTHORIZATION_ENABLED` | a | false | false | false |
 | `APP_METADATA_DISCOVERY_ENABLED` | a | false | unset | false |
 | `ACCOUNT_EXPORT_ENABLED` | a | false | unset | false |
@@ -263,8 +260,6 @@ All 61 entries in `packages/flags/registry.mjs` are listed below. Class **a** is
 | `BILLING_ENABLED` | b | false | true | false |
 | `MAIL_ENABLED` | b | false | true | false |
 | `PUSH_ENABLED` | b | false | true | false |
-| `BEAM_TURN_ENABLED` | b | false | false | false |
-| `BEAM_STUN_ENABLED` | b | false | true | true |
 | `FEDERATION_REFRESH_ENABLED` | b | true | unset | true |
 | `BROWSER_AUTOMATION_ENABLED` | b | true | unset | true |
 | `FEDERATION_ENTRY_ENABLED` | b | false | unset | false |
@@ -277,3 +272,5 @@ All 61 entries in `packages/flags/registry.mjs` are listed below. Class **a** is
 | `EMAIL_AVAILABLE` | b (derived) | false | computed | computed |
 | `EMAIL_SETUP_AVAILABLE` | b (derived) | false | computed | computed |
 | `WAITLIST_MAIL_AVAILABLE` | b (derived) | false | computed | computed |
+
+**Retired flags and settings.** `BEAM_ENABLED`, `BEAM_TURN_ENABLED` and `BEAM_STUN_ENABLED` were retired on 2026-10-26, when file transfer (Beam) was removed from the core; they remain listed as retired in the flag registry so existing console records are not orphaned, and setting them has no effect. `BEAM_MONTHLY_DELIVERY_BYTES`, `BEAM_MONTHLY_OFFERS`, `CLOUDFLARE_TURN_KEY_ID` and the `CLOUDFLARE_TURN_API_TOKEN` secret are no longer read and can be removed from existing configuration. File transfer is planned as an application on the proposed [RTC signaling](spec/rtc-signaling.md) extension, which is not implemented.

@@ -66,7 +66,7 @@ The export holds everything the account holds for its owner, plus what the syste
 | `identity` (identity port) | id, handle, aliases and assignment; createdAt; status; terms version and acceptance time; verified email and its time; email-login setting; passkeys (id, label, createdAt, lastUsed, backedUp); password present (yes/no); sessions (label, source, created, last used, expiry); **security log** (`account.audit`, last 100); linked-approval lineage summary; public name certificate | password hash, recovery hash, session and CSRF hashes, challenges, email tokens |
 | `keys` | public keys and key IDs | private signing and encryption keys. Those leave only through the separately protected identity backup ([identity-backup.mjs](../../packages/runtime/identity-backup.mjs)); the manifest links to that workflow. |
 | `messages`, `collections`, `tags`, `rules`, `views`, `activity`, `notifications` | message metadata and body payloads, collections, labels, rules, views, activity items, notification preferences | push endpoint URLs and keys (capability URLs); unsubscribe tokens |
-| `contacts`, `contact-grants`, `conversations`, `links` | contacts, names, issued contact grants (recipient, created, revoked), conversation items authored or received, link records | shared secrets, return capabilities and bootstrap material ([contact-delivery §161](../spec/contact-delivery.md)) |
+| `contacts`, `contact-grants`, `conversations`, `links` | contacts, names, issued contact grants (recipient, created, revoked), conversation items authored or received, link records; the contact profile (`profile`), saved contacts (`saved-contact/`), contact sharing grants (`contact-sharing/`) and contact redemption bindings (`contact-redeemed/`) | shared secrets, return capabilities and bootstrap material ([contact-delivery §161](../spec/contact-delivery.md)) |
 | `resources` (hosted) | resource descriptors, logical keys, versions, content types, sizes, payload bytes | private physical bucket keys (`blobRef`) |
 | `connections`, `integrations`, `events` | connection records (provider, label, scope, created, status), event-bus descriptors and retained history, integration assignments | OAuth tokens, S3 keys, any vault secret |
 | `external-storage` | **references only**: provider, resource ID, bucket/prefix or Drive folder ID, and the **host-held logical-key → provider-object mapping** with versions | external bytes (never copied, §1.5) |
@@ -77,9 +77,11 @@ The export holds everything the account holds for its owner, plus what the syste
 | `apps-held` | a list of connected apps (BindleBox included) that may hold copies, each with "export it there" guidance | the apps' data |
 
 **Inventory completeness test.** An engine test enumerates every metadata key prefix the account writes (the table above, plus the `key('…')` families in [messaging/store.mjs](../../packages/messaging/store.mjs)). It fails unless each prefix is either claimed by a contributor or listed in `EXPORT_EXCLUDED_PREFIXES` with a reason:
-- derived: search vectors, item index, usage counters;
-- transient: beams, challenges, leases, journals;
+- derived: search vectors, item index, usage counters, the `contact-redeemed-peer/` index;
+- transient: challenges, leases, journals;
 - secret: grants' secrets, vault.
+
+Fixed 2026-10-26 (provisional): the contact profile, saved contacts, sharing grants and redemption bindings used to sit under `beam/` and were wrongly excluded with the transient Beam state. With Beam removed they get neutral keys. During release v1 (`beam-retired-v1`) both keys are written and the legacy row is authoritative, so the contributors (`profile`, `contact-sharing`, `contact-redemptions`, `saved-contacts`) export the legacy rows and list the neutral copies as excluded forward copies; `beam-retired-v2` moves the contributors to the neutral keys when it deletes the legacy rows. Singleton keys (`profile`, `beam/profile`) match exactly, never as prefixes.
 
 This keeps the export honest as domains grow.
 

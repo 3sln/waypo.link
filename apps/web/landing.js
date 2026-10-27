@@ -3,7 +3,7 @@ try{const u=new URL(location.href),saved=JSON.parse(localStorage.getItem('person
 // A public, nonblocking availability hint. This document never boots the app.
 const messages=/*__LANDING_MESSAGES__*/null;
 const fragment=new URLSearchParams(location.hash.slice(1));
-if(['token','request','beam-invite'].some(key=>fragment.has(key)))location.replace('/console'+location.search+location.hash);
+if(['token','request'].some(key=>fragment.has(key)))location.replace('/console'+location.search+location.hash);
 else void (async()=>{
  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),5000);let response;
  try{

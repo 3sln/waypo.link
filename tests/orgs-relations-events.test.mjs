@@ -86,13 +86,13 @@ test('the uniform answer: 202 for every event past step 1, whoever sends it and 
   {const f=await fault(B.system('relations.ingest',{event:bad}));assert.deepEqual([f.code,f.status],['relation_event_invalid',400]);}
 }finally{await w.h.close();}});
 
-test('no fetch during verification: cache-only keys; a missing key schedules the same refresh for anyone; anti-entropy recovers',async()=>{const w=await shared();try{
+test('no fetch during verification: cache-only keys; a missing key schedules a refresh only for a counterpart (review R3-L1); anti-entropy recovers',async()=>{const w=await shared();try{
  const {h,A,B,C,instance}=w;await h.refreshKeys();const count=h.counts.resolve,rows=async()=>(await B.list('org/cert/refresh/')).size;
  const cur=(await A.cp(instance,B)).grant.generation;for(let i=0;i<3;i++)await h.ingest(B,A,h.event(A,B,instance,st(cur,'live',w.entries)));assert.equal(await w.status(),'available');await h.ingest(B,C,h.event(C,B,instance,st(1,'suspended')));
  assert.equal(h.counts.resolve,count,'no lookup at all');assert.equal(await rows(),0,'warm keys schedule nothing');
  h.coldKey(A.id);h.coldKey(C.id);
  await A.run('relations.suspend',null,{instance,counterpart:B.principal});await h.drain();assert.equal(await w.status(),'available','not processed: the key is not held');
- assert.equal(await rows(),1);await h.ingest(B,C,h.event(C,B,instance,st(2,'suspended')));assert.equal(await rows(),2,'a non-counterpart schedules exactly the same');assert.equal(h.counts.resolve,count);
+ assert.equal(await rows(),1);await h.ingest(B,C,h.event(C,B,instance,st(2,'suspended')));assert.equal(await rows(),1,'review R3-L1: a non-counterpart schedules nothing (provisional deviation from spec §9.9 step 3)');assert.equal(h.counts.resolve,count);
  await h.refreshKeys();await A.system('relations.resync');await h.drain();assert.equal(await w.status(),'unavailable','the next anti-entropy round converges');
 }finally{await w.h.close();}});
 

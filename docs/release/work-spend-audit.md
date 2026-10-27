@@ -2,6 +2,8 @@
 
 Date: 2026-10-12. Reviewer: independent automated code review and fault injection. Human reviewer/date/outcome: **unsigned**. Production release remains disabled. This review supplements [semantic spend audit](semantic-spend-audit.md), [unit economics](../architecture/unit-economics.md) and [DEVLOG](../../DEVLOG.md); it does not certify a provider invoice ceiling.
 
+(Beam removed 2026-10-26: its mentions below are historical; see [RTC signaling](../architecture/rtc-signaling.md#5-reuse-and-retirement-of-beam-code).)
+
 ## Admission controls reviewed
 
 `AccountWorkBudget` limits covered mutations and ingest attempts per UTC month to 1,000/free, 5,000/Plus and 10,000/Pro. The plan comes from durable, owner-matched billing entitlement; expired paid entitlement falls back to free. The service allowance is 250,000 units/month in total, split exactly among sixteen fixed partitions. Owner hashing routes directly to a partition. Sixteen-unit prepaid leases keep the shared service counter off most operations; a one-unit fallback can use a partition's final remainder. Unused local leases expire when the owner's month changes; their service allocation is not refunded.

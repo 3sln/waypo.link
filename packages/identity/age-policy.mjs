@@ -1,3 +1,4 @@
+import {withdrawsSharing} from '../links/sharing-fields.mjs';
 import {Engine,Provider,Action,Query} from '../../vendor/ngin/src/index.js';
 
 // Research snapshot: docs/release/age-requirements.md (2026-10-21).
@@ -35,11 +36,11 @@ export function createsContentOrGrant(path,method,input={}){
  if(path==='/api/connections/owner')return ['connections.connect','connections.connect-built-in','connections.resume','connections.approve','connections.occupy','connections.configure-seat'].includes(input.operation);
  if(path==='/api/connections/setup')return input.action==='save';
  if(path==='/api/profile')return input.discloseToContacts!==false;
- if(/^\/api\/contacts\/[^/]+\/beam$/.test(path))return input.beamEnabled!==false&&!(Array.isArray(input.profileFields)&&!input.profileFields.length&&input.beamEnabled!==true);
+ if(/^\/api\/contacts\/[^/]+\/sharing$/.test(path))return !withdrawsSharing(input);
  if(path==='/api/email-bridge')return input.enabled===true||input.autoReply===true;
  if(/^\/api\/conversations\/[^/]+\/[^/]+\/action$/.test(path))return ['post','invite','policy','permissions','accept'].includes(input.operation);
  if(/^\/api\/events\/buses\/[^/]+\/features$/.test(path))return input.read===true||input.publish===true;
- return /^\/api\/(?:views\/[^/]+|rules\/[^/]+\/restore|collections|views|rules|tags\/labels|contact-links|contacts(?:\/redeem)?|links\/(?:respond|envelope)|resources|integrations\/google\/(?:start|complete)|integrations\/records|beams\/(?:invites(?:\/redeem)?|offers)|conversations|automation\/grant|apps\/[^/]+\/grants|connections|mcp\/approve|events\/buses)$/.test(path)||/^\/api\/(?:resources\/[^/]+\/(?:objects|upload)|messages\/[^/]+\/(?:reply|postbacks\/prepare)|events\/buses\/[^/]+\/history|integrations\/records\/[^/]+\/reconfirm|beams\/[^/]+\/[^/]+\/accept)$/.test(path);
+ return /^\/api\/(?:views\/[^/]+|rules\/[^/]+\/restore|collections|views|rules|tags\/labels|contact-links|contacts(?:\/redeem)?|links\/(?:respond|envelope)|resources|integrations\/google\/(?:start|complete)|integrations\/records|conversations|automation\/grant|apps\/[^/]+\/grants|connections|mcp\/approve|events\/buses)$/.test(path)||/^\/api\/(?:resources\/[^/]+\/(?:objects|upload)|messages\/[^/]+\/(?:reply|postbacks\/prepare)|events\/buses\/[^/]+\/history|integrations\/records\/[^/]+\/reconfirm)$/.test(path);
 }
 export class TermsRequestAllowed extends Query {static deps=['identity'];constructor(context,input){super();this.context=context;this.input=input;}async fetch({identity}){if(createsContentOrGrant(this.input.path,this.input.method,this.input.document)){const {account}=await identity.authorized(this.context);identity.requireCurrentTerms(account);}return true;}}
 

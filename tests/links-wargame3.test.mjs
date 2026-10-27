@@ -1,5 +1,5 @@
 // Red-team round 3, links (DEVLOG 2026-10-23 "Links, Beam, device and directory wargame fixes"): L1 limiter oracle,
-// L3 beam redemption index, L4 revoked app-link growth, L5 tombstone collection, and two plausible findings (owner GET
+// L3 contact redemption index (Beam's until 2026-10-26), L4 revoked app-link growth, L5 tombstone collection, and two plausible findings (owner GET
 // of an unknown contact, quarantine read inside the redemption transaction).
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -23,7 +23,7 @@ function controller(t){
  return {db,c};
 }
 async function owned(t){const f=controller(t);await f.c.touch(OWNER);f.c.config.IDENTITY_ACCOUNT=async()=>({status:'active',handle:'person'});return f;}
-const link=(c,ttl=3600000)=>c.createContactLink(OWNER,'person',{name:'beam',mimeTypes:['text/plain'],expiresAt:Date.now()+ttl,maxMessages:5});
+const link=(c,ttl=3600000)=>c.createContactLink(OWNER,'person',{name:'contact',mimeTypes:['text/plain'],expiresAt:Date.now()+ttl,maxMessages:5});
 
 // L1: the caller's own budgets run before the identity lookup, so a limited caller gets 429 whatever the target.
 {
@@ -49,23 +49,24 @@ const link=(c,ttl=3600000)=>c.createContactLink(OWNER,'person',{name:'beam',mime
  });
 }
 
-// L3: permission() finds a peer's binding through the peer-keyed index, however many other bindings exist.
-test('L3: a redeemed beam-enabled contact keeps permission when the owner has more than 1,000 bindings',async t=>{
+// L3: peerBindings() finds a peer's binding through the peer-keyed index, however many other bindings exist
+// (packages/links/contact-profile.mjs; the index was Beam's permission lookup until Beam left the core, 2026-10-26).
+test('L3: a redeemed contact binding stays findable by peer when the owner has more than 1,000 bindings',async t=>{
  const {db,c}=await owned(t),l=await link(c);
- await c.beamContacts.enable(OWNER,l.id,{beamEnabled:true});await c.beamContacts.redeem(OWNER,l.url,PEER);
- assert.deepEqual(await c.beamContacts.permission(OWNER,PEER),{kind:'contact',id:l.id});
- await db.transaction(async tx=>{for(let i=0;i<1000;i++){const id=`00000000-0000-4000-8000-${String(i).padStart(12,'0')}`;await tx.put('beam/redeemed/'+id,{peer:crypto.randomUUID(),grantId:id,owner:OWNER,expiresAt:Date.now()+3600000});}});
- assert.deepEqual(await c.beamContacts.permission(OWNER,PEER),{kind:'contact',id:l.id});
- await assert.rejects(c.beamContacts.permission(OWNER,crypto.randomUUID()),{code:'beam_contact_required'});
+ await c.contactProfiles.redeem(OWNER,l.url,PEER);
+ assert.deepEqual((await c.contactProfiles.peerBindings(OWNER,PEER)).map(b=>b.grantId),[l.id]);
+ await db.transaction(async tx=>{for(let i=0;i<1000;i++){const id=`00000000-0000-4000-8000-${String(i).padStart(12,'0')}`;await tx.put('contact-redeemed/'+id,{peer:crypto.randomUUID(),grantId:id,owner:OWNER,expiresAt:Date.now()+3600000});}});
+ assert.deepEqual((await c.contactProfiles.peerBindings(OWNER,PEER)).map(b=>b.grantId),[l.id]);
+ assert.deepEqual(await c.contactProfiles.peerBindings(OWNER,crypto.randomUUID()),[]);
 });
 
 // Plausible: quarantine is read inside the redemption transaction, not from the pre-transaction inspection snapshot.
 test('redemption does not persist a binding for a link quarantined after inspection',async t=>{
- const {db,c}=await owned(t),l=await link(c),inspect=c.beamContacts.endpoints.inspect.bind(c.beamContacts.endpoints);
- c.beamContacts.endpoints={inspect:async url=>{const result=await inspect(url);await c.quarantineContact(OWNER,l.id,true);return result;}};
- const binding=await c.beamContacts.redeem(OWNER,l.url,PEER);assert.equal(binding.peer,PEER);
- assert.equal(await db.get('beam/redeemed/'+l.id),undefined,'a binding was persisted for a link quarantined before the transaction');
- assert.equal((await db.list({prefix:'beam/redeemed-peer/'})).size,0);
+ const {db,c}=await owned(t),l=await link(c),inspect=c.contactProfiles.endpoints.inspect.bind(c.contactProfiles.endpoints);
+ c.contactProfiles.endpoints={inspect:async url=>{const result=await inspect(url);await c.quarantineContact(OWNER,l.id,true);return result;}};
+ const binding=await c.contactProfiles.redeem(OWNER,l.url,PEER);assert.equal(binding.peer,PEER);
+ assert.equal(await db.get('contact-redeemed/'+l.id),undefined,'a binding was persisted for a link quarantined before the transaction');
+ assert.equal((await db.list({prefix:'contact-redeemed-peer/'})).size,0);
 });
 
 // Plausible: an owner read of an unknown contact is a 404 fault, never a plain Error (500).

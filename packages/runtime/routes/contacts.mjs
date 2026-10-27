@@ -2,7 +2,7 @@
 // Stage handlers and route-module shape: packages/runtime/routes/index.mjs.
 import {flagsFor} from '../../flags/read.mjs';
 import {developerContactRoutes} from '../developer-contact.mjs';
-import {CONTACT_PROFILE_MIME,CONTACT_INTAKE_MIME,CONTACT_DELIVERY_TOKEN,selectContactRepresentation} from '../../beaming/profile.mjs';
+import {CONTACT_PROFILE_MIME,CONTACT_INTAKE_MIME,CONTACT_DELIVERY_TOKEN,selectContactRepresentation} from '../../links/profile.mjs';
 import {parseLinkQuery,parseLinkMeta} from '../../messaging/bindle-links.mjs';
 import {contactPreview,injectPreview,oembed} from '../contact-preview.mjs';
 import {CONTACT_DELIVERY_TOKEN_MIME} from '../../messaging/contact-endpoints.mjs';

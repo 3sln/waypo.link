@@ -152,7 +152,7 @@ Quarantine, blocking and muting (§13) apply after admission and are silent.
 
 ### 4.3 Contact-link configuration and the RTC ticket link type
 
-**Contact links.** RTC permission on a contact link is mutable owner-side configuration on the parent (keyed by `jti`), like intake configuration ([links §6.2](links.md#62-intake-configuration)): a list of purpose lines (at most 16). It is not a link member, is never signed into the link, and is never disclosed in any link representation. It is directional: Alice enabling RTC on her link lets holders call Alice, not the reverse. A legacy Beam permission maps to `file-transfer/v1` (design §5).
+**Contact links.** RTC permission on a contact link is mutable owner-side configuration on the parent (keyed by `jti`), like intake configuration ([links §6.2](links.md#62-intake-configuration)): a list of purpose lines (at most 16). It is not a link member, is never signed into the link, and is never disclosed in any link representation. It is directional: Alice enabling RTC on her link lets holders call Alice, not the reverse. Legacy Beam permissions were dropped when Beam was removed on 2026-10-26 and do not map to any RTC configuration (design §5).
 
 **RTC ticket link** (`type` = `https://spec.bindle.example/links/rtc-ticket/v1`). The meta payload member set is the links §3.2 common members plus exactly:
 
@@ -455,7 +455,7 @@ RTC-1 to RTC-17, each with a recommendation, are in the [design §9](../architec
 | AMD-R3 | integrations §6.2 | Register the `rtc-ring/v1` doorbell event (§9.2). |
 | AMD-R4 | artefacts §6.3 | Register the `rtc-purpose` kind and its growth table (§3.4). |
 | AMD-R5 | links | Register the `rtc-ticket/v1` link type (§4.3); contact links gain owner-side RTC configuration (§4.3) beside intake configuration. |
-| AMD-R6 | beaming | Beam's signaling contract, relay rules and nearby invitations are superseded by this document once its implementation ships; Beam's transfer experience becomes an application on the `file-transfer/v1` purpose (design §6). |
+| AMD-R6 | beaming | Beam's signaling contract, relay rules and nearby invitations are superseded by this document; Beam's transfer experience may return as an application on the `file-transfer/v1` purpose (design §6). Applied early: Beam was removed from the core on 2026-10-26 and [beaming](beaming.md) is now a superseded stub. |
 
 ## 19. Conformance tests
 

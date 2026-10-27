@@ -81,7 +81,6 @@ Columns:
 | `BINDLEBOX_ENABLED` | a | G A S P | off | — | std | safe | off | 3sln.me side only. The separate BindleBox deployment keeps its own env. |
 | `EMAIL_BRIDGE_ENABLED` | a | G A S P | off | `BINDLEBOX_ENABLED` | crit | safe | off | Subject = recipient owner. Paid entitlement and owner opt-in still apply. |
 | `SEMANTIC_SEARCH_ENABLED` | a | G A S P V | off | — | std | safe | **on** | Also needs the AI/Vectorize bindings (adapter capability). The global budget is unchanged. |
-| `BEAM_ENABLED` | a | G A S P V | off | — | std | safe | **on** | Stateful, so no R. |
 | `DEVICE_AUTHORIZATION_ENABLED` | a | G A C | off | — | crit | safe | off | Its declaration uses the global component only (§3.6). |
 | `APP_METADATA_DISCOVERY_ENABLED` | a | G C | off | — | std | safe | off (Worker unset) | |
 | `SIGNUP_ENABLED` | c | G R | off | — | crit | last-known | **on** | No subject exists yet. R uses the same trusted `cf.country` as admission. |
@@ -96,15 +95,17 @@ Columns:
 | `WORK_LIMITS_ENABLED`, `STORAGE_WRITE_ENABLED` | b | — | **on** | — | — | — | env | Abuse and cost guards. A console action must never disable enforcement. |
 | `BROWSER_AUTOMATION_ENABLED` | b | — | **on** | — | — | — | env (on; `false` disables) | Kill switch for browser automation (wargame 3, provisional). Off makes every automation operation except revoke `not_found`; revoke is never gated. |
 | `BILLING_ENABLED` | b | — | off | — | — | — | env (on) | Polar secrets. Per-user billing would corrupt entitlement. |
-| `MAIL_ENABLED`, `PUSH_ENABLED`, `BEAM_TURN_ENABLED` | b | — | off | — | — | — | env | Bindings or secrets. |
-| `BEAM_STUN_ENABLED`, `FEDERATION_REFRESH_ENABLED` | b | — | off, on | — | — | — | env | Network and protocol metadata. No rollout use. |
+| `MAIL_ENABLED`, `PUSH_ENABLED` | b | — | off | — | — | — | env | Bindings or secrets. |
+| `FEDERATION_REFRESH_ENABLED` | b | — | on | — | — | — | env | Network and protocol metadata. No rollout use. |
 | `FEDERATION_ENTRY_ENABLED` | b | — | off | — | — | — | env | Selects a binding and embed-origin routing. |
 | `ONBOARDING_ENABLED` | b | — | off | — | — | — | env | Needs the `ONBOARDING_KEY` secret. |
 | `ADMIN_ENABLED`, `ADMIN_CLAIMS_ENABLED` | b | — | off | — | — | — | env | The console cannot control itself. |
 | `BROKERED_INTROSPECTION_MOUNTED`, `EVENT_BUS_WAITS_MOUNTED` | b, derived | — | off | — | — | — | — | Mount = the parent flag's **global** component ∧ binding. Recomputed by adapters from `flags`. |
 | `PUSH_AVAILABLE`, `EMAIL_AVAILABLE`, `EMAIL_SETUP_AVAILABLE`, `WAITLIST_MAIL_AVAILABLE` | b, derived | — | off | — | — | — | — | Capability facts about bound transports, not flags. |
 
-Numeric and policy settings stay in env: `SIGNUP_*_LIMIT`, `STORAGE_WRITE_*`, `BEAM_MONTHLY_*`, `SIGNUP_CONTACT_REQUIRED`, `RELEASE_READY` and `LOCAL_DEVELOPMENT`.
+Numeric and policy settings stay in env: `SIGNUP_*_LIMIT`, `STORAGE_WRITE_*`, `SIGNUP_CONTACT_REQUIRED`, `RELEASE_READY` and `LOCAL_DEVELOPMENT`.
+
+**Retired flags.** `BEAM_ENABLED`, `BEAM_TURN_ENABLED` and `BEAM_STUN_ENABLED` moved to `RETIRED_FLAGS` in [registry.mjs](../../packages/flags/registry.mjs) with `retiredOn: 2026-10-26` when Beam was removed from the core (provisional, unsigned; see DEVLOG). A flag leaves the registry only through `RETIRED_FLAGS`, so existing console records are not orphaned ([removal guard](../../tests/flags-registry-removals.test.mjs)). The `BEAM_MONTHLY_*` settings were removed with them.
 
 A flag is class (b) when any of these holds:
 - it selects a binding, secret, route mount or protocol metadata;
@@ -419,7 +420,7 @@ The cutover is ordered and changes no behaviour at any step.
    - The Node adapter stops defaulting class (a)/(c) vars to `'false'` and passes them unset.
    - Equivalence still holds, because unset with no record gives the safe value, which matches today's `'false'` default.
 2. **Store and console** (FF-2, FF-3, FF-6). Records stay absent, so behaviour is unchanged.
-3. **Seed.** `flags.seed` (boot or admin, critical tier, one audited commit per flag, idempotent, refuses if a record exists) writes a record from the env value **the server itself observes**: `on` with `fallthrough = onValue` for `force-on-legacy`, otherwise off. The client never supplies values. For the checked-in hosted template this keeps `SIGNUP_ENABLED`, `PAID_SIGNUP_ENABLED`, `WAITLIST_ENABLED`, `SEMANTIC_SEARCH_ENABLED` and `BEAM_ENABLED` on. Class (b) flags such as `BILLING_ENABLED` are not seeded and stay in env.
+3. **Seed.** `flags.seed` (boot or admin, critical tier, one audited commit per flag, idempotent, refuses if a record exists) writes a record from the env value **the server itself observes**: `on` with `fallthrough = onValue` for `force-on-legacy`, otherwise off. The client never supplies values. For the checked-in hosted template this keeps `SIGNUP_ENABLED`, `PAID_SIGNUP_ENABLED`, `WAITLIST_ENABLED` and `SEMANTIC_SEARCH_ENABLED` on (`BEAM_ENABLED` was in this list until it was retired on 2026-10-26). Class (b) flags such as `BILLING_ENABLED` are not seeded and stay in env.
 4. **Verify.** `flags.seed-verify` evaluates every class (a)/(c) flag twice over a fixed context matrix (anonymous, account, client, several regions): once with legacy env semantics and once from the console record with env treated as `unset`. The console shows "safe to remove" per flag only when every result matches and env is not `kill`/`invalid`.
 5. **Remove vars.** Delete the class (a)/(c) entries from `wrangler.jsonc` and `wrangler.local.jsonc`, **and from the Cloudflare dashboard**, because `keep_vars: true` preserves dashboard-set values across deploys. After deploy, the console must show env state `unset` for each flag.
    - A lingering explicit `"false"` shows as `KILL (env)`.
@@ -524,7 +525,6 @@ All 61 entries in `packages/flags/registry.mjs` are listed below. Class **a** is
 | `BINDLEBOX_ENABLED` | a | false | false | false |
 | `EMAIL_BRIDGE_ENABLED` | a | false | false | false |
 | `SEMANTIC_SEARCH_ENABLED` | a | false | true | false |
-| `BEAM_ENABLED` | a | false | true | false |
 | `DEVICE_AUTHORIZATION_ENABLED` | a | false | false | false |
 | `APP_METADATA_DISCOVERY_ENABLED` | a | false | unset | false |
 | `ACCOUNT_EXPORT_ENABLED` | a | false | unset | false |
@@ -557,8 +557,6 @@ All 61 entries in `packages/flags/registry.mjs` are listed below. Class **a** is
 | `BILLING_ENABLED` | b | false | true | false |
 | `MAIL_ENABLED` | b | false | true | false |
 | `PUSH_ENABLED` | b | false | true | false |
-| `BEAM_TURN_ENABLED` | b | false | false | false |
-| `BEAM_STUN_ENABLED` | b | false | true | true |
 | `FEDERATION_REFRESH_ENABLED` | b | true | unset | true |
 | `BROWSER_AUTOMATION_ENABLED` | b | true | unset | true |
 | `FEDERATION_ENTRY_ENABLED` | b | false | unset | false |

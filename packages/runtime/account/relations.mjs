@@ -66,7 +66,9 @@ import {encryptSecret,decryptSecret} from '../secrets.mjs';
 import {orgsEngine,orgsClock} from './orgs.mjs';
 
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-const MEMO_MS=60000,KEY_CACHE_MS=3600000,KEYCACHE='rel/keycache/',PEER_OPERATIONS=Object.freeze({'relations.offer':OfferRelation,'relations.retract':RetractRelationOffer,'relations.redeem':RedeemRelation,'relations.ingest':IngestRelationEvent});
+// KEY_CACHE_MS bounds how long a revoked or rotated counterpart certification key keeps verifying here: 300 s (refreshed
+// at half-life), the spec §9.5 key-revocation bound (review R3-L4; it was 1 h).
+const MEMO_MS=60000,KEY_CACHE_MS=300000,KEYCACHE='rel/keycache/',KEYSCAN='rel/keyscan',INBOX='rel/inbox/',INBOX_MAX=64,INBOX_PER_SENDER=8,KEY_SCAN_ROWS=1024,PEER_OPERATIONS=Object.freeze({'relations.offer':OfferRelation,'relations.retract':RetractRelationOffer,'relations.redeem':RedeemRelation,'relations.ingest':IngestRelationEvent});
 const plain=value=>value!==null&&typeof value==='object'&&!Array.isArray(value);
 const decode=segment=>{try{return JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(Uint8Array.from(atob(segment.replaceAll('-','+').replaceAll('_','/')+'='.repeat((4-segment.length%4)%4)),c=>c.charCodeAt(0))));}catch{return null;}};
 /** The UNVERIFIED payload of a compact JWS, as a routing/priming hint only (never authority). */
@@ -152,15 +154,28 @@ async function flush(c,owner){
  catch{try{await c.scheduleAlarm(Date.now()+60000);}catch{/* the next alarm retries */}}
 }
 
+/** Whether `p` is recognized (in any state but ended) as a counterpart anywhere in this organization's view (a bounded
+ * local scan; the background run only). */
+async function recognizedAnywhere(c,p){const want=principalKey(p);let after;for(let i=0;i<64;i++){const page=await c.metadata.list({prefix:'rel/cp/',...after?{startAfter:after}:{},limit:256});for(const [key,cp] of page){after=key;if(cp?.state!=='ended'&&principalKey(cp?.principal)===want)return true;}if(page.size<256)break;}return false;}
 /** Refreshes the certification-key cache of relation counterparts and of claimed senders queued by the request path
- * (spec §9.9 step 3, §9.5: verification uses only keys already held). Background only; never the request path. */
+ * (spec §9.9 step 3, §9.5: verification uses only keys already held). Background only; never the request path.
+ * Review R3-L4: the counterpart scan resumes from a cursor over rel/cp/ (KEY_SCAN_ROWS per run, wrapping), so every
+ * counterpart is reached; cache rows not refreshed for a whole cache period (no longer counterparts) are pruned.
+ * Review R3-L1: a request-path ('claimed') row of a sender recognized nowhere in this view is dropped without a fetch.
+ * The engine still queues it exactly as for a counterpart (spec §9.9 step 3); on this host the refresh is a local read,
+ * and ORG-11 must revisit this before foreign issuers are fetched (a fetch only for counterparts would reveal them). */
 async function refreshKeys(c,owner){
- const now=Date.now(),issuer=c.config.APP_ORIGIN,todo=new Map();let next=null;
+ const now=Date.now(),issuer=c.config.APP_ORIGIN,todo=new Map();let next=null,claimedChecked=0;
  const due=await c.metadata.transaction(tx=>dueMemberKeyRefreshes(tx,now,64));
- for(const [key,row] of due)if((row.issuer??issuer)===issuer&&UUID.test(row.subject??''))todo.set(principalKey({iss:issuer,sub:row.subject}),{p:{iss:issuer,sub:row.subject},key});
- // Recognized counterparts whose cached keys are missing or half-way stale (a bounded scan of this view).
- for(const cp of (await c.metadata.list({prefix:'rel/cp/',limit:1024})).values()){if(cp?.state==='ended'||cp?.principal?.iss!==issuer)continue;const pk=principalKey(cp.principal);if(todo.has(pk))continue;
+ for(const [key,row] of due){if((row.issuer??issuer)!==issuer||!UUID.test(row.subject??''))continue;const p={iss:issuer,sub:row.subject};
+  if(row.source==='claimed'){if(claimedChecked++>=16)continue;if(!await recognizedAnywhere(c,p)){await c.metadata.transaction(tx=>removeMemberKeyRefresh(tx,key));continue;}}
+  todo.set(principalKey(p),{p,key});}
+ // Recognized counterparts whose cached keys are missing or half-way stale, from a resumable cursor.
+ const cursor=(await c.metadata.get(KEYSCAN))?.after??null,page=await c.metadata.list({prefix:'rel/cp/',...cursor?{startAfter:cursor}:{},limit:KEY_SCAN_ROWS});let last=null;
+ for(const [k,cp] of page){last=k;if(cp?.state==='ended'||cp?.principal?.iss!==issuer)continue;const pk=principalKey(cp.principal);if(todo.has(pk))continue;
   const row=await c.metadata.get(KEYCACHE+pk);if(!row||row.until-now<KEY_CACHE_MS/2)todo.set(pk,{p:{iss:cp.principal.iss,sub:cp.principal.sub}});else next=Math.min(next??Infinity,row.until-KEY_CACHE_MS/2);}
+ await c.metadata.put(KEYSCAN,{after:page.size===KEY_SCAN_ROWS?last:null,at:now});if(page.size===KEY_SCAN_ROWS)next=Math.min(next??Infinity,now+1000);
+ for(const [k,row] of await c.metadata.list({prefix:KEYCACHE,limit:256}))if(!(row?.until>now-KEY_CACHE_MS)){await c.metadata.delete(k);memory(c).keycache.delete(k.slice(KEYCACHE.length));}
  let done=0;
  for(const [pk,{p,key}] of [...todo].slice(0,128)){
   const found=await fetchParty(c,p.sub);
@@ -187,7 +202,7 @@ const eventKeyHeld=(c,event)=>{
 };
 async function retryInbox(c,owner){
  let pending=false;
- for(const [key,row] of await c.metadata.list({prefix:'rel/inbox/',limit:64})){
+ for(const [key,row] of await c.metadata.list({prefix:INBOX,limit:INBOX_MAX})){
   let done=false;
   try{const hint=jwsHint(row.event);await prime(c,owner,{senders:hint?[{iss:hint.iss,sub:hint.sub}]:[]});
    if(eventKeyHeld(c,row.event)){
@@ -231,10 +246,17 @@ export const methods={
   await prime(this,owner,{parties:plain(input.from)?[input.from]:[],senders:typeof hint?.iss==='string'&&typeof hint?.sub==='string'?[{iss:hint.iss,sub:hint.sub}]:[]});
   const result=await run(this,new Operation({actor:system(owner),input:structuredClone(input)}));
   if(operation==='relations.ingest'&&hint){
-   if(!eventKeyHeld(this,input.event)){
-    const key='rel/inbox/'+await digest(globalThis.crypto,input.event);
-    await this.metadata.transaction(async tx=>{if((await tx.list({prefix:'rel/inbox/',limit:64})).size<64)await tx.put(key,{event:input.event,at:Date.now(),attempts:0});});
-    await this.scheduleAlarm(Date.now()+1000);
+   if(!eventKeyHeld(this,input.event)&&typeof hint.iss==='string'&&typeof hint.sub==='string'&&typeof hint.instance==='string'){
+    // Review R3-L1: only an event whose claimed sender is a recognized counterpart in the instance it names is kept
+    // for a retry (a local check; the answer is the same 202 either way), at most INBOX_PER_SENDER per claimed sender
+    // and INBOX_MAX in all, so nobody else can fill the inbox and crowd out a genuine rotated-key narrowing.
+    const sender={iss:hint.iss,sub:hint.sub},pk=principalKey(sender),key=INBOX+pk+'/'+await digest(globalThis.crypto,input.event);
+    const queued=await this.metadata.transaction(async tx=>{
+     const origin=(await tx.get('rel/origin/'+pk))?.origin??sender,cp=await tx.get('rel/cp/'+encodeURIComponent(hint.instance)+'/'+principalKey(origin));
+     if(!cp||cp.state==='ended')return false;
+     if((await tx.list({prefix:INBOX+pk+'/',limit:INBOX_PER_SENDER})).size>=INBOX_PER_SENDER||(await tx.list({prefix:INBOX,limit:INBOX_MAX})).size>=INBOX_MAX)return false;
+     await tx.put(key,{event:input.event,at:Date.now(),attempts:0});return true;});
+    if(queued)await this.scheduleAlarm(Date.now()+1000);
    }
   }
   // Anything this step queued (edge states after a redemption, ends after an ingest) leaves on the next alarm, never

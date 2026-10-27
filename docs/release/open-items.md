@@ -4,7 +4,7 @@ Status: consolidated checklist, written 2026-10-21 from [DEVLOG.md](../../DEVLOG
 
 How to read this file:
 
-- Decisions remain **provisional and unsigned**. This is a historical 2026-10-21 checklist, not a current configuration inventory: checked-in hosted configuration now enables signup, paid signup, waitlist, billing, mail, push, semantic search and Beam, while `RELEASE_READY` remains `false`. Configuration does not establish deployed behavior, reviewer sign-off or production verification. See [security.md](../spec/security.md) and `release-status.json` (all 13 release gates are `false`).
+- Decisions remain **provisional and unsigned**. This is a historical 2026-10-21 checklist, not a current configuration inventory: checked-in hosted configuration now enables signup, paid signup, waitlist, billing, mail, push and semantic search (Beam was also enabled until it was removed from the core on 2026-10-26), while `RELEASE_READY` remains `false`. Configuration does not establish deployed behavior, reviewer sign-off or production verification. See [security.md](../spec/security.md) and `release-status.json` (all 13 release gates are `false`).
 - "Recommendation" means what DEVLOG or the design docs record. Where the owner's brief supplied context that is **not recorded in the repo**, the row says so.
 - Review files sometimes lag DEVLOG (a finding marked "Open" in the review table but "fixed" in a later DEVLOG integration entry). Where that happens the row says which source is newer. Treat any row marked *(uncertain)* as needing a quick check against the code before relying on it.
 - This file does not edit DEVLOG.md. Decisions made here still need to be recorded there.

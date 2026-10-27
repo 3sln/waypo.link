@@ -130,16 +130,16 @@ test('aep floor and RL-4: a lower aep fails; a higher aep is held before refusin
  await w.B.metadata.put('org/record-v1',{...rec,aep:3});await refusedDirect(w.call((await w.certify()).certificate));assert.equal((await w.A.get('rel/hold/'+principalKey(w.B.principal))).aep,3);
 }finally{await w.h.close();}});
 
-test('no fetch during verification: cache-only keys, one uniform refresh schedule, the same answer for anyone',async()=>{const w=await world();try{
+test('no fetch during verification: cache-only keys, a refresh scheduled only for a counterpart (review R3-L1), the same answer for anyone',async()=>{const w=await world();try{
  const {certificate}=await w.certify(),count=w.h.counts.resolve;
  assert.equal((await w.call(certificate)).allowed,true);assert.equal(w.h.counts.resolve,count,'a valid call resolves nothing');
  await w.h.refreshKeys();// the background run empties the queue first
  const refreshRows=async()=>(await w.A.list('org/cert/refresh/')).size,base=await refreshRows();assert.equal(base,0);
  w.h.coldKey(w.B.id);await refusedDirect(w.call((await w.certify()).certificate));assert.equal(w.h.counts.resolve,count,'a missing key fetches nothing');
  assert.equal(await refreshRows(),base+1,'and schedules one background refresh');
- // A non-counterpart's claim with a missing key schedules exactly the same (C7).
+ // Review R3-L1: a non-counterpart's claim with a missing key schedules nothing (provisional deviation from §9.9 step 3).
  w.h.coldKey(w.C.id);const p=parseEntityCertificate(certificate).payload,cforged=await encodeEntityCertificate({...p,sub:w.C.id,identity:`${ISS}/identity/${w.C.id}`,jti:'C'.repeat(24)},await w.h.certs.get(w.C.id));
- await refusedDirect(w.call(cforged));assert.equal(await refreshRows(),base+2);assert.equal(w.h.counts.resolve,count);
+ await refusedDirect(w.call(cforged));assert.equal(await refreshRows(),base+1);assert.equal(w.h.counts.resolve,count);
  await w.h.refreshKeys();assert.equal((await w.call((await w.certify()).certificate)).allowed,true,'after the background refresh');
 }finally{await w.h.close();}});
 

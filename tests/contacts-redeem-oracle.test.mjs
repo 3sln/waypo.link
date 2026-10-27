@@ -1,5 +1,5 @@
 // Red-team round 3 L2: POST /api/contacts/redeem decodes the UNVERIFIED `sig` payload and calls devices(env, claims.sub) before the
-// link is verified. An inactive or unknown subject answers 409 beam_device_unavailable; an active subject reaches
+// link is verified. An inactive or unknown subject answered 409 (device unavailable); an active subject reaches
 // verification and answers 401 unauthorized. Any signed-in user can therefore test whether a known account UUID is
 // active, suspended, moved or deleted, with a forged link (U404: unknown/suspended/deleted targets are uniform).
 // L2b (plain bug, same route): a genuine new-form (bindle_meta) link can never be redeemed (only `sig` is decoded).
@@ -30,7 +30,7 @@ test('contact redemption with a forged link does not reveal whether the named ac
  assert.equal(ut,at);
 });
 test('a genuine bindle_meta contact link can be redeemed over HTTP',async()=>{
- const created=await req('/api/contact-links',{user:victim,method:'POST',value:{name:'Beam me',mimeTypes:['text/plain'],expiresAt:Date.now()+3600000,maxMessages:5}});
+ const created=await req('/api/contact-links',{user:victim,method:'POST',value:{name:'Contact me',mimeTypes:['text/plain'],expiresAt:Date.now()+3600000,maxMessages:5}});
  const link=await created.json();assert.equal(created.status,200,JSON.stringify(link));
  const redeemed=await req('/api/contacts/redeem',{user:attacker,method:'POST',value:{url:link.url}});
  assert.equal(redeemed.status,200,`bindle_meta link redemption: ${redeemed.status} ${await redeemed.text()}`);

@@ -84,7 +84,7 @@ Disposition labels used in every table:
 | `messages.mjs` | **Core: activity.** The activity slice splits it, and collection and peer methods are deleted. |
 | `views.mjs` | **Core: activity.** The conversation-card projection is removed. |
 | `identity.mjs` | **Core.** Re-point `signingKey` to `packages/identity/keys.mjs`. Add `delegationCertificate(owner, {jkt, purposes, client, cnx})`, `revokeDelegation` and status for `key-delegation.v1`. |
-| `notifications.mjs`, `search.mjs`, `storage.mjs`, `billing.mjs`, `lifecycle.mjs`, `beams.mjs`, `automation.mjs` | **Core.** Search drops the peer sources. |
+| `notifications.mjs`, `search.mjs`, `storage.mjs`, `billing.mjs`, `lifecycle.mjs`, `beams.mjs`, `automation.mjs` | **Core.** Search drops the peer sources. Superseded for `beams.mjs` (2026-10-26): Beam was removed from core; its generic contact slice is now `contact-profile.mjs`. |
 | `index.mjs` | **Core.** Remove the `contacts`, `delivery` and `conversations` entries. Add `links`. |
 
 ### 2.5 `packages/runtime/routes/`
@@ -115,8 +115,8 @@ Disposition labels used in every table:
 | --- | --- |
 | `packages/app/domains/views.mjs`, `tags.mjs` | **Core: activity**. **BindleBox** copies into `packages/bindlebox-engine/domains/{views,rules}.mjs`. |
 | `packages/app/{engine,providers,operations,faults,account,memory-providers}.mjs` | **Core.** Remove the `messaging`, `contacts`, `delivery` and `conversations` catalogue rows. BindleBox has its own catalogue (§7). |
-| `packages/beaming/contacts.mjs` | **Split.** In-person contact-card exchange becomes a handoff to the user's messaging occupant (`web+bindle://add-contact`). It stops calling `ContactEndpointService`. Device file beaming is unchanged. |
-| `packages/beaming/profile.mjs` | **Core: links.** Contact-profile representation and Accept selection. Remove `CONTACT_INTAKE_MIME` and the delivery-token profile. |
+| `packages/beaming/contacts.mjs` | **Split.** In-person contact-card exchange becomes a handoff to the user's messaging occupant (`web+bindle://add-contact`). It stops calling `ContactEndpointService`. Device file beaming is unchanged. **Superseded 2026-10-26:** Beam was removed from core; the contact code moved to `packages/links/contact-profile.mjs` and no device file beaming remains in core. |
+| `packages/beaming/profile.mjs` | **Core: links.** Contact-profile representation and Accept selection. Remove `CONTACT_INTAKE_MIME` and the delivery-token profile. (The `packages/beaming/` re-export was removed with Beam on 2026-10-26; the representation lives in `packages/links/profile.mjs`.) |
 | `packages/identity/link-response.mjs` | **Core.** Imports `packages/links/envelope.mjs`. |
 | `packages/search/content.mjs` (`messageSearchDocument`, conversation text) | **Core: activity**; **BindleBox** copy for its own local search. |
 | `packages/mcp/account.mjs`, `service.mjs` (`item_read`, `item_write`, `item_delete` over messages) | **Core: activity** (items become activity items). BindleBox MAY later expose its own MCP tools under its own grant. |
@@ -138,7 +138,7 @@ Disposition labels used in every table:
 | `bl/message-actions.mjs`, `ui/message-actions.mjs`, `providers/message-actions.mjs`, `providers/message-frame.mjs` | **Core: activity.** |
 | `ui/tag-pill.mjs` | **Core**. **BindleBox** copy. |
 | `ui/release-dialogs.mjs`, `ui/release-app.mjs`, `bl/release.mjs`, `release.mjs`, `providers/{api,browser,browser-state}.mjs` | **Core.** Remove peer-messaging navigation, dialogs and state after cutover. |
-| `bl/beaming.mjs`, `ui/release-beaming.mjs` | **Core.** Contact-card results hand off to the occupant. |
+| `bl/beaming.mjs`, `ui/release-beaming.mjs` | **Core.** Contact-card results hand off to the occupant. **Superseded 2026-10-26:** both files were deleted with Beam; the saved-contacts and profile UI live in the Contacts view. |
 
 ### 2.8 Tests
 
@@ -149,7 +149,7 @@ Disposition labels used in every table:
 | **Split** (core keeps the activity half; BindleBox copies the peer half into `tests/bindlebox/`) | `messaging.test.mjs`, `message-views.test.mjs`, `message-receipt-budget.test.mjs`, `tags.test.mjs`, `engine-views.test.mjs`, `engine-tags.test.mjs`, `engine-tag-rules.test.mjs`, `engine-item-index.test.mjs`, `worker/message-budget.test.mjs`, `tests/helpers/messaging-fixture.mjs`, `browser/contact-links.mjs` (opener flow core, compose BindleBox), `e2e/links-worker.test.mjs`, `e2e/links-conditional.test.mjs` |
 | **BindleBox** (rewritten against the new protocol; current cases become the behavioural checklist) | `contact-delivery.test.mjs`, `contact-delivery-spec.test.mjs` (vectors re-cut for the new prefixes), `contact-endpoints-links.test.mjs` (parent semantics), `contact-tags.test.mjs`, `conversation-content.test.mjs`, `engine-delivery.test.mjs`, `engine-links.test.mjs` (delivery half), `node-contact.test.mjs`, `worker/contact.test.mjs` |
 | **Delete** | `contact-endpoints.test.mjs` (legacy `?sig=` and inbox bearers), `conversations.test.mjs`, `conversations-http.test.mjs`, `conversations-audit.test.mjs`, `conversations-portable.test.mjs`, `worker/conversations.test.mjs`, `e2e/mcp-conversations.test.mjs`, `browser/mcp-conversations.mjs` |
-| **Core, edit references only** | `account-sessions`, `app-metadata`, `app-connections-audit`, `beaming-runtime`, `beaming-security`, `builtin-storage`, `lifecycle-runner`, `mcp`, `mcp-audit`, `search`, `search-runtime`, `work-budget`, `work-spend-audit`, `engine-storage-chaos`, `node-runtime`, `recovery-identity-runtime`, `scaling-audit` (`.test.mjs`); `worker/{accounts,lifecycle,security,mcp,app-engine}.test.mjs`, `worker/harness.mjs`; `e2e/{chaos,ui-chaos,ui-chaos-scale,ui-chaos-contention,ui-adversarial,signup-views,plans-search,worker-flow,beaming}`; `browser/{beaming,multi-account,owner-flow-audit,ui-chaos,signup-views}.mjs` |
+| **Core, edit references only** | `account-sessions`, `app-metadata`, `app-connections-audit`, `beaming-runtime`, `beaming-security`, `builtin-storage`, `lifecycle-runner`, `mcp`, `mcp-audit`, `search`, `search-runtime`, `work-budget`, `work-spend-audit`, `engine-storage-chaos`, `node-runtime`, `recovery-identity-runtime`, `scaling-audit` (`.test.mjs`); `worker/{accounts,lifecycle,security,mcp,app-engine}.test.mjs`, `worker/harness.mjs`; `e2e/{chaos,ui-chaos,ui-chaos-scale,ui-chaos-contention,ui-adversarial,signup-views,plans-search,worker-flow,beaming}`; `browser/{beaming,multi-account,owner-flow-audit,ui-chaos,signup-views}.mjs` (the beaming suites went with Beam on 2026-10-26) |
 
 `package.json` gains `test:bindlebox` and adds `tests/bindlebox/*.test.mjs` to `npm test`. Slice B0 owns that edit.
 
@@ -277,7 +277,7 @@ Storage-usage counters are recomputed. The step writes its marker last, so a cra
 - `account/index.mjs` and `routes/index.mjs` are edited;
 - the reset step (C4) is added;
 - the `apps/worker` and `apps/node` messaging wiring is removed;
-- the contact handoff in `packages/beaming/contacts.mjs` is split;
+- the contact handoff in `packages/beaming/contacts.mjs` is split (now `packages/links/contact-profile.mjs`; Beam removed 2026-10-26);
 - core UI navigation is removed;
 - the §2.8 deletions are made;
 - the bundled instance is deployed locally, both slots are wired, and the descriptor route is enabled.

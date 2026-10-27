@@ -52,7 +52,7 @@ The transition teardown must cover:
 - account snapshots, messages/body/history/source, list/search results, cursors, Views, drafts and selected items;
 - resource grants, app connections, consent selections, private preference fragments, automation, billing quotes/checkout URLs, signed contact links and developer-contact capability;
 - prepared form dispatch tokens, typed field values, result toasts/links, submission review state and outstanding action ports; close MessageChannels, destroy isolated frames and revoke owned Blob URLs;
-- contact/conversation acceptance drafts, beam invitations, local device offers, device-login polling and their generation-bound approvals;
+- contact/conversation acceptance drafts, beam invitations (removed with Beam 2026-10-26), local device offers, device-login polling and their generation-bound approvals;
 - recovery material, onboarding/bootstrap capabilities and pending setup state when abandoning that setup; any intentionally retained limited setup must be separately identified, never attached to the new owner;
 - service-worker window listeners and notification continuations that expect an owner; token-free continuation references may survive only with exact destination binding and expiry.
 

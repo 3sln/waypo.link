@@ -2,6 +2,8 @@
 
 Independent architecture review, 2026-10-13. This is an implementation design under the user's authorization, not a claim that automatic warning, suspension or purge currently executes. The coordinator owns final policy reconciliation in DEVLOG and the lifecycle specification. Reviewer/date/outcome: ___ / ___ / ___. The separate [activation and retention review](account-activation-retention-review.md) records tested activation and conservative paid-history protection.
 
+(Beam removed 2026-10-26: its mentions below are historical; see [RTC signaling](../architecture/rtc-signaling.md#5-reuse-and-retirement-of-beam-code).)
+
 ## Scope and policy
 
 Implement account-local durable phases with existing account alarms and the account mutation boundary. No global service is consulted on every resource operation. Keep identity assignment permanent; only hosted account data is eligible for purge. External S3, WebDAV and Google Drive object bytes are untouched. Paid history protects every automatic warning, suspension and deletion phase, including after cancellation or expiry. Reversible cold shelving remains available to paid accounts.

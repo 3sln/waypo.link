@@ -97,7 +97,9 @@ test('inventory covers every literal messaging key family and seeded persisted a
  for(const file of files){let source=await readFile(new URL('../'+file,import.meta.url),'utf8');if(file==='packages/runtime/accounts.mjs')source=source.slice(source.indexOf('export class AccountController'));for(const match of source.matchAll(/\bkey\('([a-z][a-z0-9-]*)'/g))prefixes.add(match[1]+'/');for(const match of source.matchAll(/(?:\.put|\btx\.set)\(['"`]([a-z][A-Za-z0-9_/-]*)/g))prefixes.add(match[1]);}
  // Computed key-family maps (as opposed to literal writes) are part of the
  // inventory as well: key rotations, bus rows and external version mappings.
- for(const prefix of ['identity-encryption-key/','encryption-key','identity-key-retained/','identity-key-pruned/','evbus/rec/','evbus/reader/','evbus/permit/','evbus/tx/','evbus/rate/','evbus/meter/','evbus/wait/','drive/object/','drive/retained/'])prefixes.add(prefix);
+ for(const prefix of ['identity-encryption-key/','encryption-key','identity-key-retained/','identity-key-pruned/','evbus/rec/','evbus/reader/','evbus/permit/','evbus/tx/','evbus/rate/','evbus/meter/','evbus/wait/','drive/object/','drive/retained/',
+  // Contact profile families written through CONTACT_KEYS (packages/links/contact-profile.mjs), their legacy Beam-era keys and the beam-retired-v1 marker.
+  'profile','saved-contact/','contact-sharing/','contact-redeemed/','contact-redeemed-peer/','beam/profile','beam/directory/','beam/grant/','beam/redeemed/','beam/redeemed-peer/','migration/beam-retired-v1'])prefixes.add(prefix);
  const missing=exportInventory([...prefixes]).filter(v=>!v.contributor&&!v.reason);assert.deepEqual(missing,[]);
  const f=await fixture(t);await f.metadata.put('message/'+OWNER+'/id/',{owner:OWNER,id:'id'});await f.metadata.put('vault/oauth',{token:'secret'});const keys=[...(await f.metadata.list()).keys()].filter(k=>k!=='item-index-ready');assert.deepEqual(exportInventory(keys).filter(v=>!v.contributor&&!v.reason),[]);
  assert.deepEqual(exportInventory(['new-unreviewed-domain/'])[0],{prefix:'new-unreviewed-domain/'});

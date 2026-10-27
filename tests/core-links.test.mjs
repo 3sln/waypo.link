@@ -10,7 +10,6 @@ import * as legacyReplay from '../packages/messaging/link-replay.mjs';
 import * as preview from '../packages/links/preview.mjs';
 import * as legacyPreview from '../packages/runtime/contact-preview.mjs';
 import * as profile from '../packages/links/profile.mjs';
-import * as legacyProfile from '../packages/beaming/profile.mjs';
 import * as audience from '../packages/links/audience.mjs';
 import * as contactLinks from '../packages/runtime/contact-links.mjs';
 import { MemoryMessagingStore, ContactTokenService, ContactEndpointService, MessagingService, signContactToken } from '../packages/messaging/index.mjs';
@@ -34,7 +33,7 @@ const PROOF = { stub: true }, STUB_AUTHOR = async ({ principal }) => ({ principa
 const claims = (extra = {}) => ({ resource: 'parent-1', kinds: ['one-off'], mimeTypes: ['text/plain'], maxMessages: 5, maxBytes: 65536, maxMessageBytes: 16384, ...extra });
 
 test('moved modules: every legacy path re-exports the exact core-links bindings (no parser differential)', () => {
-  for (const [moved, legacy] of [[envelope, legacyEnvelope], [replay, legacyReplay], [preview, legacyPreview], [profile, legacyProfile]]) {
+  for (const [moved, legacy] of [[envelope, legacyEnvelope], [replay, legacyReplay], [preview, legacyPreview]]) {
     assert.deepEqual(Object.keys(legacy).sort(), Object.keys(moved).sort());
     for (const name of Object.keys(moved)) assert.equal(legacy[name], moved[name], name);
   }

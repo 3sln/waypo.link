@@ -865,6 +865,7 @@ Source for every item below: "2026-10-24 — ORG-12d support adjudication", incl
 - Why: this matches contact-tokens.md.
 - Source: "Messaging, search and deletion wargame fixes" (M2).
 - Open: whether to hide the Beam refusal. That would mean accepting live transfers silently. "Left for the user."
+- Update 2026-10-26: moot. Beam was removed from the core (provisional, unsigned), so no Beam permission exists to refuse; the remaining listed inference channels still need sign-off.
 - Safe alternative: none recorded.
 - Owner: ___
 
@@ -935,6 +936,7 @@ Source for every item below: "2026-10-24 — ORG-12d support adjudication", incl
 - Value: TTL is min(300 s, the beam's remaining life). 4 re-issues. The reservation cap is 4 × the participant envelope. 16 live offers per sender.
 - Why: findings D1 and D2.
 - Source: "Links, Beam, device and directory wargame fixes".
+- Update 2026-10-26: Beam was removed from the core. The credential lease, revoke and sweep logic survives unused in `packages/rtc/relay-credentials.mjs` for the future RTC relay occupant, which will set its own per-leg bounds; these values no longer apply to any shipped feature.
 - Safe alternative: none recorded.
 - Owner: ___
 
@@ -1525,7 +1527,7 @@ These need a real-provider check. Nothing below has been run against the live se
 - **Push delivery.** Web-push notices and 410 handling for dead subscriptions are unverified, and Track A depends on accepted out-of-band notices. The deletion of session-bound subscriptions (ID-11) was tested only against local adapters. Source: "ORG-12b/12e…"; "Operator and lifecycle wargame fixes".
 - **Email bridge `Authentication-Results` trust.** On Cloudflare no authserv-id is configured, so all mail is treated as unauthenticated. Source: "App-platform wargame fixes".
 - **Directory and federation interoperability.** Unverified: production directory egress, independent-provider conformance, client-metadata resolution by other providers, and real external portability providers. Sources: "Organizations phase A: ORG-0…"; "Portability: redirect end/retarget…".
-- **TURN relay budget.** `BEAM_RELAY_BUDGET.release` is an optional port with no implementation in the repo. Source: "Messaging, search and deletion wargame fixes".
+- **TURN relay budget.** `BEAM_RELAY_BUDGET.release` was an optional port with no implementation in the repo (removed with Beam on 2026-10-26; the RTC relay occupant still needs an enforceable relay budget). Source: "Messaging, search and deletion wargame fixes".
 - **Worker CPU limits for index builds.** A single index over about 1M rows is projected at 3–4 s, and Worker CPU limits are unmeasured. Source: "Scalability fixes…".
 - **Round-2 scale probes are local.** The before/after probes use the real local SQLite adapter and count list-returned rows and read bytes, not physical SQL read counters. Wall times are not production throughput. Cold key-tombstone migration (12,800 kids) is unbounded, and its Worker CPU cost is unmeasured. Source: "Scalability fixes round 2…".
 - **Durable Object SQLite expression indexes.** The RR1-M7 conclusion rests on one local workerd (Miniflare, `useSQLite`) probe: an expression index worked on an ordinary DO SQL table and `_cf_KV` refused it (`SQLITE_AUTH`). It has not been run on deployed Durable Objects. Source: "Scalability fixes round 2…" (review follow-up 6).

@@ -24,3 +24,12 @@ test('a stored record for a retired flag is quarantined, not fatal',()=>{
  const snapshot=validateSnapshot({v:1,version:1,issuedAt:0,flags:{[name]:{rev:1,on:true,onValue:true,fallthrough:true,salt:'s'}}},{quarantine:true});
  assert.deepEqual(snapshot.quarantined,[name]);assert.deepEqual(Object.keys(snapshot.flags),[]);
 });
+
+test('the Beam flags are retired with a date and gone from the registry',()=>{
+ for(const name of ['BEAM_ENABLED','BEAM_TURN_ENABLED','BEAM_STUN_ENABLED']){
+  assert.equal(Object.hasOwn(FLAGS,name),false,`${name} is still registered`);assert.equal(lock.includes(name),true,`${name} stays in the name lock`);
+  assert.equal(RETIRED_FLAGS[name]?.retiredOn,'2026-10-26',`${name} needs its retirement date`);assert.equal(typeof RETIRED_FLAGS[name].reason,'string');
+ }
+ assert.ok(Object.isFrozen(RETIRED_FLAGS)&&Object.isFrozen(RETIRED_FLAGS.BEAM_ENABLED));
+ assert.equal(Object.values(FLAGS).some(f=>f.requires.some(dep=>Object.hasOwn(RETIRED_FLAGS,dep))),false,'no registered flag requires a retired one');
+});

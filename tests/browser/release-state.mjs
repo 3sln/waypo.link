@@ -50,7 +50,7 @@ test('a channel repaired before final activation preserves the already tested re
 test('contact profiles are bounded optional projections and never carry redirects or ambient credentials',async t=>{
  const original=globalThis.fetch;t.after(()=>{globalThis.fetch=original;});const calls=[];let response;
  globalThis.fetch=async(endpoint,options)=>{calls.push({endpoint,options});return response;};const api=createAPI();
- response=new Response(JSON.stringify({identityURI:'https://attacker.example',beamEnabled:true,profile:{displayName:'<img src=x onerror=alert(1)>',bio:'Sign in',avatar:'https://images.example/avatar.png',owner:'forged'}}),{headers:{'content-type':'application/vnd.bindle.contact-profile+json; charset=utf-8'}});
+ response=new Response(JSON.stringify({identityURI:'https://attacker.example',profile:{displayName:'<img src=x onerror=alert(1)>',bio:'Sign in',avatar:'https://images.example/avatar.png',owner:'forged'}}),{headers:{'content-type':'application/vnd.bindle.contact-profile+json; charset=utf-8'}});
  assert.deepEqual(await api.contactProfile('/private?sig=secret'),{displayName:'<img src=x onerror=alert(1)>',bio:'Sign in',avatar:'https://images.example/avatar.png'});
  const options=calls[0].options;assert.equal(options.credentials,'omit');assert.equal(options.redirect,'error');assert.equal(options.cache,'no-store');assert.equal(options.referrerPolicy,'no-referrer');
  response=new Response(JSON.stringify({profile:{displayName:'Allowed',bio:4,avatar:'https://user:password@images.example/pixel'}}),{headers:{'content-type':'application/vnd.bindle.contact-profile+json'}});assert.deepEqual(await api.contactProfile('/private'),{displayName:'Allowed'});

@@ -19,7 +19,7 @@ for(const browserName of ['chromium','firefox']){
    await route.fulfill({json:value});
   });
   await page.goto(`${baseURL}/console?lang=${locale}`);await page.emulateMedia({colorScheme});assert.equal(await page.evaluate(()=>matchMedia('(prefers-color-scheme:dark)').matches),colorScheme==='dark');await page.locator('.app-shell').waitFor();await page.waitForTimeout(200);
-  for(const view of ['inbox','conversations','contacts','rules','resources','notifications','security','connected-apps','beaming','automation','billing','settings','account-data']){
+  for(const view of ['inbox','conversations','contacts','rules','resources','notifications','security','connected-apps','automation','billing','settings','account-data']){
    await page.locator('#app').evaluate((root,view)=>root.dispatchEvent(new CustomEvent('3sln-intent',{bubbles:true,detail:{kind:'navigate',view}})),view);
    await page.waitForFunction(view=>(new URL(location.href).searchParams.get('view')??'inbox')===view,view).catch(e=>{throw Error(`Navigation ${view} at ${page.url()}: ${e.message}`);});await page.waitForTimeout(100);
    if(width===390){const small=await page.locator('button,summary,label:has(input[type=checkbox]),a[href]').evaluateAll(nodes=>nodes.filter(n=>{const r=n.getBoundingClientRect(),s=getComputedStyle(n);return r.width>0&&r.height>0&&s.visibility!=='hidden'&&s.display!=='none'&&!n.matches('.skip-link,.org-skip')&&!n.closest('[hidden]')&&r.height<43.9;}).map(n=>({tag:n.tagName,text:n.textContent.trim().slice(0,70),height:n.getBoundingClientRect().height})));assert.deepEqual(small,[],view);}

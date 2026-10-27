@@ -42,7 +42,7 @@ Normative draft: [links](../spec/links.md). Independent review: [bindle-links-re
 
 ### Why not separate link kinds for conditional contact?
 
-A conditional link has the same parent, scope, quotas, tags, receipts and delivery representations as an unconditional one. Only the admission predicate differs. A separate `type` would duplicate the scope definition, and processors could disagree on which tags or quotas apply. Future link kinds (invites, beaming) get their own `type` URIs because their authority actually differs.
+A conditional link has the same parent, scope, quotas, tags, receipts and delivery representations as an unconditional one. Only the admission predicate differs. A separate `type` would duplicate the scope definition, and processors could disagree on which tags or quotas apply. Future link kinds (invites, RTC tickets) get their own `type` URIs because their authority actually differs.
 
 ### Why a signed response at all, when delivery needs an author proof anyway?
 

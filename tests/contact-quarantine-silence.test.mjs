@@ -28,7 +28,7 @@ async function world(t){
 
 test('a quarantined link profile answers exactly like an active one and its deliveries stay 202',async t=>{
  const w=await world(t),active=await w.link(),paused=await w.link(),revoked=await w.link();
- await w.controller.beamContacts.enable(OWNER,paused.id,{discloseProfile:false});await w.controller.beamContacts.enable(OWNER,active.id,{discloseProfile:false});
+ await w.controller.contactProfiles.sharing(OWNER,paused.id,{discloseProfile:false});await w.controller.contactProfiles.sharing(OWNER,active.id,{discloseProfile:false});
  await w.controller.quarantineContact(OWNER,paused.id,true);await w.controller.revokeContact(OWNER,revoked.id);
  const a=await w.get(active.url,PROFILE),p=await w.get(paused.url,PROFILE),r=await w.get(revoked.url,PROFILE);
  const ab=await a.json(),pb=await p.text();
@@ -72,12 +72,12 @@ test('a conversation invitation through a quarantined parent is admitted silentl
 test('redeeming a quarantined link answers like an active one but cannot take the single redemption slot',async t=>{
  const w=await world(t),paused=await w.link(),peer=crypto.randomUUID(),other=crypto.randomUUID();
  await w.controller.quarantineContact(OWNER,paused.id,true);
- const first=await w.controller.beamContacts.redeem(OWNER,paused.url,peer);
+ const first=await w.controller.contactProfiles.redeem(OWNER,paused.url,peer);
  assert.deepEqual(Object.keys(first).sort(),['expiresAt','grantId','owner','peer']);
- assert.equal(await w.controller.metadata.get('beam/redeemed/'+paused.id),undefined,'a quarantined redemption was persisted');
- assert.equal((await w.controller.beamContacts.redeem(OWNER,paused.url,other)).peer,other,'another holder is answered the same way');
+ assert.equal(await w.controller.metadata.get('contact-redeemed/'+paused.id),undefined,'a quarantined redemption was persisted');
+ assert.equal((await w.controller.contactProfiles.redeem(OWNER,paused.url,other)).peer,other,'another holder is answered the same way');
  await w.controller.quarantineContact(OWNER,paused.id,false);
- await w.controller.beamContacts.redeem(OWNER,paused.url,peer);
- assert.equal((await w.controller.metadata.get('beam/redeemed/'+paused.id))?.peer,peer,'after release the owner-chosen holder redeems normally');
- await assert.rejects(w.controller.beamContacts.redeem(OWNER,paused.url,other),{code:'contact_already_redeemed'});
+ await w.controller.contactProfiles.redeem(OWNER,paused.url,peer);
+ assert.equal((await w.controller.metadata.get('contact-redeemed/'+paused.id))?.peer,peer,'after release the owner-chosen holder redeems normally');
+ await assert.rejects(w.controller.contactProfiles.redeem(OWNER,paused.url,other),{code:'contact_already_redeemed'});
 });

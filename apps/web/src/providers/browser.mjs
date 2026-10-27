@@ -36,7 +36,7 @@ function createBrowser(){
   const intentConfirmed=value=>{try{const key='3sln-intent-builtin-confirmed',marker=JSON.parse(sessionStorage.getItem(key));sessionStorage.removeItem(key);if(marker?.contact===value?.link&&marker.intent===value.intent&&marker.expires>Date.now()&&marker.expires<=Date.now()+60000)return {...value,fromIntent:true};}catch{}return value;};
   const googleReturn=location.pathname==='/integrations/google/complete';
   const googleDriveCallback=googleReturn?Object.fromEntries(['state','code','error'].filter(key=>link.has(key)).map(key=>[key,link.get(key)])):null;
-  const secret={onboardingToken:takeOnboardingEntry(),googleDriveCallback,beamInvite:link.get('beam-invite'),token:link.get('token'),owner:link.get('owner'),requestId:link.get('request'),pending:null,recovery:null,deviceCode:null,contactEndpoint:signedEndpoint,addContactURL:null,encryptedRecovery:null,restoreFile:null};
+  const secret={onboardingToken:takeOnboardingEntry(),googleDriveCallback,token:link.get('token'),owner:link.get('owner'),requestId:link.get('request'),pending:null,recovery:null,deviceCode:null,contactEndpoint:signedEndpoint,addContactURL:null,encryptedRecovery:null,restoreFile:null};
   const contextKey='3sln-auth-context',uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
   const validContext=value=>value?.kind==='mcp'&&/^(?:[0-9a-f-]{36}\.)?[A-Za-z0-9_-]{43}$/.test(value.requestId)||value?.kind==='device'&&uuid.test(value.requestId);
   const authContext=location.pathname==='/mcp/consent'?{kind:'mcp',requestId:secret.requestId}:['/device','/device/approve'].includes(location.pathname)?{kind:'device',requestId:secret.requestId}:null;
@@ -44,7 +44,7 @@ function createBrowser(){
   // Any capability-shaped component (even a rejected one) is scrubbed from the address bar; an expired return entry is dropped.
   let handoffLost=false;const capabilityName=component=>{let name=component.split('=')[0];try{name=decodeURIComponent(name);}catch{}name=name.toLowerCase();return name==='bintent'||name==='sig'||name.startsWith('bindle_')||name==='intent';},tainted=location.search.slice(1).split('&').some(c=>c&&capabilityName(c));
   for(const name of [...query.keys()])if(capabilityName(name))query.delete(name);try{const stored=JSON.parse(sessionStorage.getItem(handoffKey)??'null');if(stored&&!(Number.isFinite(stored.expiresAt)&&stored.expiresAt>Date.now())){sessionStorage.removeItem(handoffKey);handoffLost=location.pathname==='/console';}}catch{try{sessionStorage.removeItem(handoffKey);}catch{}}
-  if(googleReturn||contact||handoff||tainted||[...link.keys()].some(key=>['token','owner','request','code','beam-invite','contact','intent'].includes(key)))history.replaceState(null,'',location.pathname+(query.size?'?'+query:''));
+  if(googleReturn||contact||handoff||tainted||[...link.keys()].some(key=>['token','owner','request','code','contact','intent'].includes(key)))history.replaceState(null,'',location.pathname+(query.size?'?'+query:''));
   let capturedHandoff=handoff;
   let returnFocus,returnFocusText,captchaToken='',disposed=false,captchaAction='signup',usedCaptchaTokens=new Set(),captchaInstances=new WeakMap(),observer=null,captchaConfig={};
   let deviceGeneration=0,deviceController=null,deviceActive=false,deviceAttempted=false,deviceLocal=false,deviceProofTimer;

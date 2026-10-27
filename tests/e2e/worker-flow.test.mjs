@@ -73,7 +73,7 @@ test('real passkey signup, confirmation gate, sign out and assertion login',asyn
   const cookies=await context.cookies();assert.ok(cookies.some(c=>c.httpOnly&&c.sameSite==='Strict'));
   await page.getByRole('button',{name:'Contact links',exact:true}).click();await page.getByRole('button',{name:'New contact link',exact:true}).click();
   await page.getByLabel('Name this link').fill('Friends');await page.getByRole('button',{name:'Create contact link',exact:true}).click();
-  await page.getByLabel('Contact URL').waitFor();await page.getByRole('button',{name:'Close dialog'}).click();
+  await page.getByLabel('Contact URL',{exact:true}).waitFor();await page.getByRole('button',{name:'Close dialog'}).click();
   await page.getByRole('heading',{name:'Friends',exact:true}).waitFor();await screenshot(page,'live-contacts-desktop');
   await page.getByRole('button',{name:'Resources',exact:true}).click();await screenshot(page,'live-resources-desktop');
   await page.getByRole('button',{name:'Account & security',exact:true}).click();await screenshot(page,'live-security-desktop');
@@ -120,7 +120,7 @@ test('real password setup resumes, recovery rotates, contacts constrain messages
   const contact=await ownerAPI(page,'/api/contacts',{name:'Adversarial test',collections:[collection],mimeTypes:['text/html'],expiresAt:Date.now()+3600000,maxMessages:1,maxMessageBytes:65536,maxBytes:65536});assert.equal(contact.status,200);
   const share=new URL(contact.body.url);assert.ok(share.pathname.includes('/contact/'));assert.ok(share.searchParams.get('sig'));assert.equal((await context.request.get(share.href,{headers:{Accept:'application/vnd.bindle.contact-token+jwt'}})).status(),406);
   assert.equal((await ownerAPI(page,'/api/profile',{displayName:'Actual scoped recipient',bio:'Private biography',avatar:'https://images.example/private.png',discloseToContacts:true},'PUT')).status,200);
-  assert.equal((await ownerAPI(page,`/api/contacts/${contact.body.id}/beam`,{profileFields:['displayName'],beamEnabled:false},'PUT')).status,200);
+  assert.equal((await ownerAPI(page,`/api/contacts/${contact.body.id}/sharing`,{profileFields:['displayName']},'PUT')).status,200);
   const sharedProfile=await context.request.get(share.href,{headers:{Accept:'application/vnd.bindle.contact-profile+json'}});assert.equal(sharedProfile.status(),200);assert.deepEqual((await sharedProfile.json()).profile,{displayName:'Actual scoped recipient'});
   await page.goto(share.href);await page.getByRole('heading',{name:/^Send a message to \u2068?Actual scoped recipient\u2069?\.$/}).waitFor();assert.equal(await page.locator('.contact-profile-bio').count(),0);assert.equal(await page.getByRole('link',{name:'View shared avatar',exact:true}).count(),0);assert.equal(new URL(page.url()).search,'');await screenshot(page,'live-contact-scoped-profile');
   assert.equal((await ownerAPI(page,'/api/profile',{displayName:'Actual scoped recipient',bio:'Private biography',avatar:'https://images.example/private.png',discloseToContacts:false},'PUT')).status,200);

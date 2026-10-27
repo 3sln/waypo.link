@@ -268,13 +268,12 @@ test('console contact send: triple-click sends one envelope, a lost delivery rep
 test('saving a signed contact: a double submit redeems once and a failed refresh still reports the saved contact',async t=>{
  let redeems=0;
  const c=await chaosConsole(browser,t,{handlers:{
-  'GET /api/beams/status':route=>route.fulfill({json:{available:true,devices:[],limits:{maxFiles:10,maxBytes:1000000}}}),'GET /api/beams/mailbox':route=>route.fulfill({json:{offers:[]}}),
   'GET /api/contacts/directory':route=>route.fulfill({json:{contacts:[]}}),'GET /api/profile':route=>route.fulfill({json:{displayName:'',bio:'',discloseToContacts:false}}),
   'POST /api/contacts/redeem':route=>{redeems++;return route.fulfill({json:{saved:true}});}}});const {page}=c;
- await page.evaluate(()=>document.getElementById('app').dispatchEvent(new CustomEvent('3sln-intent',{bubbles:true,detail:{kind:'navigate',view:'beaming'}})));
- const url=page.getByLabel('Signed contact URL',{exact:true});await url.waitFor();await url.fill(baseURL+'/users/reader/contact/44444444-1111-4111-8111-111111111111?sig=fixture.signed.endpoint');
+ await page.evaluate(()=>document.getElementById('app').dispatchEvent(new CustomEvent('3sln-intent',{bubbles:true,detail:{kind:'navigate',view:'contacts'}})));
+ const url=page.getByLabel('Signed contact URL',{exact:true});await url.waitFor();await c.requests('GET','/api/contacts/directory',1);await url.fill(baseURL+'/users/reader/contact/44444444-1111-4111-8111-111111111111?sig=fixture.signed.endpoint');
  const form=url.locator('xpath=ancestor::form');const held=c.hold('POST','/api/contacts/redeem');await form.locator('button[type=submit]').click({clickCount:3});const gate=await held;await c.busy();await form.locator('button[type=submit]').click({force:true});
- c.inject('GET','/api/beams/status',503);await c.release(gate);await page.getByText('Signed contact saved.').waitFor();await c.settled();
+ c.inject('GET','/api/contacts/directory',503);await c.release(gate);await page.getByText('Signed contact saved.').waitFor();await c.settled();
  assert.equal(redeems,1,'one redeem for repeated submits');assert.ok((await c.alerts()).some(text=>/saved, but the latest information could not be loaded/.test(text)),'the stale refresh is reported separately');
 });
 

@@ -20,6 +20,12 @@ const definitions=[
  ['views',['message-views/'],'filter sort'],['activity',['activity-item/'],'app item activity source content occurredAt readAt tags collection'],
  ['notifications',['notification-preferences/','push-subscription/','activity-push-policy/','activity-push-app/','activity-push-device/'],'enabled email push collections quietHours rules previewConsent consent preferences'],
  ['contacts',['contact-name/'],''],['contact-grants',['contact-grant/'],'recipient active quarantined claims revokedAt'],
+ // Contact profile families (packages/links/contact-profile.mjs). In release v1 (beam-retired-v1) the legacy row of
+ // each pair is authoritative and every write keeps both, so these export the legacy prefixes; beam-retired-v2 moves
+ // them to the neutral prefixes when it deletes the legacy rows.
+ ['profile',['beam/profile'],'displayName bio avatar discloseToContacts'],
+ ['contact-sharing',['beam/grant/'],''],['contact-redemptions',['beam/redeemed/'],'peer grantId'],
+ ['saved-contacts',['beam/directory/'],''],
  ['conversations',['conversation/room/','conversation/history/','conversation/event/'],'source collection members permissions eventId threadId replyTo body content author occurredAt'],
  ['links',['link/','link-change/'],'target recipient active revokedAt resource key methods scope'],
  ['resources',['resource/','hosted/'],'provider builtin contracts capabilities verifiedAt key version size contentType modifiedAt'],
@@ -57,7 +63,9 @@ const excluded={
  'notification-event/':'Transient: notification queue.', 'notification-job/':'Transient: delivery queue.', 'notification-unsubscribe/':'Secret: unsubscribe capabilities.',
  'search-queue-usage/':'Derived: search usage.', 'search-vector-revision/':'Derived: search vectors.',
  'search':'Derived: search indexes, queues and maintenance cursors.', 'item-index':'Derived: SQLite item index.',
- 'beam/':'Transient: beam offers and capability material.', 'export/':'Transient: exports and download authority.',
+ 'beam/':'Legacy: retired Beam storage (offers, usage, mailbox, nearby invitations); beam-retired-v1 deletes it. Its generic contact rows are claimed above.',
+ 'contact-redeemed-peer/':'Derived: peer index of contact redemption bindings.', 'beam/redeemed-peer/':'Derived: peer index of contact redemption bindings (legacy twin).',
+ 'profile':'Forward copy of beam/profile (beam-retired-v1); exported from the legacy row until beam-retired-v2.', 'contact-sharing/':'Forward copy of beam/grant/ (beam-retired-v1); exported from the legacy row until beam-retired-v2.', 'contact-redeemed/':'Forward copy of beam/redeemed/ (beam-retired-v1); exported from the legacy row until beam-retired-v2.', 'saved-contact/':'Forward copy of beam/directory/ (beam-retired-v1); exported from the legacy row until beam-retired-v2.', 'migration/':'Derived: storage migration markers.', 'export/':'Transient: exports and download authority.',
  'deletion/':'Transient: deletion workflow and cancel-only capabilities; lifecycle projection carries owner deadlines.',
  'transfer-out/':'Transient: identity transfer-out workflow (PORT-2), dispute-token hashes and custody markers; the move record is published by the destination.',
  'blob-garbage/':'Transient: physical deletion journal.', 'blob-garbage-cursor':'Transient: garbage continuation.',
@@ -78,7 +86,10 @@ const excluded={
  'google-drive/':'Secret: OAuth and callback state; external mapping uses a dedicated port.'
 };
 export const EXPORT_EXCLUDED_PREFIXES=Object.freeze(excluded);
-export function exportInventory(prefixes){return prefixes.map(prefix=>{const claimed=Object.keys(EXPORT_CLAIMED_PREFIXES).filter(p=>prefix.startsWith(p)).sort((a,b)=>b.length-a.length)[0];if(claimed)return {prefix,contributor:EXPORT_CLAIMED_PREFIXES[claimed]};const excluded=Object.keys(EXPORT_EXCLUDED_PREFIXES).filter(p=>prefix.startsWith(p)).sort((a,b)=>b.length-a.length)[0];return {prefix,...excluded?{reason:EXPORT_EXCLUDED_PREFIXES[excluded]}:{}};});}
+// Singleton keys match exactly, never as a prefix (review R4): `profile` must not claim `profile-other/...`.
+export const EXPORT_SINGLETON_KEYS=Object.freeze(new Set(['profile','beam/profile']));
+const matches=(key,prefix)=>EXPORT_SINGLETON_KEYS.has(prefix)?key===prefix:key.startsWith(prefix);
+export function exportInventory(prefixes){return prefixes.map(prefix=>{const claimed=Object.keys(EXPORT_CLAIMED_PREFIXES).filter(p=>matches(prefix,p)).sort((a,b)=>b.length-a.length)[0];if(claimed)return {prefix,contributor:EXPORT_CLAIMED_PREFIXES[claimed]};const excluded=Object.keys(EXPORT_EXCLUDED_PREFIXES).filter(p=>matches(prefix,p)).sort((a,b)=>b.length-a.length)[0];return {prefix,...excluded?{reason:EXPORT_EXCLUDED_PREFIXES[excluded]}:{}};});}
 const stable=value=>{if(typeof value!=='string'||!/^[A-Za-z0-9_-]{1,100}$/.test(value))fault('invalid_export_id','A stable archive identifier is required.',409);return value;};
 export function identityExportRow(row){
  const value=pick(row,fields('id handle aliases assignmentId createdAt status termsVersion termsAcceptedAt verifiedEmail emailVerifiedAt emailLoginEnabled audit lineage nameCertificate'));
@@ -101,10 +112,11 @@ export function createExportContributors({accountStore,identity,keys,grants,exte
  for(const [name,prefixes,names]of definitions){
   if(name==='external-storage'){result.push(port(name,externalStorage?.page?.bind(externalStorage),row=>projection(row,names)));continue;}
   result.push({name,version:1,prefixes,async page({owner,cursor,limit}){
-   const index=cursor?.index??0,prefix=prefixes[index],pageLimit=name==='messages'?Math.min(limit,15):limit,rows=await accountStore.list({prefix,startAfter:cursor?.after??'',limit:pageLimit}),payloads=[],out=[];
+   const index=cursor?.index??0,prefix=prefixes[index],pageLimit=name==='messages'?Math.min(limit,15):limit,rows=EXPORT_SINGLETON_KEYS.has(prefix)?new Map([...await accountStore.list({prefix,startAfter:cursor?.after??'',limit:pageLimit})].filter(([key])=>key===prefix)):await accountStore.list({prefix,startAfter:cursor?.after??'',limit:pageLimit}),payloads=[],out=[];
    for(const [key,row]of rows){
-    if(row?.owner!==undefined&&row.owner!==owner||name==='connections'&&row?.kind!=='app-connection'||name==='resources'&&row?.kind==='app-connection')continue;
-    const value=name==='contacts'&&typeof row==='string'?{id:decodeURIComponent(key.split('/').filter(Boolean).at(-1)),name:row}:projection(row,names);out.push({schemaVersion:1,record:value});
+    // A saved contact's `owner` is the link owner (the other account), so it is not filtered by owner.
+    if(name!=='saved-contacts'&&row?.owner!==undefined&&row.owner!==owner||name==='connections'&&row?.kind!=='app-connection'||name==='resources'&&row?.kind==='app-connection')continue;
+    const id=decodeURIComponent(key.split('/').filter(Boolean).at(-1)),value=name==='contacts'&&typeof row==='string'?{id,name:row}:name==='contact-sharing'?{id,profileFields:Array.isArray(row?.profileFields)?[...row.profileFields]:[]}:name==='saved-contacts'?{contact:row?.owner,grantId:row?.grantId,expiresAt:row?.expiresAt}:projection(row,names);out.push({schemaVersion:1,record:value});
     if(row?.blobRef&&name==='messages')payloads.push({entryId:stable(row.id),kind:'message',source:{message:row.id,part:0},ref:row.blobRef,path:exportPath(`data/messages/${stable(row.id)}/0.bin`),size:row.size,contentType:row.mimeType});
     if(name==='messages')for(const part of row.presentation?.history??[])if(part.blobRef)payloads.push({entryId:stable(row.id)+'_'+part.revision,kind:'message',source:{message:row.id,part:part.revision},ref:part.blobRef,path:exportPath(`data/messages/${stable(row.id)}/${part.revision}.bin`),size:part.size,contentType:part.mimeType??'application/octet-stream'});
     if(row?.blobRef&&key.startsWith('hosted/')){const resource=key.split('/')[1];payloads.push({entryId:stable(row.version),kind:'object',source:{resource,key:row.key,version:row.version},ref:row.blobRef,path:exportPath(`data/objects/${stable(resource)}/${stable(row.version)}.bin`),size:row.size,contentType:row.contentType});}

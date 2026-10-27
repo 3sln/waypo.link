@@ -95,19 +95,6 @@ Lexical and tag search support bounded cursor pages, index-lag notices and openi
 ![Account search](walkthrough-assets/search-desktop.png)
 
 
-## File beaming and nearby pairing
-
-Paid senders can select several files, choose a registered device or saved contact, and review the names and declared size. Nearby QR pairing does not require a saved contact. The recipient chooses which files to receive; remote offers appear on eligible devices and only one device can accept.
-
-![File sending and nearby pairing](walkthrough-assets/beaming-desktop.png)
-
-![File sending on a narrow phone](walkthrough-assets/beaming-mobile.png)
-
-![Spanish localization with unavailable paid sending](walkthrough-assets/beaming-spanish.png)
-
-These screenshots use explicitly mocked paid-account/API fixtures. Browser tests exercised native WebRTC between two local portals and verified selected-file bytes; they do not establish internet NAT traversal, TURN relay, push delivery or real paid entitlements. Streaming uses a user-approved file destination where supported, with a bounded 32 MiB memory fallback elsewhere. TURN remains disabled pending credentials and an enforceable relay-spend budget.
-
-
 ## Agent consent and connected apps
 
 The HTTP MCP consent page identifies the requesting app, callback origin and signed-in account. Every collection/action checkbox starts unchecked. Deletion has a separate warning; the user can deny the request. Connections can be revoked in the portal.

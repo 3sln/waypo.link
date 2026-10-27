@@ -37,10 +37,10 @@ test('M3: a cold-start outage never resurrects a leftover env force-on over a co
 
 test('L5: one stale console record is quarantined; other flags and the console keep working; retire removes it',async t=>{
  const raw=new SqliteMetadata(':memory:'),storage=new AdminStorage(raw);t.after(()=>raw.close());
- await raw.transaction(async tx=>{await tx.put('admin/flags-head',{version:2,issuedAt:start});await tx.put('admin/flag/BEAM_ENABLED',rec());await tx.put('admin/flag/SIGNUP_ENABLED',rec());await tx.put('admin/flag/RETIRED_EXAMPLE_ENABLED',rec());await tx.put('admin/flag/ACTIVITY_V2_ENABLED',{...rec(),onValue:false});});
+ await raw.transaction(async tx=>{await tx.put('admin/flags-head',{version:2,issuedAt:start});await tx.put('admin/flag/EVENT_BUSES_ENABLED',rec());await tx.put('admin/flag/SIGNUP_ENABLED',rec());await tx.put('admin/flag/RETIRED_EXAMPLE_ENABLED',rec());await tx.put('admin/flag/ACTIVITY_V2_ENABLED',{...rec(),onValue:false});});
  const snapshot=await storage.flagsSnapshot(),anon={subject:{kind:'anonymous'},client:null,region:{country:'unknown'},now:start};
  assert.equal(evaluate('SIGNUP_ENABLED',anon,snapshot).value,true,'SIGNUP keeps its committed value');
- assert.equal(evaluate('BEAM_ENABLED',anon,snapshot).value,true);
+ assert.equal(evaluate('EVENT_BUSES_ENABLED',anon,snapshot).value,true);
  // The invalid record of a registered flag follows its outage policy, never the legacy env value.
  assert.deepEqual({...evaluate('ACTIVITY_V2_ENABLED',anon,snapshot,{ACTIVITY_V2_ENABLED:'true'})},{value:false,reason:'outage'});
  assert.deepEqual(validateSnapshot(snapshot,{quarantine:true}).quarantined,['ACTIVITY_V2_ENABLED','RETIRED_EXAMPLE_ENABLED']);
@@ -63,14 +63,14 @@ test('L5: one stale console record is quarantined; other flags and the console k
 });
 
 test('L6: an account writer at the current edge version re-reads the authority after ~5 minutes (single-flight)',async()=>{
- const clock=clockAt(start),committed={v:1,version:3,issuedAt:start,flags:{BEAM_ENABLED:rec()}};let reads=0;
+ const clock=clockAt(start),committed={v:1,version:3,issuedAt:start,flags:{EVENT_BUSES_ENABLED:rec()}};let reads=0;
  const writer=new FlagsRuntime({env:{},clock:clock.now,store:{flagsSnapshot:async()=>{reads++;return structuredClone(committed);}}});
- assert.equal((await writer.pin({writer:true,minVersion:3})).enabled('BEAM_ENABLED'),true);assert.equal(reads,1);
+ assert.equal((await writer.pin({writer:true,minVersion:3})).enabled('EVENT_BUSES_ENABLED'),true);assert.equal(reads,1);
  clock.advance(60000);await writer.pin({writer:true,minVersion:3});assert.equal(reads,1,'no re-read inside five minutes');
  clock.advance(300000);await Promise.all([writer.pin({writer:true,minVersion:3}),writer.pin({writer:true,minVersion:3})]);assert.equal(reads,2,'one single-flight re-read');
  clock.advance(3600001);
  const port=await writer.pin({writer:true,minVersion:3});
- assert.notEqual(port.evaluate('BEAM_ENABLED').reason,'outage','the writer keeps the committed snapshot past max-stale');
+ assert.notEqual(port.evaluate('EVENT_BUSES_ENABLED').reason,'outage','the writer keeps the committed snapshot past max-stale');
 });
 
 test('M2: flag console calls cannot reset the administrator read window (own keys, own windows)',async t=>{
@@ -95,7 +95,7 @@ test('M2: flag console calls cannot reset the administrator read window (own key
 test('flag console reads (list, get, history, preview, evaluate, seed-verify) spend the flag read window',async t=>{
  const raw=new SqliteMetadata(':memory:'),storage=new AdminStorage(raw);t.after(()=>raw.close());
  const service=new FlagService({store:storage,env:{},clock:()=>start});
- const reads=[()=>service.list({},boot),()=>service.get({name:'BEAM_ENABLED'},boot),()=>service.history({name:'BEAM_ENABLED'},boot),()=>service.evaluate({name:'BEAM_ENABLED',context:{subject:{kind:'anonymous'}}},boot),()=>service.seedVerify({},boot),()=>service.preview({name:'BEAM_ENABLED',expectedRevision:null,action:'seed'},boot)];
+ const reads=[()=>service.list({},boot),()=>service.get({name:'EVENT_BUSES_ENABLED'},boot),()=>service.history({name:'EVENT_BUSES_ENABLED'},boot),()=>service.evaluate({name:'EVENT_BUSES_ENABLED',context:{subject:{kind:'anonymous'}}},boot),()=>service.seedVerify({},boot),()=>service.preview({name:'EVENT_BUSES_ENABLED',expectedRevision:null,action:'seed'},boot)];
  for(let i=0;i<300;i++)await reads[i%reads.length]();
  for(const read of reads)await assert.rejects(read(),{code:'rate_limited'});
  assert.deepEqual(await storage.rateWindow('flags-read-boot'),{start,count:300});
@@ -105,7 +105,7 @@ test('flag console reads (list, get, history, preview, evaluate, seed-verify) sp
 test('review: retiring a registered flag replaces its record with the off record and never enables it through env',async t=>{
  const raw=new SqliteMetadata(':memory:'),storage=new AdminStorage(raw);t.after(()=>raw.close());
  // A console kill stored in a shape the deployed registry rejects (quarantined), with a leftover env force-on.
- await raw.transaction(async tx=>{await tx.put('admin/flags-head',{version:2,issuedAt:start});await tx.put('admin/flag/BEAM_ENABLED',rec());await tx.put('admin/flag/ACTIVITY_V2_ENABLED',{...rec({on:false,fallthrough:false,rev:4}),onValue:false});});
+ await raw.transaction(async tx=>{await tx.put('admin/flags-head',{version:2,issuedAt:start});await tx.put('admin/flag/EVENT_BUSES_ENABLED',rec());await tx.put('admin/flag/ACTIVITY_V2_ENABLED',{...rec({on:false,fallthrough:false,rev:4}),onValue:false});});
  const env={ACTIVITY_V2_ENABLED:'true'},owner1='00000000-0000-4000-8000-000000000001';
  const read=async()=>{const rt=new FlagsRuntime({env,clock:()=>start,store:storage});await rt.pin();const c=rt.bind(env);return {global:siteGlobal(c,'ACTIVITY_V2_ENABLED',true),owner:siteEnabled(c,'ACTIVITY_V2_ENABLED',{subject:{kind:'account',owner:owner1}},true)};};
  assert.deepEqual(await read(),{global:false,owner:false});
