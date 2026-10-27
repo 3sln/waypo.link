@@ -17,6 +17,7 @@ import {key,digest} from '../core/records.mjs';
 import {ACTIVITY_LIMITS as L,activityInput,checkExpiry,qualifiedTag,principalOf,fail} from './model.mjs';
 import {admissionEvidence,attest} from './evidence.mjs';
 import {activityFromAppMessage} from './legacy.mjs';
+import {APP_MESSAGE} from './app-messages.mjs';
 
 const plain=x=>x!==null&&typeof x==='object'&&!Array.isArray(x);
 const rows=async(tx,prefix,limit)=>[...(await tx.list({prefix,...limit?{limit}:{}})).entries()];
@@ -186,13 +187,21 @@ export class ActivityStore{
    return {deleted:true};
   });
  }
- /** v1 app messages as activity rows (read-only adapter), scanning at most 200 message records per page. */
+ /** v1 app messages as activity rows (read-only adapter), at most 200 records per page: activity's own `app-message/`
+  * family and any rows still in the legacy `message/` store (not yet moved by app-messages-v1, or unverifiable, which
+  * project as `verified:false`), merged in item-ID order. A move keeps the item ID, so a page sequence running while
+  * app-messages-v1 moves rows neither skips nor repeats one (review F4). Cursor: the last item ID (the pre-move
+  * legacy cursor is the same shape); an `a.`/`m.` prefix from the interim per-family cursor is accepted and ignored. */
  async legacy(owner,query={}){
-  if(!plain(query)||Object.keys(query).some(k=>k!=='cursor')||query.cursor!==undefined&&(typeof query.cursor!=='string'||!/^[a-f0-9-]{36}$/.test(query.cursor)))fail('invalid_args','Choose a valid activity page.');
+  if(!plain(query)||Object.keys(query).some(k=>k!=='cursor')||query.cursor!==undefined&&(typeof query.cursor!=='string'||!/^(?:[am]\.)?(?:[a-f0-9-]{36})?$/.test(query.cursor)))fail('invalid_args','Choose a valid activity page.');
+  const after=(query.cursor??'').replace(/^[am]\./,''),LIMIT=200;
   return this.transaction(async tx=>{
-   const prefix=key('message',owner),scanned=[...(await tx.list({prefix,...query.cursor?{startAfter:key('message',owner,query.cursor)+'￿'}:{},limit:200})).entries()];
-   const last=scanned.length===200?decodeURIComponent(scanned.at(-1)[0].slice(prefix.length).split('/')[0]):null;
-   return {items:scanned.map(([,m])=>m).filter(m=>m?.owner===owner).map(activityFromAppMessage).filter(Boolean),cursor:last&&/^[a-f0-9-]{36}$/.test(last)?last:null};
+   // Each family is read from the same ID; only IDs up to the smallest last ID of a full family page are complete.
+   const scan=async family=>{const prefix=key(family,owner),rows=[...(await tx.list({prefix,...after?{startAfter:key(family,owner,after)+'\uffff'}:{},limit:LIMIT})).entries()].map(([path,value])=>({id:decodeURIComponent(path.slice(prefix.length).split('/')[0]),value}));return {rows,full:rows.length===LIMIT};};
+   const app=await scan(APP_MESSAGE),legacy=await scan('message'),bounds=[app,legacy].filter(f=>f.full).map(f=>f.rows.at(-1).id).sort(),bound=bounds[0]??null;
+   const byId=new Map();for(const row of [...app.rows,...legacy.rows])if((bound===null||row.id<=bound)&&!byId.has(row.id))byId.set(row.id,row.value);
+   const ids=[...byId.keys()].sort(),page=ids.slice(0,LIMIT),more=bound!==null||ids.length>LIMIT,last=page.at(-1);
+   return {items:page.map(id=>byId.get(id)).filter(m=>m?.owner===owner).map(activityFromAppMessage).filter(Boolean),cursor:more&&last&&/^[a-f0-9-]{36}$/.test(last)?last:null};
   });
  }
  /** Pending notification work for ACT-2: each group resolves to its latest still-eligible member. */

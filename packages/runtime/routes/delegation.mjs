@@ -1,6 +1,6 @@
 // FF-5a: legacy mount visibility is preserved; after console adoption owner reads/reversal ignore targeting.
 // HTTP routes of slice C3, key-delegation.v1 (docs/spec/bindlebox.md §3.4; messaging-extraction.md C3): the public
-// delegation status endpoint receivers query, and owner views and revocation. Mounted only with BINDLEBOX_ENABLED;
+// delegation status endpoint receivers query, and owner views and revocation. Mounted only with LINKS_ENABLED;
 // with the flag off nothing here answers, so the paths stay 404 and no allowlist reveals them.
 //
 // Status: GET|HEAD {identityURI}/delegations/{jkt}, identityURI = <APP_ORIGIN>/identity/<subject> (contact delivery
@@ -29,7 +29,7 @@ async function admitted(env,request,local,subject){
 export const admission={exempt:path=>path==='/api/delegations/revoke'};
 export const stages={
  async public({request,env,path,local}){
-  if(!flagReadable(env,'BINDLEBOX_ENABLED',true))return;
+  if(!flagReadable(env,'LINKS_ENABLED',true))return;
   const match=STATUS.exec(path);if(!match)return;
   if(!['GET','HEAD'].includes(request.method))return json({error:'method_not_allowed',message:'Use GET.'},405,{...publicHeaders,Allow:'GET, HEAD'});
   const [,subject,jkt]=match;
@@ -48,7 +48,7 @@ export const stages={
  },
  // Owner views and revocation (bindlebox §3.2: the owner can revoke any delegate key, a client's keys, or all).
  async owner({request,env,path,object,id}){
-  if(!flagReadable(env,'BINDLEBOX_ENABLED',true)||!path.startsWith('/api/delegations'))return;
+  if(!flagReadable(env,'LINKS_ENABLED',true)||!path.startsWith('/api/delegations'))return;
   if(path==='/api/delegations'){const refused=only(request,'GET');if(refused)return refused;return json(await object.listDelegations(id));}
   if(path==='/api/delegations/revoke'){const refused=only(request,'POST');if(refused)return refused;return json(await object.revokeDelegations(id,await body(request,4096)));}
  },

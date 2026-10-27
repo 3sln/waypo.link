@@ -18,7 +18,7 @@ const engine=config=>createAppEngine({providers:{config,clock:fakeClock(),random
 
 test('remaining domain read sites preserve legacy parsing, including booleans, exact strings and default-on enforcement',async()=>{
  for(const value of values){
-  const env={EVENT_BUSES_ENABLED:value,BROKERING_ENABLED:value,INTEGRATIONS_ENABLED:value,EMAIL_BRIDGE_ENABLED:value,BINDLEBOX_ENABLED:value,BILLING_ENABLED:value,DEVICE_AUTHORIZATION_ENABLED:value,APP_ORIGIN:origin};
+  const env={EVENT_BUSES_ENABLED:value,BROKERING_ENABLED:value,INTEGRATIONS_ENABLED:value,EMAIL_BRIDGE_ENABLED:value,LINKS_ENABLED:value,BILLING_ENABLED:value,DEVICE_AUTHORIZATION_ENABLED:value,APP_ORIGIN:origin};
   for(const config of [env,{...env,flags:createFlags({snapshot:snapshot({},0),env})}]){
    for(const [fn,expected]of [[eventBusesEnabled,bool],[brokeringFlag,bool],[integrationsFlag,bool],[brokeringEnabled,strict],[billingEnabled,strict],[deviceAuthorizationEnabled,bool]])assert.equal(fn(config),expected(value),fn.name+' '+String(value));
    assert.equal(bridgeConfig(config).enabled,bool(value),'bridge '+String(value));assert.equal(Object.keys(recognizedSlots(config)).length>Object.keys(RECOGNIZED_SLOTS).length,bool(value),'intake slot '+String(value));
@@ -38,7 +38,7 @@ test('engine domains accept legacy boolean true and reject targeting without a v
 
 test('external placements reject retention records explicitly; owner reverse/read paths survive kills after adoption',async()=>{
  for(const name of ['DEVICE_AUTHORIZATION_ENABLED','INCREMENTAL_AUTH_ENABLED','EMAIL_BRIDGE_ENABLED']){assert.equal(FLAGS[name].retainExisting,false);assert.match(FLAGS[name].retentionReason,/store|identity/);assert.throws(()=>validateRecord(name,record({retainExisting:true})),{code:'invalid_snapshot'});}
- for(const name of ['EVENT_BUSES_ENABLED','ACTIVITY_V2_ENABLED','BINDLEBOX_ENABLED']){
+ for(const name of ['EVENT_BUSES_ENABLED','ACTIVITY_V2_ENABLED','LINKS_ENABLED']){
   const env={[name]:'false'},config={flags:port({[name]:record({on:false})},env)},e=engine(config);
   try{const result=await read(e,new ReadFeature({actor:{kind:'owner',owner},id:name}));assert.equal(result.value,false);assert.equal(result.readable,true);}finally{await e.dispose();}
  }

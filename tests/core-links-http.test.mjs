@@ -1,4 +1,4 @@
-// Core links (BB-C1a) on the real Node adapter: the owner link routes stay unmounted with BINDLEBOX_ENABLED off;
+// Core links (BB-C1a) on the real Node adapter: the owner link routes stay unmounted with LINKS_ENABLED off;
 // with it on, an app actor admitted by the slot-occupant port issues through the account engine, the owner lists
 // and revokes over HTTP, and identity key rotation keeps contact links verifiable while new ones use the new key.
 import test from 'node:test';
@@ -38,7 +38,7 @@ test('flag off: owner link routes are not mounted and the app-actor entry refuse
 
 test('flag on: occupant app issues, owner lists and revokes over HTTP; contact links survive identity key rotation', async () => {
   const occupant = { clientId: APP, generation: 1 };
-  const s = await server(8794, { BINDLEBOX_ENABLED: 'true', LINK_SLOT_OCCUPANT: async ({ slot }) => (slot === MESSAGING_INGRESS_SLOT ? occupant : null) });
+  const s = await server(8794, { LINKS_ENABLED: 'true', LINK_SLOT_OCCUPANT: async ({ slot }) => (slot === MESSAGING_INGRESS_SLOT ? occupant : null) });
   try {
     const c = s.controller(), actor = { kind: 'app', owner: s.id, clientId: APP, handle: s.handle };
     const issued = await c.linkOperation(s.id, { actor, operation: 'links.issue', input: { type: MESSAGING_CONTACT_LINK_TYPE, claims: { resource: 'p1', kinds: ['one-off'], mimeTypes: ['text/plain'], maxMessages: 5, maxBytes: 65536, maxMessageBytes: 16384 }, expiresAt: Date.now() + 86400000 } });

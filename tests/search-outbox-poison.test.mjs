@@ -126,7 +126,7 @@ test('a connected app sending 31 tags does not wedge the owner search outbox',as
  const ref=(await controller.rpc(session.access_token,{version:'0',tx:crypto.randomUUID(),resource:'@preferences',contract:'https://3sln.me/artefacts/contracts/preferences/v1',method:'read',args:{fragment:APP_NOTIFICATION_PREFERENCES}})).result.values.notifications;
  const send=(input={})=>{const transactionId=crypto.randomUUID();return controller.rpc(ref.token,{version:'0',tx:transactionId,resource:ref.id,contract:APP_NOTIFICATIONS,method:'createOwn',args:{transactionId,createdAt:Date.now(),subject:'Event reminder',body:'Meeting tomorrow',...input}},{requestOrigin:ORIGIN});};
  const response=await send({tags:Array.from({length:31},(_,i)=>`app${i}`)});assert.equal(response.error,undefined,JSON.stringify(response));
- const stored=[...(await db.list({prefix:'message/'})).values()][0];assert.equal(stored.tags.length,33);
+ const stored=[...(await db.list({prefix:'app-message/'})).values()][0];assert.equal(stored.tags.length,33);
  await send();
  const result=await account.searchDrain(OWNER,{limit:10});
  assert.equal(result.rejected,undefined);assert.deepEqual(await account.searchOutbox.peek(OWNER,10),[]);

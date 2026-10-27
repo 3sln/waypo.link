@@ -10,13 +10,15 @@
  */
 import {getFlag} from './registry.mjs';
 import {assertBillingConfiguration} from '../billing/catalog.mjs';
+// A renamed flag still reads its retired env name (registry envAlias) while the new name is unset.
+const rawEnv=(f,env)=>env[f.name]!==undefined||!f.envAlias?env[f.name]:env[f.envAlias];
 export function legacyValue(name,env={},options={}){
- const f=getFlag(name),raw=env[name],value=raw===undefined?(options.platform==='node'?f.envDefaults.node??f.envDefault:f.envDefault):raw;
+ const f=getFlag(name),raw=rawEnv(f,env),value=raw===undefined?(options.platform==='node'?f.envDefaults.node??f.envDefault:f.envDefault):raw;
  switch(options.parse??f.envParse){case 'true-only':return value===true;case 'boolean':return value===true||value==='true';case 'not-false':return value!=='false';case 'not-false-boolean':return value!==false&&value!=='false';case 'work-authority':return value===true||value==='true'||value===undefined&&Boolean(env.WORK_AUTHORITY);default:return value==='true';}
 }
 export const envParse=legacyValue;
 export function parseEnv(name,env={},hasRecord=false,options={}){
- const f=getFlag(name),raw=env[name];
+ const f=getFlag(name),raw=rawEnv(f,env);
  if(f.class==='b')return {state:'env-capability',value:legacyValue(name,env,options),raw,warning:null};
  if(raw===undefined||raw==='')return {state:'unset',value:f.safe,raw,warning:null};
  const boolean=f.envParse==='boolean'||f.envParse==='not-false-boolean',valid=raw==='true'||raw==='false'||boolean&&typeof raw==='boolean';

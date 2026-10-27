@@ -1,0 +1,33 @@
+{
+  "bindle_artefact": 1,
+  "id": "https://spec.bindle.example/rtc-purposes/device-sync/v1",
+  "kind": "rtc-purpose",
+  "versions": [
+    {
+      "version": 1,
+      "prev": null,
+      "body": {
+        "id": "https://spec.bindle.example/rtc-purposes/device-sync/v1",
+        "title": {
+          "en": "Sync your devices",
+          "es": "Sincronizar tus dispositivos"
+        },
+        "summary": {
+          "en": "Keeps an app’s data in sync between your own devices, without ringing.",
+          "es": "Mantiene sincronizados los datos de una app entre tus propios dispositivos, sin sonar."
+        },
+        "publisher": "https://spec.bindle.example",
+        "media": [
+          "data"
+        ],
+        "alert": false,
+        "parties": "self",
+        "auto_accept": "self",
+        "context": null,
+        "categories": [
+          "personal-data"
+        ]
+      }
+    }
+  ]
+}

@@ -155,6 +155,18 @@ test('developer contact shows the shared conditional link and current eligibilit
  }finally{await f.close();}
 });
 
+test('occupant-mode developer contact renders the messaging-app handoff copy in every locale',async()=>{
+ const f=await fixture({route:{kind:'home'},session:{account}});try{f.api.get=async()=>({available:true,mode:'occupant',intent:'send-message',url:link,expiresAt:Date.now()+86400000,policy:intake.policy,recipientBadge:{role:'developer'},eligibility:{state:'eligible',tier:'free'}});await f.act(new LoadDeveloperContact());const state=await f.read();assert.equal(state.developerContact.mode,'occupant');
+  const intents={...state,data:{...state.data,features:{...state.data?.features,intentLinksEnabled:true}}};
+  const en=render(developerContact,intents);assert.ok(en.textContent.includes('Write with your messaging app'));assert.ok(en.textContent.includes('Your messaging app opens to write to the developer.'));assert.equal(en.textContent.includes('Open developer contact'),false);
+  const es=render(developerContact,intents,'es');assert.ok(es.textContent.includes('Escribir con tu app de mensajería'));assert.equal(es.textContent.includes('Write with your messaging app'),false);
+  // Review I2: without intents the button opens the link's landing page, so the copy is the link copy in every locale.
+  const off={...state,data:{...state.data,features:{...state.data?.features,intentLinksEnabled:false}}};
+  const enOff=render(developerContact,off);assert.ok(enOff.textContent.includes('Open developer contact'));assert.ok(enOff.textContent.includes('Opening the link asks you to confirm your identity'));assert.equal(enOff.textContent.includes('Write with your messaging app'),false);assert.equal(enOff.textContent.includes('Your messaging app opens'),false);
+  const esOff=render(developerContact,off,'es'),esLink=createLocalization({locale:'es'}).t('Open developer contact');assert.notEqual(esLink,'Open developer contact');assert.ok(esOff.textContent.includes(esLink));assert.equal(esOff.textContent.includes('Escribir con tu app de mensajería'),false);
+ }finally{await f.close();}
+});
+
 test('developer contact rate limit is mapped from a code to translated client copy',async()=>{const f=await fixture({route:{kind:'home'},session:{account}});try{f.api.get=async()=>{throw Object.assign(Error('rate_limited'),{code:'rate_limited',status:429});};await f.act(new LoadDeveloperContact());const state=await f.read();assert.equal(state.error,'Please wait before checking again.');assert.equal(state.developerContactLoading,false);assert.equal(createLocalization({locale:'es'}).t(state.error),'Espera antes de volver a comprobarlo.');}finally{await f.close();}});
 
 test('tag pills render owner labels literally and system tags with system and suspected classes',()=>{

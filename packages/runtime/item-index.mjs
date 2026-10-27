@@ -1,7 +1,7 @@
 import {publicMessageMetadata as publicMessage} from '../messaging/message-metadata.mjs';
 import {normalizeIncomingFilter,incomingSort,normalizeIncomingUpdate} from './message-views.mjs';
 import {StorageError} from '../storage/policy.mjs';
-import {migrateTags,changeTags} from '../messaging/tags.mjs';
+import {migrateTags,changeTags} from '../core/tags.mjs';
 const encode=value=>btoa(String.fromCharCode(...new TextEncoder().encode(JSON.stringify(value)))).replaceAll('+','-').replaceAll('/','_').replace(/=+$/,'');
 function decode(value){try{if(typeof value!=='string'||value.length>4096)throw new Error();return JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(Uint8Array.from(atob(value.replaceAll('-','+').replaceAll('_','/')),c=>c.charCodeAt(0))));}catch{throw new StorageError('invalid_args','Invalid page cursor.');}}
 /** SQL catalogs provide bounded keyset pages; payloads stay in object storage.

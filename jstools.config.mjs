@@ -29,7 +29,7 @@ export const publicSources = [
   'scripts/message-frame-controller.mjs',
   'scripts/message-sanitizer.mjs',
   'apps/web/styles.css',
-  'packages/core/records.mjs','packages/content/form-policy.mjs',
+  'packages/core/records.mjs','packages/core/tags.mjs','packages/content/form-policy.mjs',
 ];
 
 export const pages = [

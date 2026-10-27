@@ -1,12 +1,15 @@
 import {siteEnabled,recordFlag} from './account/flags.mjs';
-import {validateContent} from '../messaging/content.mjs';
+import {validateContent} from '../content/render.mjs';
 import {APP_NOTIFICATIONS,ACTIVITY_CONTRACT,ACTIVITY_METHODS,notificationInput} from '../federation/app-notifications.mjs';
 import {perform} from '../app/engine.mjs';
 import {ACTIVITY_APP_OPERATIONS} from '../app/domains/activity.mjs';
 import {StorageError} from '../storage/policy.mjs';
-import {key,canonical,digest,base64url} from '../messaging/store.mjs';
-import {initialTags,applyRules,escapeLegacyTag,isSystemTag} from '../messaging/tags.mjs';
-import {ownerRules} from '../messaging/messages.mjs';
+import {key,canonical,digest,base64url} from '../core/records.mjs';
+import {initialTags,applyRules,escapeLegacyTag,isSystemTag,ownerRules} from '../core/tags.mjs';
+// Admitted v1 app messages live in activity's own families (messaging extraction prep, 2026-10-26), never in the
+// legacy peer `message/` store that the BB-CUT reset deletes. Placement (`collection`) and owner rules still run so the
+// existing inbox, views, MCP and export keep seeing them; both are BB-CUT inventory items (messaging-extraction.md §2.8).
+import {appMessageKey,appMessageUsageKey} from '../activity/app-messages.mjs';
 const fail=(code='app_notifications_unavailable',message='App notifications are unavailable.',status=503,retryAfter)=>{const e=new StorageError(code,message,status);if(retryAfter)e.retryAfter=retryAfter;throw e;};
 const plain=x=>x&&typeof x==='object'&&!Array.isArray(x);
 const jwkFields=['kid','kty','crv','x','y','alg','use','key_ops','ext'];
@@ -91,7 +94,7 @@ export async function createAppNotification(c,owner,context){
   await configuredContext(c,owner,context);
   await c.store.transaction(async tx=>{const held=await tx.get(receiptKey);if(held?.state!=='reserved'||held.reservation!==id||held.fingerprint!==fingerprint)fail('indeterminate','The notification reservation lapsed before commit.',503);if(!await appNotificationAllowed(tx,owner,{appNotification:provenance}))fail('forbidden','App messages were disabled.',403);const routed=await intake(tx,owner,input);
    const message={id,owner,...routed,mimeType:input.mimeType,size:bytes.length,bytes,receivedAt:now,readAt:null,grantId:null,senderMetadata:{subject:input.subject,tags:input.tags},appNotification:{...provenance,attestation}};
-   const usage=await tx.get(key('message-usage',owner))||{bytes:0,messages:0};if(!Number.isSafeInteger(usage.bytes)||!Number.isSafeInteger(usage.messages)||usage.bytes<0||usage.messages<0)fail();usage.bytes+=bytes.length;usage.messages++;await tx.set(key('message-usage',owner),usage);await tx.set(key('message',owner,id),message);await tx.set(receiptKey,{fingerprint,state:'done',result,expiresAt:now+APP_NOTIFICATION_RECEIPTS.retainMs});if(!message.quarantined)await tx.set(key('notification-event',owner,id),{id,owner,messageId:id,createdAt:now});
+   const usage=await tx.get(appMessageUsageKey(owner))||{bytes:0,messages:0};if(!Number.isSafeInteger(usage.bytes)||!Number.isSafeInteger(usage.messages)||usage.bytes<0||usage.messages<0)fail();usage.bytes+=bytes.length;usage.messages++;await tx.set(appMessageUsageKey(owner),usage);await tx.set(appMessageKey(owner,id),message);await tx.set(receiptKey,{fingerprint,state:'done',result,expiresAt:now+APP_NOTIFICATION_RECEIPTS.retainMs});if(!message.quarantined)await tx.set(key('notification-event',owner,id),{id,owner,messageId:id,createdAt:now});
   });await c.scheduleAlarm(Date.now()+1000);return result;
  }finally{c.messageReservation=null;await c.quota.release(id);}
 }

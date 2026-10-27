@@ -20,10 +20,12 @@
  * seed is per flag, refuses existing records (no overwrite or duplicate audit).
  * Queries: list, get, history, preview, seedVerify, explain, evaluate, snapshot.
  * retire({name,expectedVersion,reason,typedName}) deletes one quarantined stored record (a flag the deployed registry
- * no longer accepts); critical, audited, own rate window. list returns quarantined names (wargame 4, L5).
+ * no longer accepts); critical, audited, own rate window. list returns quarantined names (wargame 4, L5). Retiring a
+ * renamed flag's old record (RETIRED_FLAGS replacement whose envAlias is that name) carries it to the new name when the
+ * new name has no record yet (review F1).
  * FF-3 owns the ngin Actions/Queries wrapping this provider; no nested dispatch.
  */
-import {FLAGS,getFlag,GATE_REVISION} from './registry.mjs';
+import {FLAGS,RETIRED_FLAGS,getFlag,GATE_REVISION} from './registry.mjs';
 import {validateRecord,validateSnapshot} from './snapshot.mjs';
 import {evaluate,evaluateGlobal} from './evaluate.mjs';
 import {legacyValue,parseEnv} from './env.mjs';
@@ -158,10 +160,15 @@ export class FlagService {
   const {revision:storedRevision,...before}=stored,version=snapshot.version+1,{quarantined:_q,...rest}=snapshot,remaining=snapshot.quarantined.filter(n=>n!==name);
   const replacement=f&&f.class!=='b'?validateRecord(name,{...empty(f,this.randomId()),rev:(Number.isSafeInteger(before.rev)&&before.rev>0?before.rev:0)+1}):null;
   const writes={['flag/'+name]:replacement,'flags-head':{version,issuedAt:now}};if(replacement)writes[`flag-rev/${name}/${replacement.rev}`]={record:replacement,version,at:now,action:'flag.retire'};
-  const result=await this.store.commit({expect:{...actor.expect,['flag/'+name]:storedRevision??null,'flags-head':head?.revision??null},writes,rate:{key:flagRateKey(actor),limit:60,windowMs:60000,now},audit:{at:now,actor:actor.audit??{kind:actor.kind,...actor.owner?{owner:actor.owner}:{}},action:'flag.retire',target:name,before,after:replacement,reason:input.reason,typedName:input.typedName,acknowledgeGates:input.acknowledgeGates??[],critical:true,version}});
+  // Review F1: retiring a renamed flag's old record while the new name has no record would let the old env name
+  // (envAlias) widen it again. The old record is carried to the new name in the same commit (re-validated; the off
+  // record when its shape no longer fits), so the console state survives the rename.
+  const target=!registered&&RETIRED_FLAGS[name]?.replacement,heir=target&&own(FLAGS,target)&&getFlag(target).envAlias===name&&!own(snapshot.flags,target)&&!snapshot.quarantined.includes(target)?getFlag(target):null;
+  let carried=null;if(heir){try{carried=validateRecord(heir.name,{...before,rev:1});}catch{carried=validateRecord(heir.name,{...empty(heir,this.randomId()),rev:1});}writes['flag/'+heir.name]=carried;writes[`flag-rev/${heir.name}/1`]={record:carried,version,at:now,action:'flag.retire'};}
+  const result=await this.store.commit({expect:{...actor.expect,['flag/'+name]:storedRevision??null,...heir?{['flag/'+heir.name]:null}:{},'flags-head':head?.revision??null},writes,rate:{key:flagRateKey(actor),limit:60,windowMs:60000,now},audit:{at:now,actor:actor.audit??{kind:actor.kind,...actor.owner?{owner:actor.owner}:{}},action:'flag.retire',target:name,before,after:replacement,...heir?{carriedTo:heir.name,carried}:{},reason:input.reason,typedName:input.typedName,acknowledgeGates:input.acknowledgeGates??[],critical:true,version}});
   if(result.rateLimited)fail('rate_limited','Administrative actions are rate limited.',429);if(!result.committed)fail('conflict','Flags or authority changed; reload and try again.',409);
-  if(this.onCommit)await this.onCommit(validateSnapshot({...rest,version,issuedAt:now,flags:{...rest.flags,...replacement?{[name]:replacement}:{}},...remaining.length?{quarantined:remaining}:{}}));
-  return {name,retired:true,record:replacement,version,audit:result.audit};
+  if(this.onCommit)await this.onCommit(validateSnapshot({...rest,version,issuedAt:now,flags:{...rest.flags,...replacement?{[name]:replacement}:{},...carried?{[heir.name]:carried}:{}},...remaining.length?{quarantined:remaining}:{}}));
+  return {name,retired:true,record:replacement,...heir?{carriedTo:heir.name,carried}:{},version,audit:result.audit};
  }
  async history({name},context){await this.readLimited(this.authority(context));getFlag(name);const row=await this.store.get('flag/'+name),entries=[];for(let rev=row?.rev??0;rev>Math.max(0,(row?.rev??0)-100);rev--){const entry=await this.store.get(`flag-rev/${name}/${rev}`);if(entry)entries.push(entry);}return {name,entries};}
  async seedVerify(input,context){await this.readLimited(this.authority(context));if(Object.keys(input??{}).length)fail('invalid_request','Seed verification accepts no client values.');const snapshot=await this.snapshot(),contexts=seedContexts(this.clock()),env={...this.env};for(const f of consoleFlags)delete env[f.name];return {version:snapshot.version,contexts:contexts.length,flags:Object.fromEntries(consoleFlags.map(f=>{const state=parseEnv(f.name,this.env,own(snapshot.flags,f.name),{platform:this.platform}),legacy=legacyValue(f.name,this.env,{platform:this.platform}),mismatches=contexts.reduce((n,ctx)=>n+Number(evaluate(f.name,ctx,snapshot,env,{platform:this.platform}).value!==legacy),0);return [f.name,{safeToRemove:own(snapshot.flags,f.name)&&!['kill','invalid'].includes(state.state)&&mismatches===0,envState:state.state,managed:own(snapshot.flags,f.name),matches:contexts.length-mismatches,total:contexts.length}];}))};}

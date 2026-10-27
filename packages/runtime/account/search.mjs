@@ -2,9 +2,10 @@ import {ownerFlags,recordFlag} from './flags.mjs';
 // AccountController slice 8, Search (docs/architecture/app-engine.md §12): lexical and semantic search, indexing and the search outbox.
 // `methods` are installed on AccountController.prototype (`this` is the controller); `rpc` lists the methods
 // `invoke` accepts and the placement policy it applies to each (packages/runtime/account/index.mjs).
-import {migrateTags} from '../../messaging/tags.mjs';
+import {migrateTags} from '../../core/tags.mjs';
 import {retryReady,retryFailure} from '../cleanup-retry.mjs';
-import {key} from '../../messaging/store.mjs';
+import {key} from '../../core/records.mjs';
+import {itemRecord} from '../../activity/app-messages.mjs';
 import {StorageError} from '../../storage/policy.mjs';
 export const SEMANTIC_MIN_ACCOUNT_AGE_MS=7*86400000;
 import {storageState} from '../storage-quota.mjs';
@@ -14,7 +15,7 @@ import {enqueueSearchEvent,searchRevisionKey,messageSearchDocument,planBudget,Wo
 
 export const methods={
   async queueMessageSearch(tx,message,operation='upsert'){
-    const id=`message:${message.id}`,prior=await tx.get(searchRevisionKey(message.owner,id)),old=await tx.get(key('message',message.owner,message.id));
+    const id=`message:${message.id}`,prior=await tx.get(searchRevisionKey(message.owner,id)),old=(await itemRecord(k=>tx.get(k),message.owner,message.id))?.record;
     const revision=Math.max(prior?.revision||0,old?.revision||(old?1:0))+1;
     const entitlement=await storageState(tx,message.owner,Date.now(),this.config);
     const event=await enqueueSearchEvent(tx,{owner:message.owner,id,source:{kind:'message',id:message.id},operation,revision},{maxQueue:planBudget(entitlement.plan==='free'?'free':'paid').limits.queue});
@@ -77,7 +78,7 @@ export const methods={
   async searchDocument(owner,id,{purpose='index',revision}={}){
     await this.configureSemanticSearch(owner);
     if(typeof id!=='string'||!id.startsWith('message:'))return null;
-    const rawId=id.slice(8),message=await this.metadata.get(key('message',owner,rawId));
+    const rawId=id.slice(8),message=(await itemRecord(k=>this.metadata.get(k),owner,rawId))?.record;
     if(!message||message.owner!==owner)return null;const currentRevision=message.revision||1;const embeddingAllowed=await this.semanticBudget.enabled(owner)&&['text/plain','text/html','application/vnd.3sln.web-archive+json'].includes(message.mimeType)&&!message.quarantined;
     if(purpose!=='index'){
       const cached=purpose==='search'?await this.searchIndex?.readContent(owner,id,revision):{title:message.senderMetadata?.subject||'',text:''};

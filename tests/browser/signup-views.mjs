@@ -18,3 +18,20 @@ test('account switch clears incoming cards and rejects a late prior-owner page',
 
 test('authoritative capacity refusal closes stale free signup without losing private email draft',async()=>{const f=await fixture({auth:'signup',authMethod:'password',pending:false,signupStep:'credential',signupTermsAccepted:true,signupAgeConfirmed:18,signupPlan:'free',signupAvailability:{freeSignupOpen:true,paidSignupOpen:true,waitlistEnabled:true},config:{localDevelopment:true,signupEnabled:true}});try{f.secrets.signupEmail='retained@draft.example';f.browser.captcha=()=>({turnstileToken:'fixture'});f.api.get=async()=>({freeSignupOpen:true,paidSignupOpen:true,waitlistEnabled:true,reason:'open'});f.api.request=async()=>{throw Object.assign(Error('Free signup closed'),{code:'signup_capacity_reached',capacity:'free',status:503});};await f.act(new SignUp({values:{password:'private password'}}));assert.equal((await f.read()).signupAvailability.freeSignupOpen,false);assert.equal((await f.read()).signupAvailability.paidSignupOpen,true);assert.equal(f.secrets.signupEmail,'retained@draft.example');assert.equal((await f.read()).pending,false);}finally{await f.close();}});
 test('automatic incoming load clears all owner projections after an expired session',async()=>{const f=await fixture({session:{account:{id:'owner'}},data:{views},incoming:{items:[{id:'PRIVATE_CARD'}]},contactBook:{directory:[{url:'PRIVATE_CONTACT'}]}});try{f.api.get=async()=>{throw Object.assign(Error('Expired'),{status:401});};await f.act(new LoadIncoming());const state=await f.read();assert.equal(state.session,null);assert.equal(state.data,null);assert.equal(state.incoming,null);assert.equal(JSON.stringify(state).includes('PRIVATE_'),false);}finally{await f.close();}});
+
+// Messaging extraction prep (2026-10-26): in occupant mode the developer link belongs to the developer's messaging app,
+// so the console hands it to the sender's own messaging app as a `send-message` intent, and falls back to the link.
+test('occupant-mode developer contact hands off a send-message intent; legacy mode and disabled intents open the link',async()=>{
+ const {signLinkJWS,LINK_META_TYP}=await import('../../packages/links/envelope.mjs'),{LoadDeveloperContact}=await import('../../apps/web/src/bl/incoming.mjs');
+ const origin='https://space.example',jti=crypto.randomUUID(),sub=crypto.randomUUID(),path=`/users/n.dev/contact/${jti}`,pair=await crypto.subtle.generateKey({name:'ECDSA',namedCurve:'P-256'},false,['sign','verify']),now=Math.floor(Date.now()/1000);
+ const meta=await signLinkJWS({header:{alg:'ES256',kid:'k1',typ:LINK_META_TYP},claims:{bindle:'link-meta',v:1,type:'https://spec.bindle.example/bindlebox/v1/links/contact',iss:origin,aud:origin+path,jti,iat:now,exp:now+86400,sub,resource:'r',kinds:['one-off'],mimeTypes:['text/plain'],maxMessages:5,maxBytes:65536,maxMessageBytes:16384,audience:{challenge:'c'.repeat(22),policy:'https://3sln.example/policies/developer-contact/v1'}},privateKey:pair.privateKey});
+ const url=`${origin}${path}?bindle_meta=${meta}`,answer=mode=>({available:true,...mode?{mode,intent:'send-message'}:{},url,expiresAt:Date.now()+86400000,recipientBadge:{role:'developer'},eligibility:{state:'eligible',tier:'free'}});
+ for(const [mode,intents,expected]of [['occupant',true,'intent'],['occupant',false,'link'],[undefined,true,'link']]){
+  const f=await fixture({session:{account:{id:'owner'}},config:{origin,signupContactRequired:true,...intents?{intentLinksEnabled:true}:{}}});
+  try{f.api.get=async p=>{if(p==='/api/developer-contact')return answer(mode);throw Error(p);};await f.act(new LoadDeveloperContact());
+   assert.equal((await f.read()).developerContact.mode,mode??'legacy');assert.equal(f.secrets.developerContactURL.mode,mode??'legacy');
+   await f.act(new OpenDeveloperContact());assert.equal(f.nav.length,1);
+   if(expected==='intent'){assert.match(f.nav[0],/^\/i#bintent=/);assert.equal(f.nav[0].includes('bindle_meta'),false,'the capability rides inside the encoded intent, never as a raw query');}else assert.equal(f.nav[0],url);
+  }finally{await f.close();}
+ }
+});

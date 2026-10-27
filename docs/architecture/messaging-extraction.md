@@ -153,6 +153,56 @@ Disposition labels used in every table:
 
 `package.json` gains `test:bindlebox` and adds `tests/bindlebox/*.test.mjs` to `npm test`. Slice B0 owns that edit.
 
+#### 2.8.1 Additional BB-CUT inventory (core-scope audit, recorded 2026-10-26)
+
+The core-scope audit found tests that use legacy messaging code and that the tables above do not list. They have to be deleted, split or re-pointed in X1. The dependency column is from a source check on 2026-10-26. Two audit-listed browser and e2e files have no direct import; they are kept on the list so X1 re-checks them.
+
+| Test | Legacy dependency (2026-10-26 check) | Proposed disposition |
+| --- | --- | --- |
+| `conversation-event-metadata`, `conversation-quarantine-acceptance`, `conversations-receipt-index` | `packages/conversations/{index,runtime}.mjs` | **Delete**, like the other Conversation v1 suites; scenarios become BindleBox simulator cases where they still apply |
+| `conversations-scale-review`, `conversations-wargame3` | `packages/conversations/index.mjs` | **Delete** (scale and wargame lessons carried over as simulator scenarios) |
+| `contact-delivery-precheck` | `ContactDeliveryService`, `createContact`, `deliverLink` | **BindleBox** (receive behavioural checklist) |
+| `contact-grant-reclaim` | `contact-grant/` parents through `messaging/store.mjs` | **Split**: generic link-state reclaim (`links/audience.mjs` `collectLinkState`) stays core; grant reclaim is deleted with the grants |
+| `contact-quarantine-silence` | `packages/conversations/index.mjs` and contact quarantine | **BindleBox** (contact quarantine is a contacts-domain rule) |
+| `deletion-delivery-race` | legacy delivery into `message/` racing account deletion | **Split**: the deletion fence half stays core; the delivery half moves to BindleBox |
+| `messages-legacy-filters`, `messages-index-scale` | `MessagingService.list` and the legacy collection filters, `messagePage` | **Split**: the item-index and activity half stays core; collection filters are deleted with `/api/collections` |
+| `contacts-redeem-oracle` | `POST /api/contacts/redeem` | **Core, edit references only** if contact redemption stays with `packages/links/contact-profile.mjs` (pending the saved-contacts decision); otherwise BindleBox |
+| `e2e/setup-contact-native` | no direct import; native signup activates an account whose warm path creates the default `Inbox` collection | **Core, edit references only** (re-check after `collection/` is removed) |
+| `browser/intent-contact-migration` | `bl/contact-link.mjs` handoff (`ContactHandoff`, `send-message`) | **Split** (opener and intent handoff core, compose BindleBox), with `browser/contact-links.mjs` |
+| `e2e/signup-views`, `browser/signup-views` | inbox and conversation views, `LoadIncoming`, `OpenDeveloperContact` | **Core, edit references only**: remove conversation cards; the developer contact moves to the occupant handoff (below) |
+| `browser/ui-quality-views` | no direct import; renders signup and intent pages next to messaging navigation | **Core, edit references only** (re-check) |
+
+**Other coupling to resolve in X1** (found by the audit, not yet in the tables above):
+
+- **Search is fed by message writes.** The account store adapter queues a search event on every item write and delete (`packages/runtime/accounts.mjs`, `queueMessageSearch`), the backfill scans the item families (`account/messages.mjs`), and search documents are keyed `message:<id>`. After the reset, peer search rows and documents must go with the peer records (§4), while app-message documents stay. The adapter has to keep feeding search from activity writes.
+- **MCP and browser automation target collections.** `packages/mcp/account.mjs` (`mcpCollections`, `items_list`, `item_read`, `item_write`, `item_delete`) and `packages/automation/account.mjs` grant per-collection permissions (`inbox:<collection>`). Deleting `collection/*` breaks every MCP and automation grant. They need an activity-scoped target (for example per app or per tag) and a reviewed authority change before X1 (§2.6 row for `packages/mcp`).
+- **App messages still carry a collection.** v1 app messages keep `collection` placement and owner rules so the legacy inbox, retention units and MCP keep seeing them. At X1 they need a placement that does not depend on `collection/`, and retention units need an activity unit.
+- **Legal text to change after the cut** (do not edit before; needs owner and legal sign-off):
+  - `docs/legal/privacy.md`:
+    - l.22 (contacts see the profile);
+    - l.45–47 (profile shown to contacts; contacts and contact links; messages and conversations);
+    - l.73 (semantic search over message text);
+    - l.81 (message classification);
+    - l.103 (lawful basis: deliver messages and contacts);
+    - l.126 (recipients: contacts and correspondents);
+    - l.136 (encryption of contact link secrets);
+    - l.159 (retention of spam and rejected messages);
+    - l.189 (writing in through a contact link).
+  - `docs/legal/terms.md`:
+    - l.43 (ownership of messages);
+    - l.48 and l.50 (contact links section and what you authorize);
+    - l.62 (spam and bulk messages);
+    - l.117 (no guarantee that messages are delivered).
+
+#### 2.8.2 Preparation done before the cut (2026-10-26, provisional, no reset)
+
+See DEVLOG "2026-10-26 — Messaging extraction prep (no reset)".
+
+- **App-originated items moved to activity's own families.** v1 app messages now write `app-message/<owner>/<id>` and `app-message-usage/<owner>` (`packages/activity/app-messages.mjs`). They no longer write `message/` or `message-usage/`. The `app-messages-v1` account step moves existing rows out of `message/` by verified provenance, and unverifiable rows stay behind. It pauses while the account is shelved or an export is active. Its marker is not a completion signal (§4). Every reader resolves both families: `/api/messages*`, presentations, postbacks, notifications, search, MCP, retention, quota, shelving, export and the activity legacy adapter. `notification-event/`, the item index and search documents stay keyed by item ID. App-message blobs keep `messages/<owner>/…` names, so **the reset must delete peer blobs per record, never by blob prefix.**
+- **Tags and owner rules** moved to `packages/core/tags.mjs`. `messaging/tags.mjs` re-exports it, and `ownerRules` is re-exported from `messaging/messages.mjs`.
+- **Flags.** `BINDLEBOX_ENABLED` is retired in core in favour of `LINKS_ENABLED`, which gates the links contract, key delegation and the messaging-address descriptor. Its raw env value is still read as an alias until BB-CUT, but only while no record exists under either name. A quarantined `BINDLEBOX_ENABLED` record with no `LINKS_ENABLED` record takes the outage path, and `flags.retire` carries that record to `LINKS_ENABLED` (review F1). `EMAIL_BRIDGE_ENABLED` requires no other flag; delivery waits for any occupant of the public-message-intake slot. `PUBLIC_INTAKE_CONTRACT` moved to `packages/links/types.mjs`, so `federation/brokered.mjs` no longer imports from `email-bridge/wire.mjs`.
+- **Developer contact.** `DEVELOPER_CONTACT_MODE=occupant` routes `GET /api/developer-contact` to the link that the developer account's current messaging-ingress occupant issued through the links contract with the developer policy. The console hands it off as a `send-message` intent. The legacy grant stays the default until BB-CUT, and `cleanupDailyDeveloperGrants` stays because the legacy path still reaches it.
+
 ### 2.9 Specs, architecture docs and artefacts
 
 | Document | Disposition |
@@ -216,7 +266,7 @@ Production is disabled and nobody uses it (AGENTS.md, DEVLOG). Messaging state i
 It deletes:
 
 - keys `contact-grant/*`, `contact-delivery-receipt/*`, `contact-author-day/*`, `contact-name/*`, `collection/*`;
-- `message/*`, `message-usage/*` and `message-receipt/*` for peer messages, i.e. records without verified app-message provenance;
+- `message/*`, `message-usage/*` and `message-receipt/*` for rows that are **positively peer rows**: rows with no `appNotification` provenance, or whose provenance is not a v1 app admission for this account (the `purpose` is not `bindle-app-notification-admission-v1`, or its `owner`/`id` do not match the row). See "App-shaped rows" below;
 - `conversation/{room,history,outbox}/*`;
 - `link-audience/*`, `link-gc-cursor/*`;
 - incoming-index and search rows of peer types;
@@ -228,8 +278,14 @@ It keeps:
 - `contact-key/*` (identity public keys, moved to the identity registry in slice C0);
 - the signing and encryption keys;
 - `tag-labels`;
-- app-message records, which the activity cutover handles;
+- app-message records, which the activity cutover handles; since 2026-10-26 they live in `app-message/*` and `app-message-usage/*` (§2.8.2), which the reset never touches;
 - notification, billing and lifecycle state.
+
+**Its own verify-and-move pass (review F2, 2026-10-27, provisional).** The reset never gates on the `migration/app-messages-v1` marker. That marker records only that one earlier pass reached the end of `message/`. Rows can land in `message/` after it: a warm restore of a shelved account brings archived rows back (the restore clears the marker when it restores `message/` rows), and rolled-back code can write app rows there. Inside the reset step, before deleting anything, the reset runs a full `app-messages-v1` verify-and-move pass over `message/` to the end. It then deletes only what that pass left behind and classified as peer rows.
+
+**App-shaped rows (review F3, 2026-10-27, provisional).** A genuine app row fails verification after a signing-key rotation that drops its `kid` from `APP_NOTIFICATION_PUBLIC_JWKS`, after an `APP_ORIGIN` change (issuer mismatch), or when old keys are dropped from the published set (a set of more than 8 keys is rejected outright, and then nothing moves at all). The reset therefore never deletes a row that has `purpose === 'bindle-app-notification-admission-v1'` and matching `owner`/`id` but does not verify, for example because of an unknown `kid` or issuer. Such rows are held in place and reported for operator review: the reset counts them, records each ID in its report and does not write its marker over them unreviewed. `app-messages-v1` already counts them per account in `migration/app-messages-v1-diag` (`unverifiedAppShaped`, from the last full pass), so an operator can see them before the cut.
+
+**Release gate before BB-CUT.** Keep every retired app-notification signing `kid` in `APP_NOTIFICATION_PUBLIC_JWKS` until BB-CUT has run on every account, and keep `APP_ORIGIN` unchanged. Rotate at most 7 times before the cut, so the set stays within its 8-key bound. Any account with a non-zero `unverifiedAppShaped` count must be reviewed before the reset runs on it.
 
 Storage-usage counters are recomputed. The step writes its marker last, so a crash resumes. Lifecycle erase and export switch from the old enumeration to the new one **per account**, keyed on this marker, so an account not yet reset never escapes erase (review S-19). Blocks and erase tombstones are deleted with everything else, which is acceptable only because no production users exist. Dev and test databases are simply recreated. The developer contact link is reissued through the developer's BindleBox occupant.
 

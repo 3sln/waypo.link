@@ -1,6 +1,6 @@
 import {systemBadge} from '../identity/system-bootstrap.mjs';
 import {StorageError} from '../storage/policy.mjs';
-import {key,canonical} from '../messaging/store.mjs';
+import {key,canonical} from '../core/records.mjs';
 import {BILLING_STATE_KEY,entitlementFromState} from '../billing/catalog.mjs';
 import {UUID} from '../core/primitives.mjs';
 import {developerPolicy,evaluateRegisteredPolicy} from '../links/policies.mjs';
@@ -37,9 +37,16 @@ export async function cleanupDailyDeveloperGrants(controller,owner,now=Date.now(
  let cleaned=0;for(const [path,grant]of rows){if(cleaned>=50)break;if(grant.owner!==owner||grant.internalKind!=='developer-contact/v1'||grant.claims.exp*1000>now)continue;await controller.metadata.transaction(async tx=>{const current=await tx.get(path);if(current?.internalKind!=='developer-contact/v1'||current.owner!==owner||current.id!==grant.id||current.claims.exp*1000>now)return;await tx.delete(path);await tx.delete(`contact-name/${grant.id}`);await tx.delete(`contact-url/${grant.id}`);if(typeof current.internalPointer==='string'&&current.internalPointer.startsWith('developer-contact/v1/')){const pointer=await tx.get(current.internalPointer);if(pointer?.version===1&&pointer.owner===owner&&pointer.grantId===current.id)await tx.delete(current.internalPointer);}});cleaned++;}
  return cleaned;
 }
+/** BB-CUT switch (messaging extraction prep, 2026-10-26). `legacy` (default): the core contact grant below.
+ * `occupant`: the link the developer account's messaging-ingress occupant (Parley) issued through the links contract with
+ * the developer policy (account/links.mjs `developerOccupantLink`); the console hands it off as a `send-message` intent
+ * to the sender's own messaging app. Config, not a flag: it selects a deployment's route, not a per-account rollout. */
+export const DEVELOPER_CONTACT_MODES=Object.freeze(['legacy','occupant']);
+export const developerContactMode=config=>config?.DEVELOPER_CONTACT_MODE==='occupant'?'occupant':'legacy';
 // Runs on the developer account outside its gate; creation and renewal take the gate.
 // A revoked link stays revoked (no silent re-creation); a link near expiry is renewed.
 export async function developerContactLink(controller,owner,handle,now=Date.now()){
+ if(developerContactMode(controller.config)==='occupant')return controller.developerOccupantLink(owner);
  const pointer='developer-contact/v2',current=async()=>{const record=await controller.metadata.get(pointer);return record?.version===2&&UUID.test(record.grantId)?await controller.metadata.get(key('contact-grant',record.grantId)):null;};
  let grant=await current();
  if(grant&&!grant.active)return {available:false,reason:'contact-unavailable'};
@@ -64,6 +71,11 @@ export async function developerContactRoutes({path,request,env,owner,accountHand
  if(recipient?.status!=='active'||!badge||badge.role!=='developer'||badge.handle!==recipientHandle)return json({available:false,reason:'developer-unavailable'});
  const receiver=accountHandle(env,recipient.id),link=await receiver.developerContactLink(recipient.id,recipient.handle);
  if(!link.available)return json({available:false,reason:link.reason??'contact-unavailable'});
+ // Occupant mode: eligibility under the same bounded policy reuse, then a `send-message` intent handoff in the console.
+ if(link.mode==='occupant'){
+  const decision=await receiver.developerLinkDecide(recipient.id,link.jti,{issuer:env.APP_ORIGIN,subject:owner.account.id});
+  return json({available:true,mode:'occupant',intent:'send-message',url:link.url,expiresAt:link.expiresAt,policy:link.policy,recipientBadge:badge,eligibility:{state:decision.state,...decision.reason?{reason:decision.reason}:{},...decision.tier?{tier:decision.tier}:{}}});
+ }
  // Eligibility is the link's own host policy, reused within its bounded window.
  const decision=await receiver.linkAudienceDecide(recipient.id,link.grantId,{issuer:env.APP_ORIGIN,subject:owner.account.id});
  return json({available:true,url:link.url,expiresAt:link.expiresAt,policy:link.policy,recipientBadge:badge,eligibility:{state:decision.state,...decision.reason?{reason:decision.reason}:{},...decision.tier?{tier:decision.tier}:{}}});

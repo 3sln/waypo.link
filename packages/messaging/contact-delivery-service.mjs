@@ -16,6 +16,7 @@ import { fail, key, boundedString } from './store.mjs';
 import { contactIntake } from './tag-policy.mjs';
 import { validTagIds, validIntakeTagIds, initialTags, addTag, applyRules } from './tags.mjs';
 import { ownerRules } from './messages.mjs';
+import { storedItems } from '../activity/app-messages.mjs';
 import { validateContent } from './content.mjs';
 import { validateEnvelope, checkBody, verifyAuthor, payloadDigest, signAdmission, DELIVERY_LIMITS } from './contact-delivery.mjs';
 
@@ -83,7 +84,9 @@ export class ContactDeliveryService {
     const used = daily ?? grant;
     if (used.messagesUsed + 1 > grant.claims.maxMessages || used.bytesUsed + body.byteLength > grant.claims.maxBytes) fail('quota_exceeded');
     const usage = await tx.get(key('message-usage', grant.owner)) || { bytes: 0, messages: 0 };
-    if (usage.bytes + body.byteLength > this.maxStoredBytes || usage.messages + 1 > this.maxStoredMessages) fail('account_quota_exceeded');
+    // The account caps cover both item families (review F5); `usage` stays the legacy counter commit() writes.
+    const stored = await storedItems(tx, grant.owner, usage);
+    if (stored.bytes + body.byteLength > this.maxStoredBytes || stored.messages + 1 > this.maxStoredMessages) fail('account_quota_exceeded');
     return { grant, d, now, r, receiptKey, intake, policyTags, deliveryTags, daily, dayKey, usage };
   }
   /** Read-only pre-admission check: every refusal commit() would give for this delivery, without writes. Adapters

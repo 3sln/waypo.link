@@ -7,7 +7,7 @@ export const ORIGIN='https://3sln.example',DOMAIN='3sln.example',AUTHSERV='mx.3s
 export const OWNER='b0b00000-0000-4000-8000-000000000002',OTHER='ca401000-0000-4000-8000-000000000003';
 export const PRINCIPAL={issuer:ORIGIN,subject:OWNER,identityURI:`${ORIGIN}/identity/${OWNER}`};
 export const RESOURCE=`https://hub.box.example/bindle/mailbox/${OWNER}`;
-export const CONFIG=Object.freeze({EMAIL_BRIDGE_ENABLED:'true',BINDLEBOX_ENABLED:'true',APP_ORIGIN:ORIGIN,EMAIL_BRIDGE_AUTHSERV_ID:AUTHSERV,EMAIL_BRIDGE_AUTHSERV_STRIPS:'true'});
+export const CONFIG=Object.freeze({EMAIL_BRIDGE_ENABLED:'true',APP_ORIGIN:ORIGIN,EMAIL_BRIDGE_AUTHSERV_ID:AUTHSERV,EMAIL_BRIDGE_AUTHSERV_STRIPS:'true'});
 const enc=new TextEncoder();
 
 /** RFC 5322 bytes. `auth` adds the receiver's Authentication-Results; `headers` are extra raw header lines. */

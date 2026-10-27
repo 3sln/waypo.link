@@ -4,6 +4,8 @@ Status: digest, written 2026-10-24 at HEAD a38bfed. It covers DEVLOG.md from "20
 
 A second update, at HEAD 6bbae45, adds everything after "2026-10-24 — Pending sign-off digest": "2026-10-24 — UI quality pass 3 (browser probe round 3)"; "2026-10-24 — Scalability fixes round 2 (producer, conversations, retention totals, tombstones, directory)" and its review follow-ups; "2026-10-24 — ORG-12d support adjudication" and its review follow-ups and wargame 4 admin items; and "2026-10-24 — Operator and lifecycle wargame fixes" and its review follow-ups. The new items are ID-11, OB-45 to OB-52, MC-9, AP-15, AP-16, UI-8 to UI-11 and OL-7 to OL-17, plus new unverified external assumptions at the end.
 
+A third update, at HEAD b09140b, adds everything after "2026-10-24 — Operator and lifecycle wargame fixes" that was not yet covered: "2026-10-24 — Break-glass and ownership outbox scaling"; "2026-10-24 — ORG-10a-c relations core (flags off)", "2026-10-24 — ORG-10d/e entity certificates and relation events (flags off)" and "2026-10-26 — ORG-10f/g relations routes and console (flags off)", with their review follow-ups; "2026-10-24 — Spec/implementation drift audit"; "2026-10-26 — Test reliability fixes"; "2026-10-26 — RTC signaling extension design"; and "2026-10-26 — Beam removed from core" with its review follow-ups. The new items are OB-53 to OB-70, MC-11 to MC-15, RTC-1 to RTC-17, AMD-X1, AMD-R1 to AMD-R6 and OL-18 to OL-20. A new section, "Open scope questions (core-scope audit 2026-10-26)", lists four owner questions (SQ-1 to SQ-4), and new unverified external assumptions are added at the end. MC-10 and AP-17, added by hand between the second and third updates, are the drift audit's findings 3 and 2. Three entries join the highest-impact list: RTC-6, AMD-X1 and SQ-1. Some earlier items now carry a dated update note (MC-1, MC-8).
+
 How to read this file:
 
 - [DEVLOG.md](../../DEVLOG.md) is the source of record. This file only summarises it, and where the two differ, DEVLOG wins. Sign-offs go on the DEVLOG entry's `Reviewer / Date / Outcome` line, not here.
@@ -30,6 +32,9 @@ These items reverse an earlier stated position, carry legal or compliance weight
 12. **OB-28 — ORG-10 RL-2: any admin establishes relations.** There is no owner approval, elevation or delay, which is a governance call.
 13. **AP-15 — RR1-M7 privacy deviation: per-object app markers plus a pointer index.** Together they effectively make a per-app file record, which the RR1-M7 privacy position was meant to avoid. The DEVLOG says it is not approval of an exception.
 14. **OB-45 — Operator key custody residual.** Operator assertion keys are held by the admin service, but the admin service and the account objects share one deployment and one secret environment, so the separation is logical, not a hard trust boundary. Production needs a key custody review.
+15. **RTC-6 — Cross-user calls are relay-only by default.** Cross-entity sessions use the `relay` IP policy, and with hosted relay off they need an owner opt-in to connect directly, so cross-user calls do not work until the opt-in or a funded relay exists (RTC-7).
+16. **AMD-X1 — Bound consumer options in the extension system.** A proposed change to the extension system itself (a `bind` slot member in `crit`, `options` on slot requests, per-consumer approved values recorded in the grant). The rest of the RTC design depends on it.
+17. **SQ-1 — Confirm the irreversible BB-CUT message-data reset.** The only irreversible step in the roadmap: all existing local messages, contacts, conversations and blocks would be discarded when legacy messaging leaves core.
 
 ## Pricing and billing
 
@@ -857,6 +862,197 @@ Source for every item below: "2026-10-24 — ORG-12d support adjudication", incl
 - Safe alternative: none recorded.
 - Owner: ___
 
+### ORG-10 relations implementation (ORG-10a to ORG-10g)
+
+Source for every item below: "2026-10-24 — ORG-10a-c relations core (flags off)", "2026-10-24 — ORG-10d/e entity certificates and relation events (flags off)" and "2026-10-26 — ORG-10f/g relations routes and console (flags off)", including their review follow-ups, unless an item names another. This is the implementation of the design items above (OB-27 to OB-44). Everything is behind `ORG_RELATIONS_ENABLED` and `ORG_FOREIGN_RELATIONS_ENABLED` (class a, default off), on loopback hosts of several organizations. No foreign transport exists. Every item is a coordinator decision or reading, not signed off.
+
+**OB-53. Relation lifecycle readings that go beyond the spec or limit v1**
+- Decided: several readings of spec §9 were chosen to make the engine converge, and are flagged for spec review.
+- Value:
+  - when a counterpart ends a half, this side ends its matching half too, and a counterpart no longer recognized in a view is told "ended" for any half this side never held. This goes beyond §9.6's "for each half it held". The chaos suite needs it to converge when a grant event was lost before the end;
+  - an ended counterpart cannot be re-invited into the same instance: an ended half is final per (instance, pair), so a later relationship needs a new instance (M7, "to be confirmed against spec §9.9");
+  - v1 allows one counterpart relationship per pair per instance in a view (a second invitation is refused as `relation_counterpart_exists`), though an organization may hold several slots in an instance (L19);
+  - `relations.resume` is treated as widening (flag and step-up), although design §8b.10 lists it with the narrowing actions;
+  - an invitation or acceptance that would neither share nor receive is refused;
+  - there is no `artefact-store.mjs` kind registration and no `packages/links` registration; the growth table lives in `relationAdditive`.
+- Why: convergence under lost events, and the smallest change that keeps the consent rules.
+- Source: "ORG-10a-c relations core" (provisional decisions and readings; review M7, L19).
+- Safe alternative: none recorded.
+- Owner: ___
+
+**OB-54. Open invitations are withdrawn when the issuer or organization is no longer in good standing**
+- Decided: redeeming an invitation is refused uniformly (`invitation_invalid`) unless the inviting organization is `active` with no organization-level hold and the issuing admin is still an unheld live admin.
+- Value: scheduling deletion withdraws every open relation invitation. An issuing admin who is removed, leaves or is held has their open invitations withdrawn. An organization-level hold refuses redemption. A bounded per-commit hook (`commitHooks` in `packages/orgs/memberships.mjs`) does it, and the sweep finishes any remainder.
+- Why: an invitation was redeemable while the inviter was being deleted (review M1).
+- Source: "ORG-10a-c relations core" (review follow-up M1, labelled "Provisional decision (coordinator, unsigned)").
+- Safe alternative: none recorded.
+- Owner: ___
+
+**OB-55. Key refresh runs only for recognized counterparts (deviation from spec §9.9 step 3)**
+- Decided: `relations.ingest` and `relations.authorize` schedule a background key refresh for a missing key only for a sender recognized in the named instance. The spec says to schedule the refresh "exactly as for a non-counterpart".
+- Value:
+  - the runtime's background run drops a request-path (`claimed`) queue row of a sender recognized nowhere in the organization's view, without a fetch;
+  - the cold-key retry inbox buffers an event only for a claimed sender that is a counterpart (any state but ended) in the named instance: at most 8 rows per sender, 64 in all, five retries and 5 minutes' retention, 32 KiB each. The answer is the same 202 either way;
+  - the DEVLOG flags it for spec review. It also departs from the last clause of invariant C7 in design §8b.10.
+- Why: strangers could fill the inbox and starve the counterpart refresh (review R3-L1). On this host a refresh is a local read, so nothing reaches an issuer.
+- Must be revisited **before ORG-11**: once foreign issuers are fetched, a fetch made only for counterparts would reveal them to the claimed issuer.
+- Source: "ORG-10f/g relations routes and console" (review follow-up R3-L1).
+- Safe alternative: the earlier engine policy refreshed for any claimed sender, which matches the spec and starved the counterpart refresh behind strangers' rows.
+- Owner: ___
+
+**OB-56. Counterpart key cache of 300 s**
+- Decided: a revoked or rotated counterpart certification key stops verifying within about 300 s.
+- Value:
+  - `KEY_CACHE_MS` drops from 1 h to 300 s, refreshed at half-life, so the bound is about 300 s plus at most one background run (design §8b.4's key-revocation bound);
+  - at most 128 refreshes per alarm run, and a cursor over `rel/cp/` (1,024 rows a run, then it wraps) so every counterpart is reached;
+  - key-cache rows not refreshed for a whole cache period are pruned;
+  - ended counterpart records are kept, because an ended pair is final per instance.
+- Why: to match the revocation bound. Same-host refreshes are local reads, so the cost is a bounded number of reads per alarm run. Foreign issuers will make each refresh a fetch (see OB-55).
+- Source: "ORG-10f/g relations routes and console" (review follow-up R3-L4).
+- Safe alternative: none recorded; 1 h was the earlier value.
+- Owner: ___
+
+**OB-57. Entity certificate readings and wire extensions**
+- Decided: the entity certificate profile makes several readings of spec §9.5 and §9.9, flagged for spec review.
+- Value:
+  - `scope` is an optional top-level member, although §9.5 says "exactly these members";
+  - a prefix scope is checked as given and fails closed: a call naming neither a `key` nor a `prefix` inside it is refused, and presign is refused;
+  - write-capable methods are everything outside a read list (get, list, read, status, describe, capabilities, head, subscribe, unsubscribe), until a `writeCapable` port takes contract metadata;
+  - organization-context certificates carry `actor:{client}` only, with methods = application ∩ edge;
+  - an optional `replaces` member on entry resources (the earlier resource ID) is a **provisional wire extension**. The grantee keeps an import id only when the grantor marks a one-for-one replacement with it, and any other change of resource mints a new id, so member grants never carry over to a different resource;
+  - the `aep` baseline is taken from `counterparts.resolve().aep` at activation, and a first sighting with no baseline is recorded without a hold.
+- Why: the spec tables did not cover these cases.
+- Source: "ORG-10d/e entity certificates and relation events" (provisional decisions and readings; review follow-up L5).
+- Safe alternative: none recorded.
+- Owner: ___
+
+**OB-58. RL-4 holds: what a hold allows, and the 72 h residual**
+- Decided: policy details of holds on a counterpart's authority reset.
+- Value:
+  - under a write-only hold (an attested move) widening events are still honoured and only write-capable calls are refused. Under a full hold nothing widening is;
+  - imports from a held counterpart are marked and stay certifiable;
+  - while the grantor is fully held, `relations.certify` drops write-capable methods and keeps reads, and refuses if nothing readable is left (L6);
+  - `relations.confirm-counterpart` is a widening action (flag, unheld admin, fresh step-up, billing active) and is bound to exactly the held `aep`;
+  - confirming a hold restarts the generation floor of every mirror of that counterpart's halves at 0 (an end stays final);
+  - **residual:** the write-only hold on an attested move releases automatically after 72 h. A thief who makes an attested move with a stolen current recovery file, and is not noticed by an admin within 72 h, regains write access through the edges.
+- Why: the DEVLOG calls the residual "the user's RL-4 trade-off to confirm".
+- Source: "ORG-10d/e entity certificates and relation events" (provisional decisions; review follow-ups L1, L6; residual).
+- Safe alternative: none recorded.
+- Owner: ___
+
+**OB-59. Introductions: freshness, rate and expiry**
+- Decided: `relations.introduce` (RL-12) receipt rules.
+- Value: an introduction whose statement is older than 300 s at receipt is dropped, and the proposer introduces again. Anti-entropy does not re-send introductions. Receivers deduplicate per (instance, proposer, slot, candidate), allow 10 a day per proposer, share the 256-item inbound bound, drop muted proposers silently, record nothing while the flag is off, and expire items after 30 days. The sweep prunes day counters older than today and `rel/introduced/*` records older than 30 days.
+- Why: outbox retries must not carry stale statements.
+- Source: "ORG-10d/e entity certificates and relation events"; its review follow-up L7.
+- Safe alternative: none recorded.
+- Owner: ___
+
+**OB-60. Lifecycle effects on relations (billing, deletion, unreachable counterparts, own move)**
+- Decided: how organization lifecycle states act on relations (design §8b.6).
+- Value:
+  - `read-only` refuses write-capable methods and widening. `export-only` suspends outgoing grants with cause `billing`, and `active` restores exactly those with a new generation;
+  - deletion: the pre-purge leaves every instance and stops certification. `relations.purge-ready` reports ready when the instance counter is zero, the cursor is exhausted, and the final events are delivered or 72 h have passed. A configured `ORGANIZATION_PURGE` is held until then;
+  - delivery failures are never treated as revocation. After 30 days an unreachable counterpart is flagged on the console and every admin is told once;
+  - the organization's own move (RL-10) suspends outgoing grants with cause `moved`. `relations.resume` refuses them (`relation_rebind_required`) and `relations.rebind` (widening) re-binds from the destination pool;
+  - a key compromise gives every outgoing grant half a new generation;
+  - left participations are deleted 30 days after leaving, with their counterpart records, imports and mirrors.
+- Why: design §8b.6 and the review fixes (M1, L2).
+- Source: "ORG-10d/e entity certificates and relation events"; "ORG-10f/g relations routes and console" (adapter gate 5).
+- Safe alternative: none recorded. Production purge is still an injected integration, not a verified executor.
+- Owner: ___
+
+**OB-61. Holder public keys are stored on sessions and access records**
+- Decided: verified DPoP proofs supply `{kty,crv,x,y}` to sessions and access records, so DPoP and member tokens can issue relay certificates. Refresh retains or backfills the public key. No private key material is stored.
+- Value: Bearer-only access without a certified holder stays unavailable for relay imports. A relay token whose session key is unknown reports the import `unavailable`. The member-access holder JWK is kept only when its thumbprint equals the token's `jkt`.
+- Why: entity certificates bind the holder key, and federation tokens had stored only a thumbprint.
+- Source: "ORG-10f/g relations routes and console" (adapter gate 4; review R3-L3); "ORG-10d/e entity certificates and relation events".
+- Safe alternative: none recorded.
+- Owner: ___
+
+**OB-62. Relation upgrade is a replacement-instance invitation**
+- Decided: a newer additive full pin issues a replacement-instance invitation through the existing consent and acceptance machinery. Previous edges stay unchanged until an admin ends them. This is the design's "upgrade, or a new instance" alternative, **not** normative same-instance per-edge migration.
+- Value: tests use a synthetic newer version; the shipped catalogue has none. Same-instance upgrades and their dedicated activity queue are unimplemented, and design §8b says so.
+- Why: the engine had no upgrade operation and events carry no per-edge pin migrations.
+- Source: "ORG-10f/g relations routes and console" (provisional decisions).
+- Safe alternative: same-instance per-edge migration (the design's normative route, unimplemented).
+- Owner: ___
+
+**OB-63. Shipped relation catalogue and inspection-only export**
+- Decided: the console ships four relation pins on reserved `relations.3sln.example` URLs (share, group, supply, accounting engagement), version 1, publisher explicitly unverified. URL selection resolves only those pins. Export is a paged inspection export of whitelisted relation records, excluding sessions, proofs and key caches. It is not an authority-restoring import.
+- Value: arbitrary document fetch and cross-provider transport remain ORG-11. Participation restoration and foreign interoperability remain ORG-11b/c. English and Spanish strings were added to `packages/i18n/catalogues.mjs`.
+- Why: the `.example` domains keep examples reserved until publication authority is agreed.
+- Source: "ORG-10f/g relations routes and console" (provisional decisions).
+- Safe alternative: none recorded.
+- Owner: ___
+
+**OB-64. Relations with the flags off: what still works**
+- Decided: narrowing is never flag-gated, and ingest stays ungated for existing edges.
+- Value: signed inbound revocation, narrowing, leaving and paged admin export stay reachable with both flags off. Widening, including `relations.confirm-counterpart` and `relations.resume`, needs the flag, a fresh step-up and an unheld admin. While `ORG_RELATIONS_ENABLED` is off, widening events are dropped and narrowing still applies. Offers are not recorded while the flag is off (L16). Unknown public targets answer uniformly. `relations.v1` is declared only for an explicitly mounted foreign transport, so no adapter advertises it on flags alone.
+- Why: existing edges must be revocable, and a counterpart may resume them while the flag is off.
+- Source: "ORG-10a-c relations core" (left open L16); "ORG-10f/g relations routes and console" (adapter gate 6; review R3-L3).
+- Safe alternative: none recorded.
+- Owner: ___
+
+**OB-65. Relation work deferred, and production gates added**
+- Decided: these are not built, and the gates are recorded for later.
+- Value:
+  - not built: the entity-certificate status endpoint (the write age rule applies alone), brokered tokens for integration-hosted grantor resources, failure rate limits on `relations.authorize`, doorbell forwarding and the `packages/events` `entity` reader, same-instance upgrades, export import (ORG-11b), cross-provider transport (ORG-11a);
+  - the sweep's per-family scans were bounded to 256 rows without a cursor until the tick scheduled them; ORG-10e's `relations.tick` now schedules it;
+  - gates added to design §8b.10: ORG-10f adapters take the sending organization only from verified evidence; the storage adapter must receive the composed scope (production gate 3, done locally in ORG-10f); the RL-4 hold and invariant C8 must exist before relations are enabled for any organization (implemented locally in ORG-10e).
+- Why: scope control, and no production verification is inferred from local tests.
+- Source: "ORG-10a-c relations core" (review follow-ups); "ORG-10d/e entity certificates and relation events" (not in this pass); "ORG-10f/g relations routes and console".
+- Safe alternative: none recorded.
+- Owner: ___
+
+### Break-glass and ownership outbox scaling
+
+Source for every item below: "2026-10-24 — Break-glass and ownership outbox scaling", including its review follow-ups. Local adapter behaviour, behind the organization and break-glass flags. Probes are local.
+
+**OB-66. Hinted admins are now the longest-tenured**
+- Decided: when more than 14 admins are eligible, the admins hinted for a break-glass claim are the longest-tenured, instead of the first by principal key. Who is eligible does not change.
+- Value: `eligibleAdmins` reads the provider's unbounded index up to `since − 30 days`, oldest first, and stops at `HINTS+2` rows (hints go to at most 16 people, and quorum needs two eligible admins). `quorumMet` stops at the second eligible signer. Every candidate row is still checked with the unchanged `eligibleAdmin`/`memberPowers` predicates.
+- Why: all-admin organizations at 5,000 admins were rejected with `organization_row_limit`. The DEVLOG lists the hint order as the one "visible difference".
+- Source: "Break-glass and ownership outbox scaling" (eligibility and quorum).
+- Safe alternative: none recorded. The prior order was by principal key.
+- Owner: ___
+
+**OB-67. Admin summary indexes and the one-time migration**
+- Decided: the roster maintains per-admin summaries and indexes in the same transaction as the membership rows (`packages/orgs/admin-index.mjs`).
+- Value: `org/admin/<key>` holds `{id, since, u, f}`, with `org/admin-unbounded/…` and `org/admin-from/…` indexes, an `admin-reindex` due entry at each grant expiry, and an `admins` count and layout `ix:3` on the record. Older layouts are rebuilt once by the next roster flush, at O(admins). The probe cost was 5,008 rows, 3.08 MB and 179 ms at 5,000 admins.
+- Why: probe cliff #1.
+- Not addressed: the claim row's `cosigners` and `adminDomains` still grow with distinct co-signers. `MembershipService#operator`/`hasOperator` and `requests()` still read every admin.
+- Source: "Break-glass and ownership outbox scaling" (admin summaries; not addressed).
+- Safe alternative: none recorded.
+- Owner: ___
+
+**OB-68. Recipient fan-out above 64 admins, delivered at least once**
+- Decided: a member outbox notice to at most 64 admins (`ORG_INLINE_ADMINS`) lists recipients inline. Above that it carries a cursor, and the drain delivers pages of at most 256 admins (`ORG_FANOUT_PAGE`), at most 8 pages per drain call.
+- Value: the snapshot is the admins after the queuing transaction, bounded by each admin's `since`. Removed admins are kept in `org/admin-ended/` until the last older fan-out ends. A failed page retries from its cursor, and a removal racing the read can be delivered twice but is never missed. **Port contract change:** consumers deduplicate by event id plus recipient (admin) id. `ORGANIZATION_MEMBER_EVENTS` is still unwired. The event row grows about 100 B per live page, roughly 2 KB at 5,000 admins.
+- Why: the all-admin notice wrote a row per admin in one commit.
+- Source: "Break-glass and ownership outbox scaling" (recipient fan-out; review follow-up L3).
+- Safe alternative: none recorded. The earlier "nothing is duplicated" wording was corrected.
+- Owner: ___
+
+**OB-69. Ownership outbox rows: caps and migration**
+- Decided: each ownership effect is its own row (`org/effect/<id>`, `packages/orgs/ownership-effects.mjs`), and the record keeps a summary.
+- Value: critical effects are never refused, and only pending rows count toward the 256 cap. At most 128 done rows are kept, for 30 days, pruned at flush. Refund idempotency, the drain lease and the provider re-read are unchanged. A record with the old `ownershipOutbox` array migrates on its next commit, or a commit the drain makes first: pending rows plus the newest 128 done rows from the last 30 days.
+- Why: probe cliff #2. A 5,000-effect outbox had been one 2.5 MB record.
+- Source: "Break-glass and ownership outbox scaling" (ownership outbox rows).
+- Safe alternative: none recorded.
+- Owner: ___
+
+**OB-70. Break-glass review fixes: contest escalation and snapshot liveness**
+- Decided: three fixes to older break-glass behaviour.
+- Value:
+  - contest escalation is now a table transition, `contest-escalated` (T27, effective to effective), so chaos invariant I7 (one audit entry per transition) holds. I7 was not loosened;
+  - the start re-reads the owner's activity just before its commit and stores that time as `c.snapshotAt`. Liveness is `last >= snapshotAt`, so a sign-in between the snapshot read and the claim commit is not lost. Claims without `snapshotAt` keep the old rule;
+  - the L3 fan-out repeat fix is OB-68.
+- Why: chaos seeds 94, 128, 156 and 236 failed.
+- Source: "Break-glass and ownership outbox scaling" (review follow-ups L1, L2).
+- Safe alternative: none recorded.
+- Owner: ___
+
 ## Messaging and conversations
 
 **MC-1. Quarantine is silent; Beam exception left to the user**
@@ -962,6 +1158,50 @@ Source for every item below: "2026-10-24 — ORG-12d support adjudication", incl
 - Why: the two rules predate each other's revision; the drift audit kept the explicit S4 text and documented the adapter boundary instead of rewriting it.
 - Source: "Spec/implementation drift audit" (finding 3).
 - Safe alternative: treat signed contact targets as a named exception to the uniform-404 rule (keep 404), or restore 401 for them; either way, one spec should be updated to match.
+- Owner: ___
+
+**MC-11. Beam keys re-keyed with a read fallback, then dual-written for one release**
+- Decided: the generic contact-profile rows moved from `beam/` keys to neutral keys. For release v1 every write keeps both keys with one `updatedAt` stamp, the legacy row stays authoritative, and legacy rows are not deleted.
+- Value:
+  - the mapping is `profile` ← `beam/profile`, `contact-sharing/<grantId>` ← `beam/grant/`, `contact-redeemed/<grantId>` ← `beam/redeemed/`, `contact-redeemed-peer/<peer>/<grantId>` ← `beam/redeemed-peer/`, and `saved-contact/<linkOwner>` ← `beam/directory/`;
+  - every delete removes both rows, and revocation cleanup (`links/audience.mjs`) deletes both generations;
+  - the legacy row decides whether a row exists. Its content wins unless both rows are stamped and the neutral one is strictly newer. **Deviation from the coordinator's own wording:** an unstamped legacy row is never treated as older than a migrated copy, because it is the copy's source or a later rollback write;
+  - the alarm path keeps reconciling one slice per alarm after the marker, so rollback writes are still copied.
+- Why: "a newer row under the new key wins" was backwards for a rollback or mixed deployment with pre-removal code. A withdrawn disclosure could be silently re-enabled, and a second peer could bind the same link (review R1, Medium).
+- Source: "Beam removed from core" (decisions; review follow-up R1).
+- Safe alternative: none recorded. The first version of the decision (neutral keys win when newer) is the one review R1 replaced.
+- Owner: ___
+
+**MC-12. Contact `beamEnabled` dropped, not converted; Beam flags retired**
+- Decided: the per-contact `beamEnabled` setting is not copied to the new keys. Contact RTC configuration will be designed with RTC (RTC-4, AMD-R5).
+- Value: `BEAM_ENABLED`, `BEAM_TURN_ENABLED` and `BEAM_STUN_ENABLED` moved to `RETIRED_FLAGS` (`retiredOn 2026-10-26`) and stay in the lock fixture. The legacy sharing row keeps its stored `beamEnabled` during v1, so a rollback reads it unchanged.
+- Why: the DEVLOG records it as dropped, not converted, with contact RTC configuration left to the RTC design.
+- Source: "Beam removed from core" (decisions).
+- Safe alternative: none recorded.
+- Owner: ___
+
+**MC-13. Contact routes no longer require a current device session**
+- Decided: the device-session requirement, which only Beam needed, was removed from the contact routes. Other owner contact routes never required one. `PUT /api/contacts/{id}/beam` became `PUT /api/contacts/{id}/sharing` (body `{profileFields}` or `discloseProfile`), and the Beam RPCs were renamed (`beamContactRedeem` to `contactRedeem` and so on).
+- Value: the peer index is kept, with a bounded `peerBindings(owner, peer)` lookup that no route uses yet. It was Beam's permission lookup and could be dropped later.
+- Why: a device session had no purpose on contact routes once Beam left.
+- Source: "Beam removed from core" (decisions).
+- Safe alternative: none recorded.
+- Owner: ___
+
+**MC-14. `beam-retired-v1`: deletion of Beam data, and the deferred `beam-retired-v2`**
+- Decided: an idempotent account step (`packages/runtime/beam-retirement.mjs`, batches of 64) runs on warm and on the alarm. It copies generic rows forward without deleting them, and deletes `beam/offer/`, `beam/usage`, `beam/mailbox/`, `beam/invite/` and `beam/nearby/`. On the alarm path only, it first revokes unexpired TURN usernames within the batch budget. The marker `migration/beam-retired-v1` is written after a clean full cycle and stops only warm-path calls.
+- Value: `beam-retired-v2` is **not implemented**. After a release it would reconcile once more, delete the legacy rows, read only the neutral keys, and move the export contributors to them.
+- Why: the warm path never calls the TURN provider, so TURN revocation stays off the request path.
+- Source: "Beam removed from core" (decisions; review follow-ups, TURN revocation).
+- Safe alternative: keep the legacy rows indefinitely (current state until v2).
+- Owner: ___
+
+**MC-15. Account export gains contact-profile contributors; conflicting sharing bodies are refused**
+- Decided: `beam/` was excluded from export as transient, so the profile, saved contacts and sharing grants were missing. New contributors: `profile`, `contact-sharing`, `contact-redemptions` and `saved-contacts`.
+- Value: the encrypted link URL is not exported. `contact-redeemed-peer/` and `migration/` are excluded as derived. During v1 the contributors export the authoritative legacy rows, and neutral copies are listed as excluded forward copies. `profile` and `beam/profile` match only exactly. A sharing body with both `discloseProfile:false` and `profileFields` is refused (`contact_sharing_invalid`); a body is protective, and terms-exempt, only when it is well-formed and discloses no field.
+- Why: a fixed export gap, and a body that disclosed fields while classified as protective (review R3).
+- Source: "Beam removed from core" (decisions; review follow-ups R3, R4).
+- Safe alternative: none recorded.
 - Owner: ___
 
 ## App platform and AI budget
@@ -1126,6 +1366,202 @@ Source for every item below: "2026-10-24 — ORG-12d support adjudication", incl
 - Why: the organization side of removal was never implemented; the spec status now records the boundary.
 - Source: "Spec/implementation drift audit" (finding 2).
 - Safe alternative: keep it unsupported until built (current state).
+- Owner: ___
+
+### RTC signaling
+
+Source for every item below: "2026-10-26 — RTC signaling extension design", the [RTC signaling spec](../spec/rtc-signaling.md) and [design](../architecture/rtc-signaling.md) (revision 1, §9 and §18). This is design only: nothing is implemented, routed or tested, and one forked adversarial review found 7 High, 11 Medium and 6 Low issues, all applied. Every item is provisional, with a recommendation but no sign-off. Planned flags are `RTC_SIGNALING_ENABLED`, `RTC_FOREIGN_ENABLED` and `RTC_TICKETS_ENABLED` (class a, default off) and `RTC_TURN_ENABLED` (class b). The design lists release gates, among them sign-off of RTC-1 to RTC-17 and AMD-X1 and AMD-R1 to R6, an independent security review, a clean-room second provider and real-device WebRTC tests.
+
+**RTC-1. Shape on the extension system**
+- Decided: Recommended: adopt.
+- Value: a `features` entry (`rtc-signaling.v1`) for provider-to-provider traffic, an exclusive `rtc-signaling/v1` slot with a built-in non-brokerable occupant for apps, `rtc-purpose` artefacts, and an `rtc-ticket/v1` link type.
+- Why: It reuses every extension mechanism and adds no parallel one.
+- Source: "RTC signaling extension design" (design §9).
+- Safe alternative: none recorded. Design spec §16 rejects a new extension mechanism.
+- Owner: ___
+
+**RTC-2. AMD-X1 bound consumer options in extensions**
+- Decided: Recommended: adopt.
+- Value: a slot member `bind` (listed in `crit`), `options` on slot fragment requests, and a per-consumer approved value recorded in the grant. See AMD-X1.
+- Why: The application's purposes must be part of what the owner approves for it.
+- Source: "RTC signaling extension design" (design §9).
+- Safe alternative: one slot per purpose (rejected, spec §16).
+- Owner: ___
+
+**RTC-3. End-to-end message signatures by per-session leg keys**
+- Decided: Recommended: adopt.
+- Value: per-session leg keys, certified by the entity's issuer, sign every message, instead of provider-signed hop-by-hop events. Providers relay messages unchanged.
+- Why: It lets endpoints detect a peer provider rewriting DTLS fingerprints.
+- Source: "RTC signaling extension design" (design §9).
+- Safe alternative: provider-signed hop-by-hop events.
+- Owner: ___
+
+**RTC-4. Admission bases**
+- Decided: Recommended: adopt, and revisit relations after ORG-11.
+- Value: own entity, a link (a contact with RTC configuration, or a ticket), or an opt-in request policy (off by default). A relation basis is reserved.
+- Why: Admission needs a basis, and silent handling of blocks, mutes and quarantine.
+- Source: "RTC signaling extension design" (design §9).
+- Safe alternative: none recorded.
+- Owner: ___
+
+**RTC-5. No address before the claim**
+- Decided: Recommended: adopt.
+- Value: no address leaves a device before the first claim; SDP never carries candidates or addresses; an optional candidate-free offer may ride in the invite.
+- Why: IP privacy before the callee chooses to answer.
+- Source: "RTC signaling extension design" (design §9).
+- Safe alternative: none recorded.
+- Owner: ___
+
+**RTC-6. Cross-entity sessions are relay-only by default**
+- Decided: Recommended: adopt, with that consequence.
+- Value: the cross-entity default IP policy is `relay`; direct connection only by owner opt-in; own devices may default to direct. **With hosted relay off, cross-user calls need an explicit opt-in to connect directly.**.
+- Why: It stops a stranger learning a callee's address.
+- Source: "RTC signaling extension design" (design §9).
+- Safe alternative: none recorded. The design's trade-off is the opt-in itself.
+- Owner: ___
+
+**RTC-7. Each party funds its own relay**
+- Decided: Recommended: adopt.
+- Value: own `ice-relay/v1` occupants or an app relay; hosted relay stays off until budget enforcement exists.
+- Why: The relay-budget gate from the beaming architecture (externally enforced aggregate spend) is still unmet.
+- Source: "RTC signaling extension design" (design §9).
+- Safe alternative: none recorded.
+- Owner: ___
+
+**RTC-8. No ringing, busy or presence message in v1**
+- Decided: Recommended: adopt.
+- Value: decline only on user action.
+- Why: A ring or busy signal reveals presence.
+- Source: "RTC signaling extension design" (design §9).
+- Safe alternative: a per-contact "show that I'm being rung" opt-in, to reconsider later.
+- Owner: ___
+
+**RTC-9. Lifetimes**
+- Decided: Recommended: adopt.
+- Value: ring at most 120 s, session at most 24 h, leg certificate at most 900 s (issuer-declared, 120 to 900). 3sln.me issues 600 s. Review R7 lowered the certificate lifetime from 3,600 s to bound the revocation window.
+- Why: Bound replay and revocation windows.
+- Source: "RTC signaling extension design" (design §9).
+- Safe alternative: none recorded.
+- Owner: ___
+
+**RTC-10. Optional committed SAS profile**
+- Decided: Recommended: adopt as optional.
+- Value: 6 digits, optional.
+- Why: It detects provider substitution for users who want that.
+- Source: "RTC signaling extension design" (design §9).
+- Safe alternative: none recorded.
+- Owner: ___
+
+**RTC-11. Reference-host limits (spec §13 fixes only the kinds)**
+- Decided: Recommended: adopt as starting values and tune with load tests.
+- Value: per (caller, callee) 6 invites per 10 min; per caller principal 30 invites per hour across all entities; per (sending issuer, callee) 20 per hour and per (sending issuer, link parent) 60 per hour; per callee 4 ringing sessions and 60 invites per hour; 32 held requests per callee; per caller entity 8 open sessions and 60 `open` per hour; per leg 256 messages per minute.
+- Why: Abuse bounds.
+- Source: "RTC signaling extension design" (design §9).
+- Safe alternative: none recorded.
+- Owner: ___
+
+**RTC-12. Device delivery**
+- Decided: Recommended: adopt. Web Push delivery is unverified.
+- Value: long poll required; Web Push and integration doorbells optional; WebSocket deferred.
+- Why: A hibernating WebSocket profile is a likely later 3sln.me addition.
+- Source: "RTC signaling extension design" (design §9).
+- Safe alternative: none recorded.
+- Owner: ___
+
+**RTC-13. Multi-party is a non-goal**
+- Decided: Recommended: adopt.
+- Value: no group member in v1.
+- Why: Scope.
+- Source: "RTC signaling extension design" (design §9).
+- Safe alternative: none recorded.
+- Owner: ___
+
+**RTC-14. Beam leaves core and may return as a reference app**
+- Decided: Recommended: adopt.
+- Value: revised 2026-10-26: Beam code and routes were removed outright, without waiting for the app (see MC-11 to MC-15).
+- Why: User direction that app experiences belong in apps. Supersedes D048 (paid WebRTC beaming).
+- Source: "RTC signaling extension design" (design §9).
+- Safe alternative: none recorded.
+- Owner: ___
+
+**RTC-15. Retention**
+- Decided: Recommended: adopt.
+- Value: session records at most 24 h after end; missed list at most 30 days; no SDP or candidate retention.
+- Why: Privacy.
+- Source: "RTC signaling extension design" (design §9).
+- Safe alternative: none recorded.
+- Owner: ___
+
+**RTC-16. Core shows a portal ring notification only as a fallback**
+- Decided: Recommended: adopt.
+- Value: the application owns the call experience.
+- Why: App experiences stay out of core.
+- Source: "RTC signaling extension design" (design §9).
+- Safe alternative: none recorded.
+- Owner: ___
+
+**RTC-17. The caller's application origin is disclosed to the callee**
+- Decided: Recommended: adopt.
+- Value: `client.origin` is carried in the leg certificate.
+- Why: It lets callees judge which app is calling.
+- Source: "RTC signaling extension design" (design §9).
+- Safe alternative: omit it for caller privacy.
+- Owner: ___
+
+**AMD-X1. Bound consumer options (extensions §2.1, §2.2, §5.2; wire profile)**
+- Decided: Proposed, unsigned. It changes the extension system itself and is the one extension-system addition RTC needs. The four rules (spec §3.5): a slot member `bind` (a nonempty list of `options.consumer` names), which MUST be listed in `crit`, so a processor without AMD-X1 treats the slot as an ordinary fragment and the occupant refuses every bound operation; a slot fragment request carries `options` validated against `options.consumer`; the provider discloses the requested values at consent, records the approved subset per consumer (with `{version, digest}` per approved versioned line) and changes `bindle.grant` whenever they change, with widening needing `grant-more` and narrowing immediate; the occupant enforces the approved values on every invocation, never shared with other consumers.
+- Value: as stated.
+- Why: Slot consumer options live only in declarations, and slot atomic fields and scope selections are shared by every consumer, so an app's purposes could not be approved per app.
+- Source: "RTC signaling extension design" (spec §18).
+- Safe alternative: one slot per purpose (rejected in spec §16).
+- Owner: ___
+
+**AMD-R1. Certification key uses (organizations §3a.3; links §7.2 signature-domain table)**
+- Decided: Proposed, unsigned. Certification keys gain two uses, `bindle-rtc-leg-certificate+jwt` and `bindle-rtc-control+jwt`, and rows are added for both and for `bindle-rtc-message+jwt` (leg keys).
+- Value: as stated.
+- Why: `typ` separates the profiles so no verifier accepts one as another.
+- Source: "RTC signaling extension design" (spec §18).
+- Safe alternative: none recorded.
+- Owner: ___
+
+**AMD-R2. Feature table (protocol §2)**
+- Decided: Proposed, unsigned. Add `rtc-signaling.v1`.
+- Value: as stated.
+- Why: Provider discovery of the feature.
+- Source: "RTC signaling extension design" (spec §18).
+- Safe alternative: none recorded.
+- Owner: ___
+
+**AMD-R3. Doorbell event (integrations §6.2)**
+- Decided: Proposed, unsigned. Register the `rtc-ring/v1` event, payload exactly `{endpoint}`, so a confidential integration's server can wake its native app.
+- Value: as stated.
+- Why: An optional wake path for native apps.
+- Source: "RTC signaling extension design" (spec §18).
+- Safe alternative: none recorded; the doorbell is optional.
+- Owner: ___
+
+**AMD-R4. `rtc-purpose` artefact kind (artefacts §6.3)**
+- Decided: Proposed, unsigned. Register the kind and its growth table.
+- Value: as stated.
+- Why: Purposes are versioned artefacts.
+- Source: "RTC signaling extension design" (spec §18).
+- Safe alternative: none recorded.
+- Owner: ___
+
+**AMD-R5. `rtc-ticket/v1` link type, and contact-link RTC configuration (links)**
+- Decided: Proposed, unsigned. Register the link type, and give contact links owner-side RTC configuration beside intake configuration.
+- Value: as stated.
+- Why: Nearby pairing, call-me links and callbacks need bounded single-purpose capabilities.
+- Source: "RTC signaling extension design" (spec §18).
+- Safe alternative: admission by contact links only (rejected in spec §16).
+- Owner: ___
+
+**AMD-R6. Beaming superseded (beaming)**
+- Decided: Proposed, unsigned. Beam's signaling contract, relay rules and nearby invitations are superseded by the RTC spec; Beam's transfer experience may return as an application on the `file-transfer/v1` purpose. Applied early: Beam was removed from core on 2026-10-26 and beaming.md is a superseded stub.
+- Value: as stated.
+- Why: User direction on 2026-10-26.
+- Source: "RTC signaling extension design" (spec §18).
+- Safe alternative: none recorded.
 - Owner: ___
 
 ## Region, legal and compliance
@@ -1502,6 +1938,70 @@ Source for every item below: "2026-10-24 — ORG-12d support adjudication", incl
 - Safe alternative: none recorded.
 - Owner: ___
 
+**OL-18. Signed intent header `kid` with control characters is refused**
+- Decided: a signed intent header whose `kid` contains control characters, such as a newline, is refused as `intent_malformed`. The drift audit's read-only reproduction showed `packages/intents/format.mjs` accepting a newline, contrary to the links §3.1 profile that intents §3.3 inherits.
+- Value: attribution was still stripped, so no forged-attribution claim is made. The fix has a test in `tests/intents-kid-controls.test.mjs`. The audit found no other code defect and changed no code itself.
+- Why: finding 1 of the audit; the coordinator fixed it as a follow-up.
+- Source: "Spec/implementation drift audit" (finding 1; coordinator follow-up).
+- Safe alternative: none recorded.
+- Owner: ___
+
+**OL-19. Drift audit readings kept as they are**
+- Decided: two audit findings were deliberately left unchanged, and both rules stay recorded.
+- Value:
+  - **link authoring strictness (finding 4):** `packages/runtime/contact-links.mjs` rejects unrelated query parameters when authoring a link, with an explicit message, although links §2 rule 7 says they do not invalidate a link. Recipient verification still ignores them. The audit calls it a suspected sender-helper gap, not a reproduced admission failure;
+  - **moved-delegation exception (finding 5):** the 200 final-revoked response during a live redirect window follows the explicit portability §10 rule (`moved.mjs:74–76,101–106`) and is not established as a defect, despite tension with the general uniform-404 wording. After the window, ordinary uniform-404 handling applies;
+  - the other two findings (organization clean removal, contact-delivery 401 versus 404) are AP-17 and MC-10.
+- Why: the audit kept both as deliberate or explicit policy.
+- Source: "Spec/implementation drift audit" (findings 4 and 5; coordinator follow-up).
+- Safe alternative: for finding 4, loosen the sender helper to accept unrelated parameters. For finding 5, none recorded.
+- Owner: ___
+
+**OL-20. Test reliability fixes: new fixed bounds in tests**
+- Decided: test-only changes that keep assertions strict. Product code did not change, and no slot leak or deadline bug was found.
+- Value:
+  - the discovery contention tests wait for fetcher entry instead of a 10 ms sleep, and release their gates in `finally`;
+  - one cleanup hook closes adapters and connections before removing their directories, with bounded retries, because Node 24 skips later `after` hooks when an earlier one throws;
+  - the DX and export generation loops allow 1,000 steps (the old limit of 60 had no headroom) and stop on terminal states;
+  - clients and CLI children prefer IPv4; tests have 180 s timeouts and CLI children a 120 s hard kill;
+  - a historic 30-minute process was not ours and was neither inspected nor killed, so its trigger is unconfirmed.
+- Why: flaky and hanging tests. The full-suite green requirement was unmet in the concurrent relations scope at the time of the entry (since reported green by later entries).
+- Source: "Test reliability fixes".
+- Safe alternative: none recorded.
+- Owner: ___
+
+## Open scope questions (core-scope audit 2026-10-26)
+
+These are owner questions about what stays in the 3sln.me core now that app experiences, starting with Beam, are leaving it. They are questions, not decisions: nothing is proposed as adopted, and nothing is implemented because of them. DEVLOG records the first as an open gate ("BB-CUT awaits explicit user confirmation of the irreversible message data reset") and the second in "Beam removed from core" ("Whether they belong in core is a pending user decision"). The third and fourth come from the audit and are not recorded in a DEVLOG entry as of HEAD b09140b.
+
+**SQ-1. Confirm the irreversible BB-CUT message-data reset**
+- Question: confirm that when legacy messaging leaves core (BB-CUT, roadmap Wave 6), a `messaging-retired-v1` step discards all existing local messages, contacts, conversations and blocks instead of migrating them.
+- Context: it is the only irreversible step in the roadmap. `/api/collections` is deleted with it. The extraction plan and review S-19 accept dropped blocks "only because no production users exist". The commit should be tagged before cutover. Roadmap prerequisites look met locally, but that is uncertain. This is also item D1 in [open-items.md](open-items.md).
+- Source: [open-items.md](open-items.md) D1; [messaging-extraction.md](../architecture/messaging-extraction.md) §4; [implementation-roadmap.md](../architecture/implementation-roadmap.md) Wave 6; DEVLOG "Wave 5 committed and deployed as 4aa7b46".
+- Safe alternative: none recorded beyond migration, which the plan rejected in favour of reset.
+- Owner: ___
+
+**SQ-2. Saved contacts: a core address book, or a per-app concern?**
+- Question: should saved contacts be a core address book that apps (RTC calls, file transfer) can read through a contract, or belong to each app?
+- Context: `saved-contact/` rows and the contact profile, sharing and peer index (`packages/links/contact-profile.mjs`) were kept in core when Beam was removed ("stay for now"). RTC admission uses contact links with owner-side RTC configuration (RTC-4, AMD-R5), and RTC calls and file transfer would need to find a counterpart. The peer index has a bounded lookup no route uses yet (MC-13). Keeping them in core also makes the dual-write and export decisions (MC-11, MC-15) permanent in practice.
+- Source: "Beam removed from core" (kept and moved; decisions).
+- Safe alternative: the current state, saved contacts stay in core with no app contract.
+- Owner: ___
+
+**SQ-3. Does semantic search stay in core after messaging leaves?**
+- Question: should semantic search (Workers AI embeddings and Vectorize) stay in core once messaging leaves? Its corpus is mostly message text.
+- Context: `SEMANTIC_SEARCH_ENABLED` is a live flag with its own owner admission gate, share and budget (AP-1, AP-2). If the corpus leaves with messaging, core would keep a search stack with little to index, and the AI exposure figures in AP-1 and AP-2 would need review. If it stays, it needs a new corpus.
+- Source: raised by the core-scope audit; no DEVLOG entry records a decision. Budget context is in AP-1 and AP-2.
+- Safe alternative: none recorded.
+- Owner: ___
+
+**SQ-4. What should the core MCP and browser-automation tools expose?**
+- Question: once message collections are deleted, should the core MCP and browser-automation tools expose activity items, app-contributed callables, or nothing?
+- Context: the extraction plan turns the MCP `item_read`, `item_write` and `item_delete` tools into activity-item tools ("Core: activity") and says BindleBox MAY later expose its own MCP tools under its own grant. The MCP projection and journal rules (AP-5) and the class-b browser-automation switch (AP-7) concern the same tool surface. "App-contributed callables" would route through the app and extension machinery instead.
+- Source: [messaging-extraction.md](../architecture/messaging-extraction.md) (`packages/mcp/account.mjs` row); raised by the core-scope audit. Related: AP-5, AP-7.
+- Safe alternative: the extraction plan's recorded default, activity items.
+- Owner: ___
+
 ## Unverified external assumptions
 
 These need a real-provider check. Nothing below has been run against the live service.
@@ -1528,6 +2028,10 @@ These need a real-provider check. Nothing below has been run against the live se
 - **Email bridge `Authentication-Results` trust.** On Cloudflare no authserv-id is configured, so all mail is treated as unauthenticated. Source: "App-platform wargame fixes".
 - **Directory and federation interoperability.** Unverified: production directory egress, independent-provider conformance, client-metadata resolution by other providers, and real external portability providers. Sources: "Organizations phase A: ORG-0…"; "Portability: redirect end/retarget…".
 - **TURN relay budget.** `BEAM_RELAY_BUDGET.release` was an optional port with no implementation in the repo (removed with Beam on 2026-10-26; the RTC relay occupant still needs an enforceable relay budget). Source: "Messaging, search and deletion wargame fixes".
+- **RTC signaling, end to end.** Nothing in the RTC design is implemented or run. Unverified: a clean-room second provider interoperating over real HTTPS, real-device WebRTC on restrictive NATs and under mobile background and foreground suspension, Web Push delivery per platform (a stored subscription is not delivery), abuse load tests at the RTC-11 limits, a privacy review of retention and logs, terms stating RTC is not a telephony or emergency service, and an independent security review. Source: "RTC signaling extension design" (design §8.3).
+- **Foreign relation transport and issuer fetching.** Relations (ORG-10) run only between organizations on one local host. Cross-provider transport, issuer fetching and the effect of OB-55's recognized-only refresh on a real issuer are ORG-11 work and unverified. Source: "ORG-10a-c relations core"; "ORG-10f/g relations routes and console".
+- **Relation console and routes.** The Chromium and Firefox relation checks run against local fixtures. The built-shell checks use routed API fixtures, and WebKit was unavailable (four skips). Source: "ORG-10f/g relations routes and console".
+- **Rollback and mixed-version behaviour of the Beam re-key.** MC-11's dual-write was tested against simulated pre-removal writes, not a real mixed deployment, and TURN credential revocation was tested only against a local adapter. Source: "Beam removed from core".
 - **Worker CPU limits for index builds.** A single index over about 1M rows is projected at 3–4 s, and Worker CPU limits are unmeasured. Source: "Scalability fixes…".
 - **Round-2 scale probes are local.** The before/after probes use the real local SQLite adapter and count list-returned rows and read bytes, not physical SQL read counters. Wall times are not production throughput. Cold key-tombstone migration (12,800 kids) is unbounded, and its Worker CPU cost is unmeasured. Source: "Scalability fixes round 2…".
 - **Durable Object SQLite expression indexes.** The RR1-M7 conclusion rests on one local workerd (Miniflare, `useSQLite`) probe: an expression index worked on an ordinary DO SQL table and `_cf_KV` refused it (`SQLITE_AUTH`). It has not been run on deployed Durable Objects. Source: "Scalability fixes round 2…" (review follow-up 6).

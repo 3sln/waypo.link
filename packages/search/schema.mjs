@@ -1,4 +1,4 @@
-import { MAX_USER_TAGS, SYSTEM_TAGS } from '../messaging/tags.mjs';
+import { MAX_USER_TAGS, SYSTEM_TAGS } from '../core/tags.mjs';
 
 export class SearchFault extends Error {
   constructor(code) { super(code); this.name = 'SearchFault'; this.code = code; }

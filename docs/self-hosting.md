@@ -139,7 +139,9 @@ These switches now gate implemented local features. They default off without con
 | `BROKERING_ENABLED` (N) | `false` (off) | Brokered resource discovery, credentials and severance. |
 | `DEVICE_AUTHORIZATION_ENABLED` (N) | `false` (off) | App device authorization grant; separate from existing owner device sign-in. |
 | `ACTIVITY_V2_ENABLED` (N) | `false` (off) | Activity center v2. |
-| `BINDLEBOX_ENABLED` (N) | `false` (off) | BindleBox extraction and app cutover. |
+| `RTC_SIGNALING_ENABLED`, `RTC_FOREIGN_ENABLED`, `RTC_TICKETS_ENABLED` (N) | `false` (off) | Reserved for the proposed [RTC signaling](spec/rtc-signaling.md) extension (design: [rtc-signaling](architecture/rtc-signaling.md) §3.3). Only the wire validators, the `rtc-purpose` kind and bound consumer options (AMD-X1, behind `EXTENSIONS_ENABLED`) exist today; turning these on enables nothing yet. `RTC_SIGNALING_ENABLED` requires `EXTENSIONS_ENABLED` and `ARTEFACT_VERSIONS_ENABLED`; `RTC_FOREIGN_ENABLED` also requires `DIRECTORY_ENABLED`. |
+| `RTC_TURN_ENABLED` (N) | `false` (off) | Environment capability for the planned built-in relay occupant (RTC-f); requires `RTC_SIGNALING_ENABLED`. Not implemented; a new flag, not a rename of the retired `BEAM_TURN_ENABLED`. |
+| `LINKS_ENABLED` (N) | `false` (off) | Core links contract, key-delegation certificates and the messaging-address descriptor. Formerly `BINDLEBOX_ENABLED`, whose raw value is still read while `LINKS_ENABLED` is unset (until BB-CUT). The messaging app (Parley) reads its own `BINDLEBOX_ENABLED` in its own deployment. |
 
 ### Onboarding, administration and identities
 
@@ -152,6 +154,7 @@ These switches now gate implemented local features. They default off without con
 | `ADMIN_CLAIMS_ENABLED` | off | Shows claim-token onboarding when admin-minted claims exist, even without `ONBOARDING_ENABLED`. |
 | `SYSTEM_BOOTSTRAP_KEY` (N) | unset | Verifies system-identity invitations; also needs `RECOVERY_SIGNING_KEY` and a working setup channel. |
 | `DEVELOPER_CONTACT_HANDLE` | `ray` | Local handle the developer-contact link delivers to. Reference-service feature. |
+| `DEVELOPER_CONTACT_MODE` | `legacy` | `legacy` issues the core contact grant. `occupant` hands out the developer-policy link that the developer account's messaging-ingress occupant issued through the links contract, and the console opens it as a `send-message` intent. `occupant` needs `LINKS_ENABLED`. Provisional until BB-CUT. |
 | `DEVELOPER_CONTACT_ACTIVE_THRESHOLD` | `1500` | Active-owner count at or above which free owners lose developer contact. |
 | `DEVELOPER_CONTACT_POLICY` | built-in `.example` URI | Policy URI embedded in the developer-contact link. |
 | `CONVERSATION_PEER_ORIGINS` (N) | empty | Comma-separated origins allowed for conversation peers. |
@@ -208,7 +211,7 @@ Worker bindings: `ACCOUNTS`, `IDENTITIES`, `ABUSE`, `FEDERATION`, `MCP_AUTH`, `L
 
 ### Complete flag registry (2026-10-24)
 
-All 61 entries in `packages/flags/registry.mjs` are listed below. Class **a** is a targeted console rollout; **c** is a console switch with its declared dimensions; **b** is an environment capability (derived rows are computed by adapters). **Safe** is the registry fallback, not a deployment setting. For a/c flags, an unset environment delegates to the console and an absent record uses Safe; an explicit safe value kills the feature. Legacy unsafe environment values apply only before a console record exists and with a usable snapshot. Dependencies and service readiness can still refuse an enabled feature.
+All 62 entries in `packages/flags/registry.mjs` are listed below. Class **a** is a targeted console rollout; **c** is a console switch with its declared dimensions; **b** is an environment capability (derived rows are computed by adapters). **Safe** is the registry fallback, not a deployment setting. For a/c flags, an unset environment delegates to the console and an absent record uses Safe; an explicit safe value kills the feature. Legacy unsafe environment values apply only before a console record exists and with a usable snapshot. Dependencies and service readiness can still refuse an enabled feature.
 
 **Worker template** is the raw value in `wrangler.jsonc` (unset means no explicit value). **Node default** is the adapter's value without environment/config overrides or console records: a/c uses Safe; b uses the adapter environment parser. Derived capabilities depend on injected resources. Local signup additionally has a pre-console compatibility default in `packages/runtime/routes/shared.mjs`: with no signup record, local development may admit signup subject to its remaining gates. None of these values establishes production verification.
 
@@ -225,7 +228,7 @@ All 61 entries in `packages/flags/registry.mjs` are listed below. Class **a** is
 | `SUBJECT_DELETED_EVENTS_ENABLED` | a | false | unset | false |
 | `INCREMENTAL_AUTH_ENABLED` | a | false | false | false |
 | `EXTENSIONS_ENABLED` | a | false | false | false |
-| `BINDLEBOX_ENABLED` | a | false | false | false |
+| `LINKS_ENABLED` | a | false | false | false |
 | `EMAIL_BRIDGE_ENABLED` | a | false | false | false |
 | `SEMANTIC_SEARCH_ENABLED` | a | false | true | false |
 | `DEVICE_AUTHORIZATION_ENABLED` | a | false | false | false |
@@ -241,6 +244,9 @@ All 61 entries in `packages/flags/registry.mjs` are listed below. Class **a** is
 | `ORG_BREAK_GLASS_ENABLED` | a | false | unset | false |
 | `ORG_RELATIONS_ENABLED` | a | false | unset | false |
 | `ORG_FOREIGN_RELATIONS_ENABLED` | a | false | unset | false |
+| `RTC_SIGNALING_ENABLED` | a | false | unset | false |
+| `RTC_FOREIGN_ENABLED` | a | false | unset | false |
+| `RTC_TICKETS_ENABLED` | a | false | unset | false |
 | `SIGNUP_ENABLED` | c | false | true | false |
 | `PAID_SIGNUP_ENABLED` | c | false | true | false |
 | `WAITLIST_ENABLED` | c | false | true | false |
@@ -260,6 +266,7 @@ All 61 entries in `packages/flags/registry.mjs` are listed below. Class **a** is
 | `BILLING_ENABLED` | b | false | true | false |
 | `MAIL_ENABLED` | b | false | true | false |
 | `PUSH_ENABLED` | b | false | true | false |
+| `RTC_TURN_ENABLED` | b | false | unset | false |
 | `FEDERATION_REFRESH_ENABLED` | b | true | unset | true |
 | `BROWSER_AUTOMATION_ENABLED` | b | true | unset | true |
 | `FEDERATION_ENTRY_ENABLED` | b | false | unset | false |

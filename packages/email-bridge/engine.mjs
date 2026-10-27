@@ -52,11 +52,13 @@ const hex=async value=>[...new Uint8Array(await crypto.subtle.digest('SHA-256',n
 export const senderKey=address=>hex(`email-bridge-sender-v1\0${address.toLowerCase()}`);
 const domainKey=address=>hex(`email-bridge-domain-v1\0${address.slice(address.lastIndexOf('@')+1).toLowerCase()}`);
 
-/** Effective deployment switch: EMAIL_BRIDGE_ENABLED and BINDLEBOX_ENABLED, an exact HTTPS origin and a receiving domain. */
+/** Effective deployment switch: EMAIL_BRIDGE_ENABLED, an exact HTTPS origin and a receiving domain. No messaging-app
+ * flag is consulted (messaging extraction prep, 2026-10-26): delivery waits for any occupant of the public-message-intake
+ * slot, and mail is held while the slot is empty. */
 export function bridgeConfig(config={},owner){
  let origin=null;try{const u=new URL(config.APP_ORIGIN);if(u.protocol==='https:'&&u.origin===config.APP_ORIGIN)origin=u.origin;}catch{}
  const domain=String(config.EMAIL_BRIDGE_DOMAIN??(origin?new URL(origin).hostname:'')).toLowerCase();
- const enabled=(owner?siteEnabled(config,'EMAIL_BRIDGE_ENABLED',{subject:{kind:'account',owner}}):siteGlobal(config,'EMAIL_BRIDGE_ENABLED'))&&(owner?siteEnabled(config,'BINDLEBOX_ENABLED',{subject:{kind:'account',owner}}):siteGlobal(config,'BINDLEBOX_ENABLED'))&&!!origin&&/^[a-z0-9.-]+\.[a-z]{2,}$/.test(domain);
+ const enabled=(owner?siteEnabled(config,'EMAIL_BRIDGE_ENABLED',{subject:{kind:'account',owner}}):siteGlobal(config,'EMAIL_BRIDGE_ENABLED'))&&!!origin&&/^[a-z0-9.-]+\.[a-z]{2,}$/.test(domain);
  return {enabled,origin,domain,link:origin?`${origin}/`:null,// A configured authserv-id is honoured only with the operator's attestation that the receiving MTA removes
  // sender-supplied Authentication-Results bearing it (RFC 8601 §5; review EB-1). Cloudflare: leave both unset.
  authservId:flag(config.EMAIL_BRIDGE_AUTHSERV_STRIPS)&&typeof config.EMAIL_BRIDGE_AUTHSERV_ID==='string'&&/^[A-Za-z0-9.-]{1,253}$/.test(config.EMAIL_BRIDGE_AUTHSERV_ID)?config.EMAIL_BRIDGE_AUTHSERV_ID:null};
@@ -72,7 +74,7 @@ export async function deliveryTx(owner,fingerprint){
 // ---- Catalogue and composition ----
 const row=(placement,summary)=>Object.freeze({placement,summary});
 export const PROVIDERS=Object.freeze({
- config:row('both','Frozen deployment configuration; EMAIL_BRIDGE_ENABLED and BINDLEBOX_ENABLED decide everything.'),
+ config:row('both','Frozen deployment configuration; EMAIL_BRIDGE_ENABLED decides everything; slot occupancy decides delivery.'),
  clock:row('both','{now()} in epoch milliseconds.'),
  random:row('both','{uuid()}.'),
  audit:row('both','{record(entry)}; never records input.'),

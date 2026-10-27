@@ -82,6 +82,15 @@ test('byte, aggregate account and collection revocation limits are live', async 
   await rejects(() => g.receive('x'), 'unauthorized');
 });
 
+test('review F5: the aggregate account caps count app messages too', async () => {
+  const { appMessageUsageKey } = await import('../packages/activity/app-messages.mjs');
+  const g = await fixture(); g.messages.maxStoredBytes = 10; g.messages.maxStoredMessages = 3;
+  await g.store.transaction(tx => tx.set(appMessageUsageKey(g.owner), { bytes: 6, messages: 1 }));
+  await g.receive('1234'); await rejects(() => g.receive('a'), 'account_quota_exceeded');
+  await g.store.transaction(tx => tx.set(appMessageUsageKey(g.owner), { bytes: 0, messages: 2 }));
+  await rejects(() => g.receive('b'), 'account_quota_exceeded');
+});
+
 test('key retirement and expiration invalidate even otherwise valid signatures', async () => {
   const f = await fixture(); await f.tokens.revokeKey(f.owner, 'key-1'); await rejects(() => f.receive(), 'unauthorized');
   const g = await fixture(); g.advance(8 * 86400000); await rejects(() => g.receive(), 'unauthorized');

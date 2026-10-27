@@ -46,8 +46,10 @@ function evaluator(ctx,snapshot,env,options){
   if(state.state==='kill'||state.state==='invalid')return done(decision(f.safe,'env-kill'));
   for(const dep of f.requires){const result=run(dep,global||f.dependencyMode==='global',source,fallingBack);if(result.value===getFlag(dep).safe)return done(decision(f.safe,`dependency:${dep}`));}
   if(f.capabilities?.includes('billing-configuration')&&!billingConfigured(env))return done(decision(f.safe,'dependency:billing-configuration'));
-  // A quarantined record (L5) is unreadable for this flag only: it follows the outage policy, never legacy env.
-  if(!source||source.quarantined?.includes(name)){if(f.outage==='last-known'&&fallback&&!fallingBack){const result=run(name,global,fallback,true);return done(decision(result.value,'outage-last-known',{...result,reason:'outage-last-known',detailReason:result.reason}));}return done(decision(f.safe,'outage'));}
+  // A quarantined record (L5) is unreadable for this flag only: it follows the outage policy, never legacy env. A
+  // renamed flag without its own record whose retired name (envAlias) is quarantined is treated the same way, so a
+  // console kill or narrowing stored under the old name is never widened by the old env name (review F1).
+  if(!source||source.quarantined?.includes(name)||!record&&f.envAlias&&source.quarantined?.includes(f.envAlias)){if(f.outage==='last-known'&&fallback&&!fallingBack){const result=run(name,global,fallback,true);return done(decision(result.value,'outage-last-known',{...result,reason:'outage-last-known',detailReason:result.reason}));}return done(decision(f.safe,'outage'));}
   if(!record)return done(decision(state.state==='force-on-legacy'?state.value:f.safe,state.state==='force-on-legacy'?'legacy-env':'no-record'));
   if(!record.on)return done(decision(f.safe,'console-off'));
   if(global)return done(decision(record.onValue,'global'));

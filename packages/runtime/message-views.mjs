@@ -1,5 +1,5 @@
 import {StorageError} from '../storage/policy.mjs';
-import {validTagIds as validTagList,escapeLegacyTag,CLASSIFICATIONS} from '../messaging/tags.mjs';
+import {validTagIds as validTagList,escapeLegacyTag,CLASSIFICATIONS} from '../core/tags.mjs';
 import {canonical,isUUIDv4} from '../core/primitives.mjs';
 const invalid=()=>{throw new StorageError('invalid_view','Choose a valid bounded View filter.');};
 const plain=v=>v!==null&&typeof v==='object'&&Object.getPrototypeOf(v)===Object.prototype;

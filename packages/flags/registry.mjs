@@ -2,7 +2,8 @@
  * FF-1 registry contract (host behaviour, not protocol). FLAGS[name] is immutable:
  * {name,class,type,safe,onValue,dimensions,requires,risk,outage,gates,gateReferences,
  * experiment,stateful,retainExisting,placement,client,narrowOnly,derived,envDefault,
- * envDefaults,envParse}. requires are flag names; dependencyMode may select global.
+ * envDefaults,envParse,envAlias}. requires are flag names; dependencyMode may select global.
+ * envAlias is a retired flag name whose raw env value is read when this name is unset (rename compatibility).
  * envDefault is the raw Worker default; envDefaults.node pins adapter differences.
  * gates are release-status IDs; gateReferences point at the unsigned release ledger.
  * Experiment metric names are server-side event names, never arbitrary client input.
@@ -26,8 +27,12 @@ const rows=[
  ['SUBJECT_DELETED_EVENTS_ENABLED','a','G',{risk:'crit',requires:['INTEGRATIONS_ENABLED'],envParse:'boolean'}],
  ['INCREMENTAL_AUTH_ENABLED','a','G A S P C',{risk:'crit',requires:['FEDERATION_ENABLED'],stateful:true,retainExisting:false,retentionReason:'Pending requests and grants live in federation stores; no account-local predicate.',envParse:'boolean'}],
  ['EXTENSIONS_ENABLED','a','G A C',{stateful:true,envParse:'boolean'}],
- ['BINDLEBOX_ENABLED','a','G A S P',{stateful:true,envParse:'boolean'}],
- ['EMAIL_BRIDGE_ENABLED','a','G A S P',{risk:'crit',requires:['BINDLEBOX_ENABLED'],stateful:true,retainExisting:false,retentionReason:'Holding queues and opt-in live in the external email-bridge store; no account-local predicate.',envParse:'boolean'}],
+ // Core links contract, key-delegation certificates and the messaging-address descriptor (messaging extraction prep,
+ // 2026-10-26). Formerly BINDLEBOX_ENABLED, which named the separate messaging app; that name is retired below and its
+ // raw env value is still honoured through envAlias until BB-CUT (the new name wins when both are set).
+ ['LINKS_ENABLED','a','G A S P',{stateful:true,envParse:'boolean',envAlias:'BINDLEBOX_ENABLED'}],
+ // The email bridge needs no messaging-app flag: delivery waits for any occupant of the public-message-intake slot.
+ ['EMAIL_BRIDGE_ENABLED','a','G A S P',{risk:'crit',stateful:true,retainExisting:false,retentionReason:'Holding queues and opt-in live in the external email-bridge store; no account-local predicate.',envParse:'boolean'}],
  ['SEMANTIC_SEARCH_ENABLED','a','G A S P V',{experiment:{metrics:['search_result_opened']},capabilities:['AI','SEARCH_VECTORS']}],
  ['DEVICE_AUTHORIZATION_ENABLED','a','G A C',{risk:'crit',stateful:true,retainExisting:false,retentionReason:'Linked requests and lineages live in identity stores; session authorization is independent of federation.',envParse:'boolean'}],
  ['APP_METADATA_DISCOVERY_ENABLED','a','G C',{}],
@@ -66,6 +71,15 @@ const rows=[
  // certificates and events. Also needs the foreign-issuer allowlist (R2-M6). Local narrowing is never gated; outbound
  // events stay queued while it is off. ORG-11 transport is not implemented, so foreign counterparts are refused today.
  ['ORG_FOREIGN_RELATIONS_ENABLED','a','G A',{risk:'crit',requires:['ORG_RELATIONS_ENABLED'],stateful:true,retainExisting:false,retentionReason:'A kill switch: cross-provider relation egress and foreign redemptions stop at once; local narrowing is never gated and outbound events stay queued.',envParse:'boolean'}],
+ // RTC signaling extension (docs/architecture/rtc-signaling.md §3.3; RTC-a/b/c implemented, flags off). Gates the slot
+ // occupant declaration, contract widening operations, owner widening settings and same-provider sessions (RTC-d).
+ // Narrowing (unregister, end, revoke, block, mute, revoke ticket, decline, send of end/cancel) is never gated.
+ ['RTC_SIGNALING_ENABLED','a','G A',{risk:'crit',requires:['EXTENSIONS_ENABLED','ARTEFACT_VERSIONS_ENABLED'],stateful:true,retainExisting:false,retentionReason:'Existing sessions, endpoints and approvals stay readable, narrowable and endable; only new registrations, sessions and widening stop. Narrowing is never gated.',envParse:'boolean'}],
+ // Kill switch for the rtc-signaling.v1 feature declaration, outbound foreign delivery and the /bindle/rtc endpoint
+ // (uniform 404 when off; RTC-e). Local narrowing and control statements to already-held sessions are never gated.
+ ['RTC_FOREIGN_ENABLED','a','G A',{risk:'crit',requires:['RTC_SIGNALING_ENABLED','DIRECTORY_ENABLED'],stateful:true,retainExisting:false,retentionReason:'A kill switch: cross-provider signaling stops at once; same-provider sessions and local narrowing are unaffected.',envParse:'boolean'}],
+ // Minting rtc-ticket links (RTC-d). Existing tickets keep admitting until they expire or are revoked; revoking is never gated.
+ ['RTC_TICKETS_ENABLED','a','G A',{risk:'crit',requires:['RTC_SIGNALING_ENABLED'],stateful:true,retainExisting:false,retentionReason:'Only minting stops; existing tickets admit until they expire, are exhausted or are revoked, and revocation is never gated.',envParse:'boolean'}],
  ['SIGNUP_ENABLED','c','G R',{risk:'crit',outage:'last-known'}],
  ['PAID_SIGNUP_ENABLED','c','G R',{risk:'crit',outage:'last-known',capabilities:['billing-configuration']}],
  ['WAITLIST_ENABLED','c','G R',{outage:'last-known'}],
@@ -85,6 +99,10 @@ const rows=[
  ['STORAGE_WRITE_ENABLED','b','',{safe:true,envParse:'boolean',envDefaults:{node:'true'}}],
  ['REDIRECT_EXTENSION_ENABLED','b','',{requires:['BILLING_ENABLED'],envParse:'boolean'}],
  ['BILLING_ENABLED','b','',{}],['MAIL_ENABLED','b','',{}],['PUSH_ENABLED','b','',{}],
+ // The built-in ice-relay occupant (RTC-f). A new flag: BEAM_TURN_ENABLED was retired with Beam, not renamed. Hosted relay
+ // stays off until an enforceable relay-spend budget gate is met (docs/architecture/rtc-signaling.md §8.3). It requires
+ // RTC_SIGNALING_ENABLED (review follow-up): relay credentials exist only for live legs of signaling sessions.
+ ['RTC_TURN_ENABLED','b','',{requires:['RTC_SIGNALING_ENABLED'],envParse:'boolean'}],
  ['FEDERATION_REFRESH_ENABLED','b','',{safe:true,envDefault:true,envParse:'not-false'}],
  // Browser automation kill switch (wargame 3). It shipped always-on, so it stays default on; env 'false' refuses tool
  // discovery, grants, prepare, confirm and invoke. Revoking a session grant is never gated (the safe direction).
@@ -97,7 +115,7 @@ const rows=[
  ['EMAIL_SETUP_AVAILABLE','b','',{derived:true,envParse:'true-only'}],['WAITLIST_MAIL_AVAILABLE','b','',{derived:true,envParse:'true-only'}]
 ];
 const freeze=value=>{if(value&&typeof value==='object'){for(const child of Object.values(value))freeze(child);Object.freeze(value);}return value;};
-export const FLAGS=freeze(Object.fromEntries(rows.map(([name,kind,dimensions,extra])=>[name,{name,class:kind,type:'boolean',safe:false,onValue:true,dimensions:dimensions?dimensions.split(' '):[],requires:[],risk:kind==='b'?null:'std',outage:kind==='b'?null:'safe',gates:[...common],gateReferences:[GATE_SOURCE],gateRevision:GATE_REVISION,experiment:null,stateful:false,retainExisting:false,placement:extra.stateful?'account':'edge',client:false,narrowOnly:false,derived:false,envDefault:undefined,envDefaults:{},envParse:'string',...extra,...extra.stateful?{retainExisting:extra.retainExisting??true,...extra.retainExisting===false?{}:{hasState:name}}:{}}])));
+export const FLAGS=freeze(Object.fromEntries(rows.map(([name,kind,dimensions,extra])=>[name,{name,class:kind,type:'boolean',safe:false,onValue:true,dimensions:dimensions?dimensions.split(' '):[],requires:[],risk:kind==='b'?null:'std',outage:kind==='b'?null:'safe',gates:[...common],gateReferences:[GATE_SOURCE],gateRevision:GATE_REVISION,experiment:null,stateful:false,retainExisting:false,placement:extra.stateful?'account':'edge',client:false,narrowOnly:false,derived:false,envDefault:undefined,envDefaults:{},envParse:'string',envAlias:null,...extra,...extra.stateful?{retainExisting:extra.retainExisting??true,...extra.retainExisting===false?{}:{hasState:name}}:{}}])));
 export const registry=FLAGS;
 export const FLAG_NAMES=Object.freeze(Object.keys(FLAGS));
 /** Wargame 4 L5: names removed from the registry. A deployment may still store a console record for one; that record is
@@ -107,7 +125,9 @@ export const RETIRED_FLAGS=freeze({
  // Beam (device-to-device file transfer) was removed from the 3sln.me core.
  BEAM_ENABLED:{retiredOn:'2026-10-26',reason:'Beam removed from the core'},
  BEAM_TURN_ENABLED:{retiredOn:'2026-10-26',reason:'Beam removed from the core'},
- BEAM_STUN_ENABLED:{retiredOn:'2026-10-26',reason:'Beam removed from the core'}
+ BEAM_STUN_ENABLED:{retiredOn:'2026-10-26',reason:'Beam removed from the core'},
+ // Peer messaging leaves the core (Parley). Core links and delegation moved to LINKS_ENABLED (env alias kept until BB-CUT).
+ BINDLEBOX_ENABLED:{retiredOn:'2026-10-26',reason:'Renamed to LINKS_ENABLED; the messaging app reads its own switch',replacement:'LINKS_ENABLED'}
 });
 export function getFlag(name){if(typeof name!=='string'||!Object.hasOwn(FLAGS,name))throw Object.assign(new TypeError(`Unknown flag: ${String(name)}`),{code:'unknown_flag'});return FLAGS[name];}
 export function validateRegistry(entries=FLAGS){

@@ -1,7 +1,9 @@
-import {submissionStatus} from '../messaging/submission-status.mjs';
+import {submissionStatus} from '../content/submission-status.mjs';
 import {StorageError} from '../storage/policy.mjs';
-import {key,digest,canonical,strictText} from '../messaging/store.mjs';
-import {renderMessage} from '../messaging/content.mjs';
+import {digest,canonical,strictText} from '../core/records.mjs';
+import {renderMessage} from '../content/render.mjs';
+// Local result revisions are accounted to the family that holds the item (app-message/ for v1 app messages).
+import {itemRecord,usageKeyOf} from '../activity/app-messages.mjs';
 const uuid=/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 const hash=/^[A-Za-z0-9_-]{43}$/;
 const fail=(code,message,status=400)=>{throw new StorageError(code,message,status);};
@@ -32,13 +34,14 @@ export async function messagePresentation(c,owner,id,input){
  const uploadId=crypto.randomUUID(),reservation=await c.quota.reserve(owner,{id:uploadId,bytes:bytes.length,blobRef:`messages/${owner}/${id}/presentations/${uploadId}`,kind:'message'});
  const revision={revision:p.revision+1,createdAt:Date.now(),disposition:input.disposition,...input.toast?{toast:input.toast}:{},...input.statusCode?{statusCode:input.statusCode}:{},...input.location?{location:input.location}:{},...input.mimeType?{mimeType:input.mimeType}:{},digest:await digest(crypto,bytes),size:bytes.length,requestId:input.requestId,fingerprint,blobRef:reservation.blobRef,...input.formDigest?{formDigest:input.formDigest}:{}};
  try{await c.blobs.put(reservation.blobRef,bytes,{httpMetadata:{contentType:'application/octet-stream'},storageAdmission:{clientId:'message-presentation'}});
-  await c.metadata.transaction(async tx=>{const current=await tx.get(key('message',owner,id));if(!current||current.owner!==owner)fail('not_found','Message not found.',404);const live=state(current);if(live.revision!==p.revision||current.blobRef!==record.blobRef)fail('presentation_conflict','Message presentation changed.',409);const usage=await tx.get(key('message-usage',owner));if(!usage||!Number.isSafeInteger(usage.bytes)||usage.bytes<0)fail('presentation_unavailable','Message storage accounting is unavailable.',503);await tx.put(key('message-usage',owner),{...usage,bytes:usage.bytes+bytes.length});const next={...current,presentationBytes:(current.presentationBytes||0)+bytes.length,presentation:{revision:revision.revision,sourceDigest,history:[...live.history,revision]}};if(new TextEncoder().encode(JSON.stringify(next)).length>MESSAGE_METADATA_MAX_BYTES)fail('presentation_limit','This message has reached its retained metadata limit.',429);await tx.put(key('message',owner,id),next);c.itemIndex?.upsert(next);await c.quota.commit(tx,uploadId);});
+  await c.metadata.transaction(async tx=>{const found=await itemRecord(k=>tx.get(k),owner,id),current=found?.record,path=found?.path;if(!current||current.owner!==owner)fail('not_found','Message not found.',404);const live=state(current);if(live.revision!==p.revision||current.blobRef!==record.blobRef)fail('presentation_conflict','Message presentation changed.',409);const usageKey=usageKeyOf(path,owner),usage=await tx.get(usageKey);if(!usage||!Number.isSafeInteger(usage.bytes)||usage.bytes<0)fail('presentation_unavailable','Message storage accounting is unavailable.',503);await tx.put(usageKey,{...usage,bytes:usage.bytes+bytes.length});const next={...current,presentationBytes:(current.presentationBytes||0)+bytes.length,presentation:{revision:revision.revision,sourceDigest,history:[...live.history,revision]}};if(new TextEncoder().encode(JSON.stringify(next)).length>MESSAGE_METADATA_MAX_BYTES)fail('presentation_limit','This message has reached its retained metadata limit.',429);await tx.put(path,next);c.itemIndex?.upsert(next);await c.quota.commit(tx,uploadId);});
   return {revision:revision.revision,requestId:input.requestId,digest:revision.digest,retained:true};
  }finally{await c.quota.release(uploadId);}
 }
-/** Called in the same local deletion transaction as the original message. */
-export async function erasePresentations(tx,record,queue){
+/** Called in the same local deletion transaction as the original message. `path` is the item's key, which selects the
+ * usage counter of its family (legacy messages or app messages). */
+export async function erasePresentations(tx,record,queue,path){
  const p=state(record);if(!p.revision)return;const total=p.history.reduce((n,r)=>n+r.size,0);if(total!==record.presentationBytes)fail('presentation_unavailable','Message history accounting is unavailable.',503);
- const usage=await tx.get(key('message-usage',record.owner));if(!usage||usage.bytes<total)fail('presentation_unavailable','Message history accounting is unavailable.',503);await tx.put(key('message-usage',record.owner),{...usage,bytes:usage.bytes-total});
+ const usageKey=usageKeyOf(path,record.owner),usage=await tx.get(usageKey);if(!usage||usage.bytes<total)fail('presentation_unavailable','Message history accounting is unavailable.',503);await tx.put(usageKey,{...usage,bytes:usage.bytes-total});
  for(const r of p.history){const path=`blob-garbage/${crypto.randomUUID()}`;await tx.put(path,r.blobRef);queue.push({key:path,blobRef:r.blobRef});}
 }

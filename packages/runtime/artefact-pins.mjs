@@ -16,11 +16,14 @@ import {systemClock,cryptoRandom,nullAudit} from '../app/providers.mjs';
 import {validateSchema,fail} from '../federation/schema.mjs';
 import {validateSlotManifest} from '../federation/extensions.mjs';
 import {validateBusManifest} from '../federation/event-buses.mjs';
+// RTC-b: reviewed rtc-purpose lines, registered like intent kinds (spec rtc-signaling §3.4; the kind stays out of DEFAULT_KINDS).
+import {REGISTERED_PURPOSES,RTC_PURPOSE_KIND,validatePurpose} from '../rtc/purposes.mjs';
 export const ARTEFACT_STORE='bindle-artefacts-v1';
 export function configuredArtefacts({config,store,clock=systemClock}){
  const documents=new Proxy({}, {get:(_,key)=>configuredArtefactDocuments(config)[key],getOwnPropertyDescriptor:(_,key)=>Object.hasOwn(configuredArtefactDocuments(config),key)?{configurable:true,enumerable:true,value:configuredArtefactDocuments(config)[key]}:undefined});
  const runtime=artefactRuntime({store,documents,flags:{for:ctx=>flagsFor(config,ctx)},clock,random:cryptoRandom,audit:nullAudit,validateBody:(body,{id,kind})=>{
   if(kind==='intent')return validateIntentKind(body).id===id;
+  if(kind===RTC_PURPOSE_KIND){try{return validatePurpose(body).id===id;}catch{return false;}}
   if(kind==='slot')return validateSlotManifest(body,id).status==='valid';
   if(kind==='bus')return validateBusManifest(body,id).status==='valid';
   if(kind==='rpc-contract')return body?.$id===id&&Object.keys(contractMethods(body)).length>0;
@@ -48,7 +51,7 @@ export function configuredArtefactDocuments(config){
  if(cached&&revision.every((value,i)=>value===cached.revision[i])){boundedSchemas(config);return cached.documents;}
  const contracts=typeof config.FEDERATION_CONTRACTS==='string'?JSON.parse(config.FEDERATION_CONTRACTS):config.FEDERATION_CONTRACTS??{},documents={};
  for(const body of [...CONSENT_CONTRACT_SCHEMAS,preferencesV2]){documents[body.$id]=body;documents[body.$id+'/envelope']={bindle_artefact:1,id:body.$id,kind:'rpc-contract',versions:[{version:1,prev:null,body}]};}
- for(const envelope of [sendMessageIntent,addContactIntent,openConversationIntent]){documents[envelope.id]=envelope;documents[envelope.id+'/envelope']=envelope;}
+ for(const envelope of [sendMessageIntent,addContactIntent,openConversationIntent,...REGISTERED_PURPOSES]){documents[envelope.id]=envelope;documents[envelope.id+'/envelope']=envelope;}
  const schemas=federationSchemas(config),liveSchemas=config.FEDERATION_SCHEMAS&&typeof config.FEDERATION_SCHEMAS==='object'?config.FEDERATION_SCHEMAS:null;
  if(liveSchemas){const builtins=federationSchemas({...config,FEDERATION_SCHEMAS:{}});for(const key of Object.keys(schemas))delete schemas[key];Object.assign(schemas,builtins);}
  const sources=[schemas,...liveSchemas?[liveSchemas]:[],contracts,documents];

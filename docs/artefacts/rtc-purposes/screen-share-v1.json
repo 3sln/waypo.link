@@ -1,0 +1,35 @@
+{
+  "bindle_artefact": 1,
+  "id": "https://spec.bindle.example/rtc-purposes/screen-share/v1",
+  "kind": "rtc-purpose",
+  "versions": [
+    {
+      "version": 1,
+      "prev": null,
+      "body": {
+        "id": "https://spec.bindle.example/rtc-purposes/screen-share/v1",
+        "title": {
+          "en": "Share a screen",
+          "es": "Compartir pantalla"
+        },
+        "summary": {
+          "en": "Shows your screen, with audio, to the person you connect with.",
+          "es": "Muestra tu pantalla, con audio, a la persona con la que te conectas."
+        },
+        "publisher": "https://spec.bindle.example",
+        "media": [
+          "audio",
+          "data",
+          "screen"
+        ],
+        "alert": true,
+        "parties": "any",
+        "auto_accept": "never",
+        "context": null,
+        "categories": [
+          "personal-data"
+        ]
+      }
+    }
+  ]
+}

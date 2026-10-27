@@ -1,6 +1,6 @@
 # Manifest extensions and slots — normative draft
 
-Status: **provisional draft, 2026-10-20, revision 2.** Revision 1 was wargamed by two independent reviewers (24 security and 22 interop findings). Revision 2 answers every finding; see the [extensibility review](../release/extensibility-review.md). Rationale, rejected alternatives and migration: [extensibility design](../architecture/extensibility-design.md). Human sign-off: reviewer ___ / date ___ / outcome ___. Track the decision in [DEVLOG](../../DEVLOG.md). Slot/declaration validation and pins, owner occupancy and generation-fenced connection integration are implemented locally (`packages/federation/extensions.mjs`, `packages/app/domains/connections.mjs`), behind `EXTENSIONS_ENABLED` and integration flags (default off). This does not establish full external-provider conformance or production verification.
+Status: **provisional draft, 2026-10-20, revision 2.** Revision 1 was wargamed by two independent reviewers (24 security and 22 interop findings). Revision 2 answers every finding; see the [extensibility review](../release/extensibility-review.md). Rationale, rejected alternatives and migration: [extensibility design](../architecture/extensibility-design.md). Human sign-off: reviewer ___ / date ___ / outcome ___. Track the decision in [DEVLOG](../../DEVLOG.md). Slot/declaration validation and pins, owner occupancy and generation-fenced connection integration are implemented locally (`packages/federation/extensions.mjs`, `packages/app/domains/connections.mjs`), behind `EXTENSIONS_ENABLED` and integration flags (default off). This does not establish full external-provider conformance or production verification. **AMD-X1** (bound consumer options: §2.1 `bind`, §2.2, §5.2, §13) was added on 2026-10-26 for the [RTC signaling](rtc-signaling.md) extension; it is **proposed, provisional (coordinator) and not signed off by the user**, and is implemented locally behind `EXTENSIONS_ENABLED`.
 
 This document extends [protocol §2–§4](protocol.md). It defines interoperability rules only: no user interface beyond the security disclosures it lists, and no SDK behavior. Identifiers under `https://spec.bindle.example/` are placeholders, not live authorities. MUST/SHOULD/MAY express draft requirements. §12 lists the amendments this draft needs in existing core documents. Those amendments are proposed (approved provisionally 2026-10-20) and applied to the core drafts; runtime work remains deferred to [EXT-X1](../architecture/implementation-roadmap.md#ext-x1-deferred-code-from-wave-0).
 
@@ -79,6 +79,7 @@ A slot manifest is a [preference fragment](protocol.md#3-fragments-and-preferenc
 | `consumers` | yes | Nonempty subset of `application` (apps may request grants on this slot) and `provider` (provider features may consume it). |
 | `options` | no | Declarative schemas, in the fragment field subset and possibly empty, for the `options` object of `occupant` and `consumer` declarations (§4). Absent: declarations carry no options. |
 | `supersedes` | no | Absent or `null`, or the identifier of an earlier slot on the **same origin** that this one replaces. Informational only (§7). |
+| `bind` | no | **AMD-X1, proposed and unsigned (§13).** A nonempty list of distinct names of `options.consumer` members whose values each consuming application states in its request and the owner approves per application. A slot using `bind` MUST list `"bind"` in `crit`. |
 
 A slot manifest MUST contain exactly one `resource` field, the one named by `field`. It MAY contain additional atomic fields. These are slot-wide owner settings shared by every consumer under ordinary fragment rules, and SHOULD relate to the role. The serialized document is at most 16 KiB.
 
@@ -95,7 +96,8 @@ A slot member is **valid** only if all of the following hold:
 - `any-error` satisfies §3.3;
 - `consumers` is a nonempty subset of the two known values;
 - the `options` schemas are valid;
-- `supersedes`, if non-null, is an HTTPS URL on the origin of `id` and differs from `id`.
+- `supersedes`, if non-null, is an HTTPS URL on the origin of `id` and differs from `id`;
+- `bind`, if present, is a nonempty list (at most 16) of distinct `options.consumer` member names, and `crit` lists `"bind"` (AMD-X1, §13).
 
 A slot member is **unrecognized** when `v` is unknown or a `crit` member is not understood.
 
@@ -251,6 +253,8 @@ A provider MAY report an *optional* slot request as `unavailable` without presen
 - the provider does not recognize the slot, or blocks it; or
 - the slot has no possible occupant at this provider for anyone: no built-in occupant is declared, and no integration declaring an occupant for it is permitted at this provider.
 
+**Bound options (AMD-X1, proposed and unsigned, §13).** When the slot has `bind`, the request also carries `options`, the values the application asks for; the owner approves them, or a subset, per application, and the occupant enforces the approved values.
+
 Otherwise the request is presented normally. The response MUST NOT reveal whether this owner has connected integrations, or has any occupants. The wire representation is core amendment C5. Clients treat a missing status as `declined`.
 
 ### 5.3 Provider consumers
@@ -340,6 +344,7 @@ Tests MUST cover:
 - **Provider roles:** provider-consumer enablement, disclosure, disable and revocation; built-in occupants never auto-assigned or preselected; provider declaration removal.
 - **Lifecycle:** slot manifest disappearance and digest change; same-origin superseded-slot migration without grant copying; blocked slots.
 - **Requests and support:** `unavailable` reported only from public facts; optional versus required unsupported slot requests; provider-only slots refused for applications; a provider without `extensions.v1` processing a slot fragment as an ordinary fragment.
+- **Bound options (AMD-X1):** a slot with `bind` treated as unrecognized by a processor without AMD-X1 (via `crit`); missing or invalid `options` refused; bound values disclosed at consent, approved as a subset, recorded per consumer and never shared with other consumers; a wider request needing a new approval; owner narrowing applied at once; for versioned artefact lines, only the approved version usable until additivity is verified.
 
 ## 12. Core amendments — proposed (approved provisionally 2026-10-20)
 
@@ -351,3 +356,26 @@ Tests MUST cover:
 | C4 | protocol §5 | "`rate_limited`, `temporarily_unavailable`, `forbidden`, `not_found` and `unsupported_*` MUST be returned only when no effect occurred." |
 | C5 | wire profile | Per-fragment request outcome in the token response and grant listing: `granted`, `declined`, `unsupported` or `unavailable`. A missing value means `declined`. |
 | C6 | protocol §2 | Add `extensions` to the declaration containers and their processing rules, and `extensions.v1` to the feature table. |
+
+## 13. Amendment AMD-X1 — bound consumer options (proposed, unsigned)
+
+Status: **proposed 2026-10-26 for [RTC signaling](rtc-signaling.md) §3.5, provisional (coordinator), not signed off by the user.** Decision RTC-2 in the [RTC design](../architecture/rtc-signaling.md#9-provisional-decisions); recorded in [DEVLOG](../../DEVLOG.md) (2026-10-26, "RTC-a/b/c validators, purposes and bound options"). Sign-off: reviewer ___ / date ___ / outcome ___.
+
+**Gap.** Some slots need a value per consuming application to be part of what the owner approves for that application (for RTC, the purposes an application may ring for). `options.consumer` values exist only in declarations, which confer no authority (§4.2), and atomic slot fields and scope selections are shared by every consumer of the field (§2.1).
+
+**Rules.**
+
+1. **Slot member.** `bind` is a nonempty list of names of `options.consumer` members (§2.1). A slot using `bind` MUST list `"bind"` in `crit`, so a processor without AMD-X1 treats the slot as unrecognized and processes it as an ordinary fragment (§2.2). The application then gets no binding, and the occupant refuses every bound operation.
+2. **Request.** A request for a slot fragment with `bind` carries `options`, an object validated against the bound `options.consumer` members. Missing or invalid `options` makes the request invalid for that fragment. A request for any other fragment MUST NOT carry `options`.
+3. **Consent and record.** The provider discloses the requested bound values at consent next to the methods, records the values the owner approves (the owner MAY approve a subset, and nothing is preselected) as part of that consumer's approval, and changes the approval's identity (`bindle.grant` for brokered credentials) whenever they change. Widening is a new approval (`grant-more`, [incremental authorization §4](incremental-authorization.md#4-grant-more)); narrowing by the owner is immediate. When a bound value is a reference to a versioned artefact line, the provider records, per approved line, the `{version, digest}` it resolved at consent. A later version may be used under that approval only after the provider verified additivity ([artefacts §7.2](artefacts.md#72-advancing-a-head)), and a version that adds disclosure is a widening. Until the line's kind and growth table are registered and signed, additivity is unverifiable ([artefacts §6.4](artefacts.md#64-unknown-kinds)) and only the approved version is usable.
+4. **Enforcement.** The occupant enforces the approved values on every invocation. Bound values are per consumer and never shared with other consumers of the slot field.
+
+**3sln.me implementation (local, behind `EXTENSIONS_ENABLED`, default off; not production-verified).** `packages/federation/extensions.mjs` validates `bind` and provides the pure request, approval, coverage, narrowing and version rules; `packages/federation/service.mjs` requires and validates `options` on bound fragment requests, pins bound artefact lines from provider-held reviewed references only (an unregistered line is refused, never fetched by URL), discloses them in the consent view, records `bound: {schema, values, versions, revision}` in the consumer's grant, refuses an already-approved shortcut for any wider request or changed version, and offers the owner `federation.narrow-bound-options` and the occupant-side `federation.bound-approval` read (system-only; it takes the verified token's subject, client and grant ids, never caller input). The shared consent kit shows each requested value with its facts and no preselection. Provisional readings, each pending sign-off:
+
+- `options` may carry only bound members; unbound consumer options remain declaration-only.
+- An invalid or missing `options` currently fails the whole authorization request (`invalid_request`), as other invalid fragment requests do here, rather than reporting that fragment alone `unsupported`.
+- The approval identity is the grant's `bound.revision`, changed on every approval and narrowing. No brokered occupant can fill the only bound slot so far (its contract is non-brokerable), so deriving a brokered `bindle.grant` from it is deferred.
+- Widening goes through a new consent; wiring bound values into `grant-more` deltas (including "already granted" labels on the entry page) is a follow-up. Until then an incremental `grant-more` for a fragment whose slot has `bind` is refused (`unsupported_fragment`, with a message pointing to a full authorization request), and the owner-shard commit refuses it too.
+- Independent review follow-ups (2026-10-27, provisional): the occupant read counts only the token's own grants (`grants` is required), in its epoch when given and, with connections mounted, only while the grant's connection is live; and a bound selection resubmitted from the "already approved" offer is re-checked against the live grants inside the approve transaction, so an owner narrowing between the offer and the click is never undone (the click fails `stale_consent` once and the owner reviews the request).
+- Owner narrowing applies to every active grant of that application for the fragment, so an older, wider grant cannot keep a value alive.
+- With `EXTENSIONS_ENABLED` turned off, a pending bound request can no longer be approved (`unsupported_fragment`).

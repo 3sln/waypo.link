@@ -4950,6 +4950,7 @@ Reviewer: ___ Date: ___ Outcome: ___
 - **Scope:** documentation only. No code changed and no tests were run.
 - **Update (same day):** the digest now covers ORG-10 relations (RL-1 to RL-17 and Q21, as OB-27 to OB-44) and AU-S6 (AP-12 to AP-14, plus the privacy.md "App storage summaries" bullet as RL-9), for 121 items in all. OB-11's passkey gap is marked closed in code: `organizationVerification` → `recoveryReissueBegin` `passkey_required`, and the identity-wargame2 test was re-run 1/1.
 - **Update 2 (same day, HEAD 6bbae45):** the digest now also covers UI quality pass 3, scalability fixes round 2, ORG-12d support adjudication and the operator/lifecycle wargame fixes, with their follow-ups: 27 new items (ID-11, OB-45 to OB-52, MC-9, AP-15, AP-16, UI-8 to UI-11, OL-7 to OL-17), 148 in all, two new highest-impact entries (AP-15, OB-45) and new unverified external assumptions. Documentation only; nothing signed off.
+- **Update 3 (2026-10-26, HEAD b09140b):** the digest now also covers break-glass and ownership outbox scaling, ORG-10a-g relations, the drift audit, test reliability fixes, the RTC signaling design and the Beam removal: 50 new items (OB-53 to OB-70, MC-11 to MC-15, RTC-1 to RTC-17, AMD-X1, AMD-R1 to AMD-R6, OL-18 to OL-20), 200 in all including the hand-added MC-10 and AP-17. It adds a section of four open scope questions (SQ-1 to SQ-4), three highest-impact entries (RTC-6, AMD-X1, SQ-1) and new unverified external assumptions. Documentation only; nothing signed off.
 
 Reviewer: ___ Date: ___ Outcome: ___
 
@@ -6139,5 +6140,270 @@ Reviewer: ___ Date: ___ Outcome: ___
 - `test:organizations`: **514 passed**.
 - Contact suites (`contact-profile`, `rtc-relay-credentials`, `links-wargame3`, `contact-quarantine-silence`, `engine-account-export`): **52 passed**.
 - `test:e2e`, `build:assets` and `check:worker` were not rerun; the follow-ups changed no web UI.
+
+Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-26 — RTC-a/b/c validators, purposes and bound options (flags off)
+
+**Implemented locally, provisional and unsigned.** First slices of the [RTC signaling](docs/spec/rtc-signaling.md) plan ([design](docs/architecture/rtc-signaling.md) §8.1): RTC-a (wire validators and codecs), RTC-b (the `rtc-purpose` kind) and RTC-c (AMD-X1, bound consumer options in the extension system). The four RTC flags exist and default off, and none gates code yet. Nothing is routed; there is no session engine, transport, relay, owner UI or reference app (RTC-d onward). No commit or deployment. Every decision and reading below is **provisional** (coordinator), not signed off by the user.
+
+**RTC-a (pure, no I/O):**
+- `packages/rtc/jws.mjs`: the links §3.1 profile shared by the three RTC JWS types (exact `{alg, kid, typ}` header, canonical segments, strict I-JSON, 64-byte ES256, received-bytes signature input).
+- `packages/rtc/messages.mjs`:
+  - `bindle-rtc-message+jwt` parse and verify (spec §6.1, §6.2), the §6.4 receipt window and the §7.3 sid comparison;
+  - the §6.3 SDP rules: CRLF, trickle, no candidate lines, unspecified `c=`/`a=rtcp`/`o=` addresses, `m=` kinds consistent with the invite's media, a strong fingerprint;
+  - the §6.3 candidate rules: RFC 8839 syntax, relay `raddr`, mDNS-only host cross-entity;
+  - the §10 IP-policy filter and the "no SDP or candidate before the claim" rule;
+  - the §8.1 batch codec and the §8.2 step 1 checks that need no fetch.
+- `packages/rtc/certificates.mjs`: leg certificates (§5.1: issuance clamped to the declared bound and the session end; verification against the issuer's active certification keys as held, with the identity URI the verifier resolved itself; renewal invariants) and control statements (§5.2).
+- `packages/rtc/tickets.mjs`: the `rtc-ticket/v1` meta payload, callback tickets, canonical basis links and `link_digest` matching. Minting, use counting and revocation stay in RTC-d.
+- `packages/rtc/extension.mjs`: the signaling and ice-relay slot manifests, the `rtc-signaling.v1` feature validator and the AMD-X1 bound-artefact table.
+
+**RTC-b:** `packages/rtc/purposes.mjs` validates purpose bodies (§3.4). It reuses the intents data-schema and disclosure validators for `context`, and adds the proposed growth table (AMD-R4), widening detection, invite checks (media, parties, context) and context projection. The four candidate lines are in `docs/artefacts/rtc-purposes/` and are registered as operator documents in `packages/runtime/artefact-pins.mjs`, following the intent-kind pattern; their digests are pinned by tests. Following the `relation` precedent, `rtc-purpose` is **not** in `DEFAULT_KINDS`: until its growth table is signed, only exactly pinned versions are usable, URL-only pins are refused (`artefact_unverifiable`) and heads never advance.
+
+**RTC-c (AMD-X1), behind `EXTENSIONS_ENABLED`:**
+- `packages/federation/extensions.mjs`: the `bind` slot member, which must be in `crit` and is unrecognized for a processor without AMD-X1. It also has the pure request, approval (subset), coverage, narrowing and version rules, and the occupant check.
+- `packages/federation/service.mjs`:
+  - requires valid `options` on bound fragment requests, and refuses `options` elsewhere;
+  - pins bound artefact lines from provider-held reviewed references only; an unregistered line is refused, never fetched by URL;
+  - shows them in the consent view;
+  - records `bound: {schema, values, versions, revision}` in that app's grant;
+  - refuses the already-approved shortcut for wider values or a changed version.
+  - New ngin operations: `federation.narrow-bound-options` (owner, immediate, every active grant of the app) and `federation.bound-approval` (occupant read; the union of the token's live grants). There is also `checkBound`.
+- `packages/federation/runtime.mjs` and the composition row in `packages/runtime/federation.mjs`.
+- The shared consent kit (`apps/web/src/ui/authorize-entry-consent.mjs`) lists each requested value with plain facts (title with the host of its id, media, ringing, parties, the context names shown before answering). Nothing is preselected, approval waits for the minimum, and only checked values are sent. Spanish strings are in `packages/i18n/authorize-catalogue.mjs`.
+- [extensions §13](docs/spec/extensions.md#13-amendment-amd-x1--bound-consumer-options-proposed-unsigned) now carries the amendment text, marked proposed and unsigned, with rows in §2.1, §2.2, §5.2 and §11. `packages/federation/schema.mjs` needed no change.
+
+**Flags:**
+- `RTC_SIGNALING_ENABLED` (a, G A, crit, stateful) requires `EXTENSIONS_ENABLED` and `ARTEFACT_VERSIONS_ENABLED`.
+- `RTC_FOREIGN_ENABLED` (a) requires `RTC_SIGNALING_ENABLED` and `DIRECTORY_ENABLED`.
+- `RTC_TICKETS_ENABLED` (a) requires `RTC_SIGNALING_ENABLED`.
+- `RTC_TURN_ENABLED` (b) is a new flag, not a rename of `BEAM_TURN_ENABLED`.
+- Also updated: the registry test (62 flags, 29 class a) with a dedicated RTC test, the name lock, feature-flags.md and self-hosting.md (the stale "61 entries" is now 62). The edits are additive beside the concurrent `LINKS_ENABLED` rename.
+
+**Provisional decisions and readings (reconciled in extensions §13 and design §8.1; none signed):**
+- The invite `offer` and accept `answer` are SDP strings; `to` is null for both `invite` and `cancel`; the invite's `ring_until` must also be after `iat`.
+- A srflx `raddr` is a host address, so cross-entity it must be unspecified, mDNS or absent (the spec states the rule only for relay and host candidates). Unknown candidate extension attributes are refused, since one could carry an address. Any weak (sha-1, md5) fingerprint invalidates an SDP. Outside `o=`, `c=` and `a=rtcp`, an `IN IP4/IP6` token or a dotted IPv4 literal anywhere in an SDP is refused (defence in depth).
+- A batch's messages must all share one (`iss`, `sub`, `aud`); duplicate carried links are refused.
+- Purpose `categories` must be a sorted subset of the six known values (stricter than incremental authorization's "unknown values are ignored"). The candidate purposes declare `personal-data`. Their English and Spanish copy is a placeholder for review.
+- AMD-X1 readings (extensions §13): `options` carries only bound members; an invalid bound request fails the whole authorization (`invalid_request`), as other invalid fragment requests do here; the approval identity is `bound.revision` (brokered `bindle.grant` derivation deferred, because the only bound slot is non-brokerable); widening is a new consent (`grant-more` deltas and "already granted" labels for bound values are a follow-up); narrowing reaches every active grant of that app; with `EXTENSIONS_ENABLED` off a pending bound request cannot be approved (`unsupported_fragment`).
+
+**Review:** this was a coordinator self-review, not independent sign-off. In a scratch copy of the tree I reverted each of 39 guards (SDP and candidate rules, policy, message bindings, batch step 1, certificate key status, identity, thumbprint, lifetime and skew, ticket bounds, purpose rules and registry validation, `bind`/`crit`, approval subset, narrowing, version use, prior-approval coverage and versions, smuggled options, unregistered lines, narrowing reach, the kill switch, consent no-preselection and minimum, and flag defaults). 38 made their suite fail. Two survivors were fixed by strengthening the tests: prior-approval coverage, now tested with a generic bound enum slot, and narrowing reach, now tested with two grants. The remaining survivor is equivalent: the purpose growth rule's "not added to `required`" clause is already enforced because `required` is a frozen array.
+
+**Verification (shared checkout; concurrent messaging-extraction work in flight; local evidence only):**
+- New suites: `rtc-messages` **12**, `rtc-certificates` **8**, `rtc-tickets` **4**, `rtc-purposes` **6**, `extensions-bound-options` **11**, `browser/consent-bound-options` **2** (added to `test:ui-state`); all pass.
+- `npm test` in the main checkout: **3,875 tests, 3,870 passed, 5 failed**. The failures are `contact-preview` (4) and `deletion-http` (1), which read the built shell. `.output/public` is incomplete because `npm run build:assets` currently fails in this checkout on the concurrent change `packages/messaging/tags.mjs` → `../core/tags.mjs` ("Unmapped public module"), which is not part of this work. In a fully built scratch copy those suites pass (13/13).
+- `npm test` on a scratch copy of HEAD b09140b plus only this work (registry hunks applied to HEAD's registry): **3,864 passed, 0 failed**.
+- `npm run test:worker`: **93 passed**. `npm run test:ui-state`: **490 passed** (488 plus the two consent-kit DOM tests).
+- `npm run build:assets` on the HEAD-plus-this-work copy: passed (public build `92ac2a21ae362d52d5a1`, 262 modules; islands `5304f30b1d12f7b48826`). It fails in the main checkout for the reason above.
+- `npm run test:consent` on that copy: **25 + 28 passed**, including the Playwright consent browser suite.
+- E2E on that copy: the CX-2 incremental consent e2e passed. The authorization-entry e2e cases (6 failed, 1 skipped) fail identically on a pristine HEAD scratch copy (`Failed to fetch` on `/api/oauth/entries`), so this is an environment limitation of scratch copies. The full `test:e2e` and `check:worker` were not run in the main checkout, because its asset build is blocked.
+
+Reviewer: ___ Date: ___ Outcome: ___
+
+### Review follow-ups (2026-10-27, independent security review; provisional, unsigned)
+
+An independent review of the uncommitted RTC-a/b/c work raised one medium finding (M1), seven low findings (L1–L8) and three informational items. All are fixed locally. Each confirmed proof-of-concept case is now a regression test. The spec changes are applied as **AMD-RV1** in [rtc-signaling](docs/spec/rtc-signaling.md) §5, §6.3, §10, §11.3 and §18, and the AMD-X1 readings are in [extensions §13](docs/spec/extensions.md#13-amendment-amd-x1--bound-consumer-options-proposed-unsigned). Every reading below is provisional (coordinator) and not signed off.
+
+**Media security (`packages/rtc/messages.mjs`):**
+- **M1.** Every `a=fingerprint` line in an SDP must carry the same (algorithm, value) pair, compared case-insensitively. A session-level versus media-level split can no longer make the SAS cover a different fingerprint from the one DTLS checks. An SDP whose only fingerprint is sha-384 or sha-512 is valid but gives no SAS input.
+- **L1.**
+  - `candidate`, `remote-candidates` and `end-of-candidates` lines are matched case-insensitively, and so are `IN IP4`/`IN IP6` tokens.
+  - The `o=` username and session-id must be `-` or digits, and the session version must be digits. Reading: Firefox writes `mozilla...THIS_IS_SDPARTA-…` as the username, so endpoints rewrite it to `-` before sending (it has no protocol effect). Recorded in the spec.
+  - `u=`, `e=` and `p=` lines are refused. This goes beyond the review, which named only `u=`.
+  - Outside the address fields and the fingerprint value, these are refused: an unanchored dotted run of four numbers, which catches a leading dot and five-number runs, and any run of hex digits, dots and colons with two or more colons, which is IPv6-like. A Chrome-style audio/video offer with real `extmap`, `fmtp` and `ssrc` lines still passes.
+- **L2.**
+  - In cross-entity sessions, srflx and relay addresses must be public. `nonPublicAddress` refuses unspecified, loopback, RFC 1918, RFC 6598, link-local, multicast and reserved IPv4. It also refuses unspecified, loopback, link-local, site-local, ULA and multicast IPv6, including IPv4-mapped, IPv4-compatible and NAT64 forms of a non-public IPv4 address. Documentation ranges are allowed, since they reveal nothing.
+  - Under `public`, a srflx `raddr` must be unspecified, mDNS or absent. Only own-entity `all` may reveal the host base address.
+  - An mDNS name must be a UUID followed by `.local`.
+  - The spec was less strict on all three points and is amended (AMD-RV1).
+
+**Signatures and keys:**
+- **L3** (`jws.mjs`). `parseRtcJws` refuses high-S ES256 signatures (s > n/2), and `signRtcJws` normalizes to low-S. Design §8.1 now states the RTC-d note: a reused `seq` has "the same content" only when its payload bytes are identical. A second signature over the same bytes is a duplicate, while a re-serialized payload with equal JSON is different content.
+- **L4** (`certificates.mjs`). `verifyControl` requires `expected.iss` and `expected.sub` (as well as `aud` and `sid`) and refuses when they are missing.
+- **L5** (`certificates.mjs`).
+  - Keys use the directory document's shape (`{kid, use, alg, jwk, state}`), and only `use: 'cert'` with `state: 'active'` (and `alg` ES256 when present) verifies. The old `status` member is no longer read.
+  - `certificationKey` also accepts a lookup function. `directoryCertificationKeys(directory, {issuer, subject, identity})` adapts `Directory.resolve({purpose: 'certification'})`, which matches only `cert` keys active in both the cached document and the pin.
+  - A `sig` key never verifies a leg certificate or control statement (R4-H1 preserved).
+
+**Bound options (`packages/federation`):**
+- **L6** (`service.mjs`).
+  - `federation.bound-approval` is system-only (`actor.kind === 'system'`; any other actor gets `forbidden`).
+  - `boundApproval` and `checkBound` require the verified token's `grants` (a nonempty array of at most 256 ids); there is no fallback to all of the consumer's grants. An optional `epoch` filter is applied, and with connections mounted a grant counts only while its connection is live, as in `priorApproval`.
+- **L7** (`incremental.mjs`, `incremental-ports.mjs`). `grant-more` for a fragment whose slot has `bind` is refused at admit with `unsupported_fragment` and the message "This access has options that need a full authorization request; incremental requests cannot add them yet." The owner-shard commit refuses it as a backstop.
+- **L8** (`service.mjs`). `beginEntryAuthorization` records the bound selections it offered as "already approved" (`request.priorBound`). In the approve transaction, an identical resubmission is approved only while a live grant covers it: active, same epoch, live connection, `boundCovers`, and the same recorded versions. Otherwise the call fails with `stale_consent` once and clears the offer. The entry page already falls back to the consent review on `stale_consent`, so the owner's explicit approval there is an ordinary new consent.
+
+**Informational items:**
+- `rtcBoundArtefacts(enabled)` in `packages/rtc/extension.mjs` makes RTC purpose references resolve only while `RTC_SIGNALING_ENABLED` is on; while it is off, a bound purpose request is refused. The composition in `packages/runtime/federation.mjs` uses it (one-line additive edit; `EXTENSIONS_ENABLED` still gates `bind`). Observed: in legacy env mode `siteGlobal` returns `RTC_SIGNALING_ENABLED='true'` even without its dependencies, the same as for other flags.
+- `RTC_TURN_ENABLED` now has `requires: ['RTC_SIGNALING_ENABLED']`, the same metadata as `REDIRECT_EXTENSION_ENABLED`. Class b env reads do not evaluate dependencies, so RTC-f must check both flags. Updated: the registry test, feature-flags.md, self-hosting.md and design §3.3/§8.1.
+- `principalValid` honours `allowLoopback`.
+
+**Verification (local evidence only):**
+- Suites in the main checkout:
+  - `rtc-messages` **16**, `rtc-certificates` **10**, `rtc-tickets` **5**, `rtc-purposes` **6**, `rtc-relay-credentials` **9**, `extensions-bound-options` **17**: all pass.
+  - Flags suites (`flags-*`, `metadata-discovery-flag`, `wargame4-flags`, `packages/runtime/account/flags.test.mjs`): **127/127**.
+  - Incremental, wave3b, artefacts, authorization-entry, consent and classifier suites: **248/248**.
+  - `test:worker` **93/93**; `test:ui-state` **490/490**.
+- The main checkout's `build:assets` still fails on the concurrent `packages/messaging/tags.mjs` → `../core/tags.mjs` ("Unmapped public module"). This was confirmed on an rsync copy, without building in the checkout itself. So full `npm test` ran on a scratch copy of HEAD b09140b plus only the RTC work. The RTC hunks were applied by hand to HEAD's registry, registry test, name lock and `packages/runtime/federation.mjs`. Results: `build:assets` passed (public `92ac2a21ae362d52d5a1`, islands `5304f30b1d12f7b48826`), and `npm test` gave **3,878 passed, 0 failed**.
+- Revert check: in a scratch copy, each of **34** guards was reverted one at a time. All 34 made their suite fail. The first pass had four survivors, and each was fixed by adding a test: the lower-case `IN IP` token, the commit backstop, the version comparison in the live re-check, and the composition gate.
+
+Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-26 — Messaging extraction prep (no reset)
+
+**Direction (user, 2026-10-20):** peer messaging leaves the core and becomes its own app (Parley). This entry covers only the preparation that needs no user decision.
+
+- **No data was reset and no legacy messaging was deleted.** BB-CUT, with its irreversible `messaging-retired-v1` reset, still needs the user's explicit confirmation ([open items](docs/release/open-items.md) D1).
+- Implemented locally; nothing is production-verified.
+- Every decision below is **provisional** (coordinator). None is signed off by the user.
+- The plan is updated in [messaging extraction](docs/architecture/messaging-extraction.md) §2.8.1, §2.8.2 and §4.
+
+**1. App-originated items have their own activity families.**
+- **Families.** `packages/activity/app-messages.mjs` defines `app-message/<owner>/<id>` and `app-message-usage/<owner>`. The record shape is unchanged: signed `appNotification` provenance, placement, tags, read state, presentation history, postbacks and `blobRef`. `createAppNotification` now writes only these families, never `message/` or `message-usage/`.
+- **`app-messages-v1`** (marker `migration/app-messages-v1`, plus a cursor):
+  - It moves an existing `message/` row only when the row's v1 admission attestation verifies against `APP_NOTIFICATION_PUBLIC_JWKS`, bound to issuer, owner and ID.
+  - Each move is one transaction that moves the record and adjusts both counters by `size + presentationBytes`.
+  - An existing target is never overwritten. A row whose provenance changed mid-pass is left for the next pass.
+  - Without a usable key set nothing moves and the cursor stays put.
+  - Unverifiable rows stay in `message/` as peer history, so the §4 reset treats them as peer records. This matches the activity-center rule that unverifiable legacy records are never promoted.
+  - **Scheduling.** The warm path runs one 64-row slice per call until the marker exists. The alarm path runs one slice per alarm even after the marker (a rollback to pre-move code could write app rows into `message/`), but reschedules itself only while the marker is missing. Like `beam-retired-v1`, it never fails a request.
+- **Readers of both families.**
+  - `MessagingService` read, update, `applyAutomatedTags`, delete and the unindexed list.
+  - Presentations (the counter follows the item's family) and postbacks (the path is re-resolved inside each transaction).
+  - Notification eligibility and `nextDue`.
+  - Search revisions and documents; the item-index and search backfills share one cursor across both families (`itemPage`).
+  - The retention scan, the storage quota (sum of both counters), shelving archive and restore, and the MCP item tools.
+  - The activity legacy adapter: app family first, then remaining legacy rows. Its cursor is `a.<id>` or `m.<id>`; a bare ID is still accepted.
+- **Export.**
+  - The `messages` contributor reads `message/` and then `app-message/` with the same projection, so the archive shape is unchanged.
+  - `quota` adds `app-message-usage/`.
+- **Kept on purpose.**
+  - `notification-event/`: it is the activity notification queue, and §4 keeps notification state.
+  - Item-index and search IDs, which stay keyed by item ID.
+  - Consent checks, replay receipts, per-connection budgets, the receipt lane and push, all unchanged.
+  - Blob names (`messages/<owner>/…`). **The reset must therefore delete peer blobs per record, never by blob prefix** (recorded in §2.8.2).
+- **Still coupled (BB-CUT inventory).** App messages keep `collection` placement and owner rules, so the legacy inbox, retention units and MCP keep seeing them.
+- **Tags.** `packages/core/tags.mjs` is the old `messaging/tags.mjs` plus `ownerRules`; the old paths re-export it.
+  - `activity/model.mjs`, `app-notifications`, `item-index`, `message-views`, search and MCP import the core module.
+  - `app-notifications`, `message-postbacks`, `message-presentations` and `activity/*` no longer import anything from `packages/messaging/`.
+- **No dual path.** Peer delivery still writes only `message/`; app intake writes only `app-message/`.
+
+**2. Flags: the links plumbing and the email bridge no longer use Parley's flag.**
+- **`LINKS_ENABLED`** (class a, stateful) replaces `BINDLEBOX_ENABLED` in core. It gates the links contract, key-delegation certificates and routes, the messaging-address descriptor and declaration, `MESSAGING_DESCRIBE` and the member-certificate fall-through.
+  - `BINDLEBOX_ENABLED` moved to `RETIRED_FLAGS` (`retiredOn 2026-10-26`, `replacement: 'LINKS_ENABLED'`). It stays in the name lock, and a stored console record under the old name is quarantined.
+  - **Env compatibility.** The new registry field `envAlias` makes `parseEnv` and `legacyValue` read the retired env name while the new name is unset; the new name always wins. Only `LINKS_ENABLED` declares an alias.
+  - The core `wrangler.jsonc` and `wrangler.local.jsonc` now set `LINKS_ENABLED: "false"`. Parley (`apps/bindlebox/*`) keeps reading its own raw `BINDLEBOX_ENABLED`.
+- **`EMAIL_BRIDGE_ENABLED` requires no other flag.** `bridgeConfig`, the bridge routes and `recognizedSlots` no longer consult a messaging-app flag. Delivery depends on the public-message-intake slot having an occupant; mail is held with `no-occupant` otherwise, as before.
+- **`PUBLIC_INTAKE_CONTRACT`** moved to `packages/links/types.mjs`. `federation/brokered.mjs` imports the slot and contract from there, not from `email-bridge/wire.mjs`, which now re-exports them.
+
+**3. Developer contact through the occupant (behind config, legacy stays the default).**
+- **Switch.** `DEVELOPER_CONTACT_MODE`: `legacy` (default, unchanged) or `occupant`. It is config rather than a flag because it selects a deployment's route, not a per-account rollout.
+- **Recording the link.** When the developer account's messaging-ingress occupant issues or rotates a `MESSAGING_CONTACT_LINK_TYPE` link with the developer policy through the links contract, `account/links.mjs` records `developer-contact/occupant-v1`. The capability URL is sealed with `KEY_ENCRYPTION_KEY` under its own purpose.
+- **`GET /api/developer-contact` in occupant mode:**
+  - It hands out that link only if it still verifies, carries the developer policy, and was issued by the seat that holds the slot today. Otherwise it answers `contact-unavailable` or `occupant-changed`.
+  - Eligibility comes from the bounded links §7.5 decision for that link (`developerLinkDecide`).
+  - It answers `{mode:'occupant', intent:'send-message', …}` and mints no legacy grant.
+  - The legacy response shape is unchanged.
+- **Console.** The button reads "Write with your messaging app" and hands the link off through the existing intent router as a `send-message` intent (`/i#bintent=…`). Without intents it opens the link's landing page. New strings are added in en and es.
+- **`cleanupDailyDeveloperGrants` is kept:** the legacy path still reaches it.
+
+**4. BB-CUT inventory.** Messaging extraction §2.8.1 now records:
+- the audit's 17 tests, with the dependency each has and a proposed disposition (two have no direct import and are flagged for re-check);
+- search fed by item writes;
+- MCP and browser-automation grants that target collections;
+- the collection placement of app messages;
+- the legal lines to change after the cut: privacy.md l.22, 45–47, 73, 81, 103, 126, 136, 159, 189 and terms.md l.43, 48, 50, 62, 117. Legal text is not edited.
+
+**5. Export inventory gaps.**
+- **Gaps confirmed.** `mcp/operation/`, `mcp/operation-expiry/`, `automation/session/`, `automation/confirmation/`, `classifier/usage/v1`, `app-notification-budget/` and `app-notification-receipt/` had no inventory entry, because they are written through constants or template literals that the scan missed.
+- **Found while checking.** `message-postback-prepared/`, `developer-contact/` and `link-gc-cursor/`.
+- **Now covered.** Each has a reasoned exclusion. The inventory test scans `packages/mcp/account.mjs`, `packages/automation/account.mjs` and `packages/activity/app-messages.mjs`, catches constant-assigned key families, and pins the new families explicitly.
+- **Not account data.** `mcp/v1/*` lives in the MCP shard stores, not the account store, so it gets no account export entry.
+
+**Tests.**
+- **New:**
+  - `tests/app-messages-family.test.mjs` (5), with a seeded run of lost commit acknowledgements and crashes during the move (`CHAOS_SEED` replays a seed);
+  - `tests/developer-contact-occupant.test.mjs` (4);
+  - a retirement and alias test in `flags-registry-removals`;
+  - a console handoff case in `browser/signup-views.mjs`;
+  - an occupant-copy render case (en and es) in `browser/contact-links.mjs`.
+- **Adapted:**
+  - `app-notifications`, `search-outbox-poison` (the app family);
+  - `email-bridge`, `worker/email-bridge`, `email-bridge-helpers`, `flags-evaluate`, `flags-registry` and `routes/flags.test.mjs` (the bridge needs no messaging-app flag);
+  - the core suites that set the old flag name (now `LINKS_ENABLED`);
+  - `engine-account-export` (inventory scope).
+
+**Verification (shared checkout; the RTC agent was editing the registry, federation and catalogues in parallel; local evidence only):**
+- `npm test`: **3,874 passed, 0 failed**.
+- `test:worker`: **93 passed**.
+- `test:ui-state`: **490 passed**.
+- `test:e2e`: **324 passed, 0 failed, 4 skipped** (328), after `build:assets`.
+- **Build fix.** `build:assets` first failed with "Unmapped public module `../core/tags.mjs`", because the new core tags module was missing from `publicSources` in `jstools.config.mjs`. It is added now, and `build:assets` passes. The RTC entry above records the failure; it is resolved.
+- A first `test:e2e` run (74 failures) used a stale asset snapshot from before that fix. It is superseded by the run above.
+- `check:worker` was not run.
+
+Reviewer: ___ Date: ___ Outcome: ___
+
+### Review follow-ups (2026-10-27)
+
+An independent review of this uncommitted work found findings F1–F6, I1 and I2. All of the readings below are **provisional** (coordinator). None is signed off. Each of the review's three PoCs is now a regression test.
+
+- **F1: the env alias widened a narrowed flag.**
+  - `evaluate.mjs`: when `LINKS_ENABLED` has no record of its own and its `envAlias` (`BINDLEBOX_ENABLED`) is quarantined, the flag takes the outage path, as a quarantined record of its own would. A console kill or allowlist stored under the old name is therefore never widened by the old env name.
+  - **Decision (provisional):** `flags.retire` of a retired name whose `RETIRED_FLAGS.replacement` declares it as `envAlias`, while the replacement has no record, carries the record to the new name in the same audited commit. The record is re-validated at rev 1; if its shape no longer fits, the off record is written instead. The commit expects the new record to be absent. The audit and the result carry `carriedTo` and `carried`.
+  - Regression for `poc-flag-alias.mjs`, plus a carry test in `flags-registry-removals` (+2 tests).
+- **F2: the marker is not a completion signal.**
+  - `app-messages-v1` takes `holds` and does nothing while the account is `shelved`. It checks the hold up front and inside every move transaction.
+  - The warm restore deletes the marker, the cursor and the reconcile time in the restore transaction whenever the restored rows include `message/` rows.
+  - §4 now says the BB-CUT reset runs its own full verify-and-move pass inside the reset step and never gates on the marker.
+  - Regression for `poc-shelved-marker.mjs`, which also covers a marker from before shelving.
+- **F3: app rows that fail verification.** Design amendment to §4:
+  - The reset deletes only positively peer rows.
+  - Rows with the v1 purpose and a matching owner and ID that do not verify (unknown kid, changed issuer) are held and reported for operator review, never deleted.
+  - Release gate: keep retired kids in `APP_NOTIFICATION_PUBLIC_JWKS` and keep `APP_ORIGIN` unchanged until BB-CUT. The set stays within its 8-key bound, because a larger set is rejected outright. Any account with a non-zero count is reviewed first.
+  - Diagnostic: `migration/app-messages-v1-diag` holds `{unverifiedAppShaped, pending, completedAt}` from the last full pass.
+- **F4: export and adapter races.**
+  - The pass also holds while `export/active` exists (DX-2 pinning), so the `messages` contributor never repeats an archive path. This is the regression for `poc-export-dup.mjs`, including an export that starts mid-slice, where the cursor does not advance.
+  - The activity legacy adapter now merges both families in item-ID order with one ID cursor. A move keeps the ID, so pages neither skip nor repeat rows while rows move. The old per-family `a.`/`m.` cursors were introduced in this same uncommitted work; they are still accepted, with the prefix ignored, and the pre-move bare-ID cursor is the native shape.
+- **F5: peer-delivery caps.** `MessagingService.receive` and `ContactDeliveryService` check the account caps against both counters (`storedItems`). Only the legacy counter is written. One test each in `messaging` and `engine-delivery`.
+- **F6: post-marker reconcile.** After the marker exists, the alarm starts a new reconcile pass at most once a day (`migration/app-messages-v1-reconciled-at`). A pass already in progress continues one slice per alarm. Unverifiable rows are not tracked separately; the daily throttle bounds the re-verification.
+- **I1: developer-contact pointer.** The occupant pointer is recorded only when `DEVELOPER_CONTACT_MODE=occupant`. The account cannot see its own handle, so in occupant mode any account's occupant can still leave a pointer. Only the configured developer account's pointer is served, and the export exclusion text now says exactly that.
+- **I2: console copy.** Occupant copy ("Write with your messaging app") shows only when intents are available (`intentsAvailable`). Otherwise the en and es link copy shows. The `browser/contact-links.mjs` case covers both.
+- **Docs updated:** messaging extraction §2.8.2 and §4, and the feature-flags `LINKS_ENABLED` row.
+
+**Verification (local evidence only; the shared checkout was being edited by other agents and a gate run):**
+- Targeted suites in the checkout: **444 passed, 0 failed**. They cover app-messages-family (9), developer-contact-occupant (5), the flags suites, the export suites, app-notifications, the shelving, lifecycle and deletion suites, the contact-delivery suites, `engine-delivery`, `messaging`, `engine-activity` and `search-outbox-poison`.
+- `browser/contact-links.mjs`: 17 passed. `browser/signup-views.mjs`: 11 passed.
+- Scratch copy of the checkout:
+  - `npm test`: **3,897 passed, 0 failed**.
+  - `build:assets`: passes.
+  - `test:ui-state`: **490 passed**.
+- `test:e2e` and `check:worker` were not run for these follow-ups.
+
+Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-26 — Core-scope audit (what belongs in 3sln.me core)
+
+This audit was done at the owner's request. The goal is to keep the core to account, identity and protocol plumbing plus generic Bindle contracts, and to move app experiences into apps. It was carried out at HEAD 2a4d521.
+
+**Classification:**
+- **(A) Remove from core.**
+  - Beam, the device-to-device file transfer feature: done. See "Beam removed from core". The generic contact profile and sharing code was kept, and the TURN pieces were moved to `packages/rtc/`.
+  - Legacy peer messaging: decided on 2026-10-20 that it moves into the Parley app. Preparatory work is done; see "Messaging extraction prep (no reset)". The final cut (BB-CUT) is blocked on the owner confirming the irreversible message-data reset.
+- **(B) Keep in core** (generic or account-level):
+  - activity centre, notifications and push;
+  - device names;
+  - intents, links, and the MCP/WebMCP adapters;
+  - Google Drive, the email bridge (reshaped around the public-intake slot), the classifier and embeds;
+  - the loopback demo.
+- **(C) Owner questions:**
+  - saved contacts: a core address book, or per app?
+  - semantic search: its corpus is mostly message text;
+  - what the MCP and automation tools expose once collections are gone.
+
+  These are recorded as SQ-1 to SQ-4 in `docs/release/pending-signoffs.md`.
+- **Generic replacement:** apps get the RTC signaling extension (`docs/spec/rtc-signaling.md`) for calls and data transfer instead of a core feature.
+
+Classification is provisional.
 
 Reviewer: ___ Date: ___ Outcome: ___

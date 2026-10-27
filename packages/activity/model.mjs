@@ -2,7 +2,7 @@
 // limits and the typed app-tag namespace. Pure and portable; storage lives in store.mjs, signing in evidence.mjs.
 // The limits are provisional 3sln.me service choices (activity-center "New limits"), not Bindle wire constants.
 import {validateContent} from '../content/render.mjs';
-import {reservedTag} from '../messaging/tags.mjs';
+import {reservedTag} from '../core/tags.mjs';
 import {UUID} from '../core/primitives.mjs';
 
 export const ACTIVITY_PURPOSE='bindle-activity-admission-v1';

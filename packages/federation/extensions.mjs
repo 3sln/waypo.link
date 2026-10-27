@@ -3,7 +3,9 @@ import {AppAction,AppQuery} from '../app/engine.mjs';
 import {canonical,digest,boundedString} from '../messaging/store.mjs';
 import {fail,object,https,strings,pinVersioned,validateSchema,validateFields,validateValue} from './schema.mjs';
 
-const SLOT_KEYS=['v','crit','field','selection','failover','consumers','options','supersedes'],POLICIES=['exclusive','ordered','broadcast','consumer-choice'];
+// `bind` is AMD-X1 (bound consumer options; docs/spec/extensions.md §2.1, proposed and unsigned). A processor built
+// without it (`boundOptions:false`) does not understand `bind`, so a slot listing it in `crit` is unrecognized there.
+const SLOT_KEYS=['v','crit','field','selection','failover','consumers','options','supersedes','bind'],POLICIES=['exclusive','ordered','broadcast','consumer-choice'];
 const own=(value,key)=>object(value)&&Object.hasOwn(value,key),bytes=value=>new TextEncoder().encode(JSON.stringify(value)).length;
 const slotURL=value=>{if(typeof value!=='string'||value.length>256)fail('invalid_slot');const url=https(value);if(value.includes('?')||value.includes('#'))fail('invalid_slot');return url;};
 export function validateExtensionDigest(value){if(typeof value!=='string'||!/^sha256-[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$/.test(value))fail('invalid_digest');return value;}
@@ -14,12 +16,12 @@ export function harmlessSlot(schema,contracts={}){
  return field.contracts.every(id=>{const pin=contracts instanceof Map?contracts.get(id):own(contracts,id)?contracts[id]:null,document=pin?.schema,methods=document?.['x-methods'];return typeof pin?.digest==='string'&&!!pin.digest&&document?.$id===id&&object(methods)&&Object.keys(methods).length>0&&Object.values(methods).every(method=>object(method)&&['read','pure'].includes(method.effect));});
 }
 // An invalid/unrecognized slot remains a valid ordinary fragment (AMD-C1). Never return partial semantics.
-export function validateSlotManifest(schema,url=schema?.id,{contracts={}}={}){
+export function validateSlotManifest(schema,url=schema?.id,{contracts={},boundOptions=true}={}){
  const fragment=validateSchema(schema,url);if(!own(fragment,'slot'))return {status:'absent',schema:fragment};
  const slot=fragment.slot;if(!object(slot))return {status:'invalid',schema:fragment,reason:'invalid_slot'};
  if(slot.v!==1)return {status:'unrecognized',schema:fragment,reason:'unsupported_version'};
  try{
-  if(slot.crit!==undefined){strings(slot.crit,32);if(slot.crit.some(key=>!SLOT_KEYS.includes(key)))return {status:'unrecognized',schema:fragment,reason:'unsupported_critical_member'};if(slot.crit.some(key=>!own(slot,key)))fail('invalid_slot');}
+  if(slot.crit!==undefined){strings(slot.crit,32);if(slot.crit.some(key=>!SLOT_KEYS.includes(key)||key==='bind'&&!boundOptions))return {status:'unrecognized',schema:fragment,reason:'unsupported_critical_member'};if(slot.crit.some(key=>!own(slot,key)))fail('invalid_slot');}
   if(bytes(fragment)>16384)fail('invalid_slot');
   if(typeof slot.field!=='string'||!own(fragment.fields,slot.field)||!POLICIES.includes(slot.selection))fail('invalid_slot');
   const field=fragment.fields[slot.field],cardinality=field.cardinality;
@@ -27,6 +29,8 @@ export function validateSlotManifest(schema,url=schema?.id,{contracts={}}={}){
   if(slot.failover!==undefined&&(slot.selection!=='ordered'||!['pre-dispatch','any-error'].includes(slot.failover)))fail('invalid_slot');
   strings(slot.consumers,2);if(!slot.consumers.length||slot.consumers.some(value=>!['application','provider'].includes(value)))fail('invalid_slot');
   if(slot.options!==undefined){if(!object(slot.options)||Object.keys(slot.options).some(key=>!['occupant','consumer'].includes(key)))fail('invalid_slot');for(const fields of Object.values(slot.options))validateFields(fields,{allowEmpty:true,optionalTitle:true});}
+  // AMD-X1 item 1: `bind` names options.consumer members, and a slot using it MUST list it in `crit`.
+  if(slot.bind!==undefined){strings(slot.bind,16);if(!slot.bind.length||!slot.crit?.includes('bind')||slot.bind.some(name=>!own(slot.options?.consumer,name)))fail('invalid_slot');}
   if(slot.supersedes!==undefined&&slot.supersedes!==null&&(https(slot.supersedes).origin!==new URL(url).origin||slot.supersedes===url))fail('invalid_slot');
   const harmless=harmlessSlot(fragment,contracts);if(slot.failover==='any-error'&&!harmless)fail('unsafe_failover');
   return {status:'valid',schema:fragment,slot:structuredClone(slot),harmless};
@@ -114,6 +118,58 @@ export function slotOperationResult(state){
  const statuses=outcomes.filter(value=>!['unavailable','not_selected'].includes(value.status)).map(value=>value.status);
  const status=statuses.includes('pending')?'pending':statuses.includes('unknown')?'unknown':statuses.includes('succeeded')?(state.selection==='broadcast'&&statuses.includes('failed')?'partial':'succeeded'):statuses.length?'failed':state.occupants.length?'unavailable':'unfilled';
  return {status,outcomes};
+}
+
+// ---- AMD-X1 bound consumer options (docs/spec/extensions.md §2.1 `bind`, §5.2; proposed, unsigned) ---------------
+// A request for a slot fragment whose slot has `bind` carries `options`; the owner approves a subset at consent; the
+// approval is recorded per consumer in its grant and never shared with other consumers of the slot field; the
+// occupant enforces it on every invocation. Values are normalized to lists. Pure functions; the federation service
+// owns the records (packages/federation/service.mjs).
+/** The valid slot member of `schema` when it binds consumer options under AMD-X1, else null. */
+export function boundSlot(schema,url=schema?.id,{boundOptions=true}={}){if(!boundOptions)return null;let result;try{result=validateSlotManifest(schema,url,{boundOptions});}catch{return null;}return result.status==='valid'&&result.slot.bind?result.slot:null;}
+const boundField=(slot,name)=>slot.options.consumer[name],asValues=(field,value)=>(field.cardinality?.max??1)===1?[value]:value;
+const boundValue=(field,values)=>(field.cardinality?.max??1)===1?values[0]:values;
+/** The bound member schemas, kept with an approval so it can be revalidated without the slot document. */
+export const boundSchema=slot=>Object.fromEntries(slot.bind.map(name=>[name,structuredClone(boundField(slot,name))]));
+function boundValues(schema,options,code){
+ if(!object(options)||Object.keys(options).some(key=>!own(schema,key)))fail(code);const out={};
+ for(const [name,field] of Object.entries(schema)){if(!own(options,name))fail(code);try{validateValue(field,options[name]);}catch{fail(code);}const list=asValues(field,options[name]);if(new Set(list).size!==list.length)fail(code);out[name]=[...list];}
+ return out;
+}
+/** AMD-X1 item 2: the request's `options`, validated against the bound `options.consumer` members. Only bound members
+ * may be carried (unbound consumer options confer nothing); every bound member is required. Returns lists. */
+export const validateBoundRequest=(slot,options)=>boundValues(boundSchema(slot),options,'invalid_request');
+/** AMD-X1 item 3: the owner's approved values, a subset of the requested ones that still satisfies each member's schema
+ * (the owner declines the fragment rather than approving fewer than the minimum). */
+export function approveBoundOptions(schema,requested,approved){
+ const out=boundValues(schema,Object.fromEntries(Object.entries(approved??{}).map(([name,values])=>[name,own(schema,name)&&Array.isArray(values)?boundValue(schema[name],values):values])),'invalid_grant');
+ for(const [name,values] of Object.entries(out))if(values.some(value=>!requested[name]?.includes(value)))fail('invalid_grant');
+ return out;
+}
+/** True when every requested value is within the approved values (a request beyond them is a widening). */
+export const boundCovers=(approved,requested)=>Object.entries(requested??{}).every(([name,values])=>Array.isArray(approved?.[name])&&values.every(value=>approved[name].includes(value)));
+/** Owner narrowing (immediate): the next values must validate and stay within the current ones; widening refused. */
+export function narrowBoundOptions(schema,current,next){
+ const out=boundValues(schema,Object.fromEntries(Object.entries(next??{}).map(([name,values])=>[name,own(schema,name)&&Array.isArray(values)?boundValue(schema[name],values):values])),'invalid_args');
+ if(!boundCovers(current,out))fail('bound_options_widening','Widening approved options needs a new approval.');return out;
+}
+/**
+ * Whether a version of a bound artefact line is usable under an approval that recorded `approved` ({version, digest})
+ * at consent: the exact approved version always; a later version only when `verify(approved, reference)` reports the
+ * step verified additive and not widening (artefacts §7.2; a widening needs a new approval). Without a signed growth
+ * table nobody can verify, so only the approved version is usable (spec rtc-signaling §3.5 item 3).
+ */
+export function boundVersionUsable(approved,reference,{verify}={}){
+ if(!approved||!reference)return false;if(reference.version===approved.version)return reference.digest===approved.digest;
+ return reference.version>approved.version&&typeof verify==='function'&&verify(approved,reference)==='additive';
+}
+/** AMD-X1 item 4, the occupant check: `value` is approved for `member` in this consumer's bound approval and, for an
+ * artefact line, `reference` is usable under one of the recorded versions. `approval` is {values, versions}, where
+ * versions[line] is one {version, digest} or a list of them. */
+export function boundAllows(approval,member,value,{reference,verify}={}){
+ if(!approval||!Array.isArray(approval.values?.[member])||!approval.values[member].includes(value))return false;
+ const recorded=approval.versions?.[value],list=recorded===undefined?[]:Array.isArray(recorded)?recorded:[recorded];
+ return list.length?list.some(approved=>boundVersionUsable(approved,reference,{verify})):reference===undefined;
 }
 
 // Unmounted edge operations. Future adapters bind this provider explicitly; config alone never advertises support.

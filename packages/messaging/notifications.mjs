@@ -4,6 +4,8 @@ import {Provider} from '../../vendor/ngin/index.js';
 import {AppAction,AppQuery,ownerOf} from '../app/engine.mjs';
 import {AppFault} from '../app/faults.mjs';
 import {activityState} from '../activity/store.mjs';
+// Notification events name an item ID; the item lives in either family (legacy message/ or activity's app-message/).
+import {itemRecord} from '../activity/app-messages.mjs';
 
 export const defaultNotificationPreferences = () => ({
   enabled: true, push: { enabled: false, preview: false },
@@ -113,7 +115,7 @@ export class NotificationService {
     });
   }
   async eligible(tx, owner, event, channel, now) {
-    const message = await tx.get(key('message', owner, event.messageId));
+    const message = (await itemRecord(k => tx.get(k), owner, event.messageId))?.record;
     const preferences = await tx.get(key('notification-preferences', owner)) || defaultNotificationPreferences();
     if (!message || !await this.messageAllowed(tx,owner,message) || message.readAt !== null || message.quarantined || !preferences.enabled || !preferences[channel].enabled || quietNow(preferences.quiet, now) || (preferences.collections.length && !preferences.collections.includes(message.collection)) || message.tags.some(tag => preferences.excludeTags.includes(tag))) return null;
     return { message, preferences };
@@ -173,7 +175,7 @@ export class NotificationService {
   async nextDue(owner){return this.store.transaction(async tx=>{
     const now=this.clock(),preferences=await tx.get(key('notification-preferences',owner))||defaultNotificationPreferences();if(!preferences.enabled)return null;let due=null;
     const events=await tx.list(key('notification-event',owner));const devices=await tx.list(key('push-subscription',owner));
-    for(const {value:event}of events){const message=await tx.get(key('message',owner,event.messageId));if(!message||!await this.messageAllowed(tx,owner,message)||message.readAt!==null||message.quarantined||preferences.collections.length&&!preferences.collections.includes(message.collection)||message.tags.some(tag=>preferences.excludeTags.includes(tag)))continue;
+    for(const {value:event}of events){const message=(await itemRecord(k=>tx.get(k),owner,event.messageId))?.record;if(!message||!await this.messageAllowed(tx,owner,message)||message.readAt!==null||message.quarantined||preferences.collections.length&&!preferences.collections.includes(message.collection)||message.tags.some(tag=>preferences.excludeTags.includes(tag)))continue;
       for(const channel of ['push','email']){if(!preferences[channel].enabled)continue;for(const device of channel==='push'?devices:[{value:null}]){const id=`${event.id}:${channel}:${device.value?.id||'email'}`;const job=await tx.get(key('notification-job',owner,id));if(job&&(job.delivered>=(channel==='push'?1:preferences.email.maxReminders)||job.attempts>=8))continue;let at=job?.nextAt??event.createdAt+(channel==='email'?preferences.email.delayMinutes*60000:0);at=Math.max(at,job?.leaseUntil||0);if(channel==='email'){const budget=await tx.get(key('notification-email-budget',owner));at=Math.max(at,budget?.nextAt||0,budget?.leaseUntil||0);}if(quietNow(preferences.quiet,now))at=Math.max(at,now+900000);at=Math.max(at,now+1000);due=due===null?at:Math.min(due,at);}}
     }return due;
   });}

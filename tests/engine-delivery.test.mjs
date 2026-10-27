@@ -56,6 +56,17 @@ test('grant and account quotas are inclusive at their exact limits', async () =>
   const after = await f.state(); assert.equal(after.usage.bytes, after.list.reduce((s, m) => s + m.size, 0));
 });
 
+test('review F5: the account caps count app messages, while only the legacy counter is written', async () => {
+  const { appMessageUsageKey } = await import('../packages/activity/app-messages.mjs');
+  const f = await fixture({ maxStoredBytes: 10, maxStoredMessages: 3 });
+  await f.raw.transaction(tx => tx.set(appMessageUsageKey(OWNER), { bytes: 6, messages: 1 }));
+  await f.deliver({ text: 'x'.repeat(4) }); await assert.rejects(f.deliver({ text: 'x' }), { code: 'account_quota_exceeded' });
+  await f.raw.transaction(tx => tx.set(appMessageUsageKey(OWNER), { bytes: 0, messages: 2 }));
+  await assert.rejects(f.deliver({ text: '' }), { code: 'account_quota_exceeded' }, 'app messages hold message slots');
+  assert.deepEqual((await f.conserved()).usage, { bytes: 4, messages: 1 });
+  assert.deepEqual(await f.raw.transaction(tx => tx.get(appMessageUsageKey(OWNER))), { bytes: 0, messages: 2 });
+});
+
 test('concurrent deliveries contend for one parent quota: exactly the limit is admitted under every seeded interleaving', async t => {
   t.diagnostic(`CHAOS_SEED base ${BASE}`);
   await forEachSeed(5, async random => {

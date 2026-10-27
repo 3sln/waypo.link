@@ -2,7 +2,7 @@
 // messaging-app.md §4). The provider certifies an app-held per-user P-256 delegate key with a short-lived compact JWS
 // signed by the owner's current identity signing key (packages/identity/keys.mjs). Engine-first: DelegationRegistry is
 // the provider resource, and the Actions/Queries below are the operations over it. New issuance needs
-// BINDLEBOX_ENABLED; owner reads, status and revocations remain available during rollout changes.
+// LINKS_ENABLED; owner reads, status and revocations remain available during rollout changes.
 //
 // Core may not import BindleBox (tests/bindlebox/import-boundary.test.mjs), so the certificate encoding is written
 // here against packages/bindlebox-protocol/certificate.mjs (parseDelegation/verifyDelegation) and pinned to it by the
@@ -73,7 +73,7 @@ const forbidden = () => fault('forbidden', 'This app cannot hold delegated signi
 const invalid = message => fault('invalid_request', message ?? 'Unsupported delegation request.', 400);
 const unavailable = () => fault('delegation_unavailable', 'Delegated signing is unavailable right now.', 503);
 /** Creation/renewal only. ctx carries the verified owner subject; reverse/status paths never target. */
-export const delegationsEnabled = (config={},ctx={}) => (config?.flags??config?.FLAGS??createFlags({snapshot:{v:1,version:0,issuedAt:0,flags:{}},env:config??{}})).for(ctx).enabled('BINDLEBOX_ENABLED');
+export const delegationsEnabled = (config={},ctx={}) => (config?.flags??config?.FLAGS??createFlags({snapshot:{v:1,version:0,issuedAt:0,flags:{}},env:config??{}})).for(ctx).enabled('LINKS_ENABLED');
 const CLIENT = value => typeof value === 'string' && value.length > 0 && value.length <= 2048 && value.isWellFormed() && !/[\p{Cc}\p{Bidi_Control}\u2028\u2029\u200b\ufeff]/u.test(value);
 const plain = value => value !== null && typeof value === 'object' && !Array.isArray(value) && Object.getPrototypeOf(value) === Object.prototype;
 const only = (value, names) => plain(value) && Object.keys(value).every(name => names.includes(name));

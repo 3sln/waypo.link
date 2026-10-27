@@ -2,7 +2,7 @@
 //
 // Engine-first: LinkService is the provider resource; the Actions/Queries below are the operations a messaging app
 // reaches through an app actor (wired in C1b through the links contract resource) and the owner through
-// account/links.mjs. Everything is refused with `not_found` unless BINDLEBOX_ENABLED is on.
+// account/links.mjs. Everything is refused with `not_found` unless LINKS_ENABLED is on.
 //
 // Actors (built by trusted adapters only, never from a request body):
 //   {kind:'owner', owner, handle?}       list, changes and revoke on every app-declared link of the owner. Owners do
@@ -28,7 +28,7 @@ const CLIENT = value => typeof value === 'string' && value.length > 0 && value.l
 const INPUT = (input, names) => input === undefined || (input !== null && typeof input === 'object' && !Array.isArray(input) && Object.keys(input).every(name => names.includes(name)));
 
 /** The `links` provider class for createAppEngine (ngin constructs provider classes itself).
- * `service`: a LinkService. `enabled`: BINDLEBOX_ENABLED, decided from configuration. `occupant`: see above. */
+ * `service`: a LinkService. `enabled`: LINKS_ENABLED, decided from configuration. `occupant`: see above. */
 export function linksProvider({ service, enabled = false, occupant } = {}) {
   return class extends LinksProvider { static deps = []; constructor() { super(); Object.assign(this, { service, enabled: enabled === true, occupant }); } };
 }

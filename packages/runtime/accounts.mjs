@@ -9,6 +9,7 @@ import {cleanupPostbackPreparations,erasePostbackPreparations} from './message-p
 import {messagePresentationSummary} from '../messaging/presentation-summary.mjs';
 import {erasePresentations} from './message-presentations.mjs';
 import {appNotificationAllowed} from './app-notifications.mjs';
+import {isItemKey,itemPrefixes,APP_MESSAGES_PASS_KEYS} from '../activity/app-messages.mjs';
 import {ActivePopulationStorage,recordOwnerPopulation} from './active-population.mjs';
 import {createAppEngine,operate,operationPolicy} from '../app/engine.mjs';
 import {systemClock,cryptoRandom,nullAudit} from '../app/providers.mjs';
@@ -204,8 +205,8 @@ export class AccountController {
       const garbage=[];
       const result=await this.metadata.transaction(async tx=>operation({
         get:k=>tx.get(k),
-        set:async(k,v)=>{if(v?.bytes instanceof Uint8Array){const reservation=this.messageReservation;if(!reservation||reservation.owner!==v.owner||reservation.bytes!==v.bytes.byteLength)throw new StorageError('conflict','Message upload reservation is missing.',409);const blobRef=reservation.blobRef;const {bytes,...record}=v;record.notificationSummary=await messagePresentationSummary(v);const event=await this.queueMessageSearch(tx,record);record.revision=event.revision;await tx.put(k,{...record,blobRef});this.itemIndex?.upsert(record);await this.quota.commit(tx,reservation.id);}else{if(k.startsWith('message/')){const event=await this.queueMessageSearch(tx,v);v={...v,revision:event.revision};this.itemIndex?.upsert(v);}await tx.put(k,v);}},
-        delete:async k=>{const value=await tx.get(k);if(value?.blobRef){const garbageKey=`blob-garbage/${crypto.randomUUID()}`;await tx.put(garbageKey,value.blobRef);garbage.push({key:garbageKey,blobRef:value.blobRef});const alarm=typeof tx.getAlarm==='function'?await tx.getAlarm():null;await tx.setAlarm?.(alarm?Math.min(alarm,Date.now()+60000):Date.now()+60000);}if(k.startsWith('message/')&&value){await erasePostbackPreparations(tx,value.owner,value.id);await erasePresentations(tx,value,garbage);await this.queueMessageSearch(tx,value,'tombstone');this.itemIndex?.remove(value.id);}await tx.delete(k);},
+        set:async(k,v)=>{if(v?.bytes instanceof Uint8Array){const reservation=this.messageReservation;if(!reservation||reservation.owner!==v.owner||reservation.bytes!==v.bytes.byteLength)throw new StorageError('conflict','Message upload reservation is missing.',409);const blobRef=reservation.blobRef;const {bytes,...record}=v;record.notificationSummary=await messagePresentationSummary(v);const event=await this.queueMessageSearch(tx,record);record.revision=event.revision;await tx.put(k,{...record,blobRef});this.itemIndex?.upsert(record);await this.quota.commit(tx,reservation.id);}else{if(isItemKey(k)){const event=await this.queueMessageSearch(tx,v);v={...v,revision:event.revision};this.itemIndex?.upsert(v);}await tx.put(k,v);}},
+        delete:async k=>{const value=await tx.get(k);if(value?.blobRef){const garbageKey=`blob-garbage/${crypto.randomUUID()}`;await tx.put(garbageKey,value.blobRef);garbage.push({key:garbageKey,blobRef:value.blobRef});const alarm=typeof tx.getAlarm==='function'?await tx.getAlarm():null;await tx.setAlarm?.(alarm?Math.min(alarm,Date.now()+60000):Date.now()+60000);}if(isItemKey(k)&&value){await erasePostbackPreparations(tx,value.owner,value.id);await erasePresentations(tx,value,garbage,k);await this.queueMessageSearch(tx,value,'tombstone');this.itemIndex?.remove(value.id);}await tx.delete(k);},
         list:async prefix=>[...(await tx.list({prefix}))].map(([key,value])=>{if(value?.blobRef){const {blobRef,...record}=value;return {key,value:record};}return {key,value};})
       }));
       for(const {key,blobRef}of garbage){try{await collectGarbageRef(this,key,blobRef);}catch{/* Ownership was committed with logical deletion; GC can retry after a crash. */}}
@@ -265,12 +266,16 @@ export class AccountController {
         if(snapshot.size>8388608)throw new Error('Account archive exceeds bounds');
         const envelope=await snapshot.json();
         if(envelope.version!==1||envelope.owner!==owner||!Array.isArray(envelope.rows)||envelope.rows.length>2200||envelope.digest!==await archiveDigest(JSON.stringify(envelope.rows)))throw new Error('Account archive integrity check failed');
-        const rows=restore(envelope.rows);if(rows.some(row=>!Array.isArray(row)||row.length!==2||typeof row[0]!=='string'||!row[0].startsWith('message/')&&!row[0].startsWith('resource/')||!row[1]||row[1].owner!==owner))throw new Error('Account archive record invalid');
-        await this.metadata.transaction(async tx=>{for(const [k,v]of rows){await tx.put(k,v);if(k.startsWith('message/'))this.itemIndex?.upsert(v);}await tx.delete('shelved');});
+        const rows=restore(envelope.rows);if(rows.some(row=>!Array.isArray(row)||row.length!==2||typeof row[0]!=='string'||!isItemKey(row[0])&&!row[0].startsWith('resource/')||!row[1]||row[1].owner!==owner))throw new Error('Account archive record invalid');
+        // Restored legacy `message/` rows may include app rows the app-messages-v1 pass never saw (review F2): clear its
+        // marker, cursor and reconcile time in the same transaction so the next warm runs a full pass again.
+        await this.metadata.transaction(async tx=>{for(const [k,v]of rows){await tx.put(k,v);if(isItemKey(k))this.itemIndex?.upsert(v);}if(rows.some(([k])=>k.startsWith('message/')))for(const k of APP_MESSAGES_PASS_KEYS)await tx.delete(k);await tx.delete('shelved');});
       }
       const storedOwner=await this.metadata.get('owner');if(storedOwner!==undefined&&storedOwner!==owner)throw new StorageError('forbidden','Account owner mismatch.',403);await this.ensureBuiltinStorage(owner);await this.migrateItemIndex(owner);
       // beam-retired-v1 never fails a request: on any error the alarm path retries it (review R3).
       try{await this.retireBeamStorage();}catch{try{await this.scheduleAlarm(Date.now()+60000);}catch{}}
+      // app-messages-v1 (messaging extraction prep): moves verified app rows into activity's family; never fails a request.
+      try{await this.migrateAppMessageFamily(owner);}catch{try{await this.scheduleAlarm(Date.now()+60000);}catch{}}
       if(!(await this.messages.collections(owner)).length)await this.messages.createCollection(owner,'Inbox');
       await this.scheduleAlarm(Date.now()+7*86400000);await this.billingRefresh(owner);
     }
@@ -322,6 +327,8 @@ export class AccountController {
       // DEVLOG 2026-10-26: Beam left the core; `beam-retired-v1` copies its generic contact rows (legacy rows kept for one
       // release) and deletes the Beam-only rows, revoking TURN usernames within its batch budget.
       await this.retireBeamStorage({alarm:true});
+      // app-messages-v1: the alarm keeps reconciling one slice after the marker (a rollback could write app rows to message/).
+      {const migrationOwner=await this.metadata.get('owner');if(migrationOwner)await this.migrateAppMessageFamily(migrationOwner,{alarm:true});}
       await this.quota.cleanup();await this.collectBlobGarbage();const mcpJournalWake=await sweepMcpJournal(this.metadata);if(mcpJournalWake!==null)await this.scheduleAlarm(mcpJournalWake);const owner=await this.metadata.get('owner');if(!owner)return;await collectLinkState(this,owner);
       if(await this.metadata.get('shelved')){await this.scheduleAlarm(Date.now()+7*86400000);return;}
       // A scheduled deletion freezes the shelved state and semantic backfill (R1-H2); vector purges may continue.
@@ -332,10 +339,11 @@ export class AccountController {
       const semanticPending=await this.metadata.get('search-semantic-backfill');if(semanticPending&&!semanticPending.paused||await this.metadata.get('search-vector-purge')){await this.scheduleAlarm(Date.now()+7*86400000);return;}
       if(deletionPending){await this.scheduleAlarm(Date.now()+7*86400000);return;}
       const last=await this.metadata.get('lastOwnerActiveAt')||0;if(Date.now()-last<7*86400000){await this.scheduleAlarm(last+7*86400000);return;}
-      const messageRows=await this.metadata.list({prefix:key('message',owner),limit:2001}),resourceRows=await this.metadata.list({prefix:'resource/',limit:201});if(messageRows.size>2000||resourceRows.size>200){await this.metadata.put('cold-index-mode',{mode:'indexed-sqlite',reason:'paged-metadata-shelving-pending'});await this.scheduleAlarm(Date.now()+7*86400000);return;}const all=new Map([...messageRows,...resourceRows]);
+      // Both item families shelve together (legacy messages and activity's app messages share the 2,000-row bound).
+      const [legacyPrefix,appPrefix]=itemPrefixes(owner),legacyRows=await this.metadata.list({prefix:legacyPrefix,limit:2001}),appRows=legacyRows.size>2000?new Map():await this.metadata.list({prefix:appPrefix,limit:2001-legacyRows.size}),messageRows=new Map([...legacyRows,...appRows]),resourceRows=await this.metadata.list({prefix:'resource/',limit:201});if(messageRows.size>2000||resourceRows.size>200){await this.metadata.put('cold-index-mode',{mode:'indexed-sqlite',reason:'paged-metadata-shelving-pending'});await this.scheduleAlarm(Date.now()+7*86400000);return;}const all=new Map([...messageRows,...resourceRows]);
       // Keep signing/public capability records hot, so invalid bearers cannot
       // trigger an archive restore. Only cold content metadata/resources move.
-      const rows=[...all].filter(([k])=>k.startsWith('message/')||k.startsWith('resource/'));
+      const rows=[...all].filter(([k])=>isItemKey(k)||k.startsWith('resource/'));
       const serializedRows=serializable(rows);const serialized=JSON.stringify({version:1,owner,rows:serializedRows,digest:await archiveDigest(JSON.stringify(serializedRows))});const archiveKey=`accounts/${owner}.json`;
       if(new TextEncoder().encode(serialized).byteLength>8388608){await this.metadata.put('cold-index-mode',{mode:'indexed-sqlite',reason:'paged-metadata-shelving-pending'});await this.scheduleAlarm(Date.now()+7*86400000);return;}
       await this.archives.put(archiveKey,serialized,{httpMetadata:{contentType:'application/json'}});

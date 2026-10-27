@@ -12,6 +12,6 @@ export function integrationPorts(config,{signer,mint,eventEgress,egress,doorbell
  return {
   INTEGRATION_EVENT_PORTS:{...signer?{signer}:{},...eventEgress?{egress:eventEgress}:{},get snapshot(){return on(config,'BROKERING_ENABLED')&&(!provision||on(config,'FEDERATION_ENABLED'))&&typeof snapshot==='function'&&snapshot.available===true?snapshot:pendingPreferencesSnapshot;},...doorbellGrant?{doorbellGrant}:{}},
   ...available('BROKERING_ENABLED')&&typeof mint==='function'?{BROKERING_CONSUMER_MINT:claims=>{if(claims?.purpose!=='invoke'||typeof claims.clientId!=='string'||claims.clientId===config.APP_ORIGIN||claims.feature!==undefined)throw Object.assign(new Error('Consumer tokens are app invoke tokens only.'),{code:'invalid_request'});if(!siteEnabled(config,'BROKERING_ENABLED',{client:{clientId:claims.clientId}}))throw Object.assign(new Error('Feature unavailable.'),{code:'feature_unavailable'});return mint(claims);},...introspection===true?{BROKERED_INTROSPECTION_MOUNTED:true}:{}}:{},
-  ...available('BROKERING_ENABLED')&&typeof mint==='function'&&egress?{BROKERING_MINT:claims=>mint({...claims,clientId:config.APP_ORIGIN}),INTEGRATION_EGRESS:egress,...available('BINDLEBOX_ENABLED')&&typeof describe==='function'?{MESSAGING_DESCRIBE:describe}:{}}:{},
+  ...available('BROKERING_ENABLED')&&typeof mint==='function'&&egress?{BROKERING_MINT:claims=>mint({...claims,clientId:config.APP_ORIGIN}),INTEGRATION_EGRESS:egress,...available('LINKS_ENABLED')&&typeof describe==='function'?{MESSAGING_DESCRIBE:describe}:{}}:{},
  };
 }

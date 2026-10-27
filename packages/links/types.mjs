@@ -31,10 +31,13 @@ export const linkBinding = type => (typeof type === 'string' && Object.hasOwn(LI
 // BB-C1b: the slot handoff. The `messaging-address` provider consumer feature resolves a link of a bound type to the
 // current occupant of the binding's slot (bindlebox.md §2.1, §2.3). Placeholders under spec.bindle.example.
 export const PUBLIC_INTAKE_SLOT = 'https://spec.bindle.example/slots/public-message-intake/v1';
+/** The public-intake contract an occupant of PUBLIC_INTAKE_SLOT serves (`deliver`). Core consumers (brokered records, the
+ * email bridge) depend on the slot and this contract, never on a particular messaging app or its flag. */
+export const PUBLIC_INTAKE_CONTRACT = 'https://spec.bindle.example/contracts/public-intake/v1';
 export const MESSAGING_PROFILE = 'https://spec.bindle.example/bindlebox/v1';
 export const DESCRIPTOR_MEDIA_TYPE = 'application/vnd.bindlebox.ingress+json';
 /** The provider's consumer entry for the manifest `extensions` (bindlebox.md §2.1); declared only through the
- * EXT-X2 registry row in packages/runtime/federation.mjs, under BINDLEBOX_ENABLED and a mounted handoff. */
+ * EXT-X2 registry row in packages/runtime/federation.mjs, under LINKS_ENABLED and a mounted handoff. */
 export const MESSAGING_ADDRESS_DECLARATION = Object.freeze({ slot: MESSAGING_INGRESS_SLOT, role: 'consumer', ref: 'messaging-address', purpose: 'Tells people who hold your contact links where to deliver.' });
 /** Link type -> slot, the reviewed registration table (bindlebox.md §4.2: "a small table from link type to slot"). */
 export const LINK_SLOT_TABLE = Object.freeze(Object.entries(LINK_TYPE_BINDINGS).map(([type, binding]) => Object.freeze({ type, slot: binding.slot })));

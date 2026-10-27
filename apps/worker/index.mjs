@@ -52,8 +52,8 @@ import {transferIntakeConfig} from '../../packages/runtime/transfer-intake.mjs';
 import {transferDocument} from '../../packages/runtime/routes/transfer-pages.mjs';
 import {lifecycleMode} from '../../packages/runtime/lifecycle-runner.mjs';
 import {entryStoreName} from './federation.mjs';
-// BRIDGE (Wave 7): the Email Routing `email` handler and its object; refused generically unless EMAIL_BRIDGE_ENABLED,
-// BINDLEBOX_ENABLED and the EMAIL_BRIDGE binding are all present (packages/email-bridge/worker.mjs).
+// BRIDGE (Wave 7): the Email Routing `email` handler and its object; refused generically unless EMAIL_BRIDGE_ENABLED
+// and the EMAIL_BRIDGE binding are both present (packages/email-bridge/worker.mjs).
 import {handleEmail} from '../../packages/email-bridge/worker.mjs';
 export {EmailBridgeObject} from '../../packages/email-bridge/worker-object.mjs';
 // `cloudflare:email` is loaded only when a reply is possible, so bundles and tests without it still build.

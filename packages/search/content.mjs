@@ -1,4 +1,4 @@
-import { migrateTags, isSystemTag, MAX_USER_TAGS } from '../messaging/tags.mjs';
+import { migrateTags, isSystemTag, MAX_USER_TAGS } from '../core/tags.mjs';
 import { inspectWebArchive, WEB_ARCHIVE_MIME, conversationText } from '../messaging/content.mjs';
 import { fail, bounded, DEFAULT_BUDGETS } from './schema.mjs';
 

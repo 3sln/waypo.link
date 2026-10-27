@@ -31,18 +31,18 @@ async function account(t,{flags={},env={},version=1}={}){
 
 test('legacy read-site tables: exact strings, booleans, defaults, dependencies and mount evidence',()=>{
  for(const raw of [undefined,'',false,true,'false','true','TRUE',0]){
-  assert.equal(linksEnabled({BINDLEBOX_ENABLED:raw}),raw===true||raw==='true',`links ${raw}`);
+  assert.equal(linksEnabled({LINKS_ENABLED:raw}),raw===true||raw==='true',`links ${raw}`);
   assert.equal(deviceAuthorizationEnabled({DEVICE_AUTHORIZATION_ENABLED:raw}),raw===true||raw==='true',`device ${raw}`);
   assert.equal(clientMetadataEnabled({CLIENT_METADATA_ENABLED:raw}),raw==='true',`metadata ${raw}`);
   assert.equal(lifecycleMode({LIFECYCLE_ENABLED:raw,LIFECYCLE_DRY_RUN:'false'}),raw===true||raw==='true'?'live':'off',`lifecycle ${raw}`);
-  assert.equal(messagingAddressMounted({BINDLEBOX_ENABLED:raw,INTEGRATIONS_ENABLED:'true',MESSAGING_DESCRIBE(){}}),raw==='true',`messaging address ${raw}`);
+  assert.equal(messagingAddressMounted({LINKS_ENABLED:raw,INTEGRATIONS_ENABLED:'true',MESSAGING_DESCRIBE(){}}),raw==='true',`messaging address ${raw}`);
   if(raw!==true)assert.equal(incrementalAuthorizationEnabled({INCREMENTAL_AUTH_ENABLED:raw}),raw==='true',`incremental ${raw}`);
   for(const dry of [undefined,'',false,true,'false','true','FALSE'])assert.equal(lifecycleMode({LIFECYCLE_ENABLED:'true',LIFECYCLE_DRY_RUN:dry}),dry===false||dry==='false'?'live':'dry-run');
  }
  assert.equal(deviceGrantMountable({DEVICE_AUTHORIZATION_ENABLED:'true',FEDERATION_ENABLED:'true',KEY_ENCRYPTION_KEY:'key'}),true);
  assert.equal(deviceGrantMountable({DEVICE_AUTHORIZATION_ENABLED:'true',FEDERATION_ENABLED:'true',FEDERATION_REFRESH_ENABLED:'false',KEY_ENCRYPTION_KEY:'key'}),false);
  assert.equal(incrementalMountable({INCREMENTAL_AUTH_ENABLED:'true',FEDERATION_ENABLED:'true',FEDERATION_ENTRY_ENABLED:'true'}),true);
- const mint=()=>{},all={INTEGRATIONS_ENABLED:true,BROKERING_ENABLED:'true',BINDLEBOX_ENABLED:true};assert.equal(typeof integrationPorts(all,{mint,egress:{},describe(){}}).MESSAGING_DESCRIBE,'function');
+ const mint=()=>{},all={INTEGRATIONS_ENABLED:true,BROKERING_ENABLED:'true',LINKS_ENABLED:true};assert.equal(typeof integrationPorts(all,{mint,egress:{},describe(){}}).MESSAGING_DESCRIBE,'function');
  assert.equal(integrationPorts({...all,INTEGRATIONS_ENABLED:'false'},{mint}).BROKERING_CONSUMER_MINT,undefined);
  assert.equal(Object.keys(federationSchemas({INTEGRATIONS_ENABLED:true,EXTENSIONS_ENABLED:true})).length,2);
 });
@@ -141,9 +141,9 @@ test('retention predicates page beyond inactive rows and exclude foreign, expire
  const f=await account(t),e=engine({accountStore:f.db});for(let i=0;i<70;i++)await f.db.put('evbus/bus/'+String(i).padStart(3,'0'),{owner,state:'deleted'});await f.db.put('evbus/bus/last',{owner,state:'active'});
  await f.db.put('activity-item/'+owner+'/expired',{owner,state:'active',expiresAt:start-1});await f.db.put('activity-item/'+owner+'/foreign',{owner:other,state:'active'});
  await f.db.put('activity-item/'+owner+'/completed',{owner,state:'completed',expiresAt:start+100000});await f.db.put('link/revoked',{owner,revoked:true});
- let state=await read(e,new AccountFeatureState({actor:{kind:'system',owner}}));assert.equal(Object.entries(state).find(([name])=>name==='EVENT_BUSES_ENABLED')[1],true);for(const name of ['ACTIVITY_V2_ENABLED','BINDLEBOX_ENABLED'])assert.equal(state[name],false);
+ let state=await read(e,new AccountFeatureState({actor:{kind:'system',owner}}));assert.equal(Object.entries(state).find(([name])=>name==='EVENT_BUSES_ENABLED')[1],true);for(const name of ['ACTIVITY_V2_ENABLED','LINKS_ENABLED'])assert.equal(state[name],false);
  await f.db.put('activity-item/'+owner+'/live',{owner,state:'active',expiresAt:null});await f.db.put('key-delegation/'+owner+'/live',{owner,state:'active'});
- state=await read(e,new AccountFeatureState({actor:{kind:'system',owner}}));for(const name of ['ACTIVITY_V2_ENABLED','BINDLEBOX_ENABLED'])assert.equal(state[name],true);
+ state=await read(e,new AccountFeatureState({actor:{kind:'system',owner}}));for(const name of ['ACTIVITY_V2_ENABLED','LINKS_ENABLED'])assert.equal(state[name],true);
 });
 
 test('incremental boolean true preserves its former boolean read site',()=>{

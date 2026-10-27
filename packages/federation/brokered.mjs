@@ -19,7 +19,9 @@ import {siteGlobal} from '../flags/read.mjs';
 // Actors (built by trusted adapters only): {kind:'owner', owner} candidates, discover, records, register, reconfirm,
 // unassign, detach, revalidate, scope-describe; {kind:'system', owner} records, revalidate, describe (C1b messaging
 // descriptors), mintable, severance, severance-done.
-import {INTAKE_SLOT,INTAKE_CONTRACT} from '../email-bridge/wire.mjs';
+// The public-intake slot and contract come from core links, not from the email bridge (messaging extraction prep):
+// brokered intake delivery depends on the slot having an occupant, whichever feature consumes it.
+import {PUBLIC_INTAKE_SLOT as INTAKE_SLOT,PUBLIC_INTAKE_CONTRACT as INTAKE_CONTRACT} from '../links/types.mjs';
 export {INTAKE_SLOT,INTAKE_CONTRACT};
 import {Provider} from '../../vendor/ngin/index.js';
 import {AppAction,AppQuery} from '../app/engine.mjs';

@@ -6,7 +6,7 @@ import {capability} from '../flags/read.mjs';
 // requires a valid DMARC result, one reply per event, the inbound sender as recipient and the receiving domain as the
 // sending domain, so the reply is built here from raw bytes and sent only while the event is live.
 //
-// Everything fails closed: without EMAIL_BRIDGE_ENABLED and BINDLEBOX_ENABLED, the EMAIL_BRIDGE object binding, the
+// Everything fails closed: without EMAIL_BRIDGE_ENABLED, the EMAIL_BRIDGE object binding, the
 // identity directory, a current-entitlement answer, a provenance key or a brokered occupant port, mail is either
 // refused with the one generic reason or held undelivered. Ports not yet provided by core answer "unavailable".
 import {bridgeKey} from './keys.mjs';

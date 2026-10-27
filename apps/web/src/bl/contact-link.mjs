@@ -15,6 +15,11 @@ export const intentLink=(intent,link)=>`web+bindle://${intent}?contact-url=${enc
 const intentEnabled=s=>(s.data?.features??s.session?.account?.consoleFeatures??s.config)?.intentLinksEnabled===true;
 const modernValue=(s,intent,link)=>{if(!intentEnabled(s))return null;try{return contactIntentValue(intent,link);}catch{return null;}};
 const intentTarget=(s,intent,link)=>{if(!intentEnabled(s)||!['send-message','add-contact'].includes(intent))return null;const value=modernValue(s,intent,link);if(value)return '/i#bintent='+value;try{const url=new URL(link);if(typeof link==='string'&&link.length<=18000&&(url.protocol==='https:'||s.config?.localDevelopment===true&&url.origin===s.config.origin)&&canonicalContactLink(url.origin,link)?.link===link)return '/i#legacy='+encodeURIComponent(intentLink(intent,link));}catch{}return null;};
+/** The intent-router target that hands a contact link to the signed-in user's own messaging app as `send-message`
+ * (developer contact in occupant mode), or null when intents are unavailable for this account. */
+export const sendMessageTarget=(s,link)=>intentTarget(s,'send-message',link);
+/** Whether intent handoffs are available for this account (the console copy follows it, review I2). */
+export const intentsAvailable=s=>intentEnabled(s);
 export const writable=intake=>Boolean(intake?.mimeTypes?.some(t=>['text/plain','text/html'].includes(t)));
 const failures={
  link_malformed:'This contact link is malformed. Ask the sender for a fresh link.',link_invalid:'This contact link is expired, revoked, or invalid.',unauthorized:'This contact link is expired, revoked, or invalid.',not_acceptable:'This contact link is expired, revoked, or invalid.',

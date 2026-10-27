@@ -1,6 +1,8 @@
-import {migrateTags} from '../messaging/tags.mjs';
+import {migrateTags} from '../core/tags.mjs';
 import {StorageError} from '../storage/policy.mjs';
-import {key,canonical,digest} from '../messaging/store.mjs';
+import {key,canonical,digest} from '../core/records.mjs';
+// MCP item tools reach v1 app messages too; they live in activity's app-message/ family (messaging extraction prep).
+import {itemRecord} from '../activity/app-messages.mjs';
 import {MessagingFault} from '../core/records.mjs';
 const fail=(code,message,status=403)=>{throw new StorageError(code,message,status);};
 // F10 (wargame 3): agent mutation journals bind a request UUID to its arguments for a bounded replay lifetime. After
@@ -67,7 +69,7 @@ export async function mcpOperation(account,owner,clientId,tool,args,{itemRead=fa
   if(prior){if(prior.fingerprint!==fingerprint)fail('tx_conflict','Request identifier was reused.',409);if(prior.state==='failed')fail(prior.error?.code??'invalid_args',prior.error?.message??'The operation was refused.',prior.error?.status??400);if(prior.state!=='done')fail('indeterminate','Read the item before retrying this operation.',503);return mutationResult(tool,prior.result,itemRead);}
  }
  if(typeof args.key!=='string'||!/^[a-f0-9-]{36}$/.test(args.key))fail('invalid_args','A message identifier is required.',400);
- const record=await account.metadata.get(key('message',owner,args.key));
+ const record=(await itemRecord(k=>account.metadata.get(k),owner,args.key))?.record;
  if(!record||record.owner!==owner||record.collection!==id)fail('forbidden','This item does not belong to the selected collection.');
  if(tool==='item_read'){
   if(record.size>65536)fail('result_too_large','Download this item through the account interface.',413);

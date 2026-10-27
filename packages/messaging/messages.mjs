@@ -1,9 +1,12 @@
 import {publicMessageMetadata as metadata} from './message-metadata.mjs';
 import {validTagList,contactIntake,intakeDeliveryTags} from './tag-policy.mjs';
-import {validTagIds,isSuspectedTag,validateTagActions,changeTags,applyRules,initialTags,migrateTags,seedDefaultRules,stampRules,normalizeAutomatedResult,validUserTagId,validTagLabel} from './tags.mjs';
+import {validTagIds,isSuspectedTag,validateTagActions,changeTags,applyRules,initialTags,migrateTags,seedDefaultRules,stampRules,normalizeAutomatedResult,validUserTagId,validTagLabel,ownerRules} from '../core/tags.mjs';
 import { fail, key, boundedString, mimeValid, digest, canonical } from './store.mjs';
 import { validateContent } from './content.mjs';
 import { validateSenderMetadata } from './contact-endpoints.mjs';
+// Item reads, updates and deletes resolve either family: legacy peer messages (`message/`) or activity's v1 app messages
+// (`app-message/`, messaging extraction prep). Peer delivery (`receive`) still writes only `message/`.
+import { itemRecord, itemPrefixes, usageKeyOf, storedItems } from '../activity/app-messages.mjs';
 
 const validateActions = actions => {
   validateTagActions(actions, ['collection', 'tags', 'addTags', 'removeTags', 'classification', 'quarantined', 'read']);
@@ -12,12 +15,8 @@ const validateActions = actions => {
   if (actions.read !== undefined && typeof actions.read !== 'boolean') fail('invalid_actions');
 };
 const validMatch = match => match && typeof match === 'object' && !Array.isArray(match) && Object.keys(match).every(field => ['grantId', 'mimeType', 'collection', 'tagsAll', 'source'].includes(field)) && Object.entries(match).every(([field, value]) => field === 'tagsAll' ? validTagIds(value) && value.length > 0 : field === 'source' ? ['classifier', 'heuristic'].includes(value) && Boolean(match.tagsAll?.some(isSuspectedTag)) : boundedString(value));
-/** Seeds versioned default rules and migrates legacy rule tags inside the caller's transaction. */
-export async function ownerRules(tx, owner) {
-  const rules = await tx.get(key('rules', owner)) || [], seeded = seedDefaultRules(rules, await tx.get(key('rule-defaults', owner)));
-  if (!seeded) return rules;
-  await tx.set(key('rules', owner), seeded.rules); await tx.set(key('rule-defaults', owner), seeded.state); return seeded.rules;
-}
+// ownerRules moved to packages/core/tags.mjs (messaging extraction prep); re-exported for existing importers.
+export {ownerRules};
 
 export class MessagingService {
   constructor({ store, tokens, crypto = globalThis.crypto, clock = () => Date.now(), maxStoredBytes = 1073741824, maxStoredMessages = 10000, indexedList }) { Object.assign(this, { store, tokens, crypto, clock, maxStoredBytes, maxStoredMessages, indexedList }); }
@@ -101,7 +100,9 @@ export class MessagingService {
       if (prior) { if (prior.fingerprint !== fingerprint) fail('idempotency_conflict'); return { id: prior.id, accepted: true }; }
       if (bytes.byteLength > grant.claims.maxMessageBytes || grant.messagesUsed + 1 > grant.claims.maxMessages || grant.bytesUsed + bytes.byteLength > grant.claims.maxBytes) fail('quota_exceeded');
       const usage = await tx.get(key('message-usage', owner)) || { bytes: 0, messages: 0 };
-      if (usage.bytes + bytes.byteLength > this.maxStoredBytes || usage.messages + 1 > this.maxStoredMessages) fail('account_quota_exceeded');
+      // The account caps cover both item families (review F5); only the legacy counter is written below.
+      const stored = await storedItems(tx, owner, usage);
+      if (stored.bytes + bytes.byteLength > this.maxStoredBytes || stored.messages + 1 > this.maxStoredMessages) fail('account_quota_exceeded');
       const now = this.clock(), message = initialTags({ id: this.crypto.randomUUID(), owner, collection, mimeType, size: bytes.byteLength, bytes, deliveryCollection: collection, receivedAt: now, readAt: null, deliveryTags, quarantined: Boolean(grant.quarantined), grantId: grant.id, senderMetadata, ...(intake ? { intakeRevision: intake.revision } : {}) }, deliveryTags, intake ? { source: 'intake', intakeRevision: intake.revision } : { source: 'grant' }, now);
       // Match all rules against original delivery metadata; no accidental rule cascades.
       await applyRules(message, await ownerRules(tx, owner), { now, active: async id => (await tx.get(key('collection', owner, id)))?.active });
@@ -124,13 +125,13 @@ export class MessagingService {
     // Legacy arrays take no cursor. Index and scan share one normalization: a missing readAt is unread and a missing
     // quarantined flag is not quarantined; a filter of the wrong type matches nothing (DEVLOG 2026-10-23 follow-ups).
     if (this.indexedList) return this.indexedList(owner, { collection, unread, quarantined, limit });
-    return this.store.transaction(async tx => (await tx.list(key('message', owner))).map(row => migrateTags(row.value)).filter(message => (collection === undefined || message.collection === collection) && (unread === undefined || (message.readAt == null) === unread) && (quarantined === undefined || Boolean(message.quarantined) === quarantined)).sort((a, b) => b.receivedAt - a.receivedAt || a.id.localeCompare(b.id)).slice(0, limit).map(metadata));
+    return this.store.transaction(async tx => [...(await tx.list(itemPrefixes(owner)[0])), ...(await tx.list(itemPrefixes(owner)[1]))].map(row => migrateTags(row.value)).filter(message => (collection === undefined || message.collection === collection) && (unread === undefined || (message.readAt == null) === unread) && (quarantined === undefined || Boolean(message.quarantined) === quarantined)).sort((a, b) => b.receivedAt - a.receivedAt || a.id.localeCompare(b.id)).slice(0, limit).map(metadata));
   }
-  async read(owner, id) { return this.store.transaction(async tx => { const message = await tx.get(key('message', owner, id)); if (!message) fail('not_found'); return migrateTags(message); }); }
+  async read(owner, id) { return this.store.transaction(async tx => { const message = (await itemRecord(k => tx.get(k), owner, id))?.record; if (!message) fail('not_found'); return migrateTags(message); }); }
   async update(owner, id, actions, provenance = { source: 'owner' }) {
     validateActions(actions);
     return this.store.transaction(async tx => {
-      const path = key('message', owner, id), now = this.clock(), message = migrateTags(await tx.get(path));
+      const path = (await itemRecord(k => tx.get(k), owner, id))?.path ?? key('message', owner, id), now = this.clock(), message = migrateTags(await tx.get(path));
       if (!message) fail('not_found');
       if (actions.collection && !(await tx.get(key('collection', owner, actions.collection)))?.active) fail('invalid_collection');
       const { read, tags, addTags, removeTags, classification, ...changes } = actions; Object.assign(message, changes);
@@ -148,7 +149,7 @@ export class MessagingService {
   async applyAutomatedTags(owner, id, input) {
     const result = normalizeAutomatedResult(input);
     return this.store.transaction(async tx => {
-      const path = key('message', owner, id), now = this.clock(), message = migrateTags(await tx.get(path));
+      const path = (await itemRecord(k => tx.get(k), owner, id))?.path ?? key('message', owner, id), now = this.clock(), message = migrateTags(await tx.get(path));
       if (!message) fail('not_found');
       const { source, labels, model, version } = result, newly = [], evidence = probability => ({ ...model ? { model } : {}, version, ...probability !== undefined ? { probability } : {} });
       message.classificationResult = { ...message.classificationResult, [source]: { ...result, at: now } };
@@ -168,9 +169,9 @@ export class MessagingService {
   }
   async delete(owner, id) {
     return this.store.transaction(async tx => {
-      const path = key('message', owner, id); const message = await tx.get(path); if (!message) fail('not_found');
-      const usage = await tx.get(key('message-usage', owner));
-      if (usage) { usage.bytes -= message.size; usage.messages--; await tx.set(key('message-usage', owner), usage); }
+      const found = await itemRecord(k => tx.get(k), owner, id); if (!found) fail('not_found'); const { path, record: message } = found;
+      const usageKey = usageKeyOf(path, owner), usage = await tx.get(usageKey);
+      if (usage) { usage.bytes -= message.size; usage.messages--; await tx.set(usageKey, usage); }
       // Conversation history rows are references to the message (wargame 3 C4): they go with it.
       const history = message.conversation?.historyKey;
       if (typeof history === 'string' && history.startsWith('conversation/history/')) await tx.delete(history);

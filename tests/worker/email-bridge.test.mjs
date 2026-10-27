@@ -4,7 +4,7 @@ import {createHarness} from './harness.mjs';
 const ORIGIN='https://3sln.example';
 async function fixture(t,enabled='true'){
  const pair=await crypto.subtle.generateKey({name:'ECDSA',namedCurve:'P-256'},true,['sign','verify']),secret=JSON.stringify({kid:'bridge-local-test',privateJWK:await crypto.subtle.exportKey('jwk',pair.privateKey)});
- const h=await createHarness({assets:async()=>new Response(null,{status:404}),bindings:{APP_ORIGIN:ORIGIN,RP_ID:'3sln.example',EMAIL_BRIDGE_ENABLED:enabled,BINDLEBOX_ENABLED:'true',EMAIL_BRIDGE_SIGNING_JWK:secret}});t.after(()=>h.close());return {...h,secret};
+ const h=await createHarness({assets:async()=>new Response(null,{status:404}),bindings:{APP_ORIGIN:ORIGIN,RP_ID:'3sln.example',EMAIL_BRIDGE_ENABLED:enabled,EMAIL_BRIDGE_SIGNING_JWK:secret}});t.after(()=>h.close());return {...h,secret};
 }
 test('BRIDGE workerd: real object settings, default opt-out, paid entitlement and owner/CSRF gates; public keys contain no private material',async t=>{
  const h=await fixture(t),{cookie,result}=await h.signup(),owner=result.account.id,account=h.accounts.get(h.accounts.idFromName(owner));

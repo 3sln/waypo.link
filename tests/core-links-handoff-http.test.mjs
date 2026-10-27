@@ -1,6 +1,6 @@
 // BB-C1b descriptor route on the real Node adapter: GET <contact link> with the ingress media type answers the
 // current occupant's descriptor (configured occupancy and describe ports), uniform 503 recipient_unavailable without
-// one, 401 for links that do not verify, and nothing at all with BINDLEBOX_ENABLED off or for other media types.
+// one, 401 for links that do not verify, and nothing at all with LINKS_ENABLED off or for other media types.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -25,7 +25,7 @@ const describe = { calls: 0, body: () => ({ version: 1, profiles: [MESSAGING_PRO
 
 test('descriptor route: occupant descriptor, uniform unavailability, link checks, and nothing with the flag off', async () => {
   const seat = { value: { ...BOX, generation: 1 } };
-  const s = await server(8797, { BINDLEBOX_ENABLED: 'true', LINK_SLOT_OCCUPANT: async ({ slot }) => (slot === MESSAGING_INGRESS_SLOT ? seat.value : null), MESSAGING_DESCRIBE: async ({ occupant }) => { describe.calls++; if (occupant.clientId !== BOX.clientId) throw new Error('unknown occupant'); return describe.body(); } });
+  const s = await server(8797, { LINKS_ENABLED: 'true', LINK_SLOT_OCCUPANT: async ({ slot }) => (slot === MESSAGING_INGRESS_SLOT ? seat.value : null), MESSAGING_DESCRIBE: async ({ occupant }) => { describe.calls++; if (occupant.clientId !== BOX.clientId) throw new Error('unknown occupant'); return describe.body(); } });
   try {
     const c = s.controller(), actor = { kind: 'app', owner: s.id, clientId: BOX.clientId, handle: s.handle };
     const issued = await c.linkOperation(s.id, { actor, operation: 'links.issue', input: { type: MESSAGING_CONTACT_LINK_TYPE, claims, expiresAt: Date.now() + 86400000 } });

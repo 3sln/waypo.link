@@ -78,11 +78,14 @@ Columns:
 | `INTEGRATIONS_ENABLED` | a | G A S P C | off | — | crit | safe | off | Disconnect, severance and revocation are always available. |
 | `INCREMENTAL_AUTH_ENABLED` | a | G A S P C | off | `FEDERATION_ENABLED` | crit | safe | off | Before the owner is known, only G and C rules match. |
 | `EXTENSIONS_ENABLED` | a | G A C | off | — | std | safe | off | |
-| `BINDLEBOX_ENABLED` | a | G A S P | off | — | std | safe | off | 3sln.me side only. The separate BindleBox deployment keeps its own env. |
-| `EMAIL_BRIDGE_ENABLED` | a | G A S P | off | `BINDLEBOX_ENABLED` | crit | safe | off | Subject = recipient owner. Paid entitlement and owner opt-in still apply. |
+| `LINKS_ENABLED` | a | G A S P | off | — | std | safe | off | Core links contract, key delegation and the messaging-address descriptor. Renamed from `BINDLEBOX_ENABLED` on 2026-10-26 (retired in `RETIRED_FLAGS`; `envAlias` still reads its raw env value while `LINKS_ENABLED` is unset; a quarantined `BINDLEBOX_ENABLED` record with no `LINKS_ENABLED` record takes the outage path instead, and `flags.retire` of that record copies it to `LINKS_ENABLED`, or writes the off record when its shape does not fit; review F1, 2026-10-27, provisional). The separate messaging app deployment keeps its own env. |
+| `EMAIL_BRIDGE_ENABLED` | a | G A S P | off | — (delivery waits for any public-intake slot occupant) | crit | safe | off | Subject = recipient owner. Paid entitlement and owner opt-in still apply. |
 | `SEMANTIC_SEARCH_ENABLED` | a | G A S P V | off | — | std | safe | **on** | Also needs the AI/Vectorize bindings (adapter capability). The global budget is unchanged. |
 | `DEVICE_AUTHORIZATION_ENABLED` | a | G A C | off | — | crit | safe | off | Its declaration uses the global component only (§3.6). |
 | `APP_METADATA_DISCOVERY_ENABLED` | a | G C | off | — | std | safe | off (Worker unset) | |
+| `RTC_SIGNALING_ENABLED` | a | G A | off | `EXTENSIONS_ENABLED`, `ARTEFACT_VERSIONS_ENABLED` | crit | safe | off | Stateful, no retention predicate. RTC signaling slot occupant, widening contract operations and same-provider sessions (RTC-d, not implemented). Narrowing is never gated. Provisional (rtc-signaling design §3.3). |
+| `RTC_FOREIGN_ENABLED` | a | G A | off | `RTC_SIGNALING_ENABLED`, `DIRECTORY_ENABLED` | crit | safe | off | Kill switch for the `rtc-signaling.v1` feature, foreign delivery and `/bindle/rtc` (RTC-e, not implemented). |
+| `RTC_TICKETS_ENABLED` | a | G A | off | `RTC_SIGNALING_ENABLED` | crit | safe | off | Minting `rtc-ticket` links only (RTC-d, not implemented); existing tickets admit until expiry or revocation. |
 | `SIGNUP_ENABLED` | c | G R | off | — | crit | last-known | **on** | No subject exists yet. R uses the same trusted `cf.country` as admission. |
 | `PAID_SIGNUP_ENABLED` | c | G R | off | valid env billing configuration | crit | last-known | **on** | |
 | `WAITLIST_ENABLED` | c | G R | off | — | std | last-known | **on** | |
@@ -96,6 +99,7 @@ Columns:
 | `BROWSER_AUTOMATION_ENABLED` | b | — | **on** | — | — | — | env (on; `false` disables) | Kill switch for browser automation (wargame 3, provisional). Off makes every automation operation except revoke `not_found`; revoke is never gated. |
 | `BILLING_ENABLED` | b | — | off | — | — | — | env (on) | Polar secrets. Per-user billing would corrupt entitlement. |
 | `MAIL_ENABLED`, `PUSH_ENABLED` | b | — | off | — | — | — | env | Bindings or secrets. |
+| `RTC_TURN_ENABLED` | b | — | off | `RTC_SIGNALING_ENABLED` | — | — | env | Built-in relay occupant (RTC-f, not implemented). Requires signaling (review follow-up, provisional): relay credentials exist only for live signaling legs. New, not a rename of retired `BEAM_TURN_ENABLED`; stays off until the relay-spend budget gate. |
 | `FEDERATION_REFRESH_ENABLED` | b | — | on | — | — | — | env | Network and protocol metadata. No rollout use. |
 | `FEDERATION_ENTRY_ENABLED` | b | — | off | — | — | — | env | Selects a binding and embed-origin routing. |
 | `ONBOARDING_ENABLED` | b | — | off | — | — | — | env | Needs the `ONBOARDING_KEY` secret. |
@@ -505,7 +509,7 @@ Write ownership does not overlap. The `FLAG_STATS` binding is FF-8's; the DO cla
 
 ### Complete flag registry (2026-10-24)
 
-All 61 entries in `packages/flags/registry.mjs` are listed below. Class **a** is a targeted console rollout; **c** is a console switch with its declared dimensions; **b** is an environment capability (derived rows are computed by adapters). **Safe** is the registry fallback, not a deployment setting. For a/c flags, an unset environment delegates to the console and an absent record uses Safe; an explicit safe value kills the feature. Legacy unsafe environment values apply only before a console record exists and with a usable snapshot. Dependencies and service readiness can still refuse an enabled feature.
+All 62 entries in `packages/flags/registry.mjs` are listed below. Class **a** is a targeted console rollout; **c** is a console switch with its declared dimensions; **b** is an environment capability (derived rows are computed by adapters). **Safe** is the registry fallback, not a deployment setting. For a/c flags, an unset environment delegates to the console and an absent record uses Safe; an explicit safe value kills the feature. Legacy unsafe environment values apply only before a console record exists and with a usable snapshot. Dependencies and service readiness can still refuse an enabled feature.
 
 **Worker template** is the raw value in `wrangler.jsonc` (unset means no explicit value). **Node default** is the adapter's value without environment/config overrides or console records: a/c uses Safe; b uses the adapter environment parser. Derived capabilities depend on injected resources. Local signup additionally has a pre-console compatibility default in `packages/runtime/routes/shared.mjs`: with no signup record, local development may admit signup subject to its remaining gates. None of these values establishes production verification.
 
@@ -522,7 +526,7 @@ All 61 entries in `packages/flags/registry.mjs` are listed below. Class **a** is
 | `SUBJECT_DELETED_EVENTS_ENABLED` | a | false | unset | false |
 | `INCREMENTAL_AUTH_ENABLED` | a | false | false | false |
 | `EXTENSIONS_ENABLED` | a | false | false | false |
-| `BINDLEBOX_ENABLED` | a | false | false | false |
+| `LINKS_ENABLED` | a | false | false | false |
 | `EMAIL_BRIDGE_ENABLED` | a | false | false | false |
 | `SEMANTIC_SEARCH_ENABLED` | a | false | true | false |
 | `DEVICE_AUTHORIZATION_ENABLED` | a | false | false | false |
@@ -538,6 +542,9 @@ All 61 entries in `packages/flags/registry.mjs` are listed below. Class **a** is
 | `ORG_BREAK_GLASS_ENABLED` | a | false | unset | false |
 | `ORG_RELATIONS_ENABLED` | a | false | unset | false |
 | `ORG_FOREIGN_RELATIONS_ENABLED` | a | false | unset | false |
+| `RTC_SIGNALING_ENABLED` | a | false | unset | false |
+| `RTC_FOREIGN_ENABLED` | a | false | unset | false |
+| `RTC_TICKETS_ENABLED` | a | false | unset | false |
 | `SIGNUP_ENABLED` | c | false | true | false |
 | `PAID_SIGNUP_ENABLED` | c | false | true | false |
 | `WAITLIST_ENABLED` | c | false | true | false |
@@ -557,6 +564,7 @@ All 61 entries in `packages/flags/registry.mjs` are listed below. Class **a** is
 | `BILLING_ENABLED` | b | false | true | false |
 | `MAIL_ENABLED` | b | false | true | false |
 | `PUSH_ENABLED` | b | false | true | false |
+| `RTC_TURN_ENABLED` | b | false | unset | false |
 | `FEDERATION_REFRESH_ENABLED` | b | true | unset | true |
 | `BROWSER_AUTOMATION_ENABLED` | b | true | unset | true |
 | `FEDERATION_ENTRY_ENABLED` | b | false | unset | false |

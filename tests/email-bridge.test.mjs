@@ -10,12 +10,14 @@ import {parseProvenance,intakeDigest} from '../packages/bindlebox-protocol/index
 const REJECT={action:'reject',reason:GENERIC_REFUSAL};
 const replyBody=r=>text(r.raw).split('\r\n\r\n')[1].replace(/\r\n/g,' ').trim();
 
-test('flags: EMAIL_BRIDGE_ENABLED and BINDLEBOX_ENABLED are both required and default off; no directory lookup when off',async()=>{
- for(const config of [{...CONFIG,EMAIL_BRIDGE_ENABLED:'false'},{...CONFIG,BINDLEBOX_ENABLED:undefined},{...CONFIG,APP_ORIGIN:'http://localhost:8787'},{APP_ORIGIN:ORIGIN}]){
+test('flags: EMAIL_BRIDGE_ENABLED is required and default off; no directory lookup when off; no messaging-app flag is consulted',async()=>{
+ for(const config of [{...CONFIG,EMAIL_BRIDGE_ENABLED:'false'},{...CONFIG,APP_ORIGIN:'http://localhost:8787'},{APP_ORIGIN:ORIGIN}]){
   const w=await world({config});assert.deepEqual(await w.receive(rawMail()),REJECT);assert.equal(w.directoryCalls.length,0);assert.equal(w.replies.length,0);
   await assert.rejects(w.bridge.settings(OWNER),{code:'not_found'});assert.deepEqual(await w.bridge.drain(OWNER),{delivered:0,held:true,reason:'disabled'});
  }
  assert.equal(bridgeConfig({}).enabled,false);
+ // Messaging extraction prep: the bridge depends on the public-intake slot having an occupant, not on Parley's flag.
+ for(const config of [CONFIG,{...CONFIG,BINDLEBOX_ENABLED:'false'},{...CONFIG,LINKS_ENABLED:'false'}])assert.equal(bridgeConfig(config).enabled,true);
  for(const name of ['bridge.receive','bridge.admit','bridge.drain','bridge.accepted','bridge.reply-outcome','bridge.settings','bridge.configure','bridge.status','bridge.suppress'])assert.ok(BRIDGE_OPERATIONS[name],name);
 });
 
@@ -182,8 +184,8 @@ test('holding queue: no occupant or a disabled bridge holds mail (fail closed) a
  const w=await world({mode:'none'});await w.enable();await w.receive(rawMail());
  assert.deepEqual((await w.bridge.drain(OWNER)).delivered,0);assert.equal(w.deliveries.length,0);
  let status=await w.bridge.status(OWNER);assert.equal(status.queued,1);assert.equal(status.items[0].reason,'no-occupant');
- // Flags off: drain never contacts anything.
- const off=await world({config:{...CONFIG,BINDLEBOX_ENABLED:'false'}});assert.equal((await off.bridge.drain(OWNER)).reason,'disabled');
+ // Flag off: drain never contacts anything.
+ const off=await world({config:{...CONFIG,EMAIL_BRIDGE_ENABLED:'false'}});assert.equal((await off.bridge.drain(OWNER)).reason,'disabled');
  // Owner switch off: paused, held.
  await w.enable(OWNER,{enabled:false});w.state.mode='store';assert.equal((await w.bridge.drain(OWNER)).reason,'paused');assert.equal(w.deliveries.length,0);
  await w.enable(OWNER,{enabled:true});w.clock.advance(BRIDGE_LIMITS.idleMs);assert.equal((await w.bridge.drain(OWNER)).delivered,1);

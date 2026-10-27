@@ -3,7 +3,7 @@ import {flagsFor,ownerFlags,existingFeature,featureConfig} from './flags.mjs';
 // service and its engine over this account's store. `methods` are installed on AccountController.prototype (`this`
 // is the controller); `rpc` lists what `invoke` accepts (packages/runtime/account/index.mjs).
 //
-// Everything new is refused with `not_found` unless BINDLEBOX_ENABLED is on. The app-actor entry (`linkOperation`)
+// Everything new is refused with `not_found` unless LINKS_ENABLED is on. The app-actor entry (`linkOperation`)
 // is internal (no `rpc` entry): C1b reaches it from the links contract resource method once slot handoff exists,
 // building the actor from the verified app grant, never from the request. `config.LINK_SLOT_OCCUPANT`
 // ({owner, slot}) -> {clientId, generation} | null is that slot binding; until it is configured no app is an
@@ -28,19 +28,20 @@ import {systemClock,cryptoRandom,nullAudit} from '../../app/providers.mjs';
 import {LinkService} from '../../links/issuance.mjs';
 import {linksProvider,LINK_OPERATIONS,LinkList,LinkChanges,RevokeLink} from '../../links/engine.mjs';
 import {decideLinkAudience} from '../../links/audience.mjs';
-import {linkPolicyRegistry} from '../../links/policies.mjs';
+import {linkPolicyRegistry,developerPolicy} from '../../links/policies.mjs';
 import {StorageError} from '../../storage/policy.mjs';
 import {verifyAuthorProof} from '../../links/author-proof.mjs';
 import {LinkHandoff} from '../../links/handoff.mjs';
-import {LINKS_CONTRACT,LINK_SLOT_TABLE} from '../../links/types.mjs';
+import {LINKS_CONTRACT,LINK_SLOT_TABLE,MESSAGING_CONTACT_LINK_TYPE,MESSAGING_INGRESS_SLOT} from '../../links/types.mjs';
 import {bridgeConfig} from '../../email-bridge/engine.mjs';
 import {bridgeKey} from '../../email-bridge/keys.mjs';
 import {ownerOperation} from '../../email-bridge/owner.mjs';
-import {canonical,digest} from '../../core/records.mjs';
+import {canonical,digest,key} from '../../core/records.mjs';
+import {encryptSecret,decryptSecret} from '../secrets.mjs';
 
 export const LINK_ENGINE_OPERATIONS=operations(...LINK_OPERATIONS);
 const engines=new WeakMap();
-export const linksEnabled=(config,ctx)=>flagsFor(config,ctx).enabled('BINDLEBOX_ENABLED');
+export const linksEnabled=(config,ctx)=>flagsFor(config,ctx).enabled('LINKS_ENABLED');
 /** The controller's LinkService: current-key minting through `signingKey`, verification through the registry history. */
 export function linkService(c){
  return new LinkService({store:c.store,issuer:c.config.APP_ORIGIN,keys:c.tokens.keys,signingKey:owner=>c.signingKey(owner),decide:input=>decideLinkAudience(c,input),verifyAuthor:input=>verifyAuthorProof(input.proof,{...input,...authorPorts(c)}),policies:linkPolicyRegistry(c.config)});
@@ -65,7 +66,20 @@ function linksEngine(c){
  if(!engine){engine=createAppEngine({providers:{clock:systemClock,random:cryptoRandom,audit:nullAudit,links:linksProvider({service:linkService(c),enabled:true,config:c.config,flags:c.config.flags,occupant:occupantPort(c)})}});engines.set(c,engine);}
  return engine;
 }
-const run=(c,Operation,params)=>{if(['links.issue','links.rotate'].includes(Operation.operation)&&!ownerFlags(c.config,params.actor?.owner,params.actor?.clientId).enabled('BINDLEBOX_ENABLED'))throw new StorageError('not_found','Not found.',404);const operation=new Operation(params);return operation instanceof AppQuery?read(linksEngine(c),operation):perform(linksEngine(c),operation);};
+const run=(c,Operation,params)=>{if(['links.issue','links.rotate'].includes(Operation.operation)&&!ownerFlags(c.config,params.actor?.owner,params.actor?.clientId).enabled('LINKS_ENABLED'))throw new StorageError('not_found','Not found.',404);const operation=new Operation(params);return operation instanceof AppQuery?read(linksEngine(c),operation):perform(linksEngine(c),operation);};
+// The occupant-issued developer link (DEVELOPER_CONTACT_MODE=occupant). The URL is a capability, so it is sealed.
+export const DEVELOPER_OCCUPANT_POINTER='developer-contact/occupant-v1';
+function developerLinkRecord(c,owner,record){return record?.owner===owner&&record.type===MESSAGING_CONTACT_LINK_TYPE&&record.claims?.audience?.policy===developerPolicy(c.config)&&record.issuer?.kind==='app'&&typeof record.issuer.clientId==='string';}
+async function recordDeveloperOccupantLink(c,owner,result){
+ // Review I1: only a deployment that serves the occupant link records it. The account cannot see its own handle, so
+ // any account's occupant may still leave a pointer here; GET /api/developer-contact reads only the configured
+ // developer account's (DEVELOPER_CONTACT_HANDLE with the developer system badge), and export excludes the family.
+ if(c.config?.DEVELOPER_CONTACT_MODE!=='occupant')return false;
+ if(typeof result?.jti!=='string'||typeof result.link!=='string')return false;
+ const record=await c.metadata.get(key('link',result.jti));if(!developerLinkRecord(c,owner,record))return false;
+ const sealed=await encryptSecret({url:result.link},c.config.KEY_ENCRYPTION_KEY,DEVELOPER_OCCUPANT_POINTER);
+ await c.metadata.put(DEVELOPER_OCCUPANT_POINTER,{version:1,jti:result.jti,sealed,clientId:record.issuer.clientId,generation:record.issuer.generation??null,recordedAt:Date.now()});return true;
+}
 const owned=(owner,input)=>{if(input!==undefined&&(input===null||typeof input!=='object'||Array.isArray(input)))throw new StorageError('invalid_request','Unsupported link request.');return {actor:{kind:'owner',owner},...input===undefined?{}:{input}};};
 
 export const methods={
@@ -79,11 +93,34 @@ export const methods={
    const Operation=typeof operation==='string'&&Object.hasOwn(LINK_ENGINE_OPERATIONS,operation)?LINK_ENGINE_OPERATIONS[operation]:null;
    if(!Operation)throw new StorageError('unsupported_method','Unsupported link operation.',400);
    await this.warm(owner);
-   return run(this,Operation,{actor:{kind:actor.kind,owner,...actor.kind==='app'?{clientId:actor.clientId,handle:actor.handle,...actor.generation===undefined?{}:{generation:actor.generation,connection:actor.connection}}:{}},...id===undefined?{}:{id},...input===undefined?{}:{input:structuredClone(input)}});
+   const result=await run(this,Operation,{actor:{kind:actor.kind,owner,...actor.kind==='app'?{clientId:actor.clientId,handle:actor.handle,...actor.generation===undefined?{}:{generation:actor.generation,connection:actor.connection}}:{}},...id===undefined?{}:{id},...input===undefined?{}:{input:structuredClone(input)}});
+   // Developer contact through the occupant (messaging extraction prep): remember the developer-policy link an occupant
+   // issued or rotated, so GET /api/developer-contact can hand it off. Never fails the operation itself.
+   if(['links.issue','links.rotate'].includes(operation)&&actor.kind==='app')try{await recordDeveloperOccupantLink(this,owner,result);}catch{}
+   return result;
+  },
+  /** The developer link issued by this account's CURRENT messaging-ingress occupant (DEVELOPER_CONTACT_MODE=occupant),
+   * verified now: live, unrevoked, the developer policy, and issued by the seat that holds the slot today. */
+  async developerOccupantLink(owner){
+   const unavailable={available:false,reason:'contact-unavailable'};
+   if(!existingFeature(this.config,'LINKS_ENABLED',owner))return unavailable;
+   const pointer=await this.metadata.get(DEVELOPER_OCCUPANT_POINTER);if(pointer?.version!==1||typeof pointer.jti!=='string')return unavailable;
+   let url;try{url=(await decryptSecret(pointer.sealed,this.config.KEY_ENCRYPTION_KEY,DEVELOPER_OCCUPANT_POINTER)).url;}catch{return unavailable;}
+   let record;try{({record}=await linkService(this).verify(url));}catch{return unavailable;}
+   if(!developerLinkRecord(this,owner,record)||record.jti!==pointer.jti)return unavailable;
+   let seat=null;try{seat=await occupantPort(this)({owner,slot:MESSAGING_INGRESS_SLOT});}catch{seat=null;}
+   if(!seat||seat.clientId!==record.issuer.clientId||record.issuer.generation!==undefined&&seat.generation!==record.issuer.generation)return {available:false,reason:'occupant-changed'};
+   return {available:true,mode:'occupant',jti:record.jti,url,expiresAt:record.claims.exp*1000,policy:developerPolicy(this.config)};
+  },
+  /** Bounded eligibility for one principal against this account's live developer-policy link (links §7.5 reuse). */
+  async developerLinkDecide(owner,jti,principal){
+   const record=typeof jti==='string'&&/^[a-f0-9-]{36}$/.test(jti)?await this.metadata.get(key('link',jti)):null;
+   if(!developerLinkRecord(this,owner,record)||record.revoked||!(record.claims.exp*1000>Date.now()))return {state:'unavailable'};
+   return decideLinkAudience(this,{parent:jti,policy:record.claims.audience.policy,principal});
   },
   // Public messaging-address handoff (bindlebox §2.3): the descriptor for one of this owner's verified links.
   async linkDescriptor(owner,url){
-   if(!ownerFlags(this.config,owner).enabled('BINDLEBOX_ENABLED'))throw new StorageError('not_found','Not found.',404);
+   if(!ownerFlags(this.config,owner).enabled('LINKS_ENABLED'))throw new StorageError('not_found','Not found.',404);
    if(await this.metadata.get('owner')!==owner)throw new StorageError('recipient_unavailable','The recipient is unavailable.',503);
    try{return await linkHandoff(this).descriptor(url);}
    catch(error){throw error?.code==='link_malformed'?new StorageError('link_malformed','The link is malformed.',400):error?.code==='link_invalid'?new StorageError('link_invalid','The link is not valid.',401):new StorageError('recipient_unavailable','The recipient is unavailable.',503);}
@@ -95,8 +132,8 @@ const LINK_METHODS=Object.freeze({issue:'links.issue',revoke:'links.revoke',rota
 const WRITES=['issue','revoke','rotate'];
 const denied=()=>{throw new StorageError('forbidden','Link access denied.',403);};
 export async function linksResourceMethod(c,owner,context){
- if(!existingFeature(c.config,'BINDLEBOX_ENABLED',owner))throw new StorageError('not_found','Not found.',404);
- if(['issue','rotate'].includes(context.method)&&!ownerFlags(c.config,owner,context.clientId).enabled('BINDLEBOX_ENABLED'))throw new StorageError('not_found','Not found.',404);
+ if(!existingFeature(c.config,'LINKS_ENABLED',owner))throw new StorageError('not_found','Not found.',404);
+ if(['issue','rotate'].includes(context.method)&&!ownerFlags(c.config,owner,context.clientId).enabled('LINKS_ENABLED'))throw new StorageError('not_found','Not found.',404);
  if(typeof context?.method!=='string'||!Object.hasOwn(LINK_METHODS,context.method))throw new StorageError('unsupported_method','Unsupported link method.',400);
  const args=context.args;if(args===null||typeof args!=='object'||Array.isArray(args))throw new StorageError('invalid_args','Unsupported link request.',400);
  if(context.authority!=='bindle'||context.resource!==`${c.config.APP_ORIGIN}/entities/${owner}/links`||context.resourceGeneration!==owner||context.contract!==LINKS_CONTRACT)denied();
@@ -144,4 +181,6 @@ export const rpc={
  linkChanges:{},
  revokeLink:{},
  linkDescriptor:{gate:'none'},
+ developerOccupantLink:{gate:'none'},
+ developerLinkDecide:{gate:'none'},
 };

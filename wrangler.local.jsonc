@@ -144,7 +144,7 @@
     "BROKERING_ENABLED": "false",
     "DEVICE_AUTHORIZATION_ENABLED": "false",
     "ACTIVITY_V2_ENABLED": "false",
-    "BINDLEBOX_ENABLED": "false",
+    "LINKS_ENABLED": "false",
     "EMAIL_BRIDGE_ENABLED": "false",
     "EVENT_BUSES_ENABLED": "false",
     "INCREMENTAL_AUTH_ENABLED": "false",

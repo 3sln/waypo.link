@@ -1,0 +1,35 @@
+{
+  "bindle_artefact": 1,
+  "id": "https://spec.bindle.example/rtc-purposes/call/v1",
+  "kind": "rtc-purpose",
+  "versions": [
+    {
+      "version": 1,
+      "prev": null,
+      "body": {
+        "id": "https://spec.bindle.example/rtc-purposes/call/v1",
+        "title": {
+          "en": "Call",
+          "es": "Llamada"
+        },
+        "summary": {
+          "en": "Lets you call and be called, with audio, video and data, by the people you choose.",
+          "es": "Te permite llamar y recibir llamadas, con audio, vídeo y datos, de las personas que elijas."
+        },
+        "publisher": "https://spec.bindle.example",
+        "media": [
+          "audio",
+          "data",
+          "video"
+        ],
+        "alert": true,
+        "parties": "any",
+        "auto_accept": "never",
+        "context": null,
+        "categories": [
+          "personal-data"
+        ]
+      }
+    }
+  ]
+}

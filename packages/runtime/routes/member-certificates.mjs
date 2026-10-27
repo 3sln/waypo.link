@@ -76,7 +76,7 @@ async function status({request,env,path,local}){
  try{const account=await env.IDENTITY_REPOSITORY?.get(subject);result=account?.status==='active'?await accountHandle(env,subject).memberCertificateStatus(subject,jkt):null;}
  catch(error){if(error?.code==='member_certificates_unavailable')return answer({error:'delegation_unavailable'},503,{'Cache-Control':'no-store','Retry-After':'60'});result=null;}
  const known=result?.status==='active'||Number.isSafeInteger(result?.revokedHour);
- if(!known){if(flagReadable(env,'BINDLEBOX_ENABLED',true))return;return answer({error:'not_found'},404,{'Cache-Control':'no-store'});}
+ if(!known){if(flagReadable(env,'LINKS_ENABLED',true))return;return answer({error:'not_found'},404,{'Cache-Control':'no-store'});}
  return answer(result.status==='active'?{status:'active'}:{status:'revoked',revokedHour:result.revokedHour},200,{'Cache-Control':memberStatusCacheControl(result)});
 }
 

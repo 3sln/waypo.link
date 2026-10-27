@@ -20,7 +20,7 @@ function keyEngine(c){let engine=engines.get(c);if(!engine){engine=createIdentit
 const unavailable=()=>new StorageError('identity_keys_unavailable','Identity keys are unavailable.',409);
 
 // Slice C3, key-delegation.v1 (packages/identity/delegation.mjs): one delegation engine per controller over the same
-// account store. Everything is `not_found` unless BINDLEBOX_ENABLED is on. `config.DELEGATION_SLOT_OCCUPANT`
+// account store. Everything is `not_found` unless LINKS_ENABLED is on. `config.DELEGATION_SLOT_OCCUPANT`
 // ({owner, slot}) -> {clientId, origin, ingress, cnx, purposes} | null is the messaging-ingress occupancy port (EXT-X4
 // connections and C1b slot handoff provide it); without it nothing is certified. `DELEGATION_CERTIFICATE_SECONDS`
 // sets the certificate lifetime (default and maximum 86400). The app/system entry `delegationOperation` is internal
@@ -48,7 +48,7 @@ function reissueEngine(c){
  return engine;
 }
 const reissueActor=(owner,actor)=>({kind:'owner',owner,...typeof actor?.credentialId==='string'?{credentialId:actor.credentialId}:{},...typeof actor?.stepUpCredentialId==='string'?{stepUpCredentialId:actor.stepUpCredentialId}:{},...typeof actor?.sessionId==='string'?{sessionId:actor.sessionId}:{}});
-const delegate=(c,Operation,params)=>{if(['delegations.issue','delegations.renew'].includes(Operation.operation)&&!ownerFlags(c.config,params.actor?.owner,params.actor?.clientId).enabled('BINDLEBOX_ENABLED'))throw new StorageError('not_found','Not found.',404);const operation=new Operation(params);return operation instanceof AppQuery?read(delegationEngine(c),operation):perform(delegationEngine(c),operation);};
+const delegate=(c,Operation,params)=>{if(['delegations.issue','delegations.renew'].includes(Operation.operation)&&!ownerFlags(c.config,params.actor?.owner,params.actor?.clientId).enabled('LINKS_ENABLED'))throw new StorageError('not_found','Not found.',404);const operation=new Operation(params);return operation instanceof AppQuery?read(delegationEngine(c),operation):perform(delegationEngine(c),operation);};
 const delegationInput=input=>{if(input===null||typeof input!=='object'||Array.isArray(input))throw new StorageError('invalid_request','Unsupported delegation request.');return structuredClone(input);};
 
 export const methods={

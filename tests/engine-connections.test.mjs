@@ -241,7 +241,7 @@ test('concurrency (seeded): one exclusive winner, suspend vs occupy, and disconn
 // ---- The ports and the KD-4 cascades on the real AccountController ----
 async function account(t,overrides={}){
  const db=new SqliteMetadata(':memory:');t.after(()=>db.close());const identity={status:'active'};
- const config={APP_ORIGIN:ISSUER,KEY_ENCRYPTION_KEY:Buffer.alloc(32,9).toString('base64'),INTEGRATIONS_ENABLED:'true',BINDLEBOX_ENABLED:'true',IDENTITY_ACCOUNT:async owner=>owner===OWNER?{status:identity.status,handle:'alice'}:null,...overrides};
+ const config={APP_ORIGIN:ISSUER,KEY_ENCRYPTION_KEY:Buffer.alloc(32,9).toString('base64'),INTEGRATIONS_ENABLED:'true',LINKS_ENABLED:'true',IDENTITY_ACCOUNT:async owner=>owner===OWNER?{status:identity.status,handle:'alice'}:null,...overrides};
  const bucket={put:async()=>{},get:async()=>null,delete:async()=>{}};
  const a=new AccountController({metadata:db,gate:new SerialGate(),blobs:bucket,archives:bucket,config,sql:db.sql});await a.touch(OWNER);
  const sys=(operation,input)=>a.connectionsSystem(OWNER,{operation,input}),own=(operation,input,authTime=Date.now())=>a.connectionsOwner(OWNER,{operation,input},{authTime});

@@ -25,7 +25,7 @@ import {WORK_PRECHARGED} from '../../mcp/account.mjs';
 export const RESOURCE_METHOD_HANDLERS=Object.freeze({
   [APP_NOTIFICATIONS]:createAppNotification,
   [ACTIVITY_CONTRACT]:activityResourceMethod,
-  [LINKS_CONTRACT]:linksResourceMethod, // BB-C1b: links contract; not_found unless BINDLEBOX_ENABLED
+  [LINKS_CONTRACT]:linksResourceMethod, // BB-C1b: links contract; not_found unless LINKS_ENABLED
   [EVENT_BUS_CONTRACT]:eventBusResourceMethod, // EV-2: 3sln.me-hosted event bus; not_found unless EVENT_BUSES_ENABLED
   [CLASSIFIER_CONTRACT]:classifierResourceMethod, // EXT-X10: explicit owner occupancy; INTEGRATIONS_ENABLED + EXTENSIONS_ENABLED
 });

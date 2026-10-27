@@ -31,8 +31,9 @@ import {brokeringMounts} from './integration-ports.mjs';
 import {verifyClientAssertion,memoryReplayCache,CLIENT_ASSERTION_TYPE} from '../federation/introspection.mjs';
 import {pinnedKeys} from '../federation/integrations.mjs';
 import {brokeredResourcesDeclaration} from '../federation/introspection.mjs';
+import {rtcBoundArtefacts} from '../rtc/extension.mjs';
 
-export const messagingAddressMounted=config=>siteGlobal(config,'BINDLEBOX_ENABLED',true)&&siteGlobal(config,'INTEGRATIONS_ENABLED',true)&&typeof config.MESSAGING_DESCRIBE==='function';
+export const messagingAddressMounted=config=>siteGlobal(config,'LINKS_ENABLED',true)&&siteGlobal(config,'INTEGRATIONS_ENABLED',true)&&typeof config.MESSAGING_DESCRIBE==='function';
 export const BROKERING_STORE='bindle-brokering-v1';
 export const FEDERATION_LAYOUT='bindle-federation-v1';
 /** Append-only declaration registry (EXT-X2). Slices append rows; never edit builders or other slices' rows.
@@ -58,7 +59,7 @@ export const MANIFEST_DECLARATIONS=Object.freeze([
  // BB-C1b: the `messaging-address` provider consumer of messaging-ingress (bindlebox §2.1). Only where the adapter
  // mounted the descriptor handoff with an occupancy port AND a describe port (`mounts.messagingAddress`); the entry
  // is kept only beside a declared extensions.v1 (EXTENSIONS_ENABLED), never on flags alone.
- {flag:['BINDLEBOX_ENABLED','EXTENSIONS_ENABLED'],mounted:c=>c.target==='authority'&&c.mounts.messagingAddress===true,declare:()=>({extensions:[{...MESSAGING_ADDRESS_DECLARATION}]})},
+ {flag:['LINKS_ENABLED','EXTENSIONS_ENABLED'],mounted:c=>c.target==='authority'&&c.mounts.messagingAddress===true,declare:()=>({extensions:[{...MESSAGING_ADDRESS_DECLARATION}]})},
  // IA-1: `grant-more`/`configure` need no row of their own (a second `authorization-entry.v1` would fail closed as a
  // duplicate). They ride the FEDERATION_ENTRY_ENABLED row through `entries.intents()`, which lists them only when the
  // adapter passed AuthorizationEntries a mounted INCREMENTAL_AUTHORIZATION port (INCREMENTAL_AUTH_ENABLED on).
@@ -133,6 +134,10 @@ export function federationControllerOptions({config,repository,accounts,owner,ma
   // by the organization's own writer after its own hops (relations.certify); the shard passes its grant records and the
   // writer checks the connection. Any refusal reports the member `unavailable`.
   relationImports:{certify:input=>account.relationsCertify(owner,input)},
+  // AMD-X1 (RTC-c): bound `purposes` of the rtc-signaling slot are pinned rtc-purpose lines. Inert unless EXTENSIONS_ENABLED
+  // and an operator registers the slot fragment; the purposes resolve only while RTC_SIGNALING_ENABLED is on (review
+  // follow-up), otherwise a bound purpose request is refused. The occupant itself is RTC-d.
+  boundArtefacts:rtcBoundArtefacts(()=>siteGlobal(config,'RTC_SIGNALING_ENABLED')),
   brokering:{enabled:true,mint:input=>account.brokeredMint(owner,input),seq:input=>account.brokeredSeq(owner,input),event:input=>account.brokeredFederationEvent(owner,input)},
   deriveAppSession:appSessionDerivation({repository,owner}),
   appSessionLineage:async candidate=>candidate===subject?(await repository.get(owner))?.linkedLineage??[]:[],
@@ -151,7 +156,7 @@ export function federationControllerOptions({config,repository,accounts,owner,ma
    if(capability(config,'BROKERED_INTROSPECTION_MOUNTED'))descriptors.push(...await account.brokeredDescriptors(owner));
    if(siteEnabled(config,'EVENT_BUSES_ENABLED',{subject:{kind:'account',owner}},true))descriptors.push(...await account.eventBusDescriptors(owner));
    if(ownerFlags(config,owner).enabled('INTEGRATIONS_ENABLED')&&ownerFlags(config,owner).enabled('EXTENSIONS_ENABLED'))descriptors.push(...await account.classifierDescriptors(owner));
-   if(siteEnabled(config,'BINDLEBOX_ENABLED',{subject:{kind:'account',owner}},true))descriptors.push({id:`${subject}/links`,label:'Contact links',provider:'bindle',contracts:{[LINKS_CONTRACT]:['issue','revoke','rotate','evaluate','list','changes',...bridgeConfig(featureConfig(config,{subject:{kind:'account',owner}})).enabled?['consumerKey','accepted']:[]]},generation:owner});
+   if(siteEnabled(config,'LINKS_ENABLED',{subject:{kind:'account',owner}},true))descriptors.push({id:`${subject}/links`,label:'Contact links',provider:'bindle',contracts:{[LINKS_CONTRACT]:['issue','revoke','rotate','evaluate','list','changes',...bridgeConfig(featureConfig(config,{subject:{kind:'account',owner}})).enabled?['consumerKey','accepted']:[]]},generation:owner});
    // ORG-10f: an organization's imported resources (relation import mirrors kept by its writer), so its admins can
    // assign them to fragments and approve them for applications; never dispatched here (provider 'relation').
    if(ownerFlags(config,owner).enabled('ORGANIZATIONS_ENABLED')&&current.kind==='organization')descriptors.push(...await account.relationImportDescriptors(owner));

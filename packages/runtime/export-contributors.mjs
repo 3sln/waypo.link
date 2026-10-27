@@ -15,7 +15,9 @@ const definitions=[
  // Removal history with the owner's keep choices and deletion jobs for app-attributed data (never the stored continuation position).
  ['app-removals',['app-removal/record/','storage/producer-keep/','storage/producer-deletion/'],'removal entity client_id connection mode generation started_at cleanup_by committed_at access_ends_by concluded_at outcome result reminders action resource active supersededAt includeChanged includeKept complete stopped stoppedAt totalDeleted skipped passes at'],
  ['intent-choices',['intent-memory/'],'kind default excluded ignored'],
- ['messages',['message/'],'collection mimeType size receivedAt readAt tags classification quarantined senderMetadata conversation grantId revision presentation'],
+ // v1 app messages moved to activity's app-message/ family (messaging extraction prep) and export in the same section,
+ // with the same projection, so the archive shape is unchanged.
+ ['messages',['message/','app-message/'],'collection mimeType size receivedAt readAt tags classification quarantined senderMetadata conversation grantId revision presentation'],
  ['collections',['collection/'],'active'],['tags',['tag-labels/'],'labels'],['rules',['rules/','rule-defaults/'],'actions filter conditions enabled origin automatic updatedAt'],
  ['views',['message-views/'],'filter sort'],['activity',['activity-item/'],'app item activity source content occurredAt readAt tags collection'],
  ['notifications',['notification-preferences/','push-subscription/','activity-push-policy/','activity-push-app/','activity-push-device/'],'enabled email push collections quietHours rules previewConsent consent preferences'],
@@ -35,7 +37,7 @@ const definitions=[
  ['external-storage',['drive/object/','drive/folder/'],'provider resource resourceId bucket prefix folderId key objectId fileId version size contentType'],
  ['billing',['billing/state','billing/ever-paid/'],'plan periodStart periodEnd cancelAtPeriodEnd customerId since paidAt validUntil currency annualAmount subscriptionId pendingChange'],
  ['lifecycle',['lifecycle/state-v1','lifecycle/paid-protection-v1','lifecycle/unpaid-origin-v1','retention/'],'phase deadlines notice lastActivityAt executeAfter graceDays usage exportOffered'],
- ['quota',['quota/','hosted-usage','message-usage/'],'bytes messages objects limit storageBytes usage retention']
+ ['quota',['quota/','hosted-usage','message-usage/','app-message-usage/'],'bytes messages objects limit storageBytes usage retention']
 ];
 export const EXPORT_CLAIMED_PREFIXES=Object.freeze(Object.fromEntries(definitions.flatMap(([name,prefixes])=>prefixes.map(prefix=>[prefix,name]))));
 const excluded={
@@ -60,6 +62,18 @@ const excluded={
  'contact-author-day/':'Derived: anti-abuse counts.', 'contact-delivery-receipt/':'Transient: replay fence.', 'contact-grant-tombstone/':'Derived: reclaimed contact parent IDs that must never verify again.',
  'message-receipt/':'Transient: message idempotency.', 'notification-email-budget/':'Derived: email budgets.',
  'message-receipt-budget/':'Derived: message ingress budgets.', 'message-postback/':'Secret: prepared form submissions.', 'message-postback-budget':'Derived: submission abuse accounting.',
+ // Export inventory gaps found by the core-scope audit (messaging extraction prep, 2026-10-26). MCP authorization rows
+ // (`mcp/v1/*`) live in the MCP shard stores, not in the account store, so they have no account export entry.
+ 'mcp/operation/':'Transient: MCP agent mutation journal (48-hour replay fence); the items themselves are exported under messages.',
+ 'mcp/operation-expiry/':'Derived: MCP journal expiry index.',
+ 'automation/session/':'Transient: browser automation session grants; they expire with the browser session and are revocable.',
+ 'automation/confirmation/':'Transient: one-time browser automation confirmation receipts.',
+ 'classifier/usage/v1':'Derived: classifier call and spend accounting.',
+ 'app-notification-budget/':'Derived: per-connection app message rate accounting.',
+ 'app-notification-receipt/':'Transient: app message replay receipts (48-hour retention).',
+ 'message-postback-prepared/':'Secret: prepared form-submission capabilities (encrypted scope).',
+ 'developer-contact/':'Secret: developer-contact pointers (legacy mode: the developer account\'s system grant; occupant mode: the last developer-policy link this account\'s messaging-ingress occupant issued, with its capability URL sealed, recorded on any account but served only for the configured developer account); the links themselves are exported under links and contact-grants.',
+ 'link-gc-cursor/':'Transient: link and contact-parent sweep cursors.',
  'notification-event/':'Transient: notification queue.', 'notification-job/':'Transient: delivery queue.', 'notification-unsubscribe/':'Secret: unsubscribe capabilities.',
  'search-queue-usage/':'Derived: search usage.', 'search-vector-revision/':'Derived: search vectors.',
  'search':'Derived: search indexes, queues and maintenance cursors.', 'item-index':'Derived: SQLite item index.',

@@ -28,9 +28,11 @@ test('every base reason, env kills during outages, dependencies and last-known f
  for(const invalid of [null,{},[],{v:1,version:0,issuedAt:0,flags:{ACTIVITY_V2_ENABLED:{on:true}}}])assert.deepEqual(run({},{ACTIVITY_V2_ENABLED:'true'},invalid),{value:false,reason:'outage'});
  assert.deepEqual(evaluate('BILLING_ENABLED',{},null,{BILLING_ENABLED:'true'}),{value:true,reason:'env-capability'});
  assert.throws(()=>evaluate('UNKNOWN',{},null),{code:'unknown_flag'});
- const flags={EMAIL_BRIDGE_ENABLED:record({fallthrough:true}),BINDLEBOX_ENABLED:record({fallthrough:true})};
- assert.equal(evaluate('EMAIL_BRIDGE_ENABLED',account(),snap(flags)).value,true);assert.equal(evaluate('EMAIL_BRIDGE_ENABLED',account(),snap(flags),{BINDLEBOX_ENABLED:'false'}).reason,'dependency:BINDLEBOX_ENABLED');
- flags.BINDLEBOX_ENABLED=record({rules:[rule({accounts:[other]})]});assert.equal(evaluate('EMAIL_BRIDGE_ENABLED',account(),snap(flags)).reason,'dependency:BINDLEBOX_ENABLED');assert.equal(evaluate('EMAIL_BRIDGE_ENABLED',account(other),snap(flags)).value,true);
+ // Dependencies (the email bridge no longer depends on a messaging-app flag; APP_CLEAN_REMOVAL_ENABLED requires INTEGRATIONS_ENABLED).
+ const flags={APP_CLEAN_REMOVAL_ENABLED:record({fallthrough:true}),INTEGRATIONS_ENABLED:record({fallthrough:true})};
+ assert.equal(evaluate('APP_CLEAN_REMOVAL_ENABLED',account(),snap(flags)).value,true);assert.equal(evaluate('APP_CLEAN_REMOVAL_ENABLED',account(),snap(flags),{INTEGRATIONS_ENABLED:'false'}).reason,'dependency:INTEGRATIONS_ENABLED');
+ flags.INTEGRATIONS_ENABLED=record({rules:[rule({accounts:[other]})]});assert.equal(evaluate('APP_CLEAN_REMOVAL_ENABLED',account(),snap(flags)).reason,'dependency:INTEGRATIONS_ENABLED');assert.equal(evaluate('APP_CLEAN_REMOVAL_ENABLED',account(other),snap(flags)).value,true);
+ assert.equal(evaluate('EMAIL_BRIDGE_ENABLED',account(),snap({EMAIL_BRIDGE_ENABLED:record({fallthrough:true})}),{LINKS_ENABLED:'false'}).value,true,'the bridge needs no links or messaging-app flag');
  const fallback=snap({SIGNUP_ENABLED:record({fallthrough:true}),ACTIVITY_V2_ENABLED:record({fallthrough:true})});
  assert.deepEqual(evaluate('SIGNUP_ENABLED',anon,null,{}, {fallback}),{value:true,reason:'outage-last-known',detailReason:'fallthrough'});assert.equal(evaluate('SIGNUP_ENABLED',anon,fallback,{}, {usable:false,fallback}).reason,'outage-last-known');assert.equal(evaluate('ACTIVITY_V2_ENABLED',account(),null,{}, {fallback}).reason,'outage');assert.equal(evaluate('SIGNUP_ENABLED',anon,null,{SIGNUP_ENABLED:'false'},{fallback}).reason,'env-kill');
  assert.equal(evaluate('PAID_SIGNUP_ENABLED',anon,snap({PAID_SIGNUP_ENABLED:record({fallthrough:true})})).reason,'dependency:billing-configuration');

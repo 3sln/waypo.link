@@ -213,12 +213,12 @@ test('links contract resource method: the app actor comes only from verified con
   const OWNER = BOB, ORIGIN = ISSUER, rows = new Map(), seen = [];
   const metadata = { get: async k => structuredClone(rows.get(k)), put: async (k, v) => { rows.set(k, structuredClone(v)); }, delete: async k => { for (const key of [k].flat()) rows.delete(key); }, list: async ({ prefix = '', limit = Infinity } = {}) => new Map([...rows].filter(([k]) => k.startsWith(prefix)).slice(0, limit)) };
   const state = { epoch: true, account: { status: 'active', handle: 'bob' }, connection: true, seat: { clientId: BOX_A.clientId, connection: 'conn-1', generation: 4 } };
-  const c = { config: { BINDLEBOX_ENABLED: 'true', APP_ORIGIN: ORIGIN, FEDERATION_IDENTITY_CHECK: async (owner, epoch) => state.epoch && owner === OWNER && epoch === 'e1', IDENTITY_ACCOUNT: async () => state.account, LINK_SLOT_OCCUPANT: async ({ owner, slot }) => (owner === OWNER && slot === MESSAGING_INGRESS_SLOT ? state.seat : null) }, metadata, warm: async () => {}, apps: { check: async (owner, id, generation, clientId) => { if (!state.connection || id !== 'conn-1' || generation !== 4 || clientId !== BOX_A.clientId) throw Object.assign(new Error('gone'), { code: 'invalid_token', status: 401 }); } }, linkOperation: async (owner, params) => { seen.push(structuredClone(params)); return { ok: seen.length }; } };
+  const c = { config: { LINKS_ENABLED: 'true', APP_ORIGIN: ORIGIN, FEDERATION_IDENTITY_CHECK: async (owner, epoch) => state.epoch && owner === OWNER && epoch === 'e1', IDENTITY_ACCOUNT: async () => state.account, LINK_SLOT_OCCUPANT: async ({ owner, slot }) => (owner === OWNER && slot === MESSAGING_INGRESS_SLOT ? state.seat : null) }, metadata, warm: async () => {}, apps: { check: async (owner, id, generation, clientId) => { if (!state.connection || id !== 'conn-1' || generation !== 4 || clientId !== BOX_A.clientId) throw Object.assign(new Error('gone'), { code: 'invalid_token', status: 401 }); } }, linkOperation: async (owner, params) => { seen.push(structuredClone(params)); return { ok: seen.length }; } };
   const context = (over = {}) => ({ authority: 'bindle', resource: `${ORIGIN}/entities/${OWNER}/links`, resourceGeneration: OWNER, contract: LINKS_CONTRACT, method: 'list', args: {}, clientId: BOX_A.clientId, connection: { id: 'conn-1', generation: 4 }, epoch: 'e1', tx: crypto.randomUUID(), ...over });
   assert.equal(RESOURCE_METHOD_HANDLERS[LINKS_CONTRACT], linksResourceMethod);
   assert.deepEqual(await linksResourceMethod(c, OWNER, context()), { ok: 1 });
   assert.deepEqual(seen[0], { actor: { kind: 'app', owner: OWNER, clientId: BOX_A.clientId, handle: 'bob', generation: 4, connection: 'conn-1' }, operation: 'links.list', input: {} }, 'handle from identity, generation from the connection');
-  await assert.rejects(linksResourceMethod({ ...c, config: { ...c.config, BINDLEBOX_ENABLED: 'false' } }, OWNER, context()), { code: 'not_found' });
+  await assert.rejects(linksResourceMethod({ ...c, config: { ...c.config, LINKS_ENABLED: 'false' } }, OWNER, context()), { code: 'not_found' });
   for (const over of [{ authority: 'oauth' }, { resource: `${ORIGIN}/entities/${CAROL}/links` }, { resourceGeneration: CAROL }, { contract: 'https://spec.bindle.example/contracts/other/v1' }, { connection: undefined }]) await assert.rejects(linksResourceMethod(c, OWNER, context(over)), { code: 'forbidden' }, JSON.stringify(over));
   await assert.rejects(linksResourceMethod(c, OWNER, context({ method: 'mint' })), { code: 'unsupported_method' });
   await assert.rejects(linksResourceMethod(c, OWNER, context({ epoch: 'stale' })), { code: 'unauthorized' });
@@ -240,14 +240,14 @@ test('links contract resource method: the app actor comes only from verified con
   assert.equal([...rows.keys()].filter(k => k.startsWith('links-rpc/')).length, journalSize); assert.equal(seen.length, calls);
 });
 
-test('manifest: the messaging-address consumer row needs BINDLEBOX_ENABLED, EXTENSIONS_ENABLED and a mounted handoff', () => {
-  const row = MANIFEST_DECLARATIONS.find(r => Array.isArray(r.flag) && r.flag.includes('BINDLEBOX_ENABLED'));
-  assert.deepEqual(row.flag, ['BINDLEBOX_ENABLED', 'EXTENSIONS_ENABLED']);
+test('manifest: the messaging-address consumer row needs LINKS_ENABLED, EXTENSIONS_ENABLED and a mounted handoff', () => {
+  const row = MANIFEST_DECLARATIONS.find(r => Array.isArray(r.flag) && r.flag.includes('LINKS_ENABLED'));
+  assert.deepEqual(row.flag, ['LINKS_ENABLED', 'EXTENSIONS_ENABLED']);
   assert.equal(row.mounted({ target: 'authority', mounts: {} }), false); assert.equal(row.mounted({ target: 'entries', mounts: { messagingAddress: true } }), false);
   assert.equal(row.mounted({ target: 'authority', mounts: { messagingAddress: true } }), true);
   assert.deepEqual(row.declare({}), { extensions: [MESSAGING_ADDRESS_DECLARATION] });
-  const config = { APP_ORIGIN: ISSUER, BINDLEBOX_ENABLED: 'true', EXTENSIONS_ENABLED: 'true' };
-  assert.equal(federationDeclarations({ ...config, BINDLEBOX_ENABLED: 'false' }, { target: 'authority', mounts: { messagingAddress: true } }).extensions, undefined);
+  const config = { APP_ORIGIN: ISSUER, LINKS_ENABLED: 'true', EXTENSIONS_ENABLED: 'true' };
+  assert.equal(federationDeclarations({ ...config, LINKS_ENABLED: 'false' }, { target: 'authority', mounts: { messagingAddress: true } }).extensions, undefined);
   // Flags and mount alone never advertise: the entry is kept only beside a declared extensions.v1 (not yet mounted).
   assert.equal(federationDeclarations(config, { target: 'authority', mounts: { messagingAddress: true } }).extensions, undefined);
 });
