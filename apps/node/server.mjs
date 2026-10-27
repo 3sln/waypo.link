@@ -15,6 +15,8 @@ import {createPushTransport} from '../../packages/messaging/web-push.mjs';
 import {identityBackupPort} from '../../packages/runtime/identity-backup.mjs';
 import http from 'node:http';
 import { Readable } from 'node:stream';
+import { isIP } from 'node:net';
+import { normalizeClientIp } from '../../packages/runtime/routes/shared.mjs';
 import { readFile,writeFile,mkdir } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
 import { resolve } from 'node:path';
@@ -32,6 +34,25 @@ import {transferDocument} from '../../packages/runtime/routes/transfer-pages.mjs
 import {deviceGrantMountable,deviceGrantRunner,engineLinkedPort,localDeviceGrant,deviceLimits} from '../../packages/runtime/device-grant.mjs';
 
 const NODE_COUNTRY_HEADER='x-bindle-node-country';
+/**
+ * The Headers the router sees for one Node request. Client copies of the network-identity headers (CF-Connecting-IP,
+ * CF-IPCountry, CF-Worker, X-Forwarded-For, X-Real-IP, the adapter's internal country header and the configured
+ * trusted headers) are dropped. The client address is the socket address unless TRUSTED_CLIENT_IP_HEADER names the
+ * operator's proxy header (RTC-e review F5): then that header's single IP address, or 'unknown' for anything else. The
+ * country comes only from TRUSTED_COUNTRY_HEADER (review L5: present but invalid is XX).
+ */
+export function nodeRequestHeaders(raw,remoteAddress,{clientIpHeader=null,countryHeader=null}={}){
+ const dropped=['cf-connecting-ip','cf-ipcountry','cf-worker','x-forwarded-for','x-real-ip',NODE_COUNTRY_HEADER,clientIpHeader];
+ const headers=new Headers();for(const [key,value]of Object.entries(raw))if(value!==undefined&&!dropped.includes(key))headers.set(key,Array.isArray(value)?value.join(', '):value);
+ const country=countryHeader?raw[countryHeader]:undefined;if(country!==undefined)headers.set(NODE_COUNTRY_HEADER,typeof country==='string'&&/^[A-Z]{2}$/.test(country.trim().toUpperCase())?country.trim().toUpperCase():'XX');
+ const forwarded=clientIpHeader?raw[clientIpHeader]:undefined;
+ // RTC-e verification follow-ups: the address is normalised (normalizeClientIp: no `%zone`, IPv4-mapped IPv6 as its
+ // IPv4 address), so a dual-stack socket or a proxy writing `::ffff:a.b.c.d` never collapses every IPv4 client into one
+ // IPv6 /48 bucket.
+ const address=clientIpHeader?(typeof forwarded==='string'&&isIP(forwarded.trim())?forwarded.trim():null):remoteAddress||null;
+ headers.set('CF-Connecting-IP',address?normalizeClientIp(address):'unknown');
+ return headers;
+}
 export async function createNodeServer({directory=resolve('.data'),config={},mailer,formTransport,resolveIdentityBadges}={}){
  if(resolveIdentityBadges!==undefined&&typeof resolveIdentityBadges!=='function')throw new TypeError('Badge resolver must be injected code.');
  const origin=config.APP_ORIGIN||process.env.APP_ORIGIN||'http://localhost:8788';const parsed=new URL(origin);const local=parsed.protocol==='http:'&&parsed.hostname==='localhost';
@@ -42,6 +63,10 @@ export async function createNodeServer({directory=resolve('.data'),config={},mai
  // operator's own policy. Unknown locations are allowed unless REGION_POLICY=block-unknown. A country is known only from
  // an operator-configured trusted header (set by the operator's reverse proxy); otherwise it is unknown.
  settings.REGION_POLICY??='allow-unknown';if(!['allow-unknown','block-unknown'].includes(settings.REGION_POLICY))throw new TypeError('REGION_POLICY must be allow-unknown or block-unknown.');
+ // RTC-e review F5: the client address comes from the operator's trusted proxy header ONLY when TRUSTED_CLIENT_IP_HEADER
+ // names one (unset by default: the socket address). The proxy must overwrite it, never append; a value that is not one
+ // plain IP address is 'unknown'. Same rules as TRUSTED_COUNTRY_HEADER.
+ const clientIpHeader=settings.TRUSTED_CLIENT_IP_HEADER===undefined||settings.TRUSTED_CLIENT_IP_HEADER===''?null:typeof settings.TRUSTED_CLIENT_IP_HEADER==='string'&&/^[A-Za-z0-9-]{1,64}$/.test(settings.TRUSTED_CLIENT_IP_HEADER)?settings.TRUSTED_CLIENT_IP_HEADER.toLowerCase():(()=>{throw new TypeError('TRUSTED_CLIENT_IP_HEADER must be a header name.');})();
  const countryHeader=settings.TRUSTED_COUNTRY_HEADER===undefined||settings.TRUSTED_COUNTRY_HEADER===''?null:typeof settings.TRUSTED_COUNTRY_HEADER==='string'&&/^[A-Za-z0-9-]{1,64}$/.test(settings.TRUSTED_COUNTRY_HEADER)?settings.TRUSTED_COUNTRY_HEADER.toLowerCase():(()=>{throw new TypeError('TRUSTED_COUNTRY_HEADER must be a header name.');})();
  // The port is only reachable through McpAuthorization, which evaluates APP_METADATA_DISCOVERY_ENABLED per request and client
  // against the flags-runtime-bound shard config (console records honoured), so it is wired whatever the boot-time value.
@@ -88,13 +113,7 @@ export async function createNodeServer({directory=resolve('.data'),config={},mai
  const server=http.createServer(async(req,res)=>{
   try{
    const embedded=embed!==null&&req.headers.host===embed.host;if(req.headers.host!==parsed.host&&!embedded)return void res.writeHead(403).end('Use the configured account host.');
-   const headers=new Headers();for(const [key,value]of Object.entries(req.headers))if(value!==undefined&&!['cf-connecting-ip','cf-ipcountry','x-forwarded-for','x-real-ip',NODE_COUNTRY_HEADER].includes(key))headers.set(key,Array.isArray(value)?value.join(', '):value);
-   // The adapter's internal country header carries only the operator-configured trusted header's value; any client copy is dropped above.
-   // Review L5: a present but invalid value (for example duplicates joined by a proxy that appends) is unknown (XX), never absent.
-   const country=countryHeader?req.headers[countryHeader]:undefined;if(country!==undefined)headers.set(NODE_COUNTRY_HEADER,typeof country==='string'&&/^[A-Z]{2}$/.test(country.trim().toUpperCase())?country.trim().toUpperCase():'XX');
-   // Ignore spoofed proxy headers. Deploy behind a trusted reverse proxy with an
-   // explicit network-identity adapter before relying on forwarded client IPs.
-   headers.set('CF-Connecting-IP',req.socket.remoteAddress||'unknown');
+   const headers=nodeRequestHeaders(req.headers,req.socket.remoteAddress,{clientIpHeader,countryHeader});
    const request=new Request(new URL(req.url,embedded?embed.origin:origin),{method:req.method,headers,...['GET','HEAD'].includes(req.method)?{}:{body:Readable.toWeb(req),duplex:'half'}});
    const response=await fetch(request);
    // Node folds duplicate header entries; every Set-Cookie must stay a separate line.

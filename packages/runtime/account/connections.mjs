@@ -106,7 +106,10 @@ export const methods={
    for(const row of rows){
     try{
      if(row.kind==='delegations')await this.revokeDelegationsFor(owner,row.all?{reason:row.reason}:{clientId:row.clientId,reason:row.reason});
-     else if(row.kind==='reconcile')await this.reconcileDelegations(owner);
+     // RTC-e: the same cascade ends the application's RTC endpoints and sessions (rtc.lifecycle `app-revoked`; narrowing,
+     // never gated; a no-op without RTC state). The federation shard's bound-approval hook covers grant revocations.
+     if(row.kind==='delegations'&&typeof this.rtcAppRevoked==='function'){try{await this.rtcAppRevoked(owner,row.all?{all:true}:{clientId:row.clientId});}catch{/* RTC re-checks the grant on every operation */}}
+     if(row.kind==='reconcile')await this.reconcileDelegations(owner);
     }catch(error){if(error?.code!=='not_found')return {drained,pending:rows.length-drained};}// not_found: delegation disabled, nothing certified.
     await run(this,ConnectionCascadeDone,{actor:{kind:'system',owner},input:{key:row.key}});drained++;
    }

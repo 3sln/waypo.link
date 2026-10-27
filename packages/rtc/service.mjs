@@ -20,7 +20,12 @@
 //   keys        {certification(principal) -> [{kid, use, alg, jwk, state}] AS HELD (cache-only; never a fetch on a
 //                federation request path), identity(principal) -> identity URI the verifier itself resolved | null,
 //                handle?(principal) -> verified handle | null, resolveHandle?(handle) -> principal | null,
-//                aep?(owner) -> own authority epoch, refresh?(principal) (schedule a background refresh)}
+//                aep?(owner) -> own authority epoch, refresh?(principal, kid, {source, lane}) (schedule a background
+//                refresh; never a fetch; review F1: `source` the pseudonymous source network, `lane` a link basis that
+//                verified here), live?(principals) (review F1: peers of live or ringing sessions, refreshed first),
+//                track?(principal) (RTC-e: keep a foreign peer's keys warm), warm?(principal) (RTC-e: the §4.1
+//                caller-initiated fetch at `open`, never on a federation request path), maxLegSeconds?(principal) (the
+//                peer issuer's declared bound, as held)}
 //   signer      owner -> {kid, privateKey}: the entity's ACTIVE certification key (certificationSigner), loaded
 //                outside every storage transaction
 //   linkSigner  owner -> {kid, privateKey, publicJwk?}: the identity signing key for ticket metas
@@ -33,6 +38,8 @@
 //                current request (a detached task or the alarm; review M2). Cross-entity delivery never runs inside the
 //                sender's request, and ingest only queues: steps 2–8 run later on the receiver. Absent: the adapter's
 //                alarm (rtc.tick) does both.
+//   pushTransport {send(subscription, payload, {urgency, ttl})} (RTC-e Web Push doorbell, spec §9.2): the host's push
+//                transport; absent means no doorbell. Called after the admitting transaction, never inside it.
 //   hostLimits  {take(name, parts) -> boolean}: a host-wide fixed-window limiter shared by every entity writer on this
 //                host (review L1), for the §13 limit per caller origin principal across callee entities; the adapter
 //                keys it by a keyed hash of `parts`. Absent: only the per-callee-writer count applies (design §8.3 gate).
@@ -60,7 +67,7 @@ import {RtcWireFault} from './jws.mjs';
 import {parseBatch,batchStep1,buildBatch,parseMessage,verifyMessage,validateMessageContent,candidateAllowedByPolicy,messageAllowedBeforeClaim,linkDigest,mediaValid,iatWithinWindow,RTC_LIMITS} from './messages.mjs';
 import {parseLegCertificate,verifyLegCertificate,signLegCertificate,parseControl,verifyControl,signControl,LEG_CERTIFICATE_SECONDS,LEG_CERTIFICATE_MAX_SECONDS} from './certificates.mjs';
 import {registeredPurpose,REGISTERED_PURPOSES,validateInviteForPurpose,partiesAdmit,mediaWithin,projectContext} from './purposes.mjs';
-import {RTC_TICKET_TYPE,canonicalBasisLink,mintTicketRecord,ticketFromLink,spendTicket,ticketView,purposeLinesValid,principalValid,TICKET_KEY,TICKET_PREFIX,TICKET_MAX_USES} from './tickets.mjs';
+import {RTC_TICKET_TYPE,canonicalBasisLink,mintTicketRecord,ticketFromLink,ticketAdmits,spendTicket,ticketView,purposeLinesValid,principalValid,TICKET_KEY,TICKET_PREFIX,TICKET_MAX_USES} from './tickets.mjs';
 import {K,readPolicy,ipPolicyFor,policyWidens,isBlocked,isMuted,MUTE_KINDS,muteValue,takeLimits,pruneLimits,basisKind,alertAllowed,candidateEndpoints,DEFAULT_POLICY} from './admission.mjs';
 import {transition,canTransition,isLive,dueEvent,recordExpired,decideClaim,claimUsable,offerSeq,payloadDigest,newLeg,gapExpired,RTC_BOUNDS,ORDER_LIMITS,SESSION_MAX_MS,RING_MAX_MS} from './sessions.mjs';
 
@@ -69,6 +76,11 @@ export const RTC_SIGNALING_FLAG='RTC_SIGNALING_ENABLED',RTC_FOREIGN_FLAG='RTC_FO
 export const RTC_FRAGMENT=RTC_SIGNALING_SLOT;
 const CLOSED_KEY='rtc/closed',UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,ENDPOINT_ID=/^ep_[A-Za-z0-9_-]{22}$/,SID=/^[A-Za-z0-9_-]{22,43}$/;
 const DAY=86400000,FORWARD_MS=30000,BATCH=256;
+/** RTC-e review F6: a foreign invite is re-sent only after its first `202`, at most twice, these many ms after that
+ * acceptance (then after the first re-send); a permanent refusal stops it. */
+export const INVITE_RESEND_DELAYS=Object.freeze([3000,12000]);
+/** Review F7: doorbell pushes in flight at once (each push transport call has its own 10 s timeout). */
+const PUSH_CONCURRENCY=4;
 const fail=(code,message=code,status=400)=>{throw new AppFault(code,message,status);};
 const notFound=()=>fail('not_found','Not found.',404);
 const invalid=(message='Unsupported signaling request.')=>fail('invalid_args',message,400);
@@ -80,7 +92,11 @@ const sameRef=(a,b)=>Boolean(a&&b&&a.purpose===b.purpose&&a.version===b.version&
 const seconds=ms=>Math.floor(ms/1000);
 const labelValid=v=>typeof v==='string'&&v.length>0&&v.length<=64&&v.isWellFormed()&&!/[\p{Cc}\p{Bidi_Control}\u2028\u2029]/u.test(v);
 /** Web Push services this host accepts at `register` (spec §9.2: only origins it recognizes). Provisional list. */
-export const PUSH_ORIGINS=Object.freeze(['https://fcm.googleapis.com','https://updates.push.services.mozilla.com','https://web.push.apple.com','https://wns2-par02p.notify.windows.com']);
+// RTC-e: aligned with the host's push transport (packages/messaging/web-push.mjs PUSH_ORIGINS), which is the only one
+// that can send; the provisional WNS origin was dropped because nothing could deliver to it.
+export const PUSH_ORIGINS=Object.freeze(['https://fcm.googleapis.com','https://updates.push.services.mozilla.com','https://web.push.apple.com']);
+/** The doorbell payload (spec §9.2): exactly {"t":"rtc","endpoint":<endpoint>}; no caller, purpose or session. */
+export const doorbellPayload=endpoint=>({t:'rtc',endpoint});
 
 /** The provider-held purpose for a line: {ref:{purpose, version, digest}, body}, or null (never fetched by URL). */
 export function heldPurpose(line){
@@ -106,9 +122,9 @@ export function sameHostRtcTransport({issuer,dispatch}){
 }
 
 export class RtcService{
- constructor({store,issuer,clock,random,flags,keys,signer,linkSigner,bound=null,transport,contacts=null,defer=null,hostLimits=null,federationSubject,allowLoopback=false,crypto=globalThis.crypto,maxLegSeconds=LEG_CERTIFICATE_SECONDS,peerMaxLegSeconds=LEG_CERTIFICATE_MAX_SECONDS}){
+ constructor({store,issuer,clock,random,flags,keys,signer,linkSigner,bound=null,transport,contacts=null,defer=null,hostLimits=null,pushTransport=null,federationSubject,allowLoopback=false,crypto=globalThis.crypto,maxLegSeconds=LEG_CERTIFICATE_SECONDS,peerMaxLegSeconds=LEG_CERTIFICATE_MAX_SECONDS}){
   if(typeof store?.transaction!=='function'||typeof issuer!=='string'||typeof keys?.certification!=='function'||typeof keys?.identity!=='function'||typeof signer!=='function'||typeof transport?.deliver!=='function')throw new TypeError('RtcService needs a store, issuer, keys, signer and transport.');
-  Object.assign(this,{store,issuer,clock,random,flags,keys,signer,linkSigner,bound,transport,contacts,defer,hostLimits,allowLoopback,crypto,maxLegSeconds,peerMaxLegSeconds});
+  Object.assign(this,{store,issuer,clock,random,flags,keys,signer,linkSigner,bound,transport,contacts,defer,hostLimits,pushTransport,allowLoopback,crypto,maxLegSeconds,peerMaxLegSeconds});
   this.federationSubject=federationSubject??(owner=>`${issuer}/entities/${owner}`);
   this.waiters=new Map();
  }
@@ -125,6 +141,10 @@ export class RtcService{
  async bindOwner(tx,owner){if(await tx.get('owner')!==owner)fail('forbidden','Account owner mismatch.',403);}
  async peerKeys(p){try{return keysView(await this.keys.certification(party(p)));}catch{return [];}}
  async identity(p){try{const v=await this.keys.identity(party(p));return typeof v==='string'?v:null;}catch{return null;}}
+ track(p){try{this.keys.track?.(party(p));}catch{/* best effort */}}
+ /** The bound a peer's leg certificates must meet: its issuer's declared max_leg_certificate_seconds when held (RTC-e),
+  * else the spec maximum. */
+ peerMax(p){if(p?.iss===this.issuer)return this.peerMaxLegSeconds;let v=null;try{v=this.keys.maxLegSeconds?.(party(p));}catch{v=null;}return Number.isSafeInteger(v)&&v>=120&&v<=this.peerMaxLegSeconds?v:this.peerMaxLegSeconds;}
  async ownAep(owner){try{const v=await this.keys.aep?.(owner);return Number.isSafeInteger(v)&&v>=0?v:0;}catch{return 0;}}
  /** AMD-X1 item 4: the live bound approval of `line` (at its pinned version) behind this app's verified token. */
  async approved({owner,clientId,grants,epoch},line){
@@ -174,10 +194,29 @@ export class RtcService{
   * after commit) and `fx.drain` notes queued outbox rows: the adapter is asked (`defer`) to deliver them soon, never
   * inside this request (review M2: a sender's request never waits on, or runs, the peer's admission). */
  async commit(owner,fn){
-  const fx={woken:new Set(),drain:false};const out=await this.store.transaction(tx=>fn(tx,fx));
+  const fx={woken:new Set(),drain:false,doorbells:[]};const out=await this.store.transaction(tx=>fn(tx,fx));
   for(const id of fx.woken)this.wake(id);
   if(fx.drain)this.kick(owner,'outbox');
+  if(fx.doorbells.length)await this.ring(fx.doorbells);
   return out;
+ }
+ /**
+  * RTC-e Web Push doorbell (spec §9.2): at most one push per alerting invite per endpoint (collected by admitInvite
+  * inside the admitting transaction, sent here after it committed), only to the subscription stored and validated at
+  * `register`, `Urgency: high`, a TTL no longer than the remaining ring time, and a payload of exactly
+  * {"t":"rtc","endpoint":<endpoint>}. A push is a doorbell only: it is never needed for correctness, and a failure
+  * never affects admission. A subscription the push service reports gone is removed from the endpoint.
+  */
+ async ring(doorbells){
+  if(typeof this.pushTransport?.send!=='function')return;
+  // Review F7: pushes go out in parallel, at most PUSH_CONCURRENCY at once, so one slow push service never holds the
+  // inbox pass for the whole fan-out.
+  const one=async d=>{
+   const ttl=Math.max(0,Math.floor((d.ringUntil-this.now())/1000));if(ttl<1)return;
+   try{await this.pushTransport.send(structuredClone(d.subscription),doorbellPayload(d.endpoint),{urgency:'high',ttl});}
+   catch(error){if(error?.code==='push_subscription_gone')try{await this.store.transaction(async tx=>{const ep=await tx.get(K.endpoint(d.endpoint));if(ep?.push&&ep.push.endpoint===d.subscription.endpoint){ep.push=null;await tx.put(K.endpoint(ep.id),ep);}});}catch{/* the next invite retries */}}
+  };
+  const queue=[...doorbells];await Promise.all(Array.from({length:Math.min(PUSH_CONCURRENCY,queue.length)},async()=>{while(queue.length)await one(queue.shift());}));
  }
  kick(owner,kind){try{this.defer?.(owner,kind);}catch{/* the alarm delivers */}}
  wake(id){const set=this.waiters.get(id);if(set){this.waiters.delete(id);for(const resolve of set)resolve();}}
@@ -232,12 +271,12 @@ export class RtcService{
   * drain time, outside any storage transaction. Returns false when the outbox is full: in total (1,024) or for this
   * peer (64). Message batches stop short of both caps by a reserve kept for control statements, so a peer that
   * withholds acceptance, or one busy session, cannot crowd out revocations to everyone else (review M3). */
- async enqueue(tx,fx,{to,certificates=[],messages=[],controls=[],links=[],until}){
+ async enqueue(tx,fx,{to,certificates=[],messages=[],controls=[],links=[],until,invite}){
   const control=messages.length===0&&controls.length>0,meta=await this.outboxMeta(tx);
   const total=RTC_BOUNDS.outbox-(control?0:RTC_BOUNDS.outboxControlReserve),perPeer=RTC_BOUNDS.outboxPeer-(control?0:RTC_BOUNDS.outboxPeerControlReserve);
   if(meta.count>=total||(await tx.list({prefix:K.outboxPeerPrefix(to),limit:perPeer})).size>=perPeer)return false;
   const seq=meta.seq+1;await tx.put(K.outboxSeq,{seq,count:meta.count+1});
-  await tx.put(K.outbox(to,seq),{seq,to:party(to),certificates,messages,controls,links,until,attempts:0,notBefore:0});fx.drain=true;return true;
+  await tx.put(K.outbox(to,seq),{seq,to:party(to),certificates,messages,controls,links,until,attempts:0,notBefore:0,...typeof invite==='string'?{invite}:{}});fx.drain=true;return true;
  }
  async outboxRemove(key){await this.store.transaction(async tx=>{if(!await tx.get(key))return;await tx.delete(key);const meta=await this.outboxMeta(tx);await tx.put(K.outboxSeq,{seq:meta.seq,count:Math.max(0,meta.count-1)});});}
  /** Queues a control statement `end` (§5.2) for `leg` (null: the whole session) of `rec` to the peer entity. Own-entity
@@ -264,7 +303,12 @@ export class RtcService{
       controls=await Promise.all(row.controls.map(c=>signControl({issuer:this.issuer,sub:owner,aud:c.aud,sid:c.sid,leg:c.leg,reason:c.reason,now:c.iat*1000,jti:c.jti,allowLoopback:this.allowLoopback},signer,this.crypto)));}
      await this.transport.deliver(this.self(owner),row.to,buildBatch({certificates:row.certificates,messages:row.messages,controls,links:row.links}));
      await this.outboxRemove(key);sent++;
-    }catch{
+     if(row.invite)await this.inviteOutcome(row.invite,{accepted:true});
+    }catch(error){
+     // RTC-e: a permanent refusal by the peer provider (4xx other than 429, a redirect, a target outside the allowlist)
+     // is not retried (§8.3 retries only network errors and 5xx); the row is dropped, and (review F6) an invite of
+     // that session is not re-sent again.
+     if(error?.permanent===true){await this.outboxRemove(key);if(row.invite)await this.inviteOutcome(row.invite,{accepted:false});continue;}
      const attempts=row.attempts+1;
      await this.store.transaction(async tx=>{if(await tx.get(key))await tx.put(key,{...row,attempts,notBefore:now+Math.min(4000,500*2**(attempts-1))});});
      skip();break;
@@ -275,6 +319,14 @@ export class RtcService{
   return {sent,pending,more};
  }
 
+ /** RTC-e review F6: the delivery outcome of a foreign invite (or one of its re-sends). The first `202` arms at most
+  * INVITE_RESEND_DELAYS.length re-sends; a permanent refusal ends re-sending for that session. */
+ async inviteOutcome(sid,{accepted}){
+  try{await this.store.transaction(async tx=>{const rec=await tx.get(K.out(sid));if(!rec?.inviteRetry)return;
+   if(!accepted){delete rec.inviteRetry;delete rec.inviteCompact;}
+   else if(rec.inviteRetry.acked!==true)rec.inviteRetry={acked:true,n:0,at:this.now()+INVITE_RESEND_DELAYS[0]};else return;
+   await tx.put(K.out(sid),rec);});}catch{/* the re-send is a SHOULD (§8.3) */}
+ }
  // ---- inbound queue (§8.2 "processing after step 1 MAY be asynchronous"; review M2) ----------------------------------
  /** Steps 2–8 for queued batches, oldest first, at most `limit` per call (`rtc.inbox`: the adapter's detached task or
   * the alarm, never the sender's request). Each batch is processed as of its receipt time, then removed; processing
@@ -286,7 +338,7 @@ export class RtcService{
  async inboxPass(owner,{limit=16}={}){
   const rows=await this.store.transaction(tx=>tx.list({prefix:K.inboxPrefix,limit}));let processed=0;
   for(const [key,row] of rows){
-   try{const elements=await batchStep1(parseBatch(row.batch),{issuer:this.issuer,now:seconds(row.at),parseCertificate:parseLegCertificate,parseControl,allowLoopback:this.allowLoopback,crypto:this.crypto});await this.process(owner,elements,row.at);}catch{/* steps 2–8 are silent */}
+   try{const elements=await batchStep1(parseBatch(row.batch),{issuer:this.issuer,now:seconds(row.at),parseCertificate:parseLegCertificate,parseControl,allowLoopback:this.allowLoopback,crypto:this.crypto});await this.process(owner,elements,row.at,{source:row.source});}catch{/* steps 2–8 are silent */}
    await this.store.transaction(async tx=>{if(!await tx.get(key))return;await tx.delete(key);const m=await tx.get(K.inboxMeta)??{seq:0,count:0,bytes:0};await tx.put(K.inboxMeta,{seq:m.seq,count:Math.max(0,m.count-1),bytes:Math.max(0,m.bytes-(row.bytes??0))});});
    processed++;
   }
@@ -308,7 +360,7 @@ export class RtcService{
   if(!canTransition(rec.state,event))return false;const wasRinging=rec.state==='ringing';transition(rec,event,{now,reason});
   if(!silent){const state=['timeout','expired'].includes(rec.endReason)?'expired':'ended';for(const id of this.audience(rec))await this.push(tx,fx,id,{type:'state',sid:rec.sid,state,...controlStatement?{control:controlStatement}:{}},now);}
   if(rec.role==='callee'){delete rec.callbackLink;delete rec.invite;if(wasRinging&&!rec.claim&&['timeout','cancelled','expired'].includes(rec.endReason)&&!rec.held)await this.addMissed(tx,{caller:rec.caller,line:rec.purpose.purpose,kind:'missed',at:now});}
-  if(rec.role==='caller'){delete rec.basisLink;delete rec.callbackLink;}
+  if(rec.role==='caller'){delete rec.basisLink;delete rec.callbackLink;delete rec.inviteCompact;delete rec.inviteRetry;}
   if(control)await this.enqueueControl(tx,fx,owner,rec,{leg:control.leg??null,reason:control.reason,now});
   if(rec.own&&twin){const other=await this.twinOf(tx,rec);if(other&&isLive(other)){await this.end(tx,fx,owner,other,canTransition(other.state,event)?event:'revoke',{now,reason:rec.endReason,silent,twin:false});await tx.put(this.keyOf(other),other);}}
   return true;
@@ -349,6 +401,15 @@ export class RtcService{
   const jkt=await jwkThumbprint(delegate.jwk,this.crypto);
   await this.requireApproved(app,held.ref.purpose);
   // Caller-initiated key read (§4.1), never on a federation request path; without keys the answer could not verify.
+  // RTC-e: for a callee on another provider, the caller-initiated fetch (§4.1; interactive budget) warms the roster,
+  // which then keeps the callee's keys current for the session's life.
+  // Verification follow-ups: a per-owner `warms` limit is spent before any directory budget (only when the callee's
+  // keys are not already held), and the callee is tracked only once its session record exists (below).
+  if(to.iss!==this.issuer&&!(await this.peerKeys(to)).length){
+   const admitted=await this.store.transaction(async tx=>{await this.bindOwner(tx,owner);await this.endpointAuth(tx,app,input,this.now());return takeLimits(tx,[{name:'warms',parts:[owner]}],this.now(),this.crypto);});
+   if(!admitted)limited();
+   try{await this.keys.warm?.(to);}catch{/* answered below */}
+  }
   const now=this.now(),peerKeys=await this.peerKeys(to),peerIdentity=await this.identity(to);
   if(!peerKeys.length||!peerIdentity)fail('temporarily_unavailable','Real-time connections are temporarily unavailable.',503);
   await this.store.transaction(async tx=>{await this.bindOwner(tx,owner);await this.endpointAuth(tx,app,input,now);});
@@ -370,6 +431,7 @@ export class RtcService{
    if(callback){if((await this.liveTickets(tx,now))>=RTC_BOUNDS.tickets)limited();await tx.put(TICKET_KEY(callback.record.jti),callback.record);}
    await tx.put(K.out(sid),rec);await this.recordDelegate(tx,jkt,sid,now);
   });
+  if(to.iss!==this.issuer)this.track(to);// RTC-e: the roster keeps the callee's keys current for the session's life
   return {sid,certificate:cert.certificate,expires_at:cert.exp,peer_keys:peerKeys,...callback?{callback:callback.link}:{}};
  }
  async liveTickets(tx,now){let n=0;for(const row of (await tx.list({prefix:TICKET_PREFIX,limit:RTC_BOUNDS.tickets*4})).values())if(!row.revoked&&row.usesLeft>0&&row.expiresAt>now)n++;return n;}
@@ -469,7 +531,11 @@ export class RtcService{
     if(r.action==='duplicate')continue;
     if(r.action==='fail'){await this.end(tx,fx,owner,rec,'fail',{now,control:{leg:rec.mine.jkt,reason:'failed'}});break;}
     accepted++;out.push(m.compact);
-    if(p.type==='invite'){rec.inviteSent=true;rec.ringUntil=Math.min(p.body.ring_until*1000,now+RING_MAX_MS);}
+    if(p.type==='invite'){rec.inviteSent=true;rec.ringUntil=Math.min(p.body.ring_until*1000,now+RING_MAX_MS);
+     // RTC-e §8.3: a held-key miss at a foreign callee provider drops the invite silently after a 202, so the caller
+     // provider re-sends the unchanged invite (with its certificate and links). Review F6: only after the first 202
+     // (inviteOutcome) and at most twice; a permanent refusal stops it.
+     if(rec.callee.iss!==this.issuer){rec.inviteCompact=m.compact;rec.inviteRetry={acked:false,n:0,at:null};}}
     if(p.type==='decline')rec.declineSent=true;
     // The sender's own record ends here; an own-entity twin ends when this message reaches it (its devices are told).
     if(p.type==='cancel')await this.end(tx,fx,owner,rec,'cancel',{now,silent:true,twin:false});
@@ -481,7 +547,7 @@ export class RtcService{
     const links=first?[rec.basisLink,rec.callbackLink].filter(Boolean):[];
     // A full outbox refuses the whole send (rolled back, nothing accepted) so the endpoint learns it and may retry,
     // instead of `{accepted:N}` for messages that would never leave (review M3).
-    if(!await this.enqueue(tx,fx,{to:peer,certificates:certs,messages:out,links,until:first?rec.ringUntil:now+FORWARD_MS}))limited();
+    if(!await this.enqueue(tx,fx,{to:peer,certificates:certs,messages:out,links,until:first?rec.ringUntil:now+FORWARD_MS,...first&&rec.inviteRetry?{invite:rec.sid}:{}}))limited();
    }
    await tx.put(found.key,rec);return {accepted};
   });
@@ -511,23 +577,57 @@ export class RtcService{
   * read as held (`keys.certification`).
   */
  async ingest(actor,input){
-  const owner=this.system(actor);exact(input,['batch']);const now=this.now();
+  const owner=this.system(actor);exact(input,['batch'],['source']);const now=this.now();
+  // RTC-e review F1: the route's pseudonymous source network (never an address), kept with the queued batch so plain
+  // claims can be capped per source network at the roster. Anything else is dropped.
+  const source=typeof input.source==='string'&&/^[A-Za-z0-9_:.-]{1,128}$/.test(input.source)?input.source:null;
   try{await batchStep1(parseBatch(input.batch),{issuer:this.issuer,now:seconds(now),parseCertificate:parseLegCertificate,parseControl,allowLoopback:this.allowLoopback,crypto:this.crypto});}
   catch(error){if(error instanceof RtcWireFault)fail('rtc_batch_invalid','The batch is invalid.',400);throw error;}
   const text=typeof input.batch==='string'?input.batch:new TextDecoder().decode(input.batch),bytes=text.length+64;
   await this.store.transaction(async tx=>{
    const m=await tx.get(K.inboxMeta)??{seq:0,count:0,bytes:0};
    if(m.count+1>RTC_BOUNDS.inbox||m.bytes+bytes>RTC_BOUNDS.inboxBytes)fail('temporarily_unavailable','Real-time connections are temporarily unavailable.',503);
-   const seq=m.seq+1;await tx.put(K.inboxMeta,{seq,count:m.count+1,bytes:m.bytes+bytes});await tx.put(K.inbox(seq),{batch:text,at:now,bytes});
+   const seq=m.seq+1;await tx.put(K.inboxMeta,{seq,count:m.count+1,bytes:m.bytes+bytes});await tx.put(K.inbox(seq),{batch:text,at:now,bytes,...source?{source}:{}});
   });
   this.kick(owner,'inbox');
   return {accepted:true};
  }
- async process(owner,elements,now){
+ async process(owner,elements,now,{source=null}={}){
   const self=this.self(owner),selfIdentity=await this.identity(self);if(!selfIdentity)return;
   const certs=new Map(elements.certificates.map(c=>[c.payload.cnf.jkt,c]));
+  // §8.2 step 3 (RTC-e): a sender whose keys are not held gets a background refresh scheduled, for every claimed
+  // sender of the batch, before and whatever steps 2–8 decide. The roster bounds the queue, applies the directory
+  // budgets and never dials a non-allowlisted issuer. A key is "not held" when no certification key is held for the
+  // sender or a certificate or control of the batch names a kid that is not among them (a rotation).
+  // Review F1: whether a claim is queued, and in which lane, also depends on the source network (plain claims are
+  // capped per network), on a live session with the sender (served first) and on a link basis of an invite in the
+  // batch that verified here without spending anything (spec §8.2 step 3 exception). The caller's provider can
+  // observe at most the order of this host's fetches to it, never an answer or its timing.
+  const senders=new Map(),note=(x,kid)=>{const id=JSON.stringify([x.payload.iss,x.payload.sub]),e=senders.get(id)??{p:{iss:x.payload.iss,sub:x.payload.sub},kids:new Set()};if(kid)e.kids.add(kid);senders.set(id,e);};
+  for(const m of elements.messages)note(m);for(const c of elements.certificates)note(c,c.header.kid);for(const c of elements.controls)note(c,c.header.kid);
+  for(const [id,{p,kids}] of senders){const held=await this.peerKeys(p),missing=[...kids].find(kid=>!held.some(k=>k.kid===kid));if(held.length&&missing===undefined)continue;
+   let lane=null;if(p.iss!==this.issuer)try{lane=await this.basisLane(owner,p,elements);}catch{lane=null;}
+   try{await this.keys.refresh?.(p,missing,{...source?{source}:{},...lane?{lane}:{}});}catch{/* best effort */}}
   for(const m of elements.messages){try{await this.processMessage(owner,self,selfIdentity,m,certs,elements.links,now);}catch{/* silent */}}
   for(const c of elements.controls){try{await this.processControl(owner,selfIdentity,c,now);}catch{/* silent */}}
+ }
+ /**
+  * Review F1: the refresh lane of a claimed foreign sender whose keys are not held: `link:<digest>` when an invite of
+  * the batch from that sender presents a link basis that verifies here at step 2 without spending anything (a live
+  * ticket of this owner admitting the sender and purpose, or one of this owner's contact links), else null. Local
+  * reads only; never a fetch.
+  */
+ async basisLane(owner,sender,elements){
+  for(const m of elements.messages){
+   const p=m.payload;if(p.type!=='invite'||p.iss!==sender.iss||p.sub!==sender.sub||typeof p.body?.basis?.link_digest!=='string')continue;
+   let presented=null;for(const l of elements.links)if(await linkDigest(l,this.crypto)===p.body.basis.link_digest){presented=l;break;}
+   if(!presented||canonicalBasisLink(presented,{origin:this.issuer})===null)continue;
+   const now=this.now(),ticket=await this.store.transaction(tx=>ticketFromLink(tx,presented,{issuer:this.issuer,owner,now,crypto:this.crypto}));
+   let ok=Boolean(ticket)&&ticketAdmits(ticket.claims,{purpose:p.body.purpose?.purpose,principal:sender});
+   if(!ok&&!ticket){let contact=null;try{contact=await this.contacts?.inspect(presented);}catch{contact=null;}ok=typeof contact?.parent==='string';}
+   if(ok)return 'link:'+p.body.basis.link_digest.slice(0,96);
+  }
+  return null;
  }
  async processMessage(owner,self,selfIdentity,m,certs,links,now){
   const p=m.payload,sender={iss:p.iss,sub:p.sub},nowS=seconds(now);if(p.aud!==selfIdentity)return;
@@ -543,13 +643,16 @@ export class RtcService{
   // Step 3: the leg certificate against the sender's active certification keys AS ALREADY HELD.
   const certCompact=batchCert?.compact??rec?.theirs?.certificate;if(!certCompact)return;
   const parsedCert=batchCert??parseLegCertificate(certCompact,{allowLoopback:this.allowLoopback});
-  const keys=await this.peerKeys(sender),identity=await this.identity(sender);if(!keys.length||!identity){try{await this.keys.refresh?.(sender);}catch{/* best effort */}return;}
-  const verified=await verifyLegCertificate(parsedCert,{keys,expected:{aud:selfIdentity,sid:p.sid,role:side==='callee'?'caller':'callee',...p.type==='invite'?{purpose:p.body.purpose}:{}},identity,now:nowS,maxSeconds:this.peerMaxLegSeconds,...rec?{sessionEndsAt:seconds(rec.endsAt)}:{},crypto:this.crypto});
+  const keys=await this.peerKeys(sender),identity=await this.identity(sender);if(!keys.length||!identity)return;// refresh scheduled in process()
+  const verified=await verifyLegCertificate(parsedCert,{keys,expected:{aud:selfIdentity,sid:p.sid,role:side==='callee'?'caller':'callee',...p.type==='invite'?{purpose:p.body.purpose}:{}},identity,now:nowS,maxSeconds:this.peerMax(sender),...rec?{sessionEndsAt:seconds(rec.endsAt)}:{},crypto:this.crypto});
   if(verified.payload.iss!==sender.iss||verified.payload.sub!==sender.sub||rec&&!sameRef(verified.payload.purpose,rec.purpose))return;
   // Step 4: the message signature under the certified delegate.
   await verifyMessage(m,verified,{now:nowS,crypto:this.crypto});
   const d=await payloadDigest(m.compact,this.crypto);
-  if(side==='callee'&&p.type==='invite')return this.admitInvite(owner,self,{m,p,sender,verified,certCompact,digest:d,links,keys,now});
+  // RTC-e: a verified peer stays in the key roster for 24 h (§8.2 step 3). Verification follow-ups: only a peer with a
+  // session record here (an existing one, or an invite once admitted), never a principal that merely verifies.
+  if(side==='callee'&&p.type==='invite'){if(await this.admitInvite(owner,self,{m,p,sender,verified,certCompact,digest:d,links,keys,now})===true)this.track(sender);return;}
+  this.track(sender);
   return this.commit(owner,async(tx,fx)=>{
    const key=side==='callee'?inKey:outKey,rec=await tx.get(key);if(!rec)return;
    if(!await this.epochOk(tx,sender,verified.payload.aep,now))return;
@@ -560,7 +663,7 @@ export class RtcService{
     // §7.2: the first verified seq 0 answer becomes the callee leg; an answer after the caller's cancel, or a later
     // callee leg, is answered with a control statement `end` (`failed`) for that leg (§7.4).
     if(rec.state!=='ringing')return replyFailed(p.leg);
-    rec.theirs={jkt:p.leg,certificate:certCompact,order:newLeg(),rate:null,delivered:false};
+    rec.theirs={jkt:p.leg,certificate:certCompact,order:newLeg(),rate:null,delivered:false};delete rec.inviteCompact;delete rec.inviteRetry;
    } else if(side==='caller'&&rec.theirs&&rec.theirs.jkt!==p.leg)return replyFailed(p.leg);
    if(rec.state==='ended')return;
    // Review M1: the peer's certification keys that verified this leg are pinned on the record, so the peer's control
@@ -649,18 +752,20 @@ export class RtcService{
    await this.epochOk(tx,sender,verified.payload.aep,now);
    const muted=await isMuted(tx,{principal:sender,purpose:line,clientId:callerClient.client_id}),alert=alertAllowed({purposeBody:held.body,basis,muted,quarantined});
    const rec={v:1,sid:p.sid,role:'callee',state:'ringing',own,caller:sender,callee:self,peerIdentity:verified.payload.identity,purpose:held.ref,media:[...body.media],createdAt:now,ringUntil:Math.min(body.ring_until*1000,now+RING_MAX_MS),endsAt:p.iat*1000+SESSION_MAX_MS,
-    theirs:{jkt:p.leg,certificate:certCompact,order:newLeg(),rate:null,delivered:true},mine:null,delivered:[],claim:null,basis,alert,held:holdIt,controls:[],peerKeys:pinKeys(keys),...callbackLink?{callbackLink}:{}};
+    theirs:{jkt:p.leg,certificate:certCompact,order:newLeg(),rate:null,delivered:true},mine:null,delivered:[],claim:null,basis,alert,held:holdIt,callerClient:{client_id:callerClient.client_id,origin:callerClient.origin},controls:[],peerKeys:pinKeys(keys),...callbackLink?{callbackLink}:{}};
    offerSeq(rec.theirs.order,{seq:0,digest:d,compact:m.compact,now});
-   if(holdIt){await tx.put(key,rec);await this.addMissed(tx,{caller:sender,line,kind:'held',at:now});return;}
+   if(holdIt){await tx.put(key,rec);await this.addMissed(tx,{caller:sender,line,kind:'held',at:now});return true;}
    let targets=(await candidateEndpoints(tx,{line,now})).filter(ep=>eligible.has(ep.id));
    if(own){const out=await tx.get(K.out(p.sid));const mineEp=out?.mine?.endpoint;targets=targets.filter(ep=>ep.id!==mineEp);if(out?.target)targets=targets.filter(ep=>ep.id===out.target);}
    targets=targets.slice(0,RTC_BOUNDS.fanout);
    const projection={caller:party(sender),handle,origin:callerClient.origin,client_id:callerClient.client_id,purpose:structuredClone(held.ref),media:[...body.media],context:projectContext(body.context,held.body,held.body),basis,alert};
    for(const ep of targets){
     const auto=own&&held.body.auto_accept==='self'&&(policy.autoAccept[ep.clientId]??[]).includes(line)&&callerClient.client_id===ep.clientId;
-    if(await this.push(tx,fx,ep.id,{type:'invite',sid:p.sid,invite:m.compact,certificate:certCompact,projection:{...projection,auto_accept:auto}},now,{sensitive:body.offer!==null})){rec.delivered.push(ep.id);await tx.put(K.delivered(ep.id,p.sid),{key});}
+    if(await this.push(tx,fx,ep.id,{type:'invite',sid:p.sid,invite:m.compact,certificate:certCompact,projection:{...projection,auto_accept:auto}},now,{sensitive:body.offer!==null})){rec.delivered.push(ep.id);await tx.put(K.delivered(ep.id,p.sid),{key});
+     // RTC-e doorbell: only for an alerting invite (counted by the invite limits above), once per endpoint.
+     if(alert&&ep.push)fx.doorbells.push({endpoint:ep.id,subscription:ep.push,ringUntil:rec.ringUntil});}
    }
-   await tx.put(key,rec);
+   await tx.put(key,rec);return true;
   });
  }
  async processControl(owner,selfIdentity,parsed,now){
@@ -724,9 +829,19 @@ export class RtcService{
  }
  async revokeTicket(actor,input){exact(input,['jti']);if(typeof input.jti!=='string'||!/^[A-Za-z0-9_-]{1,128}$/.test(input.jti))invalid();return this.ownerTx(actor,async tx=>{const row=await tx.get(TICKET_KEY(input.jti));if(!row)notFound();await tx.put(TICKET_KEY(input.jti),{...row,revoked:true});return {revoked:true};});}
  async endSession(actor,input){
-  exact(input,['sid'],['caller']);if(typeof input.sid!=='string'||!SID.test(input.sid)||input.caller!==undefined&&!principalValid(input.caller,this.allowLoopback))invalid();
+  exact(input,['sid'],['caller','silent']);if(typeof input.sid!=='string'||!SID.test(input.sid)||input.caller!==undefined&&!principalValid(input.caller,this.allowLoopback))invalid();
+  if(input.silent!==undefined&&(input.silent!==true||input.caller===undefined))invalid();
   return this.ownerTx(actor,async(tx,fx,owner,now)=>{
    const key=input.caller?K.in(input.caller,input.sid):K.out(input.sid),rec=await tx.get(key);if(!rec)notFound();
+   // Review F1 (RTC-g; spec §12 "No presence oracle", §4.4): an incoming record no device answered (ringing, no
+   // claim, held or not) ends SILENTLY, whether or not `silent` was asked: reason `declined`, `state: ended` only to
+   // this owner's own endpoints (its apps stop ringing), no control statement and nothing else to the caller's
+   // provider, not recorded as missed; an own-entity twin ends the same way (end() carries no control to it). The
+   // caller's session simply rings out at ring_until, exactly as if nobody had seen the invite.
+   if(silentEndable(rec)){await this.end(tx,fx,owner,rec,'revoke',{now,reason:'declined'});await tx.put(key,rec);return {sid:rec.sid,state:rec.state,silent:true};}
+   // `silent` names only such a record: a claimed (answered) session, an outgoing one or one already ended never ends
+   // through it.
+   if(input.silent===true)invalid('Only an unanswered incoming call can be declined silently.');
    if(isLive(rec)){await this.end(tx,fx,owner,rec,'revoke',{now,control:{leg:null,reason:'revoked'}});await tx.put(key,rec);}
    return {sid:rec.sid,state:rec.state};
   });
@@ -734,7 +849,14 @@ export class RtcService{
  async revokeEndpoint(actor,input){exact(input,['endpoint']);if(typeof input.endpoint!=='string'||!ENDPOINT_ID.test(input.endpoint))invalid();return this.ownerTx(actor,async(tx,fx,owner,now)=>{const ep=await tx.get(K.endpoint(input.endpoint));if(!ep)notFound();await this.removeEndpoint(tx,fx,ep,now,'revoked');return {revoked:true};});}
  async clearMissed(actor,input={}){exact(input,[],['id']);return this.ownerTx(actor,async tx=>{let n=0;for(const [key,row] of await tx.list({prefix:K.missedPrefix,limit:RTC_BOUNDS.missed*2}))if(input.id===undefined||row.id===input.id){await tx.delete(key);n++;}return {cleared:n};});}
  async ownerRead(actor,fn){const owner=this.owner(actor);return this.store.transaction(async tx=>{await this.bindOwner(tx,owner);return fn(tx,this.now(),owner);});}
- sessions(actor){return this.ownerRead(actor,async tx=>{const out=[];for(const prefix of [K.outPrefix,K.inPrefix])for(const rec of (await tx.list({prefix,limit:4096})).values())if(isLive(rec))out.push(sessionView(rec));return {sessions:out};});}
+ /** The owner's live sessions. Review F2: an incoming record's `alert` is re-evaluated on every read against the
+  * current mutes (principal, purpose and the caller's application), so a mute set while an invite rings silences the
+  * portal ring at once; it never turns on an invite that did not alert at admission. */
+ sessions(actor){return this.ownerRead(actor,async tx=>{const out=[];for(const prefix of [K.outPrefix,K.inPrefix])for(const rec of (await tx.list({prefix,limit:4096})).values())if(isLive(rec)){
+  if(rec.role!=='callee'){out.push(sessionView(rec));continue;}
+  const client=callerClientOf(rec,this.allowLoopback);
+  out.push(sessionView(rec,{alert:rec.alert===true&&client!==null&&!await isMuted(tx,{principal:rec.caller,purpose:rec.purpose.purpose,clientId:client.client_id}),callerOrigin:client?.origin??null}));
+ }return {sessions:out};});}
  missed(actor){return this.ownerRead(actor,async tx=>({missed:[...(await tx.list({prefix:K.missedPrefix,limit:RTC_BOUNDS.missed*2})).values()].reverse().map(r=>({id:r.id,caller:r.caller,purpose:r.purpose,kind:r.kind,at:r.at}))}));}
  blocked(actor){return this.ownerRead(actor,async tx=>({blocked:[...(await tx.list({prefix:K.blockPrefix,limit:RTC_BOUNDS.blocks})).values()].map(r=>({principal:r.principal,at:r.at})),muted:[...(await tx.list({prefix:K.mutePrefix,limit:RTC_BOUNDS.mutes})).values()].map(r=>({kind:r.kind,value:r.value,at:r.at}))}));}
  tickets(actor){return this.ownerRead(actor,async(tx,now)=>({tickets:[...(await tx.list({prefix:TICKET_PREFIX,limit:RTC_BOUNDS.tickets*4})).values()].map(r=>ticketView(r,now))}));}
@@ -770,7 +892,17 @@ export class RtcService{
    await this.bindOwner(tx,owner);const now=this.now();let ended=0;
    if(input.event==='deletion')await tx.put(CLOSED_KEY,{at:now});
    const affected=rec=>input.event==='deletion'||rec.mine?.clientId===input.clientId&&(input.event==='app-revoked'||!input.purposes.includes(rec.purpose.purpose));
-   for(const prefix of [K.outPrefix,K.inPrefix])for(const [key,rec] of await tx.list({prefix,limit:4096}))if(isLive(rec)&&affected(rec)){await this.end(tx,fx,owner,rec,'revoke',{now,control:{leg:null,reason:'revoked'}});await tx.put(key,rec);ended++;}
+   const lost=input.event!=='deletion';
+   for(const prefix of [K.outPrefix,K.inPrefix])for(const [key,rec] of await tx.list({prefix,limit:4096})){
+    if(isLive(rec)&&affected(rec)){await this.end(tx,fx,owner,rec,'revoke',{now,control:{leg:null,reason:'revoked'}});await tx.put(key,rec);ended++;continue;}
+    // RTCs follow-up (b): an unanswered invite that was ringing ONLY through this app's endpoints, for a purpose the app
+    // no longer holds, ends here, silently towards the caller (no control statement, not missed; spec §12): the
+    // owner's portal and devices stop ringing, and the caller's session rings out at ring_until as for any decline.
+    if(lost&&silentEndable(rec)&&!rec.held&&Array.isArray(rec.delivered)&&rec.delivered.length&&(input.event==='app-revoked'||!input.purposes.includes(rec.purpose.purpose))){
+     let only=true;for(const id of rec.delivered){const ep=await tx.get(K.endpoint(id));if(ep&&ep.clientId!==input.clientId){only=false;break;}}
+     if(only){await this.end(tx,fx,owner,rec,'revoke',{now,reason:'revoked'});await tx.put(key,rec);ended++;}
+    }
+   }
    for(const ep of [...(await tx.list({prefix:K.endpointPrefix,limit:RTC_BOUNDS.endpoints*2})).values()]){
     if(input.event==='deletion'||input.event==='app-revoked'&&ep.clientId===input.clientId){await this.removeEndpoint(tx,fx,ep,now,'revoked');continue;}
     if(input.event==='app-narrowed'&&ep.clientId===input.clientId){const kept=ep.purposes.filter(l=>input.purposes.includes(l));if(!kept.length)await this.removeEndpoint(tx,fx,ep,now,'revoked');else if(kept.length!==ep.purposes.length)await tx.put(K.endpoint(ep.id),{...ep,purposes:kept});}
@@ -787,8 +919,9 @@ export class RtcService{
   const owner=this.system(actor);let wake=Infinity;
   // Queued batches first, as of their receipt, so their effects precede this pass's expiry.
   const inbox=await this.processInbox(owner,{limit:64});if(inbox.more)wake=Math.min(wake,this.now()+250);
+  const live=[];
   await this.commit(owner,async(tx,fx)=>{
-   await this.bindOwner(tx,owner);const now=this.now(),soon=t=>{if(t>now)wake=Math.min(wake,t);};
+   live.length=0;await this.bindOwner(tx,owner);const now=this.now(),soon=t=>{if(t>now)wake=Math.min(wake,t);};
    for(const prefix of [K.outPrefix,K.inPrefix])for(const [key,rec] of await tx.list({prefix,limit:4096})){
     if(recordExpired(rec,now)){await tx.delete(key);continue;}
     if(rec.state==='ended'){soon(rec.endedAt+86400000);continue;}
@@ -796,6 +929,20 @@ export class RtcService{
     if(due){await this.end(tx,fx,owner,rec,due,{now});await tx.put(key,rec);soon(rec.endedAt+86400000);continue;}
     const legs=[rec.mine?.order,rec.theirs?.order].filter(Boolean);
     if(legs.some(l=>gapExpired(l,now))){await this.end(tx,fx,owner,rec,'fail',{now,control:{leg:rec.theirs?.jkt??null,reason:'failed'}});await tx.put(key,rec);continue;}
+    // Review F6: at most INVITE_RESEND_DELAYS.length re-sends, and only after the first 202 (inviteOutcome).
+    if(rec.role==='caller'&&rec.state==='ringing'&&!rec.theirs&&rec.inviteCompact&&rec.inviteRetry?.acked===true){
+     {
+      if(rec.inviteRetry.at<=now&&now<rec.ringUntil){
+       const links=[rec.basisLink,rec.callbackLink].filter(Boolean),n=rec.inviteRetry.n+1;
+       if(await this.enqueue(tx,fx,{to:rec.callee,certificates:[rec.mine.certificate],messages:[rec.inviteCompact],links,until:rec.ringUntil,invite:rec.sid}))rec.inviteRetry={acked:true,n,at:n<INVITE_RESEND_DELAYS.length?now+INVITE_RESEND_DELAYS[n]:null};
+       else rec.inviteRetry={...rec.inviteRetry,at:now+INVITE_RESEND_DELAYS[0]};
+       if(rec.inviteRetry.n>=INVITE_RESEND_DELAYS.length){delete rec.inviteCompact;delete rec.inviteRetry;}
+       await tx.put(key,rec);
+      }
+      if(rec.inviteRetry?.at&&rec.inviteRetry.at<rec.ringUntil)soon(rec.inviteRetry.at);
+     }
+    }
+    if(!rec.own&&isLive(rec))live.push(party(rec.role==='caller'?rec.callee:rec.caller));
     soon(rec.state==='ringing'?rec.ringUntil:rec.endsAt);for(const l of legs)if(l.gapSince!==null)soon(l.gapSince+ORDER_LIMITS.gapMs+1);
    }
    for(const ep of [...(await tx.list({prefix:K.endpointPrefix,limit:RTC_BOUNDS.endpoints*2})).values()]){
@@ -809,12 +956,33 @@ export class RtcService{
    for(const [key,row] of await tx.list({prefix:TICKET_PREFIX,limit:RTC_BOUNDS.tickets*4}))if(row.expiresAt+DAY<=now||row.revoked&&row.createdAt+DAY<=now)await tx.delete(key);
    await pruneLimits(tx,now);
   });
+  // Review F1: the peers of live or ringing sessions go first in the key roster's refresh order.
+  try{this.keys.live?.(live.filter(p=>p.iss!==this.issuer));}catch{/* best effort */}
   const drained=await this.drain(owner).catch(()=>({pending:1}));if(drained.pending||drained.more)wake=Math.min(wake,this.now()+1000);
   return {wakeAt:Number.isFinite(wake)?wake:null,pending:drained.pending??0};
  }
 }
-/** The owner's view of one live session (never SDP, candidates, links or keys). */
-export const sessionView=rec=>({sid:rec.sid,role:rec.role,state:rec.state,own:rec.own,peer:party(rec.role==='caller'?rec.callee:rec.caller),purpose:rec.purpose.purpose,media:[...rec.media],createdAt:rec.createdAt,ringUntil:rec.ringUntil,endsAt:rec.endsAt,...rec.role==='callee'?{held:rec.held===true,claimed:Boolean(rec.claim)}:{}});
+/** Review F1: an incoming record that ends silently when its owner declines or removes it (ringing, unclaimed). */
+export const silentEndable=rec=>rec?.role==='callee'&&rec.state==='ringing'&&!rec.claim;
+/** The caller's application {client_id, origin} of an incoming record, as its verified leg certificate states it
+ * (recorded at admission; older records: read from the held certificate), or null. */
+function callerClientOf(rec,allowLoopback){
+ const valid=c=>plain(c)&&typeof c.client_id==='string'&&typeof c.origin==='string'?{client_id:c.client_id,origin:c.origin}:null;
+ if(rec.callerClient)return valid(rec.callerClient);
+ try{return valid(parseLegCertificate(rec.theirs?.certificate,{allowLoopback}).payload.client);}catch{return null;}
+}
+/**
+ * The owner's view of one live session (never SDP, candidates, links or keys). Incoming records also carry `alert`
+ * (review F2; `live.alert` is the read-time value from sessions(), else the admission decision) and `callerOrigin`,
+ * the calling application's verified origin from the caller's leg certificate (spec §9.1: the invite projection gives
+ * a callee's endpoints the caller `client.origin` before any claim; RTC-17, provisional), or null.
+ */
+export function sessionView(rec,live={}){
+ const view={sid:rec.sid,role:rec.role,state:rec.state,own:rec.own,peer:party(rec.role==='caller'?rec.callee:rec.caller),purpose:rec.purpose.purpose,media:[...rec.media],createdAt:rec.createdAt,ringUntil:rec.ringUntil,endsAt:rec.endsAt};
+ if(rec.role!=='callee')return view;
+ const origin=live.callerOrigin!==undefined?live.callerOrigin:rec.callerClient?.origin;
+ return {...view,held:rec.held===true,claimed:Boolean(rec.claim),alert:(live.alert!==undefined?live.alert:rec.alert)===true,callerOrigin:typeof origin==='string'?origin:null};
+}
 
 // ---- engine operations ---------------------------------------------------------------------------------------------------
 const CHANGED='rtc-changed';

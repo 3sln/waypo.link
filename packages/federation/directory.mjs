@@ -10,7 +10,26 @@ import {siteGlobal} from '../flags/read.mjs';
 import {isUUID} from '../core/primitives.mjs';
 import {verifyKeyContinuity} from '../identity/keys.mjs';
 import {MAX_MOVES,MAX_MOVES_DOCUMENT_BYTES,DOCUMENT_BYTES,MAX_DOCUMENT_KEYS,MAX_STATEMENT_BYTES,MAX_ATTESTATION_BYTES} from '../identity/succession.mjs';
-export const DIRECTORY_LIMITS=Object.freeze({timeoutMs:1500,maxBytes:65536,cacheEntries:256,cacheBytes:8388608,inFlight:32,global:{windowMs:60000,limit:600},perSite:{windowMs:60000,limit:30}});
+export const DIRECTORY_LIMITS=Object.freeze({timeoutMs:1500,maxBytes:65536,cacheEntries:256,cacheBytes:8388608,inFlight:32,global:{windowMs:60000,limit:600},perSite:{windowMs:60000,limit:30},
+ // RTC-e review F4 (provisional): host-wide budgets per feature, fetch class and issuer site, spent through the host's
+ // shared limiter (`hostLimiter`: WORK_AUTHORITY on both adapters) by every directory instance on the host, so the
+ // outbound volume to one issuer no longer scales with the number of targeted writers. Verification follow-ups:
+ //  - the key names the feature (`rtc`, `org`), so one feature's traffic never spends another's budget;
+ //  - every class also has a per-tenant share of `1/share` of its class limit (`tenant` overrides), spent first, so a
+ //    few tenants (targeted writers or attacker accounts) cannot spend the whole class;
+ //  - `interactive` has no host-wide class limit (null): each interactive fetch is user-triggered by an authenticated
+ //    account under per-account limits (RTC `warms`), so a host-wide cap would only be a lever for a few accounts to deny
+ //    every other user. It keeps its per-tenant share.
+ host:Object.freeze({windowMs:60000,interactive:null,background:1200,claimed:120,linked:240,share:16,tenant:Object.freeze({interactive:40})})});
+/** The fixed per-feature names of the host-wide keys (anything else is `other`). */
+export const DIRECTORY_FEATURES=Object.freeze(['rtc','org','other']);
+/** Fetch classes (RTC-e review F1). Each has its own per-site bucket in every directory, so no class can starve another:
+ *  - `background`: refresh-ahead of tracked, verified peers and members (the full per-site budget);
+ *  - `interactive`: user-triggered (the caller-initiated warm at `open`, §4.1): its own per-site budget;
+ *  - `claimed`: a request-path claim nobody has verified yet: a third of the per-site budget;
+ *  - `linked`: a claim backed by a locally verified relationship (rtc-signaling §8.2 step 3 exception: a link basis
+ *    that verified at step 2, or a peer with a live session): a third of the per-site budget. */
+export const DIRECTORY_PRIORITIES=Object.freeze(['background','interactive','claimed','linked']);
 const fail=code=>{throw Object.assign(new Error('The identity could not be verified.'),{code,status:503});};
 export function directoryURL(value){let u;try{u=new URL(value);}catch{return null;}return typeof value==='string'&&value.length<=2048&&u.href===value&&u.protocol==='https:'&&!u.port&&!u.username&&!u.password&&!u.hash&&!value.includes('#')&&publicClientHost(u.hostname)&&!/%2f|%5c|\\/i.test(u.pathname)?u:null;}
 const onOrigin=(value,issuer)=>{const u=directoryURL(value);return u&&u.origin===issuer&&!u.search&&!value.includes('?')?value:null;};
@@ -55,9 +74,33 @@ export function directoryLimitsFor(n,base=DIRECTORY_LIMITS){
 }
 export class IdentityDirectory {
  /** `tenant`: the owner whose budget this directory spends at a shared egress (passed as `budget` in the fetch init). */
- constructor({store,fetch,enabled=false,config=null,issuers=[],clock=()=>Date.now(),limiter,crypto=globalThis.crypto,limits={},tenant=null}={}){
+ constructor({store,fetch,enabled=false,config=null,issuers=[],clock=()=>Date.now(),limiter,hostLimiter=null,crypto=globalThis.crypto,limits={},tenant=null,features=[],feature='other'}={}){
   if(!store?.transaction||typeof fetch!=='function')throw new TypeError('Directory needs a durable transactional pin store and SSRF-safe egress.');
-  Object.assign(this,{store,fetcher:fetch,config,enabled:enabled===true,issuers:new Set(issuers),clock,crypto,limits:{...DIRECTORY_LIMITS,...limits},limiter:limiter??memoryLimiter({clock}),tenant:typeof tenant==='string'?tenant:null});this.base=this.limits;this.cache=new Map();this.cacheBytes=0;this.documents=new Map();this.documentBytes=0;this.manifests=new Map();this.flights=new Map();this.misses=new Map();this.manifestFlights=new Map();
+  Object.assign(this,{store,fetcher:fetch,config,enabled:enabled===true,issuers:new Set(issuers),clock,crypto,limits:{...DIRECTORY_LIMITS,...limits},limiter:limiter??memoryLimiter({clock}),hostLimiter:typeof hostLimiter?.consume==='function'?hostLimiter:null,tenant:typeof tenant==='string'?tenant:null,keepFeatures:Array.isArray(features)?features.filter(n=>typeof n==='string').slice(0,4):[],feature:DIRECTORY_FEATURES.includes(feature)?feature:'other'});this.base=this.limits;this.cache=new Map();this.cacheBytes=0;this.documents=new Map();this.documentBytes=0;this.manifests=new Map();this.flights=new Map();this.misses=new Map();this.manifestFlights=new Map();
+ }
+ /** RTC-e review F4: the host-wide budget of `cls` for `site` through the host's shared limiter (absent: no host
+  * budget, as in unit tests). A limiter that fails refuses (closed). Verification follow-ups: keys are
+  * `directory-host-v1/<feature>/<class>/<site>`, and this tenant's share `.../t/<tenant hash>` is spent first (a share
+  * refusal spends nothing of the class). `interactive` has only the tenant share (DIRECTORY_LIMITS.host). */
+ async hostAdmit(cls,site){
+  if(!this.hostLimiter)return true;const host=this.limits.host??DIRECTORY_LIMITS.host,limit=host?.[cls],valid=n=>Number.isSafeInteger(n)&&n>=1;
+  if(limit!==null&&!valid(limit))return false;const base=`directory-host-v1/${this.feature}/${cls}/${site}`;
+  try{
+   if(this.tenant!==null){const share=this.tenantShare(cls,host,limit);if(!valid(share))return false;
+    if(await this.hostLimiter.consume(`${base}/t/${await this.tenantHash()}`,{windowMs:host.windowMs,limit:share})!==true)return false;}
+   return limit===null||await this.hostLimiter.consume(base,{windowMs:host.windowMs,limit})===true;
+  }catch{return false;}
+ }
+ /** This tenant's host-wide share of class `cls`: `tenant[cls]`, else 1/`share` of the class limit. A background share
+  * grows with this directory's roster-scaled per-site budget (an organization's members), up to a quarter of the class. */
+ tenantShare(cls,host,limit){
+  const fixed=host.tenant?.[cls];if(fixed!==undefined)return fixed;if(!Number.isSafeInteger(limit))return 0;
+  const base=Math.ceil(limit/Math.max(1,host.share??16));return cls==='background'?Math.max(base,Math.min(Math.floor(limit/4),this.limits.perSite.limit)):base;
+ }
+ /** A stable pseudonym of the tenant for the shared limiter's keys (never the owner id itself). */
+ async tenantHash(){
+  this.tenantKey??=(async()=>[...new Uint8Array(await this.crypto.subtle.digest('SHA-256',new TextEncoder().encode('directory-tenant\0'+this.tenant)))].slice(0,16).map(b=>b.toString(16).padStart(2,'0')).join(''))();
+  return this.tenantKey;
  }
  /** F5: the caller's roster size (MemberContextService discovery); scales the per-site budget and the cache. */
  capacity(n){this.limits=directoryLimitsFor(n,this.base);}
@@ -82,9 +125,13 @@ export class IdentityDirectory {
  async json(url,maxBytes,priority='background'){
   const u=directoryURL(url);if(!u||!this.allowed(u.origin))fail('issuer_refused');const site=clientSite(u.hostname);
   // Unconfirmed degradation (claimed-refresh starvation): request-path 'claimed' refreshes use at most a third of the
-  // per-site budget, so member refreshes keep the rest.
+  // per-site budget, and no longer the member bucket at all.
   // Review follow-up: the narrower limiters run first, so a refused claimed or per-site request spends no global token.
-  if(priority==='claimed'&&!await this.limiter.consume('directory/claimed/'+site,{...this.limits.perSite,limit:Math.max(1,Math.floor(this.limits.perSite.limit/3))})||!await this.limiter.consume('directory/site/'+site,this.limits.perSite)||!await this.limiter.consume('directory/global',this.limits.global))fail('rate_limited');
+  // RTC-e review F1: the classes have disjoint per-site buckets (interactive its own; claimed and linked a third each;
+  // background the rest), then the directory's global bucket, then the host-wide per-site budget of the class (F4).
+  const cls=DIRECTORY_PRIORITIES.includes(priority)?priority:'background',third={...this.limits.perSite,limit:Math.max(1,Math.floor(this.limits.perSite.limit/3))};
+  const bucket=cls==='background'?['directory/site/'+site,this.limits.perSite]:cls==='interactive'?['directory/interactive/'+site,this.limits.perSite]:['directory/'+cls+'/'+site,third];
+  if(!await this.limiter.consume(...bucket)||!await this.limiter.consume('directory/global',this.limits.global)||!await this.hostAdmit(cls,site))fail('rate_limited');
   const controller=new AbortController();let timer;
   const work=(async()=>{
    const response=await this.fetcher(url,{method:'GET',redirect:'manual',credentials:'omit',headers:{Accept:'application/json','Accept-Encoding':'identity'},signal:controller.signal,budget:{tenant:this.tenant??'',priority,allowance:this.limits.perSite.limit}});
@@ -112,8 +159,16 @@ export class IdentityDirectory {
   for(const name of ['authorization_request_endpoint','authorization_endpoint','token_endpoint','rpc_endpoint','jwks_uri'])if(!onOrigin(d[name],issuer))fail('invalid_manifest');
   if(!Array.isArray(d.login_presentation)||!d.login_presentation.includes('redirect')||Object.keys(d.features).length>32||Object.values(d.features).some(v=>!plainObject(v)||new TextEncoder().encode(JSON.stringify(v)).length>4096))fail('invalid_manifest');
   if(typeof d.preferences_contract!=='string'||!directoryURL(d.preferences_contract)||!Array.isArray(d.dpop_signing_alg_values_supported)||!d.dpop_signing_alg_values_supported.includes('ES256'))fail('invalid_manifest');
-  const directory=d.features['directory.v1'].directory_url;this.remember(this.manifests,issuer,{directory,until:this.clock()+age(result.header,3600000)});return directory;
+  // RTC-e: a caller may ask to keep named manifest features (each already bounded to 4 KiB above), e.g. rtc-signaling.v1;
+  // nothing else of the manifest is kept.
+  const directory=d.features['directory.v1'].directory_url,features={};for(const name of this.keepFeatures)if(plainObject(d.features[name]))features[name]=structuredClone(d.features[name]);
+  this.remember(this.manifests,issuer,{directory,features,until:this.clock()+age(result.header,3600000)});return directory;
  }
+ /** RTC-e: the kept manifest features of `issuer` (see `features` in the constructor), fetching the manifest under the
+  * same budgets when it is not cached. */
+ async features(issuer,priority='background'){await this.manifest(issuer,priority);return structuredClone(this.manifests.get(issuer)?.features??{});}
+ /** Cache only, never dials: the kept manifest features of `issuer` while its manifest is fresh, else null. */
+ peekFeatures(issuer){const cached=this.manifests.get(issuer);return this.allowed(issuer)&&cached?.until>this.clock()?structuredClone(cached.features??{}):null;}
  async accept(issuer,subject,identity,document){
   return this.store.transaction(async tx=>{
    const path=pinKey(issuer,subject),previous=await tx.get(path);if(previous&&previous.identity!==identity)fail('identity_uri_changed');
@@ -133,7 +188,8 @@ export class IdentityDirectory {
    const pin={identity,kid:active.kid,states,material,epoch:(previous?.epoch??0)+(reset?1:0)};await tx.set(path,pin);return pin;
   });
  }
- /** `priority`: 'background' (default), 'claimed' (a request-path claim) or 'interactive' (user-triggered). `early`:
+ /** `priority`: 'background' (default), 'claimed' (a request-path claim), 'linked' (a claim with a locally verified
+  * relationship) or 'interactive' (user-triggered); see DIRECTORY_PRIORITIES. `early`:
   * refetch once less than half of the cached freshness lifetime is left (refresh-ahead for rosters, F5).
   * `verificationOnly` (defaults to `early`) accepts fresh compact material after full-document eviction. */
  async refresh({issuer,subject,kid,priority='background',early=false,verificationOnly=early}={}){

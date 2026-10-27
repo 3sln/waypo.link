@@ -7,10 +7,15 @@
 import {IdentityDirectory,directoryURL} from '../../federation/directory.mjs';
 import {flagsFor,siteGlobal} from '../../flags/read.mjs';
 
-export function foreignIssuers(config){
- let list=config?.ORG_FOREIGN_ISSUERS;if(typeof list==='string'){try{list=JSON.parse(list);}catch{return [];}}
+/** `name`: the allowlist key (RTC-e reuses this parser for RTC_FOREIGN_ISSUERS, with the same rules). */
+export function foreignIssuers(config,name='ORG_FOREIGN_ISSUERS'){
+ let list=config?.[name];if(typeof list==='string'){try{list=JSON.parse(list);}catch{return [];}}
  return Array.isArray(list)&&list.length<=64&&list.every(o=>typeof o==='string'&&directoryURL(o+'/')?.origin===o)?[...new Set(list)]:[];
 }
+/** RTC-e review F4: the host-wide limiter every IdentityDirectory on this host shares for its per-site budgets
+ * (directory.mjs DIRECTORY_LIMITS.host): the host's WORK_AUTHORITY guard (the ABUSE Durable Objects on Workers, the
+ * in-process abuse store on Node), or null where the host has none. */
+export function directoryHostLimiter(config){const authority=config?.WORK_AUTHORITY;return typeof authority?.consume==='function'?{consume:(key,limits)=>authority.consume(key,limits)}:null;}
 export function foreignDirectoryEnabled(config,owner){
  try{return typeof config?.DIRECTORY_EGRESS==='function'&&siteGlobal(config,'DIRECTORY_ENABLED')&&flagsFor(config,{subject:{kind:'account',owner}}).enabled('ORG_FOREIGN_MEMBERS_ENABLED');}catch{return false;}
 }
@@ -23,6 +28,6 @@ export function foreignDirectory(config,{store,owner}){
  if(!foreignDirectoryEnabled(config,owner))return null;const issuers=foreignIssuers(config),key=JSON.stringify(issuers);
  const entry=store&&typeof store==='object'?shared.get(store):null;
  if(entry?.config===config&&entry.owner===owner&&entry.key===key)return entry.directory;
- const directory=new IdentityDirectory({config,issuers,tenant:typeof owner==='string'?owner:null,fetch:config.DIRECTORY_EGRESS(issuers),store:{transaction:fn=>store.transaction(tx=>fn({get:k=>tx.get(k),set:(k,v)=>tx.put(k,v)}))}});
+ const directory=new IdentityDirectory({config,issuers,feature:'org',tenant:typeof owner==='string'?owner:null,fetch:config.DIRECTORY_EGRESS(issuers),hostLimiter:directoryHostLimiter(config),store:{transaction:fn=>store.transaction(tx=>fn({get:k=>tx.get(k),set:(k,v)=>tx.put(k,v)}))}});
  if(store&&typeof store==='object')shared.set(store,{config,owner,key,directory});return directory;
 }

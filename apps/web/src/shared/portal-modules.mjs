@@ -6,6 +6,7 @@ import securityView from '../ui/release-security.mjs';
 import settingsView from '../ui/release-settings.mjs';
 import billingView from '../ui/release-billing.mjs';
 import searchView from '../ui/release-search.mjs';
+import rtcSettingsView from '../ui/rtc-settings.mjs';
 import {contactsView,resourcesView,rulesView,notificationsView} from '../ui/release-views.mjs';
 const announce=(kind,detail={})=>(resources,{},{engineFeed})=>engineFeed.dispatchEvent(new CustomEvent('portal-intent',{detail:{kind,...detail}}));
 const navigation=(id,title,icon,order)=>({id,title,view:id,icon,order});
@@ -24,6 +25,8 @@ export const builtInModules=Object.freeze([
  {id:'resources',dependencies:['workspace'],contributions:{navigation:[navigation('resources','Resources','storage',30)],views:[view('resources',resourcesView)],commands:[command('resources.open','Open resources',{kind:'navigate',view:'resources'})],keybindings:[{command:'resources.open',key:'g o',when:'authenticated && !textInputFocus && !dialogOpen'}]}},
  {id:'notifications',dependencies:['workspace'],contributions:{navigation:[navigation('notifications','Notifications','bell',50)],views:[view('notifications',notificationsView)],commands:[command('notifications.open','Open notification settings',{kind:'navigate',view:'notifications'})],keybindings:[{command:'notifications.open',key:'g n',when:'authenticated && !textInputFocus && !dialogOpen'}]}},
  {id:'identity',dependencies:['workspace'],contributions:{navigation:[navigation('security','Account & security','shield',60)],views:[view('security',securityView)],commands:[command('identity.security','Open account and security',{kind:'navigate',view:'security'}),command('identity.signout','Sign out',{kind:'signout'},'account')],keybindings:[{command:'identity.security',key:'g s',when:'authenticated && !textInputFocus && !dialogOpen'}]}},
+ // RTC-g (flags off): shown only when the account's session features include RTC (ui/rtc-ring.mjs withRtcSurface).
+ {id:'rtc',dependencies:['workspace'],contributions:{navigation:[navigation('calls','Calls & connections','chat',61)],views:[view('calls',rtcSettingsView)]}},
  {id:'public-docs',dependencies:['workspace'],contributions:{commands:[{id:'docs.open',title:'Open documentation',capability:'public',deps:{browser:{}},execute:({browser})=>browser.navigate('/docs/')}]}}
 ].map(module=>({...module,contributions:{...module.contributions,...module.contributions.keybindings?{keybindings:module.contributions.keybindings.map((binding,index)=>({id:`${module.id}.binding-${index}`,...binding}))}:{}}})));
 export {defaultKeybindings} from './portal-bindings.mjs';

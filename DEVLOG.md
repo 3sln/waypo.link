@@ -6704,3 +6704,678 @@ Two follow-ups were applied:
 **Provisional:** the L-1 withdraw-wins rule.
 
 Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-27 — RTC-g owner settings and portal ring (flags off)
+
+**Implemented locally, provisional and unsigned.** Slice RTC-g of the [RTC signaling](docs/spec/rtc-signaling.md) plan ([design](docs/architecture/rtc-signaling.md) §7, §8.1): owner HTTP routes over the RtcService owner operations, the "Calls & connections" console view and the portal ring. Everything is behind `RTC_SIGNALING_ENABLED` (default off). While it is off, the view, its navigation entry and the ring do not appear; widening routes answer the uniform 404; reads, narrowing and ending stay available. No RtcService, contract route or federation file was changed (RTC-e was editing them at the same time). No commit or deployment. Every reading and wording choice below is **provisional** (coordinator), not signed off by the user.
+
+**Modules:**
+- `packages/runtime/routes/rtc-owner.mjs` (owner stage; the router has already checked origin, session, CSRF for writes and capacity):
+  - `GET /api/rtc/settings`: policy, held purposes, contact-link RTC configuration (from `rtc.export`), apps with RTC bound purposes, live sessions, missed and held invites, blocks and mutes, tickets and endpoints.
+  - `GET /api/rtc/ring`: the invites the portal may ring for.
+  - `POST /api/rtc/{action}` for `set-policy`, `set-contact-rtc`, `block`, `unblock`, `mute`, `unmute`, `revoke-ticket`, `end-session`, `revoke-endpoint` and `clear-missed`, each as `rtc.{action}` with the body as input and the actor `{kind:'owner', owner:<session account>}`.
+  - Narrowing paths are exempt from capacity admission.
+- `apps/web/src/bl/rtc-settings.mjs`: the Actions `LoadRtcSettings`, `LoadRtcRing`, `DismissRtcRing`, `RtcOwnerAction`, `SaveRtcPolicy`, `SaveRtcContact` and `SaveRtcAutoAccept`, plus the selectors `rtcEnabled`, `rtcModel` and `rtcRingInvites`.
+- `apps/web/src/ui/rtc-settings.mjs`: the view and the `rtc-confirm` dialog.
+- `apps/web/src/ui/rtc-ring.mjs`: the ring and `withRtcSurface` (the navigation gate).
+- Shared hunks, each additive:
+  - `packages/runtime/routes/index.mjs`: one import and one registry entry.
+  - `packages/runtime/routes/shared.mjs`: `sessionFeatures` gains `rtcSignalingEnabled`.
+  - `apps/web/src/shared/portal-modules.mjs`: the `rtc` module (navigation `calls` and the view).
+  - `apps/web/src/release.mjs`: the intents, the wrapper, the load on entering the view, the ring poll and its root, and `calls` as a shell route only while enabled.
+  - `apps/web/src/ui/release-dialogs.mjs`: `rtcDialog` in the chain.
+  - `packages/i18n/catalogues.mjs`: 107 English and 107 Spanish strings.
+  - `apps/web/styles.css`: an RTC-g block that uses theme tokens only.
+  - `package.json`: two files in `test:ui-state`, and `test:rtc-ui`.
+
+**Readings (RTCg-1 to RTCg-16; none signed):**
+- **RTCg-1 Actor.** Owner routes act only as the signed-in person (`{kind:'owner'}`), never as an actor from the body. An organization admin acting for an organization is not offered.
+- **RTCg-2 Uniform 404.** While the flag is off, `unblock`, `unmute` and any well-formed widening `set-policy` or `set-contact-rtc` request (as the engine decides; a malformed one is still the ordinary 400) answer exactly `{"error":"not_found"}` (404), byte-identical to an unknown `/api` path (tested). The route also maps every other `not_found` (unknown ticket, session or endpoint) to the same body. Reads answer while off (`enabled:false`), so state stays narrowable, but the console shows none of it.
+- **RTCg-3 No master switch.** RtcService has no owner on/off for calls. Availability is the flag plus the owner's choices per basis: contact links, requests and the apps they approved. The view is the "enable" surface. A master switch would be a new owner operation (see "Missing interfaces").
+- **RTCg-4 Ring eligibility.** The route computes it from the owner session view: an incoming (`callee`) record that is ringing, not held, not claimed and not own-entity, for a purpose with `alert: true`, not muted by principal or purpose, before `ringUntil`. Nothing rings while the flag is off, including an invite still ringing from before (tested). Gap: the engine's per-session `alert`, which also reflects an application mute and the basis kind, is not in `sessionView`, so an application mute does not yet silence the portal ring. *Revised by the review (F2, below):* `ringable` requires `alert === true` once the field is present; until then this is a production gate.
+- **RTCg-5 Decline.** *Superseded by the review (F1, coordinator option (a), below).* Declining or ending an incoming record that no device has answered is a **silent local end**: nothing is sent to the caller, whose session rings out at `ring_until` (§12 "No presence oracle"; §4.4 "a decline reveals that a callee device saw the invite"). The ring's Decline and the settings' Decline (ringing) and Remove (held) send `rtc.end-session` `{sid, caller, silent:true}`. Until RtcService supports that, the route does not call the service for such a record (`RTC_SILENT_END_SUPPORTED=false`), answers `{sid, state, silent:true, local:true}`, and the console hides the record in that tab until its deadline. Answered (claimed) incoming sessions and outgoing sessions keep "End" behind its confirmation, which does tell the other side. "Not now" hides the notice in this tab and sends nothing. The earlier reading (send `revoked`, worded "Declining tells the caller the call ended") is withdrawn.
+- **RTCg-6 Data before claim (§9.1, §12).** The ring carries only:
+  - `sid`;
+  - the verified caller principal;
+  - a handle only for an active account on this host (the provider's own verified binding; foreign handles wait for RTC-e's roster);
+  - the purpose and its title from the held artefact;
+  - media and the ring deadline;
+  - the owner's own apps registered for the purpose (`clientId` and verified origin).
+  It never carries context, basis or callback links, the caller's app origin (RTC-17 allows it, but the owner view lacks it), endpoint labels or secrets. The route tests pin the exact keys.
+- **RTCg-7 Open.** "Open in {app}" navigates, in a new tab with `noopener noreferrer`, to the root of an endpoint's verified origin. Only https qualifies, plus loopback http in local development. The app's endpoint claims; the portal never claims.
+- **RTCg-8 Delivery.** The ring polls `GET /api/rtc/ring` every 10 s while the tab is visible and RTC is enabled for the account. *Revised by the review (F4, below):* one tab per account polls, only on the routes where the ring renders, with backoff, an in-flight guard and stale-answer dropping, and not at all while nothing can ring. The Web Push doorbell is RTC-e. The ring renders into its own root, a polite live region beside `#app`, so its arrival never rebuilds the console or moves focus (checked in Chromium and Firefox). It shows at most 3 invites.
+- **RTCg-9 Apps.** The apps list comes from the owner's federation grants on the signaling slot fragment (`FEDERATION_AUTHORITY.grants`, as `/api/grants`), grouped by client, with the approved bound purposes and the app's registered devices. It is read-only. Narrowing bound purposes has no owner route (see "Missing interfaces"), so "Manage app access" opens the app access view, where the app can be revoked.
+- **RTCg-10 Automatic answers.** Set per app through `rtc.set-policy` `autoAccept`, only for purposes with `auto_accept: "self"` that the app holds. Other apps' entries are kept.
+- **RTCg-11 Contact links.** One form per active contact link (the parent is the grant id), offering purposes whose `parties` is not `self`. Unchecking everything removes the configuration.
+- **RTCg-12 Requests.** The `none` basis, per purpose whose `parties` is not `self`. Off by default; requests never ring and wait in the held list. The privacy form and the requests form each send only their own policy members, so neither overwrites the other's unsaved choices.
+- **RTCg-13 Confirmations.** Ending a session, revoking a call link, removing a device, blocking and clearing the whole missed list run only from a matching `rtc-confirm` dialog; the Action refuses a mismatched or missing one. Removing one missed entry, unblocking and declining from the ring do not ask.
+- **RTCg-14 Principal display.** `@handle` when this host verified it; otherwise the issuer host and the first 8 characters of `sub`, marked `translate="no"`.
+- **RTCg-15 Not offered.**
+  - Mute and unmute have routes but no controls yet.
+  - Call links are listed and revocable, but only apps mint them (`rtc.mint-ticket` is an endpoint operation), and there is no QR code (no local QR renderer).
+  - There is no command-palette entry or shortcut, because commands carry no feature gate and would reveal the view while off.
+- **RTCg-16 Network privacy defaults.** `other` defaults to `relay` (RTC-6) and offers `public`; `all` is never offered for other people. Own devices default to `all` ("Direct") and offer `public` and `relay`.
+
+**Wording decisions (provisional, en and es; the catalogue holds the exact strings):**
+- Relay (revised by the review, F6): "Relay only (recommended): The other person never sees your IP address; the relay does. The connection goes through the relay, which can be slower, and it cannot connect if neither you nor the app has a relay." Public: "Allow your public address: … can see your public IP address, which can reveal your approximate location and internet provider." Relay operators: "A relay sees your IP address, that a connection happens and how much data it carries, but it cannot read calls or files." Own devices, Direct: "… Only your own devices see them; your provider carries them briefly to set up the connection and then deletes them."
+- Contact links: "Who can call you … never written into the link, and never shown to the people who hold it." Requests: "Requests never ring: they wait in your missed and held list."
+- SAS (§11.3): "Check who you are talking to: During a call, an app may show a 6-digit code. Read it aloud to each other: if both of you see the same code, no provider or network in between can listen in. The app you use can still see the call. If the codes differ, end the call." (revised by the review, F6)
+- Ring: "Incoming {purpose}", "From {caller}", "Open in {app}", "Decline", "Not now", "Block caller", and (revised by the review, F1) "The caller is not told whether you declined or put this off: the call just rings out. Not now only hides this notice here."
+- Block: "Their calls and requests are dropped without telling them and are not listed as missed."
+
+**Missing interfaces (described, not added; for the coordinator):**
+1. `sessionView` should carry the session's `alert`, so the portal ring honours application mutes. Optionally it could carry the caller's `client.origin`, for RTC-17 disclosure in the ring.
+2. An owner route to narrow an app's bound purposes. `FederationService.narrowBoundOptions` and the `federation.narrow-bound-options` operation exist, but no `FederationController` method, `federationRemote` and `federationAuthority` entry, or `/api/...` route reaches them. RTC-e's in-flight `boundSync` hook would then end what is no longer approved. Once these exist, the apps panel can offer narrowing.
+3. Only if wanted: an owner-level on/off switch for calls (RTCg-3).
+
+**Tests:**
+- `tests/rtc-owner-routes.test.mjs` (**4**; Node runtime, real HTTP, real account writers and the same-host transport) covers:
+  - sign-in, CSRF token, origin and method;
+  - system and endpoint operations having no owner route;
+  - session features;
+  - settings defaults, policy, contact links, mutes silencing the ring, ring payload keys, the caller never rung, ending, blocking, tickets and devices, and owner isolation;
+  - with the flag off: the uniform 404 for each widening form, byte-identical to an unknown path, while narrowing, unchanged values and ending work;
+  - a lingering invite not rung once the flag is off;
+  - the `ringable` table.
+- `tests/browser/rtc-settings-engine.mjs` (**8**, engine level through the real ngin engine and state provider) covers:
+  - loading and loaded states, error, flag-off silence and the account-switch discard;
+  - the confirmation rule for each destructive action, including a mismatched dialog;
+  - ring decline without a dialog, unknown actions and the 404 shown as unavailable;
+  - exact request bodies for privacy, requests, contact links and automatic answers;
+  - ring dismissal and expiry, and the ring never raising an error.
+- `tests/browser/rtc-settings.mjs` (**8**, happy-dom, through the real renderer, portal module and catalogue) covers:
+  - en and es with no `null` or `undefined` attributes across states, dialogs and the ring;
+  - Spanish coverage of every interface string;
+  - labelled and described radio choices with relay preselected;
+  - native buttons and the confirmation intents;
+  - `aria-busy` loading and retry;
+  - flag-off invisibility (no navigation entry, no view content, no ring);
+  - pre-claim data only in the ring, and a safe origin;
+  - the stylesheet rules for phone widths, the 360 px ring and token-only colours.
+- `tests/browser/rtc-settings-browser.mjs` (**16**, Chromium and Firefox × en/es × light/dark × 360/1280 px; `npm run test:rtc-ui`) covers:
+  - no horizontal scroll, panels inside the viewport, one column on a phone and two on a desktop;
+  - WCAG contrast of at least 4.5 for headings, help text and the ring;
+  - theme-following backgrounds;
+  - radio arrow keys, the ring not taking focus, the ring inside the viewport;
+  - the dialog taking focus, trapping Tab and returning focus to its opener;
+  - no page errors.
+- **Revert check** (scratch copy): 10 guards were reverted one at a time (the uniform-404 mapping, the mute and held/own/claimed ring filters, ring-off, the confirmation rule, the action allowlist, the navigation gate, the safe origin, the view gate and the feature selector). All 10 make a suite fail. The ring-off guard first survived because no session can start while off, so the route test was strengthened with an invite that is still ringing when the flag turns off.
+
+**Verification (local evidence only).** Run on a scratch copy of the full working tree, which includes RTC-e's in-flight edits:
+- `npm test`: **3,954 passed, 0 failed**.
+- `test:worker`: **93 passed**.
+- `test:ui-state`: **525 passed**.
+- `build:assets`: passed.
+- `test:rtc-ui`: 8 + 8 happy-dom and **16** playwright, all passed.
+- A scratch probe of the composed console: the built assets, `apps/web/src/release.mjs` and the real Node server, signed up through the API, in Chromium at 360 px dark and 1280 px light.
+  - With the flag on, the navigation entry and view appear, there is no horizontal scroll and no console error, and saving network privacy reached the server.
+  - With the flag off, there is no navigation entry and no view, `/console?view=calls` falls back, and `GET /api/rtc/settings` reports `enabled:false`.
+- Not run: the Worker runtime in a browser, real WebRTC, a second provider, push or relay. Nothing is production-verified.
+
+Reviewer: ___ Date: ___ Outcome: ___
+
+### Review follow-ups (2026-10-27)
+
+**Implemented locally, provisional and unsigned.** These are fixes for the findings of an independent review of the uncommitted RTC-g work. The coordinator chose F1 option (a), not the user. Still no RtcService, contract route or `packages/rtc/*` file was changed, because RTC-e owns them. Two service changes are requested below instead. No commit or deployment.
+
+**Readings (none signed):**
+- **F1 Decline was a presence oracle (now a silent local end; RTCg-5 rewritten above).**
+  - Declining or ending an incoming record that no device answered sends the caller nothing. The caller's session rings out at `ring_until`.
+  - The route (`packages/runtime/routes/rtc-owner.mjs` `endSession`) enforces this whatever the client sends. If the callee record named by `caller` is live and unclaimed, the route either forwards `{sid, caller, silent:true}`, once `RTC_SILENT_END_SUPPORTED` is true, or answers `{sid, state, silent:true, local:true}` without calling the service.
+  - A `silent` request against a claimed record changes nothing. A malformed `silent` (not `true`, or without `caller`) is a 400.
+  - The console sends `silent:true` from the ring's Decline, the settings' Decline (ringing) and Remove (held). These need no dialog. It hides the record in that tab until its deadline (`rtcRing.declined`).
+  - Held records no longer offer "End". They offer Remove and Block.
+  - Wording: "The caller is not told whether you declined or put this off: the call just rings out. Not now only hides this notice here." The notice reads "Declined. The caller is not told; the call rings out." The active-sessions help says that declining or removing an unanswered call tells the caller nothing.
+- **F2 An application mute was ignored by the ring.**
+  - `ringable` now requires `alert === true` whenever the session view has the field.
+  - While the field is absent, the earlier behaviour stays, under production gate G1 below.
+  - The optional suppression of the ring while an endpoint for the purpose was seen recently is **not** implemented. `lastSeen` is set when a listen call starts, so a long-poll in progress and a background app that cannot alert look the same. Suppressing on it could hide calls the owner never hears. Left to the coordinator.
+- **F3 Declining resurfaced dismissed invites.**
+  - A decline now removes only the declined sid. The `dismissed` list is kept.
+  - The settings are re-read only while the view is `calls`.
+- **F4 Ring polling.** The new `apps/web/src/bl/rtc-ring-poll.mjs` is pure and injectable, and `release.mjs` wires it up.
+  - One read at a time.
+  - Stale answers are dropped: each read takes a sequence number, and an answer to an earlier read is discarded.
+  - Errors back off exponentially: 10 s × 2^n, capped at 300 s, with ±10 % jitter, and never sooner than `Retry-After`.
+  - It polls only where the ring renders (`rtcRingSurface`: signed in, RTC on, the console route, no picker or boot) and while the tab is visible.
+  - One tab per account polls, elected over BroadcastChannel `bindle-rtc-ring`:
+    - The leader announces a lease of 1.5 intervals and shares each answer, which the other tabs apply.
+    - A new tab says hello and waits about 250 ms, and the leader replies with its last reading.
+    - A tab reads only when no lease for the same account key is fresh.
+    - Without BroadcastChannel, each tab polls on its own.
+  - Nothing polls while nothing can ring. The ring answer now carries `idle`: no invite, no endpoint, no contact link and no live call link for an alerting purpose. The poller then stops until one of these happens:
+    - the settings read shows something that can ring (`rtcSettingsIdle`, the same rule);
+    - the tab becomes visible again;
+    - the account key changes.
+- **F5 Focus.**
+  - After Decline or Not now, focus moves to the next invite's heading (`[id="rtc-ring-<sid>"]`, `tabIndex -1`), or to `#main-content` when no invite is left.
+  - `restoreFocus` runs only after an action confirmed from its dialog, where `open-modal` captured the focus.
+  - Any other in-view action moves focus to its panel heading.
+- **F6 Wording (en and es).**
+  - The 6-digit code: "…if both of you see the same code, no provider or network in between can listen in. The app you use can still see the call."
+  - The relay-only option and the relay note now say that the relay sees your IP address.
+  - Local addresses: "your provider carries them briefly to set up the connection and then deletes them."
+- **F7** `set-contact-rtc` with any purposes requires `parent` to be one of the owner's active contact links. The route checks the account's existing contact-grant list (`object.contacts`). Anything else gets the uniform 404. Removing a configuration (`purposes: []`) stays available for any parent.
+- **F8** `.rtc-ring-stack` is bounded: `max-height: min(70vh, 100vh − 32px)` (with dvh), `overflow-y: auto` and contained overscroll.
+- **Info:** RTCg-2 now says "well-formed widening requests". A malformed one stays the ordinary 400.
+
+**Service interface requests (for RTC-e; not implemented here):**
+1. **Silent end.**
+   - `rtc.end-session` should accept an optional `silent: true` (`exact(input,['sid'],['caller','silent'])`).
+   - It is honoured only for a live callee record with `caller` given, `state === 'ringing'` and no `claim`, held or not. It then ends the record:
+     - with a distinct reason, for example `declined`;
+     - pushing `state: ended` only to this owner's own endpoints, so the owner's apps stop ringing;
+     - with **no** control statement and no message to the caller's provider;
+     - without adding the record to the missed list;
+     - ending an own-entity twin silently too.
+   - For any other record, `silent: true` is `invalid` (or a no-op returning the state). A claimed session must never end through it.
+   - Wiring is one line: set `RTC_SILENT_END_SUPPORTED = true` in `packages/runtime/routes/rtc-owner.mjs`. The route already forwards the silent body only for unclaimed incoming records.
+2. **`alert` in `sessionView`.**
+   - Callee records should carry `alert: rec.alert === true`, as decided at admission by `alertAllowed`, which covers the application mute, the basis kind and quarantine.
+   - Preferably `sessions()` also re-evaluates it against current mutes, including the caller's application, so an application mute set while an invite rings silences it. The ring route already re-checks principal and purpose mutes on every read.
+   - `ringable` already honours the field.
+
+**Production gates (added):**
+- **G1.** The portal ring must not be enabled for any production account until `sessionView` carries `alert` (request 2). Until then an application mute does not silence the portal ring. *Closed locally (provisional) by "RTC service follow-ups for the owner UI" below.*
+- **G2.** Decline and Remove must not ship until RtcService honours the silent end and `RTC_SILENT_END_SUPPORTED` is true. *Closed locally (provisional) by "RTC service follow-ups for the owner UI" below.* Until then they are privacy-safe (nothing is sent). But the record keeps ringing at the provider, and on the owner's own app endpoints, until its deadline, and only the declining tab hides it.
+- The gates in `docs/spec/security.md` and the RTC entries above still apply.
+
+**Tests (regression per finding):**
+- `tests/rtc-owner-routes.test.mjs`: **8** (was 4).
+  - F1, over real HTTP and the same-host transport: the silent body and an older client's body both leave the caller's endpoint with no event and the caller still ringing; malformed `silent` is a 400; the caller can still end its own call.
+  - F2: the `alert` table.
+  - F4: `idle` with nothing configured, after a contact link and after an endpoint; the `ringIdle` table.
+  - F7: invented, foreign and revoked parents get the uniform 404; an empty configuration can always be removed; nothing invented is stored.
+  - The existing tests now use a real contact link.
+- `tests/browser/rtc-settings-engine.mjs`: **15** (was 8), engine level.
+  - F1: no dialog for a silent decline, the notice, hidden while the provider still lists it, lapsing at the deadline, and a failed request hiding nothing.
+  - F3: the PoC5 scenario, and no settings read off the `calls` view.
+  - F5: next heading, previous heading, then main; a panel heading after other actions; `restoreFocus` only after a dialog.
+  - F4:
+    - the out-of-order answer is dropped;
+    - the error outcome carries Retry-After;
+    - `idle` and the shared answer are applied;
+    - the `rtcSettingsIdle` table;
+    - three poller tests with a fake clock and channel: backoff, the cap, Retry-After and the in-flight guard; eligibility and idle; one tab per account with takeover after the leader stops, other accounts ignored, and the no-channel fallback.
+- `tests/browser/rtc-settings.mjs`: **12** (was 8), happy-dom.
+  - F1: held records show Remove and Block, an unanswered invite shows Decline, answered and outgoing sessions keep End; declined records are hidden; no wording says the caller is told.
+  - F5: the heading ids and `tabIndex`.
+  - F6: en and es.
+  - F8: the CSS rule.
+- `tests/browser/rtc-settings-browser.mjs`: **20** (was 16). New: 3 invites at 360 × 640 in Chromium and Firefox, en and es.
+  - The stack stays inside the viewport and at most 70 % of its height, and scrolls.
+  - The last invite's Decline scrolls into view when focused.
+  - The next-invite heading takes focus.
+  - No horizontal scroll and no page error.
+- **Review PoCs re-run:**
+  - PoC1: the caller sees no event after a decline.
+  - PoC2: still rung. It needs request 2 (gate G1).
+  - PoC4: 0 of 50 invented parents accepted.
+  - PoC5: the dismissed invite no longer comes back. PoC5's old non-silent body is now refused for lack of a dialog.
+- **Revert check** (scratch copy): 22 guards were reverted one at a time, and every one makes a suite fail:
+  - F1: route forcing, local hide, held End and the ring sending `silent`;
+  - F2: the `alert` check;
+  - F3: keeping `dismissed`, and the settings read only on `calls`;
+  - F4: stale drop, backoff, the in-flight guard (in tick and poke together), the lease, the idle stop, eligibility in tick, and route `idle`;
+  - F5: ring focus, conditional `restoreFocus`, and the heading id;
+  - F6: the code wording;
+  - F7: the contact check;
+  - F8: the stack bound (browser).
+  - Two guards first survived (the in-flight guard and eligibility in tick), because `poke` duplicates both. The poller test was strengthened with a timer firing after the tab left the ring routes, and the in-flight guard is now reverted in both places.
+- **Composed console probe** (scratch: the built assets, `release.mjs` and the real Node server, RTC on, Chromium):
+  - An idle account made 1 ring read in 25 s.
+  - With a contact link configured for calls, one tab made 3 reads in 31 s.
+  - With a second tab, there were 3 reads in 31 s in total, all from the first tab.
+  - After the leader closed, the second tab took over (2 reads in 31 s).
+  - Off the console route there were 0 reads.
+  - No page error. The only console error is the 404 of the probe's own `/docs/` navigation.
+
+**Verification (local evidence only).** Run on a scratch copy of the full working tree, which includes RTC-e's in-flight edits:
+- `npm test`: **3,978 passed, 0 failed**.
+- `test:ui-state`: **536 passed**.
+- `test:rtc-ui`: **27** happy-dom/engine and **20** playwright, all passed.
+- `build:assets`: passed.
+- Not run: the Worker runtime in a browser, real WebRTC, a second provider, push, relay, or a browser without BroadcastChannel (covered only by the fake-channel unit test). Nothing is production-verified.
+
+Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-27 — RTC-e foreign transport, endpoint and key roster (flags off)
+
+**Implemented locally, provisional and unsigned.** Slice RTC-e of the [RTC signaling](docs/spec/rtc-signaling.md) plan ([design](docs/architecture/rtc-signaling.md) §3, §8.1): the application contract route, the foreign transport, the `POST /bindle/rtc` endpoint, the foreign key roster, the lifecycle triggers and the Web Push doorbell. Everything new is unreachable while the flags are off: the occupant descriptor needs `RTC_SIGNALING_ENABLED` (and `EXTENSIONS_ENABLED`); cross-provider sessions, the endpoint and the manifest feature need `RTC_FOREIGN_ENABLED` (which requires `DIRECTORY_ENABLED`); and outbound delivery and every directory fetch also need a non-empty `RTC_FOREIGN_ISSUERS` allowlist, which is empty by default. No commit or deployment. Nothing here is production-verified: no real second provider, HTTPS, DNS, Durable Object, push service or relay was exercised. Every reading below is **provisional** (coordinator), not signed off by the user.
+
+**Outbound gate (checked first).** docs/spec/security.md S4 ("auth/grant/race/SSRF verification … complete") is unchecked. The organizations design records the Workers egress gate as unmet (R2-M6: DoH screening is not connection pinning), and foreign issuers stay behind empty allowlists until it passes. RTC-e opens nothing beyond that:
+- Directory GETs go through the existing `DIRECTORY_EGRESS`, with the RTC allowlist, and under the directory's per-site, global and per-tenant budgets.
+- POSTs go only through the adapters' reviewed integration egress, wrapped with the same allowlist. On Node that is `createNodeIntegrationEgress` (public IPv4 only, DNS pinned into TLS, no redirects, bounded). On Workers it is `createIntegrationEgress` (DoH with `publicAddress` and strictly public routing).
+- An empty allowlist dials nothing.
+
+**Modules:**
+- `packages/rtc/federation.mjs` (new):
+  - `RtcKeyRoster`: the `keys` port for foreign principals. Reads are cache-only (`IdentityDirectory.peek` plus `resolve` with purpose `certification`, so only `cert` keys active in both the cache and the pin count, and the identity URI comes from the pin). It keeps a bounded roster (512 principals, 24 h) and a bounded refresh queue (64 in total, 16 per issuer, 60 s negative cache). `warm` is the interactive caller-initiated fetch at `open` (§4.1). `run` is the background pass. Before any identity-document fetch, the issuer's manifest must meet the directory floor and declare a valid `rtc-signaling.v1`.
+  - `rtcEgress`: only https URLs on an allowlisted origin; no port, query, userinfo or fragment; the batch media type; at most 131,072 bytes; the response body bounded to 1 KiB and discarded.
+  - `foreignRtcTransport`: `foreign: true`. Same-host principals go through `sameHostRtcTransport`. Others go only to the `endpoint` of `rtc-signaling.v1` in the validated manifest of the peer's issuer.
+- `packages/runtime/routes/rtc.mjs` (new): `POST /bindle/rtc` is a thin adapter that calls only `rtc.ingest` (through `rtcPeer`) on the writer the batch addresses. Mounted additively in `packages/runtime/routes/index.mjs`.
+- `packages/federation/directory.mjs` (additive): the constructor option `features` keeps named manifest features (each already bounded to 4 KiB). New `features(issuer)` and the cache-only `peekFeatures(issuer)`.
+- `packages/runtime/account/foreign-directory.mjs` (additive): `foreignIssuers(config, name)` parses `RTC_FOREIGN_ISSUERS` with the `ORG_FOREIGN_ISSUERS` rules.
+- `packages/rtc/service.mjs`:
+  - kid-aware refresh scheduling before steps 2–8;
+  - `keys.warm`, `keys.track` and the peer's declared certificate bound;
+  - the foreign invite re-send;
+  - permanent delivery refusals dropped from the outbox;
+  - the doorbell (`pushTransport` port; renamed from `push`, which shadowed the queue method);
+  - `PUSH_ORIGINS` aligned with the host push transport.
+- `packages/runtime/account/rtc.mjs`:
+  - the per-controller RTC directory and roster, the foreign transport over `RTC_EGRESS`, and the push transport (`RTC_PUSH ?? LIFECYCLE_PUSH ?? createPushTransport`);
+  - the roster pass in the detached task and the alarm;
+  - `rtcResourceMethod` and `rtcContractListen` (contract), `rtcAppChanged` (federation hook) and `rtcAppRevoked` (connection cascade).
+- Contract route:
+  - the `${subject}/rtc` descriptor (provider `bindle`, generation = owner) in `resourceProvider`;
+  - the `RESOURCE_METHOD_HANDLERS` entry in `packages/runtime/account/storage.mjs`;
+  - in `packages/runtime/federation.mjs`, the dispatcher's `readOnly`/`retainResult` hooks, `listen` sent to `rtcContractListen`, the `boundChanged` hook and two manifest rows;
+  - in `packages/federation/service.mjs`, the dispatch context gains `grants` (the token's grant ids), `clientOrigin` (the registered client's origin) and `jkt` (DPoP-bound tokens), plus `boundSync` after revocation and narrowing;
+  - in `packages/federation/runtime.mjs`, the journal hooks, `checkBound`, the `boundChanged` option and the remote method;
+  - in `packages/runtime/app-removal-federation.mjs`, `boundSync` after the removal cascade;
+  - in `packages/runtime/account/connections.mjs`, the cascade's `app-revoked` step.
+- Adapters:
+  - Node (`apps/node/resources.mjs`): `RTC_BOUND_CHECK` (federation shard `checkBound`; a configured port wins), `RTC_EGRESS` and the manifest mounts `rtc` and `rtcOccupant`.
+  - Workers: in `apps/worker/objects.mjs`, `RTC_BOUND_CHECK` over `federationRemote` and `RTC_EGRESS`; `apps/worker/federation.mjs` allows `checkBound` and sets the mounts; `apps/worker/index.mjs` sets the mounts.
+
+**Spec readings and provisional decisions (RTCe-1 to RTCe-18; none signed):**
+- **RTCe-1 Contract route.** The application actor `{kind:'app', owner, clientId, origin, grants, epoch, jkt?}` is built only from the verified dispatch context. The token's grant ids are required, and the origin is the registered client's. The identity epoch and the app connection are checked live, as every built-in contract handler does.
+  - `listen` and `endpoints` are reads (spec §9.1), so they are never journaled.
+  - RTC write results (leg certificates, minted and callback ticket links) are not kept in the federation journal. A retried `tx` answers `indeterminate` (§12: ticket links are never retained).
+  - `listen` long-polls outside the account gate (`rtcContractListen`). If it ever reaches the in-gate handler, `wait` is served as 0.
+  - While `RTC_SIGNALING_ENABLED` is off the descriptor is withdrawn, so even narrowing is not reachable through the contract. Owners narrow through the RTC-g routes.
+- **RTCe-2 Bound check.** `config.RTC_BOUND_CHECK` is `FederationController.checkBound` in the owner's shard on both adapters. On Workers it calls the federation DO from inside an account call. The DO is not gated, so this looks safe, but it is unverified on a real DO.
+- **RTCe-3 One `aud` per batch.** Spec §8.1 says a batch belongs to sessions between two entities, so a batch whose elements name more than one `aud` is refused at the route as `rtc_batch_invalid`.
+- **RTCe-4 Uniform 404 for unknown targets (differs from §8.2's "202 for every batch that passes step 1").** While `RTC_FOREIGN_ENABLED` is off (site-wide or for the addressed entity), and for an `aud` that names no active entity here, the route answers the uniform 404 (`packages/runtime/public-unknown.mjs`). An identity's existence and lifecycle are public through its identity document, so this reveals nothing that steps 2–8 decide. Those outcomes stay a uniform 202 with an empty body. The spec text needs a matching amendment (proposed, unsigned).
+- **RTCe-5 Allowlist.** `RTC_FOREIGN_ISSUERS` is a JSON array of https origins, at most 64, empty by default; any invalid entry empties it. It is used for directory fetches, delivery and roster scheduling. A claimed sender on a non-allowlisted issuer is never fetched. Its keys are never held, so its batches are dropped silently at step 3.
+- **RTCe-6 Control statements.** Following the registry comment, outbound control-only batches are not gated by `RTC_FOREIGN_ENABLED` (narrowing), but still need the allowlist, the directory and the egress. The endpoint itself answers 404 while the flag is off, so this host refuses a peer's controls while it is off. That asymmetry is recorded.
+- **RTCe-7 Delivery outcomes.** 202 is delivered. A network error, 429 or 5xx is retried with the existing per-peer backoff until the item's useful life (§8.3). Any other answer (400, 404, a redirect) and an off-allowlist target are permanent, and the row is dropped.
+- **RTCe-8 Invite re-send (§8.3 SHOULD).** A held-key miss at the callee provider drops an invite after a 202, so the caller provider re-sends the unchanged invite (with its current certificate and links) to a foreign callee after 2, 4, 8 and 15 s, until it is answered or `ring_until`. The callee provider ignores copies of an existing session (step 2), so they never re-ring or re-push.
+- **RTCe-9 Refresh scheduling.** For every claimed sender of a step-1-valid batch, a refresh is scheduled when no key is held, or when a certificate or control names a kid that is not held. This happens before steps 2–8 and whatever they decide. It is never a fetch on the request path: the roster fetches only on the detached task or alarm.
+- **RTCe-10 Key rotation.** A certification key published at least one directory freshness period before use is picked up by refresh-ahead, and sessions continue (tested). An abrupt rotation loses the messages signed with the unheld key. They are dropped after a 202, their `seq` gap ends the leg `failed` after 10 s, and both providers converge to `ended` (tested). Operational rule (provisional): publish a new certification key before signing with it.
+- **RTCe-11 Declared bound.** A foreign peer's leg certificates are checked against its issuer's declared `max_leg_certificate_seconds`, as held. Without a held value the spec maximum (900) applies.
+- **RTCe-12 Handles.** No foreign handle is shown in invite projections (`null`): no verified directory binding is held for it.
+- **RTCe-13 Doorbell (§9.2).** It reuses the host push transport (RFC 8291, `PUSH_ENABLED` and VAPID keys).
+  - Sent only to the subscription validated and stored at `register`, after the admitting transaction commits.
+  - At most one push per alerting invite per endpoint, so pushes are bounded by the invite limits.
+  - `Urgency: high`; the TTL is the whole remaining ring seconds, and nothing is sent below 1 s.
+  - The payload is exactly `{"t":"rtc","endpoint":…}`.
+  - A subscription reported gone is removed from the endpoint.
+  - The provisional WNS origin was dropped from RTC's `PUSH_ORIGINS`, because the host transport cannot deliver to it.
+  - Push delivery itself is unverified (docs/release/open-items.md).
+- **RTCe-14 Lifecycle triggers.** `FederationService.boundSync` runs after `revoke`, `narrowBoundOptions` and the app-removal cascade. It tells the runtime hook the union of the client's remaining active bound grants per fragment, or null. For the signaling slot the account's `rtcAppChanged` then runs `rtc.lifecycle` `app-revoked` (null) or `app-narrowed` (the union). The account's connection cascade (`delegations` rows: disconnect, removal, sever) also runs `app-revoked`. Both are best effort, not durable; the occupant re-checks the live approval on every operation and at fan-out.
+- **RTCe-15 Successor index.** Not wired: `current` is identity, and moved identities are refused as before (RTCd-25 still applies).
+- **RTCe-16 Manifest.** `rtc-signaling.v1` (`endpoint` `/bindle/rtc`, `max_leg_certificate_seconds` 600) needs `RTC_SIGNALING_ENABLED`, `RTC_FOREIGN_ENABLED`, `DIRECTORY_ENABLED` and `mounts.rtc`. On Node that mount is set when `RTC_EGRESS` exists; on Workers it is always set. The occupant `extensions` entry is kept only beside a declared `extensions.v1`, which no slice declares yet, so it is inert, as the messaging-address row is.
+- **RTCe-17 Inbound shedding.** 600 batches per minute per source network (/24 or /48) before step 1. Like the relation endpoints, it fails closed off loopback without an abuse store.
+- **RTCe-18 Roster memory.** The roster and refresh queue are in memory per writer and lost on eviction (cache-only). Directory pins persist in the account store beside the organization directory's, under the same no-rollback rules.
+
+**Not implemented:** the integration doorbell event (`rtc-ring/v1`, AMD-R3); the successor index; a durable retry for the bound-approval hook; a controller, remote or route method for `narrowBoundOptions` (the RTC-g entry asks for one); the `moved` control at move commit; publishing the contract and slot artefacts.
+
+**Tests:**
+- `tests/rtc-federation.test.mjs`, **16** tests over `tests/helpers/rtc-federation-fixture.mjs`. The fixture runs two or three providers in process, each with its own entities, SQLite stores, certification keys, `IdentityDirectory`, roster, foreign transport and the real `/bindle/rtc` route handler, over a fake network that can be partitioned, taken down, held and observed. The tests cover:
+  - a cross-provider ticket call: invite, claim, connect, candidates and hangup, with delivery only to manifest endpoints and GETs only to allowlisted directory paths;
+  - invite re-send and deduplication;
+  - key rotation, with overlap and abrupt;
+  - outage and retry (backoff, 429 retried, 404 dropped, nothing past `ring_until`);
+  - malicious-provider inputs: a forged certificate, a non-rtc issuer never fetched, replay of every accepted batch, oversized, malformed, wrong media type, wrong and multiple `aud`, wrong `iss`, a forged control, and shedding;
+  - SSRF: identity URIs off the issuer origin or at literal or metadata addresses, manifest endpoints off origin, a non-allowlisted callee, the egress wrapper, and both adapters' egress refusing private answers without dialing;
+  - flags off;
+  - the uniform 404, byte-identical across unknown, malformed, gone and entity-disabled targets;
+  - doorbell content (exact payload, urgency, TTL, no re-ring on re-sends, none when muted, gone subscriptions removed);
+  - the contract actor and its refusals;
+  - the journal policy;
+  - lifecycle triggers through a real `FederationService`;
+  - roster bounds;
+  - a **seeded chaos** test (6 seeds × 150 steps by default; `RTC_FED_CHAOS_SEEDS`, `RTC_CHAOS_STEPS`, `CHAOS_SEED`). It mixes held deliveries (reorder), duplicates, drops, partitions, outages, rotations and clock skew. After every step it checks the RTC-d invariants (one claimant, address material only to legs, every storage bound, counters) plus roster bounds, C9/C10 (only allowlisted issuers and their `/bindle/rtc`) and route answers (a 400 only for a batch held in flight past the receipt window). At quiescence every session is terminal and every outbox and inbound queue is empty. 20 seeds × 200 steps passed once.
+- `tests/rtc-federation-runtime.test.mjs` (Node runtime, 4 tests):
+  - the real router answers the uniform 404 while off, 202 into the writer's inbound queue while on (and 404 or 400 otherwise), with nothing sent outbound;
+  - the manifest rows' gating;
+  - `rtcAppChanged` narrowing and revoking endpoints.
+
+**Revert check (scratch copy; each guard reverted alone, then `rtc-federation`, `rtc-federation-runtime`, `rtc-engine` and `rtc-runtime` run with 2 chaos seeds each):**
+- **42 guards** were checked:
+  - route: flag off, per-entity flag, active entity, one `aud`, `aud` origin, media type, body bound, network shedding;
+  - egress: allowlist and body bound;
+  - transport: foreign flag and 4xx permanence;
+  - roster: allowlist, manifest floor, total and per-issuer queue bounds, negative cache, pinned active keys, roster bound;
+  - service: kid-miss refresh, invite re-send, doorbell alert-only, TTL, urgency and gone handling, permanent drop, warm at `open`, declared bound, tracking verified peers;
+  - contract: grants required, resource binding, identity check, connection check, `listen` without waiting in the gate;
+  - journal: read classification and result retention;
+  - `boundSync` on revoke, on narrow, and null when none remains; the slice's revoke mapping;
+  - manifest row flag and mount.
+- **First pass: 34 made a suite fail.** The eight survivors were per-entity flag, active entity, body bound, total queue bound, pinned active keys, declared bound, peer tracking, and the revoke mapping.
+- **Seven were fixed by strengthening tests**, and all seven now fail when reverted:
+  - an account-scoped flag rule;
+  - a fixture writer that answers for gone entities, as a real one does;
+  - a streamed oversized body counted as it is read;
+  - four or more issuers filling the queue;
+  - a document key that the pin does not hold;
+  - a peer declaring 300 s;
+  - the caller's overlap rotation seen by the callee provider.
+- **1 equivalent survivor:** mapping `purposes: null` to `app-narrowed` with an empty list has exactly the effect of `app-revoked` (every endpoint and session of the app ends).
+
+**Verification (local evidence only; scratch copy of the full working tree, including the RTC-g agent's concurrent edits):**
+- `npm run build:assets` then `npm test`: **3,978 tests, 3,978 passed, 0 failed**.
+- `npm run test:worker`: **93 passed, 0 failed**.
+- `npm run check:worker`: passed (dry run), with the existing duplicate-key warnings in the i18n catalogues.
+- In the main checkout: `tests/rtc-*.test.mjs` and `extensions-bound-options` all pass, including `rtc-federation` (16) and `rtc-federation-runtime` (4). The network chaos test passed once with 20 seeds × 200 steps.
+- Not run: browser probes (RTC-e has no UI), e2e, a real Durable Object (the federation-DO round trip for `checkBound` and the detached roster pass), a clean-room second provider over real HTTPS, and real Web Push delivery.
+
+Reviewer: ___ Date: ___ Outcome: ___
+
+### Review follow-ups (2026-10-27, independent security review; provisional, unsigned)
+
+**Implemented locally, provisional and unsigned.** These are fixes for the findings of an independent security review of the uncommitted RTC-e work, plus two follow-up items from the owner-UI service work (the entry below, RTCs-7 and RTCs-8). Everything stays behind the RTC flags and the empty-by-default `RTC_FOREIGN_ISSUERS` allowlist. No commit or deployment. The review's three proofs of concept each reproduced their finding before these changes. They are kept as regressions in `tests/rtc-review-followups.test.mjs` that assert the fixed behaviour. Every reading below is **provisional** (coordinator), not signed off by the user.
+
+**Findings and fixes:**
+- **F1 (Medium) Unauthenticated roster starvation.**
+  - The problem: an unauthenticated sender could post step-1-valid batches whose certificates claim random subjects on an allowlisted issuer. Every claimed sender got a refresh scheduled. All fetch classes, including the interactive `warm` at `open` and refresh-ahead of verified peers, drew on one 30-a-minute per-site bucket in each writer's directory. Under about 600 such batches a minute from rotating /48s, an honest caller's ticket invite never reached the victim, and the victim's own `open` to a new foreign callee failed with `temporarily_unavailable`.
+  - Directory (`packages/federation/directory.mjs`): the fetch classes now have disjoint per-site buckets (`DIRECTORY_PRIORITIES`):
+    - `background` (refresh-ahead of tracked peers and members) keeps the whole per-site budget;
+    - `interactive` (`warm`) has a budget of its own;
+    - `claimed` gets a third of the per-site budget and no longer spends the member bucket;
+    - the new `linked` class gets another third.
+    The organizations directory keeps its behaviour, except that its claimed refreshes no longer spend the member bucket.
+  - Roster (`packages/rtc/federation.mjs`): claims are queued in lanes, served in this order:
+    - `live`: peers with a live or ringing session. `RtcService.tick` passes them through the new `keys.live` port, and a verified message marks the peer live for 10 minutes. Spends `linked`.
+    - `linked`: claims whose invite in the same batch carried a link basis that verified here at step 2 without spending anything (`RtcService.basisLane`): a live ticket of this owner that admits that sender and purpose, or one of this owner's contact links. This is the spec §8.2 step 3 exception. At most one queued entry and 4 schedules a minute per link. Spends `linked`.
+    - `claimed`: everything else. At most 64 queued in total and 16 per issuer, as before. New: at most 4 queued and 8 schedules a minute per source network per writer. Spends `claimed`.
+    Live and linked share a bound of 32 queued entries. An already queued claim moves up when a better lane names it. A class refused by its budget stops for that pass and keeps its entries, and the refusal does not count against the pass or get negatively cached. Refresh-ahead serves live peers first and rotates through the rest; before, each pass revisited the same first few entries.
+  - Source network: `POST /bindle/rtc` passes the pseudonymous source-network key (an HMAC, never an address) to the writer as `rtc.ingest` `source`. It is kept on the queued batch and given to `keys.refresh`.
+  - Regression: under the review's flood, the honest ticket invite reaches the victim within 5 s and the victim's `open` to a new foreign callee succeeds. The flood leaves 11 GETs from the victim's host.
+- **F2 (Medium) The `RTC_FOREIGN_ENABLED` kill switch suppressed `revoked`/`failed` controls.**
+  - The problem: the endpoint lookup went through `rtcDirectory`, which returned null while the flag was off.
+  - The fix: `rtcDirectory(c, {control:true})` is gated only by the allowlist, `DIRECTORY_ENABLED` and the egress. `RtcKeyRoster.feature(iss, priority, {control:true})` uses it, a held (cached) feature first. `foreignRtcTransport` takes that path for control-only batches.
+  - Keys, `warm`, refreshes and new sessions stay off with the switch.
+  - Tested: with the flag off and a cold feature cache, an app revocation delivers the control and the peer ends the session. The Node runtime test checks the account wiring through the internal `rtcRosterDirectory`.
+- **F3 Node egress budget resets.**
+  - The problem: `nodeDirectoryEgress` cached one allowlist→fetcher pair. Alternating `ORG_FOREIGN_ISSUERS` and `RTC_FOREIGN_ISSUERS` built fresh fetchers with fresh budgets.
+  - The fix: one process-wide budget state (`createNodeDirectoryBudget`) is shared by every fetcher, and fetchers are cached per allowlist (at most 16).
+  - Per-class sub-budgets inside the background group:
+    - `claimed` and `linked` each get at most a quarter of the group's minute and day windows, so `background` keeps at least half;
+    - each has its own per-tenant counters at a third of the tenant allowance, so a claim flood at one writer never spends that writer's background allowance.
+- **F4 Host-wide directory budget on Workers.**
+  - Implemented, because a shared limiter facility exists: `WORK_AUTHORITY` (the ABUSE Durable Objects on Workers, the in-process abuse store on Node; already used by message postbacks and RTC's caller limit). `IdentityDirectory` takes `hostLimiter`. After its own buckets, every fetch spends `directory-host-v1/<class>/<site>` with the per-minute limits in `DIRECTORY_LIMITS.host`: interactive 600, background 1,200, claimed 120 and linked 240.
+  - A failing limiter refuses the fetch (fails closed).
+  - Wired for both the RTC directory and the organizations directory (`directoryHostLimiter`).
+  - Correction to the entry above: "under the directory's per-site, global and per-tenant budgets" was true only per writer on Workers, because each directory had its own in-memory limiter and the Workers egress has no budget state. There was no host-wide bound there before this fix.
+  - Regression: claims aimed at 20 writers produce 51 lookups in about 100 s against a host claimed limit of 30 a minute. Before the fix there were 580.
+- **F5 Inbound shedding keyed only on the source network.**
+  - `/bindle/rtc` and the public relation endpoints now share `admitSourceNetwork` (`packages/runtime/routes/shared.mjs`). It keys on the IPv4 /24 or IPv6 /48 of `CF-Connecting-IP`, as before.
+  - When `CF-Worker` is present, the key adds that zone: a per-(network, zone) budget under a ceiling for the network of 16 × the per-network budget. A forged zone therefore buys at most 16× for the network it really comes from.
+  - Node (`apps/node/server.mjs`, `nodeRequestHeaders`):
+    - The client address comes from `TRUSTED_CLIENT_IP_HEADER` only when the operator configures it (unset by default: the socket address).
+    - A value that is not one plain IP address is `unknown`.
+    - Client copies of `CF-Worker` are always dropped.
+    - Documented in docs/self-hosting.md.
+  - Not verified on real Cloudflare (production gate below).
+- **F6 Invite re-send multiplied traffic about 10×.**
+  - A foreign invite's outbox row is marked with its session. The first `202` arms re-sends (`inviteOutcome`); before it, the outbox's own retries of the one row are the only copies.
+  - After that there are at most two re-sends (`INVITE_RESEND_DELAYS`: 3 s after the acceptance, then 12 s later), then the stored invite copy is dropped.
+  - A permanent refusal ends re-sending for that session.
+  - Coalescing per peer issuer is not done. RTCe-3 allows one `aud` per batch, so invites to different callees cannot share a batch, and re-sends to one callee are already one row per session.
+  - Tested: one unanswered invite now makes 3 POSTs over its whole ring (before: about 10); a partition leaves one outbox row; a 404 is never followed by a re-send.
+- **F7 (low and informational):**
+  - While `RTC_FOREIGN_ISSUERS` is empty or invalid, `/bindle/rtc` answers the uniform 404 (byte-identical to the flag-off answer) and the manifest withholds `rtc-signaling.v1`.
+  - `ring()` sends doorbells in parallel, at most 4 at a time (`PUSH_CONCURRENCY`). Each push call keeps its 10 s timeout.
+  - Braces were added in the connection cascade (`packages/runtime/account/connections.mjs`). The behaviour is unchanged.
+  - The RTCe-4 note is in the readings below.
+- **(a) Caller origin from a foreign provider.**
+  - The ring answer carries `callerOriginReportedBy`: the caller's provider host for a foreign caller, and null for a same-host caller (`callerOriginReporter`).
+  - The ring then reads "Calling app (reported by {provider}): {host}" (es: "App que llama (según {provider}): {host}"). A same-host caller stays "Calling app: {host}".
+- **(b) Narrowing did not end ringing invites.**
+  - `rtc.lifecycle` `app-narrowed`/`app-revoked` now also ends an unanswered (`silentEndable`), not held, ringing callee record when every endpoint the invite was delivered to belongs to that app and the app no longer holds the invite's purpose (always, for a revocation).
+  - It ends silently towards the caller: reason `revoked` locally, `state: ended` to the owner's own endpoints, no control statement, not missed.
+  - An invite also delivered to another app's endpoint, or for a purpose the app keeps, keeps ringing. An invite that was delivered to no endpoint (portal only) is not "through that app" and is left alone.
+
+**Readings (corrected and new; none signed):**
+- **RTCe-6 (corrected) Control statements.** Outbound control-only batches are not gated by `RTC_FOREIGN_ENABLED` (narrowing). They need only the allowlist, `DIRECTORY_ENABLED` and the egress, and their endpoint lookup takes the roster's control path (a held feature first, else a manifest fetch under the directory budgets). Before F2 the lookup went through the flag-gated directory, so the kill switch did suppress them, contrary to the reading as written. The asymmetry stays: this host's endpoint refuses a peer's controls while the flag is off (uniform 404). With an empty allowlist nothing is delivered at all (F7).
+- **RTCe-9 (corrected) Refresh scheduling.**
+  - For every claimed sender of a step-1-valid batch whose keys are not held, or which names a kid that is not held, a refresh is attempted before steps 2–8. It is never a fetch on the request path: the roster fetches only on the detached task or the alarm.
+  - Whether the attempt is queued, and in which lane, depends on:
+    - the source network (plain claims);
+    - a live or ringing session with the sender (`live`);
+    - a link basis of an invite in the same batch that verified at step 2 without spending (`linked`).
+  - Claims spend the directory's `claimed` or `linked` class, never the `background` class of refresh-ahead or the `interactive` class of `warm`.
+  - This departs from the spec sentence "the schedule does not depend on step 2". Only the sender's issuer can observe the difference, as the order of this host's directory GETs to it under load, and it already knows its own principals' sessions. Under load it could also infer whether a presented ticket or contact link is still live, because the linked lane needs a basis that verifies. That is within the step 3 exception, which allows a fetch for a verified basis, but it is recorded. The response and its timing still never depend on steps 2–8.
+  - Proposed spec amendment AMD-RV2 (unsigned, not applied to the text).
+- **RTCe-4 (note).** The per-entity uniform 404 while `RTC_FOREIGN_ENABLED` is off for the addressed entity reveals to any sender whether foreign RTC is enabled for that account (its flag cohort). Recorded, not changed; it disappears when the flag is site-wide.
+- **RTCe-8 (corrected) Invite re-send.** Only after the first `202`, at most twice (3 s after it, then 12 s later), and never after a permanent refusal (F6). The rest is unchanged: the callee provider ignores copies of an existing session.
+- **RTCe-13 (amended) Doorbell.** Pushes go out in parallel, at most 4 at a time.
+- **RTCe-16 (amended) Manifest.** `rtc-signaling.v1` also needs a non-empty, valid `RTC_FOREIGN_ISSUERS`.
+- **RTCe-17 (amended) Inbound shedding.** 600 batches a minute per source network, or per (network, `CF-Worker` zone) under a 16× network ceiling. It fails closed off loopback without an abuse store. The relation endpoints use the same helper.
+- **RTCe-19 (new) Host-wide directory budgets.** These are the F4 values above, per issuer site and class, through `WORK_AUTHORITY`. The values are provisional, and the per-writer buckets still apply first.
+- **RTCe-20 (new) Node client address.** `TRUSTED_CLIENT_IP_HEADER` is unset by default. The operator's proxy must overwrite it, never append. It applies to every Node route that reads `CF-Connecting-IP`, not only RTC.
+- **RTCe-21 (new) Narrowing ends invites ringing only through the app** (follow-up (b)). It ends silently towards the caller, so spec §12 holds. This supersedes the "Observed, not changed" bullet of RTCs-8.
+- **RTCe-22 (new) Reported caller origin** (follow-up (a)). A foreign caller's app origin is shown only as reported by its provider, because a malicious provider can certify any origin (RTCs-7). A same-host caller's origin was certified by this host and stays unlabelled. If RTC-17 is rejected at sign-off, the label goes with the line.
+
+**Production gates (added; all open):**
+- Verify on real Cloudflare that `CF-Connecting-IP` and `CF-Worker` behave as F5 assumes: Cloudflare sets `CF-Worker` on Worker subrequests, never passes a client's copy through, and the networks Workers egress from. Do this before relying on per-network shedding at `/bindle/rtc` or the relation endpoints.
+- Verify the host-wide directory budget on real Durable Objects: a guard call per directory GET, and the hot key per (class, site) under load.
+- Node deployments behind a reverse proxy must set `TRUSTED_CLIENT_IP_HEADER` to a header the proxy overwrites, and that must be verified per deployment. Without it, every request shares the proxy's network budget.
+- Load-test the roster lanes and the host and per-writer budget values at the §13 limits. Residual risk: an attacker with many IPv6 /48s can still starve the plain claimed lane. Live peers, link-verified invites, `warm` and refresh-ahead are protected; first contact through a plain request basis (`none`, off by default) is not.
+- docs/spec/security.md S4 stays unchecked, and the Workers egress gate (R2-M6) is still unmet.
+
+**Tests:**
+- `tests/rtc-review-followups.test.mjs` (new, **19**):
+  - F1: starvation with and without the flood, roster lanes (including rates with an empty queue and the shared live/linked bound), the linked lane only for a basis that verifies for that sender, and directory classes;
+  - F4: amplification across 20 writers, the host limiter, and the organizations directory wiring;
+  - live peers kept live by the tick, and refresh-ahead rotation;
+  - F2: the kill switch;
+  - F3: the alternating-allowlist budget, and Node egress classes;
+  - F5: `CF-Worker` refinement and ceiling, the Node trusted header, and relation-endpoint shedding through the shared helper;
+  - F6: the re-send bound;
+  - F7: the empty-allowlist 404, and parallel doorbells;
+  - (a) the reporter;
+  - (b) narrowing and revocation ending ringing invites.
+- Updated:
+  - `tests/rtc-federation.test.mjs`: roster claims now spend `claimed`;
+  - `tests/rtc-federation-runtime.test.mjs` (**5**, was 4): the manifest row needs the allowlist, the queued batch carries a pseudonymous source, and a new account-level control path and host limiter test;
+  - `tests/rtc-owner-routes.test.mjs`: ring keys gain `callerOriginReportedBy`, null for a same-host caller;
+  - `tests/browser/rtc-settings.mjs`: the reported label in en and es, a same-host caller unlabelled, and the foreign ring in the Spanish coverage and no-`null` checks.
+- The fixture `tests/helpers/rtc-federation-fixture.mjs` now mirrors the production wiring: a host limiter shared by a provider's directories, the roster's control path, `source` through the route, `keys.live`, and `RTC_FOREIGN_ISSUERS` in the route env.
+
+**Revert check** (scratch copy; each guard reverted alone, then its suites run with 2 chaos seeds):
+- **55 guards** were checked:
+  - directory: class buckets, claims off the member bucket, host budget, and the host limiter failing closed;
+  - roster: every lane, cap and rate, the lane upgrade, the class of each lane, limited entries kept, rotation, the control path, `warm` interactive, and no negative cache on a budget refusal;
+  - transport: the control path;
+  - account wiring: the control directory, both host limiters, and `source`;
+  - service: the basis lane and its sender binding, `source`, the tick live hint, re-send arming, cap and stop, parallel doorbells, and the four narrowing-end conditions;
+  - route and manifest: allowlist gating and `source`;
+  - shedding: the `CF-Worker` refinement, the ceiling, the relations helper, and the Node header rules;
+  - Node egress: the shared budget, the fetcher cache, and the claim shares and counters;
+  - owner route and UI: the reporter, and the label.
+- **First pass: 48 made a suite fail.** The seven survivors were:
+  - the per-source rate, the per-link rate and the live/linked bound;
+  - `source` reaching ingest;
+  - the ticket's sender binding in the basis lane;
+  - the relation endpoints' shedding (not tested before);
+  - the re-send cap branch.
+- **Six were fixed by strengthening tests**, and all six now fail when reverted:
+  - rates checked with an empty queue, and the bound filled;
+  - the runtime queued row's `source`;
+  - a ticket bound to another principal;
+  - a relation `events` shedding test.
+- **The re-send cap branch was redundant** (the enqueue path already ends re-sending at the cap). It was removed rather than counted as an equivalent survivor.
+
+**Verification (local evidence only; scratch copy of the full working tree):**
+- `build:assets`: passed.
+- `npm test`: **4,011 tests, 4,011 passed, 0 failed**.
+- `test:worker`: **93 passed, 0 failed**.
+- `test:ui-state`: **538 passed, 0 failed**.
+- `test:rtc-ui`: **29 happy-dom/engine and 28 playwright (Chromium and Firefox), all passed**.
+- `check:worker`: passed (dry run), with only the existing duplicate-key warnings ("Loading…", "Please wait…").
+- Not run: real Cloudflare (`CF-Worker`, `CF-Connecting-IP`, Durable Object guards), a real second provider over HTTPS, a Node deployment behind a proxy, push delivery and load tests. Nothing is production-verified.
+
+Reviewer: ___ Date: ___ Outcome: ___
+
+### Verification follow-ups (2026-10-27, verification review of the fix round; provisional, unsigned)
+
+**Implemented locally, provisional and unsigned.** A verification review of the review follow-ups above found four issues (V1 medium, V2 to V4 low; its fifth item was informational and needs no change). Each of its five proofs of concept succeeded as an attack before these changes. All five are now regressions in `tests/rtc-review-followups.test.mjs` that assert the attack fails, and the original PoC file now fails 5 of 5. Everything stays behind the RTC flags and the empty-by-default allowlists. No commit or deployment. Every reading here is **provisional** (coordinator), not signed off by the user.
+
+**Updated host budget design (RTCe-19, amended).**
+- Keys name the feature: `directory-host-v1/<feature>/<class>/<site>`. The feature is `rtc` (`rtcDirectory`), `org` (`foreignDirectory`) or `other` (anything unwired), so RTC traffic never spends the organizations budget and the reverse.
+- Per-tenant share: every class also has `.../<class>/<site>/t/<tenant hash>`, spent first (a refused share spends nothing of the class). The tenant hash is a truncated SHA-256 of the owner id, never the id itself. The share is `ceil(class / 16)`: claimed 8, linked 15 and background 75 a minute. A background share grows with the directory's roster-scaled per-site budget (an organization's members), up to a quarter of the class (300).
+- `interactive` has **no host-wide class limit**, only a tenant share of 40 a minute. The reasoning: each interactive fetch is user-triggered by an authenticated account under a per-account limit. A host-wide cap can't stop an attacker who holds accounts. It only lets a few accounts deny every other user (the V2 PoC). Its cost is that interactive volume to one issuer scales with the number of active accounts: at most about 20 new callees an hour per account, each a manifest, a lookup and a document. Account creation is gated by real identity verification. Recorded as a residual risk.
+- `rtc.open` spends a per-owner `warms` limit (20 an hour, `packages/rtc/admission.mjs` LIMITS) before the caller-initiated fetch. It applies only when the foreign callee's keys are not already held, so repeat calls to a known peer spend nothing. Over the limit, `open` answers `rate_limited` (429).
+- Class limits are unchanged: background 1,200, claimed 120 and linked 240 a minute per feature and site. The per-writer buckets and the Node egress budgets still apply first.
+
+**Other fixes:**
+- **V2 inbound source (CF-Worker).** `admitSourceNetwork` always returns the plain network pseudonym as `source`, so a zone never buys its own roster source. Every admission from a network, with or without a zone, also spends the network ceiling `<scope>/n/<network>` (16 × the per-network limit). The per-network or per-(network, zone) budget is spent first. The network total really is 16× now (before: 17×).
+- **V3 IPv4-mapped addresses.** The new `normalizeClientIp` (`packages/runtime/routes/shared.mjs`) drops a `%zone` and turns an IPv4-mapped IPv6 address, in any IPv6 spelling including hex groups, into its IPv4 address. `nodeRequestHeaders` applies it to the trusted header and to the socket address, and `subnet`/`subnet64` apply it before bucketing. Documented in docs/self-hosting.md.
+- **V4 roster bound.**
+  - `RtcService` tracks a peer (24 h roster, and live for 10 min) only when a session record exists. For a non-invite message the record already exists. For an invite, tracking waits until `admitInvite` creates the record, ringing or held. For `open`, tracking happens after the outgoing record is stored. `RtcKeyRoster.warm` no longer tracks at all.
+  - Live and linked entries are capped at 8 per issuer (`priorityPerIssuer`) within the shared bound of 32.
+  - The linked lane is bounded per host by the `linked` tenant share above, so a writer's public contact link spends only that writer's share.
+
+**Residual risks (recorded, not fixed):**
+- The RTC `claimed` class can still be exhausted host-wide by claims aimed at 16 or more writers (16 × 8 ≥ 120), from one network or many. Only plain first contact suffers (a `request` basis, off by default). Live peers, link-verified invites, `warm` and refresh-ahead have their own classes. The same arithmetic applies to `linked` with the public contact links of 16 or more writers (16 × 15 ≥ 240). Link-verified first contact can then be delayed host-wide. Live peers can't be, and neither can the victim's own `open`.
+- With `source` now the plain network, every Worker-hosted peer provider reaching a writer from Cloudflare's shared egress network shares one plain-claim source there: 4 queued and 8 schedules a minute per writer. They also share that network's 16× inbound ceiling. Live and linked lanes are unaffected.
+- Interactive outbound volume grows with the number of active accounts (above).
+- The values (shares, `warms`, `priorityPerIssuer`) are provisional, pending the §13 load tests already listed under the production gates.
+
+**Tests:**
+- `tests/rtc-review-followups.test.mjs` now has **26** tests (was 19). The seven new ones:
+  - V1 flood: the PoC flood at 20 writers leaves an untargeted `org` directory unrefused, and each writer spends at most its share.
+  - V1 tenant shares: the share size, share before class, no interactive class key, disjoint features, hashed tenants and background scaling.
+  - V2: the PoC's 20 accounts × 30 opens. Each account is stopped by `warms`, the honest open succeeds, failed opens track nobody, and a held callee spends no warm.
+  - V3: unmapping in the header, the socket and `subnet`/`subnet64`, including hex form and zones.
+  - V4 roster: the per-issuer cap admits the honest link of another issuer, and `warm` doesn't track.
+  - V4 service: a verified but unadmitted invite (a `request` basis, off by default) neither tracks nor marks live its sender, and an admitted one does.
+  - V5: the zone flood is held to 16× with one source, in either order.
+- Updated tests: the F4 host-key names, the F5 source equality, the relations key pattern, and the F1 shared-bound check (now across several issuers because of the per-issuer cap). `tests/rtc-federation-runtime.test.mjs` asserts the RTC directory's `feature`.
+
+**Revert check** (scratch copy; each guard reverted alone, then `rtc-review-followups`, `rtc-federation` and `rtc-federation-runtime` run):
+- **25 guards** were checked:
+  - host budget: the feature in the key, the tenant share, share before class, no interactive class cap, background scaling and the tenant hash;
+  - feature wiring: org, RTC runtime and the fixture;
+  - `warms`: the limit, and the keys-not-held condition;
+  - tracking: `open` tracks after the record, `warm` doesn't track, an invite tracks only when admitted, and `admitInvite` reports creation;
+  - roster: the per-issuer cap;
+  - shedding: `source` is the network, and plain admissions count against the ceiling;
+  - addresses: the Node normalisation, `subnet` and `subnet64` unmapping, zone stripping and the hex form.
+- **First pass: 24 of 25 made a suite fail.** The org wiring survived. The F4 wiring test now asserts `feature: 'org'`, and an RTC runtime wiring assertion was added. Both now fail when reverted.
+
+**Verification (local evidence only; scratch copy of the full working tree):**
+- `npm test`: **4,018 tests, 4,018 passed, 0 failed**. A first run before `build:assets` had 5 asset-dependent page failures (404 for built pages). It passed after the build.
+- `test:worker`: **93 passed, 0 failed**.
+- `test:organizations`: **282 + 72 + 148 node tests and 12 browser checks, all passed**.
+- `test:ui-state`: **538 passed, 0 failed**.
+- `test:rtc-ui`: **29 happy-dom/engine and 28 playwright, all passed**.
+- `check:worker`: passed (dry run), with only the existing duplicate-key warnings ("Loading…", "Please wait…").
+- Not run: real Cloudflare (Durable Object guards per tenant share, `CF-Worker`), a Node deployment behind a proxy writing mapped addresses, a real second provider and load tests. Nothing is production-verified.
+
+Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-27 — RTC service follow-ups for the owner UI (flags off)
+
+**Implemented locally, provisional and unsigned.** These are the service changes that the RTC-g console was waiting for: the two interface requests in "RTC-g owner settings and portal ring", "Review follow-ups", and the narrowing route listed under "Missing interfaces" 2 there (and under "Not implemented" in the RTC-e entry). Everything stays behind `RTC_SIGNALING_ENABLED` (default off). Narrowing and ending are never gated. No commit or deployment. Every reading below is **provisional** (coordinator), not signed off by the user. An independent security review of the RTC-e diff was running at the same time; nothing unrelated was refactored.
+
+**Changes:**
+- `packages/rtc/service.mjs`:
+  - **Silent end (F1).** `rtc.end-session` takes `exact(input,['sid'],['caller','silent'])`. `silent` must be `true` and needs `caller`.
+    - The silent end applies to a live callee record that is `ringing` with no claim, held or not (`silentEndable`). It ends with reason `declined`, and only the audience gets `state: ended`, which is this owner's own endpoints that received the invite. No control statement is queued and nothing goes to the caller's provider. It is not added to the missed list, because `declined` is not a missed reason. An own-entity twin ends the same way: `end()` passes no control to the twin, and the twin's audience is the owner's own calling device. The answer is `{sid, state:'ended', silent:true}`.
+    - `silent: true` against any other record is refused as `invalid_args`: a claimed (answered) session, a record declined by a device claim, an outgoing record or one that has already ended. An unknown record is still `not_found`.
+  - **`alert` (F2).** A callee record in `sessionView` always carries a boolean `alert`. `sessions()` recomputes it on every read as the admission decision AND no current mute of the principal, the purpose or the caller's application. A mute set while an invite rings therefore silences it at once. Lifting a mute never turns `alert` on for an invite admitted while muted.
+  - **Caller app origin (RTC-17).** A callee record carries `callerOrigin`, the `client.origin` of the caller's verified leg certificate.
+    - New records store `callerClient {client_id, origin}` at admission. Older records read it from the held certificate.
+    - When it cannot be determined, `callerOrigin` is `null` and `alert` is `false`, because the application mute cannot be checked.
+    - Caller records carry neither `alert` nor `callerOrigin`.
+- `packages/runtime/routes/rtc-owner.mjs`:
+  - `RTC_SILENT_END_SUPPORTED = true`. The interim route logic is gone: it no longer reads the sessions first and no longer answers `local:true`. The route now checks the shape of `silent` and forwards the body. The engine decides.
+  - `ringable` requires `alert === true`. The G1 interim, which rang when the field was absent, is removed.
+  - The ring answer gains `callerOrigin`.
+  - New `POST /api/rtc/narrow-app` `{clientId, purposes}`.
+    - It runs in the owner stage, so the router has already checked origin, session and CSRF. It is in `NARROWING`, so it is exempt from capacity admission.
+    - The body must have exactly those keys. The fragment is always the signaling slot and cannot come from the body.
+    - It calls `FEDERATION_AUTHORITY.narrowBoundOptions(context, {clientId, fragment, options:{purposes}})` and answers `{clientId, purposes}`.
+    - A widening is refused as 400 `bound_options_widening` while the flag is on, and as the uniform 404 while it is off. An unknown app or a missing authority is the uniform 404. A federation `invalid_args`, such as an empty list, is 400.
+- Federation owner path (how RTC-e added `checkBound`):
+  - `FederationController.narrowBoundOptions(context, input)` is `service.narrowBoundOptions(this.authority(context, true), input)`. As a mutation, it re-authenticates the session and CSRF token in the owner shard. It is also in the `ensureClients` wrapper list.
+  - `federationAuthority.narrowBoundOptions` routes only the signed-in, active owner to their own shard, as `grants` does. This serves both Node and Workers.
+  - `federationRemote` has the method, and the Worker DO `METHODS` allowlist has it in `apps/worker/federation.mjs`.
+  - `FederationService.narrowBoundOptions` already runs `boundSync`, so `boundChanged` → `rtcAppChanged` → `rtc.lifecycle` `app-narrowed` ends the app's sessions and endpoint registrations for the removed purposes.
+- Console:
+  - `apps/web/src/bl/rtc-settings.mjs`:
+    - New `ReviewRtcNarrow`. It reads the form's `keep:<line>`, keeps only purposes the app holds, refuses an unchanged or empty selection with guidance, and opens `rtc-confirm` for `narrow-app`. It sends nothing itself.
+    - `narrow-app` is added to `needsConfirmation`, the notices and the panel focus. `RtcOwnerAction` sends it only from a matching dialog.
+  - `apps/web/src/ui/rtc-settings.mjs`:
+    - An app with more than one approved purpose shows checked boxes and the button "Approve fewer purposes". An app with one purpose shows it as a list only, because the slot needs at least one and removing every purpose means removing the app's access.
+    - The dialog names the app and lists "No longer approved" and "Still approved" as owner data.
+    - The help text now reads "To remove the app completely, change its access."
+  - `apps/web/src/ui/rtc-ring.mjs`: "Calling app: {host}" through `literal()`. It is never a link.
+  - `apps/web/src/release.mjs`: the `review-rtc-narrow` intent.
+  - `packages/i18n/catalogues.mjs`: 11 new strings in en and es. The obsolete "To approve fewer purposes or remove the app…" string was replaced.
+
+**Readings (RTCs-1 to RTCs-8; none signed):**
+- **RTCs-1 The engine enforces the silent end.** Every owner end of an unanswered incoming record is silent, whether or not `silent` was sent. Before this change, `rtc.end-session` without `silent` sent a `revoked` control to the caller of a ringing invite. That was an engine-level presence oracle (§12; §4.4: "a decline reveals that a callee device saw the invite"), which only the route was guarding against. The rule now lives in the engine, as engine-first architecture requires, so an older client's body and any other adapter get it too. The route keeps an identical shape check, which is an equivalent survivor in the revert check.
+- **RTCs-2 Reason `declined`.** The silent end uses the existing `declined` end reason, which is already in `END_REASONS`. It is local only: endpoints see `state: ended`, and nothing carries the reason. It is distinct from `revoked`, and it stays out of the missed list.
+- **RTCs-3 Own-entity twin.** "Silently" is read as "no control statement and no missed entry". The owner's own calling device is told `ended`, because it is not another entity, so §12 does not apply. An end with no state event would leave that device ringing until `ring_until`.
+- **RTCs-4 `silent` on other records is `invalid_args`, not a no-op.** A decline that races the claim or the ring-out shows the console's error and changes nothing. A claimed session can never end through `silent`.
+- **RTCs-5 §12 check.** The caller's provider observes nothing from a silent end: no batch, no outbox row and no control. Its session rings out at `ring_until`, and later invite re-sends and a late `cancel` are ignored at the callee. Tested on the same host and across two providers: a declined invite and an ignored one produce identical caller events and no batch. The only thing the caller can still observe is a claim. Spec §12 holds as written, and no spec change is needed.
+- **RTCs-6 Alert recomputation is one-way.** `alert` = admission `alert` ∧ no current mute. A mute set during ringing applies; an unmute does not resurrect an invite that admission delivered without alert, because the callee's apps already received it with `alert: false`. Basis kind and quarantine are covered by the admission value. An unreadable caller application fails closed, so the portal does not ring.
+- **RTCs-7 Caller origin before claim is allowed.** §9.1's `listen` invite projection gives the callee's endpoints the "caller `client.origin`" before any claim, and RTC-17 (adopt, unsigned) discloses it to the callee. The owner is the callee, so the owner view and the ring may show it. The value is what the caller's provider certified in its signed leg certificate; this host cannot check it independently, just as for the callee's apps. A malicious provider could therefore name any origin. The ring shows it as plain owner data (`translate="no"`), never as a link, and never in place of the verified caller principal. If RTC-17 is rejected at sign-off ("omit for caller privacy"), `callerOrigin` and the ring line must be removed with it. (Amended: for a foreign caller the ring now labels it as reported by the caller's provider; RTC-e "Review follow-ups", RTCe-22.)
+- **RTCs-8 Narrowing scope.**
+  - The route lives in `rtc-owner.mjs`, not the generic federation routes. The fragment is fixed to the signaling slot, so the route cannot narrow other slots.
+  - Narrowing applies to every active grant of the app for that slot, each keeping its intersection.
+  - The slot schema requires at least one purpose, so "remove all" stays the app access view's revoke.
+  - Observed, not changed: `app-narrowed` ends the app's own legs, meaning outgoing records and claimed incoming records, and its endpoint registrations. An unclaimed invite that is ringing for the owner only loses those endpoints and keeps ringing at the provider until `ring_until`. This is unchanged RTC-e behaviour (§14 "ends affected registrations and sessions"). (Superseded: such an invite now ends silently when it rang only through that app; RTC-e "Review follow-ups", RTCe-21.)
+
+**Production gates:**
+- **G1 closed** (local evidence, provisional): the owner view always carries `alert`, recomputed against current mutes, including the caller's app. A caller-app mute set while an invite rings silences the portal ring (route test). `ringable` no longer rings without the field.
+- **G2 closed** (local evidence, provisional): RtcService honours the silent end and `RTC_SILENT_END_SUPPORTED` is true. Decline and Remove end the record at the provider, the owner's own app endpoints stop ringing (`state: ended`), and the caller is sent nothing.
+- Still open: the RTC release gates in the design and `docs/spec/security.md`, and sign-off of RTC-17 (RTCs-7) and of this entry's readings. Nothing is production-verified.
+
+**Tests:**
+- `tests/rtc-owner-followups.test.mjs` (new, **9**, engine level):
+  - the silent end on the same host: own endpoints are told, there is no outbox row and no batch, nothing is missed, and a declined invite and an ignored one ring out identically;
+  - the matrix: an older body forced silent, held requests, malformed `silent`, already ended, claimed (refused; ending without `silent` sends a control), declined by claim, outgoing and unknown;
+  - the own-entity twin;
+  - a foreign caller (two providers): no POST to the caller's provider, re-sends ignored, ring-out;
+  - live alert recomputation (app, principal and purpose mutes; another app's mute; muted at admission stays off; held; caller records);
+  - origin exposure (view keys, no certificate or client id, a legacy record, an unreadable certificate);
+  - narrowing through a real `FederationService` whose `boundChanged` drives `rtc.lifecycle`: a connected session ended, an endpoint narrowed, re-registration refused, widening, empty and unknown refused;
+  - the controller's mutation authority and the authority's active-owner routing;
+  - the remote facade and the Worker DO allowlist being equal.
+- `tests/rtc-owner-routes.test.mjs`: **12** (was 8).
+  - Updated: ring keys and `callerOrigin`, a caller-app mute silencing the ring, the silent end at the provider (`state: ended`, no caller event, not missed, a repeat refused), and `ringable` requiring `alert`.
+  - New `narrow-app` tests:
+    - router sign-in, CSRF, origin, method and exact body;
+    - over the real Node runtime, a grant in the owner's real federation shard: HTTP → owner stage → authority → controller (CSRF re-checked) → service → `boundSync` → account writer, ending a connected CALL session and the CALL-only endpoint;
+    - while off: narrowing works, and a widening is a uniform 404 byte-identical to an unknown path. While on, the same widening is a 400;
+    - the owner stage with a stub authority (forwarded input, fixed fragment, uniform 404s).
+- `tests/browser/rtc-settings-engine.mjs`: **16** (was 15). The narrowing review: the dialog opens with only held purposes, nothing is sent before confirmation, unchanged, empty and unknown selections are refused, the confirmed body is exact, and a 404 reads as unavailable. `narrow-app` was added to the confirmation table.
+- `tests/browser/rtc-settings.mjs`: **13** (was 12).
+  - The ring shows "Calling app:" as `translate="no"`, never linked, and shows nothing for a null origin.
+  - The narrowing form (checked boxes, a native submit, its intent, a single purpose listed only), en and es.
+  - The dialog summary and its confirm intent.
+  - The Spanish coverage and no-`null` checks now include the narrowing dialog and the caller origin.
+- `tests/browser/rtc-settings-browser.mjs`: **28** (was 20). New: Chromium and Firefox × en/es × (360 px dark, 1280 px light):
+  - Space unchecks a purpose;
+  - the review button opens the dialog with focus inside, and Tab is trapped;
+  - the summary reads in both languages, the dialog fits, there is no horizontal scroll, and the label contrast is at least 4.5;
+  - Cancel returns focus to the review button;
+  - confirming sends exactly `{clientId, purposes:[CALL]}`.
+  The ring fixture now carries a long caller origin.
+- **Revert check** (scratch copy; each guard reverted alone, then its suites run): **33 guards**, **31 caught**.
+  - Caught:
+    - service: silent end forced, no control, not missed, own endpoints told, `silent` refused elsewhere, `silent` shape, ringing-only, unclaimed-only, alert recomputation, caller-app mute, fail-closed unknown app, `callerOrigin`, `callerClient` recorded;
+    - route: `ringable` requires `alert`, the ring's `callerOrigin`, narrow exact keys, widening 404 while off, widening 400 while on, `narrow-app` dispatched, no authority 404;
+    - adapters: controller mutation, remote facade, authority active owner, Worker allowlist;
+    - console: dialog required, held purposes only, at least one kept, unchanged refused, one purpose listed only, dialog summary, caller origin as owner data.
+  - **2 equivalent survivors:**
+    - the route's `silent` shape check (the engine refuses the same bodies);
+    - the fixed fragment (unreachable, because the exact-keys check already refuses a `fragment` member).
+
+**Verification (local evidence only; scratch copy of the full working tree):**
+- `npm test`: **3,991 tests, 3,991 passed, 0 failed**.
+- `test:worker`: **93 passed, 0 failed**.
+- `test:ui-state`: **538 passed, 0 failed**.
+- `test:rtc-ui`: **29 happy-dom/engine and 28 playwright (Chromium and Firefox), all passed**.
+- `build:assets`: passed.
+- `check:worker`: passed (dry run), with only the existing duplicate-key warnings ("Loading…", "Please wait…").
+- Not run: a real Durable Object round trip for `narrowBoundOptions`, which the source allowlist test covers only statically; the Worker runtime in a browser; real WebRTC; a real second provider over HTTPS; push. Nothing is production-verified.
+
+Reviewer: ___ Date: ___ Outcome: ___

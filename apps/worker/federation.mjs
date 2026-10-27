@@ -12,7 +12,7 @@ import {ENTRY_SHARDS} from '../../packages/federation/authorization-entries.mjs'
 import {federationRemote} from '../../packages/federation/runtime.mjs';
 import {UUID_V4} from '../../packages/core/primitives.mjs';
 export {federationMetadata,federationRemote} from '../../packages/federation/runtime.mjs';
-const METHODS=['memberAccess','ready','manifest','beginAuthorization','inspect','approve','configure','registerResource','revoke','exchange','rpc','tokenClient','grants','preferences','refresh','cleanup','inspectObjectURL','objectURL','entryIdentity','beginEntryAuthorization','revokeToken','redeemClaim','embedSession','embedState','embedForget','embedAvatar','embedEvents','embedEventsTick','embedEnd','dpopNonce','incrementalPort','appSessions','eventDoorbellGrant','integrationSnapshot','brokeredGrantLive','brokeredAssertionReplay','integrationClientAuth','removalRevoke','removalNonce'];
+const METHODS=['memberAccess','ready','manifest','beginAuthorization','inspect','approve','configure','registerResource','revoke','exchange','rpc','tokenClient','grants','preferences','refresh','cleanup','inspectObjectURL','objectURL','entryIdentity','beginEntryAuthorization','revokeToken','redeemClaim','embedSession','embedState','embedForget','embedAvatar','embedEvents','embedEventsTick','embedEnd','dpopNonce','incrementalPort','appSessions','eventDoorbellGrant','integrationSnapshot','brokeredGrantLive','brokeredAssertionReplay','integrationClientAuth','removalRevoke','removalNonce','checkBound','narrowBoundOptions'];
 /** Each UUID addresses independent permanent preferences, grants and journals.
  * The UUID is a locator, never an authorization credential. Further instances, named entryStoreName(shard), hold
  * the pre-owner authorization-entry store, sharded by entry ID (review M5); the two roles never share an instance.
@@ -103,6 +103,6 @@ export class FederationObject extends DurableObject {
  async compose(owner){
   const env=this.env,config=this.flagsRuntime.bind({...env,...workerIntegrationPorts(env),ARTEFACTS:this.artefactPort()}),repository=new ShardedIdentityRepository({shard:name=>env.IDENTITIES.get(env.IDENTITIES.idFromName(name)),layout:env.IDENTITY_LAYOUT});
   const accounts={get:id=>env.ACCOUNTS.get(env.ACCOUNTS.idFromName(id))};
-  return new FederationController({...await federationControllerOptions({config,repository,accounts,owner,incremental:env.FEDERATION?incrementalRemote((method,args)=>env.FEDERATION.get(env.FEDERATION.idFromName(INCREMENTAL_STORE)).incremental(method,args)):undefined,manifestMounts:{messagingAddress:messagingAddressMounted(config)}}),metadata:federationMetadata(this.storage),routingKey:owner});
+  return new FederationController({...await federationControllerOptions({config,repository,accounts,owner,incremental:env.FEDERATION?incrementalRemote((method,args)=>env.FEDERATION.get(env.FEDERATION.idFromName(INCREMENTAL_STORE)).incremental(method,args)):undefined,manifestMounts:{messagingAddress:messagingAddressMounted(config),rtcOccupant:true,rtc:true}}),metadata:federationMetadata(this.storage),routingKey:owner});
  }
 }

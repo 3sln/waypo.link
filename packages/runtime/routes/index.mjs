@@ -66,8 +66,10 @@ import * as memberCertificates from './member-certificates.mjs';
 import * as recoveryReissue from './recovery-reissue.mjs';
 import * as orgClaimAbort from './org-claim-abort.mjs';
 import * as relations from './relations.mjs';
+import * as rtcOwner from './rtc-owner.mjs';
+import * as rtc from './rtc.mjs';
 
-export const ROUTES=Object.freeze([moved,transferPages,directory,intents,recoveryReissue,orgClaimAbort,site,admin,identity,lifecycle,deletion,automation,conversations,contactProfile,contacts,delivery,messages,views,storage,billing,search,notifications,relations,memberCertificates,federation,links,delegation,incremental,events,appSessions,integrations,connections,emailBridge,exports,retention,appRemoval,orgs,transferIn]);
+export const ROUTES=Object.freeze([moved,transferPages,directory,intents,recoveryReissue,orgClaimAbort,site,admin,identity,lifecycle,deletion,automation,conversations,contactProfile,contacts,delivery,messages,views,storage,billing,search,notifications,relations,memberCertificates,federation,links,delegation,incremental,events,appSessions,integrations,connections,emailBridge,exports,retention,appRemoval,orgs,transferIn,rtcOwner,rtc]);
 export const STAGES=Object.freeze(['edge','public','anonymous','unauthenticated','api','session','beforeActivity','owner','pages']);
 for(const module of ROUTES)for(const name of Object.keys(module.stages??{}))if(!STAGES.includes(name))throw new TypeError(`Unknown route stage ${name}`);
 

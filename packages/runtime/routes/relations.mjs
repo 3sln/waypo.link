@@ -20,7 +20,7 @@
 // Same-host relations never use these HTTP endpoints: they use the account slice's same-host transport (RL-15).
 // Uniform 404 (packages/runtime/public-unknown.mjs): an unknown, deleted, suspended or moved organization, and every
 // surface that is not mounted, answer exactly like an unknown path. Credential failures answer their protocol refusal.
-import {json,accountHandle,flagEnabled,pseudonym,subnet,consume} from './shared.mjs';
+import {json,accountHandle,flagEnabled,admitSourceNetwork} from './shared.mjs';
 import {lookupUnknown} from '../public-unknown.mjs';
 import {localAudience} from '../account/member-certificates.mjs';
 import {jwsHint} from '../account/relations.mjs';
@@ -36,12 +36,9 @@ const orgsOn=(env,org)=>flagEnabled(env,'ORGANIZATIONS_ENABLED',{subject:{kind:'
 /** The organization is an active organization on this host (repository), else null. */
 async function organization(env,org){if(!UUID.test(org??''))return null;try{const a=await env.IDENTITY_REPOSITORY?.get(org);return a?.status==='active'&&a.kind==='organization'?a:null;}catch{return null;}}
 async function boundedText(request,max){const reader=request.body?.getReader();if(!reader)return '';const chunks=[];let size=0;for(;;){const {done,value}=await reader.read();if(done)break;size+=value.byteLength;if(size>max){await reader.cancel().catch(()=>{});return null;}chunks.push(value);}const bytes=new Uint8Array(size);let at=0;for(const c of chunks){bytes.set(c,at);at+=c.length;}try{return new TextDecoder('utf-8',{fatal:true}).decode(bytes);}catch{return null;}}
-/** Per-network budget for the public relation endpoints (fails closed off loopback without an abuse store). */
-async function admit(env,request,local,name,limit){
- const secret=env.ABUSE_HASH_KEY||env.KEY_ENCRYPTION_KEY,remote=request.headers.get('CF-Connecting-IP')||(local?'127.0.0.1':'unknown');
- if(secret&&typeof env.ABUSE?.consume==='function'){const network=await pseudonym(subnet(remote),secret);return consume(env,`relations/${name}/${network}`,60000,limit);}
- return local===true;
-}
+/** Per-network budget for the public relation endpoints (fails closed off loopback without an abuse store). RTC-e
+ * review F5: the shared helper, refined by `CF-Worker` under a network ceiling. */
+async function admit(env,request,local,name,limit){return (await admitSourceNetwork(env,request,local,`relations/${name}`,limit)).ok;}
 const invalidToken=()=>json({error:'invalid_token'},401,{...noStore,'WWW-Authenticate':'DPoP algs="ES256", BindleEntity'});
 const RPC_STATUS={unauthorized:401,invalid_token:401,forbidden:403,not_found:404,rate_limited:429,tx_conflict:409,conflict:409,temporarily_unavailable:503,indeterminate:503};
 

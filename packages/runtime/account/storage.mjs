@@ -19,6 +19,8 @@ import {linksResourceMethod} from './links.mjs';
 import {CLASSIFIER_CONTRACT,classifierResourceMethod} from './classifier.mjs'; // EXT-X10
 import {collectGarbageRef} from '../export-pins.mjs';
 import {WORK_PRECHARGED} from '../../mcp/account.mjs';
+import {RTC_SIGNALING_CONTRACT} from '../../rtc/extension.mjs';
+import {rtcResourceMethod} from './rtc.mjs'; // RTC-e
 
 // Append-only: add one contract handler per slice. Handlers receive (controller,owner,context)
 // and own method validation, live authorization and replay checks before effects or cached results.
@@ -28,6 +30,7 @@ export const RESOURCE_METHOD_HANDLERS=Object.freeze({
   [LINKS_CONTRACT]:linksResourceMethod, // BB-C1b: links contract; not_found unless LINKS_ENABLED
   [EVENT_BUS_CONTRACT]:eventBusResourceMethod, // EV-2: 3sln.me-hosted event bus; not_found unless EVENT_BUSES_ENABLED
   [CLASSIFIER_CONTRACT]:classifierResourceMethod, // EXT-X10: explicit owner occupancy; INTEGRATIONS_ENABLED + EXTENSIONS_ENABLED
+  [RTC_SIGNALING_CONTRACT]:rtcResourceMethod, // RTC-e: the built-in rtc-signaling/v1 occupant; descriptor only while RTC_SIGNALING_ENABLED
 });
 
 export const methods={

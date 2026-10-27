@@ -25,5 +25,5 @@ export async function revokeRemovalFederation(service,input){
   for(const row of await tx.list(key('brokered-jti',''))){const r=row.value;if(r.clientId!==clientId||r.invalidated||!(revokedFamilies.has(r.familyId)||r.grants?.some(id=>revokedGrants.has(id))))continue;r.invalidated=true;await tx.set(row.key,r);if(r.connection&&r.grant){const source=service.random();await tx.set(key('brokered-event',source),{source,event:{type:'credential-revoked',connection:r.connection,grants:[r.grant],until:Math.ceil((committed_at+360000)/1000)}});}}
   return counts;
  });
- await endLineage(service,ended);await syncEventReaders(service,subject);await service.drainBrokeredEvents();return out;
+ await endLineage(service,ended);await syncEventReaders(service,subject);await service.boundSync?.(subject,clientId);await service.drainBrokeredEvents();return out;
 }

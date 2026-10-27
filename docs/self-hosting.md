@@ -98,7 +98,7 @@ Operator configuration reference. Internal collaborator keys are summarized sepa
 
 ### Core and signup
 
-Node region policy uses `REGION_POLICY=allow-unknown` by default (`block-unknown` is the alternative). `TRUSTED_COUNTRY_HEADER` is unset by default; configure it only for a header overwritten by a trusted reverse proxy. Untrusted client location headers are discarded.
+Node region policy uses `REGION_POLICY=allow-unknown` by default (`block-unknown` is the alternative). `TRUSTED_COUNTRY_HEADER` is unset by default; configure it only for a header overwritten by a trusted reverse proxy. Untrusted client location headers are discarded. `TRUSTED_CLIENT_IP_HEADER` is also unset by default, so per-network rate limits key on the socket address; behind a reverse proxy, set it to a header the proxy overwrites (never appends) with the client's single IP address. Any other value is treated as unknown, and client-supplied `CF-Connecting-IP`, `X-Forwarded-For`, `X-Real-IP` and `CF-Worker` headers are always discarded (provisional, RTC-e review F5). An IPv4-mapped IPv6 address (`::ffff:a.b.c.d`) counts as its IPv4 address and a `%zone` suffix is dropped, from the header and from the socket alike (provisional, RTC-e verification follow-ups).
 
 | Variable | Default | Purpose |
 | --- | --- | --- |

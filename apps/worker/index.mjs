@@ -114,7 +114,7 @@ function resources(bindings,resolveIdentityBadges,flags){
  if(env.FEDERATION&&siteGlobal(env,'BROKERING_ENABLED',true))value.FEDERATION_BROKERING={enabled:true,jwks:()=>env.FEDERATION.get(env.FEDERATION.idFromName(BROKERING_STORE)).brokeringJwks()};
  // Device grant (LA3): mounted, and so declared, only with the flag and every dependency of the declared members.
  const deviceMounted=Boolean(env.FEDERATION)&&deviceGrantMountable(env);
- if(env.FEDERATION)value.FEDERATION_AUTHORITY=federationAuthority({config:value,repository,directory,manifestMounts:{deviceAuthorization:deviceMounted,messagingAddress:messagingAddressMounted(value)},shard:owner=>federationRemote({invoke:(method,args)=>env.FEDERATION.get(env.FEDERATION.idFromName(`${FEDERATION_LAYOUT}/${owner}`)).invoke(method,args,owner)})});
+ if(env.FEDERATION)value.FEDERATION_AUTHORITY=federationAuthority({config:value,repository,directory,manifestMounts:{deviceAuthorization:deviceMounted,messagingAddress:messagingAddressMounted(value),rtcOccupant:true,rtc:true},shard:owner=>federationRemote({invoke:(method,args)=>env.FEDERATION.get(env.FEDERATION.idFromName(`${FEDERATION_LAYOUT}/${owner}`)).invoke(method,args,owner)})});
  // The same front provider serves member-token DPoP RPC (ORG-4 §7.2) under the organization/member flags, independently
  // of the device grant; DEVICE_GRANT.mounted still gates every device route.
  if(env.FEDERATION&&dpopProviderMountable(env)){

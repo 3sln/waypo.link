@@ -63,6 +63,9 @@ const MIN=60000,HOUR=3600000;
 export const LIMITS=Object.freeze({
  pair:{max:6,windowMs:10*MIN},caller:{max:30,windowMs:HOUR},issuerCallee:{max:20,windowMs:HOUR},issuerParent:{max:60,windowMs:HOUR},
  callee:{max:60,windowMs:HOUR},opens:{max:60,windowMs:HOUR},leg:{max:256,windowMs:MIN},
+ // RTC-e verification follow-ups (provisional): caller-initiated directory fetches (`warm` at `open`) per owner, spent
+ // before any directory budget and only when the foreign callee's keys are not already held.
+ warms:{max:20,windowMs:HOUR},
 });
 const limitHash=(name,parts,crypto)=>digest(crypto,JSON.stringify([name,...parts]));
 /**

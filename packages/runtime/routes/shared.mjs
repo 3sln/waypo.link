@@ -17,13 +17,53 @@ export const cookie=(token,local,maxAge=86400)=>`${local?'bindle_session':'__Hos
 export function sessionToken(request,local){const name=local?'bindle_session':'__Host-bindle_session';for(const piece of (request.headers.get('Cookie')||'').split(';')){const [key,...rest]=piece.trim().split('=');if(key===name)return decodeURIComponent(rest.join('='));}return undefined;}
 export function setupCookie(request,local){const name=local?'bindle_setup':'__Host-bindle_setup';for(const piece of (request.headers.get('Cookie')||'').split(';')){const [key,...rest]=piece.trim().split('=');if(key===name){const value=rest.join('=');return /^[a-f0-9-]{72}$/.test(value)?value:undefined;}}}
 export function deviceCookie(request,local){const name=local?'bindle_device':'__Host-bindle_device';for(const piece of (request.headers.get('Cookie')||'').split(';')){const [key,...rest]=piece.trim().split('=');if(key===name)return decodeURIComponent(rest.join('='));}return undefined;}
-export function subnet(value){if(/^\d+\.\d+\.\d+\.\d+$/.test(value))return value.split('.').slice(0,3).join('.')+'/24';if(value.includes(':')){const [left,right='']=value.toLowerCase().split('::');const a=left?left.split(':'):[],b=right?right.split(':'):[];const groups=[...a,...Array(Math.max(0,8-a.length-b.length)).fill('0'),...b];return groups.slice(0,3).map(x=>parseInt(x||'0',16).toString(16)).join(':')+'::/48';}return 'unknown';}
+/** RTC-e verification follow-ups: one canonical spelling of a client address for network keys. A `%zone` suffix is
+ * dropped, and an IPv4-mapped IPv6 address (`::ffff:a.b.c.d`, in any IPv6 spelling, including hex groups) is its IPv4
+ * address, so a dual-stack socket or a proxy header never puts every IPv4 client in one IPv6 /48. Anything else is
+ * returned unchanged (lower-cased for IPv6). */
+export function normalizeClientIp(value){
+ if(typeof value!=='string')return value;let v=value.trim();const zone=v.indexOf('%');if(zone>=0&&v.includes(':'))v=v.slice(0,zone);
+ if(!v.includes(':'))return v;v=v.toLowerCase();
+ const tail=/^(.*:)(\d+\.\d+\.\d+\.\d+)$/.exec(v);let head=v,quad=null;
+ if(tail){quad=tail[2].split('.').map(Number);if(quad.some(n=>n>255))return v;head=tail[1]+((quad[0]<<8)|quad[1]).toString(16)+':'+((quad[2]<<8)|quad[3]).toString(16);}
+ const parts=head.split('::');if(parts.length>2)return v;const a=parts[0]?parts[0].split(':'):[],b=parts.length===2&&parts[1]?parts[1].split(':'):[];
+ const groups=parts.length===2?[...a,...Array(Math.max(0,8-a.length-b.length)).fill('0'),...b]:a;
+ if(groups.length!==8||groups.some(g=>!/^[0-9a-f]{1,4}$/.test(g)))return v;const n=groups.map(g=>parseInt(g,16));
+ if(n.slice(0,5).every(x=>x===0)&&n[5]===0xffff)return [n[6]>>8,n[6]&255,n[7]>>8,n[7]&255].join('.');
+ return v;
+}
+export function subnet(value){value=normalizeClientIp(value);if(/^\d+\.\d+\.\d+\.\d+$/.test(value))return value.split('.').slice(0,3).join('.')+'/24';if(value.includes(':')){const [left,right='']=value.toLowerCase().split('::');const a=left?left.split(':'):[],b=right?right.split(':'):[];const groups=[...a,...Array(Math.max(0,8-a.length-b.length)).fill('0'),...b];return groups.slice(0,3).map(x=>parseInt(x||'0',16).toString(16)).join(':')+'::/48';}return 'unknown';}
 /** The caller network for per-network budgets that must not be split by address rotation: IPv4 /24 (as `subnet`),
  * IPv6 /64 (one end-site allocation, where `subnet` uses /48). Other callers keep `subnet`. */
-export function subnet64(value){const mapped=/^::ffff:(\d+\.\d+\.\d+\.\d+)$/i.exec(value??'');if(mapped)return subnet(mapped[1]);// IPv4-mapped IPv6 is its IPv4 /24 (review 2026-10-23)
+export function subnet64(value){value=normalizeClientIp(value);const mapped=/^::ffff:(\d+\.\d+\.\d+\.\d+)$/i.exec(value??'');if(mapped)return subnet(mapped[1]);// IPv4-mapped IPv6 is its IPv4 /24 (review 2026-10-23)
  if(/^\d+\.\d+\.\d+\.\d+$/.test(value))return subnet(value);if(value.includes(':')){const [left,right='']=value.toLowerCase().split('::');const a=left?left.split(':'):[],b=right?right.split(':'):[];const groups=[...a,...Array(Math.max(0,8-a.length-b.length)).fill('0'),...b];return groups.slice(0,4).map(x=>parseInt(x||'0',16).toString(16)).join(':')+'::/64';}return 'unknown';}
 export async function pseudonym(value,secret){const key=await crypto.subtle.importKey('raw',encoder.encode(secret),{name:'HMAC',hash:'SHA-256'},false,['sign']);const bytes=new Uint8Array(await crypto.subtle.sign('HMAC',key,encoder.encode(value)));return [...bytes].map(b=>b.toString(16).padStart(2,'0')).join('');}
 export async function consume(env,key,windowMs,limit,lifetime=false,peek=false){return env.ABUSE.consume(key,{windowMs,limit,lifetime,...peek?{peek:true}:{}});}
+/** RTC-e review F5 (provisional): a request from another Cloudflare Worker carries `CF-Worker` (the zone that made the
+ * subrequest), and every Worker shares Cloudflare's egress networks, so a key on the source network alone puts every
+ * Worker-hosted provider in one bucket. The header is honoured only as a refinement under a network ceiling: a forged
+ * value buys at most WORKER_NETWORK_CEILING times the per-network budget for the network it really comes from, counting
+ * every admission from that network (with or without a zone). Whether Cloudflare always sets and never passes through
+ * a client's copy is unverified (a production gate). The Node adapter drops any client copy (apps/node/server.mjs). */
+export const WORKER_NETWORK_CEILING=16;
+const workerZone=request=>{const value=request.headers.get('CF-Worker');if(value===null)return null;const zone=value.trim().toLowerCase();return /^[a-z0-9.-]{1,253}$/.test(zone)?zone:'invalid';};
+/**
+ * Per-source-network shedding before any verification (rtc-signaling §8.2; the public relation endpoints): IPv4 /24 or
+ * IPv6 /48 of CF-Connecting-IP (on Node: the socket address, or the configured trusted proxy header), refined by
+ * `CF-Worker` when present (above). Answers {ok, source}: `source` is the pseudonymous network key (an HMAC, never an
+ * address) the caller may pass on, or null. Verification follow-ups: `source` is always the plain network key, also when
+ * a zone is present (a zone never buys its own roster source), and every admission from the network spends its ceiling
+ * `${scope}/n/<network>` (WORKER_NETWORK_CEILING x `limit`), so the network total really is at most 16x. Fails closed
+ * off loopback without an abuse store and a hash secret.
+ */
+export async function admitSourceNetwork(env,request,local,scope,limit){
+ const secret=env.ABUSE_HASH_KEY||env.KEY_ENCRYPTION_KEY,remote=request.headers.get('CF-Connecting-IP')||(local?'127.0.0.1':'unknown');
+ if(!secret||typeof env.ABUSE?.consume!=='function')return {ok:local===true,source:null};
+ const net=subnet(remote),network=await pseudonym(net,secret),zone=workerZone(request);
+ const narrow=zone===null?`${scope}/${network}`:`${scope}/w/${network}/${await pseudonym(net+'\nworker\n'+zone,secret)}`;
+ const ok=await consume(env,narrow,60000,limit)===true&&await consume(env,`${scope}/n/${network}`,60000,limit*WORKER_NETWORK_CEILING)===true;
+ return {ok,source:network};
+}
 export async function limit(env,{operation,remoteIP,address,region,handle,phase,onDenied,signupKind,admissionId}){
   const secret=env.ABUSE_HASH_KEY||env.KEY_ENCRYPTION_KEY;if(!secret)return false;
   const ip=await pseudonym(address||remoteIP||'unknown',secret);// `address`: an optional coarser per-address key (an IPv6 /64)
@@ -40,7 +80,7 @@ export function flagEnabled(env,name,ctx={},strict=false){const flags=routeFlags
 export const flagGlobal=(env,name)=>routeFlags(env).global(name)||flagEnabled(env,name)&&routeFlags(env).envState(name).state==='force-on-legacy';
 /** Legacy mounts stay hidden until console adoption. Once managed, retained owner paths ignore targeting and kills. */
 export const flagReadable=(env,name,strict=false)=>routeFlags(env).version>0||flagEnabled(env,name,{},strict);
-export const sessionFeatures=(env,owner)=>{const ctx={subject:{kind:'account',owner}};return {identityTransferOutEnabled:flagEnabled(env,'IDENTITY_TRANSFER_OUT_ENABLED',ctx),identityTransferInEnabled:flagEnabled(env,'IDENTITY_TRANSFER_IN_ENABLED',ctx),identitySuccessorAdoptionEnabled:flagEnabled(env,'IDENTITY_SUCCESSOR_ADOPTION_ENABLED',ctx),organizationsEnabled:flagEnabled(env,'ORGANIZATIONS_ENABLED',ctx,true),memberCertificatesEnabled:flagEnabled(env,'MEMBER_CERTIFICATES_ENABLED',ctx,true),intentLinksEnabled:flagEnabled(env,'INTENT_LINKS_ENABLED',ctx),deviceAuthorizationEnabled:flagEnabled(env,'DEVICE_AUTHORIZATION_ENABLED',ctx),incrementalAuthorizationEnabled:flagEnabled(env,'INCREMENTAL_AUTH_ENABLED',ctx)&&env.INCREMENTAL_AUTHORIZATION?.mounted===true,integrationsEnabled:flagEnabled(env,'INTEGRATIONS_ENABLED',ctx,true),eventBusesEnabled:flagEnabled(env,'EVENT_BUSES_ENABLED',ctx,true),incrementalAuthEnabled:flagEnabled(env,'INCREMENTAL_AUTH_ENABLED',ctx)&&env.INCREMENTAL_AUTHORIZATION?.mounted===true,activityV2Enabled:flagEnabled(env,'ACTIVITY_V2_ENABLED',ctx),semanticSearchEnabled:flagEnabled(env,'SEMANTIC_SEARCH_ENABLED',ctx),extensionsEnabled:flagEnabled(env,'EXTENSIONS_ENABLED',ctx),overQuotaRetentionEnabled:flagEnabled(env,'OVER_QUOTA_RETENTION_ENABLED',ctx),accountExportEnabled:flagEnabled(env,'ACCOUNT_EXPORT_ENABLED',ctx),accountDeletionEnabled:flagEnabled(env,'ACCOUNT_DELETION_ENABLED',ctx),emailRemovalEnabled:flagEnabled(env,'EMAIL_REMOVAL_ENABLED',ctx)};};
+export const sessionFeatures=(env,owner)=>{const ctx={subject:{kind:'account',owner}};return {identityTransferOutEnabled:flagEnabled(env,'IDENTITY_TRANSFER_OUT_ENABLED',ctx),identityTransferInEnabled:flagEnabled(env,'IDENTITY_TRANSFER_IN_ENABLED',ctx),identitySuccessorAdoptionEnabled:flagEnabled(env,'IDENTITY_SUCCESSOR_ADOPTION_ENABLED',ctx),organizationsEnabled:flagEnabled(env,'ORGANIZATIONS_ENABLED',ctx,true),memberCertificatesEnabled:flagEnabled(env,'MEMBER_CERTIFICATES_ENABLED',ctx,true),intentLinksEnabled:flagEnabled(env,'INTENT_LINKS_ENABLED',ctx),deviceAuthorizationEnabled:flagEnabled(env,'DEVICE_AUTHORIZATION_ENABLED',ctx),incrementalAuthorizationEnabled:flagEnabled(env,'INCREMENTAL_AUTH_ENABLED',ctx)&&env.INCREMENTAL_AUTHORIZATION?.mounted===true,integrationsEnabled:flagEnabled(env,'INTEGRATIONS_ENABLED',ctx,true),eventBusesEnabled:flagEnabled(env,'EVENT_BUSES_ENABLED',ctx,true),incrementalAuthEnabled:flagEnabled(env,'INCREMENTAL_AUTH_ENABLED',ctx)&&env.INCREMENTAL_AUTHORIZATION?.mounted===true,activityV2Enabled:flagEnabled(env,'ACTIVITY_V2_ENABLED',ctx),semanticSearchEnabled:flagEnabled(env,'SEMANTIC_SEARCH_ENABLED',ctx),extensionsEnabled:flagEnabled(env,'EXTENSIONS_ENABLED',ctx),overQuotaRetentionEnabled:flagEnabled(env,'OVER_QUOTA_RETENTION_ENABLED',ctx),accountExportEnabled:flagEnabled(env,'ACCOUNT_EXPORT_ENABLED',ctx),accountDeletionEnabled:flagEnabled(env,'ACCOUNT_DELETION_ENABLED',ctx),emailRemovalEnabled:flagEnabled(env,'EMAIL_REMOVAL_ENABLED',ctx),rtcSignalingEnabled:flagEnabled(env,'RTC_SIGNALING_ENABLED',ctx)};};
 export function signupEnabled(env,ctx={}){
  const flags=routeFlags(env,ctx),decision=flags.evaluate('SIGNUP_ENABLED'),raw=flags.envState('SIGNUP_ENABLED').raw,local=env.LOCAL_DEVELOPMENT==='true',present=value=>typeof value==='string'&&value.trim().length>0;
  // Local signup and RELEASE_READY were implicit defaults before console ownership.
