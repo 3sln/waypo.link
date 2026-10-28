@@ -18,11 +18,11 @@ const token=()=>Buffer.from(crypto.getRandomValues(new Uint8Array(24))).toString
 // A same-host world: a real requesting AccountController (tier stubbed per test), the developer identity in the
 // directory, the population census port and a recording mint double.
 async function world({population='all-active',mint=true}={}){
- const closers=[],state={population,tier:'free',mints:[],mintAnswer:null};
+ const closers=[],state={population,tier:'free',mints:[],mintAnswer:null,tierCalls:[]};
  const metadata=new SqliteMetadata(':memory:'),stored=new Map(),bucket={put:async(k,b)=>{stored.set(k,new Uint8Array(b));},get:async k=>stored.has(k)?{size:stored.get(k).byteLength,arrayBuffer:async()=>stored.get(k).buffer.slice(0)}:null,delete:async k=>{stored.delete(k);}};closers.push(()=>metadata.close());
  const userId=crypto.randomUUID(),developerId=crypto.randomUUID(),assignmentId=crypto.randomUUID();
  const controller=new AccountController({metadata,gate:new SerialGate(),blobs:bucket,archives:bucket,config:{APP_ORIGIN:origin,KEY_ENCRYPTION_KEY:Buffer.alloc(32,12).toString('base64'),WORK_LIMITS_ENABLED:'false',STORAGE_WRITE_ENABLED:'false'}});
- await controller.warm(userId);controller.developerContactTier=async()=>{if(state.tier==='error')throw Object.assign(Error('stale'),{code:'developer_contact_eligibility_unavailable'});return state.tier;};
+ await controller.warm(userId);controller.developerContactTier=async(owner,options)=>{state.tierCalls.push(options);if(state.tier==='error')throw Object.assign(Error('stale'),{code:'developer_contact_eligibility_unavailable'});return state.tier;};
  const recipient={id:developerId,handle:'n.dev',assignmentId,status:'active',systemIdentity:{version:1,handle:'ray',role:'developer',assignmentId,bootstrapId:crypto.randomUUID(),claimDigest:'a'.repeat(64)}};
  const env={APP_ORIGIN:origin,DEVELOPER_CONTACT_HANDLE:'ray',IDENTITY_REPOSITORY:{findByHandle:async handle=>handle==='ray'?recipient:null},
   DEVELOPER_CONTACT_POPULATION:{policy:async()=>{if(state.population==='throw')throw Error('down');const now=Date.now();return {mode:state.population,observedAt:now,validUntil:now+60000};}},
@@ -122,3 +122,8 @@ test('developer contact is off without DEVELOPER_CONTACT_HANDLE: no lookup and n
  assert.deepEqual(result.value,{available:false,reason:'developer-unavailable'});assert.deepEqual(lookups,['n.someone']);
  await http.scheduled({},env,{waitUntil:p=>waits.push(p)});await Promise.all(waits);assert.deepEqual(census,[1]);
 });
+
+test('review L5: GET reads the cached entitlement (no forced billing refresh); POST re-checks with a fresh one',async()=>{const w=await world();try{
+ w.state.tier='paid';await w.route('GET');assert.deepEqual(w.state.tierCalls,[{fresh:false}]);
+ await w.route('POST');assert.deepEqual(w.state.tierCalls.at(-1),{fresh:true});
+}finally{w.close();}});

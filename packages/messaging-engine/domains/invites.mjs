@@ -9,9 +9,10 @@
 //  - invitations: a link record is uses plus expiry (plus its id, an owner-private name, the token digest, its state
 //    and a redemption ledger). The "Invite a person" template creates the link, an admission rule ("arrived via this
 //    link" → place in Contacts) and uses the Contacts list as its target. Relationship lives on lists, never on links.
-//  - admission: a verified redemption is handed to the owner's rules; placement in a `message` or `receive-only` list
-//    accepts (the drain sends the invitation response), `request` only holds, no matching rule holds for review, and a
-//    blocked redeemer is refused silently (no response; §4.5 makes held, ignored and refused indistinguishable).
+//  - admission: a verified redemption is handed to the owner's rules; placement in a `message` list accepts (the drain
+//    sends the invitation response), `request` and (until CL-21) `receive-only` only hold, no matching rule holds for
+//    review, and a blocked redeemer is refused silently (no response; §4.5 makes held, ignored and refused
+//    indistinguishable).
 //
 // Wire behaviour (spec): receive.redeem runs §4.4 steps 3–7 after the edge ran steps 1–2 (handleConversationIngress);
 // receive.first-contact runs §6.7 steps 4–5 for credential-less first contact. The edge index holds, per token digest,
@@ -47,8 +48,10 @@ const te=new TextEncoder();
 const token=(n=32)=>P.base64url(globalThis.crypto.getRandomValues(new Uint8Array(n)));
 
 // Provisional application policy values (rethink §4.4, §4.5; reference values, not protocol limits).
-export const INVITE_POLICY=Object.freeze({personDefaultMs:7*DAY,personMaxMs:30*DAY,boundMinMs:5*60000,maxLinks:256,maxLedger:64,maxRules:512,
- perInvitationPerHour:30,maxLists:64,maxMembers:4096,pendingRedemptions:64});
+// maxLinks counts the owner's open (live, unexpired, unused) links; system-minted bound links (developer contact) have
+// their own cap, maxSystemLinks (review M4). pendingRedemptions counts only redemptions still pending (review M2).
+export const INVITE_POLICY=Object.freeze({personDefaultMs:7*DAY,personMaxMs:30*DAY,boundMinMs:5*60000,maxLinks:256,maxSystemLinks:1024,maxLedger:64,maxRules:512,
+ perInvitationPerHour:30,unverifiablePerInvitationPerHour:10,maxLists:64,maxMembers:4096,pendingRedemptions:64});
 export const POLICIES=Object.freeze(['message','request','receive-only']);
 // Most permissive first (§4.4): can message you > request > receive only.
 const RANK=Object.freeze({message:3,request:2,'receive-only':1});
@@ -67,12 +70,24 @@ const tokenDigest=t=>P.sha256(globalThis.crypto,t);
 const listView=(l,count)=>({id:l.id,name:l.name,policy:l.policy,builtin:Boolean(l.builtin),members:count});
 async function listRow(store,id){const row=await store.get(INV.list(id));return row??BUILTINS.find(b=>b.id===id)??null;}
 async function ensureBuiltins(tx,now){for(const b of BUILTINS)if(!await tx.get(INV.list(b.id)))await tx.put(INV.list(b.id),{...b,createdAt:now});}
-/** Adds `principal` to `list` inside the caller's transaction. Returns whether this call created the membership. */
-export async function addMember(tx,list,principal,{via,now,binding,selfCreated=false}){
+// Provenance (review L3): a membership created by a redemption flow is `selfCreated` and lists, in `redemptions`, the
+// token digests of the redemptions that rely on it. Another redemption adds its digest; any other reason (a manual add,
+// an inviter-side admission, an accepted redemption) makes the membership permanent. Rollback removes a digest and
+// deletes the membership only when no reason remains.
+const heldBy=m=>m?.selfCreated?(Array.isArray(m.redemptions)?m.redemptions:m.via?.tokenDigest?[m.via.tokenDigest]:[]):[];
+const permanent=m=>{const {selfCreated,redemptions,...rest}=m;return rest;};
+/** Adds `principal` to `list` inside the caller's transaction. Returns whether this call created the membership.
+ * `redemption` (a token digest) marks a redeemer-side admission that rollback may undo (with `selfCreated`). */
+export async function addMember(tx,list,principal,{via,now,binding,selfCreated=false,redemption}){
  await ensureBuiltins(tx,now);if(!await tx.get(INV.list(list)))fault('not_found','That list does not exist.',404);
- const key=INV.member(list,principal),prior=await tx.get(key);if(prior){if(binding&&!prior.binding)await tx.put(key,{...prior,binding});return false;}
+ const key=INV.member(list,principal),prior=await tx.get(key);
+ if(prior){
+  let next=binding&&!prior.binding?{...prior,binding}:prior;
+  if(prior.selfCreated)next=redemption?{...next,redemptions:[...new Set([...heldBy(prior),redemption])]}:permanent(next);
+  if(next!==prior)await tx.put(key,next);return false;
+ }
  if((await tx.list({prefix:INV.members(list)})).size>=INVITE_POLICY.maxMembers)fault('limit_reached','That list is full.',409);
- await tx.put(key,{principal:who(principal),list,addedAt:now,via,...binding?{binding}:{},...selfCreated?{selfCreated:true}:{}});await tx.put(INV.memberOf(principal,list),{list});return true;
+ await tx.put(key,{principal:who(principal),list,addedAt:now,via,...binding?{binding}:{},...selfCreated?{selfCreated:true,...redemption?{redemptions:[redemption]}:{}}:{}});await tx.put(INV.memberOf(principal,list),{list});return true;
 }
 export async function removeMember(tx,list,principal){const key=INV.member(list,principal);if(!await tx.get(key))return false;await tx.delete(key);await tx.delete(INV.memberOf(principal,list));return true;}
 /** The owner policy that gates first contact from `principal` (§6.7 step 5): 'blocked', the most permissive policy
@@ -133,7 +148,7 @@ async function currentDelegation(delegateKeys,config){
 }
 /** Creates one invitation from a template inside a fresh token (shared by the owner operation and the provider's
  * developer-contact mint hook). Returns {invite, data}; the token appears only in `data`, once. */
-export async function createInvitation({store,delegateKeys,random,clock},{template='person',name,bound,expiresIn,rule:ruleInput}){
+export async function createInvitation({store,delegateKeys,random,clock},{template='person',name,bound,expiresIn,rule:ruleInput,system=false}){
  if(template!=='person')invalid('Choose a template.');
  const now=clock.now(),config=await readConfig(store),delegation=await currentDelegation(delegateKeys,config);
  const ms=expiresIn===undefined?INVITE_POLICY.personDefaultMs:expiresIn;
@@ -141,12 +156,23 @@ export async function createInvitation({store,delegateKeys,random,clock},{templa
  const target=bound===undefined||bound===null?null:principalInput(bound);if(target&&same(target,config.principal))invalid('That is you.');
  const label=name===undefined||name===null?(target?null:'Invitation'):nameInput(name);
  const secret=token(32),digest=await tokenDigest(secret),id=random.uuid(),expiresAt=now+ms;
- const link={id,name:label,template,maxUses:1,used:0,bound:target,expiresAt,state:'live',createdAt:now,tokenDigest:digest,ledger:[],redeemers:[]};
+ const link={id,name:label,template,maxUses:1,used:0,bound:target,expiresAt,state:'live',createdAt:now,tokenDigest:digest,ledger:[],redeemers:[],...system?{system:true}:{}};
  const rule={id:random.uuid(),when:{link:id},place:[ruleInput?.list??CONTACTS_LIST],...ruleInput?.tags?{tags:ruleInput.tags}:{},createdBy:'template',createdAt:now};
  await store.transaction(async tx=>{
-  await ensureBuiltins(tx,now);if(!await tx.get(INV.list(rule.place[0])))fault('not_found','That list does not exist.',404);
-  if([...(await tx.list({prefix:INV.links})).values()].filter(l=>l.state==='live'&&l.expiresAt>now).length>=INVITE_POLICY.maxLinks)fault('limit_reached','Too many open invitations.',409);
-  if((await tx.list({prefix:INV.rules})).size>=INVITE_POLICY.maxRules)fault('limit_reached','Too many rules.',409);
+  await ensureBuiltins(tx,now);const list=await tx.get(INV.list(rule.place[0]));if(!list)fault('not_found','That list does not exist.',404);
+  // Coordinator decision (provisional, 2026-10-28): until CL-21 content refusal exists, an invitation never targets a
+  // `receive-only` list, since accepting would let the redeemer message freely through the conversation.
+  if(list.policy==='receive-only')invalid('An invitation cannot place people in a receive-only list.');
+  const links=await tx.list({prefix:INV.links}),open=l=>l.state==='live'&&l.expiresAt>now&&l.used<l.maxUses;
+  // Review M4: a system mint replaces the earlier open link bound to the same principal (its token is not kept, so it
+  // cannot be returned again), and system mints have their own cap; used links never count as open.
+  if(system&&target)for(const [key,l] of links)if(l.system&&open(l)&&same(l.bound,target)){
+   const revoked={...l,state:'revoked',revokedAt:now};await tx.put(key,revoked);links.set(key,revoked);await publishInvite(tx,revoked,now);
+   for(const [k,r] of await tx.list({prefix:INV.rules}))if(r.when?.link===l.id)await tx.delete(k);
+  }
+  const openIds=new Set([...links.values()].filter(l=>open(l)&&Boolean(l.system)===system).map(l=>l.id));
+  if(openIds.size>=(system?INVITE_POLICY.maxSystemLinks:INVITE_POLICY.maxLinks))fault('limit_reached','Too many open invitations.',409);
+  if(!system&&[...(await tx.list({prefix:INV.rules})).values()].filter(r=>!r.when?.link||openIds.has(r.when.link)).length>=INVITE_POLICY.maxRules)fault('limit_reached','Too many rules.',409);
   await tx.put(INV.link(id),link);await tx.put(INV.token(digest),id);await tx.put(INV.rule(rule.id),rule);await publishInvite(tx,link,now);
  });
  return {invite:linkView(link),data:{inviter:{iss:config.principal.issuer,sub:config.principal.subject},token:secret,delegation,expires_at:Math.floor(expiresAt/1000)}};
@@ -154,7 +180,8 @@ export async function createInvitation({store,delegateKeys,random,clock},{templa
 // Developer contact (rethink §4.7, CR-C5; provisional): a single-use invitation bound to one principal with a short
 // expiry, whose rule places the redeemer in the built-in-on-demand "Users" list (`message`) and tags it
 // `priority:<tier>` (an owner-private label). System actor only: the trusted composition that carries the provider's
-// mint request over the developer identity's own app grant calls it; no owner or ingress route reaches it.
+// mint request over the developer identity's own app grant calls it; no owner or ingress route reaches it. A new mint for
+// a principal revokes that principal's earlier open developer-contact link (review M4).
 export const USERS_LIST='users';
 export const DEVELOPER_TIERS=Object.freeze(['free','paid','plus','ultra']);
 export class InvitesMintBound extends MailboxAction {
@@ -163,7 +190,7 @@ export class InvitesMintBound extends MailboxAction {
   actorOwner(this.actor,['system']);const {principal,tier,expiresIn=HOUR}=this.input??{};
   if(!DEVELOPER_TIERS.includes(tier))invalid('Choose a tier.');if(!Number.isSafeInteger(expiresIn)||expiresIn<INVITE_POLICY.boundMinMs||expiresIn>HOUR)invalid('Choose an expiry of at most one hour.');
   await contacts.store.transaction(async tx=>{await ensureBuiltins(tx,clock.now());if(!await tx.get(INV.list(USERS_LIST)))await tx.put(INV.list(USERS_LIST),{id:USERS_LIST,name:'Users',policy:'message',builtin:false,createdAt:clock.now()});});
-  return createInvitation({store:contacts.store,delegateKeys,random,clock},{template:'person',name:'Developer contact',bound:principalInput(principal),expiresIn,rule:{list:USERS_LIST,tags:[`priority:${tier}`]}});
+  return createInvitation({store:contacts.store,delegateKeys,random,clock},{template:'person',name:'Developer contact',bound:principalInput(principal),expiresIn,rule:{list:USERS_LIST,tags:[`priority:${tier}`]},system:true});
  }
 }
 export class InvitesCreate extends MailboxAction {
@@ -197,9 +224,10 @@ async function admission(tx,linkId,principal){
  const place=new Set(),tags=new Set();
  for(const [,r] of await tx.list({prefix:INV.rules}))if(r.when?.link===linkId){for(const l of r.place)place.add(l);for(const t of r.tags??[])tags.add(t);}
  let best=null;for(const list of place){const l=await tx.get(INV.list(list))??BUILTINS.find(b=>b.id===list);if(l&&(best===null||RANK[l.policy]>RANK[best]))best=l.policy;}
- // Placement in a `message` or `receive-only` list accepts (a receive-only member's conversation lets the owner
- // deliver); `request` alone holds; no placement rule holds for review (the safe default).
- return {decision:best==='message'||best==='receive-only'?'accept':'hold',place:[...place],tags:[...tags]};
+ // Placement in a `message` list accepts; `request` alone holds; no placement rule holds for review (the safe default).
+ // Until CL-21 content refusal exists, `receive-only` placement also holds (coordinator decision, provisional): invitations
+ // cannot target such a list, and one whose list became receive-only after creation is not accepted automatically.
+ return {decision:best==='message'?'accept':'hold',place:[...place],tags:[...tags]};
 }
 
 // ---------------------------------------------------------------- shared receive helpers
@@ -210,15 +238,19 @@ async function receiptSigner(delegateKeys,config,now){
  if(s.kid!==`jkt:${c.jkt}`||c.iss!==config.principal.issuer||c.sub!==config.principal.subject||!c.purposes.includes(P.PURPOSES.receipt)||c.client.ingress!==config.ingress||now<c.iat*1000-P.LIMITS.clockSkewMs||now>c.exp*1000+P.LIMITS.clockSkewMs||now<c.since*1000)protocol('recipient_unavailable',{retryAfter:60});
  return Object.freeze({kid:s.kid,privateKey:s.privateKey,delegation:s.delegation});
 }
-// Pre-crypto limiters (§7.4, §4.5), in memory and bounded per mailbox store: per invitation (30 per hour, charged on
-// every attempt that reaches the mailbox) and, as in receive.mjs, refusals after verification per verified principal.
+// Limiters (§7.4, §4.5), in memory and bounded per mailbox store: per invitation (30 per hour, charged on every attempt
+// that reaches the mailbox, before any crypto); unverifiable redemptions per token digest (checked before verification,
+// never keyed by the unverified claimed principal, review M1); and first-contact policy refusals per verified principal,
+// checked only after verification so no pre-verification result depends on owner policy (review L2, §6.7).
 const limiters=new WeakMap();
 const limiterFor=store=>{let l=limiters.get(store);if(!l){l=boundedCache(4096);limiters.set(store,l);}return l;};
 function chargeWindow(store,key,max,windowMs,now){const l=limiterFor(store),row=l.get(key,now)??{count:0,until:now+windowMs};if(row.count>=max){const e=new MailboxFault('rate_limited','Too many messages. Try again later.',429);e.retryAfter=Math.max(1,Math.ceil((row.until-now)/1000));throw e;}l.set(key,{count:row.count+1,until:row.until},row.until);}
 export const FIRST_CONTACT_REFUSALS=Object.freeze({windowMs:HOUR,principal:20});
-const refusalKey=p=>`refused|${pk(p)}`;
-function checkRefusals(store,principal,now){const row=limiterFor(store).get(refusalKey(principal),now);if(row&&row.count>=FIRST_CONTACT_REFUSALS.principal){const e=new MailboxFault('rate_limited','Too many messages. Try again later.',429);e.retryAfter=Math.max(1,Math.ceil((row.until-now)/1000));throw e;}}
-function countRefusal(store,principal,now){const l=limiterFor(store),row=l.get(refusalKey(principal),now)??{count:0,until:now+FIRST_CONTACT_REFUSALS.windowMs};l.set(refusalKey(principal),{count:row.count+1,until:row.until},row.until);}
+const refusalKey=p=>`refused|${pk(p)}`,unverifiableKey=digest=>`unverifiable|${digest}`;
+function checkCount(store,key,max,now){const row=limiterFor(store).get(key,now);if(row&&row.count>=max){const e=new MailboxFault('rate_limited','Too many messages. Try again later.',429);e.retryAfter=Math.max(1,Math.ceil((row.until-now)/1000));throw e;}}
+function count(store,key,windowMs,now){const l=limiterFor(store),row=l.get(key,now)??{count:0,until:now+windowMs};l.set(key,{count:row.count+1,until:row.until},row.until);}
+const checkRefusals=(store,principal,now)=>checkCount(store,refusalKey(principal),FIRST_CONTACT_REFUSALS.principal,now);
+const countRefusal=(store,principal,now)=>count(store,refusalKey(principal),FIRST_CONTACT_REFUSALS.windowMs,now);
 function recipientHere(p,config){if(p.recipient.issuer!==config.principal.issuer||p.recipient.owner!==config.principal.subject)protocol('recipient_unavailable',{retryAfter:60});}
 async function verifyAuthor({envelope,directory,store,now}){
  const learned=[],ports=verificationPorts({directory,store,now,learned});
@@ -262,10 +294,11 @@ export class ReceiveRedeem extends MailboxAction {
   const live=Boolean(link)&&link.state==='live'&&link.expiresAt>now&&(link.used<link.maxUses||Boolean(prior))&&(!link.bound||same(link.bound,claimed));
   if(!matches||!live)protocol('invite_invalid');
   // The acceptance window follows the token checks, so the edge pre-filter and the mailbox agree on precedence.
-  P.checkWindow(envelope,now);checkRefusals(store,claimed,now);
-  // Step 4: same-host authors only (CL-24), then author verification with the status check.
+  P.checkWindow(envelope,now);checkCount(store,unverifiableKey(p.recipient.invite),INVITE_POLICY.unverifiablePerInvitationPerHour,now);
+  // Step 4: same-host authors only (CL-24), then author verification with the status check. A failed verification is
+  // counted against the token digest, never against the claimed principal (review M1).
   if(claimed.issuer!==config.principal.issuer)protocol('author_unverifiable');
-  let verified;try{verified=await verifyAuthor({envelope,directory,store,now});}catch(error){if(error?.code==='author_unverifiable'&&error.status!==503)countRefusal(store,claimed,now);throw error;}
+  let verified;try{verified=await verifyAuthor({envelope,directory,store,now});}catch(error){if(error?.code==='author_unverifiable'&&error.status!==503)count(store,unverifiableKey(p.recipient.invite),HOUR,now);throw error;}
   const author=verified.author,principal=who(author.principal);
   const signer=await receiptSigner(delegateKeys,config,now);
   const receipt=await P.signReceipt(await P.receiptPayload(envelope,{recipient:config.principal,ingress:config.ingress,receivedAt:now,bodyDigest:null}),signer);
@@ -312,9 +345,11 @@ export class ReceiveFirstContact extends MailboxAction {
   recipientHere(p,config);P.checkWindow(envelope,now);
   const id=await P.sha256(globalThis.crypto,P.replayKey(envelope)),prior=await store.get(KEYS.replay(id));
   await requireRestored(store,{envelope,replay:Boolean(prior)});
-  // No refusal before verification depends on owner policy (§6.7): only budgets and the verified-refusal limiter.
-  if(!prior){ownerExhausted(await store.get(KEYS.budget),{now,plan:config.plan});checkRefusals(store,who(p.author.principal),now);}
+  // No refusal before verification depends on owner policy or on the claimed principal's history (§6.7, review L2):
+  // only budgets. The refusal limiter applies to the verified principal.
+  if(!prior)ownerExhausted(await store.get(KEYS.budget),{now,plan:config.plan});
   const verified=await verifyAuthor({envelope,directory,store,now}),author=verified.author,principal=who(author.principal);
+  if(!prior)checkRefusals(store,principal,now);
   if(!P.statusRequired(envelope)&&await knownRevoked({directory,store,now},author.jkt))protocol('author_unverifiable',{revoked:true});
   // Step 5: owner policy on the verified principal. Policy refusal and block share one code and timing class.
   const policy=await firstContactPolicy(store,principal);
@@ -387,13 +422,13 @@ export class InvitesRedeem extends MailboxAction {
   if(existing&&existing.state!=='rolled-back'){if(existing.state==='pending'&&!existing.submitted)await resume({store,outbox,delegateKeys,clock},existing,data);return {state:existing.state,conversationId:existing.conversationId};}
   if(existing)fault('invite_used','This invitation was already used or is no longer valid; ask for a new one.',410);
   const inviter=await verifyInviter({directory,store,now,config},data);
-  if((await store.list({prefix:INV.pendings})).size>=INVITE_POLICY.pendingRedemptions)fault('limit_reached','Too many invitations in progress.',409);
+  if([...(await store.list({prefix:INV.pendings})).values()].filter(r=>r.state==='pending').length>=INVITE_POLICY.pendingRedemptions)fault('limit_reached','Too many invitations in progress.',409);
   const operationId=globalThis.crypto.randomUUID();
   // Step 4 happened in the handler (the viewer confirmed); admit the inviter to message the viewer, remembering
   // whether this flow created the admission so rollback never removes an existing contact.
   const created=await store.transaction(async tx=>{
    if(await tx.get(INV.pending(digest)))fault('conflict','This invitation is already in progress.',409);
-   const selfCreated=await addMember(tx,CONTACTS_LIST,inviter.principal,{via:{kind:'redeemed',tokenDigest:digest},now,selfCreated:true});
+   const selfCreated=await addMember(tx,CONTACTS_LIST,inviter.principal,{via:{kind:'redeemed',tokenDigest:digest},now,selfCreated:true,redemption:digest});
    const row={tokenDigest:digest,inviter:who(inviter.principal),inviterKeyId:inviter.keyId,ingress:inviter.ingress,identityURI:inviter.principal.identityURI,operationId,selfCreated,state:'pending',submitted:false,createdAt:now,expiresAt:data.expiresAt};
    await tx.put(INV.pending(digest),row);return row;
   });
@@ -407,23 +442,36 @@ async function resume({store,outbox,delegateKeys,clock},row,data){
  await store.transaction(async tx=>{const cur=await tx.get(INV.pending(row.tokenDigest));if(cur&&cur.state==='pending')await tx.put(INV.pending(row.tokenDigest),{...cur,submitted:true,conversationId,returnExpiresAt:returnExpiresAt??cur.returnExpiresAt});});
  return {state:'pending',conversationId};
 }
-// Step 6, rollback: only a self-created admission, only with no conversation with the inviter, and only after a
-// terminal error or an expired return control. Settled rows are kept (state) so a reused token reads as used.
+// Step 6, rollback: only a self-created admission no other reason holds (review L3), only with no conversation with the
+// inviter, and only after a terminal error or an expired return control. Settled rows are kept (state) so a reused
+// token reads as used, until the inviter has certainly pruned the token (its expiry plus the receipt-retention time;
+// review M2), then pruned, so the rows and the alarm's sweep end.
+const settledUntil=row=>Math.max(row.settledAt??0,row.expiresAt??(row.createdAt+INVITE_POLICY.personMaxMs))+P.LIMITS.retentionMs;
+async function releaseMembership(tx,row,{keep}){
+ const key=INV.member(CONTACTS_LIST,row.inviter),m=await tx.get(key),held=heldBy(m);if(!held.includes(row.tokenDigest))return;
+ const rest=held.filter(d=>d!==row.tokenDigest);
+ if(keep)await tx.put(key,permanent(m));
+ else if(rest.length)await tx.put(key,{...m,redemptions:rest});
+ else await removeMember(tx,CONTACTS_LIST,row.inviter);
+}
 export class InvitesSweep extends MailboxAction {
  static operation='invites.sweep';static deps=['contacts','clock'];static changes='contacts-changed';
  async run({contacts,clock}){
-  actorOwner(this.actor,['owner','system']);const store=contacts.store,now=clock.now();let rolledBack=0,settled=0;
+  actorOwner(this.actor,['owner','system']);const store=contacts.store,now=clock.now();let rolledBack=0,settled=0,forgotten=0;
   for(const [key,row] of await store.list({prefix:INV.pendings})){
-   if(row.state!=='pending')continue;
+   if(row.state!=='pending'){
+    if(forgotten<64&&settledUntil(row)<=now){await store.transaction(async tx=>{const cur=await tx.get(key);if(cur&&cur.state!=='pending'&&settledUntil(cur)<=now)await tx.delete(key);});forgotten++;}
+    continue;
+   }
    const message=row.submitted?await store.get(`bb:send:message/${row.operationId}`):null,tasks=message?await Promise.all(message.tasks.map(k=>store.get(k))):[];
    const terminal=tasks.some(t=>t?.state==='rejected'),expired=Number.isSafeInteger(row.returnExpiresAt)&&row.returnExpiresAt<=now;
    if(!terminal&&!expired)continue;
    await store.transaction(async tx=>{
     const cur=await tx.get(key);if(!cur||cur.state!=='pending')return;
     const room=cur.conversationId?await tx.get(`conv/room/${cur.conversationId}`):null,peer=room?await tx.get(`conv/peer/${room.id}/${pk(cur.inviter)}`):null;
-    if(peer?.state==='accepted'){await tx.put(key,{...cur,state:'accepted',settledAt:now});settled++;return;}
+    if(peer?.state==='accepted'){await releaseMembership(tx,cur,{keep:true});await tx.put(key,{...cur,state:'accepted',settledAt:now});settled++;return;}
     let conversation=false;for(const [,r] of await tx.list({prefix:'conv/room/'})){if(r.id===cur.conversationId||r.state!=='active')continue;const pr=await tx.get(`conv/peer/${r.id}/${pk(cur.inviter)}`);if(pr?.state==='accepted'){conversation=true;break;}}
-    if(cur.selfCreated&&!conversation){const m=await tx.get(INV.member(CONTACTS_LIST,cur.inviter));if(m?.via?.tokenDigest===cur.tokenDigest)await removeMember(tx,CONTACTS_LIST,cur.inviter);}
+    await releaseMembership(tx,cur,{keep:conversation});
     await tx.put(key,{...cur,state:'rolled-back',reason:terminal?'refused':'expired',settledAt:now});rolledBack++;
    });
   }
@@ -439,7 +487,7 @@ export class InvitesSweep extends MailboxAction {
     await queueEdge(tx,{kind:'invite',digest:l.tokenDigest,state:'dead',redeemers:[],expiresAt:l.expiresAt});});
    pruned++;
   }
-  return {rolledBack,settled,...pruned?{pruned}:{}};
+  return {rolledBack,settled,...pruned?{pruned}:{},...forgotten?{forgotten}:{}};
  }
 }
 export const INVITE_OPERATIONS=[ListsList,ListsMembers,ListsCreate,ListsSetPolicy,ListsAdd,ListsRemove,InvitesMintBound,InvitesCreate,InvitesRevoke,InvitesList,ReceiveRedeem,ReceiveFirstContact,InvitesInspect,InvitesRedeem,InvitesSweep];

@@ -4,7 +4,9 @@
 // the paths stay 404 and no allowlist reveals them. The contact landing, inspection, oEmbed and audience-response
 // routes stay in their current modules until the cutover moves them here.
 //
-// BB-C1b: the `messaging-address` descriptor (messaging §2.3). `GET <contact link>` with exactly
+// BB-C1b: the contact-link ingress descriptor. Its `messaging-address` consumer is withdrawn (contacts spike CL-4, CR-X1;
+// the messaging-mailbox feature replaced it) and contact links stay only until contacts phase 4 removes them; this route
+// serves the overlap. `GET <contact link>` with exactly
 // `Accept: application/vnd.bindle.messaging.ingress+json` answers the current occupant's ingress descriptor. It runs in the
 // `edge` stage because the contacts module answers every contact path in `public`; it therefore checks the app origin
 // itself, matches only that exact media type (everything else falls through untouched), and exists only with

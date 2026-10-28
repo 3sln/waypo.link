@@ -61,3 +61,10 @@ Reviewer / date / notes: _pending; local drafting and implementation may proceed
 - **Client sessions.** Revoking a device-authorization client session runs the §14.2 narrowing (`signalingClientSessionRevoked` is wired), before any enrolment page offers pairings.
 - **Data profile.** The `data` profile has a cost row and a per-owner budget confirmed against provider usage (§3.5); hosted relay issuance stays refused until the spend authority enforces a per-owner byte cap (§16.7).
 - **Conformance.** The peer conformance suite is rewritten from the revision 3.2 text (Appendix C.5 step 6) and passes in strict mode.
+
+## Messaging invitations (3sln.me policy, provisional 2026-10-28)
+
+Bindle Messaging invitations and credential-less first contact (contacts phase 3, implemented locally behind default-off flags) are not offered publicly, and the same-host-only verification rule (CL-24) is not relaxed, until all of these hold:
+- **Fetch bounds.** Author-verification fetches are bounded per author issuer and globally, their results (failures included) are cached for at least the status-cache time, and at most one directory fetch and one status fetch start per request ([messaging §7.4](../spec/extensions/messaging.md#74-edge-credential-index-and-first-contact-budgets)). Today verification is a local directory read for same-host authors only; none of these bounds is implemented.
+- **Shared budgets.** The per-source and per-owner first-contact budgets and the per-invitation and verification limiters are shared across the instance, not kept in memory per isolate or per mailbox object as they are today. The Node adapter's source is the socket address unless an operator configures a trusted proxy header.
+- **Public links.** Multi-use or public invitation links do not ship until both items above hold.

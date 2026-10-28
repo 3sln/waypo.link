@@ -171,7 +171,8 @@ export async function handleConversationIngress(request,{edge,conversationEdge,d
   const delivery=await P.parseDelivery(headers['content-type'],request.body,{idempotencyKey:headers['idempotency-key']}),p=delivery.envelope.payload;
   const input={contentType:headers['content-type'],body:request.body,authorization:headers.authorization,idempotencyKey:headers['idempotency-key'],ingress:request.url};
   if(p.kind!=='conversation-record'&&typeof deliverFirst==='function'&&typeof edge?.hosted==='function'){
-   budget?.charge({source:request.source??headers['cf-connecting-ip']??'unknown',owner:p.recipient.owner});
+   // The adapter supplies `source`; a client-sent forwarding header is never trusted here (review L1).
+   budget?.charge({source:request.source??'unknown',owner:p.recipient.owner});
    const owner=await edge.hosted(p.recipient.issuer,p.recipient.owner);
    const scheme=P.checkCredentialKind(delivery.envelope,credential);
    if(scheme==='BindleInvite'){
@@ -426,6 +427,9 @@ export async function recordListBinding(tx,who,binding){
  for(const [,m] of await tx.list({prefix:`member-of/${pk(who)}/`})){const key=`list-member/${m.list}/${pk(who)}`,row=await tx.get(key);if(row){await tx.put(key,{...row,binding:{keyId:binding.keyId,ingress:binding.ingress,identityURI:binding.identityURI}});n++;}}
  return n;
 }
+// An accepted redemption makes the redeemer's Contacts admission of the inviter permanent: rollback (invites.mjs
+// InvitesSweep) never removes it afterwards, whichever redemption created it (review L3 provenance).
+async function keepRedeemedContact(tx,inviter){const key=`list-member/contacts/${pk(inviter)}`,m=await tx.get(key);if(m?.selfCreated){const {selfCreated,redemptions,...rest}=m;await tx.put(key,rest);}}
 export async function resolveListBinding(store,who){
  for(const [,m] of await store.list({prefix:`member-of/${pk(who)}/`})){const row=await store.get(`list-member/${m.list}/${pk(who)}`);if(row?.binding)return row.binding;}
  return null;
@@ -591,7 +595,7 @@ export class ConversationsRespond extends MailboxAction {
     await tx.put(C.intro(room.id,route.principal),verified.response);
     // Contacts spike phase 3: the inviter accepted this owner's redemption; its signed binding becomes the binding the
     // owner's lists use for later credential-less first contact, and the pending redemption is settled (invites.mjs).
-    if(live.redemption){const listed=live.participants.find(x=>same(x.principal,route.principal));await recordListBinding(tx,route.principal,{keyId:peer?.keyId??listed?.keyId,ingress:verified.binding.ingress,identityURI:listed?.principal?.identityURI});for(const [key,row] of await tx.list({prefix:'inv/pending/'}))if(row.conversationId===room.id&&row.state==='pending')await tx.put(key,{...row,state:'accepted',settledAt:now});}
+    if(live.redemption){const listed=live.participants.find(x=>same(x.principal,route.principal));await recordListBinding(tx,route.principal,{keyId:peer?.keyId??listed?.keyId,ingress:verified.binding.ingress,identityURI:listed?.principal?.identityURI});for(const [key,row] of await tx.list({prefix:'inv/pending/'}))if(row.conversationId===room.id&&row.state==='pending'){await tx.put(key,{...row,state:'accepted',settledAt:now});await keepRedeemedContact(tx,row.inviter);}}
     // Relay each accepted participant's own signed response to the others (§6.3 peer-proposal introductions).
     for(const [,other] of await tx.list({prefix:C.intros(room.id)})){const about=principal(other.payload.responder.principal);if(same(about,route.principal))continue;await enqueue(tx,{type:'introduce',cid:room.id,principal:route.principal,about});await enqueue(tx,{type:'introduce',cid:room.id,principal:about,about:route.principal});}
    }else await putPeer(tx,live,{...peer,state:'declined',inbound:null},config,now);

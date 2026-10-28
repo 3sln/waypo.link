@@ -34,6 +34,8 @@ export class LinkIndexObject extends DurableObject {
  async hosted(issuer,owner){try{if(!enabled(this.env.PARLAY_ENABLED))fault('not_found','Messaging is disabled.',404);return {ok:true,value:await this.index.hosted(issuer,owner)};}catch(error){return {ok:false,error:{code:error?.code??'internal_error',status:error?.status??500}};}}
  async checkInvite(token,claim){try{if(!enabled(this.env.PARLAY_ENABLED))fault('not_found','Messaging is disabled.',404);return {ok:true,value:await this.index.checkInvite(token,claim)};}catch(error){return {ok:false,error:{code:error?.code??'internal_error',status:error?.status??500}};}}
 }
+// Every key (link, invitation digest, hosted recipient, conversation) maps onto one of 64 fixed index objects by hash, so
+// attacker-chosen junk keys never create more objects than that (contacts phase 3 review L4).
 function indexStub(env,key){if(!env.LINK_INDEX)fault('recipient_unavailable','Ingress index unavailable.',503);let hash=2166136261;for(const c of key)hash=Math.imul(hash^c.charCodeAt(0),16777619)>>>0;return env.LINK_INDEX.get(env.LINK_INDEX.idFromName(`links-v1/${hash%64}`));}
 function checked(result){if(!result.ok)throw new ProtocolFault(result.error.code,{status:result.error.status});return result.value;}
 export function edgeIndex(env){

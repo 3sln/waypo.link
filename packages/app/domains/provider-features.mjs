@@ -12,6 +12,7 @@ import {PUBLIC_INTAKE_FRAGMENT,PUBLIC_INTAKE_CONTRACT} from '../../email-bridge/
 import {MESSAGING_INGRESS_FRAGMENT} from '../../identity/messaging-ingress.mjs';
 import {bridgeConfig} from '../../email-bridge/engine.mjs';
 import {delegationLifetime} from '../../identity/delegation.mjs';
+import {memberCertificateLifetime,MEMBER_CERTIFICATE_DEFAULT_SECONDS,MEMBER_REVOCATION_BOUND_SECONDS} from '../../identity/member-certificates.mjs';
 
 export const MAILBOX_CONTRACT='https://spec.bindle.example/messaging/v1/contracts/mailbox';
 /** spec URL -> {fragment, field, methods}. Methods per contract are the feature's fixed request (extensions §4.2). */
@@ -32,6 +33,16 @@ export const FEATURE_SWEEP_MS=6*3600000;
  * describe port (MESSAGING_DESCRIBE, the brokered consumer call). Contacts spike CR-C0: LINKS_ENABLED is no longer
  * involved. A host certificate lifetime that does not parse leaves it unmounted (it could not be declared honestly). */
 export const messagingMailboxMounted=config=>siteGlobal(config,'KEY_DELEGATION_ENABLED',true)&&siteGlobal(config,'INTEGRATIONS_ENABLED',true)&&siteGlobal(config,'BROKERING_ENABLED',true)&&typeof config.MESSAGING_DESCRIBE==='function'&&delegationLifetime(config.DELEGATION_CERTIFICATE_SECONDS)!==null;
+/** The key-delegation options this host declares beside the messaging-mailbox feature: one entry for every certificate
+ * profile it issues, so each option is the maximum over them (organizations §14, review M3; provisional): Parlay
+ * delegation certificates and, with MEMBER_CERTIFICATES_ENABLED, member certificates and their revocation bound. The
+ * directory route's member-certificate entry merges into the published one by the same maximum (core/extensions.mjs
+ * OPTION_COMBINE), so the published manifest and the account-side declarations port carry the same options. */
+export function messagingKeyDelegationOptions(config={}){
+ const options={max_certificate_seconds:delegationLifetime(config?.DELEGATION_CERTIFICATE_SECONDS)??86400};
+ if(rowFlag(config??{},'MEMBER_CERTIFICATES_ENABLED')){options.max_certificate_seconds=Math.max(options.max_certificate_seconds,memberCertificateLifetime(config.MEMBER_CERTIFICATE_SECONDS)??MEMBER_CERTIFICATE_DEFAULT_SECONDS);options.revocation_bound_seconds=MEMBER_REVOCATION_BOUND_SECONDS;}
+ return options;
+}
 // The manifest rows of the provider features (packages/runtime/federation.mjs MANIFEST_DECLARATIONS spreads exactly these
 // objects), in the registry's row shape {flag, mounted, declare}. Review M2 (2026-10-27): the account-side declarations
 // port evaluates the same rows with the same mounts, so a feature counts as declared to its grants exactly when the
@@ -39,9 +50,10 @@ export const messagingMailboxMounted=config=>siteGlobal(config,'KEY_DELEGATION_E
 export const PROVIDER_FEATURE_ROWS=Object.freeze({
  // Messaging §2.5 (provisional): describe mounted (`mounts.messagingMailbox`). The row also declares its prerequisite,
  // key-delegation (extensions §2.5, messaging §3.2), with this host's delegation certificate lifetime, so both the
- // published manifest and the account-side declarations port hold exactly one key-delegation entry beside it. The
- // directory route's member-certificate entry merges into this one (routes/directory.mjs, `merge:true`).
- [EXT.messagingMailbox]:Object.freeze({flag:Object.freeze(['KEY_DELEGATION_ENABLED','INTEGRATIONS_ENABLED','BROKERING_ENABLED','EXTENSIONS_ENABLED']),mounted:c=>c.target==='authority'&&c.mounts?.messagingMailbox===true,declare:c=>({extensions:[declare(EXT.keyDelegation,{max_certificate_seconds:delegationLifetime(c?.config?.DELEGATION_CERTIFICATE_SECONDS)??86400}),declare(EXT.messagingMailbox)]})}),
+ // published manifest and the account-side declarations port hold exactly one key-delegation entry beside it. Its options
+ // cover member certificates too when they are on (messagingKeyDelegationOptions); the directory route's member entry
+ // merges into it by maximum (routes/directory.mjs, `merge:true`, review M3).
+ [EXT.messagingMailbox]:Object.freeze({flag:Object.freeze(['KEY_DELEGATION_ENABLED','INTEGRATIONS_ENABLED','BROKERING_ENABLED','EXTENSIONS_ENABLED']),mounted:c=>c.target==='authority'&&c.mounts?.messagingMailbox===true,declare:c=>({extensions:[declare(EXT.keyDelegation,messagingKeyDelegationOptions(c?.config)),declare(EXT.messagingMailbox)]})}),
  // Extensions rev 3.2 (§11.1, Q2 provisional): integrations and brokered resources mounted, and a configured bridge.
  [PROVIDER_EXT.emailBridge]:Object.freeze({flag:Object.freeze(['EMAIL_BRIDGE_ENABLED','INTEGRATIONS_ENABLED','BROKERING_ENABLED','EXTENSIONS_ENABLED']),mounted:c=>c.target==='authority'&&c.mounts?.integrations===true&&c.mounts?.brokeredResources===true&&bridgeConfig(c.config).enabled===true,declare:()=>({extensions:[declare(PROVIDER_EXT.emailBridge)]})}),
 });

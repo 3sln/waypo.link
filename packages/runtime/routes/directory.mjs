@@ -25,6 +25,8 @@ export const stages={async public(ctx){
   let value=await response.json();const entries=[declare(EXT.directory,{directory_url:env.APP_ORIGIN+DIRECTORY_PATH})];
   const keys=parseAttestationKeySet(env.IDENTITY_ATTESTATION_KEYS??env.IDENTITY_ATTESTATION_KEY);
   // ORG-4 (organizations §14): member certificates as a home provider, and organization hosting with the jwt-bearer member grant.
+  // The member key-delegation entry merges into the messaging-mailbox row's by maximum (review M3, OPTION_COMBINE), so
+  // the published lifetime covers every certificate profile this host issues.
   if(flagGlobal(env,'MEMBER_CERTIFICATES_ENABLED'))entries.push(declare(EXT.keyDelegation,{max_certificate_seconds:memberCertificateLifetime(env.MEMBER_CERTIFICATE_SECONDS)??MEMBER_CERTIFICATE_DEFAULT_SECONDS,revocation_bound_seconds:MEMBER_REVOCATION_BOUND_SECONDS}));
   if(flagGlobal(env,'ORGANIZATIONS_ENABLED')){entries.push(declare(EXT.organizations));value.grant_types_supported=[...new Set([...(Array.isArray(value.grant_types_supported)?value.grant_types_supported:[]),JWT_BEARER])];}
   if(flagGlobal(env,'IDENTITY_TRANSFER_OUT_ENABLED')&&keys?.keys.length)entries.push(declare(EXT.portability,{move_endpoint:env.APP_ORIGIN+MOVE_PATH,attestation_jwks_uri:env.APP_ORIGIN+ATTESTATION_KEYS_PATH}));

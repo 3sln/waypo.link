@@ -196,16 +196,29 @@ export function readExtensions(manifest,{registry=BINDLE_REGISTRY,issuer=manifes
 export const extensionOptions=(manifest,spec,options={})=>readExtensions(manifest,options).extensions.get(spec)??null;
 
 /**
+ * Option members whose values combine across several declarations of one extension instead of the later value winning
+ * (review M3, 2026-10-28; provisional, unsigned). Key delegation (organizations §14): one entry describes every
+ * certificate profile the issuer issues, so `max_certificate_seconds` and `revocation_bound_seconds` are the maximum
+ * over all of them (a relying party bounds revocation exposure by the longest).
+ */
+export const OPTION_COMBINE=Object.freeze({[EXT.keyDelegation]:Object.freeze({max_certificate_seconds:'max',revocation_bound_seconds:'max'})});
+function combineOptions(spec,earlier={},later={}){
+ const out={...earlier,...structuredClone(later)},rules=OPTION_COMBINE[spec]??{};
+ for(const [name,rule] of Object.entries(rules))if(rule==='max'&&Number.isSafeInteger(earlier[name])&&Number.isSafeInteger(later[name]))out[name]=Math.max(earlier[name],later[name]);
+ return out;
+}
+/**
  * Emission side: merges declaration entries into a manifest's `extensions`. `merge:true` combines options of an entry
- * already present for the same spec (later members win); otherwise a second entry for one spec is an error, because a
- * duplicate would make every copy absent at every processor (§2.5). Throws TypeError on composition errors.
+ * already present for the same spec (later members win, except the OPTION_COMBINE members); otherwise a second entry
+ * for one spec is an error, because a duplicate would make every copy absent at every processor (§2.5). Throws
+ * TypeError on composition errors.
  */
 export function withExtensionEntries(manifest,entries=[],{merge=false}={}){
  const list=(Array.isArray(manifest.extensions)?manifest.extensions:[]).map(e=>structuredClone(e));
  for(const entry of entries){
   if(!plain(entry)||!parseSpecURL(entry.spec)||entry.options!==undefined&&!plain(entry.options)||Object.keys(entry).some(k=>!['spec','options'].includes(k)))throw new TypeError('Invalid extension declaration.');
   const at=list.findIndex(e=>e.spec===entry.spec);
-  if(at>=0){if(!merge)throw new TypeError('Duplicate extension declaration.');list[at]={spec:entry.spec,options:{...list[at].options??{},...structuredClone(entry.options??{})}};}
+  if(at>=0){if(!merge)throw new TypeError('Duplicate extension declaration.');list[at]={spec:entry.spec,options:combineOptions(entry.spec,list[at].options??{},entry.options??{})};}
   else list.push(entry.options&&Object.keys(entry.options).length?{spec:entry.spec,options:structuredClone(entry.options)}:{spec:entry.spec});
  }
  if(list.length>EXTENSION_LIMITS.entries||list.some(e=>bytes(e)>EXTENSION_LIMITS.entryBytes))throw new TypeError('Too many or oversized extension declarations.');

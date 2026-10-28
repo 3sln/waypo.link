@@ -14,7 +14,7 @@ export const methods={
   /** The owner's contact parents (packages/links/parents.mjs): every issued link record, live or retained, with the
    * profile fields it shares. The snapshot and the RTC owner routes (contact-link configuration) read this list. */
   async contacts(owner){const sharing=await this.contactProfiles.sharingRows();return (await contactParents(options=>this.metadata.list(options),owner,Date.now())).map(parent=>({...parent,profileFields:sharing.get(parent.id)?.profileFields??[],discloseProfile:Boolean(sharing.get(parent.id)?.profileFields?.length)}));},
-  async developerContactTier(owner){return developerContactTier(this,owner);},
+  async developerContactTier(owner,options){return developerContactTier(this,owner,{fresh:options?.fresh!==false});},
   async signLinkResponse(owner,handle,link){return signOwnLinkResponse(this,owner,handle,link);},
 };
 

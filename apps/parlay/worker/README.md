@@ -20,6 +20,9 @@ Run Node with `node apps/parlay/node/server.mjs`. It listens on `127.0.0.1:8790`
 database while disabled. `createNodeShell`/`listenNodeShell` accept configured adapters; the CLI optionally loads
 a local `PARLAY_ADAPTER_MODULE` exporting `services` and `egress`. A single Node process owns its database
 directory. The implementation uses SQLite WAL/FULL, serialized async transactions, and typed BLOB values.
+The first-contact budget's source on Node is the socket address; a client-sent `CF-Connecting-IP` or
+`X-Forwarded-For` is ignored. Behind a reverse proxy, set `PARLAY_TRUSTED_CLIENT_IP_HEADER` (option
+`trustedClientIpHeader`) to the header the proxy overwrites with one client address.
 
 Node and Worker share the mailbox composition, ngin operations and HTTP translator. B4 conversation and B5
 organization providers are composed over the same mailbox store. UI, OAuth installation screens, and the storage-setup fragment's

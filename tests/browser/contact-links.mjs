@@ -178,8 +178,9 @@ test('Message the developer mints a bound invitation and hands it off; the token
   state=await f.read();assert.deepEqual(state.developerContact.invitation,{expiresAt:answer.expiresAt});for(const secret of [inviteToken,answer.intent.value])assert.equal(JSON.stringify(state).includes(secret),false);
   assert.deepEqual(f.secrets.developerContactURL,{...answer.intent,expiresAt:answer.expiresAt,owner:account.id,generation:state.beamGeneration??0});
   const minted=render(developerContact,state);assert.deepEqual(buttons(minted),['Open in your messaging app','Copy invitation link','Check eligibility again']);assert.ok(minted.textContent.includes('works once'));
-  // Reopening reuses this session's unexpired invitation; with intents it goes through the provider's intent router (fragment).
-  await f.write(withIntents(state));await f.act(new OpenDeveloperContact());assert.equal(posts.length,1);assert.equal(f.nav.at(-1),'/i#bintent='+answer.intent.value);
+  // Reopening reuses this session's unexpired invitation; with intents on it still uses the scheme URL until contacts
+  // phase 4 routes the `connect` kind through the provider's intent router.
+  await f.write(withIntents(state));await f.act(new OpenDeveloperContact());assert.equal(posts.length,1);assert.equal(f.nav.at(-1),answer.intent.url);
   // Rechecking eligibility forgets the invitation.
   await f.act(new LoadDeveloperContact());assert.equal(f.secrets.developerContactURL,null);assert.equal((await f.read()).developerContact.invitation,undefined);
   // Malformed answers are refused without navigation or storage.

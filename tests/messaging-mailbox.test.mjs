@@ -22,6 +22,7 @@ import {strictJSON} from '../packages/core/strict-json.mjs';
 import {AccountController} from '../packages/runtime/accounts.mjs';
 import {SqliteMetadata,SerialGate} from '../apps/node/resources.mjs';
 import {forEachSeed} from './helpers/chaos.mjs';
+import {memberCertificateLifetime,MEMBER_CERTIFICATE_DEFAULT_SECONDS,MEMBER_REVOCATION_BOUND_SECONDS} from '../packages/identity/member-certificates.mjs';
 
 const OWNER='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',ISSUER='https://3sln.example';
 const MAILBOX='https://spec.bindle.example/messaging/v1/contracts/mailbox',FEATURE=EXT.messagingMailbox,ALL=Object.values(DELEGATION_PURPOSES).sort();
@@ -69,9 +70,24 @@ test('manifest row: declared only with its own flags and a mounted describe, nev
  assert.equal(specs(both({...on,DELEGATION_CERTIFICATE_SECONDS:'10'}).published).includes(FEATURE),false,'an unusable host lifetime is not declared');
  assert.equal([PROVIDER_FEATURE_ROWS[FEATURE].flag].flat().includes('LINKS_ENABLED'),false);
  // The directory route's member-certificate entry merges into the row's (routes/directory.mjs, merge:true): still one
- // entry, the prerequisite still holds, and the member options win (divergence recorded in the report).
+ // entry, the prerequisite still holds, and lifetimes combine by maximum (review M3), never the later value.
  const merged=withExtensionEntries(both(on).published,[declare(EXT.keyDelegation,{max_certificate_seconds:3600,revocation_bound_seconds:300})],{merge:true});
- assert.deepEqual(merged.extensions.filter(e=>e.spec===EXT.keyDelegation),[{spec:EXT.keyDelegation,options:{max_certificate_seconds:3600,revocation_bound_seconds:300}}]);assert.ok(specs(merged).includes(FEATURE));
+ assert.deepEqual(merged.extensions.filter(e=>e.spec===EXT.keyDelegation),[{spec:EXT.keyDelegation,options:{max_certificate_seconds:86400,revocation_bound_seconds:300}}]);assert.ok(specs(merged).includes(FEATURE));
+});
+
+test('review M3: with member certificates on, the one key-delegation entry covers the Parlay lifetime, and the account-side port agrees with the published manifest',()=>{
+ const describe=()=>null,on={APP_ORIGIN:ISSUER,...FLAGS,MESSAGING_DESCRIBE:describe,MEMBER_CERTIFICATES_ENABLED:'true',DIRECTORY_ENABLED:'true'};
+ for(const config of [on,{...on,DELEGATION_CERTIFICATE_SECONDS:'3600'},{...on,MEMBER_CERTIFICATE_SECONDS:'120'}]){
+  const mounts={messagingMailbox:messagingMailboxMounted(config),...brokeringMounts(config)},row={issuer:ISSUER,...federationDeclarations(config,{target:'authority',mounts})};
+  // The directory route appends the member-certificate entry with merge:true (routes/directory.mjs).
+  const published=withExtensionEntries(row,[declare(EXT.keyDelegation,{max_certificate_seconds:memberCertificateLifetime(config.MEMBER_CERTIFICATE_SECONDS)??MEMBER_CERTIFICATE_DEFAULT_SECONDS,revocation_bound_seconds:MEMBER_REVOCATION_BOUND_SECONDS})],{merge:true});
+  const account=providerFeatureDeclarations(surfaceConfig(config),providerFeatureMounts(config)),entry=m=>m.extensions.filter(e=>e.spec===EXT.keyDelegation);
+  assert.equal(entry(published).length,1);
+  const parlay=config.DELEGATION_CERTIFICATE_SECONDS==='3600'?3600:86400;
+  assert.ok(entry(published)[0].options.max_certificate_seconds>=parlay,'covers every Parlay certificate');
+  assert.equal(entry(published)[0].options.max_certificate_seconds,Math.max(parlay,memberCertificateLifetime(config.MEMBER_CERTIFICATE_SECONDS)??MEMBER_CERTIFICATE_DEFAULT_SECONDS));
+  assert.deepEqual(entry(account),entry(published),'account-side port and manifest agree');
+ }
 });
 
 test('describe: exactly {version: 1, ingress}, absolute HTTPS on the occupant origin, no userinfo, query or fragment; loopback only when allowed', ()=>{

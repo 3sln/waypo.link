@@ -3,7 +3,8 @@
 // (GET eligibility, POST a principal-bound invitation; contacts spike CR-C5, packages/runtime/developer-contact.mjs).
 // Legacy messaging representations and owner contact management left the core on 2026-10-27 (DEVLOG "Messaging removed
 // from core; Parlay rename; BB-CUT reset"): the composer, intake metadata, JSON inspection, token mints, signed-link
-// POST delivery, /api/contacts*, /api/contact-links and /api/links/envelope. The messaging-address descriptor is
+// POST delivery, /api/contacts*, /api/contact-links and /api/links/envelope. The contact-link ingress descriptor (its
+// withdrawn messaging-address consumer replaced by the messaging-mailbox feature; kept until contacts phase 4) is
 // answered by routes/links.mjs in the edge stage. POST to a contact link is 405 (Allow: GET, HEAD, OPTIONS).
 // Stage handlers and route-module shape: packages/runtime/routes/index.mjs.
 import {flagsFor} from '../../flags/read.mjs';

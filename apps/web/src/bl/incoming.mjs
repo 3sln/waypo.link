@@ -1,6 +1,5 @@
 import {loadActivity,activityIntent,activityEnabled} from './activity.mjs';
 import {OwnerFlow,snapshot,publish,expireOwner} from './owner-flow.mjs';
-import {intentsAvailable} from './contact-link.mjs';
 import {decodeIntent} from '../../../../packages/intents/format.mjs';
 const split=v=>String(v??'').split(',').map(x=>x.trim()).filter(Boolean);
 export async function loadIncoming(r,ctx,{more=false}={}){try{if(!more&&await loadActivity(r,ctx))return;}catch(error){if(error.status===401){expireOwner(r,ctx);return;}throw error;}if(more&&!snapshot(r).incoming?.cursor)return;const owner=snapshot(r).session?.account?.id,generation=snapshot(r).beamGeneration??0;if(!owner||snapshot(r).offline)return;const id=snapshot(r).incomingView??'all',ticket=r.browser.id(),live=()=>snapshot(r).session?.account?.id===owner&&(snapshot(r).beamGeneration??0)===generation&&!snapshot(r).offline&&snapshot(r).incomingTicket===ticket;publish(r,ctx,{incomingLoading:true,incomingError:'',incomingTicket:ticket});try{const result=await r.api.get('/api/views');if(!live())return;const views=result.views,view=views.find(v=>v.id===id)??views[0];publish(r,ctx,{data:{...snapshot(r).data,views}});if(!view){publish(r,ctx,{incoming:{items:[]},incomingLoading:false});return;}const query=new URLSearchParams({view:view.id,viewRevision:String(view.revision),limit:'50'});if(more&&snapshot(r).incoming?.cursor)query.set('cursor',snapshot(r).incoming.cursor);const incoming=await r.api.get('/api/incoming?'+query);if(!live())return;publish(r,ctx,{incomingView:view.id,incoming:{...incoming,items:more?[...(snapshot(r).incoming?.items??[]),...incoming.items]:incoming.items},incomingLoading:false});}catch(error){if(live()&&error.status===401){expireOwner(r,ctx,generation);return;}if(live())publish(r,ctx,{incomingLoading:false,incomingError:['cursor_stale','view_conflict'].includes(error.code)?'This View or its messages changed. Reload to continue.':'Messages could not be loaded. Please try again.'});}}
@@ -28,9 +27,10 @@ function invitationOf(result){
  try{if(decodeIntent(value).kind.artefact!==CONNECT_KIND)return null;}catch{return null;}
  return {value,url,expiresAt};
 }
-// The provider's intent router (fragment placement, never sent to a server) when intents are on for this account;
-// otherwise the scheme URL, which the browser hands to a registered messaging app.
-const handoffTarget=(s,record)=>intentsAvailable(s)?'/i#bintent='+record.value:record.url;
+// The scheme URL, which the browser hands to a registered messaging app. The provider's intent router does not route the
+// `connect` kind until contacts phase 4, so it is not used here even when intents are on (review divergence 6;
+// provisional). Phase 4 switches intents-enabled accounts to '/i#bintent=' once the router handles `connect`.
+const handoffTarget=record=>record.url;
 const failures={not_eligible:'Your account is not currently eligible to message the developer.',eligibility_unavailable:'Your eligibility could not be checked right now. Try again shortly.',developer_unavailable:'The platform developer account is not ready to receive messages.',rate_limited:'Please wait before trying again.'};
 export class LoadDeveloperContact extends OwnerFlow{mutation=false;async perform(r,ctx){publish(r,ctx,{developerContactLoading:true});try{const result=await r.api.get('/api/developer-contact');r.browser.storeSecret('developerContactURL',null);if(result?.available!==true){publish(r,ctx,{developerContact:unavailableContact(result)});return;}publish(r,ctx,{developerContact:{available:true,eligibility:eligibilityOf(result.eligibility),...result.recipientBadge&&typeof result.recipientBadge==='object'?{recipientBadge:result.recipientBadge}:{}}});}catch(error){if(this.detail.quiet&&error.status!==401)return;if(error.code==='rate_limited')throw Error('Please wait before checking again.');throw error;}finally{publish(r,ctx,{developerContactLoading:false});}}}
 // Mints (or reuses this session's unexpired) invitation and hands it off. Eligibility is checked again by the server.
@@ -47,6 +47,6 @@ export class OpenDeveloperContact extends OwnerFlow{async perform(r,ctx){
   record={...invitation,owner,generation};r.browser.storeSecret('developerContactURL',record);
   publish(r,ctx,{developerContact:{...snapshot(r).developerContact,invitation:{expiresAt:record.expiresAt}}});
  }
- r.browser.navigate(handoffTarget(snapshot(r),record));
+ r.browser.navigate(handoffTarget(record));
 }}
 export class CopyDeveloperContact extends OwnerFlow{async perform(r,ctx){const record=storedInvitation(r);if(record){await r.browser.copy(record.url);publish(r,ctx,{notice:'Invitation link copied.'});}}}

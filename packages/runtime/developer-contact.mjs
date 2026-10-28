@@ -26,12 +26,15 @@ export const DEVELOPER_TIERS=Object.freeze(['free','paid','plus','ultra']);
 export const DEVELOPER_INVITE_TTL=3600000;
 export const CONNECT_INTENT_KIND='https://spec.bindle.example/messaging/v1/intents/connect';
 
-export async function developerContactTier(controller,owner){
- await controller.warm(owner);await controller.billingRefresh(owner,{force:true});
+/** The requesting account's billing tier. `fresh` (the default, and POST's gate) forces a billing reconcile and refuses a
+ * paid tier not reconciled in the last five minutes. `fresh:false` (GET's eligibility display, review L5) reads the
+ * cached entitlement only: no provider call and no write; POST re-checks before anything is minted. */
+export async function developerContactTier(controller,owner,{fresh=true}={}){
+ await controller.warm(owner);if(fresh)await controller.billingRefresh(owner,{force:true});
  const state=await controller.metadata.get(BILLING_STATE_KEY);
  if(state?.owner!==owner||!['active','canceled'].includes(state.status))return 'free';
  const now=Date.now(),tier=entitlementFromState({...state,upgrade:undefined},now,controller.config).plan;
- if(tier!=='free'&&(!Number.isSafeInteger(state.reconciledAt)||state.reconciledAt>now||state.reconciledAt<now-300000))throw new StorageError('developer_contact_eligibility_unavailable','Your subscription could not be verified. Please try again shortly.',503);
+ if(fresh&&tier!=='free'&&(!Number.isSafeInteger(state.reconciledAt)||state.reconciledAt>now||state.reconciledAt<now-300000))throw new StorageError('developer_contact_eligibility_unavailable','Your subscription could not be verified. Please try again shortly.',503);
  return tier;
 }
 /** The active-population mode ('all-active' | 'paid-only') from the census port, or null when it is unknown or stale. */
@@ -90,8 +93,8 @@ async function developerIdentity(env){
  return {recipient,badge};
 }
 /** Eligibility of the requesting (same-host) user: billing tier from the user's own account, then the population mode. */
-async function requesterEligibility(env,owner,account){
- let tier;try{tier=await account.developerContactTier(owner.account.id);if(typeof tier!=='string')return {state:'unavailable'};}catch{return {state:'unavailable'};}
+async function requesterEligibility(env,owner,account,{fresh=true}={}){
+ let tier;try{tier=await account.developerContactTier(owner.account.id,{fresh});if(typeof tier!=='string')return {state:'unavailable'};}catch{return {state:'unavailable'};}
  try{return await developerDecision(env,tier);}catch{return {state:'unavailable'};}
 }
 const eligibilityView=decision=>decision.state==='unavailable'?{state:'unavailable'}:{state:decision.eligible?'eligible':'ineligible',...decision.reason?{reason:decision.reason}:{},...decision.tier?{tier:decision.tier}:{}};
@@ -106,7 +109,7 @@ export async function developerContactRoutes({path,request,env,owner,object,acco
  const mint=env.DEVELOPER_CONTACT_MINT;
  if(typeof mint!=='function'||!developerContactHandle(env))return json({available:false,reason:'developer-unavailable'});
  const developer=await developerIdentity(env);if(!developer)return json({available:false,reason:'developer-unavailable'});
- const account=object??accountHandle(env,owner.account.id),decision=await requesterEligibility(env,owner,account),eligibility=eligibilityView(decision);
+ const account=object??accountHandle(env,owner.account.id),decision=await requesterEligibility(env,owner,account,{fresh:request.method==='POST'}),eligibility=eligibilityView(decision);
  if(request.method==='GET')return json({available:true,eligibility,recipientBadge:developer.badge});
  if(eligibility.state!=='eligible')return json({error:eligibility.state==='unavailable'?'eligibility_unavailable':'not_eligible',eligibility},eligibility.state==='unavailable'?503:403);
  const {recipient}=developer,now=Date.now();

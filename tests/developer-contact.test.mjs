@@ -31,3 +31,11 @@ test('developer policy: same-host principals only; paid tiers tag priority; popu
 
 test('developer contact rate limiting returns a stable code without server English copy',async()=>{const result=await developerContactRoutes({path:'/api/developer-contact',request:{method:'GET'},env:{},owner:{account:{id:owner}},limit:async()=>false,json:(value,status,headers)=>({value,status,headers})});assert.deepEqual(result,{value:{error:'rate_limited'},status:429,headers:{'Retry-After':'60'}});});
 
+
+test('review L5: a cached tier read (GET) neither forces a billing refresh nor writes; a stale paid state reads as its plan',async t=>{t.mock.timers.enable({apis:['Date'],now:Date.UTC(2026,9,14,12)});const metadata=new SqliteMetadata(':memory:'),now=Date.now(),config={APP_ORIGIN:origin,POLAR_SERVER:'production'},parameters={id:'paid',name:'Paid',storageBytes:5000000000,activityHour:1000,activityDay:5000},calls=[],controller={metadata,config,warm:async id=>calls.push(['warm',id]),billingRefresh:async(id,options)=>calls.push(['refresh',id,options])};try{
+ await metadata.put(BILLING_STATE_KEY,{owner,source:'polar',catalogVersion:3,plan:'paid',status:'active',validUntil:now+86400000,reconciledAt:now-3600000,verifiedPlan:parameters,origin,server:'production',metadataPrefix:'3sln_me_',catalogMode:'static',organizationId:'org',productId:'paid',subscriptionId:'subscription',currency:'usd'});
+ const before=[...(await metadata.list({prefix:''})).entries()];
+ assert.equal(await developerContactTier(controller,owner,{fresh:false}),'paid');assert.deepEqual(calls,[['warm',owner]],'no billing refresh');
+ assert.deepEqual([...(await metadata.list({prefix:''})).entries()],before,'nothing written');
+ await assert.rejects(developerContactTier(controller,owner),{code:'developer_contact_eligibility_unavailable'},'the fresh read (POST) still refuses a stale paid state');
+}finally{metadata.close();}});

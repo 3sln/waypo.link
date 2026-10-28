@@ -26,7 +26,8 @@ test('Message the developer hands off a minted connect intent; ineligible or una
  const {LoadDeveloperContact}=await import('../../apps/web/src/bl/incoming.mjs'),{encodeIntent}=await import('../../packages/intents/format.mjs');
  const origin='https://space.example',exp=Math.floor(Date.now()/1000)+3600,value=encodeIntent({bintent:1,kind:{artefact:'https://spec.bindle.example/messaging/v1/intents/connect',version:1,digest:'sha256-oCyJ6fKE_vJrmdRY5bF5U_R8t_pfE2HZoZy81yG7H-g'},data:{inviter:{iss:origin,sub:crypto.randomUUID()},token:'S'.repeat(32),delegation:'a.b.c',expires_at:exp},exp});
  const answer={intent:{value,url:'web+bindle://intent?bintent='+value},expiresAt:exp*1000};
- for(const [eligibility,intents,expected]of [['eligible',true,'router'],['eligible',false,'scheme'],['ineligible',true,'none'],['unavailable',false,'none']]){
+ // Until contacts phase 4 routes `connect`, the scheme URL is used even with intents on.
+ for(const [eligibility,intents,expected]of [['eligible',true,'scheme'],['eligible',false,'scheme'],['ineligible',true,'none'],['unavailable',false,'none']]){
   const f=await fixture({session:{account:{id:'owner'}},config:{origin,signupContactRequired:true,...intents?{intentLinksEnabled:true}:{}}});
   try{f.api.get=async p=>{if(p==='/api/developer-contact')return {available:true,eligibility:{state:eligibility}};throw Error(p);};f.api.request=async(p,b,m)=>{f.calls.push({path:p,body:b,method:m});return answer;};await f.act(new LoadDeveloperContact());
    await f.act(new OpenDeveloperContact());

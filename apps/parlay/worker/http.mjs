@@ -16,11 +16,14 @@ export async function bodyBytes(request,limit=LIMITS.maxRequestBytes){
  const bytes=new Uint8Array(size);let at=0;for(const part of chunks){bytes.set(part,at);at+=part.byteLength;}return bytes;
 }
 export function httpError(error){const known=error instanceof MailboxFault||error instanceof ProtocolFault,status=known&&Number.isSafeInteger(error.status)?error.status:500;return Response.json({error:known?error.code:'internal_error'},{status,headers:{...headers,...status===503?{'Retry-After':'60'}:{}}});}
+// The first-contact budget's source (messaging §7.4). On Workers, Cloudflare sets CF-Connecting-IP itself. Other adapters
+// pass `sourceOf` (the Node shell: the socket address, or a configured trusted proxy header; review L1).
+const workerSource=request=>request.headers.get('CF-Connecting-IP')??undefined;
 // Authentication is a configured, live verifier (ordinary app credentials). Never accept owner/actor from JSON,
 // query parameters or untrusted forwarding headers. Ingress routes only after the capability edge check.
-export function createHTTP({PARLAY_ENABLED=false,INTENT_LINKS_ENABLED=false,APP_CLEAN_REMOVAL_ENABLED=false,authenticate,mailbox,edge,conversationEdge,metadata,services,assets,archiveEnabled=typeof services?.objectStorage==='function'&&typeof services?.archiveKeys==='function'}={}){
+export function createHTTP({PARLAY_ENABLED=false,INTENT_LINKS_ENABLED=false,APP_CLEAN_REMOVAL_ENABLED=false,authenticate,mailbox,edge,conversationEdge,metadata,services,assets,sourceOf=workerSource,archiveEnabled=typeof services?.objectStorage==='function'&&typeof services?.archiveKeys==='function'}={}){
  const web=createWebHTTP({PARLAY_ENABLED:enabled(PARLAY_ENABLED),INTENT_LINKS_ENABLED:enabled(INTENT_LINKS_ENABLED),archiveEnabled,authenticate,mailbox});
- return async request=>{
+ return async(request,info={})=>{
   if(!enabled(PARLAY_ENABLED))return Response.json({error:'not_found'},{status:404,headers});
   const url=new URL(request.url),path=url.pathname;
   if(request.method==='GET'&&(path==='/'||path==='/bindle/intent'&&enabled(INTENT_LINKS_ENABLED)||path==='/bindle/remove'&&enabled(APP_CLEAN_REMOVAL_ENABLED)&&typeof services?.verifyRemoval==='function'))return webShell();
@@ -39,7 +42,7 @@ export function createHTTP({PARLAY_ENABLED=false,INTENT_LINKS_ENABLED=false,APP_
 
   if((path==='/bindle/ingress'||/^\/bindle\/ingress\/return\/[A-Za-z0-9_-]{32}$/.test(path))&&request.method==='POST')try{
    if(!edge)fault('recipient_unavailable','Ingress index unavailable.',503);
-   const wire={url:request.url,method:'POST',headers:Object.fromEntries(request.headers),body:await bodyBytes(request),source:request.headers.get('CF-Connecting-IP')??undefined},deliver=(name)=>async(owner,input)=>(await mailbox(owner)).run(owner,name,{input});
+   const wire={url:request.url,method:'POST',headers:Object.fromEntries(request.headers),body:await bodyBytes(request),source:sourceOf(request,info)},deliver=(name)=>async(owner,input)=>(await mailbox(owner)).run(owner,name,{input});
    return conversationEdge?await handleConversationIngress(wire,{edge,conversationEdge,deliverLink:deliver('receive.deliver'),deliverRecord:deliver('conversations.receive'),deliverResponse:deliver('conversations.respond'),deliverInvite:deliver('receive.redeem'),deliverFirst:deliver('receive.first-contact'),budget:firstContactBudget}):await handleIngress(wire,{edge,deliver:deliver('receive.deliver')});
   }catch(error){return ingressError(error,Date.now());}
   try{
