@@ -65,12 +65,12 @@ export function fragmentOutcome(doc,url=doc?.id){
  try{
   if(!plain(doc))invalid('invalid_schema');
   for(const key of Object.keys(doc))if(!FRAGMENT_TOP.includes(key))unsupported(key==='slot'?'slot_member':'unknown_member');
+  // Unknown members anywhere win over invalid ones (review L7), so the outcome never depends on which member is wrong.
+  if(plain(doc.fields))for(const field of Object.values(doc.fields)){if(plain(field)){for(const key of Object.keys(field))if(!FRAGMENT_FIELD.includes(key))unsupported('unknown_member');if(plain(field.cardinality))for(const key of Object.keys(field.cardinality))if(!['min','max'].includes(key))unsupported('unknown_member');}}
   if(!httpsIdentifier(url)||doc.id!==url)invalid('invalid_id');
   if(!text(doc.title,200)||!text(doc.description,2000))invalid('invalid_text');
   if(typeof doc.publisher!=='string')invalid('invalid_publisher');try{const u=new URL(doc.publisher);if(u.protocol!=='https:'||u.username||u.password||u.hash)invalid('invalid_publisher');}catch(error){if(error instanceof Outcome)throw error;invalid('invalid_publisher');}
   if(!plain(doc.fields))invalid('invalid_fields');const names=Object.keys(doc.fields);if(!names.length||names.length>32||names.some(n=>!FIELD_NAME.test(n)))invalid('invalid_fields');
-  // Unknown members anywhere win over invalid ones, so the outcome never depends on member order.
-  for(const field of Object.values(doc.fields)){if(plain(field)){for(const key of Object.keys(field))if(!FRAGMENT_FIELD.includes(key))unsupported('unknown_member');if(plain(field.cardinality))for(const key of Object.keys(field.cardinality))if(!['min','max'].includes(key))unsupported('unknown_member');}}
   for(const field of Object.values(doc.fields))checkField(field);
   return {status:'valid'};
  }catch(error){if(error instanceof Outcome)return {status:error.status,reason:error.reason};throw error;}

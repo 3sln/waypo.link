@@ -86,6 +86,8 @@ export class FederationController {
      Object.defineProperty(this.service,'incremental',{get:()=>siteGlobal(flagConfig,'INCREMENTAL_AUTH_ENABLED')?incremental:undefined});
      for(const [target,key,name]of [[this,'enabled','FEDERATION_ENABLED'],[this,'clientMetadata','CLIENT_METADATA_ENABLED'],[this.service,'clientMetadata','CLIENT_METADATA_ENABLED'],[this.service,'integrations','INTEGRATIONS_ENABLED']])Object.defineProperty(target,key,{get:()=>siteGlobal(flagConfig,name)});
      Object.defineProperty(this.service,'brokering',{get:()=>capability(flagConfig,'BROKERED_INTROSPECTION_MOUNTED')?brokering:null});
+     // Review M6: a legacy bus manifest (top-level `slot`) is a requestable fragment only while event buses are on.
+     Object.defineProperty(this.service,'eventBuses',{get:()=>siteGlobal(flagConfig,'EVENT_BUSES_ENABLED')});
     }
   }
   removalRevoke(input){return revokeRemovalFederation(this.service,input);}

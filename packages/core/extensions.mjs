@@ -140,7 +140,11 @@ export function validateOptions(descriptor,options,{issuer,allowInsecureLocalhos
  }
  return clean;
 }
-const audienceValues=(descriptor,options)=>Object.entries(descriptor.options).filter(([name,o])=>o.endpoint==='audience'&&Object.hasOwn(options,name)).flatMap(([name])=>Array.isArray(options[name])?options[name]:[options[name]]);
+// Audience comparison (extensions §2.4 rev 3.3, EXT3-32, CR-X3-34): the WHATWG URL serialisation of each value, so
+// scheme and host case, the ASCII host form, a default port, dot segments and an empty path never separate equal
+// endpoints. The query is compared exactly (the serialiser keeps it); nothing else is normalised.
+export const audienceKey=value=>{try{return new URL(value).href;}catch{return value;}};
+const audienceValues=(descriptor,options)=>Object.entries(descriptor.options).filter(([name,o])=>o.endpoint==='audience'&&Object.hasOwn(options,name)).flatMap(([name])=>Array.isArray(options[name])?options[name]:[options[name]]).map(audienceKey);
 
 /**
  * Processes a manifest's `extensions` (extensions §2.2–§2.5, protocol §2 processing rules). Never throws on content:
@@ -170,7 +174,7 @@ export function readExtensions(manifest,{registry=BINDLE_REGISTRY,issuer=manifes
   candidates.push({spec:p.spec,descriptor,options});
  }
  // Audience distinctness (§2.4): against the flat audience members, within an entry and across entries.
- const flat=new Set(FLAT_AUDIENCE_ENDPOINTS.map(name=>manifest?.[name]).filter(v=>typeof v==='string'));
+ const flat=new Set(FLAT_AUDIENCE_ENDPOINTS.map(name=>manifest?.[name]).filter(v=>typeof v==='string').map(audienceKey));
  const owners=new Map();for(const c of candidates)for(const value of new Set(audienceValues(c.descriptor,c.options))){if(!owners.has(value))owners.set(value,new Set());owners.get(value).add(c.spec);}
  const collided=new Set();
  for(const c of candidates){const values=audienceValues(c.descriptor,c.options);if(new Set(values).size!==values.length||values.some(v=>flat.has(v)||owners.get(v).size>1))collided.add(c.spec);}
@@ -209,7 +213,8 @@ export const declare=(spec,options)=>options&&Object.keys(options).length?{spec,
 // contract, entity, fingerprint), joined by `|`. The spec names the inputs, not their encoding; this one is fixed here.
 const UUID_URL_NAMESPACE=Uint8Array.from('6ba7b8119dad11d180b400c04fd430c8'.match(/../g),h=>parseInt(h,16));
 export async function featureTx(spec,contract,entity,fingerprint,{crypto=globalThis.crypto}={}){
- if(!parseSpecURL(spec)||typeof contract!=='string'||typeof entity!=='string'||typeof fingerprint!=='string')throw new TypeError('Invalid feature transaction input.');
+ // §4.2 rev 3.3: the first three inputs never contain `|`, so the joined name is unambiguous.
+ if(!parseSpecURL(spec)||typeof contract!=='string'||typeof entity!=='string'||typeof fingerprint!=='string'||[spec,contract,entity].some(v=>v.includes('|')))throw new TypeError('Invalid feature transaction input.');
  const bytes=new Uint8Array(await crypto.subtle.digest('SHA-1',new Uint8Array([...UUID_URL_NAMESPACE,...new TextEncoder().encode(`${spec}|${contract}|${entity}|${fingerprint}`)]))).slice(0,16);
  bytes[6]=bytes[6]&15|80;bytes[8]=bytes[8]&63|128;const h=[...bytes].map(b=>b.toString(16).padStart(2,'0')).join('');
  return `${h.slice(0,8)}-${h.slice(8,12)}-${h.slice(12,16)}-${h.slice(16,20)}-${h.slice(20)}`;

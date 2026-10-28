@@ -6,7 +6,7 @@ import {readExtensions} from '../core/extensions.mjs';
 import {fragmentOutcome,fieldAttributes,consumes} from '../core/fragments.mjs';
 import {canonical} from '../core/records.mjs';
 import {appendSeverance} from '../federation/brokered-severance.mjs';
-import {FEATURE_DEFINITIONS,SUSPENSION_REVOCATION_MS} from '../app/domains/provider-features.mjs';
+import {FEATURE_DEFINITIONS,SUSPENSION_REVOCATION_MS,FEATURE_SWEEP_MS} from '../app/domains/provider-features.mjs';
 import {MESSAGING_INGRESS_FRAGMENT} from '../links/types.mjs';
 // Extensions rev 3.2 (CR-X3-26): the former slot documents, republished as ordinary fragments at new URLs. The provider
 // pins these exact documents; the classifier fragment is application-consumed (Parlay requests it as a setup fragment),
@@ -37,6 +37,9 @@ const valid=r=>r?.kind==='app-connection'&&r.provider==='app'&&Number.isSafeInte
 // Local revision 2 slot rows (`connections/slot/`) are not migrated: they are deleted on first touch (CR-X3-29).
 const FIELD='connections/field/',LEGACY_SLOT='connections/slot/',FEATURE='connections/feature/',NOTICE='connections/notice/',ANNOUNCED='connections/announced/',MUTED='connections/announce-muted/',OUTBOX='connections/outbox/',CASCADE='connections/cascade/',CASCADE_ALL=CASCADE+'~all',META='connections/meta',LIFECYCLE_STATE='lifecycle/state-v1',RECORD='integrations/record/';
 export const OUTBOX_LIMIT=4096,CASCADE_LIMIT=256,FIELD_RECORDS_LIMIT=64,RECENT_AUTH_MS=900000,NOTICE_LIMIT=64;
+// Review M1: an active grant records when an evaluation last saw its declaration valid (`seenAt`), refreshed at most
+// this often (and whenever the clock moved backwards), so a later loss is dated no later than it happened.
+const SEEN_REFRESH_MS=60000;
 const BLOCKED=['suspended','purge-review','purging'];
 // Fields whose value holds key-delegation.v1 certificates (packages/identity/delegation.mjs): a change of value entry,
 // generation, ingress or consented purposes revokes or reconciles them through a cascade row (review KD-4).
@@ -93,6 +96,8 @@ export class AppConnections{
  async register(owner,client,expected,trusted={}){
   if(typeof owner!=='string'||typeof client?.id!=='string'||!client.id||client.id.length>200||typeof client.name!=='string'||!client.name||client.name.length>100)fail('invalid_request','Invalid app connection.');
   const id=await this.id(owner,client.id);
+  // L1: the announcement scope reads feature state, so declarations are applied first (read outside the transaction).
+  const declared=trusted.integration?await this.#declarationState():null;
   const result=await this.metadata.transaction(async tx=>{
    const prior=await tx.get(prefix+id);if(prior&&!valid(prior))fail('unavailable','Invalid connection record.',503);if(prior&&prior.owner!==owner)fail('forbidden','Connection belongs to another account.',403);
    if(expected!==undefined&&(prior?.generation??0)!==expected)fail('consent_stale','Connection changed. Start a fresh authorization.',409);
@@ -115,7 +120,7 @@ export class AppConnections{
    }else if(same&&prior.state!==undefined)for(const k of ['state','configured','stateChangedAt','fence','integration'])if(prior[k]!==undefined)record[k]=structuredClone(prior[k]);
    await tx.put(prefix+id,record);if(events.length)await this.#emit(tx,events);
    // Extensions §6: a newly active integration connection may be announced to the owner (local, owner-only).
-   if(trusted.integration&&!same)await this.#announce(tx,record);
+   if(trusted.integration&&!same){await this.#syncFeatures(tx,declared);await this.#announce(tx,record);}
    if(changed){await this.#cascade(tx,this.#delegationRows(await this.#affected(tx,id),'system'));await this.#reseat(tx,record);}
    return this.view(record);
   });
@@ -236,39 +241,63 @@ export class AppConnections{
   await appendSeverance(tx,rows,{clock:this.clock});
  }
  async #revokeFeature(tx,r,reason,entries){
-  const old=r.grant;r.state='revoked';r.reason=reason;r.revokedAt=this.clock();delete r.suspendedAt;await this.#putFeature(tx,r);
+  const old=r.grant;r.state='revoked';r.reason=reason;r.revokedAt=this.clock();delete r.suspendedAt;delete r.seenAt;await this.#putFeature(tx,r);
   await this.#severGrant(tx,old,entries??(await this.#values(tx,r.fragment)).record.entries.filter(e=>r.approved.includes(e.seat)),'feature-revoked');
   await this.#emit(tx,[{type:'feature-revoked',feature:r.spec,grant:old,reason}]);await this.#notice(tx,{kind:'feature-revoked',feature:r.spec,reason});
  }
- // Applies declaration loss, return, blocking and the 30-day bound to every feature grant, in the caller's transaction.
+ // L5: a grant is bound to the fragment pin it was approved under; the provider's pinned document must still match.
+ async #pinCurrent(r){const doc=Object.hasOwn(this.fieldPins,r.fragment)?this.fieldPins[r.fragment]:null;return Boolean(doc)&&typeof r.pin==='string'&&r.pin==='sha256-'+await digest(globalThis.crypto,canonical(doc));}
+ /** Applies declaration loss, return, blocking and the 30-day bound (extensions §4.2) to every feature grant, in the
+  * caller's transaction. Time-correct (review M1): a loss is dated from the last evaluation that still saw the
+  * declaration valid (`seenAt`; the scheduled sweep, featureSync, keeps that within FEATURE_SWEEP_MS of the truth), never
+  * from the first evaluation that noticed it, so a loss nobody observed for 30 days revokes on the first look, and a
+  * suspension is revoked once 30 days old by the clock before any resumption is considered. A clock that jumped
+  * backwards neither revokes nor resumes early: elapsed time is measured from the recorded timestamps. */
  async #syncFeatures(tx,state){
   const now=this.clock(),changes=[];
   for(const r of await this.#featureRecords(tx)){
    if(!['active','suspended'].includes(r.state))continue;
    if(state.blocked.has(r.spec)){await this.#revokeFeature(tx,r,'blocked');changes.push({feature:r.spec,state:'revoked'});continue;}
-   // 30 days of continuous suspension revoke, even when nothing looked during them (checked before any resumption).
-   if(r.state==='suspended'&&now-r.suspendedAt>=SUSPENSION_REVOCATION_MS){await this.#revokeFeature(tx,r,'suspension-expired');changes.push({feature:r.spec,state:'revoked'});continue;}
-   if(r.state==='active'&&!state.valid.has(r.spec)){r.state='suspended';r.suspendedAt=now;r.reason='declaration';await this.#putFeature(tx,r);await this.#emit(tx,[{type:'feature-suspended',feature:r.spec,grant:r.grant}]);await this.#notice(tx,{kind:'feature-suspended',feature:r.spec});changes.push({feature:r.spec,state:'suspended'});}
-   else if(r.state==='suspended'&&state.valid.has(r.spec)){r.state='active';delete r.suspendedAt;delete r.reason;await this.#putFeature(tx,r);await this.#emit(tx,[{type:'feature-resumed',feature:r.spec,grant:r.grant}]);changes.push({feature:r.spec,state:'active'});}
-   if(r.state==='suspended'&&now-r.suspendedAt>=SUSPENSION_REVOCATION_MS){await this.#revokeFeature(tx,r,'suspension-expired');changes.push({feature:r.spec,state:'revoked'});}
+   const declared=state.valid.has(r.spec),live=declared&&await this.#pinCurrent(r);
+   if(r.state==='active'){
+    if(live){if(!Number.isSafeInteger(r.seenAt)||now<r.seenAt||now-r.seenAt>=SEEN_REFRESH_MS){r.seenAt=now;await this.#putFeature(tx,r);}continue;}
+    r.suspendedAt=Number.isSafeInteger(r.seenAt)?r.seenAt:Number.isSafeInteger(r.enabledAt)?r.enabledAt:now;delete r.seenAt;
+    if(now-r.suspendedAt>=SUSPENSION_REVOCATION_MS){await this.#revokeFeature(tx,r,'suspension-expired');changes.push({feature:r.spec,state:'revoked'});continue;}
+    r.state='suspended';r.reason=declared?'pin':'declaration';await this.#putFeature(tx,r);await this.#emit(tx,[{type:'feature-suspended',feature:r.spec,grant:r.grant}]);await this.#notice(tx,{kind:'feature-suspended',feature:r.spec});changes.push({feature:r.spec,state:'suspended'});continue;
+   }
+   // Suspended: 30 days from the suspension timestamp revoke, even when the declaration is back (never resumed).
+   if(now-r.suspendedAt>=SUSPENSION_REVOCATION_MS){await this.#revokeFeature(tx,r,'suspension-expired');changes.push({feature:r.spec,state:'revoked'});continue;}
+   if(live){r.state='active';delete r.suspendedAt;delete r.reason;r.seenAt=now;await this.#putFeature(tx,r);await this.#emit(tx,[{type:'feature-resumed',feature:r.spec,grant:r.grant}]);changes.push({feature:r.spec,state:'active'});}
   }
   return changes;
  }
- // An approval set changed (value change, reapproval): a new `bindle.grant`, and credentials of the old one revoked.
- async #regrant(tx,r,entries){const old=r.grant;r.grant=this.uuid();r.revision=(r.revision??0)+1;await this.#putFeature(tx,r);await this.#severGrant(tx,old,entries,'feature-regranted');await this.#emit(tx,[{type:'feature-regranted',feature:r.spec,grant:r.grant,previous:old}]);}
- async #withdrawApprovals(tx,url,gone){
-  const seats=gone.map(e=>e.seat);for(const r of await this.#featuresFor(tx,url)){if(!r.approved?.some(s=>seats.includes(s)))continue;r.approved=r.approved.filter(s=>!seats.includes(s));await this.#regrant(tx,r,gone);}
+ /** An approval set or value changed (value change, reorder, entry purposes or ingress, reapproval): a new
+  * `bindle.grant` (extensions §4.2), and the brokered credentials minted under the old one revoked for every entry it
+  * covered (`extra`: entries that just left the value). Only an active or suspended grant is ever regranted (L4): a
+  * revoked or disabled feature needs a fresh enable. */
+ async #regrant(tx,r,extra=[]){
+  if(!['active','suspended'].includes(r.state))return;
+  const old=r.grant,current=(await this.#values(tx,r.fragment)).record.entries.filter(e=>(r.approved??[]).includes(e.seat)),entries=[...current,...extra.filter(e=>!current.some(c=>c.seat===e.seat))];
+  r.grant=this.uuid();r.revision=(r.revision??0)+1;await this.#putFeature(tx,r);await this.#severGrant(tx,old,entries,'feature-regranted');await this.#emit(tx,[{type:'feature-regranted',feature:r.spec,grant:r.grant,previous:old}]);
  }
+ async #withdrawApprovals(tx,url,gone){
+  const seats=gone.map(e=>e.seat);for(const r of await this.#featuresFor(tx,url)){if(!['active','suspended'].includes(r.state)||!r.approved?.some(s=>seats.includes(s)))continue;r.approved=r.approved.filter(s=>!seats.includes(s));await this.#regrant(tx,r,gone);}
+ }
+ // L3: a value change of approved entries (order among them, consented purposes, ingress) regrants their features.
+ async #regrantFor(tx,url,changed){for(const r of await this.#featuresFor(tx,url))if(changed(r))await this.#regrant(tx,r);}
  // Extensions §6: post-connection announcements, computed locally from the contracts recorded at the connection. Only
  // for `announce` fields an enabled (live) provider feature consumes, never for the provider's own built-ins, at most
  // once per (field, supplier). Nothing is sent to the integration; the notice is an owner-only record.
+ // L2: markers are keyed per field (`<digest(url)>/<digest(clientId)>`), so turning one field's announcements back on
+ // resets "at most once" for that field only.
+ async #announcedKey(url,clientId){return ANNOUNCED+await digest(globalThis.crypto,url)+'/'+(clientId===undefined?'':await digest(globalThis.crypto,clientId));}
  async #announce(tx,r){
   if(r.integration?.kind!=='external'||!SERVING.includes(r.state))return;
   for(const url of Object.keys(this.fieldPins)){
    let field;try{field=this.#field(url);}catch{continue;}if(!field.announce||!this.#eligible(r,field))continue;
    const consumers=(await this.#featuresFor(tx,url)).filter(f=>f.state==='active');if(!consumers.length)continue;
    if(await tx.get(MUTED+await digest(globalThis.crypto,url))===true)continue;
-   const marker=ANNOUNCED+await digest(globalThis.crypto,`${url}\0${r.clientId}`);if(await tx.get(marker))continue;await tx.put(marker,{at:this.clock()});
+   const marker=await this.#announcedKey(url,r.clientId);if(await tx.get(marker))continue;await tx.put(marker,{at:this.clock()});
    await this.#notice(tx,{kind:'announcement',template:'candidate-available',fragment:url,field:field.name,supplier:{clientId:r.clientId,origin:r.appOrigin??new URL(r.clientId).origin},contracts:[...field.contracts],claimed:true,consumers:consumers.map(f=>({feature:f.spec,...this.#descriptor(f.spec)}))});
   }
  }
@@ -289,6 +318,7 @@ export class AppConnections{
  }
  /** Lifecycle transitions (integrations §3.1, §7.1). `op`: suspend | resume | configured | health | approve. */
  async transition(owner,id,op,input={},{authTime}={}){
+  const declared=op==='configured'?await this.#declarationState():null;
   return this.metadata.transaction(async tx=>{
    const r=await this.#load(tx,owner,id),now=this.clock(),from=r.state,events=[];
    const set=state=>{r.state=state;r.status=connectionStatus(state);r.stateChangedAt=now;};
@@ -308,7 +338,7 @@ export class AppConnections{
     this.#fenced(r,input.expectedGeneration,true);if(typeof input.configured!=='boolean')fail('invalid_request','Say whether setup is complete.');
     if(!LIVE.includes(from))fail('invalid_state','This connection is not live.',409);
     r.configured=input.configured;const to=input.configured?(from==='configuring'?'active':from):'configuring';
-    if(to!==from){if(to==='configuring'){bump(r);await this.#cascade(tx,this.#delegationRows(await this.#affected(tx,id),'system'));}set(to);events.push({type:'connection-state',connection:id,clientId:r.clientId,generation:r.generation,state:to});if(SERVING.includes(to))await this.#reseat(tx,r);if(from==='configuring'&&to==='active')await this.#announce(tx,r);}
+    if(to!==from){if(to==='configuring'){bump(r);await this.#cascade(tx,this.#delegationRows(await this.#affected(tx,id),'system'));}set(to);events.push({type:'connection-state',connection:id,clientId:r.clientId,generation:r.generation,state:to});if(SERVING.includes(to))await this.#reseat(tx,r);if(from==='configuring'&&to==='active'){await this.#syncFeatures(tx,declared);await this.#announce(tx,r);}}
    }else if(op==='health'){
     this.#fenced(r,input.expectedGeneration,true);if(typeof input.degraded!=='boolean')fail('invalid_request','Say whether the connection is degraded.');
     const to=input.degraded&&from==='active'?'degraded':!input.degraded&&from==='degraded'?'active':from;if(to!==from){set(to);events.push({type:'connection-state',connection:id,clientId:r.clientId,generation:r.generation,state:to});}
@@ -429,7 +459,7 @@ export class AppConnections{
   await this.#emit(tx,[...removed.map(c=>({type:'value-removed',fragment:field.url,seat:c.entry.seat,connection:c.entry.connection,clientId:c.entry.clientId,generation:c.entry.generation})),{type:'field-changed',fragment:field.url,revision:record.revision,entries:this.#summary(record)}]);
   if(removed.length)await this.#withdrawApprovals(tx,field.url,removed.map(c=>c.entry));
   // Per-consumer approval of the new resource: only the features the owner ticked, each with a new grant.
-  for(const spec of approve){const f=await this.#featureRecord(tx,spec);f.approved=[...new Set([...(f.approved??[]),entry.seat])];await this.#regrant(tx,f,[]);}
+  for(const spec of approve){const f=await this.#featureRecord(tx,spec);f.approved=[...new Set([...(f.approved??[]),entry.seat])];await this.#regrant(tx,f);}
   await this.#cascade(tx,[...this.#delegationRows(removed,'system'),...DELEGATION_FIELDS.includes(field.url)?[{kind:'reconcile'}]:[]]);
   return this.#fieldView(tx,field,record);
  }
@@ -456,8 +486,9 @@ export class AppConnections{
    const {key,record}=await this.#values(tx,field.url);if(input.expectedRevision!==undefined&&input.expectedRevision!==record.revision)fail('field_changed','The field changed. Reload and try again.',409);
    if(input.seats.length!==record.entries.length||new Set(input.seats).size!==input.seats.length||input.seats.some(s=>!record.entries.some(e=>e.seat===s)))fail('invalid_request','List every current resource exactly once.');
    if((await this.#featuresFor(tx,field.url)).some(f=>f.state==='active')&&!this.#fresh(actor.authTime))fail('reauthentication_required','Confirm it is you before changing a field a provider feature uses.',401);
-   record.entries=input.seats.map(s=>record.entries.find(e=>e.seat===s));record.revision++;await tx.put(key,record);
+   const before=record.entries.map(e=>e.seat);record.entries=input.seats.map(s=>record.entries.find(e=>e.seat===s));record.revision++;await tx.put(key,record);
    await this.#emit(tx,[{type:'field-changed',fragment:field.url,revision:record.revision,entries:this.#summary(record)}]);
+   const order=(seats,r)=>seats.filter(s=>(r.approved??[]).includes(s)).join(',');await this.#regrantFor(tx,field.url,r=>order(before,r)!==order(input.seats,r));
    return this.#fieldView(tx,field,record);
   });
  }
@@ -468,8 +499,10 @@ export class AppConnections{
   return this.metadata.transaction(async tx=>{
    if(BLOCKED.includes((await tx.get(LIFECYCLE_STATE))?.phase))fail('account_suspended','This account is suspended.',423);
    const {key,record}=await this.#values(tx,field.url),entry=record.entries.find(e=>e.seat===input.seat);if(!entry)fail('not_found','Resource not found in this field.',404);
+   const changed=JSON.stringify(entry.purposes??[])!==JSON.stringify(input.purposes);
    entry.purposes=structuredClone(input.purposes);record.revision++;await tx.put(key,record);
    await this.#emit(tx,[{type:'field-changed',fragment:field.url,revision:record.revision,entries:this.#summary(record)}]);
+   if(changed)await this.#regrantFor(tx,field.url,r=>(r.approved??[]).includes(entry.seat));
    if(DELEGATION_FIELDS.includes(field.url))await this.#cascade(tx,[{kind:'reconcile'}]);
    return this.#fieldView(tx,field,record);
   });
@@ -485,7 +518,7 @@ export class AppConnections{
    const r=await this.#load(tx,owner,entry.connection);if(entry.generation!==input.generation||r.generation!==input.generation||!SERVING.includes(r.state))fail('connection_stale','The connection changed. Reload and try again.',409);
    let u;try{u=new URL(input.ingress);}catch{fail('invalid_request','Invalid ingress.');}
    if(u.origin!==r.appOrigin||u.href!==input.ingress||u.username||u.password||u.hash||u.search)fail('invalid_request','The ingress must be on the app origin.');
-   if(entry.ingress!==input.ingress){entry.ingress=input.ingress;record.revision++;await tx.put(key,record);await this.#emit(tx,[{type:'field-changed',fragment:field.url,revision:record.revision,entries:this.#summary(record)}]);if(DELEGATION_FIELDS.includes(field.url))await this.#cascade(tx,[{kind:'reconcile'}]);}
+   if(entry.ingress!==input.ingress){entry.ingress=input.ingress;record.revision++;await tx.put(key,record);await this.#emit(tx,[{type:'field-changed',fragment:field.url,revision:record.revision,entries:this.#summary(record)}]);await this.#regrantFor(tx,field.url,r=>(r.approved??[]).includes(entry.seat));if(DELEGATION_FIELDS.includes(field.url))await this.#cascade(tx,[{kind:'reconcile'}]);}
    return this.#fieldView(tx,field,record);
   });
  }
@@ -567,7 +600,7 @@ export class AppConnections{
    if(input.expectedRevision!==undefined&&input.expectedRevision!==record.revision)fail('field_changed','The field changed. Reload and try again.',409);
    if(input.assign){if(record.entries.length)fail('field_filled','This field already has a value. Change it in the field settings.',409);await this.#assignTx(tx,owner,field,{fragment:field.url,...input.assign},{authTime:actor.authTime});record=(await this.#values(tx,field.url)).record;}
    const pin='sha256-'+await digest(globalThis.crypto,canonical(field.schema));
-   r={spec:input.feature,issuer:this.origin,fragment:field.url,field:field.name,pin,methods:structuredClone(def.methods),state:'active',grant:this.uuid(),approved:record.entries.map(e=>e.seat),enabledAt:this.clock(),revision:(r?.revision??0)+1};
+   r={spec:input.feature,issuer:this.origin,fragment:field.url,field:field.name,pin,methods:structuredClone(def.methods),state:'active',grant:this.uuid(),approved:record.entries.map(e=>e.seat),enabledAt:this.clock(),seenAt:this.clock(),revision:(r?.revision??0)+1};
    await this.#putFeature(tx,r);await this.#emit(tx,[{type:'feature-enabled',feature:r.spec,grant:r.grant}]);
    return this.#featureView(input.feature,r,true);
   });
@@ -578,8 +611,10 @@ export class AppConnections{
   const state=await this.#declarationState();
   return this.metadata.transaction(async tx=>{await this.#syncFeatures(tx,state);const r=await this.#featureRecord(tx,input.feature);if(!r)fail('not_found','Feature not found.',404);if(['active','suspended'].includes(r.state))await this.#revokeFeature(tx,r,'disabled');return this.#featureView(input.feature,r,state.valid.has(input.feature));});
  }
- /** System: applies declaration loss and return, blocking and the 30-day revocation (also run by every read). */
- async featureSync(owner){const state=await this.#declarationState();return this.metadata.transaction(async tx=>({changes:await this.#syncFeatures(tx,state)}));}
+ /** System: applies declaration loss and return, blocking and the 30-day revocation (also run by every read). The
+  * account alarm runs it every FEATURE_SWEEP_MS while any grant is active or suspended (review M1), so suspension,
+  * revocation and the owner's notice happen with nobody reading; `next` is when to sweep again (null: nothing to watch). */
+ async featureSync(owner){const state=await this.#declarationState();return this.metadata.transaction(async tx=>{const changes=await this.#syncFeatures(tx,state);const watched=(await this.#featureRecords(tx)).some(r=>['active','suspended'].includes(r.state));return {changes,next:watched?this.clock()+FEATURE_SWEEP_MS:null};});}
  /** System, the provider feature's projection (extensions §3.1): only while its enablement is live and unsuspended,
   * its approved resources that are available now, in owner order, with the current `bindle.grant`. */
  async featureResources(owner,{feature}={}){
@@ -599,7 +634,7 @@ export class AppConnections{
  async announcements(owner,{fragment,enabled}={}){
   const field=this.#field(fragment);if(typeof enabled!=='boolean')fail('invalid_request','Say whether announcements are on.');
   return this.metadata.transaction(async tx=>{const key=MUTED+await digest(globalThis.crypto,field.url);
-   if(!enabled)await tx.put(key,true);else{await tx.delete(key);for(const [k] of await tx.list({prefix:ANNOUNCED,limit:512}))await tx.delete(k);}
+   if(!enabled)await tx.put(key,true);else if(await tx.get(key)===true){await tx.delete(key);for(const [k] of await tx.list({prefix:await this.#announcedKey(field.url),limit:512}))await tx.delete(k);}
    return {fragment:field.url,enabled};});
  }
 

@@ -26,7 +26,7 @@ export function configuredArtefacts({config,store,clock=systemClock}){
   if(kind===RTC_PURPOSE_KIND){try{return validatePurpose(body).id===id;}catch{return false;}}
   if(kind==='bus')return validateBusManifest(body,id).status==='valid';
   if(kind==='rpc-contract')return body?.$id===id&&Object.keys(contractMethods(body)).length>0;
-  if(kind===undefined||kind==='fragment'){validateSchema(body,id);return true;}return false;
+  if(kind===undefined||kind==='fragment'){validateSchema(body,id,{eventBuses:siteGlobal(config,'EVENT_BUSES_ENABLED')});return true;}return false;
  }});
  return {get enabled(){return siteGlobal(config,'ARTEFACT_VERSIONS_ENABLED');},...runtime};
 }

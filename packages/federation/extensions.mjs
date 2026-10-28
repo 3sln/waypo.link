@@ -46,10 +46,11 @@ export function nextFieldDispatch(operation,{tx,removed=[],featureLive=operation
  if(!resource)return {state,dispatch:null};if(!uuid(tx)||state.attempts.some(value=>value.tx===tx))fail('invalid_tx');
  state.attempts.push({id:resource.id,tx});return {state,dispatch:{resource:structuredClone(resource),tx}};
 }
-/** Records an attempt's outcome. `ordered` advances only after a proven no-effect failure (extensions §3.3). */
+/** Records an attempt's outcome. `ordered` advances only after a proven no-effect failure (extensions §3.3). A 5xx is
+ * ambiguous whatever error code it carries (review L9): it never switches resources. */
 export function recordFieldOutcome(operation,{tx,ok=false,httpStatus,code,bytesSent}={}){
  const state=structuredClone(operation),attempt=state.attempts.find(value=>value.tx===tx);if(!attempt||state.outcomes.some(value=>value.tx===tx))fail('invalid_outcome');
- const noEffect=bytesSent===false||NO_EFFECT_STATUS.includes(httpStatus)||NO_EFFECT_CODES.includes(code),status=ok===true?'succeeded':noEffect?'failed':'unknown';
+ const ambiguous=Number.isSafeInteger(httpStatus)&&httpStatus>=500,noEffect=bytesSent===false||!ambiguous&&(NO_EFFECT_STATUS.includes(httpStatus)||NO_EFFECT_CODES.includes(code)),status=ok===true?'succeeded':noEffect?'failed':'unknown';
  state.outcomes.push({...attempt,status});
  if(state.selection!=='ordered'||status!=='failed')state.stopped=true;
  return state;

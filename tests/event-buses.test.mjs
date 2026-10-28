@@ -11,7 +11,7 @@ import {createTestEngine} from './helpers/app-engine.mjs';
 
 const url='https://tasks.example/buses/task-changes/v1';
 const manifest=()=>({id:url,title:'Task changes',description:'A record when a task changes.',publisher:'https://tasks.example',fields:{bus:{title:'Task changes bus',type:'resource',cardinality:{min:0,max:1},contracts:[EVENT_BUS_CONTRACT]}},slot:{v:1,crit:['bus'],field:'bus',selection:'exclusive',consumers:['application','provider'],bus:{v:1,types:['created','completed'],payload:{type:'object',additionalProperties:false,required:['task'],properties:{task:{type:'string',maxLength:128}}},max_record_bytes:2048,retention:{min_seconds:3600,max_seconds:604800},publishers:['application'],readers:['application','provider'],effects:{read:{en:'See tasks when they change.'},write:{en:'Add task changes that connected apps see.'}}}}});
-const fixture=()=>{let document=manifest(),fetches=0;return {store:new MemoryMessagingStore(),crypto:webcrypto,schemaHosts:['tasks.example'],schemaFetcher:async()=>{fetches++;return structuredClone(document);},set:next=>document=next,get fetches(){return fetches;}};};
+const fixture=()=>{let document=manifest(),fetches=0;return {store:new MemoryMessagingStore(),crypto:webcrypto,eventBuses:true,schemaHosts:['tasks.example'],schemaFetcher:async()=>{fetches++;return structuredClone(document);},set:next=>document=next,get fetches(){return fetches;}};};
 async function harness(t,options={}){const f=fixture(),e=await createTestEngine({providers:{config:{EVENT_BUSES_ENABLED:true},eventBuses:createEventBusesProvider(f),...options}});t.after(()=>e.dispose());return {f,e,validate:schema=>e.read(new BusManifest({input:{schema}})),pin:(target=url,digest)=>e.perform(new PinBusManifest({input:{url:target,digest}}))};}
 // The bus pin digest: sha256 over the canonical complete manifest, legacy `slot` container included.
 const slotDigest=async(crypto,schema)=>'sha256-'+await digest(crypto,canonical(schema));
@@ -22,7 +22,9 @@ test('engine Query recognizes one legacy bus container without mutating it; ordi
  assert.equal(result.status,'valid');assert.deepEqual(result.schema,schema);assert.deepEqual(result.slot,schema.slot);assert.deepEqual(result.bus,schema.slot.bus);assert.deepEqual(schema,before);
  // Interim (pending events CR-X3-09): only a whole, valid legacy bus container passes the fragment member table; any
  // other top-level `slot` is unsupported.
- assert.deepEqual(validateSchema(schema,url),schema);assert.throws(()=>validateSchema({...schema,slot:{v:1,field:'feed'}},url),{code:'unsupported_fragment'});
+ assert.deepEqual(validateSchema(schema,url,{eventBuses:true}),schema);assert.throws(()=>validateSchema({...schema,slot:{v:1,field:'feed'}},url,{eventBuses:true}),{code:'unsupported_fragment'});
+ // Review M6: only while this provider implements event buses (EVENT_BUSES_ENABLED) does the bus member count.
+ assert.throws(()=>validateSchema(schema,url),{code:'unsupported_fragment'});
  result.bus.types.push('local-change');assert.deepEqual(schema,before);assert.deepEqual((await validate(schema)).bus.types,before.slot.bus.types);
  const renamed=manifest();renamed.fields.feed=renamed.fields.bus;delete renamed.fields.bus;renamed.slot.field='feed';assert.equal((await validate(renamed)).status,'valid');
 });

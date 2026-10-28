@@ -298,7 +298,10 @@ export const methods={
  },
  async rtcAppRevoked(owner,{clientId,all=false}={}){
   if(await this.metadata.get('owner')!==owner||!await hasState(this))return {ended:0};
-  let clients=[];if(all===true){const seen=new Set();for(const ep of (await this.metadata.list({prefix:'rtc/ep/',limit:64})).values())if(typeof ep?.clientId==='string')seen.add(ep.clientId);for(const prefix of ['rtc/out/','rtc/in/'])for(const rec of (await this.metadata.list({prefix,limit:4096})).values())if(typeof rec?.mine?.clientId==='string'&&['ringing','connected'].includes(rec.state))seen.add(rec.mine.clientId);clients=[...seen];}
+  // Review M5: account-wide severance (suspension, recovery, deletion) also ends every interim approval record, not
+  // only those of apps with a live endpoint or session, so an app that reconnects under a new grant needs the owner's
+  // approval again.
+  let clients=[];if(all===true){const seen=new Set();for(const ep of (await this.metadata.list({prefix:'rtc/ep/',limit:64})).values())if(typeof ep?.clientId==='string')seen.add(ep.clientId);for(const approval of (await this.metadata.list({prefix:'rtc/approval/',limit:4096})).values())if(typeof approval?.clientId==='string'&&approval.clientId)seen.add(approval.clientId);for(const prefix of ['rtc/out/','rtc/in/'])for(const rec of (await this.metadata.list({prefix,limit:4096})).values())if(typeof rec?.mine?.clientId==='string'&&['ringing','connected'].includes(rec.state))seen.add(rec.mine.clientId);clients=[...seen];}
   else if(typeof clientId==='string'&&clientId)clients=[clientId];
   let ended=0;for(const id of clients)ended+=(await run(this,new RtcLifecycle({actor:system(owner),input:{event:'app-revoked',clientId:id}}))).ended??0;return {ended};
  },

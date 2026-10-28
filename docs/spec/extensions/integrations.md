@@ -615,7 +615,7 @@ Integrations SHOULD log `jti`, `client_id`, `connection` and `tx` for every brok
 
 | Feature | Members | Meaning | When absent |
 | --- | --- | --- | --- |
-| `integrations.v1` | `hint_endpoint` (issuer origin) | The provider accepts confidential integration clients, processes `bindle_integration`, returns `bindle_connection`, issues connection-bound refresh tokens, delivers events, performs discovery and accepts hints. It also declares `token_endpoint_auth_methods_supported`, including `private_key_jwt` ([RFC 8414](https://www.rfc-editor.org/rfc/rfc8414.html)). | Clients are plain public applications. Confidential integration documents are refused (§2.1). |
+| `integrations.v1` | optional `hint_endpoint` (issuer origin, audience; optional since extensions rev 3.3, provisional and unsigned: when absent the provider accepts no change hints, and integrations send none under §8) | The provider accepts confidential integration clients, processes `bindle_integration`, returns `bindle_connection`, issues connection-bound refresh tokens, delivers events, performs discovery and accepts hints. It also declares `token_endpoint_auth_methods_supported`, including `private_key_jwt` ([RFC 8414](https://www.rfc-editor.org/rfc/rfc8414.html)). | Clients are plain public applications. Confidential integration documents are refused (§2.1). |
 | `brokered-resources.v1` | `jwks_uri` (issuer origin, brokering key set), `preferences_contract` (the v2 URL), optional `introspection_endpoint` (issuer origin) | The provider registers brokered records, projects them through preferences v2 with minted tokens, and performs §7 severance. Requires `integrations.v1`. | Only issuer-hosted resources exist. |
 
 ## 13. Conformance tests

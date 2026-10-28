@@ -144,6 +144,22 @@ test('RTC-i review M1: force-removing an app that holds an RTC grant answers and
  const account=w.app.resources.accounts.get(c.session.account.id);assert.deepEqual([...(await account.metadata.list({prefix:'rtc/approval/'})).keys()],[],'the approval record is gone');
 });
 
+// Extensions rev 3.2 code review M5: account-wide severance (suspension, recovery, deletion) ends every interim per-app
+// approval, including those of apps with no registered endpoint or live session, and it does so through the severance
+// hook itself (no INTEGRATIONS_ENABLED cascade drain needed), so an app that reconnects needs the owner's approval again.
+test('review M5: account severance drops every RTC approval, not only those of apps with live endpoints or sessions',{timeout:60000},async t=>{
+ const w=await boot(t),c=await connect(w);
+ const account=w.app.resources.accounts.get(c.session.account.id),approvals=async()=>[...(await account.metadata.list({prefix:'rtc/approval/'})).keys()];
+ assert.equal((await approvals()).length,1,'approved, and the app never registered an endpoint');
+ await account.connectionsSeverAccount(c.session.account.id,{reason:'suspended'});
+ assert.deepEqual(await approvals(),[],'the severance hook ended the approval');
+ // The RTC side alone: an account-wide revocation enumerates approval records too.
+ const again=await w.post('/api/rtc/approve-app',{clientId:APP.id,purposes:[CALL]},c.owner);assert.equal(again.status,200,await again.clone().text());
+ assert.equal((await approvals()).length,1);
+ await account.rtcAppRevoked(c.session.account.id,{all:true});
+ assert.deepEqual(await approvals(),[],'rtcAppRevoked {all:true} ends approvals without endpoints or sessions');
+});
+
 test('RTC-i review M1: force removal with an RPC of that app in flight answers (no account-gate / shard-gate cycle)',{timeout:90000},async t=>{
  const w=await boot(t),c=await connect(w);
  assert.equal((await within(c.call('register',{purposes:[CALL]}),10000,'register')).status,200);

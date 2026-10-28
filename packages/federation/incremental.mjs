@@ -138,7 +138,9 @@ export function createIncrementalProvider({store,issuer,crypto=globalThis.crypto
  const entryKey=hash=>key('e',hash);
  const ownerReviewUri=`${issuer}/access/apps`;
  /** The fragment and every manifest it supersedes, up to `chain` hops; unpinnable predecessors end the chain. */
- async function chainOf(url,pinned){const chain=[url];let schema=pinned.schema;for(let n=0;n<L.chain;n++){const prior=schema?.supersedes??schema?.slot?.supersedes;if(typeof prior!=='string'||chain.includes(prior))break;try{https(prior);chain.push(prior);schema=(await pinSchema(prior)).schema;}catch{break;}}return chain;}
+ // Review L12: fragments have no `supersedes` member any more (protocol §3 member table; a pinned fragment carrying one
+// is unsupported), so a line's chain is the fragment alone.
+ async function chainOf(url){return [url];}
  const describe=async(url,site,pinned)=>{const chain=await chainOf(url,pinned),host=hostOf(url);return {chain,host,own:registrableDomain(host)===site,root:chain[chain.length-1]};};
  const targets=record=>record.intent==='grant-more'?record.items.filter(i=>!i.status).map(i=>ladderTarget({kind:'grant-more',...i})):record.item.fields.map(field=>ladderTarget({kind:'configure',...record.item,field}));
  const itemFor=(record,item,field)=>({kind:record.intent,chain:item.chain,host:item.host,own:item.own,...field?{field}:{}});

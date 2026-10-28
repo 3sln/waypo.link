@@ -35,7 +35,7 @@ import {brokeredResourcesDeclaration} from '../federation/introspection.mjs';
 import {foreignIssuers} from './account/foreign-directory.mjs';
 import {RTC_SIGNALING_FRAGMENT_DOCUMENT,RTC_FEATURE,RTC_SIGNALING_CONTRACT,RTC_SIGNALING_METHODS,RTC_SIGNALING_FRAGMENT,ICE_RELAY_CONTRACT,ICE_RELAY_FRAGMENT_DOCUMENT} from '../rtc/extension.mjs';
 import {EXT,PROVIDER_EXT,declare} from '../core/extensions.mjs';
-import {providerFeatureDeclared} from '../app/domains/provider-features.mjs';
+import {PROVIDER_FEATURE_ROWS} from '../app/domains/provider-features.mjs';
 import {ICE_RELAY_METHODS,relayConfigured} from '../rtc/relay.mjs';
 import {LEG_CERTIFICATE_SECONDS} from '../rtc/certificates.mjs';
 
@@ -64,10 +64,10 @@ export const MANIFEST_DECLARATIONS=Object.freeze([
  // branch, DPoP RPC and cancellation (runtime/device-grant.mjs). DPoP algorithms and revocation_endpoint are already
  // base authority members whenever that mount is possible.
  {flag:'DEVICE_AUTHORIZATION_ENABLED',mounted:c=>c.target==='authority'&&c.mounts.deviceAuthorization===true,declare:c=>{const {device_authorization_endpoint,grant_types_supported,extensions}=deviceManifest(c.issuer);return {device_authorization_endpoint,grant_types_supported,extensions};}},
- // BB-C1b, extensions rev 3.2: the `messaging-address` provider feature is its own 3sln.me extension (extensions §4.2),
- // declared only where the adapter mounted the descriptor handoff (`mounts.messagingAddress`) and EXTENSIONS_ENABLED.
- // Withdrawn by the contacts spike (CL-4); kept until that code path is removed.
- {flag:['LINKS_ENABLED','EXTENSIONS_ENABLED'],mounted:c=>c.target==='authority'&&c.mounts.messagingAddress===true,declare:()=>({extensions:[declare(PROVIDER_EXT.messagingAddress)]})},
+ // BB-C1b, extensions rev 3.2: the `messaging-address` provider feature is its own 3sln.me extension (extensions §4.2).
+ // Its row lives with the feature definitions (app/domains/provider-features.mjs) so the account-side declarations port
+ // evaluates the very same row (review M2).
+ PROVIDER_FEATURE_ROWS[PROVIDER_EXT.messagingAddress],
  // IA-1: `grant-more`/`configure` need no row of their own (a second authorization-entry entry would fail closed as a
  // duplicate). They ride the FEDERATION_ENTRY_ENABLED row through `entries.intents()`, which lists them only when the
  // adapter passed AuthorizationEntries a mounted INCREMENTAL_AUTHORIZATION port (INCREMENTAL_AUTH_ENABLED on).
@@ -78,10 +78,9 @@ export const MANIFEST_DECLARATIONS=Object.freeze([
  // preferences/v2 minting, severance draining and the brokering JWKS route (`mounts.brokeredResources`);
  // introspection_endpoint only with `mounts.brokeredIntrospection`.
  {flag:['INTEGRATIONS_ENABLED','BROKERING_ENABLED'],mounted:c=>c.target==='authority'&&c.mounts.integrations===true&&c.mounts.brokeredResources===true,declare:c=>brokeredResourcesDeclaration(c.issuer,{introspection:c.mounts.brokeredIntrospection===true})},
- // Extensions rev 3.2 (§11.1, Q2 provisional): the email bridge is the provider feature of a 3sln.me extension. It is
- // declared exactly when the account-side predicate holds (app/domains/provider-features.mjs), so losing the
- // declaration and suspending the feature's grants are the same fact.
- {flag:['EMAIL_BRIDGE_ENABLED','INTEGRATIONS_ENABLED','BROKERING_ENABLED','EXTENSIONS_ENABLED'],mounted:c=>c.target==='authority'&&c.mounts.integrations===true&&c.mounts.brokeredResources===true&&providerFeatureDeclared(c.config,PROVIDER_EXT.emailBridge),declare:()=>({extensions:[declare(PROVIDER_EXT.emailBridge)]})},
+ // Extensions rev 3.2 (§11.1, Q2 provisional): the email bridge is the provider feature of a 3sln.me extension; the
+ // same row object the account-side declarations port evaluates (review M2).
+ PROVIDER_FEATURE_ROWS[PROVIDER_EXT.emailBridge],
  // CR-X3-25: the classifier is a paid built-in resource, listed in `contracts` (extensions §5.2) while it is offered.
  {flag:['INTEGRATIONS_ENABLED','EXTENSIONS_ENABLED'],mounted:c=>c.target==='authority'&&classifierOffered(c.config),declare:()=>({contracts:[CLASSIFIER_CONTRACT]})},
  // RTC (legacy rtc-signaling.v1 code, flags off; TODO signaling Appendix C): the built-in signaling resource is implied

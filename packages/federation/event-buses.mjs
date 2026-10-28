@@ -64,7 +64,9 @@ export function validateBusManifest(schema,url=schema?.id){
   if(Object.keys(slot).some(key=>!SLOT_KEYS.includes(key)))fail('invalid_bus');
   if(bytes(fragment)>16384||!slot.crit.includes('bus')||new Set(slot.crit).size!==slot.crit.length||slot.selection!=='exclusive'||Object.keys(fragment.fields).length!==1||typeof slot.field!=='string'||!own(fragment.fields,slot.field))fail('invalid_bus');
   const field=fragment.fields[slot.field],bus=slot.bus;if(field.type!=='resource'||field.cardinality?.min!==0||field.cardinality?.max!==1||field.contracts.length!==1||field.contracts[0]!==EVENT_BUS_CONTRACT)fail('invalid_bus');
-  subset(slot.consumers);if(slot.options!==undefined){if(!object(slot.options)||Object.keys(slot.options).some(key=>!['occupant','consumer'].includes(key)))fail('invalid_bus');for(const fields of Object.values(slot.options))validateFields(fields,{allowEmpty:true,optionalTitle:true});}
+  // Review M6: the field's own `consumers` (default applications) may admit no kind the slot excludes, so a bus whose
+  // slot says ["provider"] is never application-requestable.
+  subset(slot.consumers);if((field.consumers??['application']).some(kind=>!slot.consumers.includes(kind)))fail('invalid_bus');if(slot.options!==undefined){if(!object(slot.options)||Object.keys(slot.options).some(key=>!['occupant','consumer'].includes(key)))fail('invalid_bus');for(const fields of Object.values(slot.options))validateFields(fields,{allowEmpty:true,optionalTitle:true});}
   exact(bus,BUS_KEYS);
   if(bus.v!==1)fail('invalid_bus_version');strings(bus.types,32);if(!bus.types.length||bus.types.some(type=>!/^[a-z][a-z0-9.-]{0,47}$/.test(type)))fail('invalid_bus');
   payloadSchema(bus.payload);if(!integer(bus.max_record_bytes,64,16384))fail('invalid_bus');

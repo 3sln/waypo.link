@@ -15,6 +15,9 @@ import {ownerFlags,existingFeature,flagsFor,siteGlobal} from './flags.mjs';
 //       fields only; anything else is null (fail closed).
 //   connectionsSeverAccount(owner, {reason})  internal hook for suspension, recovery and deletion (review KD-4).
 //   connectionsDrain(owner)  internal: applies durable cascade rows (key-delegation revocation and reconciliation).
+//   connectionsFeatureSweep(owner)  internal, the account alarm (review M1): re-evaluates provider-feature declarations
+//       every FEATURE_SWEEP_MS while a feature grant is active or suspended, so suspension, the 30-day revocation and
+//       the owner's notice happen with nobody reading. Enabling a feature arms the alarm.
 //
 // KD-4 wiring: every disconnect, suspend, manifest invalidation, vacate or replacement of a messaging-ingress occupant
 // writes a cascade row in its own commit; the row is drained right after (and retried by every later connections call).
@@ -26,8 +29,10 @@ import {createAppEngine,perform,read,operations,AppQuery} from '../../app/engine
 import {systemClock,cryptoRandom,nullAudit} from '../../app/providers.mjs';
 import {AppConnections,recognizedFields} from '../../apps/connections.mjs';
 import {connectionsProvider,CONNECTION_OPERATIONS,CONNECTION_OWNER_OPERATIONS,FeatureResources,SeverAccountConnections,ConnectionCascades,ConnectionCascadeDone} from '../../app/domains/connections.mjs';
-import {FEATURE_DEFINITIONS,providerFeatureDeclarations,blockedExtensions} from '../../app/domains/provider-features.mjs';
+import {FEATURE_DEFINITIONS,FEATURE_SWEEP_MS,providerFeatureDeclarations,blockedExtensions} from '../../app/domains/provider-features.mjs';
 import {surfaceConfig} from './flags.mjs';
+import {brokeringMounts} from '../integration-ports.mjs';
+import {messagingAddressMounted} from '../../app/domains/provider-features.mjs';
 import {StorageError} from '../../storage/policy.mjs';
 import {GOOGLE_DRIVE_INTEGRATION} from '../../storage/google-drive-integration.mjs'; // EXT-X10 registry entry
 
@@ -37,14 +42,17 @@ export const CONNECTION_ENGINE_OPERATIONS=operations(...CONNECTION_OPERATIONS);
 export const BUILT_IN_INTEGRATIONS=Object.freeze({
  'google-drive':GOOGLE_DRIVE_INTEGRATION, // EXT-X10: upstream connector remains unchanged
 });
+/** The adapter mount evidence behind the provider-feature rows, exactly as the authority manifest receives it: the
+ * adapters pass `messagingAddress: messagingAddressMounted(config)` and federation.mjs adds brokeringMounts(config). */
+export const providerFeatureMounts=config=>({...brokeringMounts(config),messagingAddress:messagingAddressMounted(config)});
 const engines=new WeakMap();
 function connectionsEngine(c){
  let engine=engines.get(c);
  if(!engine){
   const connections=new AppConnections({subjectDeleted:async(tx,r,now)=>{for(const [path,pending]of await tx.list({prefix:'app-removal/record/'}))if(pending.entity===r.owner&&pending.client_id===r.clientId&&['pending','in-progress'].includes(pending.state)){await tx.put(path,{...pending,state:'forced',outcome:'forced',committed_at:now,access_ends_by:now+360000});await tx.delete('app-removal/open/'+encodeURIComponent(pending.client_id));}if(!siteGlobal(c.config,'SUBJECT_DELETED_EVENTS_ENABLED')||!r.integration?.snapshot?.manifest?.events_endpoint)return false;const {enqueueIntegrationEvent}=await import('../integration-events.mjs');await enqueueIntegrationEvent(tx,{type:'subject-deleted',connection:r.id,generation:r.generation,notBefore:now+360000},{now});return true;},metadata:c.metadata,origin:c.config.APP_ORIGIN,builtins:c.config.BUILT_IN_INTEGRATIONS??BUILT_IN_INTEGRATIONS,fields:c.config.CONNECTION_FIELDS??recognizedFields(),
-   // The provider's own feature declarations, evaluated live from configuration exactly as the manifest row is (or a
-   // test/operator port), so losing a declaration suspends the feature's grants on the next read.
-   declarations:async()=>typeof c.config.PROVIDER_FEATURE_DECLARATIONS==='function'?c.config.PROVIDER_FEATURE_DECLARATIONS():{manifest:providerFeatureDeclarations(surfaceConfig(c.config)),blocked:blockedExtensions(c.config)}});
+   // The provider's own feature declarations, evaluated live by the very manifest rows and mounts the authority manifest
+   // uses (or a test/operator port), so losing a declaration suspends the feature's grants on the next read (review M2).
+   declarations:async()=>typeof c.config.PROVIDER_FEATURE_DECLARATIONS==='function'?c.config.PROVIDER_FEATURE_DECLARATIONS():{manifest:providerFeatureDeclarations(surfaceConfig(c.config),providerFeatureMounts(c.config)),blocked:blockedExtensions(c.config)}});
   Object.defineProperty(connections,'fieldPins',{get:()=>c.config.CONNECTION_FIELDS??recognizedFields()});
   engine=createAppEngine({providers:{clock:systemClock,random:cryptoRandom,audit:nullAudit,connections:connectionsProvider({connections,enabled:true,config:c.config,flags:{for:ctx=>ownerFlags(c.config,ctx?.subject?.owner??ctx?.owner,ctx?.client?.clientId??ctx?.clientId)},account:typeof c.config.IDENTITY_ACCOUNT==='function'?owner=>c.config.IDENTITY_ACCOUNT(owner):undefined})}});
   engines.set(c,engine);
@@ -77,7 +85,16 @@ export const methods={
    if(!existingFeature(this.config,'INTEGRATIONS_ENABLED',owner)||!Operation)throw new StorageError('not_found','Not found.',404);
    await this.warm(owner);await this.connectionsDrain(owner);
    const result=await run(this,Operation,{actor:{kind:'owner',owner,...Number.isSafeInteger(authTime)?{authTime}:{}},...id===undefined?{}:{id},...input===undefined?{}:{input:shape(input)}});
-   await this.connectionsDrain(owner);if(!(Operation.prototype instanceof AppQuery))await this.integrationEventsKick(owner);return result;
+   await this.connectionsDrain(owner);if(!(Operation.prototype instanceof AppQuery))await this.integrationEventsKick(owner);
+   if(operation==='connections.enable-feature'&&typeof this.scheduleAlarm==='function')try{await this.scheduleAlarm(Date.now()+FEATURE_SWEEP_MS);}catch{/* the weekly alarm sweeps */}
+   return result;
+  },
+  // Review M1: the scheduled feature sweep. Re-arms itself while anything is watched; a failure re-arms within an hour.
+  async connectionsFeatureSweep(owner){
+   if(!flagsFor(this.config).background('INTEGRATIONS_ENABLED')||!await bound(this,owner)||(await this.metadata.list({prefix:'connections/feature/',limit:1})).size===0)return {changes:[],next:null};
+   let result;try{result=await this.connectionsSystem(owner,{operation:'connections.feature-sync'});}catch(error){if(typeof this.scheduleAlarm==='function')await this.scheduleAlarm(Date.now()+3600000);throw error;}
+   if(Number.isSafeInteger(result?.next)&&typeof this.scheduleAlarm==='function')await this.scheduleAlarm(result.next);
+   return result;
   },
   async connectionsSystem(owner,{operation,input}={}){
    const Operation=typeof operation==='string'&&Object.hasOwn(CONNECTION_ENGINE_OPERATIONS,operation)?CONNECTION_ENGINE_OPERATIONS[operation]:null;
@@ -104,6 +121,10 @@ export const methods={
    // (review 2026-10-23). A failure throws to the identity port, whose durable `pendingSever` row retries the whole hook.
    const result=await run(this,SeverAccountConnections,{actor:{kind:'system',owner},input:{reason}});
    if(recovery)await this.revokeDelegationsFor(owner,{reason:'system'});
+   // Review M5: RTC endpoints, sessions and every interim per-app approval end with the account severance itself, not
+   // only through the cascade drain (which waits for INTEGRATIONS_ENABLED). Narrowing and idempotent; a failure throws
+   // so the identity port's durable retry runs the whole hook again.
+   if(typeof this.rtcAppRevoked==='function')await this.rtcAppRevoked(owner,{all:true});
    await this.connectionsDrain(owner);await this.integrationEventsKick(owner);return result;
   },
   // Applies pending cascade rows in order; stops at the first failure, which stays durable for the next call.

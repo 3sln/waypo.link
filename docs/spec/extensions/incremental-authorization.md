@@ -31,7 +31,7 @@ Three rules govern every request:
 
 ## 2. Feature and intents
 
-The `authorization-entry.v1` feature's `intents` set gains `grant-more` and `configure` (AMD-C18). A provider lists them only when it implements this document. A client MUST NOT send an intent that is not listed. Without support, the client uses the fallbacks of §11.
+The `authorization-entry.v1` feature's `intents` set gains `grant-more` and `configure` (AMD-C18). A provider lists them only when it implements this document. A client MUST NOT send an intent that is not listed. *(Extensions rev 3.3, provisional and unsigned: the feature is the authorization-entry extension, whose `intents` option enumerates exactly `login`, `select-account`, `reauthenticate`, `end-session`, `grant-more` and `configure` ([protocol §2](../protocol.md#2-discovery-and-login)). A value outside that set makes the whole entry absent ([extensions §2.4](../extensions.md#24-options)), so the two intents are part of the `…/authorization-entry/v1` descriptor from its first publication.)* Without support, the client uses the fallbacks of §11.
 
 The entry body, the `?entry=` page parameter and the entry responses are still **reserved** in the wire profile (protocol §2). This document fixes the members the two intents add or constrain, so they can be published together with the entry body.
 

@@ -9212,3 +9212,32 @@ Implemented locally only: nothing is published, deployed or production-verified,
 Reviewer ___ Date ___ Outcome ___
 
 Independent code review of the revision 3.2 implementation (coordinator-commissioned, not owner sign-off): 0 High, 6 Medium, 12 Low, all on flag-off paths. Open Mediums, to fix next: M1 30-day suspension revocation is lazy (read-triggered only), so a declaration returning after 30+ days unread resumes the grant; M2 email-bridge declaration computed differently by the manifest row and the account-side check; M3 authorization-entry `intents` emit `grant-more`/`configure` beyond protocol §2; M4 initial (non-incremental) consent lacks the own-flow exclusion; M5 RTC approvals survive account severance and revive on reconnect; M6 legacy bus manifests accepted with EVENT_BUSES_ENABLED off. The chaos test's reference model mirrors the implementation and must be rewritten against the spec. Full gates (gates-13) green before commit.
+
+## 2026-10-27 — Extensions revision 3.3: spec reconciled with the revision 3.2 implementation (spec only)
+
+Provisional (coordinator), not signed off by the user; spec text only, no code changed. docs/spec/extensions.md §10.3 and protocol §2 now adopt the implementation's divergences.
+- Authorization-entry `intents` enum is exactly login, select-account, reauthenticate, end-session, grant-more and configure (EXT3-30). The §2.4 rule stands: an unknown enum value makes the entry absent, so both incremental intents are in the v1 descriptor from first publication. This closes review M3 at the spec level.
+- Endpoint kinds stated for every Bindle-owned option, and `hint_endpoint` made optional (EXT3-31). `transfer_in_endpoint` is audience because it carries private key material; widening §2.4's definition of audience instead is an open question for the owner.
+- Audience endpoints compare by WHATWG URL serialisation (EXT3-32). Code follow-up CR-X3-34.
+- UUIDv5 `tx` name is the `|`-joined UTF-8 inputs in the URL namespace, with a test vector (EXT3-33). A structured encoding is open before publication.
+- Embedded components: `parts` as `name/version`, no FedCM in islands, no `theme_tokens` (EXT3-34). Auth and profile edits are CR-X3-33. The island document at the `embed_origin` root was owner-approved in session (2026-10-27); the code move is CR-X3-35.
+- Interim `…/extensions/rtc-signaling/v1` until signaling Appendix C, never published (EXT3-35).
+- Enabling a feature always needs recent authentication. The announcement minimum is fields consumed by enabled, unsuspended provider features (EXT3-36).
+- One-line notes added to integrations §12 and incremental authorization §2.
+
+Reviewer ___ Date ___ Outcome ___
+
+## 2026-10-27 — Extensions revision 3.2 code review fixes (provisional)
+
+Provisional (coordinator), not signed off by the user. Fixed the code findings from the independent review of b7c04cc, locally and with flags off.
+- **M1:** the 30-day revocation bound is dated from the last evaluation that saw the declaration valid (`seenAt`), not from when a loss was noticed. A suspension is revoked once 30 days old by the clock, before any resumption, including when the declaration comes back; clock jumps cannot revoke or resume early. A new account-alarm sweep (`connectionsFeatureSweep`, every 6 h while a grant is watched, armed on enable) applies loss, revocation and the owner notice with nobody reading. Residual: with no provider-level ledger, a loss can be dated up to one sweep interval early (errs towards revoking sooner); the notice is the local owner notice only.
+- **M2:** the provider-feature manifest rows (`PROVIDER_FEATURE_ROWS`) are shared by the authority manifest and the account-side declarations port, with the same mounts.
+- **M3:** `grant-more`/`configure` emitted only with incremental authorization mounted; spec side closed by revision 3.3 (EXT3-30).
+- **M4:** the registrable-domain own-flow exclusion applies in the initial flow, in `inspect` and server-side in `approve`; values chosen before the flow are kept as a baseline.
+- **M5:** account severance ends every `rtc/approval/` record.
+- **M6:** legacy bus manifests are requestable only while EVENT_BUSES_ENABLED; a bus field's consumers must be a subset of its `slot.consumers`.
+- **Lows:** declarations applied before announcing (L1); per-field announcement reset (L2); `bindle.grant` changes on reorder, purpose or ingress change with old-grant credentials revoked — this reading of "value change" is provisional (L3); revoked features never regranted without a fresh enable (L4); fragment-pin mismatch suspends (L5); unknown members outrank invalid (L7); audience endpoints compare by WHATWG serialisation per EXT3-32, plus the UUIDv5 tx test vector and `|` refusal (L8); a 5xx never advances ordered failover (L9); dead `chainOf` `supersedes` reader removed (L12, partly).
+- The seeded chaos test now uses a spec-derived reference model and fails on the old code (seed 6).
+- **Deferred:** L6 (no other field mutation requires `expectedRevision`), L10 (`approve-app` admission exemption, interim RTC), L11 (legacy brokered assignment reset), remaining L12 naming leftovers.
+
+Reviewer ___ Date ___ Outcome ___

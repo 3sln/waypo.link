@@ -174,50 +174,83 @@ test('announcements: post-connection, owner-only, once per (field, supplier), ne
  await assert.rejects(f.op(C.NoticeList,f.system),code('forbidden'));
 });
 
-test('no occupancy oracle: an application request for a provider-only field is refused from the public fragment',async()=>{
+test('consumer kinds: an application request for a provider-only field is refused from the public fragment alone',async()=>{
  const {FederationService}=await import('../packages/federation/service.mjs');
- const doc=PUBLIC_INTAKE_FRAGMENT_DOCUMENT,store={transaction:fn=>fn({get:async()=>undefined,set:async()=>{},list:async()=>[],delete:async()=>{}})};
+ const doc=PUBLIC_INTAKE_FRAGMENT_DOCUMENT;
  const s=Object.create(FederationService.prototype,{artefactVersions:{value:false},schema:{value:async()=>({schema:doc,digest:'d'})}});
  await assert.rejects(s.pinRequests([{fragment:doc.id,required:true,purpose:'P',fields:['intake'],methods:{intake:{[INTAKE_CONTRACT]:['deliver']}}}]),code('invalid_request'));
  await assert.rejects(s.pinRequests([{fragment:doc.id,required:true,purpose:'P',fields:['intake'],options:{x:[1]}}]),code('invalid_args'),'AMD-X1 request options are gone');
- void store;
 });
 
-test('chaos: declaration churn (present, absent, duplicated, other version, invalid, blocked) suspends and revokes correctly',async()=>{
- await forEachSeed(12,async random=>{
+// The §4.2 reference model, written from the spec rules rather than from the implementation: a grant is suspended at
+// once when its declaration is lost, dated from the loss; a suspended grant resumes only when the same spec URL is
+// declared again within 30 days of its suspension timestamp, and is revoked at 30 days whatever the declaration says
+// then; blocking and disabling revoke; `bindle.grant` changes on every enable and value change and never on resume.
+// The provider's scheduled sweep is modelled as one evaluation immediately before each declaration change (so the
+// account last saw the old declaration at the moment it changed); everything else is unobserved time, forward and
+// backward clock jumps, and reads at random moments.
+test('chaos: §4.2 reference model over declaration churn, unobserved time, clock jumps, value changes and re-enables',async()=>{
+ const BOUND=SUSPENSION_REVOCATION_MS,HOUR=3600000;
+ await forEachSeed(16,async random=>{
   const f=await fixture();try{
-   const a=await f.connect('alpha.example');let model={state:'active',suspendedAt:null};
-   await f.op(C.EnableFeature,f.owner(),{feature:BRIDGE,assign:{connection:a.id}});
-   for(let step=0;step<40;step++){
-    const kind=random.pick(['valid','valid','absent','duplicate','version','invalid','blocked','advance','advance-long']);
-    f.decl.raw=null;f.decl.blocked=[];
-    if(kind==='valid')f.decl.list=[BRIDGE];
-    else if(kind==='absent')f.decl.list=[];
-    else if(kind==='duplicate')f.decl.raw={issuer:ISSUER,extensions:[declare(BRIDGE),declare(BRIDGE)]};
-    else if(kind==='version')f.decl.raw={issuer:ISSUER,extensions:[declare(BRIDGE),declare('https://3sln.me/extensions/email-bridge/v2')]};
-    else if(kind==='invalid')f.decl.raw={issuer:ISSUER,extensions:[{spec:BRIDGE,options:'not-an-object'}]};
-    else if(kind==='blocked'){f.decl.list=[BRIDGE];f.decl.blocked=[BRIDGE];}
-    else{f.clock.advance(kind==='advance'?random.int(3)*DAY:SUSPENSION_REVOCATION_MS);continue;}
-    const valid=kind==='valid',now=f.clock.now();
-    // Reference model of extensions §4.2.
-    if(model.state!=='revoked'){
-     if(kind==='blocked')model={state:'revoked',suspendedAt:null};
-     else if(model.state==='suspended'&&now-model.suspendedAt>=SUSPENSION_REVOCATION_MS)model={state:'revoked',suspendedAt:null};
-     else if(model.state==='active'&&!valid)model={state:'suspended',suspendedAt:now};
-     else if(model.state==='suspended'&&valid)model={state:'active',suspendedAt:null};
-     if(model.state==='suspended'&&now-model.suspendedAt>=SUSPENSION_REVOCATION_MS)model={state:'revoked',suspendedAt:null};
+   const a=await f.connect('alpha.example'),b=await f.connect('beta.example');
+   const RA='11111111-1111-4111-8111-111111111111',RB='22222222-2222-4222-8222-222222222222',resource={};
+   for(const [c,id,host] of [[a,RA,'alpha.example'],[b,RB,'beta.example']]){resource[id]=`https://${host}/r/intake`;await f.metadata.put('integrations/record/'+id,{v:1,id,owner:OWNER,connection:c.id,clientId:c.clientId,generation:c.generation,resource:resource[id],contracts:[INTAKE_CONTRACT],status:'available',assignments:[]});}
+   let holder={connection:a,record:RA};
+   const on=await f.op(C.EnableFeature,f.owner(),{feature:BRIDGE,assign:{connection:a.id,resource:RA}});
+   const m={state:'active',grant:on.grant,valid:true,blocked:false,lossAt:null,suspendedAt:null,grants:new Set([on.grant]),revocations:[]};
+   const revoke=()=>{m.revocations.push([resource[holder.record],m.grant]);m.state='revoked';m.suspendedAt=null;};
+   const evaluate=now=>{
+    if(m.state==='revoked')return;
+    if(m.blocked)return revoke();
+    if(m.state==='active'){if(m.valid)return;if(now-m.lossAt>=BOUND)return revoke();m.state='suspended';m.suspendedAt=m.lossAt;return;}
+    if(now-m.suspendedAt>=BOUND)return revoke();
+    if(m.valid){m.state='active';m.suspendedAt=null;}
+   };
+   const check=async(label,p)=>{
+    p??=await f.projection(BRIDGE);
+    assert.equal(p.state,m.state,`${label}: state`);assert.equal(p.live,m.state==='active',`${label}: live`);
+    if(p.live){assert.equal(p.grant,m.grant,`${label}: the grant is the one approved (a resume keeps it)`);assert.deepEqual(p.resources.map(r=>r.resource),[holder.record],`${label}: approved value`);}
+    else assert.deepEqual(p.resources,[],`${label}: a suspended or revoked feature sees no resources`);
+    const rows=(await f.severance()).filter(r=>r.type==='feature-revoked').map(r=>[r.resource,r.grants[0]]);
+    assert.deepEqual(rows,m.revocations,`${label}: revocation severs the credentials of the grant it ends`);
+   };
+   const freshGrant=async label=>{const g=(await f.op(C.FeatureList,f.owner())).find(x=>x.feature===BRIDGE).grant;assert.ok(!m.grants.has(g),`${label}: a new bindle.grant`);m.grants.add(g);m.grant=g;};
+   for(let step=0;step<60;step++){
+    const kind=random.pick(['declare','declare','declare','advance','advance','advance-long','jump-back','read','sweep','replace','enable','disable']),label=`step ${step} ${kind}`;
+    if(kind==='declare'){
+     await f.op(C.FeatureSync,f.system);evaluate(f.clock.now());await check(label+' (sweep before the change)');
+     const next=random.pick(['valid','valid','absent','duplicate','version','invalid','blocked']);
+     f.decl.raw=null;f.decl.blocked=[];f.decl.list=[BRIDGE];
+     if(next==='absent')f.decl.list=[];
+     else if(next==='duplicate')f.decl.raw={issuer:ISSUER,extensions:[declare(BRIDGE),declare(BRIDGE)]};
+     else if(next==='version')f.decl.raw={issuer:ISSUER,extensions:[declare(BRIDGE),declare('https://3sln.me/extensions/email-bridge/v2')]};
+     else if(next==='invalid')f.decl.raw={issuer:ISSUER,extensions:[{spec:BRIDGE,options:'not-an-object'}]};
+     else if(next==='blocked')f.decl.blocked=[BRIDGE];
+     const valid=next==='valid'||next==='blocked';if(m.valid&&!valid)m.lossAt=f.clock.now();m.valid=valid;m.blocked=next==='blocked';
+     continue; // nobody looks at the moment of the change
     }
-    const p=await f.projection(BRIDGE);
-    assert.equal(p.state,model.state,`step ${step} ${kind}`);
-    assert.equal(p.live,model.state==='active',`live at step ${step}`);
-    if(!p.live)assert.deepEqual(p.resources,[],'a suspended or revoked feature sees no resources');
-    if(model.state==='revoked'){if(random.chance(0.5)){f.decl.list=[BRIDGE];f.decl.raw=null;f.decl.blocked=[];await f.op(C.EnableFeature,f.owner(),{feature:BRIDGE});model={state:'active',suspendedAt:null};}}
+    if(kind==='advance'){f.clock.advance((random.int(72)+1)*HOUR);continue;}
+    if(kind==='advance-long'){f.clock.advance(random.pick([29,30,31])*DAY);continue;}
+    if(kind==='jump-back'){f.clock.set(f.clock.now()-(random.int(48)+1)*HOUR);continue;}
+    if(kind==='read'){evaluate(f.clock.now());await check(label);continue;}
+    if(kind==='sweep'){const out=await f.op(C.FeatureSync,f.system);evaluate(f.clock.now());assert.equal(out.next===null,m.state==='revoked',`${label}: the sweep re-arms while a grant is watched`);await check(label);continue;}
+    if(kind==='replace'){
+     evaluate(f.clock.now());
+     if(m.state==='active'){const other=holder.record===RA?{connection:b,record:RB}:{connection:a,record:RA};await f.op(C.AssignField,f.owner(),{fragment:INTAKE,connection:other.connection.id,resource:other.record,replace:true,approve:[BRIDGE]});holder=other;await freshGrant(label);}
+     await check(label);continue;
+    }
+    if(kind==='enable'){
+     if(m.state==='revoked'&&m.valid&&!m.blocked){await f.op(C.EnableFeature,f.owner(),{feature:BRIDGE});m.state='active';m.lossAt=null;await freshGrant(label);}
+     evaluate(f.clock.now());await check(label);continue;
+    }
+    if(kind==='disable'){evaluate(f.clock.now());if(m.state!=='revoked'){await f.op(C.DisableFeature,f.stale,{feature:BRIDGE});revoke();}await check(label);continue;}
    }
   }finally{f.dispose();}
  });
 });
 
-test('brokered credentials: disabling, a value change and suspension expiry revoke credentials minted under the feature grant',async t=>{
+test('brokered credentials: disabling, a value change, suspension expiry and blocking revoke credentials minted under the feature grant',async t=>{
  const f=await fixture();t.after(f.dispose);const a=await f.connect('alpha.example');
  // A brokered record for the intake field (registered by the owner through discovery; written directly here).
  const record='11111111-1111-4111-8111-111111111111';await f.metadata.put('integrations/record/'+record,{v:1,id:record,owner:OWNER,connection:a.id,clientId:a.clientId,generation:a.generation,resource:'https://alpha.example/r/intake',contracts:[INTAKE_CONTRACT],status:'available',assignments:[]});
@@ -225,7 +258,17 @@ test('brokered credentials: disabling, a value change and suspension expiry revo
  assert.equal((await f.projection(BRIDGE)).resources[0].resource,record);
  const off=await f.op(C.DisableFeature,f.owner(),{feature:BRIDGE});assert.equal(off.state,'revoked');
  let rows=await f.severance();assert.deepEqual(rows.map(r=>[r.type,r.connection,r.resource,r.grants]),[['feature-revoked',a.id,'https://alpha.example/r/intake',[on.grant]]]);
- const again=await f.op(C.EnableFeature,f.owner(),{feature:BRIDGE});const field=(await f.op(C.FieldList,f.owner())).find(x=>x.fragment===INTAKE);
+ // Suspension expiry: 30 days after the loss, with the credentials of the grant that was suspended.
+ const second=await f.op(C.EnableFeature,f.owner(),{feature:BRIDGE});f.decl.list=[ADDRESS];await f.op(C.FeatureSync,f.system);
+ assert.equal((await f.projection(BRIDGE)).state,'suspended');assert.equal((await f.severance()).length,1,'suspension alone revokes nothing');
+ f.clock.advance(SUSPENSION_REVOCATION_MS);await f.op(C.FeatureSync,f.system);
+ rows=await f.severance();assert.deepEqual(rows.at(-1).grants,[second.grant]);assert.equal(rows.at(-1).type,'feature-revoked');
+ assert.equal((await f.op(C.FeatureList,f.owner())).find(x=>x.feature===BRIDGE).reason,'suspension-expired');
+ // Blocking.
+ f.decl.list=[BRIDGE,ADDRESS];const third=await f.op(C.EnableFeature,f.owner(),{feature:BRIDGE});f.decl.blocked=[BRIDGE];await f.op(C.FeatureSync,f.system);
+ rows=await f.severance();assert.deepEqual([rows.at(-1).type,rows.at(-1).grants],['feature-revoked',[third.grant]]);
+ // A value change: the old grant's credentials go, the grant changes.
+ f.decl.blocked=[];const again=await f.op(C.EnableFeature,f.owner(),{feature:BRIDGE});const field=(await f.op(C.FieldList,f.owner())).find(x=>x.fragment===INTAKE);
  await f.op(C.UnassignField,f.owner(),{fragment:INTAKE,seat:field.values[0].seat});
  rows=await f.severance();assert.ok(rows.some(r=>r.type==='feature-regranted'&&r.grants[0]===again.grant),'a value change revokes the old grant');
  assert.notEqual((await f.op(C.FeatureList,f.owner())).find(x=>x.feature===BRIDGE).grant,again.grant);
