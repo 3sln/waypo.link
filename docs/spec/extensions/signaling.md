@@ -1505,7 +1505,7 @@ AMD-SG-L1a (owner-side signaling configuration on contact parents) and AMD-SG-L1
 
 ### 20.4 AMD-SG-K1: signature domains (core keys specification)
 
-This replaces AMD-R1. Certification keys gain the uses `bindle-signaling-leg+jwt` and `bindle-signaling-control+jwt`. Add rows for both, and for `bindle-signaling-message+jwt` (leg keys), separated by `typ`, to the signature-domain table. That table moves with the signed-object profile to a core keys specification (contacts and links spike CR-K1). Until it exists, the rows target organizations §3a.3 and links §7.2.
+This replaces AMD-R1. Certification keys gain the uses `bindle-signaling-leg+jwt` and `bindle-signaling-control+jwt`. Add rows for both, and for `bindle-signaling-message+jwt` (leg keys), separated by `typ`, to the signature-domain table. That table is in the core [keys §4](../keys.md#4-signature-domains) specification (contacts and links spike CR-K1); the rows target it and organizations §3a.3.
 
 ### 20.5 AMD-SG-P1: extension descriptor
 

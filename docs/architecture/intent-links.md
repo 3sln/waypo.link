@@ -89,6 +89,8 @@ Kinds are a new artefact kind with the envelope, digests, retraction and mirrors
 
 ### Registered kinds
 
+> **Superseded (2026-10-28, provisional).** Intents registers no kinds ([intents §11](../spec/extensions/intents.md#11-registered-kinds-none)); Bindle Messaging publishes `connect`, `open-conversation`, `send-message` and `add-contact` ([messaging §4.6](../spec/extensions/messaging.md#46-published-intent-kinds)), and the `contact-link` format is replaced by `capability` ([contacts and links rethink](contacts-and-links-rethink.md) CL-11, CL-12, CR-C10). The bodies below are historical.
+
 Draft bodies (version 1). Each is wrapped in an artefact envelope at its line URL when published.
 
 ```json

@@ -40,15 +40,16 @@ Consent must identify the verified registered app origin and current provider; d
 
 ## Capability URLs
 
-Some Bindle objects travel as URLs that are themselves capabilities: a link carrying `bindle_meta` ([links](extensions/links.md)), an intent link carrying a capability field ([intents](extensions/intents.md)), an offer or invitation token. Whoever holds such a URL holds the authority, so every party that serves, opens or forwards one MUST treat it as a secret:
+Some Bindle objects travel as URLs that are themselves capabilities: a link carrying `bindle_meta` ([Organizations link envelope](extensions/organizations-link-envelope.md)), an intent link carrying a capability field ([intents](extensions/intents.md)), an offer or an invitation token. Whoever holds such a URL holds the authority, so every party that serves, opens or forwards one MUST treat it as a secret:
 
+- Where a specification lets the capability travel in the URL fragment, minters MUST place it there, so that it never reaches a server (for example capability intents, [intents §3.4](extensions/intents.md#34-placement-in-a-url)). A page reading a fragment removes it before loading anything else.
 - The query (or the capability-bearing part of the URL) necessarily reaches the serving HTTP server and may enter infrastructure logs. Configure query redaction, or omit query strings from access logs, trace spans, analytics, crash reports and CDN debugging.
 - Every representation served at a capability URL carries `Cache-Control: no-store` and `Referrer-Policy: no-referrer`, and loads no third-party scripts, images or analytics.
 - Never include a capability URL in notification payloads or service-worker caches.
 - A page opened from a capability URL SHOULD capture the URL in memory and then remove the capability from the address bar (`history.replaceState`). Scrubbing MUST NOT break an intentional later submission, and MUST NOT turn the capability into owner authentication.
 - QR scans, browser history, clipboard managers, extensions, screenshots and recipients can disclose the URL. Wherever a capability URL is issued, the owner MUST be able to revoke it and issue a new one.
 
-(Moved 2026-10-27 from the legacy signed-contact-endpoint record, which is now a Parlay legacy document, so that Bindle specifications do not depend on application documents; contacts and links spike CR-SEC1.)
+(Moved 2026-10-27 from the legacy signed-contact-endpoint record, which is now a Parlay legacy document, so that Bindle specifications do not depend on application documents; contacts and links spike CR-SEC1. The fragment-placement rule was added 2026-10-28; provisional, unsigned.)
 
 ## Sign-off checkpoints
 

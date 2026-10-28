@@ -20,6 +20,8 @@ export const publicSources = [
   'packages/recovery/normalization.mjs',
   'packages/recovery/identity-backup.mjs',
   'packages/identity/handles.mjs',
+  // Contacts spike CR-C0: constants and the describe validator that packages/links/types.mjs re-exports (pure, no I/O).
+  'packages/identity/messaging-ingress.mjs',
   'packages/content/form-policy.mjs',
   'packages/core/tags.mjs',
   'packages/core/primitives.mjs','packages/core/contract-methods.mjs','packages/core/legacy-object-storage.mjs',

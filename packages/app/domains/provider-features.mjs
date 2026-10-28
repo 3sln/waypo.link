@@ -8,7 +8,8 @@
 // Pure: no storage. The grants themselves live in the connections domain (packages/apps/connections.mjs).
 import {siteGlobal} from '../../flags/read.mjs';
 import {PROVIDER_EXT,declare} from '../../core/extensions.mjs';
-import {PUBLIC_INTAKE_FRAGMENT,PUBLIC_INTAKE_CONTRACT,MESSAGING_INGRESS_FRAGMENT} from '../../links/types.mjs';
+import {PUBLIC_INTAKE_FRAGMENT,PUBLIC_INTAKE_CONTRACT} from '../../email-bridge/wire.mjs';
+import {MESSAGING_INGRESS_FRAGMENT} from '../../identity/messaging-ingress.mjs';
 import {bridgeConfig} from '../../email-bridge/engine.mjs';
 
 export const MAILBOX_CONTRACT='https://spec.bindle.example/messaging/v1/contracts/mailbox';

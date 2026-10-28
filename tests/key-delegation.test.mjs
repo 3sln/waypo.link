@@ -13,7 +13,7 @@ import { IdentityKeyRegistry, RotateIdentityKey, createIdentityKeyEngine, perfor
 import { DelegationRegistry, delegationsProvider, IssueDelegation, RenewDelegation, RevokeDelegation, ReconcileDelegations, DelegationList, DelegationStatus, DELEGATION_PURPOSES, DELEGATION_TYP, POP_DOMAIN, delegationLifetime, signDelegationPop, jwkThumbprint, statusCacheControl } from '../packages/identity/delegation.mjs';
 import { createAppEngine, perform, read } from '../packages/app/engine.mjs';
 import { memoryAudit } from '../packages/app/providers.mjs';
-import { MESSAGING_INGRESS_FRAGMENT } from '../packages/links/types.mjs';
+import { MESSAGING_INGRESS_FRAGMENT } from '../packages/identity/messaging-ingress.mjs';
 import * as B from '../packages/messaging-protocol/index.mjs';
 import { encryptSecret, decryptSecret } from '../packages/runtime/secrets.mjs';
 import { createScheduler, forEachSeed, fakeClock } from './helpers/chaos.mjs';

@@ -23,7 +23,7 @@
 // Statement keys must be non-decreasing along that lineage as `seq` grows: a later move signed by an ancestor of an
 // earlier move's key would be a rolled-back key (organizations §3a.4).
 import { base64url, fromBase64url, textEncoder, canonical, boundedString } from '../core/records.mjs';
-import { strictJSON, exactMembers, plainObject } from '../links/envelope.mjs';
+import { strictIJSON as strictJSON, exactMembers, plainObject } from '../core/strict-json.mjs';
 import { UUID } from '../core/primitives.mjs';
 import { verifyKeyContinuity } from './keys.mjs';
 

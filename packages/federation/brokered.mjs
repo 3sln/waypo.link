@@ -22,7 +22,7 @@ import {siteGlobal} from '../flags/read.mjs';
 // unassign, detach, revalidate, scope-describe; {kind:'system', owner} records, revalidate, describe (C1b messaging
 // descriptors), mintable, severance, severance-done.
 // The public-intake fragment and contract come from core links, not from the email bridge (messaging extraction prep).
-import {PUBLIC_INTAKE_FRAGMENT as INTAKE_FRAGMENT,PUBLIC_INTAKE_CONTRACT as INTAKE_CONTRACT} from '../links/types.mjs';
+import {PUBLIC_INTAKE_FRAGMENT as INTAKE_FRAGMENT,PUBLIC_INTAKE_CONTRACT as INTAKE_CONTRACT} from '../email-bridge/wire.mjs';
 export {INTAKE_FRAGMENT,INTAKE_CONTRACT};
 import {Provider} from '../../vendor/ngin/index.js';
 import {AppAction,AppQuery} from '../app/engine.mjs';

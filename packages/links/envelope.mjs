@@ -1,5 +1,6 @@
 import { fail, base64url, fromBase64url, textEncoder, digest, boundedString, canonical } from '../core/records.mjs';
 import { CONTACT_LINK_TYPE } from './types.mjs';
+import { strictIJSON as strictJSON, plainObject, exactMembers } from '../core/strict-json.mjs';
 
 // Core links: the generic Bindle link envelope (docs/spec/links.md §2–§5; extraction plan slice C1a moved it from
 // the legacy packages/messaging/bindle-links.mjs, removed with core messaging on 2026-10-27). Single shared parser: edge routing, account storage
@@ -46,66 +47,9 @@ export function parseLinkQuery(target) {
   return data === undefined ? { form: 'link', meta } : { form: 'link', meta, data };
 }
 
-// Strict I-JSON (RFC 7493): duplicate names at any depth, lone surrogates,
-// non-safe integers, non-finite numbers and trailing data are rejected.
-export function strictJSON(text) {
-  let i = 0;
-  const bad = () => fail('invalid_json'), ws = () => { while (i < text.length && ' \t\n\r'.includes(text[i])) i++; };
-  const string = () => {
-    let out = ''; i++;
-    for (;;) {
-      if (i >= text.length) bad();
-      const char = text[i++], code = char.charCodeAt(0);
-      if (char === '"') return out;
-      if (code < 32) bad();
-      if (char !== '\\') { out += char; continue; }
-      const escape = text[i++];
-      if (escape === 'u') {
-        const unit = hex4();
-        if (unit >= 0xdc00 && unit <= 0xdfff) bad();
-        if (unit >= 0xd800 && unit <= 0xdbff) { if (text[i] !== '\\' || text[i+1] !== 'u') bad(); i += 2; const low = hex4(); if (low < 0xdc00 || low > 0xdfff) bad(); out += String.fromCharCode(unit, low); }
-        else out += String.fromCharCode(unit);
-      } else { const mapped = { '"': '"', '\\': '\\', '/': '/', b: '\b', f: '\f', n: '\n', r: '\r', t: '\t' }[escape]; if (mapped === undefined) bad(); out += mapped; }
-    }
-  };
-  const hex4 = () => { const digits = text.slice(i, i + 4); if (!/^[0-9A-Fa-f]{4}$/.test(digits)) bad(); i += 4; return parseInt(digits, 16); };
-  const value = depth => {
-    if (depth > 8) bad(); ws();
-    const char = text[i];
-    if (char === '{') {
-      i++; const entries = [], names = new Set(); ws();
-      if (text[i] === '}') { i++; return {}; }
-      for (;;) {
-        ws(); if (text[i] !== '"') bad();
-        const name = string(); if (names.has(name)) bad(); names.add(name);
-        ws(); if (text[i++] !== ':') bad();
-        entries.push([name, value(depth + 1)]); ws();
-        if (text[i] === ',') { i++; continue; }
-        if (text[i++] !== '}') bad();
-        // fromEntries defines own data properties; "__proto__" cannot alter the prototype.
-        return Object.fromEntries(entries);
-      }
-    }
-    if (char === '[') {
-      i++; const items = []; ws();
-      if (text[i] === ']') { i++; return items; }
-      for (;;) { items.push(value(depth + 1)); ws(); if (text[i] === ',') { i++; continue; } if (text[i++] !== ']') bad(); return items; }
-    }
-    if (char === '"') return string();
-    for (const [word, literal] of [['true', true], ['false', false], ['null', null]]) if (text.startsWith(word, i)) { i += word.length; return literal; }
-    const match = /-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?/y; match.lastIndex = i;
-    const number = match.exec(text); if (!number) bad(); i = match.lastIndex;
-    const result = Number(number[0]);
-    if (!Number.isFinite(result) || Object.is(result, -0) || (Number.isInteger(result) && !Number.isSafeInteger(result))) bad();
-    return result;
-  };
-  if (typeof text !== 'string') bad();
-  const result = value(0); ws(); if (i !== text.length) bad();
-  return result;
-}
-
-export const plainObject = value => value !== null && typeof value === 'object' && !Array.isArray(value);
-export const exactMembers = (value, required, optional = []) => plainObject(value) && required.every(name => Object.hasOwn(value, name)) && Object.keys(value).every(name => required.includes(name) || optional.includes(name));
+// The signed-object profile helpers live in packages/core/strict-json.mjs (contacts spike CR-C0); re-exported for
+// the link modules until CR-C1 removes them.
+export { strictJSON, plainObject, exactMembers };
 export const httpsURI = (value, max = 256) => { try { const url = new URL(value); return typeof value === 'string' && value.length <= max && url.protocol === 'https:' && !url.username && !url.password && url.href === value; } catch { return false; } };
 // Canonical audience: origin plus path, no query, fragment or userinfo. Plain
 // HTTP is accepted only for localhost development issuers.

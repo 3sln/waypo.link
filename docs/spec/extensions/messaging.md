@@ -2,17 +2,17 @@
 
 > **Group:** Bindle extension
 >
-> **Status:** design candidate (2026-10-20); protocol validation and a local mailbox engine exist for the Parlay app; not a published occupant, independent interop or production-verified.
+> **Status:** design candidate (2026-10-20); protocol validation and a local mailbox engine exist for the Parlay app; the contacts and links spike changes (invitations, first-contact gate, content refusal) are provisional, unsigned text (2026-10-28) and not implemented; not a published occupant, independent interop or production-verified.
 >
-> **Covers:** Bindle Messaging interop between people: addresses, delegation, records, invitations and call invitations.
+> **Covers:** Bindle Messaging interop between people: delegation, invitations, records, call invitations and bridged intake.
 >
 > **Does not cover:** the Parlay app itself (`apps/parlay`); message content rules ([message content](message-content.md)); 3sln.me app messages ([messages from connected apps](../../3sln/services/app-messages.md)).
 
-> **Pending [extensions revision 3](../extensions.md) (draft, unsigned, 2026-10-27).** Where this document relies on slots or the `email-bridge` consumer, extensions revision 3.2 and protocol §2–§4 govern instead. The `messaging-address` consumer is withdrawn by the [contacts and links spike](../../architecture/contacts-and-links-rethink.md) (CL-4, CR-X1). Change request CR-X3-31 (CR-X3-04 is void), [extensions Appendix A](../extensions.md#appendix-a-migration-and-impact-change-requests-not-applied).
+> **Extensions revision 3 (draft, unsigned).** §2.1 and §9 are written in the [extensions revision 3](../extensions.md) shape: fragments and a provider-published bridge extension (CR-X3-31 and contacts spike CR-X1, CR-M8; applied 2026-10-28, provisional). The `messaging-address` consumer is withdrawn by the [contacts and links spike](../../architecture/contacts-and-links-rethink.md) (CL-4). Where any other text here still assumes revision 2 slots, extensions revision 3.3 and protocol §2–§4 govern.
 
-Status: **design candidate**, 2026-10-20. Protocol validation and a local mailbox engine exist in `packages/messaging-protocol/` and `packages/messaging-engine/`; provider delegation/status routing exists behind `LINKS_ENABLED` (default off). These are local implementations, not a complete published occupant, independent interop or production verification. Identifiers under `https://spec.bindle.example/` and hosts under `.example` are placeholders until publication authority is agreed. MUST/SHOULD/MAY are draft requirements.
+Status: **design candidate**, 2026-10-20. Protocol validation and a local mailbox engine exist in `packages/messaging-protocol/` and `packages/messaging-engine/`; provider delegation/status routing exists behind `LINKS_ENABLED` (default off). **Contacts and links spike applied (2026-10-28; provisional, unsigned; CR-M1 to CR-M8):** contact links, intake configuration, the links contract and the ingress descriptor are withdrawn (CL-4); an invitation is a Messaging intent (§4, CL-5); owner policy gates first contact only (§6.7, CL-6); a receiver may refuse content from an accepted peer (§6.4, CL-21). None of this is implemented: the engine still implements the withdrawn link kinds. **Phase 1 review fixes (2026-10-28; provisional, unsigned):** the inviter enforces the redemption shape (§4.3, §4.4); owner policy applies only after author verification, with pre-crypto budgets for credential-less first contact (§6.7, §7.4); identical redemption retries return the stored receipt (§4.4, §8.2); the inviter verifies only same-host redeemers (CL-24); the `mailbox` field is consumed by the Messaging-published messaging-mailbox feature, which gates key delegation (§2.5). These are local implementations, not a complete published occupant, independent interop or production verification. Identifiers under `https://spec.bindle.example/` and hosts under `.example` are placeholders until publication authority is agreed. MUST/SHOULD/MAY are draft requirements.
 
-Naming (2026-10-27, DEVLOG "Messaging removed from core; Parlay rename; BB-CUT reset"): this spec is **Bindle Messaging** (the user's 2026-10-20 name; formerly "BindleBox interop", `docs/spec/bindlebox.md`). The reference messaging app is **Parlay** (owner's working name, provisional), built in this monorepo under `apps/parlay` with `packages/messaging-protocol` and `packages/messaging-engine`. Identifiers moved with the rename while nothing is published: `…/bindlebox/v1` became `…/messaging/v1`, `application/vnd.bindlebox.*` became `application/vnd.bindle.messaging.*`, and the `bindlebox-*` signing domains became `bindle-messaging-*`. The spec is published by the messaging app's side, not by the core; its slot documents are `docs/artefacts/slots/messaging-ingress-v1.json` and `docs/artefacts/slots/public-message-intake-v1.json`, the single copies the provider and Parlay both pin. The former core messaging spec (blob messaging, collections and Views) is retired to apps/parlay/docs/legacy/messaging.md (Parlay legacy record `apps/parlay/docs/legacy/messaging.md`).
+Naming (2026-10-27, DEVLOG "Messaging removed from core; Parlay rename; BB-CUT reset"): this spec is **Bindle Messaging** (the user's 2026-10-20 name; formerly "BindleBox interop", `docs/spec/bindlebox.md`). The reference messaging app is **Parlay** (owner's working name, provisional), built in this monorepo under `apps/parlay` with `packages/messaging-protocol` and `packages/messaging-engine`. Identifiers moved with the rename while nothing is published: `…/bindlebox/v1` became `…/messaging/v1`, `application/vnd.bindlebox.*` became `application/vnd.bindle.messaging.*`, and the `bindlebox-*` signing domains became `bindle-messaging-*`. The spec is published by the messaging app's side, not by the core; its fragment documents are `docs/artefacts/fragments/messaging-ingress-v1.json` and `docs/artefacts/fragments/public-intake-v1.json`, the single copies the provider and Parlay both pin (extensions CR-X3-26; the former `docs/artefacts/slots/` copies are retired). **Known divergence (2026-10-28, provisional):** the messaging-ingress artefact still carries the pre-spike field name `ingress` and the old description; §2.1 governs, and the artefact is corrected in the code phase. Fragments are pinned by digest, so until then the two are different fragments. The former core messaging spec (blob messaging, collections and Views) is retired to apps/parlay/docs/legacy/messaging.md (Parlay legacy record `apps/parlay/docs/legacy/messaging.md`).
 
 Architecture and rationale: [Parlay architecture](../../architecture/messaging-app.md). Extraction: [messaging extraction](../../architecture/messaging-extraction.md). Review: [messaging app review](../../release/messaging-app-review.md). Protocol/security/interop sign-off: reviewer ___ / date ___ / outcome ___.
 
@@ -20,20 +20,19 @@ This profile defines peer-to-peer messaging between independent messaging apps a
 
 - [protocol](../protocol.md);
 - [extensions](../extensions.md);
-- the generic link envelope in [links](links.md) §1–§5 and §7.1–§9;
 - [message content](message-content.md);
-- the core directory/identity-document profile (implemented locally for organizations; Parlay integration is a separate dependency);
-- the `key-delegation.v1` feature (§3, assumed);
-- the links contract (§4.2, assumed).
+- the core directory/identity-document profile ([organizations §3a](organizations.md#3a-identity-documents-and-key-discovery-directoryv1); implemented locally for organizations; Parlay integration is a separate dependency);
+- the key-delegation extension (`https://spec.bindle.example/extensions/key-delegation/v1`; generic, [organizations AMD-O12](organizations.md), assumed), of which this document defines only the Parlay certificate profile (§3.2);
+- [intents](intents.md), for the kinds of §4.
 
-`key-delegation.v1` and the links contract are core amendments **proposed by this document**. They are not yet in the core specs, and their owners must accept them before publication or a conformance claim. Slots, integration events and brokered resources follow [extensions](../extensions.md) and [integrations](integrations.md) revision 2 as published.
+The key-delegation extension is generic: it names no Messaging fragment, field or contract (extensions §2.8 lists it under organizations; AMD-O12). This document defines the Parlay certificate profile (§3.2) and the messaging-mailbox extension (§2.5), whose provider feature gates which installation may hold the Parlay purposes. The dependency runs one way: messaging-mailbox requires key-delegation, never the reverse. Key delegation is not yet in the core specs, and its owner must accept it before publication or a conformance claim. Fragments, provider features and brokered resources follow [extensions](../extensions.md) revision 3.3 and [integrations](integrations.md).
 
 It replaces these drafts for peer messaging:
 
 | Draft | Reused | Removed |
 | --- | --- | --- |
 | contact delivery (Parlay legacy record `apps/parlay/docs/legacy/contact-delivery.md`) | Envelope, display-string rules, verification order, replay | Bearer RPC, anonymous branches |
-| [links](links.md) | Contact type (§6, §6.1–§6.3, delivery half of §7.5) | — |
+| [links](links.md) (dissolved) | — | Contact type, intake, links contract, ingress descriptor and conditional links (contacts spike CL-3, CL-4) |
 | contact endpoints (Parlay legacy record `apps/parlay/docs/legacy/contact-tokens.md`) | — | Legacy `?sig=` and inbox bearers |
 | conversations v1 (Parlay legacy record `apps/parlay/docs/legacy/conversations.md`) | — | Central authority, `actor:"bearer"` |
 
@@ -42,7 +41,7 @@ The [scaling spike](../../release/messaging-scaling-spike.md) P0 items are answe
 ## 1. Terms and identifiers
 
 - **Principal**: a Bindle identity `(iss, sub)`, where `iss` is the provider origin and `sub` is the stable account UUID.
-- **Occupant**: the recipient's mailbox resource in the messaging-ingress slot (§2.1), hosted by a messaging app.
+- **Occupant**: the recipient's mailbox resource, assigned to the owner's messaging-ingress `mailbox` field (§2.1) and supplied by a messaging app.
 - **Ingress**: the occupant's public HTTPS delivery URL.
 - **Delegate key**: an app-held P-256 key certified for a principal (§3).
 - **Obligation**: a sender's durable duty to deliver one envelope to one recipient.
@@ -50,97 +49,71 @@ The [scaling spike](../../release/messaging-scaling-spike.md) P0 items are answe
 | Identifier | Value |
 | --- | --- |
 | Profile | `https://spec.bindle.example/messaging/v1` |
-| Messaging-ingress slot | `https://spec.bindle.example/slots/messaging-ingress/v1` |
+| Messaging-ingress fragment | `https://spec.bindle.example/fragments/messaging-ingress/v1` |
+| Messaging-mailbox extension | `https://spec.bindle.example/extensions/messaging-mailbox/v1` |
 | Mailbox contract | `https://spec.bindle.example/messaging/v1/contracts/mailbox` |
-| Contact link type | `https://spec.bindle.example/messaging/v1/links/contact` |
+| Invitation intent kind | `https://spec.bindle.example/messaging/v1/intents/connect` |
+| Invitation credential scheme | `BindleInvite` |
 | Author purpose | `https://spec.bindle.example/messaging/v1/purposes/author` |
 | Receipt purpose | `https://spec.bindle.example/messaging/v1/purposes/receipt` |
 | Archive purpose | `https://spec.bindle.example/messaging/v1/purposes/archive` |
-| Public-intake slot and contract | `https://spec.bindle.example/slots/public-message-intake/v1`, `https://spec.bindle.example/contracts/public-intake/v1` |
-| Ingress descriptor media type | `application/vnd.bindle.messaging.ingress+json` |
-| Intake media type | `application/vnd.bindle.messaging.intake+json` |
+| Public-intake fragment and contract | `https://spec.bindle.example/fragments/public-intake/v1`, `https://spec.bindle.example/contracts/public-intake/v1` |
 
-## 2. Slot, contract and ingress descriptor
+## 2. Fragment, mailbox contract and fetch rules
 
-### 2.1 Messaging-ingress slot manifest
+### 2.1 Messaging-ingress fragment
 
-This is a slot per [extensions §2](../superseded/extensions-rev2.md#2-slot-manifests). The manifest is immutable at its URL.
+This is a fragment under [protocol §3](../protocol.md#3-fragments-and-preference-values) (extensions revision 3.3; contacts spike CR-X1, provisional). It replaces the revision 2 messaging-ingress slot.
 
 ```json
 {
-  "id": "https://spec.bindle.example/slots/messaging-ingress/v1",
+  "id": "https://spec.bindle.example/fragments/messaging-ingress/v1",
   "title": "Receives messages",
-  "description": "The one app that receives peer messages, contact links and bridged email for you.",
+  "description": "The one app that receives Bindle messages for you.",
   "publisher": "https://spec.bindle.example",
   "fields": {
-    "occupants": {
+    "mailbox": {
       "title": "Messaging app",
       "type": "resource",
       "cardinality": {"min": 0, "max": 1},
-      "contracts": ["https://spec.bindle.example/messaging/v1/contracts/mailbox"]
+      "contracts": ["https://spec.bindle.example/messaging/v1/contracts/mailbox"],
+      "selection": "exclusive",
+      "consumers": ["provider"],
+      "announce": true
     }
-  },
-  "slot": {"v": 1, "field": "occupants", "selection": "exclusive", "consumers": ["provider"], "supersedes": null}
+  }
 }
 ```
 
-Only provider features consume this slot. Other apps never obtain a credential for the mailbox contract (review P-17).
-
-A provider that routes links to messaging apps declares this consumer entry in its manifest `extensions` (extensions §4):
-
-```json
-{"slot": "…/messaging-ingress/v1", "digest": "sha256-…", "role": "consumer", "ref": "messaging-address", "purpose": "Tells people who hold your contact links where to deliver."}
-```
-
-A messaging app declares the matching occupant entry in the `extensions` of its client metadata, next to its `bindle_integration` member ([integrations §2](integrations.md)), whose `resources` list the mailbox contract:
-
-```json
-{"slot": "…/messaging-ingress/v1", "digest": "sha256-…", "role": "occupant", "ref": "mailbox"}
-```
-
-An app that also accepts bridged email declares an occupant entry for `…/slots/public-message-intake/v1` as well (§9).
+Only the owner assigns the field (protocol §3). Its only consumer is the provider feature of the messaging-mailbox extension (§2.5). Other apps never obtain a credential for the mailbox contract (review P-17). The field is named `mailbox`, not `ingress`, because "ingress" is the occupant's delivery URL (§1). `announce: true` lets the provider tell the owner, under the [extensions §6](../extensions.md#6-announcements-announce) floor, that a newly connected messaging app can fill the field; it applies only while the messaging-mailbox feature is enabled. A messaging app lists the mailbox contract in its integration manifest's `resources.contracts`, and also the public-intake contract if it accepts bridged email (§9). It declares nothing else for this fragment.
 
 ### 2.2 Mailbox contract (provider to occupant)
 
-Provider consumers invoke the mailbox resource over ordinary resource RPC ([protocol §5](../protocol.md#5-rpc-transport)) using the brokered consumer credential.
+Only the messaging-mailbox feature (§2.5) invokes the mailbox resource, over ordinary resource RPC ([protocol §5](../protocol.md#5-rpc-transport)) with its brokered consumer credential.
 
 | Method | Args | Result |
 | --- | --- | --- |
-| `describe` | `{}` | The ingress descriptor body of §2.3, without `expiresAt`. |
-| `linkRevoked` | `{jti}` | `{}`. Informs the occupant that the provider revoked a link. The occupant also polls `links.changes` (§4.2), so a lost call is recovered. |
+| `describe` | `{}` | `{version: 1, ingress}` |
 
-`describe` is declared `"effect": "read"`. Bridged intake uses the separate public-intake contract (§9).
+- `ingress`: an absolute HTTPS URL on the occupant's origin, with no userinfo, query or fragment. It SHOULD be the same for every mailbox the instance hosts. The instance routes by the signed `payload.recipient` and the credential, so the URL does not identify the user (review S-8).
 
-`describe` MUST be side-effect free. The provider MUST validate the result against §2.3 before serving it, and treats an invalid result as "no occupant".
+`describe` is declared `"effect": "read"` and MUST be side-effect free. The provider MUST validate the result (exact members) before using it, treats an invalid result as "no occupant", and records `ingress` as the `client.ingress` of the occupant's delegation certificates (§3.2). The result carries nothing else because the provider uses nothing else (contacts spike CR-M3, review L12). Bridged intake uses the separate public-intake contract (§9).
 
-### 2.3 Ingress descriptor
+**Binding parameters.** An occupant states its own parameters to peers only inside signed bindings (`creatorBinding` §6.1, `binding` §6.2 and §6.3):
 
-The descriptor answers `GET <contact link>` with `Accept: application/vnd.bindle.messaging.ingress+json` at the link's owner host, once links §8 steps 1–2 have succeeded. The body is JSON:
+- `profiles`: a nonempty array of supported profile identifiers, including `…/messaging/v1`.
+- `multicast`: optional, an absolute HTTPS URL on the origin of `ingress` (§7.3).
+- `limits`: `{maxParticipants, maxMessageBytes, maxEnvelopeBytes, maxBatchContexts?}`, each a positive safe integer no larger than the §11 maxima.
 
-| Member | Meaning |
-| --- | --- |
-| `version` | `1` |
-| `profiles` | Nonempty array of supported profile identifiers. Includes `…/messaging/v1`. |
-| `ingress` | Absolute HTTPS URL on the occupant's origin, with no userinfo, query or fragment. It SHOULD be the same for every mailbox the instance hosts. The instance routes by the signed `payload.recipient` and the credential, so the URL does not identify the user (review S-8). |
-| `multicast` | Optional absolute HTTPS URL (§7.3), on the same origin as `ingress`. |
-| `verifies` | Optional array of issuer origins whose principals this occupant can currently verify (§3.3). Absent means unknown. Senders use it to warn before composing. |
-| `limits` | `{maxParticipants, maxMessageBytes, maxEnvelopeBytes, maxBatchContexts?}`, each a positive safe integer no larger than the §11 maxima. |
-| `kinds` | The link's signed `kinds`. |
-| `expiresAt` | Unix milliseconds, at most 1 hour after the response. |
+### 2.3 Reaching a person and fetch rules
 
-- **Errors.** With no occupant, an occupant pending consumer re-review, or an occupant whose `describe` failed validation, the owner host returns `recipient_unavailable`, always as 503 with `Retry-After: 3600` and a uniform body. A single status means it cannot distinguish an absent occupant from one mid-switch (review S-8, P-5). Senders treat `recipient_unavailable` as retryable until the obligation's deadline.
-- **Response headers.** Responses are `Cache-Control: no-store` and `Referrer-Policy: no-referrer`, with credentialless CORS (`*`), and they never vary on cookies.
-- **Side effects.** Resolution delivers nothing and consumes no quota.
-- **Sender caching.** A sender MAY cache a descriptor until `expiresAt`. On 404, 410 or `ingress_moved` from the ingress, it MUST discard the cache and re-resolve at most once per attempt.
-- **Profile negotiation.** A sender MUST pick a profile listed in `profiles`. It MUST NOT downgrade to an unlisted profile or to any unauthored path.
+There is no public lookup from a handle or principal to an ingress (contacts spike CL-4). This answers the open question in extensibility design §10.1.
 
-**No public per-entity resolution.** Parlay needs no public lookup from a handle or principal to an ingress, and it defines none. This answers the open question in extensibility design §10.1.
-
-- Senders reach a person only through a capability: a contact link, which yields a descriptor, or an established conversation, whose bindings arrive signed by the peer.
+- A sender reaches a person only through an invitation (§4), whose delegation certificate names the inviter's ingress, or through an established conversation, whose bindings arrive signed by the peer.
 - A peer whose stored ingress fails with 404, 410 or `ingress_moved` waits for the new occupant's `ingress` or `rejoin` record (§6.3, §6.6), which the new occupant sends to every conversation peer when an import completes.
 - No enumeration surface is added to core.
 
-Host-wide fetch rules apply to descriptor fetches, ingress POSTs and directory lookups. Senders MUST use HTTPS (loopback only in explicit development), MUST NOT follow redirects, MUST screen private, loopback and link-local addresses at connect time, and MUST bound connect, response size and total time.
+Host-wide fetch rules apply to invitation redemptions, ingress POSTs, delegation status lookups and directory lookups. Senders MUST use HTTPS (loopback only in explicit development), MUST NOT follow redirects, MUST screen private, loopback and link-local addresses at connect time, and MUST bound connect, response size and total time.
 
 ### 2.4 Integration events and identity keys
 
@@ -153,8 +126,21 @@ This section reconciles with [integrations](integrations.md) §5–§6.
   - `preferences-updated`: storage or classifier changes.
 
   Each SET is signed and verified as integrations §6.1 requires (review S-16).
-- **No identity-key events.** Integrations defines no identity-key-rotation or link-revocation event. The occupant therefore resolves its owner's identity key through the directory, exactly as for any other principal (§3.3), and polls `links.changes` (§4.2) every 5 minutes and before admitting the first delivery on any parent it has not checked in that time.
-- **Requested for later.** Proposed `identity-key-rotated` and `link-changed` events would make these updates faster. They have been requested from the integrations owner, but nothing here depends on them.
+- **No identity-key events.** Integrations defines no identity-key-rotation event. The occupant therefore resolves its owner's identity key through the directory, exactly as for any other principal (§3.3).
+- **Requested for later.** A proposed `identity-key-rotated` event would make this update faster. They have been requested from the integrations owner, but nothing here depends on them.
+
+### 2.5 Messaging-mailbox extension (provider feature)
+
+Provisional (coordinator), unsigned, 2026-10-28 (contacts spike CR-X1; review M5). Bindle Messaging publishes the extension `https://spec.bindle.example/extensions/messaging-mailbox/v1`. Its descriptor is `{"id": "https://spec.bindle.example/extensions/messaging-mailbox/v1", "title": "Messaging app keys", "description": "Lets the messaging app you choose send and receive Bindle messages as you.", "options": {}}`. Its prerequisite is the key-delegation extension (`…/extensions/key-delegation/v1`), checked as [extensions §2.5](../extensions.md#25-processing-and-bounds) says. A provider that declares it always offers its feature.
+
+Its provider feature follows [extensions §4.2](../extensions.md#42-provider-features) (revision 3.3):
+
+1. **Request.** It requests the messaging-ingress fragment, pinned as in extensions §4.1, with field `mailbox` and methods `{"https://spec.bindle.example/messaging/v1/contracts/mailbox": ["describe"]}`, the descriptor text as its purpose, and no `required`.
+2. **Enablement.** Only an explicit owner action in the provider's authenticated interface, with recent owner authentication, enables it. That action is the consent for the request. If the field is empty, the owner may choose its value on the same screen (extensions §3.4, §5.3). It is never offered inside an application's or integration's authorization flow. The feature is listed among the field's consumers wherever the owner sees them.
+3. **Use.** While enabled and not suspended, it calls `describe` (§2.2) on the assigned resource, with `client_id` = issuer and `bindle.feature` = the spec URL, on enablement and on every value change, and records the validated `ingress`.
+4. **Gate.** Key delegation certifies the Parlay author, receipt and archive purposes only through this feature (§3.2, occupant check). While the feature is not enabled, is suspended, or the field is empty, no certificate carrying these purposes is issued or renewed. Disabling the feature, revoking its grant or changing the field's value revokes every `jkt` carrying these purposes.
+
+**Purpose consent is separate.** Enabling the feature lets the provider read the field and call `describe`; it authorizes no installation to sign. An installation receives the Parlay purposes only when it also holds the owner's explicit purpose consent (§3.2). A provider MAY collect both in one screen of its authenticated interface, with recent authentication, but each remains its own explicit choice.
 
 ## 3. Principals and delegate keys
 
@@ -167,9 +153,9 @@ This section reconciles with [integrations](integrations.md) §5–§6.
 
 `identityURI` and `identityDocument` MUST have `issuer` as their origin. Naming is as in contact delivery S13 and stays provisional.
 
-### 3.2 Delegation certificate (core feature `key-delegation.v1`, assumed)
+### 3.2 Delegation certificate (key-delegation extension, assumed)
 
-A provider declaring `"key-delegation.v1": {}` in `features` issues certificates to an app installation only after explicit owner consent naming the purposes. A certificate is a compact JWS. Its protected header is exactly `{alg:"ES256", kid:<identity keyId>, typ:"bindle-key-delegation+jwt"}`. Its payload contains exactly:
+A provider declaring the key-delegation extension (`{"spec": "https://spec.bindle.example/extensions/key-delegation/v1", "options": …}`, options as in [organizations §14](organizations.md)) and the messaging-mailbox extension (§2.5) issues Parlay certificates to an app installation only after explicit owner consent naming the purposes. A certificate is a compact JWS. Its protected header is exactly `{alg:"ES256", kid:<identity keyId>, typ:"bindle-key-delegation+jwt"}`. Its payload contains exactly:
 
 | Member | Definition |
 | --- | --- |
@@ -189,8 +175,8 @@ The JWS rules of [keys §3](../keys.md#3-compact-jws-profile) apply: strict I-JS
 
 Issuance rules (reviews S-3, S-12, P-3):
 
-- A provider MUST certify the Parlay author, receipt and archive purposes only to the installation that is the current messaging-ingress occupant, and MUST set `client.ingress` for it. At most one installation per principal holds these purposes at any time.
-- Certifying a new `jkt` for a principal MUST revoke every earlier `jkt` carrying these purposes. This applies to a new key in the same installation and to a new occupant.
+- **Occupant check** (contacts spike CR-X1, provisional). A provider MUST certify the Parlay author, receipt and archive purposes only while the messaging-mailbox feature is enabled and not suspended (§2.5), only to the installation that supplies the resource currently assigned to the owner's messaging-ingress `mailbox` field (§2.1) and holds the owner's purpose consent, and MUST set `client.ingress` for it from the `ingress` that feature recorded (§2.2). At most one installation per principal holds these purposes at any time.
+- Certifying a new `jkt` for a principal MUST revoke every earlier `jkt` carrying these purposes. This applies to a new key in the same installation and to a new occupant. Renewing a certificate for the same `jkt` revokes nothing. An occupant therefore SHOULD keep its delegate key for the life of its occupancy and rotate it only on suspected compromise, because a rotation kills every invitation that embeds a certificate for the old `jkt` (§4.1), including public links without expiry.
 - Removing or replacing the occupant revokes its `jkt` at once.
 - A provider MUST support revoking every delegation issued to a `client_id`, for the case of a breached app instance.
 
@@ -206,7 +192,7 @@ A receiver MUST perform all of these checks:
 4. Check `iat - 60 ≤ now ≤ exp + 60`, and `payload.createdAt ≥ (since - 60) × 1000`.
 5. Verify `proof.signature` (§5.3) with `delegate`.
 
-Until the directory profile exists, a receiver can resolve only principals whose provider exposes a directory to it. All other principals are refused with `author_unverifiable` (401), and no network fetch is attempted.
+Until the directory profile exists, a receiver can resolve only principals whose provider exposes a directory to it. All other principals are refused with `author_unverifiable` (401), and no network fetch is attempted. Invitation handling is narrower still: in this version both the handler (§4.2) and the inviter (§4.4) verify only same-host principals (CL-24).
 
 ### 3.4 Delegation status (assumed)
 
@@ -225,66 +211,84 @@ For `message` records and one-offs, the receiver MAY rely on certificate expiry.
 
 **After learning of a revocation.** A receiver MUST quarantine every record from that `jkt` that has not yet been applied and whose `createdAt` is at or after `revokedHour - 1 h`. Quarantined records are shown to the owner for review, not applied.
 
-## 4. Contact link type
+## 4. Invitations
 
-### 4.1 Meta members
+Provisional (coordinator), not signed off, not implemented; applied 2026-10-28 from the [contacts and links spike](../../architecture/contacts-and-links-rethink.md) §4.3 (CL-5, CL-19, CL-20, CL-21, CL-24; CR-M2). This section replaces the contact link type, which is withdrawn (CL-4). Hosts are placeholders under `.example`.
 
-This type is defined over the generic link envelope of [links](links.md) §2–§5. `type` is `…/parlay/v1/links/contact`.
+**Scope.** This specification defines only the invitation intent's data (§4.1), the handler's duties (§4.2), the redemption message (§4.3), the inviter's processing order (§4.4) and the results (§4.5). How many people may redeem an invitation, expiry policy, templates, admission rules, contact lists and their relationship policies, tags, safeguards and labels are **application behaviour**: each messaging app decides them for its owner, and none of them appears on the wire. In particular the wire carries neither a use count nor a direction.
 
-The exact meta member set is the common members (links §3.2) plus `sub, resource, kinds, mimeTypes, maxMessages, maxBytes, maxMessageBytes`, with an optional `audience` (links §7.1).
+### 4.1 The `connect` intent kind
 
-- `kinds` is a nonempty, unique, ascending subset of `["conversation-init","one-off"]`.
-- `resource` is an opaque parent identifier at most 128 characters long, meaningful only to the occupant.
-- `collections` and tag members MUST NOT appear.
+Bindle Messaging publishes the [intent kind](intents.md#4-intent-kinds) `https://spec.bindle.example/messaging/v1/intents/connect`: `effect` `send`; disclosure categories `personal-data` and `send-as-you` (the redeemer reveals itself and sends as itself); `capability: true`, so the intent travels in the URL fragment ([intents §3.4](intents.md#34-placement-in-a-url)). Its data:
 
-Bounds and quota semantics are those of contact endpoints. On a conditional link, quotas apply per verified author principal per UTC day (links §7.1). An unconditional link MUST reject `bindle_data`.
+| Member | Field | Display |
+| --- | --- | --- |
+| `inviter` | principal, required | `value` (the `iss` host; a handle only if the provider already holds a verified binding) |
+| `token` | string, required, `format: capability`, 22–43 base64url characters (at least 128 random bits) | `presence` |
+| `delegation` | string, required, at most 2,048 characters: the inviter's current delegation certificate (§3.2), compact JWS | `presence` |
+| `expires_at` | integer, optional, Unix seconds (absent: the issuer sets no expiry) | `value` |
+| `hint` | enum `no-reply`, optional | `value`, labelled "The inviter says you won't be able to reply". Display only; no protocol effect |
 
-### 4.2 Issuance (core links contract, assumed)
+The certificate makes an invitation link about 2 KB, within [intents §3.5](intents.md#35-size-bounds). That is the cost of verifying the inviter's ingress without a lookup service. **Disclosure:** anyone who holds the link can read the certificate's `client_id`, `origin`, `cnx` and `since`, so a public link discloses which app installation serves the inviter and since when. An invitation lives only as long as that `jkt` (§3.2): a delegate-key rotation or an app switch ends every invitation issued under it, whatever its `expires_at`.
 
-A messaging app obtains links through a provider-hosted resource implementing `https://spec.bindle.example/contracts/links/v1`, requested by fragment. Its methods:
+### 4.2 Handler duties
 
-- `issue({type, claims})` returns `{link, jti}`. The provider fills `iss`, `aud`, `jti`, `iat`, `exp`, signs with the identity key and stores the exact header and claims.
-- `revoke({jti})` returns `{}`.
-- `evaluate({jti, principal})` returns `{state}`, one of `eligible`, `ineligible`, `unavailable`, under links §7.5 reuse rules. A local block of that principal, or a policy change, MUST invalidate any reused positive decision immediately (review S-20).
-- `list({type, cursor})` returns `{links:[{jti, header, claims, revoked, occupantGeneration}], cursor}`.
-- `changes({since})` returns the `jti` values revoked or issued since a provider sequence number.
+A handler of `connect`, in this order:
 
-The provider issues only types that a registered link-type binding maps to a slot whose current occupant is the caller. For this type, the caller must be the messaging-ingress occupant. Core keeps this registration as a small table from link type to slot.
+1. Validates the data shape and `expires_at` locally. Nothing is fetched on open or prefetch. Fetches start only after the provider-level consent ([intents §7](intents.md#7-consent-choice-and-memory)), which is a viewer action.
+2. Resolves the inviter's identity key through the directory, with pinned continuity, and verifies the `delegation` signature, `typ` and `bindle`, that `iss`/`sub` equal `inviter`, and that `purposes` includes the author purpose. It checks the status of `jkt` (§3.4) and requires `active`. It does not check certificate expiry, because certificates last at most 24 hours and invitations longer. A new delegate key or an app switch revokes the `jkt` (§3.2), so the invitation dies with the inviter's old app. In this version only same-host inviters are verifiable; a foreign inviter fails as in §3.3, without a fetch (CL-24).
+3. Takes the redemption target from the certificate's `client.ingress`. There is no ingress data member to forge. The redemption follows the §2.3 fetch rules.
+4. Shows the inviter ("Allow alice@a.example to message you?"), with the labelled hint when present. The handle shown is the one bound to `inviter` in the directory identity document resolved in step 2; without such a binding, the `iss` host is shown. Only on the viewer's confirmation does its app admit the inviter to message the viewer; how it records that is application behaviour. **Nothing is sent to any party before steps 2 to 4 succeed.**
+5. Sends the redemption (§4.3). It keeps at most one pending redemption per token digest per account, and retries with identical bytes.
+6. **Rollback.** It removes the admission only if this flow created it, no conversation with the inviter exists, and either a terminal error arrived or `returnControl.expiresAt` passed without an `accept`.
 
-**Occupant replacement.** Links remain valid when the occupant changes. The new occupant reads them with `list`. Each link records the `occupantGeneration` that issued it.
+For a foreign inviter, once enabled, the inviter's provider learns when the viewer consented and which provider fetched.
 
-The previous app has seen every link capability, so on replacement the provider (or the new occupant) MUST show the owner the links issued under the previous occupant and offer to revoke and reissue them in bulk (review S-14).
+### 4.3 Redemption message
 
-### 4.3 Intake configuration
+A redemption is a `conversation-init` (§6.1) signed by the redeemer's delegate key, under the base profile `…/messaging/v1`, with exactly this shape:
 
-The occupant stores intake per parent, as in links §6.2:
+- `payload.recipient` is `{issuer, owner, invite}`, where `invite` is the canonical unpadded base64url of SHA-256 over the token's ASCII bytes (§5.1);
+- the request carries `Authorization: BindleInvite <token>` (§7.1), on a single delivery only (§7.3);
+- the envelope `subject` is `""` and `content` is `null`, and the request has no `message` part;
+- its genesis lists **exactly two participants**, the redeemer (the author) and the inviter (`recipient`), with `subject` `""` and `content` `null`.
 
-- `revision`;
-- `autoTags`;
-- `optionalTags` with labels.
+Its invitation response is never `acceptListed: true` (§6.2). The inviter's binding and limits arrive in its invitation response. Only `conversation-init` carries `invite` or `BindleInvite`; a `one-off` never does (§5.1, §7.1).
 
-These are disjoint, hold at most 32 IDs together, and are updated by compare-and-swap. Intake is owner-private organization. It is not part of the link, the signature or `md`.
+### 4.4 Inviter processing order
 
-### 4.4 Intake representation
+The inviter's occupant runs the cheap checks first and stops at the first failure:
 
-`GET {ingress}/intake` with `Authorization: BindleLink <bindle_meta>` and `Accept: application/vnd.bindle.messaging.intake+json` returns `{version:1, intakeRevision, optionalTags:[{id,label?}], kinds, mimeTypes, maxMessageBytes, quotaScope, expiresAt, conditional, policy?}`. These are the members of links §6.3 minus `form` and `type`.
+1. Pre-crypto budgets: per-source and per-invitation rate limits, size and framing (§7.1).
+2. **Shape.** A request carrying `BindleInvite` or `recipient.invite` that breaks §4.3, or that carries only one of the two, is `malformed`.
+3. A read-only lookup of the token digest. It is `invite_invalid` unless SHA-256 of the `Authorization` token equals `recipient.invite`, the token's indexed owner (§7.4) equals `recipient.owner`, and the token is live: known, not cancelled, not expired, and either not exhausted or already redeemed by the claimed author. A token bound to a different principal than the claimed author is also `invite_invalid`.
+4. Author verification (§3.3) with the status check (§3.4). In this version the inviter verifies only same-host authors; any other author is `author_unverifiable` (401) without a fetch (CL-24).
+5. **Replay.** If a redemption by the verified author is already recorded under `(owner, token digest, author principal)` (§8.2), the request is answered from that record and nothing is counted, whatever the token's current state: identical `payloadDigest` returns the stored receipt; a different one is `invite_invalid`.
+6. In one transaction: re-check that the token is live, record the redemption and count the use. A token that became unusable since step 3 (a lost spend race, a cancellation or expiry) is `invite_invalid`. This result follows verification, so its timing differs from step 3's; it reveals only that the token was live moments earlier, which the requester already knew.
+7. Hand the redemption to the owner's admission decision, which is application behaviour.
 
-The request is side-effect free. It MUST NOT disclose `autoTags`, policy tags, quota usage or anything about the requester.
+Steps 5 and 6 run in one transaction, so concurrent identical retries record one redemption and each gets the same stored receipt. Passing an exhausted token to verification when the claimed author is a recorded redeemer lets a holder of that token learn whether a named principal redeemed it; this is accepted, because only the token's holders learn it and it keeps retries safe (review M1).
 
-### 4.5 Presenting the link at delivery
+### 4.5 Results
 
-A delivery through a contact link sends `Authorization: BindleLink <bindle_meta>` to the ingress. The occupant MUST:
+- `malformed` (400) for step 2.
+- `invite_invalid` (401) for step 3, including a bound-principal mismatch, with one body and one timing class; and for steps 5 and 6 as stated there.
+- `rate_limited` (429) for budgets. A per-invitation 429 reveals liveness only to someone who already holds the token.
+- `author_unverifiable` and `too_large` as in §8.3.
+- Otherwise the ordinary receipt (§8.1). The outcome is then either an ordinary invitation response `accept` (§6.2), or **no response**, which lapses at `returnControl.expiresAt` exactly as an unanswered first contact does (§6.7). Held, ignored and refused redemptions are indistinguishable, and a refused redemption gets no response.
 
-1. parse the value under links §2 rule 4;
-2. verify the meta per links §3.3, against the identity key it holds for `sub` and its stored exact claims;
-3. check that the link is not revoked by itself or by the provider, and that `type` is this type;
-4. check that `payload.recipient.contactId` equals `jti` and `payload.recipient.resource` equals `resource`.
+**No direction on the wire** (CL-21). The redeemer admits the inviter to send to it. Whether the redeemer may send back is decided and enforced by the inviter's app under content refusal (§6.4). A redeemer app that offers compose anyway gets `not_authorized`, at the cost of one refused round trip. `hint` only sets expectations: the inviter derives it at mint time, so it can become stale, which is why it is shown as the inviter's claim. **Unsubscribing** is local and immediate: the redeemer removes or blocks the inviter (§6.5), and sends the courtesy `leave` record (§6.3).
 
-Failures produce the uniform `link_invalid` (401). `bindle_data` MUST NOT be presented at delivery (`link_malformed`).
+### 4.6 Published intent kinds
 
-### 4.6 Conditional links
+Bindle Messaging will publish these intent kind lines (CR-M7; moved from intents §11, contacts spike CL-11). Their bodies are drafts.
 
-At admission, the occupant obtains the decision for the author principal through `evaluate`, reusing a decision as links §7.5 permits. `ineligible` is `audience_ineligible` (403). `unavailable` is `audience_unavailable` (503).
+| Line | `effect` | `capability` | Data |
+| --- | --- | --- | --- |
+| `https://spec.bindle.example/messaging/v1/intents/connect` | `send` | `true` | §4.1 |
+| `https://spec.bindle.example/messaging/v1/intents/open-conversation` | `view` | `false` | `conversation` (required, `uuid`, `presence`), `creator` (required, principal, `value`), `profile` (required, `https-url`, `origin`) |
+
+**Reserved names.** `…/messaging/v1/intents/send-message` and `…/messaging/v1/intents/add-contact` are reserved, not defined: their former data carried a contact link, which is withdrawn (CL-4). Neither is published, and no handler may declare either, until a later revision defines its data. `add-contact` may instead be dropped in favour of `connect`.
 
 ## 5. Envelope
 
@@ -300,14 +304,15 @@ The envelope is exactly `{payload, proof}`. The payload fields are:
 | `noReply` | `true` exactly for `one-off`, otherwise `false` |
 | `operationId` | Lowercase UUID, stable across retries |
 | `createdAt` | Unix milliseconds, immutable |
-| `recipient` | For link kinds: `{issuer, owner, contactId, resource}`, matching the presented link. For `conversation-record`: `{issuer, owner, conversationId, incarnation}`, the recipient principal and its admission incarnation for this author. |
+| `recipient` | For first-contact kinds (`one-off`, `conversation-init`): `{issuer, owner}`, the recipient principal. A `conversation-init` that is an invitation redemption adds `invite` (§4.3; contacts spike CR-M4); a `one-off` carrying `invite` is `malformed`. For `conversation-record`: `{issuer, owner, conversationId, incarnation}`, the recipient principal and its admission incarnation for this author. |
 | `content` | `{mimeType, byteLength, sha256}` of the exact body, or `null` for control records without a body |
 | `subject` | Plain text, at most 200 code points |
-| `optionalTags` | Link kinds only: a sorted, unique subset of the current intake allowlist (at most 32). Empty for records. |
 | `author` | §3.1 |
 | `conversation` | Required for `conversation-init` (§6.1). Absent otherwise. |
 | `record` | Required for `conversation-record` (§6.3). Absent otherwise. |
-| `resendOf` | Optional. The event ID (records) or `operationId` (link kinds) of an earlier envelope that this one re-sends with identical content. Receivers that hold the original show it once, marked "resent". |
+| `resendOf` | Optional. The event ID (records) or `operationId` (first-contact kinds) of an earlier envelope that this one re-sends with identical content. Receivers that hold the original show it once, marked "resent". |
+
+The former `optionalTags` member is removed with the intake allowlist it drew from (contacts spike CL-4; review L7), so an envelope carrying it fails the exact member set.
 
 The parsing rules are those of contact delivery "One semantic envelope":
 
@@ -393,7 +398,7 @@ A dial-back made near `expiresAt` can still miss its offer if the invite is dela
 
 - the creator's ingress, which MUST equal the creator certificate's `client.ingress`;
 - a fresh incarnation that the creator issues for this invitee;
-- the creator's own descriptor members.
+- the creator's own `profiles`, `limits` and `multicast` (§2.2).
 
 Without `creatorBinding`, the invitee could not reply (review P-1).
 
@@ -468,6 +473,8 @@ The receiver precomputes the expected token digests for its accepted peers and k
 
 The secret never appears in URLs, logs, search, notifications, previews, or exports that carry no capabilities.
 
+**Content refusal by owner policy** (contacts spike CL-21, CR-M6; provisional, unsigned). A receiver MAY refuse content records (`message`, `edit`, `retract`, `peer-proposal`, `peer-response`, `rotate`) from an accepted peer under owner policy, with the uniform `not_authorized` (403) and no other signal. It MUST keep accepting the binding records `leave`, `ingress`, `rejoin`, `secret-share` and `peer-hello` from that peer, MUST keep returning receipts for the records it accepts, and MUST keep accepting invitation responses (§6.2), so that bindings and unsubscribing keep working. A policy change needs no protocol message. A sender that knows of a rotation cannot tell content refusal from rotation lag, so it retries until the obligation deadline (§6.5); that costs refused requests only and reveals nothing more.
+
 ### 6.5 Consent, block, rotation and late events
 
 - **Block.** A local block or removal immediately invalidates the author's incarnation. Records from that original author are refused, even when forwarded by others.
@@ -476,7 +483,7 @@ The secret never appears in URLs, logs, search, notifications, previews, or expo
 - **Late events.** A valid signature never overrides a newer local block.
 - **Equivocation.** Two different events with the same `(author, conversationId, stream, counter)` are equivocation. The receiver keeps both as evidence, quarantines the later one, and stops accepting that stream until the owner acts. Other streams of the same author are unaffected.
 - **Rotation conflicts (provisional, 2026-10-23).** Pending rotations are keyed by `(epoch, proposer)`. Two proposals of one epoch with different secret digests are a conflict the owner sees; accepting needs the owner to name the proposer, and an epoch already selected never takes a second secret; a late differing proposal records a secret conflict naming its proposer, which the owner can dismiss.
-- **Group bound.** `maxParticipants` bounds each owner's accepted-peer set for a conversation. An occupant refuses to accept a peer beyond it. Senders pre-check descriptor limits at compose time, and the UI shows "some participants can't see messages from everyone" when bindings show that limits differ (review P-12).
+- **Group bound.** `maxParticipants` bounds each owner's accepted-peer set for a conversation. An occupant refuses to accept a peer beyond it. Senders pre-check binding limits at compose time, and the UI shows "some participants can't see messages from everyone" when bindings show that limits differ (review P-12).
 
 ### 6.6 Rejoin after an app switch
 
@@ -495,17 +502,29 @@ A peer that is offline answers when it returns. Until then, obligations to that 
 
 **Provisional wargame reconciliation (2026-10-23):** the restored mailbox installs a `secret-share` only for the epoch it had selected before the switch, or for another epoch still inside its overlap; its selected epoch never changes, and it keeps awaiting until that epoch's secret is installed. A share of an expired epoch is ignored. If no peer holds the selected epoch's secret (for example an own rotation nobody selected), the mailbox stays awaiting until the owner acts.
 
-### 6.7 Request filtering is not observable
+### 6.7 First-contact gate and unobservable filtering
 
-A receiver MAY filter, deprioritize or auto-reject first-contact requests (`one-off`, `conversation-init`, bridged intake) under owner policy. This includes classifier-based rules ([architecture §12.1](../../architecture/messaging-app.md#121-public-request-filtering-and-auto-rejection)).
+Rewritten 2026-10-28 (contacts spike CL-6, CR-M5; provisional, unsigned).
 
-Filtering happens **after** custody. A receiver:
+**Gate.** Owner policy gates **first contact only**: `conversation-init` (including invitation redemptions) and `one-off`. A receiver processes first contact in this order and stops at the first failure:
 
-- MUST still return the ordinary receipt for an admitted request;
-- MUST NOT return any error code, header, receipt member, timing class or reply that depends on classification, score, rule or allowlist state;
-- for an auto-rejected `conversation-init`, MUST send no invitation response. The invitation lapses at `returnControl.expiresAt`, which is indistinguishable from an owner who did not answer.
+1. Framing, size and the pre-crypto budgets of §7.4.
+2. **Not hosted here.** A `recipient` this instance does not host, or whose owner has no current occupant, gets `recipient_unavailable` (503, `Retry-After`), with one body and one timing class for both cases.
+3. For an invitation redemption, §4.4 steps 2 and 3.
+4. Author verification (§3.3) with the status check (§3.4); for a redemption, §4.4 steps 4 to 6.
+5. **Owner policy**, on the verified principal only. First contact from an author whom owner policy does not admit, or whom the owner has blocked, is refused before custody with the uniform `not_authorized` (403), unless it is a valid invitation redemption (§4.3, having passed §4.4). Policy refusal and block share one body and one timing class.
 
-Refusals that happen *before* custody (credential, rate limit, size, author) use the ordinary §8.3 codes and never depend on content classification.
+**No refusal before step 5 depends on owner policy**, lists, blocks or invitation admission rules, so a request claiming an admitted author and one claiming a non-admitted author get identical results until the author is verified. Which authors owner policy admits, holds or refuses is application behaviour. A first contact that policy holds for the owner is accepted into custody, and if unanswered it lapses as below. The ingress URL is not a secret and gates nothing.
+
+**What the gate does not cover.** Records, `peer-hello` and `rejoin` stay gated only by the per-conversation accepted-peer set and pair tokens (§6.3 to §6.6), so groups that include people outside the owner's policy, and rejoin, keep working.
+
+**After custody.** A receiver MAY filter, deprioritize or auto-reject admitted first contact and bridged intake under owner policy, including classifier-based rules ([architecture §12.1](../../architecture/messaging-app.md#121-public-request-filtering-and-auto-rejection)). A receiver:
+
+- MUST still return the ordinary receipt for admitted first contact;
+- MUST NOT return any error code, header, receipt member, timing class or reply that depends on classification, score, rule, list or policy state, beyond the pre-custody refusal above;
+- for a held, ignored or auto-rejected `conversation-init`, MUST send no invitation response. It lapses at `returnControl.expiresAt`, which is indistinguishable from an owner who did not answer.
+
+Other refusals before custody (credential, rate limit, size, author) use the ordinary §8.3 codes and never depend on content classification or owner policy. The user decision of 2026-10-14 "no anonymous link messages" applies, and its scope is provisionally widened to all Bindle first contact (contacts spike CL-17, unsigned): every first contact is authored (§3.3). Bridged email stays the separately decided channel-origin exception (§9).
 
 ## 7. Transports
 
@@ -523,9 +542,9 @@ There is exactly one credential, chosen by kind:
 
 | Credential | Used for |
 | --- | --- |
-| `BindleLink` | Link kinds |
+| `BindleInvite` | Invitation redemptions (§4.3), which are always `conversation-init`. A `one-off` carrying it is `malformed`. |
 | `BindleConversation` | Records |
-| None | `rejoin` only (§6.6) |
+| None | Other first contact (§6.7), and `rejoin` (§6.6) |
 
 Cookies are not sent. An optional `Idempotency-Key` header MUST equal `operationId`.
 
@@ -535,9 +554,9 @@ The success response is 200 `{receipt}` (§8.1).
 
 ### 7.3 Multicast (optional)
 
-Multicast is available when a descriptor or binding names `multicast` on the same origin as its `ingress`. A sender MAY combine deliveries of **one identical body** to recipients whose own verified descriptors or bindings name that same URL. It POSTs to `{multicast}` with `multipart/form-data`:
+Multicast is available when a binding names `multicast` on the same origin as its `ingress`. A sender MAY combine deliveries of **one identical body** to recipients whose own verified bindings name that same URL. It POSTs to `{multicast}` with `multipart/form-data`:
 
-- a `batch` part: `{version:1, batchId (UUID), content, contexts:[{credential:{scheme:"BindleLink"|"BindleConversation", value}, envelope}]}`;
+- a `batch` part: `{version:1, batchId (UUID), content, contexts:[{credential:{scheme:"BindleConversation", value}, envelope}]}`. Redemptions carry no body and travel only by single delivery (§4.3), so `BindleInvite` never appears in a batch;
 - the `message` part.
 
 Limits:
@@ -566,16 +585,24 @@ A whole-request failure (400, 413, 429, 503) leaves every context unresolved.
 
 The sender reconciles unresolved contexts with unchanged envelopes, by single POST or a later batch. It never automatically resends a context that is already resolved.
 
-### 7.4 Edge credential index
+### 7.4 Edge credential index and first-contact budgets
 
 An instance MUST be able to refuse a bad credential without waking the target mailbox. Each mailbox therefore publishes, transactionally with every change, entries into an instance-wide edge index:
 
 | Credential | Index entry |
 | --- | --- |
-| Links | `{jti → owner, claimsDigest, revoked}` |
+| Invitations | `{token digest → owner, state, redeemers}`, where `redeemers` lists `H(author principal)` for each recorded redemption of an exhausted token (empty otherwise), so an identical retry by a redeemer reaches §4.4 step 5 |
 | Conversations | `{H(conversationId, author principal, recipient owner) → SHA-256(expected pairToken), accepted epochs, incarnation}` |
 
 The edge checks the presented credential against the index first. Only matching requests reach the mailbox. Index entries contain no secrets and no plaintext pair tokens.
+
+**Credential-less first contact** (review H2, provisional) has no index entry. Before waking a mailbox or starting any directory or status fetch, the edge MUST:
+
+- charge it against a per-source budget and a per-`recipient.owner` budget, keyed by the claimed owner whether or not it is hosted, so that a `rate_limited` (429) reveals nothing about hosting;
+- refuse a `recipient` that is not hosted here as §6.7 step 2 says, without waking any mailbox;
+- bound author-verification fetches per author issuer and globally, cache their results, including failures, for at least the §3.4 status-cache time, and start at most one directory fetch and one status fetch per request.
+
+Redemptions are charged against the same per-source and per-owner budgets.
 
 ## 8. Receipts, replay, windows and errors
 
@@ -601,7 +628,8 @@ A receipt proves that the recipient's **current** chosen app took durable custod
 
 | Kind | Namespace key | Acceptance window |
 | --- | --- | --- |
-| Link kinds | `(recipient owner, contactId, author principal, operationId)` (contact delivery S2) | `createdAt` within 24 h in the past and 60 s in the future |
+| First-contact kinds | `(recipient owner, author principal, operationId)` | `createdAt` within 24 h in the past and 60 s in the future |
+| Invitation redemptions, additionally | `(owner, token digest, author principal)` (§4.4 step 5) | While the issuer keeps the invitation's record |
 | Records | `(recipient owner, conversationId, author principal, stream, counter)`, together with `eventId` | 7 days |
 
 For records, the receiver keeps per-stream frontiers (the highest contiguous counter) plus bounded gap exceptions (§6.3). A bare highest-seen counter is not sufficient.
@@ -613,22 +641,20 @@ Retention and restore:
 - Both are restored, with control generations, before any traffic is admitted after an import or restore.
 - After a restore, an envelope whose `createdAt` predates the restored checkpoint is admitted only if it appears in the imported replay set (review S-9).
 
-The same key with a different `payloadDigest` is `operation_conflict` (409). An identical replay returns the stored receipt without another charge, write or notification, after live authorization has been rechecked.
+In the first-contact and record namespaces, the same key with a different `payloadDigest` is `operation_conflict` (409). In the redemption namespace a different `payloadDigest` is `invite_invalid` (§4.4 step 5), so a redeemer never receives a receipt for another envelope. An identical replay returns the stored receipt without another charge, write or notification, after live authorization has been rechecked; for a redemption, the recorded redemption is that authorization, whatever the token's current state. A returned receipt always matches the request's `operationId`, `payloadDigest` and `eventId`, so it passes §8.1.
 
 ### 8.3 Errors
 
 | Code | Status | Meaning |
 | --- | --- | --- |
 | `malformed` | 400 | Framing or schema |
-| `link_malformed` | 400 | Link value invalid under links §2 |
 | `envelope_expired` | 400 | `createdAt` outside the acceptance window |
 | `counter_gap` | 400 | Counter jump above §6.3's bound |
 | `clock_skew` | 400 | Future-dated beyond 60 s. Carries `serverTime`. |
-| `link_invalid` | 401 | Link fails verification |
+| `invite_invalid` | 401 | Invitation token unknown, cancelled, expired, exhausted, not matching `recipient`, bound to another principal, or already redeemed by this author with a different envelope (§4.4, §4.5) |
 | `author_unverifiable` | 401 or 503 | Author cannot be verified now. 503 is retryable. |
 | `author_required` | 403 | No author |
-| `not_authorized` | 403 | Uniform conversation-gate or host refusal |
-| `audience_ineligible` | 403 | Conditional link refuses this author |
+| `not_authorized` | 403 | Uniform first-contact gate after author verification (§6.7), conversation gate, content refusal (§6.4) or host refusal |
 | `participants_exceeded` | 403 | Group larger than the receiver accepts |
 | `record_forbidden` | 403 | Known target has a different author |
 | `operation_conflict` | 409 | Same replay key, different content |
@@ -640,31 +666,25 @@ The same key with a different `payloadDigest` is `operation_conflict` (409). An 
 | `record_unsupported` | 415 | Unknown record type |
 | `unsupported_profile` | 415 | Profile not supported |
 | `rate_limited` | 429 | `Retry-After` set |
-| `recipient_unavailable` | 503 | No current occupant. `Retry-After` set. |
+| `recipient_unavailable` | 503 | Recipient not hosted here, or no current occupant (§6.7 step 2). `Retry-After` set. |
 | `recipient_storage_unavailable` | 503 | Storage resource unavailable. `Retry-After` set. |
-| `audience_unavailable` | 503 | Conditional decision unavailable |
 
 Bodies are `{error, message}` with a fixed, safe message. Responses are no-store and no-referrer, CORS is credentialless, and redirects are never issued.
 
 Sender classification:
 
 - 429, every 503, timeouts and resets are retryable until the deadline.
-- 401/403 allow one repair (re-resolve, renew), except as §6.5 says for rotation.
-- 404, 410 and `ingress_moved` lead to a re-resolve where a link exists. For a conversation peer they become `retry_scheduled` with reason `moved`, awaiting that peer's `ingress` or `rejoin` record until the deadline.
+- 401/403 allow one repair (renew), except as §6.5 says for rotation. `invite_invalid` and `not_authorized` on first contact are terminal.
+- 404, 410 and `ingress_moved` are terminal for first contact (an invitation dies with its inviter's old app, §4.2). For a conversation peer they become `retry_scheduled` with reason `moved`, awaiting that peer's `ingress` or `rejoin` record until the deadline.
 - 400, 409, 413 and 415 are terminal.
 
 ## 9. Bridged and public intake (provider or app to occupant)
 
-The messaging spec publishes slot `https://spec.bindle.example/slots/public-message-intake/v1`, as in the extensibility design §7.1:
+Bridged intake uses the public-intake fragment of [extensions §11.1](../extensions.md#111-email-bridge-to-parlay-intake) (`https://spec.bindle.example/fragments/public-intake/v1`): one resource field `intake`, contract `https://spec.bindle.example/contracts/public-intake/v1`, `selection: "exclusive"`, `consumers: ["provider"]`. Bindle Messaging publishes it (CR-X3-31, contacts spike CR-M8; provisional, unsigned).
 
-- one resource field `occupant`;
-- contract `https://spec.bindle.example/contracts/public-intake/v1`;
-- `selection: "exclusive"`;
-- `consumers: ["provider"]`.
+Only provider features consume this field. The 3sln.me email bridge is the feature of its own provider-published extension (for example `https://provider.example/extensions/email-bridge/v1`). Application consumers (third-party channel bridges such as SMS) are deferred until a concrete bridge needs them (DEVLOG 2026-10-27 "Messaging removed from core; Parlay rename; BB-CUT reset", review fixes, provisional): admitting them opens a new ingress path into the owner's mailbox and needs its own review of consumer provenance keys, consent and rate limits. While nothing is published, adding them is a correction of v1; afterwards it is a new fragment URL (extensions §7). A Parlay mailbox resource implements both the mailbox contract and the public-intake contract, and lists both in its integration manifest's `resources.contracts`.
 
-Only the provider consumes this slot (its `email-bridge` feature). Application consumers (third-party channel bridges such as SMS) are deferred until a concrete bridge needs them (DEVLOG 2026-10-27 "Messaging removed from core; Parlay rename; BB-CUT reset", review fixes, provisional): admitting them opens a new ingress path into the owner's mailbox and needs its own review of consumer provenance keys, consent and rate limits. While nothing is published, adding them is a correction of v1; afterwards it is a new slot URL (extensions §7). A Parlay mailbox resource implements both the mailbox contract and the public-intake contract, and its integration manifest declares occupant entries for both slots, with `digest`.
-
-**Method `deliver({message, provenance})`.** It is idempotent per `tx`, and has effect `write`. The provider bridge uses `tx = UUIDv5(feature ref, contract, entity, ingress fingerprint)` (extensions §5.3).
+**Method `deliver({message, provenance})`.** It is idempotent per `tx`, and has effect `write`. A provider bridge uses `tx` = UUIDv5(spec URL, contract, entity, ingress fingerprint), encoded as [extensions §4.2](../extensions.md#42-provider-features) specifies.
 
 - `provenance` is a compact JWS (`typ` `bindle-intake-provenance+jwt`), signed by the consumer's published key: for the provider, its bridge key, discovered like the app-notification keys. Its payload is exactly `{bindle:"intake-provenance", v:1, iss, channel:"email"|<consumer-defined>, recipient: principal, receivedAt, sender:{envelopeFrom, headerFrom, replyTo?}, dmarc:"pass"|"fail"|"none"|"unknown", automation: hint labels, ingressFingerprint, normalizedDigest, jti}`.
 - `message` is `{parts:[{mimeType, dataBase64url}]}`, at most 1 MiB in total after the consumer's MIME bounds.
@@ -680,9 +700,9 @@ The result is `{disposition:"stored-receipt"|"stored-invitation"|"refused"}`. It
 5. bound `receivedAt` to the last 7 days;
 6. show `dmarc` and the sender fields only as the consumer's assertions.
 
-It MUST present the item as channel-origin with an unverified sender. It MUST NOT sign the item as authored by anyone, admit the sender into a conversation, or reply over that channel. A sender becomes a participant only through the bridge's mailbox-confirmation and identity flow, followed by an ordinary `conversation-init` or invitation response.
+It MUST present the item as channel-origin with an unverified sender. It MUST NOT sign the item as authored by anyone, admit the sender into a conversation, or reply over that channel. A sender becomes a participant only through the bridge's mailbox-confirmation and identity flow, followed by an ordinary `conversation-init` or invitation response. Bridged intake never places anyone in the owner's contact lists or other first-contact policy (contacts spike CL-17).
 
-**The provider's SMTP behaviour and auto-reply MUST NOT vary with occupancy, occupant availability or `disposition`** (extensions §9.8, no occupancy oracle). See [architecture §13](../../architecture/messaging-app.md#13-email-bridge-handoff-shared-slice-x12).
+**The provider's SMTP behaviour and auto-reply MUST NOT vary with occupancy, occupant availability or `disposition`** ([protocol §3](../protocol.md#3-fragments-and-preference-values), no occupancy oracle). See [architecture §13](../../architecture/messaging-app.md#13-email-bridge-handoff-shared-slice-x12).
 
 ## 10. Portable archive
 
@@ -695,17 +715,17 @@ To keep history portable, the occupant writes to the owner's `object-storage/v1`
 
 **Segments** are immutable JSON-lines files of records, each `{type, …}`, where `type` is one of:
 
-`item`, `body-ref`, `peer` (binding, incarnations both ways, accepted epochs), `stream-head` (own author streams per conversation), `frontier`, `gap`, `tombstone`, `pending-mutation`, `block`, `replay` (receipts and fences within the windows), `outbox` (unresolved obligations with their exact envelopes), `quota` (per-day counters), `link-parent` (intake and parent records, without metas), `view`, `rule`, `tag-label`, `overlay`.
+`item`, `body-ref`, `peer` (binding, incarnations both ways, accepted epochs), `stream-head` (own author streams per conversation), `frontier`, `gap`, `tombstone`, `pending-mutation`, `block`, `replay` (receipts and fences within the windows), `outbox` (unresolved obligations with their exact envelopes), `quota` (per-day counters), `invitation` (issued invitation records: token digest, state, expiry and redemption ledger, never the token), `view`, `rule`, `tag-label`, `overlay`.
 
 Bodies are stored at `bodies/<sha256>`.
 
 **Not exported until segment encryption exists:**
 
 - conversation secrets;
-- link metas;
+- invitation tokens;
 - delegate private keys, which are never exported.
 
-The new occupant obtains links from `links.list` (§4.2), regains secrets through `rejoin` (§6.6) and generates its own key.
+The new occupant regains secrets through `rejoin` (§6.6) and generates its own key. Invitations issued under the previous occupant die with its revoked `jkt` (§4.2).
 
 **Import order:**
 
@@ -714,7 +734,7 @@ The new occupant obtains links from `links.list` (§4.2), regains secrets throug
 3. outbox. The previous occupant's delegate key is revoked, so imported unresolved obligations are re-signed by the new key as new events carrying `resendOf`. Recipients that already hold the original show the copy once, marked "resent";
 4. items.
 
-During import the occupant admits only records and link deliveries whose replay and control state are already restored. Others get `recipient_storage_unavailable` with a short `Retry-After`. Senders' one-off deadlines are 23 h, so imports that may run longer SHOULD restore control state first (it is small) and then admit traffic while items stream in.
+During import the occupant admits only records and first-contact deliveries whose replay and control state are already restored. Others get `recipient_storage_unavailable` with a short `Retry-After`. Senders' one-off deadlines are 23 h, so imports that may run longer SHOULD restore control state first (it is small) and then admit traffic while items stream in.
 
 **Encryption** of segments is a later profile. Until then the archive is plaintext to the storage provider, and the owner MUST be told so.
 
@@ -739,19 +759,20 @@ These are maxima in v1. Hosts MAY advertise smaller limits.
 | `rejoin` per author per conversation per day | 1 |
 | Delegation certificate lifetime | 24 h |
 | Status cache | 5 min |
-| Descriptor cache | 1 h |
 | Clock skew | 60 s |
-| Link-kind window | 24 h |
+| First-contact window | 24 h |
 | Record window | 7 days |
 | Rotation overlap | 7 days |
 | Receipt and fence retention | 9 days |
 
 ## 12. Security considerations
 
-- **Credentials and authorship are independent.** A link or a secret admits a delivery. The author proof names who is speaking. Neither one substitutes for the other.
+- **Credentials and authorship are independent.** An invitation token, owner policy (§6.7) or a conversation secret admits a delivery. The author proof names who is speaking. Neither one substitutes for the other.
 - **Delegate key compromise** allows signing as the principal for Parlay purposes only, until revocation plus the remaining certificate lifetime (§3.2). The status check on first contact and peer admission bounds the most valuable cases.
 - **Expanded work.** Multicast, invitations and proposals are charged as the equivalent individual work (§7.3). No receiver fans out on behalf of a sender, and no receiver fetches recursively.
-- **Enumeration resistance.** Uniform `link_invalid`, `not_authorized` and `recipient_unavailable` responses prevent enumeration of accounts and mailboxes.
+- **Enumeration resistance.** Uniform `invite_invalid`, `not_authorized` and `recipient_unavailable` responses prevent enumeration of accounts and mailboxes. Owner policy is applied only after author verification (§6.7), so a forged claim of an admitted author learns nothing about the owner's lists.
+- **Unauthenticated cost.** First contact needs no credential. The pre-crypto budgets and fetch bounds of §7.4 keep each such request to at most one directory fetch and one status fetch, and keep unknown recipients from waking any mailbox.
+- **Public invitations.** A public `connect` link discloses the inviter's installation metadata in its certificate (§4.1) and admits only a content-free redemption (§4.3), never a message.
 - **Plaintext custody.** Providers and apps see content. This profile is not end-to-end encrypted.
 
 See also [security](../security.md) and the [review](../../release/messaging-app-review.md).
@@ -765,6 +786,14 @@ Fixed vectors are needed before publication:
 - semantic digest with a renewed certificate;
 - receipt;
 - invitation response;
+- invitation redemption: accepted, `invite_invalid` for each token failure with one timing class, replay by the same principal, and a bound token used by another principal;
+- redemption shape: `malformed` for a redemption with a subject, a body, a `message` part, a third participant or `invite` without `BindleInvite` (or the reverse), and for a `one-off` carrying `invite` or `BindleInvite`;
+- redemption binding: `invite_invalid` for a token whose digest differs from `recipient.invite` and for a token indexed to another owner;
+- redemption retry: after a lost response, an identical retry of a redemption that exhausted a single-use token returns the stored receipt; a second redemption by the same author with a different envelope is `invite_invalid`; concurrent identical retries record one redemption; a lost spend race is `invite_invalid`;
+- a foreign redeemer gets `author_unverifiable` (401) with no fetch;
+- first-contact gate refusal and content refusal (`not_authorized`), with `leave` and `peer-hello` still accepted;
+- gate position: a bogus proof claiming an admitted author and one claiming a non-admitted author get identical results; an unknown recipient and a recipient without occupant get one `recipient_unavailable`; no owner-policy result before verification;
+- first-contact budgets: per-source and per-owner 429 identical for hosted and unhosted owners; an unknown recipient wakes no mailbox; at most one directory and one status fetch per request;
 - multicast context;
 - negative vectors for the S-rules inherited from contact delivery.
 
@@ -774,4 +803,5 @@ An interop claim requires two independently implemented occupants on separate or
 | --- | --- |
 | Protocol and mailbox engine | Implemented locally in `packages/messaging-protocol/` and `packages/messaging-engine/`, including receive/send, conversations, outbox, archive and owner metadata operations. |
 | Provider delegation | Local issuance/status/revocation adapters and routes exist behind `LINKS_ENABLED` (default off); `packages/runtime/routes/delegation.mjs`. |
+| Invitations (§4), first-contact gate (§6.7), content refusal (§6.4) | Not implemented; provisional text (contacts spike phases 3 and 5). |
 | Published occupant and independent interop | Not established. Engine tests do not establish two independently implemented occupants or production provider conformance; see [extraction](../../architecture/messaging-extraction.md). |

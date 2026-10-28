@@ -13,36 +13,14 @@
 // Resolution delivers nothing, consumes no quota and creates no state. Describe results are cached per
 // (owner, slot, occupant clientId, generation) for at most one hour, so replacing the occupant invalidates the cache.
 import { fail } from '../core/records.mjs';
-import { linkBinding, MESSAGING_PROFILE } from './types.mjs';
+import { linkBinding } from './types.mjs';
+// validateDescribe moved to the delegation side (contacts spike CR-C0): the validated ingress becomes the key-delegation
+// certificate's client.ingress. Re-exported here until CR-C1 removes this module.
+import { validateDescribe, DESCRIPTOR_LIMITS } from '../identity/messaging-ingress.mjs';
+export { validateDescribe, DESCRIPTOR_LIMITS };
 
-export const DESCRIPTOR_LIMITS = Object.freeze({ maxParticipants: 32, maxMessageBytes: 1048576, maxEnvelopeBytes: 65536, maxBatchContexts: 32, maxProfiles: 16, maxVerifies: 64, cacheMs: 3600000 });
-const KINDS = ['conversation-init', 'one-off'];
 const plain = v => v !== null && typeof v === 'object' && !Array.isArray(v) && [Object.prototype, null].includes(Object.getPrototypeOf(v));
 const unavailable = () => fail('recipient_unavailable');
-function https(value, { allowLoopback = false, endpoint = false } = {}) {
-  if (typeof value !== 'string' || value.length > 2048) return null;
-  let u; try { u = new URL(value); } catch { return null; }
-  const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(u.hostname);
-  if (!(u.protocol === 'https:' || (allowLoopback && loopback && u.protocol === 'http:')) || (loopback && !allowLoopback) || u.username || u.password || u.hash || value.includes('#') || u.search || value.includes('?')) return null;
-  if (!endpoint && (u.pathname !== '/' || value !== u.origin)) return null;
-  return endpoint && u.href !== value ? null : u;
-}
-const positive = (value, max) => Number.isSafeInteger(value) && value > 0 && value <= max;
-/** §2.3 `describe` body (no `expiresAt`), exact members. Returns a detached copy or null. `origin`, when the
- * occupancy port knows it, must be the ingress origin. */
-export function validateDescribe(input, { origin, allowLoopback = false } = {}) {
-  let v; try { v = structuredClone(input); } catch { return null; }
-  const names = ['version', 'profiles', 'ingress', 'limits', 'kinds'], optional = ['multicast', 'verifies'];
-  if (!plain(v) || names.some(name => !Object.hasOwn(v, name)) || Object.keys(v).some(name => !names.includes(name) && !optional.includes(name)) || v.version !== 1) return null;
-  if (!Array.isArray(v.profiles) || !v.profiles.length || v.profiles.length > DESCRIPTOR_LIMITS.maxProfiles || new Set(v.profiles).size !== v.profiles.length || !v.profiles.every(p => typeof p === 'string' && p.length <= 256 && https(p, { endpoint: true })) || !v.profiles.includes(MESSAGING_PROFILE)) return null;
-  const ingress = https(v.ingress, { allowLoopback, endpoint: true }); if (!ingress || (origin !== undefined && ingress.origin !== origin)) return null;
-  if (Object.hasOwn(v, 'multicast') && https(v.multicast, { allowLoopback, endpoint: true })?.origin !== ingress.origin) return null;
-  if (Object.hasOwn(v, 'verifies') && (!Array.isArray(v.verifies) || v.verifies.length > DESCRIPTOR_LIMITS.maxVerifies || new Set(v.verifies).size !== v.verifies.length || !v.verifies.every(o => https(o, { allowLoopback })))) return null;
-  const l = v.limits, limitNames = ['maxParticipants', 'maxMessageBytes', 'maxEnvelopeBytes'];
-  if (!plain(l) || limitNames.some(name => !positive(l[name], DESCRIPTOR_LIMITS[name])) || Object.keys(l).some(name => ![...limitNames, 'maxBatchContexts'].includes(name)) || (Object.hasOwn(l, 'maxBatchContexts') && !positive(l.maxBatchContexts, DESCRIPTOR_LIMITS.maxBatchContexts))) return null;
-  if (!Array.isArray(v.kinds) || !v.kinds.length || !v.kinds.every((k, i) => KINDS.includes(k) && (i === 0 || v.kinds[i - 1] < k))) return null;
-  return v;
-}
 
 export class LinkHandoff {
   /** `service`: LinkService (verify). `occupant({owner, slot})` -> {clientId, generation, origin?} | null: the

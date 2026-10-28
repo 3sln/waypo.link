@@ -4,7 +4,7 @@
 >
 > **Status:** skeleton, revision 4.5; provisional; parts implemented locally behind flags; pending extensions revision 3 (CR-X3-05).
 >
-> **Covers:** organizations, membership, relations, and identity documents and key discovery (§3a, `directory.v1`).
+> **Covers:** organizations, membership, relations, and identity documents and key discovery (§3a, `directory.v1`); its invitation links use the [link envelope annex](organizations-link-envelope.md).
 >
 > **Does not cover:** signed-object rules ([keys](../keys.md)); identity moves ([identity portability](identity-portability.md)); 3sln.me organization billing and operations (architecture notes).
 
@@ -14,7 +14,7 @@ Status: **skeleton, 2026-10-24, revision 4.5.** Revision 4.5 (ORG-10/ORG-11 rela
 
 Protocol/security/interop sign-off: reviewer ___ / date ___ / outcome ___.
 
-This document extends [protocol](../protocol.md), [auth](../auth.md), [links](links.md), [extensions](../extensions.md), [integrations](integrations.md) and [events](events.md). It defines interoperability rules only, with no user interface beyond the security disclosures it lists. Governance powers, templates, grouping, recovery of organizations, billing and every presentation choice are provider policy.
+This document extends [protocol](../protocol.md), [auth](../auth.md), its [link envelope annex](organizations-link-envelope.md) (formerly links §1–§5 and §8; contacts and links spike CR-O1, provisional), [extensions](../extensions.md), [integrations](integrations.md) and [events](events.md). It defines interoperability rules only, with no user interface beyond the security disclosures it lists. Governance powers, templates, grouping, recovery of organizations, billing and every presentation choice are provider policy.
 
 **Scope: party boundaries only** (decided by the user, 2026-10-22: "Membership within an org, and access, grants, etc; are internal org matters … bindle is for the contracts/interop between providers, third parties, etc"). How an organization stores its members, what each member may do inside it, and who may change that are the organization provider's own **membership and grant policy** (§6.3). This document specifies only:
 
@@ -90,7 +90,7 @@ This document adds no new principal type, token transport, RPC transport or auth
   Verifiers follow attested successor statements (identity portability §8), never HTTP redirects.
 - **Origin principal** (AMD-P4). Every relationship with an identity (memberships, relation edges, invitations, pins) is keyed by its **origin principal** `(iss₀, sub)`: the issuer at which it was first created. For an identity that never moved, this is its `(iss, sub)`. A verifier maps an artifact's current `(iss, sub)` to the origin principal through its **successor index** (identity portability §8.1–§8.2). An artifact whose `iss` is an *earlier* host of an identity fails.
 - An organization's identity signing key MAY sign:
-  - links the organization issues (links §3);
+  - links the organization issues (annex §3);
   - entity certificates (§9.5) and relation participation statements (§9.3);
   - key-continuity statements.
 
@@ -99,7 +99,7 @@ This document adds no new principal type, token transport, RPC transport or auth
 
 ## 3a. Identity documents and key discovery (`directory.v1`)
 
-This section is the directory/identity-document profile that contact delivery (Parlay legacy record `apps/parlay/docs/legacy/contact-delivery.md`), [links §7.3](links.md#73-verifying-the-audience-identity) and [Bindle Messaging §3.3](messaging.md#33-verifying-an-author) depend on. It is specified here because organizations need it first. It MAY later move to a companion document unchanged. It is read-only discovery over keys the provider has already established. Nothing here creates, rotates or repairs keys.
+This section is the directory/identity-document profile that [Bindle Messaging §3.3](messaging.md#33-verifying-an-author) and [§4.2](messaging.md#42-handler-duties) depend on. It is specified here because organizations need it first. It MAY later move to a companion document unchanged. It is read-only discovery over keys the provider has already established. Nothing here creates, rotates or repairs keys.
 
 ### 3a.1 Declaration and naming
 
@@ -208,7 +208,7 @@ How an organization stores its members, what it records for each, and who may in
 
 ### 5.1 Invitation link type
 
-An invitation is a link ([links](links.md) §1–§5, §8) of type `https://spec.bindle.example/links/org-invitation/v1`, issued by the organization's provider and signed with the organization's key.
+An invitation is a link under the [link envelope annex](organizations-link-envelope.md) (§1–§6) of type `https://spec.bindle.example/links/org-invitation/v1`, issued by the organization's provider and signed with the organization's key.
 
 The type-specific meta members are:
 
@@ -217,11 +217,11 @@ The type-specific meta members are:
 
 What an accepted invitation confers is decided by the organization provider's membership and grant policy, subject to one floor (revision 4.3; Provisional (coordinator), not signed off by the user): an unbound invitation is a bearer capability, so an organization provider **MUST NOT** let an invitation without `invitee` confer governance powers (any part of owner-interface authority, §6.3). Governance powers may be offered only in an invitation bound to the invitee's principal. A provider MAY add further conditions, such as a delay after acceptance; 3sln.me's are in design §12c.3 (review R1-H4).
 
-The link carries no free-text title or inviter-supplied description, as in links §7.1. Display text comes from the owner host's page and is attributed to its origin.
+The link carries no free-text title or inviter-supplied description (annex §3.2). Display text comes from the owner host's page and is attributed to its origin.
 
 Rules:
 
-- Single use; `exp − iat` ≤ 30 days (**TBD**: final bound). Processing order and uniform errors follow links §8. A bound invitation opened by any other principal yields the same `invitation_invalid` result as an expired or revoked one.
+- Single use; `exp − iat` ≤ 30 days (**TBD**: final bound). Processing order and uniform errors follow annex §6. A bound invitation opened by any other principal yields the same `invitation_invalid` result as an expired or revoked one.
 - The issuing provider MAY let the organization withdraw an unaccepted invitation. A withdrawn invitation MUST then be refused exactly as an invalid one (provisional, 2026-10-23).
 - The issuing provider MAY offer a pre-acceptance preview of the organization's display name and kind. The preview MUST come from the organization's own record, never from the link or the inviter, and MUST be given only for an invitation the requester could accept at that moment. Every other case, including an unknown organization, MUST get one indistinguishable refusal (provisional, 2026-10-23).
 - Before accepting, the owner host MUST disclose:
@@ -603,9 +603,9 @@ Raising a ceiling is therefore not additive either. It can only be done by appen
 - `invitee` `{iss, sub}`, required;
 - `accept`: the invitee provider's `relations.v1` `accept_endpoint`, resolved at issue time.
 
-It is single use; `exp − iat` ≤ 30 days (**TBD**). Errors are uniform under links §8. The inviter's provider MAY let the inviting entity withdraw an unredeemed invitation; a withdrawn invitation MUST then be refused exactly as an invalid one (revision 4.5).
+It is single use; `exp − iat` ≤ 30 days (**TBD**). Errors are uniform under annex §6. The inviter's provider MAY let the inviting entity withdraw an unredeemed invitation; a withdrawn invitation MUST then be refused exactly as an invalid one (revision 4.5).
 
-**Acceptance** at the invitee's provider follows the links §9 opener pattern: a top-level form POST of the link alone, which accepts nothing by itself. The invitee's provider then:
+**Acceptance** at the invitee's provider follows the annex §7 handoff, with the `accept` member as its endpoint: a top-level form POST of the link alone, which accepts nothing by itself. The invitee's provider then:
 
 1. Authenticates a person who can operate the invitee's owner interface.
 2. Obtains the pinned relation version and validates its hash (§9.8).
@@ -864,14 +864,14 @@ The common contract between organization providers is §3a plus §9. Between an 
 | AMD-O4 | integrations §1, §3, §6.2 | Connection counterparty kinds. The `member-removed` and `relation-introduction` events. |
 | AMD-O5 | integrations §5.1, §5.3; contracts preferences v2 | Relay projection for imported resources (`token_type: "BindleEntity"`, `grantor`, `instance`); brokered tokens for relation parties with `bindle.actor`. |
 | AMD-O6 | events §2.1, §7.2 | The `entity` value in `readers` (`publishers` reserved); doorbells to an entity grantee's events endpoint. |
-| AMD-O7 | links | The organization-invitation and relation-invitation link types. Signature-domain table rows for both, for `bindle-relation-participation+jwt`, for `bindle-relation-event+jwt` (revision 4.5), and for the `BindleMember` and `BindleEntity` proofs. (Revision 2's offer type and `bindle-entity-client+jwt` are withdrawn.) |
+| AMD-O7 | links | **Applied 2026-10-28** (contacts and links spike CR-O1, CR-LK1; provisional, unsigned): links is dissolved; the envelope is this document's [annex](organizations-link-envelope.md), which carries both invitation link types, and the signature-domain rows for them, `bindle-relation-participation+jwt`, `bindle-relation-event+jwt` and the `BindleMember` and `BindleEntity` proofs are in [keys §4](../keys.md#4-signature-domains). (Revision 2's offer type and `bindle-entity-client+jwt` are withdrawn.) |
 | AMD-O8 | security, "Grants and resource authority" | Replace "A future organization owner is a separate principal…" with a pointer to §6. |
 | AMD-O9 | contracts, "Useful follow-ons" | Replace the organizations sentence with a pointer here. |
-| AMD-O10 | protocol §2; contact delivery; links §7.3; Bindle Messaging §3.3 | The `directory.v1` feature and §3a as the shared directory profile, replacing the "unwritten profile" references. The identity document `kind`. Entity client metadata (`events_endpoint`, key set) under identity-level `features` (**TBD**). *(Revision 4.5: for relations, the events endpoint is issuer-level, in `relations.v1` (§9.9, §14), and identity documents carry none.)* |
+| AMD-O10 | protocol §2; Bindle Messaging §3.3, §4.2 (contact delivery and links §7.3 are withdrawn) | The `directory.v1` feature and §3a as the shared directory profile, replacing the "unwritten profile" references. The identity document `kind`. Entity client metadata (`events_endpoint`, key set) under identity-level `features` (**TBD**). *(Revision 4.5: for relations, the events endpoint is issuer-level, in `relations.v1` (§9.9, §14), and identity documents carry none.)* |
 | AMD-O11 | protocol §3 | The field member `scope: "member"` (phase B). |
 | AMD-O13 | protocol §3, §6; contracts | Versioned integrity references (URL plus `version` plus `digest`, additive versions, provider caching) as defined by the [artefact references](../../architecture/artefact-references.md) design. They replace "a fragment URL identifies an immutable version" for every artefact class that adopts them. Owned by that design. |
 | AMD-O14 | protocol §1; the contract registry | Relation documents as a public artefact class (`/artefacts/relations/`), next to fragments, slots, buses and contracts. |
-| AMD-O12 | `key-delegation.v1` (currently proposed in Bindle Messaging §3.2) | Generalize the core feature to three certificate profiles: `bindle-key-delegation+jwt` (Parlay, unchanged), `bindle-member-certificate+jwt` (§5.2, purposes `member-access` and `member-accept`) and `bindle-entity-certificate+jwt` (§9.5, purpose `relation-access`). Add rows for both, and for the `BindleMember` DPoP proof, to the links §7.2 signature-domain table. The current implementation's "one active delegate key per principal" rule and its messaging-occupant check (`packages/identity/delegation.mjs`) apply to the Parlay profile only. Member certificates instead allow several active keys, at least one per (`aud`, `client`) issuance grant (§5.2), or a member's second organization, client or device would revoke the first (R2-M5). |
+| AMD-O12 | `key-delegation.v1` (generic; Bindle Messaging §3.2 defines only the Parlay profile) | Generalize the core feature to three certificate profiles: `bindle-key-delegation+jwt` (Parlay, unchanged), `bindle-member-certificate+jwt` (§5.2, purposes `member-access` and `member-accept`) and `bindle-entity-certificate+jwt` (§9.5, purpose `relation-access`). Add rows for both to the [keys §4](../keys.md#4-signature-domains) signature-domain table (the `BindleMember` DPoP proof row is there already). The current implementation's "one active delegate key per principal" rule and its messaging-occupant check (`packages/identity/delegation.mjs`) apply to the Parlay profile only. That check is defined by Bindle Messaging, not here: the Parlay purposes are certified only through the messaging-mailbox feature ([messaging §2.5](messaging.md#25-messaging-mailbox-extension-provider-feature)), and `key-delegation.v1` names no Messaging fragment, field or contract (contacts spike CR-X1, review M5; provisional, 2026-10-28). Member certificates instead allow several active keys, at least one per (`aud`, `client`) issuance grant (§5.2), or a member's second organization, client or device would revoke the first (R2-M5). |
 
 ## 16. Conformance tests (minimum)
 

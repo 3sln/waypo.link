@@ -1,5 +1,6 @@
 // Generalized from messaging-protocol/encoding.mjs; its nonnegative-number profile and callers stay unchanged.
 // Artefacts §3: no normalization, duplicate names, noncharacters, lone surrogates or non-decimal safe integers.
+import {fail as recordFail} from './records.mjs';
 export class StrictJSONFault extends Error {constructor(code='malformed'){super(code);this.name='StrictJSONFault';this.code=code;}}
 const bad=(code)=>{throw new StrictJSONFault(code);};
 export const textEncoder=new TextEncoder();
@@ -48,3 +49,88 @@ export function jcs(value,{maxDepth=32,maxMembers=Infinity}={}){
  };return encode(value,0);
 }
 export const sameValue=(a,b)=>jcs(a)===jcs(b);
+
+// The signed-object profile helpers (contacts-and-links spike §4.1 and CR-C0; provisional, unsigned). They moved here
+// unchanged from packages/links/envelope.mjs (strictIJSON, plainObject, exactMembers) and packages/links/author-proof.mjs
+// (ijsonJCS), so identity, federation, the email bridge and signaling never import packages/links. They keep their
+// original semantics and fault codes, which differ from strictJSON/jcs above: strictIJSON admits finite non-integer
+// numbers and noncharacters, nests at most 8 deep and throws MessagingFault('invalid_json'); ijsonJCS admits
+// noncharacters and throws MessagingFault(code). Merging the two profiles would change verdicts, so it waits for a
+// reviewed change.
+/** Strict I-JSON (RFC 7493): duplicate names at any depth, lone surrogates, non-safe integers, non-finite numbers,
+ * nesting deeper than 8 and trailing data are rejected with MessagingFault('invalid_json'). */
+export function strictIJSON(text) {
+  let i = 0;
+  const bad = () => recordFail('invalid_json'), ws = () => { while (i < text.length && ' \t\n\r'.includes(text[i])) i++; };
+  const string = () => {
+    let out = ''; i++;
+    for (;;) {
+      if (i >= text.length) bad();
+      const char = text[i++], code = char.charCodeAt(0);
+      if (char === '"') return out;
+      if (code < 32) bad();
+      if (char !== '\\') { out += char; continue; }
+      const escape = text[i++];
+      if (escape === 'u') {
+        const unit = hex4();
+        if (unit >= 0xdc00 && unit <= 0xdfff) bad();
+        if (unit >= 0xd800 && unit <= 0xdbff) { if (text[i] !== '\\' || text[i+1] !== 'u') bad(); i += 2; const low = hex4(); if (low < 0xdc00 || low > 0xdfff) bad(); out += String.fromCharCode(unit, low); }
+        else out += String.fromCharCode(unit);
+      } else { const mapped = { '"': '"', '\\': '\\', '/': '/', b: '\b', f: '\f', n: '\n', r: '\r', t: '\t' }[escape]; if (mapped === undefined) bad(); out += mapped; }
+    }
+  };
+  const hex4 = () => { const digits = text.slice(i, i + 4); if (!/^[0-9A-Fa-f]{4}$/.test(digits)) bad(); i += 4; return parseInt(digits, 16); };
+  const value = depth => {
+    if (depth > 8) bad(); ws();
+    const char = text[i];
+    if (char === '{') {
+      i++; const entries = [], names = new Set(); ws();
+      if (text[i] === '}') { i++; return {}; }
+      for (;;) {
+        ws(); if (text[i] !== '"') bad();
+        const name = string(); if (names.has(name)) bad(); names.add(name);
+        ws(); if (text[i++] !== ':') bad();
+        entries.push([name, value(depth + 1)]); ws();
+        if (text[i] === ',') { i++; continue; }
+        if (text[i++] !== '}') bad();
+        // fromEntries defines own data properties; "__proto__" cannot alter the prototype.
+        return Object.fromEntries(entries);
+      }
+    }
+    if (char === '[') {
+      i++; const items = []; ws();
+      if (text[i] === ']') { i++; return items; }
+      for (;;) { items.push(value(depth + 1)); ws(); if (text[i] === ',') { i++; continue; } if (text[i++] !== ']') bad(); return items; }
+    }
+    if (char === '"') return string();
+    for (const [word, literal] of [['true', true], ['false', false], ['null', null]]) if (text.startsWith(word, i)) { i += word.length; return literal; }
+    const match = /-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?/y; match.lastIndex = i;
+    const number = match.exec(text); if (!number) bad(); i = match.lastIndex;
+    const result = Number(number[0]);
+    if (!Number.isFinite(result) || Object.is(result, -0) || (Number.isInteger(result) && !Number.isSafeInteger(result))) bad();
+    return result;
+  };
+  if (typeof text !== 'string') bad();
+  const result = value(0); ws(); if (i !== text.length) bad();
+  return result;
+}
+/** Any non-null, non-array object (the signed-object profile's reading; `plain` above is stricter about prototypes). */
+export const plainObject = value => value !== null && typeof value === 'object' && !Array.isArray(value);
+/** Every `required` member present and nothing outside `required` and `optional`. */
+export const exactMembers = (value, required, optional = []) => plainObject(value) && required.every(name => Object.hasOwn(value, name)) && Object.keys(value).every(name => required.includes(name) || optional.includes(name));
+const ijsonPlain = v => v !== null && typeof v === 'object' && !Array.isArray(v) && [Object.prototype, null].includes(Object.getPrototypeOf(v));
+/** RFC 8785 over the I-JSON the Bindle Messaging profile admits (safe integers, well-formed strings, plain objects,
+ * depth at most 32). Anything else throws MessagingFault(`code`). */
+export function ijsonJCS(value, { code = 'invalid_json' } = {}) {
+  const invalid = () => recordFail(code);
+  const encode = (v, depth) => {
+    if (depth > 32) invalid();
+    if (v === null || v === true || v === false) return String(v);
+    if (typeof v === 'string') { if (!v.isWellFormed()) invalid(); return JSON.stringify(v); }
+    if (typeof v === 'number') { if (!Number.isSafeInteger(v) || Object.is(v, -0)) invalid(); return String(v); }
+    if (Array.isArray(v)) return `[${Array.from(v, x => encode(x, depth + 1)).join(',')}]`;
+    if (ijsonPlain(v)) return `{${Object.keys(v).sort().map(k => `${encode(k, 0)}:${encode(v[k], depth + 1)}`).join(',')}}`;
+    invalid();
+  };
+  return encode(value, 0);
+}

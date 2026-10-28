@@ -9286,3 +9286,45 @@ Provisional (coordinator), unsigned; flags stay default-off; local behaviour onl
 - **Tests.** Engine tests for each fix, and a new spec-derived lifecycle chaos test (service-class offers, approval removal, app and grant revocation, connection end, expiry races, windows and capacity, own pairings, relay; the fair share and host-wide window are modelled but never bind with one issuer). Verified by the fixing agent: npm test 3975 pass, test:worker, test:connections, test:intents, test:parlay, test:signaling-ui, test:ui-state, strict signaling conformance, build:assets, check:worker.
 
 Reviewer ___ Date ___ Outcome ___
+
+## 2026-10-28 — Contacts and links rethink: phase 1 (specs) applied
+
+Provisional (coordinator), unsigned. Applied the spec change requests of docs/architecture/contacts-and-links-rethink.md rev 2 §7. Docs only: no code, tests or flags changed; nothing is implemented, published or production-verified.
+- **Applied:** CR-LK1/2, CR-K1/2 (leftovers), CR-M1–M8, CR-I1–I3, CR-O1, CR-SEC1 (fragment rule), CR-P1, CR-X1, and the CR-C10 superseded notes. CR-S1–S4 were already satisfied by signaling rev 3.2 (the §20.4 pointer was fixed). CR-M9 stays deferred; CR-S5 stays withdrawn.
+- **New annex** docs/spec/extensions/organizations-link-envelope.md holds the query envelope; `bindle_data` is reserved and the link-data signature row is dropped. keys.md now holds the AMD-O7 rows.
+- **links.md** stays in place as a dissolved, frozen record because tests/public-documentation.test.mjs pins its path; moving it to superseded/ (with the test, a redirect and the superseded/* links) is a follow-up, as is the "Contact links (being withdrawn)" wording in docs/integration.md.
+- **Bindle Messaging:** invitations as the `connect` intent (`{inviter, token, delegation, expires_at?, hint?}`) with the `BindleInvite` credential and `invite_invalid`; a first-contact-only gate (§6.7, a provisional widening of the 2026-10-14 decision, CL-17); content refusal by owner policy (§6.4); a provider-consumed messaging-ingress fragment whose `mailbox` field is the key-delegation occupant check (reconciles CR-X3-31); a reduced `describe`; the bridge as a provider-published extension; published kinds `connect` and `open-conversation`, with `send-message` and `add-contact` data to be defined before publication.
+- **Intents** register no kinds, gain the `capability` format and inline the raw-query parser. `intents.v1` and `link-response.v1` are withdrawn from protocol §2 and extensions §2.8; CR-X3-11 is void.
+- **Open-question answers used (coordinator, provisional):** Q1 website template uses a `request` list; Q2 signing profile in keys.md; Q3 redeemer-side "Following" is an ordinary `can message you` list.
+- Verification: publication check clean, build-docs OK (52 documents), tests/public-documentation.test.mjs 7/7.
+
+Reviewer ___ Date ___ Outcome ___
+
+## 2026-10-28 — Contacts phase 1: spec review fixes
+
+Provisional (coordinator), unsigned. Docs only; nothing implemented. Applied the independent phase 1 spec review (H1–H2, M1–M5, L1–L13).
+- **H1.** The inviter enforces the content-free two-party redemption shape (`malformed` otherwise); `invite`/`BindleInvite` appear only on `conversation-init`; the §6.7 exemption covers only a valid redemption.
+- **H2.** First contact runs in this order: budgets, "not hosted here" (`recipient_unavailable`), token checks, author verification, then owner policy on the verified principal. No refusal before verification depends on owner policy; credential-less first contact gets pre-crypto per-source and per-owner budgets and fetch bounds (§6.7, §7.4).
+- **M1, M2.** Redemption replay is checked after verification and before the exhausted-token spend, so an identical retry returns the stored receipt and a different envelope is `invite_invalid`; §8.2 has one rule. Accepted residual: a token holder can learn whether a named principal redeemed it.
+- **M3.** The inviter verifies only same-host redeemers (CL-24).
+- **M4.** The fragment field is `mailbox` with `announce: true`; the artefact JSON still says `ingress` (code-phase item).
+- **M5.** The `mailbox` field is consumed by the provider feature of a new Messaging-published extension, `…/extensions/messaging-mailbox/v1` (prerequisite key-delegation; extensions rev 3.3 §4.2 grant with `describe`, owner enablement with recent authentication), which alone gates the Parlay key-delegation purposes; key-delegation stays generic (organizations AMD-O12).
+- **Lows.** `describe` reduced to `{version, ingress}`; `optionalTags` removed; `BindleInvite` dropped from multicast; key-rotation and certificate-disclosure notes for public links; `peer-hello` always accepted under content refusal; `send-message` and `add-contact` are reserved names; the annex drops the `bindle_data` format text (name reserved) and maps its vectors; the protocol example declares artefact-versions.
+- **Code-phase follow-ups:** messaging-ingress artefact field rename and digest; messaging-mailbox descriptor and feature row replacing messaging-address; `validateDescribe` reduced to `{version, ingress}`; issuance gated on the feature; engine changes (redemption shape, gate after verification, budgets, replay ordering, no `optionalTags`).
+- Verification: tests/public-documentation.test.mjs 7/7, publication check clean.
+
+Reviewer ___ Date ___ Outcome ___
+
+## 2026-10-28 — Contacts phase 2: CR-C0 safety gates implemented locally
+
+Provisional (coordinator), unsigned.
+- **New gate.** `KEY_DELEGATION_ENABLED` (class a, stateful, retained) gates key-delegation issuance and renewal (`keyDelegationAdmits`), the delegation routes and the member-certificate status fallback. Its retained state comes from live `key-delegation/` rows only.
+- **Transitional fallback.** Until CR-C7, an unconfigured `KEY_DELEGATION_ENABLED` falls back to `LINKS_ENABLED`, except that a `LINKS_ENABLED` retention resting on `link/` rows alone no longer keeps delegation open. That narrowing is the one deliberate behaviour change (LINKS_ENABLED is off in wrangler).
+- **Re-homing.** `MESSAGING_INGRESS_FRAGMENT`, `MESSAGING_PROFILE` and `validateDescribe` moved to packages/identity/messaging-ingress.mjs; `PUBLIC_INTAKE_*` moved to packages/email-bridge/wire.mjs. The links §3.1 helpers merged unchanged into packages/core/strict-json.mjs as `strictIJSON`, `plainObject`, `exactMembers` and `ijsonJCS`. New packages/core/signed-object.mjs holds compact JWS parse, verify and sign; signaling's jws.mjs uses it and no longer imports links or orgs.
+- **Describe finding.** The validated `describe` ingress is the only source of an entry's ingress and so of the certificate's `client.ingress`, so `validateDescribe` stays on the delegation side and `MESSAGING_DESCRIBE` is kept. Follow-up from the phase 1 spec fixes: reduce it to `{version, ingress}`.
+- **Intents** gain the `capability` format.
+- **Open before CR-C7:** delegation occupancy still needs `LINKS_ENABLED` through the messaging-address feature row, `messagingAddressMounted` and the `MESSAGING_DESCRIBE` port gates; the messaging-mailbox extension (messaging §2.5) replaces them.
+- **Open for review:** the signed-object decoder keeps accepting a leading byte-order mark in a segment, and verification reads only `x` and `y` of the key (unchanged from before); core now holds two strict-JSON and two canonical-encoding profiles, whose merge would change verdicts.
+- Verification (agent): npm test 3992 pass 0 fail, build:assets, check:worker (dry run), test:worker, test:parlay(+web), test:connections, test:signaling-ui, strict signaling conformance, test:e2e.
+
+Reviewer ___ Date ___ Outcome ___

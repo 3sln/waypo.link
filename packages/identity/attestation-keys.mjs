@@ -21,7 +21,7 @@
 // key is then untrusted (an attestation reset) rather than trusted on first use. The SDK owner ships the real root
 // once it exists. A provider's own issuer always uses its own configured roots (`attestationRoots`).
 import { attestationKeyThumbprint, signAttestationKeyContinuity, verifyAttestationKeyContinuity, signMoveAttestation, httpsOrigin } from './succession.mjs';
-import { exactMembers, plainObject } from '../links/envelope.mjs';
+import { exactMembers, plainObject } from '../core/strict-json.mjs';
 import { fromBase64url } from '../core/records.mjs';
 
 export const ATTESTATION_KEYS_PATH = '/bindle/portability/attestation-keys';

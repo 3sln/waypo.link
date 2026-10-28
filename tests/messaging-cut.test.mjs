@@ -19,7 +19,7 @@ import {appMessageKey,appMessageUsageKey} from '../packages/activity/app-message
 import {key} from '../packages/core/records.mjs';
 import application from '../packages/runtime/http.mjs';
 import {PUBLIC_INTAKE_FRAGMENT_DOCUMENT,RECOGNIZED_FIELDS} from '../packages/apps/connections.mjs';
-import {PUBLIC_INTAKE_FRAGMENT,PUBLIC_INTAKE_CONTRACT} from '../packages/links/types.mjs';
+import {PUBLIC_INTAKE_FRAGMENT,PUBLIC_INTAKE_CONTRACT} from '../packages/email-bridge/wire.mjs';
 import {fragmentOutcome,consumes} from '../packages/core/fragments.mjs';
 import {FEATURE_DEFINITIONS} from '../packages/app/domains/provider-features.mjs';
 import {PROVIDER_EXT} from '../packages/core/extensions.mjs';

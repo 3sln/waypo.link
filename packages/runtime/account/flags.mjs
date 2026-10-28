@@ -8,7 +8,11 @@ import {key} from '../../core/records.mjs';
 const scope=new AsyncLocalStorage();
 export {capability,flagsFor,ownerFlags,siteEnabled,siteGlobal,existingFeature,featureConfig,surfaceConfig} from '../../flags/read.mjs';
 import {flagsFor,ownerFlags,siteGlobal} from '../../flags/read.mjs';
-export function writerConfig(config){return new Proxy(config,{get:(target,name,receiver)=>name==='EVENT_BUS_WAITS_MOUNTED'&&(target.flags||target.FLAGS)?!!target[name]&&siteGlobal(receiver,'EVENT_BUSES_ENABLED'):name==='BROKERED_INTROSPECTION_MOUNTED'&&(target.flags||target.FLAGS)?!!target[name]&&siteGlobal(receiver,'BROKERING_ENABLED')&&siteGlobal(receiver,'FEDERATION_ENABLED'):['flags','FLAGS'].includes(name)&&scope.getStore()?.config===target?scope.getStore().flags:Reflect.get(target,name,receiver)});}
+export function writerConfig(config){return new Proxy(config,{get:(target,name,receiver)=>name==='EVENT_BUS_WAITS_MOUNTED'&&(target.flags||target.FLAGS)?!!target[name]&&siteGlobal(receiver,'EVENT_BUSES_ENABLED'):name==='BROKERED_INTROSPECTION_MOUNTED'&&(target.flags||target.FLAGS)?!!target[name]&&siteGlobal(receiver,'BROKERING_ENABLED')&&siteGlobal(receiver,'FEDERATION_ENABLED'):['flags','FLAGS'].includes(name)&&scope.getStore()?.config===target?scope.getStore().flags:name==='ACCOUNT_FEATURE_STATE'?(scope.getStore()?.config===target?featureState(scope.getStore().state):undefined):Reflect.get(target,name,receiver)});}
+/** The account-state predicates this writer pin already read (AccountFeatureState), as `name -> boolean`; empty outside a
+ * retention pin. Exposed on writerConfig as ACCOUNT_FEATURE_STATE so a gate can tell which state justified a `retained`
+ * decision (identity/delegation.mjs keyDelegationAdmits). Never persisted, never I/O. */
+const featureState=state=>name=>state?.[name]===true;
 const live=(row,owner)=>row?.owner===owner&&!row.revoked&&!['deleted','disconnected','revoked'].includes(row.state??row.status);
 export class AccountFeatureState extends AppQuery{
  static deps=['accountStore','clock'];
@@ -22,7 +26,11 @@ export class AccountFeatureState extends AppQuery{
   state.ACCOUNT_DELETION_ENABLED=['scheduled','executing'].includes((await store.get('deletion/request-v1'))?.state);
   state.INTEGRATIONS_ENABLED=await any('resource/',r=>live(r,owner)&&r.kind==='app-connection'&&!!r.integration);
   state.EXTENSIONS_ENABLED=await any('connections/field/',r=>r?.entries?.length>0)||await any('connections/feature/',r=>['active','suspended'].includes(r?.state));
-  state.LINKS_ENABLED=await any('link/',r=>live(r,owner))||await any(key('key-delegation',owner),r=>live(r,owner));
+  // Contacts spike CR-C0: key delegation is retained by live `key-delegation/` rows only, never by `link/` rows.
+  const delegations=await any(key('key-delegation',owner),r=>live(r,owner));state.KEY_DELEGATION_ENABLED=delegations;
+  // The links contract's own retention (removed with the links code in CR-C1). It still counts delegation rows, as before,
+  // but the delegation gate accepts a LINKS_ENABLED retention only with KEY_DELEGATION_ENABLED state behind it.
+  state.LINKS_ENABLED=delegations||await any('link/',r=>live(r,owner));
   // ORG-1: an organization's own account, and a person who is owner of record of one, stay serviceable.
   state.ORGANIZATIONS_ENABLED=(await store.get('org/record-v1'))?.kind==='organization'||await any('orgs/owned/',r=>typeof r?.org==='string');
   // Incremental grants and linked-device lineages live on the federation/identity
@@ -41,7 +49,7 @@ export async function withWriterFlags(c,config,operation,{background=false}={}){
  const state=background||!Object.values(runtime.entry?.snapshot?.flags??{}).some(r=>r.retainExisting)?{}:await read(c.engine,new AccountFeatureState({actor:{kind:'system',owner:await c.metadata.get('owner')}}));
  // Bind the owner once, without placing it in persisted state or telemetry.
  const owner=await c.metadata.get('owner'),retained=await runtime.pin({writer:true,minVersion:config.flags?.version??0,hasState:(name,subject)=>subject===owner&&state[name]===true});
- const pending=[];return scope.run({config,flags:background?backgroundPort(retained):retained,pending},async()=>{try{return await operation();}finally{await Promise.allSettled(pending);}});
+ const pending=[];return scope.run({config,flags:background?backgroundPort(retained):retained,pending,state},async()=>{try{return await operation();}finally{await Promise.allSettled(pending);}});
 }
 /** Aggregate delivery is best effort. Never retry an uncertain increment and
  * never persist an assignment, owner/event receipt or delivery log. */

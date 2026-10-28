@@ -23,6 +23,7 @@ import {actingAs} from '../../orgs/authority.mjs';
 import {JWT_BEARER} from '../../orgs/certificates.mjs';
 import {memberStatusCacheControl} from '../../identity/member-certificates.mjs';
 import {isJkt} from '../../identity/delegation.mjs';
+import {delegationRoutesReadable} from './delegation.mjs';
 import {localAudience} from '../account/member-certificates.mjs';
 
 /** Consent-screen inspections and acquisitions per owner per minute. */
@@ -76,7 +77,7 @@ async function status({request,env,path,local}){
  try{const account=await env.IDENTITY_REPOSITORY?.get(subject);result=account?.status==='active'?await accountHandle(env,subject).memberCertificateStatus(subject,jkt):null;}
  catch(error){if(error?.code==='member_certificates_unavailable')return answer({error:'delegation_unavailable'},503,{'Cache-Control':'no-store','Retry-After':'60'});result=null;}
  const known=result?.status==='active'||Number.isSafeInteger(result?.revokedHour);
- if(!known){if(flagReadable(env,'LINKS_ENABLED',true))return;return answer({error:'not_found'},404,{'Cache-Control':'no-store'});}
+ if(!known){if(delegationRoutesReadable(env))return;return answer({error:'not_found'},404,{'Cache-Control':'no-store'});}
  return answer(result.status==='active'?{status:'active'}:{status:'revoked',revokedHour:result.revokedHour},200,{'Cache-Control':memberStatusCacheControl(result)});
 }
 

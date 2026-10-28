@@ -6,13 +6,13 @@
 >
 > **Covers:** the strict JSON rules and compact JWS profile every Bindle signed object uses, and the rule that keeps objects signed by one key separable (signature domains).
 >
-> **Does not cover:** where keys come from or how they are discovered (identity documents and key discovery are in [Organizations §3a](extensions/organizations.md#3a-identity-documents-and-key-discovery-directoryv1)); key moves and successor pins ([identity portability](extensions/identity-portability.md)); the meaning of any particular signed object (each profile's own spec); artefact integrity digests ([artefacts](artefacts.md)); the link query envelope ([links](extensions/links.md), to become an Organizations annex).
+> **Does not cover:** where keys come from or how they are discovered (identity documents and key discovery are in [Organizations §3a](extensions/organizations.md#3a-identity-documents-and-key-discovery-directoryv1)); key moves and successor pins ([identity portability](extensions/identity-portability.md)); the meaning of any particular signed object (each profile's own spec); artefact integrity digests ([artefacts](artefacts.md)); the link query envelope ([Organizations link envelope annex](extensions/organizations-link-envelope.md)).
 
 MUST, MUST NOT, SHOULD and MAY express draft requirements.
 
 ## 1. Scope
 
-A **signed object** is a compact JWS that a Bindle specification defines: for example a signaling leg certificate or message, an identity-portability move statement, a key-delegation or member certificate, a signed intent, or a link envelope parameter. A **profile** is the specification that defines one signed object: its permitted algorithms, its exact protected header, its `typ`, its exact payload members and its key authority.
+A **signed object** is a compact JWS that a Bindle specification defines: for example a signaling leg certificate or message, an identity-portability move statement, a key-delegation or member certificate, a signed intent, or a link envelope meta. A **profile** is the specification that defines one signed object: its permitted algorithms, its exact protected header, its `typ`, its exact payload members and its key authority.
 
 Every profile uses the rules of §2 and §3 unless it states a stricter rule. Profiles MUST NOT relax them.
 
@@ -47,15 +47,25 @@ One key may sign several kinds of object. In the reference host, for example, on
 
 | Signed object | Input form | Separation | Defined in |
 | --- | --- | --- | --- |
-| `bindle-link-meta+jwt`, `bindle-link-data+jwt` | JWS input | `typ`, `bindle` magic, exact stored claims or `md` | [links](extensions/links.md) §3–§4 (link envelope) |
+| `bindle-link-meta+jwt` (organization and relation invitation link types) | JWS input | `typ`, `bindle` magic, `type`, exact stored claims | [Organizations link envelope](extensions/organizations-link-envelope.md) §3; types in [Organizations](extensions/organizations.md) §5.1, §9.4 |
+| `bindle-relation-participation+jwt` (identity signing key) | JWS input | `typ` | [Organizations](extensions/organizations.md) §9.3 |
+| `bindle-relation-event+jwt` (certification key) | JWS input | `typ` | [Organizations](extensions/organizations.md) §9.9 |
+| DPoP proofs presented with `BindleMember` or `BindleEntity` (the certified key, never an identity key) | JWS input | `typ` `dpop+jwt` ([RFC 9449](https://www.rfc-editor.org/rfc/rfc9449.html)) | [Organizations](extensions/organizations.md) §5.2, §9.5 |
 | Legacy `contact+jwt`, `bindle-contact-endpoint+jwt`, `bindle-inbox+jwt` (implemented; being withdrawn with contact links) | JWS input (`eyJ…`) | `typ`, exact stored claims | Parlay legacy record |
 | Conversation v1 payloads (legacy, implemented) | Raw canonical JSON (`{…`), **no domain prefix** | First byte `{` versus `e` | Parlay legacy record |
 | Contact-delivery and conversation-v2 proofs (candidates; being withdrawn) | `bindle-…-v1\n` / `-v2\n` domain prefix plus JCS | Prefix | Parlay legacy record |
 
 The unprefixed conversation-v1 form is a legacy exception: new profiles MUST NOT copy it.
 
-**Rows proposed elsewhere (not yet merged into this table).** These amendments add rows and are pending with their own specifications: Organizations AMD-O7 (organization and relation invitation link types, `bindle-relation-participation+jwt`, `bindle-relation-event+jwt`, `BindleMember` and `BindleEntity` proofs), [intents](extensions/intents.md) AMD-I5 (`bindle-intent+jwt`), [signaling](extensions/signaling.md) (leg certificate, control statement and message `typ` values; SG-41), and [Bindle Messaging](extensions/messaging.md) §3 (key-delegation and author proofs). Until they are merged, each is authoritative in its own specification, and none may reuse another's `typ` or prefix.
+The Organizations rows were merged from AMD-O7 on 2026-10-28 (contacts spike CR-O1; provisional, unsigned). The former `bindle-link-data+jwt` row is dropped with link audiences (CL-3): no link type defines data ([annex §4](extensions/organizations-link-envelope.md#4-bindle_data-reserved)).
 
-## 5. Change log
+**Rows proposed elsewhere (not yet merged into this table).** These amendments add rows and are pending with their own specifications: Organizations AMD-O12 (member and entity certificates), [intents](extensions/intents.md) AMD-I5 (`bindle-intent+jwt`), [signaling](extensions/signaling.md) (leg certificate, control statement and message `typ` values; SG-41), and [Bindle Messaging](extensions/messaging.md) §3 (key-delegation and author proofs). Until they are merged, each is authoritative in its own specification, and none may reuse another's `typ` or prefix.
+
+## 5. Conformance vectors
+
+The pure-JWS cases of the former links vector set (exact-bytes verification, noncanonical base64url, padding, signature length) test this profile. They move here when the vector file is split (contacts spike CR-LK2, pending with the code phase); until then they are in [bindle-links.vectors.json](../architecture/artefacts/bindle-links.vectors.json).
+
+## 6. Change log
 
 - 2026-10-27: created from links §3.1 and §7.2 (contacts and links spike CL-2, CR-K1; provisional, unsigned). References to "links §3.1" in signaling, identity portability, Bindle Messaging, intents and organizations now point here (CR-K2).
+- 2026-10-28: Organizations AMD-O7 rows merged; the link-meta row points to the Organizations annex; the link-data row is dropped (contacts and links spike CR-LK1, CR-LK2, CR-O1; provisional, unsigned).

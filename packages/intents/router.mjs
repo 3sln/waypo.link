@@ -4,7 +4,7 @@ import {AppFault} from '../app/faults.mjs';
 import {flagsFor} from '../flags/read.mjs';
 import {digestJSON,validateAdditive} from '../core/artefacts.mjs';
 import {decodeIntent,encodeIntent,parseIntentURL} from './format.mjs';
-import {validateIntentKind,validateIntentData} from './schema.mjs';
+import {validateIntentKind,validateIntentData,httpsURLValue} from './schema.mjs';
 import {projectIntent} from './project.mjs';
 import {validateIntentDeclarations} from './declarations.mjs';
 import {parseLegacyIntent,legacyIntentScheme} from './legacy.mjs';
@@ -70,7 +70,8 @@ async function validDefault(r,memory,intent,body,candidates,versions){
 const target=(r,h,wire)=>h.legacy?h.route+'#legacy='+encodeURIComponent(legacyIntentScheme(h.legacy)):h.route+'#bintent='+(wire&&!h.projected?wire:encodeIntent(h.outgoing))+'&bintent_iss='+encodeURIComponent(r.config.APP_ORIGIN);
 export function intentRisk(body,data,candidates=[]){const categories=[...body.disclosure.categories,...Object.keys(data).flatMap(k=>body.disclosure.fields[k].categories)],known=['personal-data','location','send-as-you','money','identity','public'];let tier=({view:0,save:1,join:1,send:2})[body.effect]??3;if(categories.some(c=>!known.includes(c)))tier=3;else if(categories.some(c=>['money','identity','send-as-you','public'].includes(c)))tier++;if(candidates.some(h=>site(h.id)===site(body.id)))tier++;return ['low','medium','high','critical'][Math.min(3,tier)];}
 const reviewed=intent=>REGISTERED_INTENT_REFERENCES.some(p=>p.artefact===intent.kind.artefact&&p.version===intent.kind.version&&p.digest===intent.kind.digest);
-export function intentDisclosure(body,data){return Object.fromEntries(Object.entries(data).map(([name,value])=>{const field=body.disclosure.fields[name];return [name,field.display==='origin'?new URL(value).origin:field.display==='value'?typeof value==='object'?new URL(value.iss).host+' (according to the link)':String(value):true];}));}
+// A `capability` value that is not an https-url shows only its presence under `origin` display (intents §4.3).
+export function intentDisclosure(body,data){return Object.fromEntries(Object.entries(data).map(([name,value])=>{const field=body.disclosure.fields[name];return [name,field.display==='origin'?(body.data.properties[name]?.format==='capability'&&!httpsURLValue(value)?true:new URL(value).origin):field.display==='value'?typeof value==='object'?new URL(value.iss).host+' (according to the link)':String(value):true];}));}
 const publicHandler=({outgoing,projected,legacy,...h})=>h;
 export function viewerActivated(headers={}){const h=new Headers(headers),site=h.get('Sec-Fetch-Site');return h.get('Sec-Fetch-Mode')==='navigate'&&h.get('Sec-Fetch-Dest')==='document'&&!h.get('Purpose')&&!h.get('Sec-Purpose')&&(site==='none'||site==='same-origin'||site==='cross-site'&&h.get('Sec-Fetch-User')==='?1');}
 export class ReceiveIntent extends AppQuery {

@@ -196,6 +196,8 @@ Parlay checks all of these at installation and shows exactly which capabilities 
 
 ## 6. Contact links: core envelope, app type
 
+> **Superseded (2026-10-28, provisional).** Contact links are withdrawn; invitations are Bindle Messaging `connect` intents ([messaging §4](../spec/extensions/messaging.md#4-invitations)), and lists, rules and admission are Parlay behaviour ([contacts and links rethink](contacts-and-links-rethink.md) CL-4, CL-5, CL-22, CR-C10). This section is historical.
+
 ### 6.1 Split
 
 | Concern | Core (`links.md`, provider) | Parlay (spec §4) |

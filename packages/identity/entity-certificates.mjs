@@ -19,7 +19,7 @@
 //   - `cnf.jkt` is the RFC 7638 thumbprint of `delegate`, the holder key (the application's session key in relay mode,
 //     or the provider gateway's key in proxy mode).
 import {base64url,fromBase64url,textEncoder,digest} from '../core/records.mjs';
-import {strictJSON} from '../links/envelope.mjs';
+import {strictIJSON as strictJSON} from '../core/strict-json.mjs';
 import {delegatePublicJwk,jwkThumbprint,originValid,isJkt} from './delegation.mjs';
 import {memberURL} from './member-certificates.mjs';
 

@@ -1,12 +1,14 @@
-# Bindle links — normative draft
+# Bindle links — normative draft (dissolved)
 
 > **Group:** Bindle extension
 >
-> **Status:** design candidate, being split (contacts and links spike CL-2, provisional). The signed-object profile and signature-domain table moved to [keys](../keys.md). The query envelope (§2, §3.2–§5, §8) is to become an Organizations annex. The contact link type (§6, §7, §9, §10) is being withdrawn and is still implemented locally behind `LINKS_ENABLED`.
+> **Status:** dissolved and frozen, provisional and unsigned (contacts and links spike CL-2, CL-3 and CR-LK1, 2026-10-28). Not maintained. The signed-object profile and signature-domain table are in [keys](../keys.md); the query envelope (§1–§5, §8 and the generic part of §9) is the [Organizations link envelope annex](organizations-link-envelope.md); the contact link type, audiences, response signing, `link-response.v1`, `intents.v1`, AMD-L1 and the legacy `?sig=` form (§6, §7, §9, §10) are withdrawn. The contact link type is still implemented locally behind `LINKS_ENABLED` until the code phase removes it.
 >
-> **Covers:** the `bindle_meta` / `bindle_data` link query envelope; until withdrawal, the contact link type.
+> **Covers:** nothing normative; the record of the former links draft.
 >
-> **Does not cover:** signed-object rules ([keys](../keys.md)); intent links ([intents](intents.md)); invitations between people, which move to [Bindle Messaging](messaging.md) and the Parlay app; capability-URL handling ([security](../security.md#capability-urls)).
+> **Does not cover:** signed-object rules ([keys](../keys.md)); the link envelope ([Organizations annex](organizations-link-envelope.md)); intent links ([intents](intents.md)); invitations between people ([Bindle Messaging §4](messaging.md#4-invitations)); capability-URL handling ([security](../security.md#capability-urls)).
+
+> **Dissolved.** This text is kept unchanged below as at 2026-10-28 so that older references resolve. Where it differs from [keys](../keys.md), the [Organizations annex](organizations-link-envelope.md), [intents](intents.md) or [Bindle Messaging](messaging.md), those govern. Do not implement §6, §7, §9 or §10. It stays at this path, rather than under `superseded/`, while the publication test pins its location.
 
 > **Pending [extensions revision 3](../extensions.md) (draft, unsigned, 2026-10-27).** Where this document relies on the `link-response.v1` and `intents.v1` features, extensions revision 3.2 and protocol §2–§4 govern instead. Change request CR-X3-11, [extensions Appendix A](../extensions.md#appendix-a-migration-and-impact-change-requests-not-applied).
 

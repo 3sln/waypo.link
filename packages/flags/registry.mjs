@@ -35,6 +35,13 @@ const rows=[
  // raw env value is still honoured through envAlias (the new name wins when both are set). BB-CUT (2026-10-27) kept the
  // alias; removing it is an open item (DEVLOG "Messaging removed from core; Parlay rename; BB-CUT reset", review fixes).
  ['LINKS_ENABLED','a','G A S P',{stateful:true,envParse:'boolean',envAlias:'BINDLEBOX_ENABLED'}],
+ // Contacts-and-links spike CR-C0 (H5, CL-25; provisional, unsigned): the key-delegation issuance gate. Stateful: an account
+ // with a live `key-delegation/` row stays serviceable through a ramp-down (runtime/account/flags.mjs reads those rows only,
+ // never `link/`). Once configured (a console record or an env value) it decides alone; until CR-C7 retires LINKS_ENABLED,
+ // an unconfigured one falls back to LINKS_ENABLED, except a LINKS_ENABLED retention that only `link/` rows could justify
+ // (identity/delegation.mjs keyDelegationAdmits), so no existing deployment changes. Later it folds into rev 3.1
+ // Messaging extension enablement.
+ ['KEY_DELEGATION_ENABLED','a','G A S P',{stateful:true,envParse:'boolean'}],
  // The email bridge needs no messaging-app flag: delivery waits for any occupant of the public-message-intake slot.
  ['EMAIL_BRIDGE_ENABLED','a','G A S P',{risk:'crit',stateful:true,retainExisting:false,retentionReason:'Holding queues and opt-in live in the external email-bridge store; no account-local predicate.',envParse:'boolean'}],
  ['SEMANTIC_SEARCH_ENABLED','a','G A S P V',{experiment:{metrics:['search_result_opened']},capabilities:['AI','SEARCH_VECTORS']}],

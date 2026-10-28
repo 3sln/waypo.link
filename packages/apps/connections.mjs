@@ -7,7 +7,7 @@ import {fragmentOutcome,fieldAttributes,consumes} from '../core/fragments.mjs';
 import {canonical} from '../core/records.mjs';
 import {appendSeverance} from '../federation/brokered-severance.mjs';
 import {FEATURE_DEFINITIONS,SUSPENSION_REVOCATION_MS,FEATURE_SWEEP_MS} from '../app/domains/provider-features.mjs';
-import {MESSAGING_INGRESS_FRAGMENT} from '../links/types.mjs';
+import {MESSAGING_INGRESS_FRAGMENT} from '../identity/messaging-ingress.mjs';
 // Extensions rev 3.2 (CR-X3-26): the former slot documents, republished as ordinary fragments at new URLs. The provider
 // pins these exact documents; the classifier fragment is application-consumed (Parlay requests it as a setup fragment),
 // the intake and ingress fragments are consumed only by provider features.

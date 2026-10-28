@@ -1,6 +1,6 @@
 # Bindle link envelope and conditional contact links — decision note
 
-> **Superseded in part (2026-10-27).** The contact link type and conditional contact links are being withdrawn ([contacts and links rethink](contacts-and-links-rethink.md), CL-2, CR-LK1, CR-C10; provisional). The signed-object profile moved to core [keys](../spec/keys.md); the link query envelope is to become an Organizations annex ([links](../spec/extensions/links.md)).
+> **Superseded in part (2026-10-27).** The contact link type and conditional contact links are being withdrawn ([contacts and links rethink](contacts-and-links-rethink.md), CL-2, CR-LK1, CR-C10; provisional). The signed-object profile moved to core [keys](../spec/keys.md); the link query envelope is the [Organizations link envelope annex](../spec/extensions/organizations-link-envelope.md) since 2026-10-28, and [links](../spec/extensions/links.md) is a dissolved, frozen record (CR-LK1, provisional).
 
 Status: provisional design. No runtime or publication claim. The coordinator owns the DEVLOG entry. Architecture/security/product sign-off: reviewer ___ / date ___ / outcome ___.
 

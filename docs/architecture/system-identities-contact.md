@@ -1,5 +1,7 @@
 # Protected system identities and conditional developer contact
 
+> **Superseded (2026-10-28, provisional).** Developer contact moves to principal-bound single-use invitations minted on demand after a 3sln.me eligibility check ([contacts and links rethink](contacts-and-links-rethink.md) §4.7, CL-13, CR-C10). The conditional-link design below is historical; the protected-identity parts stand until replaced.
+
 Provisional implementation proposal, 2026-10-13. **Superseded in part (2026-10-14):** developer contact is now one conditional link (`GET /api/developer-contact`, see [bindle-links](bindle-links.md)); the daily-grant issuance and signed `requiredTags`/`optionalTags` sections below are historical. This replaces the unshipped developer-feedback form. The current user direction is an explicit console action to request an ordinary developer contact capability valid for the current UTC day, with protected system handles and trusted badges. Human reviewer: __________  Date: __________  Outcome: __________.
 
 ## Policy and unresolved product input

@@ -1,6 +1,6 @@
 # Contacts and links rethink — design spike
 
-Status: **design spike, revision 2, 2026-10-27. Provisional (coordinator), not signed off by the owner.** It proposes. It edits no spec and no code. Every decision (CL-*) and change request (CR-*) is unsigned. Hosts are placeholders under `.example` and identifiers are placeholders under `https://spec.bindle.example/`. Nothing described here is implemented, deployed or production-verified. The coordinator logs this spike in DEVLOG.md. Sign-off: reviewer ___ / date ___ / outcome ___.
+Status: **design spike, revision 2, 2026-10-27. Provisional (coordinator), not signed off by the owner.** It proposes; it edits no code. **Phase 1 (specs) was applied on 2026-10-28** as provisional, unsigned spec text (§7 marks each change request), and the phase 1 spec review fixes were applied the same day (§7, last paragraph); nothing in it is implemented. Every decision (CL-*) and change request (CR-*) is unsigned. Hosts are placeholders under `.example` and identifiers are placeholders under `https://spec.bindle.example/`. Nothing described here is implemented, deployed or production-verified. The coordinator logs this spike in DEVLOG.md. Sign-off: reviewer ___ / date ___ / outcome ___.
 
 **Revision 2 changes.** It addresses every finding of the independent review of revision 1 (H1–H5, M1–M7, L1–L10; disposition in §12). It folds in the owner direction "invitation use cases, admission rules, lists, one-way links" (DEVLOG 2026-10-27) and two owner refinements: admission is an ordinary owner rule, and the relationship (two-way, receive only, request) lives on contact lists, not on links. It aligns with extensions revision 3.1. Accepted cuts from the review:
 - the "allow anyway" handler option;
@@ -231,7 +231,7 @@ Per-link sharing, `discloseToContacts` and `bio` are deleted. Display name and a
 
 - Manifest declarations are `{spec, options}`, with no slots, `features`, keys or refs. A provider feature is identified by its extension spec URL (one feature per extension).
 - **`messaging-address` / `address-routing` is withdrawn.** CR-X3-04 and CR-X3-23's conversion into an `address-routing` provider feature, and the retention of `MESSAGING_ADDRESS_DECLARATION`, are superseded by CL-4: there is no handle-to-ingress lookup. The coordinator reconciles this in DEVLOG.
-- Key delegation's occupant check becomes the value of the messaging-ingress fragment's `mailbox` field. `key-delegation.v1` becomes its extension URL.
+- Key delegation's occupant check becomes the value of the messaging-ingress fragment's `mailbox` field. `key-delegation.v1` becomes its extension URL. *Phase 1 review (M5):* the field is consumed by the provider feature of a Messaging-published extension, `…/extensions/messaging-mailbox/v1` (prerequisite key-delegation), under extensions rev 3.3 §4.2; key delegation stays Messaging-agnostic (messaging §2.5).
 - The 3sln.me email bridge is its own provider-published extension (for example `https://provider.example/extensions/email-bridge/v1`) consuming the public-intake fragment. It never places anyone in a list.
 - Intents is a Bindle-published extension with its own spec. links.md no longer defines `intents.v1` or `link-response.v1`.
 - The stale "extensions §9.8" reference (messaging §9 and revision 1 of this spike) becomes protocol §3 (no occupancy oracle).
@@ -272,7 +272,7 @@ Hidden concepts the user still meets: provider choice, the app chooser and conse
 | CL-3 | Withdrawn: conditional links and audiences, response signing, the replay record, the policy registry, `link-response.v1`, the contact parent and AMD-L1, and the legacy `?sig=` text. | Reviewer ___ Date ___ Outcome ___ |
 | CL-4 | Messaging withdraws standing contact links, intake configuration, the links contract and the messaging-address descriptor, including rev 3's `address-routing` conversion. | Reviewer ___ Date ___ Outcome ___ |
 | CL-5 | *Revised.* An invitation is a Messaging `connect` intent with data `{inviter, token, delegation, expires_at?, hint?}`; `hint` is display-only (`no-reply`). The spec defines only this data, the redemption message and uniform results (§4.3). Uses, admission and relationship are issuer-side. | Reviewer ___ Date ___ Outcome ___ |
-| CL-6 | *Revised (H4).* Owner list policy gates first contact only (`conversation-init`, `one-off`), with a pre-custody uniform `not_authorized` (`request` members' first contact is held after custody). Records, `peer-hello` and `rejoin` keep their per-conversation gates. §6.7 is rewritten. The ingress is never secret. | Reviewer ___ Date ___ Outcome ___ |
+| CL-6 | *Revised (H4).* Owner list policy gates first contact only (`conversation-init`, `one-off`), with a pre-custody uniform `not_authorized` (`request` members' first contact is held after custody). Records, `peer-hello` and `rejoin` keep their per-conversation gates. §6.7 is rewritten. The ingress is never secret. *Phase 1 review (H2):* the gate applies only to the verified principal, after author verification; no earlier refusal depends on owner policy; "not hosted here" is `recipient_unavailable`; credential-less first contact has pre-crypto budgets (messaging §6.7, §7.4). | Reviewer ___ Date ___ Outcome ___ |
 | CL-7 | *Revised (M4).* Requests are deferred: no v1 use case needs them. Possible later phase only. Mutual auto-accept is cut. | Reviewer ___ Date ___ Outcome ___ |
 | CL-8 | *Revised.* Rules, tags, lists and the classifier are Parlay-internal. One rules engine handles invitation admission and inbound messages. Lists are tags with provenance. | Reviewer ___ Date ___ Outcome ___ |
 | CL-9 | The signaling `link` basis, §5.3, AMD-SG-L1a/b and `mint_link` are withdrawn. Calls are call-invite messages carrying offers. | Reviewer ___ Date ___ Outcome ___ |
@@ -286,46 +286,50 @@ Hidden concepts the user still meets: provider choice, the app chooser and conse
 | CL-17 | *Revised (L7).* The **user decision** "No anonymous link messages" (2026-10-14) applies. This spike provisionally widens its scope to all Bindle first contact (redemptions are authored). Bridged email stays the separately decided channel-origin exception and never places anyone in a list. | Scope widening: Reviewer ___ Date ___ Outcome ___ |
 | CL-18 | *Revised.* Organization-supplied allowlists are deferred. Tokenless one-way intents, the "allow anyway" option and bound-principal hints in links are rejected. | Reviewer ___ Date ___ Outcome ___ |
 | CL-19 | *New (H2).* Before sending anything, the handler verifies the inviter's delegation certificate (directory key, purposes) and its `jkt` status, and redeems only to the certificate's `client.ingress`, under §2.3 fetch rules. | Reviewer ___ Date ___ Outcome ___ |
-| CL-20 | *New (M1, M2, H3).* Inviter processing is cheap checks first. Replay is keyed `(token digest, author principal)`. The redemption genesis is two parties with no subject or content and never `acceptListed`. Refused or held redemptions get no response. Rollback applies only to self-created entries. | Reviewer ___ Date ___ Outcome ___ |
+| CL-20 | *New (M1, M2, H3).* Inviter processing is cheap checks first. Replay is keyed `(token digest, author principal)`. The redemption genesis is two parties with no subject or content and never `acceptListed`. Refused or held redemptions get no response. Rollback applies only to self-created entries. *Phase 1 review (H1, M1, M2, L1, L2):* the inviter refuses any other redemption shape as `malformed`, and `one-off` never carries a token; the token must match `recipient.invite` and its owner; the replay key is `(owner, token digest, author principal)` and is checked after verification and before the exhausted-token check, so an identical retry gets the stored receipt and a different envelope gets `invite_invalid`. | Reviewer ___ Date ___ Outcome ___ |
 | CL-21 | *New (owner refinement 2; D7).* No protocol-level direction. The redeemer admits the inviter to send; the inviter enforces whether the redeemer may reply, from its lists. Messaging gains one generic rule: a receiver MAY refuse content records from an accepted peer under owner policy with `not_authorized`, while still accepting `leave`, `ingress`, `rejoin`, `secret-share` and receipts. Unsubscribe is local removal or block, plus the courtesy `leave`. | Reviewer ___ Date ___ Outcome ___ |
 | CL-22 | *New (owner refinements 1 and 2).* A Parlay link's only settings are uses and expiry (plus its id, name, token digest, state and ledger as bookkeeping). Contact lists are first-class with a relationship policy (`can message you`, `request`, `receive only`). The most permissive policy applies, a block overrides, there are no per-person overrides in v1, and a policy change applies at once. Tags are plain labels. One rules engine places arrivals in lists, tags, holds, refuses or routes. Unmatched redemptions are held. Templates create link, rule and target list (§4.4). Delete or revoke offers removal of the link's rules and, optionally, of the people it admitted. | Reviewer ___ Date ___ Outcome ___ |
 | CL-23 | *New (H3).* Leaked-invite bounds: default binding, "used by" notice with Block, and unbound-admitted and public-admitted contacts message-only until the owner replies. | Reviewer ___ Date ___ Outcome ___ |
-| CL-24 | *New (M5).* v1 redemption is same-host only. Foreign redemption waits for the person directory and per-issuer budgets. | Reviewer ___ Date ___ Outcome ___ |
+| CL-24 | *New (M5).* v1 redemption is same-host only. Foreign redemption waits for the person directory and per-issuer budgets. *Phase 1 review (M3):* enforced on both sides; the inviter refuses a foreign redeemer with `author_unverifiable` without a fetch. | Reviewer ___ Date ___ Outcome ___ |
 | CL-25 | *New (H5, M7).* A replacement key-delegation gate lands before `LINKS_ENABLED` is retired or any reset runs. | Reviewer ___ Date ___ Outcome ___ |
 
-## 7. Change requests (none applied)
+## 7. Change requests (phase 1 applied 2026-10-28; provisional, unsigned)
+
+Each mark below records where the change landed. Applying a request is not a sign-off.
 
 **links.md.**
-- **CR-LK1.** Split it. §3.1 and §7.2 (minus link rows) go to the core identity-and-keys spec. §2, §3.2–§5 and §8 become an Organizations annex. §6, §7, §9 and §10 are deleted. AMD-L1 is withdrawn.
-- **CR-LK2.** Envelope vectors 1, 3–7, 12 and 13 go to Organizations. Audience vectors 2, 8–11 and 14 are dropped. Pure-JWS vectors go with the profile.
+- **CR-LK1** *(applied: [keys](../spec/keys.md), [Organizations link envelope annex](../spec/extensions/organizations-link-envelope.md); [links](../spec/extensions/links.md) kept in place as a dissolved, frozen record because `tests/public-documentation.test.mjs` pins its path and AMD-L1 text).* Split it. §3.1 and §7.2 (minus link rows) go to the core identity-and-keys spec. §2, §3.2–§5 and §8 become an Organizations annex. §6, §7, §9 and §10 are deleted. AMD-L1 is withdrawn.
+- **CR-LK2** *(applied in text: annex §8, keys §5; splitting `bindle-links.vectors.json` waits for the code phase, CR-C2).* Envelope vectors 1, 3–7, 12 and 13 go to Organizations. Audience vectors 2, 8–11 and 14 are dropped. Pure-JWS vectors go with the profile.
 
 **Core identity-and-keys spec (new or existing; Q2).**
-- **CR-K1.** Host the signed-object profile and the signature-domain table.
-- **CR-K2.** Repoint "links §3.1" in signaling (leg certificates, messages), identity-portability (move statements, AMD-P5/P11), messaging §3.2, intents and organizations.
+- **CR-K1** *(applied, 2026-10-27 doc split; AMD-O7 rows merged and link-data row dropped 2026-10-28).* Host the signed-object profile and the signature-domain table.
+- **CR-K2** *(applied: signaling, identity portability, messaging and intents on 2026-10-27; organizations, identity portability AMD-P5/P11 and signaling §20.4 leftovers on 2026-10-28).* Repoint "links §3.1" in signaling (leg certificates, messages), identity-portability (move statements, AMD-P5/P11), messaging §3.2, intents and organizations.
 
 **messaging.md.**
-- **CR-M1.** §1: drop links, the links contract and `link-response`. Keep the directory and key delegation, by its extension URL.
-- **CR-M2.** Replace §4 with "Invitations" (§4.3 of this spike): the `connect` kind, the `BindleInvite` scheme, handler duties, inviter processing order, results, the content-refusal rule, the optional display `hint`, and the explicit statement that uses, admission, rules, lists and relationship policy are application behaviour.
-- **CR-M3.** Delete §2.3's descriptor, the `messaging-address` consumer, `linkRevoked` and the link wording in §2.1–§2.2. Keep the host-wide fetch rules, and state that they apply to redemption. Senders reach a person through an invitation or an established conversation.
-- **CR-M4.** §5.1 `recipient`: replace `contactId`/`resource` with `invite`. §8.2 adds the `(owner, token digest, author principal)` namespace. §8.3: add `invite_invalid` (401); remove `link_malformed`, `link_invalid`, `audience_ineligible` and `audience_unavailable`.
-- **CR-M5.** Rewrite §6.7 for the first-contact gate (CL-6).
-- **CR-M6.** §6.3/§6.4: add the generic content-refusal-by-owner-policy rule (CL-21), and state that it uses the uniform `not_authorized`.
-- **CR-M7.** Publish the CL-11 kinds.
-- **CR-M8.** §9: "extensions §9.8" becomes protocol §3. Intake is the rev 3.1 fragment; the email bridge is a provider-published extension. The auto-reply is unchanged.
-- **CR-M9.** The peer profile record (deferred).
+- **CR-M1** *(applied).* §1: drop links, the links contract and `link-response`. Keep the directory and key delegation, by its extension URL.
+- **CR-M2** *(applied: messaging §4.1 to §4.5).* Replace §4 with "Invitations" (§4.3 of this spike): the `connect` kind, the `BindleInvite` scheme, handler duties, inviter processing order, results, the content-refusal rule, the optional display `hint`, and the explicit statement that uses, admission, rules, lists and relationship policy are application behaviour.
+- **CR-M3** *(applied: messaging §2.2, §2.3; `describe` kept, reduced to `{version, ingress}`, because key delegation records `client.ingress` from it).* Delete §2.3's descriptor, the `messaging-address` consumer, `linkRevoked` and the link wording in §2.1–§2.2. Keep the host-wide fetch rules, and state that they apply to redemption. Senders reach a person through an invitation or an established conversation.
+- **CR-M4** *(applied; `optionalTags` removed by the phase 1 review).* §5.1 `recipient`: replace `contactId`/`resource` with `invite`. §8.2 adds the `(owner, token digest, author principal)` namespace. §8.3: add `invite_invalid` (401); remove `link_malformed`, `link_invalid`, `audience_ineligible` and `audience_unavailable`.
+- **CR-M5** *(applied).* Rewrite §6.7 for the first-contact gate (CL-6).
+- **CR-M6** *(applied: messaging §6.4).* §6.3/§6.4: add the generic content-refusal-by-owner-policy rule (CL-21), and state that it uses the uniform `not_authorized`.
+- **CR-M7** *(applied: messaging §4.6; `send-message` and `add-contact` are reserved names, unpublished until their data is defined, since their former data was a contact link).* Publish the CL-11 kinds.
+- **CR-M8** *(applied).* §9: "extensions §9.8" becomes protocol §3. Intake is the rev 3.1 fragment; the email bridge is a provider-published extension. The auto-reply is unchanged.
+- **CR-M9.** The peer profile record (deferred; not applied).
 
 **signaling.md.**
-- **CR-S1.** §5.1: remove resolving the recipient from a contact link.
-- **CR-S2.** §5.2 and §5.6: remove the `link` rows and the routing text that "shrinks to `link` invites".
-- **CR-S3.** Remove §5.3, §20.3, `mint_link` (§10.2), the §14 link rows and the minted-parent revocation text. Amend SG-5 and §19.5.
-- **CR-S4.** §9.1: remove `links` from the batch.
+- **CR-S1** *(already satisfied by signaling rev 3.2).* §5.1: remove resolving the recipient from a contact link.
+- **CR-S2** *(already satisfied by signaling rev 3.2).* §5.2 and §5.6: remove the `link` rows and the routing text that "shrinks to `link` invites".
+- **CR-S3** *(already satisfied by signaling rev 3.2; the §20.4 pointer to links §7.2 fixed 2026-10-28).* Remove §5.3, §20.3, `mint_link` (§10.2), the §14 link rows and the minted-parent revocation text. Amend SG-5 and §19.5.
+- **CR-S4** *(already satisfied by signaling rev 3.2).* §9.1: remove `links` from the batch.
 - *CR-S5 (CL-10) is withdrawn.*
 
-**intents.md.** CR-I1: remove §11, AMD-I2 and the contact intents of `intents.v1`. CR-I2: `capability` format, a per-field bound, and §3.5 text without contact links. CR-I3: inline the parser; repoint §3.1, §3.3, §3.5, §8 step 6, §9.3 and §10 Tooling.
+**intents.md** *(CR-I1 to CR-I3 applied)*. CR-I1: remove §11, AMD-I2 and the contact intents of `intents.v1`. CR-I2: `capability` format, a per-field bound, and §3.5 text without contact links. CR-I3: inline the parser; repoint §3.1, §3.3, §3.5, §8 step 6, §9.3 and §10 Tooling.
 
-**organizations.md.** CR-O1: §5.1 and §9.4 reference the annex. AMD-O7's signature-domain rows go to the identity-and-keys spec.
+**organizations.md** *(CR-O1 applied)*. CR-O1: §5.1 and §9.4 reference the annex. AMD-O7's signature-domain rows go to the identity-and-keys spec.
 
-**security.md and protocol.md** (coordinate with the agents editing protocol.md and extensions.md). CR-SEC1: the capability-handling rule; intents §9.3 points here. CR-P1: withdraw `intents.v1`'s contact-intents option and `link-response.v1`, and update the protocol example. CR-X1: withdraw the CR-X3-04 and CR-X3-23 `address-routing` conversion, and add the key-delegation `mailbox` occupant check.
+**security.md and protocol.md** (coordinate with the agents editing protocol.md and extensions.md). CR-SEC1 *(applied: 2026-10-27 doc split, fragment rule added 2026-10-28)*: the capability-handling rule; intents §9.3 points here. CR-P1 *(applied: protocol §2, extensions §2.8)*: withdraw `intents.v1`'s contact-intents option and `link-response.v1`, and update the protocol example. CR-X1 *(applied: extensions CR-X3-11 void and CR-X3-31; messaging §2.1 and §3.2 occupant check on the `mailbox` field)*: withdraw the CR-X3-04 and CR-X3-23 `address-routing` conversion, and add the key-delegation `mailbox` occupant check.
+
+**Phase 1 spec review fixes** *(applied 2026-10-28; provisional, unsigned).* Messaging: redemption shape enforced by the inviter and `invite` only on `conversation-init` (H1); gate position after author verification, `recipient_unavailable` for "not hosted here", pre-crypto first-contact budgets (H2); replay before the exhausted-token check (M1); one redemption replay rule with matching receipts (M2); inviter-side same-host rule (M3); field `mailbox` with `announce: true`, and the l.15 artefact paths (M4; the artefact JSON is corrected in the code phase); the messaging-mailbox provider feature and rev 3.3 references (M5); `describe` reduced to `{version, ingress}`; `optionalTags` removed; `BindleInvite` dropped from multicast; `send-message` and `add-contact` reserved names. Annex: `bindle_data` format text dropped (name reserved) and a vector mapping. Protocol example declares artefact-versions; extensions §2.8 lists it as intent-links' prerequisite.
 
 ## 8. Code plan (`npm test`, plus browser verification when implemented)
 

@@ -4,7 +4,7 @@
 // a durable serializable transaction port (get/set); caches are bounded, disposable, never served past freshness.
 // Foreign issuers require an explicit allowlist, empty by default. This does not open the production egress gate.
 import {publicClientHost,clientSite,memoryLimiter} from './client-metadata.mjs';
-import {strictJSON,plainObject} from '../links/envelope.mjs';
+import {strictIJSON as strictJSON,plainObject} from '../core/strict-json.mjs';
 import {canonical,key} from '../core/records.mjs';
 import {siteGlobal} from '../flags/read.mjs';
 import {isUUID} from '../core/primitives.mjs';

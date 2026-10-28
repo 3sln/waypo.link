@@ -22,6 +22,7 @@
 // tests/core-links-handoff.test.mjs, which verifies proofs produced by the protocol library's own signers.
 import { fail, base64url, fromBase64url, textEncoder, strictText } from '../core/records.mjs';
 import { UUID } from '../core/primitives.mjs';
+import { ijsonJCS } from '../core/strict-json.mjs';
 import { DELEGATION_PURPOSES, DELEGATION_TYP, delegatePublicJwk, jwkThumbprint } from '../identity/delegation.mjs';
 
 export const ENVELOPE_DOMAIN = 'bindle-messaging-envelope-v1\n';
@@ -34,16 +35,9 @@ const invalid = () => fail('author_proof_invalid');
 const unavailable = () => fail('author_proof_unavailable');
 const exact = (value, names) => plain(value) && Object.keys(value).length === names.length && names.every(name => Object.hasOwn(value, name));
 
-/** RFC 8785 over the I-JSON the Bindle Messaging profile admits (safe integers, well-formed strings, plain objects). */
-export function jcs(value, depth = 0) {
-  if (depth > 32) invalid();
-  if (value === null || value === true || value === false) return String(value);
-  if (typeof value === 'string') { if (!value.isWellFormed()) invalid(); return JSON.stringify(value); }
-  if (typeof value === 'number') { if (!Number.isSafeInteger(value) || Object.is(value, -0)) invalid(); return String(value); }
-  if (Array.isArray(value)) return `[${Array.from(value, v => jcs(v, depth + 1)).join(',')}]`;
-  if (plain(value)) return `{${Object.keys(value).sort().map(k => `${jcs(k)}:${jcs(value[k], depth + 1)}`).join(',')}}`;
-  invalid();
-}
+/** RFC 8785 over the I-JSON the Bindle Messaging profile admits (packages/core/strict-json.mjs ijsonJCS, contacts spike
+ * CR-C0); here it keeps its `author_proof_invalid` fault. */
+export const jcs = value => ijsonJCS(value, { code: 'author_proof_invalid' });
 // Strict certificate segments: UTF-8 I-JSON, depth-bounded by jcs, and no duplicate member names at any depth
 // (counted by a tokenizer pass, since JSON.parse silently keeps the last duplicate).
 function duplicateMembers(text) {

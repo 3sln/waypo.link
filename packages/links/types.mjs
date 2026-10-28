@@ -5,11 +5,14 @@
 // contact type, whose issuer (ContactEndpointService on `contact-grant` parents) left the core with messaging on
 // 2026-10-27; it has no binding, so nothing mints or verifies it any more.
 import { boundedString, mimeValid } from '../core/records.mjs';
+// Contacts spike CR-C0: the messaging-ingress fragment and the messaging profile live with key delegation
+// (packages/identity/messaging-ingress.mjs, also a public browser module for this file); re-exported here for the link
+// modules until CR-C1 removes them. The public-intake constants moved to the email bridge (packages/email-bridge/wire.mjs).
+import { MESSAGING_INGRESS_FRAGMENT, MESSAGING_PROFILE } from '../identity/messaging-ingress.mjs';
+export { MESSAGING_INGRESS_FRAGMENT, MESSAGING_PROFILE };
 
 export const CONTACT_LINK_TYPE = 'https://spec.bindle.example/links/contact/v1';
 // Placeholder identifiers under spec.bindle.example until publication authority is agreed (messaging-protocol/constants.mjs).
-// Extensions rev 3.2 (CR-X3-26): the former messaging-ingress slot, republished as an ordinary fragment at a new URL.
-export const MESSAGING_INGRESS_FRAGMENT = 'https://spec.bindle.example/fragments/messaging-ingress/v1';
 export const MESSAGING_CONTACT_LINK_TYPE = 'https://spec.bindle.example/messaging/v1/links/contact';
 export const LINKS_CONTRACT = 'https://spec.bindle.example/contracts/links/v1';
 
@@ -32,12 +35,6 @@ export const linkBinding = type => (typeof type === 'string' && Object.hasOwn(LI
 
 // BB-C1b: the handoff. The `messaging-address` provider feature resolves a link of a bound type to the current value of
 // the binding's field (messaging.md §2.1, §2.3). Placeholders under spec.bindle.example.
-// Extensions rev 3.2 (§11.1, CR-X3-26): the former public-message-intake slot, republished as the intake fragment.
-export const PUBLIC_INTAKE_FRAGMENT = 'https://spec.bindle.example/fragments/public-intake/v1';
-/** The public-intake contract a resource in the intake field serves (`deliver`). Core consumers (brokered records, the
- * email bridge) depend on the field and this contract, never on a particular messaging app or its flag. */
-export const PUBLIC_INTAKE_CONTRACT = 'https://spec.bindle.example/contracts/public-intake/v1';
-export const MESSAGING_PROFILE = 'https://spec.bindle.example/messaging/v1';
 export const DESCRIPTOR_MEDIA_TYPE = 'application/vnd.bindle.messaging.ingress+json';
 /** Link type -> field fragment, the reviewed registration table (messaging.md §4.2). */
 export const LINK_FRAGMENT_TABLE = Object.freeze(Object.entries(LINK_TYPE_BINDINGS).map(([type, binding]) => Object.freeze({ type, fragment: binding.fragment })));

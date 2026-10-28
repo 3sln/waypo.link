@@ -27,7 +27,7 @@ import {systemClock,cryptoRandom,nullAudit} from '../../app/providers.mjs';
 import {PROVIDER_EXT} from '../../core/extensions.mjs';
 import {brokeredResourcesProvider,readConnection,BROKERED_OPERATIONS,BROKERED_OWNER_OPERATIONS,DescribeOccupant,RevalidateBrokeredRecords,BrokeredRecords} from '../../federation/brokered.mjs';
 import {DiscoveryClient,sharedDiscoveryBudget} from '../../federation/resource-discovery.mjs';
-import {validateDescribe} from '../../links/handoff.mjs';
+import {validateDescribe} from '../../identity/messaging-ingress.mjs';
 import {flagReadable,routeFlags,flagEnabled,json,body} from './shared.mjs';
 
 export const BROKERED_ENGINE_OPERATIONS=operations(...BROKERED_OPERATIONS);
@@ -84,7 +84,8 @@ export const account={
    return run(this,Operation,{actor:{kind:'system',owner},...input===undefined?{}:{input:shape(input)}});
   },
   // The messaging-address provider feature's `describe` (extensions rev 3.2 §4.2), validated against messaging §2.3, for
-  // links/handoff.mjs. The value port answers first (feature live, account status, severance, exclusive selection);
+  // links/handoff.mjs and for key delegation: the validated ingress recorded below is the occupant port's `ingress`, which
+  // becomes the delegation certificate's client.ingress (contacts spike CR-C0; validateDescribe lives with delegation). The value port answers first (feature live, account status, severance, exclusive selection);
   // the entry it names must still be the one whose record is described. Any failure is recipient_unavailable upstream.
   // A changed ingress is recorded on the entry (C1b).
   async integrationsMessagingDescribe({owner,fragment,occupant}={}){

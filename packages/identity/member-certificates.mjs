@@ -52,7 +52,7 @@ import { Provider } from '../../vendor/ngin/index.js';
 import { AppAction, AppQuery } from '../app/engine.mjs';
 import { AppFault } from '../app/faults.mjs';
 import { base64url, fromBase64url, textEncoder } from '../core/records.mjs';
-import { strictJSON } from '../links/envelope.mjs';
+import { strictIJSON as strictJSON } from '../core/strict-json.mjs';
 import { custodyFence } from './keys.mjs';
 import { delegatePublicJwk, jwkThumbprint, originValid, isJkt } from './delegation.mjs';
 

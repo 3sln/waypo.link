@@ -1,7 +1,7 @@
 // FF-5a: legacy mount visibility is preserved; after console adoption owner reads/reversal ignore targeting.
 // HTTP routes of slice C3, key-delegation.v1 (docs/spec/messaging.md §3.4; messaging-extraction.md C3): the public
-// delegation status endpoint receivers query, and owner views and revocation. Mounted only with LINKS_ENABLED;
-// with the flag off nothing here answers, so the paths stay 404 and no allowlist reveals them.
+// delegation status endpoint receivers query, and owner views and revocation. Mounted only with KEY_DELEGATION_ENABLED
+// (or, until contacts spike CR-C7, LINKS_ENABLED; delegationRoutesReadable); with both off nothing here answers, so the paths stay 404 and no allowlist reveals them.
 //
 // Status: GET|HEAD {identityURI}/delegations/{jkt}, identityURI = <APP_ORIGIN>/identity/<subject> (contact delivery
 // S13 naming). The body is exactly {status} or {status, revokedHour}. Unknown, inactive or nonexistent subjects are
@@ -10,6 +10,8 @@
 // which is final (`max-age=86400, immutable`); "cannot be determined" is 503 `no-store` with Retry-After.
 import {flagReadable,json,body,privateHeaders,accountHandle,pseudonym,subnet,consume} from './shared.mjs';
 import {statusCacheControl,isJkt} from '../../identity/delegation.mjs';
+/** Contacts spike CR-C0: the delegation routes' mount rule, also used by the member-certificate status fallback. */
+export const delegationRoutesReadable=env=>flagReadable(env,'KEY_DELEGATION_ENABLED',true)||flagReadable(env,'LINKS_ENABLED',true);
 
 const STATUS=/^\/identity\/([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})\/delegations\/([^/]+)$/;
 const publicHeaders={'X-Robots-Tag':'noindex, nofollow','Referrer-Policy':'no-referrer'};
@@ -29,7 +31,7 @@ async function admitted(env,request,local,subject){
 export const admission={exempt:path=>path==='/api/delegations/revoke'};
 export const stages={
  async public({request,env,path,local}){
-  if(!flagReadable(env,'LINKS_ENABLED',true))return;
+  if(!delegationRoutesReadable(env))return;
   const match=STATUS.exec(path);if(!match)return;
   if(!['GET','HEAD'].includes(request.method))return json({error:'method_not_allowed',message:'Use GET.'},405,{...publicHeaders,Allow:'GET, HEAD'});
   const [,subject,jkt]=match;
@@ -48,7 +50,7 @@ export const stages={
  },
  // Owner views and revocation (messaging §3.2: the owner can revoke any delegate key, a client's keys, or all).
  async owner({request,env,path,object,id}){
-  if(!flagReadable(env,'LINKS_ENABLED',true)||!path.startsWith('/api/delegations'))return;
+  if(!delegationRoutesReadable(env)||!path.startsWith('/api/delegations'))return;
   if(path==='/api/delegations'){const refused=only(request,'GET');if(refused)return refused;return json(await object.listDelegations(id));}
   if(path==='/api/delegations/revoke'){const refused=only(request,'POST');if(refused)return refused;return json(await object.revokeDelegations(id,await body(request,4096)));}
  },

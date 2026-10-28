@@ -2,19 +2,19 @@
 
 > **Group:** Bindle extension
 >
-> **Status:** design candidate, revision 3; provisional; implemented locally behind flags. The registered contact intent kinds (§11) are being withdrawn (contacts and links spike CR-I1) and still exist in code.
+> **Status:** design candidate, revision 3; provisional; implemented locally behind flags. The contacts and links spike changes (no registered kinds, the `capability` format, no links dependency) are provisional, unsigned text (2026-10-28, CR-I1 to CR-I3); the withdrawn contact kinds and `intents.v1` path still exist in code.
 >
 > **Covers:** intent links, intent kinds and handlers, and hosted intent routing.
 >
-> **Does not cover:** the link query envelope ([links](links.md)); invitation kinds published by [Bindle Messaging](messaging.md); signaling session kinds ([signaling](signaling.md)); capability-URL handling ([security](../security.md#capability-urls)).
+> **Does not cover:** the link query envelope ([Organizations annex](organizations-link-envelope.md)); any particular intent kind, such as those published by [Bindle Messaging](messaging.md#46-published-intent-kinds); signaling session kinds ([signaling](signaling.md)); capability-URL handling ([security](../security.md#capability-urls)).
 
-> **Pending [extensions revision 3](../extensions.md) (draft, unsigned, 2026-10-27).** Where this document relies on the `intents.v1` and `intent-links.v1` features and other feature identifiers, extensions revision 3.2 and protocol §2–§4 govern instead. Change request CR-X3-10, [extensions Appendix A](../extensions.md#appendix-a-migration-and-impact-change-requests-not-applied).
+> **Pending [extensions revision 3](../extensions.md) (draft, unsigned, 2026-10-27).** Where this document relies on the `intent-links.v1` feature and other feature identifiers, extensions revision 3.2 and protocol §2–§4 govern instead. Change request CR-X3-10, [extensions Appendix A](../extensions.md#appendix-a-migration-and-impact-change-requests-not-applied).
 
 Status: **design candidate, 2026-10-22, revision 3.** Revision 3 records decisions that are Provisional (coordinator), not signed off by the user (the user delegated them); implementation proceeds on them, and they stay revisable: the fragment placement is required for capability kinds (§3.4, §9.3); signed intents are not part of version 1 (§3.3); and link hosts follow the handle-entry rules of §10. Organization-installed handlers stay provider policy (§6); 3sln.me's choice is in the design §6.7. Revision 2 (review round 1 applied; see the design's "Review round 1"). Unsigned v1 parsing, kind validation/projection, handler/default routing and owner controls are implemented locally (`packages/intents/`, `packages/runtime/routes/intents.mjs`), behind default-off `INTENT_LINKS_ENABLED` and, for app handlers, `INTENT_APP_HANDLERS_ENABLED`. Signed attribution remains outside v1. Not signed off, not published and not production-verified. Rationale, the 3sln.me routing and consent design, migration, threat model, slices and tests: [intent links design](../../architecture/intent-links.md). Identifiers under `https://spec.bindle.example/` and hosts under `.example` are placeholders. MUST, SHOULD and MAY express draft requirements. §14 lists the core amendments this draft needs; they are **proposed and unsigned**.
 
 Protocol/security/interop sign-off: reviewer ___ / date ___ / outcome ___.
 
-This document extends [protocol §2](../protocol.md#2-discovery-and-login), [links §6.4](links.md#64-contact-intents-and-link-previews), [artefacts](../artefacts.md), [integrations §2](integrations.md#2-integration-manifest), [incremental authorization §8–§9](incremental-authorization.md#8-describable-effects-and-risk-interop) and [identity portability](identity-portability.md). It generalizes the two contact intents of links §6.4 and the `intents.v1` handoff into an extensible mechanism. It defines the link format, the intent-kind artefact, handler declarations, the provider's processing obligations and the handoff to a handler. Chooser layout, wording, default policies beyond the obligations below, and every other presentation choice are provider policy.
+This document extends [protocol §2](../protocol.md#2-discovery-and-login), [artefacts](../artefacts.md), [integrations §2](integrations.md#2-integration-manifest), [incremental authorization §8–§9](incremental-authorization.md#8-describable-effects-and-risk-interop) and [identity portability](identity-portability.md). It registers no intent kinds: kinds are public artefacts published by the specifications that need them (contacts and links spike CL-11; provisional). It defines the link format, the intent-kind artefact, handler declarations, the provider's processing obligations and the handoff to a handler. Chooser layout, wording, default policies beyond the obligations below, and every other presentation choice are provider policy.
 
 ## 1. Model
 
@@ -73,16 +73,18 @@ A value containing `.` is the signed form; any other is the unsigned form. A sig
 
 An intent link is an absolute HTTPS URL that carries exactly one `bintent` value in one of two places:
 
-- **Query** (canonical): a query component named exactly `bintent` (lowercase, unencoded) with `=` and the value as raw bytes, parsed with the raw-query parser of [links §2](links.md#2-recognizing-and-parsing-link-parameters). Percent-encoding, `+`, padding and whitespace in the value are rejected, not decoded.
+- **Query** (canonical): a query component named exactly `bintent` (lowercase, unencoded) with `=` and the value as raw bytes. Percent-encoding, `+`, padding and whitespace in the value are rejected, not decoded. The query is parsed with the raw-query parser below.
 - **Fragment**: the fragment is exactly `bintent=<value>`.
 
-A URL with `bintent` in both places, with `bintent` more than once, or with any `bindle_*` parameter or legacy `sig` marker alongside `bintent`, is malformed.
+A URL with `bintent` in both places, with `bintent` more than once, or with any `bindle_*` parameter alongside `bintent`, is malformed.
 
-**Capability kinds use the fragment** (revision 3, Provisional (coordinator), not signed off by the user). An intent whose kind has `capability: true` MUST be placed in the fragment. Minters MUST NOT produce the query placement for one. A handling provider that finds a capability kind in the query placement refuses it with `intent_malformed` once the kind is resolved (§4.5), without handing off, and applies §9.3 redaction to the request it already received. The scheme form (§10) is unaffected. A contact link stays a link. An intent that concerns one carries it in `data`.
+**Raw-query parser** (inlined from the former links §2; contacts spike CR-I3). The parser operates on the raw query string: the bytes after the first `?` and before any `#`. It splits that string on `&` only (`;` is not a separator) into components. A component's name is the text before its first `=`, or the whole component when it has no `=`. Empty components are ignored. Name percent-decoding means WHATWG percent-decode, which leaves invalid sequences such as `%zz` literal. A component whose percent-decoded, ASCII-lowercased name is `bintent` but which is not literally `bintent`, or whose name so decoded begins with `bindle_`, makes the URL malformed. Implementations MUST use this one parser for every decision about a URL, never mixing it with `URLSearchParams`.
 
-The scheme form `web+bindle://intent?bintent=<value>` carries the same value for platform protocol handlers (§10, links §6.4). A provider receiving it through a registered handler URL (where the platform substitutes the whole scheme URL, percent-encoded, for `%s`) percent-decodes the substituted text **exactly once**. The result MUST be exactly `web+bindle://intent?bintent=<value>`: lowercase scheme and host, no userinfo, port, path, other query component or fragment, and a value that meets the raw-value rules above. Anything else is malformed; nothing is decoded a second time.
+**Capability kinds use the fragment** (revision 3, Provisional (coordinator), not signed off by the user). An intent whose kind has `capability: true` MUST be placed in the fragment. Minters MUST NOT produce the query placement for one. A handling provider that finds a capability kind in the query placement refuses it with `intent_malformed` once the kind is resolved (§4.5), without handing off, and applies §9.3 redaction to the request it already received. The scheme form (§10) is unaffected. A capability that is itself a URL stays a URL; an intent that concerns one carries it in `data`.
 
-Unrelated query components are ignored and never reflected, as in links §2 rule 7.
+The scheme form `web+bindle://intent?bintent=<value>` carries the same value for platform protocol handlers (§10). A provider receiving it through a registered handler URL (where the platform substitutes the whole scheme URL, percent-encoded, for `%s`) percent-decodes the substituted text **exactly once**. The result MUST be exactly `web+bindle://intent?bintent=<value>`: lowercase scheme and host, no userinfo, port, path, other query component or fragment, and a value that meets the raw-value rules above. Anything else is malformed; nothing is decoded a second time.
+
+Unrelated query components (for example `utm_source`) are ignored, never interpreted, and never reflected into representations, redirects or handoffs.
 
 ### 3.5 Size bounds
 
@@ -91,7 +93,7 @@ Unrelated query components are ignored and never reflected, as in links §2 rule
 - The `bintent` value is at most 6,400 characters unsigned and 7,168 characters signed.
 - A complete intent link is at most 8,192 characters.
 
-These admit, in `data`, one contact link of at most 4,352 characters: a 4,096-character `bindle_meta` with an origin and path of at most 243 characters. Links §2 rule 5 allows longer contact links (a request target of up to 8,192 characters, and legacy `sig` links up to 18,000); those cannot be carried, and a minter MUST refuse to mint rather than truncate.
+A minter whose data would exceed a bound MUST refuse to mint rather than truncate.
 
 A kind MAY set a lower `max_bytes` for `data` (§4.1). Bounds are checked before any decoding work, fetch or signature verification.
 
@@ -110,7 +112,7 @@ An intent kind is an artefact line of kind `intent` under [artefacts §2](../art
 | `effect` | yes | The most a handler may do after the viewer confirms: `view` (shows something), `save` (stores something among the viewer's data), `join` (makes the viewer a participant in something shared) or `send` (sends or publishes something as the viewer). |
 | `data` | yes | The data schema (§4.2). |
 | `disclosure` | yes | `{"categories": [...], "fields": {...}}` (§4.3). |
-| `capability` | yes | `true` when some data member is a bearer capability (for example a contact link). It MUST be `true` when any field has `format: contact-link`; a body with such a field and `false` is invalid. Capability intents get the handling of §9.3. |
+| `capability` | yes | `true` when some data member is a bearer capability (for example an invitation token). It MUST be `true` when any field has `format: capability`; a body with such a field and `false` is invalid. Capability intents get the handling of §9.3. |
 | `max_bytes` | no | An integer from 64 to 4,480: a lower limit than §3.5 on serialized `data`. |
 | `supersedes` | no | A line URL. A hint only, as in artefacts §9.1 `successor`. |
 
@@ -122,7 +124,7 @@ Display strings follow artefacts §3 rule 7. Every display string is untrusted p
 
 | Field | Members |
 | --- | --- |
-| String | `{"type":"string","maxLength":n}` with n from 1 to 4,352 Unicode code points, and optionally `format`: `https-url` (an absolute URL with scheme `https`, no userinfo and no fragment, equal to its own WHATWG serialization), `uuid` (lowercase 8-4-4-4-12 hexadecimal), `handle` (the full `local@host` form of [protocol §2](../protocol.md#2-discovery-and-login), ASCII lowercase host), or `contact-link` (a canonical contact link as defined for `contact-url` in links §6.4). |
+| String | `{"type":"string","maxLength":n}` with n from 1 to 4,352 Unicode code points, and optionally `format`: `https-url` (an absolute URL with scheme `https`, no userinfo and no fragment, equal to its own WHATWG serialization), `uuid` (lowercase 8-4-4-4-12 hexadecimal), `handle` (the full `local@host` form of [protocol §2](../protocol.md#2-discovery-and-login), ASCII lowercase host), or `capability` (a bearer secret, bounded only by the field's `maxLength`; a value that is also an absolute HTTPS URL under the `https-url` rules may be displayed by its origin). A `capability` field forces `capability: true` and is displayed only by `presence` or `origin` (§4.3). |
 | Integer | `{"type":"integer","minimum":a,"maximum":b}` with safe integers a ≤ b. |
 | Boolean | `{"type":"boolean"}` |
 | Enum | `{"type":"enum","values":[...]}`: 1–64 unique strings of at most 64 code points. |
@@ -135,9 +137,9 @@ Data members not defined by the schema at the referenced version are invalid. A 
 - `categories`: the [incremental authorization §8.3](incremental-authorization.md#83-sensitivity-categories) categories that any link of this kind can involve. A missing category never lowers risk, and unknown values are ignored for display but never lower risk.
 - `fields`: exactly one entry per data property: `{"title": <map as for title>, "categories": [...], "display": "value"|"origin"|"presence"}`.
   - `value`: the provider may show the value. Allowed only for enum, boolean, integer and principal fields, and for strings with `maxLength` at most 120 and no `format` other than `uuid` or `handle`. A shown string is labelled as text from the link and quoted. A principal is shown as its `iss` host, plus a handle only when the provider already holds a verified binding for that principal; showing it never triggers a fetch, and it is always labelled as the link's claim.
-  - `origin`: shows only the origin of an `https-url` or `contact-link` value.
+  - `origin`: shows only the origin of an `https-url` value, or of a `capability` value that is an HTTPS URL.
   - `presence`: shows only that the member is present.
-  - A field that carries a capability MUST use `origin` or `presence`. Every `contact-link` field carries one.
+  - A field that carries a capability MUST use `origin` or `presence`. Every `capability` field carries one.
 
 ### 4.4 Growth points
 
@@ -150,13 +152,13 @@ This document registers the kind `intent` with artefacts §6.3:
 | `/title`, `/summary`, `/disclosure/fields/*/title` | add-member | New BCP 47 tags only. |
 | `/data/properties/*/values` | append | Only for an enum field whose version-*N* definition had `"extensible": true`. Handlers then MUST accept unknown values. |
 
-Every other path is frozen, including `effect`, `capability`, `max_bytes`, `/disclosure/categories`, existing fields and existing `required`. Because `capability` is frozen, a version that adds a `contact-link` field to a line with `capability: false` is invalid. A new member with categories outside a consent's pinned version is a widening for that consent (§7.2).
+Every other path is frozen, including `effect`, `capability`, `max_bytes`, `/disclosure/categories`, existing fields and existing `required`. Because `capability` is frozen, a version that adds a `capability`-format field to a line with `capability: false` is invalid. A new member with categories outside a consent's pinned version is a widening for that consent (§7.2).
 
 ### 4.5 Kind processing
 
 A handling provider resolves the reference under [artefacts §7](../artefacts.md#7-validation), only after viewer authentication (§6): from its store if it holds the digest, otherwise by fetching under artefacts §8.3, which never follows a URL found in an intent other than the kind's own line URL. A reference it cannot verify fails closed (`intent_kind_unavailable` when retryable, otherwise `intent_kind_invalid`). A version at or above an accepted retraction's `from` is refused for new handling (`intent_kind_retracted`). Existing handler defaults are not deleted by a retraction, but are not used for that version.
 
-Providers SHOULD hold the kinds this specification registers (§11) in their store from installation, so that links of those kinds do not depend on the publisher staying reachable.
+Providers SHOULD hold the kinds their viewers commonly use in their store from installation, so that links of those kinds do not depend on the publisher staying reachable.
 
 A fetch tells the kind's origin that someone at this provider opened a link of that line at that time, and a publisher can mint one line URL per recipient to turn this into a read receipt. A provider therefore SHOULD resolve from its store or a mirror (artefacts §8.4) where it can, MUST budget fetches of unknown lines per account and per origin, and MAY ask the viewer before fetching a line from an origin it has not fetched from before.
 
@@ -207,7 +209,7 @@ Requirements:
 - Steps 1–6 create no durable state and consume nothing. Steps 1–2 perform no fetch. Before step 3 completes, the response MUST NOT depend on whether the provider's store holds the kind or on any fetch result, so that an unauthenticated party can neither probe the shared store (which reveals what other users opened) nor use the provider to fetch arbitrary URLs. After step 3, the only fetches are the kind line and, for a signed intent, the minter's manifest, directory and identity document, all under the protocol §2 SSRF rules and per-account and per-origin budgets.
 - The provider authenticates the viewer before showing anything derived from the kind or `data`. When several accounts are signed in, the viewer chooses one explicitly. Until authentication completes, the value is kept only in the page or in session-scoped browser storage, never in a URL the provider generates.
 - **The viewer is a person.** An organization entity is never the viewer, since nothing logs in interactively as an organization ([organizations §3](organizations.md#3-organization-entities)). A handler that acts for an organization does so only through member context ([organizations §7](organizations.md#7-member-context-for-applications)), after the viewer's confirmation in the handler. Whether organization-installed apps are offered to members as candidates is provider policy. A provider that offers them SHOULD do so only after the viewer chose to act as that organization, never mixed into the person's own candidates, and MUST name the acting entity on the chooser (revision 3, Provisional (coordinator), not signed off by the user).
-- **Cross-site POST.** It carries no provider cookies under SameSite rules, and the provider MUST NOT relax SameSite to make it do so (as links §9). The provider renders a page that re-establishes the session same-origin and continues with step 3.
+- **Cross-site POST.** It carries no provider cookies under SameSite rules, and the provider MUST NOT relax SameSite to make it do so. The provider renders a page that re-establishes the session same-origin and continues with step 3.
 - **Fragment GET.** For `GET <endpoint>#bintent=`, the provider's page reads the fragment, removes it with `history.replaceState` before loading anything else, and continues by a same-origin POST. That POST is processed like the cross-site POST: it only renders.
 - **Retention.** The provider keeps the value and `data` only for the duration of one flow (at most one hour) and never in audit, analytics or consent records. Consent, default and exclusion records hold the kind line, version, handler and time only.
 - The provider MUST NOT act on an intent itself, MUST NOT call a handler server-to-server, and MUST NOT send the intent anywhere except the route of the handler the viewer chose.
@@ -268,8 +270,8 @@ The provider's consent is a routing and disclosure control, **not a security bou
 3. **never perform a state-changing, sending, joining or disclosing action without an explicit confirmation by the viewer in its own interface**, whatever the kind's `effect`, and treat an intent identically whether or not a provider routed it;
 4. serve the route and every confirmation with `frame-ancestors 'none'`, arm confirmation controls only after a delay, and name in the confirmation the identity it will act as (person, or organization through member context);
 5. use `bintent_iss` only to choose among issuers the viewer already has a session or connection with at the handler, and otherwise ignore it: never start discovery or sign-in at an issuer named only by the hint;
-6. verify any capability in `data` with its owner as that capability's specification requires (for a contact link, links §8), before presenting it as verified;
-7. send the intent's data nowhere except where fulfilling it requires (for a contact link, its owner host).
+6. verify any capability in `data` as that kind's specification requires, before presenting it as verified;
+7. send the intent's data nowhere except where fulfilling it requires, as that kind's specification states.
 
 ## 9. Security requirements
 
@@ -289,7 +291,7 @@ The provider's consent is a routing and disclosure control, **not a security bou
 
 For a kind with `capability: true`:
 
-- link hosts, handling providers and handlers apply the [capability-URL rules](../security.md#capability-urls), as links §8 does for `bindle_meta`: redaction from logs, `no-store`, `no-referrer`, no service-worker caching;
+- link hosts, handling providers and handlers apply the [capability-URL rules](../security.md#capability-urls): redaction from logs, `no-store`, `no-referrer`, no service-worker caching, fragment placement;
 - minters MUST use the fragment placement, and the query placement is refused (§3.4; revision 3);
 - link previews never show data, and show a kind title only under §10.
 
@@ -316,49 +318,40 @@ Any origin MAY host intent links. A link host's page for a URL carrying `bintent
 
 A host that is itself a provider declaring `intent-links.v1` processes intents for its own signed-in viewers as in §6.
 
-**Tooling.** Any software MAY recognize a `bintent` value on any URL and send it to the viewer's handling provider directly, without loading the link host. An intent therefore keeps working when its link host is gone. Tooling treats decoded content as unverified, as links §5 requires.
+**Tooling.** Any software MAY recognize a `bintent` value on any URL and send it to the viewer's handling provider directly, without loading the link host. An intent therefore keeps working when its link host is gone. Tooling treats decoded content as unverified and presents nothing in it as attested.
 
 A provider that registers a platform protocol handler for `web+bindle` SHOULD place the substituted value in the fragment of its handler URL where the platform allows it. Otherwise it applies §6's redaction to the query.
 
-## 11. Registered kinds (candidates)
+## 11. Registered kinds: none
 
-This specification will publish these lines. Their bodies are drafts in the [design](../../architecture/intent-links.md#registered-kinds).
-
-| Line | `effect` | `capability` | Data |
-| --- | --- | --- | --- |
-| `https://spec.bindle.example/intents/send-message/v1` | `send` | `true` | `contact` (required, `contact-link`, `origin`) |
-| `https://spec.bindle.example/intents/add-contact/v1` | `save` | `true` | `contact` (required, `contact-link`, `origin`) |
-| `https://spec.bindle.example/intents/open-conversation/v1` | `view` | `false` | `conversation` (required, `uuid`, `presence`), `creator` (required, principal, `value`), `profile` (required, `https-url`, `origin`) |
-
-**Migration from links §6.4.** `web+bindle://send-message?contact-url=<link>` and `web+bindle://add-contact?contact-url=<link>` are equivalent to unsigned intents of the first two kinds with `data.contact` set to the decoded link. A handling provider that also declares `intents.v1` SHOULD keep accepting `bindle_intent` on its `login_endpoint` and process it as that equivalent intent under §6 and §7. New pages SHOULD use `intent-links.v1` when the viewer's provider declares it, and fall back to `intents.v1` otherwise. A legacy intent whose contact link exceeds the `contact-link` bound (§3.5; legacy `sig` links may reach 18,000 characters under links §10) cannot be re-encoded: the provider keeps processing it through its pre-existing `intents.v1` path to a built-in handler, after the same first-use consent, and never hands it to an app handler. Existing contact links, `bindle_intent` URLs and platform handler registrations that predate this feature MUST keep working until the provider's migration ends; they are converted, never refused.
+This specification registers no intent kinds and hard-codes none (contacts and links spike CL-11, CR-I1; provisional, unsigned, 2026-10-28). The former candidates `…/intents/send-message/v1`, `…/intents/add-contact/v1` and `…/intents/open-conversation/v1`, their contact-link data and the migration of the links §6.4 `web+bindle://send-message` and `add-contact` forms and of `bindle_intent` (AMD-I2) are withdrawn. Nothing was published, so the legacy forms are removed, not migrated. Bindle Messaging publishes its own kinds ([messaging §4.6](messaging.md#46-published-intent-kinds)).
 
 ## 12. Feature declaration
 
 | Feature | Members | Meaning | When absent |
 | --- | --- | --- | --- |
-| `intent-links.v1` | `endpoint` (issuer origin) | The provider is a handling provider under §6–§8 and processes `intents` handler declarations (§5). Requires `artefact-versions.v1`. | Link hosts fall back to `intents.v1` for the legacy contact intents, or to the scheme form. |
+| `intent-links.v1` | `endpoint` (issuer origin) | The provider is a handling provider under §6–§8 and processes `intents` handler declarations (§5). Requires `artefact-versions.v1`. | Link hosts fall back to the scheme form. |
 
-`intents.v1` is deprecated by this feature and SHOULD be removed once link hosts no longer depend on it.
+`intents.v1` is withdrawn, not deprecated (contacts spike CL-11, CR-P1; provisional).
 
 ## 13. Conformance tests
 
-- **Format:** both placements; both forms; noncanonical JSON (whitespace, member order, `\u` escapes of plain characters) refused; `1.0`, `1e0` and `-0`; protocol-handler substitution decoded exactly once, double-encoded values refused; a maximal contact link signed and unsigned within bounds and one character past them; duplicate, encoded or mixed-case names; `bintent` alongside `bindle_meta` or `sig`; padding, `+` and percent-encoding in values; noncanonical base64url; unknown and duplicate members at depth; `minter` in an unsigned intent; a reference without `version` or `digest`; every bound at and one past its limit, checked before fetching.
+- **Format:** both placements; both forms; noncanonical JSON (whitespace, member order, `\u` escapes of plain characters) refused; `1.0`, `1e0` and `-0`; protocol-handler substitution decoded exactly once, double-encoded values refused; maximal `data` signed and unsigned within bounds and one character past them; duplicate, encoded or mixed-case names; `bintent` alongside `bindle_meta`; padding, `+` and percent-encoding in values; noncanonical base64url; unknown and duplicate members at depth; `minter` in an unsigned intent; a reference without `version` or `digest`; every bound at and one past its limit, checked before fetching.
 - **Signatures:** a valid certification-key signature; a signature by the identity signing key gives no attribution; a wrong `typ`; a retired certification key gives no attribution whatever its `iat`; a link signed before the minter's move gives no attribution after it, and a `minter.iss` naming the earlier host fails; a failed signature removes attribution and never shows the claimed minter.
-- **Kinds:** every growth point accepting a valid addition and rejecting an invalid one; frozen `effect` and categories; a retracted version refused while older versions keep working; an unreachable publisher with and without a stored record; data members undefined at the referenced version refused; `display: value` on a capability field rejected; `publisher` not same-origin with `id` rejected; a `contact-link` field with `capability: false`, in version 1 or added later, rejected; a `value` string with a bidi control rejected.
+- **Kinds:** every growth point accepting a valid addition and rejecting an invalid one; frozen `effect` and categories; a retracted version refused while older versions keep working; an unreachable publisher with and without a stored record; data members undefined at the referenced version refused; `publisher` not same-origin with `id` rejected; a `capability`-format field with `capability: false`, in version 1 or added later, rejected; `display: value` on a `capability` field rejected; a `value` string with a bidi control rejected.
 - **Declarations:** duplicate kinds invalidating each other; a route off the origin or path prefix ignored; a kind removed from a manifest clearing the default; a sibling client on the same registrable domain sharing exclusions.
 - **Processing:** no fetch and no store-dependent response before authentication; no state or side effect before step 7; direct handoff refused for a script-submitted cross-site POST and for a navigation without fetch metadata, and allowed for `Sec-Fetch-Site: none`; value and data absent from records after the flow; no navigation target from data; consent and defaults recorded only by same-origin CSRF-protected POST; account choice with several sessions; `no-store`, `no-referrer` and log redaction.
 - **Link hosts (revision 3):** the handle step collects no credential; nothing is sent before the destination host is shown and the viewer acts; a capability kind shows its disclosure on the first and on the remembered-provider path; a query-placed capability intent is refused with `intent_malformed` and no handoff.
 - **Consent:** first use always asks; "once" records nothing; "always" pinned to a version; a widening version asks again and keeps the old default meanwhile; a new handler never replaces a default; exclusions and ignored kinds unobservable to handlers in body, status and timing.
 - **Versions:** a handler declaring *N* receives an *M* > *N* intent projected and unsigned only after additivity is verified, and not at all otherwise.
 - **Handoff:** data only in the fragment; the handler strips it; a handler test harness shows no action without a confirmation, refuses framing, and ignores a `bintent_iss` naming an issuer it has no session with.
-- **Migration:** both legacy `web+bindle` intents and `bindle_intent` map to the registered kinds and go through first-use consent.
 
 ## 14. Core amendments — proposed (unsigned)
 
 | ID | Document | Change |
 | --- | --- | --- |
-| AMD-I1 | protocol §2 | Add the `intent-links.v1` row (§12). Mark `intents.v1` deprecated in favour of it. |
-| AMD-I2 | links §6.4 | The two contact intents become the registered kinds of §11. Define `web+bindle://intent?bintent=` as the scheme form. Other intent names stay reserved. `bindle_intent` is deprecated and handled as §11 describes. |
+| AMD-I1 | protocol §2 | Add the `intent-links.v1` row (§12). The `intents.v1` row is withdrawn (contacts spike CR-P1, applied 2026-10-28, provisional). |
+| AMD-I2 | links §6.4 | **Withdrawn** (contacts spike CR-I1, 2026-10-28, provisional): links §6.4 is withdrawn with contact links, and no kinds are registered (§11). `web+bindle://intent?bintent=` stays the scheme form (§3.4). |
 | AMD-I3 | artefacts §5, §6.3 | Register the `intent` kind and its growth table (§4.4). Clarify §5 rule 2: a reference object inside the JSON of a `bintent` value is a JSON reference, not a compact string form. |
 | AMD-I4 | integrations §2.2, §2.3 | Add the `intents` member (§5) and its change-handling row. |
 | AMD-I5 | [keys §4](../keys.md#4-signature-domains) (formerly links §7.2); organizations §3a.3 | Signature-domain row for `bindle-intent+jwt`, signed with a certification key (`use:"cert"`), separated by `typ`. Certification keys gain this second use; a certificate profile never accepts an intent JWS, and the reverse. |

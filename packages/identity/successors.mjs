@@ -48,7 +48,7 @@ import { AppFault } from '../app/faults.mjs';
 import { key } from '../core/records.mjs';
 import { isUUID } from '../core/primitives.mjs';
 import { EXT, BINDLE_REGISTRY, readExtensions } from '../core/extensions.mjs';
-import { strictJSON, exactMembers, plainObject } from '../links/envelope.mjs';
+import { strictIJSON as strictJSON, exactMembers, plainObject } from '../core/strict-json.mjs';
 import { memoryLimiter, publicClientHost, clientSite } from '../federation/client-metadata.mjs';
 import { publicAddress } from '../apps/form-fetch-policy.mjs';
 import { parseMoveStatement, parseMoveAttestation, verifyMoveStatement, verifyMoveAttestation, verifyMoveRecordLink, statementDigest, evaluateAttestationKeys, attestationKeyThumbprint, documentLineage, httpsOrigin, MAX_MOVES, MAX_MOVES_DOCUMENT_BYTES, DOCUMENT_BYTES, MAX_DOCUMENT_KEYS, MAX_STATEMENT_BYTES, MAX_ATTESTATION_BYTES, SuccessionError } from './succession.mjs';

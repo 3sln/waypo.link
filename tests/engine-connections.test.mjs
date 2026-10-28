@@ -12,7 +12,7 @@ import * as C from '../packages/app/domains/connections.mjs';
 import {validateIntegrationManifest} from '../packages/federation/integrations.mjs';
 import {createFieldOperation,nextFieldDispatch,recordFieldOutcome,fieldOperationResult} from '../packages/federation/extensions.mjs';
 import {PROVIDER_EXT,declare} from '../packages/core/extensions.mjs';
-import {MESSAGING_INGRESS_FRAGMENT} from '../packages/links/types.mjs';
+import {MESSAGING_INGRESS_FRAGMENT} from '../packages/identity/messaging-ingress.mjs';
 import {DELEGATION_PURPOSES,signDelegationPop,jwkThumbprint} from '../packages/identity/delegation.mjs';
 import {AccountController} from '../packages/runtime/accounts.mjs';
 import {SqliteMetadata,SerialGate} from '../apps/node/resources.mjs';

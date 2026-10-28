@@ -2,7 +2,8 @@
 // messaging-app.md §4). The provider certifies an app-held per-user P-256 delegate key with a short-lived compact JWS
 // signed by the owner's current identity signing key (packages/identity/keys.mjs). Engine-first: DelegationRegistry is
 // the provider resource, and the Actions/Queries below are the operations over it. New issuance needs
-// LINKS_ENABLED; owner reads, status and revocations remain available during rollout changes.
+// KEY_DELEGATION_ENABLED (or, until CR-C7, LINKS_ENABLED; keyDelegationAdmits); owner reads, status and revocations
+// remain available during rollout changes.
 //
 // Core may not import Parlay (tests/parlay/import-boundary.test.mjs), so the certificate encoding is written
 // here against packages/messaging-protocol/certificate.mjs (parseDelegation/verifyDelegation) and pinned to it by the
@@ -51,7 +52,7 @@ import { AppFault } from '../app/faults.mjs';
 import { key, base64url, fromBase64url, textEncoder } from '../core/records.mjs';
 import { UUID } from '../core/primitives.mjs';
 import { keyState } from './keys.mjs';
-import { MESSAGING_INGRESS_FRAGMENT } from '../links/types.mjs';
+import { MESSAGING_INGRESS_FRAGMENT } from './messaging-ingress.mjs';
 import {createFlags} from '../flags/evaluate.mjs';
 
 // Placeholder identifiers under spec.bindle.example, equal to messaging-protocol PURPOSES (cross-tested).
@@ -72,8 +73,23 @@ const fault = (code, message, status) => { throw new AppFault(code, message, sta
 const forbidden = () => fault('forbidden', 'This app cannot hold delegated signing keys for this account.', 403);
 const invalid = message => fault('invalid_request', message ?? 'Unsupported delegation request.', 400);
 const unavailable = () => fault('delegation_unavailable', 'Delegated signing is unavailable right now.', 503);
+/**
+ * Contacts spike CR-C0 (H5, CL-25; provisional, unsigned): whether new issuance or renewal is open, given an evaluated
+ * flags port (`flags.for(ctx)`). A configured KEY_DELEGATION_ENABLED (a console record, an env value, or an unusable
+ * snapshot) decides alone. Until CR-C7 retires LINKS_ENABLED, an unconfigured one falls back to LINKS_ENABLED, so no
+ * existing deployment changes, with one exception: a LINKS_ENABLED `retained` decision counts only when the writer pin's
+ * KEY_DELEGATION_ENABLED state (live `key-delegation/` rows) is true, because that retention may rest on `link/` rows
+ * alone. `featureState(name)` is the writer pin's already-read account state (runtime/account/flags.mjs
+ * ACCOUNT_FEATURE_STATE); without it such a retention does not count.
+ */
+export function keyDelegationAdmits(port, featureState) {
+  const own = port.evaluate('KEY_DELEGATION_ENABLED');
+  if (own.reason !== 'no-record') return own.value === true;
+  const links = port.evaluate('LINKS_ENABLED');
+  return links.value === true && (links.reason !== 'retained' || (typeof featureState === 'function' && featureState('KEY_DELEGATION_ENABLED') === true));
+}
 /** Creation/renewal only. ctx carries the verified owner subject; reverse/status paths never target. */
-export const delegationsEnabled = (config={},ctx={}) => (config?.flags??config?.FLAGS??createFlags({snapshot:{v:1,version:0,issuedAt:0,flags:{}},env:config??{}})).for(ctx).enabled('LINKS_ENABLED');
+export const delegationsEnabled = (config={},ctx={}) => keyDelegationAdmits((config?.flags??config?.FLAGS??createFlags({snapshot:{v:1,version:0,issuedAt:0,flags:{}},env:config??{}})).for(ctx), config?.ACCOUNT_FEATURE_STATE);
 const CLIENT = value => typeof value === 'string' && value.length > 0 && value.length <= 2048 && value.isWellFormed() && !/[\p{Cc}\p{Bidi_Control}\u2028\u2029\u200b\ufeff]/u.test(value);
 const plain = value => value !== null && typeof value === 'object' && !Array.isArray(value) && Object.getPrototypeOf(value) === Object.prototype;
 const only = (value, names) => plain(value) && Object.keys(value).every(name => names.includes(name));
@@ -312,7 +328,7 @@ export class DelegationsProvider extends Provider {
     if ((!this.config&&!this.flags&&!this.enabled) || !this.registry) throw new AppFault('not_found', 'Not found.', 404);
     if (!UUID.test(actor?.owner ?? '') || !['owner', 'app', 'system', 'public'].includes(actor?.kind) || (actor.kind === 'app' && !CLIENT(actor.clientId))) throw new AppFault('unauthorized', 'Sign in to continue.', 401);
     const registry = this.registry, owner = actor.owner, kind = actor.kind, deny = () => forbidden();
-    const config=this.config??{},flags=config.flags??config.FLAGS??this.flags,admit=()=>{if((this.config||this.flags)&&!delegationsEnabled({...config,flags},{subject:{kind:'account',owner},...actor.clientId?{client:{clientId:actor.clientId}}:{}}))throw new AppFault('not_found','Not found.',404);};
+    const config=this.config??{},flags=config.flags??config.FLAGS??this.flags,admit=()=>{if((this.config||this.flags)&&!delegationsEnabled({...config,flags,ACCOUNT_FEATURE_STATE:config.ACCOUNT_FEATURE_STATE},{subject:{kind:'account',owner},...actor.clientId?{client:{clientId:actor.clientId}}:{}}))throw new AppFault('not_found','Not found.',404);};
     return Object.freeze({
       issue: input => { if(kind!=='app')return deny();admit();return registry.issue(owner, { clientId: actor.clientId }, input); },
       renew: input => { if(kind!=='app')return deny();admit();return registry.issue(owner, { clientId: actor.clientId }, input, { renew: true }); },
