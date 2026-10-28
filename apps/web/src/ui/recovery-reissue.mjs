@@ -13,7 +13,7 @@ export function recoveryFilePanel(state){
  return h('section',h('div',icon('shield')).classes('section-icon'),h('h2','Recovery file'),
   view.pendingReissue?h('div',h('strong','Your recovery file was replaced recently.'),h('p',interfaceText('The new file can recover your account from {date}. Until then your previous file can only cancel the replacement.',{date:date(view.pendingReissue.usableAt)})),
    view.pendingReissue.cancellable?h('p','Not you? Cancel the replacement from this device.'):h('p',view.pendingReissue.previousFileCanCancel===false?'To cancel, use a device that was signed in before the replacement started or the link in the email notice.':'To cancel, use a device that was signed in before the replacement started, the link in the email notice, or your previous recovery file.'),
-   view.pendingReissue.cancellable?btn('Cancel the replacement',{kind:'cancel-pending-recovery-reissue'},'button secondary'):null).attrs({role:'alert'}).classes('security-note','recovery-pending'):null,
+   view.pendingReissue.cancellable?btn('Cancel the replacement',{kind:'open-modal',modal:{kind:'cancel-reissue'}},'button secondary'):null).attrs({role:'alert'}).classes('security-note','recovery-pending'):null,
   required?h('div',h('strong','You need a new recovery file.'),h('p',required)).attrs({role:'alert'}).classes('security-note','recovery-required'):
    view.issuedAt?h('p',interfaceText('Your current recovery file was created {date}.',{date:date(view.issuedAt)})).classes('muted'):h('p','This account has no current recovery file.').classes('muted'),
   view.transferEligibleAt&&!required?h('p',interfaceText('It can authorize moving your identity from {date}.',{date:date(view.transferEligibleAt)})).classes('field-help'):null,
@@ -37,6 +37,16 @@ export function recoveryReissueDialog(state){
   h('p','If your account has a passkey, confirm with the passkey; a password is not enough.').classes('field-help'),
   checkbox('acknowledged',required?'I understand I need to save this new file somewhere safe.':'I understand my old recovery file will stop working.')
  ],{kind:'begin-recovery-reissue'},'Continue')};
+}
+
+/** The confirmation before the pending replacement is cancelled. The server ends the sessions that staged and confirmed
+ * the replacement, so the device that started it is signed out; the console cannot tell which device that was. */
+export function cancelReissueDialog(state){
+ const {btn}=helpers(state);
+ return {title:'Cancel the recovery file replacement?',body:h('div',
+  h('ul',h('li','Cancelling stops the pending replacement. Your previous recovery file works again and the new one never will.'),
+   h('li','If this device started the replacement, cancelling also signs this device out of this account. Sign in again afterwards.')).classes('recovery-reissue-warnings'),
+  h('div',btn('Cancel the replacement',{kind:'cancel-pending-recovery-reissue'},'button danger-button'),btn('Keep waiting',{kind:'close-modal'},'text-button')).classes('buttons'))};
 }
 
 /** The staged flow; replaces the security view while it runs. */

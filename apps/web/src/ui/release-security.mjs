@@ -5,7 +5,7 @@ import {devicesPanel,devicesApps,devicesDialog} from './devices.mjs';
 import { h,icon,badge,date,field,checkbox,pageHeader,helpers,interfaceText } from './release-primitives.mjs';
 import {contactProfilePanel} from './contact-profile.mjs';
 import {developerContact} from './release-developer-contact.mjs';
-import {recoveryFilePanel,recoveryReissueDialog,recoveryReissueView} from './recovery-reissue.mjs';
+import {recoveryFilePanel,recoveryReissueDialog,cancelReissueDialog,recoveryReissueView} from './recovery-reissue.mjs';
 import {signalingPrivacyPanel} from './signaling-controls.mjs';
 export default function securityView(state){
   const {btn,date,form}=helpers(state),a=state.data?.account??state.session?.account??{},credentials=state.data?.credentials??[],devices=state.data?.devices??[];
@@ -46,6 +46,7 @@ export function securityDialog(state){
   const m=state.modal,{btn,form}=helpers(state);
   if(devicesEnabled(state)){const dialog=devicesDialog(state);if(dialog)return dialog;}
   if(m.kind==='reissue-recovery')return recoveryReissueDialog(state);
+  if(m.kind==='cancel-reissue')return cancelReissueDialog(state);
   if(m.kind==='rename-device')return {title:'Give this device a name.',body:form([field('label','Device name','text',{required:true,maxLength:80,value:m.device.label??'',placeholder:'e.g. Living room tablet'})],{kind:'rename-device',sessionId:m.device.id},'Save device name')};
   if(m.kind==='add-passkey')return {title:'Add a key for this device.',body:form([field('label','Passkey name','text',{required:true,maxLength:80,placeholder:'e.g. Personal phone'}),h('p','Your browser will ask you to create a passkey. Give it a name you will recognize later.').classes('muted')],{kind:'add-passkey'},'Create passkey')};
   if(m.kind==='remove-passkey')return {title:'Remove this passkey?',body:h('div',h('p',`Remove “${m.credential.label??'Passkey'}” and revoke its signed-in sessions? You must keep at least one way to sign in.`),btn('Remove passkey',{kind:'remove-passkey',credentialId:m.credential.id},'button danger-button'))};

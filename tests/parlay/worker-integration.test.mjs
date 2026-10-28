@@ -21,13 +21,15 @@ const grant={revision:1,active:true,recipients:[],connection:'connection-1',gene
 function engine(t,{providers={}}={}){const h=createTestEngine({owner,store:memoryStore([['owner',owner],['config',config],['shell:authorization',grant],[BRIDGE_KEYS.settings,{enabled:true,consumers:[{origin:'https://bridge.example',channel:'email'}]}]]),registry:{...SHELL_OPERATIONS,...INTEGRATION_OPERATIONS},providers:{bridge:createBridgeProvider({PARLAY_ENABLED:true}),receive:ReceiveDomain,providerBridge:null,...providers}});t.after(()=>h.dispose());return h;}
 const event=(type,payload,over={})=>({owner,issuer:alice.principal.issuer,connection:grant.connection,jti:crypto.randomUUID(),seq:1,type,payload,...over});
 
-test('BB-B8 client metadata carries a confidential integration manifest: resource contracts claimed, the classifier fragment pinned by digest',async()=>{
+test('BB-B8 client metadata carries a confidential integration manifest: resource contracts claimed, the item-classification fragment pinned by digest',async()=>{
  const client=clientMetadata();assert.equal(client.token_endpoint_auth_method,'private_key_jwt');
  // Extensions rev 3.2 (CR-X3-27): no occupant or consumer declarations; Parlay claims the mailbox and intake contracts and
- // requests the item-classifier fragment as an optional setup grant, pinned by its digest.
+ // requests the Bindle item-classification fragment (CR-X3-25) as an optional setup grant, pinned by its digest, with
+ // the generic contract's classify method only; it sends its own categories with each call.
  assert.equal(client.bindle_integration.extensions,undefined);
- const classifier=JSON.parse(await readFile(new URL('../../docs/artefacts/fragments/item-classifier-v1.json',import.meta.url)));assert.equal(fragmentOutcome(classifier).status,'valid');
+ const classifier=JSON.parse(await readFile(new URL('../../docs/artefacts/fragments/item-classification-v1.json',import.meta.url)));assert.equal(fragmentOutcome(classifier).status,'valid');
  const setup=client.bindle_integration.setup.fragments.find(f=>f.fragment===classifier.id);assert.equal(setup.required,false);assert.equal(setup.digest,'sha256-'+await digest(crypto,canonical(classifier)));
+ assert.deepEqual(setup.methods,{classifiers:{'https://spec.bindle.example/contracts/item-classification/v1':['classify']}});assert.equal(JSON.stringify(client).includes('decision-model'),false);assert.equal(JSON.stringify(client).includes('item-classifier/v1'),false);
  const parsed=validateIntegrationManifest(client.bindle_integration,{clientId:client.client_id,confidential:true});assert.equal(parsed.status,'valid');assert.equal(parsed.manifest.extensions,undefined);
  assert.deepEqual(parsed.manifest.resources.contracts,['https://spec.bindle.example/messaging/v1/contracts/mailbox','https://spec.bindle.example/contracts/public-intake/v1']);
  assert.equal((await metadataPort()('/bindle/client.json')).bindle_integration.v,1);

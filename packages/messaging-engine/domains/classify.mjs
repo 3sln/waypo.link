@@ -1,22 +1,23 @@
 // BB-B5 classifier consumer. The host port owns the live field value, grants and the first resource's transport.
-// Port: decide({text,hints}) -> {labels:{category:probability},evidence:{model,version,schema}}. It MUST NOT
-// retry another occupant after an ambiguous dispatch; this consumer never requests failover or passes identity.
-// Shared with BB-B2/X10: the published item-classifier fragment (extensions rev 3.2, formerly a slot); decision-model/v1
-// remains an unpublished .example contract (generic item-classification/v1 is a later change, CR-X3-25).
+// Port: classify(args) -> result, the item-classification/v1 call (docs/spec/extensions/item-classification.md); Parlay
+// supplies its own categories (./categories.mjs) and binds thresholds to {model, version, schema: TAXONOMY}. The port
+// MUST NOT retry another resource after an ambiguous dispatch; this consumer never requests failover or passes identity.
+// Extensions CR-X3-25: the classifier field is the Bindle item-classification fragment; the former 3sln.me
+// item-classifier fragment and its decision-model/v1 contract with provider-fixed categories are withdrawn.
 import {MailboxAction,MailboxQuery} from '../engine.mjs';
 import {fault} from '../faults.mjs';
 import {minimize} from './intake.mjs';
 import {TAG_CATEGORIES,heuristicSuspectedTags,applyAutomatedTags,boundedString} from './tags.mjs';
+import {CLASSIFICATION_FRAGMENT,CLASSIFICATION_CONTRACT,MAX_CLASSIFIER_BYTES,CLASSIFIER_HINTS,truncateBytes,classifyText} from './categories.mjs';
 import {incomingItem,organizationOf} from '../store/item-index.mjs';
 import {KEYS} from '../store/mailbox.mjs';
 import {fromBase64url} from '../../messaging-protocol/index.mjs';
-export const CLASSIFIER_FRAGMENT='https://3sln.me/artefacts/fragments/item-classifier/v1',CLASSIFIER_CONTRACT='https://spec.bindle.example/contracts/decision-model/v1';
+export const CLASSIFIER_FRAGMENT=CLASSIFICATION_FRAGMENT,CLASSIFIER_CONTRACT=CLASSIFICATION_CONTRACT;
 const SETTINGS='bb:classify:settings',defaults=()=>({revision:0,consent:false,allowance:200,usage:{day:0,calls:0},pins:[],conversations:[]});
 const plain=v=>v!==null&&typeof v==='object'&&!Array.isArray(v),evidenceOK=e=>plain(e)&&boundedString(e.model,100)&&boundedString(e.version,64)&&boundedString(e.schema,128);
-const modelKey=e=>JSON.stringify([e.model,e.version,e.schema]),decoder=new TextDecoder(),encoder=new TextEncoder();
-// Conservative byte ceiling: the port's model tokenizer is unknown; 8,000 characters cannot prove 2,000 tokens.
-export const MAX_CLASSIFIER_BYTES=2000;
-const minimizedText=text=>{let out='',bytes=0;for(const c of minimize(text)){bytes+=encoder.encode(c).length;if(bytes>MAX_CLASSIFIER_BYTES)break;out+=c;}return out;};
+const modelKey=e=>JSON.stringify([e.model,e.version,e.schema]),decoder=new TextDecoder();
+export {MAX_CLASSIFIER_BYTES};
+const minimizedText=text=>truncateBytes(minimize(text),MAX_CLASSIFIER_BYTES);
 function normalizePin(p){
  if(!evidenceOK(p)||!plain(p.thresholds)||!Object.keys(p.thresholds).length||Object.entries(p.thresholds).some(([k,v])=>!TAG_CATEGORIES.includes(k)||typeof v!=='number'||!Number.isFinite(v)||v<=0||v>1))fault('invalid_classification','Choose model-bound thresholds.',400);
  return {model:p.model,version:p.version,schema:p.schema,thresholds:{...p.thresholds}};
@@ -33,10 +34,6 @@ async function textOf(tx,item){
  if(item.origin==='channel')return (item.message?.parts??[]).filter(p=>p.mimeType?.startsWith('text/plain')).map(p=>decoder.decode(fromBase64url(p.dataBase64url))).join('\n');
  const body=item.content?.mimeType?.startsWith('text/plain')?await tx.get(KEYS.body(item.id)):null;
  return `${item.subject??''}\n\n${body?decoder.decode(body):''}`;
-}
-function typedResult(value){
- if(!plain(value)||Object.keys(value).some(k=>!['labels','evidence'].includes(k))||!evidenceOK(value.evidence)||!plain(value.labels)||Object.keys(value.labels).length>TAG_CATEGORIES.length||Object.entries(value.labels).some(([k,p])=>!TAG_CATEGORIES.includes(k)||!Number.isFinite(p)||p<0||p>1))return null;
- return {labels:{...value.labels},evidence:{model:value.evidence.model,version:value.evidence.version,schema:value.evidence.schema}};
 }
 export class ClassificationSettings extends MailboxAction {
  static operation='classify.settings';static deps=['tags'];static changes='classification-settings-changed';
@@ -70,12 +67,12 @@ export class ClassifyItem extends MailboxAction {
    if(conversation&&!s.conversations.includes(item.conversationId??item.id))return {skip:'conversation-opt-in'};
    if(item.origin!=='channel'&&!conversation&&item.kind!=='one-off')return {skip:'unsupported-kind'};
    let reserved=false,text='';const used=s.usage.day===day?s.usage.calls:0;
-   if(s.consent&&typeof classifier?.decide==='function'&&used<s.allowance){reserved=true;s.usage={day,calls:used+1};await tx.put(SETTINGS,s);text=minimizedText(await textOf(tx,item));}
+   if(s.consent&&typeof classifier?.classify==='function'&&used<s.allowance){reserved=true;s.usage={day,calls:used+1};await tx.put(SETTINGS,s);text=minimizedText(await textOf(tx,item));}
    return {item,settings:s,revision:m.organizationRevision,reserved,text,hints:headerHints(item)};
   });
   if(snapshot.skip)return {id,status:'skipped',reason:snapshot.skip};
   let result=null;
-  if(snapshot.reserved)try{result=typedResult(await classifier.decide({text:snapshot.text,hints:snapshot.item.origin==='channel'?(snapshot.item.asserted?.automation??[]).filter(h=>['auto-submitted','list-id','list-unsubscribe','precedence-bulk'].includes(h)).slice(0,16):[]}));}catch{/* An unavailable, unconsented, malformed or failed occupant fails closed to header hints. */}
+  if(snapshot.reserved)try{result=await classifyText(classifier,{text:snapshot.text,hints:snapshot.item.origin==='channel'?(snapshot.item.asserted?.automation??[]).filter(h=>CLASSIFIER_HINTS.includes(h)).slice(0,16):[]});}catch{/* An unavailable, unconsented, malformed or failed resource fails closed to header hints. */}
   return tags.transaction(async tx=>{
    const item=await incomingItem(tx,id),s={...defaults(),...await tx.get(SETTINGS)};
    if(organizationOf(item).organizationRevision!==snapshot.revision||s.revision!==snapshot.settings.revision)return {id,status:'skipped',reason:'changed'};

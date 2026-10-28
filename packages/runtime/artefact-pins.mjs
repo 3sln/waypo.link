@@ -5,6 +5,7 @@ import {validateIntentKind} from '../intents/schema.mjs';
 import {contractMethods} from '../core/contract-methods.mjs';
 import preferencesV2 from '../../docs/artefacts/preferences-v2.json' with {type:'json'};
 import signalingV1 from '../../docs/artefacts/signaling-v1.json' with {type:'json'};
+import itemClassificationV1 from '../../docs/artefacts/item-classification-v1.json' with {type:'json'};
 import {createAppEngine,read} from '../app/engine.mjs';
 import {IntegrationContract,createIntegrationsProvider} from '../federation/integrations.mjs';
 import {CONSENT_CONTRACT_SCHEMAS} from '../consent/contracts.mjs';
@@ -72,6 +73,9 @@ export function configuredArtefactDocuments(config){
  // shipped body under the other. With either flag off nothing is added and operator registrations apply as before.
  const firstParty={},envelopeOf=body=>({bindle_artefact:1,id:body.$id,kind:'rpc-contract',versions:[{version:1,prev:null,body}]});
  if(siteGlobal(config,'SIGNALING_ENABLED')&&siteGlobal(config,'EXTENSIONS_ENABLED')){firstParty[signalingV1.$id]=signalingV1;firstParty[signalingV1.$id+'/envelope']=envelopeOf(signalingV1);}
+ // The item-classification/v1 contract (CR-X3-25) is a first-party reviewed document while the built-in classifier and
+ // the item-classification fragment ship (INTEGRATIONS_ENABLED and EXTENSIONS_ENABLED), with the same precedence.
+ if(siteGlobal(config,'INTEGRATIONS_ENABLED')&&siteGlobal(config,'EXTENSIONS_ENABLED')){firstParty[itemClassificationV1.$id]=itemClassificationV1;firstParty[itemClassificationV1.$id+'/envelope']=envelopeOf(itemClassificationV1);}
  for(const body of [...CONSENT_CONTRACT_SCHEMAS,preferencesV2]){documents[body.$id]=body;documents[body.$id+'/envelope']=envelopeOf(body);}
  // The reviewed Messaging intent kinds serve only the intent router (INTENT_LINKS_ENABLED), so a default deployment
  // registers none of them (cleanup audit 2026-10-27). Signaling registers no session kinds (signaling §15, Appendix C.2:

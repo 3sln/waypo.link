@@ -80,6 +80,12 @@ for(const [name,browserType]of [['chromium',chromium],['firefox',firefox]])test(
  await page.getByText('Your recovery file was replaced recently.').waitFor();
  assert.equal(await page.getByRole('button',{name:'Replace recovery file'}).count(),0,'no second replacement during the window');
  await page.getByRole('button',{name:'Cancel the replacement',exact:true}).click();
+ // The button only opens a warning: nothing is cancelled until it is confirmed, and dismissing changes nothing.
+ const warning=page.getByRole('dialog');await warning.getByText('signs this device out of this account',{exact:false}).waitFor();
+ await warning.getByRole('button',{name:'Keep waiting',exact:true}).click();await warning.waitFor({state:'detached'});
+ assert.ok((await fixture.identity()).recoveryPrevious,'dismissing the warning cancels nothing');
+ await page.getByRole('button',{name:'Cancel the replacement',exact:true}).click();
+ await page.getByRole('dialog').getByRole('button',{name:'Cancel the replacement',exact:true}).click();
  // This device also staged and confirmed the replacement, and a cancel ends those sessions (DEVLOG 2026-10-23
  // "Cancel sessions"), so the console signs out with the outcome rather than reporting an expired session.
  await page.getByText('Replacement cancelled. Your previous recovery file works again and the new one never will. This device made the replacement, so it was signed out. Sign in again.').waitFor();

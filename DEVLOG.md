@@ -9437,3 +9437,23 @@ Provisional (coordinator), unsigned; flags stay default-off; local behaviour onl
 - Verified (agent): npm test 4045 pass 0 fail; build:assets; test:signaling-ui (Chromium, Firefox); test:ui-state 544; strict signaling conformance 70 + 1 pre-existing skip; test:e2e. Full coordinator gates before commit.
 
 Reviewer ___ Date ___ Outcome ___
+
+## 2026-10-28 — Recovery reissue cancel confirms first
+
+Provisional (coordinator), unsigned. The "Cancel the replacement" button on the security view opens a warning dialog; only its danger button sends `cancel-pending-recovery-reissue`, and dismissing sends nothing. The dialog says cancelling stops the pending replacement (the previous file works again, the new one never will) and that a device that started the replacement is signed out (the server ends the sessions that staged and confirmed it; the console cannot tell which device that is, so the text is conditional). Engine-level dialog tests and a Chromium/Firefox e2e cover the warning and the dismiss path; en/es strings added. Verified by the agent in a clean worktree (test:recovery-reissue, test:ui-state, npm test, build:assets); full coordinator gates before commit.
+
+Reviewer ___ Date ___ Outcome ___
+
+## 2026-10-28 — CR-X3-25: generic item-classification contract (implemented locally)
+
+Provisional (coordinator), unsigned; flags off; nothing published, deployed or production-verified.
+- **Contract.** The classifier implements a Bindle-owned generic contract, `https://spec.bindle.example/contracts/item-classification/v1` (docs/artefacts/item-classification-v1.json; spec docs/spec/extensions/item-classification.md, published as a draft). The caller supplies 1–16 labels `{id, description}` with every `classify` call and gets one independent score in [0, 1] per label plus `{model.id, model.version}`. The provider hard-codes no categories. Media is inline only and 3sln.me accepts no media types.
+- **Fragment.** Apps request the new Bindle fragment `…/fragments/item-classification/v1` (`classifiers`, 0–4, `ordered`, application consumers). The 3sln.me `item-classifier/v1` fragment stays resolvable, listed as withdrawn (append-only). The unpublished `decision-model/v1` and its eleven provider-fixed categories are removed.
+- **3sln.me implementation.** A paid built-in Workers AI wrapper behind a model port (packages/runtime/account/classifier-models.mjs) with a deterministic network-free stub for tests. Validation is strict and runs before any effect; entitlement and budgets unchanged (paid plans, work admission, 200/day and 2,000/month, `classifier` ledger). Only fixed text and validated label ids enter model instructions; descriptions and the item travel as data. Results are never retained, including in the RPC journal (a same-`tx` retry is `indeterminate`; the 24-hour dedupe fingerprint stays).
+- **Parlay** owns its taxonomy (packages/messaging-engine/domains/categories.mjs, `parlay-message-categories-v1`), pins thresholds to (model, version, taxonomy), and intake asks only for spam (text cut to 2,000 bytes by the consumer).
+- **Open.** IC-4 (Parlay uses its own grant on the shared generic fragment rather than a Parlay-published fragment) needs owner sign-off; security review of caller-supplied labels; removing the core classification enum in packages/core/tags.mjs (used by search, activity, MCP and web rules); integrations.md and legacy Parlay docs still name the old fragment; Workers AI billing and accuracy unverified.
+- Verified (agent): npm test 4048 pass 0 fail; build:assets; check:worker; test:worker; test:parlay; test:parlay:web; test:connections; test:e2e; public-documentation 7/7.
+
+Reviewer ___ Date ___ Outcome ___
+
+Independent review of CR-X3-25 (coordinator-commissioned, not owner sign-off): 0 High, 2 Medium, 4 Low, flags off. Open, to fix next: M1 the 8 KiB model-request limit is measured after double JSON escaping, so items within the advertised limits (and Parlay's 2,000-byte cut) are refused and Parlay silently falls back to header heuristics (native messages then skip AI spam scoring); M2 `forbidden` is returned after effects (allowance, lease, and in one path the model call), and the dispatcher journals it as no-effect, so an ordered consumer may fail over and send the same content to a second classifier; L1 pre-effect refusals (`unsupported_media_type`, not-configured `temporarily_unavailable`) reach apps as `indeterminate`; L2 one allowance shared by all apps; L3 unsalted 24-hour argument fingerprint includes item text; L4 "characters" counted differently in spec, schema and code. Full gates (gates-25) green before commit.

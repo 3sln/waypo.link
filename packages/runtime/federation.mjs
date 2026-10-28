@@ -81,7 +81,8 @@ export const MANIFEST_DECLARATIONS=Object.freeze([
  // Extensions rev 3.2 (§11.1, Q2 provisional): the email bridge is the provider feature of a 3sln.me extension; the
  // same row object the account-side declarations port evaluates (review M2).
  PROVIDER_FEATURE_ROWS[PROVIDER_EXT.emailBridge],
- // CR-X3-25: the classifier is a paid built-in resource, listed in `contracts` (extensions §5.2) while it is offered.
+ // CR-X3-25: the classifier is a paid built-in item-classification/v1 resource, listed in `contracts` (extensions §5.2)
+ // while it is offered.
  {flag:['INTEGRATIONS_ENABLED','EXTENSIONS_ENABLED'],mounted:c=>c.target==='authority'&&classifierOffered(c.config),declare:()=>({contracts:[CLASSIFIER_CONTRACT]})},
  // Signaling rev 3.2 (flags off): the built-in signaling resource is implied by its contract in `contracts` (no occupant
  // declaration, extensions §5.2, signaling §3.1), only where the adapter mounted it.
@@ -192,11 +193,13 @@ export function federationControllerOptions({config,repository,accounts,owner,ma
    if(ownerFlags(config,owner).enabled('ORGANIZATIONS_ENABLED')&&current.kind==='organization')descriptors.push(...await account.relationImportDescriptors(owner));
    descriptors.push({id:`${subject}/app-messages`,label:'Messages from this app',provider:'bindle',contracts:{[APP_NOTIFICATIONS]:['createOwn']},generation:owner,limits:{maxRequestBytes:16384,maxResultBytes:1024,txRetentionSeconds:86400}});descriptors.push({id:`${subject}/profile`,label:'Identity profile',provider:'identity',alias:'@profile',contracts:{[PROFILE]:['read']},generation:owner,preview:{entity:subject,handle:current.handle,name:profile.displayName||current.handle,avatar:profile.avatar||null}});return descriptors;
   },
+  // Item-classification results (scores about owner content) are never kept in the journal (item-classification §5);
+  // a retry with the same tx answers `indeterminate`.
   // Relay credentials (bearer secrets, §12.4) are never kept in the journal either. The signaling contract's `listen`
   // and `endpoints` are reads (§10.2), so never journaled; its writes' results (leg certificates, offer tokens) are never
   // retained in the journal (§10.2 "Retention"); and `listen` runs outside the account gate (a long poll must not hold
   // the writer).
-  dispatcher:{durableJournal:true,readOnly:context=>context.contract===SIGNALING_CONTRACT&&['listen','endpoints'].includes(context.method),retainResult:context=>context.contract!==SIGNALING_CONTRACT&&context.contract!==ICE_RELAY_CONTRACT,execute:async context=>{if(!await validateSubject(context.subject,context.epoch))fail('unauthorized','Application authorization is no longer active.');if(context.connection)await account.appConnectionCheck(owner,context.connection.id,context.connection.generation,context.clientId);if(context.resource===`${subject}/profile`&&context.contract===PROFILE&&context.method==='read'){if(Object.keys(context.args).length)fail('invalid_args','Profile read takes no arguments.');const current=await repository.get(owner),profile=await account.accountProfile(owner);return {entity:subject,handle:current.handle,name:profile.displayName||current.handle,avatar:profile.avatar||null};}if(context.contract===SIGNALING_CONTRACT&&context.method==='listen'){const {reauthorize,...safe}=context;return account.signalingContractListen(owner,{...safe,authority:'bindle'});}return account.federationRPC({...context,authority:'bindle'});}},
+  dispatcher:{durableJournal:true,readOnly:context=>context.contract===SIGNALING_CONTRACT&&['listen','endpoints'].includes(context.method),retainResult:context=>context.contract!==SIGNALING_CONTRACT&&context.contract!==ICE_RELAY_CONTRACT&&context.contract!==CLASSIFIER_CONTRACT,execute:async context=>{if(!await validateSubject(context.subject,context.epoch))fail('unauthorized','Application authorization is no longer active.');if(context.connection)await account.appConnectionCheck(owner,context.connection.id,context.connection.generation,context.clientId);if(context.resource===`${subject}/profile`&&context.contract===PROFILE&&context.method==='read'){if(Object.keys(context.args).length)fail('invalid_args','Profile read takes no arguments.');const current=await repository.get(owner),profile=await account.accountProfile(owner);return {entity:subject,handle:current.handle,name:profile.displayName||current.handle,avatar:profile.avatar||null};}if(context.contract===SIGNALING_CONTRACT&&context.method==='listen'){const {reauthorize,...safe}=context;return account.signalingContractListen(owner,{...safe,authority:'bindle'});}return account.federationRPC({...context,authority:'bindle'});}},
   // Extensions rev 3.2 (CR-X3-20) and signaling Appendix C.2 "Lifecycle hooks": the generic grant-changed hook. When an
   // app no longer holds any active grant on the signaling fragment, signaling §14.2 runs for it (sessions, endpoints,
   // offers, pairings) and its session handler approvals are cleared.

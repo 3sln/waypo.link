@@ -11,7 +11,7 @@
     ]
    },
    {
-    "fragment": "https://3sln.me/artefacts/fragments/item-classifier/v1",
+    "fragment": "https://spec.bindle.example/fragments/item-classification/v1",
     "required": false,
     "purpose": "Sort incoming messages.",
     "fields": [
@@ -19,12 +19,12 @@
     ],
     "methods": {
      "classifiers": {
-      "https://spec.bindle.example/contracts/decision-model/v1": [
-       "decide"
+      "https://spec.bindle.example/contracts/item-classification/v1": [
+       "classify"
       ]
      }
     },
-    "digest": "sha256-GPCDz56AgmWs8hCQaRFMTx74sZ6q5xBOIjGflKRl364"
+    "digest": "sha256-yRYEzVccu6igF0mj6HVTxQ7_T4005VYtPiUVK4yInis"
    }
   ]
  },

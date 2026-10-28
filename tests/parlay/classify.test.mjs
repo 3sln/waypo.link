@@ -4,15 +4,19 @@ import {createTestEngine} from './helpers/engine.mjs';
 import {createTagsProvider} from '../../packages/messaging-engine/domains/tags.mjs';
 import {organizationProviders} from '../../packages/messaging-engine/domains/views.mjs';
 import {base64url} from '../../packages/messaging-protocol/index.mjs';
-const MODEL={model:'triage',version:'1',schema:'categories-v1'},pin={...MODEL,thresholds:{social:.8,spam:.97,automation:.9,promotional:.8}},encoder=new TextEncoder();
+import {TAXONOMY} from '../../packages/messaging-engine/domains/categories.mjs';
+// Parlay binds pins to {model id, model version, its own taxonomy}; the classifier reports only the model.
+const MODEL={model:'triage',version:'1',schema:TAXONOMY},pin={...MODEL,thresholds:{social:.8,spam:.97,automation:.9,promotional:.8}},encoder=new TextEncoder();
 const fresh=(t,classifier=null,extra={})=>{const e=createTestEngine({providers:{...organizationProviders({PARLAY_ENABLED:true,classifier}),...extra}});t.after(()=>e.dispose());return e;};
 const put=(e,id='a',extra={})=>e.store.put('item/'+id,{id,origin:'channel',kind:'channel',subject:'',receivedAt:10,state:'inbox',tags:[],notification:'push',asserted:{automation:['auto-submitted','list-id'],sender:{headerFrom:'private@sender.example'}},message:{parts:[{mimeType:'text/plain',dataBase64url:base64url(encoder.encode('Hello 123456 https://signed.example/token?secret=private bearer secretBearerValue bindle_meta=capability '+'😀'.repeat(3000)))}]},...extra});
 const enable=e=>e.run('classify.settings',{input:{consent:true,pin}});
-const fake=(labels={social:.9},evidence=MODEL)=>({calls:[],async decide(input){this.calls.push(input);return {labels,evidence};}});
+// An item-classification/v1 fake: one score per label Parlay asked for (unlisted labels score 0).
+const answer=(input,labels,evidence=MODEL)=>({scores:Object.fromEntries(input.labels.map(l=>[l.id,labels[l.id]??0])),model:{id:evidence.model,version:evidence.version}});
+const fake=(labels={social:.9},evidence=MODEL)=>({calls:[],async classify(input){this.calls.push(input);return answer(input,labels,evidence);}});
 
 test('classification without a classifier, consent or allowance yields header hints only and never finalizes/rejects',async t=>{
  for(const mode of ['absent','consent','allowance','throw','malformed','requiresConsent']){
-  const c=fake();if(mode==='throw')c.decide=async()=>{c.calls.push({});throw new Error('Unavailable');};if(mode==='malformed')c.decide=async()=>({labels:{'sys:spam':1},evidence:MODEL});if(mode==='requiresConsent')c.decide=async()=>({requiresConsent:true});
+  const c=fake();if(mode==='throw')c.classify=async()=>{c.calls.push({});throw new Error('Unavailable');};if(mode==='malformed')c.classify=async()=>({scores:{'sys:spam':1},model:{id:MODEL.model,version:MODEL.version}});if(mode==='requiresConsent')c.classify=async()=>({requiresConsent:true});
   const e=fresh(t,mode==='absent'?undefined:c);await put(e);if(!['absent','consent'].includes(mode))await enable(e);if(mode==='allowance')await e.run('classify.settings',{input:{allowance:0}});
   const r=await e.run('classify.item',{id:'a'});assert.equal(r.source,'heuristic');assert.deepEqual([...r.item.tags].sort(),['sys:suspected.automation','sys:suspected.promotional']);assert.equal(r.item.quarantined,undefined);assert.equal(r.item.state,'inbox');
   if(['absent','consent','allowance'].includes(mode))assert.equal(c.calls.length,0);
@@ -22,12 +26,13 @@ test('a consented host classifier sees minimized text only, model-bound threshol
  const c=fake({social:.91,spam:.96,promotional:.2}),e=fresh(t,c);await put(e);await enable(e);
  const status=await e.run('classify.status');assert.equal(status.consent,true);assert.deepEqual(status.pins,[pin]);
  const r=await e.run('classify.item',{id:'a'});assert.equal(r.source,'classifier');assert.deepEqual(r.item.tags,['sys:social']);assert.equal(r.item.tagProvenance['sys:social'].source,'rule');assert.equal(r.item.tagProvenance['sys:social'].from,'sys:suspected.social');assert.equal(r.item.automated['sys:suspected.social'].classifier.probability,.91);
- assert.deepEqual(Object.keys(c.calls[0]).sort(),['hints','text']);assert.ok(encoder.encode(c.calls[0].text).byteLength<=2000);assert.equal(c.calls[0].text.includes('\ufffd'),false);for(const secret of ['123456','signed.example','secretBearerValue','capability','private@sender.example'])assert.equal(c.calls[0].text.includes(secret),false,secret);
+ assert.deepEqual(Object.keys(c.calls[0]).sort(),['item','labels']);assert.deepEqual(Object.keys(c.calls[0].item).sort(),['hints','text']);assert.deepEqual(c.calls[0].item.hints,['auto-submitted','list-id']);assert.ok(encoder.encode(c.calls[0].item.text).byteLength<=2000);assert.equal(c.calls[0].item.text.includes('\ufffd'),false);for(const secret of ['123456','signed.example','secretBearerValue','capability','private@sender.example'])assert.equal(JSON.stringify(c.calls[0]).includes(secret),false,secret);
  const before=await e.store.get('item/a');await e.run('classify.item',{id:'a'});assert.deepEqual(await e.store.get('item/a'),before,'repeated identical evidence has no state changes');
 });
 test('new model/version/schema is calibration only; disabled defaults leave genuine suspected tags',async t=>{
  for(const field of ['model','version','schema']){
-  const c=fake({social:1},{...MODEL,[field]:'changed'}),e=fresh(t,c);await put(e);await enable(e);
+  // The schema is Parlay's taxonomy: a pin for another taxonomy revision is as unusable as one for another model.
+  const c=fake({social:1},field==='schema'?MODEL:{...MODEL,[field]:'changed'}),e=fresh(t,c);await put(e);await e.run('classify.settings',{input:{consent:true,pin:field==='schema'?{...pin,schema:'parlay-message-categories-v0'}:pin}});
   const r=await e.run('classify.item',{id:'a'});assert.equal(r.status,'calibration');assert.ok(r.item.tags.every(t=>t.startsWith('sys:suspected.')));assert.equal(r.item.automated?.['sys:suspected.social'],undefined);
  }
  const c=fake(),e=fresh(t,c);await put(e);await enable(e);const rules=await e.run('rules.list');await e.run('rules.replace',{input:{rules:rules.map(r=>({...r,enabled:false}))}});
@@ -38,7 +43,7 @@ test('owner suppression, manual category choices and quarantine release survive 
  const initial=await e.run('classify.item',{id:'a'});assert.equal(initial.item.quarantined,true);assert.equal((await e.store.get('item/a')).notification,null);
  await e.run('incoming.update',{input:{id:'a',expectedRevision:initial.item.organizationRevision,removeTags:['sys:social','sys:spam'],classification:'work',quarantined:false}});
  const rules=await e.run('rules.list');await e.run('rules.replace',{input:{rules:[...rules,{id:'later',enabled:true,match:{tagsAll:['sys:suspected.automation']},actions:{addTags:['sys:social'],classification:'spam',quarantined:true}}]}});
- c.decide=async()=>({labels:{automation:1},evidence:MODEL});const r=await e.run('classify.item',{id:'a'});assert.equal(r.item.classification,'work');assert.equal(r.item.quarantined,false);assert.equal(r.item.tags.includes('sys:social'),false);
+ c.classify=async input=>answer(input,{automation:1});const r=await e.run('classify.item',{id:'a'});assert.equal(r.item.classification,'work');assert.equal(r.item.quarantined,false);assert.equal(r.item.tags.includes('sys:social'),false);
 });
 test('automation runs only newly matched rules; an owner-removed suspected tag cannot later promote',async t=>{
  const c=fake(),e=fresh(t,c);await put(e);await enable(e);await e.run('rules.delete',{id:'default:promote.social'});
@@ -46,7 +51,7 @@ test('automation runs only newly matched rules; an owner-removed suspected tag c
  await e.run('rules.restore-default',{id:'default:promote.social'});await e.run('classify.item',{id:'a'});
  assert.equal((await e.store.get('item/a')).tags.some(t=>t.id==='sys:social'),false);
  await e.run('rules.replace',{input:{rules:[{id:'new-social',enabled:true,match:{tagsAll:['sys:suspected.social']},actions:{addTags:['too-late']}}]}});
- c.decide=async()=>({labels:{social:1,automation:1},evidence:MODEL});const next=await e.run('classify.item',{id:'a'});assert.equal(next.item.tags.includes('too-late'),false);
+ c.classify=async input=>answer(input,{social:1,automation:1});const next=await e.run('classify.item',{id:'a'});assert.equal(next.item.tags.includes('too-late'),false);
 });
 test('public intake retains BB-B2 tiers; conversations require explicit local opt-in; metering reserves atomically',async t=>{
  const c=fake(),e=fresh(t,c);await enable(e);
@@ -58,8 +63,8 @@ test('public intake retains BB-B2 tiers; conversations require explicit local op
  const results=await Promise.all(['first','second'].map(id=>e.run('classify.item',{id})));assert.equal(results.filter(r=>r.source==='classifier').length,1);assert.equal(c.calls.length,2);
 });
 test('in-flight classification is fenced by owner edits/consent changes and never triggers failover after a timeout',async t=>{
- let resolve,started;const ready=new Promise(r=>{started=r;}),c={calls:0,async decide(){this.calls++;started();return new Promise(r=>{resolve=r;});}},e=fresh(t,c);await put(e);await enable(e);
- const pending=e.run('classify.item',{id:'a'});await ready;await e.run('classify.settings',{input:{consent:false}});resolve({labels:{spam:1},evidence:MODEL});
+ let resolve,started;const ready=new Promise(r=>{started=r;}),c={calls:0,async classify(input){this.calls++;started();return new Promise(r=>{resolve=()=>r(answer(input,{spam:1}));});}},e=fresh(t,c);await put(e);await enable(e);
+ const pending=e.run('classify.item',{id:'a'});await ready;await e.run('classify.settings',{input:{consent:false}});resolve();
  assert.equal((await pending).reason,'changed');assert.deepEqual((await e.store.get('item/a')).tags,[]);assert.equal(c.calls,1);
 });
 test('classifier operation flag and threshold validation fail closed',async t=>{

@@ -1,0 +1,7 @@
+{
+ "id":"https://spec.bindle.example/fragments/item-classification/v1",
+ "title":"Classifiers",
+ "description":"Services that score an item against categories the requesting app supplies with each request. A score is advice; it never authorizes an action.",
+ "publisher":"https://spec.bindle.example",
+ "fields":{"classifiers":{"title":"Classifiers","type":"resource","cardinality":{"min":0,"max":4},"contracts":["https://spec.bindle.example/contracts/item-classification/v1"],"selection":"ordered","consumers":["application"]}}
+}

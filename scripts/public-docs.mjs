@@ -38,6 +38,7 @@ export const publicDocumentation=Object.freeze([
  ['Bindle extensions','docs/spec/extensions/signaling.md','Signaling (draft; implemented locally behind flags)'],
  ['Bindle extensions','docs/spec/extensions/messaging.md','Bindle Messaging (draft)'],
  ['Bindle extensions','docs/spec/extensions/message-content.md','Message content (draft)'],
+ ['Bindle extensions','docs/spec/extensions/item-classification.md','Item classification contract (draft)'],
  ['3sln.me reference service','docs/3sln/accounts/sign-in-and-sessions.md','Sign-in, passkeys and sessions'],
  ['3sln.me reference service','docs/3sln/accounts/approve-a-sign-in.md','Approve a sign-in: session handoff and app sign-in with a code'],
  ['3sln.me reference service','docs/3sln/accounts/identity-names.md','Identity names'],

@@ -87,8 +87,8 @@ export class CancelPendingRecoveryReissue extends ReissueFlow {
   }
   // The cancel ends the sessions that staged and confirmed the replacement (DEVLOG 2026-10-23 "Cancel sessions"); when
   // this was one of them, sign this browser out of the account with the outcome instead of an "expired" error.
-  if(result?.signedOut===true){if(!r.current())return;clearBrowserAccount(r);publish(r,ctx,{...accountReset(snapshot(r)),accountPicker:true,notice:'Replacement cancelled. Your previous recovery file works again and the new one never will. This device made the replacement, so it was signed out. Sign in again.'});return;}
-  publish(r,ctx,{error:'',notice:'Replacement cancelled. Your previous recovery file works again and the new one never will.'});
+  if(result?.signedOut===true){if(!r.current())return;clearBrowserAccount(r);publish(r,ctx,{...accountReset(snapshot(r)),accountPicker:true,modal:null,notice:'Replacement cancelled. Your previous recovery file works again and the new one never will. This device made the replacement, so it was signed out. Sign in again.'});return;}
+  publish(r,ctx,{error:'',modal:null,notice:'Replacement cancelled. Your previous recovery file works again and the new one never will.'});
   try{const data=await r.api.get('/api/account');publish(r,ctx,{data,session:{...snapshot(r).session,account:data.account}});}catch{}
  }
 }

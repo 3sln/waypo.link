@@ -12,7 +12,7 @@ export const PROVIDERS=Object.freeze({
  egress:row('both','effect','local','Injected transport; CLI and tests use only simulated peers.'),
  providerBridge:row('mailbox','effect','local','Injected email-bridge port of the owner\'s provider: consumerKey, accepted and optional calibration (bridged intake only).'),
  directory:row('both','effect','local','Injected identity directory and status; CLI uses ephemeral local keys.'),
- classifier:row('mailbox','effect','planned','Optional classifier slot; absent means no AI.'),
+ classifier:row('mailbox','effect','planned','Optional item-classification/v1 port (classify with Parlay categories); absent means no AI.'),
  activity:row('mailbox','effect','planned','Ordinary consented activity submission.'),
  contacts:row('mailbox','domain','local','Blocks, lists and invitations (contacts spike phases 3 and 4; invites.mjs).',{scoped:true}),
  receive:row('mailbox','domain','local','Admission and replay.',{scoped:true}),

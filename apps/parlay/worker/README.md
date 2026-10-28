@@ -128,8 +128,9 @@ validation, local broker authority and SET ordering. Test keys/verifiers are fix
 BB-CUT still needs every other prerequisite, bridge/archive integration and simulator/browser gates; this
 workstream does not authorize cutover. Provider directory, introspection, installation/occupancy, ordinary
 credential storage and storage-resource adapters require integration and independent review. The classifier
-slot exactly snapshots the extensions spec's ordered/any-error example; that policy requires a pinned
-read/pure decision-model contract, and B5's consumer remains conservative about ambiguous dispatch failures.
+is requested through the Bindle item-classification fragment (contract `item-classification/v1`, extensions
+CR-X3-25); Parlay sends its own message categories with every call (`packages/messaging-engine/domains/categories.mjs`),
+and B5's consumer remains conservative about ambiguous dispatch failures (no failover after dispatch).
 
 Local gate results (2026-10-20, concurrent Wave 3 checkout): B8's 15 tests pass, including the workerd crash/
 recovery, finite SSE RPC transport, conversation index and live peer-authorization checks. Final `npm test`:

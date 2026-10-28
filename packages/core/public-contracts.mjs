@@ -14,8 +14,10 @@ export const publicContracts=Object.freeze([
 export const publicSchemas=Object.freeze([Object.freeze({name:'conversation',title:'Conversation v1 local submission envelope (withdrawn)',version:'v1',kind:'submission-schema',status:'withdrawn',id:`${authority}/artefacts/conversation-v1.json`,path:'/artefacts/conversation-v1-body.json',source:'docs/artefacts/conversation-v1.json',documentation:'/artefacts/contracts/'})]);
 export const publicFragments=Object.freeze([Object.freeze({name:'app-message-preferences',title:'App messages preference fragment',version:'v1',kind:'preferences-fragment',status:'draft',id:'https://3sln.me/artefacts/preferences/app-messages/v1',path:'/artefacts/preferences/app-messages/v1.json',source:'docs/artefacts/app-message-preferences-v1.json',documentation:'/docs/3sln/services/app-messages.html'}),
  // Extensions rev 3.2 (CR-X3-26): the former item-classifier slot, republished as an ordinary fragment at a new URL.
- // The generic item-classification contract that replaces decision-model/v1 is a later change (CR-X3-25).
- Object.freeze({name:'item-classifier',title:'Item classifier preference fragment',version:'v1',kind:'preferences-fragment',status:'provisional',id:`${authority}/artefacts/fragments/item-classifier/v1`,path:'/artefacts/fragments/item-classifier/v1.json',source:'docs/artefacts/fragments/item-classifier-v1.json',documentation:'/docs/spec/extensions.html'})]);
+ // CR-X3-25 withdrew it: its decision-model/v1 contract carried provider-fixed message categories. The Bindle
+ // item-classification fragment and contract replace it (docs/spec/extensions/item-classification.md). Its published
+ // JSON stays immutable and resolvable at the same path, listed as withdrawn; no provider pins it.
+ Object.freeze({name:'item-classifier',title:'Item classifier preference fragment (withdrawn)',version:'v1',kind:'preferences-fragment',status:'withdrawn',id:`${authority}/artefacts/fragments/item-classifier/v1`,path:'/artefacts/fragments/item-classifier/v1.json',source:'docs/artefacts/fragments/item-classifier-v1.json',documentation:'/docs/spec/extensions.html'})]);
 // Extensions rev 3 removed the manifest `profiles` container. The components profile became the Bindle-owned
 // embedded-components extension (extensions §2.7, §2.8; CR-X3-16), and no provider emits or reads the profile URL. Its
 // published document stays immutable and resolvable at the same path, listed as withdrawn, until links move.

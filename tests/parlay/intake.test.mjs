@@ -5,10 +5,12 @@ import assert from 'node:assert/strict';
 import {createWorld,bridgeConsumer,P,uuidOf,encoder} from './receive-fixtures.test.mjs';
 import {minimize,decideTier,T_HIGH} from '../../packages/messaging-engine/domains/intake.mjs';
 import {INTAKE_CONTRACT} from '../../packages/messaging-protocol/index.mjs';
+import {TAXONOMY,CATEGORY_DESCRIPTIONS} from '../../packages/messaging-engine/domains/categories.mjs';
 
-const MODEL={model:'spamnet',version:'3',schema:'labels-v1'};
-// Fake classifier occupant: the score is read from a `p=` marker in the (already minimized) text.
-const classifier=(evidence=MODEL)=>{const inputs=[];return {inputs,evidence,async decide(input){inputs.push(structuredClone(input));const p=Number(/p=(0\.\d+)/.exec(input.text)?.[1]??0);if(/explode/.test(input.text))throw new Error('occupant failure');return {labels:{spam:p},evidence:this.evidence};}};};
+// Pins bind to {model id, model version, Parlay's taxonomy}; the classifier reports only the model.
+const MODEL={model:'spamnet',version:'3',schema:TAXONOMY};
+// Fake item-classification/v1 resource: the score is read from a `p=` marker in the (already minimized) text.
+const classifier=(evidence=MODEL)=>{const inputs=[];return {inputs,evidence,async classify(input){inputs.push(structuredClone(input));const text=input.item.text,p=Number(/p=(0\.\d+)/.exec(text)?.[1]??0);if(/explode/.test(text))throw new Error('occupant failure');return {scores:{spam:p},model:{id:this.evidence.model,version:this.evidence.version}};}};};
 const fresh=async(t,options)=>{const w=await createWorld(options);t.after(()=>w.dispose());return w;};
 const code=(r,status,error)=>{assert.equal(r.status,status,JSON.stringify(r.json));assert.equal(r.json.error,error);};
 const say=(w,from,link,n,text)=>w.deliver(from,'bob',link,{operationId:uuidOf(n),body:encoder.encode(text),createdAt:w.clock.now()-1000});
@@ -35,7 +37,8 @@ test('spam storm through a request list: tiers apply after custody and nothing o
  // Replays after rejection still return the identical receipt.
  assert.deepEqual((await w.post('alice','bob',responses[0].request)).json,responses[0].json);
  // The classifier saw minimized text only: no principal, issuer, link capability, URL or recipient.
- for(const input of c.inputs){assert.deepEqual(Object.keys(input).sort(),['hints','text']);for(const leak of [P.alice.principal.subject,'provider.example','bindle_meta','hub.box.example'])assert.equal(input.text.includes(leak),false,leak);}
+ // Intake asks only Parlay's spam category (the caller supplies the taxonomy).
+ for(const input of c.inputs){assert.deepEqual(Object.keys(input.item).sort(),['hints','text']);assert.deepEqual(input.labels,[{id:'spam',description:CATEGORY_DESCRIPTIONS.spam}]);for(const leak of [P.alice.principal.subject,'provider.example','bindle_meta','hub.box.example'])assert.equal(JSON.stringify(input).includes(leak),false,leak);}
 });
 
 test('calibration mode, allowlist and rescue: thresholds are bound to the model version and allowlisted senders are never rejected',async t=>{

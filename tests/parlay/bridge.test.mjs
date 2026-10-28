@@ -12,16 +12,18 @@ import {MAILBOX_OPERATIONS} from '../../packages/messaging-engine/operations.mjs
 import {PROVIDERS} from '../../packages/messaging-engine/providers.mjs';
 import * as B from '../../packages/messaging-protocol/index.mjs';
 import {NOW,SUBJECTS,principalOf,encoder} from './vectors/fixtures.mjs';
+import {TAXONOMY} from '../../packages/messaging-engine/domains/categories.mjs';
 
 const OWNER=SUBJECTS.bob,PRINCIPAL=principalOf('bob'),PROVIDER=PRINCIPAL.issuer,RESOURCE=`https://hub.box.example/bindle/mailbox/${OWNER}`;
-const MODEL={model:'spamnet',version:'3',schema:'labels-v1'};
+const MODEL={model:'spamnet',version:'3',schema:TAXONOMY};
 const INVARIANT='This address receives messages through Bindle. Your email was received. The recipient reads Bindle messages in their messaging app, and email replies may not reach them. To start a conversation, get Bindle: https://3sln.example/get';
 const enc=v=>B.base64url(encoder.encode(JSON.stringify(v)));
 async function sign(header,claims,privateKey){const head=`${enc(header)}.${enc(claims)}`;return `${head}.${B.base64url(new Uint8Array(await crypto.subtle.sign({name:'ECDSA',hash:'SHA-256'},privateKey,encoder.encode(head))))}`;}
 // RFC 9562 UUIDv5 over (feature ref, contract, entity, ingress fingerprint), as the provider bridge derives `tx`.
 const NAMESPACE=Uint8Array.from('6ba7b8119dad11d180b400c04fd430c8'.match(/../g),h=>parseInt(h,16));
 async function uuidv5(name){const bytes=new Uint8Array(await crypto.subtle.digest('SHA-1',new Uint8Array([...NAMESPACE,...encoder.encode(name)]))).slice(0,16);bytes[6]=bytes[6]&15|80;bytes[8]=bytes[8]&63|128;const h=[...bytes].map(b=>b.toString(16).padStart(2,'0')).join('');return `${h.slice(0,8)}-${h.slice(8,12)}-${h.slice(12,16)}-${h.slice(16,20)}-${h.slice(20)}`;}
-const classifier=()=>({inputs:[],async decide(input){this.inputs.push(structuredClone(input));return {labels:{spam:Number(/p=(0\.\d+)/.exec(input.text)?.[1]??0)},evidence:MODEL};}});
+// Fake item-classification/v1 resource; Parlay supplies the labels.
+const classifier=()=>({inputs:[],async classify(input){this.inputs.push(structuredClone(input));return {scores:{spam:Number(/p=(0\.\d+)/.exec(input.item.text)?.[1]??0)},model:{id:MODEL.model,version:MODEL.version}};}});
 
 // Fake provider handoff: SMTP acceptance (owner settings only), the holding queue, provenance signing with the
 // bridge key, tx derivation, the `deliver` RPC and the single invariant auto-reply, decided at acceptance from the
@@ -90,7 +92,7 @@ test('fake provider handoff: accepted mail is stored as an unverified channel it
  assert.deepEqual(w.provider.replies.map(r=>r.to),['spam@bulk.example','maybe@ads.example','friend@ok.example']);
  assert.equal(new Set(w.provider.replies.map(r=>r.text)).size,1);assert.equal(w.calls.egress,0);
  // The classifier saw minimized text and hints only.
- for(const input of w.classifier.inputs){assert.deepEqual(Object.keys(input).sort(),['hints','text']);assert.equal(input.text.includes('@'),false);}
+ for(const input of w.classifier.inputs){assert.deepEqual(Object.keys(input.item).sort(),['hints','text']);assert.deepEqual(input.labels.map(l=>l.id),['spam']);assert.equal(input.item.text.includes('@'),false);}
 });
 
 test('forged or misbound provenance is refused before storage; consumer and channel are checked before any key lookup',async t=>{

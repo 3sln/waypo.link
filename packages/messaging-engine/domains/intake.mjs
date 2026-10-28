@@ -16,6 +16,7 @@ import {MailboxAction,MailboxQuery} from '../engine.mjs';
 import {fault} from '../faults.mjs';
 import {KEYS,BOUNDS,actorOwner,readConfig,chargeUsage} from '../store/mailbox.mjs';
 import {chargeBudget,intakeBudgetIdentity} from './receive-budget.mjs';
+import {classifyText} from './categories.mjs';
 
 export const T_HIGH=0.97,T_LOW=0.70,SPAM='sys:suspected.spam',FINAL_SPAM='sys:spam',DEFAULT_ALLOWANCE=200,MAX_CLASSIFIER_CHARS=8000;
 const invalid=message=>fault('invalid_input',message,400);
@@ -128,10 +129,11 @@ export class IntakeDrain extends MailboxAction {
    let result=null,called=false;
    // A classifier call is reserved inside a transaction before it is made, so concurrent drains cannot overspend the
    // owner's allowance (BB2-R8).
-   if(classifier&&typeof classifier.decide==='function'&&settings.classifierConsent&&used<settings.allowance)called=await store.transaction(async tx=>{const s={...defaultSettings(),...await tx.get(KEYS.settings)},u=s.usage.day===day?s.usage.calls:0;if(!s.classifierConsent||u>=s.allowance)return false;await tx.put(KEYS.settings,{...s,usage:{day,calls:u+1}});return true;});
+   if(classifier&&typeof classifier.classify==='function'&&settings.classifierConsent&&used<settings.allowance)called=await store.transaction(async tx=>{const s={...defaultSettings(),...await tx.get(KEYS.settings)},u=s.usage.day===day?s.usage.calls:0;if(!s.classifierConsent||u>=s.allowance)return false;await tx.put(KEYS.settings,{...s,usage:{day,calls:u+1}});return true;});
    if(called){let body='';if(item.origin==='native'&&item.content?.mimeType?.startsWith('text/plain')){const b=await store.get(KEYS.body(id));if(b)body=decoder.decode(b);}
     const text=minimize(item.origin==='channel'?channelText(item):`${item.subject}\n\n${body}`);
-    try{const r=await classifier.decide({text,hints:item.origin==='channel'?item.asserted.automation.slice(0,16):[]});result={spam:r?.labels?.spam,evidence:r?.evidence};}catch{result=null;}
+    // Parlay asks only its spam category here (item-classification/v1: the caller supplies the taxonomy).
+    try{const r=await classifyText(classifier,{text,hints:item.origin==='channel'?item.asserted.automation.slice(0,16):[]},['spam']);result=r?{spam:r.labels.spam,evidence:r.evidence}:null;}catch{result=null;}
     // A host-published calibration for exactly this model version counts as a pin (architecture §12.1). It comes from
     // the owner's provider (providerBridge.calibration), never from the occupant being calibrated, and must pass the same
     // threshold checks as an owner pin (BB2-R5).
