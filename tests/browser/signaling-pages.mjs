@@ -83,16 +83,25 @@ test('pairing creation page: nothing preselected; the review shows the §5.8 dis
  assert.deepEqual([...root.querySelectorAll('input[type=radio]')].filter(r=>r.checked).map(r=>r.name),[],'no radio choice is made for the owner');
  assert.deepEqual([...root.querySelectorAll('select[name=kind],select[name=local],select[name=peerApp]')].map(s=>s.value),['','',''],'no app or kind is chosen');
  assert.deepEqual([...root.querySelectorAll('select[name=kind] option')].map(o=>o.textContent),['Choose…','Chat','Device sync']);
- root=render(state({page:'pair',params:{client:F.APP,kind:F.CHAT}}));assert.deepEqual([root.querySelector('select[name=kind]').value,root.querySelector('select[name=local]').value],[F.CHAT,F.APP],'an app\'s own entry may name itself and a kind');
+ assert.deepEqual([...root.querySelectorAll('select[name=local] option')].map(o=>o.textContent),['Choose…','app.example','loose.example'],'apps are named by verified origin, never by their self-chosen name (§5.8)');
+ assert.ok(![...root.querySelectorAll('select option')].some(o=>/Studio|Other app/.test(o.textContent)),'no self-chosen app name in a creation choice');
+ root=render(state({page:'pair',params:{client:F.APP,kind:F.CHAT}}));
+ assert.deepEqual([...root.querySelectorAll('select[name=kind],select[name=local],select[name=peerApp]')].map(s=>s.value),['','',''],'a link naming an app and a kind fills nothing (review L2)');
+ assert.deepEqual([...root.querySelectorAll('select[name=kind] option,select[name=local] option,select[name=peerApp] option')].filter(o=>o.selected&&o.value).map(o=>o.value),[],'no app or kind option is selected for the owner');
  root=render(state({page:'pair',refusal:{code:'pairing_exists',existing:F.PENDING_ID}}));const events=intents(root);
  assert.match(root.querySelector('[role=alert]').textContent,/already have a pairing with this account/);root.querySelector('[role=alert] button').click();assert.deepEqual(events.at(-1),{kind:'signaling-page',page:'pairing',params:{id:F.PENDING_ID}});
  root=render(state({page:'pair',review:F.PAIR_REVIEW}));let text=root.textContent;
- for(const pattern of [/990e8400-e29b-41d4-a716-000000000009/,/at far\.example/,/Their provider\s*https:\/\/far\.example/,/Studio starts connections; the other side answers\./,/will connect automatically, with no prompt, whenever the side that starts connections is running/,
-  /may open a direct connection with Studio without asking, and exchange data with it/,/That data can include:\s*Personal data/,/can tell when Studio is running/,/This provider can enforce only your side of this pairing/,/Expires\s*[A-Z][a-z]{2} \d+, \d{4}/,/Create and activate pairing/])assert.match(text,pattern);
+ for(const pattern of [/990e8400-e29b-41d4-a716-000000000009/,/at far\.example/,/Their provider\s*https:\/\/far\.example/,/app\.example starts connections; the other side answers\./,/will connect automatically, with no prompt, whenever the side that starts connections is running/,
+  /may open a direct connection with app\.example without asking, and exchange data with it/,/That data can include:\s*Personal data/,/can tell when app\.example is running/,/This provider can enforce only your side of this pairing/,/Expires\s*[A-Z][a-z]{2} \d+, \d{4}/,/Create and activate pairing/,/app\.example already has its own access and approval\. You can activate the pairing now/])assert.match(text,pattern);
+ assert.doesNotMatch([...root.querySelectorAll('.security-note')].map(n=>n.textContent).join(' '),/Studio/,'key sentences name the app by origin, never by its self-chosen name');
+ {const ev=intents(root),buttons=[...root.querySelectorAll('[data-signaling-decide]')];
+  assert.deepEqual(buttons.map(b=>b.textContent),['Create and activate pairing','Create without activating'],'activation is its own explicit control');
+  buttons[0].click();assert.equal(ev.at(-1).activate,true);buttons[1].click();assert.equal(ev.at(-1).activate,false);}
  root=render(state({page:'pair',review:F.OWN_PAIR_REVIEW}));text=root.textContent;
- for(const pattern of [/Your other app\s*Other app/,/Either side starts connections\./,/whenever either is running/,/Not approved for this type/,/stays inactive until you activate it/,/No expiry/])assert.match(text,pattern);
+ for(const pattern of [/Your other app\s*Other app/,/Either side starts connections\./,/app\.example and other\.example will connect automatically, with no prompt, whenever either is running/,/Not approved for this type/,/stays inactive until you activate it/,/No expiry/])assert.match(text,pattern);
  assert.doesNotMatch(text,/can tell when|enforce only your side/,'own-entity pairings carry neither peer disclosure');
- assert.equal(root.querySelector('[data-signaling-decide]').textContent,'Create pairing');
+ assert.deepEqual([...root.querySelectorAll('[data-signaling-decide]')].map(b=>b.textContent),['Create pairing'],'no activation control on a review that showed the pairing staying inactive');
+ {const ev=intents(root);root.querySelector('[data-signaling-decide]').click();assert.equal(ev.at(-1).kind,'signaling-decide');assert.equal(ev.at(-1).activate,undefined);}
 });
 
 test('pairing page: P1 status, activation only when every party qualifies, renewal and re-confirmation reviews, relabel and removal',()=>{

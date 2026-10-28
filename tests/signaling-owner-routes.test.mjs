@@ -211,7 +211,9 @@ test('pairings over the owner routes: create pending, explicit activation (CAS),
  const own={kind:REF[SYNC],local:{client_id:APP,client_session:null},peer:{self:{client_id:APP2,client_session:null}},opens:'both',label:'Desk to phone'};
  const page=items=>reviewedHTTP((path,value)=>h.call(a,'POST',path,value),items);
  assert.equal((await h.call(a,'POST','/api/signaling/pairing-create',{...own,activate:true})).body.error,'review_required','only the creation page creates a pairing');
- const [created]=await page([{path:'/api/signaling/pairing-create',action:'pairing-create',input:own,extra:{activate:true}}]);assert.equal(created.status,200,JSON.stringify(created.body));
+ const [activating]=await page([{path:'/api/signaling/pairing-create',action:'pairing-create',input:own,extra:{activate:true}}]);
+ assert.deepEqual([activating.status,activating.body.error],[409,'review_required'],'a review that showed the pairing staying inactive never carries activation (§5.8 P3)');
+ const [created]=await page([{path:'/api/signaling/pairing-create',action:'pairing-create',input:own}]);assert.equal(created.status,200,JSON.stringify(created.body));
  assert.equal(created.body.state,'pending','APP2 holds no grant or approval yet, so activation waits (P1, P3)');assert.equal(created.body.expires_at,null);assert.match(created.body.id,/^pr_/);
  let s=(await h.call(a,'GET','/api/signaling/settings')).body;
  assert.deepEqual(s.pairings.map(p=>p.id),[created.body.id]);

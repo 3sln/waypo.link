@@ -6,8 +6,9 @@
 //
 // A page first asks for a **review** (`signaling.review` {action, input}). The engine validates the change exactly as
 // the widening operation will, computes the disclosure, and stores a single-use review record (`sig/review/<id>`)
-// holding a digest of (owner, action, canonical input), `armAt` (creation + PAGE_REVIEW.dwellMs: the server floor
-// under the page's armed control) and `expiresAt`. The widening operation then carries the review id as adapter
+// holding a digest of (owner, action, canonical input), the disclosed state the input does not carry (`bound`,
+// rechecked at commit: `review_stale` on any change; and, for pairing creation, whether activation was offered),
+// `armAt` (creation + PAGE_REVIEW.dwellMs: the server floor under the page's armed control) and `expiresAt`. The widening operation then carries the review id as adapter
 // evidence (`actor.review`, never from the input) and, when the service runs with `ownerPages` (the runtime turns it
 // on; engine rule tests run without it), refuses with `review_required` unless a live review of the same owner,
 // action and canonical input exists, and with `decision_not_armed` before `armAt` (nothing is consumed then). A
@@ -56,7 +57,8 @@ export function approvalRequired(issuer,app,line,message='This kind is not appro
 }
 
 /** The members of an action's input that a review covers (labels of updates, `activate` and auto-connect on an
- * approval are chosen on the same page and are not part of the digest). */
+ * approval are chosen on the same page and are not part of the digest; `activate` is bounded by the record's
+ * `activateNow`, see takeReview). */
 export function canonicalInput(action,input){
  switch(action){
   case 'session-approve':return {clientId:input.clientId,kind:ref(input.kind)};
@@ -70,21 +72,32 @@ export function canonicalInput(action,input){
 }
 export const reviewDigest=(crypto,owner,action,input)=>digest(crypto,JSON.stringify(['signaling-owner-review',owner,action,stable(input)]));
 
-/** Stores a review record for (owner, action, canonical input); prunes expired ones and keeps at most PAGE_REVIEW.max. */
-export async function storeReview(svc,actor,action,input){
+/** Whether two bound-state values are equal (stable JSON). */
+export const sameBound=(a,b)=>JSON.stringify(stable(a??null))===JSON.stringify(stable(b??null));
+/**
+ * Stores a review record for (owner, action, canonical input); prunes expired ones and keeps at most PAGE_REVIEW.max.
+ * `bound` is the state the page disclosed that the canonical input does not carry (svc.reviewBound: the service-class
+ * status of an approval's entity, the approval version shown for auto-connect, a digest of the app set shown for the
+ * designation); it is rechecked at commit. `activateNow` (pairing creation only) records whether the reviewed page
+ * offered activation: a creation committed with `activate` is refused unless it did (§5.8 P3).
+ */
+export async function storeReview(svc,actor,action,input,{bound,activateNow}={}){
  return svc.ownerTx(actor,async(tx,fx,owner,now)=>{
   const live=[];
   for(const [key,row] of await tx.list({prefix:REVIEW_PREFIX,limit:PAGE_REVIEW.max*4}))if(!(row?.expiresAt>now))await tx.delete(key);else live.push([key,row]);
   live.sort((a,b)=>a[1].createdAt-b[1].createdAt);while(live.length>=PAGE_REVIEW.max)await tx.delete(live.shift()[0]);
   const id='rv_'+base64url(svc.random.bytes(16));
-  const record={v:1,id,owner,action,digest:await reviewDigest(svc.crypto,owner,action,input),createdAt:now,armAt:now+PAGE_REVIEW.dwellMs,expiresAt:now+PAGE_REVIEW.ttlMs};
+  const record={v:1,id,owner,action,digest:await reviewDigest(svc.crypto,owner,action,input),createdAt:now,armAt:now+PAGE_REVIEW.dwellMs,expiresAt:now+PAGE_REVIEW.ttlMs,
+   ...bound!==undefined&&bound!==null?{bound:stable(bound)}:{},...action==='pairing-create'?{activateNow:activateNow===true}:{}};
   await tx.put(reviewKey(id),record);return record;
  });
 }
 /**
  * Consumes the review that authorizes this widening action, inside the operation's own transaction. Only under
- * `svc.ownerPages`. Refuses with `review_required` (no matching live review) or `decision_not_armed` (too early; the
- * review stays). Deleting it here means a failed operation (rolled back) leaves the review usable.
+ * `svc.ownerPages`. Refuses with `review_required` (no matching live review, or a pairing creation asking to activate
+ * when its review showed it staying inactive), `decision_not_armed` (too early; the review stays) or `review_stale`
+ * (the disclosed state bound to the review changed since; the owner reviews again). Deleting it here means a failed
+ * operation (rolled back) leaves the review usable.
  */
 export async function takeReview(svc,tx,actor,action,input,now){
  if(svc.ownerPages!==true)return;
@@ -92,6 +105,10 @@ export async function takeReview(svc,tx,actor,action,input,now){
  const record=await tx.get(reviewKey(id));
  if(!record||record.owner!==actor.owner||record.action!==action||!(record.expiresAt>now)||record.digest!==await reviewDigest(svc.crypto,actor.owner,action,canonicalInput(action,input)))fail('review_required','Review this change on its page, then confirm.',409);
  if(now<record.armAt)fail('decision_not_armed','Wait until the button is ready, then confirm.',409);
+ // §5.8 P3: approving or granting a party never activates a pairing, so a creation reviewed as staying inactive is
+ // never committed live, even when every party qualifies by the time of the decision.
+ if(action==='pairing-create'&&input.activate===true&&record.activateNow!==true)fail('review_required','This review did not offer activating the pairing. Review it again.',409);
+ if(record.bound!==undefined&&!sameBound(record.bound,await svc.reviewBound(tx,record.owner,action,input)))fail('review_stale','What this page showed has changed. Review the change again.',409);
  await tx.delete(reviewKey(id));
 }
 

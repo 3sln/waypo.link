@@ -107,14 +107,27 @@ test('pairing creation page: nothing preselected (every choice required), the re
   const input=reviews[1].body.input;assert.deepEqual({...input,expiresAt:0},{kind:F.CHAT,local:{client_id:F.APP,client_session:null},peer:{handle:'river'},opens:'local',label:'Bob',expiresAt:0});
   assert.ok(Math.abs(input.expiresAt-(Date.now()+180*86400000))<60000);
   assert.equal((await f.page()).review.review,F.PAIR_REVIEW.review);
-  await f.arm();f.calls.length=0;await f.act(new sp.DecideSignalingChange({}));
-  assert.deepEqual(f.posts()[0],{method:'POST',path:'/api/signaling/pairing-create',body:{...F.PAIR_REVIEW.input,activate:true,review:F.PAIR_REVIEW.review}});
+  await f.arm();f.calls.length=0;await f.act(new sp.DecideSignalingChange({activate:true}));
+  assert.deepEqual(f.posts()[0],{method:'POST',path:'/api/signaling/pairing-create',body:{...F.PAIR_REVIEW.input,activate:true,review:F.PAIR_REVIEW.review}},'"Create and activate" on a review that offered activation');
   assert.deepEqual(f.routes,[{page:'pairing',params:{id:'pr_'+'n'.repeat(22)}}],'the new pairing\'s page opens');
   assert.equal((await f.read()).notice,'Pairing created and active.');
  }finally{await f.close();}
  const g=await fixture({submissions,request:path=>path==='/api/signaling/review'?{action:'pairing-create',review:null,refusal:{code:'pairing_exists',existing:F.PENDING_ID}}:undefined});
  try{await g.act(new sp.OpenSignalingPage({page:'pair',params:{}}));await g.act(new sp.ReviewSignalingChange({action:'pairing-create',operationId:'own'}));
   const p=await g.page();assert.equal(p.review,null);assert.deepEqual(p.refusal,{code:'pairing_exists',existing:F.PENDING_ID});assert.equal(sp.decisionSurface(await g.read()),'');}finally{await g.close();}
+});
+
+test('pairing creation decision: activation is sent only from the activation control of a review that offered it (§5.8 P3)',async()=>{
+ const submissions={own:{kind:F.SYNC,local:F.APP,with:'self',peerApp:F.APP2,opens:'both',label:'Desk'}};
+ for(const [review,detail,activate] of [[F.OWN_PAIR_REVIEW,{activate:true},false],[F.PAIR_REVIEW,{activate:false},false],[F.PAIR_REVIEW,{},false],[F.PAIR_REVIEW,{activate:true},true]]){
+  const f=await fixture({submissions,request:path=>path==='/api/signaling/review'?structuredClone(review):undefined});
+  try{
+   await f.act(new sp.OpenSignalingPage({page:'pair',params:{}}));await f.act(new sp.ReviewSignalingChange({action:'pairing-create',operationId:'own'}));
+   await f.arm();f.calls.length=0;await f.act(new sp.DecideSignalingChange(detail));
+   const body=f.posts().find(c=>c.path==='/api/signaling/pairing-create').body;
+   assert.equal('activate' in body,activate,`activateNow ${review.disclosure.activateNow}, control ${JSON.stringify(detail)}`);assert.deepEqual({...body,activate:undefined,review:undefined},{...review.input,activate:undefined,review:undefined});
+  }finally{await f.close();}
+ }
 });
 
 test('pairing page: activation, renewal and re-confirmation each take their review; relabel needs none; cancelling leaves the surface',async()=>{

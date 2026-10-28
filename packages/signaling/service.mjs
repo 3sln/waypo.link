@@ -95,6 +95,9 @@ const sameHandler=(a,b)=>a.handler===b.handler&&a.feature===b.feature;
  * client session, the endpoint's recorded client session equals it. A provider feature is never covered. */
 const sideCovers=(side,ep)=>Boolean(side&&ep)&&!ep.feature&&ep.clientId===side.client_id&&(side.client_session===null||side.client_session===ep.clientSession);
 const mayOpen=(pairing,side)=>pairing.opens==='both'||pairing.opens===side;
+/** The approved apps of an entity and their kind lines, sorted ([[clientId, [line…]]…]): the designation page's "Apps this
+ * applies to now" and the app set its review binds (reviewBound). Provider features are not apps. */
+const serviceApps=rows=>{const apps=new Map();for(const {line,approval} of rows)if(!approval.feature)apps.set(approval.handler,[...apps.get(approval.handler)??[],line]);return [...apps].map(([id,lines])=>[id,[...lines].sort()]).sort((a,b)=>a[0]<b[0]?-1:a[0]>b[0]?1:0);};
 
 /**
  * Same-host transport (§9.4): delivers a batch to the peer entity's own writer on this host as the system operation
@@ -1331,8 +1334,20 @@ export class SignalingService{
   if(!this.enabled(owner))notFound();
   const built=await this.reviewPlan(actor,owner,input.action,input.input);
   if(built.refusal)return {action:input.action,review:null,refusal:built.refusal};
-  const canonical=canonicalInput(input.action,built.input),record=await storeReview(this,actor,input.action,canonical);
+  const canonical=canonicalInput(input.action,built.input),record=await storeReview(this,actor,input.action,canonical,{bound:built.bound,activateNow:built.disclosure.activateNow});
   return {action:input.action,review:record.id,armAt:record.armAt,expiresAt:record.expiresAt,input:canonical,disclosure:built.disclosure};
+ }
+ /**
+  * The disclosed state a review binds besides its canonical input (owner-pages.mjs takeReview rechecks it at commit and
+  * refuses with `review_stale` on any difference): for an approval, whether the entity is service-class (§20.1.4
+  * service wording); for auto-connect, the approval version and digest whose kind facts were shown; for the service
+  * designation, a digest of the approved app set and its kind lines ("Apps this applies to now", §4.3). Null otherwise.
+  */
+ async reviewBound(tx,owner,action,input){
+  if(action==='session-approve')return {serviceClass:(await tx.get(K.service))?.designated===true&&await this.entityIs(owner)==='organization'};
+  if(action==='session-auto-connect'){const a=approvalIn(await tx.get(memoryKey(owner,input.kind)),{handler:input.clientId,feature:false});return {approval:a?{version:a.version,digest:a.digest}:null};}
+  if(action==='set-service')return {apps:await digest(this.crypto,JSON.stringify(['signaling-service-apps',serviceApps(await listApprovals(tx,owner))]))};
+  return null;
  }
  async resolveKind(line){if(!lineValid(line))invalid();const held=await latestHeld(this,line);if(!held)invalid('This kind is not available.');return held;}
  async reviewPlan(actor,owner,action,input){
@@ -1351,19 +1366,19 @@ export class SignalingService{
      const sides=[p.local,...p.peer.self?[p.peer.self]:[]];if(!sides.some(s=>s.client_id===input.clientId))continue;
      let ok=true;for(const s of sides)if(s.client_id!==input.clientId&&!await this.partyQualifies(tx,owner,actor,s,p.kind.artefact))ok=false;if(ok)pending.push(this.pairingSummary(p));
     }
-    return {existing,pending,designated:(await tx.get(K.service))?.designated===true};
+    return {existing,pending,bound:await this.reviewBound(tx,owner,action,{clientId:input.clientId,kind:k})};
    });
-   const serviceClass=r.designated&&await this.entityIs(owner)==='organization';
+   const serviceClass=r.bound.serviceClass;
    let adds=false;if(r.existing&&r.existing.version!==k.version){const old=await this.heldKind({artefact:k.artefact,version:r.existing.version,digest:r.existing.digest});adds=old?kindAddsDisclosure(old,body):true;}
    return {input:{clientId:input.clientId,kind:k},disclosure:{handler:appView({client_id:input.clientId}),kind:kindView(body,k),risk:kindRisk(body,input.clientId),sees:['identity','origin','context'],serviceClass,
     ...serviceClass?{serviceLimits:{openSeconds:BOUNDS.offerServiceOpenSeconds,boundSeconds:BOUNDS.offerServiceBoundSeconds}}:{},autoConnectAllowed:body.session.parties==='self',
-    existing:r.existing?{version:r.existing.version,autoConnect:r.existing.autoConnect}:null,addsDisclosure:adds,activatable:r.pending}};
+    existing:r.existing?{version:r.existing.version,autoConnect:r.existing.autoConnect}:null,addsDisclosure:adds,activatable:r.pending},bound:r.bound};
   }
   if(action==='session-auto-connect'){
    exact(input,['clientId','kind'],['autoConnect']);if(!clientIdValid(input.clientId)||!lineValid(input.kind)||input.autoConnect!==undefined&&input.autoConnect!==true)invalid();
-   const a=await this.ownerRead(actor,tx=>tx.get(memoryKey(owner,input.kind)).then(m=>approvalIn(m,{handler:input.clientId,feature:false})));if(!a)notFound();
+   const bound=await this.ownerRead(actor,tx=>this.reviewBound(tx,owner,action,input)),a=bound.approval;if(!a)notFound();
    const k={artefact:input.kind,version:a.version,digest:a.digest},body=await this.heldKind(k);if(!body||body.session.parties!=='self')invalid('Only kinds for your own devices connect automatically.');
-   return {input:{clientId:input.clientId,kind:input.kind,autoConnect:true},disclosure:{handler:appView({client_id:input.clientId}),kind:kindView(body,k),risk:kindRisk(body,input.clientId)}};
+   return {input:{clientId:input.clientId,kind:input.kind,autoConnect:true},disclosure:{handler:appView({client_id:input.clientId}),kind:kindView(body,k),risk:kindRisk(body,input.clientId)},bound};
   }
   if(action==='pairing-create'){
    exact(input,['kind','local','peer','opens','label'],['expiresAt','created_via']);
@@ -1410,11 +1425,10 @@ export class SignalingService{
   if(action==='set-service'){
    exact(input,['designated','revision']);if(input.designated!==true||!Number.isSafeInteger(input.revision))invalid();
    if(await this.entityIs(owner)!=='organization')notFound();
-   const r=await this.ownerRead(actor,async tx=>({revision:(await tx.get(K.service))?.revision??0,approvals:await listApprovals(tx,owner)}));
+   const r=await this.ownerRead(actor,async tx=>({revision:(await tx.get(K.service))?.revision??0,apps:serviceApps(await listApprovals(tx,owner)),bound:await this.reviewBound(tx,owner,action,input)}));
    if(r.revision!==input.revision)fail('conflict','This setting changed. Reload and try again.',409);
-   const apps=new Map();for(const {line,approval} of r.approvals)if(!approval.feature)apps.set(approval.handler,[...apps.get(approval.handler)??[],line]);
    return {input:{designated:true,revision:input.revision},disclosure:{openSeconds:BOUNDS.offerServiceOpenSeconds,boundSeconds:BOUNDS.offerServiceBoundSeconds,personSeconds:BOUNDS.offerPersonSeconds,
-    apps:[...apps].map(([clientId,kinds])=>({...appView({client_id:clientId}),kinds}))}};
+    apps:r.apps.map(([clientId,kinds])=>({...appView({client_id:clientId}),kinds}))},bound:r.bound};
   }
   invalid();
  }

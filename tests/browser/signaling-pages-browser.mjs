@@ -92,7 +92,7 @@ for(const name of ['chromium','firefox'])for(const locale of ['en','es'])for(con
    // The decision control is reachable by Tab and never focused first.
    const order=[];await p.locator('.signaling-pages h2').first().focus();for(let i=0;i<40&&!order.includes('decide');i++){await p.keyboard.press('Tab');order.push(await p.evaluate(()=>document.activeElement?.dataset?.signalingDecide==='true'?'decide':document.activeElement?.tagName));}
    assert.ok(order.includes('decide'),'reachable by Tab: '+order.join(','));
-   const box=await p.locator('[data-signaling-decide]').boundingBox();assert.ok(box&&box.x>=0&&box.x+box.width<=width+0.5,'inside the viewport');
+   const box=await p.locator('[data-signaling-decide]').first().boundingBox();assert.ok(box&&box.x>=0&&box.x+box.width<=width+0.5,'inside the viewport');
   }
   if(page==='overview'){await p.locator('button',{hasText:t('Revoke every offer','Revocar todas las ofertas')}).click();assert.deepEqual(await p.evaluate(()=>window.intents.at(-1)),{kind:'open-modal',modal:{kind:'signaling-confirm',action:'revoke-offers',input:{all:true}}});}
   assert.deepEqual(errors,[]);

@@ -9427,3 +9427,13 @@ Provisional (coordinator), unsigned; flags stay default-off; local behaviour onl
 Reviewer ___ Date ___ Outcome ___
 
 Independent review of the signaling owner pages (coordinator-commissioned, not owner sign-off): no review bypass found; 1 Medium, 3 Low. Open, to fix next: M1 the review digest omits `activate`, so a pairing reviewed as "stays inactive" commits live if the missing approval lands before confirmation (breaks §5.8 P3; reproduced); L1 other disclosed state (service-class status, approval version for auto-connect, the app set at designation) is not bound to the review; L2 the pairing form preselects app and kind from URL parameters; L3 key pairing sentences name apps by self-chosen name rather than verified origin. Full gates (gates-23, 16 steps) green before commit.
+
+## 2026-10-28 — Signaling owner pages: independent review fixes (M1, L1–L3)
+
+Provisional (coordinator), unsigned; flags stay default-off; local behaviour only.
+- **M1 (§5.8 P3).** A pairing-creation review stores the disclosed `activateNow`; a creation sent with `activate:true` is refused (`review_required`) unless that review offered activation, so a pairing reviewed as "stays inactive" is never committed live. When activation is possible the page shows an explicit Activation section (apps named by origin) with two armed decisions: "Create and activate pairing" and "Create without activating".
+- **L1.** Reviews bind the disclosed state the input does not carry (`reviewBound`): an approval entity's service-class status, the approval `{version, digest}` shown for auto-connect, and a digest of the approved-app and kind-line set shown at designation. It is rechecked in the commit transaction; a change refuses with `review_stale` and the owner reviews again.
+- **L2.** URL parameters no longer fill or select anything on the pairing form. **L3.** Pairing sentences and creation dropdowns name apps by verified origin host (client id when two share a host).
+- Verified (agent): npm test 4045 pass 0 fail; build:assets; test:signaling-ui (Chromium, Firefox); test:ui-state 544; strict signaling conformance 70 + 1 pre-existing skip; test:e2e. Full coordinator gates before commit.
+
+Reviewer ___ Date ___ Outcome ___

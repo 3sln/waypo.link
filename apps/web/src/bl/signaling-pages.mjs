@@ -11,7 +11,8 @@
 // State: `signalingPage` {owner, generation, page, params, status: 'loading'|'ready'|'error', review, refusal, detail,
 // service, armed, surface, done}; `signaling` (the settings read, shared with bl/signaling-controls.mjs).
 // Pages: overview (pairings by peer, own-app pairings, pending activations, live offers), approve {client, kind},
-// auto-connect {client, kind}, pair {client?, kind?}, pairing {id}, service {organization}.
+// auto-connect {client, kind}, pair (its `client`/`kind` parameters never fill the form), pairing {id}, service
+// {organization}.
 import {GuardedAction,snapshot,publish} from './guarded-action.mjs';
 import {freshAPI} from './step-up.mjs';
 import {Action} from '../shared/stack.mjs';
@@ -29,9 +30,10 @@ export const SIGNALING_PAGE_UNAVAILABLE='This page is not available right now.';
 export const SIGNALING_NOT_ARMED='Ready in a moment. Select the button again.';
 export const SIGNALING_REVIEW_EXPIRED='This review expired or changed. Review the change again.';
 export const SIGNALING_CHANGED='These details changed somewhere else. Review the latest version.';
+export const SIGNALING_REVIEW_STALE='Something this page showed has changed. Review the change again.';
 export const SIGNALING_INCOMPLETE='Choose every option before reviewing.';
 const MESSAGES=Object.freeze({
- decision_not_armed:SIGNALING_NOT_ARMED,review_required:SIGNALING_REVIEW_EXPIRED,conflict:SIGNALING_CHANGED,not_found:SIGNALING_PAGE_UNAVAILABLE,
+ decision_not_armed:SIGNALING_NOT_ARMED,review_required:SIGNALING_REVIEW_EXPIRED,review_stale:SIGNALING_REVIEW_STALE,conflict:SIGNALING_CHANGED,not_found:SIGNALING_PAGE_UNAVAILABLE,
  peer_unknown:'No account with that handle was found here.',handler_excluded:'This app is excluded for this connection type. Remove the exclusion in intent settings first.',
  pairing_parties_incomplete:'Each app needs its own access and approval first.',pairing_exists:'You already have a pairing with this account for this connection type.',
  invalid_args:'This change is not allowed. Check the choices and try again.',rate_limited:'Too many requests. Wait a moment, then try again.'});
@@ -144,7 +146,10 @@ const DECISIONS=Object.freeze({
 /**
  * The armed decision of the current review. Runs only while the surface is armed (release.mjs passes only trusted,
  * armed activations) and sends exactly the reviewed input with its review id. `autoConnect` is the approval page's
- * separate, unchecked control, honoured only where the review allows it.
+ * separate, unchecked control, honoured only where the review allows it. `activate` is the creation page's separate
+ * "Create and activate" control, sent only when the reviewed disclosure offered activation (`activateNow`; the engine
+ * refuses it otherwise, §5.8 P3); "Create without activating" and a review that showed the pairing staying inactive
+ * create it pending.
  */
 export class DecideSignalingChange extends GuardedAction {
  mutation=true;
@@ -152,10 +157,10 @@ export class DecideSignalingChange extends GuardedAction {
   const p=page(r),review=p?.review;if(!review?.review)throw Error(SIGNALING_REVIEW_EXPIRED);
   if(p.armed!==true||p.surface!==review.review)throw Error(SIGNALING_NOT_ARMED);
   const decision=DECISIONS[review.action];if(!decision)throw Error(SIGNALING_PAGE_UNAVAILABLE);
-  const input={...review.input,...review.action==='session-approve'&&d.autoConnect===true&&review.disclosure?.autoConnectAllowed===true?{autoConnect:true}:{},...review.action==='pairing-create'?{activate:true}:{}};
+  const input={...review.input,...review.action==='session-approve'&&d.autoConnect===true&&review.disclosure?.autoConnectAllowed===true?{autoConnect:true}:{},...review.action==='pairing-create'&&d.activate===true&&review.disclosure?.activateNow===true?{activate:true}:{}};
   const api=freshAPI(r,ctx);let out;
   try{out=decision.path?await api.request(decision.path,{...input,review:review.review}):await api.request('/api/orgs/'+p.params.organization+'/signaling',{operation:'set-service',input,review:review.review});}
-  catch(error){if(error.status===401)throw error;if(['review_required','conflict'].includes(error.code))patch(r,ctx,{review:null,armed:false});friendly(error);}
+  catch(error){if(error.status===401)throw error;if(['review_required','review_stale','conflict'].includes(error.code))patch(r,ctx,{review:null,armed:false});friendly(error);}
   patch(r,ctx,{review:null,armed:false,done:{action:review.action,result:out}});
   publish(r,ctx,{notice:decision.notice(out??{},input),error:''});
   try{await loadSettings(r,ctx);await loadPage(r,ctx,page(r));}catch(error){if(error.status===401)throw error;}

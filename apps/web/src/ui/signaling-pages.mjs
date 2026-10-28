@@ -3,7 +3,9 @@
 // server's review disclosures; bubbles native intents. Every decision control (Approve, Create pairing, Activate,
 // Renew, Confirm newer version, Turn on, Designate) is a separate button, never default-focused, aria-disabled until
 // the arming resource in release.mjs arms it, and sends its click event so that only trusted activations count.
-// Nothing is preselected: the pairing form's choices start empty and the approval page's auto-connect box unchecked.
+// Nothing is preselected: the pairing form's choices start empty (its address parameters never fill it) and the
+// approval page's auto-connect box unchecked. Key sentences and creation choices name apps by verified origin (§5.8);
+// an app's self-chosen name appears only beside its origin in the fact lists.
 // Owner data (handles, principals, app names, kind titles and summaries, labels, URLs) is marked translate="no";
 // interface text is localized through packages/i18n/catalogues.mjs. Provisional wording (coordinator), unsigned.
 import {h,badge,helpers,interfaceText,fire,pageHeader} from './release-primitives.mjs';
@@ -28,21 +30,29 @@ const list=(items,empty)=>items.length?h('ul',...items).classes('signaling-rows'
 const appOf=(m,clientId)=>(m?.apps??[]).find(a=>a.clientId===clientId)??null;
 /** An app as a page names it: its name only as unverified text, beside its verified origin (intents §7.1 item 4). */
 function appName(m,clientId){const a=appOf(m,clientId),origin=a?.origin??(()=>{try{return new URL(clientId).origin;}catch{return clientId;}})();return a?.name?[literal(a.name),' ',h('span','(',literal(hostOf(origin)),')').classes('field-help')]:[literal(hostOf(origin))];}
-const appText=(m,clientId)=>{const a=appOf(m,clientId);return a?.name??hostOf(a?.origin??clientId);};
+/** An app in a sentence or an option label (§5.8 "names both apps by verified origin"): the host of its verified origin,
+ * never its self-chosen name; the full client id (without scheme) when another known app shares that host. */
+function appText(m,clientId,origin){
+ const host=hostOf(origin??appOf(m,clientId)?.origin??clientId);
+ const shared=(m?.apps??[]).some(a=>a.clientId!==clientId&&hostOf(a.origin??a.clientId)===host);
+ return shared?String(clientId).replace(/^[a-z][a-z0-9+.-]*:\/\//i,''):host;
+}
 /** A peer principal: by handle only with a verified binding, otherwise the full principal and its issuer (§5.8). */
 function peerName(peer){if(peer?.handle)return [literal('@'+peer.handle)];const p=peer?.principal??peer;return [literal(p?.sub??''),' ',h('span',interfaceText('at {host}',{host:hostOf(p?.iss)})).classes('field-help')];}
 const peerText=peer=>peer?.handle?'@'+peer.handle:peer?.principal?`${hostOf(peer.principal.iss)} · ${peer.principal.sub}`:'';
 function kindTitleOf(m,line,locale){for(const a of m?.apps??[])for(const x of a.approvals??[])if(x.kind===line&&x.title){const t=title(x.title,locale);if(t)return t;}return line;}
 
 /** The decision control: armed only by release.mjs (aria-disabled until then), trusted clicks only, never default focus. */
-function decide(state,label,{armed,detail={},danger=false}={}){
- return h('button',label).props({type:'button',disabled:state.busy}).attrs(present({'aria-disabled':armed?undefined:'true','aria-describedby':armed?undefined:'signaling-arming-help'})).classes('button',danger?'danger-button':'primary').data({signalingDecide:'true'})
+function decide(state,label,{armed,detail={},danger=false,secondary=false}={}){
+ return h('button',label).props({type:'button',disabled:state.busy}).attrs(present({'aria-disabled':armed?undefined:'true','aria-describedby':armed?undefined:'signaling-arming-help'})).classes('button',danger?'danger-button':secondary?'secondary':'primary').data({signalingDecide:'true'})
   .on({click:event=>{const form=event.currentTarget.closest('form'),auto=form?new FormData(form).get('autoConnect')==='on':false;fire(event.currentTarget,'signaling-decide',{...detail,autoConnect:auto,nativeEvent:event});}});
 }
-function decisionButtons(state,p,label,extra=null){
- const {btn}=helpers(state);
- return [extra,h('p','The button becomes available in a moment.').props({id:'signaling-arming-help'}).classes('field-help','signaling-arming-help',...p.armed?['signaling-armed']:[]),
-  h('div',decide(state,label,{armed:p.armed===true}),btn('Cancel',{kind:'signaling-cancel-review'},'button secondary')).classes('buttons')];
+/** The decision controls of a review: one armed decision (with `detail`), an optional second armed decision
+ * (`alternative` {label, detail}, e.g. creating a pairing without activating it), and Cancel. */
+function decisionButtons(state,p,label,{detail={},alternative=null}={}){
+ const {btn}=helpers(state),armed=p.armed===true;
+ return [h('p','The button becomes available in a moment.').props({id:'signaling-arming-help'}).classes('field-help','signaling-arming-help',...p.armed?['signaling-armed']:[]),
+  h('div',decide(state,label,{armed,detail}),alternative?decide(state,alternative.label,{armed,detail:alternative.detail,secondary:true}):null,btn('Cancel',{kind:'signaling-cancel-review'},'button secondary')).classes('buttons')];
 }
 function kindFacts(state,kind,{risk}={}){
  const locale=state.locale??'en';
@@ -93,7 +103,7 @@ function autoConnectPage(state,p,m){
 
 // ---- pairing disclosure (§5.8) ----------------------------------------------------------------------------------------
 function pairingDisclosure(state,m,d){
- const local=appText(m,d.local.client_id),other=d.cross?peerText(d.peer):appText(m,d.peer.self.client_id),opener=d.opens==='local'?local:d.opens==='peer'?other:null;
+ const local=appText(m,d.local.client_id,d.local.origin),other=d.cross?peerText(d.peer):appText(m,d.peer.self.client_id,d.peer.self.origin),opener=d.opens==='local'?local:d.opens==='peer'?other:null;
  return [
   h('dl',
    h('div',h('dt','This app'),h('dd',...appName(m,d.local.client_id))),
@@ -117,24 +127,29 @@ function partiesStatus(state,m,parties,kind){
 
 // ---- pairing creation page --------------------------------------------------------------------------------------------
 function choice(name,legend,options){return h('fieldset',h('legend',legend),...options.map(([value,label])=>h('label',h('input').props({type:'radio',name,value,required:true,checked:false}).key(name+':'+value),h('span',label)).classes('signaling-choice'))).classes('signaling-choices');}
-function pick(name,label,options,value,required=true){return h('label',h('span',label),h('select',h('option','Choose…').props({value:'',selected:!value}),...options.map(([id,text])=>h('option',String(text)).props({value:id,selected:value===id}).attrs({translate:'no'}))).props({name,required}).classes('input').key('pick:'+name)).classes('field');}
+/** A required choice that starts empty (§5.8, §20.1.4 "nothing preselected"): no option is ever selected for the owner,
+ * whatever the page's address says. */
+function pick(name,label,options,required=true){return h('label',h('span',label),h('select',h('option','Choose…').props({value:'',selected:true}),...options.map(([id,text])=>h('option',String(text)).props({value:id,selected:false}).attrs({translate:'no'}))).props({name,required}).classes('input').key('pick:'+name)).classes('field');}
 function pairPage(state,p,m){
  const r=p.review;
  if(r?.action==='pairing-create'){const d=r.disclosure;return h('form',h('section',h('h2','Review this pairing').props({id:'signaling-decision-title',tabIndex:-1}),
   h('h3','Connection type'),...kindFacts(state,d.kind),h('h3','Pairing'),...pairingDisclosure(state,m,d),
   h('h3','Each app’s own access'),partiesStatus(state,m,d.parties,d.kind.artefact),
-  h('p',d.activateNow?'Both apps already have their own access and approval, so creating the pairing also activates it.':'Not every app has its own access and approval yet. The pairing will be created but stays inactive until you activate it on its page. Pending pairings are deleted after 7 days.').classes('field-help'),
-  ...decisionButtons(state,p,d.activateNow?'Create and activate pairing':'Create pairing')).classes('panel','signaling-decision').attrs({'aria-labelledby':'signaling-decision-title'})).on({submit:e=>e.preventDefault()});}
+  ...(d.activateNow?[h('h3','Activation'),
+   h('p',interfaceText(d.cross?'{app} already has its own access and approval. You can activate the pairing now, so that it works at once, or create it inactive and activate it later on its page.':'{app} and {other} already have their own access and approval. You can activate the pairing now, so that it works at once, or create it inactive and activate it later on its page.',{app:appText(m,d.local.client_id,d.local.origin),other:d.cross?'':appText(m,d.peer.self.client_id,d.peer.self.origin)})),
+   ...decisionButtons(state,p,'Create and activate pairing',{detail:{activate:true},alternative:{label:'Create without activating',detail:{activate:false}}})]:
+   [h('p','Not every app has its own access and approval yet. The pairing will be created but stays inactive until you activate it on its page. Pending pairings are deleted after 7 days.').classes('field-help'),
+   ...decisionButtons(state,p,'Create pairing')])).classes('panel','signaling-decision').attrs({'aria-labelledby':'signaling-decision-title'})).on({submit:e=>e.preventDefault()});}
  const {form}=helpers(state),locale=state.locale??'en',apps=(m?.apps??[]).filter(a=>a.approvals?.length);
  const kinds=[...new Map(apps.flatMap(a=>a.approvals.map(x=>[x.kind,kindTitleOf(m,x.kind,locale)]))).entries()];
  const refusal=p.refusal?.code==='pairing_exists'?h('p','You already have a pairing with this account for this connection type.',' ',nav(state,'Open that pairing','pairing',{id:p.refusal.existing})).attrs({role:'alert'}).classes('alert','error'):null;
  return h('section',h('h2','Pair apps').props({id:'signaling-decision-title',tabIndex:-1}),
   h('p','A pairing lets one of your apps connect automatically, for one connection type, with one other app of yours or with one other account. Nothing is chosen for you.').classes('muted'),refusal,
   apps.length?form([
-   pick('kind','Connection type',kinds,p.params.kind),
-   pick('local','This app',apps.map(a=>[a.clientId,appText(m,a.clientId)]),p.params.client),
+   pick('kind','Connection type',kinds),
+   pick('local','This app',apps.map(a=>[a.clientId,appText(m,a.clientId,a.origin)])),
    choice('with','Pair with',[['self','Another of my apps'],['principal','Another account']]),
-   pick('peerApp','Your other app (when pairing with another of your apps)',(m?.apps??[]).map(a=>[a.clientId,appText(m,a.clientId)]),undefined,false),
+   pick('peerApp','Your other app (when pairing with another of your apps)',(m?.apps??[]).map(a=>[a.clientId,appText(m,a.clientId,a.origin)]),false),
    h('label',h('span','Their handle (when pairing with another account)'),h('input').props({name:'peerHandle',type:'text',autocomplete:'off',spellcheck:false,placeholder:'name@provider.example'}).attrs({maxlength:'320',autocapitalize:'none'}).classes('input').key('peerHandle')).classes('field'),
    choice('opens','Who starts connections',[['local','This app'],['peer','The other side'],['both','Either side']]),
    h('label',h('span','Label'),h('input').props({name:'label',type:'text',required:true}).attrs({maxlength:'64'}).classes('input').key('label')).classes('field'),

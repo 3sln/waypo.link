@@ -70,7 +70,7 @@ test('approval page refusals: signaling off, an app without a live grant, an exc
 test('approval page: re-approval names the earlier version; pending pairings this approval completes are listed with links; a service-class handler gets the service disclosure',async()=>{
  const {h}=await host({organizations:[3]});
  await approve(h,1,APP,SYNC);
- const {result:pending}=await h.page(1,'pairing-create',own(h),'signaling.pairing-create',{extra:{activate:true}});
+ const {result:pending}=await h.page(1,'pairing-create',own(h),'signaling.pairing-create');
  assert.equal(pending.state,'pending','OTHER_APP holds no approval yet');
  const r=await review(h,1,'session-approve',{clientId:OTHER_APP,kind:SYNC});
  assert.deepEqual(r.disclosure.activatable.map(p=>[p.id,p.label,p.opens,p.state,p.local.client_id,p.peer.self.client_id]),[[pending.id,'Desk to phone','both','pending',APP,OTHER_APP]]);
@@ -112,11 +112,31 @@ test('pairing creation page (own entity): parties check, P1 status, activation a
  h.clock.advance(PAGE_REVIEW.dwellMs);
  await rejects(commit(h,1,'signaling.pairing-create',{...r.input,label:'Changed after review'},r.review),'review_required','the label shown is the label created');
  await rejects(commit(h,1,'signaling.pairing-create',{...r.input,opens:'local'},r.review),'review_required','opens');
- const pending=await commit(h,1,'signaling.pairing-create',{...r.input,activate:true},r.review);assert.equal(pending.state,'pending');
+ await rejects(commit(h,1,'signaling.pairing-create',{...r.input,activate:true},r.review),'review_required','a review showing the pairing staying inactive never activates it');
+ const pending=await commit(h,1,'signaling.pairing-create',r.input,r.review);assert.equal(pending.state,'pending');
  // Both approved: the creation page's control is the activation control (P3 "Activation at creation").
  await approve(h,1,APP,REMOTE);await approve(h,1,OTHER_APP,REMOTE);
  r=await review(h,1,'pairing-create',own(h,REMOTE,{label:'Remote',opens:'local'}));assert.equal(r.disclosure.activateNow,true);
  h.clock.advance(PAGE_REVIEW.dwellMs);assert.equal((await commit(h,1,'signaling.pairing-create',{...r.input,activate:true},r.review)).state,'live');
+ // The same page's "Create without activating" control: the reviewed activation is offered, not imposed.
+ r=await review(h,1,'pairing-create',own(h,REMOTE,{label:'Remote, later',opens:'peer'}));assert.equal(r.disclosure.activateNow,true);
+ h.clock.advance(PAGE_REVIEW.dwellMs);assert.equal((await commit(h,1,'signaling.pairing-create',r.input,r.review)).state,'pending');
+});
+
+test('pairing creation reviewed as staying inactive is never committed live when the missing approvals arrive before the decision (§5.8 P3, review M1)',async()=>{
+ const {h}=await host();
+ // Neither app holds an approval: the page says the pairing "will be created but stays inactive".
+ const r=await review(h,1,'pairing-create',own(h));assert.equal(r.disclosure.activateNow,false);
+ // Within the review's life the approvals are recorded (another tab, or the page's own "Review approval" link).
+ await approve(h,1,APP,SYNC);await approve(h,1,OTHER_APP,SYNC);
+ h.clock.advance(PAGE_REVIEW.dwellMs);
+ // A decision carrying `activate` on that review is refused and leaves nothing behind; the review stays usable.
+ await rejects(commit(h,1,'signaling.pairing-create',{...r.input,activate:true},r.review),'review_required','activation was never shown as a control');
+ assert.deepEqual((await h.run(1,'signaling.pairings')).pairings,[]);
+ // The reviewed decision creates it pending; activation is its own reviewed step.
+ const created=await commit(h,1,'signaling.pairing-create',r.input,r.review);assert.equal(created.state,'pending');
+ const a=await review(h,1,'pairing-activate',{id:created.id,revision:created.revision});assert.equal(a.disclosure.activateNow,true);
+ h.clock.advance(PAGE_REVIEW.dwellMs);assert.equal((await commit(h,1,'signaling.pairing-activate',a.input,a.review)).state,'live');
 });
 
 test('pairing creation page (cross entity): fresh authentication, verified handle display, mandatory expiry, enforcement disclosure and one pairing per (peer, kind line)',async()=>{
@@ -230,4 +250,43 @@ test('approval_required carries the provider approval page URL for the refused a
  assert.equal(url.href,approvalPageURL(ISS,APP,CHAT));assert.equal(url.origin,ISS);assert.deepEqual(Object.fromEntries(url.searchParams),{view:'signaling',page:'approve',client:APP,kind:CHAT});
  assert.deepEqual(canonicalInput('pairing-update',{id:'pr_x',revision:2,label:'l',expiresAt:5}),{id:'pr_x',revision:2,expiresAt:5});
  assert.deepEqual(canonicalInput('session-approve',{clientId:APP,kind:{artefact:CHAT,version:1,digest:'d',extra:1},autoConnect:true}),{clientId:APP,kind:{artefact:CHAT,version:1,digest:'d'}});
+});
+
+test('reviews bind the disclosed state: a changed service class, approval version or designation app set refuses the decision with review_stale (review L1)',async()=>{
+ const {h}=await host({organizations:[3]});
+ // Service class: an approval reviewed while the organization is undesignated, committed after designation.
+ await approve(h,3,APP,SYNC);
+ const r=await review(h,3,'session-approve',{clientId:OTHER_APP,kind:CHAT});assert.equal(r.disclosure.serviceClass,false);
+ const s=await review(h,3,'set-service',{designated:true,revision:0});
+ assert.deepEqual(s.disclosure.apps.map(a=>a.client_id),[APP],'the designation page lists only the apps approved now');
+ h.clock.advance(PAGE_REVIEW.dwellMs);
+ await commit(h,3,'signaling.set-service',s.input,s.review);
+ await rejects(commit(h,3,'intents.session-approve',r.input,r.review),'review_stale','the approval page did not show the service-class wording');
+ assert.deepEqual((await h.run(3,'intents.session-approvals')).approvals.map(a=>a.handler),[APP],'nothing recorded');
+ const again=await review(h,3,'session-approve',{clientId:OTHER_APP,kind:CHAT});assert.equal(again.disclosure.serviceClass,true);
+ h.clock.advance(PAGE_REVIEW.dwellMs);assert.equal((await commit(h,3,'intents.session-approve',again.input,again.review)).clientId,OTHER_APP,'a fresh review with the service wording commits');
+
+ // Designation app set: an app approved after the designation review is not in its "Apps this applies to now" list.
+ assert.deepEqual(await h.run(3,'signaling.set-service',{input:{designated:false,revision:1}}),{designated:false,revision:2,revoked:0});
+ const d=await review(h,3,'set-service',{designated:true,revision:2});
+ assert.deepEqual(d.disclosure.apps.map(a=>[a.client_id,a.kinds]),[[APP,[SYNC]],[OTHER_APP,[CHAT]]]);
+ await approve(h,3,OTHER_APP,REMOTE);
+ h.clock.advance(PAGE_REVIEW.dwellMs);
+ await rejects(commit(h,3,'signaling.set-service',d.input,d.review),'review_stale','an app or kind line approved since the review');
+ assert.equal((await h.run(3,'signaling.service')).designated,false);
+ // An unrelated change (none) between review and decision commits.
+ const ok=await review(h,3,'set-service',{designated:true,revision:2});h.clock.advance(PAGE_REVIEW.dwellMs);
+ assert.deepEqual(await commit(h,3,'signaling.set-service',ok.input,ok.review),{designated:true,revision:3});
+
+ // Auto-connect: the approval version shown on the page is the one turned on.
+ await approve(h,1,APP,SYNC);
+ const ac=await review(h,1,'session-auto-connect',{clientId:APP,kind:SYNC});assert.equal(ac.disclosure.kind.version,1);
+ await h.publish({line:SYNC,parties:'self',profiles:{data:{},webrtc:{}},properties:{where:{type:'string',maxLength:8}},fieldCategories:{where:['location']}});
+ await approve(h,1,APP,SYNC);
+ assert.equal((await h.run(1,'intents.session-approvals')).approvals.find(a=>a.kind===SYNC).version,2,'re-approved at the newer version');
+ h.clock.advance(PAGE_REVIEW.dwellMs);
+ await rejects(commit(h,1,'intents.session-auto-connect',ac.input,ac.review),'review_stale','a version the auto-connect page did not show');
+ assert.equal((await h.run(1,'intents.session-approvals')).approvals.find(a=>a.kind===SYNC).autoConnect,false);
+ const ac2=await review(h,1,'session-auto-connect',{clientId:APP,kind:SYNC});assert.equal(ac2.disclosure.kind.version,2);
+ h.clock.advance(PAGE_REVIEW.dwellMs);assert.deepEqual(await commit(h,1,'intents.session-auto-connect',ac2.input,ac2.review),{autoConnect:true});
 });
