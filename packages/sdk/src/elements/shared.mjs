@@ -75,7 +75,7 @@ export const emitLater=(target,type,detail)=>queueMicrotask(()=>emit(target,type
 export function islandPart(session,part,capabilities=session?.capabilities){
   const name={avatar:'avatar','account-switcher':'switcher','sign-in':'signIn'}[part];
   const value=capabilities?.islands?.[name];
-  return value?Object.freeze({part,issuer:capabilities.issuer,embedOrigin:capabilities.embedOrigin,version:value.version,fedcm:value.fedcm,themeTokens:capabilities.themeTokens}):null;
+  return value?Object.freeze({part,issuer:capabilities.issuer,embedOrigin:capabilities.embedOrigin,version:value.version}):null;
 }
 export async function mountIsland(element,{part,container,session,onState,capabilities}){
   const spec=islandPart(session,part,capabilities);if(!spec||!container)return null;

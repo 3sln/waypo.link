@@ -54,7 +54,7 @@ const EMBED=${JSON.stringify(EMBED)},ISSUER=${JSON.stringify(ISSUER)},CLIENT=${J
 const b64=n=>btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(n)))).replace(/\\+/g,'-').replace(/\\//g,'_').replace(/=+$/,'');
 window.islands={};window.msgs=[];addEventListener('message',e=>msgs.push({origin:e.origin,data:e.data}));
 window.mount=(id,part,o={})=>{const nonce=o.nonce??b64(16),cs=o.cs??'light',lang=o.lang??'en',iframe=document.createElement('iframe');
-  iframe.src=EMBED+'/embed?client='+encodeURIComponent(o.client??CLIENT)+(o.fragment??('#'+part+'.v1'));iframe.name='bindle-island;v=1;n='+nonce+';l='+lang+';cs='+cs;iframe.title=part;iframe.setAttribute('referrerpolicy','no-referrer');
+  iframe.src=EMBED+'/?client='+encodeURIComponent(o.client??CLIENT)+(o.fragment??('#'+part+'.v1'));iframe.name='bindle-island;v=1;n='+nonce+';l='+lang+';cs='+cs;iframe.title=part;iframe.setAttribute('referrerpolicy','no-referrer');
   iframe.allow="storage-access 'none'; browsing-topics 'none'";if(o.sandbox!=null)iframe.setAttribute('sandbox',o.sandbox);
   iframe.style.cssText='display:block;border:0;width:'+(o.w??40)+'px;height:'+(o.h??40)+'px;color-scheme:'+cs;
   const rec={messages:[],loads:0,port:null};
@@ -224,14 +224,14 @@ for(const name of ['chromium','firefox','webkit'])test(`islands in ${name}`,{tim
 
   await t.test('serving: shell, assets, worker and service worker headers from the real Worker; the app origin never serves islands',async()=>{
     const get=(url,headers={})=>forwardTo(worker.port,{method:'GET',url,headers:{'cf-connecting-ip':'198.51.100.7',...headers}});
-    const shell=await get(`${EMBED}/embed?client=${encodeURIComponent(CLIENT)}`),csp=shell.headers['content-security-policy'],html=String(shell.body);
+    const shell=await get(`${EMBED}/?client=${encodeURIComponent(CLIENT)}`),csp=shell.headers['content-security-policy'],html=String(shell.body);
     assert.equal(shell.status,200);assert.match(csp,/frame-ancestors https:\/\/app\.example;/);assert.match(csp,/script-src 'self' 'sha256-[A-Za-z0-9+/]{43}=';/);assert.match(csp,/require-trusted-types-for 'script'; trusted-types bindle-embed$/);
     assert.equal(shell.headers['cross-origin-embedder-policy'],'require-corp');assert.equal(shell.headers['cache-control'],'private, max-age=300');assert.equal(shell.headers['set-cookie'],undefined);
     const config=JSON.parse(/id="config">(.*?)<\/script>/.exec(html)[1]);assert.equal(config.issuer,ISSUER);assert.equal(config.clientId,CLIENT);assert.deepEqual(config.origins,[APP]);assert.equal(config.sw,'/embed/sw.js');
     const map=/<script type="importmap">(.*?)<\/script>/.exec(html)[1],digest='sha256-'+Buffer.from(await webcrypto.subtle.digest('SHA-256',new TextEncoder().encode(map))).toString('base64');assert.ok(csp.includes(`'${digest}'`),'the CSP hash is the shipped import map');
     for(const href of [config.worker,...[...html.matchAll(/(?:href|src)="(\/embed\/assets\/[^"]+)"/g)].map(m=>m[1]),...Object.values(JSON.parse(map).imports)]){const asset=await get(EMBED+href);assert.equal(asset.status,200,href);assert.equal(asset.headers['cross-origin-resource-policy'],'same-origin');assert.equal(asset.headers['cross-origin-embedder-policy'],'require-corp');assert.match(asset.headers['cache-control'],/immutable/);assert.equal(asset.headers['x-content-type-options'],'nosniff');}
-    const sw=await get(EMBED+'/embed/sw.js');assert.equal(sw.status,200);assert.equal(sw.headers['service-worker-allowed'],'/embed');assert.equal(sw.headers['cache-control'],'no-cache');assert.match(String(sw.body),/const GENERATION='bindle-embed-[a-f0-9]{20}'/);
-    for(const path of ['/embed/shell.html','/embed/shell.json','/embed/sw.js?v=1',config.worker+'?v=1'])assert.equal((await get(EMBED+path)).status,404,path);
+    const sw=await get(EMBED+'/embed/sw.js');assert.equal(sw.status,200);assert.equal(sw.headers['service-worker-allowed'],'/');assert.equal(sw.headers['cache-control'],'no-cache');assert.match(String(sw.body),/const GENERATION='bindle-embed-[a-f0-9]{20}'/);
+    for(const path of ['/embed/shell.html','/embed/shell.json','/embed/sw.js?v=1',config.worker+'?v=1','/embed','/embed?client='+encodeURIComponent(CLIENT),'/index.html','/favicon.ico','/console','/.well-known/bindle/manifest.json'])assert.equal((await get(EMBED+path)).status,404,path);
     for(const path of ['/embed','/embed/sw.js',config.worker,'/embed/shell.html'])assert.equal((await get(ISSUER+path)).status,404,`app origin ${path}`);
     const manifest=JSON.parse((await get(ISSUER+'/.well-known/bindle/manifest.json')).body);assert.equal(manifest.profiles,undefined);assert.equal(manifest.extensions.find(e=>e.spec==='https://spec.bindle.example/extensions/embedded-components/v1').options.embed_origin,EMBED);
     // Bearer alone never gets avatar bytes, and the refusal waits for the same fixed deadline as a success.
@@ -330,7 +330,7 @@ for(const name of ['chromium','firefox','webkit'])test(`islands in ${name}`,{tim
 // ---- The real elements mount the real islands -------------------------------------------------------------------
 // True once the island shows the key-bound, re-encoded picture (transparent corner, opaque blue centre), not the monogram.
 const boundPicture=async()=>{const img=document.querySelector('img.avatar');if(!img?.src.startsWith('blob:'))return false;await img.decode().catch(()=>{});if(!img.naturalWidth)return false;const c=document.createElement('canvas');c.width=c.height=img.naturalWidth;const x=c.getContext('2d');x.drawImage(img,0,0);const corner=x.getImageData(1,1,1,1).data,centre=x.getImageData(img.naturalWidth/2,img.naturalWidth/2,1,1).data;return corner[3]===0&&centre[3]===255&&centre[2]>200;};
-const islandFrame=(page,part)=>page.frames().find(frame=>frame.url().startsWith(EMBED+'/embed?')&&frame.url().endsWith(`#${part}.v1`));
+const islandFrame=(page,part)=>page.frames().find(frame=>frame.url().startsWith(EMBED+'/?client=')&&frame.url().endsWith(`#${part}.v1`));
 async function credentialCount(frame){return frame.evaluate(()=>new Promise((ok,fail)=>{const req=indexedDB.open('bindle-embed');req.onerror=()=>fail(req.error);req.onsuccess=()=>{const db=req.result;if(!db.objectStoreNames.contains('credentials')){db.close();return ok(0);}const count=db.transaction('credentials').objectStore('credentials').count();count.onsuccess=()=>{db.close();ok(count.result);};};}));}
 async function islandSignIn(f,page){
   await page.waitForFunction(()=>document.querySelector('bindle-sign-in')?.state.islands==='live',null,{timeout:10000});
@@ -353,7 +353,7 @@ for(const name of ['chromium','firefox','webkit'])test(`elements mount real isla
     assert.equal(caps.embedOrigin,EMBED);assert.ok(caps.islands.signIn);assert.ok(caps.islands.avatar);assert.equal(caps.fedcm,false,'the provider declares no fedcm.v1');
     const iframe=await page.evaluateHandle(()=>document.querySelector('bindle-sign-in').shadowRoot.querySelector('.island iframe'));
     const attrs=await iframe.evaluate(el=>({src:el.getAttribute('src'),allow:el.getAttribute('allow'),referrer:el.getAttribute('referrerpolicy'),name:el.name}));
-    assert.equal(attrs.src,`${EMBED}/embed?client=${encodeURIComponent(CLIENT)}#sign-in.v1`);assert.match(attrs.allow,/^identity-credentials-get 'none'; storage-access 'none';/);assert.equal(attrs.referrer,'no-referrer');
+    assert.equal(attrs.src,`${EMBED}/?client=${encodeURIComponent(CLIENT)}#sign-in.v1`);assert.match(attrs.allow,/^identity-credentials-get 'none'; storage-access 'none';/);assert.equal(attrs.referrer,'no-referrer');
     assert.match(attrs.name,/^bindle-island;v=1;n=[\w-]{22};l=en;cs=(light|dark)$/);
     await islandSignIn(f,page);
     const end=await page.evaluate(()=>window.events.find(e=>e.type==='bindle-sign-in-end').detail);

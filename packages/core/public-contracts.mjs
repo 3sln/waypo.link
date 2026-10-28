@@ -16,9 +16,10 @@ export const publicFragments=Object.freeze([Object.freeze({name:'app-message-pre
  // Extensions rev 3.2 (CR-X3-26): the former item-classifier slot, republished as an ordinary fragment at a new URL.
  // The generic item-classification contract that replaces decision-model/v1 is a later change (CR-X3-25).
  Object.freeze({name:'item-classifier',title:'Item classifier preference fragment',version:'v1',kind:'preferences-fragment',status:'provisional',id:`${authority}/artefacts/fragments/item-classifier/v1`,path:'/artefacts/fragments/item-classifier/v1.json',source:'docs/artefacts/fragments/item-classifier-v1.json',documentation:'/docs/spec/extensions.html'})]);
-// 3sln.me manifest profiles: provider declarations under the core `profiles` container, not Bindle protocol.
-// Provisional: publication implies no provider conformance; the source stays with its decision note until sign-off.
-export const publicProfiles=Object.freeze([Object.freeze({name:'components',title:'3sln.me components profile',version:'v1',kind:'manifest-profile',status:'provisional',id:`${authority}/artefacts/profiles/components/v1`,path:'/artefacts/profiles/components/v1.json',source:'docs/architecture/artefacts/components-profile-v1.json',documentation:'/docs/profiles/components-v1.html'})]);
+// Extensions rev 3 removed the manifest `profiles` container. The components profile became the Bindle-owned
+// embedded-components extension (extensions §2.7, §2.8; CR-X3-16), and no provider emits or reads the profile URL. Its
+// published document stays immutable and resolvable at the same path, listed as withdrawn, until links move.
+export const publicProfiles=Object.freeze([Object.freeze({name:'components',title:'3sln.me components profile (withdrawn)',version:'v1',kind:'manifest-profile',status:'withdrawn',id:`${authority}/artefacts/profiles/components/v1`,path:'/artefacts/profiles/components/v1.json',source:'docs/architecture/artefacts/components-profile-v1.json',documentation:'/docs/profiles/components-v1.html'})]);
 // Extensions rev 3.2 removed slots. The retired slot document stays resolvable at its URL until links move (CR-X3-26);
 // no provider processes it (a top-level `slot` makes a fragment unsupported, protocol §3).
 export const publicSlots=Object.freeze([Object.freeze({name:'item-classifier-slot',title:'Item classifier slot (retired)',version:'v1',kind:'slot-manifest',status:'withdrawn',id:`${authority}/artefacts/slots/item-classifier/v1`,path:'/artefacts/slots/item-classifier/v1.json',source:'docs/artefacts/slots/item-classifier-v1.json',documentation:'/docs/spec/extensions.html'})]);

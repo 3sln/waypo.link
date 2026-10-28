@@ -1,5 +1,5 @@
 // Real-browser checks for the islands' optional service worker (apps/embed/sw.js; embed-islands §3.3, EIR-2, EIR-16,
-// IMPL-6, S5): registration from a framed island with scope `/embed` (Service-Worker-Allowed), the shell served
+// IMPL-6, S5): registration from a framed island with scope `/` (Service-Worker-Allowed; the island document is the embed origin root), the shell served
 // network-first with an offline fallback, content-hashed assets cache-first, and `/embed/api/*` never intercepted or
 // stored. islands-embed.mjs blocks service workers, because Playwright cannot route a service worker's script fetch
 // (and request interception bypasses service workers). Here nothing is routed: a test CONNECT proxy tunnels the reserved
@@ -49,7 +49,7 @@ const appPage=`<!doctype html><meta charset="utf-8"><title>SW fixture app</title
 <script>
 window.ready=0;window.mount=()=>{
   const nonce=btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(16)))).replace(/\\+/g,'-').replace(/\\//g,'_').replace(/=+$/,'');
-  const iframe=document.createElement('iframe');iframe.src=${JSON.stringify(EMBED)}+'/embed?client='+encodeURIComponent(${JSON.stringify(CLIENT)})+'#avatar.v1';
+  const iframe=document.createElement('iframe');iframe.src=${JSON.stringify(EMBED)}+'/?client='+encodeURIComponent(${JSON.stringify(CLIENT)})+'#avatar.v1';
   iframe.name='bindle-island;v=1;n='+nonce+';l=en;cs=light';iframe.style.cssText='border:0;width:40px;height:40px';
   iframe.addEventListener('load',()=>{const ch=new MessageChannel();ch.port1.onmessage=e=>{if(e.data.type==='ready')window.ready++;};
     iframe.contentWindow.postMessage({v:1,type:'bindle-island-init',nonce,part:'avatar',version:1,theme:{seq:0,tokens:{}},locale:'en',colorScheme:'light',props:{seq:0}},${JSON.stringify(EMBED)},[ch.port2]);},{once:true});
@@ -81,7 +81,7 @@ async function launch(name){
   if(name==='chromium'){const df=await disabledFeatures();return chromium.launch({proxy:proxyOption,args:['--ignore-certificate-errors','--enable-features=ThirdPartyStoragePartitioning',`--disable-features=${df.split(',').filter(x=>x!=='ThirdPartyStoragePartitioning').join(',')}`],ignoreDefaultArgs:[`--disable-features=${df}`]});}
   return firefox.launch({proxy:proxyOption,firefoxUserPrefs:{'network.cookie.cookieBehavior':5,'devtools.serviceWorkers.testing.enabled':true}});
 }
-const island=page=>page.frames().filter(frame=>frame.url().startsWith(EMBED+'/embed?')).at(-1);
+const island=page=>page.frames().filter(frame=>frame.url().startsWith(EMBED+'/?client=')).at(-1);
 // What the embed origin's caches hold, as paths (with the query for the shell).
 const cached=frame=>frame.evaluate(async()=>{const out=[];for(const name of await caches.keys())for(const request of await(await caches.open(name)).keys()){const url=new URL(request.url);out.push(url.pathname+url.search);}return out;});
 
@@ -91,10 +91,10 @@ for(const name of ['chromium','firefox'])test(`islands service worker in ${name}
   const context=await browser.newContext({ignoreHTTPSErrors:true}),page=await context.newPage(),errors=[];page.on('pageerror',e=>errors.push(e.message));
   await page.goto(APP+'/');await page.waitForFunction(()=>window.ready===1,null,{timeout:15000});
 
-  await t.test('the framed island registers /embed/sw.js with scope /embed (Service-Worker-Allowed), partitioned to this site',async()=>{
+  await t.test('the framed island registers /embed/sw.js with scope / (Service-Worker-Allowed), partitioned to this site',async()=>{
     const registration=await island(page).evaluate(async()=>{const r=await Promise.race([navigator.serviceWorker.ready,new Promise(ok=>setTimeout(()=>ok(null),10000))]);return r&&{scope:r.scope,script:r.active?.scriptURL};});
     assert.ok(registration,'the island registered its service worker after ready');
-    assert.equal(registration.scope,`${EMBED}/embed`);assert.equal(registration.script,`${EMBED}/embed/sw.js`);
+    assert.equal(registration.scope,`${EMBED}/`);assert.equal(registration.script,`${EMBED}/embed/sw.js`);
     assert.deepEqual(await page.evaluate(async()=>(await navigator.serviceWorker.getRegistrations()).length),0,'nothing registered for the app');
     // A first-party embed-origin document is another partition: it sees no registration.
     const own=await context.newPage();await own.goto(`${EMBED}/embed/sw.js`);
@@ -106,8 +106,8 @@ for(const name of ['chromium','firefox'])test(`islands service worker in ${name}
     const frame=island(page);
     assert.equal(await frame.evaluate(()=>navigator.serviceWorker.controller?.scriptURL),`${EMBED}/embed/sw.js`);
     const keys=await cached(frame);
-    assert.ok(keys.includes(`/embed?client=${encodeURIComponent(CLIENT)}`),JSON.stringify(keys));
-    for(const key of keys)assert.match(key,/^\/embed\?client=|^\/embed\/assets\/.+\.[0-9a-f]{8,}\.(?:m?js|css)$/,`only the shell and hashed assets: ${key}`);
+    assert.ok(keys.includes(`/?client=${encodeURIComponent(CLIENT)}`),JSON.stringify(keys));
+    for(const key of keys)assert.match(key,/^\/\?client=|^\/embed\/assets\/.+\.[0-9a-f]{8,}\.(?:m?js|css)$/,`only the shell and hashed assets: ${key}`);
     assert.ok(keys.some(key=>key.startsWith('/embed/assets/')),'hashed assets are cached');
   });
 

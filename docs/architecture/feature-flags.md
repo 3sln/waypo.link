@@ -83,9 +83,9 @@ Columns:
 | `SEMANTIC_SEARCH_ENABLED` | a | G A S P V | off | — | std | safe | **on** | Also needs the AI/Vectorize bindings (adapter capability). The global budget is unchanged. |
 | `DEVICE_AUTHORIZATION_ENABLED` | a | G A C | off | — | crit | safe | off | Its declaration uses the global component only (§3.6). |
 | `APP_METADATA_DISCOVERY_ENABLED` | a | G C | off | — | std | safe | off (Worker unset) | |
-| `RTC_SIGNALING_ENABLED` | a | G A | off | `EXTENSIONS_ENABLED`, `ARTEFACT_VERSIONS_ENABLED` | crit | safe | off | Stateful, no retention predicate. RTC signaling slot occupant, widening contract operations and same-provider sessions (RTC-d, not implemented). Narrowing is never gated. Provisional (rtc-signaling design §3.3). |
-| `RTC_FOREIGN_ENABLED` | a | G A | off | `RTC_SIGNALING_ENABLED`, `DIRECTORY_ENABLED` | crit | safe | off | Kill switch for the `rtc-signaling.v1` feature, foreign delivery and `/bindle/rtc` (RTC-e, not implemented). |
-| `RTC_TICKETS_ENABLED` | a | G A | off | `RTC_SIGNALING_ENABLED` | crit | safe | off | Minting `rtc-ticket` links only (RTC-d, not implemented); existing tickets admit until expiry or revocation. |
+| `SESSION_KINDS_ENABLED` | a | G A | off | `ARTEFACT_VERSIONS_ENABLED` | crit | safe | off | Session kinds and session handler approvals (signaling AMD-SG-I1, proposed, unsigned). Separate from `INTENT_APP_HANDLERS_ENABLED`, which requires `INTENT_LINKS_ENABLED`; session kinds are not tied to intent links (signaling §20.1.8). Approval removal is never gated. |
+| `SIGNALING_ENABLED` | a | G A | off | `EXTENSIONS_ENABLED`, `ARTEFACT_VERSIONS_ENABLED`, `SESSION_KINDS_ENABLED` | crit | safe | off | Stateful, no retention predicate. The built-in signaling resource, widening contract operations, owner widening and same-provider sessions (signaling rev 3.2, implemented locally, provisional). Narrowing is never gated. Replaces `RTC_SIGNALING_ENABLED` (retired 2026-10-28). |
+| `SIGNALING_FOREIGN_ENABLED` | a | G A | off | `SIGNALING_ENABLED`, `DIRECTORY_ENABLED` | crit | safe | off | Kill switch for the signaling declaration, foreign delivery and `/bindle/signaling`; control statements to held sessions are never gated. Replaces `RTC_FOREIGN_ENABLED` (retired 2026-10-28). |
 | `SIGNUP_ENABLED` | c | G R | off | — | crit | last-known | **on** | No subject exists yet. R uses the same trusted `cf.country` as admission. |
 | `PAID_SIGNUP_ENABLED` | c | G R | off | valid env billing configuration | crit | last-known | **on** | |
 | `WAITLIST_ENABLED` | c | G R | off | — | std | last-known | **on** | |
@@ -99,7 +99,7 @@ Columns:
 | `BROWSER_AUTOMATION_ENABLED` | b | — | **on** | — | — | — | env (on; `false` disables) | Kill switch for browser automation (wargame 3, provisional). Off makes every automation operation except revoke `not_found`; revoke is never gated. |
 | `BILLING_ENABLED` | b | — | off | — | — | — | env (on) | Polar secrets. Per-user billing would corrupt entitlement. |
 | `MAIL_ENABLED`, `PUSH_ENABLED` | b | — | off | — | — | — | env | Bindings or secrets. |
-| `RTC_TURN_ENABLED` | b | — | off | `RTC_SIGNALING_ENABLED` | — | — | env | Built-in `ice-relay/v1` relay occupant (RTC-f, implemented locally, provisional). Requires signaling (review follow-up, provisional): relay credentials exist only for live signaling legs; the occupant checks both flags itself (class b `requires` is not evaluated from env). Also needs a TURN adapter and the external `RTC_RELAY_SPEND` authority (none ships). New, not a rename of retired `BEAM_TURN_ENABLED`; stays off until the relay-spend budget gate. |
+| `SIGNALING_TURN_ENABLED` | b | — | off | `SIGNALING_ENABLED` | — | — | env | Built-in `ice-relay/v1` relay resource (signaling §16.7, implemented locally, provisional). The resource checks both flags itself (class b `requires` is not evaluated from env). Also needs a TURN adapter and the external `SIGNALING_RELAY_SPEND` authority enforcing a per-owner byte cap; none ships. Replaces `RTC_TURN_ENABLED` (retired 2026-10-28). |
 | `FEDERATION_REFRESH_ENABLED` | b | — | on | — | — | — | env | Network and protocol metadata. No rollout use. |
 | `FEDERATION_ENTRY_ENABLED` | b | — | off | — | — | — | env | Selects a binding and embed-origin routing. |
 | `ONBOARDING_ENABLED` | b | — | off | — | — | — | env | Needs the `ONBOARDING_KEY` secret. |
@@ -542,9 +542,9 @@ All 62 entries in `packages/flags/registry.mjs` are listed below. Class **a** is
 | `ORG_BREAK_GLASS_ENABLED` | a | false | unset | false |
 | `ORG_RELATIONS_ENABLED` | a | false | unset | false |
 | `ORG_FOREIGN_RELATIONS_ENABLED` | a | false | unset | false |
-| `RTC_SIGNALING_ENABLED` | a | false | unset | false |
-| `RTC_FOREIGN_ENABLED` | a | false | unset | false |
-| `RTC_TICKETS_ENABLED` | a | false | unset | false |
+| `SESSION_KINDS_ENABLED` | a | false | unset | false |
+| `SIGNALING_ENABLED` | a | false | unset | false |
+| `SIGNALING_FOREIGN_ENABLED` | a | false | unset | false |
 | `SIGNUP_ENABLED` | c | false | true | false |
 | `PAID_SIGNUP_ENABLED` | c | false | true | false |
 | `WAITLIST_ENABLED` | c | false | true | false |
@@ -564,7 +564,7 @@ All 62 entries in `packages/flags/registry.mjs` are listed below. Class **a** is
 | `BILLING_ENABLED` | b | false | true | false |
 | `MAIL_ENABLED` | b | false | true | false |
 | `PUSH_ENABLED` | b | false | true | false |
-| `RTC_TURN_ENABLED` | b | false | unset | false |
+| `SIGNALING_TURN_ENABLED` | b | false | unset | false |
 | `FEDERATION_REFRESH_ENABLED` | b | true | unset | true |
 | `BROWSER_AUTOMATION_ENABLED` | b | true | unset | true |
 | `FEDERATION_ENTRY_ENABLED` | b | false | unset | false |

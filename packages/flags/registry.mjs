@@ -75,15 +75,19 @@ const rows=[
  // certificates and events. Also needs the foreign-issuer allowlist (R2-M6). Local narrowing is never gated; outbound
  // events stay queued while it is off. ORG-11 transport is not implemented, so foreign counterparts are refused today.
  ['ORG_FOREIGN_RELATIONS_ENABLED','a','G A',{risk:'crit',requires:['ORG_RELATIONS_ENABLED'],stateful:true,retainExisting:false,retentionReason:'A kill switch: cross-provider relation egress and foreign redemptions stop at once; local narrowing is never gated and outbound events stay queued.',envParse:'boolean'}],
- // RTC signaling extension (docs/architecture/rtc-signaling.md §3.3; RTC-a/b/c implemented, flags off). Gates the slot
- // occupant declaration, contract widening operations, owner widening settings and same-provider sessions (RTC-d).
- // Narrowing (unregister, end, revoke, block, mute, revoke ticket, decline, send of end/cancel) is never gated.
- ['RTC_SIGNALING_ENABLED','a','G A',{risk:'crit',requires:['EXTENSIONS_ENABLED','ARTEFACT_VERSIONS_ENABLED'],stateful:true,retainExisting:false,retentionReason:'Existing sessions, endpoints and approvals stay readable, narrowable and endable; only new registrations, sessions and widening stop. Narrowing is never gated.',envParse:'boolean'}],
- // Kill switch for the rtc-signaling.v1 feature declaration, outbound foreign delivery and the /bindle/rtc endpoint
- // (uniform 404 when off; RTC-e). Local narrowing and control statements to already-held sessions are never gated.
- ['RTC_FOREIGN_ENABLED','a','G A',{risk:'crit',requires:['RTC_SIGNALING_ENABLED','DIRECTORY_ENABLED'],stateful:true,retainExisting:false,retentionReason:'A kill switch: cross-provider signaling stops at once; same-provider sessions and local narrowing are unaffected.',envParse:'boolean'}],
- // Minting rtc-ticket links (RTC-d). Existing tickets keep admitting until they expire or are revoked; revoking is never gated.
- ['RTC_TICKETS_ENABLED','a','G A',{risk:'crit',requires:['RTC_SIGNALING_ENABLED'],stateful:true,retainExisting:false,retentionReason:'Only minting stops; existing tickets admit until they expire, are exhausted or are revoked, and revocation is never gated.',envParse:'boolean'}],
+ // Signaling rev 3.2 (docs/spec/extensions/signaling.md, Appendix C.2; implemented locally, flags off, provisional and
+ // unsigned). SESSION_KINDS_ENABLED gates session kinds and session handler approvals (AMD-SG-I1); it is separate from
+ // INTENT_APP_HANDLERS_ENABLED, which requires INTENT_LINKS_ENABLED, because session kinds are not tied to the
+ // intent-links extension (§20.1.8): splitting that requirement would change intent-link routing semantics, while a
+ // dedicated flag keeps the authority record (approvals) independently reviewable and killable.
+ ['SESSION_KINDS_ENABLED','a','G A',{risk:'crit',requires:['ARTEFACT_VERSIONS_ENABLED'],stateful:true,retainExisting:false,retentionReason:'Approvals stay readable and removable (removal is narrowing and never gated); only new approvals and auto-connect stop.',envParse:'boolean'}],
+ // SIGNALING_ENABLED gates the built-in resource, contract widening operations, owner widening settings and new
+ // same-provider sessions. Narrowing (unregister, end, revoke, block, decline, send of end/cancel/decline, approval
+ // removal, pairing removal, offer revocation) is never gated. Never INTENT_LINKS_ENABLED (§20.1.8).
+ ['SIGNALING_ENABLED','a','G A',{risk:'crit',requires:['EXTENSIONS_ENABLED','ARTEFACT_VERSIONS_ENABLED','SESSION_KINDS_ENABLED'],stateful:true,retainExisting:false,retentionReason:'Existing sessions, endpoints, offers, pairings and approvals stay readable, narrowable and endable; only new registrations, sessions and widening stop. Narrowing is never gated.',envParse:'boolean'}],
+ // Kill switch for the signaling declaration, outbound foreign delivery and the /bindle/signaling endpoint (uniform 404
+ // when off). Local narrowing and control statements to already-held sessions are never gated (§9.3).
+ ['SIGNALING_FOREIGN_ENABLED','a','G A',{risk:'crit',requires:['SIGNALING_ENABLED','DIRECTORY_ENABLED'],stateful:true,retainExisting:false,retentionReason:'A kill switch: cross-provider signaling stops at once; same-provider sessions and local narrowing are unaffected.',envParse:'boolean'}],
  ['SIGNUP_ENABLED','c','G R',{risk:'crit',outage:'last-known'}],
  ['PAID_SIGNUP_ENABLED','c','G R',{risk:'crit',outage:'last-known',capabilities:['billing-configuration']}],
  ['WAITLIST_ENABLED','c','G R',{outage:'last-known'}],
@@ -103,10 +107,10 @@ const rows=[
  ['STORAGE_WRITE_ENABLED','b','',{safe:true,envParse:'boolean',envDefaults:{node:'true'}}],
  ['REDIRECT_EXTENSION_ENABLED','b','',{requires:['BILLING_ENABLED'],envParse:'boolean'}],
  ['BILLING_ENABLED','b','',{}],['MAIL_ENABLED','b','',{}],['PUSH_ENABLED','b','',{}],
- // The built-in ice-relay occupant (RTC-f). A new flag: BEAM_TURN_ENABLED was retired with Beam, not renamed. Hosted relay
- // stays off until an enforceable relay-spend budget gate is met (docs/architecture/rtc-signaling.md §8.3). It requires
- // RTC_SIGNALING_ENABLED (review follow-up): relay credentials exist only for live legs of signaling sessions.
- ['RTC_TURN_ENABLED','b','',{requires:['RTC_SIGNALING_ENABLED'],envParse:'boolean'}],
+ // The built-in ice-relay resource (signaling §16.7; RTC-f). Hosted relay stays off until an enforceable per-owner
+ // byte cap from provider usage data exists (§16.7, AMD-SG-S2). It requires SIGNALING_ENABLED: relay credentials exist
+ // only for live legs of signaling sessions.
+ ['SIGNALING_TURN_ENABLED','b','',{requires:['SIGNALING_ENABLED'],envParse:'boolean'}],
  ['FEDERATION_REFRESH_ENABLED','b','',{safe:true,envDefault:true,envParse:'not-false'}],
  // Browser automation kill switch (wargame 3). It shipped always-on, so it stays default on; env 'false' refuses tool
  // discovery, grants, prepare, confirm and invoke. Revoking a session grant is never gated (the safe direction).
@@ -131,7 +135,13 @@ export const RETIRED_FLAGS=freeze({
  BEAM_TURN_ENABLED:{retiredOn:'2026-10-26',reason:'Beam removed from the core'},
  BEAM_STUN_ENABLED:{retiredOn:'2026-10-26',reason:'Beam removed from the core'},
  // Peer messaging leaves the core (Parlay). Core links and delegation moved to LINKS_ENABLED (env alias kept past BB-CUT; removal is open).
- BINDLEBOX_ENABLED:{retiredOn:'2026-10-26',reason:'Renamed to LINKS_ENABLED; the messaging app reads its own switch',replacement:'LINKS_ENABLED'}
+ BINDLEBOX_ENABLED:{retiredOn:'2026-10-26',reason:'Renamed to LINKS_ENABLED; the messaging app reads its own switch',replacement:'LINKS_ENABLED'},
+ // RTC signaling replaced by generic signaling rev 3.2 (signaling Appendix C.2; provisional, unsigned). No RTC flag had
+ // an envDefault or a deployment setting (Appendix C evidence), so nothing is aliased.
+ RTC_SIGNALING_ENABLED:{retiredOn:'2026-10-28',reason:'Renamed with the signaling rev 3.2 code',replacement:'SIGNALING_ENABLED'},
+ RTC_FOREIGN_ENABLED:{retiredOn:'2026-10-28',reason:'Renamed with the signaling rev 3.2 code',replacement:'SIGNALING_FOREIGN_ENABLED'},
+ RTC_TICKETS_ENABLED:{retiredOn:'2026-10-28',reason:'Ticket links withdrawn with the link basis (signaling rev 3, §5.3)'},
+ RTC_TURN_ENABLED:{retiredOn:'2026-10-28',reason:'Renamed with the signaling rev 3.2 code',replacement:'SIGNALING_TURN_ENABLED'}
 });
 export function getFlag(name){if(typeof name!=='string'||!Object.hasOwn(FLAGS,name))throw Object.assign(new TypeError(`Unknown flag: ${String(name)}`),{code:'unknown_flag'});return FLAGS[name];}
 export function validateRegistry(entries=FLAGS){

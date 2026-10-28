@@ -28,6 +28,24 @@ const LIVE=['configuring','active','degraded'],SERVING=['active','degraded'],PAU
 export const connectionStatus=state=>LIVE.includes(state)?'active':state==='disconnected'?'disconnected':'suspended';
 export const connectionState=r=>r?.state??(r?.status==='active'?'active':'disconnected');
 const valid=r=>r?.kind==='app-connection'&&r.provider==='app'&&Number.isSafeInteger(r.generation)&&r.generation>0&&(r.state===undefined||CONNECTION_STATES.includes(r.state)&&r.status===connectionStatus(r.state));
+/** The deterministic connection id of (owner, client): one record per app per account, reused across reconnects. */
+export async function appConnectionId(owner,clientId){const encoded=await digest(globalThis.crypto,`app-connection/v1\0${owner}\0${clientId}`);const hex=[...atob(encoded.replace(/-/g,'+').replace(/_/g,'/'))].slice(0,16).map(c=>c.charCodeAt(0).toString(16).padStart(2,'0')).join('');return `${hex.slice(0,8)}-${hex.slice(8,12)}-8${hex.slice(13,16)}-a${hex.slice(17,20)}-${hex.slice(20,32)}`;}
+/**
+ * The liveness of one app's connection, read in the caller's transaction `tx` ({get}) (signaling §5.4 "its connection
+ * is live", §14.2, §20.1.4): {state, generation}. `state` is `live` (active, and not fenced by an account suspension),
+ * `paused` (suspended, manifest-invalid or fenced), `ended` (disconnected) or `absent` (never connected). `generation` is the
+ * connection generation that the app's tokens carry (`check`): every disconnect, reconnect, pause, resume or re-setup
+ * changes it, so a consumer that records it can tell state of an earlier connection from the current one.
+ */
+export async function appConnectionState(tx,owner,clientId){
+ if(typeof clientId!=='string'||!clientId)return {state:'ended',generation:null};
+ const r=await tx.get(prefix+await appConnectionId(owner,clientId));
+ if(r===undefined||r===null)return {state:'absent',generation:null};
+ if(!valid(r)||r.owner!==owner||r.clientId!==clientId||r.status==='disconnected')return {state:'ended',generation:null};
+ if(r.status!=='active')return {state:'paused',generation:r.generation};
+ if(r.fence!==undefined){const lifecycle=await tx.get(LIFECYCLE_STATE);if(BLOCKED.includes(lifecycle?.phase)||r.fence!==epochOf(lifecycle))return {state:'paused',generation:r.generation};}
+ return {state:'live',generation:r.generation};
+}
 // Extensions rev 3.2 (§3–§6): the owner's value of each provider-consumable field of a recognized fragment is one ordered
 // record per field (entries are "seats": a connection, optionally a brokered record, in owner order). Provider features
 // consume those fields only through grants (feature records) that the owner enables. Outbox rows are the transactional
@@ -86,8 +104,8 @@ export class AppConnections{
   * (packages/app/domains/provider-features.mjs), read on every feature operation so suspension is immediate.
   * `builtins`: provider-authored built-in integrations by id -> {name, manifest}. `severed(owner)`: optional hook run
   * after a legacy disconnect that wrote cascade rows; its failure never undoes the committed disconnect. */
- constructor({metadata,origin,config,clock=()=>Date.now(),fields=RECOGNIZED_FIELDS,declarations=async()=>({manifest:{extensions:[]},blocked:[]}),builtins={},severed,subjectDeleted,uuid=()=>crypto.randomUUID()}){Object.assign(this,{metadata,origin,config,clock,fieldPins:fields,declarations,builtins,severed,subjectDeleted,uuid});}
- async id(owner,clientId){const encoded=await digest(globalThis.crypto,`app-connection/v1\0${owner}\0${clientId}`);const hex=[...atob(encoded.replace(/-/g,'+').replace(/_/g,'/'))].slice(0,16).map(c=>c.charCodeAt(0).toString(16).padStart(2,'0')).join('');return `${hex.slice(0,8)}-${hex.slice(8,12)}-8${hex.slice(13,16)}-a${hex.slice(17,20)}-${hex.slice(20,32)}`;}
+ constructor({metadata,origin,config,clock=()=>Date.now(),fields=RECOGNIZED_FIELDS,declarations=async()=>({manifest:{extensions:[]},blocked:[]}),builtins={},severed,ended,subjectDeleted,uuid=()=>crypto.randomUUID()}){Object.assign(this,{metadata,origin,config,clock,fieldPins:fields,declarations,builtins,severed,ended,subjectDeleted,uuid});}
+ async id(owner,clientId){return appConnectionId(owner,clientId);}
  async binding(owner,clientId){const id=await this.id(owner,clientId);const r=await this.metadata.get(prefix+id);if(r&&!valid(r))fail('unavailable','Invalid connection record.',503);return {id,generation:r?.generation??0,notificationGeneration:r?.notifications?.generation??1};}
  async registerBrowser(owner){return this.register(owner,{id:`${this.origin}/automation/browser`,name:'Browser automation'},undefined,{transport:'browser',provenance:{kind:'owner-browser-consent'}});}
  /** `trusted.integration` ({kind:'external'|'built-in', snapshot, builtin?}) is set only by the X4 connect paths: it
@@ -141,8 +159,8 @@ export class AppConnections{
   const out=await this.metadata.transaction(async tx=>{
    const r=await tx.get(prefix+id);if(!valid(r)||r.owner!==owner)fail('not_found','App connection not found.',404);
    if(expectedGeneration!==undefined&&expectedGeneration!==r.generation)fail('connection_stale','The connection changed. Reload and try again.',409);
-   let cascaded=false;
-   if(r.status!=='disconnected'){
+   let cascaded=false,ended=false;
+   if(r.status!=='disconnected'){ended=true;
     if(r.generation>=Number.MAX_SAFE_INTEGER)fail('unavailable','Connection generation unavailable.',503);
     const migrated=r.state!==undefined;r.severanceReason=reason;r.status='disconnected';r.generation++;r.disconnectedAt=this.clock();
     if(migrated){r.state='disconnected';r.stateChangedAt=r.disconnectedAt;}
@@ -154,9 +172,12 @@ export class AppConnections{
     }
    }
    if(reason==='uninstalled'&&r.severanceReason!==reason){r.severanceReason=reason;await tx.put(prefix+id,r);}
-   return {result:{disconnected:true,app:this.view(r)},cascaded};
+   return {result:{disconnected:true,app:this.view(r)},cascaded,ended:ended?r.clientId:null};
   });
   if(out.cascaded&&typeof this.severed==='function')try{await this.severed(owner);}catch{/* Durable cascade rows are retried. */}
+  // Connection end, whatever the record's shape or INTEGRATIONS_ENABLED (signaling §14.2, §20.1.4 clearing). Its
+  // failure never undoes the disconnect: the consumer re-checks the connection generation on every use and sweeps.
+  if(out.ended&&typeof this.ended==='function')try{await this.ended(owner,out.ended);}catch{/* the consumer's own sweep retries */}
   return out.result;
  }
 

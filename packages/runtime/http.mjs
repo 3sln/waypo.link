@@ -33,8 +33,11 @@ export default {
    const route={request,env,execution,url,local};let response;
    response=await stage('edge',route);if(response)return response.passthrough??response;
    if(url.origin!==env.APP_ORIGIN)return json({error:'invalid_origin',message:'Use the configured account domain.'},403);
-   // Island documents and assets are served only on the embed origin, never under the app origin (review M3).
-   if(url.pathname==='/embed'||url.pathname.startsWith('/embed/'))return json({error:'not_found'},404);
+   // Island documents and assets are served only on the embed origin, never under the app origin (review M3). The
+   // check runs on the percent-decoded, lowercased path so `/embed%2F…`, `/EMBED/…` and `/%65mbed/…` cannot reach an
+   // asset store that decodes or folds case; malformed percent-encoding is refused outright (review L1).
+   let decoded;try{decoded=decodeURIComponent(url.pathname).toLowerCase();}catch{return json({error:'not_found'},404);}
+   if(decoded==='/embed'||decoded.startsWith('/embed/')||decoded.startsWith('/embed\\'))return json({error:'not_found'},404);
    const path=url.pathname;const mutation=!['GET','HEAD','OPTIONS'].includes(request.method);
    Object.assign(route,{path,mutation});
    response=await stage('public',route);if(response)return response.passthrough??response;

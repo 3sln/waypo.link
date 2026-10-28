@@ -135,10 +135,8 @@ export function createIslandWorker({post,storeFactory=openStore,crypto=globalThi
     scheme:value=>{if(value==='light'||value==='dark')scheme=value;},
     bucket:value=>{if(validBucket(value)){buckets.set(instance,value);election?.send({type:'hello',instance,avatarBucket:value});if(election?.leading)receive({type:'hello',instance,avatarBucket:value});}},
     render:async({subjects,bucket})=>{if(!Array.isArray(subjects)||subjects.length>9||!validBucket(bucket))throw new TypeError('render');return Promise.all(subjects.map(s=>tile(typeof s==='string'?s:null,bucket)));},
-    createEntry:({prepare,delivery})=>createEntry({...scope(),key,prepare,delivery:delivery==='embed-fedcm'?'embed-fedcm':'embed-popup',fetch}),
+    createEntry:({prepare})=>createEntry({...scope(),key,prepare,fetch}),
     createRequestEntry:({prepare,subjectConstraint})=>createRequestEntry({...scope(),key,prepare,subjectConstraint,fetch}),
-    /** The FedCM `params.proof`: a fresh single-use nonce from the embed API, signed with the frame key for this entry. */
-    async fedcmProof({entry,assertUrl}){if(typeof entry!=='string'||new URL(assertUrl).origin!==config.issuer)throw new TypeError('fedcm');const {nonce}=await api.nonce();return key.fedcmProof({assertUrl,entry,nonce});},
     proof:({entry,challenge})=>key.embedProof({issuer:config.issuer,entry,challenge}),
     async redeem({claim,delivered}){const value=await api.claim(claim);if(typeof value.credential!=='string'||!value.credential)throw new TypeError('claim');const now=clock();
       await saveCredential(store,scope(),{id:randomId(crypto),credential:value.credential,subject:null,delivered:delivered===true,createdAt:now,pendingUntil:now+Math.min(Number(value.expires_in)||600,600)*1000});

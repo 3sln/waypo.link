@@ -62,7 +62,7 @@ test('endpoints: issuer origin, audience distinctness (every colliding entry inv
  const relations=(accept,join)=>({spec:EXT.relations,options:{accept_endpoint:accept,join_endpoint:join}});
  assert.deepEqual(keys(read$([relations(ISS+'/a',ISS+'/a')])),[],'audience endpoints differ within an entry');
  assert.deepEqual(keys(read$([relations(ISS+'/bindle/rpc',ISS+'/j')])),[],'an audience endpoint equal to a flat one is invalid');
- const r=read$([relations(ISS+'/x',ISS+'/j'),{spec:EXT.rtcSignalingLegacy,options:{endpoint:ISS+'/x',max_leg_certificate_seconds:600}},{spec:EXT.directory,options:{directory_url:ISS+'/d'}},{spec:EXT.artefactVersions}]);
+ const r=read$([relations(ISS+'/x',ISS+'/j'),{spec:EXT.signaling,options:{endpoint:ISS+'/x',max_leg_certificate_seconds:600,profiles:['data','webrtc']}},{spec:EXT.directory,options:{directory_url:ISS+'/d'}},{spec:EXT.artefactVersions}]);
  assert.deepEqual(keys(r).sort(),[EXT.artefactVersions,EXT.directory].sort(),'both colliding entries are invalid');assert.deepEqual(r.absent.map(a=>a.reason),['audience','audience']);
  const shared=read$([{spec:EXT.appRemoval,options:{jwks_uri:ISS+'/jwks',return_uri:ISS+'/r'}},{spec:EXT.integrations},{spec:EXT.brokeredResources,options:{jwks_uri:ISS+'/jwks',preferences_contract:'https://3sln.me/artefacts/contracts/preferences/v2'}}]);
  assert.deepEqual(keys(shared).sort(),[EXT.appRemoval,EXT.brokeredResources,EXT.integrations].sort(),'one key set serves two extensions');

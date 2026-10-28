@@ -18,11 +18,10 @@ export const EXT=Object.freeze({
  fedcm:B('fedcm'),intents:B('intents'),intentLinks:B('intent-links'),clientIdMetadata:B('client-id-metadata'),
  directory:B('directory'),organizations:B('organizations'),keyDelegation:B('key-delegation'),relations:B('relations'),portability:B('portability'),
  appRemoval:B('app-removal'),subjectDeleted:B('subject-deleted'),artefactVersions:B('artefact-versions'),embeddedComponents:B('embedded-components'),
- // Interim (extensions §2.8 maps `rtc-signaling.v1` to "none (superseded by signaling)"). The legacy RTC code still
- // implements rtc-signaling.v1 behind its default-off flags until signaling Appendix C replaces it; this placeholder
- // identity carries its two former members so the legacy provider-to-provider path keeps working meanwhile.
- // TODO(signaling Appendix C.1/C.2): remove with packages/rtc.
- rtcSignalingLegacy:B('rtc-signaling'),
+ // Signaling rev 3.2 (docs/spec/extensions/signaling.md §3.1; extensions §2.8 row `signaling.v1`). Implemented locally
+ // behind SIGNALING_ENABLED and SIGNALING_FOREIGN_ENABLED (default off). The interim `…/extensions/rtc-signaling/v1`
+ // identity is retired with packages/rtc (Appendix C.1/C.2); it was never published.
+ signaling:B('signaling'),
 });
 /** 3sln.me-published extensions whose single provider feature (extensions §4.2) consumes a provider-only field. */
 export const PROVIDER_EXT=Object.freeze({
@@ -56,7 +55,8 @@ export const BINDLE_DESCRIPTORS=Object.freeze([
  // Embedded components (extensions §2.7, EXT3-29 provisional). The components profile's nested `parts` map cannot be
  // an option (options are atomic, extensions §2.4), so each part is the value `<name>/<version>`.
  d(EXT.embeddedComponents,'Embedded components','Show your account, sign-in and request controls inside the apps you use.',{embed_origin:url('Component origin',{endpoint:'public'}),protocol:{title:'Protocol versions',type:'integer',minimum:1,maximum:64,cardinality:{min:1,max:8}},parts:choice('Parts',['avatar/1','account-switcher/1','sign-in/1','request/1'],{min:1,max:4}),credential_binding:choice('Credential binding',['key-binding.v1'],{min:0,max:4}),manage_url:url('Account management page',{endpoint:'public',min:0})}),
- d(EXT.rtcSignalingLegacy,'Real-time connections (legacy)','Direct connections between devices, for the purposes you approve.',{endpoint:url('Session endpoint',{endpoint:'audience'}),max_leg_certificate_seconds:int('Leg certificate lifetime',120,900)}),
+ // Signaling (extensions §2.3 example; signaling §3.1): `endpoint` is an audience endpoint option.
+ d(EXT.signaling,'Signaling','Direct connections between your devices and other people\'s, for the kinds you approve.',{endpoint:url('Session endpoint',{endpoint:'audience'}),max_leg_certificate_seconds:int('Leg certificate lifetime',120,900),profiles:choice('Profiles',['data','webrtc'],{min:1,max:2})},'https://spec.bindle.example/extensions/signaling/v1/spec.html'),
 ].map(value=>deepFreeze(value)));
 /** 3sln.me provider-feature descriptors (extensions §11.1). Their user-facing text is the feature's consent text. */
 export const PROVIDER_DESCRIPTORS=Object.freeze([
@@ -69,7 +69,7 @@ export const PREREQUISITES=Object.freeze({
  [EXT.brokeredResources]:Object.freeze([EXT.integrations]),[EXT.fedcm]:Object.freeze([EXT.authorizationEntry]),
  [EXT.subjectDeleted]:Object.freeze([EXT.integrations]),[EXT.intentLinks]:Object.freeze([EXT.artefactVersions]),
  [EXT.portability]:Object.freeze([EXT.directory]),
- [EXT.rtcSignalingLegacy]:Object.freeze([EXT.directory,EXT.artefactVersions]),
+ [EXT.signaling]:Object.freeze([EXT.directory,EXT.artefactVersions]),
 });
 /** Flat OAuth/core members that receive audience-bound requests (extensions §2.4 distinctness). */
 export const FLAT_AUDIENCE_ENDPOINTS=Object.freeze(['authorization_request_endpoint','token_endpoint','rpc_endpoint','revocation_endpoint','device_authorization_endpoint']);

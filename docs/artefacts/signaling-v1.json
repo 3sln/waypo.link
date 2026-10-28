@@ -1,0 +1,931 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spec.bindle.example/contracts/signaling/v1",
+  "title": "Signaling v1",
+  "description": "The signaling/v1 contract of docs/spec/extensions/signaling.md section 10 (draft revision 3.2, provisional, unsigned). Validates the contract method/args projection of a Bindle RPC envelope; the built-in resource applies every rule of the specification (exact members, bounds, endpoint binding, live grant and session handler approval). Shipped by the reference provider as a first-party reviewed document while SIGNALING_ENABLED and EXTENSIONS_ENABLED are on. Offer tokens and leg certificates are never retained in an RPC journal (section 10.2).",
+  "x-bindle-brokerable": false,
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "const": "register"
+        },
+        "args": {
+          "type": "object",
+          "properties": {
+            "kinds": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "maxLength": 256
+              },
+              "minItems": 1,
+              "maxItems": 16
+            },
+            "label": {
+              "type": "string",
+              "maxLength": 64
+            },
+            "push": {
+              "type": "object"
+            }
+          },
+          "required": [
+            "kinds"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "method",
+        "args"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "const": "unregister"
+        },
+        "args": {
+          "type": "object",
+          "properties": {
+            "endpoint": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "endpoint_secret": {
+              "type": "string",
+              "maxLength": 128
+            }
+          },
+          "required": [
+            "endpoint"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "method",
+        "args"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "const": "endpoints"
+        },
+        "args": {
+          "type": "object",
+          "properties": {
+            "endpoint": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "endpoint_secret": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "pairing": {
+              "type": "string",
+              "maxLength": 64
+            }
+          },
+          "required": [],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "method",
+        "args"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "const": "open"
+        },
+        "args": {
+          "type": "object",
+          "properties": {
+            "endpoint": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "endpoint_secret": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "to": {
+              "type": [
+                "string",
+                "object"
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "maxLength": 256
+            },
+            "profile": {
+              "enum": [
+                "data",
+                "webrtc"
+              ]
+            },
+            "params": {
+              "type": "object"
+            },
+            "delegate": {
+              "type": "object"
+            },
+            "basis": {
+              "type": "object"
+            },
+            "target": {
+              "type": "string",
+              "maxLength": 128
+            }
+          },
+          "required": [
+            "endpoint",
+            "to",
+            "kind",
+            "profile",
+            "params",
+            "delegate"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "method",
+        "args"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "const": "offer"
+        },
+        "args": {
+          "type": "object",
+          "properties": {
+            "endpoint": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "endpoint_secret": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "kind": {
+              "type": "string",
+              "maxLength": 256
+            },
+            "profile": {
+              "enum": [
+                "data",
+                "webrtc"
+              ]
+            },
+            "principals": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "iss": {
+                    "type": "string",
+                    "maxLength": 2048
+                  },
+                  "sub": {
+                    "type": "string",
+                    "maxLength": 64
+                  }
+                },
+                "required": [
+                  "iss",
+                  "sub"
+                ],
+                "additionalProperties": false
+              },
+              "minItems": 1,
+              "maxItems": 16
+            },
+            "uses": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 10000
+            },
+            "expires_in": {
+              "type": "integer",
+              "minimum": 10,
+              "maximum": 7776000
+            }
+          },
+          "required": [
+            "endpoint",
+            "kind",
+            "profile",
+            "expires_in"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "method",
+        "args"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "const": "revoke_offer"
+        },
+        "args": {
+          "type": "object",
+          "properties": {
+            "endpoint": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "endpoint_secret": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "offers": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "maxLength": 64
+              },
+              "maxItems": 64
+            }
+          },
+          "required": [
+            "endpoint"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "method",
+        "args"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "const": "claim"
+        },
+        "args": {
+          "type": "object",
+          "properties": {
+            "endpoint": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "endpoint_secret": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "sid": {
+              "type": "string",
+              "maxLength": 43
+            },
+            "outcome": {
+              "enum": [
+                "accept",
+                "decline"
+              ]
+            },
+            "delegate": {
+              "type": "object"
+            }
+          },
+          "required": [
+            "endpoint",
+            "sid",
+            "outcome",
+            "delegate"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "method",
+        "args"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "const": "send"
+        },
+        "args": {
+          "type": "object",
+          "properties": {
+            "endpoint": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "endpoint_secret": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "sid": {
+              "type": "string",
+              "maxLength": 43
+            },
+            "messages": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "maxLength": 40960
+              },
+              "minItems": 1,
+              "maxItems": 32
+            }
+          },
+          "required": [
+            "endpoint",
+            "sid",
+            "messages"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "method",
+        "args"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "const": "renew"
+        },
+        "args": {
+          "type": "object",
+          "properties": {
+            "endpoint": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "endpoint_secret": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "sid": {
+              "type": "string",
+              "maxLength": 43
+            }
+          },
+          "required": [
+            "endpoint",
+            "sid"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "method",
+        "args"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "const": "listen"
+        },
+        "args": {
+          "type": "object",
+          "properties": {
+            "endpoint": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "endpoint_secret": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "cursor": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "wait": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 25
+            }
+          },
+          "required": [
+            "endpoint"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "method",
+        "args"
+      ],
+      "additionalProperties": false
+    }
+  ],
+  "$defs": {
+    "jwk": {
+      "type": "object",
+      "properties": {
+        "kty": {
+          "type": "string"
+        },
+        "crv": {
+          "type": "string"
+        },
+        "x": {
+          "type": "string"
+        },
+        "y": {
+          "type": "string"
+        }
+      }
+    },
+    "key": {
+      "type": "object",
+      "properties": {
+        "kid": {
+          "type": "string"
+        },
+        "use": {
+          "type": "string"
+        },
+        "alg": {
+          "type": "string"
+        },
+        "jwk": {
+          "$ref": "#/$defs/jwk"
+        },
+        "state": {
+          "type": "string"
+        }
+      }
+    },
+    "peer_keys": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/key"
+      },
+      "maxItems": 8
+    },
+    "kind": {
+      "type": "object",
+      "properties": {
+        "artefact": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "version": {
+          "type": "integer"
+        },
+        "digest": {
+          "type": "string",
+          "maxLength": 64
+        }
+      }
+    },
+    "pairing": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "state": {
+          "enum": [
+            "pending",
+            "awaiting_confirmation",
+            "live",
+            "deleted"
+          ]
+        },
+        "kind": {
+          "$ref": "#/$defs/kind"
+        },
+        "side": {
+          "enum": [
+            "local",
+            "peer"
+          ]
+        },
+        "opens": {
+          "enum": [
+            "local",
+            "peer",
+            "both"
+          ]
+        },
+        "peer": {
+          "type": "object",
+          "properties": {
+            "client_id": {
+              "type": "string"
+            },
+            "principal": {
+              "type": "object",
+              "properties": {
+                "iss": {
+                  "type": "string"
+                },
+                "sub": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "expires_at": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      }
+    },
+    "event": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "invite",
+            "message",
+            "state",
+            "pairing"
+          ]
+        },
+        "sid": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "seq": {
+          "type": "integer"
+        },
+        "certificate": {
+          "type": "string"
+        },
+        "invite": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        },
+        "control": {
+          "type": "string"
+        },
+        "pairing": {
+          "$ref": "#/$defs/pairing"
+        },
+        "projection": {
+          "type": "object",
+          "properties": {
+            "initiator": {
+              "type": "object",
+              "properties": {
+                "iss": {
+                  "type": "string",
+                  "maxLength": 2048
+                },
+                "sub": {
+                  "type": "string",
+                  "maxLength": 64
+                }
+              },
+              "required": [
+                "iss",
+                "sub"
+              ],
+              "additionalProperties": false
+            },
+            "handle": {
+              "type": "string"
+            },
+            "origin": {
+              "type": "string"
+            },
+            "client_id": {
+              "type": "string"
+            },
+            "feature": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "reported_by": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "kind": {
+              "$ref": "#/$defs/kind"
+            },
+            "profile": {
+              "type": "string"
+            },
+            "params": {
+              "type": "object",
+              "properties": {
+                "offer": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "answer": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              }
+            },
+            "context": {
+              "type": [
+                "object",
+                "null"
+              ],
+              "maxProperties": 8,
+              "additionalProperties": {
+                "type": [
+                  "string",
+                  "integer",
+                  "boolean",
+                  "object"
+                ],
+                "properties": {
+                  "iss": {
+                    "type": "string"
+                  },
+                  "sub": {
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "basis": {
+              "enum": [
+                "self",
+                "pairing",
+                "offer"
+              ]
+            },
+            "auto_connect": {
+              "type": "boolean"
+            },
+            "offer_match": {
+              "type": "boolean"
+            },
+            "paired": {
+              "type": "boolean"
+            }
+          }
+        }
+      }
+    },
+    "result_register": {
+      "type": "object",
+      "properties": {
+        "endpoint": {
+          "type": "string"
+        },
+        "endpoint_secret": {
+          "type": "string"
+        },
+        "expires_at": {
+          "type": "integer"
+        }
+      }
+    },
+    "result_unregister": {
+      "type": "object",
+      "properties": {}
+    },
+    "result_endpoints": {
+      "type": "object",
+      "properties": {
+        "endpoints": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "endpoint": {
+                "type": "string"
+              },
+              "label": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "kinds": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 16
+              },
+              "last_seen": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "client_id": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "pairings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/pairing"
+          }
+        }
+      }
+    },
+    "result_open": {
+      "type": "object",
+      "properties": {
+        "sid": {
+          "type": "string"
+        },
+        "certificate": {
+          "type": "string"
+        },
+        "expires_at": {
+          "type": "integer"
+        },
+        "peer_keys": {
+          "$ref": "#/$defs/peer_keys"
+        }
+      }
+    },
+    "result_offer": {
+      "type": "object",
+      "properties": {
+        "offers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "principal": {
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "properties": {
+                  "iss": {
+                    "type": "string"
+                  },
+                  "sub": {
+                    "type": "string"
+                  }
+                }
+              },
+              "offer": {
+                "type": "string"
+              }
+            }
+          },
+          "maxItems": 16
+        },
+        "expires_at": {
+          "type": "integer"
+        }
+      }
+    },
+    "result_revoke_offer": {
+      "type": "object",
+      "properties": {}
+    },
+    "result_claim": {
+      "type": "object",
+      "properties": {
+        "certificate": {
+          "type": "string"
+        },
+        "peer_keys": {
+          "$ref": "#/$defs/peer_keys"
+        }
+      }
+    },
+    "result_send": {
+      "type": "object",
+      "properties": {
+        "accepted": {
+          "type": "integer"
+        }
+      }
+    },
+    "result_renew": {
+      "type": "object",
+      "properties": {
+        "certificate": {
+          "type": "string"
+        }
+      }
+    },
+    "result_listen": {
+      "type": "object",
+      "properties": {
+        "cursor": {
+          "type": "integer"
+        },
+        "gap": {
+          "type": "boolean"
+        },
+        "events": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/event"
+          }
+        }
+      }
+    }
+  },
+  "x-methods": {
+    "register": {
+      "request": "#",
+      "result": "#/$defs/result_register",
+      "effect": "write"
+    },
+    "unregister": {
+      "request": "#",
+      "result": "#/$defs/result_unregister",
+      "effect": "write"
+    },
+    "endpoints": {
+      "request": "#",
+      "result": "#/$defs/result_endpoints",
+      "effect": "read"
+    },
+    "open": {
+      "request": "#",
+      "result": "#/$defs/result_open",
+      "effect": "write"
+    },
+    "offer": {
+      "request": "#",
+      "result": "#/$defs/result_offer",
+      "effect": "write"
+    },
+    "revoke_offer": {
+      "request": "#",
+      "result": "#/$defs/result_revoke_offer",
+      "effect": "write"
+    },
+    "claim": {
+      "request": "#",
+      "result": "#/$defs/result_claim",
+      "effect": "write"
+    },
+    "send": {
+      "request": "#",
+      "result": "#/$defs/result_send",
+      "effect": "write"
+    },
+    "renew": {
+      "request": "#",
+      "result": "#/$defs/result_renew",
+      "effect": "write"
+    },
+    "listen": {
+      "request": "#",
+      "result": "#/$defs/result_listen",
+      "effect": "read"
+    }
+  }
+}

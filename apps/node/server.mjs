@@ -113,8 +113,12 @@ export async function createNodeServer({directory=resolve('.data'),config={},mai
  const server=http.createServer(async(req,res)=>{
   try{
    const embedded=embed!==null&&req.headers.host===embed.host;if(req.headers.host!==parsed.host&&!embedded)return void res.writeHead(403).end('Use the configured account host.');
+   // Origin-form targets only: an absolute-form (`https://other/…`), asterisk-form or authority-form target would
+   // otherwise override the origin chosen from the Host header (review I1). The URL is base origin + target, never
+   // resolved against it, so `//host/…` stays a path on this origin.
+   if(typeof req.url!=='string'||!req.url.startsWith('/'))return void res.writeHead(400,{'Content-Type':'application/json','Cache-Control':'no-store'}).end('{"error":"invalid_request_target"}');
    const headers=nodeRequestHeaders(req.headers,req.socket.remoteAddress,{clientIpHeader,countryHeader});
-   const request=new Request(new URL(req.url,embedded?embed.origin:origin),{method:req.method,headers,...['GET','HEAD'].includes(req.method)?{}:{body:Readable.toWeb(req),duplex:'half'}});
+   const request=new Request(new URL((embedded?embed.origin:parsed.origin)+req.url),{method:req.method,headers,...['GET','HEAD'].includes(req.method)?{}:{body:Readable.toWeb(req),duplex:'half'}});
    const response=await fetch(request);
    // Node folds duplicate header entries; every Set-Cookie must stay a separate line.
    const outgoing=Object.fromEntries([...response.headers].filter(([key])=>key!=='set-cookie')),cookies=response.headers.getSetCookie();if(cookies.length)outgoing['set-cookie']=cookies;res.writeHead(response.status,outgoing);if(response.body)Readable.fromWeb(response.body).pipe(res);else res.end();

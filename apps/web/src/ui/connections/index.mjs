@@ -9,6 +9,7 @@ import {connectionManifest,connectionHost,connectionLink} from '../../bl/connect
 import {accessLink} from '../../bl/access.mjs';
 import {connectionsCopy} from './copy.mjs';
 import {connectionsCSS} from './style.mjs';
+import {signalingAppControls,signalingOtherApps} from '../signaling-controls.mjs';
 const plain=text=>h('bdi',String(text??'')).attrs({dir:'auto',translate:'no'});
 const SERVING=['active','degraded'];
 // Shell intent adapter: deserialize only native form controls. No authorization or selection rules live here.
@@ -71,8 +72,10 @@ export default function connections(state,{accessHref}={}){
  const list=h('section',h('h2',t.connected),m&&!m.connections.length?h('p',t.empty):null,h('ul',...(m?.connections??[]).map(c=>{const host=connectionHost(c),s=stateOf(c);return h('li',h('article',
   h('h3',plain(c.name??host)),h('dl',h('div',h('dt',t.state),h('dd',badge(c))),h('div',h('dt',t.kind),h('dd',c.integration?.kind==='built-in'?t.builtin:t.external)),h('div',h('dt',host?t.host:t.unknown),h('dd',plain(host)))),
   h('div',link(t.access,href({connection:c.id})),s!=='disconnected'?manage(c,t.manage):null).classes('connections-links'),
-  h('div',c.integration?.staged?btn(state.locale==='es'?'Revisar cambios':'Review changes','review-manifest',{id:c.id},busy):null,s!=='disconnected'&&c.integration?btn(t.setup,'setup',{id:c.id},busy):null,s==='suspended'?btn(t.resume,'resume',{id:c.id},busy):[...SERVING,'configuring'].includes(s)&&c.integration?btn(t.suspend,'suspend',{id:c.id},busy):null,s!=='disconnected'?btn(state.locale==='es'?'Quitar app…':'Remove app…','removal-review',{id:c.id},busy):null,s!=='disconnected'?btn(t.disconnect,'disconnect',{id:c.id},busy).classes('connections-danger'):null).classes('connections-actions'),s!=='disconnected'?h('p',state.locale==='es'?'Desconectar detiene el acceso. Quitar app también permite revisar y gestionar sus datos.':'Disconnect stops access. Remove app also lets you review and manage its data.').classes('connections-note'):null
- ).data({connection:c.id})).key(c.id);})).classes('connections-grid'));
+  h('div',c.integration?.staged?btn(state.locale==='es'?'Revisar cambios':'Review changes','review-manifest',{id:c.id},busy):null,s!=='disconnected'&&c.integration?btn(t.setup,'setup',{id:c.id},busy):null,s==='suspended'?btn(t.resume,'resume',{id:c.id},busy):[...SERVING,'configuring'].includes(s)&&c.integration?btn(t.suspend,'suspend',{id:c.id},busy):null,s!=='disconnected'?btn(state.locale==='es'?'Quitar app…':'Remove app…','removal-review',{id:c.id},busy):null,s!=='disconnected'?btn(t.disconnect,'disconnect',{id:c.id},busy).classes('connections-danger'):null).classes('connections-actions'),s!=='disconnected'?h('p',state.locale==='es'?'Desconectar detiene el acceso. Quitar app también permite revisar y gestionar sus datos.':'Disconnect stops access. Remove app also lets you review and manage its data.').classes('connections-note'):null,
+  // Signaling (flags off): this app's approvals, devices, offers and pairings (signaling.md §14.1).
+  signalingAppControls(state,c.clientId)
+ ).data({connection:c.id})).key(c.id);})).classes('connections-grid'),m?signalingOtherApps(state,m.connections.map(c=>c.clientId)):null);
 
  // Extensions rev 3.2 (behind EXTENSIONS_ENABLED, minimal): provider-consumable fields with their values in owner order,
  // the consumers each value is approved for, provider-listed candidates (neutral order, none preselected, supplier

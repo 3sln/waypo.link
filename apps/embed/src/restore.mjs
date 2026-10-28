@@ -20,7 +20,6 @@ export function embedAPI({origin,key,fetch=globalThis.fetch.bind(globalThis)}){
     const value=await response.json();if(!value||typeof value!=='object'||Array.isArray(value))throw new EmbedAPIError(502);return value;
   };
   return Object.freeze({
-    nonce:()=>post('nonce'),
     claim:claim=>post('claim',{body:{claim},proofOver:claim}),
     session:credential=>post('session',{auth:`BindleEmbed ${credential}`,proofOver:credential}),
     state:session=>post('state',{auth:`BindleEmbedSession ${session}`,proofOver:session}),
@@ -48,10 +47,9 @@ export function embedAPI({origin,key,fetch=globalThis.fetch.bind(globalThis)}){
 }
 
 /** Creates the authorization entry from the element's public inputs, the clicked intent and the frame key (§7.1).
- * `delivery` is 'embed-popup' (popup presentation) or 'embed-fedcm' (FedCM inside the island, adaptive §11.3). */
-export async function createEntry({issuer,clientId,key,prepare,intent='login',delivery='embed-popup',fetch=globalThis.fetch.bind(globalThis)}){
-  const fedcm=delivery==='embed-fedcm';
-  const body={clientId,redirectUri:prepare.redirectUri,challenge:prepare.challenge,challengeMethod:'S256',state:prepare.state,intent,requests:prepare.requests,presentation:fedcm?'fedcm':'popup',delivery:fedcm?'embed-fedcm':'embed-popup',embedJkt:key.jkt,
+ * Delivery is always 'embed-popup': islands never delegate to FedCM (extensions rev 3.3 §2.7, CR-X3-33, provisional). */
+export async function createEntry({issuer,clientId,key,prepare,intent='login',fetch=globalThis.fetch.bind(globalThis)}){
+  const body={clientId,redirectUri:prepare.redirectUri,challenge:prepare.challenge,challengeMethod:'S256',state:prepare.state,intent,requests:prepare.requests,presentation:'popup',delivery:'embed-popup',embedJkt:key.jkt,
     ...prepare.loginHint?{loginHint:prepare.loginHint}:{},...prepare.uiLocales?.length?{uiLocales:prepare.uiLocales}:{},...prepare.colorScheme?{colorScheme:prepare.colorScheme}:{},...prepare.dpopJkt?{dpopJkt:prepare.dpopJkt}:{}};
   const response=await fetch(`${issuer}/api/oauth/entries`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),mode:'cors',credentials:'omit',cache:'no-store',referrerPolicy:'no-referrer'});
   if(!response.ok)throw new EmbedAPIError(response.status);const {entryId}=await response.json();

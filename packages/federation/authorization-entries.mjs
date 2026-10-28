@@ -12,7 +12,7 @@ import {EXT,declare} from '../core/extensions.mjs';
 import {digest,base64url,boundedString,canonical} from '../core/records.mjs';
 import {fail,object,exact,https} from './schema.mjs';
 import {verifyProof,EMBED_PROOF_TYP,jktPattern} from './dpop.mjs';
-import {componentsDeclaration,COMPONENTS_PROFILE} from './components-profile.mjs';
+import {componentsDeclaration} from './components-profile.mjs';
 import {metadataClientHost,validClientSnapshot,clientSite} from './client-metadata.mjs';
 import {clientPolicyLinks,withClientPolicies} from './legal.mjs';
 import {UUID_V4 as UUID} from '../core/primitives.mjs';
@@ -69,7 +69,7 @@ export class AuthorizationEntries {
  intents(){return [...ENTRY_INTENTS.filter(intent=>intent!=='end-session'||this.endSession),...this.incremental?INCREMENTAL_INTENTS:[]];}
  /** Manifest members for mounted entry routes. The components profile also needs DPoP (embed proofs) and an adapter
   * that actually serves the embed origin, which only the root adapter knows (`components`). */
- manifest({components=false}={}){const entry=entryManifest(this.issuer,{intents:this.intents()});return components&&this.embedOrigin&&this.dpop?{extensions:[...entry.extensions,...componentsDeclaration({profile:COMPONENTS_PROFILE,embedOrigin:this.embedOrigin},{incremental:!!this.incremental}).extensions??[]]}:entry;}
+ manifest({components=false}={}){const entry=entryManifest(this.issuer,{intents:this.intents()});return components&&this.embedOrigin&&this.dpop?{extensions:[...entry.extensions,...componentsDeclaration({embedOrigin:this.embedOrigin},{incremental:!!this.incremental}).extensions??[]]}:entry;}
  sharded(){return typeof this.store==='function'||this.shard!==undefined;}
  storeFor(shard){if(this.shard!==undefined&&shard!==this.shard)fail('temporarily_unavailable','Application sign-in is not available.');return typeof this.store==='function'?this.store(shard):this.store;}
  /** The entry's hash and the store of its shard. */

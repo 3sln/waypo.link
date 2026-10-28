@@ -16,6 +16,7 @@ import {handleMcpPublic,handleMcpOwner,mcpPublicPath,mcpOwnerPath} from '../../m
 import {handleFederation} from '../../federation/http.mjs';
 import {handleAuthorizationEntry,handleEmbedAPI} from '../federation-entry-http.mjs';
 import {SHELL_TEMPLATE,SHELL_BUILD,shellBuild,shellConfig,fillShell,shellPolicy} from '../../federation/embed-shell.mjs';
+import {ISLAND_PATH} from '../../sdk/src/islands-protocol.mjs';
 import {AVATAR,avatarOrigins,readAvatarSource,reencodeAvatar} from '../../federation/embed-avatar.mjs';
 import {handleObjectURL} from '../../storage/object-http.mjs';
 import {UUID as uuidPattern} from '../../core/primitives.mjs';
@@ -206,12 +207,15 @@ async function embedShellMounted(env){return embedMounted(env)&&Boolean(env.FEDE
 const embedHeaders={'Referrer-Policy':'no-referrer','X-Content-Type-Options':'nosniff'};
 /** Island picture sources: the provider's own static assets and operator-approved origins (packages/federation/embed-avatar.mjs). */
 const embedAvatars=env=>({responseMs:AVATAR.responseMs,render:async(source,size)=>reencodeAvatar(await readAvatarSource(source,{issuer:env.APP_ORIGIN,assets:env.ASSETS,fetch:env.EMBED_AVATAR_FETCH,origins:avatarOrigins(env.EMBED_AVATAR_ORIGINS)}),size)});
-/** Embed origin (components profile §2.2, §3; embed islands §3): cookieless, no CORS, nothing but islands. */
+/** Embed origin (extensions §2.7, CR-X3-16/35; components profile §2.2, §3; embed islands §3): cookieless, no CORS,
+ * nothing but islands. The island document is the origin root `/` (owner-approved 2026-10-27); the other served paths
+ * are provider-private sub-resources of that document (hashed assets, the service worker and the embed API). Every
+ * other path, `/embed` included, is 404. */
 async function embedOriginRoutes(request,env,url,local){
  const path=url.pathname,deny=(status=404,error='not_found',extra={})=>new Response(JSON.stringify({error}),{status,headers:{...embedHeaders,'Cache-Control':'no-store','Content-Type':'application/json','Cross-Origin-Resource-Policy':'same-origin',...extra}});
  if(!embedMounted(env))return deny();
  const asset=/^\/embed\/assets\/[A-Za-z0-9][A-Za-z0-9._-]*(?:\/[A-Za-z0-9][A-Za-z0-9._-]*)*\.(?:m?js|css)$/.test(path)&&!path.includes('..');
- if(path!=='/embed'&&path!=='/embed/sw.js'&&!asset&&!path.startsWith('/embed/api/'))return deny();
+ if(path!==ISLAND_PATH&&path!=='/embed/sw.js'&&!asset&&!path.startsWith('/embed/api/'))return deny();
  // Immutable hashed assets are static; the shell and the API pass the same per-IP and per-network admission.
  if(!asset){
   const secret=env.ABUSE_HASH_KEY||env.KEY_ENCRYPTION_KEY;if(!secret)return deny(503,'temporarily_unavailable');
@@ -220,7 +224,7 @@ async function embedOriginRoutes(request,env,url,local){
  }
  if(path.startsWith('/embed/api/'))return await handleEmbedAPI(request,{authority:env.FEDERATION_AUTHORITY,embedOrigin:url.origin,enabled:flagGlobal(env,'FEDERATION_ENABLED'),avatars:embedAvatars(env)})??deny();
  if(!['GET','HEAD'].includes(request.method))return deny(405,'method_not_allowed',{Allow:'GET, HEAD'});
- if(path==='/embed')return embedShell(request,env,url);
+ if(path===ISLAND_PATH)return embedShell(request,env,url);
  // Hashed assets and the service worker take no query: one URL, one body, so no cache (HTTP or service worker) can be
  // keyed on attacker-chosen variants.
  if(url.search)return deny();
@@ -231,7 +235,7 @@ async function embedOriginRoutes(request,env,url,local){
  // A script response's CSP governs only a worker it starts: the island worker talks to this origin and the issuer only.
  const headers=new Headers({...embedHeaders,'Content-Type':script?'text/javascript; charset=utf-8':'text/css; charset=utf-8','Cross-Origin-Resource-Policy':'same-origin','Cross-Origin-Embedder-Policy':'require-corp'});
  if(script)headers.set('Content-Security-Policy',`default-src 'none'; script-src 'self'; connect-src 'self'${asset?' '+env.APP_ORIGIN:''}; base-uri 'none'`);
- if(asset)headers.set('Cache-Control','public, max-age=31536000, immutable');else{headers.set('Cache-Control','no-cache');headers.set('Service-Worker-Allowed','/embed');}
+ if(asset)headers.set('Cache-Control','public, max-age=31536000, immutable');else{headers.set('Cache-Control','no-cache');headers.set('Service-Worker-Allowed',ISLAND_PATH);}
  return new Response(request.method==='HEAD'?null:file.body,{status:200,headers});
 }
 /** One static shell per client: frame-ancestors are the client's redirect-URI origins; unknown clients get an inert page. */

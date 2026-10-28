@@ -60,6 +60,8 @@ export const stages={
  },
  async beforeActivity({request,env,path,id,object}){
   if(!path.startsWith('/api/intents/'))return;
+  // Session handler approvals (signaling AMD-SG-I1) are served by routes/signaling-owner.mjs in the owner stage.
+  if(path.startsWith('/api/intents/session-'))return;
   const reverse=path.endsWith('/records')||path.endsWith('/remove');if(!reverse&&!flagEnabled(env,'INTENT_LINKS_ENABLED',{request,subject:{kind:'account',owner:id}}))return json({error:'not_found'},404);
   const name=path.split('/').at(-1),operation={resolve:'intents.resolve',decide:'intents.decide',exclude:'intents.exclude',ignore:'intents.ignore',records:'intents.records',remove:'intents.remove'}[name];if(!operation)return json({error:'not_found'},404);
   const input=request.method==='GET'?{}:await body(request,24576);delete input.activated;if(name==='resolve')input.activated=await activation(env,input.navigation,input.value);delete input.navigation;

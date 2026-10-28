@@ -1,5 +1,6 @@
 // Optional partitioned service worker for the embed origin (embed-islands §3.3, EIR-2, EIR-16). Served at
-// /embed/sw.js with `Service-Worker-Allowed: /embed`. Hashed assets cache-first; the shell network-first with a
+// /embed/sw.js with `Service-Worker-Allowed: /` and registered with scope `/`, because the island document is the embed
+// origin's root (extensions §2.7, CR-X3-35). The embed origin serves nothing but islands. Hashed assets cache-first; the shell network-first with a
 // cached fallback only on a network error while offline and only when younger than 24 hours. The embed API is
 // never intercepted or stored. One cache per build generation; no skipWaiting or clients.claim. Only content-hashed
 // asset names are served cache-first, so an unhashed (development) path can never pin old island code (IMPL-6).
@@ -30,5 +31,5 @@ self.addEventListener('fetch',event=>{
   const url=new URL(event.request.url);
   if(url.origin!==self.location.origin||event.request.method!=='GET'||url.pathname.startsWith('/embed/api/'))return;
   if(url.pathname.startsWith('/embed/assets/')&&HASHED.test(url.pathname))event.respondWith(cacheFirst(event.request));
-  else if(url.pathname==='/embed'&&event.request.mode==='navigate')event.respondWith(shell(event));
+  else if(url.pathname==='/'&&event.request.mode==='navigate')event.respondWith(shell(event));
 });

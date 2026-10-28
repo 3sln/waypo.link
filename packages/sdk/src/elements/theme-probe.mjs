@@ -1,9 +1,9 @@
 // Theme token resolution for provider islands (components profile §7; A13).
 // The token set, contrast pairs, defaults and validator are the islands
 // protocol's own (islands-protocol.mjs), so element and island revert the same
-// tokens. Elements send only tokens that are in the profile allowlist AND in the
-// provider's declared `theme_tokens`. Islands validate again: this is not a
-// trust boundary.
+// tokens. Extensions rev 3.3 (§2.7, CR-X3-33, provisional) dropped `theme_tokens`:
+// the island elements no longer call this module and send no tokens; it stays as
+// a public utility. Islands validate again: this is not a trust boundary.
 import {COLOR_TOKENS,THEME_TOKENS,THEME_DEFAULTS,CONTRAST_PAIRS,contrastRatio,validateThemeTokens} from '../islands-protocol.mjs';
 
 export const colorTokens=COLOR_TOKENS;
@@ -16,8 +16,8 @@ export {validateThemeTokens};
 // Resolves --bindle-* custom properties on `element` in the embedder's realm.
 // Colors go through a hidden probe and a 1×1 canvas round trip, so var(),
 // color-mix(), named and wide-gamut colors all normalize to opaque #rrggbb;
-// non-opaque results are rejected. `allowed` is the provider's declared
-// theme_tokens (capabilities.themeTokens); tokens outside it are never sent.
+// non-opaque results are rejected. `allowed` limits the
+// token list (default: every allowlisted token).
 export function resolveThemeTokens(element,{scheme,allowed=tokenNames}={}){
   const view=element.ownerDocument?.defaultView;if(!view)return {tokens:{},rejected:[]};
   const names=tokenNames.filter(name=>allowed.includes(name)),style=view.getComputedStyle(element),raw={},invalid=[];

@@ -15,7 +15,7 @@ export const DIRECTORY_LIMITS=Object.freeze({timeoutMs:1500,maxBytes:65536,cache
  // RTC-e review F4 (provisional): host-wide budgets per feature, fetch class and issuer site, spent through the host's
  // shared limiter (`hostLimiter`: WORK_AUTHORITY on both adapters) by every directory instance on the host, so the
  // outbound volume to one issuer no longer scales with the number of targeted writers. Verification follow-ups:
- //  - the key names the feature (`rtc`, `org`), so one feature's traffic never spends another's budget;
+ //  - the key names the feature (`signaling`, `org`), so one feature's traffic never spends another's budget;
  //  - every class also has a per-tenant share of `1/share` of its class limit (`tenant` overrides), spent first, so a
  //    few tenants (targeted writers or attacker accounts) cannot spend the whole class;
  //  - `interactive` has no host-wide class limit (null): each interactive fetch is user-triggered by an authenticated
@@ -23,7 +23,7 @@ export const DIRECTORY_LIMITS=Object.freeze({timeoutMs:1500,maxBytes:65536,cache
  //    every other user. It keeps its per-tenant share.
  host:Object.freeze({windowMs:60000,interactive:null,background:1200,claimed:120,linked:240,share:16,tenant:Object.freeze({interactive:40})})});
 /** The fixed per-feature names of the host-wide keys (anything else is `other`). */
-export const DIRECTORY_FEATURES=Object.freeze(['rtc','org','other']);
+export const DIRECTORY_FEATURES=Object.freeze(['signaling','org','other']);
 /** Fetch classes (RTC-e review F1). Each has its own per-site bucket in every directory, so no class can starve another:
  *  - `background`: refresh-ahead of tracked, verified peers and members (the full per-site budget);
  *  - `interactive`: user-triggered (the caller-initiated warm at `open`, §4.1): its own per-site budget;

@@ -23,7 +23,8 @@ import { mkdir, readFile, writeFile, rename, unlink, stat, open } from 'node:fs/
 import { existsSync, createReadStream } from 'node:fs';
 import { Readable } from 'node:stream';
 import { createHash, randomUUID } from 'node:crypto';
-import { resolve, join, extname } from 'node:path';
+import { join } from 'node:path';
+import { createNodeAssets } from './assets.mjs';
 import {nodeSqlPort} from '../../packages/search/index.mjs';
 import { IdentityRepository, FixedWindowGuard, AccountController } from '../../packages/runtime/accounts.mjs';
 import {organizationOwnerChannels} from '../../packages/identity/owner-channels.mjs';
@@ -146,10 +147,7 @@ export async function nodeResources({directory,config,formTransport,mailer}){
  }};
 
  population=activePopulationPort({repository,accounts,threshold:Number(config.DEVELOPER_CONTACT_ACTIVE_THRESHOLD??1500),authority:async(name,method,input)=>(await guardFor(name)).populationAction(method,input)});await (await guardFor('active-user-v1/census')).populationAction('baseline');
- const assets={fetch:async request=>{
-   let path;try{const pathname=decodeURIComponent(new URL(request.url).pathname);const base=resolve('.output/public');path=resolve(base,pathname==='/'?'index.html':'.'+pathname);if(!path.startsWith(base+'/'))return new Response('Not found',{status:404});}catch{return new Response('Not found',{status:404});}
-   try{const data=await readFile(path);const type={'.html':'text/html; charset=utf-8','.mjs':'text/javascript','.js':'text/javascript','.css':'text/css','.json':'application/json','.webmanifest':'application/manifest+json','.svg':'image/svg+xml','.md':'text/markdown; charset=utf-8','.txt':'text/plain; charset=utf-8'}[extname(path)]||'application/octet-stream';return new Response(data,{headers:{'Content-Type':type,'Cache-Control':'no-cache'}});}catch(error){if(['ENOENT','EISDIR'].includes(error.code))return new Response('Not found',{status:404});throw error;}
- }};
+ const assets=createNodeAssets('.output/public');
  await mkdir(join(directory,'mcp'),{recursive:true,mode:0o700});const mcpMap=new Map();
  const mcpShard=shard=>{if(!mcpMap.has(shard)){const metadata=new SqliteMetadata(join(directory,'mcp',`mcp-auth-v1-64-${shard}.sqlite`));const controller=new McpShardController({metadata,config,shard,accounts,repository});metadata.onAlarm=()=>controller.cleanup();metadata.getAlarm().then(time=>{if(time)metadata.arm(time);});mcpMap.set(shard,{metadata,controller});}return mcpMap.get(shard).controller;},mcp=mcpAuthorities(mcpShard);
  await mkdir(join(directory,'federation'),{recursive:true,mode:0o700});const federationMap=new Map();
@@ -166,11 +164,10 @@ export async function nodeResources({directory,config,formTransport,mailer}){
  for(const name of Object.keys(integrationConfig))if(config[name]!==undefined)integrationConfig[name]=config[name];
  if(integrationConfig.BROKERED_INTROSPECTION_MOUNTED)integrationConfig.BROKERED_INTROSPECTION=request=>handleBrokeredIntrospection(request,{issuer:config.APP_ORIGIN,enabled:true,artefactVersions:siteGlobal(config,'ARTEFACT_VERSIONS_ENABLED'),verifyToken:(token,options)=>brokering.verify(token,options),clientKeys:({clientId,jwksUri})=>clientDirectory.resolveKeys({id:clientId,jwksUri,authMethod:'private_key_jwt'}),account:owner=>new Proxy({},{get:(_,method)=>input=>accounts.get(owner)[method](owner,input)}),federation:owner=>federationShard(owner)});
  integrationConfig.APP_REMOVAL_REVOKE_EXTERNAL=row=>federationShard(row.owner).removalRevoke(row);
- // RTC-e: the foreign-delivery egress: the reviewed Node integration egress (public IPv4 only, DNS pinned into TLS, no
- // redirects, bounded). Inert unless the RTC flags are on; it dials only origins on the RTC_FOREIGN_ISSUERS allowlist
- // (packages/rtc/federation.mjs rtcEgress). (Per-app RTC purpose approval is the account's own interim record now:
- // extensions rev 3.2 removed AMD-X1 and checkBound.)
- integrationConfig.RTC_EGRESS=config.RTC_EGRESS??createNodeIntegrationEgress({issuer:config.APP_ORIGIN,reserved:[config.EMBED_ORIGIN].filter(Boolean).map(o=>{try{return new URL(o).hostname;}catch{return null;}}).filter(Boolean),...typeof config.DIRECTORY_DNS_LOOKUP==='function'?{lookup:config.DIRECTORY_DNS_LOOKUP}:{},...typeof config.DIRECTORY_HTTPS_REQUEST==='function'?{request:config.DIRECTORY_HTTPS_REQUEST}:{}});
+ // Signaling foreign-delivery egress: the reviewed Node integration egress (public IPv4 only, DNS pinned into TLS, no
+ // redirects, bounded). Inert unless the signaling flags are on; it dials only origins on the SIGNALING_FOREIGN_ISSUERS
+ // allowlist (packages/signaling/federation.mjs signalingEgress). Kind approval is local (no bound check, Appendix C.2).
+ integrationConfig.SIGNALING_EGRESS=config.SIGNALING_EGRESS??createNodeIntegrationEgress({issuer:config.APP_ORIGIN,reserved:[config.EMBED_ORIGIN].filter(Boolean).map(o=>{try{return new URL(o).hostname;}catch{return null;}}).filter(Boolean),...typeof config.DIRECTORY_DNS_LOOKUP==='function'?{lookup:config.DIRECTORY_DNS_LOOKUP}:{},...typeof config.DIRECTORY_HTTPS_REQUEST==='function'?{request:config.DIRECTORY_HTTPS_REQUEST}:{}});
  integrationConfig.INTEGRATION_CLIENT_SNAPSHOT=async client=>integrationSnapshot(client,await clientDirectory.resolveKeys(client));
  for(const {controller}of accountMap.values())Object.assign(controller.config,integrationConfig);
  const federationShard=owner=>{if(!federationMap.has(owner)){const metadata=new SqliteMetadata(join(directory,'federation',`${FEDERATION_LAYOUT}-${owner}.sqlite`));const implementation=new FederationController({...federationControllerOptions({config:{...config,...integrationConfig,...eventConfig},repository,accounts,owner,incremental:{loginDelta:input=>incremental.loginDelta(input),loginOutcome:input=>incremental.loginOutcome(input)},manifestMounts:{messagingAddress:messagingAddressMounted({...config,...integrationConfig})}}),metadata:federationMetadata(metadata)});if(deviceMounted&&device.linked)attachAppSessions(implementation.service,{linked:device.linked,config});metadata.onAlarm=async()=>{const result=await implementation.cleanup();if(result.remaining)await metadata.setAlarm(result.nextAlarmAt);if(device.drain){let pending=false;try{await device.drain({owner});pending=(await device.linked.outbox({owner})).length>0;}catch{pending=true;}if(pending&&!await metadata.getAlarm())await metadata.setAlarm(Date.now()+600000);}};metadata.getAlarm().then(time=>{if(time)metadata.arm(time);});const controller=new Proxy(implementation,{get:(target,method)=>typeof target[method]==='function'?async(...args)=>{const call=async()=>{const result=await target[method](...args);if(!['ready','manifest','cleanup'].includes(method)&&!await metadata.getAlarm())await metadata.setAlarm(Date.now()+600000);return result;};return flagsRuntime.scope.getStore()?call():flagsRuntime.run(await flagsRuntime.pin({alarm:method==='cleanup'}),call);}:target[method]});federationMap.set(owner,{metadata,controller});}return federationMap.get(owner).controller;};
@@ -192,7 +189,7 @@ export async function nodeResources({directory,config,formTransport,mailer}){
  const transferDue=transferDueIndex(identities);
  Object.assign(transferPorts,{identity:transferIdentityPort(repository),attestor:attestorFromJwk(config.IDENTITY_ATTESTATION_KEYS??config.IDENTITY_ATTESTATION_KEY),issuer:config.APP_ORIGIN,due:transferDue});
  try{transferPorts.notices=createTransferNotices({origin:config.APP_ORIGIN,mail:mailer??null,push:createPushTransport(config)});}catch{/* commits hold until a notice is accepted */}
- const federation=federationAuthority({config:{...config,...integrationConfig,...eventConfig},repository,directory:clientDirectory,manifestMounts:{deviceAuthorization:deviceMounted,messagingAddress:messagingAddressMounted({...config,...integrationConfig}),rtcOccupant:true,rtc:typeof integrationConfig.RTC_EGRESS?.send==='function'},shard:federationShard});
+ const federation=federationAuthority({config:{...config,...integrationConfig,...eventConfig},repository,directory:clientDirectory,manifestMounts:{deviceAuthorization:deviceMounted,messagingAddress:messagingAddressMounted({...config,...integrationConfig}),signalingResource:true,signaling:typeof integrationConfig.SIGNALING_EGRESS?.send==='function'},shard:federationShard});
  // The pre-owner authorization-entry store, sharded by entry ID like the MCP stores (one SQLite file per shard, each
  // pruned by its own alarm); null unless FEDERATION_ENTRY_ENABLED. packages/runtime/http.mjs mounts the provider
  // session-ending hook, so end-session is offered.

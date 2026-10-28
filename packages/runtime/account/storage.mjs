@@ -19,8 +19,8 @@ import {linksResourceMethod} from './links.mjs';
 import {CLASSIFIER_CONTRACT,classifierResourceMethod} from './classifier.mjs'; // EXT-X10
 import {collectGarbageRef} from '../export-pins.mjs';
 import {WORK_PRECHARGED} from '../../mcp/account.mjs';
-import {RTC_SIGNALING_CONTRACT,ICE_RELAY_CONTRACT} from '../../rtc/extension.mjs';
-import {rtcResourceMethod,rtcRelayResourceMethod} from './rtc.mjs'; // RTC-e, RTC-f
+import {SIGNALING_CONTRACT,ICE_RELAY_CONTRACT} from '../../signaling/extension.mjs';
+import {signalingResourceMethod,signalingRelayResourceMethod} from './signaling.mjs';
 
 // Append-only: add one contract handler per slice. Handlers receive (controller,owner,context)
 // and own method validation, live authorization and replay checks before effects or cached results.
@@ -30,8 +30,8 @@ export const RESOURCE_METHOD_HANDLERS=Object.freeze({
   [LINKS_CONTRACT]:linksResourceMethod, // BB-C1b: links contract; not_found unless LINKS_ENABLED
   [EVENT_BUS_CONTRACT]:eventBusResourceMethod, // EV-2: 3sln.me-hosted event bus; not_found unless EVENT_BUSES_ENABLED
   [CLASSIFIER_CONTRACT]:classifierResourceMethod, // EXT-X10: explicit owner occupancy; INTEGRATIONS_ENABLED + EXTENSIONS_ENABLED
-  [RTC_SIGNALING_CONTRACT]:rtcResourceMethod, // RTC-e: the built-in rtc-signaling/v1 occupant; descriptor only while RTC_SIGNALING_ENABLED
-  [ICE_RELAY_CONTRACT]:rtcRelayResourceMethod, // RTC-f: the built-in ice-relay/v1 occupant; descriptor only with both RTC flags and a configured relay
+  [SIGNALING_CONTRACT]:signalingResourceMethod, // the built-in signaling/v1 resource; descriptor only while SIGNALING_ENABLED and SESSION_KINDS_ENABLED
+  [ICE_RELAY_CONTRACT]:signalingRelayResourceMethod, // the built-in ice-relay/v1 resource; descriptor only with SIGNALING_TURN_ENABLED and a configured relay
 });
 
 export const methods={

@@ -34,5 +34,5 @@ export function validatePrepareRequest(data,{kind,origins=[]}={}){
 export function requestIslandSpec(client,kind,{islands='auto',islandIssuers=null}={}){
  const issuer=client?.session?.issuer,cap=issuer&&client.capabilitiesFor(issuer),declaration=issuer&&client.capabilities?.declaration(issuer),profile=declaration?.components,entry=declaration?.authorizationEntry;
  if(!REQUEST_KINDS.includes(kind)||islands==='off'||islandIssuers&&!islandIssuers.includes(issuer)||!cap?.profile||!cap.entry||!entry?.intents?.includes(kind)||!profile?.bindings?.includes('key-binding.v1')||profile.parts?.request?.version!==1||client.capabilities.degraded(issuer).has('part:request'))return null;
- return Object.freeze({issuer,embedOrigin:cap.embedOrigin,version:1,themeTokens:cap.themeTokens??[]});
+ return Object.freeze({issuer,embedOrigin:cap.embedOrigin,version:1});
 }

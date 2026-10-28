@@ -14,7 +14,18 @@ test('the fragment alone selects an allowlisted part and version',()=>{
   assert.deepEqual(P.parseFragment('#sign-in.v1'),{part:'sign-in',version:1});
   assert.deepEqual(P.parseFragment('#account-switcher.v1'),{part:'account-switcher',version:1});
   for(const hash of ['','#','#avatar.v2','#avatar.v0','#Avatar','#publications','#avatar?x','#avatar.v1#x','#avatar&part=sign-in','#__proto__','#constructor','avatar','#sign-in.v01',`#${'a'.repeat(60)}`,null,undefined])assert.equal(P.parseFragment(hash),null,String(hash));
-  assert.equal(P.islandURL('https://embed.provider.example','https://app.example/client','avatar'),'https://embed.provider.example/embed?client=https%3A%2F%2Fapp.example%2Fclient#avatar.v1');
+  // The island document is the embed origin root (extensions §2.7, CR-X3-35; owner-approved 2026-10-27).
+  assert.equal(P.islandURL('https://embed.provider.example','https://app.example/client','avatar'),'https://embed.provider.example/?client=https%3A%2F%2Fapp.example%2Fclient#avatar.v1');
+  assert.equal(P.islandURL('https://embed.provider.example','https://app.example/c?x=1&y=#z','request'),'https://embed.provider.example/?client=https%3A%2F%2Fapp.example%2Fc%3Fx%3D1%26y%3D%23z#request.v1');
+  assert.equal(P.ISLAND_PATH,'/');
+  const url=new URL(P.islandURL('https://embed.provider.example','https://app.example/client','sign-in'));
+  assert.equal(url.pathname,'/');assert.deepEqual([...url.searchParams.keys()],['client']);assert.deepEqual(P.parseFragment(url.hash),{part:'sign-in',version:1});
+  for(const origin of ['https://embed.provider.example/','https://embed.provider.example/embed','https://embed.provider.example?x','not a url','',null,'data:text/html,x'])
+    assert.throws(()=>P.islandURL(origin,'https://app.example/client','avatar'),TypeError,String(origin));
+  assert.throws(()=>P.islandURL('https://embed.provider.example','https://app.example/client','teleporter'),TypeError);
+  assert.throws(()=>P.islandURL('https://embed.provider.example','https://app.example/client','avatar',2),TypeError);
+  assert.throws(()=>P.islandURL('https://embed.provider.example','','avatar'),TypeError);
+  assert.equal(P.EXTENSION,'https://spec.bindle.example/extensions/embedded-components/v1');
 });
 
 test('window.name carries only nonce, locale and scheme in the exact grammar',()=>{

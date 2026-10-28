@@ -100,7 +100,7 @@ for(const engine of [chromium,firefox])test(`${engine.name()}: full declaration:
   // no load for a failed frame) and its part degrades for the document.
   await page.waitForFunction(()=>{const s=document.querySelector('bindle-account').state.islands;return s.avatar==='fallback'&&s.switcher==='fallback';},null,{timeout:15000});
   assert.equal(await page.evaluate(()=>document.querySelector('bindle-session').capabilities.islands.avatar),null);
-  assert.ok(embedRequests.length>0&&embedRequests.every(url=>url.startsWith('https://embed.3sln.example/embed?client=')),'only island shells were requested');
+  assert.ok(embedRequests.length>0&&embedRequests.every(url=>url.startsWith('https://embed.3sln.example/?client=')),'only island shells were requested');
   assert.deepEqual(await panelActions(page),['Use another account','Use a different provider','Sign out of this app','Manage at 3sln.example'],'the fallback keeps every action');
   await page.screenshot({path:resolve(artifacts,`provider-matrix-full-${engine.name()}.png`)});
   assert.deepEqual(errors,[]);
@@ -184,7 +184,7 @@ test('chromium: partial declarations: login without select-account, and a profil
   await page.getByRole('button',{name:/^Account: /}).click();
   await popupSignIn(f,()=>page.getByRole('button',{name:'Use another account'}).click());
   const last=[...mock.entries.values()].at(-1);assert.equal(last.intent,'login');assert.equal(last.loginHint,undefined);
-  assert.ok(embedRequests.every(url=>/^https:\/\/embed\.3sln\.example\/embed\?client=[^#]+$/.test(url)),'only the sign-in shell, never avatar or switcher (no credential binding)');assert.deepEqual(errors,[]);
+  assert.ok(embedRequests.every(url=>/^https:\/\/embed\.3sln\.example\/\?client=[^#]+$/.test(url)),'only the sign-in shell, never avatar or switcher (no credential binding)');assert.deepEqual(errors,[]);
 });
 
 test('chromium: unsupported and below-floor providers are errors without a window or fallback; a 404 host offers only the default host',async t=>{

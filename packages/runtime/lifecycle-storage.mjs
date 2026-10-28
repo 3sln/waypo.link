@@ -105,10 +105,10 @@ export async function purgeBatch(c,owner,{identity,fence,budget=64,log=()=>{},re
    log({action:'purge-stage',stage});await advance();continue;
   }
   if(stage==='identity'){
-   // RTC review M1: end the account's live RTC sessions and deliver their control statements while its certification
-   // keys are still served to peers (the tombstone stops rtcPublicKeys). Best effort, never blocking the tombstone:
+   // Signaling §14.4 (RTC review M1): end the account's live signaling sessions and deliver their control statements while its certification
+   // keys are still served to peers (the tombstone stops signalingPublicKeys). Best effort, never blocking the tombstone:
    // peers also verify against the keys pinned on each session, and the E4 `drain` stage retries the outbox.
-   try{await c.rtcDrain?.(owner);}catch{/* the drain stage retries */}
+   try{await c.signalingDrain?.(owner);}catch{/* the drain stage retries */}
    // The connections vocabulary (apps/connections.mjs severAll) names owner deletion 'deleted'.
    // A moved identity's connections were severed at commit with the non-deletion vocabulary; repeat it, never 'deleted'.
    await c.connectionsSeverAccount?.(owner,{reason:reason==='inactive'?'lifecycle-tombstone':reason==='moved'?'system':'deleted'});

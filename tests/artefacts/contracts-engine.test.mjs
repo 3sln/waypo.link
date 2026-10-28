@@ -30,7 +30,10 @@ test('strict cv maps and version pins; off preserves exact legacy contract pin s
  assert.throws(()=>contractReferences({},[ID]),{code:'artefact_digest_mismatch'});
  const extra={[ID]:{version:1,digest:D,methods:{get:{effect:'read'}}}};
  assert.deepEqual(contractPins(extra)[ID],{methods:{get:{effect:'read'}}});assert.deepEqual(contractPins(extra,{artefactVersions:true})[ID],{methods:{get:{effect:'read'}},version:1,digest:D});
- assert.throws(()=>shapeContractResult({'x-methods':{get:{result:{oneOf:[{type:'string'}]}}}},'get','a'),{code:'artefact_unverifiable'});
+ // Combinators the shaper cannot project fail closed; `oneOf`/`anyOf` are shaped by validate-then-copy (review M-1).
+ assert.throws(()=>shapeContractResult({'x-methods':{get:{result:{allOf:[{type:'string'}]}}}},'get','a'),{code:'artefact_unverifiable'});
+ assert.equal(shapeContractResult({'x-methods':{get:{result:{oneOf:[{type:'string'}]}}}},'get','a'),'a');
+ assert.throws(()=>shapeContractResult({'x-methods':{get:{result:{oneOf:[{type:'string'}]}}}},'get',4),{code:'invalid_result'});
 });
 test('integration manifests snapshot contract references only with artefact versions enabled',()=>{
  const clientId='https://integration.example/app/client.json',input={v:1,resources:{rpc_endpoint:'https://integration.example/app/rpc',discovery_endpoint:'https://integration.example/app/resources',contracts:[ID],cv:{[ID]:{version:1,digest:D}}}},context={clientId,confidential:true};

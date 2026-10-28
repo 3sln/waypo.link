@@ -5,7 +5,7 @@
 // `link/<jti>/` (./issuance.mjs), whatever its type. It replaces the legacy messaging `contact-grant/<id>` parent,
 // which carried collections, MIME types, delivery quotas, intake tags and quarantine; all of that was messaging and
 // left the core with it. Owner-side per-link configuration that core still keeps (profile sharing, audience
-// decisions and replay rows, RTC contact-link configuration) is keyed by the parent's `jti` and is live only while
+// decisions and replay rows) is keyed by the parent's `jti` and is live only while
 // the parent is: not revoked, unexpired, and owned by this account.
 //
 // Cap: an owner holds at most LINK_RECORD_CAP live parents (LinkService refuses issuance beyond it with
@@ -26,11 +26,6 @@ export async function scanAll(list,prefix,page=CONTACT_PARENT_SCAN){
 export const parentKey=jti=>key('link',jti);
 /** True for a parent record owned by `owner` that is neither revoked nor expired at `now` (Unix ms). */
 export const liveParent=(record,owner,now)=>Boolean(record&&record.owner===owner&&record.revoked!==true&&Number.isSafeInteger(record.claims?.exp)&&record.claims.exp*1000>now);
-/** Link types that may be an RTC contact basis (review L6, the pre-cut semantics: contact links only). */
-export const RTC_CONTACT_LINK_TYPES=Object.freeze([MESSAGING_CONTACT_LINK_TYPE,CONTACT_LINK_TYPE]);
-/** True for a parent (stored record or parentView) that RTC may admit as a contact basis: a contact-type link with no
- * audience condition. A conditional link's policy needs the caller principal, which the RTC port does not pass. */
-export const rtcContactBasis=parent=>Boolean(parent&&RTC_CONTACT_LINK_TYPES.includes(parent.type)&&!(parent.conditional??parent.claims?.audience));
 /** The parent record for `jti` (any single-key reader: a transaction or the store), or null. */
 export async function readParent(get,jti){if(typeof jti!=='string'||!UUID.test(jti))return null;return (await get(parentKey(jti)))??null;}
 /** The owner-visible summary of a parent (no meta, signature or capability URL). */

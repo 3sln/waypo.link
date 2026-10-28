@@ -1,7 +1,7 @@
 // Island client pieces in apps/embed that pair with the SDK elements: the leader's `/embed/api/events` stream and
-// `session/end`, and FedCM inside the island (adaptive-app-sign-in §11.3) against a test double of the browser API
-// and the provider's assertion endpoint. The FedCM server endpoints do not exist yet (packages/federation), so
-// nothing here is evidence of provider conformance or of Chromium behaviour. These tests live with the SDK suite
+// `session/end`, and the island flow transport. Islands never delegate to FedCM (extensions rev 3.3 §2.7, CR-X3-33,
+// provisional): entries are always `embed-popup` and the flow never calls the browser's FedCM API. Nothing here is
+// evidence of provider conformance or of browser behaviour. These tests live with the SDK suite
 // because of write ownership; tests/islands-worker.test.mjs covers the rest of the worker against the real stack.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -9,7 +9,8 @@ import {webcrypto} from 'node:crypto';
 import {openStore,frameKey,saveCredential} from '../../../apps/embed/src/keys.mjs';
 import {embedAPI,createEntry} from '../../../apps/embed/src/restore.mjs';
 import {createIslandWorker} from '../../../apps/embed/src/worker/index.mjs';
-import {createFlows,readFedcmToken,fedcmUsable} from '../../../apps/embed/src/parts/flow.mjs';
+import * as flowModule from '../../../apps/embed/src/parts/flow.mjs';
+const {createFlows}=flowModule;
 import {readConfig} from '../../../apps/embed/src/boot.mjs';
 
 const issuer='https://provider.example',embed='https://embed.provider.example',clientId='https://app.example/client',app='https://app.example';
@@ -105,69 +106,35 @@ test('embed API: events reject a non-OK response; session end never throws',asyn
   assert.equal(await embedAPI({origin:embed,key,fetch:async()=>{throw new TypeError('offline');}}).end('s'),false);
 });
 
-test('FedCM entry and proof: embed-fedcm delivery, entry-bound proof over a server nonce at the assertion URL',async()=>{
-  const key=await frameKey(await openStore({indexedDB:undefined}),{issuer,clientId,crypto:webcrypto});let body;
-  const entry=await createEntry({issuer,clientId,key,prepare:{redirectUri:app+'/callback',challenge:b43('c'),state:b43('s'),requests:[]},delivery:'embed-fedcm',fetch:async(url,init)=>{body=JSON.parse(init.body);return json({entryId:b43('e')});}});
-  assert.equal(entry,b43('e'));assert.equal(body.delivery,'embed-fedcm');assert.equal(body.presentation,'fedcm');assert.equal(body.embedJkt,key.jkt);
-  const proof=await key.fedcmProof({assertUrl:`${issuer}/fedcm/api/assert`,entry,nonce:'server-nonce'}),[head]=proof.split('.');
-  assert.equal(JSON.parse(Buffer.from(head,'base64url')).typ,'bindle-embed+jwt');
-  const payload=decode(proof);assert.deepEqual({htm:payload.htm,htu:payload.htu,nonce:payload.nonce,entry:payload.entry},{htm:'POST',htu:`${issuer}/fedcm/api/assert`,nonce:'server-nonce',entry});
-  assert.ok(payload.jti&&payload.iat);
+test('island entries are always embed-popup; the frame key has no FedCM proof',async()=>{
+  const key=await frameKey(await openStore({indexedDB:undefined}),{issuer,clientId,crypto:webcrypto});const bodies=[];
+  const fetch=async(url,init)=>{bodies.push(JSON.parse(init.body));return json({entryId:b43('e')});};
+  const prepare={redirectUri:app+'/callback',challenge:b43('c'),state:b43('s'),requests:[]};
+  assert.equal(await createEntry({issuer,clientId,key,prepare,fetch}),b43('e'));
+  // A caller asking for the withdrawn FedCM delivery still gets the popup delivery.
+  await createEntry({issuer,clientId,key,prepare,delivery:'embed-fedcm',fetch});
+  for(const body of bodies){assert.equal(body.delivery,'embed-popup');assert.equal(body.presentation,'popup');assert.equal(body.embedJkt,key.jkt);}
+  assert.equal('fedcmProof' in key,false);
+  assert.equal('fedcmUsable' in flowModule||'readFedcmToken' in flowModule,false,'no FedCM transport in the island');
 });
 
-test('shell config: optional FedCM endpoints must both be on the issuer origin',()=>{
+test('shell config: a config naming FedCM makes the island inert',()=>{
   const doc=config=>({getElementById:()=>({getAttribute:()=>'application/json',textContent:JSON.stringify({v:1,issuer,clientId,origins:[app],parts:['sign-in'],worker:'/embed/assets/w.0123456789abcdef.js',...config})})});
-  assert.equal(readConfig(doc({})).fedcm,null);
-  assert.deepEqual(readConfig(doc({fedcm:{configUrl:`${issuer}/fedcm/config.json`,assertUrl:`${issuer}/fedcm/api/assert`}})).fedcm,{configUrl:`${issuer}/fedcm/config.json`,assertUrl:`${issuer}/fedcm/api/assert`});
-  assert.equal(readConfig(doc({fedcm:{configUrl:'https://evil.example/fedcm.json',assertUrl:`${issuer}/fedcm/api/assert`}})),null);
-  assert.equal(readConfig(doc({fedcm:{configUrl:`${issuer}/fedcm/config.json`}})),null);
+  assert.ok(readConfig(doc({})));assert.equal('fedcm' in readConfig(doc({})),false);
+  assert.equal(readConfig(doc({fedcm:{configUrl:`${issuer}/fedcm/config.json`,assertUrl:`${issuer}/fedcm/api/assert`}})),null);
+  assert.equal(readConfig(doc({fedcm:null})),null);
 });
 
-// ---- FedCM inside the island, against a test double -------------------------------------------------------------
-const fedcm={configUrl:`${issuer}/fedcm/config.json`,assertUrl:`${issuer}/fedcm/api/assert`};
-function harness({allowed=true,identity=true,get,popup=null}={}){
-  const sent=[],calls=[],opened=[];
-  const win={IdentityCredential:identity?function IdentityCredential(){}:undefined,navigator:{credentials:{get:async options=>{calls.push(options);return get(options);}}},open:(...args)=>{opened.push(args);return popup;}};
-  const doc={featurePolicy:{allowsFeature:name=>name==='identity-credentials-get'&&allowed}};
-  const client={async call(op,args){calls.push({op,args});if(op==='createEntry')return b43('e');if(op==='fedcmProof')return 'proof.jws.sig';if(op==='redeem')return true;throw new Error(op);}};
-  const model={prepare:{redirectUri:app+'/callback',challenge:b43('c'),state:b43('s'),requests:[]},parentOrigin:app,sandboxed:false,flow:null};
-  const start=createFlows({model,send:message=>{sent.push(message);return true;},worker:async()=>client,issuer,clientId,fedcm,win,doc});
-  return {start,sent,calls,opened,model};
-}
+// ---- Flow transport: always the popup, even where FedCM would be available ---------------------------------------
 const kinds=sent=>sent.map(m=>m.type==='flow'?`flow:${m.phase}${m.outcome?':'+m.outcome:''}`:m.type);
-
-test('FedCM in frame: mediation required, entry + key proof params, code to the app, claim redeemed; no popup',async()=>{
-  const h=harness({get:async()=>({token:JSON.stringify({v:1,code:'the-code',state:b43('s'),iss:issuer,claim:'k'.repeat(43)})})});
-  h.start();await until(()=>kinds(h.sent).includes('flow:ended:completed'));
-  assert.deepEqual(kinds(h.sent),['flow:started','code','flow:ended:completed']);assert.deepEqual(h.opened,[],'no popup when FedCM is used');
-  const create=h.calls.find(c=>c.op==='createEntry'),proof=h.calls.find(c=>c.op==='fedcmProof'),get=h.calls.find(c=>c.identity);
-  assert.equal(create.args.delivery,'embed-fedcm');assert.deepEqual(proof.args,{entry:b43('e'),assertUrl:fedcm.assertUrl});
-  assert.equal(get.mediation,'required','never auto-selected (AS-R2-7)');
-  assert.deepEqual(get.identity,{providers:[{configURL:fedcm.configUrl,clientId,params:{v:1,entry:b43('e'),proof:'proof.jws.sig'}}],mode:'active',context:'signin'});
-  assert.deepEqual(h.sent[1],{v:1,type:'code',code:'the-code',state:b43('s'),iss:issuer});
-  assert.deepEqual(h.calls.find(c=>c.op==='redeem').args,{claim:'k'.repeat(43),delivered:true});
-});
-
-test('FedCM in frame: an object token (Chrome 143+) and a claimless (auto-selected) token deliver the code without a binding',async()=>{
-  const h=harness({get:async()=>({token:{v:1,code:'c2',state:b43('s'),iss:issuer}})});
-  h.start();await until(()=>kinds(h.sent).includes('flow:ended:completed'));
-  assert.equal(h.calls.some(c=>c.op==='redeem'),false,'C5: no component credential without a user choice');
-});
-
-test('FedCM in frame: dismissal cancels, pre-UI errors are unavailable, a forged token is refused; detection falls back to the popup',async()=>{
-  for(const [error,outcome] of [[Object.assign(new Error('x'),{name:'NetworkError'}),'canceled'],[Object.assign(new Error('x'),{name:'NotAllowedError'}),'unavailable']]){
-    const h=harness({get:async()=>{throw error;}});h.start();await until(()=>h.sent.length===2);
-    assert.deepEqual(kinds(h.sent),['flow:started',`flow:ended:${outcome}`]);
-  }
-  for(const token of [JSON.stringify({v:1,code:'c',state:b43('x'),iss:issuer}),JSON.stringify({v:1,code:'c',state:b43('s'),iss:'https://evil.example'}),'not json',JSON.stringify({v:1,code:'c',state:b43('s'),iss:issuer,extra:1})]){
-    const h=harness({get:async()=>({token})});h.start();await until(()=>h.sent.length===2);
-    assert.deepEqual(kinds(h.sent),['flow:started','flow:ended:canceled'],token);
-  }
-  // Not delegated (no allow="identity-credentials-get"), or no IdentityCredential: the popup path, chosen synchronously.
-  for(const options of [{allowed:false},{identity:false}]){
-    const h=harness({...options,get:async()=>{throw new Error('must not be called');}});h.start();await tick(10);
-    assert.equal(h.opened.length,1);assert.deepEqual(h.opened[0],['about:blank','_blank','popup']);assert.deepEqual(kinds(h.sent),['flow:started','flow:ended:unavailable'],'the null popup is unavailable');
-  }
-  assert.equal(fedcmUsable({fedcm:null,win:{IdentityCredential:function(){},navigator:{credentials:{get(){}}}},doc:{featurePolicy:{allowsFeature:()=>true}}}),false,'no endpoints configured');
-  assert.equal(readFedcmToken('{"v":1,"code":"c","state":"s","iss":"i","claim":"short"}',{state:'s',issuer:'i'}),null);
+test('island flows never call FedCM: the popup opens synchronously even with IdentityCredential and delegation',async()=>{
+  const sent=[],calls=[],opened=[];
+  const win={IdentityCredential:function IdentityCredential(){},navigator:{credentials:{get:async()=>{calls.push('fedcm');throw new Error('must not be called');}}},open:(...args)=>{opened.push(args);return null;}};
+  const client={async call(op,args){calls.push(op);throw new Error(op);}};
+  const model={prepare:{redirectUri:app+'/callback',challenge:b43('c'),state:b43('s'),requests:[]},parentOrigin:app,sandboxed:false,flow:null};
+  const start=createFlows({model,send:message=>{sent.push(message);return true;},worker:async()=>client,issuer,clientId,fedcm:{configUrl:`${issuer}/fedcm/config.json`,assertUrl:`${issuer}/fedcm/api/assert`},win,doc:{featurePolicy:{allowsFeature:()=>true}}});
+  start();await tick(10);
+  assert.equal(opened.length,1);assert.deepEqual(opened[0],['about:blank','_blank','popup']);
+  assert.deepEqual(kinds(sent),['flow:started','flow:ended:unavailable'],'the null popup is unavailable');
+  assert.equal(calls.includes('fedcm'),false);assert.equal(calls.includes('fedcmProof'),false);
 });

@@ -10,7 +10,7 @@ export const publicSources = [
   'vendor/ngin',
   'vendor/tldts/index.js',
   'packages/sdk/src',
-  'packages/intents/legacy.mjs','packages/intents/registered.mjs','packages/intents/format.mjs','packages/intents/schema.mjs','packages/intents/project.mjs',
+  'packages/intents/legacy.mjs','packages/intents/registered.mjs','packages/intents/format.mjs','packages/intents/schema.mjs','packages/intents/sessions.mjs','packages/intents/project.mjs',
   'packages/core/strict-json.mjs','packages/core/artefacts.mjs','packages/core/extensions.mjs','packages/core/fragments.mjs',
   'packages/links/preview.mjs','packages/links/envelope.mjs','packages/links/types.mjs',
   'packages/i18n',

@@ -6,9 +6,9 @@ import {h,icon,badge,field,select,checkbox,empty,helpers,fire} from './release-p
 import {contactSharingDialog} from './contact-profile.mjs';
 import {settingsDialog} from './release-settings.mjs';
 import {securityDialog} from './release-security.mjs';
-import {rtcDialog} from './rtc-settings.mjs';
+import {signalingDialog} from './signaling-controls.mjs';
 export default function modal(state){
-  const content=messageActionDialog(state)??automationDialog(state)??settingsDialog(state)??securityDialog(state)??contactSharingDialog(state)??rtcDialog(state)??dialogContent(state),{btn,alerts}=helpers(state);
+  const content=messageActionDialog(state)??automationDialog(state)??settingsDialog(state)??securityDialog(state)??contactSharingDialog(state)??signalingDialog(state)??dialogContent(state),{btn,alerts}=helpers(state);
   return h('div',h('section',h('div',h('h2',content.title).props({id:'dialog-title'}),btn(icon('close'),{kind:'close-modal'},'icon-button').attrs({'aria-label':'Close dialog'})).classes('modal-heading'),alerts(),content.body).attrs({role:'dialog','aria-modal':'true','aria-labelledby':'dialog-title'}).on({keydown:event=>{
     if(event.key==='Tab'){const nodes=[...event.currentTarget.querySelectorAll('button,input,select,textarea,a[href]')].filter(node=>!node.disabled);if(event.shiftKey&&document.activeElement===nodes[0]){event.preventDefault();nodes.at(-1)?.focus();}else if(!event.shiftKey&&document.activeElement===nodes.at(-1)){event.preventDefault();nodes[0]?.focus();}}
   }}).classes('modal').key(state.modal.kind)).classes('modal-backdrop');

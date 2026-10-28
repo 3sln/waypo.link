@@ -2,8 +2,8 @@
 // shared.mjs only when the capability set lists the part, so the embedder's islands="auto|off" and
 // island-issuers policy and the profile cross-checks have already passed.
 //
-//   mountIsland({element, container, session, onState, part, issuer, embedOrigin, version, fedcm, themeTokens})
-//     element    the host element (its lang, theme, attributes and computed --bindle-* tokens; never its light DOM)
+//   mountIsland({element, container, session, onState, part, issuer, embedOrigin, version})
+//     element    the host element (its lang, theme and attributes; never its light DOM or its --bindle-* tokens)
 //     container  an empty element in the host's shadow root; the iframe is appended to it and sized to fill it
 //     session    the <bindle-session> element; its controller provides prepareIsland(issuer),
 //                completeIslandCode({code,state,iss}), selectAccount(subject) and the `change`/`sign-out` events
@@ -15,7 +15,7 @@
 // and element.islandClose('escape'|'dismiss'). Raw port data never reaches app events (E3). Timeout, schema
 // violations, a mismatched `ready`, attribute tampering or a second load tear the island down and degrade the
 // part (or, for a foreign `ready.issuer`, the whole profile) for this issuer and document (E5, profile §11).
-import {islandURL,formatIslandName,validateOutbound,validateThemeTokens,PARTS,LIMITS} from '../islands-protocol.mjs';
+import {islandURL,formatIslandName,validateOutbound,PARTS,LIMITS} from '../islands-protocol.mjs';
 import {localeFor,localize,schemeFor} from './shared.mjs';
 
 // Features islands never need (profile §3.1): naming them 'none' disables those with a default allowlist of *.
@@ -39,7 +39,7 @@ function watch(controller){
   return registry;
 }
 
-export async function mountIsland({element,container,session,onState=()=>{},part,issuer,embedOrigin,version=1,fedcm=false,themeTokens=[]}){
+export async function mountIsland({element,container,session,onState=()=>{},part,issuer,embedOrigin,version=1}){
   const controller=session?.controller,client=controller?.client,clientId=client?.clientIdFor?.(issuer),spec=PARTS[part];
   const doc=element.ownerDocument,win=doc?.defaultView;
   if(!controller||!clientId||!embedOrigin||!spec||!container||!win?.MessageChannel)return null;
@@ -52,12 +52,9 @@ export async function mountIsland({element,container,session,onState=()=>{},part
     const used=win.getComputedStyle?.(element)?.colorScheme??'',dark=/\bdark\b/.test(used),light=/\blight\b/.test(used);
     return dark!==light?(dark?'dark':'light'):win.matchMedia?.('(prefers-color-scheme: dark)')?.matches?'dark':'light';
   };
-  // Only declared, validated tokens; canonical #rrggbb colours and an integer radius (profile §7).
-  const tokens=colorScheme=>{
-    const style=win.getComputedStyle?.(element),input={};
-    for(const name of themeTokens){const raw=style?.getPropertyValue?.(`--bindle-${name}`)?.trim().toLowerCase();if(!raw)continue;if(name==='radius'){if(/^\d{1,2}$/.test(raw))input.radius=Number(raw);}else if(/^#[0-9a-f]{6}$/.test(raw))input[name]=raw;}
-    return validateThemeTokens(input,{scheme:colorScheme}).tokens;
-  };
+  // No theme tokens (extensions rev 3.3 §2.7, CR-X3-33, provisional): islands use provider defaults, so the element
+  // reads no --bindle-* tokens and always sends an empty token set.
+  const tokens=()=>({});
   const props=()=>{
     if(part==='account-switcher'){const value=element.getAttribute('actions'),requested=value===null?['switch','manage']:value.split(/\s+/);return {density:element.getAttribute('density')==='compact'?'compact':'regular',actions:[...requested.includes('switch')?['use-another']:[],...requested.includes('manage')?['manage']:[],'remove']};}
     if(part==='sign-in')return {label:['sign-in','sign-up'].includes(element.getAttribute('island-label'))?element.getAttribute('island-label'):'continue',variant:element.getAttribute('island-variant')==='outline'?'outline':'filled'};
@@ -75,7 +72,8 @@ export async function mountIsland({element,container,session,onState=()=>{},part
   iframe.name=formatIslandName({nonce,lang:current.lang,colorScheme:current.scheme});
   iframe.title=titleFor(element,part,host);
   iframe.setAttribute('referrerpolicy','no-referrer');iframe.setAttribute('loading','eager');
-  iframe.setAttribute('allow',`identity-credentials-get ${fedcm&&interactive?"'src'":"'none'"}; ${denied}`);
+  // Islands never delegate to FedCM (extensions rev 3.3 §2.7, CR-X3-33, provisional).
+  iframe.setAttribute('allow',`identity-credentials-get 'none'; ${denied}`);
   const coarse=win.matchMedia?.('(pointer: coarse)')?.matches,scale=Number.parseFloat(win.getComputedStyle?.(doc.documentElement)?.fontSize)/16||1;
   Object.assign(iframe.style,{display:'block',border:'0',margin:'0',padding:'0',background:'transparent',colorScheme:current.scheme,inlineSize:'100%',blockSize:part==='sign-in'?`${(coarse?48:44)*scale}px`:'100%'});
   if(part==='avatar'){iframe.setAttribute('aria-hidden','true');iframe.tabIndex=-1;iframe.style.pointerEvents='none';}

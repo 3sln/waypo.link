@@ -68,36 +68,51 @@ test('F7: the entry document keeps its strict CSP with frame-src none and its CO
 });
 
 test('embed origin: mounted only with entries, cookieless shell with per-client frame-ancestors and an inert page otherwise',async()=>{
- const off=await fixture({entries:false,shell:true});assert.equal((await off.fetch(embedOrigin+'/embed?client='+encodeURIComponent(clientId))).status,404);
- const disabled=await fixture({federation:'false',shell:true});assert.equal((await disabled.fetch(embedOrigin+'/embed?client='+encodeURIComponent(clientId))).status,404);
+ const off=await fixture({entries:false,shell:true});assert.equal((await off.fetch(embedOrigin+'/?client='+encodeURIComponent(clientId))).status,404);
+ const disabled=await fixture({federation:'false',shell:true});assert.equal((await disabled.fetch(embedOrigin+'/?client='+encodeURIComponent(clientId))).status,404);
  const f=await fixture({shell:true});
- const shell=await f.fetch(embedOrigin+'/embed?client='+encodeURIComponent(clientId));assert.equal(shell.status,200);
+ const shell=await f.fetch(embedOrigin+'/?client='+encodeURIComponent(clientId));assert.equal(shell.status,200);
  // Per-client config filled at request time; `<` can never close the JSON block.
  const html=await shell.text(),config=JSON.parse(/id="config">(.*?)<\/script>/.exec(html)[1]);assert.equal(html.replace(/id="config">.*?<\/script>/,'id="config">{{CONFIG}}</script>'),SHELL);
  assert.deepEqual(config,{v:1,issuer,clientId,origins:[appOrigin],parts:['avatar','account-switcher','sign-in'],worker:SHELL_BUILD.worker,sw:'/embed/sw.js'});
  const csp=shell.headers.get('Content-Security-Policy');
  assert.match(csp,new RegExp(`frame-ancestors ${appOrigin.replaceAll('.','\\.')};`));assert.match(csp,new RegExp(`script-src 'self' '${SHELL_HASH.replaceAll('+','\\+')}';`));assert.match(csp,/require-trusted-types-for 'script'; trusted-types bindle-embed$/);assert.match(csp,/frame-src 'none'/);assert.match(csp,/trusted-types bindle-embed/);assert.match(csp,new RegExp(`connect-src 'self' ${issuer.replaceAll('.','\\.')};`));
  assert.equal(shell.headers.get('Set-Cookie'),null);assert.equal(shell.headers.get('X-Frame-Options'),null);assert.equal(shell.headers.get('Cache-Control'),'private, max-age=300');assert.equal(shell.headers.get('Origin-Agent-Cluster'),'?1');assert.equal(shell.headers.get('Referrer-Policy'),'no-referrer');
- const etag=shell.headers.get('ETag');assert.match(etag,/^"[a-f0-9]{64}"$/);assert.equal((await f.fetch(embedOrigin+'/embed?client='+encodeURIComponent(clientId),{headers:{'If-None-Match':etag}})).status,304);
- for(const url of [embedOrigin+'/embed?client=https%3A%2F%2Funknown.example%2Fclient',embedOrigin+'/embed',embedOrigin+'/embed?client='+encodeURIComponent(clientId)+'&x=1']){const inert=await f.fetch(url);assert.equal(inert.status,200);assert.equal(await inert.text(),'<!doctype html><meta charset="utf-8"><title></title>');assert.match(inert.headers.get('Content-Security-Policy'),/frame-ancestors 'none'/);assert.equal(inert.headers.get('Content-Security-Policy').includes('script-src'),false);}
- const unbuilt=await fixture();const pending=await unbuilt.fetch(embedOrigin+'/embed?client='+encodeURIComponent(clientId));assert.equal(await pending.text(),'<!doctype html><meta charset="utf-8"><title></title>');assert.equal(pending.headers.get('Cache-Control'),'no-store');
+ assert.equal(shell.headers.get('Cross-Origin-Embedder-Policy'),'require-corp');assert.equal(shell.headers.get('Cross-Origin-Resource-Policy'),'cross-origin','the root island document is framed cross-origin under COEP');
+ const etag=shell.headers.get('ETag');assert.match(etag,/^"[a-f0-9]{64}"$/);assert.equal((await f.fetch(embedOrigin+'/?client='+encodeURIComponent(clientId),{headers:{'If-None-Match':etag}})).status,304);
+ for(const url of [embedOrigin+'/?client=https%3A%2F%2Funknown.example%2Fclient',embedOrigin+'/',embedOrigin+'/?client=',embedOrigin+'/?client='+encodeURIComponent(clientId)+'&x=1',embedOrigin+'/?x=1&client='+encodeURIComponent(clientId)]){const inert=await f.fetch(url);assert.equal(inert.status,200);assert.equal(await inert.text(),'<!doctype html><meta charset="utf-8"><title></title>');assert.match(inert.headers.get('Content-Security-Policy'),/frame-ancestors 'none'/);assert.equal(inert.headers.get('Content-Security-Policy').includes('script-src'),false);assert.equal(inert.headers.get('Cross-Origin-Embedder-Policy'),'require-corp',url);assert.equal(inert.headers.get('Cross-Origin-Resource-Policy'),'cross-origin',url);}
+ const unbuilt=await fixture();const pending=await unbuilt.fetch(embedOrigin+'/?client='+encodeURIComponent(clientId));assert.equal(await pending.text(),'<!doctype html><meta charset="utf-8"><title></title>');assert.equal(pending.headers.get('Cache-Control'),'no-store');
  const asset=await f.fetch(embedOrigin+'/embed/assets/boot.0123456789.js');assert.equal(asset.status,200);assert.equal(asset.headers.get('Set-Cookie'),null);assert.equal(asset.headers.get('Cross-Origin-Resource-Policy'),'same-origin');assert.match(asset.headers.get('Cache-Control'),/immutable/);
  assert.equal(asset.headers.get('Cross-Origin-Embedder-Policy'),'require-corp','the island worker script must be COEP');assert.equal(asset.headers.get('Content-Type'),'text/javascript; charset=utf-8');assert.match(asset.headers.get('Content-Security-Policy'),new RegExp(`connect-src 'self' ${issuer.replaceAll('.','\\.')};`));
  assert.equal((await f.fetch(embedOrigin+'/embed/assets/boot.0123456789.js?v=2')).status,404,'no query variants of immutable assets');
- const sw=await f.fetch(embedOrigin+'/embed/sw.js');assert.equal(sw.status,200);assert.equal(sw.headers.get('Service-Worker-Allowed'),'/embed');assert.equal(sw.headers.get('Cache-Control'),'no-cache');assert.equal(sw.headers.get('Cross-Origin-Resource-Policy'),'same-origin');assert.match(sw.headers.get('Content-Security-Policy'),/connect-src 'self';/);
+ const sw=await f.fetch(embedOrigin+'/embed/sw.js');assert.equal(sw.status,200);assert.equal(sw.headers.get('Service-Worker-Allowed'),'/','the worker controls the root island document');assert.equal(sw.headers.get('Cache-Control'),'no-cache');assert.equal(sw.headers.get('Cross-Origin-Resource-Policy'),'same-origin');assert.match(sw.headers.get('Content-Security-Policy'),/connect-src 'self';/);
  assert.equal((await f.fetch(embedOrigin+'/embed/sw.js?scope=/')).status,404);
  for(const path of ['/embed/shell.html','/embed/shell.json'])assert.equal((await f.fetch(embedOrigin+path)).status,404,`${path} is a build input, never served`);
  // A plain-HTTP redirect origin never becomes a frame ancestor outside local development.
  const insecure=await fixture({shell:true,extra:{FEDERATION_ENTRIES:{...f.env.FEDERATION_ENTRIES,clients:new Map([[clientId,{id:clientId,redirectUris:['http://app.example/callback']}]])}}});
- const plain=await insecure.fetch(embedOrigin+'/embed?client='+encodeURIComponent(clientId));assert.match(plain.headers.get('Content-Security-Policy'),/frame-ancestors 'none'/);assert.equal(await plain.text(),'<!doctype html><meta charset="utf-8"><title></title>');
- for(const path of ['/console','/api/session','/oauth/authorize','/.well-known/bindle/manifest.json','/embed/../console','/embedded','/embed/assets/missing.js'])assert.equal((await f.fetch(embedOrigin+path)).status,404,path);
- assert.equal((await f.fetch(embedOrigin+'/embed',{method:'POST'})).status,405);
+ const plain=await insecure.fetch(embedOrigin+'/?client='+encodeURIComponent(clientId));assert.match(plain.headers.get('Content-Security-Policy'),/frame-ancestors 'none'/);assert.equal(await plain.text(),'<!doctype html><meta charset="utf-8"><title></title>');
+ for(const path of ['/console','/api/session','/oauth/authorize','/.well-known/bindle/manifest.json','/embed%2Fsw.js','/embed%2fassets%2fboot.0123456789.js','/EMBED/sw.js','/Embed/assets/boot.0123456789.js','/%65mbed/sw.js','/embed%5Csw.js','/embed/assets/boot.0123456789.js%00','/%zz','/embedded','/embed/assets/missing.js','/index.html','/favicon.ico','/robots.txt','/assets/app.js','/embed/','/embed/assets/','/embed/api','/%2F','/sw.js'])assert.equal((await f.fetch(embedOrigin+path)).status,404,path);
+ // The island document is the origin root only (extensions §2.7, CR-X3-35, owner-approved): the former `/embed` path is gone.
+ for(const url of [embedOrigin+'/embed?client='+encodeURIComponent(clientId),embedOrigin+'/embed',embedOrigin+'/embed/?client='+encodeURIComponent(clientId)]){const gone=await f.fetch(url);assert.equal(gone.status,404,url);assert.equal(gone.headers.get('Content-Type'),'application/json');assert.equal(gone.headers.get('Content-Security-Policy'),null);}
+ assert.equal((await f.fetch(embedOrigin+'/',{method:'POST'})).status,405);assert.equal((await f.fetch(embedOrigin+'/?client='+encodeURIComponent(clientId),{method:'PUT'})).status,405);
+ const head=await f.fetch(embedOrigin+'/?client='+encodeURIComponent(clientId),{method:'HEAD'});assert.equal(head.status,200);assert.equal(await head.text(),'');assert.match(head.headers.get('Content-Security-Policy'),/frame-ancestors /);
  // Embed API: Fetch Metadata gated, never cross-site, no CORS.
  const api=await f.fetch(embedOrigin+'/embed/api/nonce',{method:'POST',headers:{Origin:'https://evil.example'}});assert.equal(api.status,403);assert.equal(api.headers.get('Access-Control-Allow-Origin'),null);
  const nonce=await f.fetch(embedOrigin+'/embed/api/nonce',{method:'POST',headers:{Origin:embedOrigin,'Sec-Fetch-Site':'same-origin','Sec-Fetch-Mode':'cors','Sec-Fetch-Dest':'empty','X-Bindle-Embed':'1'}});assert.equal(nonce.status,200);assert.ok((await nonce.json()).nonce);
  assert.ok(f.consumed.some(key=>key.startsWith('embed/api/ip/'))&&f.consumed.some(key=>key.startsWith('embed/shell/ip/')),'shell and API pass IP admission');
  // The app origin never serves islands, and the embed origin cannot reach app routes.
- assert.equal((await f.fetch(issuer+'/embed?client='+encodeURIComponent(clientId))).headers.get('Content-Security-Policy')?.includes('trusted-types bindle-embed')??false,false);
+ const gone=await f.fetch(issuer+'/embed?client='+encodeURIComponent(clientId));assert.equal(gone.status,404);assert.deepEqual(await gone.json(),{error:'not_found'});
+});
+
+test('app origin: /embed is refused on the decoded, lowercased path, and malformed percent-encoding is refused (review L1)',async()=>{
+ // An asset store that decodes and case-folds, as the Node port on a case-insensitive filesystem could.
+ const served=[],ASSETS={fetch:async request=>{let path;try{path=decodeURIComponent(new URL(request.url).pathname).toLowerCase();}catch{return new Response('bad',{status:400});}served.push(path);return path.startsWith('/embed/')?new Response('self.x=1',{headers:{'Content-Type':'text/javascript'}}):new Response('Not found',{status:404});}};
+ const f=await fixture({shell:true,extra:{ASSETS}});
+ for(const path of ['/embed/sw.js','/embed%2Fsw.js','/embed%2fshell.html','/EMBED/sw.js','/Embed/shell.html','/%65mbed/sw.js','/%45MBED%2Fsw.js','/embed%5Csw.js','/embed','/EMBED','/%zz','/embed/%E0%A4%A','/x%']){
+  const response=await f.fetch(issuer+path);assert.equal(response.status,404,path);assert.deepEqual(await response.json(),{error:'not_found'},path);
+ }
+ assert.deepEqual(served.filter(path=>path.startsWith('/embed')),[],'no island path reaches the asset store');
+ assert.notEqual((await f.fetch(issuer+'/embedded')).headers.get('Content-Type'),'text/javascript','only the /embed segment is reserved');
 });
 
 test('Worker entry facade: local manifest, structured fault envelopes, shard routing and end-session only with the hook',async()=>{
@@ -162,8 +177,15 @@ test('Node composition: a sharded entry store, admin store and the embed host be
  assert.equal(created.status,201);const {entryId}=await created.json();assert.ok(await app.resources.federationEntries.store(entryShard(entryId)).transaction(tx=>tx.get('@alarm')),'creation arms the entry shard cleanup alarm');
  await new Promise(resolve=>app.server.listen(0,'127.0.0.1',resolve));const port=app.server.address().port;
  const get=(host,path)=>new Promise((resolve,reject)=>{import('node:http').then(({request})=>{const req=request({host:'127.0.0.1',port,path,headers:{Host:host}},res=>{let data='';res.on('data',c=>data+=c);res.on('end',()=>resolve({status:res.statusCode,headers:res.headers,body:data}));});req.on('error',reject);req.end();});});
- const shell=await get('127.0.0.1:8797','/embed?client='+encodeURIComponent(clientId));assert.equal(shell.status,200);assert.match(shell.headers['content-security-policy'],/frame-ancestors https:\/\/app\.example/);assert.equal(shell.headers['set-cookie'],undefined);
- assert.equal((await get('127.0.0.1:8797','/console')).status,404);assert.equal((await get('evil.example','/embed')).status,403);
+ const shell=await get('127.0.0.1:8797','/?client='+encodeURIComponent(clientId));assert.equal(shell.status,200);assert.match(shell.headers['content-security-policy'],/frame-ancestors https:\/\/app\.example/);assert.equal(shell.headers['set-cookie'],undefined);
+ assert.equal((await get('127.0.0.1:8797','/console')).status,404);assert.equal((await get('evil.example','/')).status,403);assert.equal((await get('127.0.0.1:8797','/embed?client='+encodeURIComponent(clientId))).status,404);
+ // Raw request targets reach the server unnormalised: traversal is resolved within the chosen origin and never
+ // reaches island build inputs or app routes (review L2), and only origin-form targets are accepted (review I1).
+ for(const path of ['/embed/../console','/embed/./../api/session','/x/../embed/shell.html','/embed%2F..%2Fconsole'])assert.equal((await get('127.0.0.1:8797',path)).status,404,path);
+ for(const path of ['/x/../embed/sw.js','/embed%2Fsw.js','/EMBED/sw.js','/%65mbed/sw.js','/%zz'])assert.equal((await get('localhost:8797',path)).status,404,path);
+ for(const target of [origin+'/console','http://127.0.0.1:8797/?client='+encodeURIComponent(clientId),'*'])for(const host of ['localhost:8797','127.0.0.1:8797']){const response=await get(host,target);assert.equal(response.status,400,`${host} ${target}`);assert.deepEqual(JSON.parse(response.body),{error:'invalid_request_target'});}
+ assert.equal((await get('localhost:8797','localhost:8797')).status,400,'authority-form is refused by the HTTP parser itself');
+ const slashes=await get('localhost:8797','//127.0.0.1:8797/?client='+encodeURIComponent(clientId));assert.equal(slashes.status,404,'a scheme-relative target stays a path on the Host origin');assert.equal(slashes.headers['content-security-policy']?.includes('trusted-types bindle-embed')??false,false);
  const disabled=await createNodeServer({directory:await mkdtemp(join(tmpdir(),'3sln-mount-off-')),config:{APP_ORIGIN:'http://localhost:8798'}});t.after(()=>disabled.close());
  assert.equal(disabled.resources.federationEntries,null);assert.ok(disabled.resources.adminStore,'the admin store exists; boot stays inert without BOOTSTRAP_TOKEN_SHA256');
  assert.equal((await disabled.fetch(new Request('http://localhost:8798/api/admin/boot/status',{method:'POST',headers:{Origin:'http://localhost:8798','Content-Type':'application/json'},body:'{}'}))).status,503,'admin routes are unmounted until boot is configured (review M6)');

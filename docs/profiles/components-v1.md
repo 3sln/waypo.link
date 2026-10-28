@@ -10,7 +10,7 @@
 
 **Profile identifier:** `https://3sln.me/artefacts/profiles/components/v1`
 
-Status: **provisional draft, 2026-10-14, revision 2** (after independent review; [review](../release/components-profile-review.md)). **2026-10-27, provisional (Bindle extensions revision 3.2, EXT3-29, §13 Q5; not signed off):** this profile is to be republished as the Bindle-owned embedded-components extension (`https://spec.bindle.example/extensions/embedded-components/v1`, placeholder), with `embed_origin` as the declared component origin ([extensions §2.7](../spec/extensions.md#27-extensions-cannot-change-core)). Republication is pending and the content below is unchanged. Nothing in this profile is implemented, routed or production-verified. Publication of this text does not imply that any provider, including 3sln.me, conforms to it. The identifier resolves to the machine-readable descriptor [components-profile-v1.json](../architecture/artefacts/components-profile-v1.json), registered as a provisional manifest profile in the [contract registry](/artefacts/contracts/). Registration is not sign-off and implies no conformance. Decision record and rationale: [components profile decision note](../architecture/components-profile.md).
+Status: **provisional draft, 2026-10-14, revision 2** (after independent review; [review](../release/components-profile-review.md)). **2026-10-27, provisional (Bindle extensions revision 3.2, EXT3-29, §13 Q5; not signed off):** this profile is to be republished as the Bindle-owned embedded-components extension (`https://spec.bindle.example/extensions/embedded-components/v1`, placeholder), with `embed_origin` as the declared component origin ([extensions §2.7](../spec/extensions.md#27-extensions-cannot-change-core)). Republication is pending. **2026-10-28, rev 3.3 changes applied here (CR-X3-33, [extensions §2.7](../spec/extensions.md#27-extensions-cannot-change-core); provisional and unsigned, except the island location, owner-approved 2026-10-27):** the declaration is the extension's atomic options (`parts` as `<name>/<version>` strings), the per-part `fedcm` member and `theme_tokens` are dropped, islands never delegate to FedCM, and the island document is at the `embed_origin` root. Text that the rev 3.3 changes supersede is marked. Nothing in this profile is implemented, routed or production-verified. Publication of this text does not imply that any provider, including 3sln.me, conforms to it. The identifier resolves to the machine-readable descriptor [components-profile-v1.json](../architecture/artefacts/components-profile-v1.json), listed as a withdrawn manifest profile in the [contract registry](/artefacts/contracts/): it stays resolvable, but no provider emits or reads the profile identifier. Registration is not sign-off and implies no conformance. Decision record and rationale: [components profile decision note](../architecture/components-profile.md).
 
 This profile is published by 3sln.me. **It is not part of the Bindle specification.** Bindle defines interop and no user interface. This profile defines what a Bindle provider must implement so that the `@3sln/bindle` custom elements (or any other embedder library that implements the element side of this profile) can embed **provider-operated components** ("islands") in an application page. It covers the wire contract between the embedder's elements and the provider's islands, and the security properties a provider must guarantee when it claims support. How a provider draws its islands, and how its islands talk to its own server, are provider matters except where §9 names a credential-binding mechanism.
 
@@ -20,42 +20,39 @@ MUST, SHOULD and MAY express requirements of this draft. "Provider" means the Bi
 
 ## 1. Relationship to core Bindle
 
-- The profile is declared in the issuer's manifest under the core `profiles` container ([protocol §2](../spec/protocol.md#2-discovery-and-login)), keyed by the identifier above. Core Bindle defines only the container and its processing rules; every member below is defined here.
-- The profile relies on core features declared separately in the manifest: `authorization-entry.v1` (islands create authorization entries), optionally `fedcm.v1` (FedCM inside an island) and the flat DPoP metadata (`dpop_signing_alg_values_supported`) for the app's own refresh token.
+- The profile is declared in the issuer's manifest as the embedded-components extension declaration (`{spec, options}`, [extensions §2](../spec/extensions.md)); the former core `profiles` container no longer exists. Every option below is defined here.
+- The profile relies on core features declared separately in the manifest: `authorization-entry.v1` (islands create authorization entries) and the flat DPoP metadata (`dpop_signing_alg_values_supported`) for the app's own refresh token.
 - The profile is an optional enhancement above the core [conformance floor](../spec/protocol.md#2-discovery-and-login). Elements fully support providers that implement only the floor.
-- The profile uses the core **component-origin envelope** ([auth](../spec/auth.md#presentation-transports-and-key-binding)): `embed_origin` is the declared component origin, which may create authorization entries and FedCM assertions for a registered client only together with the key proof of §9; codes may pass through it but reach the app only on the origin of the flow's registered redirect URI; component credentials never reach the app and never work at core endpoints.
+- The profile uses the core **component-origin envelope** ([auth](../spec/auth.md#presentation-transports-and-key-binding)): `embed_origin` is the declared component origin, which may create authorization entries (never FedCM assertions: islands never delegate to FedCM) for a registered client only together with the key proof of §9; codes may pass through it but reach the app only on the origin of the flow's registered redirect URI; component credentials never reach the app and never work at core endpoints.
 - `authorization-entry.v1` is a proposed core feature whose wire text is not yet published (decision note CPS-6). Until it is, no provider can conform to this profile's flow parts, and this profile is a design target, not an implementable standard.
 - Nothing in this profile changes consent, grants, token semantics or RPC authority. An app gets exactly the access its own code exchange grants, whichever path the user took.
 
 ## 2. Declaration
 
 ```json
-"profiles": {
-  "https://3sln.me/artefacts/profiles/components/v1": {
-    "embed_origin": "https://embed.example.org",
-    "protocol": [1],
-    "parts": {
-      "avatar": {"versions": [1]},
-      "account-switcher": {"versions": [1], "fedcm": true},
-      "sign-in": {"versions": [1], "fedcm": true}
-    },
-    "theme_tokens": ["surface", "surface-raised", "text", "text-muted", "accent", "on-accent", "border", "focus", "danger", "radius"],
-    "credential_binding": ["key-binding.v1"],
-    "manage_url": "https://example.org/console/apps"
+"extensions": [
+  {
+    "spec": "https://spec.bindle.example/extensions/embedded-components/v1",
+    "options": {
+      "embed_origin": "https://embed.example.org",
+      "protocol": [1],
+      "parts": ["avatar/1", "account-switcher/1", "sign-in/1"],
+      "credential_binding": ["key-binding.v1"],
+      "manage_url": "https://example.org/console/apps"
+    }
   }
-}
+]
 ```
 
 | Member | Required | Type and validation | If absent or invalid |
 | --- | --- | --- | --- |
 | `embed_origin` | Yes | ASCII serialization of an HTTPS origin: `new URL(v).origin === v`, no path, query, fragment, userinfo or IP literal. MUST differ from the issuer origin and from the embedder's own origin. | The whole profile declaration is ignored. |
 | `protocol` | Yes | Array of 1–8 distinct positive integers: channel protocol versions (§5). | Profile ignored. No common version with the element: profile ignored. |
-| `parts` | Yes | Object of at most 16 members. Keys match `^[a-z][a-z-]{0,31}$`. Each value is an object with `versions` (array of 1–8 distinct positive integers) and optional `fedcm` (boolean, default `false`). Unknown members of a part object are ignored. | Unknown part names are ignored. A part with no version the element implements is treated as absent. |
-| `theme_tokens` | No | Array of token names from §7; unknown names ignored. | `[]`: islands use provider defaults and the element sends no tokens. |
+| `parts` | Yes | Array of 1–4 distinct `<name>/<version>` strings from the descriptor enum (currently `avatar/1`, `account-switcher/1`, `sign-in/1`, `request/1`). There is no per-part `fedcm` member (rev 3.3). | A part with no version the element implements is treated as absent. |
 | `credential_binding` | No | Array of binding identifiers (§9). Defined: `key-binding.v1`. Unknown identifiers ignored. | `[]`. Identity-bearing parts (`avatar`, `account-switcher`) are then treated as absent (§2.1). |
 | `manage_url` | No | HTTPS URL on the **issuer** origin, no userinfo or fragment. Target of the elements' "Manage" link. | Elements link to the issuer origin root. |
 
-Unknown members are ignored. The serialized declaration is bounded by the core `profiles` limit (8 KiB).
+There is no `theme_tokens` option (rev 3.3): islands use provider defaults and the element sends no tokens. Options are validated by the extension descriptor (extensions §2.4).
 
 ### 2.1 Cross-checks
 
@@ -63,22 +60,22 @@ An element applies these after member validation; each failure removes only the 
 
 - `sign-in` and `account-switcher` require core `authorization-entry.v1` with the `login` intent, because their flows create authorization entries. Without it they are absent.
 - `avatar` and `account-switcher` render account data held by islands. They are absent unless `credential_binding` names a binding the element recognizes as meeting §9 (v1: `key-binding.v1`).
-- A part's `fedcm: true` is honored only if the manifest also declares core `fedcm.v1`, the element runs where `IdentityCredential` exists, **and** the issuer is the app's configured default provider or listed in the app's island allowlist (`island-issuers`). Otherwise the element does not delegate `identity-credentials-get` to that island, because a hostile island could run FedCM against any identity provider over the app's page.
+- Islands never delegate to FedCM (rev 3.3). The element always sets `identity-credentials-get 'none'` on the island, because a hostile island could otherwise run FedCM against any identity provider over the app's page.
 
 ### 2.2 Embed origin rules (provider)
 
 - The embed origin MUST be dedicated to islands: it serves no console, login, consent or user-generated content, sets and reads no cookies, and serves islands for **exactly one issuer**.
-- It SHOULD be same-site with the issuer (for example `embed.example.org` for `example.org`), which lets FedCM inside an island skip the well-known check ([adaptive sign-in §11.3](../architecture/adaptive-app-sign-in.md)). A cross-site embed origin MUST be listed in the issuer's FedCM well-known file if any part declares `fedcm: true`.
+- It MAY be a subdomain of the issuer's site (for example `embed.example.org` for `example.org`) or an associated site the provider operates (extensions §2.7). Every path other than the island document (§3) is provider-private.
 - The embed origin MUST NOT receive the app's PKCE verifier, access or refresh tokens, or DPoP keys. It handles authorization codes only transiently (§8).
 - Component data is scoped to `(issuer, client_id)`, not to the browser partition: every island read of bindings, labels or avatars MUST be filtered to credentials of this `client_id` that are live, so two clients on the same top-level site never see each other's users (review CPR-8).
 
 ## 3. Shell
 
 ```text
-GET <embed_origin>/embed?client=<percent-encoded client_id>#<part>.v<version>
+GET <embed_origin>/?client=<percent-encoded client_id>#<part>.v<version>
 ```
 
-- The path `/embed` is fixed by this profile. `client` is the app's exact `client_id` at this issuer (pre-registered, or resolved through core `client-id-metadata.v1`). The fragment is exactly one part name and one part version the element selected from the declaration (highest common), for example `#sign-in.v1`; the island implements that version's props, sizing and outbound set, and ignores any later `location.hash` change.
+- The island document is the embed origin's root `/` (owner-approved 2026-10-27; it replaces the former fixed `/embed` path). Every other path on the embed origin is provider-private. `client` is the app's exact `client_id` at this issuer (pre-registered, or resolved through core `client-id-metadata.v1`). The fragment is exactly one part name and one part version the element selected from the declaration (highest common), for example `#sign-in.v1`; the island implements that version's props, sizing and outbound set, and ignores any later `location.hash` change.
 - The response MUST be byte-identical for every user of a client and MUST NOT depend on cookies or request credentials. It MUST send `Content-Security-Policy` with `frame-ancestors` set to the exact origins of the client's registered redirect URIs, and `script-src` limited to the embed origin (no third-party script); `Cache-Control: private, max-age=300` (bounding staleness of `frame-ancestors` and the parts list after a registry change to 5 minutes while avoiding a provider request on every page view); `Referrer-Policy: no-referrer`; `X-Content-Type-Options: nosniff`; `Origin-Agent-Cluster: ?1`.
 - For a client resolved through `client-id-metadata.v1`, the provider MUST NOT block the shell response on a metadata fetch (serve the inert document and resolve in the background), MUST rate-limit and negative-cache lookups per client host, and MAY serve the inert document to clients it has not reviewed, since a sign-in island would otherwise lend provider branding to any page. `frame-ancestors` for such clients is the `client_id` origin.
 - For an unknown client, a part outside the profile's declared parts, or a part the client's registration excludes, the provider MUST serve a constant inert document that sends no message (so the element's handshake times out, §5.1) with `frame-ancestors 'none'` for unknown clients.
@@ -87,15 +84,15 @@ GET <embed_origin>/embed?client=<percent-encoded client_id>#<part>.v<version>
 ### 3.1 Iframe the element creates
 
 ```html
-<iframe src="<embed_origin>/embed?client=<client_id>#<part>"
+<iframe src="<embed_origin>/?client=<client_id>#<part>.v<version>"
         name="bindle-island;v=1;n=<nonce>;l=<lang>;cs=<light|dark>"
         title="<localized part title>" referrerpolicy="no-referrer" loading="eager"
-        allow="identity-credentials-get <'src' only when §2.1 allows, else 'none'>; storage-access 'none'; browsing-topics 'none'; attribution-reporting 'none'; shared-storage 'none'; join-ad-interest-group 'none'; run-ad-auction 'none'; private-aggregation 'none'; sync-xhr 'none'"></iframe>
+        allow="identity-credentials-get 'none'; storage-access 'none'; browsing-topics 'none'; attribution-reporting 'none'; shared-storage 'none'; join-ad-interest-group 'none'; run-ad-auction 'none'; private-aggregation 'none'; sync-xhr 'none'"></iframe>
 ```
 
 - `name` matches `^bindle-island;v=1;n=[A-Za-z0-9_-]{22};l=[A-Za-z0-9-]{1,35};cs=(light|dark)$`. The nonce is 128 random bits, base64url. The island reads `window.name` once and clears it.
 - `allow` names `'none'` for every feature whose default allowlist is `*` that islands do not need (the list above, extended as browsers add such features), because omitting a feature does not disable it.
-- **Sandbox (pending browser evidence).** The target is `sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox"` (no top navigation, modals, downloads or forms), once evidence shows that FedCM in the frame, partitioned storage, Web Locks and opener-preserving popups work under it in Chromium, Firefox and WebKit; the island's sandbox probe must then treat exactly a non-opaque sandbox as normal. Until that evidence exists, the element sets no `sandbox` and relies on provider rule P8 (§10). The element never sets `credentialless`, and MUST tear the island down if the embedder adds `credentialless` or a different `sandbox` or changes `src`, `name` or `allow` (observed with a `MutationObserver`), or if the iframe fires a second `load` (the element sets `src` before inserting the iframe so the initial `about:blank` does not count; needs browser evidence).
+- **Sandbox (pending browser evidence).** The target is `sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox"` (no top navigation, modals, downloads or forms), once evidence shows that partitioned storage, Web Locks and opener-preserving popups work under it in Chromium, Firefox and WebKit; the island's sandbox probe must then treat exactly a non-opaque sandbox as normal. Until that evidence exists, the element sets no `sandbox` and relies on provider rule P8 (§10). The element never sets `credentialless`, and MUST tear the island down if the embedder adds `credentialless` or a different `sandbox` or changes `src`, `name` or `allow` (observed with a `MutationObserver`), or if the iframe fires a second `load` (the element sets `src` before inserting the iframe so the initial `about:blank` does not count; needs browser evidence).
 - Sizes are set by the element or the embedder (§6). The element MUST NOT derive any size from island content.
 
 ## 4. Theme, locale and scheme before the handshake
@@ -183,7 +180,7 @@ New parts and new part versions may be added to v1 declarations without a new pr
 | `surface`, `surface-raised`, `text`, `text-muted`, `accent`, `on-accent`, `border`, `focus`, `danger` | `^#[0-9a-f]{6}$` (opaque, canonical lowercase) |
 | `radius` | integer 0–16 (CSS px) |
 
-- The element sends only tokens that are both in this allowlist and in the declaration's `theme_tokens`, after validating them. The island MUST validate again and MUST NOT trust the element.
+- *Superseded by rev 3.3 (no `theme_tokens`):* the element sends no tokens and islands use provider defaults. The allowlist and contrast rules below remain the island's own validation of any token it receives, which it MUST NOT trust.
 - Contrast: if any of these pairs falls below its minimum, the island reverts both members to its defaults: `text`/`surface` 4.5, `text-muted`/`surface` 4.5, `text`/`surface-raised` 4.5, `text-muted`/`surface-raised` 4.5, `on-accent`/`accent` 4.5, `danger`/`surface` 4.5, `danger`/`surface-raised` 4.5, `accent`/`surface` 4.5, `accent`/`surface-raised` 4.5, `focus`/`surface` 3, `focus`/`surface-raised` 3, `border`/`surface` 3, `border`/`surface-raised` 3.
 - Tokens MUST NOT affect size, visibility, opacity, position, z-index, row count or which controls exist. Trust-bearing text (provider host, "the app can't see this", warnings) uses a fixed provider palette. Under `forced-colors: active` tokens are ignored.
 - Fonts, font scale, density and color scheme are not tokens. Density is a `props` value; scheme is the `scheme` message.
@@ -192,7 +189,7 @@ New parts and new part versions may be added to v1 declarations without a new pr
 
 1. The element sends `prepare` with fresh PKCE and `state` for the issuer of that island, and keeps its pending record (verifier, state, issuer, endpoints) exactly as for an app-started flow.
 2. On a trusted activation of a flow control, the island creates the authorization entry at the core `authorization-entry.v1` endpoint itself, with the `prepare` inputs, the intent of the activated control, and any members its credential binding defines (§9). It MUST NOT accept an entry identifier, URL or key thumbprint from the element.
-3. The island opens the provider's authorization page in a popup or uses FedCM inside the island. Every approval happens in a top-level provider document or the browser's FedCM dialog, never inside the island.
+3. The island opens the provider's authorization page in a popup (islands never delegate to FedCM, rev 3.3). Every approval happens in a top-level provider document, never inside the island.
 4. On completion the island sends `code{code, state, iss}` only if the parent origin verified at init equals the origin of the flow's `redirectUri`, and the provider re-checks that `redirectUri` is registered for `client_id`. The code is bound to the app's PKCE challenge, `state`, issuer and `redirectUri` at exchange.
 5. If the island cannot complete (popup blocked, opener lost, sandboxed), it sends `flow{ended, outcome}` and the element MAY continue on its own path (app-opened popup or redirect), which yields app credentials only. A popup opened by the island that loses its opener completes to the app's registered callback as an ordinary authorization.
 
@@ -204,7 +201,7 @@ Requirements for every provider that declares this profile with an identity-bear
 - **C2.** A component credential MUST be issued only after delivery to an island has been attested by a fresh proof of possession of a key that was generated inside the embed origin and is not extractable, and MUST be bound to that key, the `client_id` and the approving account.
 - **C3.** A component credential becomes usable only when the paired authorization code is exchanged, and MUST be revoked with that app session (connection revocation, RFC 7009 revocation of its refresh token, refresh-token reuse, account recovery, suspension or deletion).
 - **C4.** Component credentials authorize only display of the bound account's identity in islands. They never authorize RPC, grants, consent, preferences or provider session changes.
-- **C5.** Authorizations completed without a user choice (for example an auto-selected FedCM assertion) MUST NOT yield a component credential.
+- **C5.** Authorizations completed without a user choice (for example an automatically re-approved authorization) MUST NOT yield a component credential.
 
 `credential_binding` names the mechanism that meets C2–C5. Elements recognize only identifiers listed here.
 
@@ -213,10 +210,10 @@ Requirements for every provider that declares this profile with an identity-bear
 Normative for providers that declare it. Rationale and attack analysis: [adaptive app sign-in §6–§8, §11](../architecture/adaptive-app-sign-in.md).
 
 - **Key.** The island generates an ECDSA P-256 key with `extractable:false` per `(issuer, client_id)`, stored in its partitioned storage (in memory if storage is unavailable). `embedJkt` is its RFC 7638 thumbprint; it is never sent to the element.
-- **Entry members.** The island's entry POST adds `embedJkt` and `delivery` (`"embed-popup"` or `"embed-fedcm"`). The provider stores both and trusts neither until attestation. Entries created by app code with these members MUST be refused.
+- **Entry members.** The island's entry POST adds `embedJkt` and `delivery` (`"embed-popup"`; the former `"embed-fedcm"` is withdrawn by rev 3.3 and refused). The provider stores both and trusts neither until attestation. Entries created by app code with these members MUST be refused.
 - **Popup attestation.** The island opens the popup within its own activation, unnamed and without `noopener`. The provider's popup document renders no account state until it has posted `{v:1, type:"bindle-embed-hello", entry, challenge}` to `window.opener` with `targetOrigin` = embed origin and received `{v:1, type:"bindle-embed-proof", proof}` from its opener, where `proof` is an ES256 JWS with header `jwk` whose payload carries `htu` (the provider's verification URL), `nonce` (the single-use, ≤60 s server challenge), `entry`, `iat` and `jti`. The provider verifies `jkt(jwk) == entry.embedJkt`. Without a valid proof within 3 s the popup continues as an ordinary authorization in a `COOP: same-origin` document and no component credential is ever issued for that entry.
 - **Delivery.** After approval the popup posts `{v:1, type:"bindle-embed-done", entry, code, state, iss, claim}` to `window.opener` with `targetOrigin` = embed origin. `claim` is single use, valid ≤2 minutes and redeemable only with a fresh proof from the entry's key. The island accepts hello and done messages only from its own popup handle, from the issuer origin, for its own pending entry, with exact schemas.
-- **FedCM inside an island.** `navigator.credentials.get({identity:{providers:[{configURL, clientId, params:{v:1, entry, proof}}], mode:'active'}, mediation:'required'})` with the RP being the embed origin. The provider's assertion endpoint requires `Origin` equal to the embed origin, `delivery == "embed-fedcm"` and `jkt(proof.jwk) == entry.embedJkt`, and returns `token` = the JSON text `{"v":1,"code","state","iss","claim"}`; for `is_auto_selected=true` it omits `claim` (C5).
+- **FedCM inside an island.** Withdrawn by rev 3.3: islands never delegate to FedCM, and the component origin never presents a FedCM ID assertion request.
 - **Claim redemption and restore.** The island redeems `claim`, and later restores sessions, with DPoP-style proofs (RFC 9449 shape, server nonce, `ath` over the credential) from the same key. A valid proof from a different key is rejected without revoking anything.
 
 Paths and lifetimes of the provider's embed API are provider-internal.
@@ -226,7 +223,7 @@ Paths and lifetimes of the provider's embed API are provider-internal.
 **Provider (P):**
 1. Dedicated, cookieless embed origin serving exactly one issuer; `ready.issuer` is that issuer (§2.2, §5.1).
 2. Shell rules of §3, including `frame-ancestors` from registered redirect-URI origins and no third-party script.
-3. No action from inbound messages; every action needs a trusted activation inside the island; every approval in a top-level provider document or the FedCM dialog (§5.3, §8).
+3. No action from inbound messages; every action needs a trusted activation inside the island; every approval in a top-level provider document (§5.3, §8).
 4. Outbound messages only as §5.4, with the entitlement invariant.
 5. Constant messages, sizes and pre-`ready` work in every account state.
 6. Component credentials per §9.

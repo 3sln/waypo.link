@@ -1,5 +1,5 @@
 // IA-4 mounter. Separate from login's prepare/exchange loop: incremental flows never log the app in.
-import {formatIslandName,islandURL,validateOutbound,LIMITS,validateThemeTokens} from '../islands-protocol.mjs';
+import {formatIslandName,islandURL,validateOutbound,LIMITS} from '../islands-protocol.mjs';
 import {localeFor,schemeFor} from './shared.mjs';
 import {requestText} from './request-protocol.mjs';
 export function mountRequestIsland({element,container,session,spec,prepare,onFlow,onCode,onState=()=>{}}){
@@ -9,7 +9,8 @@ export function mountRequestIsland({element,container,session,spec,prepare,onFlo
  const lang=()=>{const l=localeFor(element);return /^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8}){0,4}$/.test(l)&&l.length<=35?l:'en';};
  const scheme=()=>{const {theme}=schemeFor(element,session);return ['light','dark'].includes(theme)?theme:win.matchMedia?.('(prefers-color-scheme: dark)').matches?'dark':'light';};
  const props=()=>({kind:element.kind,label:element.kind==='configure'?'review-settings':'review-access',variant:element.getAttribute('island-variant')==='outline'?'outline':'filled'});
- const tokens=()=>{const style=win.getComputedStyle(element),input={};for(const key of spec.themeTokens){const value=style.getPropertyValue(`--bindle-${key}`).trim();if(value)input[key]=key==='radius'?Number(value):value;}return validateThemeTokens(input,{scheme:scheme()}).tokens;};
+ // No theme tokens (extensions rev 3.3 §2.7, CR-X3-33, provisional): islands use provider defaults.
+ const tokens=()=>({});
  const frame=element.ownerDocument.createElement('iframe');frame.src=islandURL(embedOrigin,clientId,'request',version);frame.name=formatIslandName({nonce,lang:lang(),colorScheme:scheme()});frame.title=requestText(lang())[element.kind==='configure'?'settings':'access'];frame.referrerPolicy='no-referrer';
  frame.setAttribute('allow',"identity-credentials-get 'none'; storage-access 'none'; browsing-topics 'none'; attribution-reporting 'none'; shared-storage 'none'; join-ad-interest-group 'none'; run-ad-auction 'none'; private-aggregation 'none'; sync-xhr 'none'");
  Object.assign(frame.style,{display:'block',border:'0',inlineSize:'100%',blockSize:'3.5em',colorScheme:scheme()});

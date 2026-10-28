@@ -1,5 +1,7 @@
 # Embed islands: independent review
 
+> **Status note 2026-10-28:** historical review of revision 1; findings and dates stand. Embedded components are now the Bindle extension `https://spec.bindle.example/extensions/embedded-components/v1` ([extensions §2.7](../spec/extensions.md#27-extensions-cannot-change-core), EXT3-34; current wording in [components-v1](../profiles/components-v1.md)). Changed since: the island document is `<embed_origin>/?client=<client_id>#<part>.v<n>` at the origin root, not `/embed?client=…`; the service worker is `/embed/sw.js` with scope `/` (not `/embed`); islands never delegate to FedCM (provisional, unsigned), so the FedCM-in-frame findings and the FedCM-in-island implementation notes are superseded; no `theme_tokens` option, so EIR-12 concerns only the island's own validation of any token it receives.
+
 Date: 2026-10-14. Target: [embed-islands](../architecture/embed-islands.md), revision 1 (provisional design). This is a design review through a browser-security and frontend/accessibility lens. Nothing is implemented, so nothing here is implementation evidence. I cross-read adaptive-app-sign-in revision 2, embeddable-elements and its review, the phase-1 elements in `packages/sdk/src/elements/*.mjs`, `vendor/dodo/src/{vdom,style}.js`, and the DEVLOG entries "Embed islands direction" and the user correction on event composition. Claims about browser behaviour I could not verify are marked **needs browser verification**.
 
 | Reviewer | Date | Outcome |
@@ -28,7 +30,7 @@ Date: 2026-10-14. Target: [embed-islands](../architecture/embed-islands.md), rev
 - Require `Origin == embed origin` only when the header is present or the method is not GET/HEAD.
 - Add an I4 test that sends a real same-origin GET without `Origin` and expects 200.
 
-### EIR-2 (High): the shell CSP breaks the service worker and, likely, FedCM in the frame
+### EIR-2 (High): the shell CSP breaks the service worker and, likely, FedCM in the frame (FedCM part superseded 2026-10-28: removed; SW scope now `/`)
 
 Three conflicts in §3.1 and §3.3:
 
@@ -144,7 +146,7 @@ All of this switches on automatically when the provider advertises the profile (
 - Replace `aria-busy` on the button with a status-region announcement.
 - Give standalone `<bindle-avatar>` `role=img` and an app-granted label, or `aria-hidden`.
 
-### EIR-12 (Low): theme tokens contradict "tokens never affect layout"
+### EIR-12 (Low): theme tokens contradict "tokens never affect layout" (superseded 2026-10-28: no `theme_tokens` option)
 
 The validator `theme-probe.mjs`, which §12.4 moves to `embed-protocol.mjs`, accepts:
 - `font-scale` up to 1.25, which changes text metrics and truncation;
@@ -263,7 +265,7 @@ Scope: `packages/sdk/src/islands-protocol.mjs`, `apps/embed/**` (shell, runtime,
   - the `/embed` shell (per-client CSP, `frame-ancestors`, config templating with `<` escaped);
   - asset serving with COEP and CORP.
 - **A7:** the popup document must handle `bindle-embed-ack` (`{v:1,type,entry}`).
-- **Not implemented:** FedCM in the frame.
+- **Not implemented:** FedCM in the frame (superseded 2026-10-28: removed by design, not pending).
 - **Profile vs design:** the shell's caching header disagrees (`private` vs `no-cache`).
 
 ## Serving review: slice I4 and the build (2026-10-14)
@@ -362,7 +364,7 @@ Scope: the element side of the islands (`packages/sdk/src/elements/islands.mjs`,
 - **Events.** `bindle-sign-in-end` and switcher `ended` arrive only after the app's own exchange has settled. Select is deduped per element.
 - **Island worker.** The leader streams `/embed/api/events` for each held session. It applies changed views, restores again with backoff when the server ends a stream, ends the replaced session on renewal, and ends its sessions when demoted.
 - **Session end on `pagehide`.** The island document sends `session/end` (bearer, keepalive) itself on `pagehide`, using the session tokens the worker announces. A worker is usually terminated before it reads `pagehide`: the worker-side keepalive reached the Worker 0 times in Chromium and Firefox.
-- **FedCM in the island.** Used only when the shell config names the provider's endpoints (`fedcm:{configUrl, assertUrl}` on the issuer origin), `IdentityCredential` exists and the frame was delegated the permission. Otherwise the island falls back, decided synchronously, to the popup.
+- **FedCM in the island.** (Superseded 2026-10-28: removed; islands never delegate to FedCM.) Used only when the shell config names the provider's endpoints (`fedcm:{configUrl, assertUrl}` on the issuer origin), `IdentityCredential` exists and the frame was delegated the permission. Otherwise the island falls back, decided synchronously, to the popup.
   - Request: an `embed-fedcm` entry and `mediation:'required'`, with `params:{v:1, entry, proof}`. The proof is a `bindle-embed+jwt` from the frame key, carrying an embed-API nonce, `htu` set to the assertion URL, and the entry.
   - Token handling: the token is validated exactly; a claimless (auto-selected) token gives the app its code but creates no binding.
   - Verified only against a test double, because the server endpoints do not exist.

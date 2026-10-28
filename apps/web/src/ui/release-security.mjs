@@ -6,6 +6,7 @@ import { h,icon,badge,date,field,checkbox,pageHeader,helpers,interfaceText } fro
 import {contactProfilePanel} from './contact-profile.mjs';
 import {developerContact} from './release-developer-contact.mjs';
 import {recoveryFilePanel,recoveryReissueDialog,recoveryReissueView} from './recovery-reissue.mjs';
+import {signalingPrivacyPanel} from './signaling-controls.mjs';
 export default function securityView(state){
   const {btn,date,form}=helpers(state),a=state.data?.account??state.session?.account??{},credentials=state.data?.credentials??[],devices=state.data?.devices??[];
   const reissue=recoveryReissueView(state);if(reissue)return h('div',pageHeader('Replace your recovery file.','Create, save and test a new recovery file on this device.'),reissue);
@@ -36,6 +37,8 @@ export default function securityView(state){
       // Bug hunt round 3, B8: these legacy grants are not the connected apps' access, so the panel no longer claims that
       // no app has access; it points to Connected apps, where that access is listed and revoked.
       h('p','Manage app connections and the separate agent logins they can use.').classes('muted'),btn('Connected apps',{kind:'navigate',view:'connected-apps'},'button secondary')).classes('panel'),
+    // Signaling (flags off): the IP policy and the blocked lists (signaling.md §14.1 "Privacy", "The blocked list").
+    signalingPrivacyPanel(state),
     developerContact(state)
     ).classes('settings-grid'));
 }

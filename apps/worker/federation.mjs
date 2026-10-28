@@ -103,6 +103,6 @@ export class FederationObject extends DurableObject {
  async compose(owner){
   const env=this.env,config=this.flagsRuntime.bind({...env,...workerIntegrationPorts(env),ARTEFACTS:this.artefactPort()}),repository=new ShardedIdentityRepository({shard:name=>env.IDENTITIES.get(env.IDENTITIES.idFromName(name)),layout:env.IDENTITY_LAYOUT});
   const accounts={get:id=>env.ACCOUNTS.get(env.ACCOUNTS.idFromName(id))};
-  return new FederationController({...await federationControllerOptions({config,repository,accounts,owner,incremental:env.FEDERATION?incrementalRemote((method,args)=>env.FEDERATION.get(env.FEDERATION.idFromName(INCREMENTAL_STORE)).incremental(method,args)):undefined,manifestMounts:{messagingAddress:messagingAddressMounted(config),rtcOccupant:true,rtc:true}}),metadata:federationMetadata(this.storage),routingKey:owner});
+  return new FederationController({...await federationControllerOptions({config,repository,accounts,owner,incremental:env.FEDERATION?incrementalRemote((method,args)=>env.FEDERATION.get(env.FEDERATION.idFromName(INCREMENTAL_STORE)).incremental(method,args)):undefined,manifestMounts:{messagingAddress:messagingAddressMounted(config),signalingResource:true,signaling:true}}),metadata:federationMetadata(this.storage),routingKey:owner});
  }
 }

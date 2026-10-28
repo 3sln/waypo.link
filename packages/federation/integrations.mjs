@@ -251,15 +251,34 @@ export function versionedContractProvider({enabled=false,resolve,compile=compile
 }
 export class IntegrationContract extends AppQuery {static operation='integrations.contract';static deps=['config','integrations'];fetch({config,integrations}){enabled(config);if(!siteGlobal(config,'ARTEFACT_VERSIONS_ENABLED'))fail('unsupported_artefact_version');return integrations.contract(this.input);}}
 
-/** Conservative pinned projection. Unknown object members are withheld even where an old schema was open: this
- * also withholds every member a later version might name, without trusting an incomplete view of the head. */
-export function shapeContractResult(root,method,value){
+/**
+ * Conservative pinned projection. Unknown object members are withheld even where an old schema was open: this also
+ * withholds every member a later version might name, without trusting an incomplete view of the head. The one
+ * exception is a PURE map (an object schema whose `additionalProperties` is a schema and which names no `properties`):
+ * its members are data keys, not schema members, so each is kept and shaped by that schema. A schema that mixes named
+ * `properties` with an open `additionalProperties` keeps its named members only.
+ * `anyOf`/`oneOf` are shaped by validate-then-copy: a scalar is kept only when it validates; an array or object is
+ * shaped by each alternative in order and the first shaped copy that validates (against that alternative and the
+ * whole combinator) is kept, so the same withholding applies inside each alternative. `allOf`, `if`, `patternProperties` and `$dynamicRef` fail closed.
+ */
+export function shapeContractResult(root,method,value,{check=null}={}){
  const pointer=ref=>{if(ref==='#')return root;if(typeof ref!=='string'||!ref.startsWith('#/'))fail('artefact_unverifiable');return ref.slice(2).split('/').reduce((v,k)=>v&&Object.hasOwn(v,k.replaceAll('~1','/').replaceAll('~0','~'))?v[k.replaceAll('~1','/').replaceAll('~0','~')]:undefined,root);};
  const resolve=(schema,seen=new Set())=>{if(typeof schema==='string')schema=pointer(schema);while(schema?.$ref){if(seen.has(schema.$ref))fail('artefact_unverifiable');seen.add(schema.$ref);schema=pointer(schema.$ref);}if(schema===undefined)fail('artefact_unverifiable');return schema;};
+ let validator=check;const valid=(schema,v)=>{validator??=compileContractVersion(root).check;return validator(schema,v);};
  const shape=(schema,v,depth=0)=>{schema=resolve(schema);if(depth>32||schema===false)fail('invalid_result');if(schema===true){if(v!==null&&typeof v==='object')fail('artefact_unverifiable');return v;}
-  if(!object(schema)||['oneOf','anyOf','allOf','if','patternProperties','$dynamicRef'].some(k=>Object.hasOwn(schema,k)))fail('artefact_unverifiable');
+  if(!object(schema)||['allOf','if','patternProperties','$dynamicRef'].some(k=>Object.hasOwn(schema,k)))fail('artefact_unverifiable');
+  const alternatives=schema.anyOf??schema.oneOf;
+  if(alternatives!==undefined){
+   if(!Array.isArray(alternatives)||!alternatives.length||Object.hasOwn(schema,'anyOf')&&Object.hasOwn(schema,'oneOf'))fail('artefact_unverifiable');
+   if(v===null||typeof v!=='object'){if(!valid(schema,v))fail('invalid_result');return v;}
+   for(const alt of alternatives){let out;try{out=shape(alt,v,depth+1);}catch(error){if(['artefact_unverifiable','invalid_result'].includes(error?.code))continue;throw error;}if(valid(alt,out)&&valid(schema,out))return out;}
+   fail('invalid_result');
+  }
   if(Array.isArray(v)){if(!schema.items)fail('artefact_unverifiable');return v.map(x=>shape(schema.items,x,depth+1));}
-  if(object(v)){const out={};for(const [k,s] of Object.entries(schema.properties??{}))if(Object.hasOwn(v,k))Object.defineProperty(out,k,{value:shape(s,v[k],depth+1),enumerable:true,writable:true,configurable:true});return out;}return v;
+  if(object(v)){const out={},named=schema.properties??{},map=object(schema.additionalProperties)&&Object.keys(named).length===0?schema.additionalProperties:null,put=(k,s)=>Object.defineProperty(out,k,{value:shape(s,v[k],depth+1),enumerable:true,writable:true,configurable:true});
+   if(map){for(const k of Object.keys(v))put(k,map);return out;}
+   for(const [k,s] of Object.entries(named))if(Object.hasOwn(v,k))put(k,s);return out;}
+  return v;
  };
  const result=Object.hasOwn(contractMethods(root),method)?contractMethods(root)[method].result:undefined;if(result===undefined)fail('artefact_unverifiable');return shape(result,value);
 }
@@ -268,7 +287,7 @@ export function shapeContractResult(root,method,value){
  * coercion, defaults, remote references or mutable compilation cache. The caller keys each instance by record digest. */
 export function compileContractVersion(root){
  const annotations=new Set(['$schema','$id','$defs','title','description','examples','default','deprecated','readOnly','writeOnly','x-methods','x-enumDescriptions','x-permissions','x-status']);
- const supported=new Set(['$ref','type','const','enum','properties','required','additionalProperties','items','prefixItems','minItems','maxItems','uniqueItems','minLength','maxLength','pattern','format','minimum','maximum','exclusiveMinimum','exclusiveMaximum','multipleOf','minProperties','maxProperties','oneOf','anyOf','allOf','not']);
+ const supported=new Set(['$ref','type','const','enum','properties','required','additionalProperties','items','prefixItems','minItems','maxItems','uniqueItems','minLength','maxLength','pattern','format','minimum','maximum','exclusiveMinimum','exclusiveMaximum','multipleOf','minProperties','maxProperties','oneOf','anyOf','allOf','not','dependentRequired']);
  const reference=ref=>{if(ref==='#')return root;if(typeof ref!=='string'||!ref.startsWith('#/'))fail('artefact_unverifiable');const s=ref.slice(2).split('/').reduce((v,k)=>v&&Object.hasOwn(v,k.replaceAll('~1','/').replaceAll('~0','~'))?v[k.replaceAll('~1','/').replaceAll('~0','~')]:undefined,root);if(s===undefined)fail('artefact_unverifiable');return s;};
  const same=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
  const check=(s,v,depth=0)=>{
@@ -296,10 +315,12 @@ export function compileContractVersion(root){
    for(const [i,x] of v.entries()){const item=s.prefixItems?.[i]??s.items;if(item!==undefined&&!check(item,x,depth+1))return false;}
   }else if(object(v)){
    const keys=Object.keys(v);if(s.required?.some(k=>!Object.hasOwn(v,k))||s.minProperties!==undefined&&keys.length<s.minProperties||s.maxProperties!==undefined&&keys.length>s.maxProperties)return false;
+   if(s.dependentRequired!==undefined){if(!object(s.dependentRequired)||Object.values(s.dependentRequired).some(r=>!Array.isArray(r)||r.some(k=>typeof k!=='string')))fail('artefact_unverifiable');for(const [k,r] of Object.entries(s.dependentRequired))if(Object.hasOwn(v,k)&&r.some(x=>!Object.hasOwn(v,x)))return false;}
    for(const k of keys){const member=Object.hasOwn(s.properties??{},k)?s.properties[k]:s.additionalProperties;if(member!==undefined&&!check(member,v[k],depth+1))return false;}
   }return true;
  };
- return {validate:request=>check(root,request),shape(method,result){const schema=Object.hasOwn(contractMethods(root),method)?contractMethods(root)[method].result:undefined;if(schema===undefined)fail('artefact_unverifiable');const out=shapeContractResult(root,method,result);if(!check(typeof schema==='string'?reference(schema):schema,out))fail('invalid_result');return out;}};
+ const checkSchema=(schema,v)=>check(typeof schema==='string'?reference(schema):schema,v);
+ return {check:checkSchema,validate:request=>check(root,request),shape(method,result){const schema=Object.hasOwn(contractMethods(root),method)?contractMethods(root)[method].result:undefined;if(schema===undefined)fail('artefact_unverifiable');const out=shapeContractResult(root,method,result,{check:checkSchema});if(!check(typeof schema==='string'?reference(schema):schema,out))fail('invalid_result');return out;}};
 }
 
 // INT-3: one hook extends inert declaration parsing and safe, audited snapshot adoption.

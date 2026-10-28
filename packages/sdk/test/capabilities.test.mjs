@@ -33,7 +33,7 @@ test('standard and full compute per extension; FedCM needs the entry, the extens
   assert.equal(standard.identityless,true);assert.equal(standard.selectAccount,true);assert.equal(standard.reauthenticate,false);assert.equal(standard.popup,true);assert.equal(standard.revoke,true);assert.equal(standard.dpop,false);
   const all=caps(full,{identityCredential:true,defaultIssuer:issuer});
   assert.equal(all.fedcm,true);assert.equal(all.dpop,true);assert.equal(all.clientIdMetadata,true);assert.equal(all.profile,true);assert.equal(all.manageUrl,`${issuer}/console/apps`);
-  assert.deepEqual(all.islands.avatar,{version:1,fedcm:false});assert.ok(all.islands.switcher);assert.ok(all.islands.signIn);
+  assert.deepEqual(all.islands.avatar,{version:1});assert.ok(all.islands.switcher);assert.ok(all.islands.signIn);
   assert.equal(caps(full,{identityCredential:false}).fedcm,false);
   // Prerequisite (extensions §2.5): fedcm without exactly one authorization-entry entry is absent.
   const lone=readDeclaration({...full,extensions:[fedcm]},issuer);
@@ -93,7 +93,7 @@ test('clean break: the former features and profiles containers are ignored entir
 test('embedded components: options map to islands; validation, binding and cross-checks remove only what fails',()=>{
   const profile=overrides=>caps({...full,extensions:replace(full.extensions,COMPONENTS_V1,components(overrides))},{identityCredential:true,defaultIssuer:issuer});
   const declared=readDeclaration(full,issuer,{embedderOrigin:'https://app.example'}).components;
-  assert.deepEqual(declared,{embedOrigin:'https://embed.idp.example',parts:{avatar:{version:1,fedcm:false},'account-switcher':{version:1,fedcm:false},'sign-in':{version:1,fedcm:false}},themeTokens:[],bindings:['key-binding.v1'],manageUrl:`${issuer}/console/apps`});
+  assert.deepEqual(declared,{embedOrigin:'https://embed.idp.example',parts:{avatar:{version:1},'account-switcher':{version:1},'sign-in':{version:1}},bindings:['key-binding.v1'],manageUrl:`${issuer}/console/apps`});
   // embed_origin is exempt from the issuer-origin rule (a sibling origin is fine) but still a bare HTTPS origin.
   for(const bad of [{embed_origin:issuer},{embed_origin:'https://app.example'},{embed_origin:'https://embed.idp.example/path'},{embed_origin:'http://embed.idp.example'},{embed_origin:'https://10.0.0.1'},{protocol:[2]},{protocol:[]},{parts:'x'},{parts:[]},{parts:['teleporter/1']},{parts:['avatar/9']},{credential_binding:['other.v9']}])
     assert.equal(profile(bad).profile,false,JSON.stringify(bad));
@@ -103,15 +103,16 @@ test('embedded components: options map to islands; validation, binding and cross
   assert.equal(unbound.islands.avatar,null);assert.equal(unbound.islands.switcher,null);assert.ok(unbound.islands.signIn);
   // Only the declared parts; the request part is carried for the request element.
   const parts=profile({parts:['sign-in/1','request/1']});assert.equal(parts.islands.avatar,null);assert.equal(parts.islands.signIn.version,1);
-  assert.deepEqual(readDeclaration({...full,extensions:replace(full.extensions,COMPONENTS_V1,components({parts:['request/1']}))},issuer).components.parts,{request:{version:1,fedcm:false}});
+  assert.deepEqual(readDeclaration({...full,extensions:replace(full.extensions,COMPONENTS_V1,components({parts:['request/1']}))},issuer).components.parts,{request:{version:1}});
   // Without identity-optional login, flow parts are absent.
   assert.equal(caps({...full,extensions:replace(full.extensions,EXT.authorizationEntry,entry(['select-account']))}).islands.signIn,null);
   // manage_url is a public endpoint option on the issuer origin: off-origin makes the whole entry absent.
   assert.equal(profile({manage_url:'https://evil.example/apps'}).profile,false);
   const {manage_url:_,...noManage}=componentsDeclaration(issuer),unmanaged=caps({...full,extensions:replace(full.extensions,COMPONENTS_V1,ext(COMPONENTS_V1,noManage))});assert.equal(unmanaged.profile,true);assert.equal(unmanaged.manageUrl,issuer+'/');
-  // The former theme_tokens and per-part fedcm members have no descriptor option and are ignored.
-  const legacyMembers=profile({theme_tokens:['surface','radius']});assert.deepEqual(legacyMembers.themeTokens,[]);
-  assert.equal(legacyMembers.islands.signIn.fedcm,false,'no part delegates FedCM');
+  // Rev 3.3 (§2.7, CR-X3-33): no theme_tokens option and no per-part FedCM. A legacy theme_tokens member is ignored, the
+  // capability set carries no token list, and parts carry only their version.
+  const legacyMembers=profile({theme_tokens:['surface','radius']});assert.equal(legacyMembers.profile,true);assert.equal('themeTokens' in legacyMembers,false);
+  assert.deepEqual(legacyMembers.islands.signIn,{version:1},'no part delegates FedCM');assert.deepEqual(legacyMembers.islands.avatar,{version:1});
 });
 
 test('island policy: auto by default, off disables, an allowlist restricts to listed issuers',()=>{

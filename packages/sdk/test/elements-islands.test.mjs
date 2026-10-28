@@ -49,7 +49,7 @@ const accountPage='<bindle-session client-id="https://app.example/client" redire
 test('sign-in island: exact iframe and handshake, prepare per port, translated events after the app credential is ready',async()=>{
   const {provider,events,session,uninstall}=await mount(signInPage),element=document.querySelector('bindle-sign-in');
   const iframe=await frameIn(element,'.island');
-  assert.equal(iframe.getAttribute('src'),`${embed}/embed?client=${encodeURIComponent(clientId)}#sign-in.v1`);
+  assert.equal(iframe.getAttribute('src'),`${embed}/?client=${encodeURIComponent(clientId)}#sign-in.v1`);
   const name=parseIslandName(iframe.name);assert.ok(name,'name grammar (profile §3.1)');assert.equal(name.lang,'en-US');
   assert.equal(iframe.getAttribute('referrerpolicy'),'no-referrer');assert.equal(iframe.hasAttribute('sandbox'),false);assert.equal(iframe.hasAttribute('credentialless'),false);
   assert.match(iframe.getAttribute('allow'),/^identity-credentials-get 'none'; storage-access 'none';.* sync-xhr 'none'$/,'FedCM is not delegated unless declared and allowed');

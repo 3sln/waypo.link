@@ -1,0 +1,24 @@
+{
+  "id": "https://spec.bindle.example/fragments/ice-relay/v1",
+  "title": "Connection relays",
+  "description": "Relays direct connections when a direct path is not possible or not allowed.",
+  "publisher": "https://spec.bindle.example",
+  "fields": {
+    "relays": {
+      "title": "Relays",
+      "type": "resource",
+      "cardinality": {
+        "min": 0,
+        "max": 4
+      },
+      "contracts": [
+        "https://spec.bindle.example/contracts/ice-relay/v1"
+      ],
+      "selection": "ordered",
+      "consumers": [
+        "application",
+        "provider"
+      ]
+    }
+  }
+}

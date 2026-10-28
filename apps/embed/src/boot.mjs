@@ -28,10 +28,9 @@ export function readConfig(doc){
   if(!c||typeof c!=='object'||c.v!==1||!origin(c.issuer)||typeof c.clientId!=='string'||!c.clientId||c.clientId.length>2048)return null;
   if(!Array.isArray(c.origins)||!c.origins.length||c.origins.length>16||!c.origins.every(origin)||!Array.isArray(c.parts)||!c.parts.every(p=>PART_NAMES.includes(p))||!allowedScriptPath(c.worker)||c.sw!==undefined&&!allowedScriptPath(c.sw))return null;
   let manage=c.issuer+'/';if(c.manageUrl!==undefined){try{const url=new URL(c.manageUrl);if(url.origin!==c.issuer||url.hash||url.username)return null;manage=url.href;}catch{return null;}}
-  // Optional FedCM-in-frame endpoints (adaptive §11.3), both on the issuer origin; absent means popup only.
-  const issuerURL=value=>{try{const url=new URL(value);return url.origin===c.issuer&&!url.hash&&!url.username&&!url.password?url.href:null;}catch{return null;}};
-  let fedcm=null;if(c.fedcm!==undefined){fedcm={configUrl:issuerURL(c.fedcm?.configUrl),assertUrl:issuerURL(c.fedcm?.assertUrl)};if(!fedcm.configUrl||!fedcm.assertUrl||Object.keys(c.fedcm).length!==2)return null;fedcm=Object.freeze(fedcm);}
-  return Object.freeze({issuer:c.issuer,clientId:c.clientId,origins:Object.freeze([...c.origins]),parts:Object.freeze([...c.parts]),worker:c.worker,sw:c.sw,manage,fedcm});
+  // Islands never delegate to FedCM (extensions rev 3.3 §2.7, CR-X3-33, provisional): a config naming FedCM is unexpected.
+  if(Object.hasOwn(c,'fedcm'))return null;
+  return Object.freeze({issuer:c.issuer,clientId:c.clientId,origins:Object.freeze([...c.origins]),parts:Object.freeze([...c.parts]),worker:c.worker,sw:c.sw,manage});
 }
 
 export function bootIsland({win=globalThis.window,doc=globalThis.document}={}){
@@ -81,7 +80,7 @@ export function bootIsland({win=globalThis.window,doc=globalThis.document}={}){
   const send=message=>services.channel?.send(message)??false;
   const arming=createArming({win,doc,onChange:armed=>{model.armed=armed;paint();}});
   const openProvider=()=>{try{win.open(config.manage,'_blank','noopener,noreferrer');}catch{}};
-  const startFlow=createFlows({model,send,worker,issuer:config.issuer,clientId:config.clientId,fedcm:config.fedcm,win,doc,refresh:changed});
+  const startFlow=createFlows({model,send,worker,issuer:config.issuer,win,refresh:changed});
   const context={model,issuer:config.issuer,enabled:part==='request'&&config.parts.includes('request'),t:(s,v)=>l10n.t(s,v),host,arming,worker,send,swap,nextTicket,startFlow,openProvider,refresh:changed,doc,win};
   const view=part==='avatar'?avatarPart(context):part==='sign-in'?signInPart(context):part==='request'?requestPart(context):accountSwitcherPart(context);
   function applyState(m,message){
@@ -109,7 +108,7 @@ export function bootIsland({win=globalThis.window,doc=globalThis.document}={}){
     services.channel.send(readyMessage({part,version,issuer:config.issuer}));model.live=true;changed();
     if(!['sign-in','request'].includes(part)){view.start();registerServiceWorker();}
   }
-  function registerServiceWorker(){if(!config.sw||!win.navigator.serviceWorker)return;try{win.navigator.serviceWorker.register(policy.scriptURL(config.sw),{scope:'/embed'}).catch(()=>{});}catch{}}
+  function registerServiceWorker(){if(!config.sw||!win.navigator.serviceWorker)return;try{win.navigator.serviceWorker.register(policy.scriptURL(config.sw),{scope:'/'}).catch(()=>{});}catch{}}
   win.addEventListener('message',onInit);
   win.addEventListener('resize',()=>{const bucket=bucketFor();if(bucket!==model.bucket){model.bucket=bucket;services.client?.notify('bucket',bucket);view.update();}});
   doc.addEventListener('visibilitychange',()=>services.client?.notify('visible',doc.visibilityState!=='hidden'));

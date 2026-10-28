@@ -147,8 +147,8 @@ These switches now gate implemented local features. They default off without con
 | `BROKERING_ENABLED` (N) | `false` (off) | Brokered resource discovery, credentials and severance. |
 | `DEVICE_AUTHORIZATION_ENABLED` (N) | `false` (off) | App device authorization grant; separate from existing owner device sign-in. |
 | `ACTIVITY_V2_ENABLED` (N) | `false` (off) | Activity center v2. |
-| `RTC_SIGNALING_ENABLED`, `RTC_FOREIGN_ENABLED`, `RTC_TICKETS_ENABLED` (N) | `false` (off) | **Superseded design.** These gate the flags-off code of the superseded [RTC signaling](spec/superseded/rtc-signaling.md) draft; its replacement, [signaling](spec/extensions/signaling.md) (draft), is not implemented. Reserved for the RTC signaling extension (design: [rtc-signaling](architecture/rtc-signaling.md) §3.3). Only the wire validators, the `rtc-purpose` kind and bound consumer options (AMD-X1, behind `EXTENSIONS_ENABLED`) exist today; turning these on enables nothing yet. `RTC_SIGNALING_ENABLED` requires `EXTENSIONS_ENABLED` and `ARTEFACT_VERSIONS_ENABLED`; `RTC_FOREIGN_ENABLED` also requires `DIRECTORY_ENABLED`. With `RTC_SIGNALING_ENABLED` and `EXTENSIONS_ENABLED` on, the signaling slot manifest and the `rtc-signaling/v1` contract (`docs/artefacts/rtc-signaling-v1.json`) are first-party reviewed documents, so no `FEDERATION_SCHEMAS` or `FEDERATION_CONTRACTS` entry is needed (while both flags are on, the shipped documents win over an operator `FEDERATION_SCHEMAS` or `FEDERATION_CONTRACTS` entry for the same id, for the contract's plain id and its `/envelope` alike, so an operator entry for these ids is ignored; with either flag off, operator entries apply as before). The manifest then declares `extensions.v1` beside the built-in occupant, and `rtc-signaling.v1` only beside `directory.v1`, `extensions.v1` and `artefact-versions.v1` (RTC-i, provisional). |
-| `RTC_TURN_ENABLED` (N) | `false` (off) | Environment capability for the built-in `ice-relay/v1` relay occupant (RTC-f, implemented locally, provisional). It requires `RTC_SIGNALING_ENABLED`, and both are checked by the occupant, because a class (b) flag's `requires` is not evaluated from the environment. Even with both on, nothing is offered until both relay ports below are configured. A new flag, not a rename of the retired `BEAM_TURN_ENABLED`. Superseded design, like the RTC rows above. See "Hosted relay" below. |
+| `SESSION_KINDS_ENABLED`, `SIGNALING_ENABLED`, `SIGNALING_FOREIGN_ENABLED` (N) | `false` (off) | [Signaling](spec/extensions/signaling.md) revision 3.2 (draft, provisional, unsigned), implemented locally: session kinds and session handler approvals, the built-in signaling resource, offers, pairings and the `/bindle/signaling` endpoint. Not production-verified; production stays disabled. They replace the retired `RTC_SIGNALING_ENABLED`, `RTC_FOREIGN_ENABLED` and `RTC_TICKETS_ENABLED` (2026-10-28). Foreign delivery also needs `SIGNALING_FOREIGN_ISSUERS` (empty by default) and an egress port. |
+| `SIGNALING_TURN_ENABLED` (N) | `false` (off) | Environment capability for the built-in `ice-relay/v1` relay resource (signaling §16.7). It requires `SIGNALING_ENABLED`; both are checked by the resource. Nothing is offered until a TURN adapter and the external relay spend authority (`SIGNALING_RELAY_SPEND`, enforcing a per-owner byte cap from provider usage data) are configured; none ships. Replaces the retired `RTC_TURN_ENABLED`. |
 | `LINKS_ENABLED` (N) | `false` (off) | Core links contract, key-delegation certificates and the messaging-address descriptor. Formerly `BINDLEBOX_ENABLED` (retired 2026-10-26), whose raw value is still read while `LINKS_ENABLED` is unset; a quarantined record under the old name is never widened. The messaging app (Parlay) reads its own `PARLAY_ENABLED` (retired alias `BINDLEBOX_ENABLED`) in its own deployment. |
 
 ### Onboarding, administration and identities
@@ -250,9 +250,9 @@ All 62 entries in `packages/flags/registry.mjs` are listed below. Class **a** is
 | `ORG_BREAK_GLASS_ENABLED` | a | false | unset | false |
 | `ORG_RELATIONS_ENABLED` | a | false | unset | false |
 | `ORG_FOREIGN_RELATIONS_ENABLED` | a | false | unset | false |
-| `RTC_SIGNALING_ENABLED` | a | false | unset | false |
-| `RTC_FOREIGN_ENABLED` | a | false | unset | false |
-| `RTC_TICKETS_ENABLED` | a | false | unset | false |
+| `SESSION_KINDS_ENABLED` | a | false | unset | false |
+| `SIGNALING_ENABLED` | a | false | unset | false |
+| `SIGNALING_FOREIGN_ENABLED` | a | false | unset | false |
 | `SIGNUP_ENABLED` | c | false | true | false |
 | `PAID_SIGNUP_ENABLED` | c | false | true | false |
 | `WAITLIST_ENABLED` | c | false | true | false |
@@ -272,7 +272,7 @@ All 62 entries in `packages/flags/registry.mjs` are listed below. Class **a** is
 | `BILLING_ENABLED` | b | false | true | false |
 | `MAIL_ENABLED` | b | false | true | false |
 | `PUSH_ENABLED` | b | false | true | false |
-| `RTC_TURN_ENABLED` | b | false | unset | false |
+| `SIGNALING_TURN_ENABLED` | b | false | unset | false |
 | `FEDERATION_REFRESH_ENABLED` | b | true | unset | true |
 | `BROWSER_AUTOMATION_ENABLED` | b | true | unset | true |
 | `FEDERATION_ENTRY_ENABLED` | b | false | unset | false |
@@ -286,15 +286,15 @@ All 62 entries in `packages/flags/registry.mjs` are listed below. Class **a** is
 | `EMAIL_SETUP_AVAILABLE` | b (derived) | false | computed | computed |
 | `WAITLIST_MAIL_AVAILABLE` | b (derived) | false | computed | computed |
 
-**Hosted relay (RTC-f; superseded design, provisional, not production-verified).** The built-in relay occupant hands TURN credentials only to a live leg of the caller's own RTC session, for at most 300 s and never past the session, and revokes them when the leg ends. It is reachable only when `RTC_SIGNALING_ENABLED` and `RTC_TURN_ENABLED` are both on and the deployment provides both ports:
+**Hosted relay (signaling §16.7; provisional, not production-verified).** The built-in relay resource hands TURN credentials only to a live leg of the endpoint's own signaling session, after re-checking its session handler approval, for at most 300 s and never past the session, and revokes them when the leg ends. It is reachable only when `SIGNALING_ENABLED` (with `SESSION_KINDS_ENABLED`) and `SIGNALING_TURN_ENABLED` are all on and the deployment provides both ports:
 - **TURN provider.** Set `CLOUDFLARE_TURN_KEY_ID` (a Cloudflare Realtime TURN key ID) and the `CLOUDFLARE_TURN_API_TOKEN` secret (that key's API token; on Workers use `wrangler secret put`, on Node the environment or the secret store you use for `KEY_ENCRYPTION_KEY`). These are an operator concern: the repository holds no key, tests use injected doubles, and the token is never logged or returned to apps. Revoking a credential uses the same token.
-- **Spend authority (`RTC_RELAY_SPEND`).** An adapter port that enforces relay spend outside the account (for example from the TURN provider's usage feed or a host-wide budget object):
+- **Spend authority (`SIGNALING_RELAY_SPEND`).** An adapter port that enforces relay spend outside the account (for example from the TURN provider's usage feed or a host-wide budget object):
   - `reserve({owner, bytes, ttl, sid, leg}) → {enforced: true, …}` before the TURN provider is called;
   - `commit(reservation, {owner, usernames, expiresAt, ttl, bytes, session, sid, leg, endpoint, clientId})` after the provider answered and before the credential is returned. `usernames` are the TURN usernames of that credential (never the credential itself) and `expiresAt` (milliseconds) an upper bound of their expiry, so the authority can attribute the provider's per-username usage to the owner and leg, and revoke an overrun itself;
   - `release(reservation)` when nothing was issued.
 
-  **No implementation ships**, so hosted relay stays off on every deployment until an operator provides one; that is the relay-spend budget gate in the [RTC design](architecture/rtc-signaling.md) §8.3. A TURN credential is a bearer token with no byte limit, so the per-account allowances (Paid 1 GB, Plus 10 GB, Ultra 100 GB a month, Free none; provisional, [unit economics](architecture/unit-economics.md)) are admission estimates, not a spend limit. Relayed bytes are bounded only if the authority enforces per-owner byte caps from the provider's usage feed, using the usernames it is given.
-- **Kill switch.** Turning `RTC_TURN_ENABLED` (or `RTC_SIGNALING_ENABLED`) off stops new credentials at once. Held credentials are revoked at the account's next sweep and lapse by their own expiry in any case, so the switch takes full effect within 300 s.
+  **No implementation ships**, so hosted relay stays off on every deployment until an operator provides one; that is the byte-cap gate of [signaling](spec/extensions/signaling.md) §16.7 (carried from the [RTC design](architecture/rtc-signaling.md) §8.3; AMD-SG-S2 proposes the matching security.md gate). A TURN credential is a bearer token with no byte limit, so the per-account allowances (Paid 1 GB, Plus 10 GB, Ultra 100 GB a month, Free none; provisional, [unit economics](architecture/unit-economics.md)) are admission estimates, not a spend limit. Relayed bytes are bounded only if the authority enforces per-owner byte caps from the provider's usage feed, using the usernames it is given.
+- **Kill switch.** Turning `SIGNALING_TURN_ENABLED` (or `SIGNALING_ENABLED`) off stops new credentials at once. Held credentials are revoked at the account's next sweep and lapse by their own expiry in any case, so the switch takes full effect within 300 s.
 - Accounts on any plan can instead assign a third-party relay to the `ice-relay/v1` slot (a revision 2 slot; under the [signaling](spec/extensions/signaling.md) draft `ice-relay/v1` is a preference fragment); that never uses these keys.
 
 **Retired flags and settings.** `BEAM_ENABLED`, `BEAM_TURN_ENABLED` and `BEAM_STUN_ENABLED` were retired on 2026-10-26, when file transfer (Beam) was removed from the core; they remain listed as retired in the flag registry so existing console records are not orphaned, and setting them has no effect. `BEAM_MONTHLY_DELIVERY_BYTES` and `BEAM_MONTHLY_OFFERS` are no longer read and can be removed from existing configuration. `CLOUDFLARE_TURN_KEY_ID` and the `CLOUDFLARE_TURN_API_TOKEN` secret are read again by the hosted relay above (and by the one-time Beam cleanup, which revokes leftover Beam credentials). File transfer is planned as an application on the proposed [RTC signaling](spec/superseded/rtc-signaling.md) extension, which is not implemented.

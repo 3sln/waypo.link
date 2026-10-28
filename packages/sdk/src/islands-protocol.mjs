@@ -7,7 +7,9 @@ import {monogramPattern} from './monogram-pattern.mjs';
 const freeze=value=>{if(value&&typeof value==='object'){for(const child of Object.values(value))freeze(child);Object.freeze(value);}return value;};
 const own=(value,key)=>Object.prototype.hasOwnProperty.call(value,key);
 
-export const PROFILE='https://3sln.me/artefacts/profiles/components/v1';
+/** The Bindle-owned embedded-components extension (extensions §2.7, §2.8; placeholder URL). The former components
+ * profile URL is withdrawn and no longer identifies anything here (CR-X3-16). */
+export const EXTENSION='https://spec.bindle.example/extensions/embedded-components/v1';
 export const PROTOCOL=freeze([1]);
 export const PART_PATTERN=/^[a-z][a-z-]{0,31}$/;
 const COMMON_INBOUND=['theme','locale','scheme','props','session','forget'];
@@ -36,7 +38,17 @@ export function parseFragment(hash){
 }
 export function parseIslandName(name){const match=typeof name==='string'?NAME.exec(name):null;return match&&validLang(match[2])?freeze({nonce:match[1],lang:match[2],colorScheme:match[3]}):null;}
 export function formatIslandName({nonce,lang,colorScheme}){const name=`bindle-island;v=1;n=${nonce};l=${lang};cs=${colorScheme}`;if(!parseIslandName(name))throw new TypeError('Invalid island name.');return name;}
-export function islandURL(embedOrigin,clientId,part,version=1){if(!own(PARTS,part))throw new TypeError('Unknown part.');return `${embedOrigin}/embed?client=${encodeURIComponent(clientId)}#${part}.v${version}`;}
+/** The island document: `<embed_origin>/?client=<client_id>#<part>.v<n>`, at the embed origin's root (extensions §2.7,
+ * CR-X3-35; owner-approved 2026-10-27). `embedOrigin` must be a bare origin (no path, query or fragment). */
+export function islandURL(embedOrigin,clientId,part,version=1){
+  if(!own(PARTS,part)||!PARTS[part].versions.includes(version))throw new TypeError('Unknown part.');
+  let origin;try{origin=new URL(embedOrigin).origin;}catch{origin=null;}
+  if(!origin||origin==='null'||origin!==embedOrigin)throw new TypeError('The embed origin must be a bare origin.');
+  if(typeof clientId!=='string'||!clientId)throw new TypeError('A client identifier is required.');
+  return `${origin}/?client=${encodeURIComponent(clientId)}#${part}.v${version}`;
+}
+/** The island document path on the embed origin. Every other path there is provider-private. */
+export const ISLAND_PATH='/';
 /** Smallest bucket covering the embedder-set box at the device pixel ratio (embed-islands §6.1). */
 export function avatarBucket(width,height,dpr=1){const need=Math.min(width,height)*(Number.isFinite(dpr)&&dpr>0?dpr:1);return AVATAR_BUCKETS.find(size=>size>=need)??AVATAR_BUCKETS.at(-1);}
 

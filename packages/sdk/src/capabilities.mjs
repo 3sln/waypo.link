@@ -43,7 +43,8 @@ export function checkFloor(manifest,issuer){
  * Embedded-components options (already descriptor-validated) to the islands configuration. Adds the components
  * profile's own §2 rules the descriptor cannot express: `embed_origin` is a bare HTTPS origin that is not an IP
  * literal, the issuer origin or the embedder's origin, and `protocol` includes 1. Returns null when it must be ignored.
- * Parts are `<name>/<version>` values; the former per-part `fedcm` flag no longer exists (always false).
+ * Parts are `<name>/<version>` values. Rev 3.3 (§2.7, CR-X3-33, provisional): no per-part FedCM (islands never
+ * delegate to FedCM) and no `theme_tokens` (islands use provider defaults).
  */
 export function readComponentsOptions(options,issuer,{embedderOrigin}={}){
   if(!plain(options))return null;
@@ -53,12 +54,11 @@ export function readComponentsOptions(options,issuer,{embedderOrigin}={}){
   const parts={};
   for(const value of options.parts){
     const [name,v]=value.split('/'),version=Number(v);
-    if(Object.hasOwn(PARTS,name)&&PARTS[name].versions.includes(version)&&(parts[name]?.version??0)<version)parts[name]={version,fedcm:false};
+    if(Object.hasOwn(PARTS,name)&&PARTS[name].versions.includes(version)&&(parts[name]?.version??0)<version)parts[name]={version};
   }
   const bindings=Array.isArray(options.credential_binding)?credentialBindings.filter(binding=>options.credential_binding.includes(binding)):[];
   const manageUrl=options.manage_url===undefined?null:issuerURL(options.manage_url,issuer);
-  // The embedded-components descriptor carries no theme-token option, so islands use provider defaults.
-  return {embedOrigin:embed.origin,parts,themeTokens:[],bindings,...manageUrl?{manageUrl}:{}};
+  return {embedOrigin:embed.origin,parts,bindings,...manageUrl?{manageUrl}:{}};
 }
 
 // Normalized, frozen declaration. Only required members fail closed (checkFloor);
@@ -104,8 +104,7 @@ export function computeCapabilities(declaration,{degraded=new Set(),defaultIssue
   const policy=islands!=='off'&&(!islandIssuers||islandIssuers.includes(issuer));
   const components=!off('profile')&&policy&&declaration.components||null;
   const identityless=intents.includes('login'),bound=!!components?.bindings.includes('key-binding.v1');
-  const delegate=issuer===defaultIssuer||!!islandIssuers?.includes(issuer);
-  const part=(name,ok)=>{const value=components?.parts[name];return value&&ok&&!off(`part:${name}`)?Object.freeze({version:value.version,fedcm:value.fedcm&&fedcm&&delegate}):null;};
+  const part=(name,ok)=>{const value=components?.parts[name];return value&&ok&&!off(`part:${name}`)?Object.freeze({version:value.version}):null;};
   return freeze({
     issuer,supported:true,entry:!!entry,intents:[...intents],
     login:true,identityless,selectAccount:intents.includes('select-account'),reauthenticate:intents.includes('reauthenticate'),endSession:intents.includes('end-session'),
@@ -116,7 +115,7 @@ export function computeCapabilities(declaration,{degraded=new Set(),defaultIssue
     clientIdMetadata:declaration.clientIdMetadata,
     intentLinks:declaration.intents?[...declaration.intents.intents]:[],
     manageUrl:components?.manageUrl??declaration.components?.manageUrl??issuer+'/',
-    profile:!!components,embedOrigin:components?.embedOrigin??null,themeTokens:components?[...components.themeTokens]:[],
+    profile:!!components,embedOrigin:components?.embedOrigin??null,
     islands:{avatar:part('avatar',bound),switcher:part('account-switcher',bound&&identityless),signIn:part('sign-in',identityless)},
   });
 }

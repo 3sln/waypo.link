@@ -120,7 +120,7 @@ async function fixture(t,name,faults){
 let worker=null,fixtures=0;
 test.before(async()=>{worker=await startWorker();},{timeout:90000});
 test.after(async()=>{await worker?.stop();});
-const islandFrame=(page,part)=>page.frames().find(frame=>frame.url().startsWith(EMBED+'/embed?')&&frame.url().endsWith(`#${part}.v1`));
+const islandFrame=(page,part)=>page.frames().find(frame=>frame.url().startsWith(EMBED+'/?client=')&&frame.url().endsWith(`#${part}.v1`));
 // The islands' CSP forbids eval inside the frame; conditions are re-read with evaluate until a bound.
 async function until(frame,predicate,arg,timeout=10000){const end=Date.now()+timeout;while(Date.now()<end){if(await frame.evaluate(predicate,arg).catch(()=>false))return;await sleep(50);}throw new Error('until: timed out');}
 async function signInPage(t,faults){

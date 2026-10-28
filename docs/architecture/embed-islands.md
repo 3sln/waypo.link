@@ -1,5 +1,7 @@
 # Embed islands: provider iframes for avatar, account switcher and sign-in
 
+> **Status update 2026-10-28 (provisional, unsigned except where noted):** islands are now the Bindle extension `https://spec.bindle.example/extensions/embedded-components/v1` ([extensions §2.7](../spec/extensions.md#27-extensions-cannot-change-core), EXT3-34; current wording in [components-v1](../profiles/components-v1.md)). Changes to this design: (1) owner-approved: the option is `embed_origin` and the island document is at the embed origin root, `<embed_origin>/?client=<client_id>#<part>.v<n>`; there is no `/embed` document path, provider-private sub-resources keep `/embed/assets/*`, `/embed/sw.js` (scope `/`) and `/embed/api/*`, and every other path is 404; (2) `parts` are `name/version` enum strings; (3) islands never delegate to FedCM (the `identity-credentials-get` delegation and FedCM-in-island passages are removed; island sign-in and switching use the popup/authorization-entry path only); (4) there is no `theme_tokens` option, so the element sends no tokens and islands use provider defaults. Passages below marked "superseded" keep the 2026-10-14 text for history.
+
 Status: **provisional design, 2026-10-14, revision 2** (all 18 review findings addressed; see §23). Nothing here is implemented, routed or production-verified. It is a 3sln reference-host and `@3sln/bindle` SDK design. It is not Bindle interop: islands are provider-operated components under the "Provider-operated components" rule in [auth](../spec/auth.md), and their framing rules belong to the reference-host section of [security](../3sln/release-gates.md#reference-host-presentation-and-framing-3slnme-policy). The coordinator records decisions in DEVLOG.md. Independent review: [embed-islands-review](../release/embed-islands-review.md).
 
 Architecture/security/frontend sign-off: reviewer ___ / date ___ / outcome ___.
@@ -12,7 +14,7 @@ Builds on: [adaptive app sign-in](adaptive-app-sign-in.md) revision 2 (embed ori
 
 From DEVLOG.md, 2026-10-14:
 
-1. **Islands.** Small provider iframes share one cached shell, `/embed?client=<id>#<part>`. The fragment selects an allowlisted part. A nonce-bound `MessageChannel` carries theme, locale and props inbound and events outbound. The embedder never commands actions.
+1. **Islands.** Small provider iframes share one cached shell, `<embed_origin>/?client=<id>#<part>.v<n>` (superseded 2026-10-28: was `/embed?client=<id>#<part>`). The fragment selects an allowlisted part. A nonce-bound `MessageChannel` carries theme, locale and props inbound and events outbound. The embedder never commands actions.
 2. **Leader.** Within the embed partition, one leader island (Web Locks) holds the key-bound embed session and fans state out over `BroadcastChannel`. No `SharedWorker` (unsupported on Chrome Android).
 3. **Sizes.** Islands use fixed or embedder-chosen sizes, never content-derived ones. Dropdown overflow and size-based leakage need explicit design.
 4. **Snapshot privacy.** DOM-reconstruction snapshotting cannot read cross-origin iframes, and canvas tainting prevents pixel reads. Screen capture is user-permissioned with no content opt-out, and counts as user consent, not a silent leak. `#avatar` bytes go only to the embed-session bearer, with `Cross-Origin-Resource-Policy: same-origin`, no CORS and `no-store`, rendered from an in-memory blob, with no observable load, error or timing signals.
@@ -25,11 +27,11 @@ From DEVLOG.md, 2026-10-14:
 
 | ID | Decision | Section |
 | --- | --- | --- |
-| EI-1 | One static shell document per `client_id` at `https://embed.3sln.me/embed?client=<id>`. The fragment is exactly the part name (`#avatar`), so CSS `:target` paints the skeleton before any script runs. | §3 |
+| EI-1 | One static shell document per `client_id` at `https://embed.3sln.me/?client=<id>` (superseded 2026-10-28: was `/embed?client=<id>`; the origin root serves only the island document). The fragment is exactly the part name (`#avatar`), so CSS `:target` paints the skeleton before any script runs. | §3 |
 | EI-2 | Part allowlist v1: `avatar`, `account-switcher`, `sign-in`. Each client registration may restrict its parts further. Unknown part: inert blank document, no messages. | §3.2 |
 | EI-3 | The nonce, locale and color scheme for pre-handshake rendering travel in the iframe `name` attribute (`window.name`), which the shell reads and clears on boot. They never travel in the URL. This replaces adaptive §6.1's `#n=<nonce>`. | §3.4, §4.1 |
 | EI-4 | Caching: shell `no-cache` + ETag (per-client `frame-ancestors`); hashed immutable assets; an optional partitioned service worker that serves assets cache-first and the shell network-first. Account data and avatar bytes are never cached. | §3.3 |
-| EI-5 | One `MessageChannel` per island. Inbound messages are an allowlist of validated presentation inputs (theme tokens, locale, color scheme, part props) plus the public flow inputs and the current subject inherited from adaptive §6.2. Nothing inbound starts an action. | §4 |
+| EI-5 | One `MessageChannel` per island. Inbound messages are an allowlist of validated presentation inputs (locale, color scheme, part props; theme tokens superseded 2026-10-28: no `theme_tokens` option, the element sends none) plus the public flow inputs and the current subject inherited from adaptive §6.2. Nothing inbound starts an action. | §4 |
 | EI-6 | Outbound messages are part-specific (table in §4.4). `#avatar` emits only `ready`. | §4.4 |
 | EI-7 | Leader election with Web Locks (`bindle-embed:<client_id>`), fan-out over a partitioned `BroadcastChannel`, monotonic leadership terms stored in IndexedDB, heartbeats, and a visible-follower `steal` for frozen leaders. Any part can lead. Key *use* is not exclusive; only the embed session and data stream are. | §5 |
 | EI-8 | `#avatar` fills `min(100vw,100vh)`, centered. Bytes come from `/embed/api/avatar` on the embed origin, fetch-only, re-encoded raster, rendered from a blob URL after `decode()`. Without a binding for the app's current subject, the island renders that subject's monogram, which is visually the same as the element fallback, so its appearance is not an availability oracle. | §6 |
@@ -45,13 +47,13 @@ From DEVLOG.md, 2026-10-14:
 ### 3.1 URL, document and headers
 
 ```text
-https://embed.3sln.me/embed?client=<percent-encoded client_id>#<part>
+https://embed.3sln.me/?client=<percent-encoded client_id>#<part>.v<n>   (superseded 2026-10-28: was `/embed?client=…#<part>`)
 ```
 
 - `client` is the exact registered `client_id`. The server derives `frame-ancestors` from the client's **redirect-URI origins** (adaptive §7.5, AS-R2-6). An unknown or missing client gets `frame-ancestors 'none'` and a constant inert body.
 - The document is byte-identical for every user of a client and depends on no cookies (none are sent: the origin is cookieless) and no part. It contains the client's allowed parent origins and allowed parts as a non-executable `<script type="application/json" id="config">` block, a hashed stylesheet and one hashed module script. It is at most 2 KiB when compressed.
 - Headers: `Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self'; img-src blob:; connect-src 'self'; worker-src 'self'; frame-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors <origins>; require-trusted-types-for 'script'; trusted-types bindle-embed`, where `connect-src` is `'self' <issuer origin>` (FedCM in frame fetches with destination `webidentity`, which CSP may map to `connect-src`; *needs browser evidence*). The single Trusted Types policy `bindle-embed` defines only `createScriptURL`, which returns exact allowlisted same-origin paths (`/embed/sw.js`, the hashed island worker) and throws otherwise. `createHTML` and `createScript` stay undefined, so HTML and script sinks still throw. Vendored dodo writes the DOM only through attributes, properties, `classList`, `dataset` and `style.setProperty`, and constructed sheets are outside `style-src` (verified in review); `Cache-Control: no-cache`, strong `ETag`; `Referrer-Policy: no-referrer`; `X-Content-Type-Options: nosniff`; `Origin-Agent-Cluster: ?1`; `Cross-Origin-Opener-Policy` is not sent, because it has no effect on a framed document and the popup rules live in adaptive §9. The shell is static, so it **always** sends `Cross-Origin-Embedder-Policy: require-corp` and `Cross-Origin-Resource-Policy: cross-origin`. It loads only same-origin subresources, so this is safe and lets COEP embedders frame it (*needs browser evidence*). Cross-origin-isolated embedders also send `COOP: same-origin`, which severs the island's popup (adaptive §9), so for them islands render but flows run in plain mode.
-- `Permissions-Policy`: the element's iframe carries `allow="identity-credentials-get"` only on `account-switcher` and `sign-in` (FedCM in frame, adaptive §11.3). `avatar` gets `allow=""`.
+- `Permissions-Policy`: the element's iframe carries `allow="identity-credentials-get"` only on `account-switcher` and `sign-in` (superseded 2026-10-28: no FedCM in islands, so no `allow` delegation on any part). Every part gets `allow=""`.
 - **Versioning.** The shell path is unversioned, as the user directed. Protocol versions are negotiated in the handshake (`protocol:[1]`). Asset URLs carry content hashes. A future incompatible shell would use `?client=<id>&v=2`, and v1 stays served for at least 12 months (embeddable-elements §9.4).
 
 ### 3.2 Parts
@@ -70,9 +72,9 @@ No `account-name` island in v1. Text inside a fixed-width frame truncates, which
 
 | Resource | Path | Cache policy |
 | --- | --- | --- |
-| Shell | `/embed?client=…` | `no-cache` + ETag. A 304 costs one round trip. Registry changes (removed origins or parts) take effect on the next load. |
+| Shell | `/?client=…` (superseded 2026-10-28: was `/embed?client=…`) | `no-cache` + ETag. A 304 costs one round trip. Registry changes (removed origins or parts) take effect on the next load. |
 | Runtime and part modules, CSS, locale catalogues | `/embed/assets/<name>.<hash>.{js,css}` | `public, max-age=31536000, immutable`; `Cross-Origin-Resource-Policy: same-origin` |
-| Service worker | `/embed/sw.js` (scope `/embed`, served with `Service-Worker-Allowed: /embed`) | `no-cache` |
+| Service worker | `/embed/sw.js` (scope `/`, served with `Service-Worker-Allowed: /`; superseded 2026-10-28: was scope `/embed`) | `no-cache` |
 | Embed API, including the avatar and the event stream | `/embed/api/*` | `no-store`; never handled by the service worker |
 
 **Service worker (optional enhancement).** The shell registers `/embed/sw.js` through the `bindle-embed` Trusted Types policy after `ready`, unconditionally, whatever the account state. Registration is partitioned by top-level site, like all frame storage (adaptive §4.1). Chromium 115+ partitions third-party service workers; Firefox and WebKit behaviour in third-party frames *needs browser evidence*. It follows the existing `apps/web/sw.js` model: one cache per build generation, installed atomically, with no `skipWaiting` or `clients.claim` across generations. It:
@@ -98,7 +100,7 @@ No account data renders before step 4, and steps 1–3 do the same work in every
 
 ### 4.1 Handshake (refines embeddable-elements §8.3)
 
-1. The element generates a 128-bit nonce and creates `<iframe src="https://embed.3sln.me/embed?client=…#<part>" name="bindle-island;v=1;n=<nonce>;l=<lang>;cs=<scheme>" title="<localized part title>" referrerpolicy="no-referrer" loading="eager" allow="…">`. It never sets `sandbox` or `credentialless`. The iframe's `color-scheme` CSS property equals `cs`, and the island sets the same root `color-scheme`, so the browser does not paint an opaque backdrop behind a transparent frame (*needs browser evidence*).
+1. The element generates a 128-bit nonce and creates `<iframe src="https://embed.3sln.me/?client=…#<part>.v<n>" (superseded 2026-10-28: was `/embed?client=…#<part>`) name="bindle-island;v=1;n=<nonce>;l=<lang>;cs=<scheme>" title="<localized part title>" referrerpolicy="no-referrer" loading="eager" allow="…">`. It never sets `sandbox` or `credentialless`. The iframe's `color-scheme` CSS property equals `cs`, and the island sets the same root `color-scheme`, so the browser does not paint an opaque backdrop behind a transparent frame (*needs browser evidence*).
 2. On the iframe's first `load`, the element posts once: `iframe.contentWindow.postMessage({v:1, type:'bindle-island-init', nonce, part, theme:{seq, tokens}, locale, colorScheme, props}, embedOrigin, [port2])`. `embedOrigin` comes from the issuer's verified manifest (§12.3), never `'*'`.
 3. The island accepts only the first message where `event.source === window.parent`, `event.origin` is in the config block's origin list, the key set is exact, `part` equals its fragment, the nonce matches the one from `name` (constant-time compare), `event.ports.length === 1`, and every field validates (§4.2). It then removes the window listener. All later traffic uses the port.
 4. The island replies on the port `{v:1, type:'ready', part, protocol:[1]}`. `ready` is constant and is sent before leader election and before any credentialed request.

@@ -61,16 +61,18 @@ const faultResult=(code,message,error={})=>({__federationError:{code,message,...
  * or (one case, below) what was written is terminal, so neither a retry nor another attempt could reach a different
  * domain outcome. A generic code such as `temporarily_unavailable` stays out, because adapters raise it after partial
  * effects that a retry may complete.
- * RTC-i: `claimed` and `unsupported_peer` are rtc-signaling/v1 method-specific refusals, raised nowhere else.
+ * Signaling (rev 3.2 §10.2): `claimed`, `unsupported_peer` and `approval_required` are signaling/v1 method-specific
+ * refusals, raised before any session state is written or after state that is terminal (RTCi-5), and nowhere else.
+ *
  * - `unsupported_peer` (§4.1) is raised before any session state is written (at most a rate-limit window was spent).
  * - `claimed` (§7.2) is the losing claim, which writes nothing. Review L2, the one exception: a WON claim whose session
- *   ended while its leg certificate was being signed also answers `claimed` (packages/rtc/service.mjs claim). Its
+ *   ended while its leg certificate was being signed also answers `claimed` (packages/signaling/service.mjs claim). Its
  *   claim record (the claimant, its leg-key thumbprint, the `claimed` state pushed to the other notified endpoints)
  *   is durable, but the session is already over: no certificate was handed out, a retry answers `claimed` again, and
  *   the application's next step is the same as a loser's. This is NOT a "nothing was written" code for that case.
  *   For `ordered` failover (extensions §3.3, packages/federation/extensions.mjs) `claimed` is not a no-effect code
  *   (409, so `unknown`), so it never moves a consumer to another resource. */
-const NO_EFFECT_CODES=new Set(['invalid_args','invalid_actions','unsupported_contract','unsupported_method','not_found','forbidden','conflict','quota_exceeded','account_quota_exceeded','rate_limited','storage_write_unavailable','tx_conflict','app_notifications_unavailable','message_receipt_limited','message_receipt_unavailable','message_receipt_disabled','message_receipt_too_large','operation_expired','body_too_large','claimed','unsupported_peer']);
+const NO_EFFECT_CODES=new Set(['invalid_args','invalid_actions','unsupported_contract','unsupported_method','not_found','forbidden','conflict','quota_exceeded','account_quota_exceeded','rate_limited','storage_write_unavailable','tx_conflict','app_notifications_unavailable','message_receipt_limited','message_receipt_unavailable','message_receipt_disabled','message_receipt_too_large','operation_expired','body_too_large','claimed','unsupported_peer','approval_required']);
 /** Portable composition boundary. Both hosted and self-hosted runtimes inject
  * metadata, live owner authentication and actual contract adapters here. */
 export class FederationController {
@@ -125,7 +127,7 @@ export class FederationController {
   async dpopNonce(purpose){this.requireReady();if(!['token','embed'].includes(purpose)||!this.service.dpopNonces)fail('temporarily_unavailable');return this.service.dpopNonces.issue(purpose);}
   async configure(context,input){this.requireReady();if(input?.removeSettings===true){const engine=createAppEngine({providers:{clock:systemClock,random:cryptoRandom,audit:nullAudit,federation:this.service}});try{return await perform(engine,new DeleteRemovalSettings({authority:this.authority(context,true),input}));}finally{await engine.dispose();}}const out=await this.service.configure(this.authority(context,true,true),input);await this.service.drainBrokeredEvents();return out;}
   registerResource(context,input){this.requireReady();return this.service.registerResource(this.authority(context,true,true),input);}
-  async cleanup(input){const events=await this.service.drainBrokeredEvents(),out=await this.service.cleanup(input);return events.pending?{...out,remaining:true,nextAlarmAt:this.clock()+60000}:out;}
+  async cleanup(input){const events=await this.service.drainBrokeredEvents(),grants=await this.service.drainGrantSync().catch(()=>({pending:true})),out=await this.service.cleanup(input);return events.pending||grants.pending?{...out,remaining:true,nextAlarmAt:this.clock()+60000}:out;}
   /** DX-3 E3 (account-deletion-export.md §2.3): this store is one owner's federation shard, so erasing the subject
    * deletes every `federation/` row in it: grants, token families, preferences, brokered JTIs, requests, resources
    * and persisted client snapshots. Access already ended at the identity tombstone; this removes the records. */

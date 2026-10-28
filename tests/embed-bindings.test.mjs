@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
-import {provider,post,form,createEntry,providerPage,pageHeaders,exchange,refresh,dpopKey,tokenNonce,embedHeaders,embedNonce,codeOf,b64,issuer,embedOrigin,appOrigin,clientId} from './authorization-entry-helpers.mjs';
+import {provider,post,form,createEntry,entryBody,providerPage,pageHeaders,exchange,refresh,dpopKey,tokenNonce,embedHeaders,embedNonce,codeOf,b64,issuer,embedOrigin,appOrigin,clientId} from './authorization-entry-helpers.mjs';
 import {EMBED_PROOF_TYP} from '../packages/federation/dpop.mjs';
 const api=path=>`${embedOrigin}/embed/api/${path}`;
 async function attest(p,key,entryId,{signer=key,typ=EMBED_PROOF_TYP,entry=entryId}={}){
@@ -17,6 +17,15 @@ async function embedFlow(p,{key,session=p.signIn()}={}){
 const redeem=async(p,claim,key)=>post(p,api('claim'),{claim},embedHeaders({DPoP:await key.sign({htu:api('claim'),nonce:await embedNonce(p),ath:claim,iat:Math.floor(p.clock()/1000)})}));
 const call=async(p,path,scheme,value,key)=>p.fetch(api(path),{method:'POST',headers:embedHeaders({Authorization:`${scheme} ${value}`,DPoP:await key.sign({htu:api(path),nonce:await embedNonce(p),ath:value,iat:Math.floor(p.clock()/1000)})})});
 const startSession=(p,credential,key)=>call(p,'session','BindleEmbed',credential,key);
+
+test('the embed origin creates only embed-popup/popup entries: FedCM delivery or presentation gets the generic refusal (review L2)',async()=>{
+ const p=await provider(),key=await dpopKey(),create=(overrides,origin)=>post(p,`${issuer}/api/oauth/entries`,entryBody(overrides).body,{Origin:origin});
+ assert.equal((await create({delivery:'embed-popup',embedJkt:key.jkt},embedOrigin)).status,201,'control: the supported embed delivery');
+ for(const [overrides,origin] of [[{delivery:'embed-fedcm',presentation:'fedcm',embedJkt:key.jkt},embedOrigin],[{delivery:'embed-popup',presentation:'fedcm',embedJkt:key.jkt},embedOrigin],[{delivery:'embed-fedcm',embedJkt:key.jkt},embedOrigin],[{delivery:'embed-popup',presentation:'redirect',embedJkt:key.jkt},embedOrigin],[{presentation:'fedcm'},appOrigin],[{presentation:'fedcm'},embedOrigin]]){
+  const response=await create(overrides,origin);assert.equal(response.status,400,JSON.stringify(overrides));
+  assert.deepEqual(await response.json(),{error:'invalid_request',message:'The authorization entry could not be created.'},'generic refusal names no member');
+ }
+});
 
 test('an attested embed approval yields a key-bound single-use claim; the credential activates only on the paired exchange',async()=>{
  const p=await provider(),{result,verifier,body,key}=await embedFlow(p),other=await dpopKey();

@@ -42,9 +42,7 @@ import BrowserStateProvider from './providers/browser-state.mjs';
 import * as actions from './bl/release.mjs';
 import {ReactivateAccount} from './bl/lifecycle.mjs';
 import createApp from './ui/release-app.mjs';
-import * as rtcActions from './bl/rtc-settings.mjs';
-import {createRtcRingPoller} from './bl/rtc-ring-poll.mjs';
-import {withRtcSurface,rtcRing} from './ui/rtc-ring.mjs';
+import * as signalingActions from './bl/signaling-controls.mjs';
 
 // Composition is the only layer naming concrete browser resources and domain
 // Actions. Components receive the Query projection and bubble native intents.
@@ -55,7 +53,7 @@ const consolePort=createConnectionsPort({owner:(input,{api})=>api.request('/api/
 const engine=new Engine({providers:{organizationsConsole:OrganizationsProvider,accountDataFlags:AccountDataFlags,connectionsConsole:Provider.fromSingleton(consolePort),accessCatalog:Provider.fromSingleton(createAccessCatalog({registrableDomain:host=>getDomain(host,{allowPrivateDomains:true}),transition:({operation,connection,expectedGeneration,api,owner})=>consolePort.owner({operation:'connections.'+operation,input:{connection,expectedGeneration}},{api,owner})})),messageActions:MessageActionsProvider,automation:AutomationProvider,api:APIProvider,browser:BrowserProvider,state:BrowserStateProvider,portalContributions:portalContributionsProvider(builtInModules),portalAccess:PortalAccessProvider,recoveryFile:RecoveryFileProvider}});
 const registry=await engine.container.use(['portalContributions'],({portalContributions})=>portalContributions);
 // Registry data is immutable; this read composes UI factories once per locale.
-const surfaces=Object.fromEntries(['en','es'].map(locale=>{const localization=createLocalization({locale,catalogue:catalogueForContributions(registry.list('translations'),locale)}),localize=tree=>localizeTree(tree,localization),views={...composePortalViews(registry,{t:localization.t,number:localization.number,date:localization.date,localize}),organizations:organizationsView};return [locale,withRtcSurface(withOrganizationsSurface(withAccountDataSurface(createApp({views,localize}),localize)))];}));
+const surfaces=Object.fromEntries(['en','es'].map(locale=>{const localization=createLocalization({locale,catalogue:catalogueForContributions(registry.list('translations'),locale)}),localize=tree=>localizeTree(tree,localization),views={...composePortalViews(registry,{t:localization.t,number:localization.number,date:localization.date,localize}),organizations:organizationsView};return [locale,withOrganizationsSurface(withAccountDataSurface(createApp({views,localize}),localize))];}));
 const cancelRecovery=await engine.container.use(['recoveryFile'],({recoveryFile})=>recoveryFile.cancel);
 const cancelDeviceEntry=await engine.container.use(['browser'],({browser})=>browser.cancelDeviceEntry);
 const readSignupCaptcha=await engine.container.use(['browser'],({browser})=>browser.captcha);
@@ -101,7 +99,7 @@ const constructors={
  'start-google-drive':googleDriveActions.StartGoogleDrive,
  'clear-automation-review':automationActions.ClearAutomationReview,'load-automation':automationActions.LoadAutomation,'enable-automation':automationActions.EnableAutomation,'disable-automation':automationActions.DisableAutomation,'confirm-automation':automationActions.ConfirmAutomation,
  'load-mcp-request':mcpActions.LoadMCPRequest,'decide-mcp':mcpActions.DecideMCP,'load-mcp-grants':mcpActions.LoadMCPGrants,'revoke-bindle-grant':mcpActions.RevokeBindleGrant,'revoke-mcp-grant':mcpActions.RevokeMCPGrant,'disconnect-app':mcpActions.DisconnectApp,'set-app-notifications':mcpActions.SetAppNotifications,
- 'load-rtc-settings':rtcActions.LoadRtcSettings,'rtc-action':rtcActions.RtcOwnerAction,'save-rtc-policy':rtcActions.SaveRtcPolicy,'save-rtc-contact':rtcActions.SaveRtcContact,'save-rtc-auto-accept':rtcActions.SaveRtcAutoAccept,'review-rtc-approve':rtcActions.ReviewRtcApprove,'dismiss-rtc-ring':rtcActions.DismissRtcRing,
+ 'load-signaling-settings':signalingActions.LoadSignalingSettings,'signaling-action':signalingActions.SignalingOwnerAction,'save-signaling-policy':signalingActions.SaveSignalingPolicy,
  'load-contact-profile':contactProfileActions.LoadContactProfile,'rename-device':RenameDevice,'update-contact-sharing':contactProfileActions.UpdateContactSharing,'save-profile':contactProfileActions.SaveProfile,
   signup:actions.SignUp,signin:actions.SignIn,signout:actions.SignOut,
   'start-recovery':actions.StartRecovery,'inspect-recovery':actions.InspectRecovery,
@@ -163,31 +161,24 @@ let accessHash='',consoleOwner='';const syncIntegrationRoute=()=>{const s=readMo
 // The contact profile (Account & security) and the developer contact panel load whenever that view is entered (including
 // a reload on it) and again after an account or session-epoch change while it stays open.
 let contactProfileOwner='';const syncContactProfile=()=>{const s=readModel();if(s.view!=='security'||!s.session?.account||s.offline){contactProfileOwner='';return;}const key=s.session.account.id+':'+s.session.sessionContext+':'+(s.beamGeneration??0);if(key===contactProfileOwner)return;contactProfileOwner=key;engine.dispatch(new contactProfileActions.LoadContactProfile({quiet:true}));engine.dispatch(new incomingActions.LoadDeveloperContact({quiet:true}));};engine.feed.addEventListener('browser-state-updated',syncContactProfile);
-// RTC-g (flags off): the settings load whenever "Calls & connections" is entered or its account or session generation
-// changes; the portal ring polls the owner's incoming invites (bl/rtc-ring-poll.mjs, review F4: every 10 s, one tab
-// per account, backing off on errors, only where the ring renders and while the tab is visible, and not at all while
-// nothing can ring) and renders into its own root (a polite live region) beside the console.
-let rtcOwner='';const syncRtc=()=>{const s=readModel();if(s.view!=='calls'||!s.session?.account||s.offline||!rtcActions.rtcEnabled(s)){rtcOwner='';return;}const key=s.session.account.id+':'+s.session.sessionContext+':'+(s.beamGeneration??0);if(key===rtcOwner)return;rtcOwner=key;engine.dispatch(new rtcActions.LoadRtcSettings());};engine.feed.addEventListener('browser-state-updated',syncRtc);
-const rtcRingPoller=createRtcRingPoller({key:()=>{const s=readModel();return s.session?.account?s.session.account.id+':'+s.session.sessionContext+':'+(s.beamGeneration??0):'';},eligible:()=>rtcActions.rtcRingSurface(readModel())&&document.visibilityState!=='hidden',active:()=>rtcActions.rtcSettingsIdle(rtcActions.rtcModel(readModel()))===false,
- run:async()=>{const action=new rtcActions.LoadRtcRing();await engine.dispatch(action).next('complete');return action.outcome??{ok:true,skipped:true};},apply:detail=>engine.dispatch(new rtcActions.ApplyRtcRing(detail)),channel:typeof BroadcastChannel==='function'?new BroadcastChannel('bindle-rtc-ring'):null});
-engine.feed.addEventListener('browser-state-updated',()=>rtcRingPoller.poke());document.addEventListener('visibilitychange',()=>rtcRingPoller.poke({force:document.visibilityState!=='hidden'}));
-const rtcRingRoot=document.createElement('div');rtcRingRoot.className='rtc-ring-root';rtcRingRoot.setAttribute('aria-live','polite');root.after(rtcRingRoot);rtcRingRoot.addEventListener('3sln-intent',event=>{event.stopPropagation();dispatchIntent(event.detail);});
-const ringLocalize=Object.fromEntries(['en','es'].map(locale=>{const localization=createLocalization({locale,catalogue:catalogueForContributions(registry.list('translations'),locale)});return [locale,tree=>tree?localizeTree(tree,localization):null];}));
-dodo.reconcile(rtcRingRoot,[watch(stateCell,state=>ringLocalize[state.locale??'en'](rtcRing(state)))]);
+// Signaling owner controls (flags off; signaling.md §14.1): the settings load whenever a surface that shows them
+// (Account & security, Apps & integrations or Connected apps) is entered, and again after an account or session-epoch
+// change while it stays open. Nothing is requested while the account's session features lack signaling.
+let signalingOwner='';const syncSignaling=()=>{const s=readModel();if(!signalingActions.SIGNALING_VIEWS.includes(s.view)||!s.session?.account||s.offline||!signalingActions.signalingEnabled(s)){signalingOwner='';return;}const key=s.view+':'+s.session.account.id+':'+s.session.sessionContext+':'+(s.beamGeneration??0);if(key===signalingOwner)return;signalingOwner=key;engine.dispatch(new signalingActions.LoadSignalingSettings());};engine.feed.addEventListener('browser-state-updated',syncSignaling);
 let privateGeneration=readModel().beamGeneration??0;engine.feed.addEventListener('browser-state-updated',()=>{const generation=readModel().beamGeneration??0;if(generation!==privateGeneration){privateGeneration=generation;cancelRecovery();}messageFrameResource.sync();});
 const termsFocus=new MutationObserver(()=>{const dialog=root.querySelector('[data-terms-update]');if(dialog&&!dialog.contains(document.activeElement))dialog.querySelector('h2')?.focus();});termsFocus.observe(root,{childList:true,subtree:true});
 const accountDataSubscription=engine.query(new AccountDataView()).subscribe({next:()=>{}});
 let accountDataOwner='';const syncAccountData=()=>{const s=readModel();if(!s.session?.account||s.offline){accountDataOwner='';return;}if(s.busy||s.stepUp||!s.data?.features&&!s.session.account.consoleFeatures&&!closureSession(s))return;const key=s.session.account.id+':'+s.session.sessionContext+':'+(s.beamGeneration??0);if(key===accountDataOwner)return;accountDataOwner=key;const query=new URLSearchParams(location.search),dataLink=query.getAll('view').length===1&&query.get('view')==='account-data';if(query.getAll('security').length===1&&query.get('security')==='review'&&!closureSession(s))engine.dispatch(new actions.NavigateSpace({kind:'navigate',view:'security'}));engine.dispatch(new AccountDataAction(dataLink?'open':'check'));};engine.feed.addEventListener('browser-state-updated',syncAccountData);engine.feed.addEventListener('account-data-check-due',()=>{const s=readModel();if(!s.busy&&!s.stepUp&&!accountDataCurrent(s)?.confirmation&&s.session?.account&&!s.offline&&(s.data?.features||s.session.account.consoleFeatures||closureSession(s)))engine.dispatch(new AccountDataAction('check'));});
 // Shell addresses mirror the organization console pattern. The model remains authoritative
 // during ordinary navigation; at boot and popstate the validated address chooses the view.
-const shellViews=new Set(['calls','inbox','resources','rules','notifications','security','settings','billing','activity','connected-apps','connections','access','automation','space-search','account-data']);
-const shellRoute=()=>{const q=new URLSearchParams(location.search),v=q.get('view');return q.getAll('view').length===1&&shellViews.has(v)&&(v!=='calls'||rtcActions.rtcEnabled(readModel()))?v:'inbox';};
+const shellViews=new Set(['inbox','resources','rules','notifications','security','settings','billing','activity','connected-apps','connections','access','automation','space-search','account-data']);
+const shellRoute=()=>{const q=new URLSearchParams(location.search),v=q.get('view');return q.getAll('view').length===1&&shellViews.has(v)?v:'inbox';};
 let shellBooted=false,shellRouting=false,shellTimer;
 const restoreShellRoute=()=>{const state=readModel();if(location.pathname!=='/console'||!state.session?.account||state.loading||state.busy||organizationsModel(state)?.recovery||new URLSearchParams(location.search).get('view')==='organizations')return;if(state.config?.integrationsEnabled&&accessRoute(location.hash))return;const view=shellRoute();if(view===state.view)return;shellRouting=true;dispatchIntent({kind:'navigate',view});};
 const syncShellURL=()=>{clearTimeout(shellTimer);shellTimer=setTimeout(()=>{const state=readModel();if(location.pathname!=='/console'||state.loading||state.busy||!state.session?.account)return;if(!shellBooted){shellBooted=true;restoreShellRoute();return;}if(shellRouting){if(state.view!==shellRoute())return;shellRouting=false;}if(state.view==='organizations'||!shellViews.has(state.view)||state.config?.integrationsEnabled&&accessRoute(location.hash)&&state.view!=='access')return;const u=new URL(location.href);if(u.searchParams.get('view')===state.view)return;u.searchParams.set('view',state.view);u.searchParams.delete('org');history.pushState(history.state,'',u.pathname+u.search+u.hash);},0);};
 engine.feed.addEventListener('browser-state-updated',syncShellURL);
 addEventListener('popstate',restoreShellRoute);
 engine.dispatch(new actions.InitializeSpace());
-window.addEventListener('pagehide',()=>{rtcRingPoller.stop();dodo.reconcile(rtcRingRoot,[]);accountDataSubscription.unsubscribe();termsFocus.disconnect();cancelRecovery();window.removeEventListener('keydown',keydown);dodo.reconcile(root,[]);engine.dispose();},{once:true});
+window.addEventListener('pagehide',()=>{accountDataSubscription.unsubscribe();termsFocus.disconnect();cancelRecovery();window.removeEventListener('keydown',keydown);dodo.reconcile(root,[]);engine.dispose();},{once:true});
 // Back/forward cache restores a torn-down page: reload instead of showing a blank console.
 window.addEventListener('pageshow',event=>{if(event.persisted)location.reload();});

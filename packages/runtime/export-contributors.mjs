@@ -14,7 +14,9 @@ const projection=(row,names)=>Array.isArray(row)?row.map(v=>projection(v,names))
 const definitions=[
  // Removal history with the owner's keep choices and deletion jobs for app-attributed data (never the stored continuation position).
  ['app-removals',['app-removal/record/','storage/producer-keep/','storage/producer-deletion/'],'removal entity client_id connection mode generation started_at cleanup_by committed_at access_ends_by concluded_at outcome result reminders action resource active supersededAt includeChanged includeKept complete stopped stoppedAt totalDeleted skipped passes at'],
- ['intent-choices',['intent-memory/'],'kind default excluded ignored'],
+ // Signaling AMD-SG-I1: session handler approvals (handler, version, digest, approval time, autoConnect) live beside
+ // the routing default of the same kind line.
+ ['intent-choices',['intent-memory/'],'kind default excluded ignored approvals handler feature version digest autoConnect'],
  // v1 app messages (activity's app-message/ family). The legacy peer `message/` family was deleted by the BB-CUT reset
  // (DEVLOG 2026-10-27); the section keeps its name so the archive shape is unchanged.
  ['messages',['app-message/'],'collection mimeType size receivedAt readAt tags classification quarantined revision presentation'],
@@ -34,12 +36,12 @@ const definitions=[
  ['external-storage',['drive/object/','drive/folder/'],'provider resource resourceId bucket prefix folderId key objectId fileId version size contentType'],
  ['billing',['billing/state','billing/ever-paid/'],'plan periodStart periodEnd cancelAtPeriodEnd customerId since paidAt validUntil currency annualAmount subscriptionId pendingChange'],
  ['lifecycle',['lifecycle/state-v1','lifecycle/paid-protection-v1','lifecycle/unpaid-origin-v1','retention/'],'phase deadlines notice lastActivityAt executeAfter graceDays usage exportOffered'],
- // RTC-d (packages/rtc/service.mjs): the owner's RTC settings and history. Ticket rows export only their counters and
- // dates, plus the non-secret purposes and principal binding (the meta is a bearer capability and `claims` is not
- // projected); blocks and mutes name principals the owner chose; contact rows name their link parent.
- // Interim (extensions rev 3.2 removed AMD-X1): rtc/approval/ is the owner's own per-app purpose approval (packages/rtc/approvals.mjs).
- ['rtc',['rtc/policy','rtc/block/','rtc/mute/','rtc/contact/','rtc/missed/','rtc/approval/'],'other self requests autoAccept principal at kind value purposes caller purpose parent clientId versions'],
- ['rtc-tickets',['rtc/ticket/'],'usesLeft revoked callback purposes principal'],
+ // Signaling (docs/spec/extensions/signaling.md §12.6): owner data only: the IP policy, principal blocks and provider
+ // blocks (the former rtc/block-iss/ export gap is closed: `sig/block-iss/` is claimed here, Appendix C), an
+ // organization's service designation, and pairings with every member in every state. Session handler approvals and
+ // `autoConnect` export with `intent-choices`. Offers are transient capabilities and are excluded.
+ ['signaling',['sig/policy','sig/block/','sig/block-iss/','sig/service'],'other self revision principal issuer at designated'],
+ ['signaling-pairings',['sig/pairing/'],'revision kind local peer opens accept label created_via state expires_at createdAt'],
  ['quota',['quota/','hosted-usage','app-message-usage/'],'bytes messages objects limit storageBytes usage retention']
 ];
 export const EXPORT_CLAIMED_PREFIXES=Object.freeze(Object.fromEntries(definitions.flatMap(([name,prefixes])=>prefixes.map(prefix=>[prefix,name]))));
@@ -96,18 +98,22 @@ const excluded={
  'drive/oauth/':'Secret: OAuth callback state.', 'drive/folder-pending/':'Secret: folder creation and OAuth journal.', 'drive/pending/':'Transient: upload journal.', 'drive/retained/':'External mappings are projected by the external-storage port.', 'drive/usage/':'Derived: external quota counters.', 'drive/removed/':'Transient: removed-resource sweep markers.',
  'evbus/index/':'Derived: manifest index.', 'evbus/reader/':'Secret: reader cursor authority.', 'evbus/permit/':'Transient: history opt-in.', 'evbus/tx/':'Transient: publish journal.', 'evbus/rate/':'Derived: rate counters.', 'evbus/meter/':'Derived: quota meters.', 'evbus/wait/':'Transient: wait leases.',
  'google-drive/':'Secret: OAuth and callback state; external mapping uses a dedicated port.',
- // RTC-d: signaling state that is per device, per session or derived. Session records live at most 24 h after their
- // end; SDP and candidates at most 60 s (spec §12).
- 'rtc/ep/':'Secret: RTC endpoint registrations (hashed endpoint secrets or DPoP key bindings, Web Push keys); device-local and re-registered by apps.',
- 'rtc/epq/':'Transient: RTC endpoint event queues (SDP and candidates kept at most 60 s).',
- 'rtc/out/':'Transient: RTC caller session records (kept at most 24 h after the session ends).','rtc/in/':'Transient: RTC callee session records (kept at most 24 h after the session ends).',
- 'rtc/dlv/':'Derived: RTC fan-out index.','rtc/dlg/':'Derived: certified RTC leg-key thumbprints (reuse refusal window).',
- 'rtc/limit/':'Derived: RTC rate-limit windows (hashed keys).','rtc/aep/':'Derived: highest authority epochs seen from RTC peers (24 h).',
- 'rtc/outbox/':'Transient: RTC signaling outbox.','rtc/outbox-seq':'Derived: RTC outbox sequence.','rtc/closed':'Transient: RTC deletion marker.',
- 'rtc/inq/':'Transient: RTC inbound signaling batches awaiting processing.','rtc/inq-meta':'Derived: RTC inbound queue counters.',
- // RTC-f: relay leases hold only TURN usernames (never credentials) of live legs; revoked at leg end, dropped once expired.
- 'rtc/relay/':'Transient: RTC relay credential leases (TURN usernames only, never credentials; at most 300 s past the leg).',
- 'rtc/relay-use/':'Derived: RTC relay allowance counters (reserved bytes this month and last, one-hour issuance window).'
+ // Signaling state that is per device, per session, transient, derived or a capability (§12.6 "Excluded"). Session
+ // records live at most 24 h after their end; payloads at most 60 s (§12.4).
+ 'sig/ep/':'Secret: signaling endpoint registrations (hashed endpoint secrets or DPoP key bindings, Web Push keys); device-local and re-registered by apps.',
+ 'sig/epq/':'Transient: signaling endpoint event queues (payloads kept at most 60 s).',
+ 'sig/out/':'Transient: signaling initiator session records (kept at most 24 h after the session ends).','sig/in/':'Transient: signaling recipient session records (kept at most 24 h after the session ends).',
+ 'sig/dlv/':'Derived: signaling fan-out index.','sig/dlg/':'Derived: certified leg-key thumbprints (reuse refusal window).',
+ 'sig/limit/':'Derived: signaling rate-limit windows (hashed keys).','sig/aep/':'Derived: highest authority epochs seen from signaling peers (24 h).',
+ 'sig/outbox/':'Transient: signaling outbox (offer tokens beside invites until answer_by).','sig/outbox-seq':'Derived: signaling outbox sequence.','sig/closed':'Transient: signaling deletion marker.',
+ 'sig/inq/':'Transient: inbound signaling batches awaiting processing.','sig/inq-meta':'Derived: inbound signaling queue counters.',
+ 'sig/offer/':'Transient capability: live offers (token hashes only), deleted at expiry; never exported (§5.7, §12.6).',
+ 'sig/pairing-peer/':'Derived: index of cross-entity pairings by (peer principal, kind line).',
+ 'sig/relay/':'Transient: relay credential leases (TURN usernames only, never credentials; at most 300 s past the leg).',
+ 'sig/relay-use/':'Derived: relay allowance counters (reserved bytes this month and last, one-hour issuance window).',
+ // Legacy rows of the replaced RTC code (dev and test stores only), deleted by the one-time reset on the account alarm
+ // (packages/runtime/account/signaling.mjs legacyRtcReset; signaling Appendix C).
+ 'rtc/':'Retired: rows of the replaced RTC signaling code, pending the one-time reset; never exported.'
 };
 export const EXPORT_EXCLUDED_PREFIXES=Object.freeze(excluded);
 // Singleton keys match exactly, never as a prefix (review R4): `profile` must not claim `profile-other/...`.

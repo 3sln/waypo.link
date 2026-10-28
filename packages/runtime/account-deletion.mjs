@@ -44,8 +44,9 @@ export const REQUEST_BUDGET=3,REQUEST_WINDOW_MS=DAY,RECEIPT_CAP=16,RECEIPT_TTL_M
 export const REQUEST_LOG_KEY='deletion/request-log';
 // Outboxes E4 waits for (account-local rows only; delivery itself is the owning slice's code).
 export const DRAIN_PREFIXES=Object.freeze(['connections/cascade/','integration-events/row/']);
-// RTC-d: `rtcDrain` ends live sessions with control statements (rtc.lifecycle `deletion`) and delivers them.
-const DRAINS=Object.freeze(['connectionsDrain','brokeredSeveranceDrain','integrationEventsAlarm','eventBusSweep','rtcDrain']);
+// `signalingDrain` ends live sessions with control statements (signaling.lifecycle `deletion`) and delivers them before
+// the tombstone (signaling §14.4).
+const DRAINS=Object.freeze(['connectionsDrain','brokeredSeveranceDrain','integrationEventsAlarm','eventBusSweep','signalingDrain']);
 const CANCELLABLE=new Set(['owner','admin-email']);
 // PORT-2 (identity portability, IP-R1-L10): the transfer-out record (packages/identity/transfer-out.mjs TRANSFER_KEY).
 // A committed move refuses deletion (the moved identity is purged by its own `moved` purge); a deletion request

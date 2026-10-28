@@ -48,7 +48,6 @@ import {BillingService} from '../billing/index.mjs';
 import {SearchService,SqliteSearchIndex,MetadataSearchOutbox,DurableSemanticBudget,SearchMutationGate} from '../search/index.mjs';
 import {installAccountMethods,accountRPC} from './account/index.mjs';
 import {linkService} from './account/links.mjs';
-import {rtcContactBasis} from '../links/parents.mjs';
 import {archiveDigest} from './account/support.mjs';
 
 export class IdentityRepository {
@@ -200,7 +199,7 @@ export class AccountController {
     // monthly archive write allowance meant for cold shelving (16 writes), which a single small export exceeds.
     this.exportArchives=archives;blobs=wrap(blobs,false);archives=wrap(archives,true);
     this.messageReceiptBudget=new MessageReceiptBudget({metadata,config});
-    this.metadata=metadata;this.googleDrive=new GoogleDriveService({metadata,config,fetcher:config.GOOGLE_DRIVE_FETCH??fetch});this.apps=new AppConnections({config,metadata,origin:config.APP_ORIGIN,severed:async owner=>{await this.connectionsDrain(owner);await this.integrationEventsKick(owner);}});this.gate=gate;this.workBudget=this.storageWriteBudget;this.blobs=blobs;this.archives=archives;this.config=config;this.quota=new StorageQuota({metadata,blobs,config});this.itemIndex=sql?new AccountItemIndex(sql):null;this.billing=new BillingService({config,metadata});this.searchIndex=sql?new SqliteSearchIndex({sql,transaction:sqlTransaction||sql.transaction?.bind(sql)}):null;this.searchOutbox=new MetadataSearchOutbox(metadata);this.semanticBudget=new DurableSemanticBudget({state:metadata,configured:flagsFor(config).global('SEMANTIC_SEARCH_ENABLED')&&Boolean(config.AI?.run&&(config.SEARCH_VECTORS?.query||[0,1,2,3].every(shard=>config[`SEARCH_VECTORS_${shard}`]?.query))),globalSpend:config.SEMANTIC_SPEND,eligible:owner=>this.semanticEligible(owner)});this.vectorGate=new SearchMutationGate();this.search=this.searchIndex?new SearchService({index:this.searchIndex,outbox:this.searchOutbox,semanticPolicy:this.semanticBudget,onSemanticError:(event,error)=>this.deferSemanticSearch(event,error),authority:{get:(owner,id,options)=>this.searchDocument(owner,id,options),scan:(owner,options)=>this.scanSearchDocuments(owner,options)}}):null;
+    this.metadata=metadata;this.googleDrive=new GoogleDriveService({metadata,config,fetcher:config.GOOGLE_DRIVE_FETCH??fetch});this.apps=new AppConnections({config,metadata,origin:config.APP_ORIGIN,severed:async owner=>{await this.connectionsDrain(owner);await this.integrationEventsKick(owner);},ended:async(owner,clientId)=>{await this.signalingConnectionEnded?.(owner,clientId);}});this.gate=gate;this.workBudget=this.storageWriteBudget;this.blobs=blobs;this.archives=archives;this.config=config;this.quota=new StorageQuota({metadata,blobs,config});this.itemIndex=sql?new AccountItemIndex(sql):null;this.billing=new BillingService({config,metadata});this.searchIndex=sql?new SqliteSearchIndex({sql,transaction:sqlTransaction||sql.transaction?.bind(sql)}):null;this.searchOutbox=new MetadataSearchOutbox(metadata);this.semanticBudget=new DurableSemanticBudget({state:metadata,configured:flagsFor(config).global('SEMANTIC_SEARCH_ENABLED')&&Boolean(config.AI?.run&&(config.SEARCH_VECTORS?.query||[0,1,2,3].every(shard=>config[`SEARCH_VECTORS_${shard}`]?.query))),globalSpend:config.SEMANTIC_SPEND,eligible:owner=>this.semanticEligible(owner)});this.vectorGate=new SearchMutationGate();this.search=this.searchIndex?new SearchService({index:this.searchIndex,outbox:this.searchOutbox,semanticPolicy:this.semanticBudget,onSemanticError:(event,error)=>this.deferSemanticSearch(event,error),authority:{get:(owner,id,options)=>this.searchDocument(owner,id,options),scan:(owner,options)=>this.scanSearchDocuments(owner,options)}}):null;
     const store={transaction:async operation=>{
       const garbage=[];
       const result=await this.metadata.transaction(async tx=>operation({
@@ -218,15 +217,6 @@ export class AccountController {
     this.items=new ItemService({store,clock:systemClock.now,crypto:{randomUUID:cryptoRandom.uuid,subtle:crypto.subtle,getRandomValues:array=>crypto.getRandomValues(array)},maxStoredBytes:1_000_000_000_000,maxStoredMessages:1_000_000,...this.itemIndex?{indexedList:async(owner,options)=>{await this.warm(owner);if(!await this.metadata.get('item-index-ready')||!this.itemIndex.filterIndexesReady())throw new StorageError('temporarily_unavailable','Your inbox index is being upgraded. Try again shortly.',503);return this.itemIndex.page(owner,options,{legacy:true}).items;}}:{}});
     this.notifications=new NotificationService({store,messageAllowed:appNotificationAllowed});
     this.contactProfiles=new ContactProfiles({metadata,links:{verify:url=>linkService(this).verify(url)}});
-    // RTC compatibility port (remaining coupling, DEVLOG 2026-10-27): runtime/account/rtc.mjs resolves a contact-link
-    // admission basis through `c.endpoints.inspect(link)` -> {grant:{id, owner, quarantined}}, the shape of the removed
-    // ContactEndpointService. It now resolves the contact parent (packages/links/parents.mjs) through LinkService
-    // verification (revoked, expired, owner-mismatched and badly signed links refuse); contact parents carry no
-    // quarantine. RTC code is not edited here (signaling redesign). Review L6, the old admission semantics: only a
-    // contact-type link is a contact basis (RTC_CONTACT_LINK_TYPES; an app's other link types never are), and a
-    // conditional link is refused, because its audience policy needs the caller principal, which this port does not
-    // receive. A refusal is null, which rtc.mjs folds like any other failure.
-    this.endpoints=Object.freeze({inspect:async url=>{const {record,conditional}=await linkService(this).verify(url);if(!rtcContactBasis(record)||conditional)return null;return {grant:{id:record.jti,owner:record.owner,quarantined:false}};}});
     // Account placement of the application engine (docs/architecture/app-engine.md): migrated domains are
     // Actions/Queries over these providers, reached through `dispatch`. The remaining services above are
     // wrapped as providers slice by slice. One engine per controller, so per DO instance / Node account.
@@ -327,8 +317,9 @@ export class AccountController {
     if(typeof this.orgsAlarm==='function')await this.orgsAlarm();
     // ORG-10f: relations.tick (anti-entropy, sweep, pre-purge, holds, drain) and the counterpart key refresh.
     if(typeof this.relationsAlarm==='function')await this.relationsAlarm();
-    // RTC-d: rtc.tick (ring and session expiry, retention, the signaling outbox); nothing runs without rtc/ state.
-    if(typeof this.rtcAlarm==='function')await this.rtcAlarm();
+    // Signaling: signaling.tick (answer_by and session expiry, offers, pairings, retention, the outbox); nothing runs
+    // without sig/ state.
+    if(typeof this.signalingAlarm==='function')await this.signalingAlarm();
     await this.alarmMaintenance();
     }finally{if(Number.isSafeInteger(deletionWake))await armAlarm(this.metadata,deletionWake);if(Number.isSafeInteger(transferWake))await armAlarm(this.metadata,transferWake);}
   }

@@ -121,10 +121,10 @@ export const methods={
    // (review 2026-10-23). A failure throws to the identity port, whose durable `pendingSever` row retries the whole hook.
    const result=await run(this,SeverAccountConnections,{actor:{kind:'system',owner},input:{reason}});
    if(recovery)await this.revokeDelegationsFor(owner,{reason:'system'});
-   // Review M5: RTC endpoints, sessions and every interim per-app approval end with the account severance itself, not
+   // Review M5: signaling endpoints, sessions, offers, pairings and session handler approvals end with the account severance itself, not
    // only through the cascade drain (which waits for INTEGRATIONS_ENABLED). Narrowing and idempotent; a failure throws
    // so the identity port's durable retry runs the whole hook again.
-   if(typeof this.rtcAppRevoked==='function')await this.rtcAppRevoked(owner,{all:true});
+   if(typeof this.signalingAppRevoked==='function')await this.signalingAppRevoked(owner,{all:true});
    await this.connectionsDrain(owner);await this.integrationEventsKick(owner);return result;
   },
   // Applies pending cascade rows in order; stops at the first failure, which stays durable for the next call.
@@ -136,9 +136,11 @@ export const methods={
    for(const row of rows){
     try{
      if(row.kind==='delegations')await this.revokeDelegationsFor(owner,row.all?{reason:row.reason}:{clientId:row.clientId,reason:row.reason});
-     // RTC-e: the same cascade ends the application's RTC endpoints and sessions (rtc.lifecycle `app-revoked`; narrowing,
-     // never gated; a no-op without RTC state). The federation shard's bound-approval hook covers grant revocations.
-     if(row.kind==='delegations'&&typeof this.rtcAppRevoked==='function'){try{await this.rtcAppRevoked(owner,row.all?{all:true}:{clientId:row.clientId});}catch{/* RTC re-checks the grant on every operation */}}
+     // Signaling Appendix C.2 lifecycle hook: the same cascade clears the app's session handler approvals and runs §14.2
+     // (signaling.lifecycle `app-revoked`; narrowing, never gated). A failure keeps this row pending for the next drain
+     // (never swallowed). Connection end itself reaches signaling without this drain (AppConnections `ended`, and the
+     // signaling tick's generation sweep), so INTEGRATIONS_ENABLED never decides whether it runs (H-1).
+     if(row.kind==='delegations'&&typeof this.signalingAppRevoked==='function')await this.signalingAppRevoked(owner,row.all?{all:true}:{clientId:row.clientId});
      if(row.kind==='reconcile')await this.reconcileDelegations(owner);
     }catch(error){if(error?.code!=='not_found')return {drained,pending:rows.length-drained};}// not_found: delegation disabled, nothing certified.
     await run(this,ConnectionCascadeDone,{actor:{kind:'system',owner},input:{key:row.key}});drained++;

@@ -2,6 +2,7 @@
 import {jcs,strictJSON,plain,scalarString,textEncoder} from '../core/strict-json.mjs';
 import {exact,origin,uuid,IntentFault} from './format.mjs';
 import {canonicalContactLink} from '../links/preview.mjs';
+import {sessionBodyValid} from './sessions.mjs';
 const controls=/[\p{Cc}\p{Bidi_Control}\u2028\u2029\u200b\ufeff]/u;
 const text=(v,n)=>typeof v==='string'&&scalarString(v)&&[...v].length<=n;
 const display=(v,n)=>text(v,n)&&v.length>0&&!controls.test(v);
@@ -18,7 +19,7 @@ const field=v=>{
 };
 export function validateIntentKind(input){try{
  const b=strictJSON(jcs(input,{maxDepth:8}),{maxDepth:8});
- if(!exact(b,['id','title','summary','publisher','effect','data','disclosure','capability'],['max_bytes','supersedes'])||!url(b.id,{line:true})||!origin(b.publisher)||new URL(b.id).origin!==b.publisher||!map(b.title,80)||!map(b.summary,280)||!['view','save','join','send'].includes(b.effect)||typeof b.capability!=='boolean')throw 0;
+ if(!exact(b,['id','title','summary','publisher','effect','data','disclosure','capability'],['max_bytes','supersedes','session'])||!url(b.id,{line:true})||!origin(b.publisher)||new URL(b.id).origin!==b.publisher||!map(b.title,80)||!map(b.summary,280)||!['view','save','join','send'].includes(b.effect)||typeof b.capability!=='boolean')throw 0;
  if(b.max_bytes!==undefined&&(!Number.isSafeInteger(b.max_bytes)||b.max_bytes<64||b.max_bytes>4480)||b.supersedes!==undefined&&!url(b.supersedes,{line:true}))throw 0;
  const s=b.data,d=b.disclosure;if(!exact(s,['type','properties','required'])||s.type!=='object'||!plain(s.properties)||Object.keys(s.properties).length>16||!Object.entries(s.properties).every(([k,v])=>/^[a-z][a-z0-9_]{0,31}$/.test(k)&&field(v))||!Array.isArray(s.required)||!s.required.every((k,i)=>Object.hasOwn(s.properties,k)&&(i===0||s.required[i-1]<k)))throw 0;
  if(!exact(d,['categories','fields'])||!list(d.categories)||!plain(d.fields)||Object.keys(d.fields).length!==Object.keys(s.properties).length)throw 0;
@@ -26,7 +27,10 @@ export function validateIntentKind(input){try{
   if(f.format==='contact-link'&&(!b.capability||x.display==='value'))throw 0;
   if(x.display==='origin'&&(!['https-url','contact-link'].includes(f.format)||f.type!=='string'))throw 0;
   if(x.display==='value'&&f.type==='string'&&(f.maxLength>120||f.format!==undefined&&!['uuid','handle'].includes(f.format)))throw 0;
- }return b;
+ }
+ // Signaling AMD-SG-I1 (proposed, unsigned): an optional `session` member makes this a session kind (sessions.mjs).
+ if(!sessionBodyValid(b))throw 0;
+ return b;
  }catch{throw new IntentFault('intent_kind_invalid');}}
 export function validateIntentData(body,input){const b=validateIntentKind(body);try{
  const data=strictJSON(jcs(input,{maxDepth:8}),{maxDepth:8});if(!plain(data)||textEncoder.encode(jcs(data)).length>(b.max_bytes??4480)||b.data.required.some(k=>!Object.hasOwn(data,k)))throw 0;
