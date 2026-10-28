@@ -155,7 +155,7 @@ test('caller app origin in the owner view: the verified certificate client origi
 
 test('owner narrowing of an app\'s approved purposes: FederationService narrows every grant, boundSync ends the removed purposes\' sessions and registrations',async t=>{
  const h=await rtcHost();const owner=subOf(2),subject=`${ISS}/entities/${owner}`,client=APP+'/client',authority={context:{sessionToken:owner+'.x',csrfToken:'c'},mutation:true};
- const db=new SqliteMetadata(':memory:'),config={ARTEFACT_VERSIONS_ENABLED:'true',FEDERATION_SCHEMAS:{[RTC_SIGNALING_SLOT]:structuredClone(RTC_SIGNALING_SLOT_MANIFEST)}};
+ const db=new SqliteMetadata(':memory:'),config={ARTEFACT_VERSIONS_ENABLED:'true',RTC_SIGNALING_ENABLED:'true',FEDERATION_SCHEMAS:{[RTC_SIGNALING_SLOT]:structuredClone(RTC_SIGNALING_SLOT_MANIFEST)}};
  const artefacts=configuredArtefacts({config,store:db});config.ARTEFACTS=artefacts;t.after(async()=>{await artefacts.engine.dispose();db.close();});
  const seenMutation=[];
  const fed=new FederationService({issuer:ISS,store:federationMetadata(db),schemaHosts:['spec.bindle.example'],schemaFetcher:reviewedSchemaFetcher(config),authenticateOwner:async a=>{seenMutation.push(a.mutation);return {subject,epoch:'epoch'};},clients:[{id:client,origin:APP,name:'app.example',redirectUris:[APP+'/callback']}],boundOptions:true,boundArtefacts:RTC_BOUND_ARTEFACTS});

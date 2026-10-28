@@ -33,11 +33,16 @@ async function developerEvaluation(controller,principal){
 // DEVELOPER_CONTACT_MODE switch were removed with core messaging; the BB-CUT reset deleted their rows.
 export async function developerContactLink(controller,owner){return controller.developerOccupantLink(owner);}
 
+/** The configured developer handle, or null when developer contact is off (unset or blank configuration). */
+export function developerContactHandle(env){const value=env?.DEVELOPER_CONTACT_HANDLE;return typeof value==='string'&&value.trim()?value.trim():null;}
 export async function developerContactRoutes({path,request,env,owner,accountHandle,json,limit,remoteIP}){
  if(path!=='/api/developer-contact')return null;
  if(request.method!=='GET')return json({error:'method_not_allowed'},405,{Allow:'GET'});
  if(limit&&!await limit(env,{operation:'developer-contact',remoteIP,handle:owner.account.id}))return json({error:'rate_limited'},429,{'Retry-After':'60'});
- const recipientHandle=env.DEVELOPER_CONTACT_HANDLE??'ray',recipient=await env.IDENTITY_REPOSITORY.findByHandle(recipientHandle);
+ // No built-in default: an unset DEVELOPER_CONTACT_HANDLE means developer contact is off (cleanup audit 2026-10-27);
+ // it answers like an unready developer account, so the console keeps its existing copy.
+ const recipientHandle=developerContactHandle(env);if(!recipientHandle)return json({available:false,reason:'developer-unavailable'});
+ const recipient=await env.IDENTITY_REPOSITORY.findByHandle(recipientHandle);
  const badge=systemBadge(recipient);
  if(recipient?.status!=='active'||!badge||badge.role!=='developer'||badge.handle!==recipientHandle)return json({available:false,reason:'developer-unavailable'});
  const receiver=accountHandle(env,recipient.id),link=await receiver.developerContactLink(recipient.id,recipient.handle);

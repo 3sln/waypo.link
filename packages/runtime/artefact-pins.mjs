@@ -48,7 +48,7 @@ const detached=value=>{if(!value||typeof value!=='object')return value;if(ArrayB
 // federationSchemas' 100-entry bound, re-checked against a live object registry on every lookup.
 function boundedSchemas(config){const live=config.FEDERATION_SCHEMAS;if(live&&typeof live==='object'&&Object.keys(live).length+(siteGlobal(config,'INTEGRATIONS_ENABLED')&&!Object.hasOwn(live,GOOGLE_DRIVE_SETUP_FRAGMENT.id)?1:0)>100)throw new TypeError('Invalid reviewed fragment registry.');}
 export function configuredArtefactDocuments(config){
- const revision=[config.FEDERATION_CONTRACTS,config.FEDERATION_SCHEMAS,siteGlobal(config,'INTEGRATIONS_ENABLED'),siteGlobal(config,'EXTENSIONS_ENABLED'),siteGlobal(config,'RTC_SIGNALING_ENABLED')],cached=documentRevisions.get(config);
+ const revision=[config.FEDERATION_CONTRACTS,config.FEDERATION_SCHEMAS,siteGlobal(config,'INTEGRATIONS_ENABLED'),siteGlobal(config,'EXTENSIONS_ENABLED'),siteGlobal(config,'RTC_SIGNALING_ENABLED'),siteGlobal(config,'INTENT_LINKS_ENABLED')],cached=documentRevisions.get(config);
  if(cached&&revision.every((value,i)=>value===cached.revision[i])){boundedSchemas(config);return cached.documents;}
  const contracts=typeof config.FEDERATION_CONTRACTS==='string'?JSON.parse(config.FEDERATION_CONTRACTS):config.FEDERATION_CONTRACTS??{},documents={};
  // RTC-i: the rtc-signaling/v1 contract (spec §9.1) is a first-party reviewed document while the provider implements
@@ -60,7 +60,11 @@ export function configuredArtefactDocuments(config){
  const firstParty={},envelopeOf=body=>({bindle_artefact:1,id:body.$id,kind:'rpc-contract',versions:[{version:1,prev:null,body}]});
  if(siteGlobal(config,'RTC_SIGNALING_ENABLED')&&siteGlobal(config,'EXTENSIONS_ENABLED')){firstParty[rtcSignalingV1.$id]=rtcSignalingV1;firstParty[rtcSignalingV1.$id+'/envelope']=envelopeOf(rtcSignalingV1);}
  for(const body of [...CONSENT_CONTRACT_SCHEMAS,preferencesV2]){documents[body.$id]=body;documents[body.$id+'/envelope']=envelopeOf(body);}
- for(const envelope of [sendMessageIntent,addContactIntent,openConversationIntent,...REGISTERED_PURPOSES]){documents[envelope.id]=envelope;documents[envelope.id+'/envelope']=envelope;}
+ // The messaging intent kinds serve only the intent router (INTENT_LINKS_ENABLED) and the rtc-purpose lines only RTC
+ // signaling (RTC_SIGNALING_ENABLED), so a default deployment registers none of them (cleanup audit 2026-10-27). They
+ // are slated for removal (core hard-codes no kinds; signaling App. C); until then they register only behind those flags.
+ const builtIns=[...siteGlobal(config,'INTENT_LINKS_ENABLED')?[sendMessageIntent,addContactIntent,openConversationIntent]:[],...siteGlobal(config,'RTC_SIGNALING_ENABLED')?REGISTERED_PURPOSES:[]];
+ for(const envelope of builtIns){documents[envelope.id]=envelope;documents[envelope.id+'/envelope']=envelope;}
  const schemas=federationSchemas(config),liveSchemas=config.FEDERATION_SCHEMAS&&typeof config.FEDERATION_SCHEMAS==='object'?config.FEDERATION_SCHEMAS:null;
  if(liveSchemas){const builtins=federationSchemas({...config,FEDERATION_SCHEMAS:{}});for(const key of Object.keys(schemas))delete schemas[key];Object.assign(schemas,builtins);}
  const sources=[firstParty,schemas,...liveSchemas?[liveSchemas]:[],contracts,documents];

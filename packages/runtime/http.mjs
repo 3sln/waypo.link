@@ -15,6 +15,7 @@ const CLOSURE_ROUTES=[[/^\/api\/account\/transfer-out$/,['GET']],[/^\/api\/sessi
 const closureRoute=(path,method)=>CLOSURE_ROUTES.some(([pattern,methods])=>pattern.test(path)&&methods.includes(method));
 import {MessagingFault} from '../core/records.mjs';
 import {StorageError} from '../storage/policy.mjs';
+import {developerContactHandle} from './developer-contact.mjs';
 import {flagReadable,sessionFeatures,json,status,body,cookie,sessionToken,setupCookie,deviceCookie,signedContactPath,identity,limit,turnstile,accountHandle} from './routes/shared.mjs';
 import {stage,routeMethods,admission} from './routes/index.mjs';
 export {subnet,signupEnabled} from './routes/shared.mjs';
@@ -93,7 +94,8 @@ export default {
   finally{engine?.dispose();}
  },
  async scheduled(controller,env,ctx){
-   if(env.DEVELOPER_CONTACT_POPULATION)ctx.waitUntil(env.DEVELOPER_CONTACT_POPULATION.censusStep());
+   // The active-population census exists only for developer contact; with no DEVELOPER_CONTACT_HANDLE it never starts.
+   if(env.DEVELOPER_CONTACT_POPULATION&&developerContactHandle(env))ctx.waitUntil(env.DEVELOPER_CONTACT_POPULATION.censusStep());
    // Account lifecycle sweep (present only when LIFECYCLE_ENABLED): arms schedules and nudges bounded ticks;
    // per-account alarms drive notices, suspension and, only when separately enabled, purge.
    if(env.LIFECYCLE_SWEEP)ctx.waitUntil(env.LIFECYCLE_SWEEP.run({trigger:'cron'}).catch(()=>{}));

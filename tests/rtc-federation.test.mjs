@@ -388,7 +388,7 @@ test('federation journal: RTC reads are never journaled and RTC write results ar
 
 test('lifecycle triggers: bound narrowing and grant revocation tell the occupant hook the remaining approval (null when none)',async t=>{
  const issuer='https://provider.example',subject=issuer+'/entities/alice',authority={session:'owner'},client='https://a.example/client';
- const db=new SqliteMetadata(':memory:'),config={ARTEFACT_VERSIONS_ENABLED:'true',FEDERATION_SCHEMAS:{[RTC_SIGNALING_SLOT]:structuredClone(RTC_SIGNALING_SLOT_MANIFEST)}};
+ const db=new SqliteMetadata(':memory:'),config={ARTEFACT_VERSIONS_ENABLED:'true',RTC_SIGNALING_ENABLED:'true',FEDERATION_SCHEMAS:{[RTC_SIGNALING_SLOT]:structuredClone(RTC_SIGNALING_SLOT_MANIFEST)}};
  const artefacts=configuredArtefacts({config,store:db});config.ARTEFACTS=artefacts;t.after(async()=>{await artefacts.engine.dispose();db.close();});
  const service=new FederationService({issuer,store:federationMetadata(db),schemaHosts:['spec.bindle.example'],schemaFetcher:reviewedSchemaFetcher(config),authenticateOwner:async()=>({subject,epoch:'epoch'}),clients:[{id:client,origin:'https://a.example',name:'a.example',redirectUris:['https://a.example/callback']}],boundOptions:true,boundArtefacts:RTC_BOUND_ARTEFACTS});
  const seen=[];service.boundChanged=async x=>{seen.push(structuredClone(x));};

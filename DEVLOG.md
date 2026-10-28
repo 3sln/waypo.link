@@ -8710,3 +8710,232 @@ Reviewer: ___ Date: ___ Outcome: ___
   - suggestions MAY be made, from verified contracts only.
 
 Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-27 — Extensions revision 3 draft (spec only; supersedes rev 2 pending sign-off)
+
+**What changed (spec only; no code).**
+- `docs/spec/extensions.md` was rewritten as revision 3. It is a draft, unimplemented, and supersedes revision 2 (slots, `extensions.v1`, AMD-X1) pending owner sign-off. The local code still implements revision 2 behind `EXTENSIONS_ENABLED` (default off). Nothing is published, deployed or production-verified.
+- `docs/spec/protocol.md` §2: `features` and `profiles` are replaced by `extensions: [{spec, options, digest?}]`, with the Bindle extension table and new processing rules. §3 gains the field attributes `selection`, `failover`, `consumers` and `announce`, a fail-closed rule for unknown field members, refusal of a top-level `slot`, and the owner floor. Both edits are labelled draft and unsigned.
+
+**This applies the owner's endorsed directions:**
+- `features` and slots are removed;
+- selection is a general field attribute;
+- provider features consume fragments like apps;
+- a declaration is a spec URL plus extension-level options, and the URL is the identity;
+- there are no `ref` or local ids (per-feature identity is `{extension, key}`, with keys fixed in the extension's descriptor);
+- user-facing text comes from the descriptor and fragment metadata;
+- the surfacing floor applies. Per the owner's later direction, candidate surfacing happens only after a connection completes, opted into per field by the fragment publisher with `announce: true`. Detailed throttling is 3sln.me policy, in a forthcoming 3sln.me doc.
+
+**Decisions.** EXT3-1 to EXT3-20 (extensions §12). AMD-X1 `bind` is dropped, after checking that signaling rev 2 needs no `bind` (signaling §3.2, SG-2, §20.8). `crit` and `supersedes` are dropped. Compatibility is a clean break: revision 2 shapes are ignored or refused, and local revision 2 state is reset when the code moves. Open owner questions: 4 (extensions §13), each with a recommended answer.
+
+**Change requests (not applied).** Extensions Appendix A: CR-X3-01 to CR-X3-17 against specs (signaling, messaging, organizations, device-authorization, integrations, incremental-authorization, events, intents, links, federation-implementation, auth, contracts and others), and CR-X3-18 to CR-X3-29 against code, artefacts, tests and data (federation extensions and schema, manifest declaration rows, AMD-X1 service paths, connections, brokered claims, email bridge, rtc, classifier, slot artefacts, Parlay pins).
+
+Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-27 — Extensions rev 3 open questions: provisional coordinator answers
+
+The owner delegated spec and implementation direction to the coordinator for the established direction (2026-10-27). These answers are provisional (coordinator) and **not signed off by the owner**:
+1. **Field attribute name:** `announce`, not `verbose`.
+2. **Email bridge:** a provider feature of an extension that the provider publishes itself, so email policy stays out of Bindle.
+3. **"Event buses stay core" against "optional means extension":** read as option (b).
+   - Event buses, integrations, brokered resources and authorization entry are Bindle-published extensions.
+   - The owner's "core" meant Bindle-owned, not app-level.
+   - Core stays the mandatory floor plus the extension mechanism.
+   - The owner should confirm this reading.
+4. **Unknown field members:** fail closed.
+
+Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-27 — Contacts and links rethink spike
+
+[docs/architecture/contacts-and-links-rethink.md](docs/architecture/contacts-and-links-rethink.md) answers the owner direction of 2026-10-27:
+- contact links are not core;
+- invitations are implemented as intents;
+- user-facing complexity must justify itself;
+- signaling carries no contact semantics;
+- intent kinds are not hard-coded.
+
+Decisions CL-1 to CL-18 and change requests CR-C1 to CR-C10 are provisional and unsigned. An independent review is pending.
+
+**Recommendation.**
+- Core keeps nothing contact-specific and no link format. The signed link envelope moves to the Organizations extension, its only non-contact user.
+- Contacts become an allowlist inside the Messaging extension:
+  - The Messaging extension publishes a `connect` intent kind carrying a single-use invitation token.
+  - Redeeming it makes the two people mutual contacts.
+  - Admission is allowlist-only, with a uniform refusal.
+  - Opt-in message requests come in a later phase. Developer contact moves onto them.
+- Signaling drops the `link` basis. Calls become Parlay call-invite messages carrying an `offer`.
+  - CL-10 is the only generic successor to `link`: a per-kind setting that admits `none` invites, allowed only where standing acceptance already is.
+- Messaging publishes the intent kinds that currently sit in intents §11. The built-in contacts handler and `/i/contact` are removed.
+
+**Coordinator provisional answers to the spike's questions** (the owner delegated direction; not signed off):
+1. Message requests are off by default for ordinary owners and on for the developer identity.
+2. Invitations are single-use in v1.
+3. links.md folds into Organizations.
+4. CL-10 is accepted, pending review.
+
+Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-27 — Owner direction: invitation use cases, admission rules, lists, one-way links
+
+**Owner direction (2026-10-27).**
+- Single-use invitations suit person-to-person contact. Other cases also need covering, such as a contact link published on a website.
+- Links need rules or automations: some auto-admit, some require accepting each invitee, some admit by rules.
+- Contact lists are needed.
+- One-way and two-way links are both needed, for example joining a newsletter without being able to message the owner.
+
+**Coordinator proposal (provisional, unsigned; to fold into the contacts spike after its review).**
+- **One invitation record in the messaging app, with five settings:**
+  - uses (one, N, or unlimited);
+  - expiry;
+  - admission (automatic, review each, or rules);
+  - direction ("can message you" two-way, or "receives from you only" one-way);
+  - tags and lists to apply on joining.
+- **Presets:** "Invite a person" (one use, two-way, automatic); "Website contact link" (unlimited, two-way, review or rules by default); "Newsletter/follow" (unlimited, one-way, always unsubscribable).
+- **One-way links:** the subscriber's app allowlists the publisher, while the publisher's app records a subscriber without admitting inbound messages.
+- **Lists are tags.** Allowlist entries carry provenance tags ("via link X").
+- **One owner rules engine** (conditions to actions) serves both invitation admission and inbound message handling.
+  - Conditions: via link, handle domain, organization membership, tag, body content.
+  - Actions: admit, hold, tag, refuse, route.
+- **Public-link safeguards:** per-link rate limits; review or rules as the public default; revocation offers "stop new joins" or "also remove everyone admitted via this link".
+- **Spec boundary:**
+  - Bindle Messaging specifies only the invitation intent data (token, inviter, offered direction), the redemption message and uniform result codes.
+  - Uses, admission, rules, presets, tags and lists are Parlay features.
+  - Nothing goes in core.
+
+Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-27 — Extensions revision 3.1 (rev 3 review fixes and cuts; spec only)
+
+**Owner direction recorded late (2026-10-27).** The revision 3 entry cited a later owner direction on announcements without recording it. The owner directed that candidate surfacing happens only after a connection completes, and that the fragment publisher opts each field in (the owner suggested the name `verbose`; the draft uses `announce`, provisional answer Q1). This line records that direction; it is not a sign-off of anything below.
+
+**Framing correction.** The revision 3 entry said it "applies the owner's endorsed directions" and listed some coordinator proposals among them. The owner directions are: remove `features`; anything optional is an extension; remove slots; selection is a general field attribute; provider features and extensions may consume fragments like apps; no `ref` or local ids without a use case; users see descriptions from spec metadata; core Bindle is identity, preferences, intents, resources and hub connectivity, with event buses in core; post-connection announcements as above. The following are **coordinator proposals**, not owner directions: the surfacing floor and its details; per-feature identity (`{extension, key}` in rev 3, now the spec URL); reading the owner's "core" list as Bindle-owned extensions; the fail-closed member rule.
+
+**What changed (spec only; no code, nothing implemented, flags unchanged).** An adversarial review of the rev 3 draft (4 high, 10 medium, 7 low findings, plus proposed cuts) was applied under coordinator decisions:
+- `docs/spec/extensions.md` is revision 3.1.
+  - Cuts: `broadcast`, `consumer-choice`, `failover`/`any-error` (`ordered` is always pre-dispatch); `requires` (prerequisites are prose, checked by non-recursive presence); `provider_features` and keys (at most one feature per extension, identity = spec URL); declaration `digest`; descriptor `publisher`; descriptor fetch and CORS (processors hold descriptors they implement); `extensions` in integration manifests.
+  - H1: the `limit: 0` probe and its change request are withdrawn. Announcements are computed locally from contracts recorded at connection, with no traffic to the integration.
+  - H3: the reading of "core" as Bindle-owned extensions is stated prominently as EXT3-21, needing owner sign-off, and covers intents, integrations, brokered resources, events, authorization entry and device authorization.
+  - M1/M2: announcement floor (only fields approved for an enabled consumer; never the provider's own built-ins, adapter resources or features; fixed wording without app-written titles; at most once per field and supplier). M3: four candidate kinds including brokered offers and adapter resources; brokered records keep their full claim. M4: registrable-domain own-flow exclusion restored for shared and provider-consumable fields. M5: provider-feature client identity (issuer, spec URL) everywhere. M6: endpoint distinctness and non-endpoint URL rules. M8: declaration loss suspends feature grants; revocation on owner disable, 30 days of suspension or blocking. M10: the owner floor covers every resource field (stated as a widening), with a strict initial-setup exception (EXT3-26). Lows fixed; §13 now shows provisional answers and two new questions (components exception, setup exception).
+  - New decisions EXT3-21 to EXT3-27; CR-X3-30 for the validator mismatch.
+- `docs/spec/protocol.md`: §2 uses `{spec, options}`, prose prerequisites, endpoint distinctness, the EXT3-21 note and the flagged components exception. §3 has an exhaustive fragment member table (H2). Unknown members anywhere fail closed, which **replaces AMD-C1 (provisionally approved 2026-10-20) pending owner sign-off**. It also includes the widened owner floor. §4 states provider-feature client identity.
+- `docs/spec/superseded/extensions-rev2.md`: an exact copy of `git show 10852e1:docs/spec/extensions.md` with a superseded banner, and relative links adjusted for the directory.
+- Pure link fixes repoint removed rev 2 anchors to that copy in events, messaging, signaling, incremental-authorization, app-removal, rtc-signaling and integrations, and federation-implementation now points to extensions §4.3. Stale slot wording was fixed in integrations §2.1 (occupant trigger) and contracts AMD-C10. `docs/architecture/*` links to removed anchors are left alone (CR-X3-17).
+
+**Verification.** A relative-link and anchor check over the edited specs passes. It found one pre-existing broken anchor, unrelated: messaging.md line 638 points to `../architecture/messaging-app.md#13-email-bridge-handoff`. No code changed, so `npm test` was not run. A spot check of the consent walkthrough shows resource candidates are already shown with no preselection. The initial account setup flow was not checked against EXT3-26.
+
+Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-27 — Owner sign-offs (EXT3-25, setup exception); components direction; contacts spike rev 2; address-routing reconciliation
+
+**Owner sign-off (2026-10-27, in session).** The owner said "The two decisions sound fine" to two extensions rev 3.1 decisions:
+- **EXT3-25:** unknown fragment members fail closed anywhere, which reverses AMD-C1's ignorable top-level members.
+- **§13 Q6:** the strict account-setup exception. The provider's built-in default is never preselected and sits beside an equally prominent "decide later".
+
+Recorded as: Reviewer: owner (in session) Date: 2026-10-27 Outcome: approved. Every other rev 3.1 decision stays provisional.
+
+**Components exception (extensions §13 Q5): coordinator recommendation, provisional.** Republish the components profile as a Bindle-owned extension (for example `…/extensions/embedded-components/v1`). Core's component-origin envelope would then name that extension instead of a 3sln.me URL. The owner was told this would be adopted unless they object. Not yet signed off.
+
+**Contacts and links spike rev 2.** [docs/architecture/contacts-and-links-rethink.md](docs/architecture/contacts-and-links-rethink.md) applies every review finding and both owner refinements:
+- admission is a rule created alongside a link;
+- the relationship lives on first-class contact lists (`can message you`, `request`, `receive only`; the most permissive wins and a block overrides);
+- a link carries only uses and expiry;
+- direction is left out of the protocol;
+- the Bindle Messaging intent data is `{inviter, token, delegation, expires_at?, hint?}`;
+- the core signing profile moves to a new `keys.md`, and the link query envelope moves to an Organizations annex;
+- `KEY_DELEGATION_ENABLED` (CR-C0) comes before any reset.
+
+Decisions CL-1 to CL-25 are provisional. Coordinator provisional answers to its questions:
+1. The website template defaults to a `request` list.
+2. The signing profile goes in a new `keys.md`.
+3. Redeemer-side following is an ordinary `can message you` list.
+
+**Reconciliation.** The contacts spike withdraws the messaging-address descriptor (CL-4, CR-X1). That overrides extensions rev 3.1's CR-X3-04 and CR-X3-23, which would have converted it into an `address-routing` provider feature. Those change requests are void and are to be removed from extensions Appendix A in the cleanup pass.
+
+Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-27 — Extensions revision 3.2 (rev 3.1 verification review fixes; spec only)
+
+**Owner input (relayed by the coordinator, 2026-10-27; not a sign-off).** The embedded-components extension's options give the islands' embed location. The provider owns it, and it may be a subdomain or an associated site. Declaring it in the issuer's manifest is what establishes ownership. The envelope's safety conditions stay, and the reason for them is framing and browser storage partitioning, not doubt about ownership.
+
+**What changed (spec only; no code, nothing implemented, flags unchanged).** A verification review of revision 3.1 found 0 high, 4 medium and 6 low findings, plus three proposed cuts. All of them were applied under coordinator decisions:
+- **N1, fragments follow artefacts.** `docs/spec/artefacts.md` is authoritative. Extensions §7 now makes fragments append-only lines under the artefact-versions extension and legacy immutable documents without it. Descriptors stay bundled and immutable per spec URL. Declarations pin nothing, and grants and enablements pin references (AMD-R2). AMD-R3 is withdrawn, with its reasoning in §7. `extensible` (AMD-R6) is a core member of the protocol §3 table. Protocol §3 has a note pointing to artefacts §6 and §10. These are new decisions EXT3-28 and CR-X3-14.
+- **N2, endpoint distinctness.** Endpoint options are `audience` or `public`. Only audience endpoints must be distinct, and a collision invalidates every colliding entry, which then suspends feature grants. Public endpoints may be shared, so 3sln.me's shared `/oauth/brokering/jwks` stays valid (app-removal AR-5).
+- **N3.** The own-flow exclusion covers contributing producer clients (extensions §8.3, protocol §3 rule 3).
+- **N4.** A one-line status note now sits at the top of the dependent specs: integrations, events, organizations, rtc-signaling (applies CR-X3-15), signaling, messaging, intents, device-authorization, incremental-authorization, links, auth, app-removal, federation-implementation, artefacts and identity-portability. Contracts, security and resource-contributions do not contradict revision 3 and got no note. The `extensions` member was removed from integrations' §2.1 example, its §2.2 table and its §2.3 change table.
+- **L1–L6.**
+  - Prerequisite wording is now identical in both specs: exactly one entry must be present, and a dependent extension is absent without it.
+  - The journal key carries the feature identity.
+  - `directory_url`, and every other URL a processor requests, is an endpoint option.
+  - Option value shapes and absence are defined.
+  - Suggestions draw on every candidate kind.
+  - Provider features send no `required`.
+- **Cuts.**
+  - Multi-version declaration is cut: one version per line, declared instead of the old one, and two versions are both treated as absent.
+  - `consumers` is allowed only on resource fields.
+  - The extension-conditional "Defined by" rule stays in the owner-approved EXT3-25 but has no current row. CR-X3-09 would add the first one.
+- **M4 kept deliberately.** EXT3-13 now states the rationale: on an application-only field, the app's own resource captures nothing from other consumers, and sharing the field later triggers per-consumer approval.
+- **Components (Q5), provisional option 1 (EXT3-29).**
+  - The profile becomes the Bindle-owned embedded-components extension (`https://spec.bindle.example/extensions/embedded-components/v1`, placeholder).
+  - Its `embed_origin` is a public endpoint option, exempt from the issuer-origin rule for this extension only, and authoritative because the issuer's manifest declares it.
+  - Edited to match: the envelope text in `docs/spec/auth.md`, extensions §2.7, §2.8 and §13, protocol §2, CR-X3-13 and CR-X3-16, and the status line of `docs/profiles/components-v1.md`. The profile content is unchanged and republication is pending.
+- **Address routing.** CR-X3-04 and CR-X3-23 are void, per the reconciliation entry above. Their surviving parts that do not concern addresses are restated as CR-X3-31 (messaging §9 intake and email bridge) and CR-X3-32 (email-bridge code).
+- **§13 and §12 updated.** Q4 (EXT3-25) and Q6 (EXT3-26) are shown as owner-approved on 2026-10-27, citing the entry above. EXT3-21 still needs owner sign-off. Q5 is provisional option 1.
+
+**Not changed.** No code. `packages/` and `package.json` belong to another agent.
+
+**Verification.** A relative link and anchor check over `docs/spec/**` and the components profile passes, apart from the one known pre-existing broken anchor (messaging.md, `../architecture/messaging-app.md#13-email-bridge-handoff`). No code changed, so `npm test` was not run.
+
+Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-27 — Owner direction: components declare `embed_url`, no hard-coded path
+
+**Owner direction (2026-10-27).** The islands embed path should not be hard-coded.
+
+**Coordinator decision (provisional, unsigned).**
+- The embedded-components extension option becomes `embed_url`: a full HTTPS URL that the issuer declares, at any path.
+- Every security check (postMessage target, frame-ancestors, the component-origin envelope, distinctness from the issuer and embedder origins) uses the origin of `embed_url`.
+- That origin MUST serve only the provider's islands surface. The reason: browsers isolate by origin, not path, so any other content on it would hold island powers.
+- Island parts and parameters are appended to the declared URL instead of to a fixed `/embed` path.
+
+**Not yet applied.** The change goes in with the components extension migration (CR-X3-16), because `embed_origin` is used by packages/sdk (capabilities, testing), packages/federation/components-profile.mjs, apps/web/src/bl/authorize-entry-embed.mjs, the components profile, its descriptor JSON, auth.md, protocol.md and extensions.md.
+
+Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-27 — Owner direction: keep `embed_origin`; islands document at the origin root
+
+**Owner direction (2026-10-27).**
+- Keep `embed_origin`, which supersedes the `embed_url` entry above. The security reason holds: the origin must serve nothing but the islands.
+- Asked why the islands are not at the root.
+
+**Coordinator decision (provisional, unsigned).**
+- The embedded-components extension defines the island document as `<embed_origin>/?client=…#<part>.v<n>`, at the root.
+- Every other path on the embed origin is provider-private: island assets, the service worker and the island's own API, none of which embedders ever address.
+- The current `/embed` prefix was a 3sln.me implementation convenience, with no protocol reason behind it:
+  - one Worker serves both hosts and uses the prefix to tell them apart (packages/runtime/routes/federation.mjs:213-233; http.mjs:37 refuses `/embed` on the main origin);
+  - the service worker is scoped to `/embed/`.
+- On a dedicated origin, routing by host instead is cleaner.
+- Applied with the components extension migration (CR-X3-16): the profile text, packages/sdk/src/islands-protocol.mjs `islandURL`, the embed host routing, and the tests.
+
+Reviewer: owner (in session, "sounds fine") Date: 2026-10-27 Outcome: approved
+
+## 2026-10-27 — Cleanup-audit code fixes
+
+Provisional (coordinator), not signed off by the user.
+- **SIGNED_INTENTS_ENABLED:** no gate was missing.
+  - The codec already processes signed intents as unsigned with no attribution, as intents rev 3 §3.3 requires.
+  - Removing signed parsing would refuse links, which §3.3 does not allow.
+  - The flag stays, marked reserved for INT-8 (signing and verification, not implemented).
+  - Open: INT-8 must read the flag, or the flag is retired.
+  - Tests cover both flag states and show no attribution and no leak of the unverified minter.
+- **/manifest.webmanifest:** routes/site.mjs is now the one handler. It merges `intentManifestMembers` from routes/intents.mjs, so branding, icons and `Cache-Control: no-cache` hold in both INTENT_LINKS states.
+- **artefact-pins.mjs:** the messaging intent kinds register only with INTENT_LINKS_ENABLED, and the RTC purposes only with RTC_SIGNALING_ENABLED, so a default deployment registers none. Their removal is still planned.
+- **Orphaned tests:** all 8 audit files pass and are now wired into scripts: new `test:intents`, plus additions to `test:parlay:web`, `test:connections`, `test:recovery-reissue` and `test:ui-state`.
+  - Known issue, already present at HEAD 10852e1: recovery-reissue-browser's "replace … earlier device can cancel" test times out in Chromium and Firefox.
+- **Developer contact:** the `?? 'ray'` default is removed.
+  - An unset DEVELOPER_CONTACT_HANDLE turns developer contact off, and the Worker cron census does not run.
+  - Any deployment that relied on the default must set `DEVELOPER_CONTACT_HANDLE`; deployment config is not touched here.
+- **Flake:** a millisecond-boundary flake in tests/contact-profile.test.mjs is fixed.
+- **Verification (agent run):** npm test 3954 pass, 0 fail; test:worker 80/80; check:worker passes; test:e2e passes; test:intents, test:parlay:web, test:connections and test:ui-state pass.
+
+Reviewer: ___ Date: ___ Outcome: ___

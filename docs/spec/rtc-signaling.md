@@ -1,5 +1,7 @@
 # RTC signaling (`rtc-signaling.v1`) — normative draft
 
+> **Pending [extensions revision 3](extensions.md) (draft, unsigned, 2026-10-27).** Where this document relies on revision 2 slots and AMD-X1, which revision 3 removes, extensions revision 3.2 and protocol §2–§4 govern instead. Change request CR-X3-15, [extensions Appendix A](extensions.md#appendix-a-migration-and-impact-change-requests-not-applied).
+
 > **Superseded by draft, pending sign-off (2026-10-27).** This document is superseded by [Signaling (`signaling.v1`)](signaling.md), a generic signed session channel with WebRTC as its first profile, which removes the calling concepts (ring, missed list, alert and mute policy, purpose media, call-link tickets, SAS) from the provider. The supersession is provisional and **not signed off by the owner**; until it is, this text remains the reference for the code implemented locally behind the RTC flags (all off). Disposition of every decision below: [signaling Appendix B](signaling.md#appendix-b-disposition-of-existing-rtc-decisions). Decision record: [DEVLOG](../../DEVLOG.md) 2026-10-27, "Generic signaling.v1 spec draft (replaces calling-shaped RTC)".
 
 Status: **design candidate, 2026-10-26, revision 1.** The wire validators (§5, §6, §8.1–§8.2 step 1, §4.3 ticket payloads), the `rtc-purpose` kind (§3.4) and AMD-X1 (§3.5) are implemented locally (slices RTC-a to RTC-c), and so are the session engine, admission, tickets and same-provider transport (RTC-d) and the contract route, foreign transport, §8 endpoint and key roster (RTC-e, behind an empty-by-default foreign-issuer allowlist; [design §8.1](../architecture/rtc-signaling.md#81-slices)), and the built-in `ice-relay/v1` occupant (RTC-f, §3.3, §10; behind `RTC_TURN_ENABLED` and an operator-supplied spend authority that no deployment has); nothing is published or production-verified, and every RTC flag is off. RTC-e readings that differ from this text (an `aud` naming no active entity answers the uniform 404 rather than 202; one `aud` per batch) are recorded as provisional in DEVLOG 2026-10-27 "RTC-e" and proposed as AMD-RI1 and AMD-RI2 (§18); a clean-room conformance peer (RTC-i) added AMD-RI3 to AMD-RI5 (DEVLOG 2026-10-27 "RTC-i conformance peer: divergences and fixes"). Every decision is provisional (coordinator), **not signed off by the user**; they are listed as RTC-1 to RTC-17 in the [design](../architecture/rtc-signaling.md#9-provisional-decisions). One adversarial self-review round has been applied (design §10). Track the decision in [DEVLOG](../../DEVLOG.md) (2026-10-26, "RTC signaling extension design"). Identifiers under `https://spec.bindle.example/` and hosts under `.example` are placeholders. MUST, SHOULD and MAY express draft requirements.
@@ -42,7 +44,7 @@ A provider whose entities can take part in sessions with entities at other provi
 | --- | --- | --- | --- |
 | `rtc-signaling.v1` | `endpoint` (issuer origin), `max_leg_certificate_seconds` (integer 120 to 900) | The provider accepts §8 batches at `endpoint`, sends them only to peers' declared endpoints, and issues leg certificates (§5.1) no longer than the declared bound. Requires `directory.v1` ([organizations §3a](organizations.md#3a-identity-documents-and-key-discovery-directoryv1)), `extensions.v1` and `artefact-versions.v1`. | Its entities can hold sessions only with entities on the same provider, if it offers the signaling slot at all. |
 
-The feature describes what the provider implements, so it is a feature and not a slot ([extensions §2.1](extensions.md#21-the-slot-member)). It confers no authority.
+The feature describes what the provider implements, so it is a feature and not a slot ([extensions §2.1](superseded/extensions-rev2.md#21-the-slot-member)). It confers no authority.
 
 ### 3.2 The signaling slot
 
@@ -79,7 +81,7 @@ Applications reach the provider's signaling through an ordinary slot:
 }
 ```
 
-- The occupant is the provider's **built-in** occupant, declared in its manifest `extensions` array as `{"slot": "…/slots/rtc-signaling/v1", "role": "occupant", "ref": "rtc"}` ([extensions §4](extensions.md#4-extension-declarations)). It is assigned only by the owner, like every occupant (extensions §5.1).
+- The occupant is the provider's **built-in** occupant, declared in its manifest `extensions` array as `{"slot": "…/slots/rtc-signaling/v1", "role": "occupant", "ref": "rtc"}` ([extensions §4](superseded/extensions-rev2.md#4-extension-declarations)). It is assigned only by the owner, like every occupant (extensions §5.1).
 - The contract `https://spec.bindle.example/contracts/rtc-signaling/v1` (§9.1) declares `"x-bindle-brokerable": false` ([contracts](contracts.md#contract-method-metadata)), so in this version no integration can occupy the slot. Signaling must be issued by the entity's own issuer because only it can certify leg keys (§5.1).
 - An application that uses the slot requests the slot manifest as a fragment with its `digest` and the methods it needs, plus its `purposes` as a bound consumer option (§3.5). An integration manifest MAY also carry a matching `consumer` declaration with a plain-text `purpose`; as everywhere, the declaration is informational and the request is what the owner approves.
 - Every rule of extensions §5 applies unchanged: disclosure before assignment, per-consumer approval, revocation, the occupancy no-oracle rule (extensions §9, item 8), pinning (§4.3) and versioning (§7).
@@ -453,7 +455,7 @@ RTC-1 to RTC-17, each with a recommendation, are in the [design §9](../architec
 
 | ID | Document | Change |
 | --- | --- | --- |
-| AMD-X1 | extensions §2.1, §2.2, §5.2; wire profile | Bound consumer options (§3.5): slot member `bind` (listed in `crit`), `options` on slot fragment requests, per-consumer approval recorded in the grant. Applied provisionally to [extensions §13](extensions.md#13-amendment-amd-x1--bound-consumer-options-proposed-unsigned) on 2026-10-26 (still unsigned). |
+| AMD-X1 | extensions §2.1, §2.2, §5.2; wire profile | Bound consumer options (§3.5): slot member `bind` (listed in `crit`), `options` on slot fragment requests, per-consumer approval recorded in the grant. Applied provisionally to [extensions §13](superseded/extensions-rev2.md#13-amendment-amd-x1--bound-consumer-options-proposed-unsigned) on 2026-10-26 (still unsigned). |
 | AMD-R1 | organizations §3a.3; links §7.2 signature-domain table | Certification keys gain two uses: `bindle-rtc-leg-certificate+jwt` and `bindle-rtc-control+jwt`. Add rows for both and for `bindle-rtc-message+jwt` (leg keys). |
 | AMD-R2 | protocol §2 feature table | Add `rtc-signaling.v1` (§3.1). |
 | AMD-R3 | integrations §6.2 | Register the `rtc-ring/v1` doorbell event (§9.2). |

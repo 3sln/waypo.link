@@ -1,5 +1,7 @@
 # Bindle Messaging interop v1 — normative draft
 
+> **Pending [extensions revision 3](extensions.md) (draft, unsigned, 2026-10-27).** Where this document relies on slots or the `email-bridge` consumer, extensions revision 3.2 and protocol §2–§4 govern instead. The `messaging-address` consumer is withdrawn by the [contacts and links spike](../architecture/contacts-and-links-rethink.md) (CL-4, CR-X1). Change request CR-X3-31 (CR-X3-04 is void), [extensions Appendix A](extensions.md#appendix-a-migration-and-impact-change-requests-not-applied).
+
 Status: **design candidate**, 2026-10-20. Protocol validation and a local mailbox engine exist in `packages/messaging-protocol/` and `packages/messaging-engine/`; provider delegation/status routing exists behind `LINKS_ENABLED` (default off). These are local implementations, not a complete published occupant, independent interop or production verification. Identifiers under `https://spec.bindle.example/` and hosts under `.example` are placeholders until publication authority is agreed. MUST/SHOULD/MAY are draft requirements.
 
 Naming (2026-10-27, DEVLOG "Messaging removed from core; Parlay rename; BB-CUT reset"): this spec is **Bindle Messaging** (the user's 2026-10-20 name; formerly "BindleBox interop", `docs/spec/bindlebox.md`). The reference messaging app is **Parlay** (owner's working name, provisional), built in this monorepo under `apps/parlay` with `packages/messaging-protocol` and `packages/messaging-engine`. Identifiers moved with the rename while nothing is published: `…/bindlebox/v1` became `…/messaging/v1`, `application/vnd.bindlebox.*` became `application/vnd.bindle.messaging.*`, and the `bindlebox-*` signing domains became `bindle-messaging-*`. The spec is published by the messaging app's side, not by the core; its slot documents are `docs/artefacts/slots/messaging-ingress-v1.json` and `docs/artefacts/slots/public-message-intake-v1.json`, the single copies the provider and Parlay both pin. The former core messaging spec (blob messaging, collections and Views) is retired to [apps/parlay/docs/legacy/messaging.md](../../apps/parlay/docs/legacy/messaging.md).
@@ -54,7 +56,7 @@ The [scaling spike](../release/messaging-scaling-spike.md) P0 items are answered
 
 ### 2.1 Messaging-ingress slot manifest
 
-This is a slot per [extensions §2](extensions.md#2-slot-manifests). The manifest is immutable at its URL.
+This is a slot per [extensions §2](superseded/extensions-rev2.md#2-slot-manifests). The manifest is immutable at its URL.
 
 ```json
 {

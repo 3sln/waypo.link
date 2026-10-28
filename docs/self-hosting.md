@@ -153,7 +153,7 @@ These switches now gate implemented local features. They default off without con
 | `ADMIN_ENABLED` (N) | Node: on only when boot is configured | Keeps the administration console mounted. |
 | `ADMIN_CLAIMS_ENABLED` | off | Shows claim-token onboarding when admin-minted claims exist, even without `ONBOARDING_ENABLED`. |
 | `SYSTEM_BOOTSTRAP_KEY` (N) | unset | Verifies system-identity invitations; also needs `RECOVERY_SIGNING_KEY` and a working setup channel. |
-| `DEVELOPER_CONTACT_HANDLE` | `ray` | Local handle whose messaging-ingress occupant's developer-policy link `GET /api/developer-contact` hands out (the only route since 2026-10-27; the legacy core grant and `DEVELOPER_CONTACT_MODE` were removed). Reference-service feature. |
+| `DEVELOPER_CONTACT_HANDLE` | unset (off) | Local handle whose messaging-ingress occupant's developer-policy link `GET /api/developer-contact` hands out (the only route since 2026-10-27; the legacy core grant and `DEVELOPER_CONTACT_MODE` were removed). Unset or blank turns developer contact off: the route answers `developer-unavailable` and the cron does not run the active-population census. Reference-service feature. |
 | `DEVELOPER_CONTACT_ACTIVE_THRESHOLD` | `1500` | Active-owner count at or above which free owners lose developer contact. |
 | `DEVELOPER_CONTACT_POLICY` | built-in `.example` URI | Policy URI embedded in the developer-contact link. |
 

@@ -67,7 +67,7 @@ test('invites against a purpose: media subset, parties and context; projection t
 });
 
 test('registration and pinning: exact provider-held references pin; latest, junk and invalid bodies do not',async t=>{
- const db=new SqliteMetadata(':memory:'),config={ARTEFACT_VERSIONS_ENABLED:'true'},artefacts=configuredArtefacts({config,store:db});t.after(async()=>{await artefacts.engine.dispose();db.close();});
+ const db=new SqliteMetadata(':memory:'),config={ARTEFACT_VERSIONS_ENABLED:'true',RTC_SIGNALING_ENABLED:'true'},artefacts=configuredArtefacts({config,store:db});t.after(async()=>{await artefacts.engine.dispose();db.close();});
  for(const ref of RTC_PURPOSE_REFERENCES){assert.ok(registeredArtefact(config,ref.artefact));assert.deepEqual(registeredPurpose(ref.artefact),ref);const pin=await artefacts.pin({...ref,kind:RTC_PURPOSE_KIND});assert.equal(pin.kind,RTC_PURPOSE_KIND);assert.deepEqual(pin.reference,ref);assert.equal(pin.head,0,'unknown kind: the head never advances');
   assert.deepEqual((await artefacts.resolve({...ref,kind:RTC_PURPOSE_KIND})).reference,ref);}
  await assert.rejects(artefacts.pin({artefact:RTC_PURPOSE_REFERENCES[0].artefact,kind:RTC_PURPOSE_KIND}),{code:'artefact_unverifiable'},'URL-only requests never pin an unknown kind');

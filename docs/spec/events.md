@@ -1,5 +1,7 @@
 # Event buses — normative draft
 
+> **Pending [extensions revision 3](extensions.md) (draft, unsigned, 2026-10-27).** Where this document relies on slot manifests, `slot.*` members, built-in occupants and the `events.v1` feature, extensions revision 3.2 and protocol §2–§4 govern instead. Change request CR-X3-09, [extensions Appendix A](extensions.md#appendix-a-migration-and-impact-change-requests-not-applied).
+
 Status: **provisional draft, 2026-10-20, revision 2.** Revision 1 was wargamed by two independent reviewers, and revision 2 answers their findings ([events and consent review](../release/events-consent-review.md)). The revision 2 fixes have not been independently re-reviewed. Rationale and host UX: [consent experience](../architecture/consent-experience.md). User direction: [DEVLOG, "Event buses, rich consent and incremental authorization"](../../DEVLOG.md#2026-10-20--event-buses-rich-consent-and-incremental-authorization-user-direction). Human sign-off: reviewer ___ / date ___ / outcome ___. Hosted bus storage, authorized reads/publishes, leased long-polls and coalesced doorbells are implemented locally (`packages/events/`, `packages/runtime/routes/events.mjs`), behind `EVENT_BUSES_ENABLED` (default off). Local implementation does not establish external-provider conformance or production verification.
 
 This document extends [protocol §3–§5](protocol.md), [contracts](contracts.md), [extensions](extensions.md) and [integrations](integrations.md). It defines interoperability rules only. It defines no user interface beyond the security disclosures it lists, and no SDK behaviour. Identifiers under `https://spec.bindle.example/` are placeholders. MUST/SHOULD/MAY express draft requirements. §14 lists the core amendments this draft needs. They are **proposed and unsigned**.
@@ -12,7 +14,7 @@ An **event bus** is an append-only, ordered, bounded log of small typed records 
 
 | Concept | Existing mechanism | Consequence |
 | --- | --- | --- |
-| What a kind of bus means: its purpose, payload schema, retention and ordering, who may publish and read | A **bus manifest**: a [slot manifest](extensions.md#2-slot-manifests) with selection `exclusive` and a critical `slot.bus` member (§2) | Public, immutable and digest-pinned, with the same fetch, bound and versioning rules as every fragment |
+| What a kind of bus means: its purpose, payload schema, retention and ordering, who may publish and read | A **bus manifest**: a [slot manifest](superseded/extensions-rev2.md#2-slot-manifests) with selection `exclusive` and a critical `slot.bus` member (§2) | Public, immutable and digest-pinned, with the same fetch, bound and versioning rules as every fragment |
 | One entity's bus of that kind | The slot's single **occupant**: an entity-owned resource implementing the [`event-bus/v1` contract](#4-the-event-bus-contract) | It lives in the owner's resource pool. The owner chooses it, and can remove or replace it. |
 | Who hosts the bus | The occupant's hosting: provider built-in (§3.1) or a [brokered](integrations.md#5-brokered-resources) integration resource (§3.2) | "Who hosts" is an owner choice, with no new mechanism |
 | Read, write or readwrite access | An ordinary fragment grant on the bus manifest, with exact methods (§5) | It shows up in every grant listing, revocation path and token check that already exists |
@@ -28,7 +30,7 @@ A bus therefore adds **one contract, one slot member and one event type**. It ad
 
 ## 2. Bus manifests
 
-A bus manifest is a slot manifest ([extensions §2](extensions.md#2-slot-manifests)) that meets these conditions:
+A bus manifest is a slot manifest ([extensions §2](superseded/extensions-rev2.md#2-slot-manifests)) that meets these conditions:
 
 - `slot.selection` is `exclusive`, so `fields[slot.field].cardinality` is `{"min":0,"max":1}`;
 - `fields[slot.field].contracts` is exactly `["https://spec.bindle.example/contracts/event-bus/v1"]`;
@@ -93,7 +95,7 @@ The manifest MUST NOT contain fields other than the bus field. Owner settings fo
 
 There is no ordering member: every bus is totally ordered (§6.1). There is no delivery member: every bus supports pull, and push is a host capability (§7). Neither choice is a per-manifest decision in v1.
 
-**Validation.** A `slot.bus` that fails any rule makes the slot **invalid**. Under [extensions §2.2](extensions.md#22-validation-and-unrecognized-slots), the document is then processed as an ordinary fragment without slot semantics. A provider that recognizes `slot` but not `bus` treats the slot as unrecognized, because `bus` is in `crit`. Either way, no provider applies only part of the bus semantics.
+**Validation.** A `slot.bus` that fails any rule makes the slot **invalid**. Under [extensions §2.2](superseded/extensions-rev2.md#22-validation-and-unrecognized-slots), the document is then processed as an ordinary fragment without slot semantics. A provider that recognizes `slot` but not `bus` treats the slot as unrecognized, because `bus` is in `crit`. Either way, no provider applies only part of the bus semantics.
 
 ### 2.2 Bus schema subset
 
@@ -109,13 +111,13 @@ Nesting depth is at most 6. Across the whole schema there are at most 128 proper
 
 ### 2.3 Versioning
 
-A bus manifest is immutable at its URL. Any change to `payload`, `types`, `publishers`, `readers`, `history`, `categories` or `retention` requires a new URL, which is a **new bus**. The new manifest MAY name its predecessor in `slot.supersedes`. Under [extensions §7](extensions.md#7-versioning-change-and-disappearance), a provider MAY offer the owner a migration step that assigns a new bus. It never copies records or grants. Producers that need a transition period publish to both buses under separate grants.
+A bus manifest is immutable at its URL. Any change to `payload`, `types`, `publishers`, `readers`, `history`, `categories` or `retention` requires a new URL, which is a **new bus**. The new manifest MAY name its predecessor in `slot.supersedes`. Under [extensions §7](superseded/extensions-rev2.md#7-versioning-change-and-disappearance), a provider MAY offer the owner a migration step that assigns a new bus. It never copies records or grants. Producers that need a transition period publish to both buses under separate grants.
 
 So the "payload schema version" is the manifest URL. Records carry no schema version member, and a consumer reading one bus never meets two payload shapes.
 
 ## 3. Hosting
 
-The owner chooses the single occupant under the ordinary slot rules ([extensions §5.1](extensions.md#51-assigning-occupants)):
+The owner chooses the single occupant under the ordinary slot rules ([extensions §5.1](superseded/extensions-rev2.md#51-assigning-occupants)):
 
 - only the owner assigns it;
 - no candidate is preselected, including the built-in;
@@ -124,7 +126,7 @@ The owner chooses the single occupant under the ordinary slot rules ([extensions
 
 ### 3.1 Provider-hosted buses
 
-A provider that declares `events.v1` with `hosting: true` (§13) offers a **generic built-in occupant** for every valid, recognized bus manifest, without a per-manifest `extensions` declaration. This is the one generalization of the built-in rule ([extensions §4.2](extensions.md#42-what-declarations-mean)), and it is needed because a provider cannot list every bus manifest that will ever exist. The provider creates the bus resource in the owner's pool only on an owner action, and only once per (entity, bus manifest). It is an issuer-hosted resource, so:
+A provider that declares `events.v1` with `hosting: true` (§13) offers a **generic built-in occupant** for every valid, recognized bus manifest, without a per-manifest `extensions` declaration. This is the one generalization of the built-in rule ([extensions §4.2](superseded/extensions-rev2.md#42-what-declarations-mean)), and it is needed because a provider cannot list every bus manifest that will ever exist. The provider creates the bus resource in the owner's pool only on an owner action, and only once per (entity, bus manifest). It is an issuer-hosted resource, so:
 
 - revocation is immediate (protocol §4);
 - RPC goes to the issuer endpoint with ordinary tokens;
@@ -208,7 +210,7 @@ Rules:
 - The owner may approve a subset, for example read but not write. The outcome is then `partial`, with the exact approved methods ([incremental authorization §6](incremental-authorization.md#6-outcomes)).
 - Grants bind the pinned manifest digest. A bus grant never covers another bus manifest URL, not even a successor.
 - **Owner-only operations are not contract methods.** Purging every record, deleting the bus, changing effective retention and reading subscription health are host owner-interface actions. No app grant reaches them.
-- A provider feature that reads or publishes (`provider` in `readers` or `publishers`) does so only through an explicit owner enablement under [extensions §5.3](extensions.md#53-provider-consumers), and appears in the bus's access list.
+- A provider feature that reads or publishes (`provider` in `readers` or `publishers`) does so only through an explicit owner enablement under [extensions §5.3](superseded/extensions-rev2.md#53-provider-consumers), and appears in the bus's access list.
 
 ## 6. Records, ordering and visibility
 

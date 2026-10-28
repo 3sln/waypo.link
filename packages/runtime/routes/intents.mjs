@@ -18,6 +18,9 @@ async function signature(env,value){const secret=env.KEY_ENCRYPTION_KEY;if(typeo
 const intentDigest=async value=>part(String.fromCharCode(...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(value)))));
 async function ticket(env,request,intent=''){const value=part(JSON.stringify({at:Date.now(),activated:viewerActivated(request.headers),...intent?{intent:await intentDigest(intent)}:{}})),sig=await signature(env,value);return sig?value+'.'+sig:'';}
 async function activation(env,value,intent){try{if(typeof value!=='string'||value.length>1024)return false;const [payload,sig,...extra]=value.split('.');if(extra.length||!sig||await signature(env,payload)!==sig)return false;const decoded=JSON.parse(atob(payload.replaceAll('-','+').replaceAll('_','/')));if(decoded.intent!==undefined&&(typeof intent!=='string'||!intent||decoded.intent!==await intentDigest(intent)))return false;return decoded.activated===true&&decoded.at<=Date.now()&&decoded.at>Date.now()-3600000;}catch{return false;}}
+// Web app manifest members this module owns. site.mjs serves /manifest.webmanifest (branding, Cache-Control) and merges
+// these in, so one handler answers in both flag states. Off: the static manifest's legacy `/console?intent=%s` handler.
+export function intentManifestMembers(env){return flagGlobal(env,'INTENT_LINKS_ENABLED')?{protocol_handlers:[{protocol:'web+bindle',url:'/i#%s'}]}:{};}
 export function intentFeature(env){return flagGlobal(env,'INTENT_LINKS_ENABLED')?{'intent-links.v1':{endpoint:env.APP_ORIGIN+'/i'}}:{};}
 export const allowedMethods=path=>path==='/i'||path==='/i/contact'?['GET','HEAD','POST']:path==='/api/intents/records'?['GET']: /^\/api\/intents\/(resolve|decide|exclude|ignore|remove)$/.test(path)?['POST']:null;
 async function receive(input){const engine=createAppEngine({providers:{clock:systemClock,random:cryptoRandom,audit:nullAudit}});try{return await read(engine,new ReceiveIntent({input}));}finally{await engine.dispose();}}
@@ -33,7 +36,6 @@ const invalidPage=(request,env,url,code='intent_malformed',status=400)=>prefersJ
 export const stages={
  async public({request,env,url,path}){
   if(!flagGlobal(env,'INTENT_LINKS_ENABLED'))return;
-  if(path==='/manifest.webmanifest'&&request.method==='GET'){const response=await env.ASSETS.fetch(request),manifest=await response.json();return json({...manifest,protocol_handlers:[{protocol:'web+bindle',url:'/i#%s'}]},200,{'Content-Type':'application/manifest+json'});}
   if(path==='/console'&&['GET','HEAD'].includes(request.method)){
    const names=['bindle_intent','intent'].filter(k=>url.searchParams.has(k));if(names.length===1&&url.searchParams.getAll(names[0]).length===1){
     const legacy=parseIntent(url.searchParams.get(names[0]));if(legacy?.intent&&legacy?.link){const ref=registeredIntent(legacy.intent);if(ref)try{return page(request,env,url,{value:encodeIntent({bintent:1,kind:ref,data:{contact:legacy.link}}),placement:'fragment'});}catch{try{parseLegacyIntent({intent:legacy.intent,contact:legacy.link});return page(request,env,url,{legacy:url.searchParams.get(names[0]),placement:'legacy'});}catch{/* Existing malformed legacy links retain their old response. */}}}

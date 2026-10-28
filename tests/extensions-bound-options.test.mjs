@@ -28,7 +28,7 @@ async function testLine(){
  return {envelope:{bindle_artefact:1,id:TEST_LINE,kind:'rtc-purpose',versions:[e1,e2]},refs:[{artefact:TEST_LINE,version:1,digest:d1},{artefact:TEST_LINE,version:2,digest:d2}]};
 }
 async function harness(t,{bound=true,schema=slotManifest()}={}){
- const db=new SqliteMetadata(':memory:'),line=await testLine(),config={ARTEFACT_VERSIONS_ENABLED:'true',FEDERATION_SCHEMAS:{[SLOT]:schema,[TEST_LINE]:line.envelope,[TEST_LINE+'/envelope']:line.envelope}};
+ const db=new SqliteMetadata(':memory:'),line=await testLine(),config={ARTEFACT_VERSIONS_ENABLED:'true',RTC_SIGNALING_ENABLED:'true',FEDERATION_SCHEMAS:{[SLOT]:schema,[TEST_LINE]:line.envelope,[TEST_LINE+'/envelope']:line.envelope}};
  const artefacts=configuredArtefacts({config,store:db});config.ARTEFACTS=artefacts;
  // The provider-held reviewed reference of the synthetic line is switchable (an operator reviewing v2).
  const held={version:1};const spec={...RTC_BOUND_ARTEFACTS[SLOT].purposes,reference:value=>value===TEST_LINE?line.refs[held.version-1]:RTC_BOUND_ARTEFACTS[SLOT].purposes.reference(value)};

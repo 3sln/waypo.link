@@ -42,7 +42,8 @@ test('contact parents: a live, unrevoked link record of this owner; the cap is t
  assert.equal(liveParent(parentRow(),OWNER,now),true);
  for(const row of [parentRow(GRANT,{revoked:true}),parentRow(GRANT,{owner:OTHER}),parentRow(GRANT,{claims:{exp:Math.floor(now/1000)-1}}),null])assert.equal(liveParent(row,OWNER,now),false);
  assert.equal(LINK_RECORD_CAP,1000);
- assert.deepEqual(parentView(parentRow(),now),{id:GRANT,type:MESSAGING_CONTACT_LINK_TYPE,slot:'s',active:true,createdAt:parentRow().issuedAt,expiresAt:parentRow().claims.exp*1000,conditional:false,issuer:{kind:'owner'}});
+ // One row: parentRow() reads the clock, so separate calls can straddle a millisecond (flaky under load).
+ const row=parentRow();assert.deepEqual(parentView(row,now),{id:GRANT,type:MESSAGING_CONTACT_LINK_TYPE,slot:'s',active:true,createdAt:row.issuedAt,expiresAt:row.claims.exp*1000,conditional:false,issuer:{kind:'owner'}});
  const db=store(t);await db.put(key('link',GRANT),parentRow());await db.put(key('link',OTHER),parentRow(OTHER,{owner:'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee'}));
  assert.deepEqual((await contactParents(o=>db.list(o),OWNER,now)).map(p=>p.id),[GRANT],'another owner\'s records never list');
 });

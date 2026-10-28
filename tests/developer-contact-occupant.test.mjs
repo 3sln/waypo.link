@@ -22,7 +22,7 @@ async function world({mode='occupant'}={}){
  const actor={kind:'app',owner:developer.id,clientId:BOX,handle:developer.handle,generation:1,connection:'cnx-1'};
  const issue=(input={})=>developer.controller.linkOperation(developer.id,{actor,operation:'links.issue',input:{type:MESSAGING_CONTACT_LINK_TYPE,claims,expiresAt:Date.now()+30*86400000,audience:{policy:DEVELOPER_CONTACT_POLICY},...input}});
  const assignmentId=crypto.randomUUID(),recipient={id:developer.id,handle:developer.handle,assignmentId,status:'active',systemIdentity:{version:1,handle:'ray',role:'developer',assignmentId,bootstrapId:crypto.randomUUID(),claimDigest:'a'.repeat(64)}};
- const env={APP_ORIGIN:origin,IDENTITY_REPOSITORY:{findByHandle:async handle=>handle==='ray'?recipient:null}},accountHandle=(e,id)=>new Proxy({},{get:(_,method)=>async(...args)=>{const result=await accounts.get(id).invoke({method,args});if(result?.$fault)throw Object.assign(Error(result.$fault.message),result.$fault);return result;}});
+ const env={APP_ORIGIN:origin,DEVELOPER_CONTACT_HANDLE:'ray',IDENTITY_REPOSITORY:{findByHandle:async handle=>handle==='ray'?recipient:null}},accountHandle=(e,id)=>new Proxy({},{get:(_,method)=>async(...args)=>{const result=await accounts.get(id).invoke({method,args});if(result?.$fault)throw Object.assign(Error(result.$fault.message),result.$fault);return result;}});
  const route=caller=>developerContactRoutes({path:'/api/developer-contact',request:{method:'GET'},env,owner:{account:{id:caller.id}},accountHandle,json:(value,status=200)=>({status,value})});
  return {accounts,directory,seat,make,developer,actor,issue,route,close:()=>closers.forEach(close=>close())};
 }
@@ -69,3 +69,18 @@ test('occupant mode fails closed when links are off for the account or the seale
  assert.deepEqual(await developerContactLink(d.controller,d.id,d.handle),{available:false,reason:'contact-unavailable'});
  assert.equal((await d.controller.metadata.get(key('link',pointer.jti))).revoked,false,'turning links off never revokes the link');
 }finally{w.close();}});
+
+test('developer contact is off without DEVELOPER_CONTACT_HANDLE: no built-in handle, no lookup, no cron census',async()=>{
+ const {default:http}=await import('../packages/runtime/http.mjs');
+ for(const handle of [undefined,'','  ']){
+  const lookups=[],census=[],waits=[],env={APP_ORIGIN:origin,...handle===undefined?{}:{DEVELOPER_CONTACT_HANDLE:handle},IDENTITY_REPOSITORY:{findByHandle:async h=>{lookups.push(h);return null;}},DEVELOPER_CONTACT_POPULATION:{censusStep:async()=>{census.push(1);}}};
+  const result=await developerContactRoutes({path:'/api/developer-contact',request:{method:'GET'},env,owner:{account:{id:crypto.randomUUID()}},accountHandle:()=>{throw Error('unreachable');},json:(value,status=200)=>({status,value})});
+  assert.deepEqual(result,{status:200,value:{available:false,reason:'developer-unavailable'}});assert.deepEqual(lookups,[]);
+  await http.scheduled({},env,{waitUntil:p=>waits.push(p)});await Promise.all(waits);assert.deepEqual(census,[]);
+ }
+ // Configured: the route looks up exactly that handle (never 'ray' by default) and the cron runs a census step.
+ const lookups=[],census=[],waits=[],env={APP_ORIGIN:origin,DEVELOPER_CONTACT_HANDLE:'n.someone',IDENTITY_REPOSITORY:{findByHandle:async h=>{lookups.push(h);return null;}},DEVELOPER_CONTACT_POPULATION:{censusStep:async()=>{census.push(1);}}};
+ const result=await developerContactRoutes({path:'/api/developer-contact',request:{method:'GET'},env,owner:{account:{id:crypto.randomUUID()}},accountHandle:()=>{throw Error('unreachable');},json:(value,status=200)=>({status,value})});
+ assert.deepEqual(result.value,{available:false,reason:'developer-unavailable'});assert.deepEqual(lookups,['n.someone']);
+ await http.scheduled({},env,{waitUntil:p=>waits.push(p)});await Promise.all(waits);assert.deepEqual(census,[1]);
+});

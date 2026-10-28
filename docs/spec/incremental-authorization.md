@@ -1,5 +1,7 @@
 # Incremental authorization and configuration requests — normative draft
 
+> **Pending [extensions revision 3](extensions.md) (draft, unsigned, 2026-10-27).** Where this document relies on the `authorization-entry.v1` feature, slot occupants and the components profile, extensions revision 3.2 and protocol §2–§4 govern instead. Change request CR-X3-08, [extensions Appendix A](extensions.md#appendix-a-migration-and-impact-change-requests-not-applied).
+
 Status: **provisional draft, 2026-10-20, revision 2.** Revision 1 was wargamed by two independent reviewers, and revision 2 answers their findings ([events and consent review](../release/events-consent-review.md)). The revision 2 fixes have not been independently re-reviewed. Host UX: [consent experience](../architecture/consent-experience.md). User direction: [DEVLOG, "Event buses, rich consent and incremental authorization"](../../DEVLOG.md#2026-10-20--event-buses-rich-consent-and-incremental-authorization-user-direction). Human sign-off: reviewer ___ / date ___ / outcome ___. Incremental authorization and suppression have local engine, adapter and HTTP implementations behind default-off `INCREMENTAL_AUTH_ENABLED`; see §15 for limitations. Nothing is production-verified.
 
 This document extends [protocol §2–§4](protocol.md), [auth](auth.md#application-authorization), the `authorization-entry.v1` feature, [contracts](contracts.md), [extensions](extensions.md) and the [components profile](../profiles/components-v1.md). It defines interoperability rules: wire members, outcomes, and the provider obligations that apps can observe or rely on. It defines no layout or copy; those belong to the [host design](../architecture/consent-experience.md). §13 lists the amendments, which are **proposed and unsigned**.
@@ -89,7 +91,7 @@ Setup inside a `grant-more` flow MUST NOT:
 
 - replace the occupant of an `exclusive` slot that has an enabled provider consumer ([extensions §3.4](extensions.md#34-policy-is-not-authority)). The provider sends the owner to settings instead;
 - change values that other apps currently receive unless the shared-edit disclosure is shown and confirmed (protocol §4). Choosing a resource for an empty field is not such a change;
-- offer, as an occupant candidate (a bus host, or any slot occupant), any resource whose origin shares a registrable domain with the requesting client. This follows [extensions §9.3](extensions.md#9-trust-and-security-requirements): a claim is never offered inside the claimant's own flow. The owner can still choose such a host from Settings;
+- offer, as an occupant candidate (a bus host, or any slot occupant), any resource whose origin shares a registrable domain with the requesting client. This follows [extensions §9.3](superseded/extensions-rev2.md#9-trust-and-security-requirements): a claim is never offered inside the claimant's own flow. The owner can still choose such a host from Settings;
 - offer replacement of an existing occupant of any slot or bus. Replacement starts a new, empty bus and revokes other consumers, so it belongs in Settings;
 - create a provider resource, such as a built-in bus, before the owner approves. The provider creates resources chosen during setup only when Allow commits. On decline or cancel, nothing is created.
 

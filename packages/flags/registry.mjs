@@ -19,6 +19,9 @@ const rows=[
  ['ARTEFACT_VERSIONS_ENABLED','a','G',{risk:'crit',stateful:true,retainExisting:false,retentionReason:'Pins and records live in the provider-wide artefact store; no account-local predicate.',envParse:'boolean'}],
  ['INTENT_LINKS_ENABLED','a','G A S P C',{risk:'crit',requires:['ARTEFACT_VERSIONS_ENABLED'],stateful:true,client:true,envParse:'boolean'}],
  ['INTENT_APP_HANDLERS_ENABLED','a','G A S P C',{risk:'crit',requires:['INTENT_LINKS_ENABLED','CLIENT_METADATA_ENABLED'],envParse:'boolean'}],
+ // Reserved for INT-8 (signIntent and signature verification, intent-links design §6.6), not implemented, so nothing
+ // reads it yet. Signed values need no gate meanwhile: the codec always processes them as unsigned without attribution
+ // (intents rev 3 §3.3 "Version 1 status"), pinned in tests/intents-router.test.mjs. INT-8 must consume this flag.
  ['SIGNED_INTENTS_ENABLED','c','G',{risk:'crit',requires:['INTENT_LINKS_ENABLED'],envParse:'boolean'}],
  ['ACTIVITY_V2_ENABLED','a','G A S P C V',{stateful:true,client:true,experiment:{metrics:['activity_opened']},envParse:'boolean'}],
  ['EVENT_BUSES_ENABLED','a','G A S P',{stateful:true,envParse:'boolean'}],

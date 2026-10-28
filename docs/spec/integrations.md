@@ -1,5 +1,7 @@
 # Integrations, resource discovery and brokered resources — normative draft
 
+> **Pending [extensions revision 3](extensions.md) (draft, unsigned, 2026-10-27).** Where this document relies on its `features` identifiers, the manifest table, slots, occupants and `bindle.feature` as a `ref`, extensions revision 3.2 and protocol §2–§4 govern instead. Change request CR-X3-07, [extensions Appendix A](extensions.md#appendix-a-migration-and-impact-change-requests-not-applied).
+
 Status: **provisional draft, 2026-10-20, revision 2.** Revision 1 was wargamed by two independent reviewers; revision 2 answers every finding. See the [extensibility review](../release/extensibility-review.md). Rationale and migration: [extensibility design](../architecture/extensibility-design.md). Human sign-off: reviewer ___ / date ___ / outcome ___. Track the decision in [DEVLOG](../../DEVLOG.md). Manifest/key validation, connection lifecycle, generation fencing, integration-event delivery, brokered resources and severance are implemented locally (`packages/app/domains/connections.mjs`, `packages/runtime/integration-events.mjs`, `packages/federation/brokered.mjs`). `INTEGRATIONS_ENABLED` is default off; brokered use also requires `BROKERING_ENABLED`. These local adapters do not establish external-provider conformance, real delivery or production verification.
 
 This document extends [protocol](protocol.md), [auth](auth.md), [contracts](contracts.md), [resource contributions](resource-contributions.md) and [extensions](extensions.md). It defines interoperability rules only: no user interface beyond the security disclosures it lists, and no SDK behavior. Identifiers under `https://spec.bindle.example/` are placeholders. §14 lists the amendments this draft needs in existing core documents. They are proposed (approved provisionally 2026-10-20) and applied to the core drafts; runtime work remains deferred to [EXT-X1](../architecture/implementation-roadmap.md#ext-x1-deferred-code-from-wave-0).
@@ -42,10 +44,11 @@ The integration manifest is the `bindle_integration` member of the integration's
 An integration MUST be a **confidential client** if it declares any of:
 
 - `events_endpoint`;
-- `resources`;
-- an `occupant` extension.
+- `resources`.
 
-A confidential client declares `token_endpoint_auth_method: "private_key_jwt"` and a `jwks_uri` on the `client_id` origin ([RFC 7523](https://www.rfc-editor.org/rfc/rfc7523.html)). A public client may still declare `setup` and `consumer` extensions.
+(Extensions revision 3.1, draft, unsigned: occupant extensions no longer exist, so they are no longer a trigger; see [extensions §2.1](extensions.md#21-the-extensions-array).)
+
+A confidential client declares `token_endpoint_auth_method: "private_key_jwt"` and a `jwks_uri` on the `client_id` origin ([RFC 7523](https://www.rfc-editor.org/rfc/rfc7523.html)). A public client may still declare `setup`.
 
 A provider that does not declare `integrations.v1` MUST refuse a confidential client document outright (AMD-C7 — proposed (approved provisionally 2026-10-20)). Today's client-metadata validation does so (§14, amendment C7). Before authorization, an integration MUST therefore check the provider's `integrations.v1` and `token_endpoint_auth_methods_supported`. If either is missing, the integration either uses a separate public-client `client_id` document without these members, or does not connect.
 
@@ -75,12 +78,7 @@ A provider that does not declare `integrations.v1` MUST refuse a confidential cl
       "discovery_endpoint": "https://inbox.example/bindle/resources",
       "contracts": ["https://spec.bindle.example/contracts/public-intake/v1"],
       "dpop": "supported"
-    },
-    "extensions": [
-      {"slot": "https://spec.bindle.example/slots/public-message-intake/v1", "role": "occupant", "ref": "inbox"},
-      {"slot": "https://spec.bindle.example/slots/item-classifier/v1", "role": "consumer", "ref": "triage",
-       "purpose": "Sort incoming messages."}
-    ]
+    }
   }
 }
 ```
@@ -98,7 +96,6 @@ A provider that does not declare `integrations.v1` MUST refuse a confidential cl
 | `resources.discovery_endpoint` | Search, filter and browse endpoint (§4). Required with `rpc_endpoint`. |
 | `resources.contracts` | Nonempty list of at most 32 contract URLs that the integration may offer. A discovery result claiming any other contract is dropped. |
 | `resources.dpop` | `"none"` (default), `"supported"` or `"required"` (§5.4). |
-| `extensions` | [Extension declarations](extensions.md#4-extension-declarations). |
 
 `events_endpoint`, `rpc_endpoint` and `discovery_endpoint`, when present, MUST be pairwise distinct, so that each audience value names exactly one purpose. The serialized member is at most 8 KiB, and the whole document stays within the client-metadata bound. Unknown members are ignored. An invalid member is treated as absent. If `resources` is invalid, the integration offers no brokered resources.
 
@@ -118,7 +115,7 @@ Refetching follows the client-metadata cache rules. Changes are handled as follo
 | `resources.contracts` narrowed | Adopted immediately. Brokered records lose those contracts, and grants on them become unusable. |
 | Key set rotated, with at least one pinned key still present | Adopted. The pinned thumbprints are replaced with the new set. |
 | Key set replaced with no pinned key present; or `jwks_uri`, `token_endpoint_auth_method` or `redirect_uris` changed | **Staged for owner review.** Until approved, the provider sends no events, performs no discovery, mints no tokens for this integration's resources, and accepts no hints or token-endpoint authentication with the new keys. This protects against takeover of an expired domain. |
-| `resources.contracts` widened; `setup.fragments`, `extensions` or `events` changed; `resources.dpop` weakened | Staged for owner review. The pinned values govern until then, and no grant expands without fresh consent (protocol §4). |
+| `resources.contracts` widened; `setup.fragments` or `events` changed; `resources.dpop` weakened | Staged for owner review. The pinned values govern until then, and no grant expands without fresh consent (protocol §4). |
 | Unknown `v` | The pinned snapshot is kept and an owner review is staged. The connection never degrades because of this. |
 | `bindle_integration` removed or invalid; a client-metadata fetch failing definitively (404/410) | `manifest-invalid` (§3.1). |
 | Transient fetch failure | No change; the pinned snapshot continues. |
@@ -636,5 +633,5 @@ Tests MUST cover:
 | C7 | federation-implementation, client ID metadata | "When the provider declares `integrations.v1`, `token_endpoint_auth_method: private_key_jwt` with a `jwks_uri` on the `client_id` origin and path prefix is accepted. Otherwise such documents are refused." Today every `jwks_uri` and every method other than `none` is refused. |
 | C8 | protocol §2, §4, §5; auth revocation; resource contributions | An explicit `brokered-resources.v1` exception: provider-declared integration endpoints on the integration's own origin may receive consumer RPC and provider events, with revocation bounded by `access_ends_by` rather than immediate. Contracts may opt out (`x-bindle-brokerable: false`) or require introspection. The "no callback URLs" rule of protocol §5 is scoped to consumer RPC. |
 | C9 | contracts | Publish `preferences/v2`, with the uniform per-resource object of §5.1 (`id`, `label`, `status`, `contracts`, `token`, `token_type`, `expires_at`, optional `broker`) and an integration-only result `seq`. |
-| C10 | contracts, `x-methods` | Define method `effect` values `read` and `pure`, which [extensions §3.3](extensions.md#33-failover-for-ordered) relies on, and the optional `introspect` and contract-level `x-bindle-brokerable` markers. |
+| C10 | contracts, `x-methods` | Define method `effect` values `read` and `pure`, which [extensions §3.3](superseded/extensions-rev2.md#33-failover-for-ordered) relies on, and the optional `introspect` and contract-level `x-bindle-brokerable` markers. |
 | C11 | protocol §2 | Add `integrations.v1` and `brokered-resources.v1` to the feature table. |

@@ -21,9 +21,10 @@ test.after(async()=>{await browser?.close();for(const s of servers){await s.app.
 async function server(config={}){
  const probe=net.createServer();await new Promise(resolve=>probe.listen(0,'127.0.0.1',resolve));const port=probe.address().port;await new Promise(resolve=>probe.close(resolve));
  const origin='http://localhost:'+port,directory=await mkdtemp(join(tmpdir(),'3sln-links-browser-')),mailbox=[];
- const app=await createNodeServer({directory,config:{APP_ORIGIN:origin,BRAND_NAME:'3sln.me',SIGNUP_ENABLED:'true',SYSTEM_BOOTSTRAP_KEY:secret,...config},mailer:{async sendSetupCode(value){mailbox.push(value);}}});
+ const app=await createNodeServer({directory,config:{APP_ORIGIN:origin,BRAND_NAME:'3sln.me',SIGNUP_ENABLED:'true',SYSTEM_BOOTSTRAP_KEY:secret,DEVELOPER_CONTACT_HANDLE:'ray',...config},mailer:{async sendSetupCode(value){mailbox.push(value);}}});
  await new Promise(resolve=>app.server.listen(port,'127.0.0.1',resolve));const entry={app,directory,origin,mailbox};servers.push(entry);
- // Operator bootstrap of the protected `ray` developer identity through the real public API.
+ // Operator bootstrap of the protected `ray` developer identity through the real public API; developer contact is off
+ // unless DEVELOPER_CONTACT_HANDLE names it (no built-in default since the 2026-10-27 cleanup).
  const post=(path,input,cookie)=>app.fetch(new Request(origin+path,{method:'POST',headers:{Origin:origin,'Content-Type':'application/json','CF-Connecting-IP':'192.0.2.250',...cookie?{Cookie:cookie}:{}},body:JSON.stringify(input)}));
  const begin=await post('/api/auth/system/bootstrap/begin',{});const cookie=begin.headers.get('Set-Cookie').split(';')[0],now=Date.now();
  const token=await signSystemInvitation({version:1,purpose:'bindle-system-account-setup',issuer:origin,handle:'ray',role:'developer',owner:crypto.randomUUID(),assignmentId:crypto.randomUUID(),nonce:crypto.randomUUID(),issuedAt:now,expiresAt:now+3600000},secret);

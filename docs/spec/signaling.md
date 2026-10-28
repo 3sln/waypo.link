@@ -1,5 +1,7 @@
 # Signaling (`signaling.v1`) — normative draft
 
+> **Pending [extensions revision 3](extensions.md) (draft, unsigned, 2026-10-27).** Where this document relies on the `signaling.v1` feature, slot manifests, occupant declarations and `ref`, extensions revision 3.2 and protocol §2–§4 govern instead. Change request CR-X3-03, [extensions Appendix A](extensions.md#appendix-a-migration-and-impact-change-requests-not-applied).
+
 Status: **draft, 2026-10-27, revision 2.1. Specification only: nothing in this document is implemented to this text.** It is intended to replace [RTC signaling](rtc-signaling.md) (`rtc-signaling.v1`), which is **superseded by this draft, pending sign-off**. The local code still implements `rtc-signaling.v1`, with every RTC flag off and nothing published, deployed or production-verified. Appendix C plans the move. Every decision here is provisional (coordinator) and **not signed off by the owner**. The decisions are SG-1 to SG-35 in §19.2. The owner said provisional decisions may be adopted for now without sign-off, so the eight rev 0 owner questions carry provisional answers in §19.3, the establishment spike questions carry provisional answers in §19.4, and the questions still open are in §19.5. The decision records are in [DEVLOG](../../DEVLOG.md), 2026-10-27: "Generic signaling.v1 spec draft (replaces calling-shaped RTC)" (revision 0), "signaling.v1 spec rev 1 (review fixes)" (revision 1, which answers an independent review; Appendix A.2 maps each finding to its fix) and "signaling.v1 spec rev 2 (offer and pairing bases)" (revision 2, which applies the [establishment-modes spike](../architecture/signaling-modes-spike.md), decisions SMS-1 to SMS-8 and change requests CR-1 to CR-13; Appendix A.4 maps each change request to its section) and "signaling.v1 spec rev 2.1 (rev 2 review fixes)" (revision 2.1, which answers an independent review of revision 2; Appendix A.5 maps each finding to its fix). Identifiers under `https://spec.bindle.example/` and hosts under `.example` are placeholders. MUST, SHOULD and MAY express draft requirements.
 
 Protocol/security/interop sign-off: reviewer ___ / date ___ / outcome ___.
@@ -114,11 +116,11 @@ The feature confers no authority.
 }
 ```
 
-- **Occupant.** The provider's **built-in** occupant, declared in its manifest `extensions` array as `{"slot": "…/slots/signaling/v1", "role": "occupant", "ref": "signaling"}`. The owner assigns it like any occupant ([extensions §5.1](extensions.md#51-assigning-occupants)).
+- **Occupant.** The provider's **built-in** occupant, declared in its manifest `extensions` array as `{"slot": "…/slots/signaling/v1", "role": "occupant", "ref": "signaling"}`. The owner assigns it like any occupant ([extensions §5.1](superseded/extensions-rev2.md#51-assigning-occupants)).
 - **Contract.** It declares `"x-bindle-brokerable": false` at its root. Only the entity's own issuer can certify leg keys, so no integration can occupy the slot in this version.
 - **Consumers.** `application` and `provider`:
   - An application consumes the slot by requesting the fragment with its `digest` and the methods it needs. The slot grant says *that* the app may use signaling. *Which kinds* it may use is the owner's handler approval (§20.1.4), checked live by the occupant on every operation.
-  - A provider feature consumes the slot under [extensions §5.3](extensions.md#53-provider-consumers): it is declared as a `consumer` in the provider manifest, and enabled by an explicit owner action.
+  - A provider feature consumes the slot under [extensions §5.3](superseded/extensions-rev2.md#53-provider-consumers): it is declared as a `consumer` in the provider manifest, and enabled by an explicit owner action.
 - **No `bind`, no consumer options.** The slot needs no per-consumer bound values, so AMD-X1 is not needed (§19, SG-2).
 - Every rule of extensions §5 applies: disclosure before assignment, per-consumer approval, revocation, no occupancy oracle, pinning and versioning.
 
@@ -212,7 +214,7 @@ It MAY show the owner hook, the handoff (§11.4) and the owner controls of §14 
 ### 4.2 Provider-feature endpoints
 
 A provider feature that consumes the slot must satisfy four things:
-1. It is declared as a `consumer` of the slot in the provider manifest, and enabled per entity by an owner action ([extensions §5.3](extensions.md#53-provider-consumers)).
+1. It is declared as a `consumer` of the slot in the provider manifest, and enabled per entity by an owner action ([extensions §5.3](superseded/extensions-rev2.md#53-provider-consumers)).
 2. It declares the session kinds it handles in a provider-authored manifest, as a built-in handler ([intents §5](intents.md#5-handler-declarations)). It is approved per kind by the owner exactly as an app is (§20.1.4).
 3. Its endpoints are registered by the provider. Its leg certificates carry `client: {client_id: <issuer URL>, origin: <issuer origin>, feature: <declaration ref>}` (§6.1).
 4. It gets no authority beyond the owner's approvals and enablement. It is listed among the slot's consumers (extensions §5.1). Disabling the feature ends its endpoints and sessions (§14.2).
