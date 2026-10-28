@@ -1,259 +1,13 @@
-// Clean-room conformance of the real Node provider against docs/spec/extensions/signaling.md (signaling.v1 rev 3.2).
-//
-// MINIMAL RETARGET of the RTC-i suite (tests/rtc-conformance.test.mjs, 48 tests, rtc-signaling.v1) per signaling
-// §21.2 "Impact on the existing clean-room suite": the carried tests are renamed onto the rev 3.2 wire, the §21.2
-// "Changes" table is applied, and nothing from §21.2 "New, needed by this draft" is added (that is the step-6 peer
-// rewrite). Section numbers below are rev 3.2 numbers.
-//
-// The provider under test is the production Node adapter (apps/node/server.mjs, createNodeServer) listening on a
-// loopback port with the signaling flags on and the peer origins in SIGNALING_FOREIGN_ISSUERS. The second provider is
-// tests/signaling-conformance-peer.mjs, which imports no 3sln.me code. The two talk over:
-//   - peer -> provider: real HTTP to 127.0.0.1:<port> with `Host: provider.example` (the provider's own host check);
-//   - provider -> peer: the provider's real directory and signaling egress code (DIRECTORY_EGRESS, SIGNALING_EGRESS),
-//     with only DNS and the socket replaced through the documented DIRECTORY_DNS_LOOKUP / DIRECTORY_HTTPS_REQUEST
-//     injection ports (a public IPv4 answer; the request is handed to the peer's handler instead of a TLS socket).
-// The provider-side application is driven through the real authorization request, owner consent, token and
-// /bindle/rpc routes with the DEFAULT Node wiring: the shipped signaling fragment and signaling/v1 contract. The owner
-// approves the app as a session handler of the test kind through the owner route POST /api/intents/session-approve
-// (AMD-SG-I1, §20.1.4). Test seams beyond the two network ports and the operator configuration a deployment sets
-// anyway (flags, SIGNALING_FOREIGN_ISSUERS, the reviewed client, the trusted client-IP header that gives each test
-// account its own signup address):
-//   - one session kind (an intent kind with the AMD-SG-I1 `session` member) registered as an operator artefact envelope
-//     through FEDERATION_CONTRACTS, as an operator would hold it (§3.4: providers never fetch a kind on a request path);
-//     its digest is computed with the provider's artefact digest function (packages/core/artefacts.mjs);
-//   - one throwaway provider registers, as an operator would, a clean-room contract document written from §10.2 with
-//     contract-level "x-bindle-brokerable": false; its marker is checked with the provider's contract compiler
-//     (compileContractVersion). Those are the only non-black-box imports.
-// Cross-entity sessions need a basis (§5.2: `none` is reserved): inbound invites carry an `offer_digest` of an offer
-// minted by the provider-side app through the contract method `offer` (passed out of band), with the token in the
-// batch `offers`; outbound dial-backs use a token the peer hands out (peer.mintOffer).
-// Divergences found are reported through `t.todo(...)` (so `npm test` stays green); SIGNALING_CONFORMANCE_STRICT=1
-// turns the ones not marked "plausibly intentional" into failures.
-import nodeTest, {before, after} from 'node:test';
+// Clean-room signaling conformance (signaling.v1 rev 3.2, Appendix C.5 step 6): the RTC-i tests carried by §21.2, with
+// its renames and "Changes" table applied.
+// Shared world, conventions and seams: tests/helpers/signaling-conformance-world.mjs. Divergences are t.todo in normal
+// mode and fail under SIGNALING_CONFORMANCE_STRICT=1 unless marked plausibly intentional.
 import assert from 'node:assert/strict';
-import {mkdtemp, rm} from 'node:fs/promises';
-import {tmpdir} from 'node:os';
-import {join} from 'node:path';
-import {createHash, randomUUID} from 'node:crypto';
-import http from 'node:http';
-import {createNodeServer} from '../apps/node/server.mjs';
-import {compileContractVersion} from '../packages/federation/integrations.mjs';
-import {digestJSON, versionRecord, parseEnvelope} from '../packages/core/artefacts.mjs';
-import {kindBody} from './helpers/signaling-fixture.mjs';
-import {createPeer, nodeNetwork, keyPair, newSid, now, sdp, fingerprint, offerDigest, part, sign, b64, unb64, malleate, isLowS, candidate, candidateItem, mdns, TYP, MAGIC, MEDIA_TYPE, randomId, verifyJws} from './signaling-conformance-peer.mjs';
+import {randomUUID, createHash} from 'node:crypto';
+import {APP, CONTRACT, DIRECTORY_EXT, FRAGMENT, FRAGMENT_DOCUMENT, KIND, LINE, METHODS, PEER, PROVIDER, SIGNALING_EXT, VERSIONS_EXT, accept, appMessage, beacon, boot, callee, cancel, checks, contractDocument, declares, decline, deliver, delivered, diverge, endpoint, envelope, ext, invite, openArgs, peerSend, sentinel, sleep, test, useWorld, w} from './helpers/signaling-conformance-world.mjs';
+import {keyPair, newSid, now, sdp, fingerprint, offerDigest, part, sign, b64, unb64, malleate, isLowS, candidate, candidateItem, mdns, TYP, MAGIC, MEDIA_TYPE, randomId, verifyJws} from './signaling-conformance-peer.mjs';
 
-const PROVIDER = 'https://provider.example', PEER = 'https://peer.example', PEER_NO_SIGNALING = 'https://plain.example', PEER_FLOOR = 'https://floor.example';
-const SPEC = 'https://spec.bindle.example';
-const FRAGMENT = `${SPEC}/fragments/signaling/v1`, CONTRACT = `${SPEC}/contracts/signaling/v1`;
-/** §3.1: the signaling extension and its two prerequisites. */
-const SIGNALING_EXT = `${SPEC}/extensions/signaling/v1`, DIRECTORY_EXT = `${SPEC}/extensions/directory/v1`, VERSIONS_EXT = `${SPEC}/extensions/artefact-versions/v1`;
-/** The options of extension `spec` in manifest `m` (undefined when not declared). */
-const ext = (m, spec) => (Array.isArray(m?.extensions) ? m.extensions : []).find(e => e?.spec === spec)?.options;
-/** Whether manifest `m` declares extension `spec` (an extension without options carries no `options` member). */
-const declares = (m, spec) => (Array.isArray(m?.extensions) ? m.extensions : []).some(e => e?.spec === spec);
-/** The test session kind (§3.4): other parties, the webrtc profile, every basis, one optional context property. */
-const LINE = 'https://kinds.example/kinds/conformance-call/v1';
-const KIND_ENVELOPE = {bindle_artefact: 1, id: LINE, kind: 'intent', versions: [{version: 1, prev: null, body: kindBody({line: LINE, parties: 'other', profiles: {webrtc: {}}, properties: {call: {type: 'string', maxLength: 36, format: 'uuid'}}, title: 'Conformance call'})}]};
-const KIND = {artefact: LINE, version: 1, digest: await digestJSON(versionRecord(parseEnvelope(KIND_ENVELOPE, {id: LINE}), KIND_ENVELOPE.versions[0]))};
-const KIND_CONTRACTS = {[LINE]: KIND_ENVELOPE, [LINE + '/envelope']: KIND_ENVELOPE};
-const APP = {id: 'https://app.example/client', name: 'Conformance app', origin: 'https://app.example', redirectUris: ['https://app.example/callback']};
-/** §10.2 methods. */
-const METHODS = ['register', 'unregister', 'endpoints', 'open', 'offer', 'revoke_offer', 'claim', 'send', 'renew', 'listen'];
-const STRICT = process.env.SIGNALING_CONFORMANCE_STRICT === '1';
-const sleep = ms => new Promise(r => setTimeout(r, ms));
-/** Every test is bounded, so a provider that stops answering fails the test instead of hanging the run. */
-const test = (name, fn) => nodeTest(name, {timeout: 90000}, fn);
-
-// ---- spec-derived documents the provider needs registered -----------------------------------------------------------
-/** The signaling fragment, §3.2. */
-const FRAGMENT_DOCUMENT = {id: FRAGMENT, title: 'Signaling', description: 'Lets an app or a provider feature set up direct connections between your devices and other people\'s, for the kinds you approve.', publisher: SPEC, fields: {signaling: {title: 'Signaling service', type: 'resource', cardinality: {min: 0, max: 1}, contracts: [CONTRACT], selection: 'exclusive', consumers: ['application', 'provider']}}};
-/** A clean-room contract document for §10.2 (results as listed there; `listen` events as §10.3 names them), registered
- * only by the "x-bindle-brokerable" probe. */
-function contractDocument({brokerable = false} = {}) {
-  const S = {type: 'string'}, A = {}, o = p => ({type: 'object', properties: p});
-  const event = o({type: A, sid: A, seq: A, certificate: A, invite: A, message: A, state: A, control: A, pairing: A,
-    projection: o({initiator: o({iss: A, sub: A}), handle: A, origin: A, client_id: A, feature: A, reported_by: A, kind: o({artefact: A, version: A, digest: A}), profile: A, params: A, context: A, basis: A, auto_connect: A, offer_match: A, paired: A})});
-  return {$schema: 'https://json-schema.org/draft/2020-12/schema', $id: CONTRACT, title: 'Signaling v1 (clean-room test registration)', description: 'Written from signaling.md section 10.2 for the signaling conformance suite.',
-    ...brokerable ? {'x-bindle-brokerable': false} : {},
-    oneOf: METHODS.map(m => ({type: 'object', properties: {method: {const: m}, args: {type: 'object'}}, required: ['method', 'args'], additionalProperties: false})),
-    'x-methods': Object.fromEntries(METHODS.map(m => [m, {request: '#', result: '#/$defs/' + m, effect: ['listen', 'endpoints'].includes(m) ? 'read' : 'write'}])),
-    $defs: {register: o({endpoint: S, endpoint_secret: S, expires_at: A}), unregister: o({}), endpoints: o({endpoints: {type: 'array', items: o({endpoint: S, label: A, kinds: {type: 'array', items: S}, last_seen: A, client_id: A})}, pairings: A}),
-      open: o({sid: S, certificate: S, expires_at: A, peer_keys: A}), offer: o({offers: {type: 'array', items: o({principal: A, offer: A})}, expires_at: A}), revoke_offer: o({}),
-      claim: o({certificate: S, peer_keys: A}), send: o({accepted: A}), renew: o({certificate: S}),
-      listen: o({cursor: A, gap: A, events: {type: 'array', items: event}})}};
-}
-const envelope = doc => ({[CONTRACT]: doc, [CONTRACT + '/envelope']: {bindle_artefact: 1, id: CONTRACT, kind: 'rpc-contract', versions: [{version: 1, prev: null, body: doc}]}});
-
-// ---- findings -----------------------------------------------------------------------------------------------------
-const findings = [];
-/** Records a spec/behaviour divergence and marks the test todo (or fails it under STRICT unless plausibly intentional). */
-function diverge(t, {section, request, observed, expected, side, intentional = false}) {
-  findings.push({test: t.name, section, request, observed, expected, side, intentional});
-  const message = `DIVERGENCE ${section}: expected ${expected}; observed ${observed} [wrong side: ${side}${intentional ? '; plausibly an intentional reading' : ''}]`;
-  if (STRICT && !intentional) assert.fail(message);
-  t.diagnostic(message); t.todo(message);
-}
-
-// ---- the world ----------------------------------------------------------------------------------------------------
-async function boot({config = {}, contracts = {}} = {}) {
-  const directory = await mkdtemp(join(tmpdir(), 'signaling-conformance-'));
-  const peers = {};
-  const net = nodeNetwork({'peer.example': r => peers.peer.handler(r), 'plain.example': r => peers.plain.handler(r), 'floor.example': r => peers.floor.handler(r)});
-  const cfg = {APP_ORIGIN: PROVIDER, LOCAL_DEVELOPMENT: 'true', WORK_LIMITS_ENABLED: 'false', TRUSTED_CLIENT_IP_HEADER: 'x-conformance-client-ip', SIGNUP_IP_WINDOW_MS: '1000', SIGNUP_IP_DAILY_LIMIT: '1000', SIGNUP_SUBNET_DAILY_LIMIT: '1000', SIGNUP_REGION_HOURLY_LIMIT: '1000', SIGNUP_REGION_DAILY_LIMIT: '1000', SIGNUP_GLOBAL_HOURLY_LIMIT: '1000', SIGNUP_GLOBAL_DAILY_LIMIT: '1000', FEDERATION_ENABLED: 'true', EXTENSIONS_ENABLED: 'true', ARTEFACT_VERSIONS_ENABLED: 'true', DIRECTORY_ENABLED: 'true',
-    SIGNALING_ENABLED: 'true', SESSION_KINDS_ENABLED: 'true', SIGNALING_FOREIGN_ENABLED: 'true', SIGNALING_FOREIGN_ISSUERS: JSON.stringify([PEER, PEER_NO_SIGNALING, PEER_FLOOR]),
-    FEDERATION_CLIENTS: JSON.stringify([APP]), FEDERATION_CONTRACTS: JSON.stringify({...KIND_CONTRACTS, ...contracts}),
-    DIRECTORY_DNS_LOOKUP: net.lookup, DIRECTORY_HTTPS_REQUEST: net.request, ...config};
-  const app = await createNodeServer({directory, config: cfg});
-  await new Promise(r => app.server.listen(0, '127.0.0.1', r));
-  const port = app.server.address().port;
-  /** Real HTTP over loopback to the provider, with its configured Host. */
-  const wire = (path, {method = 'GET', headers = {}, body} = {}) => new Promise((resolve, reject) => {
-    const data = body === undefined ? undefined : Buffer.from(body);
-    const req = http.request({host: '127.0.0.1', port, path, method, headers: {Host: 'provider.example', ...headers, ...data ? {'Content-Length': data.length} : {}}}, res => {
-      const chunks = []; res.on('data', c => chunks.push(c));
-      res.on('end', () => resolve(new Response([204, 304].includes(res.statusCode) ? null : Buffer.concat(chunks), {status: res.statusCode, headers: Object.entries(res.headers).flatMap(([k, v]) => Array.isArray(v) ? v.map(x => [k, x]) : [[k, String(v)]])})));
-    });
-    req.on('error', reject); if (data) req.write(data); req.end();
-  });
-  peers.peer = await createPeer({origin: PEER, providerFetch: wire});
-  peers.plain = await createPeer({origin: PEER_NO_SIGNALING, providerFetch: wire, signaling: false});
-  peers.floor = await createPeer({origin: PEER_FLOOR, providerFetch: wire, dpop: false});
-  const request = (path, {method = 'GET', data, cookie, csrf, bearer, appOrigin, ip} = {}) => wire(path, {method, headers: {Origin: appOrigin ?? PROVIDER, ...ip ? {'X-Conformance-Client-IP': ip} : {}, ...data !== undefined ? {'Content-Type': 'application/json'} : {}, ...cookie ? {Cookie: cookie} : {}, ...csrf ? {'X-CSRF-Token': csrf} : {}, ...bearer ? {Authorization: `Bearer ${bearer}`} : {}}, ...data !== undefined ? {body: JSON.stringify(data)} : {}});
-  const post = (p, d, o = {}) => request(p, {...o, method: 'POST', data: d});
-  const peer = peers.peer;
-  /** A provider account (signup through the HTTP routes) and its identity URI from the provider's own directory. */
-  let signups = 0;
-  async function account() {
-    // Signup's fixed 3-per-minute burst per client address (packages/core/abuse-policy.mjs) is met by giving each test
-    // account its own loopback address through the operator's trusted client-IP header.
-    const ip = `127.${2 + (signups >> 7)}.${signups & 127}.${1 + (signups++ & 63)}`;
-    const pending = await (await post('/api/auth/signup', {method: 'password', password: 'A durable conformance test password!', ageConfirmed: 18, termsAccepted: true, termsVersion: '2026-10-11', turnstileToken: 'local-browser-test-token'}, {ip})).json();
-    const recovery = await (await post('/api/auth/recovery/download', {pendingToken: pending.pendingToken}, {ip})).json();
-    const activation = await post('/api/auth/recovery/confirm', {pendingToken: pending.pendingToken, recoveryToken: recovery.recoveryToken, downloadConfirmed: true}, {ip});
-    assert.equal(activation.status, 200, 'signup: ' + JSON.stringify(pending));
-    const session = await activation.json(), owner = {cookie: activation.headers.get('Set-Cookie').split(';')[0], csrf: session.csrfToken};
-    const sub = session.account.id, found = await peer.lookup(sub);
-    return {sub, handle: session.account.handle, owner: {...owner, ip}, ip, identity: found?.identity, principal: {iss: PROVIDER, sub}};
-  }
-  /** Authorization request for the signaling fragment, owner assignment of the built-in signaling resource, consent,
-   * token, then the owner's session handler approval of the test kind (AMD-SG-I1 §20.1.4, owner route). */
-  async function connect(acct, {approve = true} = {}) {
-    const verifier = randomUUID() + randomUUID(), challenge = createHash('sha256').update(verifier).digest('base64url');
-    const r = await post('/api/oauth/requests', {clientId: APP.id, redirectUri: APP.redirectUris[0], challenge, challengeMethod: 'S256', state: 's', identity: acct.handle + '@provider.example', requests: [{fragment: FRAGMENT, required: true, purpose: 'Sessions', fields: ['signaling'], methods: {signaling: {[CONTRACT]: METHODS}}}]}, {appOrigin: APP.origin, ip: acct.ip});
-    const pending = await r.json(); assert.equal(r.status, 201, JSON.stringify(pending));
-    let view = await (await request('/api/oauth/requests/' + pending.requestId, acct.owner)).json();
-    const resourceURI = view.requests[0].resources.find(x => x.id.endsWith('/signaling')).id;
-    const prefs = await (await request('/api/preferences', acct.owner)).json();
-    if (!prefs.preferences.find(p => p.fragment === FRAGMENT)) {
-      const a = await post('/api/preferences', {fragment: FRAGMENT, expectedRevision: null, values: {signaling: resourceURI}}, acct.owner); assert.equal(a.status, 200, 'signaling resource assignment: ' + await a.clone().text());
-      view = await (await request('/api/oauth/requests/' + pending.requestId, acct.owner)).json();
-    }
-    const d = await post('/api/oauth/requests/' + pending.requestId + '/decision', {requestId: pending.requestId, approved: [{fragment: FRAGMENT, revision: view.requests[0].revision, fields: ['signaling'], resources: {signaling: [resourceURI]}, methods: view.requests[0].methods}]}, acct.owner);
-    const decision = await d.json(); assert.equal(d.status, 200, JSON.stringify(decision));
-    const code = new URL(decision.redirectUri).searchParams.get('code');
-    const token = await (await post('/oauth/token', {clientId: APP.id, redirectUri: APP.redirectUris[0], code, verifier}, {appOrigin: APP.origin, ip: acct.ip})).json();
-    const rpc = (bearer, resource, contract, method, args = {}) => post('/bindle/rpc', {version: '0', tx: randomUUID(), resource, contract, method, args}, {bearer, appOrigin: APP.origin, ip: acct.ip});
-    const prefsRead = await (await rpc(token.access_token, '@preferences', 'https://3sln.me/artefacts/contracts/preferences/v1', 'read', {fragment: FRAGMENT})).json();
-    assert.ok(prefsRead.result?.values?.signaling, 'preferences read: ' + JSON.stringify(prefsRead) + ' token: ' + JSON.stringify(token));
-    const ref = prefsRead.result.values.signaling;
-    if (approve) { const approved = await post('/api/intents/session-approve', {clientId: APP.id, kind: KIND}, acct.owner); assert.equal(approved.status, 200, 'session handler approval: ' + await approved.clone().text()); }
-    const call = async (method, args = {}) => { const res = await rpc(ref.token, ref.id, CONTRACT, method, args); return {status: res.status, ...await res.json()}; };
-    return {token, ref, call, grants: token.grants};
-  }
-  return {app, peers, peer, net, port, wire, request, post, account, connect, close: async () => { app.server.closeAllConnections?.(); await app.close(); await rm(directory, {recursive: true, force: true}); }};
-}
-
-let w;
-before(async () => { w = await boot(); });
-after(async () => {
-  if (findings.length) {
-    process.stdout.write(`\n# signaling conformance findings (${findings.length}):\n`);
-    for (const f of findings) process.stdout.write(`#  - [${f.section}] ${f.test}: expected ${f.expected}; observed ${f.observed} (wrong side: ${f.side}${f.intentional ? ', plausibly intentional' : ''})\n`);
-  }
-  await w?.close();
-});
-
-// ---- recipient contexts on the provider ---------------------------------------------------------------------------
-const auth = reg => ({endpoint: reg.result.endpoint, ...reg.result.endpoint_secret ? {endpoint_secret: reg.result.endpoint_secret} : {}});
-/** A long-poll reader for one endpoint (§11.1: `listen` is the baseline; rapid short polls would meet the provider's
- * per-network RPC budget). */
-function listener(c, ep) {
-  const l = {ep, events: [], cursor: undefined};
-  l.poll = async (wait = 0) => { const r = await c.call('listen', {...ep, ...l.cursor !== undefined ? {cursor: l.cursor} : {}, wait}); if (r.result) { l.cursor = r.result.cursor; l.events.push(...r.result.events); } else if (r.status !== 200 || r.error) throw new Error('listen: ' + JSON.stringify(r)); return r; };
-  l.waitEvent = async (pred, timeout = 6000) => { const end = Date.now() + timeout; let hit = l.events.find(pred); while (!hit && Date.now() < end) { await l.poll(Math.max(1, Math.min(2, Math.ceil((end - Date.now()) / 1000)))); hit = l.events.find(pred); } return hit ?? null; };
-  l.has = pred => l.events.some(pred);
-  return l;
-}
-/**
- * A provider account with the app connected and approved for the kind, one registered endpoint, and its own peer
- * initiator entity. `ctx.offerToken()` returns the token of an open offer minted by that endpoint (§5.7), rotated
- * every 5 invites so that the per-(principal, offer) window (§13.1, 6 per hour) never decides a test.
- */
-async function callee() {
-  const acct = await w.account(), c = await w.connect(acct);
-  const reg = await c.call('register', {kinds: [LINE]}); assert.equal(reg.status, 200, JSON.stringify(reg));
-  const ep = auth(reg), main = listener(c, ep);
-  const ctx = Object.assign(main, {acct, c, ep, bob: await w.peer.entity(), current: null});
-  ctx.mint = async (args = {}, from = ep) => { const o = await c.call('offer', {...from, kind: LINE, profile: 'webrtc', expires_in: 900, ...args}); assert.ok(o.result?.offers?.length, 'offer: ' + JSON.stringify(o)); return o.result; };
-  ctx.offerToken = async () => { if (!ctx.current || ctx.current.n >= 5) ctx.current = {token: (await ctx.mint({uses: 16})).offers[0].offer, n: 0}; ctx.current.n++; return ctx.current.token; };
-  ctx.register = async () => { const r = await c.call('register', {kinds: [LINE]}); assert.equal(r.status, 200, JSON.stringify(r)); return listener(c, auth(r)); };
-  return ctx;
-}
-/** Invite parts from a peer entity to the recipient; every member overridable for negative tests. `basis` defaults to
- * an offer basis over `ctx.offerToken()` with the token carried in the batch `offers` (§5.2, §9.1). */
-async function invite(ctx, {from = ctx.bob, sid = newSid(), leg, kind = KIND, profile = 'webrtc', offer = sdp(), params, answerIn = 100, basis, token, offers, certOverride = {}, msgOverride = {}, bodyOverride = {}, certOpts = {}, msgOpts = {}} = {}) {
-  leg ??= await keyPair();
-  if (basis === undefined) { token ??= await ctx.offerToken(); basis = {offer_digest: await offerDigest(token)}; }
-  offers ??= token ? [token] : [];
-  const cert = await w.peer.legCertificate({sub: from.sub, aud: ctx.acct.identity, sid, role: 'initiator', kind, profile, leg, override: certOverride, ...certOpts});
-  const body = {kind, profile, answer_by: now() + answerIn, basis, context: null, params: params ?? {offer}, ...bodyOverride};
-  const message = await w.peer.message({leg, sub: from.sub, aud: ctx.acct.identity, sid, to: null, seq: 0, type: 'invite', body, override: msgOverride, ...msgOpts});
-  return {sid, leg, from, kind, token, cert, message, batch: w.peer.batch({certificates: [cert], messages: [message], offers})};
-}
-/** Posts an invite until it reaches the endpoint (the first posts may meet a held-key miss, §9.2 step 3, §9.3). */
-async function deliver(l, inv, {timeout = 10000} = {}) {
-  const end = Date.now() + timeout;
-  while (Date.now() < end) {
-    const r = await w.peer.post(inv.batch); assert.equal(r.status, 202, `invite post: ${r.status} ${r.body}`);
-    const e = await l.waitEvent(e => e.type === 'invite' && e.sid === inv.sid, 1500); if (e) return e;
-  }
-  return null;
-}
-const appMessage = (ctx, s, {seq, type, body, to = s.peerLeg?.jkt ?? null, iat = now()}) => sign({alg: 'ES256', typ: TYP.message, kid: s.appLeg.jkt}, {bindle: MAGIC.message, v: 1, iss: PROVIDER, sub: ctx.acct.sub, aud: s.peerIdentity, sid: s.sid, leg: s.appLeg.jkt, to, seq, iat, type, body}, s.appLeg);
-/** Claims an inbound invite with `accept` and sends the signed accept; returns the connected session. */
-async function accept(ctx, inv, l = ctx) {
-  const appLeg = await keyPair(), cl = await ctx.c.call('claim', {...l.ep, sid: inv.sid, outcome: 'accept', delegate: appLeg.jwk});
-  assert.ok(cl.result?.certificate, 'claim: ' + JSON.stringify(cl));
-  const s = {...inv, appLeg, peerLeg: inv.leg, peerIdentity: inv.from.identity, recipientCert: cl.result.certificate, appSeq: 0, peerSeq: 1};
-  s.accept = await appMessage(ctx, s, {seq: s.appSeq++, type: 'accept', body: {params: {answer: sdp({setup: 'active'})}}});
-  const sent = await ctx.c.call('send', {...l.ep, sid: inv.sid, messages: [s.accept]}); assert.equal(sent.result?.accepted, 1, 'send accept: ' + JSON.stringify(sent));
-  assert.ok(await w.peer.until(() => w.peer.messages(inv.sid).some(m => m.payload.type === 'accept'), {timeout: 6000}), 'accept relayed to the peer');
-  return s;
-}
-/** A message from the peer's initiator leg in a connected inbound session; returns whether the endpoint received it. */
-async function peerSend(ctx, s, type, body, {seq, wait = true, timeout = 3000, ...opts} = {}) {
-  seq ??= s.peerSeq++;
-  const m = await w.peer.message({leg: s.peerLeg, sub: s.from.sub, aud: ctx.acct.identity, sid: s.sid, to: s.appLeg.jkt, seq, type, body, ...opts});
-  const r = await w.peer.post(w.peer.batch({messages: [m]}));
-  const got = wait ? await ctx.waitEvent(e => e.type === 'message' && e.message === m, timeout) : null;
-  return {m, r, got: !!got, seq};
-}
-/** A connected session used as an ordering sentinel: once a later valid message arrives, earlier batches were processed. */
-async function beacon(ctx) {
-  if (ctx.beacon) return ctx.beacon;
-  const inv = await invite(ctx); assert.ok(await deliver(ctx, inv), 'beacon invite delivered');
-  return ctx.beacon = await accept(ctx, inv);
-}
-async function sentinel(ctx) {
-  const b = await beacon(ctx);
-  const r = await peerSend(ctx, b, 'candidates', {gen: 0, items: [candidateItem(candidate())], complete: false}, {timeout: 6000});
-  assert.ok(r.got, 'sentinel delivered'); await sleep(150); await ctx.poll();
-}
-/** Proves through the sentinel whether an invite (or message) for `sid` reached the endpoint (or listener `l`). */
-async function delivered(ctx, sid, {type, l = ctx} = {}) { await sentinel(ctx); if (l !== ctx) await l.poll(); return l.has(e => e.sid === sid && (!type || e.type === type)); }
-/** `open` arguments toward a peer entity: an offer basis over a token the peer handed out (§5.7 "Dialing back"). */
-const openArgs = (ctx, to, leg, {token = w.peer.mintOffer(), params = {offer: null}} = {}) => ({...ctx.ep, to: to.principal, kind: LINE, profile: 'webrtc', params, delegate: leg.jwk, basis: {offer: token}});
-
+useWorld();
 // ==== §3.1 / protocol §2: discovery ==================================================================================
 test('§3.1 the provider declares the signaling extension: an issuer-origin endpoint, a 120-900 s certificate bound and its profiles', async () => {
   const m = await (await w.wire('/.well-known/bindle/manifest.json')).json(), f = ext(m, SIGNALING_EXT);
@@ -281,10 +35,9 @@ test('§3.1 the declaration has its prerequisites and the contract is listed; no
 });
 
 test('§10.1 / contracts: a contract document carrying x-bindle-brokerable:false is usable (…/contracts/signaling/v1)', async () => {
-  // The clean-room document with the marker the spec requires compiles; an operator registration of it does not
+  // An operator registration of the clean-room document with the marker the spec requires is accepted at boot, does not
   // displace the shipped document (which carries the same marker) while the signaling flags are on, and calls are served.
-  const doc = contractDocument({brokerable: true}), compiled = compileContractVersion(structuredClone(doc));
-  assert.equal(compiled.validate({method: 'register', args: {kinds: [LINE]}}), true, 'the clean-room document with the marker compiles');
+  const doc = contractDocument({brokerable: true});
   const v = await boot({config: {FEDERATION_SCHEMAS: JSON.stringify({[FRAGMENT]: FRAGMENT_DOCUMENT})}, contracts: envelope(doc)});
   try {
     const acct = await v.account(), c = await v.connect(acct), r = await c.call('register', {kinds: [LINE]});
@@ -816,7 +569,7 @@ test('§5.5/§8.5/§12.1 an owner end, an unanswered invite, an approval removal
   const un = await w.post('/api/intents/session-unapprove', {clientId: APP.id, kind: LINE}, ctx.acct.owner);
   t.diagnostic(`owner session-unapprove -> ${un.status} ${(await un.text()).slice(0, 200)}`);
   // The app's grant revoked while an invite is pending (re-approved, on a fresh endpoint).
-  const re = await w.post('/api/intents/session-approve', {clientId: APP.id, kind: KIND}, ctx.acct.owner); assert.equal(re.status, 200, 're-approval');
+  const [re] = await w.widen(ctx.acct, [{action: 'session-approve', input: {clientId: APP.id, kind: KIND}}]); assert.equal(re.status, 200, 're-approval');
   const second = await ctx.register(); ctx.current = null;
   const {offers} = await ctx.mint({uses: 4}, second.ep), d = await invite(ctx, {token: offers[0].offer}); assert.ok(await deliver(second, d), 'delivered to the new endpoint');
   const grants = await (await w.request('/api/grants', ctx.acct.owner)).json(), list = grants.grants ?? grants;
@@ -845,9 +598,13 @@ async function peerAnswer(ctx, s, type = 'accept', {leg, body} = {}) {
 }
 
 test('flow (provider opens to peer on its offer): open, invite delivered with its certificate and the offer token, accept, candidates, end', async () => {
-  const ctx = await callee(), s = await openCall(ctx);
+  // The peer mints a bound offer for the provider entity's principal (§5.7) and checks the dial-back at admission (§5.2).
+  const ctx = await callee(), token = w.peer.mintOffer({sub: ctx.bob.sub, principal: ctx.acct.principal, kind: LINE, profile: 'webrtc'}), s = await openCall(ctx, {token});
   assert.ok(s.received, 'the invite reached the peer endpoint');
   const e = s.received.entry; assert.deepEqual(e.step1.problems, []); assert.equal(e.contentType, MEDIA_TYPE);
+  const admission = await w.peer.admitOffer(e, part(s.invite, 1), part(s.cert, 1));
+  assert.deepEqual(admission, {admitted: true, reason: null}, 'the dial-back passes §5.2 "Verifying an offer basis" at the minting peer');
+  assert.equal((await w.peer.admitOffer(e, part(s.invite, 1), part(s.cert, 1))).admitted, false, 'a bound offer admits once');
   assert.ok(e.batch.certificates.includes(s.cert), 'the initiator certificate accompanies the first message');
   assert.deepEqual(part(s.invite, 1).body.basis, {offer_digest: await offerDigest(s.token)});
   assert.deepEqual(e.batch.offers, [s.token], 'the offer token travels beside the invite (§5.7 "Dialing back", §9.1), and nothing else');
@@ -1034,3 +791,4 @@ test('§3.2/§10.1 an application can request the signaling fragment on a provid
   const body = await r.json();
   assert.equal(r.status, 201, JSON.stringify(body));
 });
+

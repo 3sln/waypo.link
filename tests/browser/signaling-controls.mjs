@@ -112,9 +112,11 @@ test('each app\'s controls sit with its entry in Apps & integrations, with other
  const text=controls.textContent;
  for(const pattern of [/Connection types/,/Chat/,/Version 2/,/Device sync/,/Connects automatically between your devices/,/Devices/,/Laptop/,/Unnamed device/,/Last seen/,/Offers/,/Anyone with the offer/,/space\.example · 550e8400/,/3 of 10 uses spent/,/0 of 1 uses spent/,/Expires/,/Pairings/,/Desk to phone/,/Your own app/,/Other app/,/far\.example · 990e8400/,/Either side opens it/,/This app opens it/,/Active/,/Waiting for confirmation/,/No expiry/])assert.match(text,pattern);
  assert.doesNotMatch(text,/of_open|of_bound|pr_self|ep_a/,'never an offer token or internal id');
- // Exactly one Turn off (only the auto-connect approval), and nothing that widens: no turn on, create, pair or activate.
+ // Exactly one Turn off (only the auto-connect approval), and nothing that widens here: no turn on, create or activate.
+ // Pairing creation is offered only as navigation to its owner page (bl/signaling-pages.mjs), never as an operation.
  const labels=[...controls.querySelectorAll('button')].map(b=>b.textContent);
- assert.deepEqual(labels,['Remove','Turn off','Remove','Remove','Remove','Revoke','Revoke','Revoke all offers from this app','Remove','Remove']);
+ assert.deepEqual(labels,['Remove','Turn off','Remove','Remove','Remove','Revoke','Revoke','Revoke all offers from this app','Remove','Remove','Pair this app']);
+ controls.querySelectorAll('button')[10].click();assert.deepEqual(events.at(-1),{kind:'signaling-page',page:'pair',params:{client:APP}},'only navigation');
  assert.doesNotMatch(text,/Turn on|Activate|Create|Pair a|Connect automatically\b/);
  const buttons=[...controls.querySelectorAll('button')];
  buttons[1].click();assert.deepEqual(events.at(-1),{kind:'signaling-action',action:'session-auto-connect',input:{clientId:APP,kind:SYNC}});
@@ -145,7 +147,9 @@ test('the confirmation dialog names the change and the app, and confirms exactly
   assert.ok(confirm.classList.contains('danger-button'));
  }
  assert.equal(signalingDialog(fixture({modal:{kind:'signaling-confirm',action:'unblock',input:{issuer:'https://x.example'}}})),null,'unblock has no dialog');
- for(const [action,input] of [['block',{principal:FAR}],['revoke-offers',{all:true}],['end-session',{sid:'s'}],['pairing-remove',{}]])assert.equal(signalingDialog(fixture({modal:{kind:'signaling-confirm',action,input}})),null,action);
+ for(const [action,input] of [['block',{principal:FAR}],['revoke-offers',{all:false}],['end-session',{sid:'s'}],['pairing-remove',{}]])assert.equal(signalingDialog(fixture({modal:{kind:'signaling-confirm',action,input}})),null,action);
+ // Revoking every offer (the owner pages' live-offer list, §14.1) has its own dialog.
+ assert.match(JSON.stringify(signalingDialog(fixture({modal:{kind:'signaling-confirm',action:'revoke-offers',input:{all:true}}})).title),/Revoke every offer\?/);
 });
 
 test('every control is a native, keyboard-reachable button or input with a visible name',()=>{

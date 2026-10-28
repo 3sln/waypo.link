@@ -84,7 +84,7 @@ Provisional coordinator row, 2026-10-28 (signaling §3.5 production gate; signal
 | Plus, $35 | about 755 MB | 184,320 | $1.00 | 2.8% | 69.0% | 51.8% |
 | Ultra, $250 | about 755 MB | 184,320 | $1.00 | 0.4% | 77.1% | 53.1% |
 
-The last two columns are computed here from `relayEconomics()` and `dataEconomics()`; the model does not combine them, and no test guards a floor for them. At the full budget, Paid falls under the 50% margin floor even without any relay, and a Free account's worst-case `data` cost is about eight times its typical infrastructure cost ($0.13). The budget is the binding assumption (doubling it doubles the cost), so a per-plan budget, or a lower Free budget, is the lever if the floor is to hold. Each provider in a cross-entity session bears its own side.
+The last two columns combine `relayEconomics()` and `dataEconomics()`; the model itself does not. `tests/cost-model-margins.test.mjs` computes them and asserts the 50% floor: Plus and Ultra pass, and the failing Paid case is a `todo` that names the release gate ([release gates](../3sln/release-gates.md) "Signaling", data profile), so it is visible without failing the suite. At the full budget, Paid falls under the 50% margin floor even without any relay, and a Free account's worst-case `data` cost is about eight times its typical infrastructure cost ($0.13). The budget is the binding assumption (doubling it doubles the cost), so a per-plan budget, or a lower Free budget, is the lever if the floor is to hold. Each provider in a cross-entity session bears its own side.
 
 Economics reviewer ___ / Date ___ / Outcome ___.
 

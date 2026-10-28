@@ -1,32 +1,34 @@
 // A CLEAN-ROOM conformance peer for the signaling extension (docs/spec/extensions/signaling.md, signaling.v1 rev 3.2).
 //
-// MINIMAL RETARGET (signaling §21.2 "Carries over, with renames only"), not the step-6 rewrite: this peer was written
-// only from the superseded rtc-signaling text (RTC-i) and has been renamed onto the rev 3.2 wire: the `typ` values,
-// the `bindle` magic, the media type, the endpoint path, the `role` values (initiator/recipient), `ring_until` ->
-// `answer_by`, `purpose` -> `kind` {artefact, version, digest} plus `profile`, the invite `params` {offer} and accept
-// `params` {answer} (webrtc, §16.3), the batch `offers` member (§9.1), and no `media`, SAS, callback or link members.
-// Spec sources: signaling.md §3.1, §6, §7, §9, §16; keys.md §3 (the compact JWS profile); organizations.md §3a
+// Appendix C.5 step 6 rewrite (§21.2 "The peer itself needs"), written only from the revision 3.2 text and the
+// documents it cites: signaling.md §3 to §9, §13 and §16; keys.md §3 (the compact JWS profile); organizations.md §3a
 // (directory.v1, identity documents, certification keys) and §5.2 (`cnf`, `delegate`, `aep`); protocol.md §2 (the
-// manifest floor) and extensions.md §2. It imports NO 3sln.me code: raw WebCrypto, its own base64url, its own SDP and
-// candidate builders, plain fetch-like handlers. It plays a minimal "second provider":
+// manifest floor); extensions.md §2; intents.md §4 (intent kind bodies, for session kinds, AMD-SG-I1 §20.1.1);
+// artefacts.md §2 to §4 (envelopes, the RFC 8785 canonical form and version digests). It imports NO 3sln.me code: raw
+// WebCrypto, its own base64url, JCS, SDP and candidate builders, plain fetch-like handlers. It plays a minimal
+// "second provider":
 //
 // - it publishes a manifest declaring, in the extensions revision 3.2 shape (`extensions: [{spec, options}]`), the
-//   directory extension, the artefact-versions extension and the signaling extension with its `profiles` (§3.1), a
-//   `?sub=` / `?handle=` directory and identity documents with one `sig` key and one `cert` key per entity. It
-//   declares no intents or intent-links extension (§3.1: a peer never requires one);
+//   directory extension, the artefact-versions extension and the signaling extension with its `profiles` (§3.1; by
+//   default both registered profiles), a `?sub=` / `?handle=` directory and identity documents with one `sig` key and
+//   one `cert` key per entity. It declares no intents or intent-links extension (§3.1: a peer never requires one);
 // - it issues leg certificates (§6.1), control statements (§6.2) and messages (§7) signed ES256 with low-S signatures
-//   (§6.3), and can deliberately break any rule for negative tests;
+//   (§6.3), for both profiles: `webrtc` (`params` {offer}/{answer}, `sdp`, `candidates`, §16.3) and `data` (`params` {},
+//   `data` {payload}, §3.5), and can deliberately break any rule for negative tests;
+// - it carries the three bases of §5.2 on the wire: `null` (own entity), `{offer_digest}` with the token in the batch
+//   `offers` (§9.1), and `{relation: "pairing"}` (§5.8);
+// - it keeps its own offer records (§5.7 "What the provider stores": only the token hash, the principal or null, the
+//   kind line and profile, `uses` and the spent count) so that a dial-back from the provider under test can be checked
+//   at this peer as §5.2 "Verifying an offer basis" describes (`peer.admitOffer`);
 // - its `handler` serves those documents and accepts §9.1 batches at its endpoint, verifying them as §9.2 step 1 and
 //   steps 3-4 describe (with the sending provider's keys fetched from that provider's own directory);
-// - it holds no offers: when the provider under test dials back on an offer "minted" here, the peer only invents a
-//   token of the §5.7 shape (`mintOffer`), since the provider under test cannot check it (§5.7 "Dialing back");
+// - it computes session-kind references (`sessionKind`, `kindEnvelope`, `kindReference`: intents §4 bodies with the
+//   AMD-SG-I1 `session` member, and artefacts §4 version digests over the RFC 8785 canonical form);
+// - it computes the §8.3 glare ranks from two initiator leg key thumbprints (`glareRanks`, `glareOutcome`), as an
+//   endpoint does;
 // - `nodeNetwork` is the only seam into the provider under test: a DNS answer and a socket replacement for the
 //   provider's injected `DIRECTORY_DNS_LOOKUP` / `DIRECTORY_HTTPS_REQUEST` ports, so the provider's real screening and
 //   egress code run and only the wire is simulated. Nothing here is evidence of production behaviour.
-//
-// Not implemented here (left for the step-6 rewrite, §21.2 "The peer itself needs"): a `data`-profile client, the
-// relation basis, its own offer records (admission at this peer), glare, and verification of provider-sent offers
-// beyond their shape.
 
 export const SPEC = 'https://spec.bindle.example';
 /** Extension spec URLs (extensions rev 3.2 §2.8 placeholders; signaling §3.1). */
@@ -37,8 +39,10 @@ export const extensionOptions = (m, spec) => (Array.isArray(m?.extensions) ? m.e
 export const MEDIA_TYPE = 'application/vnd.bindle.signaling+json';
 export const TYP = { cert: 'bindle-signaling-leg+jwt', control: 'bindle-signaling-control+jwt', message: 'bindle-signaling-message+jwt' };
 export const MAGIC = { cert: 'signaling-leg-certificate', control: 'signaling-control', message: 'signaling-message' };
-/** §3.5: the registered profiles (this peer relays only `webrtc`). */
+/** §3.5: the registered profiles. */
 export const PROFILES = ['data', 'webrtc'];
+/** §3.5 `data`: at most 4,096 opaque bytes per message and 65,536 per leg. */
+export const DATA_LIMITS = { message: 4096, leg: 65536 };
 const ES256 = { name: 'ECDSA', hash: 'SHA-256' }, P256 = { name: 'ECDSA', namedCurve: 'P-256' };
 const N = 0xffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551n, HALF_N = N >> 1n;
 
@@ -120,8 +124,9 @@ export const candidateItem = (c, mid = '0') => ({ candidate: c, sdpMid: mid, sdp
  * @param {boolean} o.signaling   publish the signaling declaration (false: an issuer without one, §5.1 `unsupported_peer`)
  * @param {string[]} o.profiles   the declaration's `profiles` option (§3.1)
  */
-export async function createPeer({ origin = 'https://peer.example', providerFetch, maxLegSeconds = 600, dpop = true, endpointPath = '/bindle/signaling', signaling = true, profiles = ['webrtc'] } = {}) {
+export async function createPeer({ origin = 'https://peer.example', providerFetch, maxLegSeconds = 600, dpop = true, endpointPath = '/bindle/signaling', signaling = true, profiles = ['data', 'webrtc'] } = {}) {
   const entities = new Map(), received = [], requests = [];
+  const offerShape = /^[A-Za-z0-9_-]{22,43}$/;
   const manifest = {
     version: '0', issuer: origin,
     authorization_request_endpoint: `${origin}/oauth/requests`, authorization_endpoint: `${origin}/oauth/authorize`,
@@ -205,9 +210,38 @@ export async function createPeer({ origin = 'https://peer.example', providerFetc
   };
   /** A §9.1 batch; `offers` (the offer tokens of invites in the same batch) is omitted when empty. */
   peer.batch = ({ certificates = [], messages = [], controls = [], offers = [] } = {}) => ({ v: 1, certificates, messages, controls, ...offers.length ? { offers } : {} });
-  /** An offer token of the §5.7 shape (at least 128 random bits, 22 to 43 base64url characters) for the provider under
-   * test to dial back on. The peer keeps no offer record: admission at this peer is not implemented (step 6). */
-  peer.mintOffer = () => randomId(32);
+  // ---- offers minted at this peer (§5.7) ------------------------------------------------------------------------------
+  /** Live offer records by token digest: only what §5.7 "What the provider stores" lists (no token). */
+  const offers = new Map();
+  /**
+   * Mints one offer for one of this peer's entities and returns its token (at least 128 random bits, 22 to 43
+   * base64url characters, §5.7). `principal` binds it (single use, spent at admission); without one it is open, with
+   * `uses` (default 1). `kind` is the line URL and `profile` the profile id the dial-back must carry.
+   */
+  peer.mintOffer = ({ sub = null, principal = null, kind = null, profile = null, uses = 1, expiresIn = 900 } = {}) => {
+    const token = randomId(32);
+    offerDigest(token).then(digest => offers.set(digest, { digest, sub, principal, kind, profile, uses: principal ? 1 : uses, spent: 0, expiresAt: now() + expiresIn }));
+    return token;
+  };
+  /**
+   * §5.2 "Verifying an offer basis", as this peer applies it to an invite received from the provider under test:
+   * the batch carries a token of the right shape whose SHA-256 equals `offer_digest`, the offer is live with a free
+   * use, of the invite's kind line and profile, and open or bound to the verified certificate principal. Returns
+   * {admitted, reason} and spends a use only when admitted (bound offers spend at admission).
+   */
+  peer.admitOffer = async (entry, invite, certificatePayload) => {
+    const digest = invite?.body?.basis?.offer_digest;
+    if (typeof digest !== 'string') return { admitted: false, reason: 'no-offer-basis' };
+    const token = (entry.batch?.offers ?? []).find(o => typeof o === 'string' && offerShape.test(o));
+    if (!token || await offerDigest(token) !== digest) return { admitted: false, reason: 'token-missing-or-mismatched' };
+    const o = offers.get(digest);
+    if (!o || o.expiresAt <= now() || o.spent >= o.uses) return { admitted: false, reason: 'dead-offer' };
+    if (o.kind && invite.body.kind?.artefact !== o.kind || o.profile && invite.body.profile !== o.profile) return { admitted: false, reason: 'kind-or-profile' };
+    if (o.principal && (o.principal.iss !== certificatePayload?.iss || o.principal.sub !== certificatePayload?.sub)) return { admitted: false, reason: 'principal' };
+    o.spent++; return { admitted: true, reason: null };
+  };
+  /** Revokes an offer minted here by its token. */
+  peer.revokeOffer = async token => offers.delete(await offerDigest(token));
 
   // ---- talking to the provider under test ---------------------------------------------------------------------------
   let providerManifest = null; const providerKeys = new Map();
@@ -239,9 +273,8 @@ export async function createPeer({ origin = 'https://peer.example', providerFetc
     message: ['bindle', 'v', 'iss', 'sub', 'aud', 'sid', 'leg', 'to', 'seq', 'iat', 'type', 'body'],
     control: ['bindle', 'v', 'iss', 'sub', 'aud', 'sid', 'leg', 'type', 'reason', 'iat', 'jti']
   };
-  // §7.2 generic types and the §16.3 webrtc profile types (no `data` client in this peer).
-  const BODIES = { invite: ['kind', 'profile', 'answer_by', 'basis', 'context', 'params'], cancel: [], accept: ['params'], decline: ['reason'], end: ['reason'], sdp: ['gen', 'description'], candidates: ['gen', 'items', 'complete'] };
-  const offerShape = /^[A-Za-z0-9_-]{22,43}$/;
+  // §7.2 generic types, the §16.3 webrtc profile types and the §3.5 `data` type.
+  const BODIES = { invite: ['kind', 'profile', 'answer_by', 'basis', 'context', 'params'], cancel: [], accept: ['params'], decline: ['reason'], end: ['reason'], sdp: ['gen', 'description'], candidates: ['gen', 'items', 'complete'], data: ['payload'] };
   const same = (a, b) => a.length === b.length && [...a].sort().every((k, i) => k === [...b].sort()[i]);
   const jwsShape = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/;
   /** §9.2 step 1 as this peer reads it: shape, bounds, JWS profile, typ/bindle/v, exact members, aud, iat window, and
@@ -274,6 +307,8 @@ export async function createPeer({ origin = 'https://peer.example', providerFetc
         if (!Object.hasOwn(BODIES, p.type) || !p.body || typeof p.body !== 'object' || !same(Object.keys(p.body), BODIES[p.type])) problems.push('message-body');
         if (!Number.isSafeInteger(p.seq) || p.seq < 0 || p.seq > 4095) problems.push('message-seq');
         if (p.to === null && !['invite', 'cancel'].includes(p.type)) problems.push('message-to');
+        if (p.type === 'data') { const n = typeof p.body?.payload === 'string' && /^[A-Za-z0-9_-]*$/.test(p.body.payload) ? unb64(p.body.payload).length : -1; if (n < 1 || n > DATA_LIMITS.message) problems.push('data-payload'); }
+        if (p.type === 'invite') { const bs = p.body?.basis; if (!(bs === null || bs && same(Object.keys(bs), ['offer_digest']) || bs && same(Object.keys(bs), ['relation']) && bs.relation === 'pairing')) problems.push('invite-basis'); }
         if (typeof p.sid !== 'string' || !/^[A-Za-z0-9_-]{22,43}$/.test(p.sid)) problems.push('message-sid');
       }
       if (kind === 'cert' && (!Number.isSafeInteger(p.exp) || !Number.isSafeInteger(p.iat) || p.exp - p.iat > 900 || p.exp < t - 60)) problems.push('cert-lifetime');
@@ -323,6 +358,52 @@ export async function createPeer({ origin = 'https://peer.example', providerFetc
 export const newSid = () => randomId(16);
 /** base64url SHA-256 of an offer token (§5.2 `basis.offer_digest`). */
 export const offerDigest = async token => b64(await sha256(token));
+/** A `data` message body (§3.5): `payload` is base64url of 1 to 4,096 opaque bytes. */
+export const dataBody = (n = 32, fill = 7) => ({ payload: b64(new Uint8Array(n).fill(fill)) });
+
+// ---- session kinds (intents §4 with the AMD-SG-I1 `session` member, §20.1.1) ------------------------------------------
+/**
+ * A session-kind body: an intent kind body (intents §4.1) with `effect: "join"`, `capability: false`, `max_bytes` at most
+ * 2,048, at most 8 data properties (all optional here), one disclosure entry per property, and `session`
+ * `{v: 1, parties, profiles, bases?}` (§3.4, §20.1.1).
+ */
+export function sessionKind({ line, parties = 'any', profiles = { webrtc: {} }, bases, properties = {}, title = 'Conformance kind', categories = ['personal-data'], maxBytes = 64 }) {
+  const fields = Object.fromEntries(Object.keys(properties).map(k => [k, { title: { en: k }, categories: [...categories], display: 'presence' }]));
+  return { id: line, title: { en: title }, summary: { en: `${title} sessions.` }, publisher: new URL(line).origin, effect: 'join', capability: false, max_bytes: maxBytes,
+    data: { type: 'object', properties: structuredClone(properties), required: [] }, disclosure: { categories: [...categories], fields },
+    session: { v: 1, parties, profiles: structuredClone(profiles), ...bases ? { bases: [...bases] } : {} } };
+}
+/** An artefact envelope (artefacts §2) of kind `intent` holding one version of `body`. */
+export const kindEnvelope = body => ({ bindle_artefact: 1, id: body.id, kind: 'intent', versions: [{ version: 1, prev: null, body }] });
+/**
+ * RFC 8785 canonical JSON for the artefacts §3 profile (objects, arrays, strings, safe integers, booleans, null):
+ * members sorted by UTF-16 code units, no whitespace. Refuses anything outside the profile (artefacts §3).
+ */
+export function canonicalJSON(value) {
+  if (value === null || typeof value === 'boolean') return JSON.stringify(value);
+  if (typeof value === 'number') { if (!Number.isSafeInteger(value) || Object.is(value, -0)) throw new Error('outside the artefacts profile'); return String(value); }
+  if (typeof value === 'string') { if (/[\ud800-\udfff]/.test(value.replace(/[\ud800-\udbff][\udc00-\udfff]/g, ''))) throw new Error('lone surrogate'); return JSON.stringify(value); }
+  if (Array.isArray(value)) return `[${value.map(canonicalJSON).join(',')}]`;
+  if (typeof value === 'object') return `{${Object.keys(value).sort().map(k => `${JSON.stringify(k)}:${canonicalJSON(value[k])}`).join(',')}}`;
+  throw new Error('outside the artefacts profile');
+}
+/** artefacts §4: `sha256-` + base64url SHA-256 of the canonical version record `{t, id, kind, version, prev, body}`. */
+export const versionDigest = async (envelope, entry) => 'sha256-' + b64(await sha256(canonicalJSON({ t: 'bindle.artefact-version.v1', id: envelope.id, kind: envelope.kind, version: entry.version, prev: entry.prev, body: entry.body })));
+/** The artefact reference `{artefact, version, digest}` (artefacts §5) of an envelope's first version. */
+export const kindReference = async envelope => ({ artefact: envelope.id, version: envelope.versions[0].version, digest: await versionDigest(envelope, envelope.versions[0]) });
+
+// ---- glare (§8.3) ----------------------------------------------------------------------------------------------------
+const concatBytes = (...parts) => { const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0)); let at = 0; for (const p of parts) { out.set(p, at); at += p.length; } return out; };
+const compareBytes = (x, y) => { for (let i = 0; i < Math.min(x.length, y.length); i++) if (x[i] !== y[i]) return x[i] < y[i] ? -1 : 1; return x.length - y.length; };
+/** §8.3: the ranks of the session whose initiator leg is `a` and of the one whose initiator leg is `b` (base64url
+ * `cnf.jkt` values, decoded to bytes): SHA-256("bindle-signaling-glare" ‖ a ‖ b) and SHA-256("bindle-signaling-glare" ‖ b ‖ a). */
+export async function glareRanks(a, b) {
+  const label = utf8('bindle-signaling-glare'), x = unb64(a), y = unb64(b);
+  return { a: await sha256(concatBytes(label, x, y)), b: await sha256(concatBytes(label, y, x)) };
+}
+/** §8.3: 'a' when the session whose initiator leg is `a` survives (lower rank as a byte string), 'b' for the other,
+ * 'both-cancel' on equal ranks. */
+export async function glareOutcome(a, b) { const r = await glareRanks(a, b), c = compareBytes(r.a, r.b); return c < 0 ? 'a' : c > 0 ? 'b' : 'both-cancel'; }
 
 /**
  * The simulated network seam: hostnames map to WHATWG handlers. Returns the two ports the Node provider accepts

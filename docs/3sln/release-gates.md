@@ -57,7 +57,7 @@ Reviewer / date / notes: _pending; local drafting and implementation may proceed
 ## Signaling (3sln.me policy, provisional 2026-10-28)
 
 `SIGNALING_ENABLED` stays off in production until all of these hold:
-- **Owner pages.** Approving a session handler (signaling §20.1.4), creating and activating a pairing (§5.8) and designating a service organization (§4.3) happen only on provider pages that show the required disclosures. The JSON owner routes are adapters for those pages and are not enough on their own.
+- **Owner pages.** Approving a session handler (signaling §20.1.4), creating and activating a pairing (§5.8) and designating a service organization (§4.3) happen only on provider pages that show the required disclosures. The JSON owner routes are adapters for those pages and are not enough on their own. *Status 2026-10-28: implemented locally (console view `signaling`, single-use armed reviews); organization approvals and pairings through the owner interface, the app-request pairing page and the M4 confirmation page remain.*
 - **Client sessions.** Revoking a device-authorization client session runs the §14.2 narrowing (`signalingClientSessionRevoked` is wired), before any enrolment page offers pairings.
 - **Data profile.** The `data` profile has a cost row and a per-owner budget confirmed against provider usage (§3.5); hosted relay issuance stays refused until the spend authority enforces a per-owner byte cap (§16.7).
 - **Conformance.** The peer conformance suite is rewritten from the revision 3.2 text (Appendix C.5 step 6) and passes in strict mode.

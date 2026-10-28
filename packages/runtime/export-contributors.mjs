@@ -105,6 +105,7 @@ const excluded={
  'sig/inq/':'Transient: inbound signaling batches awaiting processing.','sig/inq-meta':'Derived: inbound signaling queue counters.',
  'sig/offer/':'Transient capability: live offers (token hashes only), deleted at expiry; never exported (§5.7, §12.6).',
  'sig/pairing-peer/':'Derived: index of cross-entity pairings by (peer principal, kind line).',
+ 'sig/review/':'Transient: owner-page reviews (single-use, at most 10 minutes; a digest of the reviewed change, its arming and expiry times; packages/signaling/owner-pages.mjs).',
  'sig/relay/':'Transient: relay credential leases (TURN usernames only, never credentials; at most 300 s past the leg).',
  'sig/relay-use/':'Derived: relay allowance counters (reserved bytes this month and last, one-hour issuance window).',
  // Legacy rows of the replaced RTC code (dev and test stores only), deleted by the one-time reset on the account alarm

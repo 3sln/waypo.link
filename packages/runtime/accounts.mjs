@@ -181,6 +181,9 @@ export class FixedWindowGuard {
   async alarm(){if(await this.metadata.get('population/census-v1')||await this.metadata.get('population/census-wake')){if(this.config.ACTIVE_POPULATION_CENSUS)try{await this.config.ACTIVE_POPULATION_CENSUS();}catch{await this.metadata.setAlarm(Date.now()+60000);}}if(await this.metadata.get('waitlist/counts'))await this.waitlist.cleanupExpired();await this.metadata.transaction(async tx=>{const window=await tx.get('window');if(window&&window.end<=this.clock())await tx.delete('window');else if(window)await tx.setAlarm(window.end);});}
 }
 
+/** Signaling `approval_required` carries the URL of this provider's approval page (signaling §20.1.4), never another
+ * origin; every other fault keeps only code, message, status and retryAfter. */
+function approvalURL(controller,error){const origin=controller?.config?.APP_ORIGIN;return error?.code==='approval_required'&&typeof error.url==='string'&&typeof origin==='string'&&error.url.startsWith(origin+'/')&&error.url.length<=4096?{url:error.url}:{};}
 function serializable(value){if(value instanceof Uint8Array)return {$bytes:Array.from(value)};if(Array.isArray(value))return value.map(serializable);if(value&&typeof value==='object')return Object.fromEntries(Object.entries(value).map(([k,v])=>[k,serializable(v)]));return value;}
 function restore(value){if(value&&Object.hasOwn(value,'$bytes'))return Uint8Array.from(value.$bytes);if(Array.isArray(value))return value.map(restore);if(value&&typeof value==='object')return Object.fromEntries(Object.entries(value).map(([k,v])=>[k,restore(v)]));return value;}
 
@@ -242,8 +245,8 @@ export class AccountController {
     // Fanout runs outside the account gate: a recipient may concurrently submit
     // to this source while its own account gate is held. Receiver writes retain
     // their own serialization, including the source's local inbox.
-    if(policy.gate==='none'){try{return await withWriterFlags(this,this.flagConfig,()=>this[method](...args));}catch(error){return {$fault:{code:error.code||'invalid_request',message:error.code?error.message:'The account operation could not be completed.',status:error.status,...Number.isSafeInteger(error.retryAfter)&&error.retryAfter>0?{retryAfter:error.retryAfter}:{}}};}}
-    const result=await this.gate.run(async()=>{try{if(policy.lifecycle!=='purging')await assertDeletionFenceOpen(this.metadata);if(policy.warm===true)await this.warm(args[0]);return await withWriterFlags(this,this.flagConfig,()=>this[method](...args));}catch(error){return {$fault:{code:error.code||'invalid_request',message:error.code?error.message:'The account operation could not be completed.',status:error.status,...Number.isSafeInteger(error.retryAfter)&&error.retryAfter>0?{retryAfter:error.retryAfter}:{}}};}});
+    if(policy.gate==='none'){try{return await withWriterFlags(this,this.flagConfig,()=>this[method](...args));}catch(error){return {$fault:{code:error.code||'invalid_request',message:error.code?error.message:'The account operation could not be completed.',status:error.status,...Number.isSafeInteger(error.retryAfter)&&error.retryAfter>0?{retryAfter:error.retryAfter}:{},...approvalURL(this,error)}};}}
+    const result=await this.gate.run(async()=>{try{if(policy.lifecycle!=='purging')await assertDeletionFenceOpen(this.metadata);if(policy.warm===true)await this.warm(args[0]);return await withWriterFlags(this,this.flagConfig,()=>this[method](...args));}catch(error){return {$fault:{code:error.code||'invalid_request',message:error.code?error.message:'The account operation could not be completed.',status:error.status,...Number.isSafeInteger(error.retryAfter)&&error.retryAfter>0?{retryAfter:error.retryAfter}:{},...approvalURL(this,error)}};}});
     // Qualifying owner/app activity resets the inactivity clock outside the account gate.
     if(!result?.$fault)await lifecycleActivity(this,method,args,policy);
     return result;

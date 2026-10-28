@@ -8,6 +8,7 @@
 // engine level (tests/helpers/signaling-fixture.mjs) and across providers (signaling-federation-fixture.mjs). Local
 // behaviour only; no foreign provider, relay or push service.
 import test from 'node:test';
+import {reviewed,approvals,reviewedHTTP} from './helpers/signaling-owner-review.mjs';
 import assert from 'node:assert/strict';
 import {mkdtemp,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
@@ -47,7 +48,8 @@ async function host(t,flags){
   const r=await post('/api/auth/recovery/confirm',{pendingToken:pending.pendingToken,recoveryToken:recovery.recoveryToken,downloadConfirmed:true}),session=await r.json();
   const id=session.account.id,object=accountHandle(env,id),actor={kind:'app',owner:id,clientId:APP,origin:'https://app.example',grants:['grant-ok']};
   // The owner's session handler approvals (AMD-SG-I1), recorded with the adapter's P1 evidence.
-  if(approve)for(const line of [CHAT,SYNC])await object.signalingDispatch(id,{operation:'intents.session-approve',actor:{kind:'owner',owner:id,parties:[APP]},input:{clientId:APP,kind:REF[line]}});
+  // Recorded as the approval page records it: a review, then the armed decision (packages/signaling/owner-pages.mjs).
+  if(approve)await reviewed((operation,input,as)=>object.signalingDispatch(id,{operation,actor:as,input}),{kind:'owner',owner:id,parties:[APP]},approvals(APP,[REF[CHAT],REF[SYNC]]));
   return {handle:session.account.handle,id,cookie:r.headers.get('Set-Cookie').split(';')[0],csrf:session.csrfToken,principal:{iss:ORIGIN,sub:id},identity:`${ORIGIN}/identity/${id}`,object,
    app:(operation,input)=>object.signalingDispatch(id,{operation,actor,input}),listen:input=>object.signalingListen(id,{actor,input}),owner:(operation,input)=>object.signalingDispatch(id,{operation,actor:{kind:'owner',owner:id},...input===undefined?{}:{input}})};
  };
@@ -148,7 +150,9 @@ test('approvals over the real runtime: session-approve needs the app\'s live sig
  // Without a grant on the signaling fragment, the widening is the uniform 404 (P1 evidence comes only from the grants).
  uniform(await h.call(b,'POST','/api/intents/session-approve',{clientId:APP,kind:REF[CHAT]}),'no grant, no approval');
  await h.grant(b);
- const ok=await h.call(b,'POST','/api/intents/session-approve',{clientId:APP,kind:REF[CHAT]});assert.equal(ok.status,200,JSON.stringify(ok.body));
+ const post=(user,path,value)=>h.call(user,'POST',path,value);
+ assert.deepEqual((await post(b,'/api/intents/session-approve',{clientId:APP,kind:REF[CHAT]})).body.error,'review_required','only the approval page records an approval');
+ const [ok]=await reviewedHTTP((path,value)=>post(b,path,value),[{path:'/api/intents/session-approve',action:'session-approve',input:{clientId:APP,kind:REF[CHAT]}}]);assert.equal(ok.status,200,JSON.stringify(ok.body));
  assert.deepEqual(ok.body,{kind:CHAT,clientId:APP,version:1,autoConnect:false});
  assert.equal((await h.call(b,'POST','/api/intents/session-approve',{clientId:APP,kind:REF[CHAT],actor:{kind:'owner',owner:a.id,parties:[APP]}})).status,400,'never an actor from the body');
  assert.equal((await h.call(b,'POST','/api/intents/session-approve',{clientId:APP,kind:{...REF[CHAT],digest:'sha256-'+'B'.repeat(43)}})).status,400,'a kind version the provider does not hold');
@@ -158,7 +162,7 @@ test('approvals over the real runtime: session-approve needs the app\'s live sig
  // Auto-connect: only for a `parties: self` kind, and only on an existing approval.
  assert.equal((await h.call(b,'POST','/api/intents/session-auto-connect',{clientId:APP,kind:CHAT,autoConnect:true})).status,400,'CHAT is not a self kind');
  uniform(await h.call(b,'POST','/api/intents/session-auto-connect',{clientId:APP,kind:SYNC,autoConnect:true}),'no SYNC approval yet');
- assert.equal((await h.call(b,'POST','/api/intents/session-approve',{clientId:APP,kind:REF[SYNC],autoConnect:true})).status,200);
+ assert.equal((await reviewedHTTP((path,value)=>post(b,path,value),[{path:'/api/intents/session-approve',action:'session-approve',input:{clientId:APP,kind:REF[SYNC]},extra:{autoConnect:true}}]))[0].status,200);
  assert.deepEqual((await h.call(b,'POST','/api/intents/session-auto-connect',{clientId:APP,kind:SYNC,autoConnect:false})).body,{autoConnect:false});
  // A connected session on CHAT: unapproving CHAT ends it at once (a control statement to the initiator, a claimed
  // session), removes the endpoint registered only for CHAT, and the app may not register for it again.
@@ -191,7 +195,7 @@ test('owner routes with signaling off: widening answers the uniform 404, byte-id
   assert.deepEqual((await h.call(a,'POST','/api/signaling/set-policy',{revision:0,other:'relay',self:'public'})).body,{other:'relay',self:'public',revision:1});
   assert.deepEqual((await h.call(a,'POST','/api/signaling/block',{principal:b.principal})).body,{blocked:true});
   assert.deepEqual((await h.call(a,'POST','/api/signaling/revoke-offers',{all:true})).body,{revoked:0});
-  assert.deepEqual((await h.call(a,'POST','/api/signaling/set-service',{designated:false,revision:0})).body,{designated:false,revision:1});
+  assert.deepEqual((await h.call(a,'POST','/api/signaling/set-service',{designated:false,revision:0})).body,{designated:false,revision:1,revoked:0});
   assert.deepEqual((await h.call(a,'POST','/api/intents/session-unapprove',{clientId:APP,kind:CHAT})).body,{removed:false,ended:0});
   uniform(await h.call(a,'POST','/api/signaling/end-session',{sid:'z'.repeat(22)}),'unknown session');uniform(await h.call(a,'POST','/api/signaling/pairing-remove',{id:'pr_'+'A'.repeat(22)}),'unknown pairing');
   assert.deepEqual((await h.call(a,'GET','/api/signaling/settings')).body.policy.self,'public');
@@ -205,25 +209,28 @@ test('pairings over the owner routes: create pending, explicit activation (CAS),
  const h=await host(t,ON),a=await h.person('sig_pair_a'),b=await h.person('sig_pair_b');
  await h.grant(a,APP);
  const own={kind:REF[SYNC],local:{client_id:APP,client_session:null},peer:{self:{client_id:APP2,client_session:null}},opens:'both',label:'Desk to phone'};
- const created=await h.call(a,'POST','/api/signaling/pairing-create',{...own,activate:true});assert.equal(created.status,200,JSON.stringify(created.body));
+ const page=items=>reviewedHTTP((path,value)=>h.call(a,'POST',path,value),items);
+ assert.equal((await h.call(a,'POST','/api/signaling/pairing-create',{...own,activate:true})).body.error,'review_required','only the creation page creates a pairing');
+ const [created]=await page([{path:'/api/signaling/pairing-create',action:'pairing-create',input:own,extra:{activate:true}}]);assert.equal(created.status,200,JSON.stringify(created.body));
  assert.equal(created.body.state,'pending','APP2 holds no grant or approval yet, so activation waits (P1, P3)');assert.equal(created.body.expires_at,null);assert.match(created.body.id,/^pr_/);
  let s=(await h.call(a,'GET','/api/signaling/settings')).body;
  assert.deepEqual(s.pairings.map(p=>p.id),[created.body.id]);
  assert.deepEqual(s.apps.filter(x=>x.pairings.some(p=>p.id===created.body.id)).map(x=>x.clientId).sort(),[APP,APP2].sort(),'an own-entity pairing is listed with both apps (P4)');
- const incomplete=await h.call(a,'POST','/api/signaling/pairing-activate',{id:created.body.id,revision:1});assert.equal(incomplete.status,409,JSON.stringify(incomplete.body));
+ const preview=await h.call(a,'POST','/api/signaling/review',{action:'pairing-activate',input:{id:created.body.id,revision:1}});assert.equal(preview.body.disclosure.activateNow,false,'the activation page shows the control unavailable until every party qualifies');
+ const [incomplete]=await page([{path:'/api/signaling/pairing-activate',action:'pairing-activate',input:{id:created.body.id,revision:1}}]);assert.deepEqual([incomplete.status,incomplete.body.error],[409,'pairing_parties_incomplete']);
  // APP2 gets its grant and approval; activation is still an explicit owner action.
- await h.grant(a,APP2);assert.equal((await h.call(a,'POST','/api/intents/session-approve',{clientId:APP2,kind:REF[SYNC]})).status,200);
+ await h.grant(a,APP2);assert.equal((await page([{path:'/api/intents/session-approve',action:'session-approve',input:{clientId:APP2,kind:REF[SYNC]}}]))[0].status,200);
  assert.equal((await h.call(a,'GET','/api/signaling/settings')).body.pairings[0].state,'pending','approving or granting a party never activates it');
  const stale=await h.call(a,'POST','/api/signaling/pairing-activate',{id:created.body.id,revision:0});assert.deepEqual([stale.status,stale.body],[409,{error:'conflict'}]);
- const live=await h.call(a,'POST','/api/signaling/pairing-activate',{id:created.body.id,revision:1});assert.deepEqual([live.status,live.body.state,live.body.revision],[200,'live',2]);
+ const [live]=await page([{path:'/api/signaling/pairing-activate',action:'pairing-activate',input:{id:created.body.id,revision:1}}]);assert.deepEqual([live.status,live.body.state,live.body.revision],[200,'live',2]);
  const relabel=await h.call(a,'POST','/api/signaling/pairing-update',{id:created.body.id,revision:2,label:'Desk'});assert.deepEqual([relabel.body.label,relabel.body.revision],['Desk',3]);
  assert.equal((await h.call(a,'POST','/api/signaling/pairing-create',{...own,peer:{feature:'https://spec.bindle.example/extensions/x/v1'}})).status,400,'a provider feature is never a pairing party');
  assert.equal((await h.call(a,'POST','/api/signaling/pairing-create',{...own,kind:REF[CHAT],peer:{self:{client_id:APP2,client_session:null}},opens:'sideways'})).status,400);
  // Cross-entity: CHAT (parties any) with B's principal. The session authenticated just now counts as fresh.
- const cross=await h.call(a,'POST','/api/signaling/pairing-create',{kind:REF[CHAT],local:{client_id:APP,client_session:null},peer:{principal:b.principal},opens:'local',label:'Bob'});
+ const [cross]=await page([{path:'/api/signaling/pairing-create',action:'pairing-create',input:{kind:REF[CHAT],local:{client_id:APP,client_session:null},peer:{principal:b.principal},opens:'local',label:'Bob'}}]);
  assert.equal(cross.status,200,JSON.stringify(cross.body));assert.ok(cross.body.expires_at>Date.now()+80*86400000,'a cross-entity pairing always expires (default 90 days)');
- const again=await h.call(a,'POST','/api/signaling/pairing-create',{kind:REF[CHAT],local:{client_id:APP,client_session:null},peer:{principal:b.principal},opens:'local',label:'Bob again'});
- assert.equal(again.status,409,'at most one cross-entity pairing per (peer principal, kind line): '+JSON.stringify(again.body));
+ const again=await h.call(a,'POST','/api/signaling/review',{action:'pairing-create',input:{kind:REF[CHAT],local:{client_id:APP,client_session:null},peer:{principal:b.principal},opens:'local',label:'Bob again'}});
+ assert.deepEqual(again.body,{action:'pairing-create',review:null,refusal:{code:'pairing_exists',existing:cross.body.id}},'at most one cross-entity pairing per (peer principal, kind line); the page links to the existing one');
  assert.equal((await h.call(a,'POST','/api/signaling/pairing-create',{kind:REF[SYNC],local:{client_id:APP,client_session:null},peer:{principal:b.principal},opens:'local',label:'x'})).status,400,'a self kind admits no other party');
  // Blocking the peer deletes its pairing; removing the own-entity one deletes it.
  assert.deepEqual((await h.call(a,'POST','/api/signaling/block',{principal:b.principal})).body,{blocked:true});
@@ -236,9 +243,9 @@ test('pairings over the owner routes: create pending, explicit activation (CAS),
 test('service designation: only an organization entity can be designated; removing is narrowing (CAS)',async t=>{
  const h=await host(t,ON),a=await h.person('sig_service_a');
  uniform(await h.call(a,'POST','/api/signaling/set-service',{designated:true,revision:0}),'a person entity cannot be designated');
- assert.deepEqual((await h.call(a,'POST','/api/signaling/set-service',{designated:false,revision:0})).body,{designated:false,revision:1});
+ assert.deepEqual((await h.call(a,'POST','/api/signaling/set-service',{designated:false,revision:0})).body,{designated:false,revision:1,revoked:0});
  assert.deepEqual((await h.call(a,'POST','/api/signaling/set-service',{designated:false,revision:0})),{status:409,body:{error:'conflict'}});
- assert.deepEqual(await a.owner('signaling.service'),{designated:false,eligible:false,revision:1});
+ assert.deepEqual(await a.owner('signaling.service'),{designated:false,eligible:false,revision:1,longOffers:0});
 });
 
 test('owner stage: forwarded as the signed-in owner; P1 evidence from the live signaling grants; fresh authentication from the session; narrowing paths exempt from capacity',async()=>{

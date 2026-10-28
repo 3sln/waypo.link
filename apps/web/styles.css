@@ -429,3 +429,19 @@ input[type=checkbox][required]:user-invalid{outline:3px solid #c5221f;outline-of
 .signaling-row>span:first-child{flex:1 1 220px;min-width:0}
 .signaling-row .buttons{margin:0;flex-wrap:wrap;align-items:center}
 .signaling-row .pill{white-space:normal;max-width:100%;overflow-wrap:anywhere}
+/* Signaling owner pages (console view `signaling`; provisional): approval, pairing, offers and service designation.
+   Decision buttons stay focusable while aria-disabled (armed after a delay); they are dimmed, never hidden. */
+.signaling-pages{min-width:0;overflow-wrap:anywhere}
+.signaling-pages .panel{margin-bottom:16px;min-width:0}
+.signaling-pages h3{font-size:15px;margin:18px 0 6px}
+.signaling-facts{display:grid;gap:8px;margin:10px 0}
+.signaling-facts>div{display:grid;grid-template-columns:minmax(120px,200px) minmax(0,1fr);gap:4px 12px}
+.signaling-facts dt{font-weight:600}
+.signaling-facts dd{margin:0;min-width:0}
+.signaling-facts ul{margin:0;padding-left:18px}
+.signaling-quote{font-style:italic}
+.signaling-peer{border-top:1px solid var(--line);padding-top:6px;margin-top:10px}
+.signaling-decision [data-signaling-decide][aria-disabled=true]{opacity:.55;cursor:not-allowed}
+/* The arming hint keeps its space once armed, so the decision button never moves under a pointer. */
+.signaling-arming-help.signaling-armed{visibility:hidden}
+@media (max-width:560px){.signaling-facts>div{grid-template-columns:minmax(0,1fr)}}

@@ -3,8 +3,8 @@
 // session handler approvals, endpoints, live offers and pairings with its entry in the owner's app connections. Engine
 // Actions over the owner routes (GET /api/signaling/settings and the narrowing POSTs); the rules are the server's.
 // Provisional (coordinator), not signed off by the user; nothing here is shown or requested while the account's session
-// features lack signalingEnabled. Pairing creation and activation, and turning auto-connect on, are widening and need
-// dedicated provider pages: they are deliberately not offered here.
+// features lack signalingEnabled. Pairing creation and activation, and turning auto-connect on, are widening: they
+// happen only on the owner pages (bl/signaling-pages.mjs, console view `signaling`), which these surfaces link to.
 //
 // State: `signaling` {owner, generation, status: 'loading'|'loaded'|'error', ...GET /api/signaling/settings}. It is
 // dropped when the account or its session generation changes (the GuardedAction epoch ticket discards late answers;
@@ -36,7 +36,7 @@ const principal=p=>p&&typeof p==='object'&&text(p.iss)&&text(p.sub)?{iss:p.iss,s
 const OPERATIONS=Object.freeze({
  unblock:{path:'/api/signaling/unblock',input:i=>principal(i?.principal)?{principal:principal(i.principal)}:text(i?.issuer)?{issuer:i.issuer}:null,notice:i=>i.issuer?'Provider unblocked.':'Unblocked.',focus:'#signaling-blocked-title'},
  'revoke-endpoint':{path:'/api/signaling/revoke-endpoint',input:i=>text(i?.endpoint)?{endpoint:i.endpoint}:null,confirm:true,notice:()=>'Device removed.'},
- 'revoke-offers':{path:'/api/signaling/revoke-offers',input:i=>text(i?.id)?{id:i.id}:text(i?.clientId)?{clientId:i.clientId}:null,confirm:true,notice:i=>i.id?'Offer revoked.':'Offers revoked.'},
+ 'revoke-offers':{path:'/api/signaling/revoke-offers',input:i=>text(i?.id)?{id:i.id}:text(i?.clientId)?{clientId:i.clientId}:i?.all===true?{all:true}:null,confirm:true,notice:i=>i.id?'Offer revoked.':'Offers revoked.'},
  'pairing-remove':{path:'/api/signaling/pairing-remove',input:i=>text(i?.id)?{id:i.id}:null,confirm:true,notice:()=>'Pairing removed.'},
  'session-unapprove':{path:'/api/intents/session-unapprove',input:i=>text(i?.clientId)&&text(i?.kind)?{clientId:i.clientId,kind:i.kind}:null,confirm:true,notice:()=>'Connection type removed.'},
  'session-auto-connect':{path:'/api/intents/session-auto-connect',input:i=>text(i?.clientId)&&text(i?.kind)?{clientId:i.clientId,kind:i.kind,autoConnect:false}:null,notice:()=>'Automatic connection turned off.',focusApp:true}

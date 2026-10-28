@@ -6,6 +6,7 @@
 // slice) with injected doubles. Retargeted from rtc-relay.test.mjs for signaling rev 3.2. Local behaviour only: nothing
 // here is evidence of Cloudflare conformance, relay spend enforcement or delivery. Provisional, unsigned.
 import test from 'node:test';
+import {reviewed,approvals} from './helpers/signaling-owner-review.mjs';
 import assert from 'node:assert/strict';
 import {mkdtemp,readFile,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
@@ -661,7 +662,7 @@ test('runtime: the relay resource is declared and dispatchable only with every f
   const downloaded=await identity.downloadRecovery({pendingToken:pending.pendingToken},base);
   await identity.confirmRecovery({pendingToken:pending.pendingToken,recoveryToken:downloaded.recoveryToken,downloadConfirmed:true},base);
   const id=pending.account.id,object=accountHandle(env,id),actor={kind:'app',owner:id,clientId:APP,origin:'https://app.example',grants:['grant-ok']},owner={kind:'owner',owner:id,parties:[APP]};
-  await object.signalingDispatch(id,{operation:'intents.session-approve',actor:owner,input:{clientId:APP,kind:KIND}});
+  await reviewed((operation,input,as)=>object.signalingDispatch(id,{operation,actor:as,input}),owner,approvals(APP,[KIND]));
   const dispatch=(operation,input,as=actor)=>object.signalingDispatch(id,{operation,actor:as,input});
   const ep=await dispatch('signaling.register',{kinds:[LINE]});
   return {id,object,owner,principal:{iss:ORIGIN,sub:id},dispatch,auth:{endpoint:ep.endpoint,endpoint_secret:ep.endpoint_secret}};

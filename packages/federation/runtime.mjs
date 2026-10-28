@@ -55,7 +55,8 @@ export function withManifestDeclarations(manifest,declarations={}){
  if(declarationBytes(result)>65536)throw new TypeError('Manifest exceeds 64 KiB.');return result;
 }
 const readMethods=new Set(['get','list','read','describe','capabilities','presign']);
-const faultResult=(code,message,error={})=>({__federationError:{code,message,...Number.isSafeInteger(error.retryAfter)&&error.retryAfter>0&&error.retryAfter<=2678400?{retryAfter:error.retryAfter}:{}}});
+// Signaling `approval_required` carries the issuer's own approval page URL (signaling §20.1.4: never app-supplied).
+const faultResult=(code,message,error={},issuer=null)=>({__federationError:{code,message,...Number.isSafeInteger(error.retryAfter)&&error.retryAfter>0&&error.retryAfter<=2678400?{retryAfter:error.retryAfter}:{},...code==='approval_required'&&typeof issuer==='string'&&typeof error.url==='string'&&error.url.startsWith(issuer+'/')&&error.url.length<=4096?{url:error.url}:{}}});
 /** Final refusal codes: a write answering one is journaled as that result (a retry answers it again). Any other code
  * from a write is `indeterminate`. The rule for membership: at every raise site, either nothing durable was written,
  * or (one case, below) what was written is terminal, so neither a retry nor another attempt could reach a different
@@ -156,14 +157,14 @@ export class FederationController {
     if(writing&&adapter?.transactional!==true&&adapter?.durableJournal!==true)fail('temporarily_unavailable','This adapter has no verified durable mutation journal.');
     // Reads have no effects to replay. Re-authorize through the service and
     // fetch fresh data without creating fleet-wide per-transaction records.
-    if(!writing){try{return await execute();}catch(error){if(NO_EFFECT_CODES.has(error.code))return faultResult(error.code,'The requested operation could not be completed.',error);throw error;}}
+    if(!writing){try{return await execute();}catch(error){if(NO_EFFECT_CODES.has(error.code))return faultResult(error.code,'The requested operation could not be completed.',error,this.issuer);throw error;}}
     const journalKey=`federation/journal/${encodeURIComponent(ctx.subject)}/${encodeURIComponent(ctx.clientId)}/${ctx.tx}`;
     const fingerprint=await digest(crypto,canonical({resource:ctx.resource,addressedResource:ctx.addressedResource??ctx.resource,contract:ctx.contract,method:ctx.method,args:ctx.args,scope:ctx.scope??{},epoch:ctx.epoch??null,resourceGeneration:ctx.resourceGeneration??null,connectionGeneration:ctx.connection?.generation??null}));
     const prior=await transact(async tx=>{const previous=await tx.get(journalKey);if(previous&&previous.expiresAt>this.clock()){if(previous.fingerprint!==fingerprint)fail('tx_conflict','Transaction identifier was reused with different arguments.');return previous;}const rows=await tx.list('federation/journal/');let live=0;for(const row of rows){if(row.value.expiresAt<=this.clock())await tx.delete(row.key);else live++;}if(live>=256)fail('rate_limited','This account has reached its outstanding transaction limit.');await tx.set(journalKey,{fingerprint,status:'reserved',expiresAt:this.clock()+86400000});return null;});
     if(prior){if(prior.status==='complete'){await ctx.reauthorize?.();if(prior.retained===false)return faultResult('indeterminate','The previous operation completed; its result is not retained. Reconcile through a fresh read.');return prior.result;}return faultResult('indeterminate','The previous operation outcome is unknown. Reconcile through a fresh read.');}
     const save=record=>transact(tx=>tx.set(journalKey,record));
     let result;try{result=await execute();}
-    catch(error){if(NO_EFFECT_CODES.has(error.code)){result=faultResult(error.code,'The requested operation could not be completed.',error);await save({fingerprint,status:'complete',result,expiresAt:this.clock()+86400000});return result;}if(lifecycleUnknown(error))throw error;if(writing){result=faultResult('indeterminate','The operation outcome is unknown. Reconcile through a fresh read.');await save({fingerprint,status:'indeterminate',expiresAt:this.clock()+86400000});return result;}throw error;}
+    catch(error){if(NO_EFFECT_CODES.has(error.code)){result=faultResult(error.code,'The requested operation could not be completed.',error,this.issuer);await save({fingerprint,status:'complete',result,expiresAt:this.clock()+86400000});return result;}if(lifecycleUnknown(error))throw error;if(writing){result=faultResult('indeterminate','The operation outcome is unknown. Reconcile through a fresh read.');await save({fingerprint,status:'indeterminate',expiresAt:this.clock()+86400000});return result;}throw error;}
     await save(retain?{fingerprint,status:'complete',result,expiresAt:this.clock()+86400000}:{fingerprint,status:'complete',retained:false,expiresAt:this.clock()+86400000});return result;
   }
 }

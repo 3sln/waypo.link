@@ -7,6 +7,7 @@ import {orgError,orgNotice,ORG_SIGNED_OUT_INVITATION} from './org-messages.mjs';
 import {breakGlassPanel,breakGlassBanners,breakGlassWaiting} from './org-break-glass.mjs';
 import {claimInterstitial} from './org-claim-interstitial.mjs';
 import {relationsPanel,relationsTabs,relationsChecklist} from './org-relations.mjs';
+import {signalingEnabled} from '../bl/signaling-controls.mjs';
 const text=(s,en,es)=>s.locale==='es'?es:en;
 const plain=value=>h('bdi',String(value??'')).attrs({dir:'auto',translate:'no'});
 // Shell tokens (apps/web/styles.css :root): --forest, --muted, --line, --surface, --focus, --lime. Text and page colour
@@ -170,7 +171,9 @@ export default function organizations(s){
   ...(m.connectionsUnavailable?[]:(m.connections??[]).map(c=>h('article',h('h3',plain(c.name??c.clientId)),h('p',t('Status: ','Estado: '),tt(STATES[c.state]??[t('Unknown','Desconocido'),t('Unknown','Desconocido')])),
    c.state==='disconnected'?null:h('div',['active','degraded','configuring','manifest-invalid'].includes(c.state)?btn(t('Suspend','Suspender'),'connection',{id:c.id,values:{operation:'suspend'}},false,'connection-suspend'):null,c.state==='suspended'?btn(t('Resume','Reanudar'),'connection',{id:c.id,values:{operation:'resume'}},deleting,'connection-resume'):null).classes('org-actions'),
    c.integration?.staged&&c.state!=='disconnected'?form([check('confirm',t('Approve this app’s changed requirements for the organization','Aprobar los requisitos modificados de esta app para la organización'))],'connection',t('Approve change','Aprobar cambio'),{id:c.id,operation:'approve'},'connection-approve'):null,
-   c.state==='disconnected'?null:form([check('confirm',t('Disconnect this app from the organization','Desconectar esta app de la organización'))],'connection',t('Disconnect','Desconectar'),{id:c.id,operation:'disconnect'},'connection-disconnect')).key(c.id)))):null;
+   c.state==='disconnected'?null:form([check('confirm',t('Disconnect this app from the organization','Desconectar esta app de la organización'))],'connection',t('Disconnect','Desconectar'),{id:c.id,operation:'disconnect'},'connection-disconnect')).key(c.id))),
+  // Signaling (flags off; signaling.md §4.3): the service designation is an owner page of the organization's owner interface.
+  m?.context&&signalingEnabled(s)?h('p',h('a',t('Service designation for direct connections','Designación de servicio para conexiones directas')).props({href:'/console?view=signaling&page=service&organization='+encodeURIComponent(m.context)})):null):null;
  const preferenceField=(p,name,f)=>{const value=p.values?.[name],label=plain(f.title??name),key='field:'+name;
   if(f.type==='resource'||(f.cardinality?.max??1)!==1)return h('p',label,': ',t('set through each app’s setup.','se configura en la configuración de cada app.'));
   if(f.type==='boolean')return h('label',h('input').props({name:key,type:'checkbox',checked:value===true}),h('span',label)).classes('org-check').key(p.fragment+key);

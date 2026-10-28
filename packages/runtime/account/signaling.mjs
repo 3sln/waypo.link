@@ -141,6 +141,9 @@ export function signalingEngine(c){
   // app with no record at all has never connected here and cannot authenticate (contractActor checks the connection),
   // so it reads as generation 0; a disconnected record reads as ended.
   connections:{state:async(tx,owner,clientId)=>{const s=await appConnectionState(tx,owner,clientId);return s.state==='absent'?{state:'live',generation:0}:s;}},
+  // Owner widening actions are recorded only through the owner pages (signaling/owner-pages.mjs; release gate
+  // "Signaling", owner pages): each needs the page's review, and cross-entity activation and renewal fresh authentication.
+  ownerPages:true,
   transport,pushTransport,defer:()=>kick(c),hostLimits:hostLimitsFor(config),allowLoopback});
  // The built-in ice-relay/v1 resource: unreachable unless both flags are on for the owner AND both ports exist.
  service.attachRelay(new SignalingRelay({service,adapter:turnAdapterFrom(config),spend:typeof config.SIGNALING_RELAY_SPEND?.reserve==='function'?config.SIGNALING_RELAY_SPEND:null,

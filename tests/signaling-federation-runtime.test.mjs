@@ -6,6 +6,7 @@
 // approvals and runs §14.2. Session kinds are operator-registered envelopes (FEDERATION_CONTRACTS), as in
 // tests/signaling-runtime.test.mjs. Local behaviour only: no real network, peer provider or push service.
 import test from 'node:test';
+import {reviewed,approvals} from './helpers/signaling-owner-review.mjs';
 import assert from 'node:assert/strict';
 import {mkdtemp,readFile,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
@@ -46,7 +47,7 @@ async function runtime(t,flags){
   await identity.confirmRecovery({pendingToken:pending.pendingToken,recoveryToken:downloaded.recoveryToken,downloadConfirmed:true},base);
   const id=pending.account.id,object=accountHandle(env,id),actor={kind:'app',owner:id,clientId:APP,origin:'https://app.example',grants:['grant-ok']},owner={kind:'owner',owner:id,parties:[APP]};
   // The owner's session handler approvals (AMD-SG-I1), with the adapter's P1 evidence of a live grant.
-  for(const line of [CHAT,SYNC])await object.signalingDispatch(id,{operation:'intents.session-approve',actor:owner,input:{clientId:APP,kind:REF[line]}});
+  await reviewed((operation,input,as)=>object.signalingDispatch(id,{operation,actor:as,input}),owner,approvals(APP,[REF[CHAT],REF[SYNC]]));
   return {id,object,actor,owner,identity:`${ORIGIN}/identity/${id}`,dispatch:(operation,input,as=actor)=>object.signalingDispatch(id,{operation,actor:as,input})};
  };
  const post=body=>app.fetch(new Request(ORIGIN+'/bindle/signaling',{method:'POST',headers:{'Content-Type':BATCH_MEDIA_TYPE},body}));
@@ -97,7 +98,7 @@ test('runtime: the lifecycle hook (signalingAppRevoked) clears an application\'s
  // An owner mismatch is ignored; the hook is not wire-dispatchable on the account object.
  assert.deepEqual(await f.accounts.get(a.id).signalingAppRevoked('0a0a0a0a-0000-4000-8000-000000000000',{clientId:'x'}),{ended:0});
  // Account severance: {all:true} clears approvals of apps with no endpoint or session.
- await a.dispatch('intents.session-approve',{clientId:APP,kind:REF[CHAT]},a.owner);assert.equal((await a.dispatch('intents.session-approvals',undefined,a.owner)).approvals.length,1);
+ await reviewed(a.dispatch,a.owner,approvals(APP,[REF[CHAT]]));assert.equal((await a.dispatch('intents.session-approvals',undefined,a.owner)).approvals.length,1);
  await f.accounts.get(a.id).signalingAppRevoked(a.id,{all:true});assert.deepEqual((await a.dispatch('intents.session-approvals',undefined,a.owner)).approvals,[]);
 });
 

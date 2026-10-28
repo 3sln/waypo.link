@@ -1,4 +1,177 @@
-# RTC signaling: design and 3sln.me implementation plan
+# Signaling: design and 3sln.me implementation (revision 3.2)
+
+> **Group:** 3sln.me architecture (development record, not published)
+>
+> **Status:** design and implementation notes for [signaling](../spec/extensions/signaling.md) **revision 3.2** (draft). The engine phase (signaling Appendix C.5 steps 2 to 4 and the core-removal half of step 5) is **implemented locally behind default-off flags** (2026-10-28), with its independent review fixes applied. The provider owner pages and the conformance peer rewrite are in progress, and the enrolment approval page (step 7) has not started. Nothing is published, deployed or production-verified. Every decision is provisional (coordinator) and **not signed off by the owner**. Rewritten 2026-10-28 from the revision 1 RTC design, which is kept below as a superseded record.
+>
+> **Covers:** how 3sln.me implements the generic signaling primitives: the `self`, `pairing` and `offer` bases; bound and open offers; service-class endpoints; pairings and rules P1 to P4; session kinds and session handler approvals in intents; the `webrtc` and `data` profiles; limits; lifecycle and the §14.2 narrowing; connection-generation liveness; the built-in relay; what moved to Parlay; and what remains.
+>
+> **Does not cover:** the normative rules, which are in the [signaling spec](../spec/extensions/signaling.md) (if this document disagrees with it, the spec wins and the difference belongs in DEVLOG.md); calls and call invitations ([Bindle Messaging §5.5](../spec/extensions/messaging.md) and the Parlay app); device authorization ([device authorization](../spec/extensions/device-authorization.md)); local clients ([local clients spike](local-clients-spike.md)); production gates, which are in [release gates](../3sln/release-gates.md) ("Signaling") and [security](../spec/security.md).
+
+Decision records: DEVLOG.md 2026-10-28, "Signaling revision 3.2 engine phase implemented locally (Appendix C.5 steps 2–4 and the core-removal half of 5)" and "Signaling revision 3.2 engine: independent review fixes (H-1, M-1 to M-4, L-1 to L-3, L-6)"; the spec revisions are listed in its status paragraph. This document adds no decision of its own. The spec's decisions are SG-1 to SG-51 (signaling §19.2), and the 3sln.me readings are listed under "Divergences and implementation choices" below. Reviewer ___ / date ___ / outcome ___.
+
+**How to read section references.** The sections of this part have no numbers. Section numbers such as §5, §8.1, §8.3 or §9 cited by older documents and code comments that point at `docs/architecture/rtc-signaling.md` refer to the superseded revision 1 record (Part II below), whose headings are unchanged. The file keeps its name so that those links still resolve.
+
+# Part I: signaling revision 3.2 (current)
+
+## Direction
+
+The owner, 2026-10-27: "I only intended for a general signaling mechanism, app to app, user to user, provider to provider, etc; something flexible enough for all use cases, but I didn't intend to build actual calling into bindle, that's an app level concern." And, as relayed to revision 3: core signaling is unaware of calls and contacts, and provides the primitives that apps need.
+
+So the provider supplies one generic, signed session channel and three ways to admit an invite. It defines no use vocabulary, presentation, ringing or missed-call list. What a session is for is a session kind that an app publishes. Calling is built in Parlay (below).
+
+## The mechanism in one paragraph
+
+An endpoint (one app connection on one device instance, or one enabled provider feature) talks only to its own entity's provider, through the signaling contract (spec §10). For each session leg it generates a fresh ES256 key, which its provider certifies in a short-lived **leg certificate** (at most `max_leg_certificate_seconds`, 120 to 900 s; 3sln.me issues 600 s). Every message is signed end to end with that key. Providers relay messages unchanged to each other through the declared `endpoint` (`/bindle/signaling` on 3sln.me) and verify the same signatures endpoints do, with no request-path key fetch and a uniform `202`. The recipient provider admits an invite only on a **basis**, routes it to the endpoints of exactly one app fixed by that basis, and lets the **first claim** win atomically at the entity's single writer. Before that claim nothing reveals whether the recipient has an endpoint, is online, admitted or blocked the initiator (spec §12.1). Unclaimed sessions end silently.
+
+## Building blocks
+
+| Piece | What it is | Spec |
+| --- | --- | --- |
+| Extension declaration | `{spec, options}` in the manifest `extensions` array; options `endpoint` (an audience option), `max_leg_certificate_seconds` and `profiles`. Prerequisites: the directory and artefact-versions extensions. The declaration confers no authority. | §3.1 |
+| Signaling fragment | `…/fragments/signaling/v1`: one exclusive `resource` field, contract `…/contracts/signaling/v1`, `x-bindle-brokerable: false` (only the issuer can certify leg keys), `consumers: ["application", "provider"]`, no per-consumer options. The grant says that an app may use signaling; which kinds it may use is the owner's session handler approval, checked live. | §3.2 |
+| Ice-relay fragment | `…/fragments/ice-relay/v1`: `relays`, 0 to 4, `ordered`, brokered relay resources allowed; one method, `credentials({sid?})`. | §3.3, §16.7 |
+| Session kinds | Intent kinds with a `session` member (AMD-SG-I1). Core registers none. | §3.4, §20.1 |
+| Profiles | `webrtc` (Annex A) and `data`. A new profile needs a spec revision. | §3.5, §16 |
+
+There is no slot, no provider feature of signaling's own, no artefact kind, no link type and no AMD-X1 bound option. The interim `…/extensions/rtc-signaling/v1` identity is retired (extensions §2.8, EXT3-35).
+
+## Session kinds and handler approvals (intents)
+
+Intents supplies two things to signaling, and nothing else: the kind registry and per-app approvals. It never routes an incoming invite, and no chooser or intents default is consulted (spec §5.4, SG-44).
+
+- **The `session` member** (`packages/intents/sessions.mjs`, validated by `packages/intents/schema.mjs`): `parties` (`self`, `other` or `any`), `profiles` (each with its parameters; both registered profiles take `{}`) and optional `bases` (a subset of `self`, `pairing` and `offer`; `none` is reserved). Both providers enforce `bases`. The kind's existing intent members supply the title, publisher, the `data` schema and disclosure (which become the invite `context`), sensitivity categories and versioning.
+- **Session handler approvals** are stored in intents memory per (app or provider feature, kind line), pinned to the approved `{version, digest}`, with the per-app `auto_connect` setting for `self` kinds. They are exported with the `intent-choices` row. A later kind version is admitted only when it is additive without new disclosure (spec §15).
+- **Live checks.** Every widening contract method (`open`, `register`, `renew`, `offer`, `claim` with `accept`, `send` other than end, cancel or decline, and relay credentials) checks the approval live and answers `approval_required` without one. Narrowing methods (`revoke_offer`, `unregister`, `decline`) are never gated.
+- **Removing an approval** runs the §14.2 narrowing in the same transaction.
+- **Flag.** `SESSION_KINDS_ENABLED`, separate from `INTENT_LINKS_ENABLED`, because session kinds are not tied to the intent-links extension (spec §20.1.8).
+
+## Profiles
+
+- **`webrtc`.** Offer, answer and candidates, with every SDP and candidate rule of Annex A (no address before the claim, the owner's IP policy: `relay` by default across entities, `public` by opt-in, raw host candidates only between own devices), fingerprint binding and the structural `m=` check. What media a connection carries is the endpoints' concern.
+- **`data`.** No transport negotiation: small opaque `data` messages after the claim, for rendezvous, app-level key agreement or device pairing. A payload is 1 to 4,096 bytes, and a leg's payloads total at most 65,536 bytes. Each provider bounds the aggregate `data` bytes it relays per entity in a rolling window (provisional engine value 1 MiB per hour per entity, `BOUNDS.dataBytes`). It is not a transfer channel.
+- **Production gate for `data`** (spec §3.5): the aggregate budget enforced and tested at the engine level (done locally), a cost-model row (done: `dataEconomics()` in `scripts/cost-model.mjs`), and the AMD-SG-S1 custody statement reconciled with security.md (not done). At the full provisional budget Paid's worst-case margin is under the 50% floor (45.6%, or 33.6% with its full relay allowance; [unit economics](unit-economics.md) "Relayed signaling `data` bytes"). `tests/cost-model-margins.test.mjs` records this as a `todo` naming the release gate, so the budget needs lowering or tiering before release.
+
+## Establishment bases
+
+There is one mechanism. The basis decides three things: what admits the invite, which endpoints receive it, and who may claim it without a user action (spec §5.6).
+
+| Basis | Wire | Admits | Routes to | Claim with no user action |
+| --- | --- | --- | --- | --- |
+| `self` | `basis: null`, same entity | Own entity | The initiating app's eligible endpoints, or a `target` endpoint of the same app | `auto_connect`: same app, `parties: self`, owner setting on the approval (default off) |
+| `pairing`, own entity | `basis: null` with `target` of a paired app | As `self`; the pairing widens routing and acceptance only | The `target` endpoint covered by the other side | Yes (`paired`, `auto_connect`) |
+| `pairing`, other entity (relation basis) | `{relation: "pairing"}` | A live pairing whose `peer.principal` is the verified initiator, for that kind line, letting the peer open | The endpoints covered by the pairing's `local` side | Yes (`paired`) |
+| `offer` | `{offer_digest}`, token carried beside the message in the batch | A live offer with a free use, minted by the recipient for this kind line, version and profile, open or bound to the verified initiator; and a nonempty routing set | The minting endpoint, else the minting app; for a service-class offer, every online endpoint of the minting app or feature | Yes (`offer_match`), after the endpoint's outstanding-offer check on the digest |
+
+A cross-entity invite with no basis admits nothing, silently (the old `none` basis is reserved). Every basis fixes the receiving app, so an invite is never visible to another app (no AMD-RW1 cross-app visibility) and a foreign initiator's asserted `client_id` never influences routing. Delivery goes to at most 16 endpoints of the routing set, most recently active first, with late delivery to an eligible endpoint that registers or listens before `answer_by` (at most 120 s).
+
+## Offers: bound and open
+
+An offer is a **reverse dial**: the minting app opens nothing. It mints offers on its own provider and hands them out through its own channels (for example inside an app message); the holder's app dials back with `open` and `basis: {offer: <token>}` after its user acts.
+
+- **Bound offer.** Names one origin principal (1 to 16 per `offer` call, never the owner). Always single-use; the use is **spent at admission**, whatever happens to the session afterwards.
+- **Open offer.** Names no principal and admits any verified principal except the minting entity, up to `uses` sessions (default 1; reference maximum 16, or 10,000 for a service-class endpoint). A use is **reserved** at admission, **spent** only by an `accept` claim and **released** by a decline or an unclaimed end. Spent plus reserved never exceeds `uses`.
+- **Expiry.** 10 to 900 s. Only a service-class endpoint may mint longer: up to 90 days for an open offer and 7 days (reference) for a bound one.
+- **Storage.** Only the token's SHA-256, the principal or `null`, the kind line, approved version and profile, the minting endpoint and app, whether the minter was service-class, the use counts and `expires_at`. The token is never stored, logged, journalled or delivered to an endpoint. Revoked and expired offers are deleted at once (review M-2); an exhausted one keeps its hash until expiry.
+- **What ends an offer.** `revoke_offer` or the owner; expiry; the end of the minting app's or feature's authority for the kind (approval removed or cleared, grant revoked, connection ended, feature disabled); removal of a service designation (offers over 900 s only); a move or deletion. Unregistering or expiry of an endpoint, and revoking one client session of a still-connected app, never end an offer. Pending sessions an offer admitted end silently when it ends; claim versus end is decided atomically at the same writer.
+- **No oracle.** Expired, revoked, exhausted, mismatched and unknown offers all admit nothing and get the uniform `202`. A digest that names an offer the initiator may not use is limit-classified as an unbased invite, so a borrowed bound offer buys no exemption.
+- **Key warming** at `offer` is issuer-level only: never a named principal's identity document or keys.
+
+**Service-class endpoints** (spec §2, §4.3) are endpoints of a provider feature, or app endpoints of a **service entity**: an organization entity whose owner designated it so, on an owner page that discloses standing reachability. A person entity cannot be designated, an undesignated organization's apps are not service-class, and an endpoint registered in member context never is (review M-4). A service-class offer belongs to the minting app or feature, not to one endpoint: it routes to every eligible endpoint that is **online** (a `listen` outstanding or within 60 s), projects `offer_match` on each, and the first claim wins. 3sln.me builds no provider feature that holds sessions today, and the designation page is one of the outstanding owner pages.
+
+## Pairings (P1 to P4)
+
+A pairing is a per-edge owner record between exactly two parties. It pre-authorizes one app (or one enrolled client session of it) to connect automatically, for one kind, with one other app of the owner or with one peer principal (spec §5.8). Pairing parties are apps; a provider feature is never one, and an own-entity pairing needs two different apps (review L-2).
+
+- **P1, each party granted individually.** Every app party holds its own live connection, signaling grant and session handler approval, each from its own owner action. A pairing never creates or implies them.
+- **P2, one edge per pairing.** Connecting a daemon to three apps takes three pairings. Nothing admits "any app". An entity holds at most one cross-entity pairing per (peer principal, kind line).
+- **P3, pending until explicitly activated.** A new pairing is `pending` and admits, routes and accepts nothing until an owner control for that one pairing activates it, armed after a delay, once every party satisfies P1. When every party already qualifies at creation, the creation control is the activation control. A pending pairing is deleted after 7 days. A live pairing never returns to pending. A device-authorization pairing is `awaiting_confirmation` until its M4 code comparison (step 7, not built).
+- **P4, visible from both parties.** An own-entity pairing is listed with both apps' connection entries; a cross-entity one with its `local` app and in a by-peer list. Either listing can remove it.
+
+Members: `kind` (pinned; re-confirmation when a later version adds disclosure), `local {client_id, client_session}`, `peer` (`{self: …}` or `{principal}`), `opens` (`local`, `peer` or `both`), `accept: "auto"`, `label`, `created_via`, `state`, `expires_at` (cross-entity always expires: default 90 days; the 3sln.me maximum is 366 days). Updates are compare-and-swap on `revision`. Coverage is by `client_id` and, when a side binds one, the endpoint's recorded client session, checked in both roles everywhere a pairing has an effect. Apps learn the pairings that cover them through `endpoints({endpoint})` and `pairing` events; `endpoints({pairing})` lists the other side's live endpoints (own entity, opening side only, with the provider's own labels and no `last_seen`). A pairing is deleted when removed, expired, still pending after 7 days, when either app's approval or grant goes, when its bound client session ends, when its peer or the peer's issuer is blocked, or on move or deletion. Deleting it ends claimed sessions with `revoked` and pending invites silently. Cross-entity creation needs fresh authentication (3sln.me: session `authTime` within 5 minutes).
+
+Only the recipient's own record is enforced by the recipient: a non-conforming peer provider can skip the initiator-side check (spec §5.1 item 7), and the creation page discloses this.
+
+## Limits
+
+Reference values are 3sln.me policy (`LIMITS` in `packages/signaling/admission.mjs`, `BOUNDS` in `packages/signaling/sessions.mjs`); the kinds of limit are normative (spec §13.1). Excess invites are dropped silently after verification and still answered `202`.
+
+- **Recipient windows:** per (initiator, recipient); per initiator across the host (one host-wide window); per (sending issuer, recipient) for cross-entity invites; pending and connected capacity per recipient; messages per leg; and the aggregate `data` budget per entity.
+- **Separate windows.** Own-device (`self`) invites, including own-entity `open` calls on the initiator side, use their own window outside every cross-entity window. Bound-offer invites skip the per-recipient and issuer windows. Open-offer invites are charged only to a per-offer window, a per-(principal, offer) window and a per-issuer fair share of the per-offer window (max(W / (n + 1), F)), plus the host-wide initiator window. Own-entity pairings have a window per (pairing, endpoint pair) and at most two live sessions per pair; cross-entity pairings have a window and a live cap per pairing `id`. Dead-offer and unpaired relation invites count as unbased.
+- **Sub-budgets.** All pairings together get at most half of the entity's pending capacity, connected capacity and `data` budget (review M-3 corrected the code to half of base pending capacity). Open-offer sessions get at most half of pending and connected capacity.
+- **Pending reserve.** Two shares, `self` and cross-entity, two pending sessions each; unbased and open-offer invites never use it.
+- **Initiator side:** open sessions and `open` calls per entity; live offers (64 per entity, 32 per app) and mints (120 per hour per app); key-warming fetches; `data` bytes sent.
+
+## Lifecycle and the §14.2 narrowing
+
+The narrowing triggers are exactly those of spec §14.2: endpoint unregister or 30-day idle expiry; revoking a device or app connection; revoking the signaling grant; removing or clearing a session handler approval; an app connection ending for any reason; revoking or ending a client session; disabling or suspending a provider feature; deleting a pairing; removing a service designation; revoking or expiring an offer. Each runs only the steps that apply: stop relaying and certifying for the affected legs; revoke relay credentials; send `revoked` control statements for claimed legs (retried while the certificate is usable); end pending invites silently when no other app still holds them; remove endpoint registrations; revoke offers only when the app's or feature's authority for the kind ends; delete the affected pairings. Narrowing is never gated by a flag; widening owner actions are.
+
+In 3sln.me the hooks are: the intents approval routes (removal runs §14.2 in the same transaction); grant revocation and connection end, which clear approvals and run §14.2 (`AppConnections.disconnect` calls a connection-ended hook; failures of the cascade drain and `grantSync` are retried from `grant-sync` rows on the federation cleanup alarm instead of being swallowed); and the account tick, which sweeps stale apps. Moves (§14.3), the §14.5 unassignment hook, clearing when an adopted manifest stops declaring a kind, and `signalingClientSessionRevoked` (L-4) are not wired yet.
+
+## Connection-generation liveness
+
+Review H-1 found that ending an app connection relied on a hook that could be skipped. The engine now records the app's **connection generation** when the owner approves it (`sig/app/` rows; the `connections` port reads `appConnectionState` from `packages/apps/connections.mjs` in the writer's transaction). Every app endpoint, approval, offer and pairing belongs to that generation:
+
+- **live**: the connection is live at the recorded generation; everything works;
+- **inert**: the same generation but paused or fenced, or no generation recorded (for example an imported approval); nothing admits, routes or authorizes until the owner re-approves;
+- **stale**: the connection ended or changed generation; the state is cleared (§20.1.4) and §14.2 runs, from the tick sweep or the next touch. Re-approval clears first, so earlier state never revives after a reconnect.
+
+Choice (provisional): any generation change counts as connection end for signaling, including pause and resume, re-setup and a manifest change. That narrows more than §20.1.4 requires, on purpose.
+
+## Relay
+
+The built-in `ice-relay/v1` resource (`packages/signaling/relay.mjs`, with `relay-credentials.mjs` and the Cloudflare adapter in `turn.mjs`) issues short-lived TURN credentials only for a live leg of the calling app's own session (a pending initiator leg before `answer_by`, a connected one, or a recipient leg whose accept won), re-checks the approval for the session's kind version (review L-6), revokes credentials on every end path with a sweep for missed ones, and enforces per-account and per-session quotas (`RELAY_LIMITS`; plan allowances `RELAY_PLAN_BYTES`). A credential is never put in a signaling message or sent to the peer.
+
+Issuance stays refused unless `SIGNALING_TURN_ENABLED` is on **and** the deployment supplies a TURN adapter and an external spend authority that enforces a per-owner byte cap from the relay provider's own usage data (spec §16.7 byte-cap rule, AMD-SG-S2). No spend authority ships, so hosted relay is unreachable on every deployment. Each party funds its own relay; Free has no hosted allowance.
+
+## Transport, delivery and privacy
+
+- **Between providers:** `POST /bindle/signaling` (renamed from `/bindle/rtc`), behind `SIGNALING_FOREIGN_ENABLED` and an empty-by-default `SIGNALING_FOREIGN_ISSUERS` allowlist, with step 1 at the route, dark ingest, the same-host `iss` refusal and shedding. The security.md S4 egress gate is not passed.
+- **Same provider:** the same-host transport delivers through exactly the foreign verification path (`signaling.ingest`), with no public endpoint.
+- **Devices:** `listen` long poll is required; the Web Push doorbell is optional and carries only `{"t":"signal","endpoint":…}`. The integration doorbell (AMD-SG-E1) is not built.
+- **Retention:** payloads deleted on delivery or after 60 s, replay state as hashes, session records deleted within 24 h of the end, no owner-visible invite history.
+
+## Where it lives in 3sln.me
+
+| Area | Files |
+| --- | --- |
+| Engine | `packages/signaling/`: `messages.mjs` (envelope, bases, `webrtc` and `data` profiles, batch codec), `certificates.mjs` (leg certificates, control statements), `jws.mjs` (`typ` list over `packages/core/signed-object.mjs` and strict JSON), `sessions.mjs` (states `pending`/`connected`/`ended`, first claim, replay, glare ranks from leg-key thumbprints, `BOUNDS`), `admission.mjs` (blocks, IP policy, windows, fair share, capacity classes), `service.mjs` (`SignalingService`: routing set, offers, pairings, projection, outbox, same-host transport, and the ngin Actions and Queries), `federation.mjs` (foreign transport, key roster), `extension.mjs` (descriptor, options validator, fragments, prerequisites), `relay.mjs`, `relay-credentials.mjs`, `turn.mjs`. |
+| Intents | `packages/intents/sessions.mjs`, `schema.mjs`; approvals in intents memory; `packages/runtime/routes/intents.mjs`. |
+| Runtime | `packages/runtime/account/signaling.mjs` (account slice, contract actor, drain, roster, `legacyRtcReset`), `packages/runtime/routes/signaling.mjs` (the federation endpoint), `packages/runtime/routes/signaling-owner.mjs` (owner JSON routes, adapters for the owner pages), `packages/runtime/federation.mjs` (descriptor and mounts), `packages/runtime/export-contributors.mjs`. |
+| Flags | `SIGNALING_ENABLED` (requires `EXTENSIONS_ENABLED`, `ARTEFACT_VERSIONS_ENABLED` and `SESSION_KINDS_ENABLED`, never `INTENT_LINKS_ENABLED`), `SIGNALING_FOREIGN_ENABLED` (requires `DIRECTORY_ENABLED`), `SIGNALING_TURN_ENABLED`, `SESSION_KINDS_ENABLED`; the four `RTC_*` flags are retired. All default off. |
+| Storage | `sig/` (was `rtc/`); pairings and provider blocks (`sig/block-iss/`, closing the old export gap) are exported, offers excluded. Legacy `rtc/` development rows are deleted in bounded pages by an alarm step (`legacyRtcReset`) and export-excluded until gone; destructive and pre-release. |
+| Owner UI | No signaling view: the IP policy and blocked list are under Account & security, and each app connection lists its approvals, endpoints, live offers and pairings. |
+| Tests | Engine-first: `tests/signaling-engine*.test.mjs`, `signaling-admission`, `signaling-chaos` and `signaling-chaos-lifecycle` (seeded, spec-derived), `signaling-wargame*`, `signaling-review*`, `signaling-runtime`, `signaling-federation*`, `signaling-relay*`, `signaling-owner-routes`, `intents-session-kinds`; the conformance peer is being rewritten. |
+
+## What moved to Parlay
+
+Every call-specific part of the old RTC code left core: the ring screen and its poller, the "Calls & connections" view and `calls` portal module, the call purpose and the other `rtc-purpose` documents, missed calls, mutes, alert policy, call-link tickets and 136 call strings. Calling is Parlay's to build on [Bindle Messaging §5.5](../spec/extensions/messaging.md) and these generic methods: Parlay publishes its own call kind, carries bound offers inside its own messages, and owns all presentation. Nothing call-specific was re-homed into `packages/signaling`. Contact-link admission (the `link` basis) was withdrawn in revision 3 and contact links were removed from core in contacts phase 4; an app that wants a person to reach it hands that person an offer.
+
+## What remains
+
+- **Owner pages (in progress, 2026-10-28).** Session handler approval, pairing creation and activation, the live-offer list and the service designation must happen on provider pages that meet the §20.1.4 page obligations. The JSON owner routes are adapters only. Release gate: [release gates](../3sln/release-gates.md) "Signaling", "Owner pages".
+- **Conformance peer rewrite (in progress; Appendix C.5 step 6).** The suite is to be rewritten from the revision 3.2 text and pass in strict mode (spec §21; release gate "Conformance").
+- **Enrolment approval page (not started; step 7).** Session handler approval and one pairing control per already-connected app on the device-authorization page, the M4 code-comparison confirmation, AMD-SG-D1 if signed off, and local-client enrolment after the local clients spike's identity phases. `signalingClientSessionRevoked` must be wired first (review L-4; release gate "Client sessions").
+- **Not yet built:** `clientSession` plumbing from the federation runtime; moves (§14.3); the §14.5 unassignment hook; the integration doorbell (AMD-SG-E1); approval clearing when a manifest stops declaring a kind; the §3.4 background fetch of unheld kind versions.
+- **Data budget and cost.** The `data` budget fails the Paid margin floor (above); the AMD-SG-S1 custody statement is unreconciled (release gate "Data profile").
+- **Docs.** The pending-signoffs digest still needs the revision 3.2 items (step 8).
+- **Owner sign-off** of C.5 step 1 (SG-2, SG-23 to SG-30, SG-36 to SG-46, AMD-SG-I1) is outstanding, which is why every flag stays off.
+
+## Divergences and implementation choices (provisional)
+
+Recorded in the DEVLOG entries above; each is provisional and unsigned, and a spec change for any of them belongs in a later revision:
+- an unpaired relation-basis invite is limit-classified as unbased;
+- `approval_required` is a no-effect code (`NO_EFFECT_CODES`);
+- the offer refresh lane requires the offer to admit the claimed sender (stricter than the text);
+- grant revocation also clears session handler approvals (L-7; §20.1.4 lists only connection end and manifest change);
+- any connection-generation change counts as connection end (above);
+- reference values: `data` budget 1 MiB per hour per entity with a pairing sub-budget of half; pairings capped at half of base pending capacity; maximum pairing expiry 366 days; fresh authentication within 5 minutes;
+- offer expiry, the pending-pairing limit and pairing expiry are also enforced at use, not only by sweeps (L-1).
+
+# Part II: superseded record, RTC signaling design revision 1 (2026-10-26)
+
+> **Superseded and retired (2026-10-28), pending owner sign-off.** Everything below is the revision 1 decision record for `rtc-signaling.v1`, kept unchanged so that its decisions (RTC-1 to RTC-17), review findings and section references stay resolvable. The `packages/rtc` code it describes has been replaced by `packages/signaling` (Part I), the `RTC_*` flags are retired, and the dispositions of its decisions are in [signaling Appendix B](../spec/extensions/signaling.md#appendix-b-disposition-of-existing-rtc-decisions). Do not implement from it. The supersession note written on 2026-10-27 follows.
+
 
 > **Superseded (2026-10-27), pending owner sign-off.** The extension this plan implements, [RTC signaling](../spec/superseded/rtc-signaling.md), is superseded by the generic [signaling](../spec/extensions/signaling.md) draft, which removes calling concepts (ring, missed calls, alert policy, purposes, call-link tickets) from the provider; calls move to the Parlay app and [Bindle Messaging §5.5](../spec/extensions/messaging.md). Slots, `features` and AMD-X1 used below are removed by [extensions revision 3](../spec/extensions.md) (draft). This plan remains the reference for the flags-off `packages/rtc` code until signaling Appendix C retires it; do not start new work from it.
 

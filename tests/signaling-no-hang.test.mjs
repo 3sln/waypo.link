@@ -5,7 +5,8 @@
 // operator registration is the app-published session kind (FEDERATION_CONTRACTS, as an operator pins a kind). An
 // application connects through the real authorization request (the ordinary fragment, no options), owner consent,
 // token and /bindle/rpc routes; the owner then approves the app for the kind through POST /api/intents/session-approve
-// (the session handler approval, AMD-SG-I1, whose P1 evidence the owner stage reads from the owner's grants).
+// (the session handler approval, AMD-SG-I1, whose P1 evidence the owner stage reads from the owner's grants), after the
+// approval page's review (POST /api/signaling/review, packages/signaling/owner-pages.mjs).
 //
 // The deadlock class RTC-i bug 1 guarded (the contract handler, inside the owner's account gate, calling the federation
 // shard, whose check called back into the account) no longer applies to kind approvals: the approval is the account's
@@ -13,6 +14,7 @@
 // writes, concurrent writes and app removal with RPCs in flight (RTC-i review M1). Local behaviour only: loopback
 // HTTP, no peer provider.
 import test from 'node:test';
+import {reviewedHTTP} from './helpers/signaling-owner-review.mjs';
 import assert from 'node:assert/strict';
 import {mkdtemp,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
@@ -67,8 +69,9 @@ async function connect(w,kinds=[CHAT]){
  const prefs=await (await rpc(token.access_token,'@preferences','https://3sln.me/artefacts/contracts/preferences/v1','read',{fragment:SIGNALING_FRAGMENT})).json();
  const ref=prefs.result?.values?.signaling;assert.ok(ref,'preferences read: '+JSON.stringify(prefs));
  // The owner approves the app for each kind (a session handler approval, never inside the app's authorization flow).
- const approve=line=>w.post('/api/intents/session-approve',{clientId:APP.id,kind:REF[line]},owner);
- for(const line of kinds){const approved=await approve(line);assert.equal(approved.status,200,'owner approval: '+await approved.clone().text());}
+ const post=async(path,body)=>{const res=await w.post(path,body,owner);return {status:res.status,body:await res.json()};};
+ const approve=line=>reviewedHTTP(post,[{path:'/api/intents/session-approve',action:'session-approve',input:{clientId:APP.id,kind:REF[line]}}]).then(([r])=>r);
+ for(const [i,approved] of (await reviewedHTTP(post,kinds.map(line=>({path:'/api/intents/session-approve',action:'session-approve',input:{clientId:APP.id,kind:REF[line]}})))).entries())assert.equal(approved.status,200,'owner approval of '+kinds[i]+': '+JSON.stringify(approved.body));
  return {owner,session,approve,call:async(method,args={})=>{const res=await rpc(ref.token,ref.id,SIGNALING_CONTRACT,method,args);return {status:res.status,...await res.json()};}};
 }
 
@@ -94,10 +97,14 @@ test('no-hang: contract writes answer through /bindle/rpc with the default Node 
  assert.equal((await within(c.call('endpoints'),10000,'endpoints')).result.endpoints.length,1,'nothing was registered for the unapproved kind');
 });
 
-test('approval_required reaches the app through /bindle/rpc for an unapproved kind (§10.2, §21.1): a no-effect refusal survives the RPC journal',{timeout:60000},async t=>{
+test('approval_required reaches the app through /bindle/rpc for an unapproved kind (§10.2, §21.1): a no-effect refusal survives the RPC journal and carries the provider approval page URL (§20.1.4)',{timeout:60000},async t=>{
  const w=await boot(t),c=await connect(w);
  const other=await within(c.call('register',{kinds:[SYNC]}),10000,'register (unapproved)');
  assert.equal(other.error?.code,'approval_required',JSON.stringify(other));
+ // The page is this provider's own (never app-supplied): the console's signaling approval page for this app and kind.
+ const page=new URL(other.error.url);assert.equal(page.origin,ORIGIN);assert.equal(page.pathname,'/console');
+ assert.deepEqual(Object.fromEntries(page.searchParams),{view:'signaling',page:'approve',client:APP.id,kind:SYNC});
+ assert.deepEqual(Object.keys(other.error).sort(),['code','message','url']);
 });
 
 test('no-hang: concurrent contract writes for one owner all answer (no account-gate / shard-gate cycle)',{timeout:60000},async t=>{

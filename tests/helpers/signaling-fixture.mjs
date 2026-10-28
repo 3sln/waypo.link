@@ -57,8 +57,10 @@ export const STANDARD_KINDS=Object.freeze([
  * Builds the host. `entities` accounts (subOf(1..n)); `flags` names → boolean (SIGNALING_ENABLED and
  * SESSION_KINDS_ENABLED on by default; `host.flags.deny(sub, name)` turns one off for one entity). `organizations` lists
  * entity numbers whose entity kind is organization (service designation). `relay(a)` returns the entity's SignalingRelay.
+ * `ownerPages: true` runs every service as the runtime does: owner widening actions need an owner-page review
+ * (packages/signaling/owner-pages.mjs); `host.page(n, action, input, operation)` takes one and commits it once armed.
  */
-export async function signalingHost({seed=1,entities=3,start=Date.UTC(2026,9,27,12),flags={},hold=false,organizations=[],relay:relayFactory=null,connections:withConnections=false}={}){
+export async function signalingHost({seed=1,entities=3,start=Date.UTC(2026,9,27,12),flags={},hold=false,organizations=[],relay:relayFactory=null,connections:withConnections=false,ownerPages=false}={}){
  const clock=fakeClock(start),ids=seededRandom(createRandom(seed));
  const flagState={names:{SIGNALING_ENABLED:true,SESSION_KINDS_ENABLED:true,SIGNALING_FOREIGN_ENABLED:false,...flags},deny:new Map()};
  const flagPort={for:ctx=>({enabled:name=>!flagState.deny.get(ctx?.subject?.owner)?.has(name)&&flagState.names[name]===true})};
@@ -89,7 +91,7 @@ export async function signalingHost({seed=1,entities=3,start=Date.UTC(2026,9,27,
   log.delivered++;return dispatch(sub,operation,input);
  }});
  async function build(a){
-  a.service=new SignalingService({store:a.store,issuer:ISS,clock,random:ids,flags:flagPort,keys,kinds,signer:async()=>a.cert,transport,defer:owner=>kicked.add(owner),hostLimits,connections:connectionsPort,entityKind:owner=>organizations.includes(accounts.get(owner)?.n)?'organization':'person'});
+  a.service=new SignalingService({store:a.store,issuer:ISS,clock,random:ids,flags:flagPort,keys,kinds,signer:async()=>a.cert,transport,defer:owner=>kicked.add(owner),hostLimits,connections:connectionsPort,ownerPages,entityKind:owner=>organizations.includes(accounts.get(owner)?.n)?'organization':'person'});
   a.audit=memoryAudit({clock});
   a.engine=createAppEngine({providers:{clock,random:ids,audit:a.audit,signaling:signalingProvider(a.service)}});
   // `relay(a)` builds the entity's SignalingRelay over a.service (rebuilt on restart).
@@ -114,6 +116,9 @@ export async function signalingHost({seed=1,entities=3,start=Date.UTC(2026,9,27,
   /** The owner's session handler approval of `clientId` for `line` (latest held version unless `version`). */
   approve(n,clientId,line,{version,autoConnect}={}){return H.run(n,'intents.session-approve',{input:{clientId,kind:H.ref(line,version),...autoConnect!==undefined?{autoConnect}:{}}});},
   unapprove(n,clientId,line){return H.run(n,'intents.session-unapprove',{input:{clientId,kind:line}});},
+  /** An owner-page decision: the review, the fake clock moved past its arming time, then `operation` with the reviewed
+   * input (plus `extra`) and the review id as adapter evidence. Returns {review, result}. */
+  async page(n,action,input,operation,{extra={},actor}={}){const as=actor??H.owner(n);const review=await H.run(n,'signaling.review',{actor:as,input:{action,input}});if(!review.review)return {review,result:null};clock.set(Math.max(clock.now(),review.armAt));const result=await H.run(n,operation,{actor:{...as,review:review.review},input:{...review.input,...extra}});return {review,result};},
   async held(){await H.drainAll();return network.splice(0);},
   async drainAll(){for(const a of accounts.values())if(!a.gone)await a.service.drain(a.sub).catch(()=>null);},
   async flushNetwork({random,dropRate=0,dupRate=0}={}){

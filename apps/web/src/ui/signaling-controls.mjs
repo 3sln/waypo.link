@@ -49,7 +49,9 @@ export function signalingPrivacyPanel(state){
   rows(blocked.map(b=>h('li',h('span',literal(principalLabel(b.principal,b.handle))),btn('Unblock',{kind:'signaling-action',action:'unblock',input:{principal:b.principal}},'text-button')).classes('signaling-row').key('p:'+b.principal?.iss+' '+b.principal?.sub)),'Nobody is blocked.'),
   h('h4','Providers'),
   h('p','A blocked provider’s people cannot connect to you, including people you know there.').classes('field-help'),
-  rows(issuers.map(b=>h('li',h('span',literal(hostOf(b.issuer))),btn('Unblock',{kind:'signaling-action',action:'unblock',input:{issuer:b.issuer}},'text-button')).classes('signaling-row').key('i:'+b.issuer)),'No provider is blocked.')
+  rows(issuers.map(b=>h('li',h('span',literal(hostOf(b.issuer))),btn('Unblock',{kind:'signaling-action',action:'unblock',input:{issuer:b.issuer}},'text-button')).classes('signaling-row').key('i:'+b.issuer)),'No provider is blocked.'),
+  // The owner pages (bl/signaling-pages.mjs): pairings by peer, own-app pairings and every live offer.
+  m.enabled===true?h('p',btn('Pairings and offers',{kind:'signaling-page',page:'overview',params:{}},'button secondary')):null
  ).attrs({'aria-labelledby':'signaling-privacy-title','aria-busy':'false'}).classes('panel','signaling-panel');
 }
 
@@ -71,7 +73,7 @@ function appControls(state,app,{title=false}={}){
   title&&app.origin?h('p',literal(app.origin)).classes('field-help'):null,
   has(app,'approvals')?[label('Connection types'),rows(app.approvals.map(a=>h('li',
    h('span',h('strong',literal(kindTitle(m,a.kind,locale))),' ',h('span',interfaceText('Version {version}',{version:a.version})).classes('field-help')),
-   a.autoConnect===true?h('span',badge('Connects automatically between your devices','good'),' ',btn('Turn off',{kind:'signaling-action',action:'session-auto-connect',input:{clientId:app.clientId,kind:a.kind}},'text-button')).classes('buttons'):null,
+   a.autoConnect===true?h('span',badge('Connects automatically between your devices','good'),' ',btn('Turn off',{kind:'signaling-action',action:'session-auto-connect',input:{clientId:app.clientId,kind:a.kind}},'text-button')).classes('buttons'):a.autoConnectAllowed===true?btn('Review automatic connection',{kind:'signaling-page',page:'auto-connect',params:{client:app.clientId,kind:a.kind}},'text-button'):null,
    confirmButton(state,'Remove','session-unapprove',{clientId:app.clientId,kind:a.kind})).classes('signaling-row').key('a:'+a.kind)),'')]:null,
   has(app,'endpoints')?[label('Devices'),rows(app.endpoints.map(e=>h('li',
    h('span',e.label?literal(e.label):h('span','Unnamed device'),' ',h('span',interfaceText('Last seen {date}',{date:date(e.lastSeen)})).classes('field-help')),
@@ -84,7 +86,9 @@ function appControls(state,app,{title=false}={}){
   has(app,'pairings')?[label('Pairings'),rows(app.pairings.map(p=>h('li',
    h('span',p.label?h('strong',literal(p.label)):null,p.label?' · ':null,literal(kindTitle(m,p.kind?.artefact,locale)),' · ',...otherParty(m,p),' ',
     h('span',OPENS[p.opens]??'',' · ',PAIRING_STATE[p.state]??'',' · ',Number.isFinite(p.expires_at)?interfaceText('Expires {date}',{date:date(p.expires_at)}):'No expiry').classes('field-help')),
-   confirmButton(state,'Remove','pairing-remove',{id:p.id})).classes('signaling-row').key('r:'+p.id)),'')]:null
+   confirmButton(state,'Remove','pairing-remove',{id:p.id})).classes('signaling-row').key('r:'+p.id)),'')]:null,
+  // Pairing creation is an owner page (§5.8); this only navigates there.
+  has(app,'approvals')?h('p',btn('Pair this app',{kind:'signaling-page',page:'pair',params:{client:app.clientId}},'button secondary')):null
  ).attrs({'aria-labelledby':id}).classes('signaling-app').data({signalingApp:app.clientId});
 }
 /** The controls for the app with this client ID, when signaling is on and enabled and that app holds any. */
@@ -106,9 +110,10 @@ const CONFIRM=Object.freeze({
  'revoke-endpoint':['Remove this device?','This device of the app stops receiving connections, and its connections end. The app can register it again while it keeps its access.','Remove device'],
  'revoke-offer':['Revoke this offer?','Nobody can use this offer any more. Connections it started that nobody accepted yet end without telling anyone.','Revoke offer'],
  'revoke-app-offers':['Revoke every offer from this app?','Nobody can use the offers this app created. Connections they started that nobody accepted yet end without telling anyone.','Revoke offers'],
+ 'revoke-all-offers':['Revoke every offer?','Nobody can use any offer your apps created. Connections they started that nobody accepted yet end without telling anyone.','Revoke offers'],
  'pairing-remove':['Remove this pairing?','The paired apps can no longer connect through it, and its connections end. Pairing again needs a new approval.','Remove pairing']
 });
-const confirmKey=(action,input)=>action==='revoke-offers'?(input?.id?'revoke-offer':'revoke-app-offers'):action;
+const confirmKey=(action,input)=>action==='revoke-offers'?(input?.id?'revoke-offer':input?.clientId?'revoke-app-offers':'revoke-all-offers'):action;
 /** The confirmation dialog for destructive signaling actions (modal kind `signaling-confirm`), for release-dialogs.mjs. */
 export function signalingDialog(state){
  const m=state.modal;if(m?.kind!=='signaling-confirm'||!signalingInput(m.action,m.input))return null;

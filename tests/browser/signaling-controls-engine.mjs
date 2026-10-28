@@ -109,7 +109,7 @@ test('unknown actions, malformed input and the routes this surface does not offe
  const f=await fixture();
  try{
   await loaded(f);
-  const refused=[['end-session',{sid:'s'}],['block',{principal:FAR}],['set-policy',{other:'public'}],['revoke-offers',{all:true}],['revoke-offers',{}],['unblock',{principal:{iss:ORIGIN}}],['unblock',{}],['revoke-endpoint',{endpoint:''}],['session-unapprove',{clientId:APP}],['session-auto-connect',{kind:SYNC}],['pairing-remove',{id:7}],['__proto__',{}],['toString',{}],[undefined,{}]];
+  const refused=[['end-session',{sid:'s'}],['block',{principal:FAR}],['set-policy',{other:'public'}],['revoke-offers',{all:false}],['revoke-offers',{}],['unblock',{principal:{iss:ORIGIN}}],['unblock',{}],['revoke-endpoint',{endpoint:''}],['session-unapprove',{clientId:APP}],['session-auto-connect',{kind:SYNC}],['pairing-remove',{id:7}],['__proto__',{}],['toString',{}],[undefined,{}]];
   for(const [action,input] of refused){await f.write({error:'',modal:{kind:'signaling-confirm',action,input}});await f.act(new sg.SignalingOwnerAction({action,input}));assert.equal((await f.read()).error,sg.SIGNALING_UNAVAILABLE,String(action)+JSON.stringify(input));}
   assert.equal(f.calls.length,0);
  }finally{await f.close();}
@@ -162,7 +162,7 @@ test('a change that succeeds but whose refresh fails is reported as saved with s
 // sent while the flag is off, every request carries only the route's members, busy always clears, and the model shown
 // is always the signed-in owner's.
 test('seeded chaos: confirmation, flag and owner invariants hold across random operations and faults',async()=>{
- const ROUTES={'/api/signaling/unblock':['principal','issuer'],'/api/signaling/revoke-endpoint':['endpoint'],'/api/signaling/revoke-offers':['id','clientId'],'/api/signaling/pairing-remove':['id'],'/api/intents/session-unapprove':['clientId','kind'],'/api/intents/session-auto-connect':['clientId','kind','autoConnect'],'/api/signaling/set-policy':['other','self','revision']};
+ const ROUTES={'/api/signaling/unblock':['principal','issuer'],'/api/signaling/revoke-endpoint':['endpoint'],'/api/signaling/revoke-offers':['id','clientId','all'],'/api/signaling/pairing-remove':['id'],'/api/intents/session-unapprove':['clientId','kind'],'/api/intents/session-auto-connect':['clientId','kind','autoConnect'],'/api/signaling/set-policy':['other','self','revision']};
  const OPS=[['revoke-endpoint',{endpoint:'ep_'+'a'.repeat(22)}],['revoke-offers',{id:'of_open'}],['revoke-offers',{clientId:APP}],['pairing-remove',{id:'pr_peer'}],['session-unapprove',{clientId:APP,kind:CHAT}],['session-auto-connect',{clientId:APP,kind:SYNC}],['unblock',{principal:FAR}],['unblock',{issuer:'https://spam.example'}],['block',{principal:FAR}],['revoke-offers',{all:true}]];
  await forEachSeed(12,async random=>{
   let fault=null;const f=await fixture({submissions:{p:{other:'public',self:'all'}},get:()=>{if(fault==='get')throw Object.assign(Error('Unavailable'),{status:503});return structuredClone(SETTINGS);},request:async()=>{if(fault==='404')throw Object.assign(Error('x'),{status:404,code:'not_found'});if(fault==='409')throw Object.assign(Error('conflict'),{status:409,code:'conflict'});if(fault==='500')throw Object.assign(Error('Server error'),{status:500});return {};}});

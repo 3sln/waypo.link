@@ -38,6 +38,9 @@
 //   hostLimits  {take(name, parts) -> boolean}: the host-wide fixed-window limiter (initiator window across entities)
 //   entityKind  owner -> 'person' | 'organization' (service designation, §4.3); default 'person'
 //   relay       attachRelay(): the entity's built-in ice-relay resource (relay.mjs)
+//   ownerPages  boolean (default false): owner widening operations need a page review (owner-pages.mjs, §20.1.4 and
+//               §5.8 page obligations) and cross-entity activation and renewal need fresh authentication. The runtime
+//               turns it on; engine rule tests run without it.
 //   connections {state(tx, owner, clientId) -> {state: 'live'|'paused'|'ended', generation}}: the app's connection as
 //               read in this writer's transaction (packages/apps/connections.mjs appConnectionState). Optional: without
 //               it every app connection counts as live (engine tests). With it, every app endpoint, approval, offer and
@@ -57,6 +60,7 @@ import {parseBatch,batchStep1,buildBatch,parseMessage,verifyMessage,validateMess
 import {parseLegCertificate,verifyLegCertificate,signLegCertificate,parseControl,verifyControl,signControl,LEG_CERTIFICATE_SECONDS,LEG_CERTIFICATE_MAX_SECONDS} from './certificates.mjs';
 import {K,readPolicy,ipPolicyFor,policyWidens,stricterIp,isBlocked,blockTarget,blockKey,blockCovers,putBlock,principalBlocks,issuerBlocks,takeLimits,limitsOpen,pruneLimits,fairShare,inviteLimits,capacityCounts,capacityAllows,endpointsFor,LIMITS as LIMIT_VALUES,DEFAULT_POLICY} from './admission.mjs';
 import {transition,canTransition,isLive,dueEvent,recordExpired,decideClaim,claimUsable,offerSeq,payloadDigest,newLeg,gapExpired,BOUNDS,ORDER_LIMITS,SESSION_MAX_MS,ANSWER_MAX_MS} from './sessions.mjs';
+import {REVIEW_ACTIONS,canonicalInput,storeReview,takeReview,approvalRequired,kindView,kindRisk,pairingEffect,appView,peerView,newerKind,latestHeld,addsDisclosure as kindAddsDisclosure} from './owner-pages.mjs';
 
 export const SIGNALING_FLAG='SIGNALING_ENABLED',SIGNALING_FOREIGN_FLAG='SIGNALING_FOREIGN_ENABLED',SESSION_KINDS_FLAG='SESSION_KINDS_ENABLED';
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,ENDPOINT_ID=/^ep_[A-Za-z0-9_-]{22}$/,SID=/^[A-Za-z0-9_-]{22,43}$/,PAIRING_ID=/^pr_[A-Za-z0-9_-]{22}$/,OFFER_ID=/^[A-Za-z0-9_-]{43}$/;
@@ -102,9 +106,9 @@ export function sameHostSignalingTransport({issuer,dispatch}){
 }
 
 export class SignalingService{
- constructor({store,issuer,clock,random,flags,keys,kinds,signer,transport,defer=null,hostLimits=null,pushTransport=null,entityKind=null,connections=null,federationSubject,allowLoopback=false,crypto=globalThis.crypto,maxLegSeconds=LEG_CERTIFICATE_SECONDS,peerMaxLegSeconds=LEG_CERTIFICATE_MAX_SECONDS}){
+ constructor({store,issuer,clock,random,flags,keys,kinds,signer,transport,defer=null,hostLimits=null,pushTransport=null,entityKind=null,connections=null,federationSubject,allowLoopback=false,crypto=globalThis.crypto,maxLegSeconds=LEG_CERTIFICATE_SECONDS,peerMaxLegSeconds=LEG_CERTIFICATE_MAX_SECONDS,ownerPages=false}){
   if(typeof store?.transaction!=='function'||typeof issuer!=='string'||typeof keys?.certification!=='function'||typeof keys?.identity!=='function'||typeof kinds?.held!=='function'||typeof signer!=='function'||typeof transport?.deliver!=='function')throw new TypeError('SignalingService needs a store, issuer, keys, kinds, signer and transport.');
-  Object.assign(this,{store,issuer,clock,random,flags,keys,kinds,signer,transport,defer,hostLimits,pushTransport,entityKind,connections,allowLoopback,crypto,maxLegSeconds,peerMaxLegSeconds});
+  Object.assign(this,{store,issuer,clock,random,flags,keys,kinds,signer,transport,defer,hostLimits,pushTransport,entityKind,connections,allowLoopback,crypto,maxLegSeconds,peerMaxLegSeconds,ownerPages:ownerPages===true});
   this.federationSubject=federationSubject??(owner=>`${issuer}/entities/${owner}`);
   this.waiters=new Map();this.relay=null;
  }
@@ -160,9 +164,10 @@ export class SignalingService{
   const ref={artefact:line,version:approval.version,digest:approval.digest},body=await this.heldKind(ref);
   return body?{ref,body,approval}:null;
  }
- async requireApproval(app,line){const a=await this.approvalFor(app.owner,app,line);if(!a)fail('approval_required','This kind is not approved for this application.',403);return a;}
+ /** `approval_required` carries the provider page URL for this app and kind (§20.1.4; owner-pages.mjs). */
+ async requireApproval(app,line){const a=await this.approvalFor(app.owner,app,line);if(!a)throw approvalRequired(this.issuer,app,line);return a;}
  /** The approval of `app` for the kind of a live session, admitting the session's kind version (§15), as `claim` checks. */
- async requireAdmits(app,ref){const a=await this.requireApproval(app,ref.artefact);if(!await this.admits(a.ref,ref))fail('approval_required','This kind is not approved for this application.',403);return a;}
+ async requireAdmits(app,ref){const a=await this.requireApproval(app,ref.artefact);if(!await this.admits(a.ref,ref))throw approvalRequired(this.issuer,app,ref.artefact);return a;}
 
  // ---- connection liveness (§5.4, §14.2, §20.1.4 clearing) ------------------------------------------------------------
  async appKey(clientId){return K.app(await digest(this.crypto,'signaling-app\0'+clientId));}
@@ -239,7 +244,7 @@ export class SignalingService{
    await this.bindOwner(tx,owner);if(await tx.get(K.closed))notFound();
    let live=0,mine=0;for(const ep of (await tx.list({prefix:K.endpointPrefix,limit:BOUNDS.endpoints*2})).values())if(ep.expiresAt>now){live++;if(ep.clientId===app.clientId&&(ep.feature??null)===(app.feature??null))mine++;}
    if(live>=BOUNDS.endpoints||mine>=BOUNDS.endpointsPerApp)limited();
-   const st=app.feature?{status:'live',generation:null}:await this.appState(tx,owner,app.clientId);if(st.status!=='live')fail('approval_required','This kind is not approved for this application.',403);
+   const st=app.feature?{status:'live',generation:null}:await this.appState(tx,owner,app.clientId);if(st.status!=='live')throw approvalRequired(this.issuer,app,input.kinds[0]);
    const ep={v:2,id,clientId:app.clientId,origin:app.origin,feature:app.feature??null,kinds:[...input.kinds],label:input.label??null,providerLabel:typeof actor.deviceLabel==='string'&&labelValid(actor.deviceLabel)?actor.deviceLabel:null,push:input.push?structuredClone(input.push):null,bind,grants:[...app.grants],...app.epoch!==undefined?{epoch:app.epoch}:{},clientSession:app.clientSession??null,memberContext:app.memberContext===true,generation:st.generation,createdAt:now,lastSeen:now,expiresAt:now+BOUNDS.endpointIdleMs,q:{next:1,count:0,bytes:0},gap:false};
    await tx.put(K.endpoint(id),ep);
    // §5.4 late delivery: a pending invite of this endpoint's routing set reaches it when it registers.
@@ -717,7 +722,7 @@ export class SignalingService{
   const peek=await this.store.transaction(async tx=>{await this.bindOwner(tx,owner);const ep=await this.endpointAuth(tx,app,input,now);const dl=await tx.get(K.delivered(ep.id,input.sid));return dl?await tx.get(dl.key):null;});
   if(!peek)notFound();
   // §10.1: an `accept` claim checks the handler approval live; a decline is not gated by it.
-  if(input.outcome==='accept'){const a=await this.requireApproval(app,peek.kind.artefact);if(!await this.admits(a.ref,peek.kind))fail('approval_required','This kind is not approved for this application.',403);}
+  if(input.outcome==='accept'){const a=await this.requireApproval(app,peek.kind.artefact);if(!await this.admits(a.ref,peek.kind))throw approvalRequired(this.issuer,app,peek.kind.artefact);}
   const won=await this.commit(owner,async(tx,fx)=>{
    const ep=await this.endpointAuth(tx,app,input,now),dl=await tx.get(K.delivered(ep.id,input.sid)),rec=dl?await tx.get(dl.key):null;if(!rec)notFound();
    // §5.7 L-1: an offer record ends at `expires_at`, at the moment of decision and not only when `tick` runs: a pending,
@@ -1133,14 +1138,18 @@ export class SignalingService{
   * handler approval for the kind line (local). */
  async partyQualifies(tx,owner,actor,side,line){return Array.isArray(actor.parties)&&actor.parties.includes(side.client_id)&&Boolean(await this.approvalFor(owner,{clientId:side.client_id},line,tx));}
  async pairingParties(tx,owner,actor,p){const sides=[p.local,...p.peer.self?[p.peer.self]:[]];for(const s of sides)if(!await this.partyQualifies(tx,owner,actor,s,p.kind.artefact))return false;return true;}
+ /** P1 per party, for the pages: [{client_id, connected, approved}] (connected: a live connection and grant). */
+ async partyStatus(tx,owner,actor,p){const out=[];for(const s of [p.local,...p.peer.self?[p.peer.self]:[]])out.push({client_id:s.client_id,connected:Array.isArray(actor.parties)&&actor.parties.includes(s.client_id),approved:Boolean(await this.approvalFor(owner,{clientId:s.client_id},p.kind.artefact,tx))});return out;}
+ /** Owner-page policy (owner-pages.mjs): activating, renewing or re-confirming a cross-entity pairing needs fresh
+  * authentication, as creating one does (§5.8). Only under `ownerPages`. */
+ freshCross(actor,p){if(this.ownerPages&&p.peer.principal&&actor.freshAuth!==true)fail('reauthentication_required','Confirm it is you to pair with another account.',403);}
  /**
-  * Creates a pairing by owner action (§5.8 "Creation"): only through the owner interface, never by an app. Refused
-  * when the kind's `parties` does not admit the peer type, when the kind's `bases` excludes `pairing`, when a cross-entity
-  * pairing for (peer principal, kind line) exists in any state, when the peer is the owner, or (cross-entity) without
-  * fresh authentication. A cross-entity pairing always expires (default 90 days, at most 1 year). It is created live
-  * only when `activate` is set and every party already holds what P1 requires; otherwise pending (7 days).
+  * Validates a pairing creation (§5.8 "Creation") without writing: refused when the kind's `parties` does not admit the
+  * peer type, when the kind's `bases` excludes `pairing`, when the peer is the owner or the local app itself, or
+  * (cross-entity) without fresh authentication. A cross-entity pairing always expires (default 90 days, at most 1
+  * year). Returns {owner, cross, body, expires, now}. Shared by createPairing and the creation page's review.
   */
- async createPairing(actor,input){
+ async pairingPlan(actor,input){
   exact(input,['kind','local','peer','opens','label'],['expiresAt','activate','created_via']);
   const owner=this.owner(actor),self=this.self(owner);if(!this.enabled(owner))notFound();// creation widens
   const side=v=>plain(v)&&Object.keys(v).sort().join()==='client_id,client_session'&&clientIdValid(v.client_id)&&sessionIdValid(v.client_session);
@@ -1158,8 +1167,19 @@ export class SignalingService{
   const now=this.now();let expires=input.expiresAt??(cross?now+BOUNDS.pairingDefaultMs:null);
   if(expires!==null&&(!Number.isSafeInteger(expires)||expires<=now||expires>now+BOUNDS.pairingMaxMs))invalid('Choose an expiry within a year.');
   if(cross&&expires===null)invalid('A pairing with another account always expires.');
+  return {owner,cross,body,expires,now};
+ }
+ /**
+  * Creates a pairing by owner action (§5.8 "Creation"): only through the owner interface, never by an app; validated by
+  * pairingPlan, and refused when a cross-entity pairing for (peer principal, kind line) exists in any state. It is
+  * created live only when `activate` is set and every party already holds what P1 requires; otherwise pending (7 days).
+  * Under `ownerPages` it needs the creation page's review.
+  */
+ async createPairing(actor,input){
+  const {cross,expires,now}=await this.pairingPlan(actor,input);
   return this.ownerTx(actor,async(tx,fx,owner)=>{
    if(await tx.get(K.closed))notFound();
+   await takeReview(this,tx,actor,'pairing-create',input,this.now());
    if((await this.pairingRows(tx)).length>=BOUNDS.pairings)limited();
    if(cross&&await this.relationPairing(tx,party(input.peer.principal),input.kind.artefact))fail('pairing_exists','A pairing with this account for this kind already exists.',409);
    const p={v:1,id:'pr_'+base64url(this.random.bytes(16)),revision:1,kind:structuredClone(input.kind),local:{client_id:input.local.client_id,client_session:input.local.client_session},peer:cross?{principal:party(input.peer.principal)}:{self:{client_id:input.peer.self.client_id,client_session:input.peer.self.client_session}},opens:input.opens,accept:'auto',label:input.label,created_via:input.created_via??'settings',state:'pending',expires_at:expires,createdAt:now};
@@ -1170,7 +1190,8 @@ export class SignalingService{
   });
  }
  /** P3: the explicit activation control of one pending pairing, available only once every party qualifies. A live
-  * pairing never returns to pending. Compare-and-swap on `revision`. */
+  * pairing never returns to pending. Compare-and-swap on `revision`. Under `ownerPages` it needs the activation page's
+  * review, and fresh authentication for a cross-entity pairing. */
  async activatePairing(actor,input){
   exact(input,['id','revision']);if(typeof input.id!=='string'||!PAIRING_ID.test(input.id)||!Number.isSafeInteger(input.revision))invalid();
   const owner=this.owner(actor);if(!this.enabled(owner))notFound();
@@ -1179,12 +1200,16 @@ export class SignalingService{
    if(p.state!=='pending')invalid('Only a pending pairing can be activated.');
    // L-1: a pending pairing older than 7 days, or past its expiry, is gone at the moment of decision (tick deletes it).
    if(p.createdAt+BOUNDS.pairingPendingMs<=now||p.expires_at!==null&&p.expires_at<=now)notFound();
+   this.freshCross(actor,p);await takeReview(this,tx,actor,'pairing-activate',input,now);
    if(!await this.pairingParties(tx,owner,actor,p))fail('pairing_parties_incomplete','Each app needs its own access and approval first.',409);
    p.state='live';p.revision++;await tx.put(K.pairing(p.id),p);await this.notifyPairing(tx,fx,owner,p,now);return this.pairingView(p);
   });
  }
- /** Relabel, set or renew an expiry, or re-confirm a newer kind version (§5.8), compare-and-swap. Shortening or
-  * clearing nothing is never gated; renewing and re-confirming widen. */
+ /** Whether an update widens (§14.1): a later or removed expiry, or a re-confirmed kind version. */
+ static updateWidens(p,input){return input.kind!==undefined||input.expiresAt!==undefined&&(input.expiresAt===null||p.expires_at!==null&&input.expiresAt>p.expires_at);}
+ /** Relabel, set or renew an expiry, or re-confirm a newer kind version (§5.8), compare-and-swap. Relabelling and
+  * shortening are never gated; renewing and re-confirming widen (and, under `ownerPages`, need the page's review and,
+  * for a cross-entity pairing, fresh authentication). */
  async updatePairing(actor,input){
   exact(input,['id','revision'],['label','expiresAt','kind']);if(typeof input.id!=='string'||!PAIRING_ID.test(input.id)||!Number.isSafeInteger(input.revision))invalid();
   if(input.label!==undefined&&!labelValid(input.label,BOUNDS.pairingLabel)||input.kind!==undefined&&!kindReferenceValid(input.kind))invalid();
@@ -1193,28 +1218,45 @@ export class SignalingService{
    // L-1: an expired pairing (or a pending one past 7 days) is never renewed or re-confirmed while its deletion waits
    // for `tick`.
    if(p.expires_at!==null&&p.expires_at<=now||p.state!=='live'&&p.createdAt+BOUNDS.pairingPendingMs<=now)notFound();
-   if(input.expiresAt!==undefined){const e=input.expiresAt;
-    if(e===null?Boolean(p.peer.principal):!Number.isSafeInteger(e)||e<=now||e>now+BOUNDS.pairingMaxMs)invalid('Choose an expiry within a year.');
-    if((e===null||p.expires_at!==null&&e>p.expires_at)&&!this.enabled(owner))notFound();p.expires_at=e;}
-   if(input.kind!==undefined){if(!this.enabled(owner))notFound();if(input.kind.artefact!==p.kind.artefact||input.kind.version<p.kind.version||!await this.additive(p.kind,input.kind))invalid('Choose a later version of the same kind.');p.kind=structuredClone(input.kind);}
+   if(input.expiresAt!==undefined){const e=input.expiresAt;if(e===null?Boolean(p.peer.principal):!Number.isSafeInteger(e)||e<=now||e>now+BOUNDS.pairingMaxMs)invalid('Choose an expiry within a year.');}
+   const widening=SignalingService.updateWidens(p,input);if(widening&&!this.enabled(owner))notFound();
+   if(input.kind!==undefined&&(input.kind.artefact!==p.kind.artefact||input.kind.version<p.kind.version||!await this.additive(p.kind,input.kind)))invalid('Choose a later version of the same kind.');
+   if(widening){this.freshCross(actor,p);await takeReview(this,tx,actor,'pairing-update',input,now);}
+   if(input.expiresAt!==undefined)p.expires_at=input.expiresAt;
+   if(input.kind!==undefined)p.kind=structuredClone(input.kind);
    if(input.label!==undefined)p.label=input.label;
    p.revision++;await tx.put(K.pairing(p.id),p);return this.pairingView(p);
   });
  }
  async removePairing(actor,input){exact(input,['id']);if(typeof input.id!=='string'||!PAIRING_ID.test(input.id))invalid();return this.ownerTx(actor,async(tx,fx,owner,now)=>{const p=await tx.get(K.pairing(input.id));if(!p)notFound();await this.deletePairing(tx,fx,owner,p,now);return {removed:true};});}
+ /** One pairing for its owner page: the record, its kind as the pages show it, both parties (P1 status), the peer as it
+  * may be shown, and a newer held kind version it could be re-confirmed to (§5.8 "Kind versions"). */
+ async pairingDetail(actor,input){
+  exact(input,['id']);if(typeof input.id!=='string'||!PAIRING_ID.test(input.id))invalid();const owner=this.owner(actor);
+  const r=await this.ownerRead(actor,async(tx,now)=>{const p=await tx.get(K.pairing(input.id));if(!p)notFound();return {p,now,parties:await this.partyStatus(tx,owner,actor,p)};});
+  const body=await this.heldKind(r.p.kind);
+  return {pairing:this.pairingView(r.p),kind:body?kindView(body,r.p.kind):null,effect:body?pairingEffect(body):null,local:appView(r.p.local),peer:r.p.peer.principal?await peerView(this,r.p.peer.principal):{self:appView(r.p.peer.self)},
+   parties:r.parties,newer:body&&r.p.state==='live'?await newerKind(this,r.p.kind):null,maxExpiresAt:r.now+BOUNDS.pairingMaxMs,enabled:this.enabled(owner)};
+ }
+ pairingSummary(p){return {id:p.id,label:p.label,state:p.state,opens:p.opens,kind:structuredClone(p.kind),local:appView(p.local),peer:p.peer.self?{self:appView(p.peer.self)}:{principal:party(p.peer.principal)},expires_at:p.expires_at};}
+ async pairingDisclosure(p,body){const cross=Boolean(p.peer.principal);return {id:p.id,label:p.label,state:p.state,opens:p.opens,cross,expires_at:p.expires_at,kind:kindView(body,p.kind),local:appView(p.local),peer:cross?await peerView(this,p.peer.principal):{self:appView(p.peer.self)},effect:pairingEffect(body),peerCanTellRunning:cross,recipientOnlyEnforcement:cross};}
 
  // ---- owner: service designation (§4.3) --------------------------------------------------------------------------------
- async serviceDesignation(actor){const owner=this.owner(actor);return this.ownerRead(actor,async tx=>{const s=await tx.get(K.service);return {designated:s?.designated===true,eligible:await this.entityIs(owner)==='organization',revision:s?.revision??0};});}
+ /** The designation, whether this entity may hold one, and how many live offers lasting longer than 900 s removing it
+  * would revoke (§4.3, §14.2). */
+ async serviceDesignation(actor){const owner=this.owner(actor);return this.ownerRead(actor,async(tx,now)=>{const s=await tx.get(K.service);let longOffers=0;for(const [,o] of await this.offerRows(tx))if(!o.revoked&&!o.feature&&o.expiresAt>now&&o.expiresAt-o.createdAt>BOUNDS.offerPersonSeconds*1000)longOffers++;return {designated:s?.designated===true,eligible:await this.entityIs(owner)==='organization',revision:s?.revision??0,longOffers};});}
  /** Sets or removes the designation of an organization entity (a person entity cannot be designated). Removing it is
-  * narrowing and revokes the entity's offers longer than 900 s (§4.3, §14.2). */
+  * narrowing and revokes the entity's offers longer than 900 s (§4.3, §14.2). Setting it needs the page's review under
+  * `ownerPages`. */
  async setServiceDesignation(actor,input){
   exact(input,['designated','revision']);if(typeof input.designated!=='boolean'||!Number.isSafeInteger(input.revision))invalid();
   const owner=this.owner(actor);if(input.designated&&(!this.enabled(owner)||await this.entityIs(owner)!=='organization'))notFound();
   return this.ownerTx(actor,async(tx,fx,owner,now)=>{
    const prior=await tx.get(K.service),revision=prior?.revision??0;if(revision!==input.revision)fail('conflict','This setting changed. Reload and try again.',409);
+   if(input.designated)await takeReview(this,tx,actor,'set-service',input,now);
    await tx.put(K.service,{designated:input.designated,revision:revision+1,at:now});
-   if(!input.designated)for(const [key,o] of await this.offerRows(tx))if(!o.revoked&&!o.feature&&o.expiresAt-o.createdAt>BOUNDS.offerPersonSeconds*1000)await this.endOffer(tx,fx,owner,key,o,now);
-   return {designated:input.designated,revision:revision+1};
+   let revoked=0;if(!input.designated)for(const [key,o] of await this.offerRows(tx))if(!o.revoked&&!o.feature&&o.expiresAt-o.createdAt>BOUNDS.offerPersonSeconds*1000){await this.endOffer(tx,fx,owner,key,o,now);revoked++;}
+   return {designated:input.designated,revision:revision+1,...input.designated?{}:{revoked}};
   });
  }
 
@@ -1228,8 +1270,8 @@ export class SignalingService{
  }
  /**
   * Records a session handler approval (widening): the owner approved `kind` ({artefact, version, digest} as shown) for
-  * `clientId` on a provider page meeting the §20.1.4 obligations (the adapter's job; `actor.parties` must list the app,
-  * so it holds a live connection and grant). `autoConnect` is allowed only for `parties: self`.
+  * `clientId` on a provider page meeting the §20.1.4 obligations (under `ownerPages`, the page's review; `actor.parties`
+  * must list the app, so it holds a live connection and grant). `autoConnect` is allowed only for `parties: self`.
   */
  async approve(actor,input){
   exact(input,['clientId','kind'],['autoConnect']);const owner=this.owner(actor);
@@ -1238,6 +1280,7 @@ export class SignalingService{
   const body=await this.heldKind(input.kind);if(!body)invalid('This kind is not available.');
   if(input.autoConnect===true&&body.session.parties!=='self')invalid('Only kinds for your own devices connect automatically.');
   return this.ownerTx(actor,async(tx,fx,owner,now)=>{
+   await takeReview(this,tx,actor,'session-approve',input,now);
    // §20.1.4 "Exclusions (§7.4) apply": an excluded handler cannot be approved for that kind (L-3).
    if(handlerExcluded(await tx.get(memoryKey(owner,input.kind.artefact)),input.clientId))fail('handler_excluded','This app is excluded for this kind. Remove the exclusion first.',409);
    // The approval belongs to the app's current connection generation. State of an ended or earlier connection is
@@ -1245,10 +1288,10 @@ export class SignalingService{
    if(typeof this.connections?.state==='function'){const st=await this.appState(tx,owner,input.clientId);if(st.state!=='live'||st.generation===null)notFound();
     if(st.status==='stale')await this.clearApp(tx,fx,owner,input.clientId,now);
     await tx.put(await this.appKey(input.clientId),{clientId:input.clientId,generation:st.generation});}
-   const key=memoryKey(owner,input.kind.artefact),memory=await tx.get(key),prior=approvalIn(memory,{handler:input.clientId,feature:false});
+   const key=memoryKey(owner,input.kind.artefact),memory=await tx.get(key);
    await tx.put(key,withApproval(memory,input.kind.artefact,{handler:input.clientId,feature:false,version:input.kind.version,digest:input.kind.digest,at:now,autoConnect:input.autoConnect===true}));
-   // A later version that adds disclosure replaced the earlier approval only after this owner action (re-approval).
-   if(prior&&prior.version!==input.kind.version){/* nothing else changes: pairings keep their own pinned version */}
+   // A later version that adds disclosure replaces the earlier approval only after this owner action (re-approval);
+   // pairings keep their own pinned version.
    return {kind:input.kind.artefact,clientId:input.clientId,version:input.kind.version,autoConnect:input.autoConnect===true};
   });
  }
@@ -1262,15 +1305,118 @@ export class SignalingService{
    return {removed,ended};
   });
  }
- /** Sets `autoConnect` on an existing approval: turning it on widens (needs signaling on and a `self` kind). */
+ /** Sets `autoConnect` on an existing approval: turning it on widens (needs signaling on, a `self` kind and, under
+  * `ownerPages`, the page's review); turning it off is never gated. */
  async setAutoConnect(actor,input){
   exact(input,['clientId','kind','autoConnect']);if(!clientIdValid(input.clientId)||!lineValid(input.kind)||typeof input.autoConnect!=='boolean')invalid();
   const owner=this.owner(actor);if(input.autoConnect&&!this.enabled(owner))notFound();
   return this.ownerTx(actor,async(tx,fx,owner,now)=>{
    const key=memoryKey(owner,input.kind),memory=await tx.get(key),a=approvalIn(memory,{handler:input.clientId,feature:false});if(!a)notFound();
-   if(input.autoConnect){const body=await this.heldKind({artefact:input.kind,version:a.version,digest:a.digest});if(!body||body.session.parties!=='self')invalid('Only kinds for your own devices connect automatically.');}
+   if(input.autoConnect){const body=await this.heldKind({artefact:input.kind,version:a.version,digest:a.digest});if(!body||body.session.parties!=='self')invalid('Only kinds for your own devices connect automatically.');await takeReview(this,tx,actor,'session-auto-connect',input,now);}
    await tx.put(key,withApproval(memory,input.kind,{...a,autoConnect:input.autoConnect}));return {autoConnect:input.autoConnect};
   });
+ }
+
+ // ---- owner pages: reviews (owner-pages.mjs; §20.1.4, §5.8, §4.3 page obligations) -------------------------------------
+ /**
+  * `signaling.review` {action, input}: validates a widening owner action as the operation will, computes what its page
+  * must disclose, and stores a single-use review (armed after PAGE_REVIEW.dwellMs). Returns {action, review, armAt,
+  * expiresAt, input, disclosure}: `input` is exactly what the page commits (with `review` as adapter evidence). A
+  * cross-entity pairing that already exists for (peer, kind line) answers {review: null, refusal: {code:
+  * 'pairing_exists', existing}} so that the page can link to it (§5.8). Widening: not found while signaling is off.
+  */
+ async review(actor,input){
+  exact(input,['action','input']);const owner=this.owner(actor);
+  if(!REVIEW_ACTIONS.includes(input.action)||!plain(input.input))invalid();
+  if(!this.enabled(owner))notFound();
+  const built=await this.reviewPlan(actor,owner,input.action,input.input);
+  if(built.refusal)return {action:input.action,review:null,refusal:built.refusal};
+  const canonical=canonicalInput(input.action,built.input),record=await storeReview(this,actor,input.action,canonical);
+  return {action:input.action,review:record.id,armAt:record.armAt,expiresAt:record.expiresAt,input:canonical,disclosure:built.disclosure};
+ }
+ async resolveKind(line){if(!lineValid(line))invalid();const held=await latestHeld(this,line);if(!held)invalid('This kind is not available.');return held;}
+ async reviewPlan(actor,owner,action,input){
+  if(action==='session-approve'){
+   exact(input,['clientId','kind']);if(!clientIdValid(input.clientId))invalid();
+   if(!Array.isArray(actor.parties)||!actor.parties.includes(input.clientId))notFound();
+   let held;if(typeof input.kind==='string')held=await this.resolveKind(input.kind);
+   else{if(!kindReferenceValid(input.kind))invalid();const body=await this.heldKind(input.kind);if(!body)invalid('This kind is not available.');held={ref:{artefact:input.kind.artefact,version:input.kind.version,digest:input.kind.digest},body};}
+   const k=held.ref,body=held.body;
+   const r=await this.ownerRead(actor,async(tx,now)=>{
+    const memory=await tx.get(memoryKey(owner,k.artefact));if(handlerExcluded(memory,input.clientId))fail('handler_excluded','This app is excluded for this kind. Remove the exclusion first.',409);
+    if(typeof this.connections?.state==='function'){const st=await this.appState(tx,owner,input.clientId);if(st.state!=='live'||st.generation===null)notFound();}
+    const existing=approvalIn(memory,{handler:input.clientId,feature:false}),pending=[];
+    for(const p of await this.pairingRows(tx)){
+     if(p.state!=='pending'||p.kind.artefact!==k.artefact||p.createdAt+BOUNDS.pairingPendingMs<=now||p.expires_at!==null&&p.expires_at<=now)continue;
+     const sides=[p.local,...p.peer.self?[p.peer.self]:[]];if(!sides.some(s=>s.client_id===input.clientId))continue;
+     let ok=true;for(const s of sides)if(s.client_id!==input.clientId&&!await this.partyQualifies(tx,owner,actor,s,p.kind.artefact))ok=false;if(ok)pending.push(this.pairingSummary(p));
+    }
+    return {existing,pending,designated:(await tx.get(K.service))?.designated===true};
+   });
+   const serviceClass=r.designated&&await this.entityIs(owner)==='organization';
+   let adds=false;if(r.existing&&r.existing.version!==k.version){const old=await this.heldKind({artefact:k.artefact,version:r.existing.version,digest:r.existing.digest});adds=old?kindAddsDisclosure(old,body):true;}
+   return {input:{clientId:input.clientId,kind:k},disclosure:{handler:appView({client_id:input.clientId}),kind:kindView(body,k),risk:kindRisk(body,input.clientId),sees:['identity','origin','context'],serviceClass,
+    ...serviceClass?{serviceLimits:{openSeconds:BOUNDS.offerServiceOpenSeconds,boundSeconds:BOUNDS.offerServiceBoundSeconds}}:{},autoConnectAllowed:body.session.parties==='self',
+    existing:r.existing?{version:r.existing.version,autoConnect:r.existing.autoConnect}:null,addsDisclosure:adds,activatable:r.pending}};
+  }
+  if(action==='session-auto-connect'){
+   exact(input,['clientId','kind'],['autoConnect']);if(!clientIdValid(input.clientId)||!lineValid(input.kind)||input.autoConnect!==undefined&&input.autoConnect!==true)invalid();
+   const a=await this.ownerRead(actor,tx=>tx.get(memoryKey(owner,input.kind)).then(m=>approvalIn(m,{handler:input.clientId,feature:false})));if(!a)notFound();
+   const k={artefact:input.kind,version:a.version,digest:a.digest},body=await this.heldKind(k);if(!body||body.session.parties!=='self')invalid('Only kinds for your own devices connect automatically.');
+   return {input:{clientId:input.clientId,kind:input.kind,autoConnect:true},disclosure:{handler:appView({client_id:input.clientId}),kind:kindView(body,k),risk:kindRisk(body,input.clientId)}};
+  }
+  if(action==='pairing-create'){
+   exact(input,['kind','local','peer','opens','label'],['expiresAt','created_via']);
+   const norm=structuredClone(input);
+   if(plain(norm.local)&&norm.local.client_session===undefined)norm.local.client_session=null;
+   if(plain(norm.peer)&&plain(norm.peer.self)&&norm.peer.self.client_session===undefined)norm.peer.self.client_session=null;
+   if(plain(norm.peer)&&Object.keys(norm.peer).join()==='handle'){
+    const handle=typeof norm.peer.handle==='string'?norm.peer.handle.trim().replace(/^@/,''):'';if(!handle||handle.length>320)invalid('Enter a handle.');
+    let p=null;try{p=await this.keys.resolveHandle?.(handle);}catch{p=null;}if(!principalValid(p,this.allowLoopback))fail('peer_unknown','No account with that handle was found here.',404);norm.peer={principal:party(p)};
+   }
+   if(typeof norm.kind==='string'){const line=norm.kind;if(!lineValid(line))invalid();const mine=plain(norm.local)&&clientIdValid(norm.local.client_id)?await this.approvalFor(owner,{clientId:norm.local.client_id},line):null;norm.kind=mine?.ref??(await this.resolveKind(line)).ref;}
+   const plan=await this.pairingPlan(actor,norm);
+   norm.expiresAt=plan.expires;norm.created_via=norm.created_via??'settings';
+   const r=await this.ownerRead(actor,async tx=>{
+    const existing=plan.cross?await this.relationPairing(tx,party(norm.peer.principal),norm.kind.artefact):null;if(existing)return {existing};
+    return {parties:await this.partyStatus(tx,owner,actor,{local:norm.local,peer:norm.peer,kind:norm.kind})};});
+   if(r.existing)return {refusal:{code:'pairing_exists',existing:r.existing.id}};
+   return {input:norm,disclosure:{kind:kindView(plan.body,norm.kind),local:appView(norm.local),peer:plan.cross?await peerView(this,norm.peer.principal):{self:appView(norm.peer.self)},opens:norm.opens,label:norm.label,cross:plan.cross,
+    expiresAt:plan.expires,effect:pairingEffect(plan.body),peerCanTellRunning:plan.cross,recipientOnlyEnforcement:plan.cross,parties:r.parties,activateNow:r.parties.every(x=>x.connected&&x.approved)}};
+  }
+  if(action==='pairing-activate'){
+   exact(input,['id','revision']);if(typeof input.id!=='string'||!PAIRING_ID.test(input.id)||!Number.isSafeInteger(input.revision))invalid();
+   const r=await this.ownerRead(actor,async(tx,now)=>{const p=await tx.get(K.pairing(input.id));if(!p)notFound();if(p.revision!==input.revision)fail('conflict','This pairing changed. Reload and try again.',409);
+    if(p.state!=='pending')invalid('Only a pending pairing can be activated.');if(p.createdAt+BOUNDS.pairingPendingMs<=now||p.expires_at!==null&&p.expires_at<=now)notFound();return {p,parties:await this.partyStatus(tx,owner,actor,p)};});
+   this.freshCross(actor,r.p);const body=await this.heldKind(r.p.kind);if(!body)invalid('This kind is not available.');
+   return {input:{id:input.id,revision:input.revision},disclosure:{...await this.pairingDisclosure(r.p,body),parties:r.parties,activateNow:r.parties.every(x=>x.connected&&x.approved)}};
+  }
+  if(action==='pairing-update'){
+   exact(input,['id','revision'],['expiresAt','kind']);if(typeof input.id!=='string'||!PAIRING_ID.test(input.id)||!Number.isSafeInteger(input.revision))invalid();
+   const norm=structuredClone(input);
+   const r=await this.ownerRead(actor,async(tx,now)=>{const p=await tx.get(K.pairing(input.id));if(!p)notFound();if(p.revision!==input.revision)fail('conflict','This pairing changed. Reload and try again.',409);
+    if(p.expires_at!==null&&p.expires_at<=now||p.state!=='live'&&p.createdAt+BOUNDS.pairingPendingMs<=now)notFound();return {p,now};});
+   const p=r.p;
+   if(typeof norm.kind==='string'){if(norm.kind!==p.kind.artefact)invalid('Choose a later version of the same kind.');const newer=await newerKind(this,p.kind);if(!newer)invalid('There is no later version of this kind to confirm.');norm.kind={artefact:newer.kind.artefact,version:newer.kind.version,digest:newer.kind.digest};}
+   else if(norm.kind!==undefined&&!kindReferenceValid(norm.kind))invalid();
+   if(norm.expiresAt!==undefined){const e=norm.expiresAt;if(e===null?Boolean(p.peer.principal):!Number.isSafeInteger(e)||e<=r.now||e>r.now+BOUNDS.pairingMaxMs)invalid('Choose an expiry within a year.');}
+   if(!SignalingService.updateWidens(p,norm))invalid('Only renewing or re-confirming a pairing needs a review.');
+   if(norm.kind!==undefined&&(norm.kind.artefact!==p.kind.artefact||norm.kind.version<p.kind.version||!await this.additive(p.kind,norm.kind)))invalid('Choose a later version of the same kind.');
+   this.freshCross(actor,p);
+   const current=await this.heldKind(p.kind),next=norm.kind?await this.heldKind(norm.kind):current;if(!next)invalid('This kind is not available.');
+   return {input:norm,disclosure:{...await this.pairingDisclosure(p,next),current:{expires_at:p.expires_at,kind:current?kindView(current,p.kind):null},
+    next:{...norm.expiresAt!==undefined?{expires_at:norm.expiresAt}:{},...norm.kind?{kind:kindView(next,norm.kind),addsDisclosure:current?kindAddsDisclosure(current,next):true}:{}}}};
+  }
+  if(action==='set-service'){
+   exact(input,['designated','revision']);if(input.designated!==true||!Number.isSafeInteger(input.revision))invalid();
+   if(await this.entityIs(owner)!=='organization')notFound();
+   const r=await this.ownerRead(actor,async tx=>({revision:(await tx.get(K.service))?.revision??0,approvals:await listApprovals(tx,owner)}));
+   if(r.revision!==input.revision)fail('conflict','This setting changed. Reload and try again.',409);
+   const apps=new Map();for(const {line,approval} of r.approvals)if(!approval.feature)apps.set(approval.handler,[...apps.get(approval.handler)??[],line]);
+   return {input:{designated:true,revision:input.revision},disclosure:{openSeconds:BOUNDS.offerServiceOpenSeconds,boundSeconds:BOUNDS.offerServiceBoundSeconds,personSeconds:BOUNDS.offerPersonSeconds,
+    apps:[...apps].map(([clientId,kinds])=>({...appView({client_id:clientId}),kinds}))}};
+  }
+  invalid();
  }
 
  /** signaling.export: owner data (§12.6): the IP policy, principal and provider blocks, pairings (every member, every
@@ -1457,6 +1603,9 @@ export class SignalingUpdatePairing extends SignalingAction{static operation='si
 export class SignalingRemovePairing extends SignalingAction{static operation='signaling.pairing-remove';static lifecycle='suspended';run({signaling}){return signaling.removePairing(this.actor,this.input);}}
 export class SignalingServiceDesignation extends SignalingQuery{static operation='signaling.service';static lifecycle='suspended';fetch({signaling}){return signaling.serviceDesignation(this.actor);}}
 export class SignalingSetServiceDesignation extends SignalingAction{static operation='signaling.set-service';static lifecycle='suspended';run({signaling}){return signaling.setServiceDesignation(this.actor,this.input);}}
+// Owner pages (owner-pages.mjs): the review a page takes before a widening action, and one pairing's page read.
+export class SignalingReview extends SignalingAction{static operation='signaling.review';run({signaling}){return signaling.review(this.actor,this.input);}}
+export class SignalingPairingDetail extends SignalingQuery{static operation='signaling.pairing';static lifecycle='suspended';fetch({signaling}){return signaling.pairingDetail(this.actor,this.input);}}
 export class SignalingExport extends SignalingQuery{static operation='signaling.export';static lifecycle='suspended';fetch({signaling}){return signaling.exportRecords(this.actor);}}
 // Intents session handler approvals (AMD-SG-I1), owner operations on this engine (the records live in intents memory).
 export class IntentsSessionApprovals extends SignalingQuery{static operation='intents.session-approvals';static lifecycle='suspended';fetch({signaling}){return signaling.approvals(this.actor);}}
@@ -1475,15 +1624,15 @@ export class SignalingRelayCredentials extends SignalingAction{static operation=
 export class SignalingRelaySweep extends SignalingSystem{static operation='signaling.relay-sweep';run({signaling}){const owner=signaling.system(this.actor);return signaling.relay?signaling.relay.sweep(owner):{revoked:0,pending:0,wakeAt:null};}}
 
 export const ENDPOINT_OPERATIONS=Object.freeze([SignalingRegister,SignalingUnregister,SignalingOpen,SignalingOffer,SignalingRevokeOffer,SignalingClaim,SignalingSend,SignalingRenew,SignalingListen,SignalingEndpoints]);
-export const OWNER_OPERATIONS=Object.freeze([SignalingPolicy,SignalingSetPolicy,SignalingBlock,SignalingUnblock,SignalingBlocked,SignalingEndSession,SignalingRevokeEndpoint,SignalingEndpointList,SignalingOffers,SignalingRevokeOffers,SignalingSessions,SignalingPairings,SignalingCreatePairing,SignalingActivatePairing,SignalingUpdatePairing,SignalingRemovePairing,SignalingServiceDesignation,SignalingSetServiceDesignation,SignalingExport,IntentsSessionApprovals,IntentsSessionApprove,IntentsSessionUnapprove,IntentsSessionAutoConnect]);
+export const OWNER_OPERATIONS=Object.freeze([SignalingPolicy,SignalingSetPolicy,SignalingBlock,SignalingUnblock,SignalingBlocked,SignalingEndSession,SignalingRevokeEndpoint,SignalingEndpointList,SignalingOffers,SignalingRevokeOffers,SignalingSessions,SignalingPairings,SignalingCreatePairing,SignalingActivatePairing,SignalingUpdatePairing,SignalingRemovePairing,SignalingServiceDesignation,SignalingSetServiceDesignation,SignalingReview,SignalingPairingDetail,SignalingExport,IntentsSessionApprovals,IntentsSessionApprove,IntentsSessionUnapprove,IntentsSessionAutoConnect]);
 export const SYSTEM_OPERATIONS=Object.freeze([SignalingIngest,SignalingInbox,SignalingTick,SignalingOutboxDrain,SignalingLifecycle,SignalingRelaySweep]);
 export const RELAY_OPERATIONS=Object.freeze([SignalingRelayCredentials]);
 export const RELAY_CONTRACT_OPERATIONS=Object.freeze({credentials:'signaling.relay-credentials'});
 /** Operations no signaling flag ever gates (§14.1 narrowing, and reads of existing state). Decline claims, `send` of
  * only end/cancel/decline and narrowing set-policy/pairing updates are decided inside the engine. */
-export const NEVER_GATED=Object.freeze(['signaling.unregister','signaling.revoke-offer','signaling.end-session','signaling.revoke-endpoint','signaling.block','signaling.revoke-offers','signaling.pairing-remove','signaling.listen','signaling.endpoints','signaling.policy','signaling.blocked','signaling.endpoint-list','signaling.offers','signaling.sessions','signaling.pairings','signaling.service','signaling.export','intents.session-approvals','intents.session-unapprove','signaling.ingest','signaling.inbox','signaling.tick','signaling.outbox-drain','signaling.lifecycle','signaling.relay-sweep']);
+export const NEVER_GATED=Object.freeze(['signaling.unregister','signaling.revoke-offer','signaling.end-session','signaling.revoke-endpoint','signaling.block','signaling.revoke-offers','signaling.pairing-remove','signaling.listen','signaling.endpoints','signaling.policy','signaling.blocked','signaling.endpoint-list','signaling.offers','signaling.sessions','signaling.pairings','signaling.pairing','signaling.service','signaling.export','intents.session-approvals','intents.session-unapprove','signaling.ingest','signaling.inbox','signaling.tick','signaling.outbox-drain','signaling.lifecycle','signaling.relay-sweep']);
 /** Operations that answer the uniform 404 while signaling is off (the engine rechecks every gate). */
-export const WIDENING=Object.freeze(new Set(['signaling.register','signaling.open','signaling.offer','signaling.renew','signaling.unblock','signaling.relay-credentials','signaling.pairing-create','signaling.pairing-activate','intents.session-approve']));
+export const WIDENING=Object.freeze(new Set(['signaling.register','signaling.open','signaling.offer','signaling.renew','signaling.unblock','signaling.relay-credentials','signaling.pairing-create','signaling.pairing-activate','intents.session-approve','signaling.review']));
 /** The contract's method names (§10.2) → engine operations, for the RPC adapter. */
 export const CONTRACT_OPERATIONS=Object.freeze({register:'signaling.register',unregister:'signaling.unregister',endpoints:'signaling.endpoints',open:'signaling.open',offer:'signaling.offer',revoke_offer:'signaling.revoke-offer',claim:'signaling.claim',send:'signaling.send',renew:'signaling.renew',listen:'signaling.listen'});
 export {DEFAULT_POLICY,iatWithinWindow,LIMIT_VALUES,BOUNDS,PROFILES};

@@ -4,6 +4,7 @@
 // federation RPC context) is supplied as the RPC adapter supplies it: an {kind:'app'} actor. The owner approves the app
 // through the intents session handler approval (owner operation, with the adapter's P1 evidence). Local behaviour only.
 import test from 'node:test';
+import {reviewed,approvals} from './helpers/signaling-owner-review.mjs';
 import assert from 'node:assert/strict';
 import {mkdtemp,readFile,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
@@ -47,7 +48,8 @@ async function runtime(t,{flags=FLAGS}={}){
   await identity.confirmRecovery({pendingToken:pending.pendingToken,recoveryToken:downloaded.recoveryToken,downloadConfirmed:true},base);
   const id=pending.account.id,object=accountHandle(env,id),actor={kind:'app',owner:id,clientId:APP,origin:'https://app.example',grants:['grant-ok']},owner={kind:'owner',owner:id,parties:[APP]};
   // The owner's session handler approval (AMD-SG-I1): widening, needs the flags and the adapter's P1 evidence.
-  if(approve&&flags.SIGNALING_ENABLED==='true')await object.signalingDispatch(id,{operation:'intents.session-approve',actor:owner,input:{clientId:APP,kind:KIND}});
+  // Recorded the way the owner page records it (a review, then the armed decision; packages/signaling/owner-pages.mjs).
+  if(approve&&flags.SIGNALING_ENABLED==='true')await reviewed((operation,input,as)=>object.signalingDispatch(id,{operation,actor:as,input}),owner,approvals(APP,[KIND]));
   return {id,object,actor,owner,principal:{iss:ORIGIN,sub:id},identity:`${ORIGIN}/identity/${id}`,
    dispatch:(operation,input,as=actor)=>object.signalingDispatch(id,{operation,actor:as,input}),listen:input=>object.signalingListen(id,{actor,input})};
  };
@@ -138,7 +140,7 @@ test('runtime (review H-1): disconnecting the app connection clears signaling wi
  const f=await runtime(t),a=await f.person({approve:false}),b=await f.person({approve:false}),client={id:APP,name:'App',origin:'https://app.example'};
  assert.notEqual(f.env.INTEGRATIONS_ENABLED,'true','the shipped default');
  const conn=await b.object.appBindleConnect(b.id,client,0);
- await b.dispatch('intents.session-approve',{clientId:APP,kind:KIND},b.owner);
+ await reviewed(b.dispatch,b.owner,approvals(APP,[KIND]));
  const eb=await b.dispatch('signaling.register',{kinds:[LINE]});
  await b.dispatch('signaling.offer',{endpoint:eb.endpoint,endpoint_secret:eb.endpoint_secret,kind:LINE,profile:'webrtc',principals:[a.principal],expires_in:600});
  const off=await b.object.appDisconnect(b.id,conn.id);
