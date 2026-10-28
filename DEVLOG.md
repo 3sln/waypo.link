@@ -8939,3 +8939,208 @@ Provisional (coordinator), not signed off by the user.
 - **Verification (agent run):** npm test 3954 pass, 0 fail; test:worker 80/80; check:worker passes; test:e2e passes; test:intents, test:parlay:web, test:connections and test:ui-state pass.
 
 Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-27 — signaling.v1 spec rev 3 (core-scope cut, extensions rev 3, pairing consent)
+
+Provisional (coordinator), not signed off by the owner. Spec only: `docs/spec/signaling.md` revision 3, plus one new section in `docs/spec/messaging.md` (§5.5, call invitations). No code changed.
+
+**Inputs.** Owner direction (2026-10-27, relayed): "Core signaling should be unaware of calls, contacts etc.; it provides the primitives apps need; it should not spec or implement app-level features." Intent kinds are public URL artefacts and core hard-codes none. Contacts and links spike rev 2 (CL-9, CR-S1 to CR-S4, CR-K1/K2, L5; CL-10 withdrawn). Local clients spike (LC-11, LC-12, CR-L1 to CR-L10). Extensions rev 3.2 Appendix A, CR-X3-03.
+
+**Removed from signaling.**
+- The `link` basis: §5.3 (now a withdrawal stub), AMD-SG-L1a and L1b (§20.3 stub), `mint_link`, resolving a recipient from a link, the batch `links` member, link windows (`preferred`, `issuerParent`), quarantine, and the link rows in owner controls, narrowing, moves, deletion, export and logging.
+- Every call and presentation reference in normative text. Examples are neutral (remote control, file sync, an app-defined media session).
+- The call-invite description, which moves to Bindle Messaging §5.5. The presentation (ring) hint stays out, as a notice-contract proposal.
+- AMD-INT-R1 item 5 (the candidate `start-call` kind).
+- The slot manifests, the occupant declaration, `ref` and AMD-X1.
+
+**What remains.**
+- The bases are `self`, `pairing`, `offer` and `none` (held).
+- Routing cases are renumbered 1 to 4. Intents routing is used only in the own-entity fallback, case 2.
+- The extension is declared as `{spec, options}`: `endpoint` is an audience option, the prerequisites are directory and artefact-versions, and the built-in contracts are listed in `contracts`.
+- The two fragments, `signaling/v1` and `ice-relay/v1`, carry `selection` and `consumers`.
+- A provider feature is identified by (issuer, its extension's spec URL), and `client.feature` carries that spec URL.
+- The pairing is a per-edge owner record under P1 to P4.
+- Local-client enrolment, with M4 or M5.
+
+**New decisions SG-36 to SG-42** (unsigned; §19.2):
+- SG-36: core-scope cut.
+- SG-37: extensions rev 3 shape.
+- SG-38: standing acceptance reserved. This is a coordinator reading: with `link` gone and requests held, no basis delivers an unsolicited cross-entity invite, so the setting had nothing to apply to.
+- SG-39: pairing consent (CR-L10).
+- SG-40: local clients.
+- SG-41: signed-object profile repointed to the forthcoming core keys spec.
+- SG-42: AMD-INT-R1 reduced to hosted intents obligations.
+
+Several earlier SG rows are revised in place (SG-5, SG-18 withdrawn, SG-30 and others). Appendix A.6 maps each applied change request to its section.
+
+**Messaging §5.5 (provisional, unsigned).**
+- The call kind uses bases `["offer"]` and `profiles: {"webrtc": {}}`. The media choice lives only in the body.
+- `expiresAt` is at most 840 s after creation: the 900 s offer maximum minus a 60 s skew margin.
+- Who can call follows the messaging first-contact gate and list policies.
+- No alerting for unaccepted conversations, or for invite-admitted contacts until the owner has replied once (CL-23).
+- An invalid body is refused with `malformed`.
+
+**Open questions.** These are in signaling §19.5:
+- Q8 (pairing in call kinds) is moot, because kinds are app-defined.
+- Former Q6 and Q7 moved out to the notice-contract and Messaging proposals.
+- New Q10: accept reserving standing acceptance until a ticket-style admitting basis has a consumer.
+- New Q11: the local-clients extension identifier.
+- Still open: the residuals and the core keys spec location.
+
+**Verification.** A relative link and anchor check over `docs/spec/**` passes for signaling.md and messaging.md. The only failures are pre-existing: site-root `/artefacts/...` links in storage, contracts, app-messages and protocol, and the known messaging.md anchor `../architecture/messaging-app.md#13-email-bridge-handoff`. No code changed, so `npm test` was not run. Another agent's concurrent recovery-code edits were not touched.
+
+Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-27 — signaling.v1 spec rev 3.1 (rev 3 review fixes; open offers)
+
+Provisional (coordinator), not signed off by the owner. Spec only: `docs/spec/signaling.md` revision 3.1, `docs/spec/messaging.md` §5.5, and a new frozen copy `docs/spec/superseded/signaling-rev2.1.md` (`git show 2a686cf:docs/spec/signaling.md`, superseded banner, relative links adjusted). No code changed; another agent's concurrent recovery-code edits were not touched.
+
+**Input.** An independent review of the uncommitted revision 3 (2 high, 6 medium, 10 low findings) and the coordinator's decisions on it. Signaling §A.7 maps each finding to its fix.
+
+**Cuts.**
+- **Intents routing (H1).** The routing handler, its default, sole-handler promotion, the owner-hook chooser, the `bsession` handoff and late delivery to a chosen app are cut. Own-entity invites go to the initiating app or a named `target`. Signaling keeps only session kinds and per-app session handler approvals from intents. AMD-INT-R1 moves out to the intents change requests, and SG-42 is withdrawn as not needed. New SG-44.
+- **`none` (H2).** Reserved as a possible future basis. Removed: held requests, "Allow later", `basis: "request"` and the owner hook, which leaves the provider with no presentation duty. New SG-45.
+- **Lows.** The glare auto-accept is cut. A.1–A.5 and the bodies of withdrawn amendments are moved to the frozen copy, with short pointers left behind.
+
+**Open offers (M4, SG-38; new SG-43, which replaces standing acceptance and the reserved ticket idea).**
+- An offer MAY omit its principal: an open offer admits any verified principal except the minting entity.
+- An offer MAY admit `uses` from 1 to a provider maximum (default 1).
+- Every offer has an expiry and is revocable. The expiry range is 10–900 s.
+- **Service-class endpoints** are provider features, and apps of entities whose kind is not `person`. They MAY mint for up to 90 days, and they auto-accept their own offers on every endpoint of the minting app or feature.
+- **Why 90 days:** it matches the default cross-entity pairing expiry, forces at least quarterly rotation of a publishable capability, and bounds both the damage of a leak and the time a stale offer holds a live-offer slot.
+- **Why 900 s for open offers from a person's apps:** a person must never have a standing public address, which CL-10 rejected. 900 s still covers a code shown in person, or a group the app cannot list by principal.
+- **Abuse bounds:**
+  - a use is reserved atomically at admission, spent by the first claim and released on an unclaimed end;
+  - per-offer, per-(principal, offer) and per-(issuer, offer) windows apply, plus the issuer and host-wide windows;
+  - open-offer invites never use the pending reserve;
+  - blocks apply first;
+  - revocation ends pending sessions silently;
+  - a dead offer looks exactly like an unknown one;
+  - tokens are never logged;
+  - every check is local and runs first at step 7.
+- The approval page of a service-class handler discloses all of this.
+- Owner question Q10 is rewritten against the owner's verbatim "app to app, user to user, provider to provider … all use cases" direction. New Q12 covers `none` reserved.
+
+**Pairings (M1–M3, L7, L10; new SG-46).**
+- At most one cross-entity pairing per (peer principal, kind line), in any state, enforced at creation.
+- An app learns the pairings that cover it through `endpoints({endpoint})` `pairings` and a new `pairing` `listen` event, and learns nothing else about pairings.
+- The M4 confirmation is reachable from the `peer` (interactive) side for every value of `opens`.
+- Provider features are never pairing parties.
+- Two P3 readings: activation at creation, and single-submit activation on an M5 enrolment page.
+- P4 is spelled out for cross-entity pairings: listed with the local app and in a by-peer list.
+- The confirmation code covers the provider-chosen `user_code`, so it cannot be ground offline.
+
+**Messaging §5.5 (M5, L3, L4).**
+- Alerting is allowed only if the receiving owner has sent the author a message in a two-party conversation, plus the existing expiry, state and rate rules. Nothing depends on list policies or CL-23.
+- The call kind's `parties` is `other`.
+- `expiresAt` ≤ the earliest embedded offer `expires_at` − 60 s. Offer entries now carry `expires_at`.
+- A near-expiry dial-back that misses its offer is acknowledged.
+
+**Appendix C (M6), checked against the code.**
+- `packages/rtc/relay.mjs` imports `relay-credentials.mjs`, so that file is kept.
+- There is no `beam-retirement.mjs`.
+- `packages/runtime/account/contact-profile.mjs` has no imports, so its row is removed.
+- `packages/core/signed-object.mjs` does not exist yet ("once created").
+- `jws.mjs` and `tickets.mjs` import `packages/links/envelope.mjs` today.
+
+**Readings and disagreements.**
+- `endpoints` gains an optional `endpoint` argument.
+- An `open` to another entity must carry a basis.
+- A decline spends an offer use.
+- `revoke_offer` with a token list covers the whole minting app.
+- Reservation replaces spend-at-admission for every offer, not only open ones, so there is one rule. A bound offer whose first dial-back goes unanswered can now be used again before it expires.
+- M1 is applied as "one pairing in any state", stricter than "one live", to avoid activation races.
+- These are listed in §A.7 and stay provisional.
+
+**Verification.** A relative link and anchor check over `docs/spec/**` passes, apart from the pre-existing failures: the site-root `/artefacts/...` links in storage, contracts, app-messages and protocol, and messaging.md `../architecture/messaging-app.md#13-email-bridge-handoff`. No code changed, so `npm test` was not run.
+
+Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-27 — Recovery reissue: cancel from the replacing device (bug fix)
+
+Provisional bug fix.
+
+**Symptom.** `npm run test:recovery-reissue` timed out in the browser test that cancels the pending window. It was already failing at 10852e1; no script ran the file.
+
+**Cause.**
+- The "Cancel sessions" rule (re-verification follow-ups, 2026-10-23) ends the sessions that staged and confirmed the reissue.
+- The view marks that same device `cancellable`, because its session predates the begin.
+- When the owner cancelled from it, the console's follow-up `GET /api/account` hit 401. The confirmation was lost and the owner saw "Your session expired".
+
+**Fix.**
+- `reissueRecoveryCancel` returns `signedOut:true`, with no account projection, when the caller's session did not survive the cancel.
+- `CancelPendingRecoveryReissue` then signs this browser out of the account and shows the outcome on the account picker (en/es) without sending another request.
+- The browser test now expects this.
+
+**Regressions.** `tests/identity-wargame2.test.mjs` and `tests/browser/recovery-reissue-window.mjs`. Each fails when its fix is reverted.
+
+**Follow-up (coordinator, provisional).** Keep offering the cancel on the replacing device, since a stolen-session scenario may need it, but warn on the control that cancelling signs this device out. Queued.
+
+Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-27 — signaling.v1 spec rev 3.2 (rev 3.1 verification fixes)
+
+Provisional (coordinator), unsigned. Specification only: `docs/spec/signaling.md` (revision 3.2) and `docs/spec/messaging.md` §5.5. No code changed. Findings map to fixes in signaling Appendix A.8; decisions are SG-47 to SG-51, with SG-31 and SG-43 revised.
+
+**Service offers (H1, L-8, L5; SG-47).**
+- A service-class offer belongs to the minting app or feature, not to the minting endpoint.
+  - Dial-backs route to every eligible and online endpoint of that app or feature. Online means a `listen` outstanding or within the liveness window (reference 60 s).
+  - The first claim wins atomically.
+- Other offers keep minting-endpoint routing. The online condition is scoped to service offers, because a sleeping person-app endpoint is woken by its doorbell.
+- An offer ends only on:
+  - revocation, or expiry;
+  - the end of the minting app's or feature's authority for the kind;
+  - removal of a service designation (offers over 900 s only);
+  - the entity's move or deletion.
+- Unregistering an endpoint never ends an offer, and neither does its expiry. Endpoint expiry is now a §14.2 trigger with the effects of `unregister`.
+- A move kills published offers, and this is now stated for service operators.
+
+**Open-offer abuse bounds (H2, M1; SG-48).**
+- Open-offer invites are charged only to their own windows and the host-wide initiator window, never to windows that unbased traffic fills. Their own windows are:
+  - per offer;
+  - per (principal, offer);
+  - a per-issuer fair share of max(W / (n + 1), F).
+- Reference values are examples and remain provider policy:
+  - for other offers: 60/h, 6/h and F 6/h;
+  - for service offers: 3,600/h, 12/h and F 60/h.
+- Operational responses are named: block providers, rotate the offer, mint per-audience offers.
+- An open-offer sub-budget caps sessions admitted on open offers at half of pending capacity and half of connected capacity (reference).
+- No offer admits, or takes a use, when its routing set is empty.
+
+**Use accounting (M2, M4, L1; SG-49).**
+- Bound offers are single-use again and spent at admission (`uses` absent or 1). This removes the rev 3.1 re-dial and polling leak, and §12.1 is reworded.
+- An open offer's use is reserved at admission and spent only by an `accept`. A decline or an unclaimed end releases it.
+- A service-class endpoint MAY decline automatically under its declared policy.
+- A claim and the end of its offer are decided atomically at the first-claim authority.
+
+**Service-class narrowed (M3, L3; SG-50).**
+- Service-class now means two things only:
+  - provider features;
+  - the apps of organization entities whose owner explicitly designated them service entities, through a new owner setting with its own disclosure page. It is exported and listed in owner controls, and removing it is a narrowing trigger.
+- Person apps are not service-class. Neither are undesignated organizations' apps (including those on members' devices) or member-context endpoints.
+- Q10 is corrected: a person entity gets standing reachability only through a provider feature it explicitly enables.
+- Service bound offers are capped at 7 days (reference). The approval and designation pages disclose them.
+
+**Residuals and consistency (M5, L2, L4, L-6, L-7, C.2; SG-51).**
+- Residual stated: one holder can exhaust a person app's short open offer with throwaway principals, and can watch availability while it lives. 900 s and the small `uses` stay as the bound.
+- Accepted with justification: a person's app re-minting single-use bound offers amounts to a short pairing without the owner page. Forbidding it would be unenforceable, and each offer expires within 900 s.
+- The holder provider keeps an offer token only in its outbox. It never logs the token and deletes it with the invite payload.
+- `endpoints({endpoint})` is now used everywhere for `pairings`.
+- Glare is scoped to pairing invites and same-app own-entity `target` invites.
+- The Appendix C.2 flag plan no longer requires `INTENT_LINKS_ENABLED`.
+- Q12 is reworded.
+
+**Messaging §5.5.**
+- At most 8 offer entries, and each principal is at most 256 bytes serialized. A compact 8-entry body is about 3.4 KiB, under the 4 KiB cap.
+- The group-call alert rule is stated: it needs a two-party unlock with the author.
+- The unlock persists until a block or a per-author owner clear. Muting does not clear it.
+- The author is compared by origin principal.
+
+**Readings (provisional, A.8).**
+- The empty-routing-set rule applies to every offer.
+- Accept-only spending applies to person open offers too.
+- Removing a designation revokes only offers over 900 s.
+
+**Verification.** A relative link and anchor check over `docs/spec/**` passes, apart from the pre-existing `../architecture/messaging-app.md#13-email-bridge-handoff` anchor. Site-root links were not checked. No code changed, so `npm test` was not run.
+
+Reviewer: ___ Date: ___ Outcome: ___

@@ -338,6 +338,43 @@ These are added to the [links §7.2](links.md) signature-domain table. They diff
 - For `conversation-record`, the **event ID** is `payloadDigest` computed with the `recipient` member also removed. The same author event therefore has one ID across all recipients, while each recipient's delivery context still binds its own incarnation.
 - Randomized signature bytes and renewed certificates never change identity.
 
+### 5.5 Call invitations (proposed, unsigned)
+
+Proposed 2026-10-27, provisional (coordinator), not signed off, not implemented. Bindle Messaging owns this text; it moved here from [signaling](signaling.md) revision 2.1 §20.12 and the [signaling-modes spike](../architecture/signaling-modes-spike.md) §4, and is aligned with signaling revision 3.2. Signaling attaches no meaning to calls. Sign-off: reviewer ___ / date ___ / outcome ___.
+
+A call invitation is an ordinary message whose body has media type `application/vnd.bindle.messaging.call-invite+json` (placeholder). It travels as a `conversation-record` of `type: "message"`, or a `one-off`, under every rule of §5 to §8. Whether it is accepted at all is decided exactly as for any message: the receiver's first-contact filtering (§6.7) and content refusal apply unchanged. Whether it may alert is decided only by the rule under **Receivers** below.
+
+**Body.** Strict I-JSON under §5.1's parsing rules, at most 4 KiB, with exactly these members:
+
+| Member | Definition |
+| --- | --- |
+| `v` | `1` |
+| `call` | Lowercase UUID chosen by the caller. It identifies the call across edits, and is the session `context.call`. |
+| `state` | `"ringing"` in the original message. An `edit` (§6.3) MAY change it to `"cancelled"` or `"ended"`. |
+| `media` | A nonempty, unique, ascending subset of `["audio", "video"]`: what the caller offers. It lives only here, never in signaling parameters. |
+| `createdAt` | Unix milliseconds, equal to the envelope's `createdAt`. |
+| `expiresAt` | Unix milliseconds, at least `createdAt` + 10,000, and at most the earliest `expires_at` in the original message's `session.offers` (in milliseconds) minus 60,000 (a skew margin). Default `createdAt` + 60,000, within that bound. |
+| `caller` | `{iss, sub}`, equal to the envelope's verified author principal (§3.3). |
+| `session` | `{kind, profile, offers}`: `kind`, an artefact reference to the call session kind below; `profile`, `"webrtc"`; `offers`, 1 to 8 entries `{principal, offer, expires_at}`, one per invited principal, unique, never `caller`, and in a `conversation-record` only genesis participants. Each is a bound, single-use signaling offer (signaling §5.7) with the `expires_at` (Unix seconds) its `offer` result returned. Open offers are not used. |
+
+**Size.** `caller` and each offer `principal`, serialized as `{"iss":…,"sub":…}`, are at most 256 bytes; a principal longer than that cannot be invited by this version of the body. With that bound, 8 entries always fit the 4 KiB cap: one compact entry is at most 349 bytes (a 256-byte `principal`, a 43-character token, a 10-digit `expires_at` and 40 bytes of names and punctuation), 8 entries at most 2,792 bytes, and every other member together at most about 630 bytes (a 256-byte `caller` and the call kind's reference, under 160 bytes), about 3,420 bytes in all. A larger group call uses a group service (signaling §8.6).
+
+An `edit` changes only `state`, and MAY set `offers` to an empty array. The envelope `subject` is `"Audio call"` or `"Video call"` (localizable), so that a receiver without this type still shows something meaningful. A body that breaks these rules is refused with `malformed`, after author verification and before custody.
+
+**The call session kind.** Bindle Messaging publishes `https://spec.bindle.example/messaging/v1/sessions/call` as an intent kind with `effect: "join"`, `capability: false`, `max_bytes: 64`, data `{call}` (`uuid`, required, display `presence`) and `session` `{"v": 1, "parties": "other", "profiles": {"webrtc": {}}, "bases": ["offer"]}`. An app that places or answers calls holds the owner's session handler approval for it (signaling §20.1.4).
+
+**Using signaling.**
+1. **Placing.** The caller's app mints one bound offer per invited principal (signaling `offer` with `principals`, §5.7; bound offers are single-use, spent when the dial-back is admitted), lists them with their `expires_at` in `offers`, and then sets `expiresAt` within the bound above. Order does not matter: the bound is checked against the offers' own expiry, not `createdAt`.
+2. **Answering.** Only after an explicit user action, and only while `expiresAt` has not passed (30 s skew) and the latest `state` is `"ringing"`, the callee's app calls signaling `open` with `to` = `caller`, the listed `kind` and `profile`, `basis` = its own principal's offer, `context` = `{call}` and `params` = `{offer}` (an SDP offer or `null`). No media parameter is sent.
+3. **Binding.** The caller's app claims automatically only as signaling §5.5 allows (the minting endpoint, after its digest-keyed outstanding-offer check), and additionally only for a call it is still placing. The callee's app checks that the connected peer's verified principal equals `caller` before sending media.
+4. **Ending.** The caller's app SHOULD revoke unused offers and send an `edit` with `"cancelled"` when it stops before anyone answers, or `"ended"` when the call ends. "Missed" is a local presentation of an invitation that expired unanswered.
+
+A dial-back made near `expiresAt` can still miss its offer if the invite is delayed, for example by a key refresh and re-send at the caller's provider (signaling §9.3); the session then simply does not connect, and the caller MAY place the call again.
+
+**Receivers** MUST NOT auto-answer. A receiver MUST NOT alert (ring, notify urgently or request a presentation hint) for a call invitation unless the receiving owner has sent at least one message (a `conversation-record` of `type: "message"`, §6.3) to that author in a conversation whose genesis participants are exactly the two of them. The author is compared by origin principal ([identity portability §8.1](identity-portability.md#81-stable-identifier)), so a move by either party neither grants nor loses this. The rule is the same for group calls: an invitation in a conversation with more than two genesis participants alerts only if the owner has such a two-party conversation with its author, and is otherwise stored and shown inertly. Once met, the condition persists until the owner blocks the author, or clears it with a per-author control, after which only messages the owner sends later count; muting a conversation does not clear it. It also MUST NOT alert for an invitation that is past `expiresAt` or no longer `"ringing"`, or whose author already alerted 3 times in the last 10 minutes. This one rule covers first contact, unaccepted conversations, one-way followers and contacts admitted through public or leaked invitations, without depending on any app's contact lists. Other invitations MAY be stored and shown inertly. Offers are capabilities: they are kept out of notifications, previews, search indexes, logs and exports. Any alert through the owner's provider uses only the best-effort notice-contract presentation hint (a separate proposal), never a guaranteed channel. Call invitations count as ordinary messages against every §11 limit.
+
+**Vectors needed:** valid audio and video invitations; a `caller` mismatch; `expiresAt` later than the earliest offer `expires_at` minus 60 s, or earlier than `createdAt` + 10 s; an edit that changes `media`; an offer naming a non-participant or the caller; a `session` carrying a media parameter; alerting refused with no prior two-party message from the owner, and allowed after one; a group-call invitation not alerting without that two-party message; the condition surviving the author's move, and ending on a block or an owner clear; a body with 8 entries and 256-byte principals within 4 KiB; 9 entries, or a 257-byte principal, refused.
+
 ## 6. Conversations
 
 ### 6.1 Genesis and bootstrap

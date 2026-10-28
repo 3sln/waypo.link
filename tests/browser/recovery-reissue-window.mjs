@@ -42,6 +42,18 @@ test('cancel from an earlier device posts an explicit confirmation and refreshes
  assert.match(state.notice,/previous recovery file works again/);
 });
 
+test('cancel from the device that made the replacement: the server ends this session, so the console signs out with the outcome, not "session expired"',async()=>{
+ // recovery-reissue-browser regression (2026-10-27): the follow-up GET /api/account hit 401 and the notice was lost.
+ const calls=[],secrets=[];let state={locale:'en',busy:false,notice:'',error:'',session:{account:{id:'a'},sessionContext:'s'},data:{recovery:{pendingReissue:{cancellable:true}}}};
+ const resources={state:{snapshot:()=>state,transition:fn=>{const next={...state};state=fn(next)??next;},reserve:()=>!state.busy&&(state={...state,busy:true},true)},
+  api:{request:async(path,body)=>{calls.push([path,body]);return {cancelled:true,restored:true,notified:{email:false,push:false},signedOut:true};},get:async path=>{calls.push([path]);throw Object.assign(Error('Sign in to continue.'),{status:401,code:'unauthorized'});}},
+  browser:{storeSecret:(key,value)=>secrets.push([key,value]),clearOwnerContext:()=>calls.push(['clearOwnerContext']),consumeSubmission:()=>({})}};
+ await new CancelPendingRecoveryReissue({}).execute(resources,{engineFeed:new EventTarget()});
+ assert.deepEqual(calls.map(c=>c[0]),['/api/auth/recovery/reissue/cancel','clearOwnerContext'],'no request is sent with the ended session');
+ assert.equal(state.session,null);assert.equal(state.data,null);assert.equal(state.accountPicker,true);assert.equal(state.busy,false);
+ assert.equal(state.error,'');assert.match(state.notice,/^Replacement cancelled\. Your previous recovery file works again .* so it was signed out\. Sign in again\.$/);
+});
+
 test('recovery refused for a pending replacement keeps the proof in memory; cancelling with the file sends it once',async()=>{
  const secrets=new Map([['restoreFile','encrypted']]),calls=[];let state={config:{origin:'https://space.example',localDevelopment:true},unlockQuestions:[{id:'q'}],beamGeneration:0};
  const payload={version:2,recoveryToken:'id.token'};

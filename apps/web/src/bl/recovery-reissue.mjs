@@ -9,6 +9,7 @@
 // The plaintext file and the encrypted copy stay in the in-memory browser secrets, never in the UI projection, storage
 // or a URL. Cancelling before confirmation keeps the current file working.
 import {OwnerFlow,snapshot,publish} from './owner-flow.mjs';
+import {accountReset,clearBrowserAccount} from './account-context.mjs';
 import {Action} from '../shared/stack.mjs';
 import {createLocalization} from '../shared/i18n.mjs';
 
@@ -79,11 +80,14 @@ export class ConfirmRecoveryReissue extends ReissueFlow {
  * the new one never will. The server accepts it only from a session that existed before the replacement began. */
 export class CancelPendingRecoveryReissue extends ReissueFlow {
  async perform(r,ctx){
-  try{await r.api.request('/api/auth/recovery/reissue/cancel',{confirmed:true});}catch(error){
+  let result;try{result=await r.api.request('/api/auth/recovery/reissue/cancel',{confirmed:true});}catch(error){
    const known={rate_limited:'Too many requests. Wait a moment, then try again.',not_found:'Not found.',forbidden:'This request could not be completed. Refresh and try again.'};
    if(error.code)throw Error(createLocalization({locale:snapshot(r).locale}).t(known[error.code]??'This request could not be completed. Refresh and try again.'));
    throw error;
   }
+  // The cancel ends the sessions that staged and confirmed the replacement (DEVLOG 2026-10-23 "Cancel sessions"); when
+  // this was one of them, sign this browser out of the account with the outcome instead of an "expired" error.
+  if(result?.signedOut===true){if(!r.current())return;clearBrowserAccount(r);publish(r,ctx,{...accountReset(snapshot(r)),accountPicker:true,notice:'Replacement cancelled. Your previous recovery file works again and the new one never will. This device made the replacement, so it was signed out. Sign in again.'});return;}
   publish(r,ctx,{error:'',notice:'Replacement cancelled. Your previous recovery file works again and the new one never will.'});
   try{const data=await r.api.get('/api/account');publish(r,ctx,{data,session:{...snapshot(r).session,account:data.account}});}catch{}
  }

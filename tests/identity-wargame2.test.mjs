@@ -415,6 +415,23 @@ test('cancel ends sessions created at or after the begin, and severs app connect
   await f.recover(f.file); assert.deepEqual(severed.at(-1), [f.id, { reason: 'recovery' }]); assert.equal(severed.length, 2);
 });
 
+test('a cancel from the session that staged and confirmed the replacement reports signedOut instead of projecting the account; an earlier bystander session keeps its account view', async t => {
+  // recovery-reissue-browser regression (2026-10-27): the console cancelled from the confirming device, lost its session
+  // to the "Cancel sessions" rule and showed "Your session expired" instead of the outcome.
+  const f = await reissueFixture(t); await f.age(); f.advance(MINUTE); const bystander = await f.secondSession(); f.advance(MINUTE); await f.stepUp('password');
+  await f.confirm(f.parse(await f.begin()));
+  assert.equal((await f.owner()).recovery.pendingReissue.cancellable, true, 'the minter predates its own begin, so the view offers the cancel');
+  const own = await f.service.reissueRecoveryCancel({ confirmed: true }, f.ctx);
+  assert.deepEqual(own, { cancelled: true, restored: true, notified: own.notified, signedOut: true }); assert.equal('account' in own, false);
+  await assert.rejects(f.owner(f.ctx), { code: 'unauthorized' }); await assert.doesNotReject(f.owner(bystander));
+
+  const g = await reissueFixture(t); await g.age(); g.advance(MINUTE); const earlier = await g.secondSession(); g.advance(MINUTE); await g.stepUp('password');
+  await g.confirm(g.parse(await g.begin()));
+  const other = await g.service.reissueRecoveryCancel({ confirmed: true }, earlier);
+  assert.equal(other.cancelled, true); assert.equal(other.signedOut, undefined); assert.equal(other.account.id, g.id);
+  await assert.doesNotReject(g.owner(earlier));
+});
+
 test('item 7: a cancel whose identity write never lands leaves the current (new) file restorable', async t => {
   const f = await reissueFixture(t); await f.age(); f.advance(MINUTE); await f.stepUp('password');
   const staged = f.parse(await f.begin()); await f.confirm(staged);

@@ -669,7 +669,12 @@ export class IdentityService {
     if(!await this.rateLimiter.check({operation:'recovery-reissue-cancel',remoteIP:context.remoteIP,region:context.region,handle:account.id}))fail('rate_limited','Please wait before trying again.');
     const hash=session.hash;
     const result=await this.cancelReissue(account.id,'session',async(current,previous)=>{const live=current.sessions.find(s=>secureEqual(s.hash,hash)&&s.expiresAt>this.clock());if(!live)fail('unauthorized','Sign in to continue.');if(!(Number.isSafeInteger(live.createdAt)&&live.createdAt<previous.preparedAt))throw Object.assign(new IdentityFault('reissue_cancel_not_allowed','Cancel from a device that was signed in before the replacement started, from the link in the email notice, or with your previous recovery file.'),{status:403});return true;});
-    return {...result,account:await this.projectAccount(await this.repository.get(account.id))};
+    // The cancel ends the staging and confirming sessions (and sessions approved from them), which may include this one:
+    // say so instead of projecting the account to an ended session, so the console can show the outcome and sign out
+    // rather than treating the next request's 401 as an expired session.
+    const after=await this.repository.get(account.id);
+    if(!after?.sessions?.some(s=>secureEqual(s.hash,hash)&&s.expiresAt>this.clock()))return {...result,signedOut:true};
+    return {...result,account:await this.projectAccount(after)};
   }
   /** Cancel with the link mailed to an email verified before the reissue began. Mailbox proof only cancels; it never
    * signs in. GET of the page changes nothing; this is the explicit POST. */

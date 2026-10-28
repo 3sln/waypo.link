@@ -80,8 +80,13 @@ for(const [name,browserType]of [['chromium',chromium],['firefox',firefox]])test(
  await page.getByText('Your recovery file was replaced recently.').waitFor();
  assert.equal(await page.getByRole('button',{name:'Replace recovery file'}).count(),0,'no second replacement during the window');
  await page.getByRole('button',{name:'Cancel the replacement',exact:true}).click();
- await page.getByText('Replacement cancelled. Your previous recovery file works again and the new one never will.').waitFor();
- assert.equal((await fixture.identity()).recoveryHash,before.recoveryHash,'the previous credential is current again');
+ // This device also staged and confirmed the replacement, and a cancel ends those sessions (DEVLOG 2026-10-23
+ // "Cancel sessions"), so the console signs out with the outcome rather than reporting an expired session.
+ await page.getByText('Replacement cancelled. Your previous recovery file works again and the new one never will. This device made the replacement, so it was signed out. Sign in again.').waitFor();
+ await page.getByRole('heading',{name:'Accounts in this browser'}).waitFor();
+ assert.equal(await page.getByText('Your session expired. Sign in again.').count(),0);
+ const record=await fixture.identity();
+ assert.equal(record.recoveryHash,before.recoveryHash,'the previous credential is current again');assert.equal(record.recoveryPrevious,undefined);
  assert.deepEqual(errors,[]);
 });
 

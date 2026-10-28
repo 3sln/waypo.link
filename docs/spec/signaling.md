@@ -1,29 +1,28 @@
 # Signaling (`signaling.v1`) — normative draft
 
-> **Pending [extensions revision 3](extensions.md) (draft, unsigned, 2026-10-27).** Where this document relies on the `signaling.v1` feature, slot manifests, occupant declarations and `ref`, extensions revision 3.2 and protocol §2–§4 govern instead. Change request CR-X3-03, [extensions Appendix A](extensions.md#appendix-a-migration-and-impact-change-requests-not-applied).
-
-Status: **draft, 2026-10-27, revision 2.1. Specification only: nothing in this document is implemented to this text.** It is intended to replace [RTC signaling](rtc-signaling.md) (`rtc-signaling.v1`), which is **superseded by this draft, pending sign-off**. The local code still implements `rtc-signaling.v1`, with every RTC flag off and nothing published, deployed or production-verified. Appendix C plans the move. Every decision here is provisional (coordinator) and **not signed off by the owner**. The decisions are SG-1 to SG-35 in §19.2. The owner said provisional decisions may be adopted for now without sign-off, so the eight rev 0 owner questions carry provisional answers in §19.3, the establishment spike questions carry provisional answers in §19.4, and the questions still open are in §19.5. The decision records are in [DEVLOG](../../DEVLOG.md), 2026-10-27: "Generic signaling.v1 spec draft (replaces calling-shaped RTC)" (revision 0), "signaling.v1 spec rev 1 (review fixes)" (revision 1, which answers an independent review; Appendix A.2 maps each finding to its fix) and "signaling.v1 spec rev 2 (offer and pairing bases)" (revision 2, which applies the [establishment-modes spike](../architecture/signaling-modes-spike.md), decisions SMS-1 to SMS-8 and change requests CR-1 to CR-13; Appendix A.4 maps each change request to its section) and "signaling.v1 spec rev 2.1 (rev 2 review fixes)" (revision 2.1, which answers an independent review of revision 2; Appendix A.5 maps each finding to its fix). Identifiers under `https://spec.bindle.example/` and hosts under `.example` are placeholders. MUST, SHOULD and MAY express draft requirements.
+Status: **draft, 2026-10-27, revision 3.2. Specification only: nothing in this document is implemented to this text.** It is intended to replace [RTC signaling](rtc-signaling.md) (`rtc-signaling.v1`), which is **superseded by this draft, pending sign-off**. The local code still implements `rtc-signaling.v1`, with every RTC flag off and nothing published, deployed or production-verified. Appendix C plans the move. Revision 3 is written against [extensions revision 3.2](extensions.md) (draft, unsigned): a `{spec, options}` declaration, two fragments and no slots. It applies extensions change request CR-X3-03 here (§3.1 to §3.3, §4.2, §6.1, §20.1.4). Every decision here is provisional (coordinator) and **not signed off by the owner**. The decisions are SG-1 to SG-51 in §19.2. The owner said provisional decisions may be adopted for now without sign-off, so the owner questions carry provisional answers in §19.3 to §19.5. The decision records are in [DEVLOG](../../DEVLOG.md), 2026-10-27: "Generic signaling.v1 spec draft (replaces calling-shaped RTC)" (revision 0), "signaling.v1 spec rev 1 (review fixes)" (revision 1; Appendix A.2), "signaling.v1 spec rev 2 (offer and pairing bases)" (revision 2; Appendix A.4), "signaling.v1 spec rev 2.1 (rev 2 review fixes)" (revision 2.1; Appendix A.5), "signaling.v1 spec rev 3 (core-scope cut, extensions rev 3, pairing consent)" (revision 3; Appendix A.6 maps each applied change request to its section) "signaling.v1 spec rev 3.1 (rev 3 review fixes; open offers)" (revision 3.1; Appendix A.7) and "signaling.v1 spec rev 3.2 (rev 3.1 verification fixes)" (revision 3.2; Appendix A.8). Revision 2.1, with the history of revisions 0 to 2.1 (former Appendix A.1 to A.5) and the bodies of amendments withdrawn since, is frozen in [superseded/signaling-rev2.1.md](superseded/signaling-rev2.1.md). Identifiers under `https://spec.bindle.example/` and hosts under `.example` are placeholders. MUST, SHOULD and MAY express draft requirements.
 
 Protocol/security/interop sign-off: reviewer ___ / date ___ / outcome ___.
 
 **Owner direction (2026-10-27, verbatim):** "I only intended for a general signaling mechanism, app to app, user to user, provider to provider, etc; something flexible enough for all use cases, but I didn't intend to build actual calling into bindle, that's an app level concern." And: "Core bindle should be about identity, preferences, intents, and resources; a hub for connecting things together."
 
-This document defines a Bindle extension on the existing extension system. It has:
-- a provider **feature**, `signaling.v1` ([protocol §2](protocol.md#2-discovery-and-login));
-- one exclusive **slot**, `signaling/v1`, with a built-in occupant ([extensions](extensions.md));
-- the existing `ice-relay/v1` **slot**, unchanged (§3.3).
+**Owner direction (2026-10-27, as relayed to this revision):** "Core signaling should be unaware of calls, contacts etc.; it provides the primitives apps need; it should not spec or implement app-level features." Intent kinds are public, URL-identified artefacts, and core hard-codes none.
 
-It defines no artefact kind, no link type and no extension-system member. Instead it reuses core primitives:
-- **What a session is for** is an [intent kind](intents.md#4-intent-kinds) with a `session` member.
-- **Who may open a session, and which app receives it,** depends on an explicit **establishment basis** (§5.6): `self` (own devices), `pairing` (an owner record that pre-authorizes two apps, or one peer, for a kind), `offer` (a one-use dial-back authorization that an app hands to an invited party inside its own app message), `link` (a configured contact link) or `none` (requests, held). Only `link` invites, and own-entity invites with no initiating app to route to, use the owner's intent handler choice for the kind.
-- **Shareable admission** uses the owner's existing [contact links](links.md#6-contact-link-type) with owner-side configuration. App-minted links wait for the links §6 re-scope (§20.3.2). Callbacks are withdrawn: the `offer` basis replaces them (§5.7).
-- **Presentation** is the app's. The provider keeps only a minimal owner hook for invites no app can see (§11.3). Calling and other use semantics are app-level: a messaging app's call invite, for example, is a message with a JSON media type in the Bindle Messaging spec, not part of this document (§20.12).
+This document defines a Bindle-owned extension ([extensions §1](extensions.md#1-model), §2.8) with the spec URL `https://spec.bindle.example/extensions/signaling/v1`. It has:
+- a provider **declaration**, `{spec, options}` (§3.1);
+- two **fragments**, `…/fragments/signaling/v1` (§3.2) and `…/fragments/ice-relay/v1` (§3.3), each filled by a built-in resource that the provider supplies;
+- no provider feature of its own, no artefact kind, no link type and no slot.
 
-The intents, links and device-authorization changes this needs, and two security.md statements, are written as proposed, unsigned amendments in §20. None of those documents is edited by this draft.
+It reuses existing primitives:
+- **What a session is for** is a **session kind**: an [intent kind](intents.md#4-intent-kinds) with a `session` member, published by an app or anyone else. This document registers none.
+- **Who may open a session, and which app receives it,** depends on an explicit **establishment basis** (§5.6): `self` (own devices), `pairing` (a per-edge owner record that pre-authorizes two apps, or an app and one peer, for a kind) or `offer` (an expiring, revocable dial-back authorization that an app mints and hands out, bound to named principals or open to any verified principal). Every basis fixes the receiving app; nothing consults an intents default.
+- **Presentation and use semantics** are the app's. The provider presents nothing about invites.
 
-**Intents route handoffs, not incoming events.** A person starting something ("call this contact") hands off through intents. An incoming invite never opens a chooser at the time it arrives: `offer` and `pairing` invites go to a fixed app, and only an unsolicited `link` invite with no routing handler reaches the owner hook, from which the owner may hand it off later (§5.4, §11.4).
+The intents and device-authorization changes this needs, and two security.md statements, are written as proposed, unsigned amendments in §20. None of those documents is edited by this draft.
 
-It defines interoperability rules only. It has no ring screen, call list, alert or mute policy, call vocabulary, chooser layout, or SDK behaviour. Call invitations and ring presentation are specified elsewhere, and only referenced here (§20.12).
+**Intents supply kinds and approvals, not routing.** Signaling reuses intents only for session kinds and per-app session handler approvals (§3.4, §20.1). An incoming invite never reaches a chooser: an `offer` invite goes to the minting app, a `pairing` invite to the paired app, and an own-entity invite to the initiating app or a named `target` endpoint (§5.4).
+
+It defines interoperability rules only: no presentation, no use vocabulary, no chooser layout and no SDK behaviour.
 
 ## 1. Scope, model and guardrails
 
@@ -33,11 +32,11 @@ A **signed session channel** between two **endpoints**. An endpoint is an applic
 - `webrtc`: the WebRTC offer, answer and candidates (Annex A, §16).
 - `data`: no transport negotiation, only small, bounded, opaque `data` messages after the claim. Uses include rendezvous, key agreement for app-level end-to-end encryption, and device pairing. It is not a transfer channel: bulk bytes belong on a direct connection that the endpoints set up themselves.
 
-What a session is for (file transfer, a call, device sync, pairing, a game) is an **app-level** matter. It is named by a session kind that an app or anyone else publishes. The provider never interprets it beyond its schema.
+What a session is for (for example remote control, file sync, device pairing or an app-defined media session) is an **app-level** matter. It is named by a session kind that an app or anyone else publishes. The provider never interprets it beyond its schema.
 
-- **Path.** An endpoint talks only to its own entity's provider, through the slot's contract (§10). Providers talk to each other only through the feature endpoint (§9). No endpoint ever contacts the peer's provider to signal.
+- **Path.** An endpoint talks only to its own entity's provider, through the signaling contract (§10). Providers talk to each other only through the declared endpoint (§9). No endpoint ever contacts the peer's provider to signal.
 - **Authentication.** Every message is signed end to end by a per-session **leg key** held by the sending endpoint. The sender's provider certifies that key with a **leg certificate** (§6). Providers relay messages unchanged and verify the same signatures endpoints do.
-- **Consent.** An initiator reaches a recipient only on an admission basis (§5.2). The invite reaches only the endpoints of one app, fixed by the basis: the paired app, the app that minted the offer, the initiator's own app, or the app the owner chose for that kind (§5.4). A session connects only after one of those endpoints **claims** it (§8.2). Before that claim, nothing reveals whether the recipient has any endpoint, is online, admitted the initiator or blocked it (§12.1).
+- **Consent.** An initiator reaches a recipient only on an admission basis (§5.2). The invite reaches only the endpoints of one app, fixed by the basis: the paired app, the app that minted the offer, or for an own-entity invite the initiator's own app or the paired app its `target` names (§5.4). A session connects only after one of those endpoints **claims** it (§8.2). Before that claim, nothing reveals whether the recipient has any endpoint, is online, admitted the initiator or blocked it (§12.1).
 
 ### 1.2 Guardrails: not a second messaging system
 
@@ -51,11 +50,11 @@ These are requirements, not defaults:
    - Each provider bounds the `data` bytes it relays for each of its entities in aggregate (§13.1).
    - Providers bound concurrent sessions per entity (§13).
 3. **Delete after delivery.** Message payloads (SDP, candidates, `data`) are deleted once delivered, or after 60 s. Replay state keeps only payload hashes, never payloads (§7.3). The invite `context` is deleted when the session is claimed or ends. Session records hold routing metadata only and are deleted at most 24 h after the session ends (§12.4).
-4. **No history.** No provider keeps message content after delivery. The only owner-visible record of an invite is an owner-hook entry (§11.3), which holds no message content and is deleted by `answer_by`.
+4. **No history.** No provider keeps message content after delivery, or any owner-visible record of invites.
 5. **No multi-party.** A session has exactly two legs. There is no group member, and no fan-out after the claim (§8.6).
 6. **No pre-claim payload.** Before the claim, only the invite's schema-validated `context` and the profile's pre-claim parameters travel (§7.2, §16.3). Opaque `data` is post-claim only. Providers enforce the address rules for profile parameters (§16.4). They cannot enforce them for `context`: schema validation does not detect an address in an app-defined field, so keeping addresses out of `context` is an endpoint requirement (§7.2), not a provider guarantee.
 
-**Non-goals.** Media relaying by providers, recording, telephony interconnect and emergency calling, presence, reachability guarantees, and sessions that act for no entity (§4.3).
+**Non-goals.** Relaying session content beyond the bounded `data` messages, recording, interconnect with other networks, presence, reachability guarantees, and sessions that act for no entity (§4.3).
 
 ## 2. Terms
 
@@ -66,36 +65,48 @@ These are requirements, not defaults:
 | Initiator, recipient | The two parties of a session. The initiator sends the invite. |
 | Session | One attempt to connect an initiator endpoint with one recipient endpoint. It is identified by `sid` and keyed by (initiator origin principal, `sid`). |
 | Leg | One endpoint's participation in one session: its leg key, certificate and message sequence. A session has one initiator leg and at most one claimed recipient leg. |
-| Session kind | An intent kind whose body carries a `session` member (§3.4, §20.1). |
+| Session kind | An intent kind whose body carries a `session` member (§3.4, §20.1). Kinds are public, URL-identified artefacts. This document registers none. |
+| Provider feature | The provider feature of some extension ([extensions §4.2](extensions.md#42-provider-features)), identified by (issuer, that extension's spec URL), that consumes the signaling fragment through a grant (§4.2). |
 | Approved handler | An app, or a provider feature, that the owner approved to start and answer sessions of a kind (§20.1.4). |
-| Standing acceptance | An owner setting on a session handler approval of a provider feature, or of any handler of a hosted service entity, that lets that handler accept admitted cross-entity sessions of that kind without a user action at the device (§5.5). Off by default. App endpoints of other entities use a pairing instead. |
-| Routing handler | The one approved handler that receives an entity's incoming `link`-basis invites of a kind, and own-entity invites whose initiating app is not an approved handler (§5.4). |
 | Basis | What admits an invite at the recipient provider, and which app it is routed to (§5.2, §5.6). |
-| Offer | A one-use, short-lived authorization, minted by the recipient-to-be's provider for one of its apps, that lets one named principal open one session of one kind and profile back to that app (§5.7). |
-| Pairing | An owner record that pre-authorizes one app (or one enrolled client session of it) to connect automatically, for one kind, with another of the owner's apps or with one peer principal (§5.8). |
+| Offer | An expiring, revocable authorization, minted by the recipient-to-be's provider for one of its apps or features, that lets one named principal open one session (a **bound** offer, single-use) or any verified principal open up to `uses` sessions (an **open** offer) of one kind and profile back to that app (§5.7). |
+| Service-class endpoint | An endpoint of a provider feature (§4.2), or an app endpoint of a **service entity**: an organization entity ([organizations §3](organizations.md#3-organization-entities)) whose owner has designated it a service entity (§4.3). Nothing else is service-class: not a person entity's apps, not an undesignated organization's apps, and never an endpoint registered in member context ([organizations §7](organizations.md#7-member-context-for-applications)). Only service-class endpoints may mint offers that last longer than 900 s, and their offers belong to the minting app or feature, not to one endpoint (§5.4 case 3, §5.7). |
+| Pairing | A per-edge owner record between exactly two parties. It pre-authorizes one app (or one enrolled client session of it) to connect automatically, for one kind, with one other app of the owner or with one peer principal (§5.8). Connecting one app to several others takes several pairings. |
 | Claim | The atomic, first-wins answer (accept or decline) by one recipient endpoint (§8.2). |
 | Pending | An admitted invite that is not yet claimed, cancelled or past `answer_by`. |
 | Profile | A registered transport negotiation (§3.5). |
 
 ## 3. Building blocks
 
-### 3.1 Feature declaration
+### 3.1 Extension declaration
 
-A provider whose entities can hold sessions with entities at other providers declares in `features`:
+A provider whose entities can hold sessions with entities at other providers declares, in its manifest `extensions` array ([extensions §2.1](extensions.md#21-the-extensions-array)):
 
-| Feature | Members | Meaning | When absent |
-| --- | --- | --- | --- |
-| `signaling.v1` | `endpoint` (issuer origin), `max_leg_certificate_seconds` (integer 120 to 900), `profiles` (nonempty, unique, ascending subset of the registered profile ids) | The provider accepts §9 batches at `endpoint` and sends batches only to peers' declared endpoints. It issues leg certificates (§6.1) no longer than the declared bound, and relays and validates the listed profiles. Requires `directory.v1` ([organizations §3a](organizations.md#3a-identity-documents-and-key-discovery-directoryv1)), `extensions.v1` and `artefact-versions.v1`. | Its entities can hold sessions only with entities on the same provider, if it offers the slot at all. |
+```json
+{"spec": "https://spec.bindle.example/extensions/signaling/v1",
+ "options": {"endpoint": "https://provider.example/bindle/signaling",
+             "max_leg_certificate_seconds": 600, "profiles": ["data", "webrtc"]}}
+```
 
-The feature confers no authority.
+| Option | Value | Meaning |
+| --- | --- | --- |
+| `endpoint` | A URL on the issuer origin. It is an **audience** endpoint option ([extensions §2.4](extensions.md#24-options)). | The provider accepts §9 batches here. It sends batches only to peers' declared `endpoint`. |
+| `max_leg_certificate_seconds` | An integer from 120 to 900. | The longest leg certificate it issues (§6.1). |
+| `profiles` | A nonempty, unique, ascending subset of the registered profile ids. | The profiles it relays and validates (§3.5). |
 
-**Local requirement, not a federation dependency.** A provider that offers the slot MUST implement session kinds and session handler approvals (AMD-SG-I1, §20.1) for its own entities. That is local behaviour. Its manifest does not need to declare `intent-links.v1`, and a peer provider MUST NOT check a peer's `intent-links.v1` declaration, or refuse a peer for lacking one. Nothing a peer does depends on how the other side stores approvals.
+The descriptor is the one in [extensions §2.3](extensions.md#23-descriptor). The manifest `contracts` list `…/contracts/signaling/v1` and `…/contracts/ice-relay/v1`, which the provider's built-in resources implement ([extensions §5.2](extensions.md#52-built-ins)).
 
-### 3.2 The signaling slot
+**Prerequisites**, checked as in [extensions §2.5](extensions.md#25-processing-and-bounds): exactly one entry for the directory extension (`…/extensions/directory/v1`, [organizations §3a](organizations.md#3a-identity-documents-and-key-discovery-directoryv1)) and exactly one for the artefact-versions extension (`…/extensions/artefact-versions/v1`). If either is missing, the declaration is absent for that processor.
+
+Without a valid declaration, a provider's entities can hold sessions only with entities on the same provider, if it supplies the built-in signaling resource at all. The declaration confers no authority.
+
+**Local requirement, not a federation prerequisite.** A provider that supplies the built-in signaling resource MUST implement session kinds and session handler approvals (AMD-SG-I1, §20.1) for its own entities, under the intents extension. That is local behaviour. A peer provider MUST NOT check a peer's intents or intent-links declaration, or refuse a peer for lacking one. Nothing a peer does depends on how the other side stores approvals.
+
+### 3.2 The signaling fragment
 
 ```json
 {
-  "id": "https://spec.bindle.example/slots/signaling/v1",
+  "id": "https://spec.bindle.example/fragments/signaling/v1",
   "title": "Signaling",
   "description": "Lets an app or a provider feature set up direct connections between your devices and other people's, for the kinds you approve.",
   "publisher": "https://spec.bindle.example",
@@ -104,42 +115,36 @@ The feature confers no authority.
       "title": "Signaling service",
       "type": "resource",
       "cardinality": {"min": 0, "max": 1},
-      "contracts": ["https://spec.bindle.example/contracts/signaling/v1"]
+      "contracts": ["https://spec.bindle.example/contracts/signaling/v1"],
+      "selection": "exclusive",
+      "consumers": ["application", "provider"]
     }
-  },
-  "slot": {
-    "v": 1,
-    "field": "signaling",
-    "selection": "exclusive",
-    "consumers": ["application", "provider"]
   }
 }
 ```
 
-- **Occupant.** The provider's **built-in** occupant, declared in its manifest `extensions` array as `{"slot": "…/slots/signaling/v1", "role": "occupant", "ref": "signaling"}`. The owner assigns it like any occupant ([extensions §5.1](superseded/extensions-rev2.md#51-assigning-occupants)).
-- **Contract.** It declares `"x-bindle-brokerable": false` at its root. Only the entity's own issuer can certify leg keys, so no integration can occupy the slot in this version.
+- **Candidate.** The provider's built-in signaling resource, a candidate in each owner's pool. Only the owner assigns it (protocol §3 owner floor; [extensions §5.2, §5.3](extensions.md#53-assignment-and-disclosure)).
+- **Contract.** It declares `"x-bindle-brokerable": false` at its root. Only the entity's own issuer can certify leg keys, so the field has only issuer-hosted candidates ([extensions §5.1](extensions.md#51-candidates)), and no integration can supply it in this version.
 - **Consumers.** `application` and `provider`:
-  - An application consumes the slot by requesting the fragment with its `digest` and the methods it needs. The slot grant says *that* the app may use signaling. *Which kinds* it may use is the owner's handler approval (§20.1.4), checked live by the occupant on every operation.
-  - A provider feature consumes the slot under [extensions §5.3](superseded/extensions-rev2.md#53-provider-consumers): it is declared as a `consumer` in the provider manifest, and enabled by an explicit owner action.
-- **No `bind`, no consumer options.** The slot needs no per-consumer bound values, so AMD-X1 is not needed (§19, SG-2).
-- Every rule of extensions §5 applies: disclosure before assignment, per-consumer approval, revocation, no occupancy oracle, pinning and versioning.
+  - An application requests the fragment, pinned by `digest`, with the methods it needs. The grant says *that* the app may use signaling. *Which kinds* it may use is the owner's handler approval (§20.1.4), which the built-in resource checks live on every operation.
+  - A provider feature consumes it under extensions §4.2 (§4.2 here).
+- There are no per-consumer options. Every grant, disclosure, revocation, no-oracle and pinning rule of protocol §3 and §4 and extensions §3 to §5 applies.
 
-### 3.3 The ice-relay slot (unchanged)
+### 3.3 The ice-relay fragment
 
-`https://spec.bindle.example/slots/ice-relay/v1` is kept exactly as [rtc-signaling §3.3](rtc-signaling.md#33-the-ice-relay-slot) defines it:
-- one `resource` field `relays`, `cardinality` 0 to 4, contract `…/contracts/ice-relay/v1`;
-- `selection: "ordered"`, `failover: "pre-dispatch"`, `consumers: ["application", "provider"]`, no options;
-- one method, `credentials({sid?})` → `{ice_servers, expires_at}`, a write effect, with brokered occupants allowed.
+`https://spec.bindle.example/fragments/ice-relay/v1` carries what [rtc-signaling §3.3](rtc-signaling.md#33-the-ice-relay-slot) defined as a slot, restated as a fragment:
+- one `resource` field `relays`, `cardinality` 0 to 4, contract `…/contracts/ice-relay/v1`, `selection: "ordered"` (failover only before dispatch, [extensions §3.3](extensions.md#33-failover-for-ordered)), `consumers: ["application", "provider"]`, no options;
+- one method, `credentials({sid?})` → `{ice_servers, expires_at}`, a write effect. Brokered relay resources are allowed.
 
 Carried rules:
-- **AMD-RL1.** A built-in occupant also takes `endpoint` and, for an endpoint registered without DPoP, `endpoint_secret`, bound as in §10.1. `sid`, `endpoint` and `endpoint_secret` are sent only to a built-in occupant, never to a brokered one.
-- **Disclosure.** A relay occupant sees its own entity's endpoint addresses and peers' relay addresses, and learns when sessions happen.
+- **AMD-RL1.** The built-in relay resource also takes `endpoint` and, for an endpoint registered without DPoP, `endpoint_secret`, bound as in §10.1. `sid`, `endpoint` and `endpoint_secret` are sent only to the built-in resource, never to a brokered one.
+- **Disclosure.** A relay resource sees its own entity's endpoint addresses and peers' relay addresses, and learns when sessions happen.
 
 §16.7 defines how endpoints use relays.
 
 ### 3.4 Session kinds
 
-What a session is for is a **session kind**: an intent kind ([intents §4](intents.md#4-intent-kinds)) whose body has the `session` member defined by AMD-SG-I1 (§20.1). The kind's existing members give everything the old `rtc-purpose` had except calling policy:
+What a session is for is a **session kind**: an intent kind ([intents §4](intents.md#4-intent-kinds)) whose body has the `session` member defined by AMD-SG-I1 (§20.1). The kind's existing members give everything the old `rtc-purpose` had except its presentation policy:
 - the title, summary and publisher;
 - the `data` schema and `disclosure`, which become the invite **context** and its disclosure;
 - the sensitivity categories;
@@ -148,16 +153,16 @@ What a session is for is a **session kind**: an intent kind ([intents §4](inten
 The `session` member adds:
 - `parties`: `self` (own devices only), `other` (other entities only) or `any`;
 - `profiles`: the profiles a session of this kind may use, each with its profile-defined parameters. Both registered profiles take `{}` (§3.5, §16.2);
-- `bases` (optional): the establishment bases a session of this kind may use, a nonempty, unique subset of `self`, `pairing`, `offer`, `link` and `none`. When it is absent, every basis is allowed. For example, an agent remote-control kind declares `["self", "pairing"]`, so that no contact link or request can ever reach a daemon; a call kind declares `["offer", "link"]` (revision 2.1 recommends leaving `pairing` out of call kinds in this version, so that no cross-person call is answered automatically, §20.12). Both providers enforce it (§5.1, §9.2 step 7).
+- `bases` (optional): the establishment bases a session of this kind may use, a nonempty, unique subset of `self`, `pairing` and `offer`. When it is absent, every basis is allowed. For example, a remote-control kind declares `["self", "pairing"]`, so that no offer can ever reach a daemon, and a kind used only for requests carried in an app's own messages declares `["offer"]`. Both providers enforce it (§5.1, §9.2 step 7). `none` is reserved (§15) and invalid here.
 
-There is no alert, ring, auto-accept or media member in the core. In particular, whether a call carries audio, video or both is not a signaling parameter: it lives in the app message that carries the request (for a call, the Bindle Messaging call-invite body, §20.12), and in the SDP the endpoints exchange. A kind is referenced as an artefact reference `{artefact, version, digest}` ([artefacts §5](artefacts.md#5-references)). Providers resolve kinds only under artefacts §7 and §8, and never fetch a kind on the path of a request from another provider (§9.2).
+A kind carries no presentation, acceptance or content policy. What a connection carries (for example the media of an app-defined media session) is the endpoints' concern: it is decided in the app's own messages and, under `webrtc`, in the SDP the endpoints exchange (§16.2). A kind is referenced as an artefact reference `{artefact, version, digest}` ([artefacts §5](artefacts.md#5-references)). Providers resolve kinds only under artefacts §7 and §8, and never fetch a kind on the path of a request from another provider (§9.2).
 
 **Where a recipient provider gets a kind version.** A recipient provider resolves the kind version named in an invite only from:
 - its own artefact store, including versions pinned by its entities' approvals;
 - a mirror under artefacts §8;
 - a background fetch whose triggering and timing do not depend on any recipient's state. That is either a periodic refresh of the kind lines pinned on the host, or a fetch scheduled for every step-1-valid invite that names a version the provider does not hold, whatever steps 2 to 8 later decide. Both run under per-line and global fetch budgets, with negative caching.
 
-It MUST NOT fetch, or decide to fetch, a kind because a particular recipient has an approval, an endpoint, a configured link or any other state. An invite whose kind version is not held is not delivered (§9.2 step 7). The fetch that the invite may have scheduled helps only later invites.
+It MUST NOT fetch, or decide to fetch, a kind because a particular recipient has an approval, an endpoint, a pairing or any other state. An invite whose kind version is not held is not delivered (§9.2 step 7). The fetch that the invite may have scheduled helps only later invites.
 
 ### 3.5 Profiles
 
@@ -175,7 +180,7 @@ This version registers `webrtc` (Annex A) and `data`:
 
   A `data` message in a session of any other profile is invalid. A `webrtc` session carries application bytes only over its own data channels.
 
-A provider relays only the profiles it declares in `signaling.v1` `profiles`. A new profile is added by a revision of this document, never by a kind or an app.
+A provider relays only the profiles it lists in its declaration's `profiles` option (§3.1). A new profile is added by a revision of this document, never by a kind or an app.
 
 **Production gate for `data`.** A provider MUST NOT declare `data` in `profiles` in production until all of these hold:
 - the aggregate `data` budget per entity (§13.1) is enforced and tested at the engine level;
@@ -185,14 +190,13 @@ A provider relays only the profiles it declares in `signaling.v1` `profiles`. A 
 ### 3.6 What the provider does not do
 
 A provider implementing this document MUST NOT:
-- ring, alert, notify or otherwise present an invite on its own. Its only duty is the owner hook (§11.3), which never interrupts;
-- keep any list of missed, unanswered or declined sessions;
-- define alert, mute or interruption policy for sessions;
+- present an invite to a person on its own, or notify or interrupt anyone about it;
+- keep any list of unanswered or refused sessions;
+- define interruption policy for sessions;
 - interpret a kind's meaning;
-- compute or display short authentication strings;
-- mint link types for calls.
+- compute or display short authentication strings.
 
-It MAY show the owner hook, the handoff (§11.4) and the owner controls of §14 in its own interface.
+It MAY show the owner controls of §14 in its own interface.
 
 ## 4. Parties and consumers
 
@@ -200,31 +204,35 @@ It MAY show the owner hook, the handoff (§11.4) and the owner controls of §14 
 
 | Case | How it is met |
 | --- | --- |
-| Own devices | `self` basis (§5.2). Routed to the initiator's own app, or to a named `target` endpoint (§5.4). Raw host candidates are allowed under `webrtc` (§16.4). The owner's auto-connect setting applies (§5.5). Two different apps of the owner (for example a vendor's native daemon and its web app) connect automatically under an own-entity pairing (§5.8). |
-| Invite-style requests between people (for example a messaging app's calls) | The `offer` basis (§5.7): the app that asks mints an offer and sends it inside its own app message. The invited party's app dials back with it after a user action, and the asking app claims without a further prompt. |
-| Always-on wiring with a known peer | A cross-entity pairing on both sides (§5.8): the relation basis, with a direction (`opens`) and a mandatory expiry. Not for calls in this version (§20.12). |
+| Own devices | `self` basis (§5.2). Routed to the initiator's own app, or to a named `target` endpoint (§5.4). Raw host candidates are allowed under `webrtc` (§16.4). The owner's auto-connect setting applies (§5.5). Two different apps of the owner (for example a vendor's daemon and its web app) connect automatically under an own-entity pairing (§5.8). |
+| Requests between people, carried in an app's own messages | A bound `offer` (§5.7): the app that asks mints an offer per invited principal and sends it inside its own app message. The invited party's app dials back with it after a user action, and the asking app claims without a further prompt. A short-lived open offer covers an audience the app cannot list by principal (for example a code shown in person). |
+| Always-on wiring with a known peer | A cross-entity pairing on both sides (§5.8): the relation basis, with a direction (`opens`) and a mandatory expiry. |
 | User to user, same provider | The same-host transport (§9.4): the full verification path, with no public endpoint. |
-| User to user, cross provider | The feature endpoint (§9), held keys and the uniform response. |
-| App to app | Any two approved handlers of the same kind, of the same entity or of different entities. The kind names the use. The `data` profile covers apps that need no media. |
-| Provider endpoints | A provider feature consuming the slot (§4.2) is an endpoint for one of its hosted entities, and can be either party. With standing acceptance (§5.5), it can answer with no person present. |
-| Headless app clients (for example agent daemons) | Enrolled through device authorization (§5.9). They answer the owner's other apps, or one known peer, under a pairing (§5.8). |
-| Service entities, conferencing services | An app endpoint of a hosted service entity (§4.3) that answers any admitted initiator (for example a conferencing service reached with ordinary two-party sessions, §8.6) accepts cross-entity sessions only under standing acceptance (§5.5). |
-| Provider to provider | Two provider features acting for hosted service entities (§4.3) on different providers, through the feature endpoint, exactly as apps do, with standing acceptance where the answering side has no person present. |
+| User to user, cross provider | The declared `endpoint` (§9), held keys and the uniform response. |
+| App to app | Any two approved handlers of the same kind, of the same entity or of different entities. The kind names the use. The `data` profile covers apps that need no `webrtc` connection. |
+| Provider endpoints | A provider feature consuming the signaling fragment (§4.2) is an endpoint for one of its hosted entities, and can be either party. Across entities it answers only offers it minted, bound or open (§5.5). It is never a pairing party (§5.8). |
+| Headless app clients (for example agent daemons) | Enrolled through device authorization, or as local clients (§5.9). They answer the owner's other apps, or one known peer, under a pairing (§5.8). |
+| Public services: bots, support lines, rendezvous and dial-in group services | A service-class endpoint (§2: a provider feature, or an app of a designated service entity) publishes an open offer, multi-use and long-lived up to the service maximum, wherever it wants to be reachable. Any verified principal that holds it dials back, within the offer's `uses` and its open-offer windows, and whichever online endpoint of the service claims first answers automatically (§5.4 case 3, §5.7, §13.1). |
+| Service entities, provider to provider | A hosted service entity (§4.3) acts through an app or a provider feature like any entity, through the declared endpoints of both providers: it opens sessions and mints offers, and through an app it may hold pairings with known peers. Two service entities on different providers connect through each other's open offers, or through a pairing between their apps. |
 
 ### 4.2 Provider-feature endpoints
 
-A provider feature that consumes the slot must satisfy four things:
-1. It is declared as a `consumer` of the slot in the provider manifest, and enabled per entity by an owner action ([extensions §5.3](superseded/extensions-rev2.md#53-provider-consumers)).
-2. It declares the session kinds it handles in a provider-authored manifest, as a built-in handler ([intents §5](intents.md#5-handler-declarations)). It is approved per kind by the owner exactly as an app is (§20.1.4).
-3. Its endpoints are registered by the provider. Its leg certificates carry `client: {client_id: <issuer URL>, origin: <issuer origin>, feature: <declaration ref>}` (§6.1).
-4. It gets no authority beyond the owner's approvals and enablement. It is listed among the slot's consumers (extensions §5.1). Disabling the feature ends its endpoints and sessions (§14.2).
-5. **Answering policy.** A provider feature has no user action at a device. For a cross-entity session, it accepts only when the owner set standing acceptance on its approval for that kind (§5.5). Within that setting, the enabled feature's own declared policy decides which admitted invites it accepts. The policy is disclosed when the owner enables the feature and when the owner sets standing acceptance. Without standing acceptance, the feature never accepts a cross-entity session.
+The signaling extension defines no provider feature of its own. A provider feature that holds sessions is the one feature of **its own** extension (for example an answering service), and must satisfy all of these:
+1. It consumes the signaling fragment under [extensions §4.2](extensions.md#42-provider-features): it requests a grant on the `signaling` field, and the owner enables it by an explicit action in the provider's interface. Its client identity is (issuer, its extension's spec URL).
+2. It declares the session kinds it handles as a built-in handler ([intents §5](intents.md#5-handler-declarations)), identified by its extension's spec URL. The owner approves it per kind exactly as an app (§20.1.4).
+3. Its endpoints are registered by the provider. Its leg certificates carry `client: {client_id: <issuer URL>, origin: <issuer origin>, feature: <its extension's spec URL>}` (§6.1).
+4. It gets no authority beyond its grant and the owner's approvals. It is listed among the field's consumers wherever the owner sees them. Disabling it, or its suspension under extensions §4.2, ends its endpoints and sessions (§14.2).
+5. **Answering.** It has no user action at a device. Across entities it accepts only an `offer`-basis invite for an offer it minted, after the outstanding-offer check (`offer_match`, §5.5, §5.7). Its declared policy, disclosed when the owner enables it, says which offers, bound or open, it mints and answers, and when it declines automatically (§5.5 "Decline"). It is never a pairing party (§5.8).
 
 ### 4.3 Out of scope, and service entities
 
-Every session acts for an entity at each end. A provider acting as itself, for no entity, is not a party in this version (§19.3, answer 8). An operator that needs one hosts a **service entity** and enables a feature for it, with standing acceptance where the feature answers on its own.
+Every session acts for an entity at each end. A provider acting as itself, for no entity, is not a party in this version (§19.3, answer 8). An operator that needs one hosts a **service entity** and enables a feature or connects an app for it.
 
-A service entity is an ordinary entity, typically an organization entity ([organizations §3](organizations.md#3-organization-entities)), that the operator controls. Its approvals, feature enablement and standing acceptance are owner actions taken through its owner interface ([organizations §6.3](organizations.md#63-owner-interface)), with the same disclosures as for any entity. There is no provider-wide shortcut.
+A service entity is an organization entity ([organizations §3](organizations.md#3-organization-entities)) that the operator controls and whose owner has **designated** it a service entity. The designation is a signaling owner setting of an organization entity, recorded only by an owner action through its owner interface ([organizations §6.3](organizations.md#63-owner-interface)) on a page that meets the §20.1.4 page obligations. That page says that the entity's approved apps, on every endpoint they register, may publish offers lasting up to 90 days (open) or 7 days (bound), that anyone holding an open one can connect automatically, and that holders can tell when the app is running. Its app endpoints are then service-class (§2). Removing the designation is narrowing (§14.2). A person entity cannot be designated.
+
+Its approvals, pairings and feature enablement are owner actions taken through its owner interface, with the same disclosures as for any entity. There is no provider-wide shortcut.
+
+**What is not service-class.** An undesignated organization's apps, including apps that run on members' personal devices, are not service-class: their offers follow the person-app rules (900 s, minting-endpoint routing), so a member's device never becomes a standing, publicly reachable endpoint without a designation its owner chose. An endpoint registered in member context ([organizations §7](organizations.md#7-member-context-for-applications)) is never service-class, even for a designated entity. A person entity gets standing reachability only through a provider feature it explicitly enables, whose answering policy is disclosed then (§4.2). A person who creates and designates a service entity holds a separate entity with its own address; if they run its app on their own device, holders of its open offers can tell when that device runs it, as the designation page disclosed.
 
 ## 5. Authorization
 
@@ -232,21 +240,20 @@ A service entity is an ordinary entity, typically an organization entity ([organ
 
 Before certifying an initiator leg (`open`, §10.2), the initiator provider MUST check, live:
 1. The entity is active.
-2. The calling app's connection is live and holds the slot grant with the method. For a provider feature, its enablement is live.
+2. The calling app's connection is live and holds a grant on the signaling field with the method. For a provider feature, its enabled grant is live.
 3. The app is an approved handler of the requested kind, at a version it approved (§20.1.4).
 4. The kind's `parties` admits the recipient (the own entity or another).
 5. The requested profile is listed in the kind's `session.profiles`, and the invite's profile parameters are within the kind's (§16.2).
-6. The kind's `session.bases`, when present, includes the basis of the invite (§3.4). An own-entity invite (`basis: null`) counts as `pairing` when its `target` names an endpoint of a paired app (§5.4 case 5), and otherwise as `self`.
-7. For a `relation` basis (§5.8), the entity holds its own live pairing with `peer.principal` equal to the recipient, for that kind, whose `local` covers the calling app and, when `local.client_session` is set, the calling connection's client session, and whose `opens` lets the local side open (`local` or `both`). Without one, `open` with `relation` fails with `invalid_args`. That reveals only the caller's own records. For an own-entity `target` of a paired app (§5.4 case 5), the same coverage applies to the side the calling app is on: its `client_id`, its client session when that side binds one, and that side's right to open.
+6. The kind's `session.bases`, when present, includes the basis of the invite (§3.4). An own-entity invite (`basis: null`) counts as `pairing` when its `target` names an endpoint of a paired app (§5.4 case 4), and otherwise as `self`. A cross-entity invite must carry an `offer` or `relation` basis; `open` refuses one without either with `invalid_args` (`none` is reserved, §15).
+7. For a `relation` basis (§5.8), the entity holds its own live pairing with `peer.principal` equal to the recipient, for that kind, whose `local` covers the calling app and, when `local.client_session` is set, the calling connection's client session, and whose `opens` lets the local side open (`local` or `both`). Without one, `open` with `relation` fails with `invalid_args`. That reveals only the caller's own records. For an own-entity `target` of a paired app (§5.4 case 4), the same coverage applies to the side the calling app is on: its `client_id`, its client session when that side binds one, and that side's right to open.
 8. The entity's own limits allow it (§13).
 
-It resolves the recipient to an origin principal in one of three ways:
+It resolves the recipient to an origin principal in one of two ways:
 - from a principal (always, for an `offer` or `relation` basis);
-- from a contact link presented as basis;
-- from a handle, through the recipient issuer's directory ([organizations §3a.2](organizations.md#3a2-handle-lookup)). A provider without a handle index MAY support principals and links only.
+- from a handle, through the recipient issuer's directory ([organizations §3a.2](organizations.md#3a2-handle-lookup)). A provider without a handle index MAY support principals only.
 
 It then checks the recipient's issuer:
-- If the issuer's validated manifest is held and declares no `signaling.v1`, or does not list the profile, `open` fails with `unsupported_peer`. That is a public fact.
+- If the issuer's validated manifest is held and has no valid signaling declaration (§3.1), or its `profiles` option does not list the profile, `open` fails with `unsupported_peer`. That is a public fact.
 - If the manifest cannot be obtained or validated, `open` fails with `temporarily_unavailable` (AMD-RI5 reading).
 
 The initiator provider then obtains the recipient's current certification keys. This is an initiator-initiated fetch, never on a federation request path. It is spent from a per-entity budget, and only when the keys are not already held. The provider keeps those keys current for the session's life, and pins them on the session record (§6.3), so that the answer and any control statement verify. If it cannot obtain them, `open` fails with `temporarily_unavailable`. Every other outcome of `open` is the same success (§12.1).
@@ -260,72 +267,34 @@ The recipient provider admits an `invite` only on one of these bases, evaluated 
 | `self` | `basis: null`, and the initiator origin principal equals the recipient | Always, subject to §5.4 and the owner's settings. |
 | `pairing`, own entity | `basis: null`, and the initiator origin principal equals the recipient | As `self`. An own-entity pairing (§5.8) widens routing and acceptance, not admission: it lets the invite reach, and be claimed automatically by, the paired app. |
 | `pairing`, another entity (the relation basis) | `basis: {"relation": "pairing"}` | The recipient entity holds a live, not pending, pairing whose `peer.principal` equals the initiator's **verified** origin principal, for this kind line, and whose `opens` lets the peer open (`peer` or `both`) (§5.8). There is no secret: the leg certificate already proves who is asking. |
-| `offer` | `basis: {"offer_digest": <base64url SHA-256 of the offer token>}`, with the token carried beside the message in the batch (§9.1) | The offer is live, unspent, minted by the recipient entity for this kind line, an admitted version and this profile, and its principal equals the initiator's **verified** origin principal (§5.7). |
-| `link` | `basis: {"link_digest": <base64url SHA-256 of the canonical link>}`, with the link carried beside the message in the batch (§9.1) | The link verifies at the recipient provider as its owner host and is live, the link is an unconditional contact link (§5.3), and its parent's owner-side signaling configuration (§5.3) admits this kind and this initiator. |
-| `none` | `basis: null`, another entity | Only if the owner enabled requests from verified identities for that kind. Default: off. A `none` invite is **held**: it is never delivered to endpoints, and it is recorded only as an owner-hook entry (§11.3). |
+| `offer` | `basis: {"offer_digest": <base64url SHA-256 of the offer token>}`, with the token carried beside the message in the batch (§9.1) | The offer is live, has a free use, was minted by the recipient entity for this kind line, an admitted version and this profile, and either is open or its principal equals the initiator's **verified** origin principal (§5.7); and the routing set (§5.4 case 3) is not empty. |
 
-**Verifying a link basis.** This is unchanged from [rtc-signaling §4.2](rtc-signaling.md#42-admission-bases):
-- The link is canonical: the origin and path plus exactly `bindle_meta` or legacy `sig`, with no `bindle_data` and no unrelated parameters.
-- Its SHA-256 equals `link_digest`.
-- The recipient provider verifies it as if it had received a request for that URL, under [links §8](links.md#8-processing-order-and-results) steps 1 and 2.
-- Only the digest is in the signed invite. The bearer link is never delivered to endpoints (§10.2).
+A cross-entity invite with `basis: null` (formerly the `none` basis) admits nothing, silently, at §9.2 step 7.
 
 **Verifying an offer basis.**
 - The token is 22 to 43 base64url characters, and its SHA-256 equals `offer_digest`.
-- At §9.2 step 7 the recipient provider looks the offer up by digest in its own records only, and checks, read-only, that it is live, unspent, of the invite's kind line, at a version the minting app's approval admits (§15), and of the invite's profile, and that its principal equals the **verified** leg-certificate principal (the certificate was verified at step 3). This comparison spends nothing.
-- At §9.2 step 8 it re-confirms all of that atomically, and spends the offer only if the offer is still live and unspent and its principal still equals the verified principal. A mismatch admits nothing and spends nothing, silently.
-- **Limit classification** (§13.1) follows the step 7 principal match, not the digest alone: an invite whose digest names a live offer bound to another principal is classified as an unbased invite, exactly like an unknown digest. So reading someone else's offer (for example in a shared conversation) buys no limit exemption.
+- At §9.2 step 7 the recipient provider looks the offer up by digest in its own records only, and checks, read-only, that it is live, has a free use (spent plus reserved uses below `uses`), is of the invite's kind line, at a version the minting app's approval admits (§15), and of the invite's profile, and, for a bound offer, that its principal equals the **verified** leg-certificate principal (the certificate was verified at step 3). An open offer admits any verified principal except the minting entity itself. This check changes nothing.
+- At §9.2 step 8 it re-confirms all of that atomically, and also that the routing set (§5.4 case 3) is not empty. Only if all of it still holds does it take a use. A mismatch, or an empty routing set, admits nothing and takes nothing, silently.
+  - **Bound offer (single-shot).** The single use is **spent** at admission. Whatever happens to the session afterwards (accept, decline, no answer, cancel), the offer is used up.
+  - **Open offer.** One use is **reserved** at admission. It is **spent** only by an `accept` claim of that session (§8.2), and **released** if the session is declined or ends unclaimed, so junk that a service declines or ignores does not use up its published offer.
+  - Under any concurrency, spent plus reserved uses never exceed `uses`.
+- **Limit classification** (§13.1) follows the step 7 check, not the digest alone: an invite whose digest names an offer that is not live, has no free use, or is bound to another principal is classified as an unbased invite, exactly like an unknown digest. So reading someone else's bound offer (for example in an app message that several parties can read) buys no limit exemption.
+- **No oracle.** An expired, revoked, exhausted, mismatched or unknown offer each admit nothing, reserve nothing and get the uniform `202`; nothing the initiator observes distinguishes them (§12.1).
 - Only the digest is in the signed invite. The token is never delivered to endpoints, and never appears in a `listen` event.
 
 **Kind bases.** An invite whose basis is not in the kind's `session.bases` (§3.4), at the version the recipient holds, admits nothing, silently, at step 7.
 
-A basis grants nothing beyond reaching one routing set (§5.4) with one invite. The initiator is always identified by its verified leg certificate, never by possession of a link or an offer: the link or offer authorizes reaching, and the certificate says who is asking. Relation values other than `"pairing"` are reserved (§15).
+A basis grants nothing beyond reaching one routing set (§5.4) with one invite. The initiator is always identified by its verified leg certificate, never by possession of an offer: the offer authorizes reaching, and the certificate says who is asking. Relation values other than `"pairing"`, and the `none` basis, are reserved (§15).
 
-Block, quarantine and limits (§13) apply after verification and are silent.
+Block and limits (§13) apply after verification and are silent.
 
-### 5.3 Contact-link signaling configuration
+### 5.3 Withdrawn: contact-link admission
 
-Signaling admission on a contact link is **mutable owner-side configuration on an existing contact parent**, keyed by `jti`, like intake configuration ([links §6.2](links.md#62-intake-configuration)). It replaces the RTC per-parent configuration (`rtc/contact/`). AMD-SG-L1a (§20.3.1) defines it. In this revision only the owner configures it, on a parent the owner already has. There are no app-minted or signaling-only parents and no delivery-off switch: those wait for the links §6 re-scope (AMD-SG-L1b, §20.3.2) and are **unavailable** until it lands. There are no callbacks at all: offers replace them (§5.7).
-
-| Member | Definition |
-| --- | --- |
-| `revision` | A nonnegative safe integer, incremented by every update. Updates are compare-and-swap. |
-| `kinds` | A nonempty, unique, ascending list of at most 16 session kind line URLs, each pinned at configuration time to the version the owner saw. |
-| `uses` | `null` (unbounded within the parent's life), or an integer from 1 to 1,000: how many invites it can still admit. |
-| `principal` | `null` (any verified identity), or `{iss, sub}`: only that origin principal. |
-| `minted_by` | Always `null` in this revision (owner-configured). The member is kept for AMD-SG-L1b, where it names the app (`client_id`) or provider feature (`feature`) that minted the parent. |
-
-The configuration is never signed into the link, never disclosed in any link representation, and never delivered to the link holder. It is directional: enabling it on Alice's link lets holders reach Alice, not the reverse. When the configuration's `kinds` becomes empty, the configuration is removed.
-
-**Not on conditional parents.** The owner MUST NOT configure signaling on a conditional contact parent (one whose meta has `audience`, [links §7](links.md#7-audience-requirement-conditional-contact-links)), and a provider refuses such an update. A conditional link presented as a basis admits nothing, silently. The reasons for forbidding it, rather than evaluating the audience policy against the verified certificate principal:
-- Audience policy is operator host policy, evaluated at GET and at message admission (links §7.4, §7.5). Evaluating it inside §9.2 would put a policy call, and for foreign principals the unwired links §7.3 directory path, into federation verification, which must stay local and cheapest-first (§9.2 step 7).
-- Its quota model is per verified principal per UTC day (links §7.1), which does not map onto `uses`.
-- The owner already has an exact, local alternative: `principal` names one origin principal, and is compared with the verified certificate principal at step 8.
-
-A later revision MAY lift this once links §7.3 foreign verification exists, by evaluating the policy on the verified leg-certificate principal at step 8, in the way links §7.5 evaluates it on the author principal.
-
-**What link holders and representations see.** Configuring signaling changes nothing a link representation reports:
-- The sender metadata representation ([links §6.3](links.md#63-sender-metadata-representation)) is unchanged. Its `kinds` are still the signed message kinds, and it never reports session kinds, `uses`, `principal` or whether signaling is configured.
-- The HTML composer, inspection, contact-profile representation and previews (links §6, §6.4) are unchanged and show no signaling state.
-- A GET or HEAD of the link never admits, spends or creates anything.
-- The parent still accepts messages exactly as its signed meta and intake allow. Configuring signaling adds a way for holders to reach the owner, and it is disclosed to the owner as such when it is set (§14.1).
-
-An initiator learns which kinds a link admits only out of band, from the owner. A wrong guess gets the same `202` as everything else (§12.1).
-
-The rules carried from tickets are:
-- **When checks run.** At §9.2 step 2, the recipient provider only verifies the link itself, without spending anything. At step 7 it checks that the parent is unconditional, live and not exhausted, and that its configuration admits the kind. The use is spent, and `principal` compared with the **verified** leg-certificate principal, atomically at step 8. So forged or failing invites never spend uses.
-- **Dead parents.** A parent at zero uses, revoked or expired admits nothing, silently.
-- **GET.** A GET of the link never admits, spends or creates anything.
-
-**Callbacks are withdrawn.** Revision 1 reserved `callback_digest` for one-use, principal-bound callback links (rev 1 §20.3.2). Revision 2 removes the member and the callback design. A party that wants to be dialed back mints an offer (§5.7) instead, which needs no links re-scope because it is a signaling record, not a link.
-
-A link is a bearer capability, and its URL is subject to the [contact endpoint](../../apps/parlay/docs/legacy/contact-tokens.md#url-secrecy-and-browser-handling) secrecy rules. Shown as a QR code, it proves nothing about proximity. QR display and any other presentation are app-level.
+Revision 3 withdraws the `link` basis, the owner-side signaling configuration on contact parents (AMD-SG-L1a), app-minted links (AMD-SG-L1b) and `mint_link` ([contacts and links spike](../architecture/contacts-and-links-rethink.md) CL-9, CR-S1 to CR-S3). Deciding which people may reach an app is the app's own matter: an app that wants a person to reach one of its sessions hands that person an offer (§5.7) inside its own message. An invite whose basis carries `link_digest` is invalid as an unknown member (§7.2). The section number is kept so that references stay stable.
 
 ### 5.4 Routing to the handler
 
-An invite names an entity, never an app. The recipient provider chooses the endpoints by the invite's basis: the minting app for an `offer`, the paired app for a `pairing`, the initiator's own app for `self`, and otherwise the owner's **intent handler choice** for the invite's kind line (AMD-SG-I1, §20.1.5).
-
-**Status.** Intents routing applies only to `link`-basis invites, and to own-entity invites whose initiating app is not an approved handler (cases 2 and 3). It is not used for `offer` or `pairing` invites, and never opens a chooser when an invite arrives (§5.6, SG-29). This is provisional.
+An invite names an entity, never an app. The recipient provider chooses the endpoints by the invite's basis alone: the minting app for an `offer`, the paired app for a `pairing`, and for an own-entity invite the initiating app or the endpoint its `target` names. No intents default, chooser or owner choice is consulted (§5.6, SG-44).
 
 An endpoint is **eligible** when all of these hold:
 - it is registered for the kind;
@@ -333,110 +302,120 @@ An endpoint is **eligible** when all of these hold:
 - its connection or enablement is live;
 - it is not the initiator's own endpoint.
 
-Each endpoint records the client session of the connection that registered it (for a provider feature, none). Pairing coverage (case 5, §5.5, §10.2) is evaluated against that recorded client session, never against anything the app asserts.
+Each endpoint records the client session of the connection that registered it (for a provider feature, none). Pairing coverage (case 4, §5.5, §10.2) is evaluated against that recorded client session, never against anything the app asserts.
 
 The **routing set** is:
 
-1. **Own entity, with `target` of the same app.** That one endpoint. It must be eligible, and it must belong to the same app as the initiating endpoint (the same `client_id`, or the same provider feature). A `target` of a paired app is case 5.
-2. **Own entity, without `target`.** The eligible endpoints of the initiator's own app (the leg certificate's `client`, which this same provider certified), if that app is an approved handler. Otherwise, the routing handler's eligible endpoints.
-3. **Another entity, `link` basis.** The eligible endpoints of the owner's **routing handler** for the kind line, and of no other app. The routing handler is the owner's explicit default for the kind line. If there is none, it is the single approved handler, when there is exactly one (§20.1.5).
-4. **`offer` basis.** The minting endpoint, if it is still eligible. Otherwise the eligible endpoints of the minting app (the offer's `client_id`, or provider feature) for the recipient entity. Never another app, whatever the owner's intents default for the kind. Only the minting endpoint gets `offer_match: true`; the minting app's other endpoints get `offer_match: false`, and a claim there needs a user action (§5.5, §10.3).
-5. **`pairing` basis.** A pairing covers an endpoint only when the endpoint's app equals the pairing side's `client_id` and, when that side sets `client_session`, the endpoint's recorded client session equals it. This applies to both sides and both roles.
+1. **Own entity, with `target` of the same app.** That one endpoint. It must be eligible, and it must belong to the same app as the initiating endpoint (the same `client_id`, or the same provider feature). A `target` of a paired app is case 4.
+2. **Own entity, without `target`.** The eligible endpoints of the initiator's own app (the leg certificate's `client`, which this same provider certified). §5.1 item 3 makes that app an approved handler at `open`; if its approval is removed before admission, the set is empty.
+3. **`offer` basis.** Never another app than the minting one (the offer's `client_id`, or provider feature).
+   - **An offer minted by an endpoint that is not service-class** (a person entity's app, or an undesignated organization's app): the minting endpoint, if it is still eligible; otherwise the eligible endpoints of the minting app for the recipient entity. `offer_match` is projected on the minting endpoint only (§5.5, §10.3).
+   - **A service-class offer** (minted by a service-class endpoint, §2): the offer belongs to the minting app or feature, not to the minting endpoint. The routing set is every endpoint of that app or feature that is eligible **and online**, whether or not the minting endpoint still exists. For this case, an endpoint is online when it has a `listen` outstanding or completed one within the liveness window (reference: 60 s); a provider-feature endpoint is online while its feature is enabled and its provider runs it. `offer_match` is projected on every routed endpoint, and the first claim wins atomically (§8.2). The online condition applies only here: a person's app endpoint that is registered but asleep must still receive invites, because a doorbell wakes it (§11.2), while a service instance that has stopped polling should not hold invites it will never answer.
+4. **`pairing` basis.** A pairing covers an endpoint only when the endpoint's app equals the pairing side's `client_id` and, when that side sets `client_session`, the endpoint's recorded client session equals it. This applies to both sides and both roles.
    - **Own entity:** `target` names an eligible endpoint covered by the other side of a live own-entity pairing for the kind, where the initiating endpoint is covered by the first side, and that first side may open under `opens` (§5.8). That one endpoint. An own-entity invite without `target` is case 1 or 2.
-   - **Another entity (relation basis):** the eligible endpoints covered by the recipient pairing's `local` side (its `client_id`, narrowed to `local.client_session` when it is set) (§5.8).
-   - Never the routing handler.
+   - **Another entity (relation basis):** the eligible endpoints covered by the `local` side of the recipient's one pairing for (initiator principal, kind line) (§5.8).
 
-`open` refuses with `invalid_args` a `target` that is neither the initiating app's own endpoint (case 1) nor an endpoint covered under case 5, including a `target` outside a bound client session, or one the initiating side may not open to under `opens`.
+`open` refuses with `invalid_args` a `target` that is neither the initiating app's own endpoint (case 1) nor an endpoint covered under case 4, including a `target` outside a bound client session, or one the initiating side may not open to under `opens`.
 
-**Handoff target.** Cases 1 to 3 also fix the one app that a handoff (§11.4) opens, whether or not it has an eligible endpoint now:
-- case 1: the initiating app;
-- case 2: the initiating app if it is an approved handler, otherwise the routing handler;
-- case 3: the routing handler.
+The provider delivers an admitted invite to at most 16 endpoints of the routing set, most recently active first. If the routing set is empty, nothing is delivered and nothing is recorded for the owner. The invite stays pending until `answer_by` and then ends silently (§8.5).
 
-If that rule gives no app (case 2 or 3 with no routing handler), the handoff opens the chooser (§20.1.5). Cases 4 and 5 have no handoff: their app is fixed by the basis, and they never enter the owner hook (§11.3).
-
-The provider delivers an admitted, not held, invite to at most 16 endpoints of the routing set, most recently active first. If the routing set is empty, nothing is delivered to endpoints, and the invite stays pending until `answer_by`:
-- in cases 1 to 3, when the handoff target has no eligible endpoint, or there is no handoff target, the provider records an owner-hook entry that offers the handoff (§11.3, §11.4);
-- in cases 4 and 5, nothing is recorded. If no endpoint of the fixed app becomes eligible before `answer_by`, the invite ends silently (§8.5).
-
-A pending invite is also delivered to an eligible endpoint of the routing set that registers or starts `listen` before `answer_by` (late delivery). This is how a handoff to a closed app reaches the invite, and how an offer reaches the minting app when the minting device has gone away.
+A pending invite is also delivered to an eligible endpoint of the routing set that registers or starts `listen` before `answer_by` (late delivery). This is how an offer reaches the minting app when the minting device has gone away, how a service-class offer reaches an instance that comes online, and how an own-entity invite reaches a device of the same app that wakes up. An offer-basis invite whose routing set is empty at admission is not admitted at all (§5.2), so late delivery never holds a use for an app that has no eligible endpoint.
 
 Consequences, by construction:
-- **No cross-app visibility.** Each invite reaches exactly one app, fixed by its basis or by the owner's choice, so the cross-application visibility of AMD-RW1 does not arise.
+- **No cross-app visibility.** Each invite reaches exactly one app, fixed by its basis, so the cross-application visibility of AMD-RW1 does not arise.
 - **No preference for asserted clients.** A foreign initiator's asserted `client_id` and `origin` never influence routing (RTCw-R3, I2).
 
 ### 5.5 Acceptance
 
 - A session connects only through a claim with outcome `accept` by one recipient endpoint (§8.2). A recipient provider MUST NOT claim on its own.
 - **Cross-entity sessions.** The claim MUST result from a user action at the recipient device, except in these cases:
-  - the glare rule of §8.3;
-  - **offer match** (`offer_match`, §10.3). An `offer`-basis invite delivered to the **minting endpoint** MAY be accepted with no user action, because the minting side's user already acted by asking for the session. Before any automatic claim, the minting endpoint MUST check that the invite's `basis.offer_digest` equals the SHA-256 of an offer token it still holds outstanding (one it minted, has not revoked and still wants answered), and that the verified initiator principal equals the principal that token was minted for. The check is keyed on the digest, which the app computes from its own token, never on `context`, which the initiator chooses. Other endpoints of the minting app get `offer_match: false` and claim only after a user action.
+  - **offer match** (`offer_match`, §10.3). An `offer`-basis invite delivered to an endpoint with `offer_match: true` MAY be accepted with no user action: for a person's app, because the minting side's user already acted by minting the offer; for a service-class endpoint, because answering holders of its own offers is what it minted them for (§5.7). Before any automatic claim, the endpoint MUST check that the invite's `basis.offer_digest` equals the SHA-256 of an offer token its app still holds outstanding (one it minted, has not revoked and still wants answered), and, for a bound offer, that the verified initiator principal equals the principal that token was minted for. The check is keyed on the digest, which the app computes from its own token, never on `context`, which the initiator chooses. Endpoints with `offer_match: false` claim only after a user action.
   - **paired** (`paired`, §10.3). A relation-basis invite routed to an endpoint covered by the recipient pairing's `local` side MAY be accepted with no user action, within the pairing (`accept: "auto"`, §5.8).
-  - **standing acceptance**, for provider features and service entities only. The owner MAY set standing acceptance on a session handler approval, per (handler, kind) (§20.1.4), only when the handler is a provider feature (§4.2), or the entity is a hosted service entity (§4.3). It is off by default, and it is allowed only for kinds whose `parties` is `other` or `any`. With it, that handler's endpoints MAY accept admitted, not held, cross-entity invites of that kind without a user action at the device. For a provider feature, the enabled feature's own declared policy decides which of those invites it accepts (§4.2).
-
-  Standing acceptance is how provider-feature endpoints and hosted service entities (for example a conferencing service) answer, where "any admitted initiator" is the point. An app endpoint of a person's entity that should answer one known peer automatically uses a pairing instead (§5.8): that narrows "visible to any admitted initiator" to "visible to this peer". Standing acceptance changes no admission rule: held invites are never delivered, so they are never accepted, and the routing set is unchanged.
-
-  **Disclosure.** The page that sets standing acceptance MUST tell the owner, before the control is armed, that an automatic answer reveals to any initiator who can reach the entity with that kind (any admitted initiator) that the entity has a live endpoint of that handler. That is, it makes the entity's availability visible to them, which §12.1 otherwise hides. It also names what can admit such initiators: the owner's links configured for that kind. Requests (`none`) are held and never accepted.
 - **Own-entity sessions.** The claim MAY be automatic (**auto-connect**) when either of these holds:
   - **same app:** the kind's `parties` is `self`, the owner enabled auto-connect for that app and kind (an owner setting on the approval, §20.1.4; default off), and the initiator leg certificate's `client.client_id` equals the claiming endpoint's app;
-  - **own-entity pairing:** a live, not pending, pairing for the kind covers the initiating endpoint on one side and the claiming endpoint on the other (each by `client_id` and, when that side binds one, by the endpoint's recorded client session, §5.4 case 5), and `opens` lets the initiating side open (§5.8). The kind's `parties` may then be `self` or `any`.
+  - **own-entity pairing:** a live pairing for the kind covers the initiating endpoint on one side and the claiming endpoint on the other (each by `client_id` and, when that side binds one, by the endpoint's recorded client session, §5.4 case 4), and `opens` lets the initiating side open (§5.8). The kind's `parties` may then be `self` or `any`.
 
-  The provider computes `auto_connect`, `offer_match`, `paired` and `standing_accept` per endpoint in the invite projection (§10.3). It cannot verify a user action at `claim`, so it enforces nothing more there. A vendor's native and web clients, under different `client_id`s, are "the same app" only through an explicit own-entity pairing: grouping by registrable domain is not used for signaling (I3, §19.4).
-- **Decline.** A decline reveals that a recipient device saw the invite. An endpoint MUST NOT decline without a user action or an owner setting. An **owner** who dismisses or declines a pending invite through the provider's interface (for example from the owner hook, §11.3) ends it **silently** (§8.5): nothing is sent to the initiator.
+  The provider computes `auto_connect`, `offer_match` and `paired` per endpoint in the invite projection (§10.3). It cannot verify a user action at `claim`, so it enforces nothing more there. A vendor's native and web clients, under different `client_id`s, are "the same app" only through an explicit own-entity pairing: grouping by registrable domain is not used for signaling (I3, §19.4).
+- **Decline.** A decline reveals that a recipient device saw the invite. An endpoint MUST NOT decline without a user action or an owner setting, except that a **service-class endpoint** MAY decline an invite on one of its own offers automatically under its declared policy (for a provider feature, the policy disclosed at enablement, §4.2 item 5). That reveals nothing beyond what its automatic accept already reveals. A declined or unanswered open-offer session releases its reserved use; only an accepted one spends it (§5.2). If the **owner** ends a pending invite through the provider's interface, it ends **silently** (§8.5): nothing is sent to the initiator.
 
 ### 5.6 Establishment bases
 
 There is **one** signaling mechanism. The signed session channel (leg certificates, first claim, profiles, silent ends, no presence oracle) is the same for every session. What differs is three things: what admits the invite, which endpoints receive it, and who may claim it without a user action. Those are fixed by the invite's **basis** (SG-23, from the [establishment-modes spike](../architecture/signaling-modes-spike.md) §1.5). Revision 1's two "establishment modes" are two uses of these bases: invite-style use is the `offer` basis (§5.7), and always-on use is the `pairing` basis (§5.8).
 
-| Basis | Admits | Routes to (§5.4) | Claim without a user action (§5.5) | Owner hook (§11.3) |
-| --- | --- | --- | --- | --- |
-| `self` | The own entity | The same app, a `target` of it, or the routing handler | Auto-connect: the same app and `parties: self` | Only with an empty routing set |
-| `pairing` (own entity: extends `self`; another entity: the relation basis) | The paired app, or the paired principal, for the kind | The paired app's endpoints | Yes, within the pairing | Never |
-| `offer` | The offer's principal, once, before expiry | The minting endpoint, else the minting app | Yes, by the minting endpoint only, after its outstanding-offer check | Never |
-| `link` | A configured contact link | The intents routing handler | No, except standing acceptance (provider features and service entities only) | Only with an empty routing set |
-| `none` | Requests, if enabled | Held | Never | Held |
+| Basis | Admits | Routes to (§5.4) | Claim without a user action (§5.5) |
+| --- | --- | --- | --- |
+| `self` | The own entity | The same app, or a `target` of it | Auto-connect: the same app and `parties: self` |
+| `pairing` (own entity: extends `self`; another entity: the relation basis) | The paired app, or the paired principal, for the kind | The paired app's endpoints | Yes, within the pairing |
+| `offer` | The offer's principal once (bound), or any verified principal within `uses` (open), before expiry | The minting endpoint, else the minting app; for a service-class offer, the minting app's or feature's online endpoints | Yes, under `offer_match`, after the outstanding-offer check |
 
 Consequences:
-- **Intents routing shrinks to `link` invites** (and the own-entity fallback of §5.4 case 2). Session kinds stay intent kinds, because the registry, disclosure, projection and approvals are all reused (SG-2). Only the question "which app receives an unsolicited invite" still uses the routing handler.
-- **Intents never route incoming events.** An incoming invite never opens a chooser when it arrives. A person who starts something ("call this contact" from a contact card or a web page) hands off through intents to the app that will act; that app then uses an `offer` or a pairing (AMD-INT-R1 item 4, §20.10).
-- **Most real traffic never enters the owner hook.** `offer` and `pairing` invites always have a fixed app. If none of its endpoints is eligible, the invite stays pending, with late delivery, until `answer_by`, and then ends silently.
+- **Kinds and approvals come from intents; routing does not** (SG-2, SG-44). Session kinds stay intent kinds, because the registry, disclosure, projection and approvals are all reused.
+- **Intents never route incoming events.** An incoming invite never reaches a chooser. A person who starts something hands off through intents to the app that will act; that app then opens, mints an offer or uses a pairing.
+- **No owner-visible record.** Every invite has a fixed app. If none of its endpoints is eligible, the invite stays pending, with late delivery, until `answer_by`, and then ends silently.
+- **`none` is reserved** (§15, SG-45). Nothing admits a cross-entity invite without an offer or a pairing.
 
-### 5.7 The `offer` basis (invite-style)
+### 5.7 The `offer` basis (invite-style and open)
 
-An offer lets one invited principal open one session back to the app that asked. It is a **reverse dial**: the side that asks does not open a signaling session. It mints offers on its own provider, and hands them to the invited parties inside its own app-level message, which carries the request and does the alerting (for a messaging app's call, the call-invite message of Bindle Messaging, §20.12). The invited party's app dials back with the offer only after its user acts (for example taps Answer). Signaling then connects two parties who have both already acted.
+An offer lets a principal open a session back to the app that minted it. It is a **reverse dial**: the minting side does not open a signaling session. It mints offers on its own provider and hands them out through its own channels: inside an app message that carries a request and whatever presentation the app chooses, or, for an open offer, wherever it wants to be reachable. The holder's app dials back with the offer only after its user acts (for example confirms in the app), or, for an app with no person present, under its own policy. Signaling then connects two parties who have both acted.
 
-**Minting.** The `offer` method (§10.2) takes `{endpoint, kind, profile, principals, expires_in}`:
-- `principals` is 1 to 16 unique origin principals, never the owner's own entity;
-- `expires_in` is 10 to 900 seconds. An app SHOULD mint with `expires_in` at least the remaining lifetime of the app invitation that will carry the offer, plus a skew margin (reference 60 s), so that a dial-back made just before the invitation expires on the invited party's clock still finds the offer live. An app invitation that carries offers should therefore live at most 900 s minus that margin.
+There are two shapes, distinguished only by whether the offer names a principal:
+- a **bound** offer names one origin principal, and admits only that principal;
+- an **open** offer names none, and admits any verified principal except the minting entity itself.
 
-Before minting, the provider checks, live, everything §5.1 checks for an initiator (items 1 to 6 and 8, with each principal as the recipient, `offer` as the basis, and the offer limits of §13.1). It then mints one opaque token per principal: at least 128 random bits, encoded as 22 to 43 base64url characters. It returns `{offers: [{principal, offer}], expires_at}`. The result is never retained in an RPC journal (§10.2).
+**Minting.** The `offer` method (§10.2) takes `{endpoint, kind, profile, principals?, uses?, expires_in}`:
+- `principals`, when present, is 1 to 16 unique origin principals, never the owner's own entity: one bound offer is minted per principal. When it is absent, one open offer is minted;
+- `uses` applies to an open offer only: the number of sessions it may admit, from 1 (the default) to a provider maximum (reference: 16 for an endpoint that is not service-class, 10,000 for a service-class endpoint). A bound offer is always **single-use**, spent at admission (§5.2): with `principals`, `uses` MUST be absent or 1, and `offer` refuses any other value with `invalid_args`;
+- `expires_in` is from 10 to 900 seconds. A **service-class** endpoint (§2) MAY use up to 7,776,000 seconds (90 days) for an open offer, and up to 604,800 seconds (7 days, reference) for a bound offer. An app SHOULD mint with `expires_in` at least the remaining lifetime of the app message that will carry the offer, plus a skew margin (reference 60 s), so that a dial-back made just before that message expires on the holder's clock still finds the offer live.
 
-**What the provider stores.** Per offer, only: the SHA-256 of the token; the principal; the kind line, the version the minting app is approved for, and the profile; the minting endpoint and the minting app (`client_id`, or provider feature); `expires_at`; and whether it is spent. The token itself is never stored, logged or delivered to any endpoint after the `offer` result. An offer record is deleted at `expires_at`, whether or not it was spent; until then a spent offer keeps its hash so that it can never be reused.
+Every offer has an expiry and is revocable. There is no offer without one.
 
-**Key warming (issuer-level only).** At `offer`, the minting provider MAY warm only **issuer-level** metadata of the named principals' issuers: the validated manifest, its `signaling.v1` declaration and its directory endpoint, from the per-entity warming budget. It MUST NOT fetch a named principal's identity document or certification keys because of an `offer`. Reasons:
+**Why the long maximum is only for service-class endpoints.** A long-lived open offer is a standing, publishable address: anyone who obtains it can reach the minting app and, because it answers automatically, can tell when that app is running. For a provider feature or a designated service entity's app that is the point (a bot, a support line, a rendezvous or dial-in group service, a provider-to-provider service entity), and the owner was told so when enabling the feature, designating the entity or approving the app (§4.2, §4.3, §20.1.4). For a person it would be the unsolicited, standing reachability that the contacts and links spike rejected (CL-10), so a person entity's apps, like every other app that is not service-class (§4.3), may mint offers only within the 900 s cap: long enough for a code shown in person or posted to a group the app cannot list by principal, and short enough that a leaked token is soon useless. 90 days matches the default cross-entity pairing expiry (§5.8): it forces a published capability to be rotated at least quarterly, bounds the damage of a leak, and bounds how long an abandoned offer holds a live-offer slot (§13.1). A service-class **bound** offer is capped lower (7 days, reference): it lets one known principal connect automatically once, which is closer to a pairing than to a published address, so a longer standing arrangement with a known peer is a pairing (for an app, §5.8) or a re-minted offer.
+
+Before minting, the provider checks, live, everything §5.1 checks for an initiator (items 1 to 6 and 8, with each principal, or for an open offer any other entity, as the recipient, `offer` as the basis, and the offer limits of §13.1). It then mints one opaque token per offer: at least 128 random bits, encoded as 22 to 43 base64url characters. It returns `{offers: [{principal, offer}], expires_at}`, with `principal` `null` for an open offer. The result is never retained in an RPC journal (§10.2).
+
+**What the provider stores.** Per offer, only: the SHA-256 of the token; the principal, or `null`; the kind line, the version the minting app is approved for, and the profile; the minting endpoint and the minting app (`client_id`, or provider feature), with whether the minting endpoint was service-class; `uses`, and the counts of spent and reserved uses; and `expires_at`. The minting endpoint serves only the routing of an offer that is not service-class and `revoke_offer` without a token list; a service-class offer is routed by its app or feature (§5.4 case 3). The token itself is never stored, logged or delivered to any endpoint after the `offer` result. The holder's provider keeps the token only beside the invite in its outbox, for re-sending until `answer_by` (§9.3); it never logs it, and deletes it with the invite payload once the invite is terminal or `answer_by` passes (§12.4). An offer record is deleted at `expires_at`; until then an exhausted offer keeps its hash so that it can never be reused.
+
+**Key warming (issuer-level only).** At `offer`, the minting provider MAY warm only **issuer-level** metadata of the named principals' issuers: the validated manifest, its signaling declaration and its directory endpoint, from the per-entity warming budget. It MUST NOT fetch a named principal's identity document or certification keys because of an `offer`. Reasons:
 - a per-principal fetch at mint time tells the invited party's issuer that someone on the minting provider is about to interact with that principal, before the invited party has acted, and whether or not it ever answers. Disclosing that on the minting page would not remove the leak to a third party;
 - an `offer` names up to 16 principals, so per-principal warming would turn one call into up to 16 targeted fetches;
-- the dial-back still verifies: a peer the entity talked to in the last 24 h is already kept current (§9.2 step 3); otherwise the first dial-back schedules a refresh, the invited party's provider re-sends the invite (§9.3), and the receiver MAY put invites whose `offer_digest` names a live offer in its first refresh lane (§9.2 step 3). The cost is at most one delayed first dial-back, which the invitation's lifetime absorbs.
+- the dial-back still verifies: a peer the entity talked to in the last 24 h is already kept current (§9.2 step 3); otherwise the first dial-back schedules a refresh, the holder's provider re-sends the invite (§9.3), and the receiver MAY put invites whose `offer_digest` names a live offer in its first refresh lane (§9.2 step 3). The cost is at most one delayed first dial-back.
 
-**Dialing back.** The invited party's app calls `open` on its own provider with `to` = the minting entity's principal, `kind` and `profile` as given with the offer, and `basis: {"offer": <token>}`. Its provider checks §5.1 as for any initiator. It cannot check the offer, which only the minting provider holds. It puts `{"offer_digest": …}` in the signed invite and carries the token in the batch's `offers` (§9.1), or on the internal path for a same-provider session (§9.4).
+An open offer names no principal, so nothing is warmed for it.
 
-**Admission at the minting provider.** As §5.2 "Verifying an offer basis": the principal compared read-only at §9.2 step 7, then re-confirmed and the offer spent atomically at step 8, only when the offer's principal equals the verified leg-certificate principal. A wrong principal, an expired or spent offer, another kind line, profile or unadmitted version, or an unknown digest each admits nothing, spends nothing, and gets the uniform `202`. Routing is §5.4 case 4. The projection carries `basis: "offer"`, with `offer_match: true` only on the minting endpoint (§10.3).
+**Dialing back.** The holder's app calls `open` on its own provider with `to` = the minting entity's principal, `kind` and `profile` as given with the offer, and `basis: {"offer": <token>}`. Its provider checks §5.1 as for any initiator. It cannot check the offer, which only the minting provider holds. It puts `{"offer_digest": …}` in the signed invite and carries the token in the batch's `offers` (§9.1), or on the internal path for a same-provider session (§9.4).
 
-**Revoking.** `revoke_offer({endpoint, offers?})` revokes the listed tokens minted by that endpoint, or every live offer it minted when `offers` is absent. It is narrowing. An app SHOULD revoke offers that it no longer needs (for example when the person who asked gives up). Narrowing the minting app (§14.2) revokes its offers, and the owner can list and revoke live offers (§14.1).
+**Admission at the minting provider.** As §5.2 "Verifying an offer basis": checked read-only at §9.2 step 7, then re-confirmed atomically at step 8, with a nonempty routing set. A bound offer's single use is spent then. An open offer reserves one use then, spent only by an `accept` claim and released by a decline or an unclaimed end. Cheap checks run first (§9.2 step 7): the offer lookup and its windows read only the minting provider's own records. Routing is §5.4 case 3. The projection carries `basis: "offer"` (§10.3).
 
-**Ending what an offer admitted.** When an offer is revoked (by `revoke_offer`, by narrowing or by the owner) or reaches `expires_at`, every session it admitted that is still pending and unclaimed ends **silently** (§8.5): nothing goes to the initiator, whose session ends at `answer_by`. A session already claimed is unaffected by the offer's end.
+**Automatic answering.** For an offer that is not service-class, `offer_match` is projected true on the minting endpoint. A service-class offer belongs to the minting app or feature, so `offer_match` is true on every routed endpoint (eligible and online, §5.4 case 3), because a service has no person at one device and its instances share one policy. A service-class endpoint MAY also decline automatically under its declared policy, which releases an open offer's use (§5.5). Every other endpoint gets `offer_match: false`. An endpoint with `offer_match: true` still makes the outstanding-offer check before claiming (§5.5); an app MAY share its set of outstanding offer digests among its own endpoints. Service-class endpoints auto-accept holders of their own open offers this way; there is no separate "standing acceptance" setting.
+
+**Revoking.** `revoke_offer({endpoint, offers?})` revokes the listed tokens minted by that endpoint's app, or every live offer the endpoint minted when `offers` is absent. It is narrowing. An app SHOULD revoke offers that it no longer needs (for example when the person who asked gives up, or a published open offer leaks). The owner can list and revoke live offers (§14.1).
+
+**What ends an offer.** Only these:
+- `revoke_offer`, or the owner revoking it (§14.1);
+- reaching `expires_at`;
+- the end of the minting app's or feature's authority for the kind: its session handler approval removed or cleared, its grant on the signaling field revoked, its app connection ending, or the feature disabled or suspended (§14.2);
+- for an offer longer than 900 s minted by a service entity's app, removal of the entity's service designation (§4.3, §14.2);
+- the entity's move (§14.3) or deletion (§14.4).
+
+Unregistering an endpoint, an endpoint's expiry 30 days after its last `listen` (§10.2), and revoking one client session of an app whose connection otherwise remains never end an offer: the offer belongs to the minting app or feature, and `revoke_offer` covers one endpoint's offers while that endpoint exists. Exhaustion stops new admissions without ending anything.
+
+**Moves.** A move deletes the entity's live offers at the source, and offers are never exported (§12.6, §14.3). A service that moves re-mints and re-publishes its offers from the destination; dial-backs on the old ones admit nothing there.
+
+**Ending what an offer admitted.** When an offer ends (any item above), every session it admitted that is still pending and unclaimed ends **silently** (§8.5): nothing goes to the initiator, whose session ends at `answer_by`. A session already claimed is unaffected by the offer's end. **Claim versus end is atomic.** The authority that decides the first claim (§8.2) also records the offer's end, against the same records, and whichever it records first wins: a claim recorded first connects the session, which the offer's end then leaves alone; an end recorded first ends the session silently, and a later claim fails with `claimed`. An open offer's reserved use is spent or released by that one decision, never both.
 
 **Properties.**
-- **No presence oracle in either direction.** An invited party who does not act sends nothing, and the offer expires. The minting side learns that the invited party acted only when it did. The minting endpoint auto-accepts only the one principal it named, for an offer it still holds outstanding, for the one kind, before expiry, which reveals nothing it had not already disclosed by asking.
-- **The same app on both legs.** The offer routes back to the minting app, whatever the minting entity's intents default for the kind. Only the minting endpoint may answer it automatically.
-- **Cross-app interop.** The invited party may use any app that holds a session handler approval for the kind and the slot grant.
-- **Several devices of the invited party.** The first device to dial back spends the offer. A second device's invite admits nothing and ends silently at `answer_by`. Telling the other devices that one answered is app-internal.
-- **Several invited parties.** One offer per principal, each spent at most once: a mesh of two-party sessions (§8.6), at most 16 per `offer` call. Larger groups are a conferencing service reached with ordinary sessions.
-- **Bearer secrecy.** An offer is a capability while it is live. It is bound to one principal, so a party that reads it (for example another participant of a conversation) cannot use it. Apps keep it out of notifications, previews, search indexes and logs.
+- **No presence oracle in either direction.** A holder who does not act sends nothing, and the offer expires. The minting side learns that a holder acted only when it did. An automatic answer reveals the minting app's availability only to holders of an offer it chose to hand out (§12.1). A dead offer looks like an unknown one (§5.2).
+- **The same app on both legs.** The offer routes back to the minting app, whatever the minting entity's intents defaults. Only `offer_match` endpoints answer it automatically.
+- **Cross-app interop.** The holder may use any app that holds a session handler approval for the kind and a grant on the signaling field.
+- **Several devices of an invited party.** A bound offer admits only the first dial-back that reaches admission, and an open offer only while a use is free. Another device's invite then admits nothing and ends silently at `answer_by`. Telling the other devices that one answered is app-internal.
+- **Several invited parties.** One bound offer per principal: a mesh of two-party sessions (§8.6), at most 16 per `offer` call. A larger group is a group service: a service-class endpoint whose open offer each participant dials (§8.6).
+- **Bearer secrecy.** An offer is a capability while it is live. A bound offer is useless to anyone but its principal, so another reader of the app message that carried it cannot use it. An open offer is usable by any holder, so an app hands it out only where it means anyone there to connect. Apps keep every offer out of notifications, previews, search indexes and logs, except where they deliberately publish an open offer.
+- **Residual: a person's short open offer.** Any holder of an open offer from a person's app, including someone it reached beyond the intended group, can use throwaway principals at an issuer it controls to spend every use the minting app accepts (up to the reference 16), and, while the offer lives, tell from its automatic accept whether the minting app is running. The per-(principal, offer) and per-issuer bounds slow this but cannot stop one holder with many principals. It is inherent to a bearer capability. The bound is the 900 s expiry and the small `uses`, and revoking the offer stops it.
+- **Re-minting by a person's app.** A person's app can keep re-minting bound offers (each single-use, at most 900 s, within the mint and live-offer caps, §13.1) and pass them to one peer over its own channel, whose app dials back under its own policy. That is equivalent to a short pairing without the §5.8 owner page. It is accepted, not restricted: the provider cannot verify a user action (§5.5), so a rule against it would be unenforceable; it needs both apps to cooperate over their own channel, which could already carry their bytes; each connection takes a fresh single-use offer, so it stops within 900 s of the minting app stopping; and it reveals nothing to third parties. What a pairing adds, and re-minting cannot, is owner-visible standing consent and acceptance that the provider enforces without the app (§5.8).
 
 ### 5.8 The pairing record (always-on)
 
-A **pairing** is an owner record that pre-authorizes one app, or one enrolled client session of it, to connect automatically, for one kind, with another of the owner's apps or with one peer principal. It fills the relation basis that revision 1 reserved, and it replaces open-ended standing acceptance for app endpoints (§5.5).
+A **pairing** is a per-edge owner record between exactly two parties. It pre-authorizes one app, or one enrolled client session of it, to connect automatically, for one kind, with one other app of the owner or with one peer principal. Connecting a daemon to three apps takes three pairings, each created by its own owner action; nothing admits "any app" (rule P2 of the [local clients spike](../architecture/local-clients-spike.md) §4.3, LC-12). A pairing fills the relation basis that revision 1 reserved. It stays a signaling owner record, not a slot assignment or a preferences-assignable resource (LC-11, SG-39). **Pairing parties are apps.** Each side names a `client_id`; a provider feature is never a pairing party, and reaches known peers with offers instead (§4.2, §5.7).
 
 | Member | Definition |
 | --- | --- |
@@ -448,16 +427,17 @@ A **pairing** is an owner record that pre-authorizes one app, or one enrolled cl
 | `accept` | `"auto"`, the only value in this version. |
 | `label` | Owner-visible plain text, at most 64 characters. |
 | `created_via` | `settings`, `device-authorization` or `app-request`. |
-| `state` | `pending`, `awaiting_confirmation` (a device-authorization pairing before its code comparison, §5.9) or `live`. |
+| `state` | `pending` (not yet activated), `awaiting_confirmation` (a device-authorization pairing before its code comparison, §5.9) or `live`. |
 | `expires_at` | A time. `null` (no expiry) only for an own-entity pairing. A cross-entity pairing always expires: default 90 days after creation, at most 1 year, renewable by the owner on the same page (reference values). A pending pairing expires 7 days after creation (below). |
 
-**Coverage.** A pairing side covers an endpoint only when the endpoint's app equals that side's `client_id` and, when that side sets `client_session`, the endpoint's recorded client session (§5.4) equals it. Coverage is checked in both roles, initiating and answering, and everywhere the pairing has an effect: routing and `target` eligibility (§5.4 case 5), the initiator check (§5.1 item 7), `endpoints({pairing})` (§10.2), and the `auto_connect` and `paired` projection (§5.5, §10.3). A pairing whose side binds a client session never covers another session of the same app, on either side.
+**Coverage.** A pairing side covers an endpoint only when the endpoint's app equals that side's `client_id` and, when that side sets `client_session`, the endpoint's recorded client session (§5.4) equals it. Coverage is checked in both roles, initiating and answering, and everywhere the pairing has an effect: routing and `target` eligibility (§5.4 case 4), the initiator check (§5.1 item 7), `endpoints({pairing})` (§10.2), and the `auto_connect` and `paired` projection (§5.5, §10.3). A pairing whose side binds a client session never covers another session of the same app, on either side. A local client's `client_id` is already per installation (local clients spike §2.3 rule 1), so a side that names one covers only that installation, and binding its `client_session` as well narrows it to one client session.
 
-**Creation.** Only by an owner action on a provider page that meets the §20.1.4 page obligations (same-origin, CSRF-protected, `frame-ancestors 'none'`, controls armed after a delay, nothing preselected). A provider MAY offer the page from its settings, from the device-authorization approval page (§5.9), or at an app's request through a URL on the provider's own origin, never one the app supplies (as for `approval_required`, §20.1.4). The page:
+**Creation.** Only by an owner action on a provider page that meets the §20.1.4 page obligations (same-origin, CSRF-protected, `frame-ancestors 'none'`, controls armed after a delay, nothing preselected). A provider MAY offer the page from its settings, from the enrolment approval page (§5.9), or at an app's request through a URL on the provider's own origin, never one the app supplies (as for `approval_required`, §20.1.4). The page:
 - names both apps by verified origin, or the peer principal (below), the kind and its profiles, and which side opens;
 - says that these apps will connect automatically, with no prompt, whenever the opening side is running. For a peer pairing, it also says that the peer can tell when this app is running;
-- words the effect from the kind's sensitivity categories (intents §4), not from the kind's own title alone. For example, a kind whose profiles include `webrtc` and whose categories include audio or video capture says "*peer* may start audio or video with this app without asking";
-- refuses a combination the kind's `parties` does not admit: an own-entity pairing needs `parties` `self` or `any`, and a cross-entity pairing needs `other` or `any`.
+- words the effect from the kind's profiles and sensitivity categories (intents §4), not from the kind's own title alone. For example, a `webrtc` kind whose categories include `personal-data` says "*peer* may open a direct connection with this app, and exchange personal data with it, without asking";
+- refuses a combination the kind's `parties` does not admit: an own-entity pairing needs `parties` `self` or `any`, and a cross-entity pairing needs `other` or `any`;
+- refuses a cross-entity pairing when the entity already holds a pairing, in any state, with the same `peer.principal` and kind line, and links to that pairing instead. So an entity holds **at most one cross-entity pairing per (peer principal, kind line)**, and admission, routing, `opens`, expiry and the per-pairing limits (§13.1) always resolve to one record. Connecting a second local app to the same peer for the same kind is done at app level, or with a different kind.
 
 **Cross-entity creation, additionally:**
 - the owner authenticates freshly (as device authorization §5.1(2) requires for an approval);
@@ -465,10 +445,16 @@ A **pairing** is an owner record that pre-authorizes one app, or one enrolled cl
 - an expiry is always set (above), and the page shows it;
 - the page discloses that this pairing lets the peer connect automatically, and that whether the peer's own owner must also pair depends on the peer's provider: a conforming provider requires the peer's own record before its app may open (§5.1 item 7), but this provider can enforce only its own record (below).
 
-**Pending.** Both apps of an own-entity pairing, and the local app of a peer pairing, need the session handler approval for the kind. A newly created pairing whose app is not yet approved is **pending**: it is shown to the owner, but it admits, routes and accepts nothing until the approval exists. A pending pairing is deleted if it is still pending 7 days after creation. **Only creation produces a pending pairing**: a live pairing never returns to pending. Any approval page that would activate a pending pairing (for example the later approval of the other app) MUST name that pairing (its label, both apps or the peer, the kind and `opens`) before its control is armed, so that no pairing goes live without the owner seeing it.
+**Each party is granted individually (P1).** Every app party (both sides of an own-entity pairing, and the `local` side of a cross-entity pairing) holds its own live connection, its own grant on the signaling field with the methods it needs, and its own session handler approval for the kind, each recorded by its own owner action. A pairing never creates, implies or extends any of them. A page MAY offer them beside the pairing only as separate, unchecked controls.
+
+**Pending and explicit activation (P3).** A newly created pairing is **pending**: it is shown to the owner, but it admits, routes and accepts nothing. It goes live only through an owner control for that one pairing, unchecked and armed after a delay, that names both parties (or the peer), the kind and `opens`, and that is available only once every party holds what P1 requires. Approving or granting a party never activates a pairing; an approval page MAY show the pending pairings that the approval would make activatable, with a link to each one's activation control. A pending pairing is deleted if it is still pending 7 days after creation. **Only creation produces a pending pairing**: a live pairing never returns to pending. Two readings of P3 (SG-46):
+- **Activation at creation.** When every party already holds what P1 requires when the creation page is shown, that page's pairing control meets every requirement of an activation control, so it is the activation control, and the pairing is created live.
+- **Enrolment pages.** A device-authorization pairing under M4 is activated only by its code confirmation (§5.9 step 5). On an M5 enrolment page, where the client's grant and its session handler approval are recorded by the same submit as the pairing control, the pairing goes live in that transaction only if every party then holds what P1 requires; otherwise it stays pending. The pairing control is still separate, unchecked and armed after a delay.
+
+**Visible from both parties (P4).** An own-entity pairing is listed with both of its apps wherever the provider lists the owner's app connections (§14.1). A cross-entity pairing is listed with its `local` app there, and in the owner's list of cross-entity pairings by peer principal (§14.1), because the peer is not an app connection. Either listing can remove it.
 
 **Own-entity pairing extends `self`.** With a live pairing whose sides cover the initiating and the claiming endpoints, and whose `opens` lets the initiating side open:
-- `target` may name an eligible endpoint covered by the other side (§5.4 case 5);
+- `target` may name an eligible endpoint covered by the other side (§5.4 case 4);
 - the projection's `paired` and `auto_connect` are true for that endpoint (§10.3);
 - the kind's `parties` may be `self` or `any`.
 
@@ -481,10 +467,16 @@ A **pairing** is an owner record that pre-authorizes one app, or one enrolled cl
 
 **Kind versions.** A pairing covers invites at its pinned kind version, and at later versions that are additive from it without new disclosure (§15). A newer version that adds disclosure needs the owner to **re-confirm** each affected pairing on the creation page, showing the difference. Until then the pairing covers only invites at versions within what was confirmed, and invites at the new version are not covered (they fall back to whatever other basis applies, or admit nothing).
 
-**Routing and acceptance.** Routing is §5.4 case 5, to at most 16 covered endpoints, most recently active first, never the routing handler. Covered answering endpoints MAY claim `accept` with no user action (§5.5).
+**Routing and acceptance.** Routing is §5.4 case 4, to at most 16 covered endpoints, most recently active first. Covered answering endpoints MAY claim `accept` with no user action (§5.5).
+
+**How an app learns its pairings.** An app never creates a pairing, but it needs the `id` to use one. The provider tells each covered endpoint about the pairings that cover it, and nothing else:
+- `endpoints({endpoint})`, called with one of the app's own endpoints (§10.2), returns `pairings`: every pairing, in any state, that covers the calling endpoint on either side, as `{id, state, kind, side, opens, peer, expires_at}`. `side` is `local` or `peer` (which side covers the caller). `peer` is the other party: `{client_id}` for an own-entity pairing, or `{principal}` for a cross-entity one, which the owner paired this app with and which it needs in order to open;
+- `listen` delivers a `pairing` event to each covered endpoint when such a pairing is created, changes `state` or is deleted (§10.3).
+
+No method reveals pairings that do not cover the caller, or their labels.
 
 **Discovery, own entity only, opening side only.** `endpoints({pairing})` (§10.2) returns the eligible endpoints covered by the other side of a live own-entity pairing, and only to a calling endpoint that the pairing covers on a side that may open. Each is returned as `{endpoint, label, kinds, client_id}`:
-- `label` is the provider's own name for the endpoint's device or client session, as shown in Devices (for a device-authorization client, the name shown at approval), never the `label` the paired app supplied at `register`. One app never sees text another app wrote about itself;
+- `label` is the provider's own name for the endpoint's device or client session, as shown in the owner's own lists (for an enrolled client, the owner-authored label given at approval), never the `label` the paired app supplied at `register`. One app never sees text another app wrote about itself;
 - there is no `last_seen` for another app's endpoints: listing only live endpoints already says enough to connect, and a last-seen time would let one app watch another app's usage;
 - the answering side gets nothing extra.
 
@@ -498,8 +490,8 @@ There is no discovery across entities: the initiator opens to the principal, and
 **Revocation and clearing.** A pairing is **deleted**, and stops admitting, routing and accepting at once, when:
 - the owner removes it, or it reaches `expires_at`;
 - it is still pending 7 days after creation;
-- either app's session handler approval for the kind, or its slot grant, is removed or cleared (§20.1.4). Clearing deletes the pairing; it never parks it as pending. Restoring the approval does not restore the pairing, which the owner creates again;
-- the client session it binds (`local.client_session` or `peer.self.client_session`) is revoked or ends, for example from Devices (§5.9, device authorization §8);
+- either app's session handler approval for the kind, or its grant on the signaling field, is removed or cleared (§20.1.4). Clearing deletes the pairing; it never parks it as pending. Restoring the approval does not restore the pairing, which the owner creates again;
+- the client session it binds (`local.client_session` or `peer.self.client_session`) is revoked or ends, for example from the owner's list of app connections (§5.9, device authorization §8);
 - the owner blocks its `peer.principal`, or the provider that issues it (§13.2);
 - the entity moves (§14.3) or is deleted (§14.4).
 
@@ -507,27 +499,27 @@ Deleting a pairing ends its claimed sessions with a control statement `revoked`,
 
 ### 5.9 Enrolling headless clients
 
-A headless client, such as an agent daemon on a machine with no browser, is a public native client. It enrolls with [device authorization](device-authorization.md) (RFC 8628 with mandatory DPoP), which 3sln.me implements locally behind `DEVICE_AUTHORIZATION_ENABLED`. This section adds nothing to that protocol. It says how a provider offering the signaling slot uses it.
+A headless client, such as an agent daemon on a machine with no browser, is a public native client. It enrolls with [device authorization](device-authorization.md) (RFC 8628 with mandatory DPoP; mechanism M4 of the [local clients spike](../architecture/local-clients-spike.md) §1.2), which 3sln.me implements locally behind `DEVICE_AUTHORIZATION_ENABLED`. A client with a browser on the same device MAY instead enroll with a loopback authorization-code flow with PKCE and mandatory DPoP (M5, spike §2.3 rule 7). This section adds nothing to either protocol. It says how a provider that supplies the built-in signaling resource uses them.
 
-1. **Start.** The client requests a device authorization with its `client_id` (a client ID metadata document listing the device grant), a `dpop_jkt`, and a request for the signaling slot fragment with the methods it needs (`register`, `listen`, `claim`, `send`, `renew`, and relay credentials).
-2. **Show.** The client shows the `user_code` and `verification_uri`. **Code entry is the default.** The client MAY also show a QR code of `verification_uri_complete`, but a prefilled code loses protection against code substitution (device authorization §10.6), so the provider still asks the owner to type the code unless its policy establishes that the approval is happening alongside the device (device authorization §5.2).
-3. **Approve.** On another device, the owner authenticates freshly, enters the code and consents to the fragments. On the same page, the provider MAY offer, as separate, unchecked controls:
-   - the session handler approval for the kinds declared in the client's manifest (§20.1.4);
-   - a pairing (§5.8) with `local = {client_id: <the client>, client_session: <this grant's client session>}`, `peer` = another of the owner's apps (for example the vendor's web app), `opens: "peer"` by default (the interactive app opens, the headless client answers), and `created_via: "device-authorization"`. It stays pending until that app is connected and approved for the kind, and then awaits confirmation (step 5).
+1. **Start.** The client requests authorization with its `client_id`, a `dpop_jkt`, and a request for the signaling fragment with the methods it needs (`register`, `listen`, `claim`, `send`, `renew`, and relay credentials). The `client_id` is either a client ID metadata document listing the grant it uses, or a **local-client identifier**: the RFC 9278 JWK thumbprint URI of its DPoP key, proven at request time, with its local manifest (spike §2.3 rules 1 to 4, a proposed local-clients extension). Under M5, steps 2 and 3 happen on the provider's authorization page instead.
+2. **Show.** Under M4, the client shows the `user_code` and `verification_uri`. **Code entry is the default.** The client MAY also show a QR code of `verification_uri_complete`, but a prefilled code loses protection against code substitution (device authorization §10.6), so the provider still asks the owner to type the code unless its policy establishes that the approval is happening alongside the device (device authorization §5.2).
+3. **Approve.** The owner authenticates freshly, enters the code (M4) and consents to the fragments. On the same page, the provider MAY offer, as separate, unchecked controls:
+   - the session handler approval for the kinds declared in the client's manifest or local manifest (§20.1.4);
+   - **one pairing control per already-connected candidate app** (P2, §5.8), each creating a pairing with `local = {client_id: <the client>, client_session: <this grant's client session>}`, `peer` = that app, `opens: "peer"` by default (the interactive app opens, the headless client answers), and `created_via: "device-authorization"`. Each one still needs activation (§5.8): under M4, the confirmation of step 5; under M5, the same submit, as §5.8 "Enrolment pages" allows.
 4. **Run.** The client receives DPoP-bound tokens, registers a DPoP-bound endpoint (§10.1), and long-polls `listen`. It needs no person again.
-5. **Confirm.** Before a device-authorization pairing goes live, the owner confirms it **in the paired app** by comparing a short code:
-   - the headless client displays a confirmation code: the first 6 decimal digits (reference) of a SHA-256 over a fixed label and its own DPoP key thumbprint (`dpop_jkt`), which it can compute alone;
-   - while the pairing is `awaiting_confirmation`, the paired app's `endpoints({pairing})` answers `approval_required` with a provider page URL on the provider's own origin (§20.1.4). That page names the pairing (label, both apps, the kind and `opens`), shows the same code, which the provider derives from the `dpop_jkt` bound at approval, and asks the owner to confirm only if the code matches the one shown on the device in front of them. The control is armed after a delay and preselects nothing;
+5. **Confirm (M4 only).** A pairing whose bound client session came from the device grant (M4) goes live only after this confirmation. An M5 enrolment happened in the same device's browser and cannot be phished remotely, so it uses no code (§5.8 "Enrolment pages", CR-L5). The owner confirms an M4 pairing **in the paired app** (the pairing's `peer` side, the interactive app) by comparing a short code:
+   - the headless client displays a confirmation code: the first 6 decimal digits (reference) of a SHA-256 over a fixed label, the `user_code` of its device authorization and its own DPoP key thumbprint (`dpop_jkt`), which it can compute alone. The provider chose the `user_code` after the client committed its `dpop_jkt`, so a device that can see the legitimate code cannot grind keys offline to match it: each attempt costs a new, rate-limited device authorization;
+   - the paired app finds the pairing through `endpoints({endpoint})` or a `pairing` event (§5.8), whatever `opens` is. While the pairing is `awaiting_confirmation`, `endpoints({pairing})` called by an endpoint covered on the `peer` side answers `approval_required` with a provider page URL on the provider's own origin (§20.1.4), for every value of `opens`. That page names the pairing (label, both apps, the kind and `opens`), shows the same code, which the provider derives from the `user_code` and `dpop_jkt` it bound at approval, and asks the owner to confirm only if the code matches the one shown on the device in front of them. The control is armed after a delay and preselects nothing. Confirming is the pairing's activation (§5.8);
    - a mismatch, or a cancel, deletes the pairing. An unconfirmed pairing never admits, routes or accepts anything, and is deleted after 7 days like a pending one.
 
    This binds the pairing to a device the owner can see, so a phished device code (device authorization §10) does not by itself yield a live automatic connection. The code is a comparison value, not a secret. It does not stop an owner who is talked into reading a code off an attacker's screen; it adds a second, deliberate step in the owner's own app.
-6. **Connect.** The paired app calls `endpoints({pairing})`, then `open` with `target` set to each live paired endpoint. Each claims at once.
+6. **Connect.** The opening side's app calls `endpoints({pairing})`, then `open` with `target` set to each live paired endpoint. Each claims at once. With `opens: "local"`, the headless client is the opening side and does the same.
 
-**Standing authorization** is the intersection of four things, each checked live: the client session (device authorization §7: no absolute lifetime by default, an idle limit, live lineage and grant checks); both apps' slot grants and session handler approvals; the pairing; and the endpoint's registration (§10.2).
+**Standing authorization** is the intersection of four things, each checked live: the client session (device authorization §7: no absolute lifetime by default, an idle limit, live lineage and grant checks); both apps' grants and session handler approvals; the pairing; and the endpoint's registration (§10.2).
 
-**Device-grant lineage (finding, proposed amendment).** Device authorization §7 item 4 revokes a client session when the *approving login session* is ended explicitly, including by sign-out. An owner who approves a daemon from a phone browser, and later signs out of that browser, would silently end every daemon approved from it. That is right for a television, and surprising for a fleet. AMD-SG-D1 (§20.11) proposes that the owner may mark a device grant as a **standing device grant** at approval. It is exempt from exactly three lineage events of the approving session: that session's own sign-out, its natural expiry and its eviction by a session-count limit. Global sign-out ("sign out everywhere"), remote revocation of the approving session, a credential change or removal, recovery, account suspension or deletion, and explicit revocation from Devices still revoke it. Providers MAY restrict which clients are offered the mark. It is proposed, unsigned and **not applied to device-authorization.md**. Until it is adopted, a provider SHOULD warn at approval that signing out of the approving browser ends the client.
+**Device-grant lineage (finding, proposed amendment).** Device authorization §7 item 4 revokes a client session when the *approving login session* is ended explicitly, including by sign-out. An owner who approves a daemon from a phone browser, and later signs out of that browser, would silently end every daemon approved from it. That is right for a television, and surprising for a fleet. AMD-SG-D1 (§20.11) proposes that the owner may mark a device grant as a **standing device grant** at approval. It is exempt from exactly three lineage events of the approving session: that session's own sign-out, its natural expiry and its eviction by a session-count limit. Global sign-out ("sign out everywhere"), remote revocation of the approving session, a credential change or removal, recovery, account suspension or deletion, and explicit revocation of the grant still revoke it. Providers MAY restrict which clients are offered the mark, and MUST NOT offer it to a local client whose recorded origin is a web origin. It is proposed, unsigned and **not applied to device-authorization.md**. Until it is adopted, a provider SHOULD warn at approval that signing out of the approving browser ends the client.
 
-**Revocation** uses existing surfaces: Devices lists the client session, and revoking it ends its endpoints and sessions (`revoked`, §14.2) and the pairings bound to it (§5.8). Pairings have their own owner control (§14.1).
+**Revocation** uses existing surfaces. The provider's list of the owner's app connections shows the client session (a local client as an unverified app on the owner's device, grouped by the owner's device label; spike §3.2), with its endpoints, its standing status and the pairings it is party to. Revoking it ends its endpoints and sessions (`revoked`, §14.2) and the pairings bound to it (§5.8). Pairings have their own owner control (§14.1).
 
 ## 6. Keys and certificates
 
@@ -537,7 +529,7 @@ For each leg, the endpoint generates a fresh ES256 key pair:
 - it SHOULD be non-extractable;
 - it MUST NOT be reused across sessions, so that no peer can link an endpoint across sessions.
 
-The entity's provider certifies the public key in a leg certificate: a compact JWS under the [links §3.1](links.md#31-jws-profile-shared-with-bindle_data) profile. Its protected header is exactly `{alg:"ES256", kid:<an active certification kid of the entity>, typ:"bindle-signaling-leg+jwt"}`. Its payload is exactly:
+The entity's provider certifies the public key in a leg certificate: a compact JWS under the core **signed-object profile**, which [links §3.1](links.md#31-jws-profile-shared-with-bindle_data) defines today and which is due to move to a core keys specification ([contacts and links spike](../architecture/contacts-and-links-rethink.md) CR-K1, CR-K2). Its protected header is exactly `{alg:"ES256", kid:<an active certification kid of the entity>, typ:"bindle-signaling-leg+jwt"}`. Its payload is exactly:
 
 | Member | Definition |
 | --- | --- |
@@ -548,7 +540,7 @@ The entity's provider certifies the public key in a leg certificate: a compact J
 | `role` | `"initiator"` or `"recipient"`. |
 | `kind` | `{artefact, version, digest}`: the session kind. |
 | `profile` | The profile id. |
-| `client` | `{client_id, origin, feature}`, as verified by the provider. `feature` is `null` for an app, and the declaration `ref` for a provider feature (§4.2). |
+| `client` | `{client_id, origin, feature}`, as verified by the provider. `feature` is `null` for an app, and for a provider feature the spec URL of the extension whose feature it is (§4.2). |
 | `cnf`, `delegate` | `{jkt}` and the public JWK, as in [organizations §5.2](organizations.md#52-member-authentication-certificates-and-signed-requests). |
 | `aep` | The entity's authority epoch. |
 | `jti`, `iat`, `exp` | `exp − iat` is at most the declared `max_leg_certificate_seconds`. `exp` is no later than the session's maximum lifetime (§8.1). For a pending initiator leg, it is no later than `answer_by` plus the declared bound. |
@@ -592,7 +584,7 @@ A control statement can only end things. After a verified control statement, not
 
 ### 7.1 Envelope
 
-A message is a compact JWS under the links §3.1 profile, at most 40,960 bytes. Its protected header is exactly `{alg:"ES256", typ:"bindle-signaling-message+jwt", kid:<the leg's jkt>}`. Its payload is exactly:
+A message is a compact JWS under the signed-object profile (§6.1), at most 40,960 bytes. Its protected header is exactly `{alg:"ES256", typ:"bindle-signaling-message+jwt", kid:<the leg's jkt>}`. Its payload is exactly:
 
 | Member | Definition |
 | --- | --- |
@@ -612,7 +604,7 @@ A message is a compact JWS under the links §3.1 profile, at most 40,960 bytes. 
 
 | `type` | Sender | `body` (exactly) |
 | --- | --- | --- |
-| `invite` | initiator | `kind` (`{artefact, version, digest}`); `profile`; `answer_by` (Unix seconds, after `iat` and at most `iat` + 120); `basis` (§5.2: `null`, `{link_digest}`, `{offer_digest}` or `{relation: "pairing"}`); `context` (`null`, or an object valid against the kind's `data` schema at that version); `params` (the profile's invite parameters, §3.5, §16.3). Revision 1's `callback_digest` member is removed (§5.3), so an invite that carries it is invalid as an unknown member. |
+| `invite` | initiator | `kind` (`{artefact, version, digest}`); `profile`; `answer_by` (Unix seconds, after `iat` and at most `iat` + 120); `basis` (§5.2: `null`, `{offer_digest}` or `{relation: "pairing"}`); `context` (`null`, or an object valid against the kind's `data` schema at that version); `params` (the profile's invite parameters, §3.5, §16.3). Revision 1's `callback_digest` and revision 2's `link_digest` members are removed (§5.3), so an invite that carries either is invalid as an unknown member. |
 | `cancel` | initiator | `{}`. Ends an unclaimed session. |
 | `accept` | recipient | `params`: the profile's accept parameters. |
 | `decline` | recipient | `reason`: `declined` or `unsupported`. |
@@ -626,7 +618,7 @@ A message is a compact JWS under the links §3.1 profile, at most 40,960 bytes. 
 - Only the initiator leg may send `invite` and `cancel`. Only the claiming recipient leg may send `accept` or `decline`, and only after its claim succeeded.
 - **Before the claim**, the initiator leg sends nothing but `invite` and `cancel`. The recipient provider drops any other pre-claim message from the initiator leg at §9.2 step 7, after step 5 has consumed its `seq` (RTCw-L4).
 - **`data`.** `data` exists only in `data` sessions, and travels only between the two claimed legs. Providers never inspect its payload. They enforce its per-message and per-leg caps (§3.5) and the aggregate budget (§13.1).
-- **Context.** `context` has at most 8 properties and 2,048 serialized bytes (AMD-SG-I1 constrains session kinds so). No property may have `format: contact-link`. An endpoint MUST NOT put a network address of its device (an IP address, a hostname that resolves to it, an mDNS name or an ICE candidate) in `context`, or in any other pre-claim field. Providers validate `context` only against the kind's schema and cannot detect an address in it, so they cannot enforce this rule (§12.3).
+- **Context.** `context` has at most 8 properties and 2,048 serialized bytes (AMD-SG-I1 constrains session kinds so). No property may have a capability format (`capability`, or the legacy `contact-link`). An endpoint MUST NOT put a network address of its device (an IP address, a hostname that resolves to it, an mDNS name or an ICE candidate) in `context`, or in any other pre-claim field. Providers validate `context` only against the kind's schema and cannot detect an address in it, so they cannot enforce this rule (§12.3).
 
 ### 7.3 Ordering, replay and expiry
 
@@ -666,12 +658,16 @@ A recipient endpoint answers with the contract's `claim` (§10.2). Only an endpo
 
 ### 8.3 Glare
 
-An endpoint may have an unclaimed outgoing session to an entity for a kind line, and receive an invite from that entity for the same kind line. Under a pairing, this covers two `pairing` invites (own-entity or relation basis) that cross for the same kind line between the same endpoint pair: each paired app may be opening to the other at the same moment. It then ranks the two sessions by their initiator leg keys, never by `sid`, which the peer's provider chose and could steer:
+An endpoint has glare when it holds an unclaimed outgoing session for a kind line and receives an invite for the same kind line from the party that session is addressed to, in exactly these cases:
+- two `pairing` invites, own-entity (with `target`, §5.4 case 4) or relation basis: each paired app may be opening to the other at the same moment;
+- two own-entity same-app invites with `target` (§5.4 case 1), each naming the other endpoint.
+
+Own-entity invites without `target`, which may reach several endpoints, and `offer` dial-backs (below) do not glare; they are ordinary sessions, and collapsing them is an app concern. Within that scope, both endpoints rank the two sessions by their initiator leg keys, never by `sid`, which the peer's provider chose and could steer:
 - Let `a` be the `cnf.jkt` of the initiator leg of one session and `b` that of the other, each taken from its verified leg certificate, as base64url-decoded bytes. The rank of the session whose initiator leg is `a` is SHA-256(`"bindle-signaling-glare"` ‖ `a` ‖ `b`), and the rank of the other is SHA-256(`"bindle-signaling-glare"` ‖ `b` ‖ `a`). Both endpoints compute the same two ranks.
 - The session with the lower rank, compared as byte strings, survives. The endpoint whose outgoing session has the higher rank cancels it.
 - Neither side can steer the outcome: each leg key is generated fresh by its own endpoint (§6.1) and committed in its invite before the other side's key is seen, and the rank depends on both.
 - **Equal ranks** happen only if both legs carry the same key, which §6.1 forbids within an entity and which is otherwise negligible. Both endpoints then cancel their outgoing sessions, neither claims, and the apps retry with jittered backoff.
-- It MAY claim the surviving invite with `accept` without a further user action, because its user just asked to connect with that entity for that kind. It does so only when the surviving invite is within what its own cancelled outgoing invite asked for: the same kind line, the same profile, and invite `params` that the profile deems within its own outgoing `params`. For both registered profiles that comparison is trivial: `data` params are `{}`, and `webrtc` params carry no bound (§16.3). Otherwise the endpoint treats the surviving invite as an ordinary one and needs a user action (or standing acceptance). Crossing `pairing` invites need no special case for acceptance, because the surviving one is claimable under the pairing anyway; the rule only stops both sessions from connecting. An `offer` dial-back does not glare, because the minting side opens nothing.
+- Glare decides only which session survives. Whether the surviving invite may be claimed without a user action follows §5.5 alone; for crossing `pairing` invites it is claimable under the pairing anyway. An `offer` dial-back does not glare, because the minting side opens nothing. Two mutual offers whose dial-backs cross are two ordinary sessions; collapsing them is an app concern.
 
 ### 8.4 End
 
@@ -683,8 +679,8 @@ An endpoint may have an unclaimed outgoing session to an entity for a kind line,
 
 ### 8.5 Silent ends
 
-A recipient session that no endpoint has claimed (pending, held or not) ends **silently**: no message and no control statement go to the initiator's provider, whatever the cause. The causes include:
-- an owner dismissal or decline (§5.5);
+A recipient session that no endpoint has claimed ends **silently**: no message and no control statement go to the initiator's provider, whatever the cause. The causes include:
+- an owner ending it (§5.5);
 - an app's approval or grant being narrowed or revoked (§14.2);
 - the offer that admitted it being revoked or expiring (§5.7), or the pairing that admitted or routed it being deleted (§5.8);
 - a block;
@@ -700,25 +696,25 @@ Claimed sessions end with `end` or a control statement as usual.
 
 Multi-party sessions are a non-goal:
 - A mesh is a set of independent two-party sessions.
-- A conferencing service is a peer entity reached with ordinary sessions.
+- A group service is a service entity that each participant reaches with an ordinary two-party session, typically by dialing its open offer (§5.7). Mixing is the service's concern.
 - A later version MAY add an explicit group correlation member. The exact-member rules reject one in this version.
 
 ## 9. Transport between providers
 
 ### 9.1 Endpoint and batch
 
-**Where batches go.** A provider sends messages and control statements for a session only to the `endpoint` of `signaling.v1` in the validated manifest of the peer entity's **current** issuer, found through the successor index for a moved identity. It MUST NOT send to any other URL, including one received in a response, a link or a message. Delivery follows the protocol §2 fetch rules: HTTPS, no redirects, bounded size and time, and screening of private, loopback and link-local targets.
+**Where batches go.** A provider sends messages and control statements for a session only to the `endpoint` option of the signaling declaration (§3.1) in the validated manifest of the peer entity's **current** issuer, found through the successor index for a moved identity. It MUST NOT send to any other URL, including one received in a response, a link or a message. Delivery follows the protocol §2 fetch rules: HTTPS, no redirects, bounded size and time, and screening of private, loopback and link-local targets.
 
 **The request** is a `POST` with `Content-Type: application/vnd.bindle.signaling+json` (a project-private proposed media type) and a body of at most 131,072 bytes:
 
 ```json
-{"v": 1, "certificates": ["<leg certificate>"], "messages": ["<message>"], "controls": ["<control statement>"], "links": ["<canonical link>"], "offers": ["<offer token>"]}
+{"v": 1, "certificates": ["<leg certificate>"], "messages": ["<message>"], "controls": ["<control statement>"], "offers": ["<offer token>"]}
 ```
 
 **Batch rules:**
 - `certificates` (at most 4), `messages` (at most 32) and `controls` (at most 4) may each be empty, but not all three.
-- `links` (at most 4, each at most 8,192 characters) carries only the basis links whose digests appear in invites in the same batch.
-- `offers` (at most 4, each 22 to 43 base64url characters) carries only the offer tokens whose digests appear in invites in the same batch. `links` and `offers` MAY be omitted when empty.
+- `offers` (at most 4, each 22 to 43 base64url characters) carries only the offer tokens whose digests appear in invites in the same batch. It MAY be omitted when empty.
+- Unknown members are invalid, including revision 2's `links`.
 - Every element of a batch names the same `aud` (AMD-RI2).
 - A leg's certificate accompanies its first message to each receiver, and every renewal.
 
@@ -727,20 +723,19 @@ Multi-party sessions are a non-goal:
 The receiving provider MUST perform these steps in order:
 
 1. **Shape (no fetch).**
-   - Check the batch shape and bounds. For each JWS, check the links §3.1 rules, `typ`, `bindle`, `v`, exact members, low-S, and the `iat` window.
+   - Check the batch shape and bounds. For each JWS, check the signed-object profile rules (§6.1), `typ`, `bindle`, `v`, exact members, low-S, and the `iat` window.
    - Check that `aud` is an absolute HTTPS URL on this provider's issuer origin, with no userinfo, query or fragment, and that every element names the same `aud`.
    - At the public endpoint, refuse any element whose `iss` is this provider's own issuer. Sessions between two entities this provider hosts travel only through the internal path, where the sender's provider applies §7 and §16 first (AMD-RW2).
    - A batch in which any element fails this step is refused as a whole.
 2. **Session lookup (no fetch).** Find the session by (**initiator** origin principal, `sid`). The initiator principal is the sender for `role: initiator`, and the entity named by `aud` for `role: recipient`, each mapped through the successor index.
-   - **Invite.** The session must not exist yet (a retried copy is ignored at step 5). For an `offer` basis, the batch must carry a token whose SHA-256 equals `offer_digest`; the offer record itself is not read until step 7. For a `link` basis, the provider verifies only the link itself, locally, as its owner host: canonical form, digest equal to `link_digest`, and links §8 steps 1 and 2 (§5.2). This reads only its own link records, fetches nothing and spends nothing. It exists so that step 3 can choose a refresh lane. The parent's configuration, liveness and uses are evaluated at step 7, and a use is spent only at step 8 (§5.3).
+   - **Invite.** The session must not exist yet (a retried copy is ignored at step 5). For an `offer` basis, the batch must carry a token whose SHA-256 equals `offer_digest`; the offer record itself is not read until step 7.
    - **First answer.** For a recipient leg's `seq` 0 `accept` or `decline` with `to` equal to the initiator leg, the session must exist with no recipient leg recorded. The first one verified at step 4 becomes the recipient leg.
    - **Other messages.** The sender's `leg` must be the session's initiator leg, or its recorded recipient leg.
 3. **Certificate.** Verify the leg certificate (§6.1) against the sender's `active` certification keys **as already held**, or as pinned on the session (§6.3).
    - The receiver keeps current, by background refresh, the keys of the entities its hosted entities admit, of the peers of their sessions within the last 24 h, and of the recipients of its own entities' open sessions (§5.1).
    - If the key is not held, the message is not processed and a refresh is scheduled.
-   - Refresh scheduling is bounded (a bounded queue, per-issuer and global fetch budgets before any fetch, the manifest floor and a valid `signaling.v1` before identity documents are fetched, negative caching) and never runs on the request path.
-   - A receiver MAY order its refresh queue in lanes: first peers with a live or pending session and invites whose `offer_digest` names a live offer of the addressed entity (a read-only lookup of its own records, spending nothing), then invites whose link basis verified at step 2 without spending, then everything else, capped per source network (AMD-RV2). The response and its timing still never depend on steps 2 to 8.
-   - **One exception:** for an invite whose link basis verified at step 2, the receiver MAY fetch the sender's identity document during processing, under the same budgets.
+   - Refresh scheduling is bounded (a bounded queue, per-issuer and global fetch budgets before any fetch, the manifest floor and a valid signaling declaration before identity documents are fetched, negative caching) and never runs on the request path.
+   - A receiver MAY order its refresh queue in lanes: first peers with a live or pending session and invites whose `offer_digest` names a live offer of the addressed entity (a read-only lookup of its own records, spending nothing), then everything else, capped per source network (AMD-RV2). The response and its timing still never depend on steps 2 to 8.
 4. **Signature.** Verify the message signature under the certificate's `delegate`. Check that the certificate's `sid`, `aud`, `role`, and for an invite `kind` and `profile`, match.
 5. **Order and replay.** Apply §7.3. A (`sid`, `leg`, `seq`) is recorded only after step 4.
 6. **Authority epoch.** Refuse an `aep` lower than the highest recorded for that sender, and record a higher one. Epochs are recorded only for admitted traffic, and dropped with the state they belong to.
@@ -749,10 +744,10 @@ The receiving provider MUST perform these steps in order:
    - duplicate;
    - block (§13.2);
    - the kind's `session.bases`, at the held version (§5.2);
-   - basis configuration: for `link`, an unconditional parent, configured for the kind, live and not exhausted; for `offer`, a live, unspent offer of this kind line, version and profile whose principal equals the verified certificate principal, compared read-only (§5.2, §5.7); for `relation`, a live pairing keyed by (initiator principal, kind line) that lets the peer open (§5.8);
+   - basis: an invite with no basis from another entity stops here (§5.2); for `offer`, a live offer of this kind line, version and profile with a free use, open or bound to the verified certificate principal, checked read-only (§5.2, §5.7); for `relation`, the live pairing keyed by (initiator principal, kind line) that lets the peer open (§5.8);
    - `sid` collision (§8.2);
-   - pending and connected capacity, including the pairing sub-budget and the reserve shares (§13.1);
-   - per-recipient limits (§13.1).
+   - pending and connected capacity, including the pairing and open-offer sub-budgets and the reserve shares (§13.1);
+   - per-recipient limits, or for an open-offer invite only its own windows: per offer, per (principal, offer) and the per-issuer fair share (§13.1).
 
    Only an invite that passes them reaches the host-wide limiter, handler eligibility (§5.4), context validation against the pinned kind version, and the profile rules (§16).
    - **Unheld kind version.** If the provider does not hold the invite's kind version (§3.4), nothing is delivered and the session silently stays unanswered.
@@ -760,11 +755,10 @@ The receiving provider MUST perform these steps in order:
    - **Other drops.** The pre-claim and `to` drops of §7.2 and §7.3 happen here.
 8. **Apply, atomically.**
    - Re-run the local checks without counting.
-   - For a link basis, spend a use and compare `principal` with the verified certificate principal (§5.3).
-   - For an offer basis, re-confirm that the offer is live and unspent and that its principal equals the verified certificate principal, and spend it only then (§5.7). Exactly one invite can spend an offer, under any concurrency.
+   - For an offer basis, re-confirm the step 7 offer check and that the routing set (§5.4 case 3) is not empty, and only then spend a bound offer's single use or reserve one use of an open offer (§5.2, §5.7). Under any concurrency, spent plus reserved uses never exceed `uses`.
    - For a relation basis, compare the pairing's `peer.principal` with the verified certificate principal (§5.8).
    - Create or update the session.
-   - Deliver to the routing set (§5.4), to the claimed endpoint, or hold.
+   - Deliver to the routing set (§5.4), or to the claimed endpoint.
 
 **Response:**
 - `202` with an empty body for every batch that passes step 1, whatever steps 2 to 8 decide. Processing after step 1 MAY be asynchronous, and runs as of the batch's receipt time.
@@ -797,14 +791,13 @@ Sessions between two entities on one provider run the full §9.2 path on the rec
 
 ### 10.1 Endpoint binding
 
-`https://spec.bindle.example/contracts/signaling/v1` is invoked by ordinary RPC ([protocol §5](protocol.md)) on the occupant the consumer was granted, with `x-bindle-brokerable: false`. All arguments reject unknown members.
+`https://spec.bindle.example/contracts/signaling/v1` is invoked by ordinary RPC ([protocol §5](protocol.md)) on the built-in signaling resource the consumer was granted, with `x-bindle-brokerable: false`. All arguments reject unknown members.
 
-**Live checks.** Every method checks the slot grant (or feature enablement) live. Every widening method also checks the handler approval for the kind live. The widening methods are:
+**Live checks.** Every method checks the grant on the signaling field (for a provider feature, its enabled grant) live. Every widening method also checks the handler approval for the kind live. The widening methods are:
 - `open`, `register`, `renew` and `offer`;
 - `claim` with outcome `accept`. A `decline` claim is narrowing and is not gated by the approval;
 - `send`, unless every message is `end`, `cancel` or `decline` (RTCw-M4);
-- relay credentials (§16.7);
-- `mint_link`, when it exists (AMD-SG-L1b, §20.3.2). For it, the check covers every kind the minted configuration would name.
+- relay credentials (§16.7).
 
 `revoke_offer` and `unregister` are narrowing, and are never gated by the approval.
 
@@ -817,26 +810,24 @@ Sessions between two entities on one provider run the full §9.2 path on the rec
 
 | Method | Effect | Arguments → result |
 | --- | --- | --- |
-| `register` | write | `{kinds, label?, push?}` → `{endpoint, endpoint_secret?, expires_at}`. Registers this device instance for the listed kinds; each kind MUST be one the app is approved for. `label` is at most 64 characters of plain text, shown only to the owner and to the app's own endpoints; it is never shown to another app (§5.8). `push` is optional (§11.2). An endpoint lives at most 30 days after its last `listen`. A provider SHOULD bound live endpoints per app within the entity's bound (reference host: 8 of 32). |
-| `unregister` | write | `{endpoint}` → `{}`. Ends its legs (§14.2). |
-| `endpoints` | read | `{pairing?}` → `{endpoints: [{endpoint, label, kinds, last_seen?, client_id?}]}`: this app's endpoints for the owner's own entity only, with `last_seen`. With `pairing` (a pairing `id`), it also returns the eligible endpoints covered by the other side of that live own-entity pairing, as `{endpoint, label, kinds, client_id}` with the provider's Devices name as `label` and no `last_seen`, and only when the calling endpoint is covered (app and bound client session) on a side that may open under `opens` (§5.8). A pairing that is pending, does not cover the calling endpoint, does not let its side open, or names a peer principal returns no extra endpoints. A device-authorization pairing awaiting confirmation answers `approval_required` with the confirmation page (§5.9). Never across entities (§5.8, §12.2). |
-| `open` | write | `{endpoint, to, kind, profile, params, delegate, basis?, target?}` → `{sid, certificate, expires_at, peer_keys}`. `kind` is the line URL, and the provider pins the version the app was approved for. `to` is a principal, a handle (§5.1) or omitted with a link `basis`. `target` is one of the owner's own eligible endpoints of the same app, or an endpoint covered by the other side of an own-entity pairing that covers the calling endpoint and lets its side open (§5.4 cases 1 and 5), and is allowed only when `to` is the owner. `basis` is one of `{link: <contact link>}`, `{offer: <offer token>}` (§5.7) or `{relation: "pairing"}` (§5.8); omitted for `self`, `none` and own-entity pairings. `peer_keys` are the recipient's active certification keys as held. `approval_required` (with a provider page URL) means the app is not an approved handler of the kind (§20.1.4). |
-| `offer` | write | `{endpoint, kind, profile, principals, expires_in}` → `{offers: [{principal, offer}], expires_at}`. Mints one single-use offer per principal (1 to 16 origin principals, never the owner) for the calling app, valid for 10 to 900 s (§5.7), within the per-app and per-entity live-offer caps (§13.1). Widening. `approval_required` as for `open`. |
-| `revoke_offer` | write | `{endpoint, offers?}` → `{}`. Revokes the listed offer tokens minted by this endpoint, or all of its live offers when `offers` is absent. Narrowing. Unknown, spent or expired tokens are ignored. |
-| `claim` | write | `{endpoint, sid, outcome, delegate}` → `{certificate, peer_keys}`, or the error `claimed`. `outcome` is `accept` or `decline`. Only an endpoint the invite was delivered to may claim. An `accept` claim checks the handler approval live (§10.1). |
+| `register` | write | `{kinds, label?, push?}` → `{endpoint, endpoint_secret?, expires_at}`. Registers this device instance for the listed kinds; each kind MUST be one the app is approved for. `label` is at most 64 characters of plain text, shown only to the owner and to the app's own endpoints; it is never shown to another app (§5.8). `push` is optional (§11.2). An endpoint lives at most 30 days after its last `listen`, and then expires with the effects of `unregister` (§14.2). A provider SHOULD bound live endpoints per app within the entity's bound (reference host: 8 of 32). |
+| `unregister` | write | `{endpoint}` → `{}`. Ends its legs (§14.2). It never ends an offer (§5.7). |
+| `endpoints` | read | `{endpoint?, pairing?}` → `{endpoints: [{endpoint, label, kinds, last_seen?, client_id?}], pairings?}`: this app's endpoints for the owner's own entity only, with `last_seen`. With `endpoint` (one of this app's endpoints, bound as §10.1), it also returns `pairings`, the pairings that cover that endpoint (§5.8 "How an app learns its pairings"). With `pairing` (a pairing `id`, which needs `endpoint`), it also returns the eligible endpoints covered by the other side of that live own-entity pairing, as `{endpoint, label, kinds, client_id}` with the provider's own name (§5.8) as `label` and no `last_seen`, and only when the calling endpoint is covered (app and bound client session) on a side that may open under `opens` (§5.8). A pairing that is pending, does not cover the calling endpoint, does not let its side open, or names a peer principal returns no extra endpoints. A device-authorization pairing awaiting confirmation answers `approval_required` with the confirmation page to an endpoint covered on its `peer` side, whatever `opens` is (§5.9). Never across entities (§5.8, §12.2). |
+| `open` | write | `{endpoint, to, kind, profile, params, delegate, basis?, target?}` → `{sid, certificate, expires_at, peer_keys}`. `kind` is the line URL, and the provider pins the version the app was approved for. `to` is a principal or a handle (§5.1). `target` is one of the owner's own eligible endpoints of the same app, or an endpoint covered by the other side of an own-entity pairing that covers the calling endpoint and lets its side open (§5.4 cases 1 and 4), and is allowed only when `to` is the owner. `basis` is `{offer: <offer token>}` (§5.7) or `{relation: "pairing"}` (§5.8), is required when `to` is another entity, and is omitted for `self` and own-entity pairings. `peer_keys` are the recipient's active certification keys as held. `approval_required` (with a provider page URL) means the app is not an approved handler of the kind (§20.1.4). |
+| `offer` | write | `{endpoint, kind, profile, principals?, uses?, expires_in}` → `{offers: [{principal, offer}], expires_at}`. Mints one single-use bound offer per listed principal (1 to 16 origin principals, never the owner; `uses` absent or 1), or, when `principals` is absent, one open offer (`principal: null`) admitting up to `uses` sessions (default 1), for the calling app, valid for 10 to 900 s, or from a service-class endpoint up to 90 days (open) or 7 days (bound) (§5.7), within the per-app and per-entity live-offer caps (§13.1). Widening. `approval_required` as for `open`. |
+| `revoke_offer` | write | `{endpoint, offers?}` → `{}`. Revokes the listed offer tokens minted by this endpoint's app, or all live offers this endpoint minted when `offers` is absent. Narrowing. Unknown, exhausted or expired tokens are ignored. |
+| `claim` | write | `{endpoint, sid, outcome, delegate}` → `{certificate, peer_keys}`, or the error `claimed`. `outcome` is `accept` or `decline`. Only an endpoint the invite was delivered to may claim. An `accept` claim checks the handler approval live (§10.1). For an open-offer session, an `accept` claim spends its reserved use and a `decline` releases it; a bound offer's use was already spent at admission (§5.2). |
 | `send` | write | `{endpoint, sid, messages}` → `{accepted}`, with at most 32 JWS messages, all from this endpoint's leg in this session. The provider applies §7 and the profile's rules, including the owner's IP policy, to its own endpoint's messages before relaying, and refuses violations with `invalid_args`. It does not buffer out-of-order messages from its own endpoint. A full outbox refuses with `rate_limited`, and nothing is accepted. |
 | `renew` | write | `{endpoint, sid}` → `{certificate}`. |
 | `listen` | read | `{endpoint, cursor?, wait?}` → `{cursor, events, gap}`. A long poll, with `wait` at most 25 s (§10.3). |
 
-`mint_link` is **unavailable** in this revision. It is defined, for later, in AMD-SG-L1b (§20.3.2), and a provider MUST NOT offer it before the links §6 re-scope lands. There is no interim ticket type.
-
 **Errors** follow protocol §5. `claimed` and `unsupported_peer` are the method-specific errors that depend on state, and they are returned only to the owner's own endpoints. Both are raised before any session state is written, or after state that is terminal, so a runtime keeps them as no-effect outcomes (RTCi-5). A runtime MAY answer `indeterminate` for a write whose outcome it cannot classify.
 
-**Retention.** Write results that carry a leg certificate, a link or an offer token are never retained in an RPC journal. A retried `tx` answers `indeterminate`. Arguments that carry an offer token are never logged.
+**Retention.** Write results that carry a leg certificate or an offer token are never retained in an RPC journal. A retried `tx` answers `indeterminate`. Arguments that carry an offer token are never logged.
 
 ### 10.3 `listen` events (AMD-RI4, generalized)
 
-Every event has `type` (`invite`, `message` or `state`), `sid` and `seq`.
+Every event has `type` (`invite`, `message`, `state` or `pairing`), `sid` (`null` for `pairing`) and `seq`.
 
 - **`invite`** adds:
   - `invite`: the raw invite;
@@ -849,23 +840,23 @@ Every event has `type` (`invite`, `message` or `state`), `sid` and `seq`.
     - `kind` `{artefact, version, digest}` and `profile`;
     - `params`: the projected profile parameters;
     - `context`: projected to the version this app approved;
-    - `basis`: `self`, `pairing`, `offer`, `link` or `request`;
+    - `basis`: `self`, `pairing` or `offer`;
     - `auto_connect`: boolean, true for an own-entity invite under the same-app rule or an own-entity pairing (§5.5);
-    - `offer_match`: boolean, true only for an `offer`-basis invite delivered to the minting endpoint itself; false on every other endpoint of the minting app (§5.4 case 4, §5.5). The endpoint still makes its outstanding-offer check before claiming automatically;
-    - `paired`: boolean, true only when a live pairing covers this endpoint on the answering side (app and bound client session) and covers the initiator on a side that may open: for an own-entity invite, the initiating endpoint's app and client session; for a relation-basis invite, the verified initiator principal (§5.8);
-    - `standing_accept`: boolean, true only for a cross-entity invite routed to a provider feature, or a handler of a hosted service entity, whose approval has standing acceptance for the kind (§5.5).
+    - `offer_match`: boolean, true for an `offer`-basis invite delivered to the minting endpoint of an offer that is not service-class, or to any routed (eligible and online) endpoint of a service-class offer; false otherwise (§5.4 case 3, §5.5, §5.7). The endpoint still makes its outstanding-offer check before claiming automatically;
+    - `paired`: boolean, true only when a live pairing covers this endpoint on the answering side (app and bound client session) and covers the initiator on a side that may open: for an own-entity invite, the initiating endpoint's app and client session; for a relation-basis invite, the verified initiator principal (§5.8).
 
-  Each of `auto_connect`, `offer_match`, `paired` and `standing_accept` permits a claim with no user action. The basis link and the offer token are never in an `invite` event.
+  Each of `auto_connect`, `offer_match` and `paired` permits a claim with no user action. The offer token is never in an `invite` event.
 - **`message`** adds `message` and, with the first message of a leg, `certificate`.
 - **`state`** adds `state` (`claimed`, `expired` or `ended`) and, when there is one, `control`.
+- **`pairing`** adds `pairing`, as one `endpoints({endpoint})` `pairings` entry (§5.8), with `state` `deleted` when the pairing was deleted. It goes only to endpoints the pairing covers.
 
 A queue that overflowed reports `gap: true`. The affected sessions end `failed`, silently if they are unclaimed (§8.5). Reference bounds: 256 events or 512 KiB per endpoint.
 
-## 11. Delivery, presentation and handoff
+## 11. Delivery
 
 ### 11.1 Long poll (required)
 
-`listen` is the baseline that every occupant implements. A doorbell is never needed for correctness and carries no session content. The endpoint always fetches content with `listen`.
+`listen` is the baseline that every built-in signaling resource implements. A doorbell is never needed for correctness and carries no session content. The endpoint always fetches content with `listen`.
 
 ### 11.2 Doorbells (optional)
 
@@ -873,55 +864,36 @@ A queue that overflowed reports `gap: true`. The affected sessions end `failed`,
   - The push endpoint URL is an outbound fetch target. It MUST be HTTPS and pass the protocol §2 SSRF screening. A provider SHOULD accept, at `register`, only origins it recognizes as Web Push services.
   - The provider sends at most one push per delivered invite per endpoint, encrypted under [RFC 8291](https://www.rfc-editor.org/rfc/rfc8291.html), with `Urgency: high` and a TTL no longer than the time left to `answer_by`.
   - The payload is exactly `{"t":"signal","endpoint":"<endpoint>"}`: no initiator, kind or session.
-  - Pushes count against the recipient's invite limits (§13.1). Held invites are never delivered to endpoints, so they never push.
+  - Pushes count against the recipient's invite limits (§13.1).
   - A subscription reported gone is removed.
 - **Integration doorbell.** A confidential integration's server MAY receive the SET event `…/events/signaling-doorbell/v1` (payload exactly `{endpoint}`) on its existing events channel ([integrations §6](integrations.md#6-events)), so that it can wake its native app. AMD-SG-E1 registers it.
 
-How an app presents an invite once woken, whether it rings and what it shows, is the app's concern.
+How an app presents an invite once woken is the app's concern.
 
-### 11.3 The owner hook: the provider's only presentation duty
+### 11.3 Withdrawn: the owner hook
 
-The provider presents nothing about invites: no ring, alert, notification, push to the owner, activity item or call list. How a request to connect is surfaced to a person is the app's concern (§1.1, §11.2). In particular, a call invite in a messaging app is a message with a JSON media type, specified by Bindle Messaging, and any ring is a best-effort presentation hint that the app requests through the notice contract. Both are separate proposals outside this document (§20.12). Signaling never rings for an offer: the app message that carries the offer does the alerting.
+Revision 3.1 removes the owner hook, the provider's last presentation duty. It served only held requests and own-entity invites with no eligible endpoint; the `none` basis is reserved (§15) and own-entity invites route only to the initiating app or its `target` (§5.4), so an invite with no eligible endpoint simply ends silently at `answer_by`. The provider presents nothing about invites (§3.6). Its earlier text is in the [frozen revision 2.1 copy](superseded/signaling-rev2.1.md#113-the-owner-hook-the-providers-only-presentation-duty); the section number is kept so that references stay stable.
 
-What remains is a minimal **owner hook**, for the invites that no app can see:
-- **Which invites.** An admitted, pending invite that is **held** (admitted through `none` or a quarantined contact parent, §13.3), or that has an **empty routing set** under §5.4 cases 1 to 3. `offer` and `pairing` invites **never** enter it, whether or not their fixed app has an eligible endpoint (§5.4 cases 4 and 5). Blocked invites never enter it.
-- **What it holds.** Only the verified initiator principal (with a handle only under a verified binding), the initiator's app origin labelled "reported by" its issuer for a foreign initiator (RTC-17, RTCe-22), the kind line, the basis kind, the handoff target if any (§5.4), and the time. No `context`, link, `params` or payload.
-- **Who reads it.** Only the owner, through the provider's owner interface. It is not an activity item, never interrupts, never notifies and never pushes. Whether and how a provider shows it is provider interface, outside this specification.
-- **Lifetime.** An entry lasts until `answer_by`, and is deleted when the invite is claimed or ends. It is not history.
-- **Bounds.** Entries count against a per-entity bound. They fold per (initiator origin principal, kind line) for initiators on this provider, and per (initiator issuer, kind line) for foreign initiators, because a foreign issuer can mint principals at will (RTCw-L2, AMD-RW4). Folding keeps one initiator, or one foreign issuer, from evicting the others.
-- **Actions,** all through the owner interface:
-  - **Hand off:** §11.4. This is offered only for an entry with an empty routing set. A held invite is never handed off or admitted retroactively.
-  - **Dismiss:** a silent end (§8.5).
-  - **Block** (§13.2).
-  - **Allow later,** for a held entry: an explicit configuration change that applies only to later invites.
+### 11.4 Withdrawn: handoff to the chosen app
 
-There is no signaling mute and no interruption policy. A provider that also wants to mirror hook entries into [activity](activity.md) needs a separate amendment first (§20.2).
-
-### 11.4 Handoff to the chosen app
-
-"Hand off" is an intents handoff (AMD-SG-I1, §20.1.7). It applies only to owner-hook entries with an empty routing set: `link`-basis invites, and own-entity invites under §5.4 case 2. It never applies to `offer` or `pairing` invites (§5.6). It is the owner's later, deliberate action, never a chooser shown when the invite arrives:
-- The provider navigates top-level to the handoff target's declared `route` for the kind (§5.4). With no handoff target, it first shows the intents chooser (§20.1.5).
-- **Chooser label.** A chooser opened from a hook entry MUST say that it was triggered by an incoming request from another party, whose kind and context the initiator chose and the provider has not verified, beyond the initiator's identity. It preselects nothing (beyond intents §7.3), and choosing records an ordinary approval with every §20.1.4 disclosure.
-- The navigation carries a provider-constructed intent of the session kind, whose `data` is the context projected to the handler's approved version, plus a `bsession` hint naming the `sid`.
-- The app registers or listens and receives the pending invite by late delivery (§5.4).
-- The hint is untrusted. The app claims only after a user action in its own interface, unless auto-connect or standing acceptance applies (§5.5). (`offer_match` and `paired` never apply here, because those invites are never handed off.)
+Revision 3.1 removes the intents handoff from the owner hook, with the routing handler and the chooser it opened (§11.3, §20.1.5, §20.1.7). A person who starts something still hands off through intents, which is outside signaling.
 
 ## 12. Privacy
 
 ### 12.1 No presence oracle
 
-Nothing an initiator or its provider observes may depend on any of the following, except a claim the recipient made (including an automatic one under auto-connect, an offer match, a pairing or standing acceptance, §5.5). An automatic claim under an offer match reveals nothing the minting side had not already disclosed by asking. Under a pairing it reveals availability only to the paired peer, and under standing acceptance to any admitted initiator; the owner was told so in both cases (§5.5, §5.8):
+Nothing an initiator or its provider observes may depend on any of the following, except a claim the recipient made (including an automatic one under auto-connect, an offer match or a pairing, §5.5). An automatic claim under an offer match reveals availability only to holders of an offer the minting app chose to hand out: for a bound offer, once, at a moment the one invited principal chooses, because the offer is spent at its first admission (§5.2) and so cannot be used to poll; for a person's open offer, to its holders while it lives, at most 900 s (the residual in §5.7); for a service-class offer, what it publishes the offer for, as the owner was told (§4.3, §20.1.4). Under a pairing it reveals availability only to the paired peer, and the owner was told so (§5.8):
 - whether the recipient has endpoints, or is online;
-- whether it admitted the basis, blocked the initiator, or quarantined the link;
-- whether an offer was live, spent, revoked or bound to another principal, or whether a matching pairing exists;
-- whether it has an approved or routing handler;
+- whether it admitted the basis or blocked the initiator;
+- whether an offer was live, exhausted, revoked, expired or bound to another principal, or whether a matching pairing exists;
+- whether it has an approved handler;
 - whether it enabled signaling.
 
 In particular:
 - the §9.2 response, its timing and its queue behaviour are uniform;
 - `open` succeeds alike for any active entity, whose certification keys are served whether or not it ever registered (RTCd-11);
-- there is no ringing or busy indication;
-- unanswered and owner-dismissed invites end silently (§8.5);
+- there is no busy or presence indication;
+- unanswered and owner-ended invites end silently (§8.5);
 - a recipient provider MUST NOT send a message the initiator could use to learn any of these.
 
 ### 12.2 Device inventory
@@ -939,10 +911,9 @@ Provider enforcement protects against default ICE leaks, not against an app that
 ### 12.4 Minimal metadata and retention
 
 - **Session records.** Providers keep, per session, only what routing, ordering, replay protection and limits need, and delete session records no later than 24 h after the session ends.
-- **No logging of payloads or capabilities.** Providers MUST NOT log SDP, candidates, addresses taken from candidates, `data`, `context` values, `ice_servers` credentials, links, offer tokens (in `open` and `revoke_offer` arguments and `offer` results), or the federation batch `links` and `offers` members. Logging a batch means logging at most its shape and counts.
+- **No logging of payloads or capabilities.** Providers MUST NOT log SDP, candidates, addresses taken from candidates, `data`, `context` values, `ice_servers` credentials, offer tokens (in `open` and `revoke_offer` arguments, `offer` results and the holder provider's outbox, which deletes them with the invite payload, §5.7), or the federation batch `offers` member. Logging a batch means logging at most its shape and counts.
 - **Payload deletion.** Payloads are deleted once delivered, or after 60 s. `context` is deleted at claim or end.
 - **Limit state** is keyed so that it reveals no more than the limit needs: hashed keys, with no principal named in the record. It expires with its window.
-- **Owner-hook entries** (§11.3) are deleted when the invite is claimed or ends, and by `answer_by` at the latest.
 - **Replay state** holds payload hashes, never payloads (§7.3).
 
 ### 12.5 Third parties
@@ -952,18 +923,18 @@ Doorbell payloads carry no session content. Kind and identity documents are neve
 ### 12.6 Export and deletion
 
 **Export** includes, as owner data:
-- the IP policy and request settings;
+- the IP policy;
 - principal blocks and provider blocks;
-- signaling configurations on contact parents (`revision`, kinds with pinned versions, uses left, principal, `minted_by`; never the link meta);
-- pairings (§5.8): every member, including `opens` and `state`, and pending ones.
+- pairings (§5.8): every member, including `opens` and `state`, and pending ones;
+- an organization entity's service designation (§4.3).
 
-Session handler approvals, with their `auto_connect` and `standing_accept` settings, and routing defaults are exported with intents memory (the `intent-choices` family, AMD-SG-I1, Appendix C.2).
+Session handler approvals, with their `auto_connect` settings, are exported with intents memory (the `intent-choices` family, AMD-SG-I1, Appendix C.2).
 
 **Provider blocks must be exported.** The current code exports `rtc/block/` but neither exports nor excludes `rtc/block-iss/` (a prefix `rtc/block/` does not match it). The renamed provider-block family MUST be exported beside principal blocks.
 
 **Excluded** from export, as transient, derived or secret:
 - endpoints (secret: hashed secrets, DPoP bindings, push keys);
-- session records, event queues, outboxes and inbound queues, and owner-hook entries;
+- session records, event queues, outboxes and inbound queues;
 - offers (transient capabilities, deleted at expiry, §5.7);
 - replay, delegate, epoch and limit state;
 - relay leases.
@@ -979,7 +950,7 @@ Values are provider policy (reference values are in Appendix B, RTC-11), but the
 **A recipient provider MUST limit, after verification:**
 - invites per (initiator origin principal, recipient);
 - invites per initiator origin principal across all recipient entities on the host, as one host-wide window;
-- for cross-entity invites, invites per (sending issuer, recipient) and per (sending issuer, link parent), because one issuer can mint any number of principals;
+- for cross-entity invites, invites per (sending issuer, recipient), because one issuer can mint any number of principals;
 - pending sessions and invites per recipient;
 - connected sessions per recipient;
 - messages per leg;
@@ -987,9 +958,17 @@ Values are provider policy (reference values are in Appendix B, RTC-11), but the
 
 **Separate windows (RTCw-M1, R2; AMD-RW3):**
 - **Own devices.** `self` invites count only against their own per-entity window, outside every cross-entity window and the host-wide initiator window. No other party can spend it. On the initiator side, own-entity `open` calls count against that same own-device window and not against the entity's `open` window. Otherwise the smaller `open` window binds first and the own-device window never does. That is the reference code today: `opens` (60/h) is taken at every `open`, before `self` (120/h) at admission. Appendix C.1 lists the change.
-- **Principal-bound links.** Invites on a principal-bound link presented by the principal it names count against the per-(initiator, recipient) and host-wide initiator windows, the link parent's (issuer, parent) window, and their own per-recipient window. They count against neither the per-recipient window nor the (issuer, recipient) window. This matches the reference code (`inviteLimits`: `pair`, `caller`, `issuerParent` and `preferred`).
 - **Same-host share.** A provider that counts its own verified principals as individual shares of the issuer windows MUST also bound their total by a per-recipient window below the per-recipient limit, so that foreign initiators keep headroom.
-- **Offers.** An `offer`-basis invite is bounded by its offer, which admits at most one invite. It counts against neither the per-recipient window nor the issuer windows, and it counts against the per-(initiator, recipient) window. An invite with a spent or unknown offer, or with a live offer bound to another principal (decided by the read-only principal comparison at §9.2 step 7, §5.2), counts as an unbased invite against the per-recipient and issuer windows, so that guessing or borrowing offers is limited.
+- **Bound offers.** An invite on a bound offer is bounded by the offer's single use, spent at admission. It counts against neither the per-recipient window nor the issuer windows, and it counts against the per-(initiator, recipient) window.
+- **Open offers.** Anyone may hold an open offer, so its invites get their own windows and are charged **only** to those and to the host-wide initiator window. They are never charged to the per-recipient window, the per-(initiator, recipient) window or the per-(sending issuer, recipient) window, which unbased and dead-offer invites fill, so a flood of unbased invites from principals at a large issuer cannot lock that issuer's other users out of a published offer. The windows are:
+  - a window **per offer**, W;
+  - a window **per (initiator origin principal, offer)**;
+  - a **per-issuer fair share** of W: one sending issuer may take at most max(W / (n + 1), F) of the per-offer window, where n is the number of issuers already charged to that offer in the current window (the recipient provider's own issuer counts as one) and F is a floor. The + 1 keeps headroom for an issuer not yet seen: when one arrives, the n earlier issuers hold at most n·W / (n + 1), so at least W / (n + 1) is free, which is at least the newcomer's share (the floor can weaken this when n is large).
+
+  Reference values are examples; the values are provider policy. For an offer that is not service-class: W = 60 per hour, 6 per hour per (principal, offer), F = 6 per hour. For a service-class offer: W = 3,600 per hour, 12 per hour per (principal, offer), F = 60 per hour, and a provider MAY raise W for a service entity within that entity's capacity. At most `uses` sessions are pending on one open offer at once, by construction (§5.2). All of these read only the recipient provider's own records and run in the §9.2 step 7 local checks, before anything host-wide.
+
+  An attacker that controls many issuers can still fill W. The operational responses are to block those providers (§13.2), rotate the offer (revoke it and publish a new one), and mint separate offers per audience or channel, so that one flooded or leaked offer does not take the others down.
+- **Dead offers.** An invite whose offer is unknown, expired, revoked or exhausted, or bound to another principal (decided by the read-only check at §9.2 step 7, §5.2), counts as an unbased invite against the per-recipient and issuer windows, so that guessing, borrowing or replaying offers is limited.
 - **Own-entity pairings.** Own-entity pairing invites count against their own window per (pairing, endpoint pair) (reference value 30 per hour), and stay outside the cross-entity windows, as `self` does. Both endpoints are local, so the pair is known. There are at most two live sessions per (pairing, endpoint pair) at a time.
 - **Cross-entity pairings.** The recipient cannot see the initiator's endpoint (leg keys are fresh per session, and endpoints are never disclosed, §12.2), so a per-endpoint-pair key is unenforceable there. The recipient keys both limits **per pairing `id`**:
   - a window of relation-basis invites per pairing (reference value 30 per hour per local covered endpoint, at most 240 per hour);
@@ -997,20 +976,19 @@ Values are provider policy (reference values are in Appendix B, RTC-11), but the
 
   Relation-basis invites stay outside the per-recipient and issuer windows, but count against the per-(initiator, recipient) window.
 - **Pairing sub-budget.** All pairings of an entity together get a bounded share of its pending capacity, connected capacity and aggregate `data` budget (reference: at most half of each), so that one paired peer, or a busy fleet, cannot take the whole entity's capacity. Own-entity pairings share it with each other, not with `self` sessions of the same app.
+- **Open-offer sub-budget.** Sessions admitted on open offers get a bounded share of the entity's pending capacity and of its connected capacity (reference: at most half of each), so that one published offer, whether its holders' sessions are ignored or auto-accepted and held, cannot take the capacity that bound offers, pairings and own devices need. A provider sizes a service entity's capacity as policy. A use is taken only when the routing set is not empty (§5.2), so an offer with no eligible endpoint (for a service-class offer, no online one) takes no capacity.
 
-**Pending reserve.** When pending capacity is short, bearer-link invites MUST NOT use the reserve. The reserve is split into two shares, so that one class cannot starve the other:
+**Pending reserve.** When pending capacity is short, invites that count as unbased (invites whose offer did not match) and open-offer invites MUST NOT use the reserve. The reserve is split into two shares, so that one class cannot starve the other:
 - a **`self` share**, for own-entity invites (`self` and own-entity pairings);
-- a **cross-entity share**, for relation-basis pairing invites, offer invites and principal-bound link invites.
+- a **cross-entity share**, for relation-basis pairing invites and matched bound-offer invites.
 
 Reference value: 2 pending sessions per share.
 
 **An initiator provider MUST limit:**
 - open sessions and `open` calls per entity;
-- live offers per entity (reference value 64), live offers per app within that (reference value 32), and offer mints per app (reference value 120 per hour), counting each principal of an `offer` call as one mint;
+- live offers per entity (reference value 64), live offers per app within that (reference value 32), and offer mints per app (reference value 120 per hour), counting each offer an `offer` call mints as one mint, and an open offer as one live offer whatever its `uses`;
 - key-warming fetches per entity, spent only when the recipient's keys are not held;
 - the `data` bytes its endpoints send, within the aggregate budget above.
-
-Link minting per app (a live-link quota and a mint window per app, RTCw-M2-2, I5) applies once `mint_link` exists (§20.3.2).
 
 It refuses its own app with `rate_limited`.
 
@@ -1020,23 +998,19 @@ It refuses its own app with `rate_limited`.
 
 - **Principals.** An owner blocks an origin principal.
 - **Providers.** An owner blocks a whole initiator provider (issuer origin). This is needed because a foreign issuer can mint principals at will (AMD-RW4).
-- **Effect.** Blocked invites are dropped at the block step (§9.2 step 7), silently. They create no owner-hook entry and are answered like any other batch. Blocking ends the blocked party's pending invites silently.
+- **Effect.** Blocked invites are dropped at the block step (§9.2 step 7), silently, and are answered like any other batch. Blocks apply before any offer, so a blocked principal or provider cannot use an open offer. Blocking ends the blocked party's pending invites silently.
 - **Pairings.** Blocking a principal deletes every pairing whose `peer.principal` equals it, and blocking a provider deletes every pairing whose `peer.principal.iss` is that issuer. Their claimed sessions end with a control statement `revoked`, and their pending invites silently (§5.8, §14.2). Unblocking does not restore them.
 - **Own-entity exemption.** The owner's own principal and its own provider can never be blocked. An invite from the owner's own entity is never blocked, whatever rows are stored, so a block can never break own-device sessions (RTCw-M6-3).
-- **A shared block list.** A provider MAY implement these as one core blocked-principals and blocked-providers list, shared with link intake and other features.
+- **A shared block list.** A provider MAY implement these as one blocked-principals and blocked-providers list, shared with other features.
 
-### 13.3 Quarantine and requests
+### 13.3 Withdrawn: requests
 
-- An invite admitted through a **quarantined** contact parent is answered and processed exactly as through an active one, up to step 7. It is then held: it is never delivered to endpoints, and creates an owner-hook entry (§11.3).
-- **Requests** (`none` basis) are held the same way. A bounded number are held per recipient, and the excess is dropped silently.
+Revision 3.1 reserves the `none` basis (§15): a cross-entity invite without an offer or a pairing admits nothing, silently, at §9.2 step 7, and is limited as an unbased invite. There are no held requests. The section number is kept so that references stay stable.
 
 ### 13.4 Revocation
 
 The following stop new admissions at once:
-- revoking a link;
-- removing a link's signaling configuration, or the kind from it;
-- exhausting its uses;
-- revoking, spending or expiring an offer (§5.7). Revoking or expiring one also ends, silently, the pending unclaimed sessions it admitted;
+- revoking, exhausting or expiring an offer (§5.7). Revoking or expiring one also ends, silently, the pending unclaimed sessions it admitted;
 - deleting a pairing for any reason in §5.8 (removal, expiry, clearing, a bound client session ending, or a block). A live pairing never becomes pending again (§5.8).
 
 Sessions already connected continue until they end, except that deleting a pairing ends its claimed sessions with `revoked` (§14.2).
@@ -1045,52 +1019,48 @@ Sessions already connected continue until they end, except that deleting a pairi
 
 ### 14.1 Owner controls
 
-These are generic controls. Their presentation belongs in existing surfaces, not a calling view (Appendix C):
+These are generic controls. Their presentation belongs in the provider's existing surfaces, not a view for any one use (Appendix C). The 3sln.me layout proposed by the [local clients spike](../architecture/local-clients-spike.md) §3.2 is one example: provider sessions under Devices, and every app connection, including headless and local clients, under Connected apps.
 
 | Control | Where it belongs |
 | --- | --- |
-| Approved handlers per kind, the routing default, per-app auto-connect for `self` kinds, and standing acceptance per (handler, kind) for provider features and service entities, with its availability disclosure (§5.5) | Intents settings, and app access (AMD-SG-I1). |
-| Pairings (§5.8): list (including pending and unconfirmed ones, with `opens` and expiry), remove, change the label, set or renew an expiry, and re-confirm after a kind version adds disclosure | App access. Created from that page, from the device-authorization approval page (§5.9), or at an app's request on a provider page. |
-| Live offers (§5.7): list per app (kind, invited principal, expiry; never the token), and revoke one, all of an app's, or all | App access. Revoking ends the pending sessions an offer admitted, silently. |
-| Endpoints per app, with revoke | Devices. |
-| Headless clients enrolled by device authorization, with revoke, and (if AMD-SG-D1 is adopted) whether each is a standing device grant, with its last refresh time and whether its refreshes have come from a new network since approval (§5.9, §20.11) | Devices. |
-| Signaling configuration on the owner's unconditional contact links. Setting it discloses that any holder of the link can then request sessions of those kinds (§5.3). App-minted links, grouped by minting app with per-app revoke, come with AMD-SG-L1b. | Links. |
+| Approved handlers per kind, and per-app auto-connect for `self` kinds | Intents settings, and the owner's app connections (AMD-SG-I1). |
+| Pairings (§5.8): list (including pending and unconfirmed ones, with `opens` and expiry), activate, remove, change the label, set or renew an expiry, and re-confirm after a kind version adds disclosure | Own-entity: with **both** apps' entries in the provider's list of app connections. Cross-entity: with the `local` app's entry, and in a list of cross-entity pairings by peer principal (P4). Created from there, from the enrolment approval page (§5.9), or at an app's request on a provider page. |
+| Live offers (§5.7): list per app (kind, invited principal or "anyone" for an open offer, uses spent of `uses`, expiry; never the token), and revoke one, all of an app's, or all | The app's entry in the list of app connections. Revoking ends the pending sessions an offer admitted, silently. |
+| Service designation of an organization entity (§4.3): set, with its disclosure, or remove | The organization's owner interface. Removing it revokes the entity's offers longer than 900 s. |
+| Endpoints per app, with revoke | The app's entry in the list of app connections. |
+| Headless and local clients enrolled under §5.9, with revoke, and (if AMD-SG-D1 is adopted) whether each is a standing device grant, with its last refresh time and whether its refreshes have come from a new network since approval (§20.11) | The list of app connections, local clients grouped by the owner's device label. The provider's list of its own sessions cross-links to the clients approved from each session. |
 | IP policy for other entities (`relay` by default, `public` by opt-in) and for own devices | Privacy. |
-| Requests (`none`) per kind, off by default | Privacy, or the kind's settings. |
-| Principal and provider blocks | People, blocked. |
-| Held invites and invites with no eligible endpoint | The owner hook (§11.3), wherever the provider's interface shows it. |
+| Principal and provider blocks | The blocked list. |
 | End a live session | The app, or a provider control listing the entity's live sessions. |
 
 Owner actions that widen are governed by the provider's feature gates. Narrowing actions, including ending, revoking, blocking and removing approvals, are never gated.
 
-**Concurrent edits.** Updates to owner signaling settings (IP policy, requests, auto-connect, standing acceptance, link configuration, pairings) are compare-and-swap on a revision, so that a stale interface cannot silently undo a newer choice (DEVLOG 2026-10-27, "Bug hunt round 3 (browser)", R1).
+**Concurrent edits.** Updates to owner signaling settings (IP policy, auto-connect, pairings) are compare-and-swap on a revision, so that a stale interface cannot silently undo a newer choice (DEVLOG 2026-10-27, "Bug hunt round 3 (browser)", R1).
 
 ### 14.2 Revocation and narrowing
 
 Each of the following has the effects listed after it:
-- unregistering an endpoint;
+- unregistering an endpoint, or its expiry 30 days after its last `listen` (§10.2), which has the same effects;
 - revoking a session's device or app connection;
-- revoking an app's slot grant;
+- revoking an app's grant on the signaling field;
 - removing an app's session handler approval for a kind, or the approval being **cleared** under §20.1.4 (the handler's connection ends, including app removal, or an adopted manifest stops declaring the kind);
 - an app's connection ending for any reason;
-- revoking or ending a client session, including a device-authorization client session from Devices;
-- disabling a provider feature;
+- revoking or ending a client session, including an enrolled client's session (§5.9);
+- disabling a provider feature, or its suspension (extensions §4.2);
 - deleting a pairing for any reason in §5.8, including a block (§13.2) (which affects only that pairing's sessions);
+- removing an organization entity's service designation (§4.3) (which revokes only its offers longer than 900 s);
 - revoking or expiring an offer (which affects only the pending sessions it admitted, §5.7).
 
-These are the only lifecycle triggers. They replace the AMD-X1 bound-narrowing path (`narrowBoundOptions`) and the RTC grant-changed path (Appendix C.2).
+These are the only lifecycle triggers. Appendix C.2 lists the code paths they replace.
 
 The provider at once:
 1. Stops relaying and certifying for the affected legs.
 2. Revokes their relay credentials, best effort.
 3. Sends a control statement `revoked` for each **claimed** leg. It retries for as long as the leg's certificate could still be used.
 4. Ends **pending** invites silently (§8.5) when the invite was delivered only to that app's endpoints and the app no longer holds the kind. An invite that was also delivered elsewhere keeps pending (RTCe-21).
-5. Narrows link configurations:
-   - **App-minted parents** (`minted_by` names that app or feature; none exist until AMD-SG-L1b): when the app's connection or grant ends, it revokes every parent that app minted. When only a kind is removed, it revokes only that app's minted parents whose configuration names the kind (RTCw-M2-3). It never revokes a parent minted by another app, or an owner-configured one.
-   - **Owner-configured parents** (`minted_by: null`): it never revokes the parent, which may also carry messages. When the entity no longer has any approved handler for a kind, it removes that kind from every owner-configured configuration, and removes a configuration whose `kinds` becomes empty (§5.3). While another approved handler remains, the kind stays, because invites can still route to it.
-6. Removes the app's endpoint registrations for the affected kinds.
-7. Revokes the live offers minted by the affected app, endpoints or kinds (§5.7).
-8. Deletes the affected pairings: every pairing that names the app for an affected kind, or binds the revoked client session (§5.8). Clearing deletes; it never leaves a pairing pending. Their claimed sessions get `revoked` (step 3), and their pending invites end silently (step 4).
+5. Removes the app's endpoint registrations for the affected kinds.
+6. Revokes the live offers of the affected app or feature for the affected kinds, only when the trigger ends that app's or feature's authority for the kind (approval removal or clearing, grant revocation, the app connection ending, the feature disabled or suspended), and the entity's offers longer than 900 s when its service designation is removed (§5.7 "What ends an offer"). Unregistering or expiry of an endpoint, and revoking one client session of an app whose connection remains, revoke no offer.
+7. Deletes the affected pairings: every pairing that names the app for an affected kind, or binds the revoked client session (§5.8). Clearing deletes; it never leaves a pairing pending. Their claimed sessions get `revoked` (step 3), and their pending invites end silently (step 4).
 
 A revoked endpoint that still holds an unexpired leg certificate, and posts directly to the peer provider, is refused there once the control statement arrives. The residual window is at most the certificate's remaining lifetime (at most 900 s). If a control statement finds even the reserved outbox full, the session still ends locally, and the same bound applies (RTCd-24).
 
@@ -1107,43 +1077,42 @@ When an entity's move commits, its source provider:
 
 Peers' cross-entity pairings name the moving entity by origin principal, which a move does not change, so they keep matching invites that the moved entity sends from its destination.
 
-Peers resolve the current issuer through successor pins, and deliver only there. Messages naming an earlier issuer fail at step 2. Admission state is keyed by origin principal. Contact links and their signaling configuration work at the destination only if imported. In-progress sessions are not migrated.
+Peers resolve the current issuer through successor pins, and deliver only there. Messages naming an earlier issuer fail at step 2. Admission state is keyed by origin principal. In-progress sessions are not migrated.
 
 ### 14.4 Deletion
 
 Account deletion:
 - ends every live session, with a control statement `revoked` for claimed legs and silently for pending ones;
 - removes the endpoints;
-- removes the signaling configurations and pairings, deletes offers, and revokes any app-minted links (once AMD-SG-L1b exists);
+- removes the pairings and deletes offers;
 - closes the entity to new admissions.
 
 The drain that delivers those control statements MUST run before the identity is tombstoned, so that peers can still verify them (RTCd-12, RTC-d review M1). Pinned peer keys (§6.3) cover the peer side.
 
-### 14.5 Authority resets and slot changes
+### 14.5 Authority resets and resource changes
 
 - A higher `aep` from a peer is recorded. A provider MAY end sessions with a peer whose authority reset, and MUST refuse certificates with a lower `aep`.
-- Removing the signaling occupant ends every registration and session, as in §14.2.
+- Unassigning the built-in signaling resource from the owner's `signaling` field ends every registration and session, as in §14.2.
 - Blocking a kind version (artefacts and intents) stops new sessions of that version.
 
 ## 15. Interoperability and versioning
 
 - **Discovery.**
-  - An initiator provider learns a peer's support, and the peer's profiles, from the peer issuer's manifest (`signaling.v1`).
-  - An app learns its own provider's support from the manifest's `extensions` occupant declaration for the slot, beside `extensions.v1`.
-  - Providers without `extensions.v1` process the slot fragment as an ordinary fragment. With no built-in occupant, there is no signaling.
-- **Versions.** The feature, the message, certificate and control `v`, the slot, the contract, each profile and each kind line version independently, each by its own rule. A receiver rejects an unknown `v`. A new message version is introduced by a new feature version, and a provider MAY declare both.
+  - An initiator provider learns a peer's support, and the peer's profiles, from the signaling declaration in the peer issuer's manifest (§3.1).
+  - An app learns its own provider's support from the same declaration and from `…/contracts/signaling/v1` in the manifest `contracts`. It requests the signaling fragment (§3.2). A provider that supplies no candidate for the field MAY report the request `unavailable` under [extensions §4.3](extensions.md#43-outcomes-from-public-facts-only).
+- **Versions.** The extension (by its spec URL), the message, certificate and control `v`, the fragments, the contract, each profile and each kind line version independently, each by its own rule. A receiver rejects an unknown `v`. A new message version is introduced by a new extension version, and a provider declares one version of the line (extensions §2.2).
 - **Kind versions.** A recipient provider delivers an invite of kind version *M* to a handler approved for version *N* < *M* only when it has verified that the line is additive from *N* to *M* ([artefacts §7.2](artefacts.md#72-advancing-a-head)). It then projects `context` to version *N*, and still delivers the raw invite unchanged. A version that adds disclosure needs re-approval ([intents §7.2](intents.md#72-remembered-consent)), and the owner's re-confirmation of each pairing of that kind line (§5.8).
-- **No registered kinds.** This document registers no session kinds. Apps and other publishers publish them. §20.1.9 gives one worked example, which is not registered.
+- **No registered kinds.** This document registers no session kinds. Apps and other publishers publish them as public, URL-identified artefacts. §20.1.9 gives one worked example, which is not registered.
 - **Reserved:**
   - `relation` values other than `"pairing"` (for example an access entry over an [organizations §9](organizations.md#9-relations) edge);
+  - the `none` basis (verified-identity requests with no offer or pairing). Revisions 0 to 3 held such invites for an owner hook; revision 3.1 removes them (§13.3). It is a possible future basis if a consumer needs one, and would need its own presentation and abuse design;
   - `accept` values other than `"auto"` on a pairing, and pairings that span entities on both sides of a fleet;
-  - brokered signaling occupants;
+  - brokered signaling resources;
   - a group member;
   - long-term device keys for end-to-end pinning;
   - a WebSocket or SSE delivery profile;
   - further transport profiles (for example WebTransport);
-  - sessions that act for no entity;
-  - app-minted signaling links and signaling-only parents (§20.3.2).
+  - sessions that act for no entity.
 
 ## 16. Annex A: the `webrtc` profile (normative)
 
@@ -1153,7 +1122,7 @@ It sets up a WebRTC peer connection. Media and data then flow peer to peer, or t
 
 ### 16.2 Kind parameters
 
-`session.profiles.webrtc` is exactly `{}`. There is no media bound: what a connection carries is the endpoints' concern, and a provider could not stop an app streaming video over a data channel anyway (§19.3, answer 5). The only media check left is structural (§16.4).
+`session.profiles.webrtc` is exactly `{}`. There is no bound on what a connection carries: that is the endpoints' concern, and a provider could not enforce one over a data channel anyway (§19.3, answer 5). The only media check left is structural (§16.4).
 
 ### 16.3 Parameters and messages
 
@@ -1238,9 +1207,9 @@ The owner's policy restricts only the candidates an endpoint gathers and sends:
 
 ### 16.7 Relays
 
-- Each endpoint obtains relay credentials only for itself: from its own entity's `ice-relay/v1` occupants, or from its app's own relay configuration.
+- Each endpoint obtains relay credentials only for itself: from the resources in its own entity's `relays` field (§3.3), or from its app's own relay configuration.
 - A credential is never sent in a signaling message, or to the peer.
-- **The built-in occupant** issues credentials only for a live leg of its entity:
+- **The built-in relay resource** issues credentials only for a live leg of its entity:
   - an initiator leg that is pending before `answer_by`, or connected;
   - a recipient leg whose accept claim won.
 
@@ -1248,7 +1217,7 @@ The owner's policy restricts only the candidates an endpoint gathers and sends:
 - Before issuance it re-checks the handler approval for the session's kind (RTCw-M4).
 - It revokes credentials, best effort, when the leg ends, and a sweep revokes whatever the end path missed.
 - It enforces its own budget, and MUST NOT rely on client-reported byte counts.
-- **Byte cap (normative).** A built-in occupant MUST NOT issue any relay credential unless a per-owner byte cap is enforced from the relay provider's own usage data: usage attributed to the owner through the credential usernames the occupant issued, with credentials revoked when the owner overruns. Client-reported counts, declared sizes, reservations and admission estimates do not satisfy this. A TURN credential is a bearer token with no byte limit of its own, so without such enforcement relayed bytes, and their cost, are unbounded. This carries the RTC-f production gate (RTCf M1(d)) into the normative text. AMD-SG-S2 (§20.9) proposes the matching security.md gate.
+- **Byte cap (normative).** The built-in relay resource MUST NOT issue any relay credential unless a per-owner byte cap is enforced from the relay provider's own usage data: usage attributed to the owner through the credential usernames it issued, with credentials revoked when the owner overruns. Client-reported counts, declared sizes, reservations and admission estimates do not satisfy this. A TURN credential is a bearer token with no byte limit of its own, so without such enforcement relayed bytes, and their cost, are unbounded. This carries the RTC-f production gate (RTCf M1(d)) into the normative text. AMD-SG-S2 (§20.9) proposes the matching security.md gate.
 - Its refusals before any credential exists are no-effect outcomes (`not_found`, `forbidden`, `rate_limited`), so ordered failover proceeds (RTCf-10).
 
 ## 17. What each party can still do
@@ -1259,9 +1228,10 @@ The owner's policy restricts only the candidates an endpoint gathers and sends:
 | The recipient's provider | The same for the recipient. Learn whether, and on which of its user's devices, a session was answered. | Substitute the initiator's keys toward an endpoint that verifies directly (§16.6). |
 | Both providers together, or one provider hosting both parties | Mount an undetected man-in-the-middle, unless the endpoints compare a SAS in-band. | Defeat a compared in-band SAS, except by guessing. |
 | A relay operator | See its own endpoints' addresses, peers' relay addresses, timing and volume. | Read or alter DTLS-protected media or data. |
-| An app | Anything its code does with what it receives, including moving bytes through `data` or its own servers after a claim. Mint offers for kinds it is approved for, and hand them to anyone. | Start or answer sessions of kinds the owner did not approve. See invites routed to another app. Reach other apps' endpoints, except those of an app the owner paired with it. Create a pairing. |
+| An app | Anything its code does with what it receives, including moving bytes through `data` or its own servers after a claim. Mint offers for kinds it is approved for, and hand them to anyone. Keep re-minting single-use bound offers for one cooperating peer app, which emulates a short pairing (§5.7). | Start or answer sessions of kinds the owner did not approve. See invites routed to another app. Reach other apps' endpoints, except those of an app the owner paired with it. Create a pairing. |
 | A paired peer | Tell when the paired app is running, and connect to it automatically for the paired kind, when the recipient's pairing lets it open. If its own provider does not conform, keep opening after its own owner removes their side, because only the recipient's record is enforced by the recipient (§5.8). | Connect for another kind, or to another app or client session. Keep connecting after the recipient's owner removes, blocks or lets expire the recipient's side. |
-| A holder of someone else's offer (for example another participant of a conversation) | Nothing: the offer is bound to one principal. | Use it, or learn whether it was used. |
+| A holder of someone else's bound offer (for example another reader of the app message that carried it) | Nothing: the offer is bound to one principal. | Use it, or learn whether it was used. |
+| A holder of an open offer | Connect to the minting app for that kind and profile, as any verified principal it controls, within `uses`, the expiry and the open-offer windows; tell whether that app is running when it auto-accepts. With throwaway principals at an issuer it controls, spend every use of a person app's short open offer while it lives (§5.7). | Use it after revocation, expiry or exhaustion, or learn which of those happened. Use it while blocked. Reach another app or kind. Hold it past 900 s against a person entity's app. Take more than its issuer's fair share of a service's per-offer window, or lock other holders out with unbased traffic (§13.1). |
 
 A provider cannot stop a connection that already exists. Ending a leg relies on the peer endpoint closing it and on relay credentials lapsing.
 
@@ -1269,122 +1239,144 @@ A provider cannot stop a connection that already exists. Ending a leg relies on 
 
 | Alternative | Why not |
 | --- | --- |
-| Keep `rtc-signaling.v1` as designed | It carries a calling product into the provider: ring screen, missed list, alert and mute policy, media in the purpose, call links and SAS. The owner's direction rules that out. |
-| A WebRTC-only wire | Simpler, but it hard-codes SDP and media vocabulary into a core-adjacent extension. Every non-WebRTC use would then need a parallel extension that duplicates admission, claim and the no-oracle rules. |
+| Keep `rtc-signaling.v1` as designed | It carries one app-level product into the provider: presentation, history, interruption policy, media in the purpose, dedicated links and SAS. The owner's direction rules that out. |
+| A WebRTC-only wire | Simpler, but it hard-codes SDP vocabulary into a Bindle-owned extension. Every non-WebRTC use would then need a parallel extension that duplicates admission, claim and the no-oracle rules. |
 | **A slim `signaling-purpose` artefact kind with AMD-X1 bound purposes** (the main rejected alternative) | See §19.1. It keeps a second kind registry beside intents, keeps the only extension-system amendment, and either keeps cross-app visibility (AMD-RW1) or re-builds handler choice outside intents. |
 | Provider-signed hop-by-hop events | The receiving provider could rewrite DTLS fingerprints undetectably. |
 | Long-lived device keys | They link one device across every session and peer. Per-session keys give the same detection without the tracking. |
 | Candidates in the invite, sent to every device | They disclose addresses before anyone answers, and make candidate policy unenforceable. |
-| A ringing or busy message | It reveals presence to anyone who can reach the recipient. |
+| A busy or presence message | It reveals presence to anyone who can reach the recipient. |
 | Signaling over messaging or activity | No ordering, latency target or first-claim semantics. Both keep what signaling must delete. |
 | Network fetches during verification | Timing would reveal admission and contact relationships. |
-| A dedicated ticket link type | Contact links with owner-side configuration (`uses`, `principal`, `minted_by`) express the same capabilities, reuse link verification, revocation and secrecy, and add no link type. |
-| Provider presentation (a portal ring, or activity items for invites) | Presentation is the app's (§11.3). Rev 0 used provider-source activity items; the owner moved all presentation to the app layer, leaving only the owner hook. |
-| An interim ticket link type until the links re-scope | It would ship a link type due to be removed. Owner-configured parents cover shareable admission now, and app minting waits (§20.3.2). |
+| Provider presentation (a provider screen for invites, activity items, or the revision 1 to 3 owner hook) | Presentation is the app's (§3.6). Rev 0 used provider-source activity items; the owner moved all presentation to the app layer. Rev 3.1 removes the remaining owner hook, which only held requests and invites no app could see (§11.3). |
 | Two establishment mechanisms, one for invite-style and one for always-on use | It would duplicate the hard part (certificates, claim, relay, privacy) to vary three cells: admission, routing and acceptance. One mechanism with explicit bases (§5.6). |
-| A caller-initiated signaling invite for calls, beside the call-invite message | It needs signaling-specific admission between people who already message each other, routes through the intents default (possibly a different app from the one showing the message), cannot survive offline devices within the 120 s window, and rings twice. The reverse dial with an `offer` avoids all four (§5.7). |
-| Callbacks (one-use, principal-bound contact links, `callback_digest`) | They need the links §6 re-scope and a link per invite. The offer is a signaling record with the same binding, and no link (§5.3, §5.7). |
+| An invite opened by the asking side, beside the app's own request message | It needs signaling-specific admission between parties who already reach each other through the app, routes through the intents default (possibly a different app from the one showing the message), cannot survive offline devices within the 120 s window, and presents the request twice. The reverse dial with an `offer` avoids all four (§5.7). |
+| Callbacks (one-use, principal-bound contact links, `callback_digest`) | They need a link per request. The offer is a signaling record with the same binding, and no link (§5.7). |
+| Keep the `link` basis (owner-configured contact links) | It makes core signaling aware of contacts, and duplicates admission that apps already decide (for example by their own contact lists). An app hands the people it admits an offer (§5.3, §5.7; contacts and links spike CL-9). |
+| Standing acceptance: an owner setting that lets a service answer any admitted initiator (revisions 1 to 2.1; reserved in revision 3) | After the `link` basis went, no basis delivered an unsolicited invite for it to apply to. An open offer from a service-class endpoint gives the same reach with an explicit, expiring, revocable, use-counted and rate-limited capability that the service hands out itself (§5.7, SG-43). |
+| A separate multi-use "ticket" basis (contacts and links spike §4.6) | The open offer is that basis, with the offer's existing record, routing, no-oracle and revocation rules. A second basis would duplicate them (SG-43). |
+| Keep `none` as held requests | Its only actions were dismiss and block, it gave foreign issuers a way to fill an owner-visible list, and it reopened a weak form of the unsolicited reachability that CL-10 rejected. Reserved instead (§15, SG-45). |
+| Route own-entity invites through the intents default when the initiating app cannot receive them | §5.1 item 3 already makes the initiating app an approved handler, so the fallback could fire only in a race, and its chooser path handed off to an app that never received the invite. Cut (SG-44). |
+| A pairing as a slot assignment or a preferences-assignable resource | Neither represents cross-entity pairings, and a pairing's direction, automatic acceptance, expiry and kind-version pinning are not resource semantics. A per-edge owner record with P1 to P4 gives the same per-party consent (§5.8; local clients spike §4.2, LC-11). |
 | Open standing acceptance for app endpoints that answer one known peer | It exposes availability to every admitted initiator. A pairing scopes it to one peer (§5.5, §5.8). |
 | Grouping a vendor's clients by registrable domain (I3) | Implicit and wider than the owner meant. An explicit own-entity pairing names both `client_id`s (§5.8). |
-| The intents chooser for incoming invites | The event already landed in a specific app, is time-critical, and no person is on a provider page. Intents stay for handoffs a person starts (§5.6, AMD-INT-R1). |
+| The intents chooser for incoming invites | The event already landed in a specific app, is time-critical, and no person is on a provider page. Intents stay for handoffs a person starts (§5.6). |
 
 ## 19. Provisional decisions and owner questions
 
-### 19.1 Routing: intents (adopted for `link` invites) versus a slim purpose kind
+### 19.1 Kind authorization: intents kinds and approvals versus a slim purpose kind
 
-| | **A. Intents routing (adopted, for `link` invites)** | **B. Slim `signaling-purpose` kind (documented fallback)** |
+| | **A. Intents kinds and approvals (adopted)** | **B. Slim `signaling-purpose` kind (documented fallback)** |
 | --- | --- | --- |
 | What names the use | An intent kind with a `session` member | A separate artefact kind (`id`, `title`, `summary`, `parties`, `profiles`, `context`, `categories`) |
-| Per-app authorization | An intents session handler approval (an owner record in intents memory) | AMD-X1 bound consumer options on the slot grant |
-| Who receives invites | The owner's routing handler for the kind | Every approved app (AMD-RW1 visibility), or a per-purpose default stored by signaling (a copy of intents §7) |
-| Core changes | Intents amendment AMD-SG-I1, which adds an authority record to intents (§20.1.10) | Extensions amendment AMD-X1, plus a kind registration |
-| Reuse | Kind registry, growth tables, disclosure, projection, handler declarations, defaults, exclusions, chooser, handoff | Data schema and disclosure validators only |
+| Per-app authorization | An intents session handler approval (an owner record in intents memory) | Bound consumer options on the grant (the withdrawn AMD-X1) |
+| Who receives invites | The app fixed by the basis (§5.4) | Every approved app (AMD-RW1 visibility), or a per-purpose default stored by signaling |
+| Changes elsewhere | Intents amendment AMD-SG-I1, which adds an authority record to intents (§20.1.10) | An extensions amendment like AMD-X1, plus a kind registration |
+| Reuse | Kind registry, growth tables, disclosure, projection, handler declarations, exclusions | Data schema and disclosure validators only |
 | Approval check | Local to the account (intents memory), so no federation-shard call inside the account gate. The RTC-i lock-order class goes away. | Federation grant data, needing the RTC-i dispatch snapshot and approval record (RTCi-1, RTCi-2) |
-| Cost now | Larger. The intents amendment needs owner sign-off, and code moves from purposes and bound options into intents. | Smaller. Most of it is implemented. |
 
-**Position (provisional).** A is adopted, provisionally, with its scope narrowed by the establishment spike (§19.4). Session kinds are intent kinds, and session handler approvals are the kind authorization, for every basis. The owner's handler choice decides only which app receives a `link`-basis invite (and the own-entity fallback of §5.4 case 2): `offer` and `pairing` invites go to an app the basis fixes, and incoming invites never open a chooser (§5.6). It matches "a hub for connecting things together", removes a parallel kind registry and the extension-system amendment, and fixes cross-app visibility by construction. B stays the documented fallback. If it is chosen, drop `media`, `alert` and `auto_accept` from the purpose, keep AMD-X1, and adopt AMD-RW1's disclosure.
+**Position (provisional).** A is adopted. Session kinds are intent kinds, and session handler approvals are the kind authorization, for every basis. Signaling takes nothing else from intents: no defaults, chooser or handoff (SG-44). It removes a parallel kind registry and any extension-system amendment, and fixes cross-app visibility by construction. B stays the documented fallback.
 
 ### 19.2 Decisions (all provisional and unsigned)
 
 | ID | Decision | Sign-off |
 | --- | --- | --- |
 | SG-1 | A generic signed session channel with profiles. `webrtc` is the first profile, and `data` the second, with the rev 1 limits (§1, §3.5). | Reviewer ___ Date ___ Outcome ___ |
-| SG-2 | Session kinds are intent kinds with a `session` member. Intents routing (AMD-SG-I1) chooses the receiving app only for `link`-basis invites and the own-entity fallback; `offer` and `pairing` invites route to the app their basis fixes (revised in rev 2, SG-23). The `rtc-purpose` kind and AMD-X1 are dropped, and AMD-RW1 does not arise (§5.4, §5.6, §19.1). | Reviewer ___ Date ___ Outcome ___ |
-| SG-3 | Kind authorization is a session handler approval in intents memory, checked live and locally on every widening operation, including `claim` accept (§10.1). The routing handler is the explicit default, else the sole approved handler. When a second handler is approved and no default exists, the sole handler is promoted to the explicit default (§20.1.5). Otherwise the owner hook offers the chooser. | Reviewer ___ Date ___ Outcome ___ |
-| SG-4 | No calling and no presentation in the provider. Calling is app-level (a messaging app's call invite is a message with a JSON media type, in the Bindle Messaging spec). The provider's only duty is the owner hook for held invites and invites with no eligible endpoint, which never interrupts. Signaling creates no activity items, and AMD-SG-A1 and AMD-SG-N1 are withdrawn (§11.3, §20.2). | Reviewer ___ Date ___ Outcome ___ |
-| SG-5 | Admission is `self`, `pairing` (SG-25), `offer` (SG-24), owner-side signaling configuration on the owner's existing unconditional contact parents (AMD-SG-L1a, replacing `rtc/contact/`), or `none`. Tickets are dropped, with no interim type. `mint_link`, minted and signaling-only parents and delivery-off are unavailable until the links §6 re-scope (AMD-SG-L1b). Callbacks are withdrawn in rev 2, replaced by offers (§5.2, §5.3, §20.3). | Reviewer ___ Date ___ Outcome ___ |
-| SG-6 | Consumers are `application` and `provider`. Provider features are endpoints, acting as built-in handlers for an entity. Cross-entity, they answer only under standing acceptance, within their declared policy (§4.2). | Reviewer ___ Date ___ Outcome ___ |
+| SG-2 | Session kinds are intent kinds with a `session` member. Every basis fixes the receiving app (SG-23); rev 3.1 removes the routing handler that revisions 0 to 3 used as an own-entity fallback (SG-44). The `rtc-purpose` kind and AMD-X1 are dropped, and AMD-RW1 does not arise (§5.4, §5.6, §19.1). | Reviewer ___ Date ___ Outcome ___ |
+| SG-3 | Kind authorization is a session handler approval in intents memory, checked live and locally on every widening operation, including `claim` accept (§10.1). *Revised in rev 3.1:* the routing default, sole-handler promotion and owner-hook chooser are withdrawn (SG-44). | Reviewer ___ Date ___ Outcome ___ |
+| SG-4 | No app-level use and no presentation in the provider. Uses and their presentation are app-level, specified by the apps that define them (rev 3: signaling names none). *Rev 3.1:* the owner hook is removed, so the provider has no presentation duty at all (SG-44, SG-45). Signaling creates no activity items, and AMD-SG-A1 and AMD-SG-N1 are withdrawn (§3.6, §11.3, §20.2). | Reviewer ___ Date ___ Outcome ___ |
+| SG-5 | *Revised in rev 3 and 3.1.* Admission is `self`, `pairing` (SG-25) or `offer` (SG-24, SG-43); `none` is reserved (SG-45). The `link` basis, owner-side configuration on contact parents (AMD-SG-L1a), `mint_link` and minted parents (AMD-SG-L1b) are withdrawn (contacts and links spike CL-9; §5.3, SG-36). Callbacks were withdrawn in rev 2, replaced by offers (§5.2, §5.7). | Reviewer ___ Date ___ Outcome ___ |
+| SG-6 | Consumers are `application` and `provider`. A provider feature that holds sessions is the one feature of its own extension, identified by (issuer, spec URL), acting as a built-in handler for an entity. Cross-entity, it answers only offers it minted, bound or open, and is never a pairing party (rev 3.1; earlier revisions used standing acceptance) (§4.2, §5.8, SG-43, SG-46). | Reviewer ___ Date ___ Outcome ___ |
 | SG-7 | Guardrails: no offline delivery, a 120 s answer window, a 24 h session cap, `seq` ≤ 4,095, delete after delivery, payload hashes only in replay state, no history, no multi-party. `data` exists only in the `data` profile, at ≤ 4 KiB per message and 64 KiB per leg, under a required aggregate per-entity budget, and behind a production gate (§1.2, §3.5, §13.1). | Reviewer ___ Date ___ Outcome ___ |
 | SG-8 | Adopt AMD-RI1 (uniform 404 for an unknown `aud`), RI2 (one `aud`), RI3 (`to` drop), RI4 (`listen` members), RI5 (`unsupported_peer`), RV2 (re-send bound, refresh lanes) and RW2 (same-host `iss` refusal), and the per-entity-enablement rule (RTCw-R1), with the drain-rate residual recorded (§9, §10). | Reviewer ___ Date ___ Outcome ___ |
-| SG-9 | Abuse limit kinds include the aggregate `data` budget, the own-device, principal-bound and same-host-share windows, and the pending reserve. Own-entity `open` calls count against the own-device window (a code change). The principal-bound windows match the code. Cheap checks run before expensive ones. There are per-app endpoint caps, and per-app link quotas once minting exists (§13.1). | Reviewer ___ Date ___ Outcome ___ |
-| SG-10 | Block lists cover principals and providers, with the own-entity exemption, and both are exported. Mutes are dropped, and there is no signaling interruption policy (§11.3, §12.6, §13.2). | Reviewer ___ Date ___ Outcome ___ |
+| SG-9 | Abuse limit kinds include the aggregate `data` budget, the own-device and same-host-share windows, and the pending reserve. Own-entity `open` calls count against the own-device window (a code change). Cheap checks run before expensive ones. There are per-app endpoint caps. Rev 3 removes the principal-bound link windows and the per-app link quotas with the `link` basis (§13.1). | Reviewer ___ Date ___ Outcome ___ |
+| SG-10 | Block lists cover principals and providers, with the own-entity exemption, and both are exported. Mutes are dropped, and there is no signaling interruption policy (§3.6, §12.6, §13.2). | Reviewer ___ Date ___ Outcome ___ |
 | SG-11 | SAS leaves the core, and fingerprint binding stays. The media bound is dropped. Only the structural `m=` type check (`audio`, `video`, `application`) remains (§16). | Reviewer ___ Date ___ Outcome ___ |
 | SG-12 | The initiator's app origin is disclosed to the recipient, labelled "reported by" for a foreign initiator (RTC-17, RTCe-22). | Reviewer ___ Date ___ Outcome ___ |
 | SG-13 | Decline reasons are `declined` and `unsupported`. `busy` is dropped, and end reasons are neutral (§7.2). | Reviewer ___ Date ___ Outcome ___ |
-| SG-14 | `ice-relay/v1` is unchanged, with AMD-RL1 and the RTC-f rules. No credential is issued unless a per-owner byte cap is enforced from provider usage data (§3.3, §16.7, AMD-SG-S2). | Reviewer ___ Date ___ Outcome ___ |
-| SG-15 | New identifiers (`signaling.v1`, `typ`, media type, slot, contract) rather than reusing `rtc-signaling.v1`. Nothing is published, so no compatibility is owed (Appendix C). | Reviewer ___ Date ___ Outcome ___ |
+| SG-14 | `ice-relay` is unchanged in substance (a fragment since rev 3), with AMD-RL1 and the RTC-f rules. No credential is issued unless a per-owner byte cap is enforced from provider usage data (§3.3, §16.7, AMD-SG-S2). | Reviewer ___ Date ___ Outcome ___ |
+| SG-15 | New identifiers (the extension spec URL, `typ`, media type, fragments, contract) rather than reusing `rtc-signaling.v1`. Nothing is published, so no compatibility is owed (Appendix C). | Reviewer ___ Date ___ Outcome ___ |
 | SG-16 | Auto-connect is an owner setting per app and per `self` kind, and requires the same `client_id` (§5.5). Different apps of the owner (a vendor's native and web clients, I3) auto-connect only under an explicit own-entity pairing (SG-25); grouping by registrable domain is not used for signaling. | Reviewer ___ Date ___ Outcome ___ |
-| SG-17 | Standing acceptance: an owner setting per (handler, kind) for cross-entity kinds, off by default. It lets that handler accept admitted invites without a user action. Its approval page discloses that it makes the entity's availability visible to any admitted initiator. For provider features, the feature's declared policy applies within it. Narrowed in rev 2 to provider features and service entities (SG-26) (§4.2, §5.5). | Reviewer ___ Date ___ Outcome ___ |
-| SG-18 | Signaling configuration is forbidden on conditional contact parents, rather than evaluating audience policy at §9.2. Link representations (links §6.3, the composer and previews) are unchanged by it (§5.3). | Reviewer ___ Date ___ Outcome ___ |
+| SG-17 | *Reserved in rev 3, replaced in rev 3.1 by SG-43.* Standing acceptance: an owner setting per (handler, kind) for cross-entity kinds, letting a provider feature or service entity accept admitted invites without a user action. Service-class endpoints now auto-accept holders of their own open offers (§5.7). | Reviewer ___ Date ___ Outcome ___ |
+| SG-18 | *Withdrawn in rev 3 with the `link` basis (SG-36).* Signaling configuration was forbidden on conditional contact parents. | Reviewer ___ Date ___ Outcome ___ |
 | SG-19 | A recipient provider resolves kind versions only from its store, a mirror, or a background fetch whose triggering does not depend on recipient state (§3.4). | Reviewer ___ Date ___ Outcome ___ |
-| SG-20 | `target` is restricted to the initiating app's own endpoints (in rev 2, also to a paired app's endpoints under an own-entity pairing, §5.4 case 5). Glare auto-accept requires the surviving invite to be within the endpoint's own outgoing invite. Each routing case fixes a handoff target (§5.4, §8.3). | Reviewer ___ Date ___ Outcome ___ |
+| SG-20 | `target` is restricted to the initiating app's own endpoints, or a paired app's endpoints under an own-entity pairing (§5.4 cases 1 and 4). *Rev 3.1:* glare decides only which session survives; the glare auto-accept exception is removed (§5.5, §8.3). | Reviewer ___ Date ___ Outcome ___ |
 | SG-21 | Superseded in rev 2 by SG-23. (Rev 1: two establishment modes, with mode (b) waiting for a spike.) The spike found that the two modes are two uses of one mechanism, distinguished by basis. | Reviewer ___ Date ___ Outcome ___ |
-| SG-22 | The intents chooser gets a robust short-list: likely candidates first, an expansion to all capable apps, and a confirmation only when there is one candidate. This is an intents requirement for every chooser, not a signaling rule. Rev 2 restates it as AMD-INT-R1 (§20.10, SG-29). | Reviewer ___ Date ___ Outcome ___ |
-| SG-23 | One signaling mechanism with explicit establishment bases (`self`, `pairing`, `offer`, `link`, `none`), each fixing admission, routing and acceptance; no second mechanism. Answers S1 and S2 (§5.6; spike SMS-1, CR-13). | Reviewer ___ Date ___ Outcome ___ |
-| SG-24 | Invite-style establishment is a reverse dial with an `offer`: a one-use, short-lived authorization bound to the invited principal, the kind and the profile, minted by `offer` and revoked by `revoke_offer`, carried inside an app message, routed to the minting endpoint or app, and claimable with no user action (`offer_match`), in rev 2.1 by the minting endpoint only (SG-31). It replaces callbacks and `callback_digest` (§5.2, §5.4 case 4, §5.5, §5.7, §10.2; spike SMS-2, CR-1 to CR-4). | Reviewer ___ Date ___ Outcome ___ |
-| SG-25 | Always-on establishment is an owner pairing record: created only by owner action, pending until the approvals exist; own-entity it extends `self` across apps (solving I3 for this use); cross-entity it is the relation basis `{"relation": "pairing"}`, with both owners' records required between conforming providers (rev 2.1: the recipient enforces only its own record, SG-34). Routing to the paired app only, `paired` acceptance, own-entity discovery through `endpoints({pairing})`, revocation through removal, approval or grant clearing, and client-session revocation (§5.4 case 5, §5.8, §10.2, §14; spike SMS-3, CR-5, CR-7, CR-11). | Reviewer ___ Date ___ Outcome ___ |
-| SG-26 | Standing acceptance is kept only for provider features and service entities. App endpoints that answer a known peer automatically use a pairing (§5.5, §20.1.4; spike SMS-3, CR-4). | Reviewer ___ Date ___ Outcome ___ |
-| SG-27 | Session kinds MAY restrict their bases with an optional, frozen `bases` member, enforced by both providers (§3.4, §5.1, §5.2, §20.1.1; CR-6). Limits: offer invites bounded by their offer, live offers per entity and mints per app; pairing invites in their own window per (pairing, endpoint pair), with at most two live sessions; both in the pending reserve (§13.1; CR-8). Rev 2.1 re-keys the cross-entity pairing limits per pairing `id` and splits the reserve (SG-33). Glare covers crossing pairing invites (§8.3; CR-9). Offer and pairing invites never enter the owner hook or the handoff (§11.3, §11.4; CR-10). | Reviewer ___ Date ___ Outcome ___ |
-| SG-28 | Headless clients enroll through device authorization, with code entry by default and a QR code optional. The approval page MAY offer the kind approval and a pairing bound to the new client session. A standing device grant that survives the approving session's sign-out is proposed as AMD-SG-D1, not applied (§5.9, §20.11; spike SMS-4). Rev 2.1: a device-authorization pairing goes live only after the owner compares a short code in the paired app; the standing mark is exempt only from the approving session's own sign-out, natural expiry and session-count eviction; the post-approval notification names both the pairing and the mark; providers MAY restrict which clients are offered the mark; Devices shows last-refresh and network-change signals. | Reviewer ___ Date ___ Outcome ___ |
-| SG-29 | Intents are for user-initiated handoff only, never for routing incoming events. The short-list requirement stays an intents amendment (AMD-INT-R1). The chooser's choice history is on by default and owner-deletable (§5.6, §20.10; spike SMS-5, SMS-6). Rev 2.1: history is scoped per (person, acting entity), disclosed at first use, and the provider's own review is not a ranking signal. | Reviewer ___ Date ___ Outcome ___ |
-| SG-30 | Signaling stays free of calling semantics. The call-invite message type belongs to Bindle Messaging (owned by the Parlay app), and the ring hint to the notice contract, with 3sln.me delivery policy. Both are referenced as separate proposals, not signaling text (§11.3, §20.12; spike SMS-7, SMS-8, CR-12). Rev 2.1: a call's audio and video choice lives in the app message body, not in signaling parameters; the call kind is `profiles: {"webrtc": {}}` with bases `["offer", "link"]` (§20.12). |
-| SG-31 | Offers (rev 2.1): only the minting endpoint gets `offer_match`, and it MUST check, before any automatic claim, that `basis.offer_digest` equals the digest of an offer token it holds outstanding and that the verified initiator is that offer's principal; other endpoints of the minting app claim only after a user action. The offer principal is compared read-only at §9.2 step 7 and re-confirmed atomically at step 8; limit classification follows the principal match. Revoking or expiring an offer ends the pending sessions it admitted, silently. A per-app live-offer cap and owner list and revoke controls. Key warming at `offer` is issuer-level only. Mint `expires_in` covers the invitation's lifetime plus a skew margin. Offer tokens and the batch `offers` and `links` members are never logged (§5.2, §5.4, §5.5, §5.7, §9.2, §10.3, §12.4, §13.1, §14.1; review H1, M1, L1 to L4). | Reviewer ___ Date ___ Outcome ___ |
-| SG-32 | Pairings (rev 2.1): coverage binds `client_id` and any bound `client_session` on both sides and in both roles, for routing, `target`, the initiator check, `endpoints({pairing})` and the projection. A direction member `opens` (`local`, `peer`, `both`); device-authorization pairings default to the interactive app opening. `endpoints({pairing})` answers only the opening side, labels endpoints with the provider's Devices names, and omits `last_seen`. Clearing deletes a pairing; only creation produces a pending pairing, which an activating approval page must name and which expires after 7 days. Principal and provider blocks delete matching pairings, ending their sessions with `revoked`. Creation checks `parties`; a disclosure-adding kind version needs re-confirmation; moves delete offers and pairings at the source (§5.1, §5.4, §5.5, §5.8, §10.2, §13.2, §13.4, §14.2, §14.3; review H2, H4, M2, M3, L6). | Reviewer ___ Date ___ Outcome ___ |
+| SG-22 | *Moved out in rev 3.1.* The chooser short-list is an intents matter, carried as AMD-INT-R1 outside signaling (§20.10, SG-42). | Reviewer ___ Date ___ Outcome ___ |
+| SG-23 | One signaling mechanism with explicit establishment bases (`self`, `pairing`, `offer`; rev 2 also had `link`, and `none` is reserved since rev 3.1), each fixing admission, routing and acceptance; no second mechanism. Answers S1 and S2 (§5.6; spike SMS-1, CR-13). | Reviewer ___ Date ___ Outcome ___ |
+| SG-24 | Invite-style establishment is a reverse dial with an `offer`: a one-use, short-lived authorization bound to the invited principal, the kind and the profile, minted by `offer` and revoked by `revoke_offer`, carried inside an app message, routed to the minting endpoint or app, and claimable with no user action (`offer_match`), in rev 2.1 by the minting endpoint only (SG-31). It replaces callbacks and `callback_digest` (§5.2, §5.4 case 3, §5.5, §5.7, §10.2; spike SMS-2, CR-1 to CR-4). Rev 3.1 generalizes it to open and multi-use offers (SG-43). | Reviewer ___ Date ___ Outcome ___ |
+| SG-25 | Always-on establishment is an owner pairing record: created only by owner action, pending until activated (rev 3: explicit activation, SG-39); own-entity it extends `self` across apps (solving I3 for this use); cross-entity it is the relation basis `{"relation": "pairing"}`, with both owners' records required between conforming providers (rev 2.1: the recipient enforces only its own record, SG-34). Routing to the paired app only, `paired` acceptance, own-entity discovery through `endpoints({pairing})`, revocation through removal, approval or grant clearing, and client-session revocation (§5.4 case 4, §5.8, §10.2, §14; spike SMS-3, CR-5, CR-7, CR-11). | Reviewer ___ Date ___ Outcome ___ |
+| SG-26 | Standing acceptance was kept only for provider features and service entities, and app endpoints that answer a known peer automatically use a pairing (§5.5, §20.1.4; spike SMS-3, CR-4). Rev 3 reserved standing acceptance (SG-38), and rev 3.1 replaces it with service-class open offers (SG-43); the pairing rule stands. | Reviewer ___ Date ___ Outcome ___ |
+| SG-27 | Session kinds MAY restrict their bases with an optional, frozen `bases` member, enforced by both providers (§3.4, §5.1, §5.2, §20.1.1; CR-6). Limits: offer invites bounded by their offer, live offers per entity and mints per app; pairing invites in their own window per (pairing, endpoint pair), with at most two live sessions; both in the pending reserve (§13.1; CR-8). Rev 2.1 re-keys the cross-entity pairing limits per pairing `id` and splits the reserve (SG-33). Glare covers crossing pairing invites (§8.3; CR-9). | Reviewer ___ Date ___ Outcome ___ |
+| SG-28 | Headless clients enroll through device authorization, with code entry by default and a QR code optional. The approval page MAY offer the kind approval and pairings bound to the new client session. A standing device grant that survives the approving session's sign-out is proposed as AMD-SG-D1, not applied (§5.9, §20.11; spike SMS-4). Rev 2.1: a device-authorization pairing goes live only after the owner compares a short code in the paired app; the standing mark is exempt only from the approving session's own sign-out, natural expiry and session-count eviction; the post-approval notification names both the pairing and the mark; providers MAY restrict which clients are offered the mark; last-refresh and network-change signals are shown. Rev 3 adds local clients (SG-40). | Reviewer ___ Date ___ Outcome ___ |
+| SG-29 | Intents are for user-initiated handoff only, never for routing incoming events (§5.6; spike SMS-5). *Rev 3.1:* signaling uses no intents routing at all (SG-44); the chooser short list and choice history (spike SMS-6) are an intents matter outside signaling. | Reviewer ___ Date ___ Outcome ___ |
+| SG-30 | Signaling stays free of app-level use semantics (spike SMS-7, SMS-8, CR-12). *Revised in rev 3:* signaling references no app-level message or presentation. Bindle Messaging owns its call-invite message ([messaging §5.5](messaging.md#55-call-invitations-proposed-unsigned)), and the presentation hint is a separate notice-contract proposal outside signaling (SG-36). | Reviewer ___ Date ___ Outcome ___ |
+| SG-31 | Offers (rev 2.1; rev 3.1 widens `offer_match` and replaces spend-at-admission with reserve-then-spend, SG-43; rev 3.2 restores spend-at-admission for bound offers and spends an open offer's use only on accept, SG-49): only the minting endpoint gets `offer_match`, and it MUST check, before any automatic claim, that `basis.offer_digest` equals the digest of an offer token it holds outstanding and that the verified initiator is that offer's principal; other endpoints of the minting app claim only after a user action. The offer principal is compared read-only at §9.2 step 7 and re-confirmed atomically at step 8; limit classification follows the principal match. Revoking or expiring an offer ends the pending sessions it admitted, silently. A per-app live-offer cap and owner list and revoke controls. Key warming at `offer` is issuer-level only. Mint `expires_in` covers the invitation's lifetime plus a skew margin. Offer tokens and the batch `offers` member are never logged (§5.2, §5.4, §5.5, §5.7, §9.2, §10.3, §12.4, §13.1, §14.1; review H1, M1, L1 to L4). | Reviewer ___ Date ___ Outcome ___ |
+| SG-32 | Pairings (rev 2.1): coverage binds `client_id` and any bound `client_session` on both sides and in both roles, for routing, `target`, the initiator check, `endpoints({pairing})` and the projection. A direction member `opens` (`local`, `peer`, `both`); device-authorization pairings default to the interactive app opening. `endpoints({pairing})` answers only the opening side, labels endpoints with the provider's Devices names, and omits `last_seen`. Clearing deletes a pairing; only creation produces a pending pairing, which expires after 7 days (rev 3: activation is explicit, SG-39). Principal and provider blocks delete matching pairings, ending their sessions with `revoked`. Creation checks `parties`; a disclosure-adding kind version needs re-confirmation; moves delete offers and pairings at the source (§5.1, §5.4, §5.5, §5.8, §10.2, §13.2, §13.4, §14.2, §14.3; review H2, H4, M2, M3, L6). | Reviewer ___ Date ___ Outcome ___ |
 | SG-33 | Pairing limits (rev 2.1): own-entity per (pairing, endpoint pair); cross-entity per pairing `id` at the recipient, with a live-session cap of 2 × the local covered endpoints; a pairing sub-budget of pending, connected and `data` capacity; the pending reserve split into a `self` share and a cross-entity share (§9.2 step 7, §13.1; review H3). | Reviewer ___ Date ___ Outcome ___ |
-| SG-34 | Cross-entity pairing creation (rev 2.1): fresh authentication; a handle only under a verified binding, else the full principal and issuer; wording from the kind's sensitivity categories; a mandatory expiry (default 90 days, at most 1 year, renewable); disclosure that the recipient enforces only its own record. Call kinds leave `pairing` out of `bases` in this version (recommended), so cross-person calls are never answered automatically; same-owner pairing for other kinds stays (§3.4, §5.8, §17, §20.12; review M4, L7, M7). | Reviewer ___ Date ___ Outcome ___ |
-| SG-35 | Glare (rev 2.1) ranks the crossing sessions by SHA-256 over both initiator leg key thumbprints, never by `sid`; equal ranks cancel both (§8.3; review L5). | Reviewer ___ Date ___ Outcome ___ | Reviewer ___ Date ___ Outcome ___ |
+| SG-34 | Cross-entity pairing creation (rev 2.1): fresh authentication; a handle only under a verified binding, else the full principal and issuer; wording from the kind's profiles and sensitivity categories; a mandatory expiry (default 90 days, at most 1 year, renewable); disclosure that the recipient enforces only its own record (§5.8, §17; review M4, L7). Rev 3: which bases a kind allows is the kind publisher's choice (SG-27); the rev 2.1 recommendation about one app's kind is that app's matter. | Reviewer ___ Date ___ Outcome ___ |
+| SG-35 | Glare (rev 2.1) ranks the crossing sessions by SHA-256 over both initiator leg key thumbprints, never by `sid`; equal ranks cancel both (§8.3; review L5). | Reviewer ___ Date ___ Outcome ___ |
+| SG-36 | *New in rev 3 (owner direction, 2026-10-27; contacts and links spike CL-9).* Core signaling is unaware of calls, contacts and other app-level features: it names no use, registers no kind and uses neutral examples. The `link` basis, §5.3's contact-link configuration, AMD-SG-L1a and L1b, `mint_link`, the batch `links` member and the link limits, controls and revocation rows are withdrawn. The call-invite text leaves signaling for Bindle Messaging §5.5. CL-10 (`none` admitting) is not adopted (§5.3, §9.1, §13, §14, §20.3, §20.12). | Reviewer ___ Date ___ Outcome ___ |
+| SG-37 | *New in rev 3 (extensions rev 3.2, CR-X3-03).* The extension is declared as `{spec, options}`, with `endpoint` an audience endpoint option, prerequisites (directory, artefact-versions) in prose, and its built-in contracts in `contracts`. The slots become the `signaling/v1` and `ice-relay/v1` fragments, whose fields carry `selection` and `consumers`. A provider feature's identity is (issuer, extension spec URL), and `client.feature` and handler approvals use that spec URL. There is no `ref`, no occupant declaration, no slot and no AMD-X1 (§3.1 to §3.3, §4.2, §6.1, §15, §20.1.4). | Reviewer ___ Date ___ Outcome ___ |
+| SG-38 | *New in rev 3, superseded in rev 3.1 by SG-43.* Standing acceptance was reserved because, with the `link` basis gone and requests held, no basis delivered an unsolicited cross-entity invite. Rev 3.1 gives public services an admitting basis instead: the open offer. | Reviewer ___ Date ___ Outcome ___ |
+| SG-39 | *New in rev 3 (local clients spike LC-11, LC-12; CR-L10).* A pairing stays a per-edge signaling owner record (not a slot assignment or a preferences-assignable resource), under P1 to P4: each party holds its own grant and approval, which a pairing never creates; one consent per edge; explicit activation, never by approving a party; listed with both parties (§5.8, §14.1, §20.1.4). | Reviewer ___ Date ___ Outcome ___ |
+| SG-40 | *New in rev 3 (CR-L4 to CR-L9).* Headless clients MAY enroll as local clients (RFC 9278 thumbprint `client_id`, local manifest) and MAY use the loopback flow (M5). The device-authorization pairing confirmation is required for M4 and optional for M5. A local client's `client_id` is per installation for coverage. A local client declares session kinds without `route` (moot for signaling since rev 3.1, which has no handoff, SG-44). The standing mark is never offered to a local client with a web origin. Headless and local clients are listed with the owner's app connections (§5.8, §5.9, §14.1, §20.1.3, §20.11). | Reviewer ___ Date ___ Outcome ___ |
+| SG-41 | *New in rev 3 (contacts and links spike CR-K1, CR-K2, L5).* Leg certificates, messages and control statements use the core signed-object profile, which moves from links §3.1 to a core keys specification; until RTC code is removed it imports the core signed-object module, never organization code (§6.1, §20.4, Appendix C). | Reviewer ___ Date ___ Outcome ___ |
+| SG-42 | *Rev 3.1: withdrawn, not needed.* Signaling no longer depends on AMD-INT-R1 (SG-44). AMD-INT-R1, without its call-specific item 5, moves to the intents change requests; its text stays readable in the frozen revision 2.1 copy (§20.10). | Reviewer ___ Date ___ Outcome ___ |
+| SG-43 | *New in rev 3.1 (replaces standing acceptance, SG-17, SG-26, SG-38, and the reserved ticket idea); revised in rev 3.2 by SG-47 to SG-51, which take precedence where they differ (service-class narrowed, app-owned service offers, single-use bound offers, accept-only spending of open-offer uses, isolated open-offer windows and sub-budget).* The `offer` basis generalizes minimally: an offer MAY omit `principal` (an **open** offer, admitting any verified principal except the minting entity) and MAY admit `uses` 1 to a provider maximum (default 1). Every offer has an expiry and is revocable. Expiry is 10 to 900 s, except that a **service-class** endpoint (rev 3.2: a provider feature, or an app of a designated service entity, SG-50) MAY mint for up to 90 days; such endpoints project `offer_match` on every endpoint of the minting app or feature and so auto-accept holders of their own offers. A person entity's apps may mint open offers only within 900 s. Abuse bounds: a use is reserved atomically at admission, spent by the first claim and released on an unclaimed end; per-offer, per-(principal, offer) and per-(issuer, offer) windows plus the issuer and host-wide windows; open-offer invites never use the pending reserve; revocation ends pending sessions silently; a dead offer looks like an unknown one; tokens are never logged; all checks are local and run first at step 7 (§2, §4.1, §5.2, §5.5, §5.7, §8.6, §10.2, §10.3, §12.1, §13.1, §17, §20.1.4). | Reviewer ___ Date ___ Outcome ___ |
+| SG-44 | *New in rev 3.1.* Intents routing is cut from signaling: no routing handler, explicit default, sole-handler promotion, owner-hook chooser, `bsession` handoff or late delivery to a chosen app. Own-entity invites go to the initiating app or a named `target`. Signaling keeps only session kinds and per-app session handler approvals from intents, and no longer depends on AMD-INT-R1. The owner hook goes with it (§5.4, §5.6, §11.3, §11.4, §19.1, §20.1.3, §20.1.5 to §20.1.7). | Reviewer ___ Date ___ Outcome ___ |
+| SG-45 | *New in rev 3.1.* `none` (requests) is reserved as a possible future basis. The requests setting, held entries, "Allow later", `basis: "request"` and the owner-visible held list are removed; a cross-entity invite without an offer or pairing admits nothing and is limited as unbased (§5.2, §13.3, §15). | Reviewer ___ Date ___ Outcome ___ |
+| SG-46 | *New in rev 3.1.* Pairing addressing: at most one cross-entity pairing per (peer principal, kind line) on an entity, enforced at creation; apps learn the pairings that cover them through `endpoints({endpoint})` and `pairing` events, and nothing else; the M4 confirmation is reachable from the `peer` (interactive) side for every `opens`; provider features are never pairing parties. P3 readings: activation at creation when every party already qualifies, and single-submit activation on an M5 enrolment page. P4 for cross-entity pairings: listed with the local app and in a by-peer list. The M4 confirmation code includes the provider-chosen `user_code` (§5.8, §5.9, §10.2, §10.3, §14.1). | Reviewer ___ Date ___ Outcome ___ |
+| SG-47 | *New in rev 3.2 (review of rev 3.1, H1, L-8, L5).* A service-class offer belongs to the minting app or feature, not the minting endpoint: its dial-backs route to every eligible and online endpoint of that app or feature (online: a `listen` outstanding or within the liveness window, reference 60 s), at most 16, and the first claim wins atomically. Other offers keep minting-endpoint routing. An offer ends only on `revoke_offer` or owner revocation, expiry, the end of the minting app's or feature's authority for the kind, removal of a service designation (offers over 900 s), a move or deletion; never on unregistering or expiry of an endpoint, which §14.2 now lists as acting like `unregister`. A move kills published offers (§5.4, §5.7, §10.2, §10.3, §14.2, §14.3). | Reviewer ___ Date ___ Outcome ___ |
+| SG-48 | *New in rev 3.2 (H2, M1).* Open-offer invites are charged only to their own windows (per offer, per (principal, offer), a per-issuer fair share of max(W / (n + 1), F)) and the host-wide initiator window, never to windows that unbased traffic fills. Reference values are examples and provider policy, scaled for services (60/h, 6/h, F 6/h; service-class 3,600/h, 12/h, F 60/h). The operational responses are named. An open-offer sub-budget caps pending and connected sessions admitted on open offers (reference: half of each), and no use is taken when the routing set is empty (§5.2, §5.4, §9.2, §13.1, B.1). | Reviewer ___ Date ___ Outcome ___ |
+| SG-49 | *New in rev 3.2 (M2, M4, L1).* Bound offers are single-use again and spent at admission (`uses` absent or 1), so a holder cannot re-dial to poll availability. An open offer's use is reserved at admission, spent only by an `accept`, and released by a decline or an unclaimed end. A service-class endpoint MAY decline automatically under its declared policy. A claim and the offer's end are decided atomically at the first-claim authority (§5.2, §5.5, §5.7, §8.2, §10.2, §12.1). | Reviewer ___ Date ___ Outcome ___ |
+| SG-50 | *New in rev 3.2 (M3, L3).* Service-class means provider features and the apps of organization entities whose owner designated them service entities, an explicit owner setting with its own disclosure. Person apps, undesignated organizations' apps (including on members' devices) and member-context endpoints are not service-class. A person entity gets standing reachability only through a provider feature it explicitly enables. Service-class bound offers are capped at 7 days (reference), and the approval and designation pages disclose them (§2, §4.1, §4.3, §5.7, §12.6, §14.1, §14.2, §20.1.4, Q10). | Reviewer ___ Date ___ Outcome ___ |
+| SG-51 | *New in rev 3.2 (M5, L2, L4, L-6, L-7, Appendix C.2 residual).* Recorded residual: one holder of a person app's open offer can exhaust it with throwaway principals and watch availability while it lives, bounded by 900 s and its small `uses`. Accepted: a person's app re-minting single-use bound offers equals a short pairing without the owner page, bounded by 900 s per offer and unenforceable to forbid. The holder's provider keeps an offer token only in its outbox, never logged, deleted with the invite payload. `pairings` are returned by `endpoints({endpoint})` everywhere. Glare covers pairing invites and same-app own-entity `target` invites only. The Appendix C.2 flag plan no longer ties signaling to intent-links (§5.7, §5.8, §5.9, §8.3, §10.3, §12.4, §17, Appendix C.2). | Reviewer ___ Date ___ Outcome ___ |
 
 ### 19.3 Answers to the rev 0 owner questions (provisional, unsigned)
 
 The owner said provisional decisions may be adopted for now without sign-off. These answers are adopted on that basis. Each still needs sign-off.
 
-1. **Intents routing (SG-2, SG-3).** Adopt A provisionally, with M4 (sole-handler promotion, §20.1.5) and M6 (the authority record, made explicit in intents §1, §5 and §9.5, §20.1.10). B stays the documented fallback. Later owner direction narrows this: A is the leading candidate for mode (a) only, pending the spike (§5.6).
-2. **Provider presentation (SG-4).** Never interrupt by default. "Unanswered" items are dropped. Held and no-handler cases are kept. Later owner direction goes further: all presentation moves to the app layer, so held and no-handler invites survive only as entries in the minimal owner hook (§11.3), not as activity items, and the provider never interrupts at all.
-3. **Contact links (SG-5).** `mint_link` and callbacks are unavailable until the links re-scope (rev 2: callbacks are withdrawn instead, replaced by offers, §5.7). There is no interim ticket type. Owner-side configuration on existing parents ships now, with the H3 audience fix (§5.3, §20.3).
+1. **Intents routing (SG-2, SG-3).** Adopt A provisionally, with M6 (the authority record, made explicit in intents §1, §5 and §9.5, §20.1.10). Rev 3.1 keeps only kinds and approvals from intents and cuts routing (SG-44).
+2. **Provider presentation (SG-4).** The provider never interrupts and, since rev 3.1, presents nothing about invites at all (§3.6).
+3. **Contact links (SG-5).** Superseded in rev 3: the `link` basis and every contact-link mechanism are withdrawn (§5.3, SG-36).
 4. **`data` profile (SG-1, SG-7).** Acceptable with the rev 1 changes: 4 KiB per message, 64 KiB per leg, a required aggregate per-entity budget, `data` only in the `data` profile, payload hashes only in replay state, and a production gate (§3.5, §13.1).
-5. **Media bound (SG-11).** Dropped. Only the structural `m=` type check remains (§16.2, §16.4).
+5. **Content bound (SG-11).** Dropped. Only the structural `m=` type check remains (§16.2, §16.4).
 6. **RTC-17 / SG-12.** Disclose the app origin, labelled "reported by" for a foreign initiator.
 7. **AMD-RI1 (SG-8).** The uniform `404` for an unknown identity.
-8. **Provider to provider (§4.3).** A hosted service entity is enough, given standing acceptance (H1).
+8. **Provider to provider (§4.3).** A hosted service entity acting through an app or a provider feature. Revisions 1 to 2.1 relied on standing acceptance for an endpoint that answers any initiator; rev 3.1 uses the service's own open offers instead (SG-43, §5.7).
 
 ### 19.4 Answers to the establishment spike (provisional, unsigned)
 
-The [establishment-modes spike](../architecture/signaling-modes-spike.md) (2026-10-27) answered the rev 1 spike questions. Its decisions SMS-1 to SMS-8 are provisional and unsigned, and are adopted here on the owner's permission to adopt provisional decisions without sign-off.
+The [establishment-modes spike](../architecture/signaling-modes-spike.md) (2026-10-27) answered the rev 1 spike questions. Its decisions SMS-1 to SMS-8 are provisional and unsigned, and are adopted here, as narrowed by rev 3, on the owner's permission to adopt provisional decisions without sign-off.
 
-- **S1. Do intents fit every invite-style case?** No, and they are not needed for it. An incoming request already lands in a specific app (for a call, the messaging app that received the call-invite message), it is time-critical, and no person is on a provider page. Invite-style establishment is the `offer` basis, a reverse dial (§5.7, SG-24). Intents stay for handoffs a person starts, such as "call this contact" from a contact card (SG-29).
-- **S2. The shape of always-on establishment.** The pairing record (§5.8, SG-25): its own authorization record, with acceptance scoped to the paired app or peer; own-entity discovery through `endpoints({pairing})`, with no inventory leak across entities; routing that bypasses intents and names the paired app; reconnection by replacement sessions under the 24 h cap, at most two live per endpoint pair, in its own window; and a Pairings owner control, with Devices for enrolled clients (§14.1).
+- **S1. Do intents fit every invite-style case?** No, and they are not needed for it. An incoming request already lands in a specific app (the app whose message carried it), it is time-critical, and no person is on a provider page. Invite-style establishment is the `offer` basis, a reverse dial (§5.7, SG-24). Intents stay for handoffs a person starts (SG-29).
+- **S2. The shape of always-on establishment.** The pairing record (§5.8, SG-25, SG-39): its own authorization record, with acceptance scoped to the paired app or peer; own-entity discovery through `endpoints({pairing})`, with no inventory leak across entities; routing that bypasses intents and names the paired app; reconnection by replacement sessions under the 24 h cap, at most two live per endpoint pair, in its own window; and pairing controls listed with both parties (§14.1).
 - **I3. A vendor's native and web clients under different `client_id`s.** Solved for signaling by explicit own-entity pairing (CR-11). Grouping by verified registrable domain stays unneeded for signaling; it remains in intents only for exclusions.
-- **Links re-scope timing.** No longer blocks anything signaling needs for invite-style use, because offers replace callbacks. AMD-SG-L1b (minting, minted parents and delivery-off) still waits for the links §6 re-scope.
+- **Links re-scope timing.** Moot: rev 3 withdraws every link mechanism from signaling.
 
 ### 19.5 Open questions
 
 **Owner questions from the spike** (with the coordinator's provisional recommendation, adopted for now and unsigned):
-1. **Reverse dial for calls (SG-24).** Is it acceptable that the callee's app initiates the signaling session, so that the caller's app answers automatically for its own outstanding call? Recommended: yes.
-2. **Pairing replaces open standing acceptance for app endpoints (SG-26).** Keep the open form only for provider features and service entities? Recommended: yes.
-3. **Standing device grant (SG-28, AMD-SG-D1).** Should a device grant that the owner marks as a standing device survive the approving browser's sign-out, revoked explicitly from Devices (or by credential removal, recovery, suspension or deletion)? Recommended: yes.
-4. **Group size.** Is a mesh of up to 16 offers per invitation enough for Parlay v1, with larger groups waiting for a conferencing service? Recommended: yes.
-5. **Choice history default (SG-29).** "Use my history to suggest apps" on by default, and owner-deletable? Recommended: on.
-6. **Opening from a ring.** May a ring open the app's call screen directly after account resolution (an `open.path` on the notice), rather than a fixed provider destination plus one "Open in Parlay" tap? Recommended: yes, direct. This belongs to the notice-contract proposal, not to signaling (§20.12).
-7. **App-own push.** May Parlay ring through its own push when installed as a PWA? Recommended: no; all rings go through the provider's notice contract. Also outside signaling (§20.12).
+1. **Reverse dial (SG-24).** Is it acceptable that the invited party's app initiates the signaling session, so that the asking app answers automatically for its own outstanding offer? Recommended: yes.
+2. **Pairing replaces open standing acceptance for app endpoints (SG-26).** Recommended: yes. Rev 3.1 replaces standing acceptance for services with open offers (SG-43, question 10).
+3. **Standing device grant (SG-28, AMD-SG-D1).** Should a device grant that the owner marks as standing survive the approving browser's sign-out, revoked explicitly (or by credential removal, recovery, suspension or deletion)? Recommended: yes.
+4. **Group size.** Is a mesh of up to 16 offers per `offer` call enough, with larger groups using a group service reached through its open offer (§8.6)? Recommended: yes.
+5. **Choice history default.** No longer a signaling question: it moved with AMD-INT-R1 to the intents change requests (SG-42).
+6. and 7. **Opening a presentation directly, and app-own push.** Not signaling questions. They belong to the notice-contract and Bindle Messaging proposals, which own them (SG-30).
 
 **Owner questions from the rev 2 review** (provisional recommendation, adopted for now and unsigned):
-8. **Pairing for calls (SG-34).** Leave `pairing` out of the call kind's `bases` in v1, so that no cross-person call is answered automatically? Recommended: yes. Same-owner pairing for non-call kinds (for example agent remote control) stays.
+8. **`pairing` in one app's kind (SG-34).** Moot in rev 3: kinds are app-defined, and which bases a kind allows is its publisher's choice (`session.bases`, §3.4). Signaling neither recommends nor forbids a basis for any use.
 9. **Cross-entity pairing expiry (SG-34).** Always expire, default 90 days, at most 1 year, renewable? Recommended: yes.
+
+**New in rev 3 and 3.1** (provisional recommendation, adopted for now and unsigned):
+10. **Open offers instead of standing acceptance (SG-43; replaces the rev 3 question on reserving standing acceptance).** Your direction asks for "app to app, user to user, provider to provider … flexible enough for all use cases". Reserving standing acceptance (rev 3) left public services (bots, support lines, rendezvous and dial-in group services, provider-to-provider service entities) with no way to be reached. Rev 3.1 lets an offer omit its principal and admit several uses, so a service publishes an expiring, revocable, use-counted capability and answers its holders automatically. Is the shape right? Recommended: yes, with these bounds (revised in rev 3.2): up to 90 days (open) or 7 days (bound, single-use) only for service-class endpoints, which are provider features and the apps of organization entities that their owner explicitly designated as service entities (not other organizations' apps, which may run on members' devices); 900 s for every other app. A person entity never gets a standing public address through its own apps (CL-10). It gets standing reachability only through a provider feature it explicitly enables, whose policy is disclosed then (§4.2), or by designating a separate service entity, with that page's disclosure (§4.3). A service-class offer belongs to its app, routes to the app's online instances and survives instance churn. The windows are per offer and per principal, with a per-issuer fair share that unbased traffic cannot fill, plus an open-offer sub-budget. A dead offer is indistinguishable from an unknown one. Alternatives: keep open offers short-lived for everyone (services re-mint and re-publish often), or forbid open offers on person entities entirely (loses codes shown in person and group invitations an app cannot list by principal).
+11. **Local-clients extension identifier.** The proposed local-clients feature (`local-clients.v1` in the local clients spike) is cited here by mechanism only. Recommended: publish it as a Bindle-owned extension spec URL under extensions §2.8 when local-clients.md is drafted.
+12. **`none` reserved (SG-45).** Is it acceptable that a verified identity with no offer and no pairing can never reach an entity through signaling? Recommended: yes. A service that wants to be asked publishes a long-lived open offer from a provider feature or a designated service entity (§4.3). A person's app takes requests over its own channel and answers with a bound offer, or shows a short open offer (at most 900 s) where it means anyone present to connect.
 
 **Still open:**
 - **Residuals to accept or close.** The drain-rate residual for dark batches (§9.2), the unenforceable `context` address rule (§7.2, §12.3), and the peer-provider residual of cross-entity pairings: against a non-conforming peer provider, only the recipient's record is enforced (§5.8).
-- **Messaging alignment.** docs/spec/messaging.md's proposed call-invite §5.5 (spike §4) must align with §20.12 (no `profiles.webrtc.media`, no `params.media`, bases `["offer", "link"]`, invitation lifetime within the offer's margin). That file is not edited by this revision.
-- **Links re-scope timing** for AMD-SG-L1b, outside this spec.
+- **The core keys specification** (contacts and links spike Q2, recommended a new `keys.md`), to which §6.1 and AMD-SG-K1 repoint.
 
 ## 20. Proposed amendments (unsigned)
 
@@ -1394,17 +1386,17 @@ None of the amendments below is applied to its target document. Each needs proto
 
 **Target:** [intents](intents.md) §1, §4.1, §4.4, §5, §6, §7, §7.3, §8, §9.5, §12 and §14. **Status:** proposed, unsigned. **Not applied to intents.md.**
 
-**What it adds.** This amendment adds an **authority record** to intents: the session handler approval (§20.1.4). Intents today grants nothing (intents §1, §5, §9.5). §20.1.10 amends those sections explicitly. In revision 2, the approval authorizes a kind for every basis, but the routing handler chooses the receiving app only for `link`-basis invites and the own-entity fallback (signaling §5.4, §5.6).
+**What it adds.** This amendment adds an **authority record** to intents: the session handler approval (§20.1.4). Intents today grants nothing (intents §1, §5, §9.5). §20.1.10 amends those sections explicitly. The approval authorizes a kind for every basis. Intents chooses nothing for signaling: the basis fixes the receiving app (signaling §5.4, §5.6).
 
 #### 20.1.1 The `session` member
 
 An intent kind body MAY carry `session`, exactly `{"v": 1, "parties": "self"|"other"|"any", "profiles": {<profile id>: <profile parameters>}}`, plus the optional member `bases`:
 - `profiles` names one to four profiles registered by [signaling](signaling.md) §3.5. Each value is validated by that profile. Both registered profiles take `{}`.
-- `bases`, when present, is a nonempty, unique array whose members are drawn from `self`, `pairing`, `offer`, `link` and `none` ([signaling](signaling.md) §3.4, §5.6). When it is absent, every basis is allowed.
+- `bases`, when present, is a nonempty, unique array whose members are drawn from `self`, `pairing` and `offer` ([signaling](signaling.md) §3.4, §5.6). When it is absent, every basis is allowed.
 
 A body with `session` (a **session kind**) MUST also have:
 - `effect: "join"`;
-- `capability: false`, and no field with `format: contact-link`;
+- `capability: false`, and no field with a capability format (`capability`, or the legacy `contact-link`);
 - `max_bytes` present and at most 2,048;
 - at most 8 data properties.
 
@@ -1412,28 +1404,30 @@ A body with `session` (a **session kind**) MUST also have:
 
 #### 20.1.2 Not a link intent
 
-A handling provider refuses a session kind received in a `bintent` at its `intent-links.v1` endpoint (§6), if it has one, with `intent_kind_invalid`, after kind resolution and without handoff. Session kinds reach handlers only through §20.1.6 and §20.1.7. This keeps links from becoming a way to push invites.
+A handling provider refuses a session kind received in a `bintent` at its intent-links endpoint (§6), if it has one, with `intent_kind_invalid`, after kind resolution and without handoff. Session kinds reach handlers only through §20.1.6. This keeps links from becoming a way to push invites.
 
 #### 20.1.3 Handler declarations
 
-These are unchanged. An app declares a session kind in its manifest `intents` member with `kind`, `version`, `digest` and `route`. `route` is the handoff target of §20.1.7. A provider feature declares session kinds as a built-in handler (§5 "Built-in handlers").
+An app declares a session kind in its manifest `intents` member with `kind`, `version` and `digest`. `route` is optional and unused for session kinds, because signaling has no handoff (signaling §11.4). A provider feature declares session kinds as a built-in handler (§5 "Built-in handlers"), identified by its extension's spec URL. A local client declares session kinds in its local manifest ([local clients spike](../architecture/local-clients-spike.md) §2.3 rule 3).
 
 #### 20.1.4 Session handler approval
 
 An entity's **session handler approval** is an owner record with these members:
-- the handler (`client_id`, or the provider feature `ref`);
+- the handler (`client_id`, or for a provider feature the spec URL of its extension);
 - the kind line, with the `{version, digest}` shown;
 - the approval time;
-- `auto_connect` (boolean, default `false`; allowed only when `parties` is `self`);
-- `standing_accept` (boolean, default `false`; allowed only when `parties` is `other` or `any`, and only when the handler is a provider feature or the entity is a hosted service entity). It lets the handler accept admitted cross-entity invites of that kind without a user action at the device ([signaling](signaling.md) §5.5). An app of a person's entity that should answer a known peer automatically uses a pairing ([signaling](signaling.md) §5.8) instead.
+- `auto_connect` (boolean, default `false`; allowed only when `parties` is `self`).
+
+Revisions 1 to 2.1 also defined `standing_accept`. Revision 3.1 replaces it with service-class open offers ([signaling](signaling.md) §5.7), so it does not exist.
 
 **What it authorizes.** It lets that handler register endpoints for, open sessions of, receive invites of, and accept sessions of, that kind under [signaling](signaling.md). It is the only authority for a kind. A manifest declaration confers none (§5).
 
 **How it is recorded.** Only by an owner action on a provider page that:
 - meets the §7.1 disclosure obligations;
 - also shows `parties`, the profiles, and that the handler will see the verified identity, reported app origin and context of every invite routed to it;
-- for `standing_accept`, says before the control is armed that an automatic answer makes the entity's availability visible to any initiator admitted for that kind, and names the configured links that can admit them (signaling §5.5). For a provider feature, it also shows the feature's declared answering policy;
-- names every pending pairing that this approval would activate (signaling §5.8), with its label, both apps or the peer, the kind and `opens`, before the control is armed;
+- for a provider feature, shows the feature's declared answering policy (signaling §4.2);
+- for a service-class handler (signaling §2: a provider feature, or an app of a designated service entity), says that it may hand out open offers lasting up to 90 days and single-use bound offers lasting up to 7 days, that anyone who holds an open one can connect to it automatically on any of its online endpoints, that holders can tell when it is running, and that it may decline automatically (signaling §4.3, §5.7);
+- never activates a pairing. It MAY list the pending pairings that this approval would make activatable (signaling §5.8), with their labels, both apps or the peer, the kind and `opens`, each with a link to its own activation control;
 - preselects nothing;
 - is same-origin and CSRF-protected, with `frame-ancestors 'none'` and controls armed after a delay.
 
@@ -1443,52 +1437,39 @@ An entity's **session handler approval** is an owner record with these members:
 - for a hosted service entity (signaling §4.3), whoever operates that entity's owner interface under the same rule. The operator gets no provider-wide shortcut.
 
 **Where a provider MAY offer it:**
-- at authorization of the signaling slot, for the session kinds in the app's pinned manifest;
-- from the chooser (§20.1.5, AMD-INT-R1);
-- from the device-authorization approval page, for the kinds the enrolling client declares ([signaling](signaling.md) §5.9);
+- at authorization of the signaling fragment, for the session kinds in the app's pinned manifest;
+- from the enrolment approval page, for the kinds the enrolling client declares ([signaling](signaling.md) §5.9);
 - from the `approval_required` answer of signaling `open` and `register`. That answer carries the URL of a provider page on the provider's own origin, never a URL that the app supplies.
 
 **Lifecycle:**
-- **Widening.** A later kind version that adds disclosure needs re-approval, as §7.2. Turning on `auto_connect` or `standing_accept` is widening, and needs the same page.
+- **Widening.** A later kind version that adds disclosure needs re-approval, as §7.2. Turning on `auto_connect` is widening, and needs the same page.
 - **Removal** is immediate narrowing.
 - **Clearing.** An approval is cleared when the handler's connection ends, including app removal, or when an adopted manifest snapshot stops declaring the kind. A failed refetch clears nothing.
 - **Signaling effects.** Removal, clearing and a connection ending each trigger signaling §14.2 narrowing, which also revokes the app's offers and deletes its pairings for the kind.
 - **Exclusions** (§7.4) apply. An excluded handler cannot be approved for that kind until the exclusion is removed.
-- **Privacy.** Approvals and defaults are owner data. They are listed, removable, exported with the account (the `intent-choices` export) and deleted with it, and are never observable by initiators or other apps.
+- **Privacy.** Approvals are owner data. They are listed, removable, exported with the account (the `intent-choices` export) and deleted with it, and are never observable by initiators or other apps.
 
-#### 20.1.5 Routing handler
+#### 20.1.5 Withdrawn in revision 3.1: routing handler
 
-The owner MAY set one approved handler as the **default** for a kind line. The **routing handler** is that default, else the sole approved handler when there is exactly one, else none. It receives only `link`-basis invites, and own-entity invites whose initiating app is not an approved handler ([signaling](signaling.md) §5.4 cases 2 and 3). `offer` and `pairing` invites never use it. A newly approved handler never replaces an existing default (§7.3).
-
-**Promotion of the sole handler.** When the owner approves a second handler for a kind line that has no explicit default, the provider records the existing sole handler as the explicit default in the same transaction. The approval page says so, and offers to make the new handler the default instead. Routing never changes silently because a second app was approved.
-
-With no routing handler, the provider offers a chooser among the approved handlers, and the connected handlers that declare the kind, from the owner hook of [signaling](signaling.md) §11.3, with the short list of AMD-INT-R1 (§20.10). The chooser is never shown when an invite arrives, only when the owner acts on a hook entry. A chooser opened from an incoming invite MUST say that it was triggered by an incoming request from another party, whose kind and context the provider has not verified (signaling §11.4). Choosing records an approval (§20.1.4), and optionally a default.
+The routing handler, its explicit default, sole-handler promotion and the chooser offered from the owner hook are withdrawn with intents routing (signaling SG-44). Their earlier text is in the [frozen revision 2.1 copy](superseded/signaling-rev2.1.md#2015-routing-handler).
 
 #### 20.1.6 Addressed delivery (amends §6)
 
 §6 says "The provider MUST NOT act on an intent itself, MUST NOT call a handler server-to-server, and MUST NOT send the intent anywhere except the route of the handler the viewer chose." Add:
 
-> For a session kind, the provider delivers an admitted invite only to the signaling endpoints of the routing set that [signaling](signaling.md) §5.4 defines: the app that minted the offer, the paired app, the owner's routing handler, or for own-entity sessions the initiator's own approved app or target. It delivers by the handler's own `listen` calls and payload-free doorbells, never by calling the handler's servers with session content, and never to another app.
+> For a session kind, the provider delivers an admitted invite only to the signaling endpoints of the routing set that [signaling](signaling.md) §5.4 defines: the app that minted the offer, the paired app, or for own-entity sessions the initiator's own app or its target. It delivers by the handler's own `listen` calls and payload-free doorbells, never by calling the handler's servers with session content, and never to another app.
 
-#### 20.1.7 Session handoff (amends §8)
+#### 20.1.7 Withdrawn in revision 3.1: session handoff
 
-A provider MAY hand off a session-kind intent that it constructed itself from a pending invite, at the owner's action in its own interface. The navigation is top-level, with `Referrer-Policy: no-referrer`, to:
-
-`<route>#bintent=<value>&bintent_iss=<issuer>&bsession=<sid>`
-
-- `<value>` is the unsigned intent `{bintent: 1, kind, data}`, where `data` is the invite context projected to the handler's approved version.
-- The route is the handoff target's (signaling §5.4).
-- `bsession` is an untrusted hint.
-- The handler applies every §8 rule. It claims the invite through signaling only after a confirmation in its own interface, except under auto-connect or standing acceptance.
-- Direct handoff without a page is allowed only under §7.3's conditions. A click on the provider's own owner-hook control is a same-origin user activation.
+The `bsession` handoff from the owner hook is withdrawn (signaling §11.4, SG-44). Its earlier text is in the [frozen revision 2.1 copy](superseded/signaling-rev2.1.md#2017-session-handoff-amends-8).
 
 #### 20.1.8 Feature and amendment rows
 
-A provider that offers the signaling slot processes session kinds as above. That is local behaviour, and it is not tied to declaring `intent-links.v1` (signaling §3.1). Add a §14 row: "AMD-SG-I1, session kinds (with optional `bases`), session handler approvals (an authority record) and addressed delivery, proposed by signaling §20.1." The chooser short list is a separate row, AMD-INT-R1 (§20.10).
+A provider that supplies the built-in signaling resource processes session kinds as above. That is local behaviour, and it is not tied to declaring the intent-links extension (signaling §3.1). Add a §14 row: "AMD-SG-I1, session kinds (with optional `bases`), session handler approvals (an authority record) and addressed delivery, proposed by signaling §20.1."
 
 #### 20.1.9 Worked example (not registered)
 
-The line `https://spec.bindle.example/intents/device-sync/v1` has:
+The line `https://sync.example/kinds/device-sync/v1`, published by a hypothetical sync app, has:
 - `effect: "join"`, `capability: false`, `max_bytes: 64`;
 - `data` `{"properties": {}, "required": []}`;
 - `disclosure` `{"categories": ["personal-data"], "fields": {}}`;
@@ -1500,55 +1481,27 @@ An app approved for it with `auto_connect` syncs its own devices without prompti
 
 - **§1 Model.** After "An intent grants nothing.", add: "The one authority record this document defines is the **session handler approval** (AMD-SG-I1): an owner record, not an intent, that authorizes a handler to use [signaling](signaling.md) for one session kind. It is recorded only by an owner action, and never by an intent, link or declaration."
 - **§5 Handler declarations.** In the first rule, after "`intents` grants nothing", add: "and never creates a session handler approval". In "Change handling", after "Removing a kind clears the viewer's default for that handler and kind", add: "and clears that handler's session handler approval for the kind, which narrows signaling at once (signaling §14.2)". The statement that a declaration "confers no authority" stays true.
-- **§9.5 Malicious handlers and minters.** Add: "A session handler approval is authority. An approved handler receives the verified identity, reported app origin and context of every invite routed to it. With `standing_accept`, it answers cross-entity sessions without the owner, revealing availability to admitted initiators. So an approval is recorded only by an owner action with the §20.1.4 disclosures, is removable at any time, is cleared with the connection, and is checked live on every widening signaling operation. For an organization or a hosted service entity, only a person authorized through its owner interface approves (organizations §6.3)."
+- **§9.5 Malicious handlers and minters.** Add: "A session handler approval is authority. An approved handler receives the verified identity, reported app origin and context of every invite routed to it. So an approval is recorded only by an owner action with the §20.1.4 disclosures, is removable at any time, is cleared with the connection, and is checked live on every widening signaling operation. For an organization or a hosted service entity, only a person authorized through its owner interface approves (organizations §6.3)."
 
-#### 20.1.11 Chooser short-list (moved to AMD-INT-R1)
+#### 20.1.11 Chooser short-list (moved out)
 
-Revision 1 wrote the chooser short-list here, as an intents requirement amending intents §7.3. Revision 2 keeps it an intents requirement, not a signaling rule, and restates it, with the spike's ranking obligations, the single-candidate confirmation, the choice history and the scope rule, as **AMD-INT-R1** (§20.10).
+Moved to AMD-INT-R1 in revision 2, and out of signaling in revision 3.1 (§20.10).
 
 ### 20.2 AMD-SG-A1: provider-feature source items (activity) — withdrawn in revision 1
 
-Revision 0 proposed provider-source activity items for invites. Revision 1 withdraws it, following the owner's direction that presentation belongs to apps (§11.3). Signaling creates no activity items, so activity's signed admission evidence requirement does not arise for it.
+Revision 0 proposed provider-source activity items for invites. Revision 1 withdraws it, following the owner's direction that presentation belongs to apps. Signaling creates no activity items. The precondition revision 1 set for any later activity mirror is in the [frozen revision 2.1 copy](superseded/signaling-rev2.1.md#202-amd-sg-a1-provider-feature-source-items-activity--withdrawn-in-revision-1); since revision 3.1 there is nothing left to mirror.
 
-**Precondition for any later mirror.** A provider that later wants to mirror owner-hook entries into activity MUST first get an activity amendment that defines both of these:
-- **A provider-feature source**, `{provider: <issuer>, feature: <ref>}`, that no app can request. The subject app (the handoff target, or `null`) is a filter facet, never the item's author.
-- **A system evidence profile.** It is purpose-separated signed admission evidence with its own `typ`, anchored to the admitting issuer's authenticated key discovery. It binds the profile and version, the admitting issuer, the destination account, the item id and revision, the source (provider and feature `ref`) and the feature declaration digest, the subject app or `null`, the operation id, kind and times, the exact content digest and media type, the system tags and the expiry. Items without valid evidence are never promoted to verified activity.
+### 20.3 AMD-SG-L1: withdrawn in revision 3
 
-Such mirrored items would also never interrupt by default, and would fold foreign initiators per issuer (§11.3).
+AMD-SG-L1a (owner-side signaling configuration on contact parents) and AMD-SG-L1b (`mint_link`, minted parents and delivery-off) are withdrawn with the `link` basis (§5.3; contacts and links spike CL-9, CR-S3). Nothing is proposed to links.md by this document.
 
-### 20.3 AMD-SG-L1: signaling configuration on contact parents (links), split
+### 20.4 AMD-SG-K1: signature domains (core keys specification)
 
-**Target:** [links](links.md) §6, §6.2, §6.3 and §7. **Status:** proposed, unsigned. Revision 1 splits it into L1a, which is needed now, and L1b, which is deferred.
+This replaces AMD-R1. Certification keys gain the uses `bindle-signaling-leg+jwt` and `bindle-signaling-control+jwt`. Add rows for both, and for `bindle-signaling-message+jwt` (leg keys), separated by `typ`, to the signature-domain table. That table moves with the signed-object profile to a core keys specification (contacts and links spike CR-K1). Until it exists, the rows target organizations §3a.3 and links §7.2.
 
-#### 20.3.1 AMD-SG-L1a (now): owner-side configuration on existing contact parents
+### 20.5 AMD-SG-P1: extension descriptor
 
-- **Signaling configuration.** An existing contact parent gains owner-side `signaling` configuration (signaling §5.3) beside intake configuration (§6.2). It is stored on the parent, compare-and-swap by `revision`, never signed, and never disclosed in any representation. When its `kinds` becomes empty, it is removed. It replaces the RTC per-parent configuration (`rtc/contact/`).
-- **Unconditional parents only.** It MUST NOT be set on a parent whose meta has `audience` (§7). An update that tries to is refused. Signaling §5.3 gives the reasons.
-- **Representations unchanged.** The §6.3 sender metadata representation keeps its exact member set. Its `kinds` are the signed message kinds, and it never reports session kinds, `uses`, `principal` or whether signaling is configured. The HTML composer, inspection, contact-profile representation and §6.4 previews are unchanged. A GET never admits, spends or creates anything.
-- **Messages unchanged.** The parent's message delivery, quotas, intake and §6.1 authorship rules are untouched.
-- **Owner disclosure.** Setting it tells the owner that any holder of the link can then request sessions of those kinds, and suggests `principal` for a link that is shared widely.
-- **Lifecycle.** Revoking or expiring the parent ends its signaling admission. Narrowing follows signaling §14.2 step 5. Export and deletion follow signaling §12.6 and §14.4.
-
-#### 20.3.2 AMD-SG-L1b (deferred until the links §6 re-scope): minting, minted parents and delivery-off
-
-**Unavailable** until the links §6 re-scope that the messaging extraction needs (scope audit, Task 1) lands and this part is signed off. A provider MUST NOT offer any of it before then. It is written here so that the re-scope can account for it.
-
-- **`mint_link`** (signaling contract): `{kinds, uses, expires_in, principal?}` → `{link}`. It mints a contact parent for the owner, with signaling configuration and message delivery off, and with `minted_by` naming the calling app or feature.
-  - It is a widening method: the handler approval for every named kind is checked live (signaling §10.1).
-  - A minted parent has `exp − iat` of at most 30 days.
-  - Minted parents count against a per-app live quota within the account's parent cap, and a per-app mint window.
-  - Results that carry a link are never retained in an RPC journal (signaling §10.2).
-- **Delivery switch.** A parent MAY have message delivery disabled, so that a parent minted only for signaling admits no message. Its §6.3 representation then needs to report that it accepts no message kinds. The re-scope must decide how, because the signed meta `kinds` is nonempty today.
-- **Narrowing.** As signaling §14.2 step 5: revoking minted parents touches only parents whose `minted_by` is the narrowed app. Owner-configured parents lose only the kind.
-- **Callbacks: withdrawn in revision 2.** Revision 1 defined callbacks here (`open {callback: true}`, a one-use, principal-bound contact parent minted for the initiator, and `callback_digest` in the invite). The `offer` basis (signaling §5.7) replaces them with the same binding (one principal, one use, short-lived) and no link, so the links re-scope no longer needs to account for them.
-
-### 20.4 AMD-SG-K1: signature domains (organizations §3a.3; links §7.2)
-
-This replaces AMD-R1. Certification keys gain the uses `bindle-signaling-leg+jwt` and `bindle-signaling-control+jwt`. Add rows for both, and for `bindle-signaling-message+jwt` (leg keys), separated by `typ`.
-
-### 20.5 AMD-SG-P1: feature table (protocol §2)
-
-This replaces AMD-R2. Add `signaling.v1` (§3.1), with no `intent-links.v1` dependency (§3.1, L5).
+This replaces AMD-R2. Extensions revision 3.2 (draft) already carries the signaling row of its §2.8 table, the descriptor in its §2.3 and the example in its §11.2. What remains is to publish that descriptor with this specification. No protocol feature-table row is added, and the extension has no intents or intent-links prerequisite (§3.1).
 
 ### 20.6 AMD-SG-E1: doorbell event (integrations §6.2)
 
@@ -1556,17 +1509,22 @@ This replaces AMD-R3. Register `signaling-doorbell/v1`, with payload exactly `{e
 
 ### 20.7 AMD-SG-N1: push for activity items (notifications) — withdrawn in revision 1
 
-Signaling creates no activity items (§11.3), so it needs nothing from notifications. Endpoint doorbells (§11.2) are signaling's own, and carry no content.
+Signaling creates no activity items (§3.6), so it needs nothing from notifications. Endpoint doorbells (§11.2) are signaling's own, and carry no content.
 
 ### 20.8 Withdrawn by this draft (proposed)
 
 | Amendment | Proposed withdrawal |
 | --- | --- |
-| AMD-X1 (extensions §13, applied provisionally to the text on 2026-10-26) | No longer needed: extensions §2.1 `bind`, the §2.2 rule, the §5.2 paragraph, the §11 tests and §13 would be removed. **Not edited by this draft.** |
-| AMD-R4 (`rtc-purpose` kind) and AMD-R5 (`rtc-ticket/v1` link type) | Replaced by AMD-SG-I1 and AMD-SG-L1a (L1b later). |
+| AMD-X1 (extensions revision 2 §13) | Withdrawn by extensions revision 3 (EXT3-16). The code paths are extensions change request CR-X3-20. |
+| AMD-R4 (`rtc-purpose` kind) and AMD-R5 (`rtc-ticket/v1` link type) | Replaced by AMD-SG-I1. AMD-R5 has no successor since revision 3 (§20.3). |
 | AMD-RW1 (cross-application visibility) | Does not arise under §5.4. |
 | AMD-SG-A1 and AMD-SG-N1 (proposed in revision 0) | Withdrawn in revision 1 (§20.2, §20.7). |
-| Callbacks and `callback_digest` (rev 1 §5.3, §7.2 and AMD-SG-L1b) | Withdrawn in revision 2, replaced by the `offer` basis (§5.7, §20.3.2). |
+| Callbacks and `callback_digest` (rev 1 §5.3, §7.2 and AMD-SG-L1b) | Withdrawn in revision 2, replaced by the `offer` basis (§5.7). |
+| AMD-SG-L1a and AMD-SG-L1b | Withdrawn in revision 3 with the `link` basis (§5.3, §20.3). |
+| AMD-INT-R1 item 5 (a candidate `start-call` intent kind) | Withdrawn in revision 3: core registers no kinds, and an app publishes its own (§20.10). |
+| AMD-INT-R1 items 1 to 4 | Moved out of signaling in revision 3.1, to the intents change requests: signaling no longer routes through intents (§20.10, SG-42, SG-44). |
+| AMD-SG-I1 routing handler, promotion and `bsession` handoff (§20.1.5, §20.1.7) | Withdrawn in revision 3.1 (SG-44). |
+| The rev 2.1 §20.12 references to app-level messages and presentation | Removed in revision 3. Bindle Messaging owns its call-invite message (messaging §5.5); the presentation hint is a separate notice-contract proposal (§20.12). |
 
 ### 20.9 Proposed security.md amendments (AMD-SG-S1, AMD-SG-S2)
 
@@ -1582,24 +1540,9 @@ Signaling creates no activity items (§11.3), so it needs nothing from notificat
 
 > **Hosted relay.** No `ice-relay/v1` credential is issued unless a per-owner byte cap is enforced from the relay provider's own usage data, attributing usage through the issued usernames and revoking credentials that overrun. Client-reported counts, declared sizes, reservations and admission estimates do not satisfy this gate. A TURN credential is a bearer token with no byte limit of its own.
 
-### 20.10 AMD-INT-R1: chooser ordering, short lists and scope (intents)
+### 20.10 AMD-INT-R1: moved out of signaling
 
-**Target:** [intents](intents.md) §2, §7.2, §7.3, a new §7.5, §11 and §14. **Status:** proposed by the [establishment-modes spike](../architecture/signaling-modes-spike.md) §2.4, unsigned. **Not applied to intents.md.** It replaces rev 1 §20.1.11. The spec states obligations only. Ranking weights, labels and tiers stay 3sln.me policy, as chooser layout already is (spike §2.2).
-
-1. **§7.3 Order and short lists.** "A provider MAY present a subset of candidates first, provided that every candidate is reachable with one further viewer action from the same page. Candidate order and any subset MUST be derived only from the viewer's own records and from facts the provider verified (choices, approvals, the provider's own observations of connection use, and verified hosts). They MUST NOT be derived from a manifest's claims about itself, from consideration paid by a handler, or from the provider's own review or endorsement of a handler. Nothing is preselected without a default." **Rev 2.1:** the provider's own review is removed as a ranking signal, and from the no-score fallback order, because a provider that also publishes handlers would otherwise rank its own apps first (self-preferencing). A provider MAY still show a review label beside a candidate, without moving it. With no positive score, the order is the most recent use, then `client_id` compared lexically. This changes the 3sln.me order "reviewed first, then recently used" ([intent-links design](../architecture/intent-links.md) §6.3), and the spike's "Reviewed by 3sln.me" weight (spike §2.2) is withdrawn. A reference layout is at most three ranked candidates, with one action to expand to every capable connected app and, by provider policy, one to browse a catalogue. Excluded handlers stay hidden (§7.4).
-2. **§7.3 Single candidate.** "With exactly one candidate, the provider MAY show a confirmation of that candidate instead of a chooser. It still meets §7.1." Its control is armed after a delay. A reviewed `view` kind with one candidate is still a page, never zero clicks.
-3. **§7.2 "Just once" and the choice history.** This changes the existing intents conformance item in intents §13 ("Consent": '"once" records nothing'), which would read '"once" records no default; a choice-history entry is recorded only under the rules below'. Replace "records nothing" with "records no default. A provider MAY keep a bounded choice history (kind line, handler, time) used only for ordering. It is owner data under §7.4's listing, removal, export and deletion rules, and it is never observable by handlers or minters." Further obligations:
-   - it records only the kind line, the handler and the time, never intent data, minters or link hosts;
-   - it is bounded (reference: at most 256 entries, 90 days);
-   - it is listed with the owner's links and apps, deletable entry by entry or all at once, exported with the account and deleted with it;
-   - a setting ("Use my history to suggest apps") turns it off. **The default is on** (provisional, unsigned, SG-29; owner question 5, §19.5);
-   - **disclosed at first use** (rev 2.1): the first chooser or confirmation that would record an entry says that the choice is remembered to order later suggestions, and offers the off switch on the same page, before anything is recorded;
-   - **scope for organizations and acting entities** (rev 2.1): history is kept per (person, acting entity). A member's choices made while acting for an organization entity are kept under that pair, are visible and deletable only by that person, are never shown to other members or through the organization's owner interface, never influence another member's ordering, are exported with the person's account, and are deleted when the person's membership ends. The organization's explicit defaults (§7.3) are unaffected and remain the only shared choice.
-4. **New §7.5 Scope of intents.** "Intents route a viewer-initiated handoff. A provider MUST NOT use the intent chooser to decide which application is told about an incoming event addressed to the viewer, such as an incoming invitation. Applications that receive such events already hold them. Signaling session kinds follow [signaling] §5.4 and its bases." A chooser opened later from the signaling owner hook (§11.4) is the owner's deliberate action, not routing of the event, and carries the "triggered by an incoming request" label.
-5. **§11 Registered kinds (candidate).** `https://spec.bindle.example/intents/start-call/v1`: `effect: "send"`, `capability: true`; data `contact` (`contact-link`, `origin`, optional) or `person` (principal, `value`, optional), and `media` (`audio`, `video` or `audio-video`, `value`); no `session` member, because it hands off to an app and is not itself a session kind. This is how "call this contact" reaches the owner's calling app, which then sends a call invite with offers (§20.12).
-6. **§14 row.** "AMD-INT-R1, ordering, short lists, choice history and scope, proposed by the signaling-modes spike."
-
-**Privacy (carried from the spike, §2.3).** The requesting party learns nothing: the handoff is a top-level navigation, and ranking runs only after the viewer is authenticated, on provider pages. Handlers learn only that they were chosen: no API, event or response reveals the candidate list, its order, the scores, other handlers, exclusions, or whether the receiving handler is the default. Device signals are the provider's own session records, never fingerprinting or client hints sent to apps.
+Revision 3.1 withdraws AMD-INT-R1 from this document: signaling no longer depends on it (SG-42, SG-44). Its items 1 to 4 (chooser order and short lists, the single-candidate confirmation, the choice history, and the scope rule that intents never route incoming events) are generic intents obligations, carried as an intents change request. Item 5 was withdrawn in revision 3. The text as proposed is in the [frozen revision 2.1 copy](superseded/signaling-rev2.1.md#2010-amd-int-r1-chooser-ordering-short-lists-and-scope-intents).
 
 ### 20.11 AMD-SG-D1: standing device grants (device authorization)
 
@@ -1608,29 +1551,19 @@ Signaling creates no activity items (§11.3), so it needs nothing from notificat
 **Problem.** Device authorization §7 item 4 revokes a client session when the approving login session is ended explicitly, including by sign-out. A headless client enrolled from a phone browser (§5.9) then ends silently when the owner signs out of that browser.
 
 **Proposal.**
-- **Marking.** On the approval page (§5.1), the owner MAY mark the grant as a **standing device grant**, with a separate, unchecked control, armed after a delay, that says the client keeps working after the owner signs out of this browser, until it is revoked from Devices. Nothing is preselected. **Providers MAY restrict which clients are offered the mark** (for example only clients whose metadata declares a headless or daemon use, or clients the provider has reviewed), and MUST NOT offer it on a page whose approval it would treat as alongside the device without code typing.
+- **Marking.** On the approval page (§5.1), the owner MAY mark the grant as a **standing device grant**, with a separate, unchecked control, armed after a delay, that says the client keeps working after the owner signs out of this browser, until it is revoked from the owner's list of app connections. Nothing is preselected. **Providers MAY restrict which clients are offered the mark** (for example only clients whose metadata declares a headless or daemon use, or clients the provider has reviewed). They MUST NOT offer it on a page whose approval it would treat as alongside the device without code typing, and MUST NOT offer it to a local client whose recorded origin is a web origin, whose page origin is shared by everything served there ([local clients spike](../architecture/local-clients-spike.md) §2.3 rule 16, LC-9).
 - **Lineage (rev 2.1).** A standing device grant's client session is exempt from **exactly three** lineage events of the approving login session: that session's own sign-out (the owner signing out of that one browser), its natural expiry, and its eviction by a session-count limit. Everything else in item 4 still revokes it, checked live on every refresh and resource request, failing closed: global sign-out ("sign out everywhere"), remote revocation of the approving session (for example from a list of signed-in sessions), a credential change or removal, recovery, account suspension or deletion, and explicit revocation of the grant. Global sign-out and remote revocation are deliberate "cut everything off" actions, often taken after a suspected compromise, so they must reach standing grants too. Item 6 chains apply unchanged to everything else.
-- **Revocation.** Devices (§8) lists standing device grants distinctly, and revokes them individually. Revoking one ends the client session, and through signaling §14.2 its endpoints, sessions and bound pairings.
-- **Signals in Devices (rev 2.1).** For each standing grant, Devices shows the time of its last refresh and whether its refreshes have come from a different network than at approval since then (a coarse signal derived from the provider's own request records, such as a changed network prefix or country; not a location), so that an owner can notice a grant used from somewhere unexpected.
-- **Pairing confirmation (rev 2.1, signaling §5.9 step 5).** A pairing created on the approval page goes live only after the owner compares a short code that the client displays, in the paired app, on a provider page.
+- **Revocation.** The provider's list of the owner's app connections (device authorization §8; for local clients, the grouping of the local clients spike §3.2) lists standing device grants distinctly, and revokes them individually. Revoking one ends the client session, and through signaling §14.2 its endpoints, sessions and bound pairings.
+- **Signals (rev 2.1).** For each standing grant, that list shows the time of its last refresh and whether its refreshes have come from a different network than at approval since then (a coarse signal derived from the provider's own request records, such as a changed network prefix or country; not a location), so that an owner can notice a grant used from somewhere unexpected.
+- **Pairing confirmation (signaling §5.9 step 5).** A pairing created on an M4 approval page goes live only after the owner compares a short code that the client displays, reached from the paired app, on a provider page. A pairing created on an M5 page needs no code (CR-L5).
 - **Lifetime.** The idle limit of §7 item 2 still applies. A provider MAY cap the absolute lifetime of standing grants, and states it in `refresh_expires_in`.
 - **Security considerations.** A phished approval marked standing survives the victim's sign-out, so §10.1's mitigations (fresh authentication, code typing by default, post-approval notification) are required for the mark. The post-approval notification names both the standing mark and any pairing created on the page (its label, the paired app and the kind), with a direct link to revoke each.
 
 Until AMD-SG-D1 is adopted, a provider SHOULD warn at approval that signing out of the approving browser ends the client (§5.9).
 
-### 20.12 Related proposals outside signaling (references only)
+### 20.12 Withdrawn in revision 3: references to app-level uses
 
-These are **not signaling text**, and nothing in them changes a signaling rule. Signaling stays free of calling semantics (SG-30). They are listed so that readers can find where the parts that use signaling live.
-
-- **The call-invite message (Bindle Messaging).** A call invitation is an ordinary message whose body has the media type `application/vnd.bindle.messaging.call-invite+json` (a placeholder identifier). It carries the call identifier, state, offered media, expiry, the caller principal (equal to the verified envelope author) and one signaling offer per invited principal. It belongs to the [Bindle Messaging](messaging.md) spec, owned by the Parlay app, as a proposed new §5.5. Its proposed text is in the [spike](../architecture/signaling-modes-spike.md) §4, and is not applied to messaging.md. It uses signaling only through `offer`, `revoke_offer` and `open` with an offer basis (§5.7).
-  - **Reconciliation with this revision (rev 2.1).** Revision 1 dropped the media bound (§16.2, SG-11): a kind's `session.profiles.webrtc` is exactly `{}`, and `webrtc` invite `params` are exactly `{offer}` (§16.3). The spike's text declares `profiles: {"webrtc": {"media": [...]}}` on the call kind and sends `params.media` at answer, which this revision would refuse as unknown members. So:
-    - **the audio and video choice lives in the app message body**, not in signaling: the call-invite's `media` member says what the caller offers, and the answering app's choice travels in its own app layer and its SDP (whose `m=` lines are only structurally checked, §16.4). No signaling member carries it, and no provider enforces it;
-    - **the call kind, valid under this revision,** is an intent kind with `effect: "join"`, `capability: false`, `max_bytes: 64`, data `{call}`, and `session` `{"v": 1, "parties": "any", "profiles": {"webrtc": {}}, "bases": ["offer", "link"]}`. `pairing` is left out of its bases in this version (SG-34, owner question 8, §19.5), so that no cross-person call is answered automatically. `link` stays for an owner who configures a contact link for calls; such invites are never auto-accepted by an app (§5.5);
-    - **the answering `open`** carries `params` `{offer}` (the SDP offer or `null`) and `context` `{call}`, never `params.media`;
-    - **the offer lifetime:** the caller's app mints with `expires_in` at least the invitation's remaining lifetime plus the skew margin (§5.7), so the invitation's `expiresAt` should be at most 900 s minus that margin after creation;
-    - **the caller's automatic claim** follows §5.5: only the minting endpoint, and only after its digest-keyed outstanding-offer check. The spike's "`context.call` names a call it is still placing" check is an additional app check, not the one that permits the claim.
-  - **Follow-up (not done here).** docs/spec/messaging.md must align with the points above when the call-invite §5.5 is written into it. Another agent owns that file at the time of this revision, so this revision does not edit it.
-- **The ring hint (notice contract).** A best-effort, never-guaranteed request for call-style presentation, which an app attaches to a notice it submits to the owner's provider: a presentation class, an `until` of at most 120 s, a required expiry and collapse key, an optional media display hint, and optionally a validated `open.path` into the app (owner question 6, §19.5). It never bypasses consent, mutes, pauses or budgets, and the admission outcome is uniform. It belongs to the app-to-owner notice contract (activity admission and app messages; proposed as a "Bindle Notices" extension in the [extension catalogue spike](../architecture/extension-catalogue-spike.md)), with delivery policy, the per-device fallback ladder and budgets in 3sln.me. Its proposed text is in the signaling-modes spike §3 (AMD-ACT-R1), and is a separate proposal. Signaling neither sends nor depends on it: the provider still presents nothing about invites (§3.6, §11.3). Under owner question 7, all rings go through the provider's notice contract, never an app's own push.
+Revision 2.1 listed, as references only, an app's message type and a presentation hint that use signaling. Revision 3 removes them: signaling names no app-level use (SG-30, SG-36). Apps specify their own uses; Appendix A.6 records where that text went.
 
 ## 21. Conformance tests
 
@@ -1638,14 +1571,14 @@ These are **not signaling text**, and nothing in them changes a signaling rule. 
 
 Tests MUST cover:
 
-- **Slot and feature.**
-  - The slot is processed without `bind`.
-  - A brokered registration of the contract is refused.
-  - `consumers` includes `provider`, and a provider feature endpoint is gated by its owner enablement.
-  - `signaling.v1` `profiles` is respected: `unsupported_peer` for a missing profile.
-  - Occupancy is invisible to other providers.
+- **Declaration and fragments.**
+  - Both fragments validate against the protocol §3 member table, with `selection` and `consumers` on their fields.
+  - A brokered registration of the signaling contract is refused.
+  - `consumers` includes `provider`. A provider feature endpoint is gated by its enabled grant, and its leg certificates carry `client.feature` equal to its extension's spec URL.
+  - The declaration's `profiles` option is respected: `unsupported_peer` for a missing profile. A declaration without its prerequisites, or whose `endpoint` equals another audience endpoint, is absent.
+  - Field values are invisible to other providers.
 - **Session kinds** (AMD-SG-I1).
-  - Each `session` rule: `effect`, `capability`, `max_bytes`, 8 properties, no `contact-link`, frozen `/session`, and `bases` shape (nonempty, unique, known values).
+  - Each `session` rule: `effect`, `capability`, `max_bytes`, 8 properties, no capability format, frozen `/session`, and `bases` shape (nonempty, unique, known values; `link` and `none` are invalid).
   - `bases` enforcement: `open`, `offer` and admission each refuse a basis the kind does not list, the recipient silently at step 7.
   - A session kind in a `bintent` link is refused.
   - Context is projected to an older approved version, only after additivity.
@@ -1653,64 +1586,53 @@ Tests MUST cover:
 - **Approval and routing.**
   - `open` and `register` are refused for an unapproved kind (`approval_required` with a provider-origin URL).
   - Approval removal, approval clearing and a connection ending each run §14.2: sessions and endpoints end, silently for pending invites delivered only to that app.
-  - Owner-configured link configurations lose a kind only when no approved handler for it remains, and are removed when empty. The parent is never revoked.
-  - A cross-entity invite reaches only the routing handler's endpoints, never another approved app.
-  - The sole-approved-handler fallback, and its promotion to the explicit default when a second handler is approved.
-  - No routing handler gives an owner-hook entry whose handoff opens the chooser, labelled as triggered by an incoming request.
+  - Each invite reaches only the app its basis fixes: the minting app, the paired app, or the initiating app or its `target`, whatever the owner's intents defaults. No chooser, handoff or owner-visible record exists for any invite.
+  - An own-entity invite whose routing set is empty (for example the initiating app's approval removed before admission) ends silently at `answer_by`.
   - Late delivery to an endpoint that registers before `answer_by`.
   - A foreign initiator's asserted `client_id` never affects routing.
-  - Own-entity routing to the initiator's own app and to `target`. A `target` of another app is refused.
-  - The handoff target for each routing case, including an own-entity invite whose approved initiating app has no eligible endpoint.
+  - Own-entity routing to the initiator's own app and to `target`. A `target` of another, unpaired app is refused.
   - Auto-connect is refused when the `client_id` differs, or the kind is not `self`.
   - `claim` accept is refused after the approval is removed. `claim` decline still works.
 - **Offers** (§5.7).
   - `offer` checks the approval, `parties`, profile, `bases` and limits live; refuses the owner's own principal and more than 16 principals; and its result is never journaled.
-  - An offer is spent exactly once under concurrent dial-backs; every other invite admits nothing and ends silently at `answer_by`.
-  - An offer presented with a wrong principal admits nothing, silently, and is **not** spent; the right principal can still use it.
-  - Expired, revoked (`revoke_offer`) and spent offers, and another kind line, profile or unadmitted version, admit nothing, with the uniform `202`.
-  - An offer-basis invite is routed to the minting endpoint, else to the minting app's other eligible endpoints by late delivery, even when the owner's intents default for the kind is a different app.
-  - `offer_match` is projected true only on the minting endpoint; on the minting app's other endpoints (fallback delivery) it is false.
+  - **Uses.** Under concurrent dial-backs, spent plus reserved uses never exceed `uses`; every excess invite admits nothing and ends silently at `answer_by`. A bound offer's single use is spent at its first admission whatever the session's outcome, so a second dial-back (after no answer, a decline or a cancel) admits nothing, and `offer` refuses `uses` other than 1 with `principals`. An open offer's reserved use is spent only by an `accept`, and released by a decline or an unclaimed end, after which another dial-back can use it. An offer-basis invite whose routing set is empty admits nothing and takes no use.
+  - A bound offer presented with a wrong principal admits nothing, silently, and reserves nothing; the right principal can still use it.
+  - Expired, revoked (`revoke_offer`) and exhausted offers, and another kind line, profile or unadmitted version, admit nothing, with the uniform `202` and no difference in timing class or limit treatment from an unknown digest.
+  - An offer-basis invite on an offer that is not service-class is routed to the minting endpoint, else to the minting app's other eligible endpoints. A service-class offer is routed to every eligible and online endpoint of the minting app or feature, whether or not the minting endpoint still exists; a registered endpoint past the liveness window is reached only by late delivery once it listens. Unregistering or expiry of the minting endpoint revokes no offer.
+  - `offer_match` is projected true only on the minting endpoint, except that for an offer minted by a service-class endpoint it is true on every routed endpoint of the minting app or feature.
+  - **Open offers.** An open offer admits any verified principal except the minting entity, within `uses`. `expires_in` above 900 s is refused for an endpoint that is not service-class, above 90 days for any open offer, and above 7 days for any bound offer. A blocked principal or provider cannot use one. The per-offer and per-(principal, offer) windows and the per-issuer fair share hold, with many principals from one issuer; a flood of unbased invites from one issuer does not stop that issuer's other principals from using an open offer; a new issuer finds headroom after earlier issuers took their shares; the open-offer sub-budget holds; open-offer invites never use the pending reserve; and an invite on an open offer is never charged a host-wide check before the local ones.
+  - The approval page of a service-class handler, and the service-designation page, carry the open- and bound-offer disclosure. An app of an undesignated organization (including one on a member's device), an endpoint registered in member context and a person's app are not service-class: 900 s cap and minting-endpoint routing. Removing a designation revokes the entity's offers longer than 900 s.
+  - A service-class endpoint's automatic decline releases the open offer's use. A claim racing the offer's revocation or expiry either connects (claim first; the use is spent) or fails with `claimed` (end first; the use is released), never both.
+  - The holder's provider never logs the token and deletes it from its outbox with the invite payload.
   - A reference endpoint claims automatically only when `basis.offer_digest` matches an outstanding token it holds and the verified initiator is that token's principal; an invite whose `context` names an outstanding request but whose digest does not match is not auto-claimed.
   - The principal is compared read-only at step 7 and re-confirmed at step 8; a live offer presented by the wrong principal is classified as an unbased invite for limits.
   - `revoke_offer`, owner revocation and expiry each end the pending unclaimed sessions the offer admitted, silently (no batch or control to the initiator).
-  - The token is never in a `listen` event, a log (including `open` and `revoke_offer` arguments and the batch `offers` member) or an export; only its hash is stored.
+  - The token, bound or open, is never in a `listen` event, a log (including `open` and `revoke_offer` arguments, `offer` results and the batch `offers` member) or an export; only its hash is stored.
   - Narrowing the minting app revokes its offers. The per-app live-offer cap. The owner lists and revokes live offers without seeing tokens.
   - `offer` triggers no fetch of a named principal's identity document or certification keys; only issuer-level metadata may be warmed.
 - **Pairings** (§5.8).
-  - Created only through the owner page; no method lets an app create one. Creation is refused when the kind's `parties` does not admit the peer type.
-  - Pending until both approvals exist: it admits, routes and accepts nothing meanwhile. The approval page that would activate it names it. A pairing still pending after 7 days is deleted.
+  - Created only through the owner page; no method lets an app create one. Creation is refused when the kind's `parties` does not admit the peer type, when a side names a provider feature, or when a cross-entity pairing for the same (peer principal, kind line) already exists in any state.
+  - Pending until explicitly activated: it admits, routes and accepts nothing meanwhile. Approving or granting a party never activates it. The activation control is offered only once every party holds its own grant and approval; a creation whose parties already hold them creates it live. On an M5 enrolment page, the single submit activates it only if every party then qualifies. A pairing still pending after 7 days is deleted.
+  - One pairing per edge: no pairing covers a second app or peer. An own-entity pairing is listed with both apps; a cross-entity one with its local app and in the by-peer list; either listing removes it.
+  - `endpoints({endpoint})` returns exactly the pairings that cover that endpoint, in every state, and a `pairing` event reaches only covered endpoints on creation, state change and deletion. No other app or endpoint learns a pairing `id`.
   - **`client_session` binding in both roles.** With a side bound to one client session, another session of the same app on that side: cannot open to the paired app (`target` refused, relation `open` refused); is not in the routing set; is not returned by `endpoints({pairing})` and gets no extra endpoints when it calls it; and gets neither `auto_connect` nor `paired` in its projection.
   - **`opens`.** An invite from a side that may not open is not covered (own-entity `target` refused; relation basis admits nothing at the recipient, and the initiator's `open` is refused). `endpoints({pairing})` answers only the opening side. A device-authorization pairing defaults to the interactive app opening.
-  - `endpoints({pairing})` labels paired endpoints with the provider's Devices name, never the `register` label, and carries no `last_seen` for them.
+  - `endpoints({pairing})` labels paired endpoints with the provider's own name for the device or client session (for a local client, the owner-authored label), never the `register` label, and carries no `last_seen` for them.
   - Own-entity: `target` of a covered endpoint is allowed, `auto_connect` and `paired` are projected, and a `target` of an unpaired app is refused.
   - Cross-entity: a relation-basis invite with no matching recipient pairing gets the uniform `202` and admits nothing; the initiator's `open` with `relation` and no own covering pairing is refused. A recipient whose peer provider skips that check still admits only under its own record.
   - Cross-entity creation requires fresh authentication, shows a handle only under a verified binding (else the full principal and issuer), uses wording from the kind's sensitivity categories, and always sets an expiry (default 90 days, at most 1 year).
-  - Routing to covered endpoints only, never the routing handler.
+  - Routing to covered endpoints only.
   - Revoking a device-authorization client session ends paired sessions with `revoked` and deletes the pairings bound to it. Removing a pairing, its expiry, approval or grant clearing, and a principal or provider block matching `peer.principal` do the same. Restoring an approval, or unblocking, does not restore a deleted pairing.
   - A kind version that adds disclosure stops covering until the owner re-confirms the pairing.
-  - A device-authorization pairing is `awaiting_confirmation` until the code comparison in the paired app; `endpoints({pairing})` answers `approval_required` meanwhile; a mismatch deletes it.
+  - A pairing bound to a device-grant (M4) client session is `awaiting_confirmation` until the code comparison; `endpoints({pairing})` from the `peer` side answers `approval_required` meanwhile, for each of `opens` `local`, `peer` and `both`; a mismatch deletes it; the code changes with the `user_code`. A pairing bound to an M5 client session never uses a code.
   - **Limits.** Own-entity: at most two live sessions per (pairing, endpoint pair), and the per-(pairing, endpoint pair) window. Cross-entity, at the recipient: the window per pairing `id`, and at most 2 × the number of local covered endpoints live sessions per pairing `id`, whatever number of distinct initiator endpoints, leg keys or `sid`s the peer uses. All pairings together stay within the pairing sub-budget of pending, connected and `data` capacity.
-  - Crossing pairing invites resolve by glare (§8.3).
+  - Crossing pairing invites resolve by glare (§8.3), and so do crossing same-app own-entity `target` invites; untargeted own-entity invites do not glare.
   - A move deletes the source's offers and pairings; an imported pairing starts pending; a peer's pairing keyed by origin principal keeps matching after the move.
-- **Standing acceptance.**
-  - Off by default, and refused for `self` kinds.
-  - Refused for an app handler of a person's entity; allowed only for provider features and handlers of hosted service entities.
-  - With it, `standing_accept` is projected only for admitted cross-entity invites routed to that handler. Held invites are never delivered or accepted.
-  - A provider feature accepts a cross-entity session only with standing acceptance, and within its declared policy.
-  - The approval page carries the availability disclosure.
+- **No standing acceptance.** No approval carries `standing_accept`, and no projection carries it. A provider-feature or service-entity endpoint claims a cross-entity invite automatically only under `offer_match`.
 - **Admission.**
   - Each basis.
-  - A contact link without configuration for the kind.
-  - A conditional parent: configuration refused, and a conditional link basis admits nothing.
-  - The links §6.3 representation, composer and previews are identical with and without signaling configuration.
-  - A non-canonical link, and a digest mismatch.
-  - Exactly `uses` admitted under concurrent invites.
-  - No use is spent by invites that fail certificate or signature checks.
-  - A principal-bound link presented by another principal.
-  - Revoked, expired and quarantined parents.
-  - `none` is off by default and held.
-  - Links are never delivered to endpoints.
-  - An invite carrying `callback_digest` is invalid (unknown member), and `mint_link` is not offered (§20.3.2).
+  - A cross-entity invite with no basis admits nothing, with the uniform `202`, is limited as unbased, and creates no record; `open` refuses it.
+  - An invite carrying `callback_digest` or `link_digest` is invalid (unknown member), a batch carrying `links` fails step 1, and no `mint_link` method exists.
 - **Certificates and messages.**
   - Wrong `typ` across every certification-key profile.
   - Identity-key and `sig`-key signatures fail.
@@ -1726,7 +1648,7 @@ Tests MUST cover:
   - A message from an ended leg.
 - **Silence** (§8.5, §12.1). Identical initiator observations (no batch, no control) for:
   - an admitted invite, a blocked one and one with no endpoint;
-  - an owner dismissal, a narrowed approval, a revoked grant, a gap failure, a reused `seq`, queue overflow and deletion, each before a claim.
+  - an owner end, a narrowed approval, a revoked grant, a gap failure, a reused `seq`, queue overflow and deletion, each before a claim.
 
   A claimed session still gets its control statement.
 - **Transport.**
@@ -1736,8 +1658,6 @@ Tests MUST cover:
   - Two audiences give `400`.
   - The public endpoint refuses this host's own `iss`.
   - Refresh scheduling is bounded and off the request path, with lanes not depending on the response.
-  - Step 2 verifies a link basis without spending. Configuration is evaluated at step 7, and the use spent at step 8.
-  - The link-verified fetch exception happens only after verification.
   - Whole-batch refusal.
   - Control statements are retried until the affected certificates expire, and bypass the cross-provider kill switch.
   - Per-issuer limits across many principals from one issuer.
@@ -1747,19 +1667,13 @@ Tests MUST cover:
 - **Abuse.**
   - Every §13.1 limit kind, including the aggregate `data` budget.
   - Own-entity `open` calls count against the own-device window, not the `open` window.
-  - Principal-bound invites count against `pair`, `caller`, the parent window and their own window only.
   - Own-device invites unaffected by a flood through the issuer windows.
-  - A principal-bound link holder admitted while bearer-link initiators fill the shared windows.
   - The same-host share bound.
   - The pending reserve.
-  - Cheap checks first: no handler-eligibility or host-wide call for blocked or unconfigured invites.
-  - Per-app endpoint caps. (Link quotas and the mint window come with AMD-SG-L1b.)
-- **Blocks.** Principal and provider blocks are silent, create no owner-hook entry, and end pending invites. Own-entity invites are never blocked. The own principal and own issuer cannot be blocked.
-- **Owner hook** (§11.3).
-  - Exactly held invites and invites with an empty routing set under §5.4 cases 1 to 3 create entries. `offer` and `pairing` invites never do, even with no eligible endpoint, and are never handed off. Signaling creates no activity item, notification or push to the owner.
-  - Entries carry no context, link or payload.
-  - Deletion on claim, end and `answer_by`.
-  - Folding per initiator principal for local initiators, and per issuer for foreign initiators.
+  - Cheap checks first: no handler-eligibility or host-wide call for blocked or unbased invites.
+  - Per-app endpoint caps.
+- **Blocks.** Principal and provider blocks are silent and end pending invites. Own-entity invites are never blocked. The own principal and own issuer cannot be blocked.
+- **No presentation.** Signaling creates no activity item, notification, push to the owner or owner-visible record of any invite.
 - **`webrtc` profile.**
   - Each §16.4 rule.
   - Candidates before the claim.
@@ -1767,7 +1681,6 @@ Tests MUST cover:
   - A `relay` endpoint connecting to a peer that sends `srflx` candidates.
   - Direct identity fetch refused under `relay` without opt-in.
   - The structural `m=` check (`audio`, `video`, `application` only).
-  - Glare auto-accept only when the surviving invite is within the endpoint's own outgoing invite.
 - **Relays.**
   - Credentials only for live legs, never past `answer_by` while pending, revoked at the end, never in messages.
   - The approval re-check.
@@ -1780,16 +1693,21 @@ Tests MUST cover:
   - Deletion delivers its controls before the identity tombstone.
   - A lower `aep` is refused.
 - **Privacy and export.**
-  - No SDP, candidates, `data`, context, credentials, links, offer tokens or batch `links` and `offers` members in logs, or past their bounds.
+  - No SDP, candidates, `data`, context, credentials, offer tokens or batch `offers` member in logs, or past their bounds.
   - Exact doorbell payload.
   - No endpoint data in any cross-entity response.
-  - Export includes provider blocks (the `rtc/block-iss/` gap closed), link signaling configuration, pairings, and approvals with `auto_connect` and `standing_accept` in `intent-choices`. It excludes secrets, transient state, offers and owner-hook entries.
-- **Abuse, rev 2 and 2.1.** Offer invites count only against the per-(initiator, recipient) window; wrong-principal, unknown or spent offers count as unbased invites; the live-offer (per entity and per app) and mint limits. The pending reserve is split: a flood of cross-entity offer, relation-basis and principal-bound invites cannot take the `self` share, and own-entity invites cannot take the cross-entity share.
+  - Export includes provider blocks (the `rtc/block-iss/` gap closed), pairings, and approvals with `auto_connect` in `intent-choices`. It excludes secrets, transient state and offers.
+- **Abuse, rev 2 and 2.1.** Bound-offer invites count only against the per-(initiator, recipient) window; wrong-principal, unknown, exhausted or expired offers count as unbased invites; the live-offer (per entity and per app) and mint limits. The pending reserve is split: a flood of cross-entity offer and relation-basis invites cannot take the `self` share, and own-entity invites cannot take the cross-entity share.
 - **Glare (rev 2.1).** Both endpoints compute the same ranks from the two initiator leg key thumbprints; a peer that chooses its `sid` cannot change the outcome; equal ranks cancel both sessions.
 
-**Engine-level and chaos coverage.** These are expected first at the engine level: offer spend races, principal mismatch, minter routing against a different intents default, offer revocation ending admitted pending sessions, pairing pending and revocation, `client_session` coverage in both roles, `opens`, cross-entity per-pairing caps, and device-authorization revocation cascading into paired sessions, plus a seeded chaos test of concurrent offers, claims, offer revocations, pairing removals, blocks and client-session revocations (spike §7 item 2).
+- **Rev 3.**
+  - Enrolment with a local-client identifier (thumbprint `client_id` proven by DPoP at request) under M4 and M5; a local client's pairing covers only its installation.
+  - The standing mark is never offered to a local client whose recorded origin is a web origin.
+  - The enrolment page offers one pairing control per already-connected candidate app, each needing its own activation.
+- **Rev 3.1.** No routing handler, default, chooser or handoff exists; open offers (above); at most one cross-entity pairing per (peer principal, kind line); pairing ids only through `endpoints({endpoint})` and `pairing` events; provider features refused as pairing parties; glare never auto-accepts.
+- **Rev 3.2.** Service-class offers route to the app's online endpoints and survive endpoint churn; bound offers are single-use at admission; open-offer uses are spent only by accept; open-offer windows are isolated from unbased traffic, with a per-issuer fair share; the open-offer sub-budget; no use with an empty routing set; the service designation; claim versus offer end is atomic; the glare scope (all above).
 
-**Intents (AMD-INT-R1, if adopted).** The intents §13 "Consent" item '"once" records nothing' changes to '"once" records no default', with new cases: history disclosed at first use; history kept per (person, acting entity) and invisible to other members; the provider's own review never moves a candidate.
+**Engine-level and chaos coverage.** These are expected first at the engine level: offer use reservation, spend and release races (including a decline and an unclaimed end racing a new dial-back, and a claim racing revocation), service-class routing under instance churn, the per-issuer fair share, open-offer windows under many principals from one issuer, principal mismatch, minter routing, offer revocation ending admitted pending sessions, pairing pending, activation and revocation (including activation racing a party's revocation), `client_session` coverage in both roles, `opens`, cross-entity per-pairing caps, and device-authorization revocation cascading into paired sessions, plus a seeded chaos test of concurrent offers, claims, offer revocations, pairing removals, blocks and client-session revocations (spike §7 item 2).
 
 ### 21.2 Impact on the existing clean-room suite
 
@@ -1807,43 +1725,42 @@ The suite is `tests/rtc-conformance.test.mjs` (48 tests) and `tests/rtc-conforma
 - sender-side IP policy;
 - ordering, duplicates, gaps and `seq` reuse;
 - replayed invites;
-- both call flows, which become "session flows";
+- both session flows (formerly the two call flows);
 - cancel crossing an accept;
 - the first answer only;
 - 5xx retries;
 - `unsupported_peer`;
 - the DPoP-optional manifest;
 - control statements from the wrong party;
-- fan-out and first claim, now within one routing handler;
+- fan-out and first claim, now within one routing set;
 - the 32-message buffer;
 - the `to` rule;
-- the slot request on a provider declaring the feature.
+- the fragment request on a provider declaring the extension.
 
 **Changes:**
 
 | Existing test | Change |
 | --- | --- |
 | "§8.2 an aud naming no hosted entity answers 202" and "§8.1 RTCe-3 … two audiences" (the two todos) | They become assertions of the adopted AMD-RI1 (`404`) and AMD-RI2 (`400`). The suite should then run with 0 todos. |
-| "§3.1 … rtc-signaling.v1" (two tests) | Assert `signaling.v1`, including `profiles`, and that no `intent-links.v1` declaration is required of a peer. |
-| "§4.3 ticket uses …" and "§4.3 a principal-bound ticket …" | Rewritten against owner-configured contact parents (`uses`, `principal`), set by the owner, not through `mint_link`. |
-| "§4.3 inbound/outbound callback …" (two tests) | Callbacks are withdrawn (rev 2). Replace with offer tests: an inbound offer-basis invite spent once and routed to the minter, and a wrong-principal offer admitting nothing unspent. Assert that an invite carrying `callback_digest` is invalid. |
-| "§4.2 link basis …" | The same cases, with contact-link configuration in place of RTC configuration. |
+| "§3.1 … rtc-signaling.v1" (two tests) | Assert the `{spec, options}` signaling declaration, including `profiles`, and that no intents or intent-links declaration is required of a peer. |
+| "§4.3 ticket uses …" and "§4.3 a principal-bound ticket …" | Retired with the `link` basis (rev 3). |
+| "§4.3 inbound/outbound callback …" (two tests) | Callbacks are withdrawn (rev 2). Replace with offer tests: an inbound offer-basis invite admitted within its uses and routed to the minter, and a wrong-principal bound offer admitting nothing and reserving nothing. Assert that an invite carrying `callback_digest` is invalid. |
+| "§4.2 link basis …" | Retired (rev 3). Replaced by an assertion that an invite carrying `link_digest`, or a batch carrying `links`, is invalid. |
 | "§6.2 invite body rules: ring_until, media, context, sas_commit …" and "§6.2 only the caller leg sends sas …" | Drop the SAS cases. Add `params`, `profile` and `kind` cases. |
 | "§6.2/§9.1 … ring_until beyond iat + 120 or media beyond the opened media" | Becomes `answer_by`. The media cases are dropped (§16.2). |
-| "§4.4/§12 a silent owner decline, an unanswered ring and an app revocation send the caller nothing" | Kept, extended with the §8.5 causes. Its owner-decline step goes through the owner hook's dismiss rather than the RTC owner route. |
+| "§4.4/§12 a silent owner decline, an unanswered ring and an app revocation send the caller nothing" | Kept, extended with the §8.5 causes. Its owner-decline step becomes an owner end of a pending invite, or an approval removal, rather than the RTC owner route. |
 | "§9.1 the default Node bound check answers …" (divergence 1) | Becomes "kind approval is checked without a federation-shard call". The deadlock class it guarded no longer applies to kind approvals, but the test stays as a no-hang regression for contract writes. |
 | "§9.1 / contracts: x-bindle-brokerable:false" | Kept, against the renamed contract document. |
 
 **New, needed by this draft:**
-- the routing tests of §21.1 (only the routing handler sees invites);
+- the routing tests of §21.1 (each invite reaches only the app its basis fixes);
 - `approval_required`;
 - the `data` profile (4 KiB and 64 KiB caps, post-claim only, absent from `webrtc` sessions);
 - the per-entity-enablement uniformity;
 - the same-host `iss` refusal;
-- owner-hook silence toward the peer;
-- standing acceptance projected for a cross-entity invite to a provider feature or service entity;
-- a conditional link basis admitting nothing;
-- the `offer` basis over the feature endpoint: digest and token in the batch, single spend, principal binding, uniform `202`;
+- no automatic cross-entity claim except under `offer_match` or `paired`;
+- a cross-entity invite with no basis admits nothing;
+- the `offer` basis over the feature endpoint: digest and token in the batch, use reservation and spend, principal binding for bound offers, any principal for open offers, uniform `202` for dead offers;
 - the relation basis: admitted with a pairing, uniform `202` without one;
 - `bases` enforcement at the recipient.
 
@@ -1859,154 +1776,97 @@ It still must import no 3sln.me code, and be rewritten only from this text.
 
 ## Appendix A: where each fix lives in this text
 
-### A.1 RTC fixes
+### A.1 to A.5 (moved)
 
-| Fix (source) | Section here |
-| --- | --- |
-| Ticket uses spent only after verification; `principal` compared with the verified certificate (review R1) | §5.3, §9.2 step 8 |
-| Initiator-keyed session lookup; first verified answer becomes the leg (R2) | §9.2 step 2 |
-| IP policy restricts only gathered and sent candidates (R3, R4) | §16.5 |
-| Auto-accept only for the same `client_id` (R5, RTCd-6) | §5.5 |
-| Bounded refresh scheduling (R6, RTCe F1, AMD-RV2) | §9.2 step 3 |
-| 900 s certificate ceiling; controls retried until certificates expire (R7) | §3.1, §9.3, §14.2 |
-| Canonical link verification by digest (R9, R19) | §5.2 |
-| Identity URI from the directory only (R11) | §6.1 |
-| Initiator warms recipient keys at `open` (R12, RTCe V2 `warms`) | §5.1, §13.1 |
-| Per-issuer limits (R15) | §13.1 |
-| Push endpoint screening; pushes counted (R16) | §11.2 |
-| Endpoint binding by DPoP or hashed secret (R17, RTCd-8) | §10.1 |
-| Cancel crossing an accept (R18) | §8.4 |
-| AMD-RV1 SDP, candidate, fingerprint and signature rules | §6.3, §16.4 |
-| Payload-bytes replay comparison (RTCabc-3, RTCd-3) | §7.3 |
-| Asynchronous delivery; no cross-entity work in a request; bounded inbound queue and 503 (RTC-d M2, RTCd-21, RTCd-22) | §9.2, §9.3 |
-| Per-peer outbox with control reserve; one `failed` reply per leg (RTC-d M3) | §8.2, §13.1 |
-| Host-wide initiator window (RTC-d L1, RTCd-14) | §13.1 |
-| Repeat claims only while usable; live IP-policy narrowing (RTC-d L2, L3) | §8.2, §16.5 |
-| Deletion drain before tombstone; pinned peer keys (RTC-d M1, RTCd-23) | §6.3, §14.4 |
-| No oracle via keys (RTCd-11) | §12.1 |
-| Silent owner decline in the engine (RTCg-5, RTCs-1) | §5.5, §8.5 |
-| Narrowing ends invites pending only through that app, silently (RTCe-21) | §14.2 |
-| Foreign app origin "reported by" its provider (RTCe-22) | §10.3, §11.3 |
-| Kill switch never suppresses controls (RTCe F2) | §9.3 |
-| Invite re-send bound (RTCe F6) | §9.3 |
-| Declared certificate bound for foreign peers (RTCe-11) | §6.1 |
-| Pending-leg relay TTL cap; no-effect refusal codes; approval re-check before issuance (RTC-f M1(b), M2, RTCw-M4) | §16.7 |
-| Relay byte cap enforced from provider usage data before any credential (RTC-f M1(d), production gate) | §16.7, AMD-SG-S2 (§20.9) |
-| `unsupported_peer` (RTCi-4, AMD-RI5) and no-effect `claimed` (RTCi-5) | §5.1, §10.2 |
-| `to` drop (RTCi-7, AMD-RI3) | §7.3 |
-| `listen` members (RTCi-9, AMD-RI4) | §10.3 |
-| One `aud` per batch (RTCe-3, AMD-RI2); uniform 404 for an unknown `aud` (RTCe-4, AMD-RI1) | §9.1, §9.2 |
-| Silent ends on every pre-claim path (RTCw-H1) | §8.5 |
-| Same-host `iss` refusal (AMD-RW2) | §9.2 step 1, §9.4 |
-| Receiver-side pre-claim rule (RTCw-L4) | §7.2 |
-| Own-device, principal-bound and same-host windows; pending reserve (RTCw-M1, R2, AMD-RW3) | §13.1 |
-| Per-app endpoint cap (RTCw-M3) | §10.2 |
-| Live approval checks on `send`, `renew` and relay (RTCw-M4) | §10.1, §16.7 |
-| Cheap checks first (RTCw-M5, I1) | §9.2 step 7 |
-| Colliding `sid` dropped (RTCw-L1) | §8.2 |
-| Record folding (RTCw-L2), now per issuer for foreign initiators | §11.3 |
-| Per-entity enablement invisible (RTCw-L3, R1) | §9.2 response |
-| App-minted links attributed, quota'd, revoked with the app (RTCw-M2, I5, AMD-RW6) | Deferred: §20.3.2, with the narrowing rule in §14.2 |
-| Provider block; own-entity exemption (RTCw-M6-1, M6-3, AMD-RW4) | §13.2 |
-| Foreign-asserted app scoping (RTCw-R3, I2, AMD-RW5) | §5.4, §11.3 |
-| Export gap: provider blocks (`rtc/block-iss/`) are neither exported nor excluded in the current code | §12.6, Appendix C |
-| Stale owner settings could overwrite newer ones; no revision on `set-policy` or `set-contact-rtc` (bug hunt round 3, R1; the fix was reverted unshipped) | §14.1 |
+The history of revisions 0 to 2.1 (RTC fixes, the reviews of revisions 0 and 2, the owner direction received during revision 1, and the establishment-modes spike) is in the [frozen revision 2.1 copy](superseded/signaling-rev2.1.md#appendix-a-where-each-fix-lives-in-this-text), with section and case numbers as they were then. A.6 records revision 3 with revision 3 numbers; A.7 records revision 3.1; A.8 records revision 3.2.
 
-### A.2 Independent review of revision 0 (fixed in revision 1)
+### A.6 Revision 3: owner direction and applied change requests
+
+Sources: the owner direction of 2026-10-27 quoted at the top; the [contacts and links spike](../architecture/contacts-and-links-rethink.md) revision 2 (CL-* decisions, CR-S* and CR-K* change requests); the [local clients spike](../architecture/local-clients-spike.md) (LC-11, LC-12, CR-L1 to CR-L10); and [extensions revision 3.2](extensions.md) Appendix A (CR-X3-03). All are provisional and unsigned.
+
+| Change request or direction | Applied as | Section here |
+| --- | --- | --- |
+| Owner direction: core signaling unaware of calls and contacts, no app-level features, kinds app-defined | Neutral examples; no presentation, history or use vocabulary in normative text; no registered or recommended kind; SG-36 | Header, §1.1, §1.2, §3.4, §3.6, §4.1, §5.7, §8.6, §11.2, §11.3, §17, §18 |
+| Call-invite description moves to Bindle Messaging | Removed here; Messaging owns `application/vnd.bindle.messaging.call-invite+json` and its rules | §20.12 (stub), [messaging §5.5](messaging.md#55-call-invitations-proposed-unsigned), SG-30 |
+| Presentation hint stays out (a notice-contract proposal) | Removed here, with the former owner questions 6 and 7 | §11.3, §19.5, §20.12 |
+| AMD-INT-R1 as applied to signaling | Call-specific candidate kind (item 5) withdrawn; items 1 to 3 kept only as hosted intents obligations; signaling relies on item 4 | §20.8, §20.10, SG-42 |
+| CL-9 / CR-S1: no recipient resolved from a contact link | Two resolution paths: principal or handle | §5.1 |
+| CR-S2: remove the `link` rows and the "shrinks to `link` invites" routing text | `link` rows removed; intents routing only in the own-entity fallback; routing cases renumbered | §5.2, §5.4, §5.6, §10.3 |
+| CR-S3: remove §5.3, §20.3, `mint_link` and the link control and revocation rows; amend SG-5 and §19.5 | §5.3 and §20.3 are withdrawal stubs; `mint_link` gone; link rows removed from limits, owner controls, narrowing, moves, deletion, export and logging | §5.3, §9.2, §10.1, §10.2, §12.4, §12.6, §13.1, §13.4, §14.1 to §14.4, §20.3, SG-5, SG-18, §19.3, §19.5 |
+| CR-S4: remove `links` from the batch | `links` removed; unknown batch members invalid | §9.1, §21.1 |
+| CR-S5 / CL-10 (`none` admitting): withdrawn | Not applied. The ticket idea is listed as reserved | §15, SG-36 |
+| CR-K1, CR-K2 (signaling part); spike L5 | Signed-object profile repointed to the forthcoming core keys specification; RTC code imports the core signed-object module | §6.1, §7.1, §20.4, SG-41, Appendix C.1 |
+| CR-X3-03: declaration `{spec, options}`, prerequisites in prose | §3.1 rewritten; `endpoint` an audience option; contracts in `contracts`; no `extensions.v1` | §3.1, §9.1, §15 |
+| CR-X3-03: slots become fragments | `signaling/v1` and `ice-relay/v1` fragments with `selection` and `consumers`; no occupant declaration; built-in resource wording | §3.2, §3.3, §10.1, §14.5, §16.7 |
+| CR-X3-03: provider feature identity, `ref` gone | (issuer, spec URL); `client.feature` and handler approvals carry the spec URL | §2, §4.2, §6.1, §20.1.3, §20.1.4, §20.2 |
+| CR-X3-03: AMD-SG-P1 and AMD-X1 | AMD-SG-P1 becomes the descriptor; AMD-X1 withdrawn by extensions rev 3 | §20.5, §20.8 |
+| CR-X3-03: status note | Replaced by the revision 3 status | Header |
+| Intents is an extension | Session kinds and approvals are local behaviour under the intents extension, never a federation prerequisite | §3.1, §20.1.8 |
+| CR-L1: explicit activation (P3) | Activation control per pairing; approval never activates | §5.8, §20.1.4 |
+| CR-L2: each party granted individually (P1) | Pairings never create or imply grants or approvals | §5.8, §5.9 step 3 |
+| CR-L3: per-edge record (P2) | Exactly two parties; fan-out is several pairings | §2, §5.8 |
+| CR-L4: local-client enrolment, M5 | Thumbprint `client_id` with local manifest; loopback flow allowed | §5.9 |
+| CR-L5: confirmation code for M4 only | Required for M4, optional for M5 | §5.9 step 5 |
+| CR-L6: coverage note for local clients | Per-installation `client_id` | §5.8 |
+| CR-L7: listing under app connections; pairings on both parties' rows (P4) | Presentation-neutral listing rules | §5.8, §5.9, §14.1, §20.11 |
+| CR-L8: session kinds without `route` | Never a handoff target or chooser candidate | §5.4, §20.1.3, §20.1.5 |
+| CR-L9: no standing mark for web-origin local clients | Added | §5.9, §20.11 |
+| CR-L10: SG row for LC-11 and LC-12 | SG-39 (and SG-40 for CR-L4 to CR-L9) | §19.2 |
+| Bases re-check (`self`, `pairing`, `offer`, `none`) | Tables, wire, conformance list and migration plan updated; former owner question 8 answered as moot | §5.6, §7.2, §9.2, §10.3, §19.5, §21, Appendix C |
+
+**Readings added in revision 3** (provisional, not in any change request): standing acceptance is reserved, because no remaining basis delivers an unsolicited cross-entity invite (SG-38, §5.5); the owner-hook handoff applies only to own-entity invites, and held requests are never handed off (§11.4); quarantine is removed with link parents (§13.3); the pending reserve excludes unbased invites (§13.1); session kinds forbid the intents `capability` format, which replaces `contact-link` (§7.2, §20.1.1); `endpoints({pairing})` labels use the owner-authored label for a local client (§5.8); §5.3, §20.3 and §20.12 are kept as stubs so that section references stay stable.
+
+### A.7 Revision 3.1: review of revision 3
+
+Source: an independent review of revision 3 (2026-10-27) and the coordinator's decisions on it. All fixes are provisional and unsigned (SG-43 to SG-46, and revisions of SG-2 to SG-6, SG-17, SG-20, SG-22, SG-23, SG-26, SG-27, SG-29, SG-31, SG-38, SG-42). The A.6 rows that mention the owner hook, held requests, the routing handler, intents routing, glare auto-accept or reserved standing acceptance describe revision 3 and are superseded by these.
 
 | Finding | Fix | Section here |
 | --- | --- | --- |
-| H1 User-action rule blocks provider features, service entities, headless servers, conferencing | Standing acceptance per (handler, kind), off by default, with the availability disclosure. Provider features answer within their declared policy under it. | §4.1, §4.2, §4.3, §5.5, §20.1.4 |
-| H2 `data` cost and scope | 4 KiB per message, 64 KiB per leg, a required aggregate per-entity budget, `data` only in the `data` profile, payload hashes only in replay state, a production gate with a cost-model row, and AMD-SG-S1 | §1.2, §3.5, §7.2, §7.3, §9.2, §13.1, §20.9 |
-| H3 AMD-SG-L1 underspecified, conflicts with links §6 | Split. L1a now: owner configuration on existing parents, replacing `rtc/contact/`, forbidden on conditional parents (with reasons), links §6.3, composer and previews unchanged. L1b deferred and unavailable: `mint_link`, minted parents, delivery-off, callbacks. | §5.3, §10.2, §20.3 |
-| M1 Live-approval list | Adds `claim` accept and `mint_link` | §10.1 |
-| M2 Narrowing revoked owner parents | Revoke only parents minted by that app. Owner-configured parents lose the kind (when no approved handler remains), and empty configurations are removed. | §14.2 |
-| M3 Callback verification | Canonical form, digest, owner equal to the verified initiator principal, else dropped silently. Retention at both providers, revoked on an unclaimed end, counted in the per-app quota. | §20.3.2 |
-| M4 Sole handler | Promoted to the explicit default when a second handler is approved | §20.1.5 |
-| M5 Kind resolution | Store, mirror, or a background fetch that does not depend on recipient state | §3.4 |
-| M6 Authority record in intents | Stated, with explicit amendments to intents §1, §5 and §9.5, and who approves for organizations and service entities | §20.1, §20.1.4, §20.1.10 |
-| M7 Appendix C gaps | Lifecycle hooks, the flag requirements and the `intent-choices` export fields | §14.2, Appendix C.2 |
-| M8 Activity items | Superseded by the owner's direction: no activity items. The owner hook never interrupts, folds foreign initiators per issuer, and labels the chooser as triggered by an incoming request. | §11.3, §11.4 |
-| M9 Activity evidence | Moot for signaling (no items). A system evidence profile is defined as the precondition for any later mirror. | §20.2 |
-| L1 `target` | Same app only | §5.4, §10.2 |
-| L2 Glare | Auto-accept only within the endpoint's own outgoing invite | §8.3 |
-| L3 Addresses in `context` | Endpoint MUST NOT. Providers cannot enforce it. The §1.2 and §12.3 overclaims are fixed. | §1.2, §7.2, §12.3 |
-| L4 Window numbers | Own-entity `open` calls count against the own-device window (a code change). Principal-bound windows aligned with the code. | §13.1, Appendix C.1 |
-| L5 `intent-links.v1` | A local requirement, not a federation dependency | §3.1, §20.1.8, §20.5 |
-| L6 Own-entity handoff target | Fixed per routing case | §5.4 |
-| L7 Dark-batch drain rate | Recorded as a residual, with a SHOULD | §9.2 |
-| L8 Relay byte cap | Normative rule, and AMD-SG-S2 | §16.7, §20.9 |
-| L9 Step 2 wording; colliding offers | Step 2 verifies the link only. The colliding-offers rule is restored. | §9.2, §16.6 |
-| L10 Appendix C files; `rtc/block-iss/` export | Added | §12.6, Appendix C |
+| H1 The intents routing fallback is unreachable except in a race, and its chooser handed off to an app that never received the invite | Intents routing cut: no routing handler, default, promotion, owner-hook chooser, `bsession` handoff or late delivery to a chosen app. Own-entity invites go to the initiating app or a named `target`. Only kinds and approvals come from intents. AMD-INT-R1 moves to the intents change requests; SG-42 withdrawn as not needed | Header, §1.1, §2, §5.4, §5.6, §11.4, §19.1, §20.1, §20.8, §20.10, SG-44 |
+| H2 `none` is a dead end; "Allow later" has no target | `none` reserved as a possible future basis; requests setting, held entries, "Allow later", `basis: "request"`, the owner hook and its export, control, retention and test rows removed | §1.2, §3.6, §5.2, §5.6, §8.5, §10.3, §11.3, §12, §13.3, §14.1, §15, SG-45 |
+| M1 Several cross-entity pairings per (peer principal, kind line) | At most one, in any state, enforced at creation | §5.4, §5.8, SG-46 |
+| M2 Apps cannot learn pairing ids; confirmation path undefined for `opens: "local"` | `endpoints({endpoint})` returns covering pairings; `pairing` `listen` events; the M4 confirmation answers on the `peer` side for every `opens`; the opening side connects | §5.8, §5.9, §10.2, §10.3 |
+| M3 Provider features and pairings contradict each other | Features are never pairing parties; they use offers | §4.1, §4.2, §5.8, SG-6 |
+| M4 and SG-38 Public services lost their path | The `offer` basis generalizes: open offers (no principal), `uses`, always expiring and revocable; up to 90 days only for service-class endpoints, which auto-accept their own offers on every endpoint; 900 s for person entities' open offers; per-offer, per-(principal, offer) and per-(issuer, offer) windows; reserve at admission, spend at claim; no oracle; standing acceptance and the ticket reservation replaced | §2, §4.1, §4.3, §5.2, §5.5, §5.7, §8.6, §9.2, §10.2, §10.3, §12.1, §13.1, §14.1, §15, §17, §18, §20.1.4, SG-43, Q10 |
+| M5 Messaging alert gating depended on Parlay list state | Messaging §5.5: alert only after the owner has sent the author a message in a two-party conversation; kind `parties: "other"`; `expiresAt` bounded by the earliest offer expiry minus 60 s | [messaging §5.5](messaging.md#55-call-invitations-proposed-unsigned) |
+| M6 Appendix C claims did not match the code | `relay-credentials.mjs` kept (it holds `relay.mjs`'s lease constants); the `contact-profile.mjs` row removed (no `rtc/turn.mjs` import exists); `signed-object.mjs` "once created"; `tickets.mjs` imports corrected | Appendix C.1, C.2 |
+| L1 Cross-entity glare auto-accept is dead | Removed; glare only picks the survivor; crossing offer dial-backs are an app concern | §5.5, §8.3, SG-20 |
+| L2 `basis: "request"` never delivered | Removed | §10.3 |
+| L3, L4 Messaging kind `parties` and expiry | Messaging §5.5 | messaging §5.5 |
+| L5 §20.11 not updated for CR-L5 | M4 only | §20.11 |
+| L6 §21.2 routing-handler test | Replaced | §21.2 |
+| L7 P3 and P4 readings | Activation at creation listed as a reading; M5 single-submit activation; P4 for cross-entity pairings | §5.8, §5.9, §14.1 |
+| L8 Stale history | RTC-11 states current values; the standing-acceptance paragraph moved to §18; A.1 to A.5 and withdrawn amendment bodies moved to the frozen copy | §5.5, §18, §20.2, Appendix A, B.1 |
+| L9 Worked-example URL looked core-published | `https://sync.example/kinds/device-sync/v1` | §20.1.9 |
+| L10 Confirmation code could be ground offline | The code covers the provider-chosen `user_code`, fixed after the client commits its key | §5.9 |
 
-### A.3 Owner direction received during revision 1
+**Readings added in revision 3.1** (provisional, not in the review): `endpoints` takes an optional `endpoint`, which pairing results need; an `open` to another entity must carry a basis; `revoke_offer` with a token list covers the whole minting app's offers, because a service's minting endpoint may be gone; a decline spends an offer use; blocks apply before offers; service-class is defined by entity kind (not `person`) or provider feature, so it is testable; an open offer counts as one live offer whatever its `uses`.
 
-| Direction | Effect | Section here |
-| --- | --- | --- |
-| The foundation stays; calling and use semantics move to the app layer. A messaging app (Parlay) implements calling, and a call invite is a message with a JSON media type in the messaging/BindleBox spec. | Activity items and every other provider presentation removed. Only a minimal owner hook remains. AMD-SG-A1 and AMD-SG-N1 withdrawn. | §1, §3.6, §11.3, §14.1, §20.2, §20.7 |
-| Intents is right in principle but may not fit every case. Two establishment modes, (a) invite-style and (b) always-on, need a spike. | Intents routing marked the leading candidate for mode (a), not final. Mode (b) described as a separate path. Spike questions S1 and S2. | §5.4, §5.6, §19.1, §19.4 |
-| Intents routing needs a robust short-list. | An intents requirement for every chooser (likely candidates first, expand to all, confirm-only for one candidate), not a signaling rule | §20.1.11 (rev 2: AMD-INT-R1, §20.10) |
+### A.8 Revision 3.2: verification of revision 3.1
 
-### A.4 Establishment-modes spike (applied in revision 2)
-
-Source: [signaling-modes spike](../architecture/signaling-modes-spike.md), 2026-10-27, decisions SMS-1 to SMS-8 (provisional, unsigned) and change requests CR-1 to CR-13 (unsigned). Owner direction of 2026-10-27 (DEVLOG, "Owner direction: core scope, Parlay, signaling consumers") is the context.
-
-| Change request | Applied as | Section here |
-| --- | --- | --- |
-| CR-1 `offer` basis; `offer` and `revoke_offer`; `offer_digest` with the token in the batch | The offer record, minting, dial-back, verification at steps 7 and 8, revocation; batch `offers` | §5.2, §5.7, §7.2, §9.1, §9.2, §10.1, §10.2 |
-| CR-2 Remove `callback_digest` and callbacks | Removed from the invite; callbacks withdrawn from AMD-SG-L1b | §5.3, §7.2, §20.3.2, §20.8 |
-| CR-3 Routing cases 4 (offer) and 5 (pairing) | Added, with no handoff for either | §5.4 |
-| CR-4 `offer_match` and `paired`; standing acceptance only for provider features and service entities | Projection members and acceptance rules | §5.5, §10.3, §20.1.4 |
-| CR-5 The pairing record | Members, creation, pending, own-entity and relation rules, reconnection, revocation, export | §2, §5.2, §5.8, §12.6, §14.1, §14.2 |
-| CR-6 Optional `bases` on session kinds | `session.bases`, enforced by both providers, frozen with `/session` | §3.4, §5.1, §5.2, §9.2, §20.1.1 |
-| CR-7 `endpoints({pairing})` | Own-entity paired endpoints, with `client_id`; never across entities | §10.2, §12.2 |
-| CR-8 Limits | Offer bounds, live-offer and mint limits, the pairing window, two live sessions per endpoint pair, the pending reserve | §13.1 |
-| CR-9 Glare for crossing pairing invites | Added | §8.3 |
-| CR-10 No owner hook or handoff for `offer` and `pairing` | Added | §5.4, §11.3, §11.4 |
-| CR-11 I3 solved by explicit pairing | Auto-connect across apps only under an own-entity pairing; no registrable-domain grouping for signaling | §5.5, §19.4 |
-| CR-12 Cross-references; signaling stays call-free | Call invite in Bindle Messaging, ring hint in the notice contract, referenced only | §11.3, §20.12 |
-| CR-13 Decisions and tests | SG-23 to SG-30, S1 and S2 answered, conformance tests | §19.2, §19.4, §21 |
-
-| Spike decision | Here |
-| --- | --- |
-| SMS-1 One mechanism, explicit bases | SG-23, §5.6 |
-| SMS-2 Reverse dial with an offer; callbacks withdrawn | SG-24, §5.7 |
-| SMS-3 Pairing; standing acceptance limited | SG-25, SG-26, §5.5, §5.8 |
-| SMS-4 Headless enrolment by device authorization | SG-28, §5.9, AMD-SG-D1 (§20.11) |
-| SMS-5 Intents for viewer-initiated handoffs only | SG-29, AMD-INT-R1 item 4 (§20.10) |
-| SMS-6 Ranked short list, confirm page for one candidate | SG-29, AMD-INT-R1 items 1 to 3 (§20.10) |
-| SMS-7 Ring hint, best effort, in the notice contract with 3sln.me policy | SG-30, §20.12 (reference only) |
-| SMS-8 Call invite as a Bindle Messaging message | SG-30, §20.12 (reference only) |
-
-**Readings added in revision 2** (not in the spike, provisional): own-entity pairing invites need `target` (§5.4 case 5), so that each invite still reaches exactly one app; offer invites still count against the per-(initiator, recipient) window, and a wrong or unknown offer counts as an unbased invite against the per-recipient and issuer windows (§13.1); the minting provider MAY warm invited principals' keys at `offer` (§5.7); the stale "no handler activity item" sentence in §5.4 now reads as an owner-hook entry, matching §11.3.
-
-### A.5 Independent review of revision 2 (fixed in revision 2.1)
-
-All fixes are provisional and unsigned (SG-31 to SG-35, and revisions of SG-24, SG-25, SG-27 to SG-30).
+Source: an independent verification review of revision 3.1 (2026-10-27) and the coordinator's decisions on it. All fixes are provisional and unsigned (SG-47 to SG-51, and revisions of SG-31 and SG-43). Two revision 3.1 readings in A.7 are superseded: "a decline spends an offer use" (now only an `accept` spends an open offer's use, and a bound offer is spent at admission), and "service-class is defined by entity kind (not `person`)" (now provider features and designated service entities).
 
 | Finding | Fix | Section here |
 | --- | --- | --- |
-| H1 `offer_match` on every endpoint of the minting app; outstanding-request check only a SHOULD, keyed on `context`; revoked or expired offers leave admitted sessions pending | `offer_match` only on the minting endpoint, `false` on fallback endpoints. A MUST outstanding-offer check before any automatic claim, keyed on `offer_digest` computed from the app's own token and on the verified principal. Revocation and expiry end the pending unclaimed sessions the offer admitted, silently. | §5.4 case 4, §5.5, §5.6, §5.7, §8.5, §10.3, §13.4, §20.12 |
-| H2 Own-entity pairing `client_session` binding not enforced in both roles; app-supplied labels shown across apps | Coverage is `client_id` plus the endpoint's recorded client session, on both sides and in both roles, for routing, `target`, the initiator check, `endpoints({pairing})` and the projection. Cross-app labels are the provider's Devices names. | §5.1 item 7, §5.4, §5.5, §5.8, §10.2, §10.3 |
-| H3 Cross-entity pairing window and live cap keyed per endpoint pair, which the recipient cannot see; no pairing sub-budget; one shared reserve | Cross-entity limits per pairing `id` at the recipient, with a live cap of 2 × the local covered endpoints. A pairing sub-budget of pending, connected and `data` capacity. The reserve split into a `self` share and a cross-entity share. §21 test fixed. | §9.2 step 7, §13.1, §21.1 |
-| H4 No pairing direction; `endpoints({pairing})` to both sides; `last_seen` exposed across apps | `opens` (`local`, `peer`, `both`), with device-authorization pairings defaulting to the interactive app opening. `endpoints({pairing})` only to the opening side. `last_seen` dropped for other apps' endpoints. | §5.2, §5.8, §5.9, §10.2, §12.2 |
-| M1 Offer principal compared only at step 8; limit classification by live digest | Read-only principal comparison at step 7, atomic re-confirmation at step 8. Limit classification by principal match. | §5.2, §9.2 steps 7 and 8 |
-| M2 Clearing could leave pairings pending and reactivate silently; no pending expiry; §13.4 and §14.2 disagreed | Clearing deletes. Only creation produces pending. An activating approval page names the pairing. Pending pairings expire after 7 days. §13.4 and §14.2 now both say "deleted". | §5.8, §13.4, §14.2, §20.1.4 |
-| M3 Blocks left pairings in force | A principal or provider block deletes matching pairings and ends their claimed sessions with `revoked`. | §5.8, §13.2, §14.2 |
-| M4 Cross-entity pairing creation too weak; cross-person auto-answered calls | Fresh authentication; a handle only under a verified binding, else the full principal and issuer; wording from the kind's sensitivity categories; a mandatory default expiry. Recommended: no `pairing` in call kinds' bases for v1; same-owner pairing for other kinds stays. | §3.4, §5.8, §19.5 Q8 and Q9, §20.12 |
-| M5 Device-authorization pairing goes live on the approval alone | Short-code comparison in the paired app before it goes live. The post-approval notification names the pairing and the standing mark. Providers MAY restrict which clients are offered the mark. | §5.9 step 5, §20.11 |
-| M6 Standing mark exempt from too many lineage events | Exempt only from the approving session's own sign-out, natural expiry and session-count eviction. Global sign-out, remote revocation and credential change still revoke. Devices shows last-refresh and network-change signals. | §5.9, §14.1, §20.11 |
-| M7 Call-invite reference used `profiles.webrtc.media` and `params.media`, invalid under rev 2 | Audio and video choice lives in the app message body. The call kind is `profiles: {"webrtc": {}}`, bases `["offer", "link"]`. messaging.md alignment recorded as a follow-up; not edited. | §3.4, §19.5, §20.12 |
-| L1 Offer tokens and batch `offers` not in the no-logging list | Added, with `open` and `revoke_offer` arguments and the batch `links` member. | §12.4, §21.1 |
-| L2 Offer could expire before the invitation | Mint `expires_in` ≥ the invitation's remaining lifetime plus a skew margin (reference 60 s). | §5.7, §20.12 |
-| L3 No per-app offer cap or owner offer controls | Per-app live-offer cap (reference 32). Owner list and revoke. | §10.2, §13.1, §14.1 |
-| L4 Key warming at mint leaked to third-party issuers | Issuer-level metadata only, with the justification; a refresh lane for invites naming a live offer. | §5.7, §9.2 step 3 |
-| L5 Glare by `sid`, which the peer's provider chooses | Ranked by SHA-256 over both initiator leg key thumbprints; equal ranks cancel both. | §8.3 |
-| L6 `parties` not checked at pairing creation; disclosure-adding kind versions; moves; §5.1 item 7 without `client_session` | All added. | §5.1, §5.8, §14.3, §15 |
-| L7 "Both records required" overstated | Only the recipient's record is enforced by the recipient against a non-conforming peer provider; disclosed at creation. | §5.8, §17, §19.5 |
-| L8 AMD-INT-R1 history scope, first-use disclosure, self-preferencing | History per (person, acting entity); disclosed at first use; the provider's own review removed as a ranking signal and from the fallback. The intents §13 "once records nothing" test changes. | §20.10, §21.1 |
+| H1 A service offer is pinned to the minting instance; §14.2 revokes it when that instance goes | A service-class offer belongs to the minting app or feature and routes to every eligible and online endpoint of it (liveness window, reference 60 s); the first claim wins; endpoint unregister and expiry never revoke offers, and §14.2 step 6 is narrowed to the end of app or feature authority; offers that are not service-class keep minting-endpoint routing | §2, §5.4 case 3, §5.6, §5.7, §10.2, §10.3, §14.2, SG-47 |
+| H2 Open-offer invites share windows with unbased junk; one global per-offer window | Charged only to their own windows and the host-wide initiator window; a per-issuer fair share max(W / (n + 1), F); reference values are examples, scaled for services; operational responses named | §9.2, §13.1, §17, B.1, SG-48 |
+| M1 No open-offer sub-budget; uses reserved with nobody to answer | Open-offer sub-budget (reference: half of pending and of connected capacity); no admission and no use with an empty routing set | §5.2, §5.4, §9.2, §13.1, SG-48 |
+| M2 A service cannot cheaply refuse junk | A service-class endpoint MAY decline automatically under its declared policy; a declined or unanswered open-offer session releases its use, and only an `accept` spends it | §4.2, §5.2, §5.5, §5.7, §10.2, §20.1.4, SG-49 |
+| M3 "Service-class" by entity kind is too broad | Provider features and apps of organization entities their owner designated as service entities (explicit, disclosed owner setting); undesignated organizations' apps, member devices, member-context endpoints and person apps are not service-class; Q10 corrected | §2, §4.1, §4.3, §12.6, §14.1, §14.2, §20.1.4, SG-50, Q10 |
+| M4 Bound offers reusable after an unanswered dial-back (polling) | Bound offers single-use, spent at admission (`uses` absent or 1); §12.1 reworded | §5.2, §5.7, §10.2, §12.1, §13.1, SG-49 |
+| M5 A person's group open offer exhaustible by one holder | Residual stated plainly; 900 s and small `uses` kept as the bound | §5.7, §17, SG-51 |
+| L1 Claim versus offer end not atomic | Decided at the first-claim authority; first recorded wins; the reserved use is spent or released, never both | §5.7, §21.1, SG-49 |
+| L2 Token in the initiator provider's outbox | Kept only in the outbox until `answer_by`, never logged, deleted with the invite payload | §5.7, §12.4, SG-51 |
+| L3 Long-lived bound offers not disclosed | Disclosed on the approval and designation pages; service-class bound offers capped at 7 days (reference) and single-use | §4.3, §5.7, §10.2, §20.1.4, SG-50 |
+| L4 A person's app can emulate a pairing by re-minting | Accepted and justified: unenforceable to forbid, needs both apps' cooperation, single-use offers stop within 900 s, nothing leaks to third parties | §5.7, §17, SG-51 |
+| L5 A move kills published offers | Stated for service operators | §5.7, SG-47 |
+| L-6 `endpoints()` versus `endpoints({endpoint})` | `endpoints({endpoint})` everywhere | §5.8, §5.9, §10.3, SG-51 |
+| L-7 Glare scope | Pairing invites and same-app own-entity `target` invites only; untargeted own-entity invites and offer dial-backs do not glare | §8.3, §21.1, SG-51 |
+| L-8 Endpoint expiry not a §14.2 trigger | Listed, with the effects of `unregister`; never revokes offers | §10.2, §14.2, SG-47 |
+| Appendix C.2 registry row ties signaling to intent-links | Requires a session-kinds and approvals flag, never `INTENT_LINKS_ENABLED` | Appendix C.2, SG-51 |
+| Messaging §5.5 body size, alert rule, author comparison | At most 8 offer entries and 256-byte principals, so the body fits 4 KiB; group-call rule stated; the unlock persists until a block or an owner clear; authors compared by origin principal | [messaging §5.5](messaging.md#55-call-invitations-proposed-unsigned) |
 
-**Readings added in revision 2.1** (provisional, not in the review): endpoints record the registering client session (§5.4); a pairing `state` member (`pending`, `awaiting_confirmation`, `live`); the confirmation code is derived from the client's `dpop_jkt` so that no new method is needed, and the confirmation page is reached through `approval_required` (§5.9); a provider does not offer the standing mark where the approval skipped code typing (§20.11); cross-entity pairing expiry at most 1 year (§5.8); reconnection retries at most every 15 minutes once idle, replacing the `last_seen` trigger (§5.8).
+**Readings added in revision 3.2** (provisional, not in the review): the online condition applies only to service-class offer routing, because a sleeping person-app endpoint must still be reachable through its doorbell; the empty-routing-set rule applies to every offer, not only open ones, so there is one admission rule; open-offer uses are spent only by `accept` for person apps too, so a person's decline also releases a use; removing a service designation revokes only offers longer than 900 s.
 
 ## Appendix B: disposition of existing RTC decisions
 
@@ -2016,34 +1876,34 @@ Key: **Kept** means the decision stands, with renames only. **Changed** means it
 
 | ID | Verdict | Note |
 | --- | --- | --- |
-| RTC-1 Shape | Changed | The feature, the exclusive slot and `ice-relay` are kept. Purposes become intent kinds (routing provisional, SG-2), and the ticket link type is dropped with no interim type (SG-5). |
+| RTC-1 Shape | Changed | The extension and `ice-relay` are kept; since rev 3 the slots are fragments (SG-37). Purposes become intent kinds (SG-2), and the ticket link type is dropped with no successor (SG-5). |
 | RTC-2 AMD-X1 | Dropped | §19.1, §20.8. |
 | RTC-3 Leg-key signatures | Kept | §6. |
-| RTC-4 Admission bases | Changed | `link` means owner-configured, unconditional contact links only. Rev 2 adds `offer` and `pairing`; the relation basis is defined as `{"relation": "pairing"}` (§5.2, §5.6). |
+| RTC-4 Admission bases | Changed | The bases are `self`, `pairing` (with the relation basis `{"relation": "pairing"}`) and `offer`, bound or open; `link` is withdrawn and `none` reserved (§5.2, §5.6). |
 | RTC-5 No address before the claim | Kept | §1.2, §16.4. |
 | RTC-6 Relay-only default | Kept | §16.5. |
 | RTC-7 Each party funds its own relay | Kept | §16.7. |
 | RTC-8 No ringing, busy or presence | Kept | It is strengthened: `busy` is dropped (SG-13). |
 | RTC-9 Lifetimes | Changed | Ring ≤ 120 s becomes `answer_by` ≤ 120 s. Session 24 h and certificate 120 to 900 s are kept. |
 | RTC-10 SAS | Dropped | Out of core. In-band SAS is an endpoint matter (§16.6). |
-| RTC-11 Limits | Kept | Reference values carry over, with renames: "ringing" becomes "pending". Added: `self` 120/h (own-entity `open` calls now count against it rather than `opens` 60/h, §13.1), `preferred` 60/h (alongside `pair`, `caller` and `issuerParent`), `sameHost` 40/h, pending reserve 2, `warms` 20/h, 8 endpoints per app, and a new aggregate `data` budget per entity (value to be set with the cost-model row). `mint` 120/h and 64 live links per app wait for AMD-SG-L1b. Rev 2 adds 64 live offers per entity, 120 offer mints per app per hour, 30 pairing invites per (pairing, endpoint pair) per hour, and two live sessions per (pairing, endpoint pair). Rev 2.1 adds 32 live offers per app; keeps the endpoint-pair values for own-entity pairings only; keys cross-entity pairings per pairing `id` (30 per hour per local covered endpoint, at most 240, and at most 2 × the local covered endpoints live); adds a pairing sub-budget (half of pending, connected and `data` capacity); and splits the pending reserve into a `self` share and a cross-entity share of 2 each. |
+| RTC-11 Limits | Kept | Reference values carry over, with "ringing" read as "pending". Current values: `pair` and `caller` windows; `self` 120/h, which own-entity `open` calls count against instead of `opens` 60/h (§13.1); `sameHost` 40/h; `warms` 20/h; 8 endpoints per app; an aggregate `data` budget per entity (value set with the cost-model row); 64 live offers per entity and 32 per app; 120 offer mints per app per hour; open-offer windows (rev 3.2, examples) of 60/h per offer, 6/h per (principal, offer) and a per-issuer floor of 6/h for offers that are not service-class, and 3,600/h, 12/h and 60/h for service-class offers, with the per-issuer fair share max(W / (n + 1), F); an open-offer sub-budget of half of pending and connected capacity; a 7-day cap on service-class bound offers; 30 pairing invites per hour per own-entity (pairing, endpoint pair), with two live sessions; cross-entity pairings per pairing `id` at 30/h per local covered endpoint (at most 240) and 2 × the local covered endpoints live; a pairing sub-budget of half of pending, connected and `data` capacity; and a pending reserve of 2 per share (`self` and cross-entity). |
 | RTC-12 Device delivery | Kept | The integration doorbell is renamed (§11.2). |
 | RTC-13 No multi-party | Kept | §8.6. |
 | RTC-14 Beam leaves core | Kept | Historical. |
-| RTC-15 Retention | Changed | The missed list is dropped. Owner-hook entries are deleted by `answer_by` (§11.3, §12.4). |
-| RTC-16 Portal ring fallback | Dropped | No provider presentation. Only the owner hook remains (SG-4). |
+| RTC-15 Retention | Changed | The missed list is dropped. The provider keeps no owner-visible record of invites (§1.2, §12.4). |
+| RTC-16 Portal ring fallback | Dropped | No provider presentation (SG-4). |
 | RTC-17 Caller app origin | Kept | Provisional answer 6 (§19.3, SG-12). |
 
 ### B.2 Amendments
 
 | ID | Verdict | Note |
 | --- | --- | --- |
-| AMD-X1 | Dropped | §20.8. extensions §13 is to be withdrawn by a later edit. |
+| AMD-X1 | Dropped | §20.8. Withdrawn by extensions revision 3 (EXT3-16). |
 | AMD-R1 | Changed | AMD-SG-K1. |
 | AMD-R2 | Changed | AMD-SG-P1. |
 | AMD-R3 | Changed | AMD-SG-E1. |
 | AMD-R4 | Dropped | Replaced by AMD-SG-I1. |
-| AMD-R5 | Changed | The ticket type is dropped. Contact-link configuration moves to AMD-SG-L1a, and minting to the deferred AMD-SG-L1b. Callbacks are withdrawn in rev 2, replaced by offers (§5.7). |
+| AMD-R5 | Dropped | The ticket type is dropped. Its rev 1 successors (AMD-SG-L1a and L1b) are withdrawn in rev 3, and callbacks in rev 2, replaced by offers (§5.7). |
 | AMD-R6 | Kept | Historical. |
 | AMD-RV1 | Kept | Applied, §6.3, §16.4. |
 | AMD-RV2 | Kept | Applied, §9.2, §9.3. |
@@ -2051,8 +1911,8 @@ Key: **Kept** means the decision stands, with renames only. **Changed** means it
 | AMD-RI1 to RI5 | Kept | Applied, §5.1, §7.3, §9, §10. |
 | AMD-RW1 | Dropped | It does not arise (§5.4). |
 | AMD-RW2, RW3, RW4 | Kept | Applied, §9.2, §13. |
-| AMD-RW5 | Dropped | Mutes are dropped, and there is no signaling interruption policy for the scoping rule to apply to (§11.3). Folding foreign initiators per issuer keeps its intent. |
-| AMD-RW6 | Changed | It applies to app-minted contact links once AMD-SG-L1b exists (§14.2, §20.3.2). |
+| AMD-RW5 | Dropped | Mutes are dropped, and there is no signaling interruption policy for the scoping rule to apply to. |
+| AMD-RW6 | Dropped | There are no app-minted links since rev 3 (§5.3). |
 
 ### B.3 RTC-a/b/c (RTCabc)
 
@@ -2072,9 +1932,9 @@ Key: **Kept** means the decision stands, with renames only. **Changed** means it
 | RTCd-1 Records keyed by initiator | Kept | |
 | RTCd-2, RTCd-21, RTCd-22 Asynchronous processing, inbound queue | Kept | §9.2, §9.3. |
 | RTCd-3 Replay window | Kept | |
-| RTCd-4 Held invites | Changed | Owner-hook entries (§11.3). |
+| RTCd-4 Held invites | Dropped | No held invites since rev 3.1 (`none` reserved, SG-45). |
 | RTCd-5 Mutes | Dropped | |
-| RTCd-6 Auto-accept projection | Changed | `auto_connect` for own-entity, `offer_match` and `paired` (rev 2) and `standing_accept` (provider features and service entities) for cross-entity (§5.5, §10.3). Rev 2.1: `offer_match` only on the minting endpoint; `paired` and `auto_connect` under pairing coverage including bound client sessions. |
+| RTCd-6 Auto-accept projection | Changed | `auto_connect` for own-entity, `offer_match` and `paired` for cross-entity (§5.5, §10.3), under pairing coverage including bound client sessions. `offer_match` is on the minting endpoint, or on every online endpoint of a service-class minting app or feature (rev 3.1, 3.2). There is no `standing_accept`. |
 | RTCd-7 Decline by claim | Kept | |
 | RTCd-8, RTCd-9, RTCd-20 Wire details | Kept | §10. |
 | RTCd-10 Tickets apart from LinkService | Dropped | |
@@ -2095,9 +1955,9 @@ Key: **Kept** means the decision stands, with renames only. **Changed** means it
 | RTCg-3 No master switch | Kept | |
 | RTCg-4 Ring eligibility | Dropped | |
 | RTCg-5 Silent local end | Kept | As the engine rule (§8.5). |
-| RTCg-6, RTCg-14 Ring data and principal display | Changed | The same pre-claim minimization for owner-hook entries (§11.3). |
-| RTCg-7, RTCg-8 Open in app; ring delivery | Changed | The intents handoff from the owner hook (§11.4). No polling. |
-| RTCg-9 to RTCg-12 Apps, automatic answers, contact links, requests | Changed | Folded into generic surfaces (§14.1). Automatic answers for app endpoints become pairings (rev 2, §5.8), with direction, mandatory cross-entity expiry and code confirmation for device-authorization pairings in rev 2.1. |
+| RTCg-6, RTCg-14 Ring data and principal display | Changed | The pre-claim minimization applies to the `listen` projection (§10.3). |
+| RTCg-7, RTCg-8 Open in app; ring delivery | Dropped | No provider handoff (rev 3.1). Delivery is `listen` with optional doorbells. |
+| RTCg-9 to RTCg-12 Apps, automatic answers, contact links, requests | Changed | Folded into generic surfaces (§14.1). Automatic answers for app endpoints become pairings (rev 2, §5.8), with direction, mandatory cross-entity expiry and code confirmation for device-authorization pairings in rev 2.1, and explicit per-edge activation in rev 3. Contact links are dropped in rev 3, and requests in rev 3.1. |
 | RTCg-13 Confirmations | Kept (impl) | For destructive owner actions. |
 | RTCg-15 Controls not offered | Dropped | |
 | RTCg-16 Network privacy defaults | Kept | §16.5. |
@@ -2120,14 +1980,14 @@ Key: **Kept** means the decision stands, with renames only. **Changed** means it
 | RTCe-21 | Kept | §14.2. |
 | RTCe-15, RTCe-18 | Kept | Still open. |
 | RTCe-17, RTCe-19, RTCe-20 | Kept | |
-| RTCe-22 | Kept | In the `listen` projection and the owner hook. |
+| RTCe-22 | Kept | In the `listen` projection. |
 | RTCe-resid, RTCe-open | Kept | The integration doorbell is renamed. |
 
 ### B.7 RTC service follow-ups (RTCs)
 
 | ID | Verdict | Note |
 | --- | --- | --- |
-| RTCs-1 to RTCs-5 Silent end | Kept | Reached through the owner hook's dismiss. |
+| RTCs-1 to RTCs-5 Silent end | Kept | As the §8.5 engine rule. |
 | RTCs-6 Alert recomputation | Dropped | There is no alert. |
 | RTCs-7 Caller origin | Kept | RTC-17. |
 | RTCs-8 Narrowing route | Changed | Removing a kind approval is an intents-settings action. |
@@ -2161,18 +2021,18 @@ Key: **Kept** means the decision stands, with renames only. **Changed** means it
 | RTCw-M4 | Kept | |
 | RTCw-M5, RTCw-I1 | Kept | |
 | RTCw-L1 | Kept | |
-| RTCw-L2 | Changed | Owner-hook folding, per issuer for foreign initiators. |
+| RTCw-L2 | Dropped | No owner-visible record to fold (rev 3.1). |
 | RTCw-L3, RTCw-R1, RTCw-I3 | Kept | |
-| RTCw-L5 Ticket pruning | Changed | Applies to app-minted links (deferred, AMD-SG-L1b). |
+| RTCw-L5 Ticket pruning | Dropped | No tickets or minted links (rev 3). |
 | RTCw-info | Kept | Handles are unsupported for `open` on this host, and re-registration after revoke is allowed. |
-| RTCw-M2-1, M2-3 | Changed | Apply to app-minted links (deferred). M2-3 now revokes only that app's minted parents; owner-configured parents lose the kind (§14.2). |
-| RTCw-M2-2, RTCw-I5 | Changed | A link quota and mint window per app, with AMD-SG-L1b. |
+| RTCw-M2-1, M2-3 | Dropped | No app-minted links (rev 3). |
+| RTCw-M2-2, RTCw-I5 | Dropped | No link quota or mint window (rev 3). |
 | RTCw-M2-4 Legacy tickets | Dropped | |
-| RTCw-M2-5, RTCw-I6 | Changed | Bulk revoke per app in the links view. |
+| RTCw-M2-5, RTCw-I6 | Dropped | No signaling links (rev 3). Offers have per-app bulk revoke (§14.1). |
 | RTCw-M6-1 | Kept | |
 | RTCw-M6-2, RTCw-R3 | Changed | Mutes are dropped. R3's routing half is kept (§5.4). Its mute-scoping half has nothing left to apply to. |
 | RTCw-M6-3 | Kept | |
-| RTCw-M6-4 Ring controls | Dropped | Replaced by the owner hook's actions. |
+| RTCw-M6-4 Ring controls | Dropped | |
 | RTCw-M6-5 | Changed | Generic surfaces. |
 | RTCw-copy | Dropped | |
 | RTCw-resid | Kept | |
@@ -2192,9 +2052,11 @@ The storage families are:
 - **Federation shard:** AMD-X1 `bound` members on grants. These exist only where `EXTENSIONS_ENABLED` and the RTC flags were on.
 - **Host abuse store:** the `rtc/inbound` per-network limiter scope (`packages/runtime/routes/rtc.mjs`, `admitSourceNetwork`). It is transient window state.
 
-Their fate: `rtc/contact/` becomes link signaling configuration on the parent (AMD-SG-L1a). `rtc/missed/`, `rtc/mute/`, `rtc/ticket/` and `rtc/approval/` are dropped. The rest are renamed. Revision 2 adds two new families with no RTC predecessor: pairings (owner data, exported) and offers (transient, excluded from export, deleted at expiry). Revision 2.1 adds members to them (pairing `opens` and `state`; per-app offer counts) and a recorded client session on each endpoint registration; none has existing rows.
+Their fate: `rtc/contact/`, `rtc/missed/`, `rtc/mute/`, `rtc/ticket/` and `rtc/approval/` are dropped (`rtc/contact/` by the contacts reset `contact-links-retired-v1`, [contacts and links spike](../architecture/contacts-and-links-rethink.md) §9). The rest are renamed. Revision 2 adds two new families with no RTC predecessor: pairings (owner data, exported) and offers (transient, excluded from export, deleted at expiry). Revision 2.1 adds members to them (pairing `opens` and `state`; per-app offer counts) and a recorded client session on each endpoint registration; none has existing rows. Revision 3 adds no family. Revision 3.1 adds members to offers (the principal may be `null`; `uses` and spent and reserved counts) and removes the owner-hook entries, which never had rows.
 
 So rows can exist only in local development and test stores. For example, the round 3 browser bug hunt ran a local Worker with `RTC_SIGNALING_ENABLED` and `RTC_TICKETS_ENABLED` on (DEVLOG 2026-10-27). A one-time cleanup step, or a dev reset, is enough. No owner data needs conversion.
+
+**Calling code leaves core.** Every call-specific part of the RTC code (the ring screen and poll, the "Calls & connections" view, the call purpose, call strings) is removed from core. Calling is built in Parlay on Bindle Messaging §5.5 and these generic signaling methods; nothing call-specific is re-homed into the signaling package.
 
 **Export gap (pre-existing).** `rtc/block-iss/` is neither exported nor excluded in `packages/runtime/export-contributors.mjs`: the `rtc` contributor claims `rtc/block/`, and that prefix does not match `rtc/block-iss/`. The renamed provider-block family must be exported (§12.6).
 
@@ -2202,82 +2064,77 @@ So rows can exist only in local development and test stores. For example, the ro
 
 | File | Plan |
 | --- | --- |
-| `jws.mjs` | Keep. Update the `typ` list. |
-| `messages.mjs` | Reduce and split into a generic envelope and types (`answer_by`, `kind`, `profile`, `params`, the `self`, `link`, `offer_digest` and `relation` bases, and the batch `offers` member; no `callback_digest`, SAS, `busy` or `media`), plus profile validators: `webrtc`, which keeps every SDP and candidate rule but only the structural `m=` check, and `data`, which owns the `data` type (4 KiB per message, 64 KiB per leg). |
+| `jws.mjs` | Keep the `typ` list here. It takes `strictJSON` from `packages/links/envelope.mjs` today (checked 2026-10-27); repoint it to `packages/core/strict-json.mjs`, which exists, and take compact JWS sign and verify from `packages/core/signed-object.mjs` once contacts spike CR-C0 creates it. Never from `packages/links` or `packages/orgs` after that. |
+| `messages.mjs` | Reduce and split into a generic envelope and types (`answer_by`, `kind`, `profile`, `params`, the `self`, `offer_digest` and `relation` bases, and the batch `offers` member; no `link_digest`, `links`, `callback_digest`, SAS, `busy` or `media`), plus profile validators: `webrtc`, which keeps every SDP and candidate rule but only the structural `m=` check, and `data`, which owns the `data` type (4 KiB per message, 64 KiB per leg). |
 | `certificates.mjs` | Keep. Renames (`role`, `kind`, `profile`, `client.feature`). |
-| `extension.mjs` | Reduce. Slot manifest without `bind` or options, `consumers` with `provider`, a feature validator with `profiles`. Remove the AMD-X1 bound-artefact table. |
+| `extension.mjs` | Rebuild in the extensions revision 3 shape (CR-X3-24): the descriptor and its options validator (`endpoint` audience, `max_leg_certificate_seconds`, `profiles`), the prerequisite check, and the two fragments with `selection` and `consumers`. No slot, `bind` or AMD-X1 bound-artefact table. |
 | `purposes.mjs` | Remove. Session-kind validation (`session` member) moves to `packages/intents/schema.mjs`, and projection reuses `packages/intents/project.mjs`. |
 | `sessions.mjs` | Keep. Rename `ringing` to `pending`. Bounds stay. Replay state stores payload hashes only. |
-| `admission.mjs` | Reduce. Remove the mute kinds and alert. Keep the blocks (principal and issuer), limits and windows (`inviteLimits` already matches §13.1 for principal-bound invites). Add the aggregate `data` budget, the offer and pairing windows and limits, `bases` enforcement, and the offer and relation basis checks at step 7 (with the read-only offer principal comparison and principal-based limit classification). Rev 2.1: cross-entity pairing window and live cap per pairing `id`, the pairing sub-budget, and the split pending reserve. Eligibility becomes the routing set, read from intents memory and the pairing records. |
-| `tickets.mjs` | Remove. Its replacement is owner-side signaling configuration on LinkService contact parents (`packages/links`, AMD-SG-L1a), refused on conditional parents. `minted_by`, quotas and minting wait for AMD-SG-L1b. Callbacks are withdrawn; offers are new code in `service.mjs` and `admission.mjs`. |
-| `service.mjs` | Reduce. Remove the missed list, mutes, alert recomputation, ticket operations and RTC owner reads tied to the ring. Add the routing set (cases 1 to 5) and handoff target, late delivery, the owner hook, standing acceptance (provider features and service entities only), the live approval check on `claim` accept, and approval checks from intents memory. Add `offer` and `revoke_offer` with hashed offer records and atomic spend, the pairing record and its lifecycle, `endpoints({pairing})`, and the `offer_match` and `paired` projection members. Rev 2.1: `offer_match` only for the minting endpoint; offer revocation and expiry ending admitted pending sessions; the per-app live-offer cap; issuer-level-only warming at `offer`; the client session recorded on each endpoint and pairing coverage checked against it in both roles; `opens`; Devices-name labels and no `last_seen` in paired results; pairing deletion on clearing, blocks and moves; the 7-day pending expiry; re-confirmation on disclosure-adding kind versions; glare ranks from leg key thumbprints (endpoint SDK). Change `open`: own-entity opens take the `self` window, not `opens` (§13.1, L4). |
+| `admission.mjs` | Reduce. Remove the mute kinds and alert. Keep the blocks (principal and issuer), limits and windows, removing the link windows (`preferred`, `issuerParent`). Add the aggregate `data` budget, the offer and pairing windows and limits, `bases` enforcement, and the offer and relation basis checks at step 7 (with the read-only offer principal comparison and principal-based limit classification). Rev 2.1: cross-entity pairing window and live cap per pairing `id`, the pairing sub-budget, and the split pending reserve. Eligibility becomes the routing set, read from intents memory and the pairing records. |
+| `tickets.mjs` | Remove, with no replacement (rev 3). It imports `packages/links/envelope.mjs` and `packages/identity/delegation.mjs` today, not organization code; until removal, any repoint goes to the core modules (contacts spike L5). Offers are new code in `service.mjs` and `admission.mjs`. |
+| `service.mjs` | Reduce. Remove the missed list, mutes, alert recomputation, ticket operations and RTC owner reads tied to the ring. Add the routing set (cases 1 to 4), late delivery, the live approval check on `claim` accept, and approval checks from intents memory. Add `offer` and `revoke_offer` with hashed offer records and atomic spend, the pairing record and its lifecycle, `endpoints({pairing})`, and the `offer_match` and `paired` projection members. Rev 2.1: `offer_match` only for the minting endpoint; offer revocation and expiry ending admitted pending sessions; the per-app live-offer cap; issuer-level-only warming at `offer`; the client session recorded on each endpoint and pairing coverage checked against it in both roles; `opens`; Devices-name labels and no `last_seen` in paired results; pairing deletion on clearing, blocks and moves; the 7-day pending expiry; re-confirmation on disclosure-adding kind versions; glare ranks from leg key thumbprints (endpoint SDK). Rev 3: no link routing or standing acceptance; explicit pairing activation, one edge per pairing, and pairing deletion when either party's grant or approval goes. Rev 3.1: no routing handler, owner hook, held requests or handoff; open and multi-use offers with use reservation, the service-class expiry and `offer_match` rules and the open-offer windows; one cross-entity pairing per (peer principal, kind line); `pairings` in `endpoints` and `pairing` events; no glare auto-accept. Rev 3.2: service-class offers owned by the app and routed to its online endpoints; bound offers spent at admission; open-offer uses spent only by accept; open-offer windows outside the unbased windows, with a per-issuer fair share; the open-offer sub-budget; no use with an empty routing set; offers untouched by endpoint unregister and expiry; the service designation. Change `open`: own-entity opens take the `self` window, not `opens` (§13.1, L4). |
 | `federation.mjs` | Keep. Renames. |
 | `relay.mjs` | Keep. The approval check uses kind approval. Issuance stays refused until the spend authority enforces a per-owner byte cap from provider usage (§16.7). `scripts/cost-model.mjs` imports it (see C.2). |
-| `relay-credentials.mjs`, `turn.mjs` | Keep. `relay-credentials.mjs` is used only by `beam-retirement.mjs`; remove it with `beam-retired-v2`. |
+| `relay-credentials.mjs`, `turn.mjs` | Keep. `relay.mjs` imports `RELAY_LEASE_MS`, `RELAY_RETRY_MS` and `relayUsernames` from `relay-credentials.mjs`, and `CloudflareTurnAdapter` and `TURN_MAX_TTL_SECONDS` from `turn.mjs`, which `relay-credentials.mjs` also imports (checked 2026-10-27). Fold the parts `relay.mjs` uses into it, or keep both files; do not delete `relay-credentials.mjs` on its own. |
 
 ### C.2 Runtime, routes, federation and other packages
 
 | File | Plan |
 | --- | --- |
-| `packages/app/domains/rtc.mjs` | Rename to `signaling.mjs`. Reduce the operation lists (no ticket, mute, missed or narrow operations). |
+| `packages/app/domains/rtc.mjs` | Rename to `signaling.mjs`. Reduce the operation lists (no ticket, contact-configuration, mute, missed or narrow operations). |
 | `packages/runtime/account/rtc.mjs` | Reduce. Remove `rtc/approval/`, `narrowedApproval` and the bound copying into actors. Keep the contract actor (grant ids), peer, listen, drain, relay and the roster. |
 | `packages/runtime/routes/rtc.mjs` | Keep the logic: step 1 at the route, dark ingest, the same-host `iss` refusal, shedding. Rename the path and media type, and the `rtc/inbound` limiter scope in the host abuse store (to `signaling/inbound`). |
-| `packages/runtime/routes/rtc-owner.mjs` | Mostly remove. Drop `GET /api/rtc/ring`, missed, mute, tickets and `narrow-app`. Keep minimal owner routes for the IP policy and requests, principal and provider blocks, end-session, revoke-endpoint, the owner hook (read, dismiss, block, hand off) and auto-connect. Link configuration moves to the links routes, and approvals and standing acceptance to the intents routes. |
+| `packages/runtime/routes/rtc-owner.mjs` | Mostly remove. Drop `GET /api/rtc/ring`, missed, mute, tickets and `narrow-app`. Keep minimal owner routes for the IP policy, principal and provider blocks, end-session, revoke-endpoint and auto-connect. Drop `set-contact-rtc` and `endpoints.inspect` (contacts spike CR-C6). Approvals move to the intents routes. |
 | `packages/runtime/routes/index.mjs`, `packages/runtime/account/index.mjs` | Rename the `rtc` and `rtc-owner` route imports and the `rtc` account slice. |
-| `packages/runtime/routes/intents.mjs`, `packages/intents/*` | Extend: session kinds (with `bases`), approvals with `auto_connect` and `standing_accept`, the routing default with sole-handler promotion, and the `bsession` handoff (AMD-SG-I1). The ranked short list, the single-candidate confirmation, the choice history (on by default, owner-deletable) and the scope rule follow AMD-INT-R1. Rev 2.1: history per (person, acting entity), disclosed at first use; the provider's review removed from ranking and from the fallback order. |
-| Pairing owner routes and pages (new) | Create (owner page only), list, relabel, expire, renew, re-confirm and remove pairings, compare-and-swap, with the §5.8 disclosures (rev 2.1: `opens`, `parties` check, fresh authentication and verified-handle display for cross-entity pairings, sensitivity-category wording, mandatory cross-entity expiry, the recipient-only enforcement disclosure). Activating approval pages name pending pairings. Live-offer list and revoke. Lives with app access, not in a calling view. |
-| `packages/runtime` device authorization approval page | Offer the session handler approval and a pairing bound to the new client session (default `opens: "peer"`) as separate, unchecked controls (§5.9). Add the code-comparison confirmation page reached from the paired app through `approval_required`, and name the pairing in the post-approval notification. The standing device grant waits for AMD-SG-D1 sign-off; until then, warn that signing out of the approving browser ends the client. If adopted: the three-event exemption only, the client restriction, and last-refresh and network-change signals in Devices. Revoking a device-authorization client session calls the signaling §14.2 narrowing. |
-| `packages/links/*` | Add owner-side parent signaling configuration (AMD-SG-L1a), refused on conditional parents, leaving the §6.3 representation unchanged. Nothing for minting or delivery-off until AMD-SG-L1b. |
+| `packages/runtime/routes/intents.mjs`, `packages/intents/*` | Extend: session kinds (with `bases`), and session handler approvals with `auto_connect` and the service-class disclosure (AMD-SG-I1). No routing default, promotion, chooser or `bsession` handoff for signaling (rev 3.1). AMD-INT-R1 is an intents change request, outside this plan. |
+| Pairing owner routes and pages (new) | Create (owner page only), activate, list, relabel, expire, renew, re-confirm and remove pairings, compare-and-swap, with the §5.8 disclosures (rev 2.1: `opens`, `parties` check, fresh authentication and verified-handle display for cross-entity pairings, sensitivity-category wording, mandatory cross-entity expiry, the recipient-only enforcement disclosure). Rev 3: explicit activation (P3), one edge per pairing (P2), parties' grants never created by the pairing (P1), listed with both parties (P4). Rev 3.1: refuse a second cross-entity pairing per (peer principal, kind line) and a provider feature as a party; a by-peer list of cross-entity pairings. Live-offer list (with "anyone" and uses) and revoke. Lives with the owner's app connections. Rev 3.2: the service-designation owner setting for organization entities, with its disclosure; removing it revokes offers longer than 900 s. |
+| `packages/runtime` device authorization approval page | Offer the session handler approval and one pairing control per already-connected candidate app, bound to the new client session (default `opens: "peer"`), as separate, unchecked controls (§5.9). Local-client enrolment (thumbprint `client_id`, local manifest, M5) follows the local clients spike phases 2, 3 and 5, behind its own flag. Add the code-comparison confirmation page (M4 only, code over the `user_code` and `dpop_jkt`) reached from the paired app through `approval_required`, and name the pairing in the post-approval notification. Under M5, the same submit activates a pairing whose parties then qualify. The standing device grant waits for AMD-SG-D1 sign-off; until then, warn that signing out of the approving browser ends the client. If adopted: the three-event exemption only, the client restriction, and last-refresh and network-change signals in Devices. Revoking a device-authorization client session calls the signaling §14.2 narrowing. |
 | **Lifecycle hooks** (intents, connections, federation) | Removing or clearing a session handler approval (§20.1.4), and an app connection ending for any reason, each call the signaling §14.2 narrowing. These two hooks replace `narrowBoundOptions` and the RTC grant-changed path. Slot-grant revocation keeps a generic grant-changed hook into the same narrowing. |
 | `packages/runtime/federation.mjs` | Reduce. Rename the manifest rows. Remove `rtcBoundArtefacts` and bound resolution. Keep the descriptors. |
 | `packages/federation/extensions.mjs`, `service.mjs`, `runtime.mjs`, incremental | Remove AMD-X1: `bind`, bound options, `narrowBoundOptions` (controller, remote, Worker allowlist), `boundApproval`, `checkBound`, `dispatchBound` and the incremental refusal. Keep a generic grant-changed hook for slot-grant revocation, and keep `NO_EFFECT_CODES`. |
 | `packages/runtime/artefact-pins.mjs` | Remove the four `rtc-purpose` operator documents. Keep the first-party contract under its new id. |
-| `packages/runtime/export-contributors.mjs` | Drop the `rtc/missed/`, `rtc/mute/`, `rtc/ticket/` and `rtc/approval/` rows. Export provider blocks (closing the `rtc/block-iss/` gap). Move `rtc/contact/` into the links parent configuration export. Rename the families. Extend the `intent-choices` row's claimed fields (today `kind default excluded ignored`) with the session handler approval fields: `approvals` (handler, `version`, `digest`, approval time), `autoConnect` and `standingAccept`, and the AMD-INT-R1 choice history. Add a pairings row (exported) and exclude offers. |
-| `packages/flags/registry.mjs` | `RTC_SIGNALING_ENABLED` → `SIGNALING_ENABLED`, requiring `INTENT_APP_HANDLERS_ENABLED` (which itself requires `INTENT_LINKS_ENABLED` and `CLIENT_METADATA_ENABLED`) besides its current requirements. The review also asked for `ACTIVITY_V2_ENABLED`, because revision 0 presented invites as activity items. Under the owner's later direction signaling creates no activity items, so that requirement is dropped unless an activity mirror (§20.2) is adopted. `RTC_FOREIGN_ENABLED` → `SIGNALING_FOREIGN_ENABLED`. Retire `RTC_TICKETS_ENABLED` into `RETIRED_FLAGS`. Keep or rename `RTC_TURN_ENABLED`. Rename `RTC_FOREIGN_ISSUERS`. |
+| `packages/runtime/export-contributors.mjs` | Drop the `rtc/missed/`, `rtc/mute/`, `rtc/ticket/` and `rtc/approval/` rows. Export provider blocks (closing the `rtc/block-iss/` gap). Drop `rtc/contact/` with the contacts reset. Rename the families. Extend the `intent-choices` row's claimed fields (today `kind default excluded ignored`) with the session handler approval fields: `approvals` (handler, `version`, `digest`, approval time) and `autoConnect`. Add a pairings row (exported) and exclude offers. |
+| `packages/flags/registry.mjs` | `RTC_SIGNALING_ENABLED` → `SIGNALING_ENABLED`, requiring, besides its current requirements, a flag that gates session kinds and session handler approvals, but never `INTENT_LINKS_ENABLED`, because session kinds are not tied to the intent-links extension (§20.1.8). `INTENT_APP_HANDLERS_ENABLED` requires `INTENT_LINKS_ENABLED` today, so either a separate session-kinds flag is added or that requirement is split; the choice is made with the code change (rev 3.2). The review also asked for `ACTIVITY_V2_ENABLED`, because revision 0 presented invites as activity items. Under the owner's later direction signaling creates no activity items, so that requirement is dropped unless an activity mirror (§20.2) is adopted. `RTC_FOREIGN_ENABLED` → `SIGNALING_FOREIGN_ENABLED`. Retire `RTC_TICKETS_ENABLED` into `RETIRED_FLAGS`. Keep or rename `RTC_TURN_ENABLED`. Rename `RTC_FOREIGN_ISSUERS`. |
 | `apps/node/resources.mjs`, `apps/worker/objects.mjs` | Remove `RTC_BOUND_CHECK` (kind approval is local). Rename `RTC_EGRESS` and the `RTC_FOREIGN_ISSUERS` allowlist wiring. |
 | `apps/worker/federation.mjs`, `apps/worker/index.mjs` | Rename the `rtcOccupant` mount (and its use in `packages/runtime/federation.mjs` descriptors). |
 | `scripts/cost-model.mjs` | Follow the `relay.mjs` rename (it imports `RELAY_PLAN_BYTES` and `RELAY_LIMITS`). Add the `data` row needed by the §3.5 production gate. |
-| `docs/artefacts/rtc-purposes/*` | Remove. They become app-published kinds. The device-sync example is optional. |
-| `docs/artefacts/rtc-signaling-v1.json` | Replace with `signaling-v1.json`. |
-| `packages/runtime/account/contact-profile.mjs` | Its `rtc/turn.mjs` import is a Beam leftover (TURN revocation for `beam-retired-v1`). Remove it with `beam-retired-v2`. |
+| `docs/artefacts/rtc-purposes/*` | Remove from core. Any kind an app needs is published by that app (for example Messaging's call kind, messaging §5.5). The device-sync example is optional. |
+| `docs/artefacts/rtc-signaling-v1.json` | Replace with the extension descriptor and the two fragment documents. |
 
 ### C.3 Web UI and catalogues
 
 | File | Plan |
 | --- | --- |
-| `apps/web/src/ui/rtc-ring.mjs`, `apps/web/src/bl/rtc-ring-poll.mjs` | Remove. |
-| `apps/web/src/ui/rtc-settings.mjs`, `apps/web/src/bl/rtc-settings.mjs` | Remove the "Calls & connections" view and the `calls` portal module. Re-home the generic controls (§14.1) into app access, Devices, Links, Privacy and the blocked lists. |
+| `apps/web/src/ui/rtc-ring.mjs`, `apps/web/src/bl/rtc-ring-poll.mjs` | Remove from core. Call presentation is Parlay's. |
+| `apps/web/src/ui/rtc-settings.mjs`, `apps/web/src/bl/rtc-settings.mjs` | Remove the "Calls & connections" view and the `calls` portal module. Re-home the generic controls (§14.1) into the owner's app connections, Privacy and the blocked lists. |
 | `apps/web/src/ui/authorize-entry-consent.mjs` | Remove the bound-options consent. Add the session-kind approval rows if approvals are offered at authorization. |
 | `apps/web/src/release.mjs`, `apps/web/src/ui/release-dialogs.mjs`, `apps/web/src/shared/portal-modules.mjs`, `apps/web/styles.css` | Remove the RTC hunks. |
-| `packages/i18n/catalogues.mjs`, `authorize-catalogue.mjs` | Remove most of the about 157 RTC strings per locale (107 + 11 + 36 + 3). Add neutral strings for the owner hook, standing acceptance (with its availability disclosure), pairings (with the "connect automatically" and peer-availability disclosures), the device-authorization pairing control, the chooser short list and choice history, and the re-homed settings. |
+| `packages/i18n/catalogues.mjs`, `authorize-catalogue.mjs` | Remove most of the about 157 RTC strings per locale (107 + 11 + 36 + 3). Add neutral strings for pairings (with the "connect automatically", peer-availability and activation disclosures), the enrolment pairing controls, and the re-homed settings. Call strings belong to Parlay. |
 
 ### C.4 Tests
 
 | Test | Plan |
 | --- | --- |
 | `rtc-messages`, `rtc-certificates`, `rtc-federation`, `rtc-federation-runtime`, `rtc-runtime`, `rtc-review-followups`, `rtc-relay`, `rtc-relay-credentials`, `cost-model-relay`, `rtc-bound-default` (no-hang part) | Keep, retargeted to the renames. |
-| `rtc-engine`, `rtc-wargame` | Keep most. Retarget the ticket, mute and missed cases to link configuration, the owner hook and blocks. Replace the round-robin cases with routing cases. Add standing acceptance, the `data` budget and the own-device `open` window. |
-| `rtc-tickets`, `rtc-tickets-spam` | Rewrite as owner link-configuration tests (uses, principal, conditional-parent refusal, narrowing, provider block). The quota and mint cases wait for AMD-SG-L1b. |
+| `rtc-engine`, `rtc-wargame` | Keep most. Retarget the mute and missed cases to blocks and silent ends; retire the ticket cases. Replace the round-robin cases with routing cases. Add the `data` budget and the own-device `open` window. |
+| `rtc-tickets`, `rtc-tickets-spam` | Remove with the `link` basis; keep any provider-block case as a block test. |
 | `tests/helpers/rtc-fixture.mjs`, `tests/helpers/rtc-settings-fixture.mjs` | Rename `rtc-fixture.mjs`. Remove `rtc-settings-fixture.mjs` with the settings view, or reduce it to the re-homed controls. |
 | `rtc-purposes` | Replace with intents session-kind tests. |
 | `extensions-bound-options`, `browser/consent-bound-options` | Remove with AMD-X1. |
 | `rtc-owner-routes`, `rtc-owner-followups` | Reduce to the remaining owner routes and the silent end. |
-| `browser/rtc-settings*` | Remove. New browser tests are needed for the re-homed controls, the owner hook, the standing-acceptance disclosure, the Pairings control and creation page, the device-authorization pairing control, and the chooser short list (ranking labels, expansion, the single-candidate confirmation, history deletion). |
-| New engine tests | Offers and pairings, as §21.1 "Offers", "Pairings" and "Engine-level and chaos coverage", including the rev 2.1 cases (minting-endpoint-only `offer_match`, client-session coverage in both roles, `opens`, per-pairing-id caps, split reserve, block deletion, glare by leg keys). |
-| Intents tests | If AMD-INT-R1 is adopted, the "once records nothing" consent case changes (§20.10 item 3), with history scope, first-use disclosure and no review-based ordering. |
+| `browser/rtc-settings*` | Remove. New browser tests are needed for the re-homed controls, the pairing creation and activation pages and their listings, the enrolment pairing controls, and the live-offer list. |
+| New engine tests | Offers and pairings, as §21.1 "Offers", "Pairings" and "Engine-level and chaos coverage", including the rev 2.1 cases (minting-endpoint-only `offer_match`, client-session coverage in both roles, `opens`, per-pairing-id caps, split reserve, block deletion, glare by leg keys) and the rev 3 and 3.1 cases (explicit activation, one edge per pairing, `link_digest` and `links` refused, open offers and use reservation, one cross-entity pairing per peer and kind line). |
 | `rtc-conformance*` | §21.2. |
 
 ### C.5 Order
 
-1. Owner sign-off of the routing choice and the bases (SG-2, SG-23 to SG-30) with AMD-SG-I1, AMD-INT-R1 and L1a. (The establishment spike reported on 2026-10-27, §19.4.)
-2. Intents session kinds (with `bases`), approvals, standing acceptance and the AMD-INT-R1 chooser short list.
-3. Links owner-side signaling configuration (L1a).
-4. Engine reduction and renames, including the owner hook, the `data` profile limits and the own-device `open` window. Then the `offer` basis and the pairing record, engine-level tests first, behind the default-off signaling flags.
-5. Remove AMD-X1 and wire the lifecycle hooks.
-6. UI re-homing.
-7. Conformance peer rewrite.
-8. Device-authorization approval page: the pairing control and its code-comparison confirmation, and AMD-SG-D1 if it is signed off.
-9. Docs: the design doc and the pending-signoffs digest, and the messaging.md call-invite alignment (§20.12 follow-up), by that file's owner.
-10. Later, after the links §6 re-scope: AMD-SG-L1b (minting and delivery-off).
+1. Owner sign-off of the kind-authorization choice and the bases (SG-2, SG-23 to SG-30, SG-36 to SG-46) with AMD-SG-I1. (The establishment spike reported on 2026-10-27, §19.4.)
+2. Intents session kinds (with `bases`) and approvals.
+3. Engine reduction and renames, including the `data` profile limits, the own-device `open` window and the removal of link, ticket and call code. Then the `offer` basis (bound and open) and the pairing record with explicit activation, engine-level tests first, behind the default-off signaling flags.
+4. The extension in the revision 3 shape (descriptor, fragments, prerequisite check), with AMD-X1 removal (CR-X3-20) and the lifecycle hooks.
+5. UI re-homing.
+6. Conformance peer rewrite.
+7. Enrolment approval page: the pairing controls and the M4 code-comparison confirmation, AMD-SG-D1 if it is signed off, and local-client enrolment after the local clients spike's identity phases.
+8. Docs: the design doc and the pending-signoffs digest. (Messaging §5.5 already carries the call-invite text.)
 
 Each step is reversible while flags stay off.
