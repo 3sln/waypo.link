@@ -1,5 +1,5 @@
-// Core links: the `messaging-address` slot handoff (slice BB-C1b; docs/spec/messaging.md §2.1–§2.3; links §6.4;
-// messaging-app.md §5 "Endpoints come from the occupant, never the slot").
+// Core links: the `messaging-address` handoff (slice BB-C1b; docs/spec/messaging.md §2.1–§2.3; links §6.4;
+// messaging-app.md §5 "Endpoints come from the occupant"; extensions rev 3.2: the occupant is the field's current value).
 //
 // A sender who holds a contact link (from the landing page, an intent `web+bindle://send-message?contact-url=…`, or
 // a QR code) GETs the link at the owner host with `Accept: application/vnd.bindle.messaging.ingress+json`. The provider
@@ -57,13 +57,13 @@ export class LinkHandoff {
     const verified = await this.service.verify(url), record = verified.record, binding = linkBinding(record.type), now = this.clock();
     if (!binding) fail('link_invalid');
     if (typeof this.occupant !== 'function' || typeof this.describe !== 'function') unavailable();
-    let seat; try { seat = await this.occupant({ owner: record.owner, slot: binding.slot }); } catch { unavailable(); }
+    let seat; try { seat = await this.occupant({ owner: record.owner, fragment: binding.fragment }); } catch { unavailable(); }
     if (!plain(seat) || typeof seat.clientId !== 'string' || !seat.clientId) unavailable();
-    const cacheKey = JSON.stringify([record.owner, binding.slot, seat.clientId, seat.generation ?? null, seat.origin ?? null]);
+    const cacheKey = JSON.stringify([record.owner, binding.fragment, seat.clientId, seat.generation ?? null, seat.origin ?? null]);
     let body = this.cache.get(cacheKey);
     if (!body || body.until <= now) {
       this.cache.delete(cacheKey);
-      let described; try { described = await this.describe({ owner: record.owner, slot: binding.slot, occupant: { clientId: seat.clientId, generation: seat.generation ?? null, ...(typeof seat.origin === 'string' ? { origin: seat.origin } : {}) } }); } catch { unavailable(); }
+      let described; try { described = await this.describe({ owner: record.owner, fragment: binding.fragment, occupant: { clientId: seat.clientId, generation: seat.generation ?? null, ...(typeof seat.origin === 'string' ? { origin: seat.origin } : {}) } }); } catch { unavailable(); }
       const valid = validateDescribe(described, { origin: typeof seat.origin === 'string' ? seat.origin : undefined, allowLoopback: this.allowLoopback });
       if (!valid) unavailable();
       body = { value: valid, until: now + DESCRIPTOR_LIMITS.cacheMs };

@@ -1,0 +1,19 @@
+{
+ "id": "https://spec.bindle.example/extensions/rtc-signaling/v1",
+ "title": "Real-time connections (legacy)",
+ "description": "Direct connections between devices, for the purposes you approve.",
+ "options": {
+  "endpoint": {
+   "title": "Session endpoint",
+   "type": "url",
+   "maxLength": 2048,
+   "endpoint": "audience"
+  },
+  "max_leg_certificate_seconds": {
+   "title": "Leg certificate lifetime",
+   "type": "integer",
+   "minimum": 120,
+   "maximum": 900
+  }
+ }
+}

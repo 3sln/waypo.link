@@ -130,11 +130,13 @@ test('fragment additions obey field rules, enum constraints and all frozen paths
  for(const edit of [b=>b.fields.mode.values.reverse(),b=>b.fields.mode.values.push('a'),b=>b.fields.mode.values.push(7),b=>{b.fields.mode.extensible=false;}])additive('fragment',enums,edit,false);
  const resource={fields:{r:{title:'R',type:'resource',contracts:[ID]}}};additive('fragment',resource,b=>b.fields.r.contracts.push('https://other.example/contract'),false);
 });
-test('slot and bus growth: options, declared types and open payloads only',()=>{
+test('bus growth: options, declared types and open payloads only; the slot kind is retired',()=>{
  const old={fields:{r:{type:'resource'}},slot:{options:{occupant:{},consumer:{}},selection:'ordered',bus:{types:['changed'],types_extensible:true,payload:objectSchema(true),publishers:['app'],readers:['app'],history:false,retention:1,categories:[]}}};
- for(const kind of ['slot','bus'])for(const side of ['occupant','consumer'])additive(kind,old,b=>{b.slot.options[side].flag=clone(optional);});
- additive('slot',old,b=>{b.fields.something=clone(optional);},false);
- additive('bus',old,b=>b.slot.bus.types.push('created'));additive('slot',old,b=>b.slot.bus.types.push('created'),false);
+ for(const side of ['occupant','consumer'])additive('bus',old,b=>{b.slot.options[side].flag=clone(optional);});
+ additive('bus',old,b=>{b.fields.something=clone(optional);},false);
+ // Extensions revision 3.2 removed slots: `slot` is no longer a default artefact kind (bus manifests keep theirs).
+ assert.equal(Object.hasOwn(DEFAULT_KINDS,'slot'),false);assert.deepEqual(validateAdditive('slot',old,clone(old)),{known:false,additive:null,changes:[]});
+ additive('bus',old,b=>b.slot.bus.types.push('created'));
  const frozen=clone(old);frozen.slot.bus.types_extensible=false;additive('bus',frozen,b=>b.slot.bus.types.push('created'),false);
  additive('bus',old,b=>{b.slot.bus.payload.properties.extra={type:'string'};});
  const closed=clone(old);closed.slot.bus.payload.additionalProperties=false;additive('bus',closed,b=>{b.slot.bus.payload.properties.extra={};},false);

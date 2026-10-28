@@ -133,7 +133,7 @@ async function fixture(t,name){
       if(url.pathname==='/')return route.fulfill({contentType:'text/html',headers:{'Cross-Origin-Opener-Policy':'same-origin-allow-popups'},body:appPage});
       if(url.pathname==='/elements')return route.fulfill({contentType:'text/html',headers:{'Cross-Origin-Opener-Policy':'same-origin-allow-popups'},body:elementsPage});
       // The real @3sln/bindle elements, served from this checkout.
-      if(/^\/(?:packages\/sdk\/src|packages\/i18n|vendor\/dodo)\//.test(url.pathname)&&!url.pathname.includes('..'))return route.fulfill({contentType:['.mjs','.js'].includes(extname(url.pathname))?'text/javascript':'text/plain',body:await readFile(resolve('.'+url.pathname))});
+      if(/^\/(?:packages\/sdk\/src|packages\/i18n|packages\/core|vendor\/dodo)\//.test(url.pathname)&&!url.pathname.includes('..'))return route.fulfill({contentType:['.mjs','.js'].includes(extname(url.pathname))?'text/javascript':'text/plain',body:await readFile(resolve('.'+url.pathname))});
       return route.fulfill({status:404,body:''});
     }
     if(url.origin===ISSUER&&url.pathname==='/oauth/authorize'&&url.searchParams.has('entry'))return route.fulfill({contentType:'text/html',headers:{'Referrer-Policy':'no-referrer'},body:popupPage});
@@ -233,7 +233,7 @@ for(const name of ['chromium','firefox','webkit'])test(`islands in ${name}`,{tim
     const sw=await get(EMBED+'/embed/sw.js');assert.equal(sw.status,200);assert.equal(sw.headers['service-worker-allowed'],'/embed');assert.equal(sw.headers['cache-control'],'no-cache');assert.match(String(sw.body),/const GENERATION='bindle-embed-[a-f0-9]{20}'/);
     for(const path of ['/embed/shell.html','/embed/shell.json','/embed/sw.js?v=1',config.worker+'?v=1'])assert.equal((await get(EMBED+path)).status,404,path);
     for(const path of ['/embed','/embed/sw.js',config.worker,'/embed/shell.html'])assert.equal((await get(ISSUER+path)).status,404,`app origin ${path}`);
-    const manifest=JSON.parse((await get(ISSUER+'/.well-known/bindle/manifest.json')).body);assert.equal(manifest.profiles['https://3sln.me/artefacts/profiles/components/v1'].embed_origin,EMBED);
+    const manifest=JSON.parse((await get(ISSUER+'/.well-known/bindle/manifest.json')).body);assert.equal(manifest.profiles,undefined);assert.equal(manifest.extensions.find(e=>e.spec==='https://spec.bindle.example/extensions/embedded-components/v1').options.embed_origin,EMBED);
     // Bearer alone never gets avatar bytes, and the refusal waits for the same fixed deadline as a success.
     const started=Date.now(),refused=await get(`${EMBED}/embed/api/avatar?s=64`,{'sec-fetch-site':'same-origin','sec-fetch-mode':'cors','sec-fetch-dest':'empty','x-bindle-embed':'1',authorization:'BindleEmbedSession x'});
     assert.equal(refused.status,401);assert.ok(Date.now()-started>=1400,'uniform deadline');assert.equal(refused.headers['access-control-allow-origin'],undefined);assert.equal(refused.headers['cross-origin-resource-policy'],'same-origin');

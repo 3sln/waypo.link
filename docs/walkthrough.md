@@ -1,5 +1,9 @@
 # Local app walkthrough
 
+> **Outdated, being refreshed (2026-10-27).** Several sections and screenshots show interfaces that no longer exist: the contact endpoint manager, the conversations and reply-all views and the contact-page composer (peer messaging left the 3sln.me core and is now the Parlay app), and slot-based connection screens (removed by the extensions revision 3 draft). Do not treat any screenshot here as current behaviour or as evidence of a working external provider. The walkthrough will be regenerated rather than patched.
+>
+> **Group:** 3sln.me reference service · **Covers:** a historical screenshot tour of the local app (2026-10-11 to 2026-10-12) · **Does not cover:** current behaviour; see [self-hosting](self-hosting.md) and the specs.
+
 Captured from the actual local Wrangler app, the gated deployment and real Chrome, 2026-10-11–12. These are test accounts; no live recovery credentials, contact capabilities or private answers appear in the images. **Production release remains disabled.** External-provider setup, notification delivery, full federation and account-retention/deletion still require the work recorded in [DEVLOG](../DEVLOG.md).
 
 The new encrypted recovery flow passed real passkey and password signup, restoration, file rotation and replay rejection, with independent adversarial checks. Personal information remains vulnerable to offline guessing; the UI recommends an extra private passphrase.

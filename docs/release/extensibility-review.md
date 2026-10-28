@@ -1,6 +1,6 @@
 # Extensibility design review (slots, integrations, brokered resources)
 
-Date: 2026-10-20. Subject: revision 1 of [extensions](../spec/extensions.md), [integrations](../spec/integrations.md) and the [extensibility design](../architecture/extensibility-design.md). Two independent reviewer agents with different lenses read the drafts plus the relevant core specs and source (`packages/federation/schema.mjs`, `service.mjs`), working read-only. Revision 2 of all three documents incorporates the fixes recorded below. This is an agent review, not human sign-off: reviewer ___ / date ___ / outcome ___.
+Date: 2026-10-20. Subject: revision 1 of [extensions](../spec/extensions.md), [integrations](../spec/extensions/integrations.md) and the [extensibility design](../architecture/extensibility-design.md). Two independent reviewer agents with different lenses read the drafts plus the relevant core specs and source (`packages/federation/schema.mjs`, `service.mjs`), working read-only. Revision 2 of all three documents incorporates the fixes recorded below. This is an agent review, not human sign-off: reviewer ___ / date ___ / outcome ___.
 
 The review asked two questions. Can the core invariants be broken by abuse? Does the design survive versioning, partial support and ecosystem growth? It found 9 High findings across the two lenses:
 

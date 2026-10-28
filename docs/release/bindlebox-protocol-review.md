@@ -2,7 +2,7 @@
 
 Date: 2026-10-20.
 
-**Scope.** `packages/bindlebox-protocol/*`, the pure protocol library for the Bindle Messaging interop draft ([spec](../spec/messaging.md)). The package keeps its `bindlebox` name until the app rename. Tests: `tests/bindlebox/protocol*.test.mjs`. Fixed vectors: `tests/bindlebox/vectors/`.
+**Scope.** `packages/bindlebox-protocol/*`, the pure protocol library for the Bindle Messaging interop draft ([spec](../spec/extensions/messaging.md)). The package keeps its `bindlebox` name until the app rename. Tests: `tests/bindlebox/protocol*.test.mjs`. Fixed vectors: `tests/bindlebox/vectors/`.
 
 **Method.** The library was reviewed by one independent security-reviewer subagent, read-only, with executable probes. It looked at:
 - signature substitution;

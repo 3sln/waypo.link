@@ -1,6 +1,8 @@
 // IA-1 through the provider-owned authorization entry and its HTTP handler, plus the token-endpoint branch: pinned
 // client/callback/PKCE/state/nonce, intent gating by mount, uniform creation, result redirects, and concurrency
 // (parallel decisions, parallel creation against caps, parallel code redemption).
+import {EXT} from '../packages/core/extensions.mjs';
+const ext=(manifest,spec)=>{const e=manifest.extensions?.find(x=>x.spec===spec);return e?e.options??{}:undefined;};
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {webcrypto} from 'node:crypto';
@@ -31,8 +33,8 @@ const token=(s,{code,verifier,proof,clientId=tasks.id})=>s.fetch(`${issuer}/oaut
 test('the intents are accepted and listed only when the flag is on and the port is mounted',async()=>{
  assert.equal(incrementalMountable(config),true);assert.equal(incrementalMountable({...config,INCREMENTAL_AUTH_ENABLED:'false'}),false);
  const on=stack(),off=stack({flag:false});assert.equal(off.port,null);
- assert.deepEqual(on.entries.manifest().features['authorization-entry.v1'].intents,['login','select-account','reauthenticate','grant-more','configure']);
- assert.deepEqual(off.entries.manifest().features['authorization-entry.v1'].intents,['login','select-account','reauthenticate']);
+ assert.deepEqual(ext(on.entries.manifest(),EXT.authorizationEntry).intents,['login','select-account','reauthenticate','grant-more','configure']);
+ assert.deepEqual(ext(off.entries.manifest(),EXT.authorizationEntry).intents,['login','select-account','reauthenticate']);
  assert.equal((await create(off)).response.status,400);assert.equal((await create(on)).response.status,201);
  for(const extra of [{reason:'x'},{target:{fragment:SUMMARY}}])assert.equal((await create(on,{intent:'login',subjectConstraint:undefined,requests:[],...extra})).response.status,400,'incremental members are refused on other intents');
  assert.equal((await create(on,{intent:'login',subjectConstraint:undefined,requests:[]})).response.status,201,'existing intents are unaffected');
@@ -152,9 +154,9 @@ test('IA-R2: wider methods, new resources and buses, alternating intents and cap
 
 
 test('IA-4: attested incremental popups deliver only code/result, state and issuer; plain fallback keeps the callback',async()=>{
- const embed='https://embed.provider.example',profile='https://3sln.me/artefacts/profiles/components/v1';
- assert.equal(stack({flag:false}).entries.manifest({components:true}).profiles[profile].parts.request,undefined);
- assert.deepEqual(stack().entries.manifest({components:true}).profiles[profile].parts.request,{versions:[1]});
+ const embed='https://embed.provider.example';
+ assert.deepEqual(ext(stack({flag:false}).entries.manifest({components:true}),EXT.embeddedComponents).parts,['avatar/1','account-switcher/1','sign-in/1']);
+ assert.deepEqual(ext(stack().entries.manifest({components:true}),EXT.embeddedComponents).parts,['avatar/1','account-switcher/1','sign-in/1','request/1']);
  for(const intent of ['grant-more','configure']){
   const s=stack(),key=await frameKey(await openStore({indexedDB:undefined}),{issuer,clientId:tasks.id,crypto:webcrypto,clock:s.f.time}),extra=intent==='configure'?{requests:undefined,challenge:undefined,challengeMethod:undefined,target:{fragment:SUMMARY}}:{};
   const {response,json,body}=await create(s,{...extra,intent,presentation:'popup',delivery:'embed-popup',embedJkt:key.jkt});assert.equal(response.status,201);

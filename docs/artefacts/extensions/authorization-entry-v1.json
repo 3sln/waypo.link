@@ -1,0 +1,29 @@
+{
+ "id": "https://spec.bindle.example/extensions/authorization-entry/v1",
+ "title": "Authorization entry",
+ "description": "Sign in to apps without typing your full handle, switch accounts, confirm it is you, add access and sign out from the app.",
+ "options": {
+  "endpoint": {
+   "title": "Entry endpoint",
+   "type": "url",
+   "maxLength": 2048,
+   "endpoint": "audience"
+  },
+  "intents": {
+   "title": "Intents",
+   "type": "enum",
+   "values": [
+    "login",
+    "select-account",
+    "reauthenticate",
+    "end-session",
+    "grant-more",
+    "configure"
+   ],
+   "cardinality": {
+    "min": 1,
+    "max": 6
+   }
+  }
+ }
+}

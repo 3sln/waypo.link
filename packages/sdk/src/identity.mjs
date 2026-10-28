@@ -109,7 +109,7 @@ export class BindleClient {
   clientIdFor(issuer){
     const config=this.clientIds;let id;
     try{id=typeof config==='string'?config:typeof config==='function'?config(issuer):config&&Object.hasOwn(config,issuer)?config[issuer]:undefined;}catch{id=undefined;}
-    if((id===undefined||id===null)&&this.clientMetadataUrl&&this.capabilities.declaration(issuer,{stale:true})?.features['client-id-metadata'])id=this.clientMetadataUrl;
+    if((id===undefined||id===null)&&this.clientMetadataUrl&&this.capabilities.declaration(issuer,{stale:true})?.clientIdMetadata)id=this.clientMetadataUrl;
     return typeof id==='string'&&id&&id.length<=2048?id:null;
   }
   get defaultIssuer(){return noDefault(this.defaultHost)?null:originOf(this.defaultHost);}
@@ -250,7 +250,7 @@ export class BindleClient {
       if(!extensions||typeof extensions!=='object'||Array.isArray(extensions)||Object.keys(extensions).length>8)throw new Error('Invalid authorization extensions.');
       for(const [name,value] of Object.entries(extensions)){if(!/^[a-z][A-Za-z0-9_]{0,31}$/.test(name)||name in body||entryCoreKeys.has(name)||!['string','number','boolean'].includes(typeof value)||String(value).length>512)throw new Error('Invalid authorization extension.');body[name]=value;}
     }
-    const response=await this.#post(declaration.features['authorization-entry'].endpoint,body,signal).catch(error=>{if(key)this.#releaseKey(key.jkt);throw error;});
+    const response=await this.#post(declaration.authorizationEntry.endpoint,body,signal).catch(error=>{if(key)this.#releaseKey(key.jkt);throw error;});
     // A declared entry endpoint that is not implemented degrades the feature for this issuer (decision note §4).
     if(notImplemented(response.status)){
       this.capabilities.degrade(issuer,'authorization-entry');if(key)this.#releaseKey(key.jkt);

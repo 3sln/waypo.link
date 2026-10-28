@@ -10,6 +10,8 @@ test.after(async()=>{await window.happyDOM.close();for(const n of names)globalTh
 const entryLogic=await import('../../apps/web/src/bl/authorize-entry.mjs');
 const {parseEntryLocation,validEntryView,entryToken,priorApproval,callbackTarget,eligibleAccounts,parseAccounts,durationOf}=entryLogic;
 const {embedOriginFor,validProof,validAck,runHandshake,deliverToOpener}=await import('../../apps/web/src/bl/authorize-entry-embed.mjs');
+// The embedded-components extension (extensions rev 3.2 §2.7) replaced the components profile in the manifest.
+const COMPONENTS='https://spec.bindle.example/extensions/embedded-components/v1';
 const {createArming}=await import('../../apps/web/src/bl/authorize-entry-arming.mjs');
 const {startEntryPage}=await import('../../apps/web/src/bl/authorize-entry-page.mjs');
 const {authorizeCatalogue,authorizeLocalization}=await import('../../packages/i18n/authorize-catalogue.mjs');
@@ -51,10 +53,11 @@ test('catalogue: English and Spanish keys match and the entry strings localize',
 });
 
 test('embed origin discovery and exact bridge message schemas',()=>{
- const manifest={profiles:{'https://3sln.me/artefacts/profiles/components/v1':{embed_origin:embed}}};
+ const manifest={extensions:[{spec:COMPONENTS,options:{embed_origin:embed}}]};
  assert.equal(embedOriginFor({entry:{},manifest,issuer}),embed);assert.equal(embedOriginFor({entry:{embed:{origin:embed+'/path'}},manifest,issuer}),null);
- assert.equal(embedOriginFor({entry:{},manifest:{profiles:{'https://3sln.me/artefacts/profiles/components/v1':{embed_origin:issuer}}},issuer}),null,'the issuer is never an embed origin');
+ assert.equal(embedOriginFor({entry:{},manifest:{extensions:[{spec:COMPONENTS,options:{embed_origin:issuer}}]},issuer}),null,'the issuer is never an embed origin');
  assert.equal(embedOriginFor({entry:{},manifest:null,issuer}),null);
+ assert.equal(embedOriginFor({entry:{},manifest:{extensions:[...manifest.extensions,...manifest.extensions]},issuer}),null,'a duplicate declaration is absent');
  assert.equal(validProof({v:1,type:'bindle-embed-proof',proof:'a.b.c'}),true);assert.equal(validProof({v:1,type:'bindle-embed-proof',proof:'a.b.c',extra:1}),false);assert.equal(validProof({v:1,type:'bindle-embed-proof',proof:'<script>'}),false);
  assert.equal(validAck({v:1,type:'bindle-embed-ack',entry:entryId},entryId),true);assert.equal(validAck({v:1,type:'bindle-embed-ack',entry:'x'},entryId),false);
 });
@@ -143,7 +146,7 @@ test('requested fragments go through the shared consent review; a decision that 
 
 test('frame-initiated popup: nothing renders or loads before the opener proves the key; approval goes only to the embed origin',async()=>{
  const posts=[],opener={postMessage:(data,origin)=>{posts.push({data,origin});queueMicrotask(()=>{const reply=data.type==='bindle-embed-hello'?{v:1,type:'bindle-embed-proof',proof:'p.r.f'}:data.type==='bindle-embed-done'?{v:1,type:'bindle-embed-ack',entry:entryId}:null;if(reply){const event=new Event('message');Object.assign(event,{data:reply,source:opener,origin:embed});h.win.dispatchEvent(event);}});}};
- const requestId=`${A}.${'R'.repeat(43)}`,manifest={profiles:{'https://3sln.me/artefacts/profiles/components/v1':{embed_origin:embed}}};
+ const requestId=`${A}.${'R'.repeat(43)}`,manifest={extensions:[{spec:COMPONENTS,options:{embed_origin:embed}}]};
  let release;const gate=new Promise(r=>release=r);
  const h=harness({opener,routes:[[`GET /api/oauth/entries/${entryId}`,()=>view({delivery:'embed-popup',embed:{attested:false,plain:false}})],['GET /.well-known/bindle/manifest.json',()=>manifest],
   [`POST /oauth/entries/${entryId}/embed-challenge`,async()=>{await gate;return {challenge:'C'.repeat(22)};}],[`POST /oauth/entries/${entryId}/embed-verify`,()=>({pageSecret:'S'.repeat(43)})],...accountRoutes([[A,'alex','ca']]),
@@ -163,7 +166,7 @@ test('frame-initiated popup: nothing renders or loads before the opener proves t
 });
 
 test('frame-initiated entry without a provable opener is replaced by the plain page before anything renders',async()=>{
- const h=harness({opener:null,routes:[[`GET /api/oauth/entries/${entryId}`,()=>view({delivery:'embed-popup',embed:{attested:false,plain:false}})],['GET /.well-known/bindle/manifest.json',()=>({profiles:{'https://3sln.me/artefacts/profiles/components/v1':{embed_origin:embed}}})],...accountRoutes()]});
+ const h=harness({opener:null,routes:[[`GET /api/oauth/entries/${entryId}`,()=>view({delivery:'embed-popup',embed:{attested:false,plain:false}})],['GET /.well-known/bindle/manifest.json',()=>({extensions:[{spec:COMPONENTS,options:{embed_origin:embed}}]})],...accountRoutes()]});
  await until(()=>h.nav.length);assert.deepEqual(h.nav,[{replace:`/oauth/authorize?entry=${entryId}&mode=plain`}]);assert.equal(h.calls.some(c=>/accounts|session|challenge/.test(c.path)),false);assert.doesNotMatch(h.root.textContent,/alex/);h.page.dispose();
  // The plain page (COOP same-origin) runs as an ordinary flow and declares plain mode on every owner step.
  const requestId=`${A}.${'R'.repeat(43)}`;

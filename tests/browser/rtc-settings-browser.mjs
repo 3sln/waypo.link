@@ -37,7 +37,7 @@ const root=document.getElementById('app'),ringRoot=document.createElement('div')
 window.intents=[];let opener=null;
 const render=()=>{dodo.reconcile(root,[app(state)]);const r=rtcRing(state);dodo.reconcile(ringRoot,r?[localize(r)]:[]);};
 const onIntent=event=>{const d=event.detail;window.intents.push(d);if(d.kind==='open-modal'){opener=document.activeElement;state={...state,modal:d.modal};render();requestAnimationFrame(()=>document.querySelector('[role=dialog] button')?.focus());}if(d.kind==='close-modal'){state={...state,modal:null};render();opener?.focus();}
- if(d.kind==='review-rtc-narrow'){const app=state.rtc.apps.find(a=>a.clientId===d.clientId),data=new FormData(d.form);opener=document.activeElement;state={...state,modal:{kind:'rtc-confirm',action:'narrow-app',input:{clientId:d.clientId,purposes:app.purposes.filter(l=>data.get('keep:'+l)==='on')}}};render();requestAnimationFrame(()=>document.querySelector('[role=dialog] button')?.focus());}};
+ if(d.kind==='review-rtc-approve'){const data=new FormData(d.form);opener=document.activeElement;state={...state,modal:{kind:'rtc-confirm',action:'approve-app',input:{clientId:d.clientId,purposes:state.rtc.purposes.map(p=>p.id).filter(l=>data.get('approve:'+l)==='on')}}};render();requestAnimationFrame(()=>document.querySelector('[role=dialog] button')?.focus());}};
 root.addEventListener('3sln-intent',onIntent);ringRoot.addEventListener('3sln-intent',onIntent);
 window.ringFar=()=>{state={...state,rtcRing:{...state.rtcRing,invites:[{...invite,sid:'f'.repeat(22),caller:far,callerHandle:null,callerOriginReportedBy:'a-very-long-provider-name.example',callerProvider:far.iss}]}};render();};
 window.ring=on=>{const n=on===true?1:Number(on)||0;state={...state,rtcRing:{...state.rtcRing,invites:Array.from({length:n},(_,k)=>({...invite,sid:String.fromCharCode(114+k).repeat(22)}))}};render();};
@@ -102,16 +102,17 @@ for(const name of ['chromium','firefox'])for(const locale of ['en','es'])test(`R
 });
 
 // Service follow-ups (2026-10-27): narrowing an app's approved purposes from the apps panel, by keyboard, at phone and
-// desktop widths: the checkboxes toggle with Space, the review button opens the confirmation with focus inside, its
+// desktop widths (interim owner approval; extensions rev 3.2 removed AMD-X1): the checkboxes toggle with Space, the save
+// button opens the confirmation for a narrowing with focus inside, its
 // summary fits and reads, Cancel returns focus to the opener, and confirming sends exactly the purposes kept.
-for(const name of ['chromium','firefox'])for(const locale of ['en','es'])for(const [width,colorScheme] of [[360,'dark'],[1280,'light']])test(`RTC narrowing ${name} ${locale} ${width} ${colorScheme}`,async()=>{
+for(const name of ['chromium','firefox'])for(const locale of ['en','es'])for(const [width,colorScheme] of [[360,'dark'],[1280,'light']])test(`RTC approval narrowing ${name} ${locale} ${width} ${colorScheme}`,async()=>{
  const page=await browsers[name].newPage({viewport:{width,height:800},colorScheme}),errors=[];page.on('pageerror',e=>errors.push(e.message));
  try{
   await page.goto(`${origin}/?locale=${locale}`);await page.waitForFunction(()=>window.ready);await settle(page);
   const SYNC='https://spec.bindle.example/rtc-purposes/device-sync/v1',CALL='https://spec.bindle.example/rtc-purposes/call/v1';
-  const sync=page.locator(`.rtc-app input[name="keep:${SYNC}"]`);assert.equal(await sync.isChecked(),true);
+  const sync=page.locator(`.rtc-app input[name="approve:${SYNC}"]`);assert.equal(await sync.isChecked(),true);
   await sync.focus();await page.keyboard.press('Space');assert.equal(await sync.isChecked(),false,'Space unchecks the purpose');
-  const review=page.locator('.rtc-app form button[type=submit]',{hasText:locale==='es'?'Aprobar menos fines':'Approve fewer purposes'});
+  const review=page.locator('.rtc-app form button[type=submit]',{hasText:locale==='es'?'Guardar fines aprobados':'Save approved purposes'});
   await review.focus();await page.keyboard.press('Enter');await settle(page);
   const dialog=page.locator('[role=dialog]');await dialog.waitFor();assert.equal(await dialog.evaluate(d=>d.contains(document.activeElement)),true,'focus moves into the dialog');
   const summary=await dialog.locator('.rtc-narrow-summary').innerText();
@@ -124,7 +125,7 @@ for(const name of ['chromium','firefox'])for(const locale of ['en','es'])for(con
   assert.equal(await review.evaluate(e=>document.activeElement===e),true,'Cancel returns focus to the review button');
   await page.keyboard.press('Enter');await settle(page);await dialog.waitFor();
   await dialog.locator('button',{hasText:locale==='es'?'Aprobar menos fines':'Approve fewer purposes'}).click();
-  assert.deepEqual(await page.evaluate(()=>window.intents.filter(i=>i.kind==='rtc-action').at(-1)),{kind:'rtc-action',action:'narrow-app',input:{clientId:'https://app.example/client',purposes:[CALL]}});
+  assert.deepEqual(await page.evaluate(()=>window.intents.filter(i=>i.kind==='rtc-action').at(-1)),{kind:'rtc-action',action:'approve-app',input:{clientId:'https://app.example/client',purposes:[CALL]}});
   assert.deepEqual(errors,[]);
  }finally{await page.close();}
 });

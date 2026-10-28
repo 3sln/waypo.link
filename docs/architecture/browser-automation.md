@@ -8,7 +8,7 @@ Use one connected-app and resource model, with small transport adapters around t
 
 The immediate implementation projects the existing five collection/item MCP tools into the signed-in portal's browser context. One shared definition and validation module supplies both HTTP MCP and WebMCP. This establishes an actual local tool path while preserving the existing limits on inbox operations, hosted storage writes, conditional updates, work admission and durable mutation receipts.
 
-General app import remains a distinct integration task. Reuse the approved [app-connection resource direction](app-resource-options.md) and [contribution specification](../spec/resource-contributions.md): one connection can implement multiple separately granted methods. A tool discovered in a page is a candidate descriptor, not an owner-approved function or proof of its effects.
+General app import remains a distinct integration task. Reuse the approved [app-connection resource direction](app-resource-options.md) and [contribution specification](../spec/extensions/resource-contributions.md): one connection can implement multiple separately granted methods. A tool discovered in a page is a candidate descriptor, not an owner-approved function or proof of its effects.
 
 ## Current browser evidence
 
@@ -56,7 +56,7 @@ HTTP MCP preserves its current registered-client grants. Portal WebMCP executes 
 
 The initial browser adapter requires explicit enablement and local selection of collection/function access. Sensitive writes require a trusted confirmation bound to the actual operation and inputs. Disabling, logout, owner replacement, offline transition and document teardown must stop new calls and invalidate retained callbacks. Already accepted effects may finish; abort is not an undo guarantee.
 
-Tool hints, returned text, app branding and browser-origin exposure cannot expand rights. Keep private tool results outside logs, caches and third-party presentation fetches. Reuse origin/CSRF checks for owner requests. The [browser adapter specification](../spec/browser-automation.md) defines the immediate contract; [security gates](../spec/security.md) still control production release.
+Tool hints, returned text, app branding and browser-origin exposure cannot expand rights. Keep private tool results outside logs, caches and third-party presentation fetches. Reuse origin/CSRF checks for owner requests. The [browser adapter specification](../3sln/services/browser-automation.md) defines the immediate contract; [security gates](../spec/security.md) still control production release.
 
 | Decision | Review place |
 | --- | --- |

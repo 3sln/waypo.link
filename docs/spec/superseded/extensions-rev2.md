@@ -1,8 +1,17 @@
-> **Superseded.** This is a frozen copy of extensions revision 2, exactly as at commit 10852e1 (`git show 10852e1:docs/spec/extensions.md`), kept so that links into revision 2 anchors stay resolvable. It is superseded by [extensions revision 3](../extensions.md) (draft, pending owner sign-off) and is not maintained. Only relative links were adjusted for this directory; the text is otherwise unchanged. Its own references to "this document" and its sign-off lines are historical.
-
 # Manifest extensions and slots — normative draft
 
-Status: **provisional draft, 2026-10-20, revision 2.** Revision 1 was wargamed by two independent reviewers (24 security and 22 interop findings). Revision 2 answers every finding; see the [extensibility review](../../release/extensibility-review.md). Rationale, rejected alternatives and migration: [extensibility design](../../architecture/extensibility-design.md). Human sign-off: reviewer ___ / date ___ / outcome ___. Track the decision in [DEVLOG](../../../DEVLOG.md). Slot/declaration validation and pins, owner occupancy and generation-fenced connection integration are implemented locally (`packages/federation/extensions.mjs`, `packages/app/domains/connections.mjs`), behind `EXTENSIONS_ENABLED` and integration flags (default off). This does not establish full external-provider conformance or production verification. **AMD-X1** (bound consumer options: §2.1 `bind`, §2.2, §5.2, §13) was added on 2026-10-26 for the [RTC signaling](../rtc-signaling.md) extension; it is **proposed, provisional (coordinator) and not signed off by the user**, and is implemented locally behind `EXTENSIONS_ENABLED`.
+> **Group:** Superseded
+>
+> **Status:** frozen copy of extensions revision 2; superseded by [extensions revision 3](../extensions.md) pending owner sign-off.
+>
+> **Covers:** revision 2 slots, `extensions.v1` and AMD-X1, for links into old anchors.
+>
+> **Does not cover:** the current extension mechanism ([extensions](../extensions.md)).
+
+> **Superseded.** This is a frozen copy of extensions revision 2, exactly as at commit 10852e1 (`git show 10852e1:docs/spec/extensions.md`), kept so that links into revision 2 anchors stay resolvable. It is superseded by [extensions revision 3](../extensions.md) (draft, pending owner sign-off) and is not maintained. Only relative links were adjusted for this directory; the text is otherwise unchanged. Its own references to "this document" and its sign-off lines are historical.
+
+
+Status: **provisional draft, 2026-10-20, revision 2.** Revision 1 was wargamed by two independent reviewers (24 security and 22 interop findings). Revision 2 answers every finding; see the [extensibility review](../../release/extensibility-review.md). Rationale, rejected alternatives and migration: [extensibility design](../../architecture/extensibility-design.md). Human sign-off: reviewer ___ / date ___ / outcome ___. Track the decision in [DEVLOG](../../../DEVLOG.md). Slot/declaration validation and pins, owner occupancy and generation-fenced connection integration are implemented locally (`packages/federation/extensions.mjs`, `packages/app/domains/connections.mjs`), behind `EXTENSIONS_ENABLED` and integration flags (default off). This does not establish full external-provider conformance or production verification. **AMD-X1** (bound consumer options: §2.1 `bind`, §2.2, §5.2, §13) was added on 2026-10-26 for the [RTC signaling](rtc-signaling.md) extension; it is **proposed, provisional (coordinator) and not signed off by the user**, and is implemented locally behind `EXTENSIONS_ENABLED`.
 
 This document extends [protocol §2–§4](../protocol.md). It defines interoperability rules only: no user interface beyond the security disclosures it lists, and no SDK behavior. Identifiers under `https://spec.bindle.example/` are placeholders, not live authorities. MUST/SHOULD/MAY express draft requirements. §12 lists the amendments this draft needs in existing core documents. Those amendments are proposed (approved provisionally 2026-10-20) and applied to the core drafts; runtime work remains deferred to [EXT-X1](../../architecture/implementation-roadmap.md#ext-x1-deferred-code-from-wave-0).
 
@@ -19,7 +28,7 @@ An occupant can be hosted in three ways:
 
 - by the provider, as a **built-in** occupant;
 - by the provider's adapter gateway;
-- by a third-party integration, as a [brokered resource](../integrations.md#5-brokered-resources).
+- by a third-party integration, as a [brokered resource](../extensions/integrations.md#5-brokered-resources).
 
 Three things stay separate:
 
@@ -135,7 +144,7 @@ The preference value of the slot field is an ordered list of occupants. The orde
 
 An occupant is **available** to a consumer only under all of these conditions:
 
-- it appears in that consumer's current preferences projection with `status: "available"`, as specified in the [integrations §5.1](../integrations.md#51-preferences-projection) projection rule, which applies to all resource fields;
+- it appears in that consumer's current preferences projection with `status: "available"`, as specified in the [integrations §5.1](../extensions/integrations.md#51-preferences-projection) projection rule, which applies to all resource fields;
 - its credential is current;
 - for provider consumers, the feature enablement is live.
 
@@ -175,7 +184,7 @@ Replacing the occupant of an `exclusive` slot that has an enabled provider consu
 
 ### 4.1 The `extensions` array
 
-A provider manifest ([protocol §2](../protocol.md#2-discovery-and-login)) and an [integration manifest](../integrations.md#2-integration-manifest) MAY contain an `extensions` array. Each entry is an object:
+A provider manifest ([protocol §2](../protocol.md#2-discovery-and-login)) and an [integration manifest](../extensions/integrations.md#2-integration-manifest) MAY contain an `extensions` array. Each entry is an object:
 
 ```json
 "extensions": [
@@ -201,14 +210,14 @@ An array is used, rather than a map keyed by slot URL, for two reasons. One mani
 | Declared in | `occupant` means | `consumer` means |
 | --- | --- | --- |
 | Provider manifest | The provider offers a **built-in occupant** for every eligible entity. `ref` identifies it to the provider. Its resource lives in the owner's pool like the default storage resource. It is assigned only when the owner assigns it. | A **provider feature** consumes this slot when the owner has enabled that feature. `ref` names the feature. This lets integrations tell the owner that occupying the slot has an effect at this provider. |
-| Integration manifest | The integration can supply occupants. Candidates are found through its [discovery endpoint](../integrations.md#4-resource-discovery), filtered by the slot's contracts. | The integration will request a grant on this slot at authorization or setup. The declaration does not replace that request. |
+| Integration manifest | The integration can supply occupants. Candidates are found through its [discovery endpoint](../extensions/integrations.md#4-resource-discovery), filtered by the slot's contracts. | The integration will request a grant on this slot at authorization or setup. The declaration does not replace that request. |
 
 A provider MUST NOT declare a `consumer` entry for a slot whose `consumers` excludes `provider`. Integration `consumer` entries for slots whose `consumers` excludes `application` are ignored.
 
 When a provider removes a declaration, existing state degrades visibly and never disappears silently:
 
 - **Removing a built-in occupant declaration** makes that resource `unavailable`. It stays assigned until the owner removes it.
-- **Removing a provider consumer declaration** disables the feature, notifies the owner, and revokes the feature's credentials ([integrations §7.1](../integrations.md#71-operations)).
+- **Removing a provider consumer declaration** disables the feature, notifies the owner, and revokes the feature's credentials ([integrations §7.1](../extensions/integrations.md#71-operations)).
 
 ### 4.3 Processing and bounds
 
@@ -267,7 +276,7 @@ A provider feature that consumes a slot:
 - MUST be enabled by an explicit owner action that discloses the slot and its current occupants;
 - acts with no authority beyond the owner's current assignment.
 
-The provider appears in the slot's consumer list (§5.1). For a brokered occupant, it obtains credentials under the ordinary minting rules, with its issuer URL as `client_id` and the declaration `ref` as `bindle.feature` ([integrations §5.3](../integrations.md#53-consumer-credentials)). Each enablement has its own grant identifier. Disabling the feature, or removing the occupant, stops new invocations immediately and revokes those credentials.
+The provider appears in the slot's consumer list (§5.1). For a brokered occupant, it obtains credentials under the ordinary minting rules, with its issuer URL as `client_id` and the declaration `ref` as `bindle.feature` ([integrations §5.3](../extensions/integrations.md#53-consumer-credentials)). Each enablement has its own grant identifier. Disabling the feature, or removing the occupant, stops new invocations immediately and revokes those credentials.
 
 A provider feature's `tx` values MUST be UUIDs. A feature that derives them deterministically (for example from an ingress fingerprint) uses UUIDv5 over (feature `ref`, contract, entity, fingerprint). That keeps features from colliding in a shared journal.
 
@@ -281,7 +290,7 @@ A built-in occupant is an ordinary resource, and its consumers are authorized li
 | --- | --- |
 | Two integrations can occupy an `exclusive` slot | The owner chooses. A newly connected integration's declaration never displaces the current occupant. Replacement is an explicit owner action under §3.4, never offered inside an integration-initiated authorization. |
 | Owner adds a ninth occupant, or a second under `exclusive` | Rejected by cardinality validation. |
-| An integration declares `required: true` for a slot the owner leaves unconfigured | The integration's connection stays in `configuring` ([integrations §3](../integrations.md#3-connection-lifecycle)). It is never forced into the slot. |
+| An integration declares `required: true` for a slot the owner leaves unconfigured | The integration's connection stays in `configuring` ([integrations §3](../extensions/integrations.md#3-connection-lifecycle)). It is never forced into the slot. |
 | Built-in and third-party occupants | Treated identically; the order is the owner's. |
 | The same purpose under v1 and v2 slot identifiers | Two distinct slots (§7). No automatic merge or copy. |
 | Competing slots for one role from different publishers | Distinct slots. Occupants SHOULD declare every slot they fill. There is no equivalence mechanism, because one would invite hijacking. |
@@ -328,7 +337,7 @@ Providers implementing only the [conformance floor](../protocol.md#2-discovery-a
 3. **No hijacking by declaration.** Declaring `occupant`, being connected, or being the most recently connected integration never places a resource in a slot (§5.1). Claim-like requests ("make me the default handler") are candidates presented to the owner, and are never offered inside the claimant's own authorization flow.
 4. **Provider consumers are disclosed.** A provider feature consuming a slot is listed among the slot's consumers. Enabling it is an owner decision bound to the current occupants. Changing occupants while it is enabled requires the §3.4 review, which names the provider feature.
 5. **Data flows are disclosed.** For each occupant, the provider discloses which origin receives invocations and what the slot's contracts send there.
-6. **No core change by slots.** A slot cannot alter discovery, issuer rules, consent, tokens, grants or RPC semantics. A slot MUST NOT declare endpoints or require introspection. Only contracts can mark methods for introspection ([integrations §5.7](../integrations.md#57-introspection)). The [component-origin envelope](../auth.md#presentation-transports-and-key-binding) is available only to profiles, never to slots.
+6. **No core change by slots.** A slot cannot alter discovery, issuer rules, consent, tokens, grants or RPC semantics. A slot MUST NOT declare endpoints or require introspection. Only contracts can mark methods for introspection ([integrations §5.7](../extensions/integrations.md#57-introspection)). The [component-origin envelope](../auth.md#presentation-transports-and-key-binding) is available only to profiles, never to slots.
 7. **Bounded processing.** All bounds in §2 and §4.3 apply before fetching. Slot manifests are fetched lazily under budgets.
 8. **No occupancy oracle.** Responses visible to applications or to external parties MUST NOT vary with whether an owner's slot is occupied, except through grants the owner approved (§5.2).
 
@@ -361,7 +370,7 @@ Tests MUST cover:
 
 ## 13. Amendment AMD-X1 — bound consumer options (proposed, unsigned)
 
-Status: **proposed 2026-10-26 for [RTC signaling](../rtc-signaling.md) §3.5, provisional (coordinator), not signed off by the user.** Decision RTC-2 in the [RTC design](../../architecture/rtc-signaling.md#9-provisional-decisions); recorded in [DEVLOG](../../../DEVLOG.md) (2026-10-26, "RTC-a/b/c validators, purposes and bound options"). Sign-off: reviewer ___ / date ___ / outcome ___.
+Status: **proposed 2026-10-26 for [RTC signaling](rtc-signaling.md) §3.5, provisional (coordinator), not signed off by the user.** Decision RTC-2 in the [RTC design](../../architecture/rtc-signaling.md#9-provisional-decisions); recorded in [DEVLOG](../../../DEVLOG.md) (2026-10-26, "RTC-a/b/c validators, purposes and bound options"). Sign-off: reviewer ___ / date ___ / outcome ___.
 
 **Gap.** Some slots need a value per consuming application to be part of what the owner approves for that application (for RTC, the purposes an application may ring for). `options.consumer` values exist only in declarations, which confer no authority (§4.2), and atomic slot fields and scope selections are shared by every consumer of the field (§2.1).
 
@@ -369,7 +378,7 @@ Status: **proposed 2026-10-26 for [RTC signaling](../rtc-signaling.md) §3.5, pr
 
 1. **Slot member.** `bind` is a nonempty list of names of `options.consumer` members (§2.1). A slot using `bind` MUST list `"bind"` in `crit`, so a processor without AMD-X1 treats the slot as unrecognized and processes it as an ordinary fragment (§2.2). The application then gets no binding, and the occupant refuses every bound operation.
 2. **Request.** A request for a slot fragment with `bind` carries `options`, an object validated against the bound `options.consumer` members. Missing or invalid `options` makes the request invalid for that fragment. A request for any other fragment MUST NOT carry `options`.
-3. **Consent and record.** The provider discloses the requested bound values at consent next to the methods, records the values the owner approves (the owner MAY approve a subset, and nothing is preselected) as part of that consumer's approval, and changes the approval's identity (`bindle.grant` for brokered credentials) whenever they change. Widening is a new approval (`grant-more`, [incremental authorization §4](../incremental-authorization.md#4-grant-more)); narrowing by the owner is immediate. When a bound value is a reference to a versioned artefact line, the provider records, per approved line, the `{version, digest}` it resolved at consent. A later version may be used under that approval only after the provider verified additivity ([artefacts §7.2](../artefacts.md#72-advancing-a-head)), and a version that adds disclosure is a widening. Until the line's kind and growth table are registered and signed, additivity is unverifiable ([artefacts §6.4](../artefacts.md#64-unknown-kinds)) and only the approved version is usable.
+3. **Consent and record.** The provider discloses the requested bound values at consent next to the methods, records the values the owner approves (the owner MAY approve a subset, and nothing is preselected) as part of that consumer's approval, and changes the approval's identity (`bindle.grant` for brokered credentials) whenever they change. Widening is a new approval (`grant-more`, [incremental authorization §4](../extensions/incremental-authorization.md#4-grant-more)); narrowing by the owner is immediate. When a bound value is a reference to a versioned artefact line, the provider records, per approved line, the `{version, digest}` it resolved at consent. A later version may be used under that approval only after the provider verified additivity ([artefacts §7.2](../artefacts.md#72-advancing-a-head)), and a version that adds disclosure is a widening. Until the line's kind and growth table are registered and signed, additivity is unverifiable ([artefacts §6.4](../artefacts.md#64-unknown-kinds)) and only the approved version is usable.
 4. **Enforcement.** The occupant enforces the approved values on every invocation. Bound values are per consumer and never shared with other consumers of the slot field.
 
 **3sln.me implementation (local, behind `EXTENSIONS_ENABLED`, default off; not production-verified).** `packages/federation/extensions.mjs` validates `bind` and provides the pure request, approval, coverage, narrowing and version rules; `packages/federation/service.mjs` requires and validates `options` on bound fragment requests, pins bound artefact lines from provider-held reviewed references only (an unregistered line is refused, never fetched by URL), discloses them in the consent view, records `bound: {schema, values, versions, revision}` in the consumer's grant, refuses an already-approved shortcut for any wider request or changed version, and offers the owner `federation.narrow-bound-options` and the occupant-side `federation.bound-approval` read (system-only; it takes the verified token's subject, client and grant ids, never caller input). The shared consent kit shows each requested value with its facts and no preselection. Provisional readings, each pending sign-off:

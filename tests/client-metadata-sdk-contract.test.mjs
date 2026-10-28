@@ -41,7 +41,7 @@ test('SDK contract: clientMetadataUrl signs in with no registration when the pro
 
 test('SDK contract: without the declaration the SDK reports an unregistered client and nothing is fetched',async()=>{
  const p=await cimdProvider({enabled:false}),{win,opened,fetcher}=harness(p);
- const manifest=await(await p.fetch(`${issuer}/.well-known/bindle/manifest.json`)).json();assert.equal(manifest.features?.[CLIENT_METADATA_FEATURE],undefined);
+ const manifest=await(await p.fetch(`${issuer}/.well-known/bindle/manifest.json`)).json();assert.equal(manifest.extensions?.some(e=>e.spec===CLIENT_METADATA_FEATURE),false);
  const session=createSession({clientMetadataUrl:clientId,redirectUri,fetcher,storage:memoryStorage(),history:{replaceState(){}},window:win,defaultHost:host});
  await session.loadCapabilities();const result=await session.signIn({identity:'alex'});
  assert.equal(result.code,'unregistered-client',JSON.stringify(result));assert.equal(opened.length,0);assert.equal(p.egress.calls.length,0);

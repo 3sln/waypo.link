@@ -13,7 +13,8 @@ import { LinkService } from '../packages/links/issuance.mjs';
 import { linksProvider, IssueLink, RevokeLink, EvaluateLink, LinkList } from '../packages/links/engine.mjs';
 import { verifyAuthorProof, ENVELOPE_DOMAIN, jcs } from '../packages/links/author-proof.mjs';
 import { LinkHandoff, validateDescribe } from '../packages/links/handoff.mjs';
-import { MESSAGING_INGRESS_SLOT, MESSAGING_CONTACT_LINK_TYPE, MESSAGING_PROFILE, DESCRIPTOR_MEDIA_TYPE, LINK_SLOT_TABLE, LINKS_CONTRACT, MESSAGING_ADDRESS_DECLARATION } from '../packages/links/types.mjs';
+import { MESSAGING_INGRESS_FRAGMENT, MESSAGING_CONTACT_LINK_TYPE, MESSAGING_PROFILE, DESCRIPTOR_MEDIA_TYPE, LINK_FRAGMENT_TABLE, LINKS_CONTRACT } from '../packages/links/types.mjs';
+import { PROVIDER_EXT } from '../packages/core/extensions.mjs';
 import { contactIntent } from '../packages/links/preview.mjs';
 import { linksResourceMethod } from '../packages/runtime/account/links.mjs';
 import { RESOURCE_METHOD_HANDLERS } from '../packages/runtime/account/storage.mjs';
@@ -55,7 +56,7 @@ async function world({ seed = Number(process.env.CHAOS_SEED ?? 1) } = {}) {
     status: async ({ jkt }) => { if (calls.statusThrows) throw new Error('status down'); return { status: revoked.has(jkt) ? 'revoked' : 'active' }; },
   };
   const seat = { value: { ...BOX_A, generation: 1 } };
-  const occupant = async ({ owner, slot }) => (owner === BOB && slot === MESSAGING_INGRESS_SLOT ? seat.value : null);
+  const occupant = async ({ owner, fragment }) => (owner === BOB && fragment === MESSAGING_INGRESS_FRAGMENT ? seat.value : null);
   const service = new LinkService({ store: stores[BOB], issuer: ISSUER, keys: registries[BOB], clock: clock.now, policies: [POLICY], signingKey: owner => registries[BOB].privateKey(owner, 'signing'), decide: async input => { decisions.push(input); return { state: input.principal.subject === ALICE ? 'eligible' : 'ineligible' }; }, verifyAuthor: input => verifyAuthorProof(input.proof, { ...input, ...hostPorts }) });
   const core = createAppEngine({ providers: { clock, random: { uuid: () => crypto.randomUUID() }, audit: memoryAudit({ clock }), links: linksProvider({ service, enabled: true, occupant }) } });
   const describers = { [BOX_A.clientId]: () => describeBody(BOX_A.origin), [BOX_B.clientId]: () => describeBody(BOX_B.origin) };
@@ -91,8 +92,8 @@ async function world({ seed = Number(process.env.CHAOS_SEED ?? 1) } = {}) {
 test('pins: core proof verification, certificates and descriptors match the Parlay protocol library', async () => {
   const w = await world();
   assert.equal(ENVELOPE_DOMAIN, B.DOMAINS.envelope);
-  assert.deepEqual(LINK_SLOT_TABLE, [{ type: MESSAGING_CONTACT_LINK_TYPE, slot: MESSAGING_INGRESS_SLOT }]);
-  assert.equal(MESSAGING_CONTACT_LINK_TYPE, B.CONTACT_LINK_TYPE); assert.equal(MESSAGING_INGRESS_SLOT, B.INGRESS_SLOT); assert.equal(MESSAGING_PROFILE, B.PROFILE); assert.equal(DESCRIPTOR_MEDIA_TYPE, B.DESCRIPTOR_MEDIA_TYPE);
+  assert.deepEqual(LINK_FRAGMENT_TABLE, [{ type: MESSAGING_CONTACT_LINK_TYPE, fragment: MESSAGING_INGRESS_FRAGMENT }]);
+  assert.equal(MESSAGING_CONTACT_LINK_TYPE, B.CONTACT_LINK_TYPE); assert.equal(MESSAGING_INGRESS_FRAGMENT, B.INGRESS_FRAGMENT); assert.equal(MESSAGING_PROFILE, B.PROFILE); assert.equal(DESCRIPTOR_MEDIA_TYPE, B.DESCRIPTOR_MEDIA_TYPE);
   // Core-encoded certificates parse under the protocol's strict parser; JCS readings agree.
   assert.equal(B.parseDelegation(w.parties.alice.signer.delegation).claims.sub, ALICE);
   const value = { b: [1, 'x', { d: null, c: true }], a: 'ü' }; assert.equal(jcs(value), B.jcs(value));
@@ -213,7 +214,7 @@ test('links contract resource method: the app actor comes only from verified con
   const OWNER = BOB, ORIGIN = ISSUER, rows = new Map(), seen = [];
   const metadata = { get: async k => structuredClone(rows.get(k)), put: async (k, v) => { rows.set(k, structuredClone(v)); }, delete: async k => { for (const key of [k].flat()) rows.delete(key); }, list: async ({ prefix = '', limit = Infinity } = {}) => new Map([...rows].filter(([k]) => k.startsWith(prefix)).slice(0, limit)) };
   const state = { epoch: true, account: { status: 'active', handle: 'bob' }, connection: true, seat: { clientId: BOX_A.clientId, connection: 'conn-1', generation: 4 } };
-  const c = { config: { LINKS_ENABLED: 'true', APP_ORIGIN: ORIGIN, FEDERATION_IDENTITY_CHECK: async (owner, epoch) => state.epoch && owner === OWNER && epoch === 'e1', IDENTITY_ACCOUNT: async () => state.account, LINK_SLOT_OCCUPANT: async ({ owner, slot }) => (owner === OWNER && slot === MESSAGING_INGRESS_SLOT ? state.seat : null) }, metadata, warm: async () => {}, apps: { check: async (owner, id, generation, clientId) => { if (!state.connection || id !== 'conn-1' || generation !== 4 || clientId !== BOX_A.clientId) throw Object.assign(new Error('gone'), { code: 'invalid_token', status: 401 }); } }, linkOperation: async (owner, params) => { seen.push(structuredClone(params)); return { ok: seen.length }; } };
+  const c = { config: { LINKS_ENABLED: 'true', APP_ORIGIN: ORIGIN, FEDERATION_IDENTITY_CHECK: async (owner, epoch) => state.epoch && owner === OWNER && epoch === 'e1', IDENTITY_ACCOUNT: async () => state.account, LINK_SLOT_OCCUPANT: async ({ owner, fragment }) => (owner === OWNER && fragment === MESSAGING_INGRESS_FRAGMENT ? state.seat : null) }, metadata, warm: async () => {}, apps: { check: async (owner, id, generation, clientId) => { if (!state.connection || id !== 'conn-1' || generation !== 4 || clientId !== BOX_A.clientId) throw Object.assign(new Error('gone'), { code: 'invalid_token', status: 401 }); } }, linkOperation: async (owner, params) => { seen.push(structuredClone(params)); return { ok: seen.length }; } };
   const context = (over = {}) => ({ authority: 'bindle', resource: `${ORIGIN}/entities/${OWNER}/links`, resourceGeneration: OWNER, contract: LINKS_CONTRACT, method: 'list', args: {}, clientId: BOX_A.clientId, connection: { id: 'conn-1', generation: 4 }, epoch: 'e1', tx: crypto.randomUUID(), ...over });
   assert.equal(RESOURCE_METHOD_HANDLERS[LINKS_CONTRACT], linksResourceMethod);
   assert.deepEqual(await linksResourceMethod(c, OWNER, context()), { ok: 1 });
@@ -240,14 +241,16 @@ test('links contract resource method: the app actor comes only from verified con
   assert.equal([...rows.keys()].filter(k => k.startsWith('links-rpc/')).length, journalSize); assert.equal(seen.length, calls);
 });
 
-test('manifest: the messaging-address consumer row needs LINKS_ENABLED, EXTENSIONS_ENABLED and a mounted handoff', () => {
+test('manifest: the messaging-address provider feature row needs LINKS_ENABLED, EXTENSIONS_ENABLED and a mounted handoff', () => {
   const row = MANIFEST_DECLARATIONS.find(r => Array.isArray(r.flag) && r.flag.includes('LINKS_ENABLED'));
   assert.deepEqual(row.flag, ['LINKS_ENABLED', 'EXTENSIONS_ENABLED']);
   assert.equal(row.mounted({ target: 'authority', mounts: {} }), false); assert.equal(row.mounted({ target: 'entries', mounts: { messagingAddress: true } }), false);
   assert.equal(row.mounted({ target: 'authority', mounts: { messagingAddress: true } }), true);
-  assert.deepEqual(row.declare({}), { extensions: [MESSAGING_ADDRESS_DECLARATION] });
+  // Extensions rev 3.2: the feature is its own provider-published extension, identified by its spec URL.
+  assert.deepEqual(row.declare({}), { extensions: [{ spec: PROVIDER_EXT.messagingAddress }] });
   const config = { APP_ORIGIN: ISSUER, LINKS_ENABLED: 'true', EXTENSIONS_ENABLED: 'true' };
   assert.equal(federationDeclarations({ ...config, LINKS_ENABLED: 'false' }, { target: 'authority', mounts: { messagingAddress: true } }).extensions, undefined);
-  // Flags and mount alone never advertise: the entry is kept only beside a declared extensions.v1 (not yet mounted).
-  assert.equal(federationDeclarations(config, { target: 'authority', mounts: { messagingAddress: true } }).extensions, undefined);
+  assert.equal(federationDeclarations({ ...config, EXTENSIONS_ENABLED: 'false' }, { target: 'authority', mounts: { messagingAddress: true } }).extensions, undefined);
+  assert.deepEqual(federationDeclarations(config, { target: 'authority', mounts: { messagingAddress: true } }).extensions, [{ spec: PROVIDER_EXT.messagingAddress }]);
+  assert.equal(federationDeclarations(config, { target: 'authority', mounts: {} }).extensions, undefined, 'flags alone never declare');
 });

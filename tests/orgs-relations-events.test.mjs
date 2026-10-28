@@ -8,6 +8,7 @@ import {relationsHost,rejects,fault,ISS,DAY,STORE} from './helpers/relations-wor
 import {principalKey} from '../packages/core/principals.mjs';
 import {RELATION_EVENT} from '../packages/orgs/relation-edges.mjs';
 import {manifestEventDelivery,parseRelationEvent,RELATION_EVENT_TYP} from '../packages/orgs/relation-events.mjs';
+import {EXT} from '../packages/core/extensions.mjs';
 import {signCompact,STATEMENT_TYP} from '../packages/orgs/relation-statements.mjs';
 
 const ALL={[STORE]:['get','list','put','delete']};
@@ -97,13 +98,16 @@ test('no fetch during verification: cache-only keys; a missing key schedules a r
 }finally{await w.h.close();}});
 
 test('events endpoint only from the counterpart\'s current manifest (RL-6); a redemption answer naming an URL is ignored',async()=>{
- const posts=[],manifests={'https://peer.example':{features:{'relations.v1':{events_endpoint:'https://peer.example/relations/events'}}},'https://bad.example':{features:{'relations.v1':{events_endpoint:'http://10.0.0.1/hook'}}},'https://other.example':{features:{'relations.v1':{events_endpoint:'https://attacker.example/x'}}}};
+ const relations=(iss,ev)=>({issuer:iss,extensions:[{spec:EXT.relations,options:{accept_endpoint:`${iss}/relations/accept`,join_endpoint:`${iss}/relations/join`,events_endpoint:ev}}]});
+ const posts=[],manifests={'https://peer.example':relations('https://peer.example','https://peer.example/relations/events'),'https://bad.example':relations('https://bad.example','http://10.0.0.1/hook'),'https://other.example':relations('https://other.example','https://attacker.example/x'),
+  // Clean break: the former features container is ignored; a duplicate entry is absent.
+  'https://legacy.example':{issuer:'https://legacy.example',features:{'relations.v1':{events_endpoint:'https://legacy.example/relations/events'}}},'https://twice.example':{issuer:'https://twice.example',extensions:[...relations('https://twice.example','https://twice.example/e').extensions,...relations('https://twice.example','https://twice.example/e').extensions]}};
  const moved=new Map([['https://old.example','https://peer.example']]);
  const deliver=manifestEventDelivery({current:async p=>({iss:moved.get(p.iss)??p.iss,sub:p.sub}),manifest:async iss=>manifests[iss]??null,post:async(url,body,o)=>{posts.push([url,o.contentType]);return {status:202};}});
  const sub='00000000-0000-4000-8000-000000000001';
  await deliver({iss:'https://peer.example',sub},'jws');await deliver({iss:'https://old.example',sub},'jws');
  assert.deepEqual(posts,[['https://peer.example/relations/events','application/secevent+jwt'],['https://peer.example/relations/events','application/secevent+jwt']],'after a move, the current issuer\'s manifest');
- for(const iss of ['https://bad.example','https://other.example','https://none.example'])await assert.rejects(deliver({iss,sub},'jws'),{code:'relation_delivery_unavailable'});
+ for(const iss of ['https://bad.example','https://other.example','https://none.example','https://legacy.example','https://twice.example'])await assert.rejects(deliver({iss,sub},'jws'),{code:'relation_delivery_unavailable'});
  assert.equal(posts.length,2);
  // Same host: the inviter's redemption answer carries an extra events URL; nothing uses it.
  const h=await relationsHost({orgs:2});try{const [A,B]=h.list,rA=await res(A,'f'),targets=[];

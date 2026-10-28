@@ -1,8 +1,17 @@
-> Current wire profile: [runtime implementation](federation-implementation.md). The capability-negotiated [object storage contract](storage.md) supersedes any older mandatory-list/write examples below; listing is not part of object storage. Profile/preferences/descriptor/scoping identifiers use the canonical 3sln.me artefact URLs.
+# Baseline contracts v0 — normative draft
+
+> **Group:** Bindle core
+>
+> **Status:** normative draft. Identifiers are canonical 3sln.me artefact candidates; immutable publication and external-provider conformance are not established.
+>
+> **Covers:** the baseline contracts: profile, preferences v1 and v2, contract method metadata and the resource descriptor.
+>
+> **Does not cover:** the object storage contract, whose current text is in [object storage](../3sln/services/storage.md) together with 3sln.me's adapters (a split of the contract text back into Bindle is pending); artefact versioning ([artefacts](artefacts.md)); integration-audience tokens ([integrations](extensions/integrations.md)).
+
+> Current wire profile: [runtime implementation](federation-implementation.md). The capability-negotiated [object storage contract](../3sln/services/storage.md) supersedes any older mandatory-list/write examples below; listing is not part of object storage. Profile/preferences/descriptor/scoping identifiers use the canonical 3sln.me artefact URLs.
 
 Browse the [contract registry](/artefacts/contracts/) or its [machine-readable index](/artefacts/contracts/index.json). Each JSON Schema link opens the published definition directly. Canonical contract identifiers also return JSON; usage prose remains in this document.
 
-# Baseline contracts v0 — normative draft
 
 Read [the protocol](protocol.md) first. The identifiers below are canonical 3sln.me artefact candidates. Immutable publication and external-provider conformance require their own recorded evidence. All contract arguments reject unknown fields and enforce documented bounds. Required methods have explicit grant permissions; implementing a contract never grants access automatically.
 
@@ -16,9 +25,9 @@ ID: [`https://3sln.me/artefacts/contracts/preferences/v1`](https://3sln.me/artef
 
 ## Preferences v2
 
-**AMD-C9 — proposed (approved provisionally 2026-10-20).** ID: `https://3sln.me/artefacts/contracts/preferences/v2` (proposed identifier; artifact and runtime deferred). `@preferences` offers the same `read({fragment})` operation and result members as v1, plus `seq` only when the reader is an integration; `seq` is that connection's current configuration sequence, as defined in [integrations §6.2](integrations.md#62-event-types).
+**AMD-C9 — proposed (approved provisionally 2026-10-20).** ID: `https://3sln.me/artefacts/contracts/preferences/v2` (draft identifier; the [JSON Schema](/artefacts/contracts/preferences/v2.json) is in the artefact lock and public registry, and the runtime is implemented locally in `packages/federation/service.mjs`; not production-verified). `@preferences` offers the same `read({fragment})` operation and result members as v1, plus `seq` only when the reader is an integration; `seq` is that connection's current configuration sequence, as defined in [integrations §6.2](extensions/integrations.md#62-event-types).
 
-Every resource-field value MUST be a list, in owner order, of `{id,label,status,contracts,token,token_type,expires_at,broker?}`. `id` remains the provider's opaque scoped reference; `status` is `available` or `unavailable`; `contracts` lists approved exact contract URLs; `token` is an opaque independently attenuated credential; `token_type` is `Bearer` or `DPoP`; `expires_at` is Unix time in seconds. `broker`, present only for brokered resources, is `{endpoint,origin,resource}`: the validated integration RPC endpoint, its origin and its resource ID. The consumer MUST call that endpoint with `resource` set to `broker.resource` and the projected token; issuer-hosted resources use the issuer RPC endpoint. Consumers MUST NOT log tokens or persist them beyond expiry. Unapproved resources are omitted under AMD-C3. See [integrations §5.1](integrations.md#51-preferences-projection) for the full projection.
+Every resource-field value MUST be a list, in owner order, of `{id,label,status,contracts,token,token_type,expires_at,broker?}`. `id` remains the provider's opaque scoped reference; `status` is `available` or `unavailable`; `contracts` lists approved exact contract URLs; `token` is an opaque independently attenuated credential; `token_type` is `Bearer` or `DPoP`; `expires_at` is Unix time in seconds. `broker`, present only for brokered resources, is `{endpoint,origin,resource}`: the validated integration RPC endpoint, its origin and its resource ID. The consumer MUST call that endpoint with `resource` set to `broker.resource` and the projected token; issuer-hosted resources use the issuer RPC endpoint. Consumers MUST NOT log tokens or persist them beyond expiry. Unapproved resources are omitted under AMD-C3. See [integrations §5.1](extensions/integrations.md#51-preferences-projection) for the full projection.
 
 The immutable v1 contract and its object shape are unchanged. A v1 read MUST omit brokered resources and list the field in `requiresConsent`; it MUST NOT hide approved issuer-hosted resources in the same field.
 
@@ -26,7 +35,7 @@ The immutable v1 contract and its object shape are unchanged. A v1 read MUST omi
 
 **AMD-C10 — proposed (approved provisionally 2026-10-20).** Pinned contract definitions MAY annotate each method in `x-methods` with `effect: "read"` (reads state without changing it or causing external effects) or `effect: "pure"` (computes from its inputs without state access or external effects). Missing or unknown effects MUST NOT be treated as read-only or pure. (Extensions revision 3.1, draft, unsigned, removes slots and `any-error` failover, which this rule previously gated.) Classification does not waive authorization, privacy or work budgets.
 
-An `x-methods` entry MAY set `introspect: true`, requiring the brokered resource server to check live authority through the provider's declared introspection endpoint before executing the method; read-only authorization may be cached for at most 30 s. Write-capable brokered contracts MUST require live introspection without cached authorization. If the required endpoint or verification is unavailable, execution MUST fail closed. Contract-level `x-bindle-brokerable: false` forbids registration as a brokered resource. Fragment field attributes and extensions MUST NOT override these markers. See [integrations §5.7](integrations.md#57-introspection).
+An `x-methods` entry MAY set `introspect: true`, requiring the brokered resource server to check live authority through the provider's declared introspection endpoint before executing the method; read-only authorization may be cached for at most 30 s. Write-capable brokered contracts MUST require live introspection without cached authorization. If the required endpoint or verification is unavailable, execution MUST fail closed. Contract-level `x-bindle-brokerable: false` forbids registration as a brokered resource. Fragment field attributes and extensions MUST NOT override these markers. See [integrations §5.7](extensions/integrations.md#57-introspection).
 
 ## Resource descriptor v1
 
@@ -46,7 +55,7 @@ Every object has `{key, version, size, contentType?, modifiedAt}`. Version is an
 
 `put` and `delete` preconditions MUST be atomic relative to this resource's writes. The gateway serializes writes per key where needed, but a gateway lock alone does not protect against external Drive/WebDAV edits. Adapters without reliable upstream conditional writes MUST NOT advertise writable object-store/v1 capabilities for externally mutable objects. A dedicated provider-managed namespace with all writes mediated by the gateway may satisfy this contract if the upstream guarantees needed for durable read/write reconciliation are documented. Silent last-write-wins is forbidden. App sync logic reads versions and resolves conflicts itself; this contract supplies no CRDT or global transaction.
 
-Object enumeration is deliberately absent. Applications keep a known root directory/index object and use exact-key reads plus atomic conditional index updates. See [application-managed directories](storage.md#application-managed-directories) for bootstrap, conflicts, orphan recovery and deletion limits. Resource adapters need conformance tests for Unicode keys, atomic condition failure, concurrent writes, deletion, quota exhaustion and unknown outcomes after upstream timeout.
+Object enumeration is deliberately absent. Applications keep a known root directory/index object and use exact-key reads plus atomic conditional index updates. See [application-managed directories](../3sln/services/storage.md#application-managed-directories) for bootstrap, conflicts, orphan recovery and deletion limits. Resource adapters need conformance tests for Unicode keys, atomic condition failure, concurrent writes, deletion, quota exhaustion and unknown outcomes after upstream timeout.
 
 ### Adapter rollout
 

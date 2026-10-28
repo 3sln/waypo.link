@@ -1,5 +1,13 @@
 # Configure a Bindle provider
 
+> **Group:** 3sln.me reference service (hosting)
+>
+> **Status:** operator guide; configuration alone does not establish working external delivery or provider conformance.
+>
+> **Covers:** enabling the Bindle provider profile and registering apps.
+>
+> **Does not cover:** the protocol and its security requirements ([protocol](../spec/protocol.md), [security](../spec/security.md)); 3sln.me release gates ([release gates](../3sln/release-gates.md)).
+
 The Worker and Node adapters share the same authorization implementation. Enable the operator-reviewed v0 profile with `FEDERATION_ENABLED=true`; keep public signup controlled separately by `RELEASE_READY`. Never enable public account creation merely to test federation. On Workers the `FEDERATION` binding uses `FederationObject` (migration v4). Node creates per-account SQLite files under its private data directory.
 
 Register an app only after verifying its HTTPS origin and exact callback control. `FEDERATION_CLIENTS` is a JSON array:

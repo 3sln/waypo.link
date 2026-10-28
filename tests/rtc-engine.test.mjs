@@ -252,7 +252,8 @@ test('approval: unapproved purposes, unapproved callee apps and muting',async()=
  const h=await rtcHost();const a=h.device(1),b=h.device(2,{purposes:[FILES]}),other=h.device(2,{purposes:[CALL],grant:h.grant(2,{clientId:OTHER_APP+'/c',origin:OTHER_APP,purposes:[CALL]})});
  await a.register();await b.register();await other.register();
  assert.equal((await fault(b.register([CALL]))).code,'forbidden','registering an unapproved purpose');
- const narrow=h.device(1,{grant:h.grant(1,{purposes:[FILES]})});await narrow.register([FILES]);assert.equal((await fault(narrow.open(h.principal(2),CALL))).code,'forbidden');
+ // Approval is per (owner, application) now (the interim owner-local record), so the narrowly approved app is its own client.
+ const narrow=h.device(1,{grant:h.grant(1,{clientId:'https://narrow.example/client',origin:'https://narrow.example',purposes:[FILES]})});await narrow.register([FILES]);assert.equal((await fault(narrow.open(h.principal(2),CALL))).code,'forbidden');
  await rejects(a.open(h.principal(2),CALL,{media:['screen']}),'invalid_args','media outside the purpose');
  const {link}=await other.run('rtc.mint-ticket',{purposes:[CALL],uses:5,expires_in:3600});
  // B's endpoint is not registered for call; only the other app's endpoint is eligible.
@@ -591,7 +592,8 @@ async function forgedAccept(h,n,s,callerN=1){
  const m=await signMessage({bindle:'rtc-message',v:1,iss:ISS,sub:B.sub,aud,sid:s.sid,leg:k.jkt,to:s.leg.jkt,seq:0,iat:Math.floor(now/1000),type:'accept',body:{answer:null,sas_nonce:null}},k.privateKey);
  return {cert:cert.certificate,m};
 }
-const countBound=account=>{const orig=account.service.bound,box={n:0};account.service.bound={check:async input=>{box.n++;return orig.check(input);}};return box;};
+// Counts the callee's approval reads (eligibility at admission; the interim owner-local approval record).
+const countBound=account=>{const svc=account.service,orig=svc.approved.bind(svc),box={n:0};svc.approved=async(...args)=>{box.n++;return orig(...args);};return box;};
 
 test('review M2: a send never runs the callee\'s admission; ingest only queues and answers before steps 2–8',async()=>{
  const h=await rtcHost();const a=h.device(1),b=h.device(2);await a.register();await b.register();
@@ -599,7 +601,7 @@ test('review M2: a send never runs the callee\'s admission; ingest only queues a
  const s=await a.open(h.principal(2),CALL,{basis:link}),checks=countBound(h.account(2));h.kicked.clear();
  assert.deepEqual(await a.invite(s),{accepted:1});
  // Structural, not timing: nothing at the callee ran inside the sender's request.
- assert.equal(checks.n,0,'no bound check (callee admission) during send');
+ assert.equal(checks.n,0,'no approval read (callee admission) during send');
  assert.equal((await h.rows(2,'rtc/in/')).length+(await h.rows(2,'rtc/inq/')).length,0,'nothing reached the callee during send');
  assert.equal((await h.rows(1,'rtc/outbox/')).length,1);assert.ok(h.kicked.has(subOf(1)),'the sender asked its adapter for a pass after commit');
  // Delivery reaches only the receiver's queue: step 1 and an immediate answer, no admission.

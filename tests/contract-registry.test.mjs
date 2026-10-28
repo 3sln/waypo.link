@@ -34,7 +34,7 @@ test('canonical IDs, explicit JSON and legacy source aliases return identical ma
 test('directory links all resolve to JSON and missing/proposed contracts stay errors',async t=>{
  const out=await build(t),h=host(out);assert.equal((await h.request('/artefacts/contracts')).headers.get('Location'),'/artefacts/contracts/');
  const page=await h.request('/artefacts/contracts/');assert.equal(page.status,200);assert.match(page.headers.get('Content-Type'),/text\/html/);const html=await page.text();
- const targets=[...html.matchAll(/href="([^"#]+\.json)"/g)].map(match=>match[1]);assert.equal(targets.length,12);
+ const targets=[...html.matchAll(/href="([^"#]+\.json)"/g)].map(match=>match[1]);assert.equal(targets.length,13,'adds the item-classifier fragment (extensions rev 3.2)');
  for(const target of targets){const response=await h.request(target,{headers:{Accept:'text/html'}});assert.equal(response.status,200);assert.match(response.headers.get('Content-Type'),/json/);await response.json();}
  for(const path of ['/artefacts/contracts/conversation/v2','/artefacts/contracts/made-up/v1.json','/docs/artefacts/automation-v1.json'])assert.equal((await h.request(path)).status,404);
  h.env.ASSETS.fetch=async()=>new Response(null,{status:304,headers:{ETag:'"schema"'}});const unchanged=await h.request(publicContracts[0].path,{headers:{'If-None-Match':'"schema"'}});assert.equal(unchanged.status,304);assert.equal(await unchanged.text(),'');assert.equal(unchanged.headers.get('ETag'),'"schema"');

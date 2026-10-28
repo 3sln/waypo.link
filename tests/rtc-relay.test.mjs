@@ -15,8 +15,8 @@ import {RELAY_RETRY_MS} from '../packages/rtc/relay-credentials.mjs';
 import {CloudflareTurnAdapter} from '../packages/rtc/turn.mjs';
 import {RTC_WIDENING,RTC_NEVER_GATED,RTC_SYSTEM_OPERATIONS,RTC_RELAY_OPERATIONS,RTC_RELAY_CONTRACT_OPERATIONS} from '../packages/app/domains/rtc.mjs';
 import {exportInventory} from '../packages/runtime/export-contributors.mjs';
-import {ICE_RELAY_CONTRACT,ICE_RELAY_SLOT,ICE_RELAY_SLOT_MANIFEST} from '../packages/rtc/extension.mjs';
-import {createSlotOperation,nextSlotDispatch,recordSlotOutcome} from '../packages/federation/extensions.mjs';
+import {ICE_RELAY_CONTRACT,ICE_RELAY_FRAGMENT_DOCUMENT} from '../packages/rtc/extension.mjs';
+import {createFieldOperation,nextFieldDispatch,recordFieldOutcome} from '../packages/federation/extensions.mjs';
 
 const MIN=60000,ENVELOPE=RELAY_LIMITS.envelopeBytes,LAPSE=RELAY_LIMITS.ttlSeconds*1000+RELAY_EXPIRY_GRACE_MS;// a recorded credential has lapsed (review L1 grace)
 const TURN_URLS=['stun:stun.cloudflare.com:3478','turn:turn.cloudflare.com:3478?transport=udp','turn:turn.cloudflare.com:3478?transport=tcp','turns:turn.cloudflare.com:5349?transport=tcp','turn:turn.cloudflare.com:53?transport=udp','turn:turn.cloudflare.com:80?transport=tcp','turns:turn.cloudflare.com:443?transport=tcp'];
@@ -155,7 +155,9 @@ test('revocation on every end path: hangup, cancel, decline, unregister, revoke-
  // RTC wargame M3 allows 8 live endpoints per application: each scenario unregisters the previous scenario's devices.
  const used=[],dev=n=>{const d=h.device(n);used.push(d);return d;},tidy=async()=>{for(const d of used.splice(0))if(d.endpoint)await fault(d.run('rtc.unregister',d.auth()));await h.pump();};
  // RTC-11 allows 6 invites per (caller, callee) in 10 min: each scenario starts in a fresh window.
- const both=async()=>{await tidy();h.clock.advance(11*MIN);const x=await connected(h,{a:dev(1),b:dev(2)});return {...x,ua:usernames(await creds(x.a,x.s)),ub:usernames(await creds(x.b,x.c))};};
+ // The lifecycle paths also narrow or delete the app's approval record (interim owner-local approval), so each
+ // scenario starts with the owner's approvals restored.
+ const both=async()=>{await tidy();await h.syncApprovals({force:true});h.clock.advance(11*MIN);const x=await connected(h,{a:dev(1),b:dev(2)});return {...x,ua:usernames(await creds(x.a,x.s)),ub:usernames(await creds(x.b,x.c))};};
  const paths={
   'hangup (caller)':async x=>{await x.a.end(x.s);await h.pump();},
   'hangup (callee)':async x=>{await x.b.end(x.c);await h.pump();},
@@ -176,11 +178,11 @@ test('revocation on every end path: hangup, cancel, decline, unregister, revoke-
   cancel:async r=>{await r.a.cancel(r.s);},
   decline:async r=>{const c=await r.b.claim(r.s.sid,'decline');await r.b.decline(c);await h.pump();},
   'ring timeout':async r=>{h.clock.advance(121000);await h.tick(1);},
- })){await tidy();h.clock.advance(11*MIN);const r=await ringing(h,{a:dev(1),b:dev(2)});const u=usernames(await creds(r.a,r.s));await end(r);
+ })){await tidy();await h.syncApprovals({force:true});h.clock.advance(11*MIN);const r=await ringing(h,{a:dev(1),b:dev(2)});const u=usernames(await creds(r.a,r.s));await end(r);
   // At the ring timeout the ringing leg's credential has already lapsed (its TTL is capped at ring_until, review M1).
   if(label==='ring timeout')assert.ok(!h.turn.live().some(v=>u.includes(v)),label);else assert.ok(revokedAll(h,u),label);}
  // The 24 h session cap: a renewal near the end, then expiry through rtc.tick.
- await tidy();h.clock.advance(11*MIN);const x=await connected(h,{a:dev(1),b:dev(2)});h.clock.advance(86400000-200000);const u=usernames(await creds(x.a,x.s));
+ await tidy();await h.syncApprovals({force:true});h.clock.advance(11*MIN);const x=await connected(h,{a:dev(1),b:dev(2)});h.clock.advance(86400000-200000);const u=usernames(await creds(x.a,x.s));
  assert.equal(h.turn.creds.get(u[0]).ttl,200,'TTL = the session\'s remaining life');h.clock.advance(200000);await h.tick(1);
  const rec=(await h.rows(1,'rtc/out/')).find(([,v])=>v.sid===x.s.sid)[1];assert.equal(rec.state,'ended');assert.equal(rec.endReason,'expired');
  assert.ok(!h.turn.live().some(v=>u.includes(v)),'at expiry the credential has lapsed with the session');
@@ -357,13 +359,14 @@ async function federationDispatch(h,d,args){
  const subject=`${ORIGIN}/entities/${OWNER}`;
  return FederationController.prototype.dispatch.call({dispatcher,metadata,clock:()=>h.clock.now()},{subject,clientId:APP+'/client',tx:crypto.randomUUID(),resource:`${subject}/relay`,contract:ICE_RELAY_CONTRACT,method:'credentials',args:{...d.auth(),...args},scope:{},epoch:1,resourceGeneration:OWNER},crypto);
 }
-/** The ordered `ice-relay/v1` slot (built-in occupant first, a third-party relay second): records the built-in
- * occupant's federation outcome and returns the next dispatch's occupant id (null: failover stopped). */
+/** The ordered `relays` field of the ice-relay fragment (built-in relay first, a third-party relay second; extensions
+ * rev 3.2 `selection: "ordered"`): records the built-in relay's federation outcome and returns the next dispatch's
+ * resource id (null: failover stopped). */
 function failoverAfter(result){
- let state=createSlotOperation(ICE_RELAY_SLOT_MANIFEST,[{id:'built-in',status:'available',credentialCurrent:true},{id:'third-party',status:'available',credentialCurrent:true}],{contracts:{[ICE_RELAY_CONTRACT]:{}}});
- const first=nextSlotDispatch(state,{tx:crypto.randomUUID()});assert.equal(first.dispatch.occupant.id,'built-in');
- const error=result?.__federationError;state=recordSlotOutcome(first.state,error?{tx:first.dispatch.tx,code:error.code}:{tx:first.dispatch.tx,ok:true});
- return nextSlotDispatch(state,{tx:crypto.randomUUID()}).dispatch?.occupant.id??null;
+ let state=createFieldOperation(ICE_RELAY_FRAGMENT_DOCUMENT.fields.relays,[{id:'built-in',status:'available',credentialCurrent:true},{id:'third-party',status:'available',credentialCurrent:true}],{consumer:'application'});
+ const first=nextFieldDispatch(state,{tx:crypto.randomUUID()});assert.equal(first.dispatch.resource.id,'built-in');
+ const error=result?.__federationError;state=recordFieldOutcome(first.state,error?{tx:first.dispatch.tx,code:error.code}:{tx:first.dispatch.tx,ok:true});
+ return nextFieldDispatch(state,{tx:crypto.randomUUID()}).dispatch?.resource.id??null;
 }
 test('refusals before any credential exists reach the next relay occupant through the federation dispatch path (review M2)',async()=>{
  const seen=[];
@@ -548,14 +551,13 @@ test('runtime: the relay occupant is declared and dispatchable only with both fl
  const BASE={EXTENSIONS_ENABLED:'true',ARTEFACT_VERSIONS_ENABLED:'true',RTC_SIGNALING_ENABLED:'true'};
  const turn=fakeTurn();turn.clock={now:()=>Date.now()};const spend=fakeSpend();
  // Manifest: the occupant entry needs the mount, both flags (TURN from env) and both ports.
- const ext=(c,m={rtcOccupant:true})=>(federationDeclarations({APP_ORIGIN:ORIGIN,...BASE,...c},{target:'authority',mounts:m}).extensions??[]).filter(e=>e.slot===ICE_RELAY_SLOT);
+ const ext=(c,m={rtcOccupant:true})=>(federationDeclarations({APP_ORIGIN:ORIGIN,...BASE,...c},{target:'authority',mounts:m}).contracts??[]).filter(x=>x===ICE_RELAY_CONTRACT);
  const ports={RTC_TURN_ADAPTER:turn,RTC_RELAY_SPEND:spend};
  assert.equal(ext({RTC_TURN_ENABLED:'true'}).length,0,'no ports');assert.equal(ext({...ports}).length,0,'TURN off');
  assert.equal(ext({...ports,RTC_TURN_ENABLED:'true',RTC_SIGNALING_ENABLED:'false'}).length,0,'signaling off');
  assert.equal(ext({...ports,RTC_TURN_ENABLED:'true'},{}).length,0,'not mounted');
- // Like the signaling occupant, the entry is kept only beside a declared extensions.v1, which the RTC-i signaling
- // occupant row now declares (packages/runtime/federation.mjs), so with both flags and both ports it is present.
- assert.equal(ext({...ports,RTC_TURN_ENABLED:'true'}).length,1,'declared beside extensions.v1');
+ // Extensions rev 3.2: the built-in relay is implied by the ice-relay contract in the manifest `contracts` list.
+ assert.equal(ext({...ports,RTC_TURN_ENABLED:'true'}).length,1,'the ice-relay contract listed');
  // Descriptor (the owner-assignable resource) and journal: only with RTC_SIGNALING_ENABLED, EXTENSIONS_ENABLED,
  // RTC_TURN_ENABLED and both ports; credentials are never kept in the RPC journal.
  const {federationControllerOptions}=await import('../packages/runtime/federation.mjs');const OWNER='0a0a0a0a-0000-4000-8000-0000000000aa';
@@ -566,7 +568,7 @@ test('runtime: the relay occupant is declared and dispatchable only with both fl
  assert.deepEqual((await relayDescriptor({...BASE,...ports,RTC_TURN_ENABLED:'true'})).contracts,{[ICE_RELAY_CONTRACT]:['credentials']});
  const dispatcher=options({...BASE}).dispatcher;assert.equal(dispatcher.retainResult({contract:ICE_RELAY_CONTRACT,method:'credentials'}),false,'never journaled');
  const directory=await mkdtemp(join(tmpdir(),'rtc-relay-runtime-'));
- const app=await createNodeServer({directory,config:{...BASE,RTC_TURN_ENABLED:'true',APP_ORIGIN:ORIGIN,LOCAL_DEVELOPMENT:'true',...ports,RTC_BOUND_CHECK:async input=>input.grants.includes('grant-ok')&&input.value===CALL}});
+ const app=await createNodeServer({directory,config:{...BASE,RTC_TURN_ENABLED:'true',APP_ORIGIN:ORIGIN,LOCAL_DEVELOPMENT:'true',...ports}});
  t.after(async()=>{await app.close();await rm(directory,{recursive:true,force:true});});
  const RECOVERY_SIGNING_KEY=await readFile(join(directory,'recovery-signing-key'),'utf8'),repository=app.resources.repository,accounts=app.resources.accounts;
  const identity=new IdentityService({repository,identityBackup:identityBackupPort({config:{APP_ORIGIN:ORIGIN,RECOVERY_SIGNING_KEY},accounts}),turnstile:{verify:async()=>true},rateLimiter:{check:async()=>true},webauthn:{},passwordHasher:fakeHasher,config:{origin:ORIGIN,rpID:new URL(ORIGIN).hostname,termsVersion:'2026-10-11',allowInsecureLocalhost:true}});
@@ -577,6 +579,8 @@ test('runtime: the relay occupant is declared and dispatchable only with both fl
  const id=pending.account.id,env={...BASE,APP_ORIGIN:ORIGIN,LOCAL_DEVELOPMENT:'true',RECOVERY_SIGNING_KEY,IDENTITY_REPOSITORY:repository,ACCOUNTS:accounts},object=accountHandle(env,id);
  const actor={kind:'app',owner:id,clientId:'https://app.example/client',origin:'https://app.example',grants:['grant-ok']};
  const dispatch=(operation,input)=>object.rtcDispatch(id,{operation,actor,input});
+ // The owner approves call for the app (interim owner-local approval; extensions rev 3.2 removed AMD-X1).
+ await object.rtcDispatch(id,{operation:'rtc.approve-app',actor:{kind:'owner',owner:id},input:{clientId:actor.clientId,purposes:[CALL]}});
  const c=accounts.get(id);await c.metadata.put('billing/state',null);
  // An own-entity session: two endpoints of the same owner (the plan port reads the billing entitlement: free here, so
  // the occupant refuses with relay_not_included, which proves the request reached it with both flags on).

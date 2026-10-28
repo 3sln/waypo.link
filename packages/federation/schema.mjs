@@ -1,31 +1,30 @@
 import {artefactURL} from '../core/artefacts.mjs';
 import {objectKey} from '../storage/policy.mjs';
 import { canonical, digest, boundedString } from '../core/records.mjs';
+import {fragmentOutcome,fieldOutcome,FIELD_NAME} from '../core/fragments.mjs';
+import {validateBusManifest} from './event-buses.mjs';
 export class FederationFault extends Error { constructor(code,message=code){super(message);this.name='FederationFault';this.code=code;} }
 export const fail=(code,message)=>{throw new FederationFault(code,message);};
 export const object=value=>value!==null&&typeof value==='object'&&!Array.isArray(value);
 export function exact(value,keys){if(!object(value)||Object.keys(value).some(key=>!keys.includes(key)))fail('invalid_args','Unexpected fields.');}
 export function https(value){try{const url=new URL(value);if(url.protocol!=='https:'||url.username||url.password||url.hash||url.href!==value&&url.origin!==value)fail('invalid_args','Canonical HTTPS URL required.');return url;}catch{fail('invalid_args','Canonical HTTPS URL required.');}}
 export function strings(value,max=64){if(!Array.isArray(value)||value.length>max||new Set(value).size!==value.length||value.some(x=>!boundedString(x,2048)))fail('invalid_args','Bounded distinct strings required.');return value;}
+/** Fragment documents against the exhaustive protocol §3 member table (packages/core/fragments.mjs; extensions rev 3.2,
+ * CR-X3-30). An unknown member anywhere (including a top-level `slot`) is `unsupported_fragment`; a listed member used
+ * wrongly is `invalid_schema`. Never partial semantics. */
 export function validateSchema(schema,url){
-  if(!object(schema))fail('invalid_schema');https(url);if(schema.id!==url||!boundedString(schema.title,200)||!boundedString(schema.description,2000))fail('invalid_schema');https(schema.publisher);
-  validateFields(schema.fields);return structuredClone(schema);
+  https(url);const outcome=fragmentOutcome(schema,url);
+  // Interim (pending events CR-X3-09): a legacy event-bus manifest keeps its `slot` container, which the events
+  // implementation validates whole; this provider implements it, so the bus member counts here (the extension-
+  // conditional rule of protocol §3). Any other top-level `slot` stays unsupported.
+  if(outcome.status==='unsupported'&&outcome.reason==='slot_member'&&validateBusManifest(schema,url).status==='valid')return structuredClone(schema);
+  if(outcome.status==='unsupported')fail('unsupported_fragment','This fragment uses members this provider does not support.');
+  if(outcome.status!=='valid')fail('invalid_schema');return structuredClone(schema);
 }
-// Shared bounded field subset; declaration option metadata may omit titles.
+/** A set of fields against the member table (resource attributes included). */
 export function validateFields(fields,{allowEmpty=false,optionalTitle=false}={}){
   if(!object(fields)||!allowEmpty&&!Object.keys(fields).length||Object.keys(fields).length>32)fail('invalid_schema');
-  for(const [name,field] of Object.entries(fields)){
-    if(!/^[A-Za-z][A-Za-z0-9_-]{0,63}$/.test(name))fail('invalid_schema');
-    exact(field,['title','description','type','cardinality','contracts','values','minLength','maxLength','minimum','maximum']);
-    if((!optionalTitle||field.title!==undefined)&&!boundedString(field.title,200)||field.description!==undefined&&!boundedString(field.description,1000)||!['string','boolean','integer','number','enum','url','resource'].includes(field.type))fail('invalid_schema');
-    const cardinality=field.cardinality??{min:1,max:1};exact(cardinality,['min','max']);if(!Number.isSafeInteger(cardinality.min)||!Number.isSafeInteger(cardinality.max)||cardinality.min<0||cardinality.max<1||cardinality.max>16||cardinality.min>cardinality.max)fail('invalid_schema');
-    if(field.type==='resource'){strings(field.contracts,16);if(!field.contracts.length)fail('invalid_schema');field.contracts.forEach(https);}
-    else if(field.contracts!==undefined)fail('invalid_schema');
-    if(field.type==='enum'){strings(field.values,32);if(!field.values.length)fail('invalid_schema');}else if(field.values!==undefined)fail('invalid_schema');
-    if(['string','url'].includes(field.type)){if(!Number.isSafeInteger(field.maxLength)||field.maxLength<1||field.maxLength>2048||field.minLength!==undefined&&(!Number.isSafeInteger(field.minLength)||field.minLength<0||field.minLength>field.maxLength))fail('invalid_schema');}
-    else if(field.minLength!==undefined||field.maxLength!==undefined)fail('invalid_schema');
-    if(['integer','number'].includes(field.type)){if(!Number.isFinite(field.minimum)||!Number.isFinite(field.maximum)||field.minimum>field.maximum||Math.abs(field.minimum)>Number.MAX_SAFE_INTEGER||Math.abs(field.maximum)>Number.MAX_SAFE_INTEGER)fail('invalid_schema');}else if(field.minimum!==undefined||field.maximum!==undefined)fail('invalid_schema');
-  }
+  for(const [name,field] of Object.entries(fields)){if(!FIELD_NAME.test(name))fail('invalid_schema');const outcome=fieldOutcome(field,{optionalTitle});if(outcome.status==='unsupported')fail('unsupported_fragment');if(outcome.status!=='valid')fail('invalid_schema');}
   return structuredClone(fields);
 }
 export function validateValue(field,value,validateURL=https){

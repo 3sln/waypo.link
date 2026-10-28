@@ -1,10 +1,18 @@
 # Public artefacts: additive versions and integrity references — normative draft
 
+> **Group:** Bindle core
+>
+> **Status:** provisional draft, revision 3; strict validation and durable publication are implemented locally; alignment with extensions revision 3 is pending (CR-X3-14). Nothing is published as immutable yet.
+>
+> **Covers:** the public artefact envelope, additive versions, integrity references, caching, notices and grant upgrades.
+>
+> **Does not cover:** signed-object JWS rules ([keys](keys.md)); the meaning of particular contracts ([contracts](contracts.md)); extension descriptors ([extensions](extensions.md)).
+
 > **Pending [extensions revision 3](extensions.md) (draft, unsigned, 2026-10-27).** Where this document relies on `slot` references, extension declarations carrying `version` (AMD-R3, withdrawn) and its §12 features, extensions revision 3.2 and protocol §2–§4 govern instead. Change request CR-X3-14, [extensions Appendix A](extensions.md#appendix-a-migration-and-impact-change-requests-not-applied).
 
 Status: **provisional draft, 2026-10-22, revision 3** (review round 1 applied; the user's 2026-10-22 decisions on design §13 Q1–Q4 applied in §2, §6.3, §9.2 and §11). Implemented locally: strict envelope/reference validation and additive checks (`packages/core/artefacts.mjs`), durable publication/resolution (`packages/federation/artefact-store.mjs`), versioned preference/grant/contract integration and transition serving. These are local implementation paths behind `ARTEFACT_VERSIONS_ENABLED` (default off), not full external-provider conformance. The draft remains unsigned and nothing is production-verified. Rationale, alternatives, migration and tests: [artefact references](../architecture/artefact-references.md). Human sign-off: reviewer ___ / date ___ / outcome ___.
 
-This document extends [protocol §3, §4 and §6](protocol.md), [extensions §2, §4 and §7](extensions.md), [events §2](events.md), [contracts](contracts.md), [integrations §2.3](integrations.md) and [incremental authorization](incremental-authorization.md). It changes the rule "a public artefact is immutable at its URL" into "a public artefact is **append-only** at its URL". MUST/SHOULD/MAY express draft requirements. Identifiers under `https://spec.bindle.example/` are placeholders. §14 lists the core amendments this draft needs; they are **proposed and unsigned**.
+This document extends [protocol §3, §4 and §6](protocol.md), [extensions §2, §4 and §7](extensions.md), [events §2](extensions/events.md), [contracts](contracts.md), [integrations §2.3](extensions/integrations.md) and [incremental authorization](extensions/incremental-authorization.md). It changes the rule "a public artefact is immutable at its URL" into "a public artefact is **append-only** at its URL". MUST/SHOULD/MAY express draft requirements. Identifiers under `https://spec.bindle.example/` are placeholders. §14 lists the core amendments this draft needs; they are **proposed and unsigned**.
 
 ## 1. Scope and terms
 
@@ -295,7 +303,7 @@ Signatures are optional. They add provenance, never integrity: a reference's dig
 3. **Serving older versions.** A provider whose head is *H* serves any accepted version *N* ≤ *H*. A request naming version *N* gets a grant pinned at *N*, and projections and argument validation use version *N*.
 4. **Validation and results use the pinned version.** An implementer validates RPC arguments against the request schema of the contract version the caller's grant pins, and returns or delivers only result and payload members that version defines or that were admitted as unnamed additional members before the first version that names them (§6.3). For brokered resources, the provider states that version **and its digest** in the token (AMD-R4); the integration MUST validate against the record with that digest and fail closed (`artefact_digest_mismatch`) if its own copy differs, so a publisher cannot show the consenting provider one body and the implementer another. JSON Schema tooling registers schemas by `$id`, and every version of a line shares one `$id`: implementations MUST compile each version in a separate validator context keyed by its version digest, never by `$id` or URL.
 5. **Upgrading a pin.** When an app sends a request naming version *M* of a line on which it holds a grant pinned at *N* < *M*, the provider verifies *N* → *M* under §7.2 and computes the delta:
-   - new fields, resources or methods requested are delta items for [incremental authorization](incremental-authorization.md) (`grant-more`) or the initial consent flow;
+   - new fields, resources or methods requested are delta items for [incremental authorization](extensions/incremental-authorization.md) (`grant-more`) or the initial consent flow;
    - for every already granted method whose request branch or result schema differs between the pinned contract version and the target contract version, compared after resolving every `$ref` (new optional arguments, new result members, §6.3), the method is a delta item marked "updated", because new arguments can widen what the method does and new result members widen what the app receives. Granted buses whose payload or `types` grew are "updated" in the same way;
    - the delta view shows every display string added between the two versions for granted items (for example a new `summary` translation), because added text can reframe existing items (§6.1);
    - if there are no delta items, the provider advances the grant's pin to *M* without asking the owner, records the change in the owner-visible access history, and never widens any field, resource or method set;

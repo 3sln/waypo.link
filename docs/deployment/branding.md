@@ -1,5 +1,13 @@
 # Canonical 3sln branding
 
+> **Group:** 3sln.me reference service (hosting)
+>
+> **Status:** operator guide; configuration alone does not establish working external delivery or provider conformance.
+>
+> **Covers:** canonical 3sln branding assets.
+>
+> **Does not cover:** the protocol and its security requirements ([protocol](../spec/protocol.md), [security](../spec/security.md)); 3sln.me release gates ([release gates](../3sln/release-gates.md)).
+
 Source: `3sln/.github`, local checkout `../dotgithub`, revision `458ad44a83a9f4b54136c96ca74122cabd99be8b`. The original mark, outlined light/dark wordmarks and 512px PNG avatar were copied unchanged into the web assets. The mark supplies the SVG favicon; the PNG supplies the PWA/apple-touch icon and email inline image. The wordmark retains its outlined Inter lettering. Source notes describe Inter's SIL Open Font License.
 
 Hosted mail uses the exact avatar PNG as a CID inline attachment with escaped HTML and the existing plaintext content. It performs no remote logo fetch and adds no tracking pixel. Self-hosted operators retain their own name and generic web/icon presentation; their mail does not include the 3sln mark. No live email was sent for this change.

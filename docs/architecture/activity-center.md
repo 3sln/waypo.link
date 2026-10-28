@@ -1,6 +1,6 @@
 # 3sln.me activity center
 
-Provisional host design, 2026-10-20; documentation only. [Core activity interop](../spec/activity.md) defines admission and provenance; this document owns the UI, policy, SDK mapping, and extraction plan. User direction keeps notifications and messages from installed apps in core and moves peer-to-peer communication into a separate app. “App messaging” below means app-to-owner activity, including rich app content and local postbacks, not peer communication.
+Provisional host design, 2026-10-20; documentation only. [Core activity interop](../3sln/services/activity.md) defines admission and provenance; this document owns the UI, policy, SDK mapping, and extraction plan. User direction keeps notifications and messages from installed apps in core and moves peer-to-peer communication into a separate app. “App messaging” below means app-to-owner activity, including rich app content and local postbacks, not peer communication.
 
 The [DEVLOG scope decision](../../DEVLOG.md#2026-10-20--scope-reduction-messaging-leaves-core-manifest-extensions-activity-stays) and [NOTES](../../NOTES.md) are source records. Their broader app/integration unification is compatible with this design: built-in and third-party integrations use the same app attribution and controls. Resource discovery, preference-change webhooks, and manifest extension selection need their own designs. The older NOTES messaging robustness work now belongs to the separate messaging app.
 

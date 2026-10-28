@@ -1,15 +1,19 @@
 // Declaration validation and per-feature capability computation (components-profile
-// decision note §4–§5, protocol §2). Fixtures use .example hosts.
+// decision note §4–§5, protocol §2, extensions revision 3.2 §2). Fixtures use .example hosts.
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {readDeclaration,computeCapabilities,checkFloor,CapabilityStore,COMPONENTS_V1,declarationLimits,freshness} from '../src/capabilities.mjs';
+import {readDeclaration,computeCapabilities,checkFloor,CapabilityStore,COMPONENTS_V1,EXT,declarationLimits,freshness} from '../src/capabilities.mjs';
 import {componentsDeclaration} from '../src/testing.mjs';
 
 const issuer='https://idp.example';
 const floor={version:'0',issuer,authorization_endpoint:`${issuer}/authorize`,token_endpoint:`${issuer}/token`,rpc_endpoint:`${issuer}/rpc`,jwks_uri:`${issuer}/jwks`,authorization_request_endpoint:`${issuer}/requests`,preferences_contract:'https://contracts.example/preferences/v1',login_presentation:['redirect']};
-const entry=(intents=['login','select-account','reauthenticate','end-session'])=>({'authorization-entry.v1':{endpoint:`${issuer}/entries`,intents}});
-const full={...floor,login_presentation:['redirect','popup'],revocation_endpoint:`${issuer}/revoke`,dpop_signing_alg_values_supported:['ES256'],grant_types_supported:['authorization_code','refresh_token'],features:{...entry(),'fedcm.v1':{config_url:`${issuer}/fedcm.json`},'client-id-metadata.v1':{}},profiles:{[COMPONENTS_V1]:componentsDeclaration(issuer)}};
+const ext=(spec,options)=>options?{spec,options}:{spec};
+const entry=(intents=['login','select-account','reauthenticate','end-session'],endpoint=`${issuer}/entries`)=>ext(EXT.authorizationEntry,{endpoint,intents});
+const fedcm=ext(EXT.fedcm,{config_url:`${issuer}/fedcm.json`});
+const components=(overrides={})=>ext(COMPONENTS_V1,{...componentsDeclaration(issuer),...overrides});
+const full={...floor,login_presentation:['redirect','popup'],revocation_endpoint:`${issuer}/revoke`,dpop_signing_alg_values_supported:['ES256'],grant_types_supported:['authorization_code','refresh_token'],extensions:[entry(),fedcm,ext(EXT.clientIdMetadata),components()]};
 const caps=(manifest,options)=>computeCapabilities(readDeclaration(manifest,issuer,{embedderOrigin:'https://app.example'}),options);
+const replace=(list,spec,value)=>[...list.filter(item=>item.spec!==spec),...value?[value]:[]];
 
 test('conformance floor: every required member fails closed with unsupported-provider',()=>{
   checkFloor(floor,issuer);
@@ -24,56 +28,90 @@ test('minimal (floor only): identity-pinned redirect, nothing optional, issuer-r
   assert.equal(c.manageUrl,issuer+'/');assert.deepEqual(c.islands,{avatar:null,switcher:null,signIn:null});
 });
 
-test('standard and full compute per feature; FedCM needs the entry, the feature and the user agent',()=>{
-  const standard=caps({...floor,login_presentation:['redirect','popup'],revocation_endpoint:`${issuer}/revoke`,features:entry(['login','select-account'])});
+test('standard and full compute per extension; FedCM needs the entry, the extension and the user agent',()=>{
+  const standard=caps({...floor,login_presentation:['redirect','popup'],revocation_endpoint:`${issuer}/revoke`,extensions:[entry(['login','select-account'])]});
   assert.equal(standard.identityless,true);assert.equal(standard.selectAccount,true);assert.equal(standard.reauthenticate,false);assert.equal(standard.popup,true);assert.equal(standard.revoke,true);assert.equal(standard.dpop,false);
   const all=caps(full,{identityCredential:true,defaultIssuer:issuer});
   assert.equal(all.fedcm,true);assert.equal(all.dpop,true);assert.equal(all.clientIdMetadata,true);assert.equal(all.profile,true);assert.equal(all.manageUrl,`${issuer}/console/apps`);
   assert.deepEqual(all.islands.avatar,{version:1,fedcm:false});assert.ok(all.islands.switcher);assert.ok(all.islands.signIn);
   assert.equal(caps(full,{identityCredential:false}).fedcm,false);
-  assert.equal(caps({...full,features:{'fedcm.v1':{config_url:`${issuer}/fedcm.json`}}},{identityCredential:true}).fedcm,false,'fedcm requires authorization-entry');
+  // Prerequisite (extensions §2.5): fedcm without exactly one authorization-entry entry is absent.
+  const lone=readDeclaration({...full,extensions:[fedcm]},issuer);
+  assert.equal(lone.fedcm,null);assert.ok(lone.warnings.includes(EXT.fedcm));
+  assert.equal(caps({...full,extensions:[fedcm]},{identityCredential:true}).fedcm,false,'fedcm requires authorization-entry');
   // DPoP needs ES256, the entry (it carries dpopJkt) and a refresh grant.
   assert.equal(caps({...full,grant_types_supported:['authorization_code']}).dpop,false);
   assert.equal(caps({...full,dpop_signing_alg_values_supported:['RS256']}).dpop,false);
 });
 
-test('absent or invalid entry intents mean none, never all; unknown intent values are ignored',()=>{
-  assert.equal(caps({...floor,features:{'authorization-entry.v1':{endpoint:`${issuer}/entries`}}}).entry,false);
-  assert.equal(caps({...floor,features:{'authorization-entry.v1':{endpoint:`${issuer}/entries`,intents:[]}}}).entry,false);
-  assert.equal(caps({...floor,features:{'authorization-entry.v1':{endpoint:`${issuer}/entries`,intents:['teleport']}}}).entry,false);
-  assert.deepEqual(caps({...floor,features:entry(['login','teleport'])}).intents,['login']);
-  assert.equal(caps({...floor,features:{'authorization-entry.v1':{endpoint:'https://other.example/entries',intents:['login']}}}).entry,false,'feature endpoints stay on the issuer origin');
+test('entry intents: absent or invalid means none, never all; values outside the descriptor make the entry absent',()=>{
+  const only=value=>caps({...floor,extensions:[value]});
+  assert.equal(only(ext(EXT.authorizationEntry,{endpoint:`${issuer}/entries`})).entry,false);
+  assert.equal(only(entry([])).entry,false);
+  assert.equal(only(entry(['teleport'])).entry,false);
+  assert.equal(only(entry(['login','teleport'])).entry,false,'a known option failing validation makes the entry absent');
+  // Descriptor intents the SDK flows do not use (grant-more, configure) are kept on the declaration only.
+  const more=readDeclaration({...floor,extensions:[entry(['login','grant-more'])]},issuer);
+  assert.deepEqual(more.authorizationEntry.intents,['login','grant-more']);assert.deepEqual(computeCapabilities(more).intents,['login']);
+  assert.equal(only(entry(['grant-more'])).entry,false,'no flow intent: the entry capability is off');
+  assert.equal(only(entry(['login'],'https://other.example/entries')).entry,false,'endpoint options stay on the issuer origin');
+  assert.equal(only(ext(EXT.fedcm,{config_url:'https://other.example/fedcm.json'})).fedcm,false);
 });
 
-test('bounded containers, unknown features and versions ignored, highest implemented version wins',()=>{
-  const declaration=readDeclaration({...floor,features:{...entry(['login']),'authorization-entry.v7':{anything:true},'teleport.v1':{},'Bad.Key':{},'authorization-entry.v2':{endpoint:`${issuer}/x`,intents:['login']}},unknown_member:{nested:true}},issuer);
-  assert.equal(declaration.features['authorization-entry'].version,1);assert.equal(declaration.features.teleport,undefined);
-  const oversize=readDeclaration({...floor,features:{'authorization-entry.v1':{endpoint:`${issuer}/entries`,intents:['login'],padding:'x'.repeat(declarationLimits.featureBytes)}}},issuer);
-  assert.equal(oversize.features['authorization-entry'],undefined);assert.ok(oversize.warnings.includes('authorization-entry.v1'));
-  const many=Object.fromEntries(Array.from({length:declarationLimits.features+1},(_,i)=>[`f${i}.v1`,{}]));
-  assert.deepEqual(readDeclaration({...floor,features:{...many,...entry()}},issuer).features,{},'an oversized container is ignored as a whole');
-  assert.deepEqual(readDeclaration({...floor,features:[1]},issuer).features,{});
-  const profiles=Object.fromEntries(Array.from({length:declarationLimits.profiles+1},(_,i)=>[`https://p${i}.example/v1`,{}]));
-  assert.deepEqual(readDeclaration({...floor,profiles},issuer).profiles,{});
+test('extension processing: unknown ignored, duplicates and two versions absent, bounded, audience collisions',()=>{
+  const declaration=readDeclaration({...floor,extensions:[entry(['login']),ext('https://spec.bindle.example/extensions/teleport/v1'),ext('not a url'),{spec:EXT.clientIdMetadata,extra:true}],unknown_member:{nested:true}},issuer);
+  assert.deepEqual(declaration.authorizationEntry,{endpoint:`${issuer}/entries`,intents:['login']});assert.equal(declaration.clientIdMetadata,true);
+  assert.deepEqual(Object.keys(declaration.extensions).sort(),[EXT.authorizationEntry,EXT.clientIdMetadata].sort());
+  // Unknown option members are ignored and dropped.
+  assert.deepEqual(readDeclaration({...floor,extensions:[ext(EXT.authorizationEntry,{endpoint:`${issuer}/entries`,intents:['login'],future:1})]},issuer).extensions[EXT.authorizationEntry],{endpoint:`${issuer}/entries`,intents:['login']});
+  // Duplicate spec: every copy absent (and a dependent fedcm loses its prerequisite).
+  const duplicate=readDeclaration({...floor,extensions:[entry(['login']),entry(['select-account']),fedcm]},issuer);
+  assert.equal(duplicate.authorizationEntry,null);assert.equal(duplicate.fedcm,null);assert.ok(duplicate.warnings.includes(EXT.authorizationEntry));
+  // Two versions of one line: all absent, even when the other version is unimplemented.
+  const versions=readDeclaration({...floor,extensions:[entry(['login']),ext(EXT.authorizationEntry.replace(/v1$/,'v2'),{anything:true})]},issuer);
+  assert.equal(versions.authorizationEntry,null);
+  // Audience distinctness: an entry endpoint equal to a flat audience endpoint is absent.
+  assert.equal(readDeclaration({...floor,extensions:[entry(['login'],floor.token_endpoint)]},issuer).authorizationEntry,null);
+  // Bounds: an oversized entry is ignored; an oversized container is ignored as a whole.
+  const oversize=readDeclaration({...floor,extensions:[{...entry(['login']),padding:'x'.repeat(declarationLimits.entryBytes)}]},issuer);
+  assert.equal(oversize.authorizationEntry,null);
+  const many=Array.from({length:declarationLimits.entries},(_,i)=>ext(`https://ext.example/f${i}/v1`));
+  assert.equal(readDeclaration({...floor,extensions:[...many,entry()]},issuer).authorizationEntry,null,'more than 48 entries');
+  assert.ok(readDeclaration({...floor,extensions:[...many.slice(1),entry()]},issuer).authorizationEntry,'48 entries are fine');
+  assert.equal(readDeclaration({...floor,extensions:{[EXT.authorizationEntry]:{}}},issuer).authorizationEntry,null);
 });
 
-test('components profile: member validation, binding and cross-checks remove only what fails',()=>{
-  const profile=overrides=>caps({...full,profiles:{[COMPONENTS_V1]:{...componentsDeclaration(issuer),...overrides}}},{identityCredential:true,defaultIssuer:issuer});
-  for(const bad of [{embed_origin:issuer},{embed_origin:'https://app.example'},{embed_origin:'https://embed.idp.example/path'},{embed_origin:'http://embed.idp.example'},{embed_origin:'https://10.0.0.1'},{protocol:[2]},{protocol:[]},{parts:'x'}])
+test('clean break: the former features and profiles containers are ignored entirely',()=>{
+  const legacy={...full,extensions:undefined,features:{'authorization-entry.v1':{endpoint:`${issuer}/entries`,intents:['login','select-account']},'fedcm.v1':{config_url:`${issuer}/fedcm.json`},'client-id-metadata.v1':{},'intents.v1':{intents:['send-message'],login_endpoint:`${issuer}/console`}},profiles:{'https://3sln.me/artefacts/profiles/components/v1':{embed_origin:'https://embed.idp.example',protocol:[1],parts:{'sign-in':{versions:[1]}},credential_binding:['key-binding.v1']}}};
+  const declaration=readDeclaration(legacy,issuer),c=computeCapabilities(declaration,{identityCredential:true});
+  assert.deepEqual(declaration.extensions,{});assert.equal(declaration.authorizationEntry,null);assert.equal(declaration.components,null);
+  assert.deepEqual({entry:c.entry,fedcm:c.fedcm,clientIdMetadata:c.clientIdMetadata,profile:c.profile,intentLinks:c.intentLinks},{entry:false,fedcm:false,clientIdMetadata:false,profile:false,intentLinks:[]});
+  // Alongside `extensions`, legacy containers neither add nor remove anything.
+  assert.deepEqual(readDeclaration({...full,features:{},profiles:{}},issuer).extensions,readDeclaration(full,issuer).extensions);
+});
+
+test('embedded components: options map to islands; validation, binding and cross-checks remove only what fails',()=>{
+  const profile=overrides=>caps({...full,extensions:replace(full.extensions,COMPONENTS_V1,components(overrides))},{identityCredential:true,defaultIssuer:issuer});
+  const declared=readDeclaration(full,issuer,{embedderOrigin:'https://app.example'}).components;
+  assert.deepEqual(declared,{embedOrigin:'https://embed.idp.example',parts:{avatar:{version:1,fedcm:false},'account-switcher':{version:1,fedcm:false},'sign-in':{version:1,fedcm:false}},themeTokens:[],bindings:['key-binding.v1'],manageUrl:`${issuer}/console/apps`});
+  // embed_origin is exempt from the issuer-origin rule (a sibling origin is fine) but still a bare HTTPS origin.
+  for(const bad of [{embed_origin:issuer},{embed_origin:'https://app.example'},{embed_origin:'https://embed.idp.example/path'},{embed_origin:'http://embed.idp.example'},{embed_origin:'https://10.0.0.1'},{protocol:[2]},{protocol:[]},{parts:'x'},{parts:[]},{parts:['teleporter/1']},{parts:['avatar/9']},{credential_binding:['other.v9']}])
     assert.equal(profile(bad).profile,false,JSON.stringify(bad));
-  // No recognised binding: identity-bearing parts are absent, sign-in remains.
-  const unbound=profile({credential_binding:['other.v9']});assert.equal(unbound.islands.avatar,null);assert.equal(unbound.islands.switcher,null);assert.ok(unbound.islands.signIn);
-  // Unknown parts and unimplemented versions are ignored.
-  const parts=profile({parts:{avatar:{versions:[9]},'sign-in':{versions:[1,2]},teleporter:{versions:[1]}}});assert.equal(parts.islands.avatar,null);assert.equal(parts.islands.signIn.version,1);
+  assert.equal(profile({embed_origin:'https://components.cdn.example'}).embedOrigin,'https://components.cdn.example');
+  // No binding: identity-bearing parts are absent, sign-in remains.
+  const unbound=caps({...full,extensions:replace(full.extensions,COMPONENTS_V1,ext(COMPONENTS_V1,componentsDeclaration(issuer,{binding:false})))},{defaultIssuer:issuer});
+  assert.equal(unbound.islands.avatar,null);assert.equal(unbound.islands.switcher,null);assert.ok(unbound.islands.signIn);
+  // Only the declared parts; the request part is carried for the request element.
+  const parts=profile({parts:['sign-in/1','request/1']});assert.equal(parts.islands.avatar,null);assert.equal(parts.islands.signIn.version,1);
+  assert.deepEqual(readDeclaration({...full,extensions:replace(full.extensions,COMPONENTS_V1,components({parts:['request/1']}))},issuer).components.parts,{request:{version:1,fedcm:false}});
   // Without identity-optional login, flow parts are absent.
-  assert.equal(caps({...full,features:entry(['select-account'])}).islands.signIn,null);
-  assert.equal(profile({manage_url:'https://evil.example/apps'}).manageUrl,issuer+'/');
-  assert.deepEqual(profile({theme_tokens:['surface','font','radius']}).themeTokens,['surface','radius']);
-  // FedCM is delegated to an island only for the default provider or an allowlisted issuer (profile §2.1).
-  const fedcmParts=overrides=>caps({...full,profiles:{[COMPONENTS_V1]:componentsDeclaration(issuer,{fedcm:true})}},{identityCredential:true,...overrides});
-  assert.equal(fedcmParts({defaultIssuer:issuer}).islands.signIn.fedcm,true);
-  assert.equal(fedcmParts({defaultIssuer:'https://other.example'}).islands.signIn.fedcm,false);
-  assert.equal(fedcmParts({defaultIssuer:'https://other.example',islandIssuers:[issuer]}).islands.signIn.fedcm,true);
+  assert.equal(caps({...full,extensions:replace(full.extensions,EXT.authorizationEntry,entry(['select-account']))}).islands.signIn,null);
+  // manage_url is a public endpoint option on the issuer origin: off-origin makes the whole entry absent.
+  assert.equal(profile({manage_url:'https://evil.example/apps'}).profile,false);
+  const {manage_url:_,...noManage}=componentsDeclaration(issuer),unmanaged=caps({...full,extensions:replace(full.extensions,COMPONENTS_V1,ext(COMPONENTS_V1,noManage))});assert.equal(unmanaged.profile,true);assert.equal(unmanaged.manageUrl,issuer+'/');
+  // The former theme_tokens and per-part fedcm members have no descriptor option and are ignored.
+  const legacyMembers=profile({theme_tokens:['surface','radius']});assert.deepEqual(legacyMembers.themeTokens,[]);
+  assert.equal(legacyMembers.islands.signIn.fedcm,false,'no part delegates FedCM');
 });
 
 test('island policy: auto by default, off disables, an allowlist restricts to listed issuers',()=>{
@@ -86,7 +124,7 @@ test('island policy: auto by default, off disables, an allowlist restricts to li
 test('runtime degradation is per issuer, dependent flags inherit it, and it never reverses',()=>{
   const store=new CapabilityStore(),other='https://other.example',events=[];
   store.subscribe(value=>events.push(value));
-  store.remember(readDeclaration(full,issuer,{}));store.remember(readDeclaration({...full,issuer:other,...Object.fromEntries(['authorization_endpoint','token_endpoint','rpc_endpoint','jwks_uri','authorization_request_endpoint','revocation_endpoint'].map(key=>[key,full[key].replace(issuer,other)])),features:{'authorization-entry.v1':{endpoint:`${other}/entries`,intents:['login']}},profiles:{}},other,{}));
+  store.remember(readDeclaration(full,issuer,{}));store.remember(readDeclaration({...full,issuer:other,...Object.fromEntries(['authorization_endpoint','token_endpoint','rpc_endpoint','jwks_uri','authorization_request_endpoint','revocation_endpoint'].map(key=>[key,full[key].replace(issuer,other)])),extensions:[ext(EXT.authorizationEntry,{endpoint:`${other}/entries`,intents:['login']})]},other,{}));
   store.degrade(issuer,'authorization-entry');
   const degraded=store.capabilities(issuer,{identityCredential:true});
   assert.equal(degraded.entry,false);assert.equal(degraded.fedcm,false,'fedcm depends on the entry');assert.equal(degraded.dpop,false);assert.equal(degraded.islands.signIn,null);
@@ -102,5 +140,5 @@ test('declarations are cached for the HTTP freshness lifetime, capped at one hou
   assert.equal(freshness(headers('max-age=999999')),3600000);assert.equal(freshness(headers('no-store')),0);assert.equal(freshness(headers(null)),300000);
   store.remember(declaration,freshness(headers('max-age=60')));
   assert.ok(store.declaration(issuer));now=61000;assert.equal(store.declaration(issuer),null);assert.ok(store.declaration(issuer,{stale:true}));
-  assert.ok(Object.isFrozen(declaration)&&Object.isFrozen(declaration.features));
+  assert.ok(Object.isFrozen(declaration)&&Object.isFrozen(declaration.extensions));
 });

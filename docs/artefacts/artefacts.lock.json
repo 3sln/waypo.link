@@ -63,6 +63,13 @@
     ]
   },
   {
+    "id": "https://3sln.me/artefacts/fragments/item-classifier/v1",
+    "kind": "fragment",
+    "versions": [
+      "sha256-b5e5bGtWtRz9ND-NTqNllyAhbfRbdVPfldokKu51A4Q"
+    ]
+  },
+  {
     "id": "https://3sln.me/artefacts/profiles/components/v1",
     "kind": "manifest-profile",
     "versions": [

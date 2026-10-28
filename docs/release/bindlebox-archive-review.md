@@ -9,7 +9,7 @@ Date: 2026-10-21.
 - Tests: `tests/bindlebox/{archive-fixtures,archive,archive-security,app-switch}.test.mjs`, run on the BB-B4 conversation mesh (seeded network simulator), with simulated object-storage/v1 resources and a simulated key holder.
 
 Design sources:
-- [spec](../spec/messaging.md) §3.2, §6.6, §8.2 and §10;
+- [spec](../spec/extensions/messaging.md) §3.2, §6.6, §8.2 and §10;
 - [architecture](../architecture/messaging-app.md) §8, §16 and §18 (scaling spike P0: retention and anti-resurrection);
 - [design review](messaging-app-review.md) S-9, S-15, P-3, P-4 and P-15;
 - DEVLOG 2026-10-13, "Conversation storage and contact handoff redesign" and "owner-bucket archives": cold data lives in the owner's bucket, encrypted to the recovery identity's encryption key, so backups and transfers include everything.

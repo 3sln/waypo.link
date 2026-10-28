@@ -1,4 +1,12 @@
-# Reference implementation boundaries
+# `dev:demo` boundaries (in-memory demonstration)
+
+> **Group:** 3sln.me reference service
+>
+> **Status:** describes only the separate `dev:demo` in-memory demonstration, not the main application.
+>
+> **Covers:** the deliberate differences between the loopback-only `dev:demo` consent demonstration and production.
+>
+> **Does not cover:** the main authenticated application ([self-hosting](self-hosting.md)).
 
 The spec documents describe the proposed production system. This first slice demonstrates consent and authorization, with deliberate differences listed here so downstream developers do not mistake fixture code for protocol conformance.
 

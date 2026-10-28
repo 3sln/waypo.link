@@ -67,7 +67,7 @@ test('engine account and percentage rules reach route creates and session featur
 test('engine rollout gates connections, classifier offerings, brokered creates and activity push widening',async t=>{
  const f=await fixture(t);for(const name of ['INTEGRATIONS_ENABLED','EXTENSIONS_ENABLED','ACTIVITY_V2_ENABLED'])await f.edit(name,{on:true,fallthrough:false,rules:[{when:{accounts:[OWNER]},serve:{value:true}}]});
  const env=await f.ports(),object={connectionsOwner:async()=>({connections:[]}),activityPush:async()=>({enabled:false})};
- for(const [id,status]of [[OWNER,200],[OTHER,409]])assert.equal((await connections.owner(route(env,'/api/connections/owner','POST',{operation:'connections.connect-built-in',input:{integration:'classifier'}},{id,object}))).status,status);
+ for(const [id,status]of [[OWNER,200],[OTHER,409]])assert.equal((await connections.owner(route(env,'/api/connections/owner','POST',{operation:'connections.connect-built-in',input:{integration:'google-drive'}},{id,object}))).status,status);
  const list=await connections.owner(route(env,'/api/connections/owner','POST',{operation:'connections.list'},{id:OTHER,object}));assert.equal(list.status,200);assert(!(await list.json()).offerings.some(v=>v.id==='classifier'));
  assert.equal((await integrations.owner(route(env,'/api/integrations/records','POST',{}, {id:OTHER,object}))).status,409);
  assert.equal((await notifications.owner(route(env,'/api/notifications/activity','PUT',{enabled:true},{id:OTHER,object}))).status,409);

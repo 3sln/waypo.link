@@ -1,0 +1,6 @@
+{
+ "id": "https://spec.bindle.example/extensions/artefact-versions/v1",
+ "title": "Artefact versions",
+ "description": "Accept additive versions of published documents at the same address.",
+ "options": {}
+}

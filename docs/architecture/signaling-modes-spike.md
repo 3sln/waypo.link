@@ -2,9 +2,9 @@
 
 Status: **design spike, 2026-10-27. Documentation only.** Nothing here is implemented, and no specification is edited by this document. Every decision is **provisional (coordinator) and not signed off by the owner**. Identifiers under `https://spec.bindle.example/` and hosts under `.example` are placeholders. Spike sign-off: reviewer ___ / date ___ / outcome ___.
 
-It answers the open spike items of [signaling](../spec/signaling.md) §5.6 and §19.4 (S1, S2 and I3), against **revision 1 as read on 2026-10-27**. Another agent is revising that draft at the same time, so section numbers cited here may shift. The change requests in §1.6 are written against rev 1 for a rev 2.
+It answers the open spike items of [signaling](../spec/extensions/signaling.md) §5.6 and §19.4 (S1, S2 and I3), against **revision 1 as read on 2026-10-27**. Another agent is revising that draft at the same time, so section numbers cited here may shift. The change requests in §1.6 are written against rev 1 for a rev 2.
 
-Inputs: [signaling](../spec/signaling.md), [intents](../spec/intents.md) and its [design](intent-links.md), [notifications](../spec/notifications.md), [activity](../spec/activity.md), the [activity center](activity-center.md), [Bindle Messaging interop](../spec/messaging.md) and its [architecture](messaging-app.md), [device authorization](../spec/device-authorization.md), [device login](../spec/device-login.md), and the owner's direction of 2026-10-27, quoted in the brief.
+Inputs: [signaling](../spec/extensions/signaling.md), [intents](../spec/extensions/intents.md) and its [design](intent-links.md), [notifications](../3sln/services/notifications.md), [activity](../3sln/services/activity.md), the [activity center](activity-center.md), [Bindle Messaging interop](../spec/extensions/messaging.md) and its [architecture](messaging-app.md), [device authorization](../spec/extensions/device-authorization.md), [device login](../3sln/accounts/sign-in-and-sessions.md), and the owner's direction of 2026-10-27, quoted in the brief.
 
 **Naming.** The brief calls the messaging app "Parlay". [open-items](../release/open-items.md) D2 records the app name as open, and says Parlay and Parlay were rejected over name clashes. Here "Parlay" means "the Parlay messaging app, whatever it ends up being called". The media type and kind identifiers use the current `bindlebox` path segment, so they change with D2.
 
@@ -106,7 +106,7 @@ Rules:
 
 ### 1.4 Enrolling a headless daemon
 
-The daemon is a public native client with no browser. It enrolls with [device authorization](../spec/device-authorization.md) (RFC 8628 with mandatory DPoP), which 3sln.me implements locally behind `DEVICE_AUTHORIZATION_ENABLED`. Bridle-style walk-through:
+The daemon is a public native client with no browser. It enrolls with [device authorization](../spec/extensions/device-authorization.md) (RFC 8628 with mandatory DPoP), which 3sln.me implements locally behind `DEVICE_AUTHORIZATION_ENABLED`. Bridle-style walk-through:
 
 1. **Start.** `bridle tether work` sends `POST https://3sln.example/oauth/device_authorization` with `client_id=https://bridle.example/cli` (a client ID metadata document listing the device grant), a `dpop_jkt`, and `bindle_requests` for the signaling slot fragment with `register`, `listen`, `claim`, `send`, `renew` and relay credentials.
 2. **Show.** The terminal shows the `user_code` and `verification_uri`, and MAY show a QR code. By device authorization §10.6, a QR code that prefills the code loses protection against substitution. 3sln.me should therefore ask the owner to type the code, unless its policy decides the approval is happening alongside the device.
@@ -228,7 +228,7 @@ Today the candidates are already filtered to built-ins and connected apps whose 
 
 ### 2.4 Proposed intents amendment outline (AMD-INT-R1, unsigned)
 
-Target: [intents](../spec/intents.md) §7.2, §7.3, §2, §14. The spec states obligations. The weights, labels and tiers above stay 3sln.me policy, as chooser layout already is.
+Target: [intents](../spec/extensions/intents.md) §7.2, §7.3, §2, §14. The spec states obligations. The weights, labels and tiers above stay 3sln.me policy, as chooser layout already is.
 
 1. **§7.3 Order and short lists.** "A provider MAY present a subset of candidates first, provided that every candidate is reachable with one further viewer action from the same page. Candidate order and any subset MUST be derived only from the viewer's own records and from facts the provider verified (choices, approvals, the provider's own observations of connection use, verified hosts and the provider's own review). They MUST NOT be derived from a manifest's claims about itself or from consideration paid by a handler. Nothing is preselected without a default."
 2. **§7.3 Single candidate.** "With exactly one candidate, the provider MAY show a confirmation of that candidate instead of a chooser. It still meets §7.1."
@@ -390,7 +390,7 @@ These are proposed reference values for 3sln.me, for product and security review
   - provider-level capability discovery;
   - the optional `open.path`, if the owner accepts it.
 
-  This must be portable, because an app such as Parlay works with every Bindle provider. It replaces nothing in [notifications](../spec/notifications.md). That document is a message-centric 3sln.me implementation draft, already slated for a rewrite (signaling §20.7).
+  This must be portable, because an app such as Parlay works with every Bindle provider. It replaces nothing in [notifications](../3sln/services/notifications.md). That document is a message-centric 3sln.me implementation draft, already slated for a rewrite (signaling §20.7).
 - **3sln.me feature (activity center):**
   - the owner controls in §3.3;
   - the ladder and service-worker detection in §3.4;
@@ -405,11 +405,11 @@ Activity says that apps "MUST NOT select devices, sounds, lock-screen previews, 
 
 ## 4. Proposed Parlay addition: the call-invite media type
 
-The text below is written as a proposed new **§5.5** of [Bindle Messaging interop](../spec/messaging.md). It is **not applied to messaging.md**. It depends on signaling rev 2 CR-1 (offers) and CR-6 (`bases`).
+The text below is written as a proposed new **§5.5** of [Bindle Messaging interop](../spec/extensions/messaging.md). It is **not applied to messaging.md**. It depends on signaling rev 2 CR-1 (offers) and CR-6 (`bases`).
 
 > ### 5.5 Structured bodies: call invitations (proposed, unsigned)
 >
-> A call invitation is an ordinary message whose body has media type `application/vnd.bindle.messaging.call-invite+json`. It travels as a `one-off` or a `conversation-record` of `type: "message"`, under every rule of §5 to §8. It is a request to connect, carried by messaging. The connection itself uses [signaling](signaling.md). Providers attach no meaning to it.
+> A call invitation is an ordinary message whose body has media type `application/vnd.bindle.messaging.call-invite+json`. It travels as a `one-off` or a `conversation-record` of `type: "message"`, under every rule of §5 to §8. It is a request to connect, carried by messaging. The connection itself uses [signaling](../spec/extensions/signaling.md). Providers attach no meaning to it.
 >
 > #### 5.5.1 Body
 >
@@ -433,7 +433,7 @@ The text below is written as a proposed new **§5.5** of [Bindle Messaging inter
 >
 > Unknown members are invalid. An `edit` keeps `v`, `call`, `media`, `createdAt`, `caller` and `session.kind` and `session.profile` unchanged. It MAY set `offers` to an empty array, and only `state` may otherwise change. An edit with any other change is refused (`content_invalid`).
 >
-> The envelope `subject` MUST be `"Audio call"` or `"Video call"` (localizable by the sender), so that a receiver that does not support this type still shows something meaningful (§5.1, [message content](message-content.md) "Other permitted media types").
+> The envelope `subject` MUST be `"Audio call"` or `"Video call"` (localizable by the sender), so that a receiver that does not support this type still shows something meaningful (§5.1, [message content](../spec/extensions/message-content.md) "Other permitted media types").
 >
 > #### 5.5.2 The call session kind
 >
@@ -463,7 +463,7 @@ The text below is written as a proposed new **§5.5** of [Bindle Messaging inter
 >   - comes from an author who has already alerted 3 times in the last 10 minutes;
 > - MAY still store and show any of those invitations, inertly, as messages;
 > - MUST NOT include offers in notifications, previews, search indexes, logs or exports without capabilities (§6.4 secrecy rules apply to them as capabilities);
-> - when it alerts through the owner's provider, does so only through a best-effort activity presentation hint ([activity](activity.md) AMD-ACT-R1), never through a guaranteed channel.
+> - when it alerts through the owner's provider, does so only through a best-effort activity presentation hint ([activity](../3sln/services/activity.md) AMD-ACT-R1), never through a guaranteed channel.
 >
 > #### 5.5.5 Limits and errors
 >
@@ -527,4 +527,4 @@ The text below is written as a proposed new **§5.5** of [Bindle Messaging inter
 - WebKit, "Web Push for Web Apps on iOS and iPadOS" (2023-02-16): https://webkit.org/blog/13878/web-push-for-web-apps-on-ios-and-ipados/
 - WebKit, "Meet Declarative Web Push" (2025-03-27): https://webkit.org/blog/16535/meet-declarative-web-push/
 - MDN browser-compat-data 8.1.7 (2026-10-22): https://github.com/mdn/browser-compat-data
-- RFC 8628 (device authorization grant) and RFC 9449 (DPoP), as cited in [device authorization](../spec/device-authorization.md).
+- RFC 8628 (device authorization grant) and RFC 9449 (DPoP), as cited in [device authorization](../spec/extensions/device-authorization.md).

@@ -13,7 +13,7 @@ import { IdentityKeyRegistry, RotateIdentityKey, createIdentityKeyEngine, perfor
 import { DelegationRegistry, delegationsProvider, IssueDelegation, RenewDelegation, RevokeDelegation, ReconcileDelegations, DelegationList, DelegationStatus, DELEGATION_PURPOSES, DELEGATION_TYP, POP_DOMAIN, delegationLifetime, signDelegationPop, jwkThumbprint, statusCacheControl } from '../packages/identity/delegation.mjs';
 import { createAppEngine, perform, read } from '../packages/app/engine.mjs';
 import { memoryAudit } from '../packages/app/providers.mjs';
-import { MESSAGING_INGRESS_SLOT } from '../packages/links/types.mjs';
+import { MESSAGING_INGRESS_FRAGMENT } from '../packages/links/types.mjs';
 import * as B from '../packages/messaging-protocol/index.mjs';
 import { encryptSecret, decryptSecret } from '../packages/runtime/secrets.mjs';
 import { createScheduler, forEachSeed, fakeClock } from './helpers/chaos.mjs';
@@ -30,7 +30,7 @@ function fixture({ store = new MemoryMessagingStore(), clock = fakeClock(1800000
   const keys = new IdentityKeyRegistry({ store, ...sealing, clock: clock.now });
   const signer = async owner => { await keys.ensure(owner, 'signing'); return keys.privateKey(owner, 'signing'); };
   const seat = { value: { clientId: APP, origin: 'https://box.example', ingress: 'https://box.example/ingress', cnx: 'cnx-1', purposes: ALL } };
-  const port = occupant === undefined ? async ({ slot }) => (slot === MESSAGING_INGRESS_SLOT ? seat.value : null) : occupant;
+  const port = occupant === undefined ? async ({ fragment }) => (fragment === MESSAGING_INGRESS_FRAGMENT ? seat.value : null) : occupant;
   const registry = new DelegationRegistry({ store, issuer: ISSUER, signer, occupant: port, account, clock: clock.now, ...options });
   const audit = memoryAudit({ clock });
   const engine = createAppEngine({ providers: { clock, random: { uuid: () => crypto.randomUUID(), bytes: n => crypto.getRandomValues(new Uint8Array(n)) }, audit, delegations: delegationsProvider({ registry, enabled }) } });
@@ -51,7 +51,7 @@ const decode = part => JSON.parse(Buffer.from(part, 'base64url').toString('utf8'
 
 test('cross-test: issued certificates verify with packages/messaging-protocol exactly', async () => {
   const f = fixture(), key = await delegateKey();
-  assert.deepEqual(DELEGATION_PURPOSES, B.PURPOSES); assert.equal(DELEGATION_TYP, B.JWS_TYPES.delegation); assert.equal(MESSAGING_INGRESS_SLOT, B.INGRESS_SLOT);
+  assert.deepEqual(DELEGATION_PURPOSES, B.PURPOSES); assert.equal(DELEGATION_TYP, B.JWS_TYPES.delegation); assert.equal(MESSAGING_INGRESS_FRAGMENT, B.INGRESS_FRAGMENT);
   const issued = await f.run(IssueDelegation, f.app(), await request(f, key));
   const [header, payload] = issued.certificate.split('.').map((part, i) => i < 2 ? decode(part) : part);
   const current = await f.keys.current(OWNER, { purpose: 'signing' });
@@ -321,7 +321,7 @@ test('flag off: the status endpoint and owner routes are not mounted and the app
 
 test('flag on: issuance through the account, protocol verification, and status endpoint cache semantics', async () => {
   const seat = { value: { clientId: APP, origin: 'https://box.example', ingress: 'https://box.example/ingress', cnx: 'cnx-1', purposes: ALL } };
-  const s = await server(8797, { LINKS_ENABLED: 'true', DELEGATION_SLOT_OCCUPANT: async ({ slot }) => (slot === MESSAGING_INGRESS_SLOT ? seat.value : null), DELEGATION_CERTIFICATE_SECONDS: '7200' });
+  const s = await server(8797, { LINKS_ENABLED: 'true', DELEGATION_SLOT_OCCUPANT: async ({ fragment }) => (fragment === MESSAGING_INGRESS_FRAGMENT ? seat.value : null), DELEGATION_CERTIFICATE_SECONDS: '7200' });
   try {
     const c = s.controller(), actor = { kind: 'app', owner: s.id, clientId: APP }, key = await delegateKey();
     await assert.rejects(c.delegationOperation(s.id, { actor: { ...actor, owner: crypto.randomUUID() }, operation: 'delegations.issue', input: {} }), code('forbidden'));

@@ -1,175 +1,154 @@
+// Extensions revision 3.2 (docs/spec/extensions.md §2, §3; protocol §2): `{spec, options}` declarations processed with
+// bundled descriptors (packages/core/extensions.mjs), manifest emission through MANIFEST_DECLARATIONS
+// (packages/runtime/federation.mjs, packages/federation/runtime.mjs), the gated engine Queries, and the selection state
+// machine over field attributes (packages/federation/extensions.mjs). Revision 2 slot tests were rewritten here and in
+// tests/extensions-rev3-engine.test.mjs (fragment attributes, provider features, floor rules, chaos).
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {webcrypto,createHash} from 'node:crypto';
-import {validateSchema,pinSchema} from '../packages/federation/schema.mjs';
-import {canonical,MemoryMessagingStore} from '../packages/core/records.mjs';
-import {createTestEngine} from './helpers/app-engine.mjs';
-import {validateSlotManifest,validateExtensions,slotDigest,validateExtensionDigest,pinSlotManifest,createSlotOperation,nextSlotDispatch,recordSlotOutcome,slotOperationResult,createExtensionsProvider,SlotManifest,ExtensionDeclarations,SlotSelection,PinSlotManifest} from '../packages/federation/extensions.mjs';
+import {readFile} from 'node:fs/promises';
+import {EXT,PROVIDER_EXT,BINDLE_DESCRIPTORS,PROVIDER_DESCRIPTORS,BINDLE_REGISTRY,readExtensions,parseSpecURL,validateDescriptor,descriptorRegistry,withExtensionEntries,declare,EXTENSION_LIMITS} from '../packages/core/extensions.mjs';
+import {createFieldOperation,nextFieldDispatch,recordFieldOutcome,fieldOperationResult,createExtensionsProvider,ExtensionDeclarations,FieldAttributes,FieldSelection,PROVIDER_REGISTRY} from '../packages/federation/extensions.mjs';
+import {createManifestDeclarationProvider,withManifestDeclarations} from '../packages/federation/runtime.mjs';
+import {MANIFEST_DECLARATIONS,federationDeclarations} from '../packages/runtime/federation.mjs';
+import {createAppEngine,read} from '../packages/app/engine.mjs';
+import {memoryAudit} from '../packages/app/providers.mjs';
+import {fakeClock} from './helpers/chaos.mjs';
 
-const url='https://slots.example/classifier/v1',contract='https://contracts.example/decision/v1',other='https://contracts.example/other/v1';
-const manifest=(selection='ordered')=>({id:url,title:'Classifier',description:'Classifies incoming items.',publisher:'https://publisher.example',fields:{occupants:{title:'Classifiers',type:'resource',cardinality:{min:0,max:selection==='exclusive'?1:4},contracts:[contract]},enabled:{title:'Enabled',type:'boolean',cardinality:{min:0,max:1}}},slot:{v:1,field:'occupants',selection,consumers:['application','provider']}});
-const contracts=(effect='read')=>({[contract]:{digest:'pinned-contract-digest',schema:{$id:contract,'x-methods':{decide:{effect},describe:{effect:'pure'}}}}});
-const declaration=(extra={})=>({slot:url,role:'occupant',ref:'classifier',...extra});
-const occupant=id=>({id:`https://resources.example/${id}`,status:'available',credentialCurrent:true});
-const tx=n=>`00000000-0000-4000-8000-${String(n).padStart(12,'0')}`;
-const valid=(schema,options)=>validateSlotManifest(schema,url,options).status;
-const fixture=()=>{let document=manifest(),fetches=0;const store=new MemoryMessagingStore();return {store,crypto:webcrypto,schemaHosts:['slots.example'],contracts:contracts(),schemaFetcher:async()=>{fetches++;return structuredClone(document);},set:next=>document=next,get fetches(){return fetches;}};};
+const ISS='https://p.example',code=c=>e=>{assert.equal(e.code,c,`expected ${c}, got ${e.code}`);return true;};
+const floor={version:'0',issuer:ISS,authorization_request_endpoint:ISS+'/api/oauth/requests',token_endpoint:ISS+'/oauth/token',rpc_endpoint:ISS+'/bindle/rpc',revocation_endpoint:ISS+'/oauth/revoke'};
+const read$=(extensions,extra={})=>readExtensions({...floor,...extra,extensions});
+const keys=r=>[...r.extensions.keys()];
+const entry={spec:EXT.authorizationEntry,options:{endpoint:ISS+'/api/oauth/entries',intents:['login']}};
 
-test('AMD-C1 tolerates and retains unknown top-level members, without widening fields or the field subset',async()=>{
- const schema=manifest();schema.future={arbitrary:['metadata']};schema.slot.v=77;
- const result=validateSchema(schema,url);assert.deepEqual(result,schema);assert.notEqual(result,schema);assert.deepEqual(Object.keys(result.fields),['occupants','enabled']);
- for(const extension of [null,[],false,'unknown',{v:90}]){schema.slot=extension;assert.deepEqual(validateSchema(schema,url),schema);}
- schema.fields.enabled.future=true;assert.throws(()=>validateSchema(schema,url));delete schema.fields.enabled.future;
- schema.fields.enabled.type='script';assert.throws(()=>validateSchema(schema,url));
- const f=fixture(),document=manifest();document.future={data:1};f.set(document);const pin=await pinSchema(f,url);document.future.data=2;f.set(document);
- await assert.rejects(pinSchema(f,url),{code:'schema_changed'});assert.equal((await f.store.transaction(t=>t.get(`federation/schema/${url}`))).digest,pin.digest);
+test('spec URLs: versioned last segment, HTTPS, bounded, no query, fragment or userinfo',()=>{
+ assert.deepEqual(parseSpecURL('https://x.example/ext/widgets/v12'),{line:'https://x.example/ext/widgets',version:12});
+ for(const bad of ['https://x.example/ext/widgets','https://x.example/v1','http://x.example/a/v1','https://x.example/a/v0','https://x.example/a/v1000','https://u@x.example/a/v1','https://x.example/a/v1?x','https://x.example/a/v1#x','https://x.example/'+'a'.repeat(260)+'/v1',7,null])assert.equal(parseSpecURL(bad),null,String(bad));
 });
 
-test('recognizes the four policies and retains atomic owner settings and untrusted publisher metadata',()=>{
- for(const policy of ['exclusive','ordered','broadcast','consumer-choice']){const schema=manifest(policy),result=validateSlotManifest(schema,url);assert.equal(result.status,'valid');assert.equal(result.slot.selection,policy);assert.equal(result.schema.publisher,'https://publisher.example');}
- const ordinary=manifest();delete ordinary.slot;assert.equal(valid(ordinary),'absent');
+test('descriptors: every bundled descriptor validates; unknown members, attributes and bad endpoints are refused',async()=>{
+ for(const d of [...BINDLE_DESCRIPTORS,...PROVIDER_DESCRIPTORS]){validateDescriptor(d);
+  // The JSON artefacts under docs/artefacts/extensions mirror the bundled descriptors exactly.
+  const name=new URL(d.id).pathname.split('/').at(-2);assert.deepEqual(JSON.parse(await readFile(new URL(`../docs/artefacts/extensions/${name}-v1.json`,import.meta.url))),structuredClone(d),name);}
+ const base={id:'https://x.example/e/v1',title:'T',description:'D',options:{}};
+ for(const bad of [{...base,publisher:'https://x.example'},{...base,requires:[]},{...base,id:'https://x.example/e'},{...base,title:''},{...base,options:{r:{title:'R',type:'resource',contracts:['https://c.example/c/v1']}}},{...base,options:{u:{title:'U',type:'url',maxLength:9,selection:'exclusive'}}},{...base,options:{s:{title:'S',type:'string',maxLength:9,endpoint:'audience'}}},{...base,options:{u:{title:'U',type:'url',maxLength:9,endpoint:'both'}}},{...base,options:{e:{title:'E',type:'enum',values:['a'],extensible:true}}}])
+  assert.throws(()=>validateDescriptor(bad),TypeError,JSON.stringify(bad));
+ assert.throws(()=>descriptorRegistry([base,base]),TypeError,'one descriptor per spec URL');
 });
 
-test('slot invariants fail atomically while the ordinary fragment remains usable',()=>{
- const mutations=[
-  s=>s.slot=null,s=>s.slot.field='missing',s=>s.slot.field='enabled',s=>s.slot.field='constructor',s=>s.slot.selection='random',
-  s=>s.fields.occupants.cardinality.min=1,s=>s.fields.occupants.cardinality.max=9,s=>s.fields.occupants.cardinality.max=1,
-  s=>s.fields.second=structuredClone(s.fields.occupants),s=>s.slot.consumers=[],s=>s.slot.consumers=['application','application'],s=>s.slot.consumers=['robot'],
-  s=>s.slot.failover='always',s=>{s.slot.selection='broadcast';s.slot.failover='pre-dispatch';},s=>{s.slot.selection='exclusive';},
-  s=>s.slot.supersedes=url,s=>s.slot.supersedes='https://other.example/v0',s=>s.slot.supersedes='http://slots.example/v0',
-  s=>s.slot.options={consumer:{label:{type:'javascript'}}},s=>s.slot.options={consumer:[]},s=>s.slot.options={other:{}},
-  s=>s.slot.options={consumer:{label:{type:'string',maxLength:2049}}},s=>s.slot.crit=['field','field'],s=>s.slot.crit=['supersedes'],s=>s.slot.crit='field',
-  s=>s.padding='é'.repeat(8200),
- ];
- for(const mutate of mutations){const schema=manifest();mutate(schema);assert.doesNotThrow(()=>validateSchema(schema,url));const result=validateSlotManifest(schema,url);assert.equal(result.status,'invalid',String(mutate));assert.equal(Object.hasOwn(result,'slot'),false);}
- const good=manifest();good.slot.supersedes='https://slots.example/classifier/v0';assert.equal(valid(good),'valid');good.slot.supersedes=null;assert.equal(valid(good),'valid');
- const invalid=manifest();delete invalid.fields.occupants.contracts;assert.throws(()=>validateSlotManifest(invalid,url),'invalid ordinary fragment still rejects');
+test('processing: unknown and invalid specs ignored; duplicates and two versions of a line are all absent',()=>{
+ let r=read$([entry,{spec:'https://x.example/unknown/v1'},{spec:'nope'},'string',{spec:EXT.integrations}]);
+ assert.deepEqual(keys(r),[EXT.authorizationEntry,EXT.integrations]);assert.equal(r.ignored,3);
+ r=read$([entry,entry,{spec:EXT.integrations}]);assert.deepEqual(keys(r),[EXT.integrations]);assert.deepEqual(r.absent.map(a=>a.reason),['duplicate','duplicate']);
+ r=read$([entry,{spec:EXT.authorizationEntry.replace(/v1$/,'v2')},{spec:EXT.integrations}]);assert.deepEqual(keys(r),[EXT.integrations],'a second version of the line, even unimplemented, makes the line absent');
+ assert.deepEqual(keys(read$(Array.from({length:EXTENSION_LIMITS.entries+1},()=>({spec:EXT.integrations})))),[],'an oversized container is ignored as a whole');
+ assert.deepEqual(keys(read$([{spec:EXT.integrations,options:{pad:'x'.repeat(EXTENSION_LIMITS.entryBytes)}}])),[],'an entry over 4 KiB is ignored');
+ assert.deepEqual(keys(read$({not:'an array'})),[]);assert.deepEqual(keys(readExtensions({...floor})),[]);
+ // Clean break: revision 2 containers mean nothing.
+ assert.deepEqual(keys(readExtensions({...floor,features:{'authorization-entry.v1':entry.options},profiles:{'https://3sln.me/artefacts/profiles/components/v1':{}}})),[]);
+ assert.deepEqual(keys(read$([{slot:'https://x.example/slots/s/v1',role:'occupant',ref:'r'}])),[],'revision 2 entries lack `spec`');
 });
 
-test('unknown versions and critical members are unrecognized; unlisted members are ignored and pinned',()=>{
- const schema=manifest();schema.slot.v=2;assert.equal(valid(schema),'unrecognized');schema.slot.v=1;schema.slot.crit=['future'];schema.slot.future=true;assert.equal(valid(schema),'unrecognized');
- delete schema.slot.crit;assert.equal(valid(schema),'valid');schema.slot.crit=['selection'];assert.equal(valid(schema),'valid');
+test('options: scalar and array shapes, absence only with min 0, unknown members ignored, known members failing make the entry absent',()=>{
+ const o=opts=>read$([{spec:EXT.authorizationEntry,options:opts}]).extensions.get(EXT.authorizationEntry)??null;
+ assert.deepEqual(o({...entry.options,future:1}),entry.options,'unknown option members are ignored and dropped');
+ for(const bad of [{endpoint:entry.options.endpoint},{intents:['login']},{...entry.options,intents:'login'},{...entry.options,intents:[]},{...entry.options,intents:['login','login']},{...entry.options,intents:['teleport']},{...entry.options,endpoint:'https://other.example/e'},{...entry.options,endpoint:[entry.options.endpoint]}])assert.equal(o(bad),null,JSON.stringify(bad));
+ assert.deepEqual(read$([{spec:EXT.integrations}]).extensions.get(EXT.integrations),{},'options absent means {}');
+ assert.equal(read$([{spec:EXT.integrations,options:[]}]).extensions.get(EXT.integrations),undefined);
+ const kd=v=>read$([{spec:EXT.keyDelegation,options:{max_certificate_seconds:v}}]).extensions.get(EXT.keyDelegation)??null;
+ assert.ok(kd(660));assert.equal(kd(59),null);assert.equal(kd(660.5),null);assert.equal(kd('660'),null);
 });
 
-test('any-error checks every method of every exact pinned contract, treating missing/unknown effects conservatively',()=>{
- const schema=manifest();schema.slot.failover='any-error';assert.equal(valid(schema),'invalid');assert.equal(valid(schema,{contracts:contracts()}),'valid');
- for(const effect of ['write','unknown',null])assert.equal(valid(schema,{contracts:contracts(effect)}),'invalid');
- const missingEffect=contracts();delete missingEffect[contract].schema['x-methods'].decide.effect;assert.equal(valid(schema,{contracts:missingEffect}),'invalid');
- for(const pin of [{$id:contract,'x-methods':{get:{effect:'read'}}},{schema:{$id:contract,'x-methods':{get:{effect:'read'}}}},{digest:'pin',schema:{$id:other,'x-methods':{get:{effect:'read'}}}},{digest:'pin',schema:{$id:contract,'x-methods':{}}}])assert.equal(valid(schema,{contracts:{[contract]:pin}}),'invalid');
- const pins=contracts();schema.fields.occupants.contracts.push(other);assert.equal(valid(schema,{contracts:pins}),'invalid');pins[other]={digest:'pin',schema:{$id:other,'x-methods':{get:{effect:'read'}}}};assert.equal(valid(schema,{contracts:pins}),'valid');
+test('endpoints: issuer origin, audience distinctness (every colliding entry invalid), shared public endpoints, the embed_origin exemption',()=>{
+ const relations=(accept,join)=>({spec:EXT.relations,options:{accept_endpoint:accept,join_endpoint:join}});
+ assert.deepEqual(keys(read$([relations(ISS+'/a',ISS+'/a')])),[],'audience endpoints differ within an entry');
+ assert.deepEqual(keys(read$([relations(ISS+'/bindle/rpc',ISS+'/j')])),[],'an audience endpoint equal to a flat one is invalid');
+ const r=read$([relations(ISS+'/x',ISS+'/j'),{spec:EXT.rtcSignalingLegacy,options:{endpoint:ISS+'/x',max_leg_certificate_seconds:600}},{spec:EXT.directory,options:{directory_url:ISS+'/d'}},{spec:EXT.artefactVersions}]);
+ assert.deepEqual(keys(r).sort(),[EXT.artefactVersions,EXT.directory].sort(),'both colliding entries are invalid');assert.deepEqual(r.absent.map(a=>a.reason),['audience','audience']);
+ const shared=read$([{spec:EXT.appRemoval,options:{jwks_uri:ISS+'/jwks',return_uri:ISS+'/r'}},{spec:EXT.integrations},{spec:EXT.brokeredResources,options:{jwks_uri:ISS+'/jwks',preferences_contract:'https://3sln.me/artefacts/contracts/preferences/v2'}}]);
+ assert.deepEqual(keys(shared).sort(),[EXT.appRemoval,EXT.brokeredResources,EXT.integrations].sort(),'one key set serves two extensions');
+ const embed=origin=>read$([{spec:EXT.embeddedComponents,options:{embed_origin:origin,protocol:[1],parts:['avatar/1']}}]).extensions.has(EXT.embeddedComponents);
+ assert.equal(embed('https://embed.other.example'),true,'embed_origin is exempt from the issuer-origin rule');
+ assert.equal(read$([{spec:EXT.embeddedComponents,options:{embed_origin:'https://embed.other.example',protocol:[1],parts:['avatar/1'],manage_url:'https://embed.other.example/m'}}]).extensions.has(EXT.embeddedComponents),false,'for that option only');
+ // A non-endpoint URL option is an opaque identifier and may name another host.
+ assert.ok(read$([{spec:EXT.integrations},{spec:EXT.brokeredResources,options:{jwks_uri:ISS+'/k',preferences_contract:'https://other.example/contracts/preferences/v2'}}]).extensions.has(EXT.brokeredResources));
+ assert.equal(readExtensions({...floor,extensions:[{spec:EXT.fedcm,options:{config_url:'http://localhost:8787/f'}},entry]},{issuer:'http://localhost:8787'}).extensions.has(EXT.fedcm),false,'insecure only when allowed');
 });
 
-test('digest syntax is unpadded canonical SHA-256 base64url, computed over all members and stable object ordering',async()=>{
- const schema=manifest(),hash=await slotDigest(webcrypto,schema);assert.equal(hash,'sha256-'+createHash('sha256').update(canonical(schema)).digest('base64url'));assert.equal(validateExtensionDigest(hash),hash);
- for(const bad of [hash.slice(7),hash+'=',hash.slice(0,-1)+'B','sha256-'+'A'.repeat(42),'sha256-'+'A'.repeat(44),null])assert.throws(()=>validateExtensionDigest(bad),{code:'invalid_digest'});
- assert.equal(await slotDigest(webcrypto,Object.fromEntries(Object.entries(schema).reverse())),hash);schema.slot.future=true;assert.notEqual(await slotDigest(webcrypto,schema),hash);
+test('prerequisites: non-recursive presence of exactly one entry; the dependent extension is absent without it',()=>{
+ const fedcm={spec:EXT.fedcm,options:{config_url:ISS+'/f'}};
+ assert.deepEqual(keys(read$([fedcm])),[]);assert.equal(read$([fedcm]).absent[0].reason,'prerequisite');
+ assert.deepEqual(keys(read$([fedcm,entry])).sort(),[EXT.authorizationEntry,EXT.fedcm].sort());
+ // Presence only: an invalid prerequisite entry still satisfies the check (it need not be implemented or valid).
+ assert.ok(read$([fedcm,{spec:EXT.authorizationEntry,options:{endpoint:'https://other.example/e',intents:['login']}}]).extensions.has(EXT.fedcm));
+ assert.equal(read$([fedcm,entry,entry]).extensions.has(EXT.fedcm),false,'exactly one entry');
 });
 
-test('slot pins share the ordinary fragment namespace, survive publication faults and reject request digest mismatches',async()=>{
- const f=fixture(),hash=await slotDigest(webcrypto,manifest());assert.equal((await pinSlotManifest(f,url,hash)).digest,hash);assert.equal((await pinSchema(f,url)).digest,hash.slice(7));
- const wrong=await slotDigest(webcrypto,{different:true});await assert.rejects(pinSlotManifest(f,url,wrong),{code:'digest_mismatch'});
- const changed=manifest();changed.slot.extra=true;f.set(changed);await assert.rejects(pinSlotManifest(f,url),{code:'schema_changed'});assert.deepEqual((await f.store.transaction(t=>t.get(`federation/schema/${url}`))).schema,manifest());
- f.schemaFetcher=async()=>{throw Error('publisher unavailable');};await assert.rejects(pinSlotManifest(f,url),/publisher unavailable/);assert.equal((await f.store.transaction(t=>t.get(`federation/schema/${url}`))).digest,hash.slice(7));
- const firstOrdinary=fixture();await pinSchema(firstOrdinary,url);assert.equal((await pinSlotManifest(firstOrdinary,url)).digest,hash);
- const mismatch=fixture();await assert.rejects(pinSlotManifest(mismatch,url,wrong),{code:'digest_mismatch'});assert.equal(await mismatch.store.transaction(t=>t.get(`federation/schema/${url}`)),undefined);
- await assert.rejects(pinSlotManifest(mismatch,'https://untrusted.example/v1'),{code:'untrusted_schema_host'});assert.equal(mismatch.fetches,1);
- const bad=manifest();bad.slot.v=2;mismatch.set(bad);await assert.rejects(pinSlotManifest(mismatch,url),{code:'unsupported_fragment'});
+test('emission: rows emit one entry per extension, built-in contracts, and duplicates fail closed at composition',()=>{
+ const provider=registry=>createManifestDeclarationProvider({registry,context:{issuer:ISS,target:'authority',mounts:{}}});
+ const rows=[{flag:'A',mounted:()=>true,declare:()=>({extensions:[declare(EXT.integrations)],contracts:['https://c.example/a/v1']})},{flag:'B',mounted:()=>true,declare:()=>({contracts:['https://c.example/a/v1','https://c.example/b/v1']})}];
+ assert.deepEqual(provider(rows).declarations({A:true,B:'true'}),{extensions:[{spec:EXT.integrations}],contracts:['https://c.example/a/v1','https://c.example/b/v1']});
+ assert.deepEqual(provider(rows).declarations({A:true}),{extensions:[{spec:EXT.integrations}],contracts:['https://c.example/a/v1']});
+ assert.throws(()=>provider([...rows,{flag:'A',mounted:()=>true,declare:()=>({extensions:[declare(EXT.integrations)]})}]).declarations({A:true}),TypeError);
+ assert.throws(()=>provider([{flag:'A',mounted:()=>true,declare:()=>({features:{'x.v1':{}}})}]).declarations({A:true}),TypeError,'no features container');
+ assert.throws(()=>withManifestDeclarations(floor,{profiles:{}}),TypeError);
+ assert.deepEqual(withExtensionEntries({extensions:[{spec:EXT.portability,options:{move_endpoint:ISS+'/m'}}]},[declare(EXT.portability,{transfer_in_endpoint:ISS+'/t'})],{merge:true}).extensions,[{spec:EXT.portability,options:{move_endpoint:ISS+'/m',transfer_in_endpoint:ISS+'/t'}}]);
+ for(const row of MANIFEST_DECLARATIONS)assert.ok(row.declare.length<=1&&typeof row.mounted==='function');
 });
 
-test('concurrent pins serialize globally per URL and cannot replace the first approved document',async()=>{
- const f=fixture(),a=manifest(),b=manifest();b.slot.extra='changed';let calls=0;f.schemaFetcher=async()=>++calls===1?a:b;
- const results=await Promise.allSettled([pinSlotManifest(f,url),pinSlotManifest(f,url)]);assert.equal(results.filter(r=>r.status==='fulfilled').length,1);assert.equal(results.find(r=>r.status==='rejected').reason.code,'schema_changed');
+test('emission: the real rows produce entries every processor accepts, behind flags and mounts only',()=>{
+ const config={APP_ORIGIN:ISS,APP_CLEAN_REMOVAL_ENABLED:'true',INTEGRATION_EVENT_PORTS:{signer:{sign(){}}},INTEGRATIONS_ENABLED:'true',BROKERING_ENABLED:'true',SUBJECT_DELETED_EVENTS_ENABLED:'true',ORG_RELATIONS_ENABLED:'true',ORG_FOREIGN_RELATIONS_ENABLED:'true',DEVICE_AUTHORIZATION_ENABLED:'true'};
+ const out=federationDeclarations(config,{target:'authority',mounts:{integrations:true,brokeredResources:true,relations:true,deviceAuthorization:true}});
+ assert.equal(out.features,undefined);assert.equal(out.profiles,undefined);
+ const r=readExtensions({...floor,...out,device_authorization_endpoint:out.device_authorization_endpoint},{registry:PROVIDER_REGISTRY});
+ assert.deepEqual(r.absent,[]);assert.deepEqual(keys(r).sort(),[EXT.appRemoval,EXT.subjectDeleted,EXT.integrations,EXT.relations,EXT.brokeredResources,EXT.deviceAuthorization].sort());
+ assert.deepEqual(federationDeclarations({APP_ORIGIN:ISS},{target:'authority',mounts:{integrations:true,brokeredResources:true}}),{},'flags off: nothing is declared');
+ assert.deepEqual(federationDeclarations({...config},{target:'authority',mounts:{}}).extensions?.map(e=>e.spec)??[],[EXT.appRemoval],'flags without mounts declare nothing else');
+ // The provider's own feature extensions need EXTENSIONS_ENABLED and their own mounted evidence.
+ assert.ok(!out.extensions.some(e=>Object.values(PROVIDER_EXT).includes(e.spec)));
 });
 
-test('declarations validate locally and lazily, ignore unknown members, and preserve exact identifiers',async()=>{
- const hash=await slotDigest(webcrypto,manifest()),entry=declaration({digest:hash,future:'ignored'});assert.deepEqual(validateExtensions([entry]),[{status:'unknown',entry:declaration({digest:hash})}]);
- const slots=new Map([[url,{schema:manifest(),digest:hash}]]);assert.equal(validateExtensions([entry],{slots})[0].status,'valid');assert.equal(validateExtensions([declaration({slot:url+'/lookalike'})],{slots})[0].status,'unknown');
- assert.equal(validateExtensions([entry],{slots:new Map([[url,{schema:manifest(),digest:hash.slice(7)}]])})[0].status,'valid','ordinary fragment storage pins use raw base64url');
- const mismatch=declaration({digest:'sha256-'+'A'.repeat(43)});assert.equal(validateExtensions([mismatch],{slots})[0].reason,'digest_mismatch');
- for(const slot of ['http://slots.example/v1',url+'?x=1',url+'?',url+'#',url+'#hash','https://user@slots.example/v1',url+'x'.repeat(256)])assert.equal(validateExtensions([declaration({slot})])[0].status,'invalid');
- for(const extra of [{role:'admin'},{ref:'Bad'},{ref:'a'.repeat(33)},{digest:'sha256-bad'},{options:[]},{purpose:'occupant purpose'},{required:false}])assert.equal(validateExtensions([declaration(extra)])[0].status,'invalid');
- assert.equal(validateExtensions([declaration({purpose:'Uses classifiers.',role:'consumer'})])[0].status,'unknown');assert.equal(validateExtensions([declaration({required:true,role:'consumer'})],{kind:'integration'})[0].status,'unknown');
+test('engine harness: declaration, field-attribute and selection Queries are gated by EXTENSIONS_ENABLED',async t=>{
+ const make=async flag=>{const clock=fakeClock(0),e=createAppEngine({providers:{clock,random:{uuid:()=>crypto.randomUUID()},audit:memoryAudit({clock}),config:{EXTENSIONS_ENABLED:flag},extensions:createExtensionsProvider()}});t.after(()=>e.dispose());return e;};
+ const off=await make(false);await assert.rejects(read(off,new ExtensionDeclarations({input:{manifest:{...floor,extensions:[entry]}}})),code('extensions_disabled'));
+ const on=await make(true),d=await read(on,new ExtensionDeclarations({input:{manifest:{...floor,extensions:[entry,{spec:PROVIDER_EXT.emailBridge}]}}}));
+ assert.deepEqual(Object.keys(d.extensions).sort(),[EXT.authorizationEntry,PROVIDER_EXT.emailBridge].sort());
+ assert.equal((await read(on,new FieldAttributes({input:{field:{title:'R',type:'resource',contracts:['https://c.example/c/v1'],selection:'exclusive'}}}))).status,'valid','exclusive defaults to cardinality max 1');
+ assert.equal((await read(on,new FieldSelection({input:{field:{title:'R',type:'resource',cardinality:{min:0,max:2},contracts:['https://c.example/c/v1'],selection:'ordered'},resources:[]}}))).selection,'ordered');
 });
 
-test('declaration bounds and duplicate sets invalidate every affected entry without rejecting unrelated entries',()=>{
- const a=declaration(),b=declaration({ref:'second'}),elsewhere=declaration({slot:url+'/other'});
- assert.deepEqual(validateExtensions([a,{...a,future:true},b,elsewhere]).map(r=>r.status),['invalid','invalid','unknown','unknown']);
- assert.equal(validateExtensions([a,{...a,options:[]}])[0].status,'invalid','malformed duplicate does not let the first one win');
- assert.deepEqual(validateExtensions(Array.from({length:5},(_,i)=>declaration({ref:'r'+i})).concat(elsewhere)).map(r=>r.status),['invalid','invalid','invalid','invalid','invalid','unknown']);
- assert.equal(validateExtensions([declaration({future:'é'.repeat(1100)}),elsewhere])[0].status,'invalid');
- for(const entries of [null,{},Array.from({length:33},()=>a)])assert.deepEqual(validateExtensions(entries),[]);assert.deepEqual(validateExtensions(undefined),[]);
- assert.equal(validateExtensions([null,{},elsewhere])[2].status,'unknown');
+const FIELD=(selection,max,consumers)=>({title:'F',type:'resource',cardinality:{min:0,max},contracts:['https://c.example/c/v1'],...selection?{selection}:{},...consumers?{consumers}:{}});
+const ok=id=>({id,status:'available',credentialCurrent:true});
+const TX=n=>`00000000-0000-4000-8000-${String(n).padStart(12,'0')}`;
+
+test('selection: exclusive invokes the single resource; an empty field is unfilled; policy never advances',()=>{
+ assert.equal(fieldOperationResult(createFieldOperation(FIELD('exclusive',1),undefined)).status,'unfilled');
+ let s=createFieldOperation(FIELD('exclusive',1),ok('a'));let {state,dispatch}=nextFieldDispatch(s,{tx:TX(1)});assert.equal(dispatch.resource.id,'a');
+ state=recordFieldOutcome(state,{tx:TX(1),httpStatus:404});assert.equal(nextFieldDispatch(state,{tx:TX(2)}).dispatch,null,'exclusive never fails over');
+ s=createFieldOperation(FIELD('exclusive',1),{...ok('a'),credentialCurrent:false});assert.equal(nextFieldDispatch(s,{tx:TX(1)}).dispatch,null);assert.equal(fieldOperationResult(s).status,'unavailable');
+ assert.throws(()=>createFieldOperation(FIELD('exclusive',1),[ok('a'),ok('b')]),code('invalid_resources'));
 });
 
-test('declaration options follow the bounded fragment subset and consumers are restricted by manifest kind',()=>{
- const schema=manifest();schema.slot.options={occupant:{label:{type:'string',maxLength:4}},consumer:{}};const slots=new Map([[url,{schema,digest:'pin'}]]);
- assert.equal(valid(schema),'valid');assert.equal(validateExtensions([declaration({options:{label:'Host'}})],{slots})[0].status,'valid');
- for(const options of [undefined,{},null,{label:'longer'},{label:'Host',extra:true},{label:1}])assert.equal(validateExtensions([declaration({options})],{slots})[0].status,'invalid');
- const consumer=declaration({role:'consumer',purpose:'Classify.'});assert.equal(validateExtensions([consumer],{slots})[0].status,'valid');
- schema.slot.consumers=['application'];assert.equal(validateExtensions([consumer],{slots})[0].reason,'unsupported_consumer');assert.equal(validateExtensions([consumer],{slots,kind:'integration'})[0].status,'valid');
- schema.slot.consumers=['provider'];assert.equal(validateExtensions([consumer],{slots,kind:'integration'})[0].reason,'unsupported_consumer');
- schema.slot.v=2;assert.equal(validateExtensions([consumer],{slots})[0].reason,'unsupported_slot');
- const absent=manifest(),none=new Map([[url,{schema:absent,digest:'pin'}]]);assert.equal(validateExtensions([declaration({options:{extra:1}})],{slots:none})[0].status,'invalid');
+test('selection: ordered follows owner order, skips unavailable resources, needs a fresh tx per switch, advances only pre-dispatch',()=>{
+ const base=createFieldOperation(FIELD('ordered',3),[{...ok('a'),status:'unavailable'},ok('b'),ok('c')]);
+ let {state,dispatch}=nextFieldDispatch(base,{tx:TX(1)});assert.equal(dispatch.resource.id,'b');
+ assert.equal(nextFieldDispatch(state,{tx:TX(2)}).dispatch,null,'nothing while an attempt is outstanding');
+ for(const failure of [{httpStatus:401},{httpStatus:403},{httpStatus:404},{httpStatus:429},{code:'unsupported_contract'},{code:'unsupported_method'},{code:'forbidden'},{code:'not_found'},{code:'rate_limited'},{code:'temporarily_unavailable'},{bytesSent:false}]){
+  const next=nextFieldDispatch(recordFieldOutcome(state,{tx:TX(1),...failure}),{tx:TX(2)});assert.equal(next.dispatch?.resource.id,'c',JSON.stringify(failure));
+  assert.throws(()=>nextFieldDispatch(recordFieldOutcome(state,{tx:TX(1),...failure}),{tx:TX(1)}),code('invalid_tx'),'a fresh tx for every resource');}
+ for(const ambiguous of [{httpStatus:500},{httpStatus:502},{code:'indeterminate'},{code:'conflict'},{}]){
+  const after=recordFieldOutcome(state,{tx:TX(1),...ambiguous});assert.equal(nextFieldDispatch(after,{tx:TX(2)}).dispatch,null,JSON.stringify(ambiguous));assert.equal(fieldOperationResult(after).status,'unknown');}
+ const done=recordFieldOutcome(state,{tx:TX(1),ok:true});assert.equal(nextFieldDispatch(done,{tx:TX(2)}).dispatch,null);assert.equal(fieldOperationResult(done).status,'succeeded');
+ // A removal while an outcome is outstanding is reported unknown, and nothing is dispatched elsewhere.
+ const removed=nextFieldDispatch(state,{tx:TX(3),removed:['b']});assert.equal(removed.dispatch,null);assert.equal(fieldOperationResult(removed.state).status,'unknown');
 });
 
-test('engine harness drives gated slot/declaration Queries and pin Actions over injected providers',async t=>{
- const f=fixture(),hash=await slotDigest(webcrypto,manifest());f.slots=new Map([[url,{schema:manifest(),digest:hash}]]);
- const e=await createTestEngine({providers:{config:{EXTENSIONS_ENABLED:'true'},extensions:createExtensionsProvider(f)}});t.after(()=>e.dispose());
- assert.equal((await e.read(new SlotManifest({input:{schema:manifest()}}))).status,'valid');assert.equal((await e.read(new ExtensionDeclarations({input:{entries:[declaration({digest:hash})]}})))[0].status,'valid');
- const selection=await e.read(new SlotSelection({input:{schema:manifest(),occupants:[occupant('a'),occupant('b')]}}));assert.equal(nextSlotDispatch(selection,{tx:tx(1)}).dispatch.occupant.id,occupant('a').id);
- assert.equal((await e.perform(new PinSlotManifest({input:{url,digest:hash}}))).digest,hash);assert.equal(f.fetches,1);assert.equal(e.audit.entries.at(-1).operation,'extensions.pin');
- const disabled=await createTestEngine({providers:{config:{EXTENSIONS_ENABLED:'false'},extensions:createExtensionsProvider(f)}});t.after(()=>disabled.dispose());
- await assert.rejects(disabled.read(new SlotManifest({input:{schema:manifest()}})),{code:'extensions_disabled'});await assert.rejects(disabled.read(new ExtensionDeclarations({input:{entries:[declaration()]}})),{code:'extensions_disabled'});await assert.rejects(disabled.read(new SlotSelection({input:{schema:manifest(),occupants:[]}})),{code:'extensions_disabled'});await assert.rejects(disabled.perform(new PinSlotManifest({input:{url}})),{code:'extensions_disabled'});assert.equal(f.fetches,1);
-});
-
-test('exclusive slots invoke exactly one current approved occupant and represent an empty slot by absence',()=>{
- const schema=manifest('exclusive');let state=createSlotOperation(schema,occupant('a'));const before=structuredClone(state),next=nextSlotDispatch(state,{tx:tx(1)});assert.deepEqual(state,before);assert.equal(next.dispatch.occupant.id,occupant('a').id);
- state=recordSlotOutcome(next.state,{tx:tx(1),ok:true});assert.equal(nextSlotDispatch(state,{tx:tx(2)}).dispatch,null);assert.equal(slotOperationResult(state).status,'succeeded');
- assert.equal(slotOperationResult(createSlotOperation(schema,undefined)).status,'unfilled');assert.throws(()=>createSlotOperation(schema,[]),{code:'invalid_occupants'});
- assert.equal(nextSlotDispatch(createSlotOperation(schema,{...occupant('a'),credentialCurrent:false}),{tx:tx(1)}).dispatch,null);
- assert.equal(slotOperationResult(createSlotOperation(schema,{...occupant('a'),credentialCurrent:false})).status,'unavailable','configured but unavailable differs from an empty role');
-});
-
-test('ordered slots snapshot owner order, skip unavailable/stale occupants, and require a fresh tx for every switch',()=>{
- const projected=[{...occupant('a'),status:'unavailable'},{...occupant('b'),credentialCurrent:false},occupant('c'),occupant('d')],state=createSlotOperation(manifest(),projected);projected.reverse();projected[0].status='unavailable';
- let next=nextSlotDispatch(state,{tx:tx(1)});assert.equal(next.dispatch.occupant.id,occupant('c').id);assert.equal(nextSlotDispatch(next.state,{tx:tx(2)}).dispatch,null,'outstanding dispatch blocks switching');
- const failed=recordSlotOutcome(next.state,{tx:tx(1),code:'rate_limited'});assert.throws(()=>nextSlotDispatch(failed,{tx:tx(1)}),{code:'invalid_tx'});next=nextSlotDispatch(failed,{tx:tx(2)});assert.equal(next.dispatch.occupant.id,occupant('d').id);assert.equal(slotOperationResult(recordSlotOutcome(next.state,{tx:tx(2),ok:true})).status,'succeeded');
- assert.throws(()=>recordSlotOutcome(failed,{tx:tx(1),ok:true}),{code:'invalid_outcome'});
-});
-
-test('pre-dispatch failover accepts only enumerated no-effect statuses/codes or proof no bytes were sent',()=>{
- for(const outcome of [{bytesSent:false},...[401,403,404,429].map(httpStatus=>({httpStatus})),...['unsupported_contract','unsupported_method','forbidden','not_found','rate_limited','temporarily_unavailable'].map(code=>({code}))]){
-  const first=nextSlotDispatch(createSlotOperation(manifest(),[occupant('a'),occupant('b')]),{tx:tx(1)}),state=recordSlotOutcome(first.state,{tx:tx(1),...outcome});assert.equal(nextSlotDispatch(state,{tx:tx(2)}).dispatch.occupant.id,occupant('b').id,JSON.stringify(outcome));
- }
- for(const outcome of [{bytesSent:true},...['timeout','indeterminate','unsupported_future','network_error'].map(code=>({code})),...[400,408,500,503].map(httpStatus=>({httpStatus}))]){
-  const first=nextSlotDispatch(createSlotOperation(manifest(),[occupant('a'),occupant('b')]),{tx:tx(1)}),state=recordSlotOutcome(first.state,{tx:tx(1),...outcome});assert.equal(nextSlotDispatch(state,{tx:tx(2)}).dispatch,null);assert.equal(slotOperationResult(state).status,'unknown');
- }
-});
-
-test('any-error permits harmless failover but observing removal of an outstanding occupant reports unknown and stops switching',()=>{
- const schema=manifest();schema.slot.failover='any-error';let first=nextSlotDispatch(createSlotOperation(schema,[occupant('a'),occupant('b')],{contracts:contracts()}),{tx:tx(1)});
- const unknown=recordSlotOutcome(first.state,{tx:tx(1),code:'timeout'});assert.equal(nextSlotDispatch(unknown,{tx:tx(2)}).dispatch.occupant.id,occupant('b').id);
- assert.equal(nextSlotDispatch(unknown,{tx:tx(2),removed:[occupant('a').id]}).dispatch,null,'removal after recording ambiguity also blocks switching');
- const removed=nextSlotDispatch(first.state,{tx:tx(2),removed:[occupant('a').id]});assert.equal(removed.dispatch,null);assert.equal(slotOperationResult(removed.state).status,'unknown');
- const pending=createSlotOperation(manifest(),[occupant('a'),occupant('b')]);assert.equal(nextSlotDispatch(pending,{tx:tx(1),removed:[occupant('a').id]}).dispatch.occupant.id,occupant('b').id);
-});
-
-test('broadcast dispatches independently, reports every occupant and never calls partial or unknown complete success',()=>{
- let state=createSlotOperation(manifest('broadcast'),[occupant('a'),occupant('b'),occupant('c')]);
- for(let n=1;n<=3;n++)state=nextSlotDispatch(state,{tx:tx(n)}).state;assert.equal(state.attempts.length,3);assert.equal(slotOperationResult(state).status,'pending');
- state=recordSlotOutcome(state,{tx:tx(1),ok:true});state=recordSlotOutcome(state,{tx:tx(2),httpStatus:403});const partial=recordSlotOutcome(state,{tx:tx(3),ok:true});assert.equal(slotOperationResult(partial).status,'partial');assert.deepEqual(slotOperationResult(partial).outcomes.map(o=>o.status),['succeeded','failed','succeeded']);
- assert.equal(slotOperationResult(recordSlotOutcome(state,{tx:tx(3),code:'timeout'})).status,'unknown');
-});
-
-test('consumer-choice uses only the projected set and permits multiple invocations only with pinned harmless contracts',()=>{
- const schema=manifest('consumer-choice'),state=createSlotOperation(schema,[occupant('a'),occupant('b')]);assert.equal(nextSlotDispatch(state,{tx:tx(1)}).dispatch,null);assert.throws(()=>nextSlotDispatch(state,{tx:tx(1),choice:occupant('outside').id}),{code:'invalid_choice'});
- const first=nextSlotDispatch(state,{tx:tx(1),choice:occupant('b').id});assert.equal(first.dispatch.occupant.id,occupant('b').id);assert.equal(nextSlotDispatch(recordSlotOutcome(first.state,{tx:tx(1),httpStatus:403}),{tx:tx(2),choice:occupant('a').id}).dispatch,null);
- const harmless=nextSlotDispatch(createSlotOperation(schema,[occupant('a'),occupant('b')],{contracts:contracts()}),{tx:tx(1),choice:occupant('b').id});assert.ok(nextSlotDispatch(recordSlotOutcome(harmless.state,{tx:tx(1),code:'timeout'}),{tx:tx(2),choice:occupant('a').id}).dispatch);
- const done=slotOperationResult(recordSlotOutcome(harmless.state,{tx:tx(1),ok:true}));assert.equal(done.status,'succeeded');assert.deepEqual(done.outcomes.map(value=>value.status),['not_selected','succeeded']);
-});
-
-test('provider consumers require live enablement and invalid cardinality/consumer sets do not dispatch',()=>{
- const schema=manifest(),state=createSlotOperation(schema,[occupant('a')],{consumer:'provider'});assert.equal(nextSlotDispatch(state,{tx:tx(1)}).dispatch,null);assert.ok(nextSlotDispatch(state,{tx:tx(1),featureEnabled:true}).dispatch);
- assert.equal(nextSlotDispatch(createSlotOperation(schema,[occupant('a')],{consumer:'provider',featureEnabled:true}),{tx:tx(1),featureEnabled:false}).dispatch,null);
- schema.slot.consumers=['provider'];assert.throws(()=>createSlotOperation(schema,[occupant('a')]),{code:'unsupported_consumer'});schema.slot.consumers=['application'];assert.throws(()=>createSlotOperation(schema,[occupant('a'),occupant('a')]),{code:'invalid_occupants'});assert.equal(slotOperationResult(createSlotOperation(schema,[])).status,'unfilled');
+test('selection: consumers and live enablement; a field without a policy has no failover',()=>{
+ assert.throws(()=>createFieldOperation(FIELD('ordered',2),[],{consumer:'provider'}),code('unsupported_consumer'),'default consumers are applications only');
+ const p=createFieldOperation(FIELD('ordered',2,['provider']),[ok('a'),ok('b')],{consumer:'provider'});assert.equal(nextFieldDispatch(p,{tx:TX(1)}).dispatch,null,'a feature that is not live never dispatches');
+ assert.equal(nextFieldDispatch(p,{tx:TX(1),featureLive:true}).dispatch.resource.id,'a');
+ assert.throws(()=>createFieldOperation(FIELD('ordered',2,['provider']),[],{consumer:'application'}),code('unsupported_consumer'));
+ const none=createFieldOperation(FIELD(null,2),[ok('a'),ok('b')]);const first=nextFieldDispatch(none,{tx:TX(1)});
+ assert.equal(nextFieldDispatch(recordFieldOutcome(first.state,{tx:TX(1),httpStatus:404}),{tx:TX(2)}).dispatch,null);
+ assert.throws(()=>createFieldOperation({title:'S',type:'string',maxLength:3},[]),code('invalid_field'));
+ assert.ok(BINDLE_REGISTRY.has(EXT.authorizationEntry)&&PROVIDER_REGISTRY.has(PROVIDER_EXT.emailBridge)&&!BINDLE_REGISTRY.has(PROVIDER_EXT.emailBridge));
 });

@@ -6,7 +6,7 @@ Status: core and browser integration source review completed; independent real-C
 
 ## Scope and threat model
 
-Reviewed the [v1 contract](../spec/recovery-file.md), `packages/recovery/index.mjs`, `packages/recovery/normalization.mjs`, `scripts/recovery-kdf-worker.mjs`, `packages/runtime/http.mjs`, and the existing identity recovery/resume transaction. Also reviewed `apps/web/src/providers/recovery-file.mjs`, the browser private submission vault, composition dispatch, recovery Actions, question rendering, fresh document navigation, and signup confirmation.
+Reviewed the [v1 contract](../3sln/accounts/recovery-file.md), `packages/recovery/index.mjs`, `packages/recovery/normalization.mjs`, `scripts/recovery-kdf-worker.mjs`, `packages/runtime/http.mjs`, and the existing identity recovery/resume transaction. Also reviewed `apps/web/src/providers/recovery-file.mjs`, the browser private submission vault, composition dispatch, recovery Actions, question rendering, fresh document navigation, and signup confirmation.
 
 The feature protects an independently random recovery credential with a single key derived from all selected answers. An attacker with the envelope has an unlimited offline guessing oracle through its GCM tag. Birthdays, IDs, phone numbers, short PINs, and correlated biographical facts may be known. Argon2 increases guessing cost; it cannot make these facts secret. One question is permitted, so low-entropy configurations are a deliberate product tradeoff. The recommendation for an additional private passphrase and a readable-metadata warning must remain visible in setup and restore.
 

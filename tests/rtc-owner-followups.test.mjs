@@ -1,20 +1,16 @@
 // RTC service follow-ups for the RTC-g owner UI (DEVLOG 2026-10-27 "RTC service follow-ups for the owner UI"):
 // the silent end of an unanswered incoming record (review F1, spec §12, §4.4), the read-time `alert` and the caller's
-// app origin in the owner session view (review F2, spec §9.1, RTC-17), and owner narrowing of an app's approved RTC
-// purposes ending what is no longer approved (spec §14 "Slot changes", AMD-X1 item 3). Engine level: dispatched ngin
-// Actions and Queries on the loopback host (tests/helpers/rtc-fixture.mjs), the two-provider world
-// (tests/helpers/rtc-federation-fixture.mjs) and a real FederationService. Local behaviour only; .example hosts.
+// app origin in the owner session view (review F2, spec §9.1, RTC-17), and the owner's interim approval of an app's RTC
+// purposes (rtc.approve-app; extensions rev 3.2 removed AMD-X1, TODO(signaling Appendix C.2: approvals move to intents
+// session handler approvals)) ending what is no longer approved. Engine level: dispatched ngin Actions and Queries on
+// the loopback host (tests/helpers/rtc-fixture.mjs) and the two-provider world (tests/helpers/rtc-federation-fixture.mjs).
+// Local behaviour only; .example hosts.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {rtcHost,CALL,SYNC,REF,ISS,APP,OTHER_APP,subOf,fault,payloadOf} from './helpers/rtc-fixture.mjs';
 import {rtcWorld,A,B,OPS as WORLD_OPS,perform} from './helpers/rtc-federation-fixture.mjs';
 import {sessionView,silentEndable} from '../packages/rtc/service.mjs';
-import {FederationController,federationMetadata} from '../packages/federation/runtime.mjs';
-import {FederationService} from '../packages/federation/service.mjs';
-import {SqliteMetadata} from '../apps/node/resources.mjs';
-import {configuredArtefacts,reviewedSchemaFetcher} from '../packages/runtime/artefact-pins.mjs';
-import {RTC_SIGNALING_SLOT,RTC_SIGNALING_SLOT_MANIFEST,RTC_BOUND_ARTEFACTS} from '../packages/rtc/extension.mjs';
-import {federationAuthority} from '../packages/runtime/federation.mjs';
+import {approvalKey} from '../packages/rtc/approvals.mjs';
 
 const rows=async(h,n,prefix)=>(await h.rows(n,prefix)).map(([,v])=>v);
 const types=events=>events.map(e=>e.type==='state'?`state:${e.state}`:e.type==='message'?payloadOf(e.message).type:e.type);
@@ -153,56 +149,60 @@ test('caller app origin in the owner view: the verified certificate client origi
  const broken=(await h.run(2,'rtc.sessions')).sessions.find(v=>v.sid===s.sid);assert.deepEqual([broken.callerOrigin,broken.alert],[null,false],'unknown caller app: no origin, and no ring (the app mute cannot be checked)');
 });
 
-test('owner narrowing of an app\'s approved purposes: FederationService narrows every grant, boundSync ends the removed purposes\' sessions and registrations',async t=>{
- const h=await rtcHost();const owner=subOf(2),subject=`${ISS}/entities/${owner}`,client=APP+'/client',authority={context:{sessionToken:owner+'.x',csrfToken:'c'},mutation:true};
- const db=new SqliteMetadata(':memory:'),config={ARTEFACT_VERSIONS_ENABLED:'true',RTC_SIGNALING_ENABLED:'true',FEDERATION_SCHEMAS:{[RTC_SIGNALING_SLOT]:structuredClone(RTC_SIGNALING_SLOT_MANIFEST)}};
- const artefacts=configuredArtefacts({config,store:db});config.ARTEFACTS=artefacts;t.after(async()=>{await artefacts.engine.dispose();db.close();});
- const seenMutation=[];
- const fed=new FederationService({issuer:ISS,store:federationMetadata(db),schemaHosts:['spec.bindle.example'],schemaFetcher:reviewedSchemaFetcher(config),authenticateOwner:async a=>{seenMutation.push(a.mutation);return {subject,epoch:'epoch'};},clients:[{id:client,origin:APP,name:'app.example',redirectUris:[APP+'/callback']}],boundOptions:true,boundArtefacts:RTC_BOUND_ARTEFACTS});
- // The runtime's hook (packages/runtime/federation.mjs boundChanged -> account.rtcAppChanged -> rtc.lifecycle).
- fed.boundChanged=async({fragment,clientId,values})=>{if(fragment!==RTC_SIGNALING_SLOT)return;await h.run(2,'rtc.lifecycle',{actor:h.system(2),input:values?{event:'app-narrowed',clientId,purposes:values.purposes??[]}:{event:'app-revoked',clientId}});};
- const begin=async()=>(await fed.beginAuthorization({clientId:client,redirectUri:APP+'/callback',challenge:'A'.repeat(43),challengeMethod:'S256',state:'s',requests:[{fragment:RTC_SIGNALING_SLOT,required:true,purpose:'Ring you',fields:['signaling'],options:{purposes:[CALL,SYNC].sort()}}]})).requestId;
- const id=await begin();await fed.configure(authority,{fragment:RTC_SIGNALING_SLOT,values:{}});const r=(await fed.inspect(id,authority)).requests[0];
- await fed.approve(authority,{requestId:id,approved:[{fragment:RTC_SIGNALING_SLOT,fields:['signaling'],resources:{signaling:[]},methods:{},revision:r.revision,options:{purposes:[CALL,SYNC].sort()}}]});
- const grantId=(await fed.store.transaction(tx=>tx.list('federation/grant/'))).map(x=>x.value).find(g=>g.active).id;
- // The callee's RtcService checks the live approval through this FederationService (the adapters' RTC_BOUND_CHECK).
- h.account(2).service.bound={check:input=>fed.checkBound(input)};
- const a=h.device(1),b=h.device(2,{grant:{id:grantId,clientId:client,origin:APP}});await a.register();await b.register([CALL,SYNC]);
+test('owner approval of an app\'s purposes (interim): widening needs the flag, narrowing ends the removed purposes\' sessions and registrations at once',async()=>{
+ const h=await rtcHost();const owner=h.owner(2),client=APP+'/client';
+ const approve=purposes=>h.run(2,'rtc.approve-app',{actor:owner,input:{clientId:client,purposes}});
+ const approvals=async()=>(await h.run(2,'rtc.approvals',{actor:owner})).approvals;
+ // A grant the fixture does not mirror: only the owner's own approvals decide (no host.grants entry for entity 2).
+ const a=h.device(1),b=h.device(2,{grant:{id:'g-owner-approved',clientId:client,origin:APP}});await a.register();
+ assert.equal((await fault(b.run('rtc.register',{purposes:[CALL]})))?.code,'forbidden','nothing approved yet');
+ assert.deepEqual(await approve([SYNC,CALL]),{clientId:client,purposes:[CALL,SYNC].sort(),ended:0});
+ assert.deepEqual((await approvals()).map(x=>[x.clientId,x.purposes]),[[client,[CALL,SYNC].sort()]]);
+ const record=(await h.rows(2,'rtc/approval/'))[0];assert.equal(record[0],await approvalKey(crypto,client));
+ assert.deepEqual(record[1].versions[CALL],{version:REF[CALL].version,digest:REF[CALL].digest},'pinned to the provider-held reference');
+ await b.register([CALL,SYNC]);
  const callSession=await ring(h,a,b);const c=await b.claim(callSession.sid);await b.accept(c);await h.pump();
  assert.equal((await h.run(2,'rtc.sessions')).sessions.find(x=>x.sid===callSession.sid).state,'connected');
  // Narrowing to SYNC only: CALL's connected session ends (control `revoked` to the caller), the endpoint keeps SYNC.
  const before=batchesTo(h,1);
- const out=await fed.narrowBoundOptions(authority,{clientId:client,fragment:RTC_SIGNALING_SLOT,options:{purposes:[SYNC]}});
- assert.deepEqual(out.values,{purposes:[SYNC]});assert.equal(seenMutation.at(-1),true);
+ assert.deepEqual(await approve([SYNC]),{clientId:client,purposes:[SYNC],ended:1});
  assert.equal((await h.run(2,'rtc.sessions')).sessions.some(x=>x.sid===callSession.sid),false,'the session for the removed purpose ended');
  assert.deepEqual((await h.run(2,'rtc.endpoint-list')).endpoints.map(e=>e.purposes),[[SYNC]]);
  await h.pump();assert.ok(batchesTo(h,1)>before,'the caller is told with a control statement (an answered call)');
  await a.listen();assert.equal(a.events.filter(e=>e.sid===callSession.sid&&e.type==='state').at(-1).state,'ended');
- assert.equal(await fed.checkBound({subject,clientId:client,fragment:RTC_SIGNALING_SLOT,grants:[grantId],member:'purposes',value:CALL,reference:{version:REF[CALL].version,digest:REF[CALL].digest}}),false);
- // The app can no longer register or be rung for CALL; widening back is refused (it needs a new approval).
  assert.equal((await fault(b.run('rtc.register',{purposes:[CALL]})))?.code,'forbidden');
- assert.equal((await fault(fed.narrowBoundOptions(authority,{clientId:client,fragment:RTC_SIGNALING_SLOT,options:{purposes:[CALL,SYNC]}})))?.code,'bound_options_widening');
- assert.equal((await fault(fed.narrowBoundOptions(authority,{clientId:client,fragment:RTC_SIGNALING_SLOT,options:{purposes:[]}})))?.code,'invalid_args','at least one purpose (the slot schema); removing all is revoking');
- assert.equal((await fault(fed.narrowBoundOptions(authority,{clientId:'https://unknown.example/client',fragment:RTC_SIGNALING_SLOT,options:{purposes:[SYNC]}})))?.code,'not_found');
+ // Widening back is an owner approval (the flag on); with the flag off it is the uniform not_found, narrowing is not.
+ h.flags.deny(subOf(2),'RTC_SIGNALING_ENABLED');
+ assert.equal((await fault(approve([CALL,SYNC])))?.code,'not_found');
+ h.flags.allow(subOf(2),'RTC_SIGNALING_ENABLED');
+ assert.deepEqual((await approve([CALL,SYNC])).purposes,[CALL,SYNC].sort());assert.ok((await b.run('rtc.register',{purposes:[CALL]})).endpoint);
+ h.flags.deny(subOf(2),'RTC_SIGNALING_ENABLED');
+ assert.deepEqual(await approve([]),{clientId:client,purposes:[],ended:0},'narrowing to nothing stays available while off');
+ assert.deepEqual(await approvals(),[],'the record is gone');assert.deepEqual((await h.run(2,'rtc.endpoint-list')).endpoints,[],'and every registration of the app');
+ h.flags.allow(subOf(2),'RTC_SIGNALING_ENABLED');
+ // Exact input; only purposes this host holds; no duplicates; never as the app.
+ for(const input of [{clientId:client,purposes:['https://unknown.example/purpose']},{clientId:client,purposes:[CALL,CALL]},{clientId:client},{clientId:'',purposes:[]},{clientId:client,purposes:[],extra:1}])
+  assert.equal((await fault(h.run(2,'rtc.approve-app',{actor:owner,input})))?.code,'invalid_args',JSON.stringify(input));
+ assert.ok(await fault(h.run(2,'rtc.approve-app',{actor:b.actor,input:{clientId:client,purposes:[CALL]}})),'an app never approves itself');
+ // The grant hook (FederationService grantChanged -> rtcAppChanged purposes:null -> rtc.lifecycle app-revoked) deletes it.
+ await approve([CALL]);await h.run(2,'rtc.lifecycle',{actor:h.system(2),input:{event:'app-revoked',clientId:client}});
+ assert.deepEqual(await approvals(),[]);assert.equal((await fault(b.run('rtc.register',{purposes:[CALL]})))?.code,'forbidden');
+ // app-narrowed keeps the intersection only.
+ await approve([CALL,SYNC]);await h.run(2,'rtc.lifecycle',{actor:h.system(2),input:{event:'app-narrowed',clientId:client,purposes:[SYNC]}});
+ assert.deepEqual((await approvals()).map(x=>x.purposes),[[SYNC]]);
+ // A record pinned to another version (or of the older change-log shape) approves nothing (fail closed).
+ const key=await approvalKey(crypto,client),store=h.account(2).store;
+ await store.put(key,{...(await store.get(key)),versions:{[SYNC]:{version:REF[SYNC].version,digest:'x'.repeat(43)}}});
+ assert.equal((await fault(b.run('rtc.register',{purposes:[SYNC]})))?.code,'forbidden','a re-pinned purpose needs a new approval');
+ assert.deepEqual((await approvals()).map(x=>x.purposes),[[]],'and is not shown as approved');
+ await store.put(key,{clientId:client,purposes:[SYNC],revision:1,at:1});
+ assert.equal((await fault(b.run('rtc.register',{purposes:[SYNC]})))?.code,'forbidden','the older record shape approves nothing');
 });
 
-test('narrowing adapters: the controller authenticates as a mutation; the authority routes only the signed-in active owner to their shard',async()=>{
- const calls=[];const self={requireReady(){},authority:FederationController.prototype.authority,service:{narrowBoundOptions:async(authority,input)=>{calls.push({authority,input});return {ok:true};}}};
- assert.deepEqual(await FederationController.prototype.narrowBoundOptions.call(self,{sessionToken:'s',csrfToken:'c'},{clientId:'x'}),{ok:true});
- assert.deepEqual(calls[0],{authority:{context:{sessionToken:'s',csrfToken:'c'},mutation:true},input:{clientId:'x'}});
- const owner='0a0a0a0a-0000-4000-8000-000000000002',shards=[];const accounts={[owner]:{status:'active'},'0a0a0a0a-0000-4000-8000-000000000003':{status:'suspended'}};
- const auth=federationAuthority({config:{APP_ORIGIN:ISS},repository:{get:async id=>accounts[id]??null},shard:id=>({narrowBoundOptions:async(context,input)=>{shards.push({id,context,input});return {done:true};}})});
- assert.deepEqual(await auth.narrowBoundOptions({sessionToken:owner+'.token'},{clientId:'x'}),{done:true});assert.equal(shards[0].id,owner);
- for(const context of [{},{sessionToken:'nope'},{sessionToken:'0a0a0a0a-0000-4000-8000-000000000003.t'},{sessionToken:'0a0a0a0a-0000-4000-8000-000000000009.t'}])assert.equal((await fault(auth.narrowBoundOptions(context,{clientId:'x'})))?.code,'unauthorized',JSON.stringify(context));
- assert.equal(shards.length,1);
-});
-
-test('narrowing reaches the owner shard on Workers: the federation remote facade and the Durable Object allowlist both carry it',async()=>{
+test('AMD-X1 removed: no bound narrowing or bound check on the federation remote facade or the Worker allowlist',async()=>{
  const {federationRemote}=await import('../packages/federation/runtime.mjs'),{readFile}=await import('node:fs/promises');
- const invoked=[];const remote=federationRemote({invoke:async(method,args)=>{invoked.push([method,args]);return {ok:true,result:{narrowed:true}};}});
- assert.deepEqual(await remote.narrowBoundOptions({sessionToken:'s'},{clientId:'x'}),{narrowed:true});assert.deepEqual(invoked,[['narrowBoundOptions',[{sessionToken:'s'},{clientId:'x'}]]]);
- // apps/worker/federation.mjs imports cloudflare:workers, so its allowlist is read from the source: it must equal the
- // facade (a facade method missing from the allowlist answers unsupported_method on Workers only).
+ const remote=federationRemote({invoke:async()=>({ok:true,result:null})});
+ for(const name of ['narrowBoundOptions','checkBound'])assert.equal(Object.hasOwn(remote,name),false,name);
  const source=await readFile(new URL('../apps/worker/federation.mjs',import.meta.url),'utf8'),allowed=JSON.parse(/const METHODS=(\[[^\]]*\])/.exec(source)[1].replaceAll("'",'"'));
- assert.deepEqual([...allowed].sort(),Object.keys(remote).sort());assert.ok(allowed.includes('narrowBoundOptions'));
+ assert.deepEqual([...allowed].sort(),Object.keys(remote).sort());assert.ok(!allowed.includes('narrowBoundOptions')&&!allowed.includes('checkBound'));
 });

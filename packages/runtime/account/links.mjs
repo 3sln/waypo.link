@@ -32,7 +32,7 @@ import {linkPolicyRegistry,developerPolicy} from '../../links/policies.mjs';
 import {StorageError} from '../../storage/policy.mjs';
 import {verifyAuthorProof} from '../../links/author-proof.mjs';
 import {LinkHandoff} from '../../links/handoff.mjs';
-import {LINKS_CONTRACT,LINK_SLOT_TABLE,MESSAGING_CONTACT_LINK_TYPE,MESSAGING_INGRESS_SLOT} from '../../links/types.mjs';
+import {LINKS_CONTRACT,LINK_FRAGMENT_TABLE,MESSAGING_CONTACT_LINK_TYPE,MESSAGING_INGRESS_FRAGMENT} from '../../links/types.mjs';
 import {bridgeConfig} from '../../email-bridge/engine.mjs';
 import {bridgeKey} from '../../email-bridge/keys.mjs';
 import {ownerOperation} from '../../email-bridge/owner.mjs';
@@ -107,7 +107,7 @@ export const methods={
    let url;try{url=(await decryptSecret(pointer.sealed,this.config.KEY_ENCRYPTION_KEY,DEVELOPER_OCCUPANT_POINTER)).url;}catch{return unavailable;}
    let record;try{({record}=await linkService(this).verify(url));}catch{return unavailable;}
    if(!developerLinkRecord(this,owner,record)||record.jti!==pointer.jti)return unavailable;
-   let seat=null;try{seat=await occupantPort(this)({owner,slot:MESSAGING_INGRESS_SLOT});}catch{seat=null;}
+   let seat=null;try{seat=await occupantPort(this)({owner,fragment:MESSAGING_INGRESS_FRAGMENT});}catch{seat=null;}
    if(!seat||seat.clientId!==record.issuer.clientId||record.issuer.generation!==undefined&&seat.generation!==record.issuer.generation)return {available:false,reason:'occupant-changed'};
    return {available:true,mode:'occupant',jti:record.jti,url,expiresAt:record.claims.exp*1000,policy:developerPolicy(this.config)};
   },
@@ -159,7 +159,7 @@ export async function linksResourceMethod(c,owner,context){
  // Occupancy before any journal read or write (review LH-2, LH-8): an app holding no bound seat at this exact
  // generation can neither fill the journal nor replay a cached result.
  const port=occupantPort(c);let seated=false;
- if(port)for(const slot of new Set(LINK_SLOT_TABLE.map(row=>row.slot))){let found=null;try{found=await port({owner,slot});}catch{found=null;}if(found?.clientId===context.clientId&&found.generation===context.connection.generation&&found.connection===context.connection.id){seated=true;break;}}
+ if(port)for(const fragment of new Set(LINK_FRAGMENT_TABLE.map(row=>row.fragment))){let found=null;try{found=await port({owner,fragment});}catch{found=null;}if(found?.clientId===context.clientId&&found.generation===context.connection.generation&&found.connection===context.connection.id){seated=true;break;}}
  if(!seated)denied();
  if(!WRITES.includes(context.method))return c.linkOperation(owner,params);
  if(typeof context.tx!=='string'||!/^[a-f0-9-]{36}$/.test(context.tx))throw new StorageError('invalid_args','A transaction UUID is required.',400);

@@ -21,6 +21,7 @@ import {siteGlobal} from '../flags/read.mjs';
 import {AppAction,operations} from '../app/engine.mjs';
 import {digest,base64url,boundedString,canonical} from '../core/records.mjs';
 import {fail,object,https,validateValue} from './schema.mjs';
+import {consumes} from '../core/fragments.mjs';
 import {EVENT_BUS_CONTRACT} from './event-buses.mjs';
 import {consumeProof} from './dpop.mjs';
 /** Wargame 2026-10-23 #5 (provisional): a token-endpoint DPoP proof is recorded only after its code exists and is bound
@@ -98,9 +99,12 @@ export function displayHost(field,value){
  if(Array.isArray(value)){const hosts=value.map(item=>displayHost(field,item));return hosts.some(Boolean)?hosts:null;}if(typeof value!=='string')return null;if(field?.type==='url')return hostOf(value);
  if(field?.format==='email'){const at=value.lastIndexOf('@');return at>0?value.slice(at+1).toLowerCase():null;}return field?.format==='hostname'?value.toLowerCase():null;
 }
-/** §4.2: a resource whose origin shares a registrable domain with the requesting client is never offered as an
- * occupant inside that client's own flow. Unresolvable origins are omitted (fail closed). */
-export function occupantCandidates(candidates,site,registrableDomain){return (candidates??[]).filter(c=>{const host=hostOf(c?.origin);if(!host)return false;const domain=registrableDomain(host);return typeof domain==='string'&&domain!==site;});}
+/** Extensions rev 3.2 §8.3 (protocol §3 rule 3, EXT3-13): inside a client's own flow, for a field another consumer
+ * already uses or that admits provider consumers (`shared`), no candidate is offered when its origin, its supplying
+ * integration's origin (`supplier`) or its contributing producer client's origin (`producer`) shares a registrable
+ * domain with that client. On a fresh field only the requesting app consumes, its own resource may be offered.
+ * Unresolvable origins are omitted (fail closed). Order is kept (neutral); nothing is preselected. */
+export function occupantCandidates(candidates,site,registrableDomain,{shared=true}={}){return (candidates??[]).filter(c=>{if(!hostOf(c?.origin))return false;if(!shared)return true;return [c.origin,c.supplier,c.producer].filter(v=>v!==undefined&&v!==null).every(o=>{const host=hostOf(o);if(!host)return false;const domain=registrableDomain(host);return typeof domain==='string'&&domain!==site;});});}
 /** CX-1 grant cards for the tier-4 refusal of unreviewed apps (consent-experience §11, Q7). */
 export function consentGrants(items){
  const grants=[];
@@ -151,9 +155,8 @@ export function createIncrementalProvider({store,issuer,crypto=globalThis.crypto
    const items=[];
    for(const r of input.requests){
     let pin;try{pin=await pinned(r.fragment,r.digest,r.version);}catch(error){if(artefactVersions&&error?.code==='artefact_digest_mismatch')throw error;if(['unsupported_fragment','unavailable'].includes(error?.code)){items.push({fragment:r.fragment,purpose:r.purpose,fields:[...r.fields],methods:copy(r.methods),status:error.code==='unavailable'?'unavailable':'unsupported'});continue;}generic();}
-    // Review L7 (AMD-X1): a slot with `bind` needs per-consumer option approval, which grant-more deltas cannot carry yet.
-    if(object(pin.schema?.slot)&&pin.schema.slot.bind!==undefined)fail('unsupported_fragment','This access has options that need a full authorization request; incremental requests cannot add them yet.');
-    const fields=pin.schema.fields;for(const f of r.fields)if(!Object.hasOwn(fields,f))generic();
+    // Extensions §4: a field only provider features consume is never granted to an app (public fact of the fragment).
+    const fields=pin.schema.fields;for(const f of r.fields)if(!Object.hasOwn(fields,f)||fields[f].type==='resource'&&!consumes(fields[f],'application'))generic();
     for(const [field,contracts] of Object.entries(r.methods))for(const contract of Object.keys(contracts))if(fields[field].type!=='resource'||!fields[field].contracts.includes(contract))generic();
     const contract_versions={},contractPins={};if(artefactVersions)for(const cs of Object.values(r.methods??{}))for(const contract of Object.keys(cs)){if(typeof pinContract!=='function')generic();const ref=r.contract_versions?.[contract],cp=await pinContract(ref?{contract,...ref}:contract);if(ref&&(cp.version!==ref.version||cp.digest!==ref.digest))generic();if(!cp.version||!cp.digest||cp.schema?.$id!==contract||cs[contract].some(method=>!Object.hasOwn(contractMethods(cp.schema),method)))generic();contract_versions[contract]={version:cp.version,digest:cp.digest};contractPins[contract]=copy(cp);}
     items.push({fragment:r.fragment,purpose:r.purpose,fields:[...r.fields],methods:copy(r.methods),digest:pin.digest,...pin.version?{version:pin.version}:{},...artefactVersions?{contract_versions,contractPins}:{},types:Object.fromEntries(r.fields.map(f=>[f,fields[f].type])),...await describe(r.fragment,site,pin)});
@@ -210,7 +213,10 @@ export function createIncrementalProvider({store,issuer,crypto=globalThis.crypto
   for(const name of item.fields){if(!current?.fields?.includes(name))continue;const field=pin.schema.fields[name],receivers=await preferences.receivers({subject:record.subject,fragment:item.fragment,field:name,clientId:record.clientId})??[];fields.push({name,field,receivers,current:prefs&&Object.hasOwn(prefs.values,name)?prefs.values[name]:null,suppressed:blocked(itemFor(record,item,name)),...fieldSensitivity(field,receivers)});}
   return {fields,revision:prefs?.revision??null,values:copy(prefs?.values??{}),schema:pin.schema,blocked:fields.length>0&&fields.every(f=>f.suppressed)};
  }
- async function candidatesFor(record,fragment,field){return occupantCandidates(await preferences.candidates({subject:record.subject,fragment,field})??[],record.site,registrableDomain);}
+ async function candidatesFor(record,fragment,field,item){
+  const schema=(await pinSchema(reference(item))).schema.fields[field],receivers=await preferences.receivers({subject:record.subject,fragment,field,clientId:record.clientId})??[];
+  return occupantCandidates(await preferences.candidates({subject:record.subject,fragment,field})??[],record.site,registrableDomain,{shared:receivers.length>0||consumes(schema,'provider')});
+ }
  /** Provider-page view (host contract for CX-2; never sent to the app). */
  async function view(record,s){
   const common={intent:record.intent,client:copy(record.client),...record.reason!==undefined?{reason:record.reason}:{},blocked:s.blocked,armAt:record.begunAt+L.minDwellMs,offerAppScope:await store.transaction(tx=>sup.offerAppScope(tx,{subject:record.subject,site:record.site}))};
@@ -219,13 +225,13 @@ export function createIncrementalProvider({store,issuer,crypto=globalThis.crypto
    for(const i of s.items){
     if(i.status){requests.push({fragment:i.fragment,purpose:i.purpose,status:i.status});continue;}
     const prefs=await preferences.read({subject:record.subject,fragment:i.fragment}),setup=[];
-    for(const f of i.delta.fields)if(!prefs||!Object.hasOwn(prefs.values,f))setup.push({field:f,type:i.types[f],...i.types[f]==='resource'?{candidates:await candidatesFor(record,i.fragment,f)}:{}});
+    for(const f of i.delta.fields)if(!prefs||!Object.hasOwn(prefs.values,f))setup.push({field:f,type:i.types[f],...i.types[f]==='resource'?{candidates:await candidatesFor(record,i.fragment,f,i)}:{}});
     requests.push({fragment:i.fragment,digest:i.digest,...i.version?{version:i.version}:{},...artefactVersions?{contract_versions:copy(i.contract_versions)}:{},purpose:i.purpose,alreadyAllowed:grantView(i.current,artefactVersions),delta:{fields:i.delta.fields,methods:i.delta.methods,...artefactVersions?{updated:i.delta.updated,display:i.delta.display,additions:i.delta.additions}:{}},suppressed:i.suppressed,setup,ownSite:i.own});
    }
    return {...common,requests};
   }
   return {...common,fragment:record.item.fragment,digest:record.item.digest,...record.item.version?{version:record.item.version}:{},ownSite:record.item.own,revision:s.revision,fields:await Promise.all(s.fields.map(async f=>{const suggested=record.suggestion&&Object.hasOwn(record.suggestion.values,f.name)&&!f.suppressed?{suggested:copy(record.suggestion.values[f.name]),...displayHost(f.field,record.suggestion.values[f.name])?{suggestedHost:displayHost(f.field,record.suggestion.values[f.name])}:{}}:{};
-   return {name:f.name,type:f.field.type,current:f.current,...suggested,sensitive:f.sensitive,sensitivity:f.reasons,receivers:copy(f.receivers),suppressed:f.suppressed,...f.field.type==='resource'?{occupant:f.current===null?{candidates:await candidatesFor(record,record.item.fragment,f.name)}:'settings'}:{}};}))};
+   return {name:f.name,type:f.field.type,current:f.current,...suggested,sensitive:f.sensitive,sensitivity:f.reasons,receivers:copy(f.receivers),suppressed:f.suppressed,...f.field.type==='resource'?{occupant:f.current===null?{candidates:await candidatesFor(record,record.item.fragment,f.name,record.item)}:'settings'}:{}};}))};
  }
  async function mint(tx,record,result){
   if(record.intent==='configure')return {result:result.result};
@@ -265,7 +271,7 @@ export function createIncrementalProvider({store,issuer,crypto=globalThis.crypto
    const held=new Set([...item.current?.fields??[],...fields]),addFields=fields.filter(f=>!item.current?.fields?.includes(f)),addMethods={};
    for(const [field,contracts] of Object.entries(methods)){if(!object(contracts)||!held.has(field))fail('invalid_args');for(const [contract,list] of Object.entries(contracts)){if(!Array.isArray(list)||list.some(m=>!item.methods?.[field]?.[contract]?.includes(m)))fail('invalid_args');const added=list.filter(m=>!item.current?.methods?.[field]?.[contract]?.includes(m)||item.delta.updated?.[field]?.[contract]?.includes(m));if(added.length)(addMethods[field]??={})[contract]=[...new Set(added)];}}
    // IA-R7: resources only for a field the grant holds none on, chosen from the §4.2-filtered candidates.
-   let resources;if(selection.resources!==undefined){if(!object(selection.resources))fail('invalid_args');for(const [field,ids] of Object.entries(selection.resources)){if(!held.has(field)||item.types[field]!=='resource'||!Array.isArray(ids)||!ids.length||ids.length>16||new Set(ids).size!==ids.length||ids.some(id=>!boundedString(id,2048))||(item.current?.resources?.[field]??[]).length)fail('invalid_args');const allowed=(await candidatesFor(record,item.fragment,field)).map(c=>c.id);if(ids.some(id=>!allowed.includes(id)))fail('invalid_args');}resources=copy(selection.resources);}
+   let resources;if(selection.resources!==undefined){if(!object(selection.resources))fail('invalid_args');for(const [field,ids] of Object.entries(selection.resources)){if(!held.has(field)||item.types[field]!=='resource'||!Array.isArray(ids)||!ids.length||ids.length>16||new Set(ids).size!==ids.length||ids.some(id=>!boundedString(id,2048))||(item.current?.resources?.[field]??[]).length)fail('invalid_args');const allowed=(await candidatesFor(record,item.fragment,field,item)).map(c=>c.id);if(ids.some(id=>!allowed.includes(id)))fail('invalid_args');}resources=copy(selection.resources);}
    if(!addFields.length&&!Object.keys(addMethods).length&&!resources)continue;
    // A pre-declined (suppressed) item is answered only after the owner revealed it; answering lifts the block (§9.3 2).
    if(item.suppressed){if(decision.reveal!==true)fail('invalid_args');lifted.push(itemFor(record,item));}
@@ -287,7 +293,7 @@ export function createIncrementalProvider({store,issuer,crypto=globalThis.crypto
     const had=prefs&&Object.hasOwn(prefs.values,name),change=changes.find(c=>c.fragment===item.fragment);
     // IA-R9: setup fills only empty fields the owner is approving now; existing values change in Settings or configure.
     if(had||!change.fields.includes(name)&&!Object.hasOwn(change.methods,name))fail('replace_in_settings','Change this in Settings.');
-    if(field.type==='resource'){if(had)fail('replace_in_settings','Change this in Settings.');const allowed=(await candidatesFor(record,item.fragment,name)).map(c=>c.id),list=Array.isArray(value)?value:[value];if(list.some(v=>!allowed.includes(object(v)?v.resource:v)))fail('invalid_args');}
+    if(field.type==='resource'){if(had)fail('replace_in_settings','Change this in Settings.');const allowed=(await candidatesFor(record,item.fragment,name,item)).map(c=>c.id),list=Array.isArray(value)?value:[value];if(list.some(v=>!allowed.includes(object(v)?v.resource:v)))fail('invalid_args');}
     else if(had&&canonical(prefs.values[name])!==canonical(value)&&(await preferences.receivers({subject:record.subject,fragment:item.fragment,field:name,clientId:record.clientId})??[]).length)shared=true;
     values[name]=copy(value);
    }
@@ -306,7 +312,7 @@ export function createIncrementalProvider({store,issuer,crypto=globalThis.crypto
    let value;
    if(change.take==='suggested'){if(Object.hasOwn(change,'value')||!['field','bulk'].includes(change.via)||!record.suggestion||!Object.hasOwn(record.suggestion.values,f.name))fail('invalid_args');if(change.via==='bulk'&&f.sensitive)fail('individual_acceptance_required','Choose this value on its own row.');value=copy(record.suggestion.values[f.name]);}
    else{if(change.take!==undefined||change.via!==undefined||!Object.hasOwn(change,'value'))fail('invalid_args');try{validateValue(f.field,change.value);}catch{fail('invalid_args');}value=copy(change.value);
-    if(f.field.type==='resource'){if(f.current!==null)fail('replace_in_settings','Change this in Settings.');const allowed=(await candidatesFor(record,record.item.fragment,f.name)).map(c=>c.id);if((Array.isArray(value)?value:[value]).some(v=>!allowed.includes(object(v)?v.resource:v)))fail('invalid_args');}}
+    if(f.field.type==='resource'){if(f.current!==null)fail('replace_in_settings','Change this in Settings.');const allowed=(await candidatesFor(record,record.item.fragment,f.name,record.item)).map(c=>c.id);if((Array.isArray(value)?value:[value]).some(v=>!allowed.includes(object(v)?v.resource:v)))fail('invalid_args');}}
    if(canonical(value)===canonical(f.current))continue;changed=true;changedFields.push(f.name);if(f.receivers.length)shared=true;values[f.name]=value;
   }
   if(shared&&decision.sharedAcknowledged!==true)fail('shared_confirmation_required','Confirm the change for the other apps first.');

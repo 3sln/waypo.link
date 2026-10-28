@@ -5,8 +5,8 @@
 // - the reset keeps live link families, preserves a legacy-only profile, survives corrupt rows and never stops the
 //   other alarm maintenance;
 // - the removed legacy routes answer uniformly without reaching an account;
-// - the public-message-intake slot is one document with provider-only consumers, and the email bridge's auto-reply stays invariant while the slot's
-//   occupancy changes under it (seeded);
+// - the intake fragment (extensions rev 3.2 §11.1, formerly the public-message-intake slot) is one document with
+//   provider-only consumers, and the email bridge's auto-reply stays invariant while the field's value changes (seeded);
 // - the Parlay app's env rename keeps the retired names as aliases.
 // Engine level over the real SQLite adapter and AccountController. Rerun a seeded failure with CHAOS_SEED=<seed>.
 import test from 'node:test';
@@ -18,14 +18,16 @@ import {resetLegacyMessaging,MESSAGING_RESET_MARKER,MESSAGING_RESET_PREFIXES} fr
 import {appMessageKey,appMessageUsageKey} from '../packages/activity/app-messages.mjs';
 import {key} from '../packages/core/records.mjs';
 import application from '../packages/runtime/http.mjs';
-import {PUBLIC_INTAKE_MANIFEST,MESSAGING_INGRESS_MANIFEST,recognizedSlots} from '../packages/apps/connections.mjs';
-import {PUBLIC_INTAKE_SLOT,PUBLIC_INTAKE_CONTRACT,MESSAGING_INGRESS_SLOT} from '../packages/links/types.mjs';
-import {slotDigest} from '../packages/federation/extensions.mjs';
+import {PUBLIC_INTAKE_FRAGMENT_DOCUMENT,RECOGNIZED_FIELDS} from '../packages/apps/connections.mjs';
+import {PUBLIC_INTAKE_FRAGMENT,PUBLIC_INTAKE_CONTRACT} from '../packages/links/types.mjs';
+import {fragmentOutcome,consumes} from '../packages/core/fragments.mjs';
+import {FEATURE_DEFINITIONS} from '../packages/app/domains/provider-features.mjs';
+import {PROVIDER_EXT} from '../packages/core/extensions.mjs';
+import {validateIntegrationManifest} from '../packages/federation/integrations.mjs';
 import {parlayEnv,PARLAY_ENV_NAMES} from '../apps/parlay/env.mjs';
 import {RETIRED_FLAGS,FLAGS} from '../packages/flags/registry.mjs';
 import {world,rawMail,text,DOMAIN,OWNER as BRIDGE_OWNER} from './email-bridge-helpers.mjs';
 import {forEachSeed} from './helpers/chaos.mjs';
-import {validateExtensions} from '../packages/federation/extensions.mjs';
 import {contactParents,CONTACT_PARENT_SCAN} from '../packages/links/parents.mjs';
 
 const OWNER='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',ORIGIN='https://provider.example',KEK=Buffer.alloc(32,7).toString('base64');
@@ -205,18 +207,18 @@ test('removed legacy routes answer uniformly and never reach an account',async()
  assert.equal(calls,0,'no identity lookup or account call');
 });
 
-test('public-message-intake is one document with provider-only consumers: the core pin equals the Bindle Messaging spec artefact and the Parlay integration pin',async()=>{
- const artefact=JSON.parse(await readFile(new URL('../docs/artefacts/slots/public-message-intake-v1.json',import.meta.url))),manifest=JSON.parse(await readFile(new URL('../apps/parlay/integration.json',import.meta.url)));
- assert.deepEqual(PUBLIC_INTAKE_MANIFEST,artefact);assert.equal(artefact.id,PUBLIC_INTAKE_SLOT);
- assert.equal(artefact.slot.field,'occupant');assert.deepEqual(Object.keys(artefact.fields),['occupant']);assert.deepEqual(artefact.fields.occupant.contracts,[PUBLIC_INTAKE_CONTRACT]);
- // Review M2: provider-only, as the removed core copy was; application consumers are deferred (messaging §9).
- assert.deepEqual(artefact.slot.consumers,['provider']);assert.equal(artefact.slot.selection,'exclusive');
- const slots=new Map([[PUBLIC_INTAKE_SLOT,{schema:artefact,digest:await slotDigest(crypto,artefact)}]]),consumer={slot:PUBLIC_INTAKE_SLOT,role:'consumer',ref:'sms-bridge',purpose:'Delivers SMS.'};
- assert.equal(validateExtensions([consumer],{slots,kind:'integration'})[0].reason,'unsupported_consumer','an app cannot declare itself a consumer of the intake slot');
- assert.equal(validateExtensions([{...consumer,ref:'email-bridge'}],{slots})[0].status,'valid','the provider can');
- const pin=manifest.extensions.find(entry=>entry.slot===PUBLIC_INTAKE_SLOT);assert.equal(pin.digest,await slotDigest(crypto,PUBLIC_INTAKE_MANIFEST));
- const ingress=manifest.extensions.find(entry=>entry.slot===MESSAGING_INGRESS_SLOT);assert.equal(ingress.digest,await slotDigest(crypto,MESSAGING_INGRESS_MANIFEST));
- assert.equal(recognizedSlots({EMAIL_BRIDGE_ENABLED:'true'})[PUBLIC_INTAKE_SLOT],PUBLIC_INTAKE_MANIFEST);assert.equal(recognizedSlots({})[PUBLIC_INTAKE_SLOT],undefined);
+test('intake is one fragment with provider-only consumers: the core pin equals the published artefact, the bridge consumes it, Parlay only claims the contract',async()=>{
+ const artefact=JSON.parse(await readFile(new URL('../docs/artefacts/fragments/public-intake-v1.json',import.meta.url))),manifest=JSON.parse(await readFile(new URL('../apps/parlay/integration.json',import.meta.url)));
+ assert.deepEqual(PUBLIC_INTAKE_FRAGMENT_DOCUMENT,artefact);assert.equal(artefact.id,PUBLIC_INTAKE_FRAGMENT);assert.equal(fragmentOutcome(artefact).status,'valid');
+ const field=artefact.fields.intake;assert.deepEqual(Object.keys(artefact.fields),['intake']);assert.deepEqual(field.contracts,[PUBLIC_INTAKE_CONTRACT]);
+ // Review M2: provider-only (extensions §11.1); an application can never request it.
+ assert.deepEqual(field.consumers,['provider']);assert.equal(field.selection,'exclusive');assert.equal(field.announce,true);assert.equal(consumes(field,'application'),false);
+ assert.deepEqual(FEATURE_DEFINITIONS[PROVIDER_EXT.emailBridge],{fragment:PUBLIC_INTAKE_FRAGMENT,field:'intake',methods:{[PUBLIC_INTAKE_CONTRACT]:['deliver']}});
+ assert.equal(RECOGNIZED_FIELDS[PUBLIC_INTAKE_FRAGMENT],PUBLIC_INTAKE_FRAGMENT_DOCUMENT);
+ // Parlay declares nothing about intake: it only claims the contract in `resources.contracts`, recorded at connection.
+ assert.equal(manifest.extensions,undefined);assert.ok(manifest.resources.contracts.includes(PUBLIC_INTAKE_CONTRACT));
+ const r=validateIntegrationManifest({...manifest,extensions:[{slot:'https://spec.bindle.example/slots/public-message-intake/v1',role:'occupant',ref:'mailbox'}]},{clientId:'https://messages.example/bindle/client.json',confidential:true,redirectUris:['https://messages.example/bindle/callback'],jwksUri:'https://messages.example/bindle/jwks.json'});
+ assert.equal(r.status,'valid');assert.equal(r.manifest.extensions,undefined,'an `extensions` member in an integration manifest is ignored');
 });
 
 test('email bridge (seeded): occupancy filled, emptied, refusing or failing under it never changes the auto-reply; mail is delivered or held, never lost',async()=>{

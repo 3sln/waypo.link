@@ -7,7 +7,7 @@ Date: 2026-10-20.
 - Tests: `tests/bindlebox/{conversations-fixtures,conversations,conversations-security}.test.mjs`, run on the seeded network simulator with a 3–5 party mesh across three hosts, one of them a shared hub.
 
 Design sources:
-- [spec](../spec/messaging.md) §5–§8 and §11;
+- [spec](../spec/extensions/messaging.md) §5–§8 and §11;
 - [architecture](../architecture/messaging-app.md) §4.3, §7, §9 and §16;
 - [design review](messaging-app-review.md) blockers P-1 (one-way conversations), P-2 (groups never form) and P-3 (an app switch looks like a forger).
 
@@ -98,7 +98,7 @@ Informational items (spec reconciliation):
 
 BB4-I1 now renews the same delegate key's certificate before an expired transport proof is retried, preserving the signed payload, event ID, signature and frozen audience. The simulator asserts delivery after a 73-hour outage. BB4-I2 clears protected secret parts, embedded invitation secrets and credentials on delivered/rejected/cancelled tasks; expired catch-up tasks retain retry material only to their last retry horizon, with a durable cleanup alarm. BB4-I4 is composed in both shells, the shared operation registry and the metadata index; a three-party composed-shell simulator covers send, receive, Views/tags, edit and removal.
 
-BB4-I3 is reconciled in [spec §§6.1–6.6](../spec/messaging.md#61-genesis-and-bootstrap): verified awaiting-secret 503, one epoch per event, genesis-only membership and prior-opt-in proposal acceptance. Each change remains provisional. This integration records implementation and local tests; it does not provide independent security review, human approval or production verification.
+BB4-I3 is reconciled in [spec §§6.1–6.6](../spec/extensions/messaging.md#61-genesis-and-bootstrap): verified awaiting-secret 503, one epoch per event, genesis-only membership and prior-opt-in proposal acceptance. Each change remains provisional. This integration records implementation and local tests; it does not provide independent security review, human approval or production verification.
 
 Reviewer ___ / date ___ / outcome ___.
 

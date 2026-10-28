@@ -8,6 +8,7 @@
 // Every mutation also carries the per-entry page token, which only a reader of the provider view holds.
 // Storage is sharded by entry ID (review M5): an entry and its selections live on the shard named by the ID's first
 // character, so every retry reaches the same records; creation budgets live on the caller's own shard.
+import {EXT,declare} from '../core/extensions.mjs';
 import {digest,base64url,boundedString,canonical} from '../core/records.mjs';
 import {fail,object,exact,https} from './schema.mjs';
 import {verifyProof,EMBED_PROOF_TYP,jktPattern} from './dpop.mjs';
@@ -38,7 +39,7 @@ export async function remoteShard(crypto,remote){return entryShard(await digest(
  * step-up; an older verification counts only within `maxAge` seconds. `authAfter` is the entry's creation time. */
 export const reauthenticationFresh=(authTime,{maxAge,authAfter},now)=>Number.isSafeInteger(authTime)&&Number.isSafeInteger(maxAge)&&Number.isSafeInteger(authAfter)&&authTime<=now+60000&&(authTime>=authAfter||authTime>=now-maxAge*1000);
 /** Core `authorization-entry.v1` feature (protocol §2), advertised only where the entry routes are mounted. */
-export function entryManifest(issuer,{intents=ENTRY_INTENTS.slice(0,3)}={}){return {features:{'authorization-entry.v1':{endpoint:`${issuer}/api/oauth/entries`,intents:[...intents]}}};}
+export function entryManifest(issuer,{intents=ENTRY_INTENTS.slice(0,3)}={}){return {extensions:[declare(EXT.authorizationEntry,{endpoint:`${issuer}/api/oauth/entries`,intents:[...intents]})]};}
 /** Candidate owner of an owner step. A routing hint only: `entryIdentity` must authenticate it before any use. */
 export const ownerOf=context=>{const owner=context?.expectedOwner??(typeof context?.sessionToken==='string'?context.sessionToken.split('.')[0]:'');return UUID.test(owner)?owner:null;};
 export class AuthorizationEntries {
@@ -68,7 +69,7 @@ export class AuthorizationEntries {
  intents(){return [...ENTRY_INTENTS.filter(intent=>intent!=='end-session'||this.endSession),...this.incremental?INCREMENTAL_INTENTS:[]];}
  /** Manifest members for mounted entry routes. The components profile also needs DPoP (embed proofs) and an adapter
   * that actually serves the embed origin, which only the root adapter knows (`components`). */
- manifest({components=false}={}){const entry=entryManifest(this.issuer,{intents:this.intents()});return components&&this.embedOrigin&&this.dpop?{...entry,...componentsDeclaration({profile:COMPONENTS_PROFILE,embedOrigin:this.embedOrigin},{incremental:!!this.incremental})}:entry;}
+ manifest({components=false}={}){const entry=entryManifest(this.issuer,{intents:this.intents()});return components&&this.embedOrigin&&this.dpop?{extensions:[...entry.extensions,...componentsDeclaration({profile:COMPONENTS_PROFILE,embedOrigin:this.embedOrigin},{incremental:!!this.incremental}).extensions??[]]}:entry;}
  sharded(){return typeof this.store==='function'||this.shard!==undefined;}
  storeFor(shard){if(this.shard!==undefined&&shard!==this.shard)fail('temporarily_unavailable','Application sign-in is not available.');return typeof this.store==='function'?this.store(shard):this.store;}
  /** The entry's hash and the store of its shard. */

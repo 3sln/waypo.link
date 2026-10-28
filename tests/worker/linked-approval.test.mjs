@@ -49,7 +49,7 @@ const federationStub=async(h,owner)=>{const namespace=await h.mf.getDurableObjec
 test('LA3 CLI device flow on workerd: declaration, request, browser approval, DPoP token, RPC, refresh and revoke',async t=>{
  const f=await flows(t),{h}=f;
  const manifest=await(await h.mf.dispatchFetch(h.origin+'/.well-known/bindle/manifest.json')).json();
- assert.deepEqual(manifest.features['device-authorization.v1'],{});assert.equal(manifest.device_authorization_endpoint,h.origin+'/oauth/device_authorization');assert.ok(manifest.grant_types_supported.includes(URN)&&manifest.grant_types_supported.includes('refresh_token'));assert.ok(manifest.dpop_signing_alg_values_supported.includes('ES256'));assert.equal(manifest.revocation_endpoint,h.origin+'/oauth/revoke');
+ assert.equal(manifest.features,undefined);assert.ok(manifest.extensions.some(e=>e.spec==='https://spec.bindle.example/extensions/device-authorization/v1'));assert.equal(manifest.device_authorization_endpoint,h.origin+'/oauth/device_authorization');assert.ok(manifest.grant_types_supported.includes(URN)&&manifest.grant_types_supported.includes('refresh_token'));assert.ok(manifest.dpop_signing_alg_values_supported.includes('ES256'));assert.equal(manifest.revocation_endpoint,h.origin+'/oauth/revoke');
  const browser=await f.call('/oauth/device_authorization',{fields:{client_id:cli.id,dpop_jkt:(await dpopKey()).jkt},headers:{Origin:h.origin}});assert.deepEqual([browser.status,browser.body.error],[400,'invalid_request'],'browser refusal');
  for(const headers of [{'Sec-Fetch-Mode':'cors'},{'Sec-Fetch-Mode':'cors','Sec-Fetch-Site':'none'}]){const r=await f.call('/oauth/device_authorization',{fields:{client_id:cli.id,dpop_jkt:(await dpopKey()).jkt},headers});assert.equal(r.status,Object.keys(headers).length===1&&headers['Sec-Fetch-Mode']==='cors'?200:400,JSON.stringify(headers));assert.equal(r.headers.get('Access-Control-Allow-Origin'),null);}
  const unregistered=await f.call('/oauth/device_authorization',{fields:{client_id:'https://other.example/cli',dpop_jkt:(await dpopKey()).jkt}});assert.equal(unregistered.status,400);
@@ -94,7 +94,7 @@ test('LA3 session device flow on workerd: linked start, locator QR, approval, Co
 test('LA3 flag off on workerd: no linked or device routes, no declaration, legacy QR flow intact',async t=>{
  const f=await flows(t,'false'),{h,call}=f;
  const manifest=await(await h.mf.dispatchFetch(h.origin+'/.well-known/bindle/manifest.json')).json();
- assert.equal(manifest.features?.['device-authorization.v1'],undefined);assert.equal(manifest.device_authorization_endpoint,undefined);assert.ok(!manifest.grant_types_supported.includes(URN));
+ assert.equal(manifest.extensions?.some(e=>e.spec==='https://spec.bindle.example/extensions/device-authorization/v1')??false,false);assert.equal(manifest.device_authorization_endpoint,undefined);assert.ok(!manifest.grant_types_supported.includes(URN));
  const key=await dpopKey();assert.equal((await call('/oauth/device_authorization',{fields:{client_id:cli.id,dpop_jkt:key.jkt}})).status,404);
  const token=await call('/oauth/token',{fields:{grant_type:URN,device_code:crypto.randomUUID()+'.'+'a'.repeat(43),client_id:cli.id},headers:{DPoP:await key.sign({htu:h.origin+'/oauth/token'})}});assert.deepEqual([token.status,token.body.error],[400,'invalid_request'],'the generic token endpoint, no device branch');
  assert.equal((await call('/bindle/rpc',{json:{},headers:{Authorization:'DPoP '+crypto.randomUUID()+'.'+'a'.repeat(43),DPoP:'x'}})).body.message,'Bearer token required.');

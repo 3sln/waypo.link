@@ -4,7 +4,7 @@ Date: 2026-10-14. Independent source/design review. Human approval remains blank
 
 ## Normative draft assessment
 
-Reviewed [message-content.md](../spec/message-content.md) against the current content validator, conservative renderer, form policy, prepared broker and retained presentation code. The draft defines observable effects and authority boundaries without requiring a particular rendering library, browser API, SDK or RPC. No structural blocker was found in that separation.
+Reviewed [message-content.md](../spec/extensions/message-content.md) against the current content validator, conservative renderer, form policy, prepared broker and retained presentation code. The draft defines observable effects and authority boundaries without requiring a particular rendering library, browser API, SDK or RPC. No structural blocker was found in that separation.
 
 The text/HTML requirements preserve accepted bytes and distinguish presentation from delivery permission. Other allowed types remain opaque absent an explicit supported profile. The project-private JSON archive's entry count, decoded-size bounds, path restrictions and text entrypoint match the reference validator; this is not ZIP/WARC/MHTML interoperability, and bundled image validation is not image decoding or presentation support. Transport ceilings can be smaller than the archive envelope ceiling.
 

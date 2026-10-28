@@ -43,7 +43,7 @@ The reviewer found no High-severity issue.
 
 These gates remain before production declaration:
 
-- Verify the Workers egress against private and rebinding targets ([security](../spec/security.md#required-verification-before-a-public-beta)).
+- Verify the Workers egress against private and rebinding targets ([security](../3sln/release-gates.md#required-verification-before-a-public-beta)).
 - Run consent comprehension research for unreviewed-app labels.
 - Get human sign-off.
 

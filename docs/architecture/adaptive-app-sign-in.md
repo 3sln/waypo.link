@@ -362,7 +362,7 @@ Embeddable-elements §7.5 applies (fixed size chosen by the parent, no nested fr
 | Provider components | auth | A provider MAY operate a component embedded in client pages that starts authorizations from client-supplied public parameters. It returns to the client only the ordinary code with `state` and `iss`, delivered only to documents of the client's registered origins; credentials for the component MUST NOT reach the client in any redirect, token response or message. Behaviour is provider-defined; `embed_profiles_supported` lists profile URIs (the single name; DEVLOG's `embed_binding_profiles_supported` is retired). **Proposed:** `embed_origin`, the exact HTTPS origin serving the component, used by clients only as iframe `src` origin and `postMessage` `targetOrigin`; an explicit exception to the v0 same-origin endpoint rule, final name to be agreed with the authorization-entry implementer. |
 | DPoP refresh | auth, protocol §4 | `dpopJkt`; DPoP at the token endpoint; persistence only when sender-constrained; `refresh_idle_expires_in`; `dpop_signing_alg_values_supported`. |
 
-Removed from the spec: every framing, iframe and handle-suffix rule (moved to the 3sln host section of [security](../spec/security.md#reference-host-presentation-and-framing-3slnme-policy)).
+Removed from the spec: every framing, iframe and handle-suffix rule (moved to the 3sln host section of [security](../3sln/release-gates.md#reference-host-presentation-and-framing-3slnme-policy)).
 
 ## 17. Storage eviction and browser matrix
 

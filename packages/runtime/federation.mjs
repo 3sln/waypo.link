@@ -24,19 +24,22 @@ import {deviceManifest} from '../federation/device-authorization.mjs';
 import {createManifestDeclarationProvider,ManifestDeclarations,withManifestDeclarations} from '../federation/runtime.mjs';
 import {ClientDirectory,CLIENT_METADATA_FEATURE,clientSite} from '../federation/client-metadata.mjs';
 import {UUID_V4 as UUID} from '../core/primitives.mjs';
-import {MESSAGING_ADDRESS_DECLARATION,LINKS_CONTRACT} from '../links/types.mjs';
+import {LINKS_CONTRACT} from '../links/types.mjs';
 import {GOOGLE_DRIVE_SETUP_FRAGMENT} from '../storage/google-drive-integration.mjs';
-import {ITEM_CLASSIFIER_MANIFEST} from '../apps/connections.mjs';
+import {ITEM_CLASSIFIER_FRAGMENT_DOCUMENT} from '../apps/connections.mjs';
+import {CLASSIFIER_CONTRACT,classifierOffered} from './account/classifier.mjs';
 import {brokeringMounts} from './integration-ports.mjs';
 import {verifyClientAssertion,memoryReplayCache,CLIENT_ASSERTION_TYPE} from '../federation/introspection.mjs';
 import {pinnedKeys} from '../federation/integrations.mjs';
 import {brokeredResourcesDeclaration} from '../federation/introspection.mjs';
 import {foreignIssuers} from './account/foreign-directory.mjs';
-import {rtcBoundArtefacts,RTC_SIGNALING_SLOT_MANIFEST,RTC_FEATURE,RTC_SIGNALING_CONTRACT,RTC_SIGNALING_METHODS,RTC_SIGNALING_SLOT,RTC_OCCUPANT_DECLARATION,ICE_RELAY_CONTRACT,ICE_RELAY_SLOT} from '../rtc/extension.mjs';
+import {RTC_SIGNALING_FRAGMENT_DOCUMENT,RTC_FEATURE,RTC_SIGNALING_CONTRACT,RTC_SIGNALING_METHODS,RTC_SIGNALING_FRAGMENT,ICE_RELAY_CONTRACT,ICE_RELAY_FRAGMENT_DOCUMENT} from '../rtc/extension.mjs';
+import {EXT,PROVIDER_EXT,declare} from '../core/extensions.mjs';
+import {providerFeatureDeclared} from '../app/domains/provider-features.mjs';
 import {ICE_RELAY_METHODS,relayConfigured} from '../rtc/relay.mjs';
 import {LEG_CERTIFICATE_SECONDS} from '../rtc/certificates.mjs';
 
-export const messagingAddressMounted=config=>siteGlobal(config,'LINKS_ENABLED',true)&&siteGlobal(config,'INTEGRATIONS_ENABLED',true)&&typeof config.MESSAGING_DESCRIBE==='function';
+export {messagingAddressMounted} from '../app/domains/provider-features.mjs';
 export const BROKERING_STORE='bindle-brokering-v1';
 export const FEDERATION_LAYOUT='bindle-federation-v1';
 /** Append-only declaration registry (EXT-X2). Slices append rows; never edit builders or other slices' rows.
@@ -44,51 +47,54 @@ export const FEDERATION_LAYOUT='bindle-federation-v1';
  * Context: {config,issuer,target:'authority'|'entries'|'controller',mounts,directory?,entries?,components?}.
  * `mounts` is adapter-owned evidence of mounted routes, default {}; flags alone never imply a mount.
  * Example for LA3: flag:'DEVICE_AUTHORIZATION_ENABLED', mounted:c=>c.target==='authority'&&c.mounts.deviceAuthorization===true.
- * A row may return features/profiles/extensions, device_authorization_endpoint and additive OAuth grant/auth lists.
- * extensions additionally requires EXTENSIONS_ENABLED and a separately mounted extensions.v1 declaration.
+ * Extensions revision 3.2 (protocol §2; extensions §2.8, CR-X3-19): a row returns `extensions` entries ({spec, options};
+ * one per extension, options from the descriptor, endpoint options on the issuer origin and audience endpoints
+ * distinct), `contracts` (built-in resource contracts, extensions §5.2), device_authorization_endpoint and additive
+ * OAuth grant/auth lists. There is no `features`, `profiles` or `extensions.v1`: the mechanism is core.
  * Do not declare integrations/brokering merely because their keys or JWKS route exist: full protocol slices own those claims. */
 export const MANIFEST_DECLARATIONS=Object.freeze([
- {flag:'APP_CLEAN_REMOVAL_ENABLED',mounted:c=>c.target==='authority'&&typeof c.config.INTEGRATION_EVENT_PORTS?.signer?.sign==='function',declare:c=>({features:{'app-removal.v1':{jwks_uri:c.issuer+'/oauth/brokering/jwks',return_uri:c.issuer+'/api/apps/removal/return',completion_endpoint:c.issuer+'/bindle/removal/complete'}}})},
- {flag:'SUBJECT_DELETED_EVENTS_ENABLED',mounted:c=>c.target==='authority'&&c.mounts.integrations===true,declare:()=>({features:{'subject-deleted.v1':{}}})},
- {flag:'ARTEFACT_VERSIONS_ENABLED',mounted:c=>c.config.ARTEFACTS?.enabled===true,declare:()=>({features:{'artefact-versions.v1':{}}})},
- {flag:['INTEGRATIONS_ENABLED','BROKERING_ENABLED'],mounted:c=>c.target==='authority'&&c.mounts.integrations===true&&c.mounts.brokeredResources===true,declare:()=>({features:{'integrations.v1':{}},token_endpoint_auth_methods_supported:['none','private_key_jwt']})},
- {flag:'CLIENT_METADATA_ENABLED',mounted:c=>c.target==='authority'&&c.directory?.enabled===true,declare:()=>({features:{[CLIENT_METADATA_FEATURE]:{}}})},
+ {flag:'APP_CLEAN_REMOVAL_ENABLED',mounted:c=>c.target==='authority'&&typeof c.config.INTEGRATION_EVENT_PORTS?.signer?.sign==='function',declare:c=>({extensions:[declare(EXT.appRemoval,{jwks_uri:c.issuer+'/oauth/brokering/jwks',return_uri:c.issuer+'/api/apps/removal/return',completion_endpoint:c.issuer+'/bindle/removal/complete'})]})},
+ {flag:'SUBJECT_DELETED_EVENTS_ENABLED',mounted:c=>c.target==='authority'&&c.mounts.integrations===true,declare:()=>({extensions:[declare(EXT.subjectDeleted)]})},
+ {flag:'ARTEFACT_VERSIONS_ENABLED',mounted:c=>c.config.ARTEFACTS?.enabled===true,declare:()=>({extensions:[declare(EXT.artefactVersions)]})},
+ {flag:['INTEGRATIONS_ENABLED','BROKERING_ENABLED'],mounted:c=>c.target==='authority'&&c.mounts.integrations===true&&c.mounts.brokeredResources===true,declare:()=>({extensions:[declare(EXT.integrations)],token_endpoint_auth_methods_supported:['none','private_key_jwt']})},
+ {flag:'CLIENT_METADATA_ENABLED',mounted:c=>c.target==='authority'&&c.directory?.enabled===true,declare:()=>({extensions:[declare(CLIENT_METADATA_FEATURE)]})},
  {flag:'FEDERATION_ENTRY_ENABLED',mounted:c=>c.target==='entries'&&!!c.entries,declare:c=>entryManifest(c.issuer,{intents:c.entries.intents()})},
  {flag:'FEDERATION_ENTRY_ENABLED',mounted:c=>c.target==='entries'&&c.components===true&&!!c.entries?.embedOrigin&&c.entries.dpop===true,declare:c=>componentsDeclaration(componentsProfile(c.config),{incremental:c.entries?.incremental?.mounted===true})},
- // LA3: RFC 8628 members plus the feature, only where the adapter mounted the device endpoint, the device_code token
+ // LA3: RFC 8628 members plus the extension, only where the adapter mounted the device endpoint, the device_code token
  // branch, DPoP RPC and cancellation (runtime/device-grant.mjs). DPoP algorithms and revocation_endpoint are already
  // base authority members whenever that mount is possible.
- {flag:'DEVICE_AUTHORIZATION_ENABLED',mounted:c=>c.target==='authority'&&c.mounts.deviceAuthorization===true,declare:c=>{const {device_authorization_endpoint,grant_types_supported,features}=deviceManifest(c.issuer);return {device_authorization_endpoint,grant_types_supported,features};}},
- // BB-C1b: the `messaging-address` provider consumer of messaging-ingress (messaging §2.1). Only where the adapter
- // mounted the descriptor handoff with an occupancy port AND a describe port (`mounts.messagingAddress`); the entry
- // is kept only beside a declared extensions.v1 (EXTENSIONS_ENABLED), never on flags alone.
- {flag:['LINKS_ENABLED','EXTENSIONS_ENABLED'],mounted:c=>c.target==='authority'&&c.mounts.messagingAddress===true,declare:()=>({extensions:[{...MESSAGING_ADDRESS_DECLARATION}]})},
- // IA-1: `grant-more`/`configure` need no row of their own (a second `authorization-entry.v1` would fail closed as a
+ {flag:'DEVICE_AUTHORIZATION_ENABLED',mounted:c=>c.target==='authority'&&c.mounts.deviceAuthorization===true,declare:c=>{const {device_authorization_endpoint,grant_types_supported,extensions}=deviceManifest(c.issuer);return {device_authorization_endpoint,grant_types_supported,extensions};}},
+ // BB-C1b, extensions rev 3.2: the `messaging-address` provider feature is its own 3sln.me extension (extensions §4.2),
+ // declared only where the adapter mounted the descriptor handoff (`mounts.messagingAddress`) and EXTENSIONS_ENABLED.
+ // Withdrawn by the contacts spike (CL-4); kept until that code path is removed.
+ {flag:['LINKS_ENABLED','EXTENSIONS_ENABLED'],mounted:c=>c.target==='authority'&&c.mounts.messagingAddress===true,declare:()=>({extensions:[declare(PROVIDER_EXT.messagingAddress)]})},
+ // IA-1: `grant-more`/`configure` need no row of their own (a second authorization-entry entry would fail closed as a
  // duplicate). They ride the FEDERATION_ENTRY_ENABLED row through `entries.intents()`, which lists them only when the
  // adapter passed AuthorizationEntries a mounted INCREMENTAL_AUTHORIZATION port (INCREMENTAL_AUTH_ENABLED on).
- // EXT-X8: brokered-resources.v1 (integrations §12; it replaces the provisional top-level brokering_jwks_uri) only where
- // the adapter mounted integrations.v1 (`mounts.integrations`) AND preferences/v2 minting, severance draining and the
- // brokering JWKS route (`mounts.brokeredResources`); introspection_endpoint only with `mounts.brokeredIntrospection`.
- // ORG-10f: relations.v1 (spec organizations §14) only where an adapter mounted the cross-provider relation transport
- // (`mounts.relations`, ORG-11a). No adapter sets it yet: same-host relations need no manifest, and the join and events
- // endpoints stay behind ORG_FOREIGN_RELATIONS_ENABLED, so the feature is never claimed on flags alone.
- {flag:['ORG_RELATIONS_ENABLED','ORG_FOREIGN_RELATIONS_ENABLED'],mounted:c=>c.target==='authority'&&c.mounts.relations===true,declare:c=>({features:{'relations.v1':{accept_endpoint:c.issuer+'/relations/accept',join_endpoint:c.issuer+'/relations/join',events_endpoint:c.issuer+'/relations/events'}}})},
+ // ORG-10f: the relations extension (spec organizations §14) only where an adapter mounted the cross-provider relation
+ // transport (`mounts.relations`, ORG-11a). No adapter sets it yet.
+ {flag:['ORG_RELATIONS_ENABLED','ORG_FOREIGN_RELATIONS_ENABLED'],mounted:c=>c.target==='authority'&&c.mounts.relations===true,declare:c=>({extensions:[declare(EXT.relations,{accept_endpoint:c.issuer+'/relations/accept',join_endpoint:c.issuer+'/relations/join',events_endpoint:c.issuer+'/relations/events'})]})},
+ // EXT-X8: the brokered-resources extension only where the adapter mounted integrations (`mounts.integrations`) AND
+ // preferences/v2 minting, severance draining and the brokering JWKS route (`mounts.brokeredResources`);
+ // introspection_endpoint only with `mounts.brokeredIntrospection`.
  {flag:['INTEGRATIONS_ENABLED','BROKERING_ENABLED'],mounted:c=>c.target==='authority'&&c.mounts.integrations===true&&c.mounts.brokeredResources===true,declare:c=>brokeredResourcesDeclaration(c.issuer,{introspection:c.mounts.brokeredIntrospection===true})},
- // RTC-e (rtc-signaling spec §3.1, §3.2): the built-in signaling occupant beside a declared extensions.v1, and the
- // provider-to-provider feature only while RTC_FOREIGN_ENABLED is on and the adapter mounted the foreign transport
- // (`mounts.rtc`: the /bindle/rtc route plus an RTC_EGRESS port). Flags alone never declare either.
- // RTC-i (RTCe-16 revised, provisional): this row also declares `extensions.v1`, which rtc-signaling.v1 requires (spec
- // §3.1) and which no other row declares; it is the first slice whose slot processing (AMD-X1 `bind`) a peer or an
- // application must be able to rely on. A later row that declares extensions.v1 must replace this member, not add a
- // second one (a duplicate feature fails closed). Its presence also keeps the other rows' `extensions` entries.
- {flag:['RTC_SIGNALING_ENABLED','EXTENSIONS_ENABLED'],mounted:c=>c.target==='authority'&&c.mounts.rtcOccupant===true,declare:()=>({features:{'extensions.v1':{}},extensions:[{...RTC_OCCUPANT_DECLARATION}]})},
- // RTC-f: the built-in ice-relay/v1 occupant beside the signaling occupant, only with RTC_TURN_ENABLED (class b, read from
- // env here) and a configured relay (TURN adapter and the external spend authority, which no deployment has yet).
- {flag:['RTC_SIGNALING_ENABLED','EXTENSIONS_ENABLED'],mounted:c=>c.target==='authority'&&c.mounts.rtcOccupant===true&&capability(c.config,'RTC_TURN_ENABLED')&&relayConfigured(c.config),declare:()=>({extensions:[{slot:ICE_RELAY_SLOT,role:'occupant',ref:'relay'}]})},
+ // Extensions rev 3.2 (§11.1, Q2 provisional): the email bridge is the provider feature of a 3sln.me extension. It is
+ // declared exactly when the account-side predicate holds (app/domains/provider-features.mjs), so losing the
+ // declaration and suspending the feature's grants are the same fact.
+ {flag:['EMAIL_BRIDGE_ENABLED','INTEGRATIONS_ENABLED','BROKERING_ENABLED','EXTENSIONS_ENABLED'],mounted:c=>c.target==='authority'&&c.mounts.integrations===true&&c.mounts.brokeredResources===true&&providerFeatureDeclared(c.config,PROVIDER_EXT.emailBridge),declare:()=>({extensions:[declare(PROVIDER_EXT.emailBridge)]})},
+ // CR-X3-25: the classifier is a paid built-in resource, listed in `contracts` (extensions §5.2) while it is offered.
+ {flag:['INTEGRATIONS_ENABLED','EXTENSIONS_ENABLED'],mounted:c=>c.target==='authority'&&classifierOffered(c.config),declare:()=>({contracts:[CLASSIFIER_CONTRACT]})},
+ // RTC (legacy rtc-signaling.v1 code, flags off; TODO signaling Appendix C): the built-in signaling resource is implied
+ // by its contract in `contracts` (no occupant declaration, extensions §5.2), only where the adapter mounted it.
+ {flag:['RTC_SIGNALING_ENABLED','EXTENSIONS_ENABLED'],mounted:c=>c.target==='authority'&&c.mounts.rtcOccupant===true,declare:()=>({contracts:[RTC_SIGNALING_CONTRACT]})},
+ // RTC-f: the built-in ice-relay resource beside the signaling one, only with RTC_TURN_ENABLED (class b, read from env
+ // here) and a configured relay (TURN adapter and the external spend authority, which no deployment has yet).
+ {flag:['RTC_SIGNALING_ENABLED','EXTENSIONS_ENABLED'],mounted:c=>c.target==='authority'&&c.mounts.rtcOccupant===true&&capability(c.config,'RTC_TURN_ENABLED')&&relayConfigured(c.config),declare:()=>({contracts:[ICE_RELAY_CONTRACT]})},
  // Review F7: and only while RTC_FOREIGN_ISSUERS names at least one issuer (with it empty, nothing is ever delivered).
- // RTC-i: and only beside its prerequisites (spec §3.1): extensions.v1 (the occupant row above), artefact-versions.v1
- // (ARTEFACT_VERSIONS_ENABLED with a mounted artefact store) and directory.v1 (DIRECTORY_ENABLED).
- {flag:['RTC_SIGNALING_ENABLED','RTC_FOREIGN_ENABLED','DIRECTORY_ENABLED','EXTENSIONS_ENABLED','ARTEFACT_VERSIONS_ENABLED'],mounted:c=>c.target==='authority'&&c.mounts.rtc===true&&c.mounts.rtcOccupant===true&&c.config.ARTEFACTS?.enabled===true&&foreignIssuers(c.config,'RTC_FOREIGN_ISSUERS').length>0,declare:c=>({features:{[RTC_FEATURE]:{endpoint:c.issuer+'/bindle/rtc',max_leg_certificate_seconds:LEG_CERTIFICATE_SECONDS}}})},
+ // RTC-i: and only beside its prerequisites: artefact-versions (ARTEFACT_VERSIONS_ENABLED with a mounted artefact store)
+ // and directory (DIRECTORY_ENABLED; declared by the directory route wrapper). The legacy feature is the interim
+ // EXT.rtcSignalingLegacy extension (core/extensions.mjs).
+ {flag:['RTC_SIGNALING_ENABLED','RTC_FOREIGN_ENABLED','DIRECTORY_ENABLED','EXTENSIONS_ENABLED','ARTEFACT_VERSIONS_ENABLED'],mounted:c=>c.target==='authority'&&c.mounts.rtc===true&&c.mounts.rtcOccupant===true&&c.config.ARTEFACTS?.enabled===true&&foreignIssuers(c.config,'RTC_FOREIGN_ISSUERS').length>0,declare:c=>({extensions:[declare(RTC_FEATURE,{endpoint:c.issuer+'/bindle/rtc',max_leg_certificate_seconds:LEG_CERTIFICATE_SECONDS})]})},
 ]);
 /** Synchronous adapter over the same provider Query used by the engine harness. Mounts never come from query input. */
 export function federationDeclarations(config,context={}){return new ManifestDeclarations().fetch({config:surfaceConfig(config),federation:createManifestDeclarationProvider({registry:MANIFEST_DECLARATIONS,context:{...context,issuer:config.APP_ORIGIN,mounts:context.mounts??{}}})});}
@@ -96,16 +102,16 @@ export function federationEntryManifest(config,entries,{components=false,mounts=
 const routed=/^([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\.[A-Za-z0-9_-]{43}$/;
 const fail=(code,message)=>{throw Object.assign(new Error(message),{code});};
 export function federationConfig(value,fallback){if(value===undefined||value==='')return structuredClone(fallback);return typeof value==='string'?JSON.parse(value):structuredClone(value);}
-/** X10's recognized immutable slot joins reviewed fragments only while its implementation is enabled. */
+/** Shipped reviewed fragments join the registry only while their implementation is enabled. */
 export function federationSchemas(config){
  const schemas=federationConfig(config.FEDERATION_SCHEMAS,{});
  if(siteGlobal(config,'INTEGRATIONS_ENABLED'))schemas[GOOGLE_DRIVE_SETUP_FRAGMENT.id]=structuredClone(GOOGLE_DRIVE_SETUP_FRAGMENT);
  if(!schemas||Array.isArray(schemas)||typeof schemas!=='object'||Object.keys(schemas).length>100)throw new TypeError('Invalid reviewed fragment registry.');
- if(siteGlobal(config,'INTEGRATIONS_ENABLED')&&siteGlobal(config,'EXTENSIONS_ENABLED'))schemas[ITEM_CLASSIFIER_MANIFEST.id]=structuredClone(ITEM_CLASSIFIER_MANIFEST);
- // RTC-i: the signaling slot manifest of spec §3.2 is a first-party reviewed fragment while the provider implements
- // the slot (RTC_SIGNALING_ENABLED and EXTENSIONS_ENABLED), so a default deployment needs no operator registration; an
- // operator entry for the same id is replaced by the shipped one.
- if(siteGlobal(config,'RTC_SIGNALING_ENABLED')&&siteGlobal(config,'EXTENSIONS_ENABLED'))schemas[RTC_SIGNALING_SLOT]=structuredClone(RTC_SIGNALING_SLOT_MANIFEST);
+ if(siteGlobal(config,'INTEGRATIONS_ENABLED')&&siteGlobal(config,'EXTENSIONS_ENABLED'))schemas[ITEM_CLASSIFIER_FRAGMENT_DOCUMENT.id]=structuredClone(ITEM_CLASSIFIER_FRAGMENT_DOCUMENT);
+ // RTC-i: the signaling and ice-relay fragments are first-party reviewed fragments while the provider implements them
+ // (RTC_SIGNALING_ENABLED and EXTENSIONS_ENABLED), so a default deployment needs no operator registration; an operator
+ // entry for the same id is replaced by the shipped one.
+ if(siteGlobal(config,'RTC_SIGNALING_ENABLED')&&siteGlobal(config,'EXTENSIONS_ENABLED')){schemas[RTC_SIGNALING_FRAGMENT]=structuredClone(RTC_SIGNALING_FRAGMENT_DOCUMENT);schemas[ICE_RELAY_FRAGMENT_DOCUMENT.id]=structuredClone(ICE_RELAY_FRAGMENT_DOCUMENT);}
  return schemas;
 }
 export function federationClients(config){const clients=federationConfig(config.FEDERATION_CLIENTS,[]);if(!Array.isArray(clients)||clients.length>100)throw new TypeError('At most 100 reviewed federation clients can be configured.');for(const client of clients){if(typeof client?.id!=='string'||client.id.length>200||typeof client.name!=='string'||!client.name.trim()||client.name.length>100)throw new TypeError('Reviewed clients require a URL ID of at most 200 characters and name of at most 100 characters.');}return clients;}
@@ -156,10 +162,6 @@ export function federationControllerOptions({config,repository,accounts,owner,ma
   // by the organization's own writer after its own hops (relations.certify); the shard passes its grant records and the
   // writer checks the connection. Any refusal reports the member `unavailable`.
   relationImports:{certify:input=>account.relationsCertify(owner,input)},
-  // AMD-X1 (RTC-c): bound `purposes` of the rtc-signaling slot are pinned rtc-purpose lines. Inert unless EXTENSIONS_ENABLED
-  // and an operator registers the slot fragment; the purposes resolve only while RTC_SIGNALING_ENABLED is on (review
-  // follow-up), otherwise a bound purpose request is refused. The occupant itself is RTC-d.
-  boundArtefacts:rtcBoundArtefacts(()=>siteGlobal(config,'RTC_SIGNALING_ENABLED')),
   brokering:{enabled:true,mint:input=>account.brokeredMint(owner,input),seq:input=>account.brokeredSeq(owner,input),event:input=>account.brokeredFederationEvent(owner,input)},
   deriveAppSession:appSessionDerivation({repository,owner}),
   appSessionLineage:async candidate=>candidate===subject?(await repository.get(owner))?.linkedLineage??[]:[],
@@ -178,8 +180,8 @@ export function federationControllerOptions({config,repository,accounts,owner,ma
    if(capability(config,'BROKERED_INTROSPECTION_MOUNTED'))descriptors.push(...await account.brokeredDescriptors(owner));
    if(siteEnabled(config,'EVENT_BUSES_ENABLED',{subject:{kind:'account',owner}},true))descriptors.push(...await account.eventBusDescriptors(owner));
    if(ownerFlags(config,owner).enabled('INTEGRATIONS_ENABLED')&&ownerFlags(config,owner).enabled('EXTENSIONS_ENABLED'))descriptors.push(...await account.classifierDescriptors(owner));
-   // RTC-e: the built-in rtc-signaling/v1 occupant (spec §3.2), assignable by the owner to the slot's `signaling` field.
-   // RTC-f: the built-in ice-relay/v1 occupant, only with RTC_SIGNALING_ENABLED, EXTENSIONS_ENABLED, RTC_TURN_ENABLED (class
+   // RTC-e: the built-in rtc-signaling/v1 resource, assignable by the owner to the fragment's `signaling` field.
+   // RTC-f: the built-in ice-relay/v1 resource, only with RTC_SIGNALING_ENABLED, EXTENSIONS_ENABLED, RTC_TURN_ENABLED (class
    // b, read here because its `requires` is not evaluated from env) and a configured relay (TURN adapter and spend port).
    if(siteEnabled(config,'RTC_SIGNALING_ENABLED',{subject:{kind:'account',owner}},true)&&siteEnabled(config,'EXTENSIONS_ENABLED',{subject:{kind:'account',owner}},true)&&ownerFlags(config,owner).enabled('RTC_TURN_ENABLED')&&relayConfigured(config))descriptors.push({id:`${subject}/relay`,label:'Connection relay',provider:'bindle',contracts:{[ICE_RELAY_CONTRACT]:[...ICE_RELAY_METHODS]},generation:owner,limits:{maxRequestBytes:4096,maxResultBytes:16384,txRetentionSeconds:86400}});
    if(siteEnabled(config,'RTC_SIGNALING_ENABLED',{subject:{kind:'account',owner}},true)&&siteEnabled(config,'EXTENSIONS_ENABLED',{subject:{kind:'account',owner}},true))descriptors.push({id:`${subject}/rtc`,label:'Real-time connections',provider:'bindle',contracts:{[RTC_SIGNALING_CONTRACT]:[...RTC_SIGNALING_METHODS]},generation:owner,limits:{maxRequestBytes:262144,maxResultBytes:1048576,txRetentionSeconds:86400}});
@@ -194,8 +196,9 @@ export function federationControllerOptions({config,repository,accounts,owner,ma
   // results (leg certificates, callback and minted ticket links) are not kept in the journal (§12); and `listen` runs
   // outside the account gate (a long poll must not hold the writer).
   dispatcher:{durableJournal:true,readOnly:context=>context.contract===RTC_SIGNALING_CONTRACT&&['listen','endpoints'].includes(context.method),retainResult:context=>context.contract!==RTC_SIGNALING_CONTRACT&&context.contract!==ICE_RELAY_CONTRACT,execute:async context=>{if(!await validateSubject(context.subject,context.epoch))fail('unauthorized','Application authorization is no longer active.');if(context.connection)await account.appConnectionCheck(owner,context.connection.id,context.connection.generation,context.clientId);if(context.resource===`${subject}/profile`&&context.contract===PROFILE&&context.method==='read'){if(Object.keys(context.args).length)fail('invalid_args','Profile read takes no arguments.');const current=await repository.get(owner),profile=await account.accountProfile(owner);return {entity:subject,handle:current.handle,name:profile.displayName||current.handle,avatar:profile.avatar||null};}if(context.contract===RTC_SIGNALING_CONTRACT&&context.method==='listen'){const {reauthorize,...safe}=context;return account.rtcContractListen(owner,{...safe,authority:'bindle'});}return account.federationRPC({...context,authority:'bindle'});}},
-  // RTC-e: bound approvals changed (revocation, removal, narrowing): the occupant ends what is no longer approved.
-  boundChanged:async({fragment,clientId,values,at})=>{if(fragment!==RTC_SIGNALING_SLOT)return;await account.rtcAppChanged(owner,{clientId,purposes:values?(Array.isArray(values.purposes)?values.purposes:[]):null,...Number.isSafeInteger(at)?{at}:{}});},
+  // Extensions rev 3.2 (CR-X3-20): the generic grant-changed hook replaces AMD-X1's bound-approval hook. When an app no
+  // longer holds any active grant on the legacy RTC signaling fragment, the RTC code ends its sessions and endpoints.
+  grantChanged:async({fragment,clientId,active,at})=>{if(fragment!==RTC_SIGNALING_FRAGMENT||active)return;await account.rtcAppChanged(owner,{clientId,purposes:null,...Number.isSafeInteger(at)?{at}:{}});},
   connections:{notificationCheck:(connection,clientId)=>account.appNotificationCheck(owner,connection,clientId),binding:clientId=>account.appConnectionBinding(owner,clientId),connect:async(client,expected,permissions)=>account.appBindleConnect(owner,client,expected?.generation,{...permissions,...client.integration?.status==='valid'&&typeof config.INTEGRATION_CLIENT_SNAPSHOT==='function'?{integration:{kind:'external',snapshot:await config.INTEGRATION_CLIENT_SNAPSHOT(client)}}:{},expectedNotificationGeneration:expected?.notificationGeneration}),check:(connection,clientId)=>account.appConnectionCheck(owner,connection.id,connection.generation,clientId)}
  };
 }
@@ -271,8 +274,6 @@ export function federationAuthority({config,repository,shard,clock=systemNow,dir
   async organizationPreferences(context,org){await organizationShard(org);return shard(org).preferences({...context,organization:{epoch:context?.organization?.epoch,aep:context?.organization?.aep,id:org}});},
   async organizationConfigure(context,org,input){await organizationShard(org);if(!input||typeof input!=='object'||Array.isArray(input)||Object.keys(input).some(k=>!['fragment','values','expectedRevision'].includes(k)))fail('invalid_request','Unsupported preferences request.');return shard(org).configure({...context,organization:{epoch:context?.organization?.epoch,aep:context?.organization?.aep,id:org}},input);},
   async preferences(context){const owner=typeof context?.sessionToken==='string'?context.sessionToken.split('.')[0]:'';if(!UUID.test(owner))fail('unauthorized','Sign in to continue.');const current=await repository.get(owner);if(!current||current.status!=='active')fail('unauthorized','Sign in to continue.');return shard(owner).preferences(context);},
-  /** RTC-g follow-up: the signed-in owner narrows one app's bound options in the owner's own shard (as `grants`). */
-  async narrowBoundOptions(context,input){const owner=typeof context?.sessionToken==='string'?context.sessionToken.split('.')[0]:'';if(!UUID.test(owner))fail('unauthorized','Sign in to continue.');const current=await repository.get(owner);if(!current||current.status!=='active')fail('unauthorized','Sign in to continue.');return shard(owner).narrowBoundOptions(context,input);},
   revoke:async(context,id)=>(await controllerFor(id)).revoke(context,id),exchange:async input=>{await allowed(input?.clientId);const controller=await controllerFor(input.code);return controller.exchange(await authenticateClient(input,controller));},tokenClient:async token=>(await controllerFor(token)).tokenClient(token),rpc:async(token,envelope,transport)=>{const controller=await controllerFor(token),waits=busWaitsPort(config.EVENT_BUS_WAITS)??config.EVENT_BUS_WAITER;if(!waits||envelope?.contract!==EVENT_BUS_CONTRACT||envelope.method!=='read')return controller.rpc(token,envelope,transport);const clientId=await controller.tokenClient(token);if(!siteEnabled(config,'EVENT_BUSES_ENABLED',{subject:{kind:'account',owner:token.split('.')[0]},client:{clientId}},true))return controller.rpc(token,envelope,transport);return holdBusRPC({owner:token.split('.')[0],waits,rpc:lease=>controller.rpc(token,envelope,{...transport,busWaits:true,...lease?{busResume:lease}:{}}),recheck:()=>controller.tokenClient(token)});},
   refresh:async input=>{await allowed(input?.clientId);const controller=await controllerFor(input.refreshToken);return controller.refresh(await authenticateClient(input,controller));},
   approve:async(context,input,options)=>(await controllerFor(input.requestId)).approve(context,input,options),

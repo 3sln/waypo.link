@@ -6,8 +6,8 @@ Status: provisional, 2026-10-20. Design evidence only. Nothing is implemented. S
 
 Revision 1 of three documents:
 
-- [events](../spec/events.md) (EV);
-- [incremental authorization](../spec/incremental-authorization.md) (IA);
+- [events](../spec/extensions/events.md) (EV);
+- [incremental authorization](../spec/extensions/incremental-authorization.md) (IA);
 - [consent experience](../architecture/consent-experience.md) (CX).
 
 Two independent reviewers each read the drafts, the related core specs (extensions, integrations, protocol, auth, contracts, activity, components profile) and the current consent code. Neither edited files.

@@ -8,6 +8,7 @@ import { metadataStore } from '../packages/app/memory-providers.mjs';
 import { fakeClock } from './helpers/chaos.mjs';
 import { createTestEngine } from './helpers/app-engine.mjs';
 import { World, json } from './helpers/portability-network.mjs';
+import { EXT } from '../packages/core/extensions.mjs';
 import { SuccessorRegistry, portabilityClient, portabilityURL, createPortabilityFetch, PORTABILITY_LIMITS, SUCCESSOR_OPERATIONS, AdoptSuccessor, ConfirmSuccessor, PresentSuccessor, ResolveSuccessor } from '../packages/identity/successors.mjs';
 import { signMoveStatement, signMoveAttestation, statementDigest, parseMoveStatement, attestationKeyThumbprint } from '../packages/identity/succession.mjs';
 import { removeAttestationKey, attestationRootThumbprints, SHIPPED_ATTESTATION_ROOTS } from '../packages/identity/attestation-keys.mjs';
@@ -301,7 +302,7 @@ test('the portability client applies the client-metadata fetch policy', async t 
   assert.equal(portabilityURL('https://a.example:8443/x'), null); assert.equal(portabilityURL('https://u@a.example/x'), null); assert.equal(portabilityURL('https://a.example/x#f'), null);
   assert.ok(portabilityURL('https://a.example/directory?sub=x'));
   const clock = fakeClock(), seen = [];
-  const fetch = async (url, init) => { seen.push(init); if (url.endsWith('/manifest.json')) return json({ version: '0', issuer: A, features: { 'directory.v1': { directory_url: `${A}/dir` }, 'portability.v1': { move_endpoint: 'https://evil.example/move', attestation_jwks_uri: `${A}/k` } } }); if (url.includes('/dir')) return new Response('x'.repeat(PORTABILITY_LIMITS.directoryBytes + 1), { status: 200, headers: { 'Content-Type': 'application/json' } }); return json({}, 302, { Location: 'https://evil.example/' }); };
+  const fetch = async (url, init) => { seen.push(init); if (url.endsWith('/manifest.json')) return json({ version: '0', issuer: A, extensions: [{ spec: EXT.directory, options: { directory_url: `${A}/dir` } }, { spec: EXT.portability, options: { move_endpoint: 'https://evil.example/move', attestation_jwks_uri: `${A}/k` } }] }); if (url.includes('/dir')) return new Response('x'.repeat(PORTABILITY_LIMITS.directoryBytes + 1), { status: 200, headers: { 'Content-Type': 'application/json' } }); return json({}, 302, { Location: 'https://evil.example/' }); };
   const client = portabilityClient({ fetch, clock: clock.now, limits: { ...PORTABILITY_LIMITS, perSite: { windowMs: 60000, limit: 3 } } });
   const manifest = await client.manifest(A);
   assert.equal(manifest.status, 'ok'); assert.equal(manifest.portability, null, 'an off-origin feature member makes the feature absent');

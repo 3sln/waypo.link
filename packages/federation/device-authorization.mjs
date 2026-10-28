@@ -9,6 +9,7 @@ import {siteGlobal} from '../flags/read.mjs';
 // signature and nonce → client → identity read. The owner shard then turns the single redemption into one app session
 // (app-sessions.mjs): DPoP-bound refresh and access tokens, no absolute lifetime unless the user chose one, a sliding
 // idle limit, and the approval lineage checked on every refresh and every RPC.
+import {EXT,declare} from '../core/extensions.mjs';
 import {AppAction} from '../app/engine.mjs';
 import {digest,boundedString,canonical} from '../core/records.mjs';
 import {fail,object,https} from './schema.mjs';
@@ -16,7 +17,7 @@ import {verifyProof,DPOP_TYP,jktPattern} from './dpop.mjs';
 import {metadataClientHost} from './client-metadata.mjs';
 import {linkedNetwork} from '../identity/linked-approval.mjs';
 import {createAppSession,issueAppAccess,boundTokenId,revokeFamily,endLineage,appSessionPolicy} from './app-sessions.mjs';
-export const DEVICE_GRANT='urn:ietf:params:oauth:grant-type:device_code',DEVICE_FEATURE='device-authorization.v1';
+export const DEVICE_GRANT='urn:ietf:params:oauth:grant-type:device_code',DEVICE_FEATURE=EXT.deviceAuthorization;
 export const DEVICE_LIMITS=Object.freeze({body:8192,client:{windowMs:600000,limit:300},address:{windowMs:600000,limit:3},pollPrefix:{windowMs:60000,limit:120},pollGlobal:{windowMs:60000,limit:20000},approvalMs:600000,jti:20000});
 const NO_STORE=Object.freeze({'Cache-Control':'no-store',Pragma:'no-cache'});
 const DEVICE_CODE=/^([a-f0-9-]{36})\.[A-Za-z0-9_-]{43}$/,REQUEST_ID=/^[a-f0-9-]{36}$/,OWNER_TOKEN=/^([a-f0-9-]{36})\.[A-Za-z0-9_-]{43}$/;
@@ -55,7 +56,7 @@ export class MemoryJtiCache {
   if((this.seen.get(name)??0)>now)return false;if(this.seen.size>=this.max)fault('temporarily_unavailable','Device sign-in is busy. Try again shortly.',{retryAfter:5});this.seen.set(name,expiresAt);return true;}
 }
 /** Manifest members for LA3's declaration row (only where the routes are mounted and the flag is on). */
-export function deviceManifest(issuer){return {device_authorization_endpoint:`${issuer}/oauth/device_authorization`,grant_types_supported:[DEVICE_GRANT,'refresh_token'],dpop_signing_alg_values_supported:['ES256'],revocation_endpoint:`${issuer}/oauth/revoke`,features:{[DEVICE_FEATURE]:{}}};}
+export function deviceManifest(issuer){return {device_authorization_endpoint:`${issuer}/oauth/device_authorization`,grant_types_supported:[DEVICE_GRANT,'refresh_token'],dpop_signing_alg_values_supported:['ES256'],revocation_endpoint:`${issuer}/oauth/revoke`,extensions:[declare(DEVICE_FEATURE)]};}
 /** Owner-shard wiring for app sessions: the host's lifetime policy (app-sessions.mjs `appSessionPolicy`) and the
  * lineage port. LA3 calls this when it builds each owner FederationService, so refreshes on any instance see it. */
 export function attachAppSessions(service,{linked,config={},policy=appSessionPolicy(config)}={}){

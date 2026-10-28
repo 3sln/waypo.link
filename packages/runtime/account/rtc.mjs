@@ -23,12 +23,14 @@
 //   rtcRosterDirectory({control})                  tests and operators (internal): the RTC directory (review F2)
 //   rtcContractListen(owner, context)              RTC-e: the contract's `listen` from the verified federation RPC
 //                                                  dispatch context, outside the account gate (a real long poll)
-//   rtcAppChanged(owner, {clientId, purposes, at}) RTC-e: the federation shard's bound-approval hook after a grant
-//                                                  revocation, an app removal or bound narrowing: `purposes: null`
-//                                                  runs rtc.lifecycle `app-revoked`, a list runs `app-narrowed`. RTC-i
-//                                                  review L1: it first records {purposes, revision, at} for the client
-//                                                  (rtc/approval/), which contractActor intersects with any older
-//                                                  dispatch approval
+//   rtcAppChanged(owner, {clientId, purposes, at}) the federation shard's `grantChanged` hook (packages/runtime/
+//                                                  federation.mjs) once the client holds no active grant on the
+//                                                  signaling fragment (revocation, app removal): `purposes: null` runs
+//                                                  rtc.lifecycle `app-revoked`, which deletes the client's interim
+//                                                  approval record and ends its RTC state; a list runs `app-narrowed`
+//                                                  (the record keeps only those lines). Extensions rev 3.2 removed
+//                                                  AMD-X1 bound narrowing. TODO(signaling Appendix C.2: approvals move
+//                                                  to intents session handler approvals)
 //   rtcAppRevoked(owner, {clientId?, all?})        RTC-e: the account's connection cascade (disconnect, removal,
 //                                                  sever) runs rtc.lifecycle `app-revoked` (internal)
 //   rtcResourceMethod(c, owner, context)           RTC-e: the RESOURCE_METHOD_HANDLERS entry for the signaling contract
@@ -47,10 +49,10 @@
 //                 (detached task, alarm) or at `open` (§4.1)
 //   signer        certificationSigner over this account (the person's or organization's ACTIVE certification key)
 //   linkSigner    the identity signing key (ticket metas)
-//   bound         config.RTC_BOUND_CHECK(input) -> boolean: FederationService.checkBound, wired by the adapter (RTC-e);
-//                 absent means nothing is approved, so every endpoint operation is refused (fail closed). Used only
-//                 outside the account gate (fan-out eligibility); a contract RPC's actor carries the approval from its
-//                 verified dispatch context instead (RTC-i bug 1: no call into the federation shard inside the gate)
+//   (approvals)   none: per-app purpose approval is the interim owner-local record in this account's own store
+//                 (packages/rtc/approvals.mjs, rtc.approve-app), read by RtcService itself; no call into the federation
+//                 shard (RTC-i bug 1). Extensions rev 3.2 removed AMD-X1 `bind` and FederationService.checkBound.
+//                 TODO(signaling Appendix C.2: approvals move to intents session handler approvals)
 //   contacts      ContactEndpointService.inspect over this owner's contact links
 //   transport     foreignRtcTransport (RTC-e): same-host principals through sameHostRtcTransport over rtcPeer; other
 //                 issuers only through the adapter's SSRF-screened RTC_EGRESS ({send}), the RTC_FOREIGN_ISSUERS
@@ -79,7 +81,7 @@ import {IdentityDirectory} from '../../federation/directory.mjs';
 import {foreignIssuers,directoryHostLimiter} from './foreign-directory.mjs';
 import {createPushTransport} from '../../activity/web-push.mjs';
 import {RtcKeyRoster,RtcDeliveryError,foreignRtcTransport,rtcEgress} from '../../rtc/federation.mjs';
-import {RTC_FEATURE,RTC_SIGNALING_CONTRACT,RTC_SIGNALING_SLOT} from '../../rtc/extension.mjs';
+import {RTC_FEATURE,RTC_SIGNALING_CONTRACT,RTC_SIGNALING_FRAGMENT,ICE_RELAY_FRAGMENT} from '../../rtc/extension.mjs';
 import {RtcService,rtcProvider,sameHostRtcTransport,RTC_ENDPOINT_OPERATIONS,RTC_OWNER_OPERATIONS,RTC_WIDENING,RTC_SIGNALING_FLAG,RTC_LIMIT_VALUES,RtcIngest,RtcInbox,RtcTick,RtcLifecycle,RtcOutboxDrain,RTC_CONTRACT_OPERATIONS,RTC_FOREIGN_FLAG,RtcRelay,RtcRelaySweep,RTC_RELAY_OPERATIONS,RTC_RELAY_CONTRACT_OPERATIONS,RTC_TURN_FLAG,turnAdapterFrom} from '../../app/domains/rtc.mjs';
 import {ICE_RELAY_CONTRACT} from '../../rtc/extension.mjs';
 
@@ -164,7 +166,6 @@ export function rtcEngine(c){
   },
   signer:owner=>signerFor(c)(owner),
   linkSigner:async owner=>{const k=await c.signingKey(owner);return k?{kid:k.kid,privateKey:k.privateKey}:null;},
-  bound:typeof config.RTC_BOUND_CHECK==='function'?{check:input=>config.RTC_BOUND_CHECK(input)}:null,
   contacts:{inspect:async link=>{const owner=await c.metadata.get('owner');let inspected=null;try{inspected=await c.endpoints?.inspect(link);}catch{inspected=null;}const g=inspected?.grant;return g&&g.owner===owner&&typeof g.id==='string'?{parent:g.id,quarantined:g.quarantined===true}:null;}},
   transport,pushTransport,defer:()=>kick(c),hostLimits:hostLimitsFor(config),allowLoopback});
  // RTC-f: the built-in ice-relay/v1 occupant. Unreachable unless both flags are on for the owner AND both ports exist.
@@ -181,52 +182,28 @@ const enabled=(c,owner)=>{try{return flagsFor(c.config,{subject:{kind:'account',
 /** RTC-f: the relay also needs RTC_TURN_ENABLED (class b: its `requires` is not evaluated from env, so both are read). */
 const relayEnabled=(c,owner)=>{try{return enabled(c,owner)&&flagsFor(c.config,{subject:{kind:'account',owner}}).enabled(RTC_TURN_FLAG)===true;}catch{return false;}};
 const hasState=async c=>(await c.metadata.list({prefix:'rtc/',limit:1})).size>0;
-/** RTC-i review L1: the account-local record of the last bound change the federation shard reported for a client
- * (`rtc/approval/<SHA-256 of the client id>`): {clientId, purposes (a list, or null when no bound grant remains),
- * revision (a local counter), at (the shard's clock when it read the remaining grants)}. One row per client that
- * ever had a change; replaced, never appended. */
-const APPROVAL_PREFIX='rtc/approval/';
-const approvalKey=async clientId=>APPROVAL_PREFIX+base64url(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode('rtc-approval\0'+clientId))));
-/** The dispatch approval narrowed by the client's approval record when that record is at least as new as the
- * approval (the approval's `at` is not later than the record's): a narrowing or revocation that committed after the
- * RPC's authorization transaction but whose hook entered this account's gate first is never bypassed. A malformed
- * record approves nothing (fail closed). An approval read after the record (a later approval or narrowing) stands. */
-function narrowedApproval(approval,at,record){
- if(record===undefined||record===null)return approval;
- if(!plain(record)||!Number.isSafeInteger(record.at)||!(record.purposes===null||Array.isArray(record.purposes)))return {values:{},versions:{}};
- if(Number.isSafeInteger(at)&&at>record.at)return approval;
- if(record.purposes===null)return {values:{},versions:{}};
- const keep=new Set(record.purposes),values={};
- for(const [name,list]of Object.entries(approval.values))values[name]=name==='purposes'&&Array.isArray(list)?list.filter(v=>keep.has(v)):list;
- const lines=new Set(Array.isArray(values.purposes)?values.purposes:[]);
- return {values,versions:Object.fromEntries(Object.entries(approval.versions).filter(([line])=>lines.has(line)))};
-}
-
 /** RTC-e: the {kind:'app'} actor from the VERIFIED federation RPC dispatch context (never from arguments): the token's
- * subject owner, client, the client's registered origin, the token's grant ids (required by checkBound), its epoch
+ * subject owner, client, the client's registered origin, the token's grant ids, its epoch
  * and, for a DPoP-bound token, the key's jkt. Live checks as every built-in contract handler makes them. */
-async function contractActor(c,owner,context,{contract=RTC_SIGNALING_CONTRACT,resource='rtc',operations=RTC_CONTRACT_OPERATIONS}={}){
+async function contractActor(c,owner,context,{contract=RTC_SIGNALING_CONTRACT,fragment=RTC_SIGNALING_FRAGMENT,resource='rtc',operations=RTC_CONTRACT_OPERATIONS}={}){
  const forbidden=()=>{throw new StorageError('forbidden','Real-time connection access denied.',403);};
  const origin=c.config.APP_ORIGIN,subject=`${origin}/entities/${owner}`;
  if(!plain(context)||context.authority!=='bindle'||context.contract!==contract||context.subject!==subject||context.resource!==`${subject}/${resource}`||context.resourceGeneration!==owner||!plain(context.connection)||typeof context.connection.id!=='string'||!Number.isSafeInteger(context.connection.generation)||context.epoch===undefined||context.epoch===null||typeof context.clientId!=='string'||!plain(context.args))forbidden();
  const operation=typeof context.method==='string'&&Object.hasOwn(operations,context.method)?operations[context.method]:null;if(!operation)throw new StorageError('unsupported_method','Unsupported signaling method.',400);
+ // The authorizing grant is on the legacy fragment itself, so its revocation reaches rtcAppChanged (FederationService
+ // grantChanged) and ends what the app holds here. TODO(signaling Appendix C.2: approvals move to intents session
+ // handler approvals)
+ if(!plain(context.grant)||context.grant.fragment!==fragment)forbidden();
  if(!Array.isArray(context.grants)||!context.grants.length||context.grants.length>256||context.grants.some(g=>typeof g!=='string'))forbidden();
  let appOrigin=null;try{appOrigin=new URL(typeof context.clientOrigin==='string'?context.clientOrigin:context.clientId).origin;}catch{appOrigin=null;}if(!appOrigin||appOrigin==='null')forbidden();
  if(typeof c.config.FEDERATION_IDENTITY_CHECK!=='function'||await c.config.FEDERATION_IDENTITY_CHECK(owner,context.epoch)!==true)throw new StorageError('unauthorized','Application authorization is no longer active.',401);
  await c.apps.check(owner,context.connection.id,context.connection.generation,context.clientId);
- // RTC-i (bug 1): this handler runs inside the owner's account gate, so it must never call into the federation shard
- // (whose gate another RPC may hold while it waits on this account: tokenRecord's connection check). The bound
- // approval of the signaling fragment comes with the verified dispatch context instead (FederationService rpc
- // `bound`, computed in that RPC's own authorization transaction); without one nothing is approved (fail closed).
- // RTC-i review L1: that approval is narrowed by the client's account-local approval record (rtcAppChanged), so a
- // narrowing or revocation whose hook entered this gate before this RPC is never bypassed by an older snapshot.
- // RTC wargame M4 (revises RTCi-11): the ice-relay/v1 actor carries the SIGNALING slot's approval behind the same
- // token, narrowed by the same approval record, because relay issuance now re-checks the session's purpose live
- // (§9.1). A token without the signaling grant carries an empty approval, so the check stays closed and off the shard.
- const bound=plain(context.bound)&&Object.hasOwn(context.bound,RTC_SIGNALING_SLOT)?context.bound[RTC_SIGNALING_SLOT]:null;
- let approval=plain(bound)&&plain(bound.values)&&plain(bound.versions)?{values:structuredClone(bound.values),versions:structuredClone(bound.versions)}:{values:{},versions:{}};
- {let record;try{record=await c.metadata.get(await approvalKey(context.clientId));}catch{record=false;}approval=narrowedApproval(approval,plain(bound)?bound.at:undefined,record===false?{}:record);}
- return {operation,actor:{kind:'app',owner,clientId:context.clientId,origin:appOrigin,grants:[...context.grants],epoch:context.epoch,bound:approval,...typeof context.jkt==='string'?{jkt:context.jkt}:{}}};
+ // RTC-i (bug 1): this handler runs inside the owner's account gate, so it never calls into the federation shard. The
+ // purpose approval is not carried here: RtcService reads the owner's interim approval record from this account's
+ // own store on every method (extensions rev 3.2 removed AMD-X1 `bind` and the dispatch context's `bound`), for the
+ // signaling and the ice-relay/v1 actor alike (wargame M4: relay issuance re-checks the session's purpose).
+ // TODO(signaling Appendix C.2: approvals move to intents session handler approvals)
+ return {operation,actor:{kind:'app',owner,clientId:context.clientId,origin:appOrigin,grants:[...context.grants],epoch:context.epoch,...typeof context.jkt==='string'?{jkt:context.jkt}:{}}};
 }
 /** RTC-e RESOURCE_METHOD_HANDLERS entry for `rtc-signaling/v1` (inside the account gate: `listen` never waits here;
  * the runtime dispatcher sends `listen` to rtcContractListen, outside the gate). */
@@ -239,7 +216,7 @@ export async function rtcResourceMethod(c,owner,context){
 /** RTC-f RESOURCE_METHOD_HANDLERS entry for `ice-relay/v1` on the built-in relay occupant (`${subject}/relay`, declared
  * only while both flags are on and the relay is configured): the verified actor, then rtc.relay-credentials. */
 export async function rtcRelayResourceMethod(c,owner,context){
- const {operation,actor}=await contractActor(c,owner,context,{contract:ICE_RELAY_CONTRACT,resource:'relay',operations:RTC_RELAY_CONTRACT_OPERATIONS});
+ const {operation,actor}=await contractActor(c,owner,context,{contract:ICE_RELAY_CONTRACT,fragment:ICE_RELAY_FRAGMENT,resource:'relay',operations:RTC_RELAY_CONTRACT_OPERATIONS});
  return c.rtcDispatch(owner,{operation,actor,input:context.args});
 }
 
@@ -311,14 +288,11 @@ export const methods={
   if(context?.method!=='listen')throw new StorageError('unsupported_method','Unsupported signaling method.',400);
   const {actor}=await contractActor(this,owner,context);return this.rtcListen(owner,{actor,input:context.args});
  },
- async rtcAppChanged(owner,{clientId,purposes,at}={}){
+ async rtcAppChanged(owner,{clientId,purposes}={}){
   if(await this.metadata.get('owner')!==owner||typeof clientId!=='string'||!clientId||clientId.length>2048||!(purposes===null||Array.isArray(purposes)&&purposes.length<=16&&purposes.every(p=>typeof p==='string')))return {ended:0};
-  // RTC-i review L1: record the change before anything else (inside this account's gate, so every contract RPC that
-  // enters the gate afterwards intersects its dispatch approval with it). A later-reported change never yields to an
-  // earlier one that arrives late. Without the shard's `at` (direct callers), this writer's clock stands in.
-  const when=Number.isSafeInteger(at)&&at>=0?at:Date.now(),path=await approvalKey(clientId);
-  await this.metadata.transaction(async tx=>{if(await tx.get('rtc/closed'))return;const prior=await tx.get(path);if(plain(prior)&&Number.isSafeInteger(prior.at)&&prior.at>when)return;
-   await tx.put(path,{clientId,purposes:purposes===null?null:[...purposes],revision:(plain(prior)&&Number.isSafeInteger(prior.revision)?prior.revision:0)+1,at:when});});
+  // The approval record is deleted (or narrowed) by rtc.lifecycle in the same transaction that ends the app's RTC
+  // state, so this runs whenever any rtc/ state exists (an approval record alone included). Revocation always wins:
+  // a late hook can only remove an approval (fail closed), and the owner approves again after a new grant.
   if(!await hasState(this))return {ended:0};
   return run(this,new RtcLifecycle({actor:system(owner),input:purposes===null?{event:'app-revoked',clientId}:{event:'app-narrowed',clientId,purposes:[...purposes]}}));
  },

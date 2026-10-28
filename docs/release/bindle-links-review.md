@@ -1,6 +1,6 @@
 # Bindle links — independent security and interop review
 
-Date: 2026-10-14. Scope: [links draft](../spec/links.md) and [decision note](../architecture/bindle-links.md), checked against contact-tokens, contact-delivery, security.md, `contact-endpoints.mjs`, `contact-tokens.mjs`, `developer-contact.mjs`, the signed-contact route in `http.mjs`, and the DEVLOG developer-contact entries. This was a design review by an independent agent reviewer. No code or tests were run, and nothing here is deployment evidence. Human protocol/security reviewer ___ / date ___ / outcome ___.
+Date: 2026-10-14. Scope: [links draft](../spec/extensions/links.md) and [decision note](../architecture/bindle-links.md), checked against contact-tokens, contact-delivery, security.md, `contact-endpoints.mjs`, `contact-tokens.mjs`, `developer-contact.mjs`, the signed-contact route in `http.mjs`, and the DEVLOG developer-contact entries. This was a design review by an independent agent reviewer. No code or tests were run, and nothing here is deployment evidence. Human protocol/security reviewer ___ / date ___ / outcome ___.
 
 The reviewer confirmed that both documents reflect the user-approved decisions: the coordinator's provisional points 1–9, no anonymous delivery through any link, and response nonce with mint time, expiry and a bounded replay record.
 

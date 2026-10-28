@@ -36,7 +36,7 @@ const permanent=(code,status=0)=>{throw new RtcDeliveryError(code,{permanent:tru
 
 /**
  * The key roster (§8.2 step 3, §4.1, design §3.4). `directory({control})` returns the host's IdentityDirectory for this
- * entity (built with `features: ['rtc-signaling.v1']` and the RTC issuer allowlist) or null while gated off; with
+ * entity (built with `features: [RTC_FEATURE]` (the interim legacy extension spec URL) and the RTC issuer allowlist) or null while gated off; with
  * `control: true` it is gated only by the allowlist, DIRECTORY_ENABLED and the egress, never by RTC_FOREIGN_ENABLED
  * (review F2: control-only delivery is narrowing). Reads never dial; only `warm` (the caller-initiated fetch at
  * `open`, §4.1), `run` (background, from the alarm or the detached task) and `feature` for delivery do, and only

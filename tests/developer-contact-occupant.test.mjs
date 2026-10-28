@@ -8,7 +8,7 @@ import {AccountController} from '../packages/runtime/accounts.mjs';
 import {SqliteMetadata,SerialGate} from '../apps/node/resources.mjs';
 import {developerContactLink,developerContactRoutes,DEVELOPER_CONTACT_POLICY} from '../packages/runtime/developer-contact.mjs';
 import {DEVELOPER_OCCUPANT_POINTER} from '../packages/runtime/account/links.mjs';
-import {MESSAGING_CONTACT_LINK_TYPE,MESSAGING_INGRESS_SLOT} from '../packages/links/types.mjs';
+import {MESSAGING_CONTACT_LINK_TYPE,MESSAGING_INGRESS_FRAGMENT} from '../packages/links/types.mjs';
 import {key} from '../packages/core/records.mjs';
 
 const origin='https://developer.example',BOX='https://box.example/client';
@@ -18,7 +18,7 @@ async function world({mode='occupant'}={}){
  const make=async(handle,extra={})=>{const id=crypto.randomUUID(),metadata=new SqliteMetadata(':memory:'),stored=new Map(),bucket={put:async(k,b)=>{stored.set(k,new Uint8Array(b));},get:async k=>stored.has(k)?{size:stored.get(k).byteLength,arrayBuffer:async()=>stored.get(k).buffer.slice(0)}:null,delete:async k=>{stored.delete(k);}};closers.push(()=>metadata.close());
   const controller=new AccountController({metadata,gate:new SerialGate(),blobs:bucket,archives:bucket,config:{APP_ORIGIN:origin,KEY_ENCRYPTION_KEY:Buffer.alloc(32,12).toString('base64'),WORK_LIMITS_ENABLED:'false',STORAGE_WRITE_ENABLED:'false',CONVERSATION_ACCOUNT:o=>accounts.get(o),IDENTITY_ACCOUNT:async o=>directory.get(o)??null,DEVELOPER_CONTACT_POPULATION:{policy:async()=>({mode:'all-active',observedAt:Date.now(),validUntil:Date.now()+30000})},...extra}});
   await controller.warm(id);await controller.signingKey(id);controller.developerContactTier=async()=>'free';accounts.set(id,controller);directory.set(id,{status:'active',handle});return {id,handle,controller};};
- const developer=await make('n.dev',{LINKS_ENABLED:'true',LINK_SLOT_OCCUPANT:async({slot})=>slot===MESSAGING_INGRESS_SLOT?seat.value:null,...mode?{DEVELOPER_CONTACT_MODE:mode}:{}});
+ const developer=await make('n.dev',{LINKS_ENABLED:'true',LINK_SLOT_OCCUPANT:async({fragment})=>fragment===MESSAGING_INGRESS_FRAGMENT?seat.value:null,...mode?{DEVELOPER_CONTACT_MODE:mode}:{}});
  const actor={kind:'app',owner:developer.id,clientId:BOX,handle:developer.handle,generation:1,connection:'cnx-1'};
  const issue=(input={})=>developer.controller.linkOperation(developer.id,{actor,operation:'links.issue',input:{type:MESSAGING_CONTACT_LINK_TYPE,claims,expiresAt:Date.now()+30*86400000,audience:{policy:DEVELOPER_CONTACT_POLICY},...input}});
  const assignmentId=crypto.randomUUID(),recipient={id:developer.id,handle:developer.handle,assignmentId,status:'active',systemIdentity:{version:1,handle:'ray',role:'developer',assignmentId,bootstrapId:crypto.randomUUID(),claimDigest:'a'.repeat(64)}};

@@ -25,7 +25,7 @@ Open http://localhost:8788. The Node adapter persists SQLite metadata and privat
 
 ## Current implementation
 
-The app has real WebAuthn/passkey and optional Argon2id-password login, multiple passkeys, revocable sessions, device/TV approval, mandatory encrypted recovery files, signed contact endpoints, bounded blob messaging, owner read/classification/rules, notification preferences, and storage adapter seams. Recovery files combine every selected typed answer into an Argon2id-derived AES-GCM key; readable questions/hints and the risk of guessing personal information offline are explained in the [recovery specification](docs/spec/recovery-file.md).
+The app has real WebAuthn/passkey and optional Argon2id-password login, multiple passkeys, revocable sessions, approving a sign-in from another device (session handoff), mandatory encrypted recovery files, messages and activity from connected apps, notification preferences, and storage adapter seams. Peer messaging between people is the separate Parlay app (`apps/parlay`), not part of the core. Recovery files combine every selected typed answer into an Argon2id-derived AES-GCM key; readable questions/hints and the risk of guessing personal information offline are explained in the [recovery specification](docs/3sln/accounts/recovery-file.md).
 
 Static code contributions provide portal views, navigation, commands and contextual user-overridable keybindings. UI localization uses `@3sln/bab`; user content remains unchanged. The front end follows the 3sln stack's injected providers, named Actions, Query projections and pure UI factories. Vendored dependencies retain licenses and provenance.
 
@@ -46,6 +46,6 @@ Browser checks run against a fresh local Wrangler instance and use actual Chrome
 
 `tests/spikes/coop-opener/run.mjs` is a retained manual browser spike (COOP/opener behavior across Chromium and Firefox, results in [docs/release/coop-opener-spike.md](docs/release/coop-opener-spike.md)); it is not part of any gate. Islands and element suites that also use Firefox (`tests/browser/islands-embed.mjs`, `islands-sw.mjs`) run from `npm run test:e2e`; `tests/browser/embed-elements.mjs` and `provider-matrix.mjs` are run manually with `node --test`.
 
-[Specifications](docs/spec/protocol.md), [module development](docs/modules.md), [independent audits](docs/release/) and the screenshot walkthrough live under `docs/`. The assets build publishes semantic HTML and Markdown documentation, machine-readable artefacts, `llms.txt` and an accessible landing page.
+Documentation lives under `docs/`, in three groups: the Bindle core specification in [docs/spec/](docs/spec/protocol.md) (start with the protocol), optional Bindle extensions in `docs/spec/extensions/`, and 3sln.me reference-service documents in `docs/3sln/`. Superseded specs are kept in `docs/spec/superseded/`. Each document opens with its group, status, what it covers and what it does not. [Module development](docs/modules.md), [independent audits](docs/release/) and the (outdated) screenshot walkthrough are also there. The assets build publishes semantic HTML and Markdown documentation, machine-readable artefacts, `llms.txt` and an accessible landing page.
 
 The GitHub publish workflow is manual and enforces the release gates. Main pushes run checks and do not deploy.

@@ -21,7 +21,7 @@ export class AccountFeatureState extends AppQuery{
   state.ACCOUNT_EXPORT_ENABLED=await store.get('export/active')!==undefined;
   state.ACCOUNT_DELETION_ENABLED=['scheduled','executing'].includes((await store.get('deletion/request-v1'))?.state);
   state.INTEGRATIONS_ENABLED=await any('resource/',r=>live(r,owner)&&r.kind==='app-connection'&&!!r.integration);
-  state.EXTENSIONS_ENABLED=await any('connections/slot/',r=>r?.occupants?.length>0);
+  state.EXTENSIONS_ENABLED=await any('connections/field/',r=>r?.entries?.length>0)||await any('connections/feature/',r=>['active','suspended'].includes(r?.state));
   state.LINKS_ENABLED=await any('link/',r=>live(r,owner))||await any(key('key-delegation',owner),r=>live(r,owner));
   // ORG-1: an organization's own account, and a person who is owner of record of one, stay serviceable.
   state.ORGANIZATIONS_ENABLED=(await store.get('org/record-v1'))?.kind==='organization'||await any('orgs/owned/',r=>typeof r?.org==='string');

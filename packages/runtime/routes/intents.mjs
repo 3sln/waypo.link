@@ -1,4 +1,5 @@
 // INT-5. Public transport only renders; owner decisions use the router's origin/session/CSRF checks.
+import {EXT,declare} from '../../core/extensions.mjs';
 import {createAppEngine,read} from '../../app/engine.mjs';
 import {systemClock,cryptoRandom,nullAudit} from '../../app/providers.mjs';
 import {ReceiveIntent,viewerActivated} from '../../intents/router.mjs';
@@ -21,7 +22,8 @@ async function activation(env,value,intent){try{if(typeof value!=='string'||valu
 // Web app manifest members this module owns. site.mjs serves /manifest.webmanifest (branding, Cache-Control) and merges
 // these in, so one handler answers in both flag states. Off: the static manifest's legacy `/console?intent=%s` handler.
 export function intentManifestMembers(env){return flagGlobal(env,'INTENT_LINKS_ENABLED')?{protocol_handlers:[{protocol:'web+bindle',url:'/i#%s'}]}:{};}
-export function intentFeature(env){return flagGlobal(env,'INTENT_LINKS_ENABLED')?{'intent-links.v1':{endpoint:env.APP_ORIGIN+'/i'}}:{};}
+/** The intent-links extension entry (extensions rev 3.2 §2.8), as a list for withExtensionEntries. */
+export function intentFeature(env){return flagGlobal(env,'INTENT_LINKS_ENABLED')?[declare(EXT.intentLinks,{endpoint:env.APP_ORIGIN+'/i'})]:[];}
 export const allowedMethods=path=>path==='/i'||path==='/i/contact'?['GET','HEAD','POST']:path==='/api/intents/records'?['GET']: /^\/api\/intents\/(resolve|decide|exclude|ignore|remove)$/.test(path)?['POST']:null;
 async function receive(input){const engine=createAppEngine({providers:{clock:systemClock,random:cryptoRandom,audit:nullAudit}});try{return await read(engine,new ReceiveIntent({input}));}finally{await engine.dispose();}}
 async function page(request,env,url,{value='',placement='',legacy='',status=200,error=false}={}){

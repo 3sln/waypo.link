@@ -47,22 +47,24 @@ test('legacy read-site tables: exact strings, booleans, defaults, dependencies a
  assert.equal(Object.keys(federationSchemas({INTEGRATIONS_ENABLED:true,EXTENSIONS_ENABLED:true})).length,2);
 });
 
+// The classifier is a built-in resource since extensions rev 3.2, no longer a built-in integration; google-drive is
+// the remaining built-in integration that exercises the connect-built-in writer path.
 test('writer Actions honor account, percentage and kill; cached engines do not capture the first rollout',async t=>{
  const f=await account(t,{flags:{INTEGRATIONS_ENABLED:record({rules:[{when:{accounts:[owner]},serve:{value:true}}]})}});
- let result=await f.invoke('connectionsOwner',{operation:'connections.connect-built-in',input:{integration:'classifier'}});assert.equal(result.$fault,undefined);assert.equal(result.kind,'app-connection');
+ let result=await f.invoke('connectionsOwner',{operation:'connections.connect-built-in',input:{integration:'google-drive'}});assert.equal(result.$fault,undefined);assert.equal(result.kind,'app-connection');
  await f.runtime.publish(snapshot({INTEGRATIONS_ENABLED:record({rules:[{when:{},serve:{value:true,percent:0}}]})},2));
- result=await f.invoke('connectionsOwner',{operation:'connections.connect-built-in',input:{integration:'classifier'}});assert.equal(result.$fault?.code,'not_found');
+ result=await f.invoke('connectionsOwner',{operation:'connections.connect-built-in',input:{integration:'google-drive'}});assert.equal(result.$fault?.code,'not_found');
  assert.equal((await f.invoke('connectionsOwner',{operation:'connections.list'})).connections.length,1,'owner read ignores targeting');
  await f.runtime.publish(snapshot({INTEGRATIONS_ENABLED:record({rules:[{when:{},serve:{value:true,percent:10000}}]})},3));
- assert.equal((await f.invoke('connectionsOwner',{operation:'connections.connect-built-in',input:{integration:'classifier'}})).$fault,undefined);
- const killed=await account(t,{flags:{INTEGRATIONS_ENABLED:record({fallthrough:true})},env:{INTEGRATIONS_ENABLED:'false'}});assert.equal((await killed.invoke('connectionsOwner',{operation:'connections.connect-built-in',input:{integration:'classifier'}})).$fault?.code,'not_found');
+ assert.equal((await f.invoke('connectionsOwner',{operation:'connections.connect-built-in',input:{integration:'google-drive'}})).$fault,undefined);
+ const killed=await account(t,{flags:{INTEGRATIONS_ENABLED:record({fallthrough:true})},env:{INTEGRATIONS_ENABLED:'false'}});assert.equal((await killed.invoke('connectionsOwner',{operation:'connections.connect-built-in',input:{integration:'google-drive'}})).$fault?.code,'not_found');
 });
 
 test('classifier engine gates both owner and verified client; dependency kills and store outage refuse new work',async t=>{
  const rules=[{when:{accounts:[owner],clients:[client]},serve:{value:true}}],flags={INTEGRATIONS_ENABLED:record({rules}),EXTENSIONS_ENABLED:record({rules})},e=engine({config:{flags:port(flags)}});
  for(const [id,clientId,allowed]of [[owner,client,true],[other,client,false],[owner,'https://excluded.example',false]])assert.equal((await read(e,new Decision({actor:{kind:'system',owner:id},id:'EXTENSIONS_ENABLED',input:{clientId}}))).value,allowed);
  const f=await account(t,{flags:{FEDERATION_ENABLED:record({fallthrough:true}),DEVICE_AUTHORIZATION_ENABLED:record({fallthrough:true})},env:{FEDERATION_ENABLED:'false'}});assert.deepEqual(await f.invoke('approvalNoticeContacts'),{subscriptions:[]});
- const down=await account(t);down.runtime.entry=null;down.runtime.store.flagsSnapshot=async()=>{throw Error('offline');};assert.equal((await down.invoke('connectionsOwner',{operation:'connections.connect-built-in',input:{integration:'classifier'}})).$fault?.code,'not_found');
+ const down=await account(t);down.runtime.entry=null;down.runtime.store.flagsSnapshot=async()=>{throw Error('offline');};assert.equal((await down.invoke('connectionsOwner',{operation:'connections.connect-built-in',input:{integration:'google-drive'}})).$fault?.code,'not_found');
 });
 
 test('global protocol mounts ignore audience rules and region; writer stateful flags reject region rules',()=>{
@@ -76,9 +78,9 @@ test('retention Query reads actual state only; retainExisting loses to console o
  const f=await account(t,{flags:{INTEGRATIONS_ENABLED:record({retainExisting:true})}});
  await f.db.put('resource/retained',{id:'retained',owner,kind:'app-connection',state:'active',integration:{kind:'built-in'}});
  const state=await read(f.controller.engine,new AccountFeatureState({actor:{kind:'system',owner}}));assert.equal(Object.entries(state).find(([name])=>name==='INTEGRATIONS_ENABLED')[1],true);assert.equal(Object.entries(await read(f.controller.engine,new AccountFeatureState({actor:{kind:'system',owner:other}}))).length,0);
- assert.equal((await f.invoke('connectionsOwner',{operation:'connections.connect-built-in',input:{integration:'classifier'}})).$fault,undefined);
- for(const [patch,version]of [[{on:false},2],[{deny:{accounts:[owner],clients:[]}},3]]){await f.runtime.publish(snapshot({INTEGRATIONS_ENABLED:record({retainExisting:true,...patch})},version));assert.equal((await f.invoke('connectionsOwner',{operation:'connections.connect-built-in',input:{integration:'classifier'}})).$fault?.code,'not_found');assert.equal((await f.invoke('connectionsOwner',{operation:'connections.list'})).connections.length>=1,true);}
- const killed=await account(t,{flags:{INTEGRATIONS_ENABLED:record({retainExisting:true})},env:{INTEGRATIONS_ENABLED:'false'}});await killed.db.put('resource/retained',{owner,kind:'app-connection',integration:{}});assert.equal((await killed.invoke('connectionsOwner',{operation:'connections.connect-built-in',input:{integration:'classifier'}})).$fault?.code,'not_found');
+ assert.equal((await f.invoke('connectionsOwner',{operation:'connections.connect-built-in',input:{integration:'google-drive'}})).$fault,undefined);
+ for(const [patch,version]of [[{on:false},2],[{deny:{accounts:[owner],clients:[]}},3]]){await f.runtime.publish(snapshot({INTEGRATIONS_ENABLED:record({retainExisting:true,...patch})},version));assert.equal((await f.invoke('connectionsOwner',{operation:'connections.connect-built-in',input:{integration:'google-drive'}})).$fault?.code,'not_found');assert.equal((await f.invoke('connectionsOwner',{operation:'connections.list'})).connections.length>=1,true);}
+ const killed=await account(t,{flags:{INTEGRATIONS_ENABLED:record({retainExisting:true})},env:{INTEGRATIONS_ENABLED:'false'}});await killed.db.put('resource/retained',{owner,kind:'app-connection',integration:{}});assert.equal((await killed.invoke('connectionsOwner',{operation:'connections.connect-built-in',input:{integration:'google-drive'}})).$fault?.code,'not_found');
  assert.equal([...await f.db.list({prefix:''})].some(([k])=>/enroll|flag-assignment|sticky/.test(k)),false);
 });
 

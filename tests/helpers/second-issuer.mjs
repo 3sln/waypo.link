@@ -4,7 +4,7 @@
 // interoperability: the same authors wrote both. Foreign issuers stay behind ORG_FOREIGN_MEMBERS_ENABLED and an empty
 // allowlist until a clean-room issuer passes this suite and the outbound-fetch egress gate passes.
 //
-// It serves, through `fetch` (never the network): the protocol §2 manifest with `directory.v1`, the `?sub=` directory
+// It serves, through `fetch` (never the network): the protocol §2 manifest declaring the directory extension, the `?sub=` directory
 // lookup and identity documents with signing keys (`use:"sig"`, continuity optional) and certification keys
 // (`use:"cert"`), and issues member certificates (`bindle-member-certificate+jwt`) under its active certification key.
 const ES256 = { name: 'ECDSA', hash: 'SHA-256' }, P256 = { name: 'ECDSA', namedCurve: 'P-256' };
@@ -16,7 +16,7 @@ async function keyPair() { const pair = await crypto.subtle.generateKey(P256, tr
 
 export async function secondIssuer({ origin = 'https://second.example', clock = () => Date.now(), maxAge = 300 } = {}) {
   const people = new Map(), calls = [];
-  const manifest = { version: '0', issuer: origin, authorization_request_endpoint: `${origin}/requests`, authorization_endpoint: `${origin}/authorize`, token_endpoint: `${origin}/token`, rpc_endpoint: `${origin}/rpc`, jwks_uri: `${origin}/jwks`, preferences_contract: 'https://contracts.example/preferences', login_presentation: ['redirect'], dpop_signing_alg_values_supported: ['ES256'], features: { 'directory.v1': { directory_url: `${origin}/directory` }, 'key-delegation.v1': { max_certificate_seconds: 600, revocation_bound_seconds: 60 } } };
+  const manifest = { version: '0', issuer: origin, authorization_request_endpoint: `${origin}/requests`, authorization_endpoint: `${origin}/authorize`, token_endpoint: `${origin}/token`, rpc_endpoint: `${origin}/rpc`, jwks_uri: `${origin}/jwks`, preferences_contract: 'https://contracts.example/preferences', login_presentation: ['redirect'], dpop_signing_alg_values_supported: ['ES256'], extensions: [{ spec: 'https://spec.bindle.example/extensions/directory/v1', options: { directory_url: `${origin}/directory` } }, { spec: 'https://spec.bindle.example/extensions/key-delegation/v1', options: { max_certificate_seconds: 600, revocation_bound_seconds: 60 } }] };
   const identity = sub => `${origin}/people/${sub}`;
   async function person(sub) {
     if (!people.has(sub)) { const sig = await keyPair(), cert = await keyPair(); people.set(sub, { sub, aep: 0, keys: [{ ...sig, use: 'sig', state: 'active', predecessor: null }, { ...cert, use: 'cert', state: 'active' }] }); }

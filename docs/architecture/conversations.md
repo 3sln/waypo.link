@@ -1,6 +1,6 @@
 # Conversation authority, fanout and trust — design draft
 
-> **Superseded (2026-10-27).** Legacy peer messaging, contact grants, contact delivery and Conversation v1 left the 3sln.me core (DEVLOG "Messaging removed from core; Parlay rename; BB-CUT reset"). This document is historical rationale; the current design is [Parlay](messaging-app.md) and [Bindle Messaging](../spec/messaging.md). Code paths named here may no longer exist.
+> **Superseded (2026-10-27).** Legacy peer messaging, contact grants, contact delivery and Conversation v1 left the 3sln.me core (DEVLOG "Messaging removed from core; Parlay rename; BB-CUT reset"). This document is historical rationale; the current design is [Parlay](messaging-app.md) and [Bindle Messaging](../spec/extensions/messaging.md). Code paths named here may no longer exist.
 
 
 Status: provisional design, 2026-10-12. This document defines the intended architecture; it is not evidence that cross-provider delivery or every protocol feature is implemented. See the [conversation specification](../../apps/parlay/docs/legacy/conversations.md), [security gates](../spec/security.md), and [decision ledger](../../DEVLOG.md). Human architecture/security sign-off: reviewer ___ / date ___ / outcome ___.

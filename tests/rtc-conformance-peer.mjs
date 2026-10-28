@@ -5,9 +5,11 @@
 // `delegate`, `aep`), protocol.md §2 (the manifest floor) and extensions.md. It imports NO 3sln.me code: raw WebCrypto,
 // its own base64url, its own SDP and candidate builders, plain fetch-like handlers. It plays a minimal "second provider":
 //
-// - it publishes a manifest declaring `directory.v1` and `rtc-signaling.v1` (plus `extensions.v1` and
-//   `artefact-versions.v1`, which §3.1 lists as required), a `?sub=` / `?handle=` directory and identity documents with
-//   one `sig` key and one `cert` key per entity;
+// - it publishes a manifest declaring, in the extensions revision 3.2 shape (`extensions: [{spec, options}]`; the
+//   former `features` keys mapped by extensions §2.8), the directory extension and the interim legacy rtc extension
+//   (the former `rtc-signaling.v1` members at their own spec URL, until signaling Appendix C replaces it) plus the
+//   artefact-versions extension it requires, a `?sub=` / `?handle=` directory and identity documents with one `sig`
+//   key and one `cert` key per entity;
 // - it issues leg certificates (§5.1), control statements (§5.2) and messages (§6) signed ES256 with low-S signatures
 //   (AMD-RV1), and can deliberately break any rule for negative tests;
 // - its `handler` serves those documents and accepts §8 batches at its endpoint, verifying them exactly as §8.2 step 1
@@ -17,6 +19,10 @@
 //   egress code run and only the wire is simulated. Nothing here is evidence of production behaviour.
 
 export const SPEC = 'https://spec.bindle.example';
+/** Extension spec URLs (extensions rev 3.2 §2.8 placeholders). */
+export const EXT = { directory: `${SPEC}/extensions/directory/v1`, artefactVersions: `${SPEC}/extensions/artefact-versions/v1`, rtc: `${SPEC}/extensions/rtc-signaling/v1` };
+/** The options of extension `spec` in a manifest (undefined when not declared). */
+export const extensionOptions = (m, spec) => (Array.isArray(m?.extensions) ? m.extensions : []).find(e => e?.spec === spec)?.options;
 export const MEDIA_TYPE = 'application/vnd.bindle.rtc+json';
 export const TYP = { cert: 'bindle-rtc-leg-certificate+jwt', control: 'bindle-rtc-control+jwt', message: 'bindle-rtc-message+jwt' };
 const ES256 = { name: 'ECDSA', hash: 'SHA-256' }, P256 = { name: 'ECDSA', namedCurve: 'P-256' };
@@ -96,7 +102,7 @@ export const candidateItem = (c, mid = '0') => ({ candidate: c, sdpMid: mid, sdp
  * @param {object} o
  * @param {string} o.origin       the peer issuer origin (https, no port: the provider's egress dials :443 only)
  * @param {(url:string, init?:object)=>Promise<Response>} o.providerFetch  how the peer reaches the provider under test
- *        (its manifest, directory, identity documents and `rtc-signaling.v1` endpoint)
+ *        (its manifest, directory, identity documents and the rtc extension's `endpoint`)
  */
 export async function createPeer({ origin = 'https://peer.example', providerFetch, maxLegSeconds = 600, dpop = true, endpointPath = '/bindle/rtc', rtc = true } = {}) {
   const entities = new Map(), received = [], requests = [];
@@ -107,11 +113,11 @@ export async function createPeer({ origin = 'https://peer.example', providerFetc
     preferences_contract: 'https://3sln.me/artefacts/contracts/preferences/v1', login_presentation: ['redirect'],
     // Optional under protocol §2 ("every ... DPoP declaration is optional"); `dpop: false` publishes the bare floor.
     ...dpop ? { dpop_signing_alg_values_supported: ['ES256'] } : {},
-    features: {
-      'directory.v1': { directory_url: `${origin}/bindle/directory` },
-      'extensions.v1': {}, 'artefact-versions.v1': {},
-      ...rtc ? { 'rtc-signaling.v1': { endpoint: `${origin}${endpointPath}`, max_leg_certificate_seconds: maxLegSeconds } } : {}
-    }
+    extensions: [
+      { spec: EXT.directory, options: { directory_url: `${origin}/bindle/directory` } },
+      { spec: EXT.artefactVersions, options: {} },
+      ...rtc ? [{ spec: EXT.rtc, options: { endpoint: `${origin}${endpointPath}`, max_leg_certificate_seconds: maxLegSeconds } }] : []
+    ]
   };
   const identity = sub => `${origin}/identity/${sub}`;
   const peer = { origin, manifest, entities, received, requests, identity, endpointStatus: 202 };
@@ -186,15 +192,15 @@ export async function createPeer({ origin = 'https://peer.example', providerFetc
   // ---- talking to the provider under test ---------------------------------------------------------------------------
   let providerManifest = null; const providerKeys = new Map();
   peer.providerManifest = async () => providerManifest ??= await (await providerFetch('/.well-known/bindle/manifest.json')).json();
-  /** POST a batch (object, or a raw string body) to the provider's declared `rtc-signaling.v1` endpoint. */
+  /** POST a batch (object, or a raw string body) to the provider's declared rtc extension `endpoint`. */
   peer.post = async (batch, { contentType = MEDIA_TYPE, path } = {}) => {
-    const m = await peer.providerManifest(), endpoint = path ?? new URL(m.features['rtc-signaling.v1'].endpoint).pathname;
+    const m = await peer.providerManifest(), endpoint = path ?? new URL(extensionOptions(m, EXT.rtc).endpoint).pathname;
     const res = await providerFetch(endpoint, { method: 'POST', headers: { 'Content-Type': contentType }, body: typeof batch === 'string' ? batch : JSON.stringify(batch) });
     return { status: res.status, body: await res.text(), headers: res.headers };
   };
   /** The provider entity's identity URI, from its directory only (organizations §3a.1: never constructed). */
   peer.lookup = async sub => {
-    const m = await peer.providerManifest(), dir = new URL(m.features['directory.v1'].directory_url);
+    const m = await peer.providerManifest(), dir = new URL(extensionOptions(m, EXT.directory).directory_url);
     const res = await providerFetch(`${dir.pathname}?sub=${encodeURIComponent(sub)}`); if (res.status !== 200) return null;
     return res.json();
   };
@@ -265,7 +271,7 @@ export async function createPeer({ origin = 'https://peer.example', providerFetc
     if (held && held.identity !== p.identity) problems.push('cert-identity-claim');
     if (p.iss !== new URL(held?.identity ?? 'https://invalid.example').origin) problems.push('cert-iss');
     if (p.cnf?.jkt !== await thumbprint(p.delegate ?? {})) problems.push('cert-cnf');
-    const declared = (await peer.providerManifest()).features?.['rtc-signaling.v1']?.max_leg_certificate_seconds;
+    const declared = extensionOptions(await peer.providerManifest(), EXT.rtc)?.max_leg_certificate_seconds;
     if (p.exp - p.iat > (declared ?? 900)) problems.push('cert-lifetime-over-declared');
     for (const m of messages) {
       const mp = part(m, 1), mh = part(m, 0);

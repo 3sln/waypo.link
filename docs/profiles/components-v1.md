@@ -1,5 +1,13 @@
 # 3sln.me components profile v1 — provisional draft
 
+> **Group:** 3sln.me reference service
+>
+> **Status:** provisional draft, revision 2; nothing implemented, routed or production-verified. Provisionally to be republished as the Bindle-owned embedded-components extension (EXT3-29, not signed off).
+>
+> **Covers:** what a provider implements so that embeddable `@3sln/bindle` elements can show provider islands (the components profile).
+>
+> **Does not cover:** the core authorization envelope for components ([auth](../spec/auth.md#presentation-transports-and-key-binding)); the extension mechanism ([extensions](../spec/extensions.md)).
+
 **Profile identifier:** `https://3sln.me/artefacts/profiles/components/v1`
 
 Status: **provisional draft, 2026-10-14, revision 2** (after independent review; [review](../release/components-profile-review.md)). **2026-10-27, provisional (Bindle extensions revision 3.2, EXT3-29, §13 Q5; not signed off):** this profile is to be republished as the Bindle-owned embedded-components extension (`https://spec.bindle.example/extensions/embedded-components/v1`, placeholder), with `embed_origin` as the declared component origin ([extensions §2.7](../spec/extensions.md#27-extensions-cannot-change-core)). Republication is pending and the content below is unchanged. Nothing in this profile is implemented, routed or production-verified. Publication of this text does not imply that any provider, including 3sln.me, conforms to it. The identifier resolves to the machine-readable descriptor [components-profile-v1.json](../architecture/artefacts/components-profile-v1.json), registered as a provisional manifest profile in the [contract registry](/artefacts/contracts/). Registration is not sign-off and implies no conformance. Decision record and rationale: [components profile decision note](../architecture/components-profile.md).

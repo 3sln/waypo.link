@@ -51,14 +51,14 @@ function contactsPanel(state,m){
    :h('p','You have no active contact links. Create one under Contact links, then choose here who can call you through it.').classes('field-help'));
 }
 /**
- * An app's approved purposes. With more than one, the owner can narrow them here (`review-rtc-narrow` opens the
- * confirmation; at least one stays, removing all is removing the app's access). With one, they are listed only.
+ * An app's approved purposes: every purpose this host holds, checked when the owner approved it for this app
+ * (`review-rtc-approve` sends a widening at once and opens the confirmation for a narrowing). Interim owner-local
+ * approval (extensions rev 3.2 removed AMD-X1 `bind`). TODO(signaling Appendix C.2: approvals move to intents session
+ * handler approvals)
  */
 function approvedPurposes(state,m,app){
  const {form}=helpers(state),locale=state.locale??'en';
- if(!app.purposes.length)return h('p','No purposes approved.').classes('field-help');
- if(app.purposes.length===1)return h('ul',h('li',literal(purposeTitle(m,app.purposes[0],locale))));
- return form([...app.purposes.map(l=>checkbox('keep:'+l,literal(purposeTitle(m,l,locale)),true)),h('p','Uncheck what this app should no longer do. Its calls and connections for those purposes end at once, and approving them again needs a new request from the app.').classes('field-help')],{kind:'review-rtc-narrow',clientId:app.clientId},'Approve fewer purposes');
+ return form([...(app.purposes.length?[]:[h('p','No purposes approved.').classes('field-help')]),...m.purposes.map(p=>checkbox('approve:'+p.id,literal(purposeTitle(m,p.id,locale)),app.purposes.includes(p.id))),h('p','Check what this app may do. Its calls and connections for purposes you uncheck end at once; you can approve them again here.').classes('field-help')],{kind:'review-rtc-approve',clientId:app.clientId},'Save approved purposes');
 }
 function appsPanel(state,m){
  const {btn,form,date}=helpers(state),locale=state.locale??'en',view=state.config?.integrationsEnabled?'connections':'connected-apps';
@@ -172,7 +172,7 @@ const CONFIRM=Object.freeze({
  'revoke-unknown-tickets':['Revoke every call link from unknown apps?','Nobody can start a new call with the links created before call links recorded which app made them. Calls already connected continue until they end.','Revoke links'],
  'revoke-all-tickets':['Revoke all call links?','Nobody can start a new call with any of your call links. Apps can create new ones later. Calls already connected continue until they end.','Revoke all'],
  'clear-missed':['Clear the missed and held list?','Every entry is removed from this list. Nobody is told.','Clear list'],
- 'narrow-app':['Approve fewer purposes for this app?','The app can no longer ring you or connect your devices for these purposes. Its calls and connections for them end now, and its devices stop listening for them. Approving them again needs a new request from the app.','Approve fewer purposes'],
+ 'approve-app':['Approve fewer purposes for this app?','The app can no longer ring you or connect your devices for these purposes. Its calls and connections for them end now, and its devices stop listening for them. You can approve them again here.','Approve fewer purposes'],
 });
 /** The narrowing dialog names the app and the purposes it loses (owner data, not translated). */
 function narrowSummary(state,input){
@@ -187,5 +187,5 @@ const confirmKey=(action,input)=>action==='block'&&typeof input?.issuer==='strin
 export function rtcDialog(state){
  const m=state.modal;if(m?.kind!=='rtc-confirm'||!Object.hasOwn(CONFIRM,m.action))return null;
  const {btn}=helpers(state),[title,text,label]=CONFIRM[confirmKey(m.action,m.input)];
- return {title,body:h('div',h('p',text),m.action==='block'&&typeof m.input?.issuer==='string'?h('p',h('strong',literal(hostOf(m.input.issuer)))):null,m.action==='narrow-app'?narrowSummary(state,m.input):null,h('div',btn(label,{kind:'rtc-action',action:m.action,input:m.input},'button danger-button'),btn('Cancel',{kind:'close-modal'},'button secondary')).classes('buttons')).classes('rtc-confirm')};
+ return {title,body:h('div',h('p',text),m.action==='block'&&typeof m.input?.issuer==='string'?h('p',h('strong',literal(hostOf(m.input.issuer)))):null,m.action==='approve-app'?narrowSummary(state,m.input):null,h('div',btn(label,{kind:'rtc-action',action:m.action,input:m.input},'button danger-button'),btn('Cancel',{kind:'close-modal'},'button secondary')).classes('buttons')).classes('rtc-confirm')};
 }

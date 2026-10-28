@@ -4,9 +4,9 @@ Status: **provisional design, 2026-10-20, revision 2.** Revision 1 was wargamed 
 
 This is **host UX**, which the Bindle specs deliberately leave out. It relies on these interop drafts:
 
-- [events](../spec/events.md): buses, access modes and disclosures;
-- [incremental authorization](../spec/incremental-authorization.md): the `grant-more` and `configure` intents, outcomes, suppression, limits and effect metadata;
-- the existing [protocol §3–§4](../spec/protocol.md) consent rules, [extensions §5](../spec/extensions.md#5-occupancy-consumption-and-consent), and [integrations §5.2](../spec/integrations.md#52-consent-disclosure).
+- [events](../spec/extensions/events.md): buses, access modes and disclosures;
+- [incremental authorization](../spec/extensions/incremental-authorization.md): the `grant-more` and `configure` intents, outcomes, suppression, limits and effect metadata;
+- the existing [protocol §3–§4](../spec/protocol.md) consent rules, [extensions §5](../spec/superseded/extensions-rev2.md#5-occupancy-consumption-and-consent), and [integrations §5.2](../spec/extensions/integrations.md#52-consent-disclosure).
 
 It replaces the review layout of the current consent kit (`apps/web/src/ui/authorize-entry-consent.mjs`), and keeps the entry page's framing, member and arming protections ([authorize-entry UI review](../release/authorize-entry-ui-review.md)).
 
@@ -60,14 +60,14 @@ The new experience:
 - **The palette is fixed provider tokens.** The app cannot theme the consent page.
 - **Card tier.** A card takes the highest tier among its items. Cards are ordered tier 4 → 1, then by the app's request order. Inside a card, rows are ordered by tier.
 - **Bus modes.** Read access is tier 1 plus the manifest's categories. `subscribe` and `unsubscribe` add nothing; they are part of read. Write access is tier 2, since others will read what this app writes. Write is raised to the highest tier-4 capability held by any **current reader** of that feed, with the line "Apps that read this feed may act on it, for example ‹reader› can send as you". A bus whose categories include `send-as-you` or `public` is tier 4 for write.
-- **Brokered resources** get an extra line: "Your requests go directly to ‹origin›" ([integrations §5.2](../spec/integrations.md#52-consent-disclosure)). This does not change the tier.
+- **Brokered resources** get an extra line: "Your requests go directly to ‹origin›" ([integrations §5.2](../spec/extensions/integrations.md#52-consent-disclosure)). This does not change the tier.
 
 ## 4. Where the words come from
 
 ### 4.1 Assembly order for one capability row
 
 1. **Provider catalogue** (`packages/consent/reviewed-contracts.mjs`, localized through `packages/i18n/consent-catalogue.mjs`). Used for reviewed contracts: profile, preferences, object storage, resource descriptor, event-bus, activity, and later others after review. It is shown without an attribution line, and each such row carries a small "Checked by 3sln.me" mark (D12). Reviewing means 3sln.me has read the contract and agrees the text describes what the contract **allows**. It is not a claim about how the app will behave, and the help text says so.
-2. **Publisher `summary`** from pinned `x-methods` ([incremental authorization §8.1](../spec/incremental-authorization.md#81-contract-method-metadata-amd-c16)), or the bus `effects`. It carries an attribution line, "Described by ‹publisher host›", or "Described by the app's own site" (D3). For event feeds, the row text is the **catalogue sentence** ("See events in ‹feed title›", "Add events to ‹feed title›"), and the manifest's `effects` text follows it as an attributed quote. The bus contract being reviewed never lends its mark to publisher text.
+2. **Publisher `summary`** from pinned `x-methods` ([incremental authorization §8.1](../spec/extensions/incremental-authorization.md#81-contract-method-metadata-amd-c16)), or the bus `effects`. It carries an attribution line, "Described by ‹publisher host›", or "Described by the app's own site" (D3). For event feeds, the row text is the **catalogue sentence** ("See events in ‹feed title›", "Add events to ‹feed title›"), and the manifest's `effects` text follows it as an attributed quote. The bus contract being reviewed never lends its mark to publisher text.
 3. **Settings reads.** Plain atomic fields have no methods. Their row is the catalogue sentence "See your ‹group› settings: ‹field titles›" (tier 1), with the group's publisher attribution, and, for shared fields, "Also sent to ‹apps›".
 4. **Fallback**, when neither exists: the provider's generic tier sentence plus the method name in code style, for example "Can change something in Work calendar (`setColor`)", with "No description provided". The fallback never shows a blank row.
 
@@ -99,7 +99,7 @@ The interface language comes from the account preference, then the entry `uiLoca
 
 | Level | Shown | How |
 | --- | --- | --- |
-| L0, the card summary | One generated sentence ("See and add events in Work calendar"), the tier label and icon, chips, the Include switch, the field titles shared, and the **mandatory facts** that the specs require on the final screen: existing recipients by name ("Also sent to Mail, Notes"), and for event feeds the reader and publisher facts of [events §10.2](../spec/events.md#102-required-disclosures-before-approval) ("Notes and 1 other app will see what Tasks adds. Apps you allow later will too." / "Sent by: Tasks") | Always visible |
+| L0, the card summary | One generated sentence ("See and add events in Work calendar"), the tier label and icon, chips, the Include switch, the field titles shared, and the **mandatory facts** that the specs require on the final screen: existing recipients by name ("Also sent to Mail, Notes"), and for event feeds the reader and publisher facts of [events §10.2](../spec/extensions/events.md#102-required-disclosures-before-approval) ("Notes and 1 other app will see what Tasks adds. Apps you allow later will too." / "Sent by: Tasks") | Always visible |
 | L1, details | One row per capability with its tier; the host and data location ("Stored on 3sln.me" or "Requests go to cal.example"); for event feeds, retention and history; the attribution line; the app's claim; every app and provider feature that already has this access | "Details" disclosure per card. It is expanded by default for tier 3–4 cards, and collapsed for tier 1–2. |
 | L2, technical | Fragment URL, contract URLs, digest, scope settings, the `client_id` URL | "Technical details" link inside L1, opening a sheet |
 

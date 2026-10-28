@@ -1,4 +1,6 @@
 import test from 'node:test';
+import {EXT,extensionOptions} from '../packages/core/extensions.mjs';
+const declares=(manifest,spec)=>Boolean(manifest.extensions?.some(e=>e.spec===spec));
 import assert from 'node:assert/strict';
 import {webcrypto} from 'node:crypto';
 import {provider,post,createEntry,entryBody,providerPage,pageHeaders,viewOf,exchange,codeOf,issuer,appOrigin,embedOrigin,clientId,redirectUri,fragment,b64,pkce} from './authorization-entry-helpers.mjs';
@@ -158,14 +160,15 @@ test('the entry document is static, never redirects, and keeps its opener only f
 
 test('manifest advertises entry, intents, revocation, embed profile and DPoP algorithms only when configured',async()=>{
  const p=await provider(),manifest=await(await p.fetch(`${issuer}/.well-known/bindle/manifest.json`)).json();
- // Core feature and components-profile shapes (protocol §2, components-profile §3.3); no flat draft members remain.
- assert.deepEqual(manifest.features['authorization-entry.v1'],{endpoint:`${issuer}/api/oauth/entries`,intents:['login','select-account','reauthenticate']});assert.equal(manifest.revocation_endpoint,`${issuer}/oauth/revoke`);assert.deepEqual(manifest.dpop_signing_alg_values_supported,['ES256']);assert.equal(manifest.fedcm_config_url,undefined);
- assert.deepEqual(manifest.profiles,{'https://3sln.me/artefacts/profiles/components/v1':{embed_origin:embedOrigin,protocol:[1],parts:{avatar:{versions:[1]},'account-switcher':{versions:[1]},'sign-in':{versions:[1]}},credential_binding:['key-binding.v1']}});
+ // Extension declarations (protocol §2, extensions rev 3.2 §2.7/§2.8); no features, profiles or flat draft members remain.
+ assert.equal(manifest.features,undefined);assert.equal(manifest.profiles,undefined);
+ assert.deepEqual(extensionOptions(manifest,EXT.authorizationEntry),{endpoint:`${issuer}/api/oauth/entries`,intents:['login','select-account','reauthenticate']});assert.equal(manifest.revocation_endpoint,`${issuer}/oauth/revoke`);assert.deepEqual(manifest.dpop_signing_alg_values_supported,['ES256']);assert.equal(manifest.fedcm_config_url,undefined);
+ assert.deepEqual(extensionOptions(manifest,EXT.embeddedComponents),{embed_origin:embedOrigin,protocol:[1],parts:['avatar/1','account-switcher/1','sign-in/1'],credential_binding:['key-binding.v1']});
  for(const flat of ['authorization_entry_endpoint','authorization_entry_intents','embed_profiles_supported','embed_origin'])assert.equal(manifest[flat],undefined);
  // The authority alone never advertises entry routes: only an adapter that mounts them adds the feature (F8).
- assert.equal((await p.authority.manifest()).features,undefined);assert.equal(p.entries.manifest().profiles,undefined);
+ assert.equal(declares(await p.authority.manifest(),EXT.authorizationEntry),false);assert.equal(declares(await p.authority.manifest(),EXT.embeddedComponents),false);assert.equal(declares(p.entries.manifest(),EXT.embeddedComponents),false);
  const bare=await provider({entryConfig:false}),plain=await(await bare.fetch(`${issuer}/.well-known/bindle/manifest.json`)).json();
- assert.equal(plain.features,undefined);assert.equal(plain.profiles,undefined);assert.equal(plain.revocation_endpoint,`${issuer}/oauth/revoke`);
+ assert.equal(declares(plain,EXT.authorizationEntry),false);assert.equal(declares(plain,EXT.embeddedComponents),false);assert.equal(plain.revocation_endpoint,`${issuer}/oauth/revoke`);
  assert.equal(clientId,'https://app.example/client');assert.equal(pkce('x'.repeat(43)).length,43);
 });
 

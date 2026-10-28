@@ -1,6 +1,7 @@
 // Root mount of the authorization-entry slice, the embed origin and host administration in packages/runtime/http.mjs:
 // flag gating, F7 (the entry document keeps its own CSP and COOP), F8 (the manifest advertises only mounted routes)
 // and the components-profile shell contract. Real entry store and federation stack; .example hosts only.
+import {EXT,extensionOptions} from '../packages/core/extensions.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import application from '../packages/runtime/http.mjs';
@@ -9,7 +10,7 @@ import {federationEntriesRemote,ENTRY_METHODS} from '../packages/runtime/federat
 import {AuthorizationEntries,entryShard} from '../packages/federation/authorization-entries.mjs';
 import {MemoryFederationStore} from '../packages/federation/index.mjs';
 import {installedAccountCookies} from '../packages/runtime/account-cookies.mjs';
-const PROFILE='https://3sln.me/artefacts/profiles/components/v1',SHELL='<!doctype html><title>Islands</title><script type="application/json" id="config">{{CONFIG}}</script><script type="module" src="/embed/assets/boot.0123456789.js"></script>';
+const ext=(manifest,spec)=>{const e=manifest.extensions?.find(x=>x.spec===spec);return e?e.options??{}:undefined;},SHELL='<!doctype html><title>Islands</title><script type="application/json" id="config">{{CONFIG}}</script><script type="module" src="/embed/assets/boot.0123456789.js"></script>';
 const SHELL_HASH='sha256-'+'B'.repeat(43)+'=',SHELL_BUILD={v:1,worker:'/embed/assets/apps/embed/src/worker/index.0123456789.js',sw:'/embed/sw.js',scripts:[SHELL_HASH]};
 const MAP_HASH='sha256-'+'A'.repeat(43)+'=';
 function assets({shell=false}={}){return {fetch:async request=>{const path=new URL(request.url).pathname;
@@ -29,12 +30,12 @@ const manifestOf=async f=>(await f.fetch(issuer+'/.well-known/bindle/manifest.js
 
 test('F8: the manifest advertises the entry feature only when mounted and the components profile only with a served shell',async()=>{
  const none=await fixture({entries:false});const bare=await manifestOf(none);
- assert.equal(bare.features['authorization-entry.v1'],undefined);assert.equal(bare.profiles,undefined);assert.ok(bare.features['intents.v1']);assert.equal(bare.revocation_endpoint,issuer+'/oauth/revoke');
+ assert.equal(bare.features,undefined);assert.equal(bare.profiles,undefined);assert.equal(ext(bare,EXT.authorizationEntry),undefined);assert.equal(ext(bare,EXT.embeddedComponents),undefined);assert.ok(ext(bare,EXT.intents));assert.equal(bare.revocation_endpoint,issuer+'/oauth/revoke');
  const noShell=await manifestOf(await fixture());
- assert.deepEqual(noShell.features['authorization-entry.v1'],{endpoint:issuer+'/api/oauth/entries',intents:['login','select-account','reauthenticate']});assert.equal(noShell.profiles,undefined,'no islands are built, so the profile is not offered');
- const noEmbed=await manifestOf(await fixture({embed:false,shell:true}));assert.equal(noEmbed.profiles,undefined,'an entry store without the embed origin mounted declares no profile');
+ assert.deepEqual(ext(noShell,EXT.authorizationEntry),{endpoint:issuer+'/api/oauth/entries',intents:['login','select-account','reauthenticate']});assert.equal(ext(noShell,EXT.embeddedComponents),undefined,'no islands are built, so the extension is not declared');
+ const noEmbed=await manifestOf(await fixture({embed:false,shell:true}));assert.equal(ext(noEmbed,EXT.embeddedComponents),undefined,'an entry store without the embed origin mounted declares no embedded components');
  const full=await manifestOf(await fixture({shell:true}));
- assert.deepEqual(full.profiles[PROFILE],{embed_origin:embedOrigin,protocol:[1],parts:{avatar:{versions:[1]},'account-switcher':{versions:[1]},'sign-in':{versions:[1]}},credential_binding:['key-binding.v1']});
+ assert.equal(full.profiles,undefined);assert.deepEqual(extensionOptions(full,EXT.embeddedComponents),{embed_origin:embedOrigin,protocol:[1],parts:['avatar/1','account-switcher/1','sign-in/1'],credential_binding:['key-binding.v1']});
  for(const flat of ['authorization_entry_endpoint','authorization_entry_intents','embed_profiles_supported','embed_origin'])assert.equal(full[flat],undefined);
  assert.equal((await (await fixture({federation:'false',shell:true})).fetch(issuer+'/.well-known/bindle/manifest.json')).status,503,'nothing is advertised while federation is disabled');
 });
@@ -103,8 +104,8 @@ test('Worker entry facade: local manifest, structured fault envelopes, shard rou
  const calls=[],config={APP_ORIGIN:issuer,FEDERATION_ENTRY_ENABLED:'true',EMBED_ORIGIN:embedOrigin,KEY_ENCRYPTION_KEY:'k',FEDERATION_CLIENTS:JSON.stringify([{id:clientId,name:'App',origin:appOrigin,redirectUris:[appOrigin+'/callback']}])};
  assert.equal(federationEntriesRemote({config:{...config,FEDERATION_ENTRY_ENABLED:'false'},invoke:()=>{}}),null);
  const id='Q'.repeat(43),remote=federationEntriesRemote({config,invoke:async(shard,method,args)=>{calls.push([shard,method]);return method==='view'?{ok:false,error:{code:'invalid_request',message:'expired',retryAfter:5}}:{ok:true,result:{entryId:id}};}});
- assert.deepEqual(remote.manifest().features['authorization-entry.v1'].intents,['login','select-account','reauthenticate']);assert.equal(remote.manifest().profiles,undefined);assert.ok(remote.manifest({components:true}).profiles[PROFILE]);
- assert.deepEqual(federationEntriesRemote({config,endSession:true,invoke:()=>{}}).manifest().features['authorization-entry.v1'].intents,['login','select-account','reauthenticate','end-session']);
+ assert.deepEqual(ext(remote.manifest(),EXT.authorizationEntry).intents,['login','select-account','reauthenticate']);assert.equal(ext(remote.manifest(),EXT.embeddedComponents),undefined);assert.ok(ext(remote.manifest({components:true}),EXT.embeddedComponents));
+ assert.deepEqual(ext(federationEntriesRemote({config,endSession:true,invoke:()=>{}}).manifest(),EXT.authorizationEntry).intents,['login','select-account','reauthenticate','end-session']);
  assert.equal(remote.clients.get(clientId).origin,appOrigin);assert.equal(remote.embedOrigin,embedOrigin);
  assert.deepEqual(await remote.create({clientId},{remote:'r'}),{entryId:id});assert.deepEqual(calls.map(c=>c[1]),['admit','create']);
  await assert.rejects(remote.view(id),error=>error.code==='invalid_request'&&error.retryAfter===5);assert.deepEqual(calls.at(-1),[entryShard(id),'view']);
@@ -156,7 +157,7 @@ test('Node composition: a sharded entry store, admin store and the embed host be
  const app=await createNodeServer({directory,config:{APP_ORIGIN:origin,FEDERATION_ENABLED:'true',FEDERATION_ENTRY_ENABLED:'true',EMBED_ORIGIN:embed,FEDERATION_CLIENTS:JSON.stringify([{id:clientId,name:'App',origin:appOrigin,redirectUris:[appOrigin+'/callback']}])}});
  t.after(async()=>{await app.close();await rm(directory,{recursive:true,force:true});});
  const manifest=await(await app.fetch(new Request(origin+'/.well-known/bindle/manifest.json',{headers:{'CF-Connecting-IP':'203.0.113.9'}}))).json();
- assert.deepEqual(manifest.features['authorization-entry.v1'].intents,['login','select-account','reauthenticate','end-session'],'Node mounts the session-ending hook');
+ assert.deepEqual(ext(manifest,EXT.authorizationEntry).intents,['login','select-account','reauthenticate','end-session'],'Node mounts the session-ending hook');
  const {body}=entryBody(),created=await app.fetch(new Request(origin+'/api/oauth/entries',{method:'POST',headers:{'Content-Type':'application/json',Origin:appOrigin,'CF-Connecting-IP':'203.0.113.9'},body:JSON.stringify({...body,redirectUri:appOrigin+'/callback'})}));
  assert.equal(created.status,201);const {entryId}=await created.json();assert.ok(await app.resources.federationEntries.store(entryShard(entryId)).transaction(tx=>tx.get('@alarm')),'creation arms the entry shard cleanup alarm');
  await new Promise(resolve=>app.server.listen(0,'127.0.0.1',resolve));const port=app.server.address().port;

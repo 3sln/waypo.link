@@ -13,7 +13,7 @@ import { MemoryMessagingStore, key, fromBase64url, strictText } from '../package
 import { IdentityKeyRegistry } from '../packages/identity/keys.mjs';
 import { LinkService, currentLinkKey } from '../packages/links/issuance.mjs';
 import { linksProvider, IssueLink, RevokeLink, RotateLinkChallenge, EvaluateLink, LinkList, LinkChanges } from '../packages/links/engine.mjs';
-import { MESSAGING_CONTACT_LINK_TYPE, MESSAGING_INGRESS_SLOT, CONTACT_LINK_TYPE } from '../packages/links/types.mjs';
+import { MESSAGING_CONTACT_LINK_TYPE, MESSAGING_INGRESS_FRAGMENT, CONTACT_LINK_TYPE } from '../packages/links/types.mjs';
 import { createAppEngine, perform, read } from '../packages/app/engine.mjs';
 import { memoryAudit } from '../packages/app/providers.mjs';
 import { SqliteMetadata } from '../apps/node/resources.mjs';
@@ -72,7 +72,7 @@ async function linksWorld({ enabled = true, occupant, changeRetention, decide } 
   await registry.ensure(OWNER, 'signing');
   const service = new LinkService({ store, issuer: ISSUER, keys: registry, clock: clock.now, policies: [POLICY], signingKey: owner => registry.privateKey(owner, 'signing'), decide, verifyAuthor: STUB_AUTHOR, ...(changeRetention ? { changeRetention } : {}) });
   const audit = memoryAudit({ clock }), state = { occupant: occupant === undefined ? { clientId: 'https://box.example/app', generation: 3 } : occupant };
-  const engine = createAppEngine({ providers: { clock, random: { uuid: () => crypto.randomUUID() }, audit, links: linksProvider({ service, enabled, occupant: async ({ owner, slot }) => (owner === OWNER && slot === MESSAGING_INGRESS_SLOT ? state.occupant : null) }) } });
+  const engine = createAppEngine({ providers: { clock, random: { uuid: () => crypto.randomUUID() }, audit, links: linksProvider({ service, enabled, occupant: async ({ owner, fragment }) => (owner === OWNER && fragment === MESSAGING_INGRESS_FRAGMENT ? state.occupant : null) }) } });
   const app = (clientId = 'https://box.example/app') => ({ kind: 'app', owner: OWNER, clientId, handle: 'alice' }), owner = { kind: 'owner', owner: OWNER };
   return { clock, store, registry, service, engine, audit, state, app, owner, issue: (input, actor = app()) => perform(engine, new IssueLink({ actor, input: { type: MESSAGING_CONTACT_LINK_TYPE, claims: claims(), expiresAt: clock.now() + 86400000, ...input } })) };
 }

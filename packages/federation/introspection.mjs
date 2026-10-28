@@ -30,6 +30,7 @@ import {siteGlobal,capability} from '../flags/read.mjs';
 // app-consumer `invoke` token whose audience is that integration's pinned rpc_endpoint, and every live mint check
 // still holds in the account and the federation shard. Nothing is cached (`Cache-Control: no-store`); any failure is
 // `active: false`, so an integration that requires introspection for write methods fails closed.
+import {EXT,declare} from '../core/extensions.mjs';
 import {Provider} from '../../vendor/ngin/index.js';
 import {AppAction,AppQuery,createAppEngine,perform,read,operations} from '../app/engine.mjs';
 import {AppFault} from '../app/faults.mjs';
@@ -44,7 +45,7 @@ import {PREFERENCES_V2} from './service.mjs';
 
 export {PREFERENCES_V2};
 
-export const BROKERED_RESOURCES_FEATURE='brokered-resources.v1',INTROSPECTION_PATH='/oauth/brokering/introspect';
+export const BROKERED_RESOURCES_FEATURE=EXT.brokeredResources,INTROSPECTION_PATH='/oauth/brokering/introspect';
 export const CLIENT_ASSERTION_TYPE='urn:ietf:params:oauth:client-assertion-type:jwt-bearer';
 /** §7.2 step 3: 300 s token lifetime + 30 s verifier leeway + 30 s verifier clock error. */
 export const ACCESS_ENDS_BY_MS=(ACCESS_LIFETIMES.invoke+30+30)*1000;
@@ -265,8 +266,8 @@ export function preferencesSnapshotPort(federationFor){
 }
 
 // ---- Feature declaration (EXT-X2 registry row in packages/runtime/federation.mjs) ----
-/** brokered-resources.v1 members (§12); `brokering_jwks_uri` moved here as `jwks_uri` (EXT-X5 follow-up). */
-export const brokeredResourcesDeclaration=(issuer,{introspection=false}={})=>({features:{[BROKERED_RESOURCES_FEATURE]:{jwks_uri:`${issuer}${BROKERING_JWKS_PATH}`,preferences_contract:PREFERENCES_V2,...introspection?{introspection_endpoint:`${issuer}${INTROSPECTION_PATH}`}:{}}}});
+/** brokered-resources extension options (§12; extensions rev 3.2 §2.8); `brokering_jwks_uri` moved here as `jwks_uri` (EXT-X5 follow-up). */
+export const brokeredResourcesDeclaration=(issuer,{introspection=false}={})=>({extensions:[declare(BROKERED_RESOURCES_FEATURE,{jwks_uri:`${issuer}${BROKERING_JWKS_PATH}`,preferences_contract:PREFERENCES_V2,...introspection?{introspection_endpoint:`${issuer}${INTROSPECTION_PATH}`}:{}})]});
 
 // ---- RFC 7523 client assertion ----
 const text=new TextEncoder();

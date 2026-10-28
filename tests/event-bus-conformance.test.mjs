@@ -22,14 +22,16 @@ export function integrationBusConformance(createHost,label='reference fake'){
  const host=async(t,options={})=>{const h=await createHost({enabled:true,...options});t.after(()=>h.close());return h;};
  const scenario=(name,run)=>test(`EV-4 ${label}: ${name}`,run);
 
- scenario('manifest pinning is immutable, exact, and covers unknown top-level members',async t=>{
+ scenario('manifest pinning is immutable, exact, and refuses unknown top-level members',async t=>{
   const h=await host(t),document=busManifest(),first=await h.control({op:'pin',manifest:document});
   assert.match(first.digest,/^sha256-/);assert.deepEqual(await h.control({op:'pin',manifest:document,digest:first.digest}),first);
   await fault(h.control({op:'pin',manifest:document,digest:'sha256-'+'A'.repeat(43)}),'digest_mismatch');
-  for(const mutate of [m=>m.slot.bus.types.push('renamed'),m=>m.title='Different title',m=>m.future={purpose:'changed'}]){
+  for(const mutate of [m=>m.slot.bus.types.push('renamed'),m=>m.title='Different title']){
    const changed=busManifest();mutate(changed);await fault(h.control({op:'pin',manifest:changed}),'schema_changed');
   }
-  const successor=busManifest();successor.id=BUS_MANIFEST+'/v2';successor.slot.supersedes=BUS_MANIFEST;
+  // The fragment member table is exhaustive (protocol §3): an unknown top-level member is refused, never pinned.
+  {const unknown=busManifest();unknown.future={purpose:'changed'};await fault(h.control({op:'pin',manifest:unknown}),'unsupported_fragment');}
+  const successor=busManifest();successor.id=BUS_MANIFEST+'/v2';
   const resource=BUS_RESOURCE+'-v2';await h.control({op:'create',manifest:successor,resource});
   const a=await approve(h,'reader',full,{history:true}),b=await approve(h,'reader',full,{history:true,resource});
   const transaction=tx();await publish(h,a,'t',transaction);assert.equal((await readPage(h,b,{start:'oldest'},resource)).records.length,0,'new URL has no copied records');

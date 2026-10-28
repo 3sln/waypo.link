@@ -1,0 +1,29 @@
+{
+ "id": "https://spec.bindle.example/extensions/app-removal/v1",
+ "title": "App removal",
+ "description": "Remove apps cleanly, telling them to delete what they hold for you.",
+ "options": {
+  "jwks_uri": {
+   "title": "Removal keys",
+   "type": "url",
+   "maxLength": 2048,
+   "endpoint": "public"
+  },
+  "return_uri": {
+   "title": "Return page",
+   "type": "url",
+   "maxLength": 2048,
+   "endpoint": "public"
+  },
+  "completion_endpoint": {
+   "title": "Completion endpoint",
+   "type": "url",
+   "maxLength": 2048,
+   "endpoint": "audience",
+   "cardinality": {
+    "min": 0,
+    "max": 1
+   }
+  }
+ }
+}

@@ -1,4 +1,5 @@
 import test from 'node:test';
+import {EXT,extensionOptions} from '../packages/core/extensions.mjs';
 import assert from 'node:assert/strict';
 import {mkdtemp,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
@@ -14,8 +15,8 @@ import {digest,canonical} from '../packages/core/records.mjs';
 async function prepared(t){const f=await brokeredProvider(t,{introspection:true}),r=await f.register('https://models.example/r/fast'),id=brokeredResourceId(SUBJECT,r.id);await f.configure({theme:'dark',model:[id],store:[]});const token=await f.authorize({resources:{model:[id],store:[]}});return {...f,r,id,token};}
 test('X8 adapter composition declares only mounted capabilities and moves the provisional key URL',async t=>{
  const directory=await mkdtemp(join(tmpdir(),'bindle-wave5-')),resources=await nodeResources({directory,config:{APP_ORIGIN:'https://provider.example',FEDERATION_ENABLED:'true',INTEGRATIONS_ENABLED:'true',BROKERING_ENABLED:'true',KEY_ENCRYPTION_KEY:Buffer.alloc(32,17).toString('base64'),FEDERATION_CLIENTS:JSON.stringify([{id:'https://app.example/client',name:'App',origin:'https://app.example',redirectUris:['https://app.example/callback']}])}});t.after(async()=>{resources.close();await rm(directory,{recursive:true,force:true});});
- const config=resources.integrationConfig,manifest=await resources.federation.manifest();assert.equal(config.BROKERED_INTROSPECTION_MOUNTED,true);assert.equal(config.INTEGRATION_EVENT_PORTS.snapshot.available,true);assert.equal(typeof config.BROKERING_CONSUMER_MINT,'function');assert.equal(typeof config.BROKERED_INTROSPECTION,'function');assert.equal(manifest.features['brokered-resources.v1'].introspection_endpoint,'https://provider.example/oauth/brokering/introspect');
- const {handleFederation}=await import('../packages/federation/http.mjs');const response=await handleFederation(new Request('https://provider.example/.well-known/bindle/manifest.json'),{issuer:'https://provider.example',controller:resources.federation,brokering:resources.brokering});const wire=await response.json();assert.equal(wire.brokering_jwks_uri,undefined);assert.equal(wire.features['brokered-resources.v1'].jwks_uri,'https://provider.example/oauth/brokering/jwks');
+ const config=resources.integrationConfig,manifest=await resources.federation.manifest();assert.equal(config.BROKERED_INTROSPECTION_MOUNTED,true);assert.equal(config.INTEGRATION_EVENT_PORTS.snapshot.available,true);assert.equal(typeof config.BROKERING_CONSUMER_MINT,'function');assert.equal(typeof config.BROKERED_INTROSPECTION,'function');assert.equal(extensionOptions(manifest,EXT.brokeredResources).introspection_endpoint,'https://provider.example/oauth/brokering/introspect');
+ const {handleFederation}=await import('../packages/federation/http.mjs');const response=await handleFederation(new Request('https://provider.example/.well-known/bindle/manifest.json'),{issuer:'https://provider.example',controller:resources.federation,brokering:resources.brokering});const wire=await response.json();assert.equal(wire.brokering_jwks_uri,undefined);assert.equal(extensionOptions(wire,EXT.brokeredResources).jwks_uri,'https://provider.example/oauth/brokering/jwks');
  assert.equal((await config.BROKERED_INTROSPECTION(new Request('https://provider.example/oauth/brokering/introspect'))).status,405);
 });
 

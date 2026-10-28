@@ -1,16 +1,16 @@
 # Parlay: peer-to-peer messaging as a Bindle app
 
-> **Update (2026-10-27).** The app is now **Parlay** (owner's working name, provisional) and its interop spec is **Bindle Messaging** ([spec](../spec/messaging.md)). Legacy core messaging was removed and its data reset (BB-CUT; DEVLOG "Messaging removed from core; Parlay rename; BB-CUT reset"). Paths: `apps/parlay`, `packages/messaging-protocol`, `packages/messaging-engine`, `tests/parlay`; switches `PARLAY_*` with the retired `BINDLEBOX_*` names read as aliases.
+> **Update (2026-10-27).** The app is now **Parlay** (owner's working name, provisional) and its interop spec is **Bindle Messaging** ([spec](../spec/extensions/messaging.md)). Legacy core messaging was removed and its data reset (BB-CUT; DEVLOG "Messaging removed from core; Parlay rename; BB-CUT reset"). Paths: `apps/parlay`, `packages/messaging-protocol`, `packages/messaging-engine`, `tests/parlay`; switches `PARLAY_*` with the retired `BINDLEBOX_*` names read as aliases.
 
 
 Status: **provisional design**, 2026-10-20. Sources:
 
 - the user direction in DEVLOG ("Scope reduction: messaging leaves core", 2026-10-20) and NOTES.md;
 - the slot mechanism in [extensions](../spec/extensions.md) (revision 2);
-- core [activity](../spec/activity.md) and the [activity center](activity-center.md);
+- core [activity](../3sln/services/activity.md) and the [activity center](activity-center.md);
 - the [messaging scaling spike](../release/messaging-scaling-spike.md).
 
-Nothing here is implemented, and no production gate in [security](../spec/security.md) changes. The interop draft is [Bindle Messaging interop v1](../spec/messaging.md), the extraction plan is [messaging extraction](messaging-extraction.md), and the wargame record is [messaging app review](../release/messaging-app-review.md).
+Nothing here is implemented, and no production gate in [security](../spec/security.md) changes. The interop draft is [Bindle Messaging interop v1](../spec/extensions/messaging.md), the extraction plan is [messaging extraction](messaging-extraction.md), and the wargame record is [messaging app review](../release/messaging-app-review.md).
 
 Sign-off (all unsigned, so every decision is provisional):
 
@@ -63,7 +63,7 @@ Core (the Bindle spec and 3sln.me) keeps:
 - storage resources, preferences and grants;
 - the SMTP entry point of the public email bridge and its auto-reply (§13).
 
-The boundary rule is stated in [activity](../spec/activity.md) "Limits and scope": Parlay MAY submit its own app-attributed activity ("New message from alice") under ordinary connection consent. Core MUST NOT accept peer envelopes through an activity backdoor or mirror peer bodies.
+The boundary rule is stated in [activity](../3sln/services/activity.md) "Limits and scope": Parlay MAY submit its own app-attributed activity ("New message from alice") under ordinary connection consent. Core MUST NOT accept peer envelopes through an activity backdoor or mirror peer bodies.
 
 Parlay is an ordinary app/integration. It uses grants, fragments, slots and brokered resources, with no private provider API. 3sln.me may bundle a default instance on its own origin ([extraction](messaging-extraction.md) §5), and an import-boundary test proves the instance cannot reach provider internals.
 
@@ -99,7 +99,7 @@ Today one provider-custodied P-256 identity key per account signs everything. It
 - conversation v1 payloads;
 - admission receipts (provisionally).
 
-See `packages/runtime/account/identity.mjs` (`signingKey`) and the signature-domain table in [links §7.2](../spec/links.md). As an app, Parlay must produce author proofs attributable to the user's identity without ever holding that key.
+See `packages/runtime/account/identity.mjs` (`signingKey`) and the signature-domain table in [links §7.2](../spec/extensions/links.md). As an app, Parlay must produce author proofs attributable to the user's identity without ever holding that key.
 
 ### 4.2 Options
 
@@ -125,7 +125,7 @@ See `packages/runtime/account/identity.mjs` (`signingKey`) and the signature-dom
 2. **Purposes are published profile URIs.** Parlay defines `…/parlay/v1/purposes/author`, `…/purposes/receipt` and `…/purposes/archive`.
    - They are certified **only to the current messaging-ingress occupant**. Certifying a new key revokes the previous one, so two apps never sign concurrently for one principal (reviews P-3, S-12). A provider can also revoke every delegation of a breached `client_id`.
    - The provider certifies only purposes its own policy recognizes, and only after an explicit owner consent screen ("Let Parlay sign messages and delivery receipts as you").
-   - Profiles verified against the identity key never accept a delegate key: link metas, audience responses, delegation certificates and conversation v1. A stolen delegate key therefore cannot forge them. The `typ` header separates JWS profiles, and domain prefixes separate the rest (added to the [links §7.2](../spec/links.md) table).
+   - Profiles verified against the identity key never accept a delegate key: link metas, audience responses, delegation certificates and conversation v1. A stolen delegate key therefore cannot forge them. The `typ` header separates JWS profiles, and domain prefixes separate the rest (added to the [links §7.2](../spec/extensions/links.md) table).
 3. **Renewal and revocation.**
    - The app renews at half the lifetime, and the provider renews only while the connection is live.
    - Disconnect, uninstall, occupant replacement, suspension or "revoke messaging key" stops renewal immediately and marks the `jkt` revoked at the status endpoint. The status response carries only `active`/`revoked` and a coarse hour.
@@ -149,7 +149,7 @@ See `packages/runtime/account/identity.mjs` (`signingKey`) and the signature-dom
 
 ## 5. Slots, extensions and installation
 
-This section follows [extensions](../spec/extensions.md), [integrations](../spec/integrations.md) and [extensibility design](extensibility-design.md), all at revision 2. Manifest entries are claims of the form `{slot, digest?, role, ref, purpose?, required?, options?}`. Brokered resources use provider-minted 300 s tokens with bounded-delay severance.
+This section follows [extensions](../spec/extensions.md), [integrations](../spec/extensions/integrations.md) and [extensibility design](extensibility-design.md), all at revision 2. Manifest entries are claims of the form `{slot, digest?, role, ref, purpose?, required?, options?}`. Brokered resources use provider-minted 300 s tokens with bounded-delay severance.
 
 | Slot | Selection | Consumers | Occupant | Parlay's role |
 | --- | --- | --- | --- | --- |
@@ -526,7 +526,7 @@ Intents were considered and rejected for this path: intents are browser handoffs
 
 ## 14. Notifications through core activity
 
-Parlay never pushes on its own. Under its connection and an explicit activity method grant ([activity](../spec/activity.md) "Authority and submission"), it keeps **one activity item per conversation** (and one for "new contact messages"). It updates the item with `Replace` as messages arrive, with:
+Parlay never pushes on its own. Under its connection and an explicit activity method grant ([activity](../3sln/services/activity.md) "Authority and submission"), it keeps **one activity item per conversation** (and one for "new contact messages"). It updates the item with `Replace` as messages arrive, with:
 
 - the subject "3 new messages from alice@3sln.example";
 - no body;

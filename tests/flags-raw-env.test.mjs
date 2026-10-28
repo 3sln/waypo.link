@@ -133,9 +133,9 @@ test('real delegation and connections Actions honor evaluated owner rollout at c
   const issuing=perform(delegation,new IssueDelegation({actor:{kind:'app',owner:id,clientId:client},input:{}}));
   if(allowed)assert.deepEqual(await issuing,{issued:true});else await assert.rejects(issuing,{code:'not_found'});
   assert.deepEqual(await read(delegation,new DelegationList({actor})),[]);assert.deepEqual(await perform(delegation,new RevokeDelegation({actor,input:{all:true}})),{revoked:true});
-  const service={metadata:{get:async()=>id},connectBuiltIn:async()=>({connected:true}),list:async()=>[],slots:async()=>[],disconnect:async()=>({disconnected:true})},connections=engine({connections:connectionsProvider({connections:service,flags})});
+  const service={metadata:{get:async()=>id},connectBuiltIn:async()=>({connected:true}),list:async()=>[],fields:async()=>[],features:async()=>[],notices:async()=>({notices:[]}),disconnect:async()=>({disconnected:true})},connections=engine({connections:connectionsProvider({connections:service,flags})});
   const connecting=perform(connections,new ConnectBuiltIn({actor,input:{integration:'builtin'}}));if(allowed)assert.deepEqual(await connecting,{connected:true});else await assert.rejects(connecting,{code:'not_found'});
-  assert.deepEqual(await read(connections,new ConnectionList({actor})),{connections:[],slots:[]});assert.deepEqual(await perform(connections,new DisconnectConnection({actor,input:{connection:other}})),{disconnected:true});
+  assert.deepEqual(await read(connections,new ConnectionList({actor})),{connections:[],fields:[],features:[],notices:[]});assert.deepEqual(await perform(connections,new DisconnectConnection({actor,input:{connection:other}})),{disconnected:true});
   await delegation.dispose();await connections.dispose();
  }
 });

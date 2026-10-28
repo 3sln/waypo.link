@@ -47,6 +47,7 @@ import { AppAction, AppQuery } from '../app/engine.mjs';
 import { AppFault } from '../app/faults.mjs';
 import { key } from '../core/records.mjs';
 import { isUUID } from '../core/primitives.mjs';
+import { EXT, BINDLE_REGISTRY, readExtensions } from '../core/extensions.mjs';
 import { strictJSON, exactMembers, plainObject } from '../links/envelope.mjs';
 import { memoryLimiter, publicClientHost, clientSite } from '../federation/client-metadata.mjs';
 import { publicAddress } from '../apps/form-fetch-policy.mjs';
@@ -87,6 +88,7 @@ export function portabilityURL(value) {
 }
 /** An HTTPS URL on exactly `origin`, without query or fragment (manifest feature members). */
 const onOrigin = (value, origin) => { const url = portabilityURL(value); return url && url.origin === origin && !url.search && !value.includes('?') ? value : null; };
+const PORTABILITY_REGISTRY = new Map([EXT.directory, EXT.portability].map(spec => [spec, BINDLE_REGISTRY.get(spec)]));
 /** The move endpoint's `authorize_url` (spec §5.2): an HTTPS URL on exactly `origin`; a query is allowed (a source may
  * carry the statement digest a destination-start authorization binds to, spec §6.1 item 1), a fragment is not. */
 const authorizeOn = (value, origin) => { const url = portabilityURL(value); return url && url.origin === origin ? value : null; };
@@ -143,8 +145,8 @@ export function portabilityClient({ fetch, limiter, clock = () => Date.now(), li
   }
   const client = {
     limits,
-    /** Protocol §2 floor plus `directory.v1` and `portability.v1` members (spec §3). Invalid feature members make the
-     * feature absent. Resolves {status:'ok', issuer, directory, portability} or {status:'gone'}. */
+    /** Protocol §2 floor plus the directory and portability extension declarations (spec §3; extensions §2). An
+     * invalid entry is absent; portability without exactly one directory entry is absent (prerequisite, §2.5). Resolves {status:'ok', issuer, directory, portability} or {status:'gone'}. */
     async manifest(origin) {
       if (!httpsOrigin(origin)) fault('invalid_url', 'The identity provider URL is not allowed.', 400);
       const cached = manifests.get(origin); if (cached && cached.until > clock()) return cached.value;
@@ -153,11 +155,12 @@ export function portabilityClient({ fetch, limiter, clock = () => Date.now(), li
       if (response.status === 404 || response.status === 410) value = { status: 'gone' };
       else if (response.status !== 200 || response.invalid || !plainObject(response.json)) value = { status: 'invalid' };
       else {
-        const document = response.json, features = plainObject(document.features) ? document.features : {};
+        const document = response.json;
         if (document.issuer !== origin || document.version !== '0') value = { status: 'invalid' };
         else {
-          const dir = features['directory.v1'], directory = plainObject(dir) && onOrigin(dir.directory_url, origin) || null;
-          const port = features['portability.v1'];
+          const declared = readExtensions(document, { registry: PORTABILITY_REGISTRY, issuer: origin }).extensions;
+          const dir = declared.get(EXT.directory), directory = dir && onOrigin(dir.directory_url, origin) || null;
+          const port = declared.get(EXT.portability);
           let portability = null;
           if (directory && plainObject(port)) {
             const move = onOrigin(port.move_endpoint, origin), jwks = onOrigin(port.attestation_jwks_uri, origin), transferIn = port.transfer_in_endpoint === undefined ? undefined : onOrigin(port.transfer_in_endpoint, origin);

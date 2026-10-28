@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createNodeServer } from '../apps/node/server.mjs';
 import { fromBase64url, strictText } from '../packages/core/records.mjs';
-import { MESSAGING_CONTACT_LINK_TYPE, MESSAGING_INGRESS_SLOT } from '../packages/links/types.mjs';
+import { MESSAGING_CONTACT_LINK_TYPE, MESSAGING_INGRESS_FRAGMENT } from '../packages/links/types.mjs';
 import { linkService } from '../packages/runtime/account/links.mjs';
 
 const APP = 'https://box.example/app';
@@ -38,7 +38,7 @@ test('flag off: owner link routes are not mounted and the app-actor entry refuse
 
 test('flag on: occupant app issues, owner lists and revokes over HTTP; contact links survive identity key rotation', async () => {
   const occupant = { clientId: APP, generation: 1 };
-  const s = await server(8794, { LINKS_ENABLED: 'true', LINK_SLOT_OCCUPANT: async ({ slot }) => (slot === MESSAGING_INGRESS_SLOT ? occupant : null) });
+  const s = await server(8794, { LINKS_ENABLED: 'true', LINK_SLOT_OCCUPANT: async ({ fragment }) => (fragment === MESSAGING_INGRESS_FRAGMENT ? occupant : null) });
   try {
     const c = s.controller(), actor = { kind: 'app', owner: s.id, clientId: APP, handle: s.handle };
     const issued = await c.linkOperation(s.id, { actor, operation: 'links.issue', input: { type: MESSAGING_CONTACT_LINK_TYPE, claims: { resource: 'p1', kinds: ['one-off'], mimeTypes: ['text/plain'], maxMessages: 5, maxBytes: 65536, maxMessageBytes: 16384 }, expiresAt: Date.now() + 86400000 } });

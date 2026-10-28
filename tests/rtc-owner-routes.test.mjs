@@ -1,6 +1,7 @@
 // RTC-g owner routes (packages/runtime/routes/rtc-owner.mjs) over the durable Node runtime and real HTTP: session
 // cookies, CSRF, the owner stage, two people's real account writers and the same-host transport. The application hop
-// (RTC-e) is supplied as tests/rtc-runtime.test.mjs supplies it: an {kind:'app'} actor plus config.RTC_BOUND_CHECK.
+// (RTC-e) is supplied as tests/rtc-runtime.test.mjs supplies it: an {kind:'app'} actor; the owner approves call for
+// that app through the interim owner operation rtc.approve-app (extensions rev 3.2 removed AMD-X1 and checkBound).
 // Local behaviour only; no foreign provider, relay or push service.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -24,8 +25,7 @@ async function legKey(){const pair=await crypto.subtle.generateKey({name:'ECDSA'
 
 async function host(t,flags){
  const directory=await mkdtemp(join(tmpdir(),'rtc-owner-'));let network=1;
- const RTC_BOUND_CHECK=async input=>input.grants.includes('grant-ok')&&input.member==='purposes'&&input.value===CALL.artefact&&input.reference.digest===CALL.digest;
- const app=await createNodeServer({directory,config:{...flags,APP_ORIGIN:ORIGIN,LOCAL_DEVELOPMENT:'true',WORK_LIMITS_ENABLED:'false',RTC_BOUND_CHECK}});
+ const app=await createNodeServer({directory,config:{...flags,APP_ORIGIN:ORIGIN,LOCAL_DEVELOPMENT:'true',WORK_LIMITS_ENABLED:'false'}});
  t.after(async()=>{await app.close();await rm(directory,{recursive:true,force:true});});
  const env={...flags,APP_ORIGIN:ORIGIN,IDENTITY_REPOSITORY:app.resources.repository,ACCOUNTS:app.resources.accounts};
  const fetch=(path,{user,method='GET',value,csrf=true,origin=true}={})=>app.fetch(new Request(ORIGIN+path,{method,headers:{'CF-Connecting-IP':'192.0.2.'+(network++%250+1),...user?{Cookie:user.cookie}:{},...user&&csrf?{'X-CSRF-Token':user.csrf}:{},...origin?{Origin:ORIGIN}:{},...value===undefined?{}:{'Content-Type':'application/json'}},...value===undefined?{}:{body:JSON.stringify(value)}}));
@@ -36,6 +36,7 @@ async function host(t,flags){
   const recovery=await (await post('/api/auth/recovery/download',{pendingToken:pending.pendingToken})).json();
   const r=await post('/api/auth/recovery/confirm',{pendingToken:pending.pendingToken,recoveryToken:recovery.recoveryToken,downloadConfirmed:true}),session=await r.json();
   const id=session.account.id,object=accountHandle(env,id),actor={kind:'app',owner:id,clientId:'https://app.example/client',origin:'https://app.example',grants:['grant-ok']};
+  if(flags.RTC_SIGNALING_ENABLED==='true')await object.rtcDispatch(id,{operation:'rtc.approve-app',actor:{kind:'owner',owner:id},input:{clientId:actor.clientId,purposes:[CALL.artefact]}});
   return {handle:session.account.handle,id,cookie:r.headers.get('Set-Cookie').split(';')[0],csrf:session.csrfToken,principal:{iss:ORIGIN,sub:id},identity:`${ORIGIN}/identity/${id}`,
    app:(operation,input)=>object.rtcDispatch(id,{operation,actor,input}),listen:input=>object.rtcListen(id,{actor,input})};
  };
@@ -241,65 +242,69 @@ test('F7: set-contact-rtc names one of the owner\'s active contact links; anythi
  assert.deepEqual((await h.call(a,'GET','/api/rtc/settings')).body.contacts,[],'nothing invented was stored');
 });
 
-// ——— Service follow-ups (2026-10-27): narrowing an app's approved RTC purposes from the console ———
-import {boundSchema} from '../packages/federation/extensions.mjs';
-import {RTC_SIGNALING_SLOT,RTC_SIGNALING_SLOT_MANIFEST} from '../packages/rtc/extension.mjs';
+// ——— Interim owner approval of an app's RTC purposes from the console (extensions rev 3.2 removed AMD-X1 `bind` and
+// `narrow-app`; TODO(signaling Appendix C.2: approvals move to intents session handler approvals)) ———
+import {RTC_SIGNALING_FRAGMENT} from '../packages/rtc/extension.mjs';
 const APP_CLIENT='https://app.example/client',FEDERATION={FEDERATION_ENABLED:'true',FEDERATION_CLIENTS:JSON.stringify([{id:APP_CLIENT,name:'App',origin:'https://app.example',redirectUris:['https://app.example/callback']}])};
-/** One active bound grant of the signaling slot for `user` and the test app, written into the owner's real federation
- * shard (the consent flow itself is covered by tests/extensions-bound-options.test.mjs). */
-async function rtcGrant(h,user,purposes=[CALL.artefact,SYNC]){
- const id='g'+Math.random().toString(36).slice(2),versions=Object.fromEntries(purposes.map(l=>[l,l===CALL.artefact?{version:CALL.version,digest:CALL.digest}:{version:1,digest:'sha256-'+'S'.repeat(43)}]));
- await h.app.resources.federationShard(user.id).metadata.transaction(tx=>tx.set('federation/grant/'+id,{id,active:true,subject:`${ORIGIN}/entities/${user.id}`,clientId:APP_CLIENT,fragment:RTC_SIGNALING_SLOT,fields:['signaling'],resources:{},methods:{},createdAt:Date.now(),
-  bound:{schema:boundSchema(RTC_SIGNALING_SLOT_MANIFEST.slot),values:{purposes:[...purposes]},versions,revision:'r1'}}));
+/** One active grant on the legacy signaling fragment for `user` and the test app, written into the owner's real
+ * federation shard (no bound options: the grant only says the app may reach the signaling resource). */
+async function rtcGrant(h,user){
+ const id='g'+Math.random().toString(36).slice(2);
+ await h.app.resources.federationShard(user.id).metadata.transaction(tx=>tx.set('federation/grant/'+id,{id,active:true,subject:`${ORIGIN}/entities/${user.id}`,clientId:APP_CLIENT,fragment:RTC_SIGNALING_FRAGMENT,fields:['signaling'],resources:{},methods:{},createdAt:Date.now()}));
  return id;
 }
 
-test('narrow-app: the router enforces sign-in, CSRF, origin and method; the body is exact',async t=>{
- const h=await host(t,{...ON,...FEDERATION}),a=await h.person('rtc_narrow_csrf');await rtcGrant(h,a);
+test('approve-app: the router enforces sign-in, CSRF, origin and method; the body is exact',async t=>{
+ const h=await host(t,{...ON,...FEDERATION}),a=await h.person('rtc_approve_csrf');await rtcGrant(h,a);
  const body={clientId:APP_CLIENT,purposes:[SYNC]};
- assert.equal((await h.call(null,'POST','/api/rtc/narrow-app',body)).status,401,'no session');
- const noToken=await h.call(a,'POST','/api/rtc/narrow-app',body,{csrf:false});assert.deepEqual([noToken.status,noToken.body.error],[403,'csrf']);
- const noOrigin=await h.call(a,'POST','/api/rtc/narrow-app',body,{origin:false});assert.deepEqual([noOrigin.status,noOrigin.body.error],[403,'csrf']);
- assert.equal((await h.call(a,'GET','/api/rtc/narrow-app')).status,405);
- for(const bad of [{clientId:APP_CLIENT},{purposes:[SYNC]},{clientId:APP_CLIENT,purposes:[SYNC],fragment:'https://evil.example/slot'},{clientId:APP_CLIENT,purposes:SYNC},{clientId:'',purposes:[SYNC]},{clientId:APP_CLIENT,purposes:[1]}])
-  assert.equal((await h.call(a,'POST','/api/rtc/narrow-app',bad)).status,400,JSON.stringify(bad));
- // Nothing was narrowed by a refused request.
- assert.deepEqual((await h.call(a,'GET','/api/rtc/settings')).body.apps.map(x=>[x.clientId,x.purposes]),[[APP_CLIENT,[CALL.artefact,SYNC].sort()]]);
+ assert.equal((await h.call(null,'POST','/api/rtc/approve-app',body)).status,401,'no session');
+ const noToken=await h.call(a,'POST','/api/rtc/approve-app',body,{csrf:false});assert.deepEqual([noToken.status,noToken.body.error],[403,'csrf']);
+ const noOrigin=await h.call(a,'POST','/api/rtc/approve-app',body,{origin:false});assert.deepEqual([noOrigin.status,noOrigin.body.error],[403,'csrf']);
+ assert.equal((await h.call(a,'GET','/api/rtc/approve-app')).status,405);
+ assert.equal((await h.call(a,'POST','/api/rtc/narrow-app',body)).status,404,'narrow-app is gone');
+ for(const bad of [{clientId:APP_CLIENT},{purposes:[SYNC]},{clientId:APP_CLIENT,purposes:[SYNC],fragment:'https://evil.example/fragment'},{clientId:APP_CLIENT,purposes:SYNC},{clientId:'',purposes:[SYNC]},{clientId:APP_CLIENT,purposes:[1]},{clientId:APP_CLIENT,purposes:['https://unknown.example/purpose']}])
+  assert.equal((await h.call(a,'POST','/api/rtc/approve-app',bad)).status,400,JSON.stringify(bad));
+ // Nothing changed by a refused request: the app (from the grant) with the purposes the owner approved.
+ assert.deepEqual((await h.call(a,'GET','/api/rtc/settings')).body.apps.map(x=>[x.clientId,x.name,x.purposes]),[[APP_CLIENT,'App',[CALL.artefact]]]);
 });
 
-test('narrow-app over the real runtime: the federation shard narrows every grant and the occupant ends the removed purpose\'s session',async t=>{
- const h=await host(t,{...ON,...FEDERATION}),a=await h.person('rtc_narrow_a'),b=await h.person('rtc_narrow_b');await rtcGrant(h,b);await rtcGrant(h,b,[CALL.artefact]);
+test('approve-app over the real runtime: narrowing ends the removed purpose\'s session at once; widening needs a live grant',async t=>{
+ const h=await host(t,{...ON,...FEDERATION}),a=await h.person('rtc_approve_a'),b=await h.person('rtc_approve_b');await rtcGrant(h,b);
  const {sid,eb}=await ring(a,b);const leg=await legKey();await b.app('rtc.claim',{endpoint:eb.endpoint,endpoint_secret:eb.endpoint_secret,sid,outcome:'accept',delegate:leg.jwk});
  assert.equal((await h.call(b,'GET','/api/rtc/settings')).body.sessions.find(s=>s.sid===sid).state,'connected');
- const r=await h.call(b,'POST','/api/rtc/narrow-app',{clientId:APP_CLIENT,purposes:[SYNC]});
- assert.equal(r.status,200,JSON.stringify(r.body));assert.deepEqual(r.body,{clientId:APP_CLIENT,purposes:[SYNC]});
+ const r=await h.call(b,'POST','/api/rtc/approve-app',{clientId:APP_CLIENT,purposes:[SYNC]});
+ assert.equal(r.status,200,JSON.stringify(r.body));assert.deepEqual(r.body,{clientId:APP_CLIENT,purposes:[SYNC],ended:1});
  const s=(await h.call(b,'GET','/api/rtc/settings')).body;
- assert.deepEqual(s.apps.map(x=>[x.clientId,x.purposes]),[[APP_CLIENT,[SYNC]]],'every grant of the app keeps the intersection (the CALL-only grant keeps nothing)');
- assert.equal(s.sessions.some(x=>x.sid===sid),false,'the connected CALL session ended (boundSync -> rtc.lifecycle app-narrowed)');
+ assert.deepEqual(s.apps.map(x=>[x.clientId,x.purposes]),[[APP_CLIENT,[SYNC]]]);
+ assert.equal(s.sessions.some(x=>x.sid===sid),false,'the connected CALL session ended (rtc.approve-app ends it in the same transaction)');
  assert.deepEqual(s.endpoints,[],'the device registered only for CALL no longer listens');
- // Widening back needs a new approval; another owner's app is unknown here (uniform 404); at least one purpose stays.
- assert.deepEqual([(await h.call(b,'POST','/api/rtc/narrow-app',{clientId:APP_CLIENT,purposes:[CALL.artefact,SYNC]})).status],[400]);
- assert.equal((await h.call(b,'POST','/api/rtc/narrow-app',{clientId:APP_CLIENT,purposes:[]})).status,400);
- uniform(await h.call(a,'POST','/api/rtc/narrow-app',{clientId:APP_CLIENT,purposes:[SYNC]}),'A holds no grant for the app');
- uniform(await h.call(b,'POST','/api/rtc/narrow-app',{clientId:'https://unknown.example/client',purposes:[SYNC]}),'an unknown app');
+ await assert.rejects(b.app('rtc.register',{purposes:[CALL.artefact]}),e=>e.code==='forbidden');
+ // Widening back is the owner's approval here (the app holds a live grant); then the app may register for it again.
+ const back=await h.call(b,'POST','/api/rtc/approve-app',{clientId:APP_CLIENT,purposes:[CALL.artefact,SYNC]});assert.deepEqual([back.status,back.body.purposes],[200,[CALL.artefact,SYNC].sort()]);
+ assert.ok((await b.app('rtc.register',{purposes:[CALL.artefact]})).endpoint);
+ // A has approved CALL for the app but holds no grant on the signaling fragment: widening is the uniform 404, narrowing is not.
+ uniform(await h.call(a,'POST','/api/rtc/approve-app',{clientId:APP_CLIENT,purposes:[CALL.artefact,SYNC]}),'A holds no grant for the app');
+ uniform(await h.call(b,'POST','/api/rtc/approve-app',{clientId:'https://unknown.example/client',purposes:[SYNC]}),'an unknown app');
+ assert.deepEqual((await h.call(a,'POST','/api/rtc/approve-app',{clientId:APP_CLIENT,purposes:[]})).body,{clientId:APP_CLIENT,purposes:[],ended:0});
 });
 
-test('narrow-app with RTC off: narrowing stays available, a widening answers the uniform 404, byte-identical to an unknown path',async t=>{
- const h=await host(t,{...OFF,...FEDERATION}),a=await h.person('rtc_narrow_off');await rtcGrant(h,a);
- const widening=await h.fetch('/api/rtc/narrow-app',{user:a,method:'POST',value:{clientId:APP_CLIENT,purposes:[CALL.artefact,SYNC,'https://spec.bindle.example/rtc-purposes/file-transfer/v1']}}),baseline=await h.fetch('/api/no-such-route',{user:a});
+test('approve-app with RTC off: narrowing stays available, a widening answers the uniform 404, byte-identical to an unknown path',async t=>{
+ const h=await host(t,{...OFF,...FEDERATION}),a=await h.person('rtc_approve_off');await rtcGrant(h,a);
+ const widening=await h.fetch('/api/rtc/approve-app',{user:a,method:'POST',value:{clientId:APP_CLIENT,purposes:[CALL.artefact,SYNC]}}),baseline=await h.fetch('/api/no-such-route',{user:a});
  assert.equal(widening.status,404);assert.equal(await widening.text(),await baseline.text());
- const r=await h.call(a,'POST','/api/rtc/narrow-app',{clientId:APP_CLIENT,purposes:[CALL.artefact]});assert.deepEqual([r.status,r.body],[200,{clientId:APP_CLIENT,purposes:[CALL.artefact]}]);
- // With RTC on, the same widening is the ordinary refusal (it needs a new approval), not a 404.
- const on=await host(t,{...ON,...FEDERATION}),b=await on.person('rtc_narrow_on');await rtcGrant(on,b,[CALL.artefact]);
- const refused=await on.call(b,'POST','/api/rtc/narrow-app',{clientId:APP_CLIENT,purposes:[CALL.artefact,SYNC]});assert.deepEqual([refused.status,refused.body.error],[400,'bound_options_widening']);
+ const r=await h.call(a,'POST','/api/rtc/approve-app',{clientId:APP_CLIENT,purposes:[]});assert.deepEqual([r.status,r.body],[200,{clientId:APP_CLIENT,purposes:[],ended:0}]);
 });
 
-test('narrow-app through the owner stage: forwarded as the signed-in owner for the signaling slot only; no authority is the uniform 404',async()=>{
- const seen=[],request=()=>new Request(ORIGIN+'/api/rtc/narrow-app',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({clientId:APP_CLIENT,purposes:[SYNC]})});
- const stage=async env=>{const r=await stages.owner({request:request(),env:{APP_ORIGIN:ORIGIN,...env},url:new URL(ORIGIN+'/api/rtc/narrow-app'),path:'/api/rtc/narrow-app',id:'0a0a0a0a-0000-4000-8000-000000000001',object:{},context:{sessionToken:'s',csrfToken:'c'}});return {status:r.status,body:await r.json()};};
- const authority={narrowBoundOptions:async(context,input)=>{seen.push({context,input});return {clientId:input.clientId,values:{purposes:[SYNC]},revision:'x'};}};
- assert.deepEqual(await stage({FEDERATION_AUTHORITY:authority}),{status:200,body:{clientId:APP_CLIENT,purposes:[SYNC]}});
- assert.deepEqual(seen[0],{context:{sessionToken:'s',csrfToken:'c'},input:{clientId:APP_CLIENT,fragment:RTC_SIGNALING_SLOT,options:{purposes:[SYNC]}}});
- assert.deepEqual(await stage({}),{status:404,body:{error:'not_found'}});
- assert.deepEqual(await stage({FEDERATION_AUTHORITY:{narrowBoundOptions:async()=>{throw Object.assign(new Error('x'),{code:'not_found'});}}}),{status:404,body:{error:'not_found'}});
+test('approve-app through the owner stage: forwarded as the signed-in owner; a widening needs the app\'s live signaling grant',async()=>{
+ const seen=[],body=purposes=>JSON.stringify({clientId:APP_CLIENT,purposes});
+ const object={rtcDispatch:async(id,x)=>{seen.push([id,x]);if(x.operation==='rtc.approvals')return {approvals:[{clientId:APP_CLIENT,purposes:[CALL.artefact,SYNC],at:1}]};return {clientId:x.input.clientId,purposes:[...x.input.purposes].sort(),ended:0};}};
+ const stage=async(env,purposes)=>{const r=await stages.owner({request:new Request(ORIGIN+'/api/rtc/approve-app',{method:'POST',headers:{'Content-Type':'application/json'},body:body(purposes)}),env:{APP_ORIGIN:ORIGIN,...env},url:new URL(ORIGIN+'/api/rtc/approve-app'),path:'/api/rtc/approve-app',id:'0a0a0a0a-0000-4000-8000-000000000001',object,context:{sessionToken:'s',csrfToken:'c'}});return {status:r.status,body:await r.json()};};
+ const granted={grants:async()=>({grants:[{active:true,clientId:APP_CLIENT,fragment:RTC_SIGNALING_FRAGMENT,client:{name:'App',origin:'https://app.example'}}]})};
+ assert.deepEqual(await stage({},[SYNC]),{status:200,body:{clientId:APP_CLIENT,purposes:[SYNC],ended:0}},'narrowing needs no grant read');
+ assert.deepEqual(seen.at(-1),['0a0a0a0a-0000-4000-8000-000000000001',{operation:'rtc.approve-app',actor:{kind:'owner',owner:'0a0a0a0a-0000-4000-8000-000000000001'},input:{clientId:APP_CLIENT,purposes:[SYNC]}}]);
+ const widen=[CALL.artefact,SYNC,'https://spec.bindle.example/rtc-purposes/file-transfer/v1'];
+ assert.deepEqual(await stage({},widen),{status:404,body:{error:'not_found'}},'no authority: no grant, so no widening');
+ assert.deepEqual(await stage({FEDERATION_AUTHORITY:{grants:async()=>({grants:[{active:true,clientId:APP_CLIENT,fragment:'https://other.example/fragment'}]})}},widen),{status:404,body:{error:'not_found'}},'a grant on another fragment');
+ assert.deepEqual(await stage({FEDERATION_AUTHORITY:{grants:async()=>({grants:[{active:false,clientId:APP_CLIENT,fragment:RTC_SIGNALING_FRAGMENT}]})}},widen),{status:404,body:{error:'not_found'}},'an inactive grant');
+ assert.equal((await stage({FEDERATION_AUTHORITY:granted},widen)).status,200);
 });

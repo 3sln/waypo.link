@@ -4,6 +4,9 @@ import {Engine,Provider,Action,Query} from '../../../vendor/ngin/index.js';
 import {createKey,createProof,thumbprint} from './dpop.mjs';
 import {boundedJSON,validateAccessResponse} from './tokens.mjs';
 import {parseIdentity} from './handle.mjs';
+import {EXT,BINDLE_REGISTRY,readExtensions} from '../../core/extensions.mjs';
+
+const deviceRegistry=new Map([[EXT.deviceAuthorization,BINDLE_REGISTRY.get(EXT.deviceAuthorization)]]);
 
 export const deviceGrant='urn:ietf:params:oauth:grant-type:device_code';
 const coded=(code,message=code)=>Object.assign(new Error(message),{code});
@@ -19,7 +22,7 @@ function endpoint(value,issuer,{plain=false}={}){
 /** The manifest must come from trusted discovery for the configured issuer. */
 export function deviceDeclaration(manifest,issuer){
  let origin;try{origin=new URL(issuer);}catch{}
- if(!origin||origin.origin!==issuer||origin.protocol!=='https:'||!object(manifest)||manifest.issuer!==issuer||manifest.version!=='0'||!object(manifest.features?.['device-authorization.v1'])||!Array.isArray(manifest.grant_types_supported)||![deviceGrant,'refresh_token'].every(grant=>manifest.grant_types_supported.includes(grant))||!Array.isArray(manifest.dpop_signing_alg_values_supported)||!manifest.dpop_signing_alg_values_supported.includes('ES256'))throw coded('unsupported_provider','The provider does not declare the Bindle device profile.');
+ if(!origin||origin.origin!==issuer||origin.protocol!=='https:'||!object(manifest)||manifest.issuer!==issuer||manifest.version!=='0'||!readExtensions(manifest,{registry:deviceRegistry,issuer}).extensions.has(EXT.deviceAuthorization)||!Array.isArray(manifest.grant_types_supported)||![deviceGrant,'refresh_token'].every(grant=>manifest.grant_types_supported.includes(grant))||!Array.isArray(manifest.dpop_signing_alg_values_supported)||!manifest.dpop_signing_alg_values_supported.includes('ES256'))throw coded('unsupported_provider','The provider does not declare the Bindle device profile.');
  const names=['device_authorization_endpoint','token_endpoint','rpc_endpoint','revocation_endpoint'];
  return Object.freeze({issuer,...Object.fromEntries(names.map(name=>[name,endpoint(manifest[name],issuer)])),preferences_contract:manifest.preferences_contract});
 }

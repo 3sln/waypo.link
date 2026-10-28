@@ -103,7 +103,7 @@ test('Worker owner ports: signer from EMAIL_BRIDGE_SIGNING_JWK, brokered occupan
 
 test('wire pins: the core restatement of the intake contract, slot and digest equals the Parlay protocol (import boundary kept)',async()=>{
  const W=await import('../packages/email-bridge/wire.mjs'),B=await import('../packages/messaging-protocol/index.mjs');
- assert.equal(W.INTAKE_CONTRACT,B.INTAKE_CONTRACT);assert.equal(W.INTAKE_SLOT,B.INTAKE_SLOT);
+ assert.equal(W.INTAKE_CONTRACT,B.INTAKE_CONTRACT);assert.equal(W.INTAKE_FRAGMENT,B.INTAKE_FRAGMENT);
  const message={parts:[{mimeType:'text/plain',dataBase64url:W.base64url(new TextEncoder().encode('héllo'))}]};
  assert.equal(await W.intakeDigest(message),await B.intakeDigest(message));assert.equal(W.base64url(new Uint8Array([251,255])),B.base64url(new Uint8Array([251,255])));
 });

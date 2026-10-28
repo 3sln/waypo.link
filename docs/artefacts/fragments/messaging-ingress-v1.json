@@ -1,0 +1,7 @@
+{
+ "id":"https://spec.bindle.example/fragments/messaging-ingress/v1",
+ "title":"Receives messages",
+ "description":"The one app that receives peer messages, contact links and bridged email for you.",
+ "publisher":"https://spec.bindle.example",
+ "fields":{"ingress":{"title":"Messaging app","type":"resource","cardinality":{"min":0,"max":1},"contracts":["https://spec.bindle.example/messaging/v1/contracts/mailbox"],"selection":"exclusive","consumers":["provider"],"announce":true}}
+}

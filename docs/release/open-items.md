@@ -25,7 +25,7 @@ How to read this file:
 | D8 | **Spam thresholds** | `T_high` 0.97 (auto-reject to `sys:spam`, recoverable 500 items / 7 days) and `T_low` 0.70 (`sys:suspected.spam`), bound to the classifier model version, calibration mode on model change, no auto-reject without a classifier. [messaging-app.md](../architecture/messaging-app.md) §12.1, §19 Q7. | 0.97 / 0.70 are the provisional values in DEVLOG. **Per the owner's brief (not recorded in DEVLOG or docs): the coordinator suggested 0.98.** Live Clef accuracy is unverified, so any value is unvalidated. |
 | D9 | **Slot registry location** | Where slot manifests are published. [extensibility-design.md](../architecture/extensibility-design.md) §11 Q5. | Recommended: a generic `/artefacts/slots/` registry (classifier slot there; messaging slots in the messaging spec). Implemented locally as `docs/artefacts/slots/item-classifier-v1.json`; not published remotely. |
 | D10 | **Integration manifest location** | Member of OAuth client metadata (one source of truth, shares the 16 KiB bound) versus a separate document with a second fetch. extensibility Q3. | No explicit recommendation recorded. The implemented design (EXT-X3) is the client-metadata member `bindle_integration`; confirm or request the separate document. |
-| D11 | **Link inheritance on occupant change** | A new messaging occupant can list, rotate, evaluate and revoke links the previous occupant issued. [core-links-review.md](core-links-review.md) item 6; [bindlebox.md](../spec/messaging.md) §4.2. | Provisional rule: links stay with the slot and are inherited; owner sees previous occupant's links with bulk revoke and reissue (review S-14). "To be recorded as a decision in DEVLOG" is still outstanding. |
+| D11 | **Link inheritance on occupant change** | A new messaging occupant can list, rotate, evaluate and revoke links the previous occupant issued. [core-links-review.md](core-links-review.md) item 6; [bindlebox.md](../spec/extensions/messaging.md) §4.2. | Provisional rule: links stay with the slot and are inherited; owner sees previous occupant's links with bulk revoke and reissue (review S-14). "To be recorded as a decision in DEVLOG" is still outstanding. |
 | D12 | **Email bridge: hold duration, follow-up confirmation, authserv attestation** | See 1c. | Needs sign-off; no coordinator recommendation recorded beyond the implemented defaults. |
 
 ### 1b. Events and consent questions Q1–Q12
@@ -64,12 +64,12 @@ Source: [email-bridge-review.md](email-bridge-review.md) "Spec and implementatio
 | AMD-C12–C20 (events, incremental authorization, consent) proposed and **unsigned**. AMD-C1–C11 were approved provisionally 2026-10-20 | DEVLOG 2026-10-20 (events entry); [consent-experience.md](../architecture/consent-experience.md) §12 |
 | Activity open questions: push caps (3/app/h, 10/app/day; 6 and 20 per account), whether updates mark read items unread, 90-day maximum expiry / 32 revisions, messaging app name and historical transfer approach | [activity-design-review.md](activity-design-review.md) "Open questions for the user" |
 | Provisional deviation from integrations §2.3: added JWKS keys stay pending until a pinned key vouches (fixes X3 S1 high) | DEVLOG X3 entry |
-| Provisional app credential lifetime model: 15 min Bearer / 60 min DPoP access tokens, rotating refresh with reuse detection, no absolute lifetime, 180-day idle (`APP_REFRESH_IDLE_DAYS`), app approval choices `ongoing` (default) / `1h` / `8h`. Supersedes the earlier 30 d / 7 d cap. Roadmap conflict-resolution item 14 still states 30 d / 7 d and is stale | DEVLOG LA1/LA2 entries; [linked-approval.md](../architecture/linked-approval.md) §15 Q1, Q4 ("pending user confirmation") |
+| Provisional app credential lifetime model: 15 min Bearer / 60 min DPoP access tokens, rotating refresh with reuse detection, no absolute lifetime, 180-day idle (`APP_REFRESH_IDLE_DAYS`), app approval choices `ongoing` (default) / `1h` / `8h`. Supersedes the earlier 30 d / 7 d cap. Roadmap conflict-resolution item 14 still states 30 d / 7 d and is stale | DEVLOG LA1/LA2 entries; [linked-approval.md](../3sln/accounts/approve-a-sign-in.md) §15 Q1, Q4 ("pending user confirmation") |
 | ACT2-R8: named IANA time zones in quiet hours (design said fixed offsets only) | [activity-design-review.md](activity-design-review.md) |
-| BB4-I3 spec reconciliation: genesis-only membership, awaiting-secret 503, one epoch per event, proposal auto-accept for listed peers vs §6.3 "never auto-accepted" | [bindlebox.md](../spec/messaging.md) lines marked "Provisional BB4-I3" |
+| BB4-I3 spec reconciliation: genesis-only membership, awaiting-secret 503, one epoch per event, proposal auto-accept for listed peers vs §6.3 "never auto-accepted" | [bindlebox.md](../spec/extensions/messaging.md) lines marked "Provisional BB4-I3" |
 | BindleBox spec items for the design owner: `secret-share` should require a status check; envelopes signed per recipient; multicast results lack per-context status; gap/introduction liveness | DEVLOG BB-B1 entry; [bindlebox-protocol-review.md](bindlebox-protocol-review.md) |
 | LH-6: conditional links cannot admit authors from other hosts (functional gap, to be recorded) | [link-handoff-bridge-review.md](link-handoff-bridge-review.md) |
-| Owner-approved device-auth defaults (30 d etc.) were accepted 2026-10-20; the device-authorization checkpoints DA1–DA5 remain pending | [device-authorization.md](../spec/device-authorization.md) §11 |
+| Owner-approved device-auth defaults (30 d etc.) were accepted 2026-10-20; the device-authorization checkpoints DA1–DA5 remain pending | [device-authorization.md](../spec/extensions/device-authorization.md) §11 |
 | Terms and privacy approval, and the other release gates | `release-status.json` |
 
 ## 2. Per feature flag: gates before enabling in production
@@ -147,22 +147,22 @@ Every row has a blank Reviewer, Date and Outcome (or a "Pending" slot). Recorded
 | --- | --- |
 | [messaging-app.md](../architecture/messaging-app.md) | Sign-off table: name, signing model, links boundary, send queue, bridge handoff and auto-reply, data reset, spike decisions D1–D4 (7 rows, all `___`) |
 | [messaging-extraction.md](../architecture/messaging-extraction.md) | Reviewer line |
-| [bindlebox.md](../spec/messaging.md) | Interop spec; BB4-I3 reconciliation "pending" |
-| [extensibility-design.md](../architecture/extensibility-design.md), [extensions.md](../spec/extensions.md), [integrations.md](../spec/integrations.md) | Revision 2 provisional; AMD-C1–C11 provisional only |
-| [events.md](../spec/events.md), [incremental-authorization.md](../spec/incremental-authorization.md), [consent-experience.md](../architecture/consent-experience.md) | Revision 2; AMD-C12–C20 unsigned |
-| [device-authorization.md](../spec/device-authorization.md) | DA1–DA5 all "Pending" |
-| [linked-approval.md](../architecture/linked-approval.md) | Architecture/security/product line |
-| [activity.md](../spec/activity.md), [activity-center.md](../architecture/activity-center.md) | Provisional, reviewer blank |
+| [bindlebox.md](../spec/extensions/messaging.md) | Interop spec; BB4-I3 reconciliation "pending" |
+| [extensibility-design.md](../architecture/extensibility-design.md), [extensions.md](../spec/extensions.md), [integrations.md](../spec/extensions/integrations.md) | Revision 2 provisional; AMD-C1–C11 provisional only |
+| [events.md](../spec/extensions/events.md), [incremental-authorization.md](../spec/extensions/incremental-authorization.md), [consent-experience.md](../architecture/consent-experience.md) | Revision 2; AMD-C12–C20 unsigned |
+| [device-authorization.md](../spec/extensions/device-authorization.md) | DA1–DA5 all "Pending" |
+| [linked-approval.md](../3sln/accounts/approve-a-sign-in.md) | Architecture/security/product line |
+| [activity.md](../3sln/services/activity.md), [activity-center.md](../architecture/activity-center.md) | Provisional, reviewer blank |
 | [public-email-bridge.md](../architecture/public-email-bridge.md), [email-bridge-review.md](email-bridge-review.md) | Reviewer blank |
 | [auth.md](../spec/auth.md) | A1–A5 unchecked, includes the provisional token-lifetime line |
 | [security.md](../spec/security.md) | S1–S5 unchecked |
-| [account-lifecycle.md](../spec/account-lifecycle.md), [account-lifecycle-executor-design.md](account-lifecycle-executor-design.md), [lifecycle-runner-review.md](lifecycle-runner-review.md) | Decision table "Pending" |
+| [account-lifecycle.md](../3sln/accounts/account-lifecycle.md), [account-lifecycle-executor-design.md](account-lifecycle-executor-design.md), [lifecycle-runner-review.md](lifecycle-runner-review.md) | Decision table "Pending" |
 | [federation-implementation.md](../spec/federation-implementation.md), [client-metadata-review.md](client-metadata-review.md), [components-profile.md](../architecture/components-profile.md) | Reviewer blank; `client-id-metadata.v1` declaration needs sign-off |
 | [embed-islands.md](../architecture/embed-islands.md), [adaptive-app-sign-in.md](../architecture/adaptive-app-sign-in.md), [embeddable-elements.md](../architecture/embeddable-elements.md) | Architecture/security/frontend sign-off blank |
 | [boot-and-admin.md](../architecture/boot-and-admin.md), [admin-ui-review.md](admin-ui-review.md) | Reviewer blank |
-| [bindle-links.md](../architecture/bindle-links.md), [links.md](../spec/links.md) | Sign-off blank |
+| [bindle-links.md](../architecture/bindle-links.md), [links.md](../spec/extensions/links.md) | Sign-off blank |
 | [app-engine.md](../architecture/app-engine.md) | "User sign-off: Reviewer ___ Date ___" |
-| [recovery-identity.md](../spec/recovery-identity.md), [messaging.md](../spec/messaging.md), [app-metadata.md](../spec/app-metadata.md) | Reviewer blank (older, outside the scope-reduction period) |
+| [recovery-identity.md](../3sln/accounts/recovery-identity.md), [messaging.md](../spec/extensions/messaging.md), [app-metadata.md](../spec/extensions/app-metadata.md) | Reviewer blank (older, outside the scope-reduction period) |
 | [wave4-integration.md](wave4-integration.md) | Six decision rows, all "provisional" |
 
 ## 5. Known environment limits

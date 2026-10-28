@@ -51,7 +51,7 @@ import { AppFault } from '../app/faults.mjs';
 import { key, base64url, fromBase64url, textEncoder } from '../core/records.mjs';
 import { UUID } from '../core/primitives.mjs';
 import { keyState } from './keys.mjs';
-import { MESSAGING_INGRESS_SLOT } from '../links/types.mjs';
+import { MESSAGING_INGRESS_FRAGMENT } from '../links/types.mjs';
 import {createFlags} from '../flags/evaluate.mjs';
 
 // Placeholder identifiers under spec.bindle.example, equal to messaging-protocol PURPOSES (cross-tested).
@@ -146,7 +146,7 @@ export class DelegationRegistry {
   /** {state:'ok', value} | {state:'none'} | {state:'error'}; a malformed answer is 'none' (fail closed). */
   async occupancy(owner) {
     if (typeof this.occupant !== 'function') return { state: 'none' };
-    let found; try { found = await this.occupant({ owner, slot: MESSAGING_INGRESS_SLOT }); } catch { return { state: 'error' }; }
+    let found; try { found = await this.occupant({ owner, fragment: MESSAGING_INGRESS_FRAGMENT }); } catch { return { state: 'error' }; }
     if (!found) return { state: 'none' };
     const cnx = typeof found.cnx === 'string' ? found.cnx : Number.isSafeInteger(found.generation) ? String(found.generation) : found.generation;
     const consented = Array.isArray(found.purposes) ? found.purposes.filter(p => KNOWN.includes(p)) : [];

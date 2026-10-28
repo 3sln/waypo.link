@@ -1,5 +1,13 @@
 # Client build and public cache model
 
+> **Group:** 3sln.me reference service (hosting)
+>
+> **Status:** operator guide; configuration alone does not establish working external delivery or provider conformance.
+>
+> **Covers:** client asset builds and the public cache model.
+>
+> **Does not cover:** the protocol and its security requirements ([protocol](../spec/protocol.md), [security](../spec/security.md)); 3sln.me release gates ([release gates](../3sln/release-gates.md)).
+
 The application now uses pinned `@3sln/js-tools`0.2.0 through `jstools.config.mjs` and `scripts/build-assets.mjs`. Run `npm ci` and `npm run build:assets` before local Wrangler/Node or browser checks. `dev:worker`, `dev:node` and `check:worker` build these same artifacts; local Wrangler exercises the production import-map model.
 
 Project modules remain authored ES modules, emitted individually with content-addressed URLs. Vendored dodo/ngin/Bab snapshots remain single source graphs; absolute and relative aliases converge to the same emitted module. Only the existing browser crypto package is selected for js-tools dependency bundling. The recovery worker and external SDK entries are standalone ESM bundles because a Worker or embedding document does not inherit the portal's import map. No server adapters, identity policy, billing logic or credentials are shipped by the explicit public-source boundary.

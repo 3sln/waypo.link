@@ -7,6 +7,7 @@ import { createNodeServer } from '../apps/node/server.mjs';
 import { injectPreview,oembed,contactIntent,canonicalContactLink,BINDLE_INTENT_SCHEME } from '../packages/links/preview.mjs';
 import { linkService } from '../packages/runtime/account/links.mjs';
 import { MESSAGING_CONTACT_LINK_TYPE } from '../packages/links/types.mjs';
+import { EXT,extensionOptions } from '../packages/core/extensions.mjs';
 
 // Default HTML representation of contact links: previews, intents and robots (real Node adapter).
 const origin='http://localhost:8793';
@@ -66,9 +67,9 @@ test('pure helpers escape every attribute and only canonical same-origin capabil
 
 test('this provider declares contact intents and its intent login endpoint in the Bindle manifest',async()=>{
  const {default:application}=await import('../packages/runtime/http.mjs'),issuer='https://provider.example';
- const env={APP_ORIGIN:issuer,FEDERATION_ENABLED:'true',KEY_ENCRYPTION_KEY:'isolated-manifest-test',ABUSE:{consume:async()=>true},FEDERATION_AUTHORITY:{clients:[],ready:async()=>true,manifest:async()=>({version:'0',issuer,features:{'authorization-entry.v1':{endpoint:issuer+'/api/oauth/entries',intents:['login']}}})}};
+ const env={APP_ORIGIN:issuer,FEDERATION_ENABLED:'true',KEY_ENCRYPTION_KEY:'isolated-manifest-test',ABUSE:{consume:async()=>true},FEDERATION_AUTHORITY:{clients:[],ready:async()=>true,manifest:async()=>({version:'0',issuer,extensions:[{spec:EXT.authorizationEntry,options:{endpoint:issuer+'/api/oauth/entries',intents:['login']}}]})}};
  const response=await application.fetch(new Request(issuer+'/.well-known/bindle/manifest.json'),env);assert.equal(response.status,200);assert.equal(response.headers.get('Access-Control-Allow-Origin'),'*');
- const manifest=await response.json();assert.deepEqual(manifest.features['intents.v1'],{intents:['send-message','add-contact'],login_endpoint:issuer+'/console'});assert.ok(manifest.features['authorization-entry.v1'],'other features are preserved');assert.equal(manifest.intents_supported,undefined);assert.equal(manifest.issuer,issuer);
+ const manifest=await response.json();assert.equal(manifest.features,undefined);assert.deepEqual(extensionOptions(manifest,EXT.intents),{intents:['send-message','add-contact'],login_endpoint:issuer+'/console'});assert.ok(extensionOptions(manifest,EXT.authorizationEntry),'other extensions are preserved');assert.equal(manifest.intents_supported,undefined);assert.equal(manifest.issuer,issuer);
 });
 
 test('only the contact page widens connect-src, for credentialless manifest discovery',async()=>{

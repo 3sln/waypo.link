@@ -1,6 +1,6 @@
 # Linked approval and device authorization: security wargame
 
-Status: design review, 2026-10-20. One independent agent reviewer worked read-only against the first drafts of [device authorization](../spec/device-authorization.md) and [linked approval](../architecture/linked-approval.md), and against the current device-login code. The design author incorporated the fixes below into both documents. This is agent review, not human sign-off. Nothing here is implemented, and production remains gated.
+Status: design review, 2026-10-20. One independent agent reviewer worked read-only against the first drafts of [device authorization](../spec/extensions/device-authorization.md) and [linked approval](../3sln/accounts/approve-a-sign-in.md), and against the current device-login code. The design author incorporated the fixes below into both documents. This is agent review, not human sign-off. Nothing here is implemented, and production remains gated.
 
 Human reviewer: __________  Date: __________  Outcome: __________
 
@@ -83,7 +83,7 @@ Decision reviewer: __________  Date: __________  Outcome: __________
 
 ## LA1 implementation
 
-Status: agent review, 2026-10-20. One independent agent reviewer worked read-only against the uncommitted LA1 identity core: `packages/identity/{linked-approval,device-login,service,index}.mjs`, the Worker/Node adapter hunks and `tests/linked-approval.test.mjs`. It checked them against [linked approval](../architecture/linked-approval.md) §3–§10.1 and the [device authorization](../spec/device-authorization.md) spec. The author fixed the confirmed findings in LA1's own files and added regression tests. Findings that need other owners stay open. This is not human sign-off, and production remains gated.
+Status: agent review, 2026-10-20. One independent agent reviewer worked read-only against the uncommitted LA1 identity core: `packages/identity/{linked-approval,device-login,service,index}.mjs`, the Worker/Node adapter hunks and `tests/linked-approval.test.mjs`. It checked them against [linked approval](../3sln/accounts/approve-a-sign-in.md) §3–§10.1 and the [device authorization](../spec/extensions/device-authorization.md) spec. The author fixed the confirmed findings in LA1's own files and added regression tests. Findings that need other owners stay open. This is not human sign-off, and production remains gated.
 
 Human reviewer: __________  Date: __________  Outcome: __________
 

@@ -115,7 +115,7 @@ test('reauthenticate honours maxAge: a stale session needs a fresh sign-in, then
 
 test('end-session: explicit confirmation naming the account ends only that account in this browser; completed/canceled only',async t=>{
  const f=await fixture(t);
- const manifest=await(await f.context.request.get(baseURL+'/.well-known/bindle/manifest.json')).json();assert.equal(manifest.features['authorization-entry.v1'].intents.includes('end-session'),true,'the Worker mounts the session-ending hook');
+ const manifest=await(await f.context.request.get(baseURL+'/.well-known/bindle/manifest.json')).json();assert.equal(manifest.extensions.find(e=>e.spec==='https://spec.bindle.example/extensions/authorization-entry/v1').options.intents.includes('end-session'),true,'the Worker mounts the session-ending hook');
  const kept=await entryFrom(f.app,{intent:'end-session',presentation:'redirect',subjectConstraint:subject(f.first)});
  await f.app.goto(`${baseURL}/oauth/authorize?entry=${kept.body.entryId}`);await f.app.getByRole('button',{name:'Stay signed in'}).click();
  const canceled=await callbackOf(f.app);assert.deepEqual(Object.fromEntries(canceled.searchParams),{result:'canceled',state:kept.state,iss:baseURL});
@@ -133,8 +133,8 @@ test('end-session: explicit confirmation naming the account ends only that accou
 
 test('frame-initiated popup: the real embed bridge and keys attest the opener; delivery reaches only the embed origin',async t=>{
  const f=await fixture(t);
- const manifest=await(await f.context.request.get(baseURL+'/.well-known/bindle/manifest.json')).json(),profile=manifest.profiles?.['https://3sln.me/artefacts/profiles/components/v1'];
- if(!profile){t.skip('islands shell not built: no components profile to discover the embed origin');return;}assert.equal(profile.embed_origin,embedOrigin);
+ const manifest=await(await f.context.request.get(baseURL+'/.well-known/bindle/manifest.json')).json(),profile=manifest.extensions?.find(e=>e.spec==='https://spec.bindle.example/extensions/embedded-components/v1')?.options;
+ if(!profile){t.skip('islands shell not built: no embedded-components extension to discover the embed origin');return;}assert.equal(profile.embed_origin,embedOrigin);
  // The islands shell refuses a non-HTTPS issuer (apps/embed/src/boot.mjs readConfig), so the frame here is a fixture
  // document on the real embed origin that runs the shipped frame modules: bridge.mjs (unnamed popup, exact-origin
  // handshake), keys.mjs (non-extractable key, embed proofs) and restore.mjs (entry creation, claim redemption).

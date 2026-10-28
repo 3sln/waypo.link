@@ -42,7 +42,7 @@ export class LinksProvider extends Provider {
       // Slots this app occupies now; a failing or missing port fails closed.
       if (typeof occupant !== 'function') return [];
       const held = [];
-      for (const slot of new Set(Object.values(LINK_TYPE_BINDINGS).map(binding => binding.slot))) { let found = null; try { found = await occupant({ owner: actor.owner, slot }); } catch { found = null; } if (found?.clientId === actor.clientId && (actor.generation === undefined || found.generation === actor.generation) && (actor.connection === undefined || found.connection === actor.connection)) held.push({ slot, generation: found.generation ?? null }); }
+      for (const slot of new Set(Object.values(LINK_TYPE_BINDINGS).map(binding => binding.fragment))) { let found = null; try { found = await occupant({ owner: actor.owner, fragment: slot }); } catch { found = null; } if (found?.clientId === actor.clientId && (actor.generation === undefined || found.generation === actor.generation) && (actor.connection === undefined || found.connection === actor.connection)) held.push({ slot, generation: found.generation ?? null }); }
       return held;
     };
     return Object.freeze(scope(this.service, actor, { slots }));
@@ -52,7 +52,7 @@ export class LinksProvider extends Provider {
 // The owner-scoped handle: methods take no owner argument, so an operation never holds an ID it could swap.
 function scope(service, actor, { owner = false, slots }) {
   const allowed = async () => owner ? undefined : (await slots()).map(held => held.slot);
-  const occupying = async type => { const binding = linkBinding(type); if (!binding) throw new AppFault('unsupported_link_type', 'This link type is not supported.', 400); const held = (await slots()).find(entry => entry.slot === binding.slot); if (!held) forbidden(); return held; };
+  const occupying = async type => { const binding = linkBinding(type); if (!binding) throw new AppFault('unsupported_link_type', 'This link type is not supported.', 400); const held = (await slots()).find(entry => entry.slot === binding.fragment); if (!held) forbidden(); return held; };
   return {
     async issue(input) {
       if (owner) forbidden();

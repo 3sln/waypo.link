@@ -76,15 +76,6 @@ const es={
  'Already granted to {app}':'Ya concedido a {app}',
  'New fields: ':'Campos nuevos: ',
  'New permissions: ':'Permisos nuevos: ',
- 'Choose what this app may do':'Elige lo que esta app puede hacer',
- 'Nothing is selected for you. Approve each one you want this app to use.':'No hay nada seleccionado. Aprueba cada uno que quieras que esta app use.',
- 'Media: ':'Medios: ',
- 'Can ring you':'Puede hacerte sonar',
- 'Never rings':'Nunca suena',
- 'Only your own devices':'Solo tus propios dispositivos',
- 'Only other people':'Solo otras personas',
- 'Your devices and other people':'Tus dispositivos y otras personas',
- 'Shown before you answer: ':'Se muestra antes de responder: ',
  '{app} is asking for more access than you already granted. New items are marked below.':'{app} solicita más acceso del que ya concediste. Los elementos nuevos están marcados abajo.',
 };
 const en=Object.fromEntries(Object.entries(es).map(([key,value])=>[key,typeof value==='string'?key:{one:key.replace(/s$/,''),other:key}]));

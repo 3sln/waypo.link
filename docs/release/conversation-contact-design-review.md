@@ -67,7 +67,7 @@ The stable proposal's later privacy update was reviewed on 2026-10-13. Its ident
 
 ### Encrypted cold archives — additional design review
 
-The user requested that cold conversation archives and their downloads/transfers be ciphertext encrypted for the owner's assigned encryption public key, recoverable with the corresponding private key in the encrypted restoration file. The [existing recovery contract](../spec/recovery-identity.md) already distinguishes original ECDSA signing keys from a separate ECDH P-256 encryption key. Recovery answers unlock the file; they do not derive that identity key. A recovery/reset token authorizes a different operation and is not the archive decryption key.
+The user requested that cold conversation archives and their downloads/transfers be ciphertext encrypted for the owner's assigned encryption public key, recoverable with the corresponding private key in the encrypted restoration file. The [existing recovery contract](../3sln/accounts/recovery-identity.md) already distinguishes original ECDSA signing keys from a separate ECDH P-256 encryption key. Recovery answers unlock the file; they do not derive that identity key. A recovery/reset token authorizes a different operation and is not the archive decryption key.
 
 The provider currently retains this private key encrypted under its server `KEY_ENCRYPTION_KEY`. Therefore this design protects cold/exported ciphertext against parties lacking the key; it does not establish E2EE against that provider or prevent it decrypting archives. Plaintext working sets, retained database/search indexes, safe outer metadata and browser memory require an explicit threat boundary. Do not claim that encrypting archive bodies encrypts every local index or prevents provider access.
 

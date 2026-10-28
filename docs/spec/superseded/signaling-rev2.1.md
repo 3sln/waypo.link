@@ -1,10 +1,19 @@
-> **Superseded.** This is a frozen copy of signaling.v1 revision 2.1, exactly as at commit 2a686cf (`git show 2a686cf:docs/spec/signaling.md`), kept so that the revision history (Appendix A.1 to A.5) and the bodies of amendments that later revisions withdrew stay readable. It is superseded by [signaling revision 3.1](../signaling.md) (draft, unsigned) and is not maintained. Only relative links were adjusted for this directory; the text is otherwise unchanged. Its own references to "this document" and its sign-off lines are historical.
-
 # Signaling (`signaling.v1`) — normative draft
+
+> **Group:** Superseded
+>
+> **Status:** frozen copy of signaling revision 2.1; superseded by [signaling](../extensions/signaling.md) revision 3.x (draft, unsigned).
+>
+> **Covers:** signaling revision history (Appendix A.1–A.5) and withdrawn amendment bodies.
+>
+> **Does not cover:** current signaling ([signaling](../extensions/signaling.md)).
+
+> **Superseded.** This is a frozen copy of signaling.v1 revision 2.1, exactly as at commit 2a686cf (`git show 2a686cf:docs/spec/signaling.md`), kept so that the revision history (Appendix A.1 to A.5) and the bodies of amendments that later revisions withdrew stay readable. It is superseded by [signaling revision 3.1](../extensions/signaling.md) (draft, unsigned) and is not maintained. Only relative links were adjusted for this directory; the text is otherwise unchanged. Its own references to "this document" and its sign-off lines are historical.
+
 
 > **Pending [extensions revision 3](../extensions.md) (draft, unsigned, 2026-10-27).** Where this document relies on the `signaling.v1` feature, slot manifests, occupant declarations and `ref`, extensions revision 3.2 and protocol §2–§4 govern instead. Change request CR-X3-03, [extensions Appendix A](../extensions.md#appendix-a-migration-and-impact-change-requests-not-applied).
 
-Status: **draft, 2026-10-27, revision 2.1. Specification only: nothing in this document is implemented to this text.** It is intended to replace [RTC signaling](../rtc-signaling.md) (`rtc-signaling.v1`), which is **superseded by this draft, pending sign-off**. The local code still implements `rtc-signaling.v1`, with every RTC flag off and nothing published, deployed or production-verified. Appendix C plans the move. Every decision here is provisional (coordinator) and **not signed off by the owner**. The decisions are SG-1 to SG-35 in §19.2. The owner said provisional decisions may be adopted for now without sign-off, so the eight rev 0 owner questions carry provisional answers in §19.3, the establishment spike questions carry provisional answers in §19.4, and the questions still open are in §19.5. The decision records are in [DEVLOG](../../../DEVLOG.md), 2026-10-27: "Generic signaling.v1 spec draft (replaces calling-shaped RTC)" (revision 0), "signaling.v1 spec rev 1 (review fixes)" (revision 1, which answers an independent review; Appendix A.2 maps each finding to its fix) and "signaling.v1 spec rev 2 (offer and pairing bases)" (revision 2, which applies the [establishment-modes spike](../../architecture/signaling-modes-spike.md), decisions SMS-1 to SMS-8 and change requests CR-1 to CR-13; Appendix A.4 maps each change request to its section) and "signaling.v1 spec rev 2.1 (rev 2 review fixes)" (revision 2.1, which answers an independent review of revision 2; Appendix A.5 maps each finding to its fix). Identifiers under `https://spec.bindle.example/` and hosts under `.example` are placeholders. MUST, SHOULD and MAY express draft requirements.
+Status: **draft, 2026-10-27, revision 2.1. Specification only: nothing in this document is implemented to this text.** It is intended to replace [RTC signaling](rtc-signaling.md) (`rtc-signaling.v1`), which is **superseded by this draft, pending sign-off**. The local code still implements `rtc-signaling.v1`, with every RTC flag off and nothing published, deployed or production-verified. Appendix C plans the move. Every decision here is provisional (coordinator) and **not signed off by the owner**. The decisions are SG-1 to SG-35 in §19.2. The owner said provisional decisions may be adopted for now without sign-off, so the eight rev 0 owner questions carry provisional answers in §19.3, the establishment spike questions carry provisional answers in §19.4, and the questions still open are in §19.5. The decision records are in [DEVLOG](../../../DEVLOG.md), 2026-10-27: "Generic signaling.v1 spec draft (replaces calling-shaped RTC)" (revision 0), "signaling.v1 spec rev 1 (review fixes)" (revision 1, which answers an independent review; Appendix A.2 maps each finding to its fix) and "signaling.v1 spec rev 2 (offer and pairing bases)" (revision 2, which applies the [establishment-modes spike](../../architecture/signaling-modes-spike.md), decisions SMS-1 to SMS-8 and change requests CR-1 to CR-13; Appendix A.4 maps each change request to its section) and "signaling.v1 spec rev 2.1 (rev 2 review fixes)" (revision 2.1, which answers an independent review of revision 2; Appendix A.5 maps each finding to its fix). Identifiers under `https://spec.bindle.example/` and hosts under `.example` are placeholders. MUST, SHOULD and MAY express draft requirements.
 
 Protocol/security/interop sign-off: reviewer ___ / date ___ / outcome ___.
 
@@ -16,9 +25,9 @@ This document defines a Bindle extension on the existing extension system. It ha
 - the existing `ice-relay/v1` **slot**, unchanged (§3.3).
 
 It defines no artefact kind, no link type and no extension-system member. Instead it reuses core primitives:
-- **What a session is for** is an [intent kind](../intents.md#4-intent-kinds) with a `session` member.
+- **What a session is for** is an [intent kind](../extensions/intents.md#4-intent-kinds) with a `session` member.
 - **Who may open a session, and which app receives it,** depends on an explicit **establishment basis** (§5.6): `self` (own devices), `pairing` (an owner record that pre-authorizes two apps, or one peer, for a kind), `offer` (a one-use dial-back authorization that an app hands to an invited party inside its own app message), `link` (a configured contact link) or `none` (requests, held). Only `link` invites, and own-entity invites with no initiating app to route to, use the owner's intent handler choice for the kind.
-- **Shareable admission** uses the owner's existing [contact links](../links.md#6-contact-link-type) with owner-side configuration. App-minted links wait for the links §6 re-scope (§20.3.2). Callbacks are withdrawn: the `offer` basis replaces them (§5.7).
+- **Shareable admission** uses the owner's existing [contact links](../extensions/links.md#6-contact-link-type) with owner-side configuration. App-minted links wait for the links §6 re-scope (§20.3.2). Callbacks are withdrawn: the `offer` basis replaces them (§5.7).
 - **Presentation** is the app's. The provider keeps only a minimal owner hook for invites no app can see (§11.3). Calling and other use semantics are app-level: a messaging app's call invite, for example, is a message with a JSON media type in the Bindle Messaging spec, not part of this document (§20.12).
 
 The intents, links and device-authorization changes this needs, and two security.md statements, are written as proposed, unsigned amendments in §20. None of those documents is edited by this draft.
@@ -63,7 +72,7 @@ These are requirements, not defaults:
 
 | Term | Meaning |
 | --- | --- |
-| Entity, principal | As in [protocol §1](../protocol.md#1-model-and-custody). A principal is `(iss, sub)`. Relationships are keyed by **origin principal** ([identity portability §8.1](../identity-portability.md#81-stable-identifier)). |
+| Entity, principal | As in [protocol §1](../protocol.md#1-model-and-custody). A principal is `(iss, sub)`. Relationships are keyed by **origin principal** ([identity portability §8.1](../extensions/identity-portability.md#81-stable-identifier)). |
 | Endpoint | A registration, at the entity's provider, of one application connection on one device instance, or of one enabled provider feature (§10.1). Endpoints are provider-local and never disclosed to other entities. |
 | Initiator, recipient | The two parties of a session. The initiator sends the invite. |
 | Session | One attempt to connect an initiator endpoint with one recipient endpoint. It is identified by `sid` and keyed by (initiator origin principal, `sid`). |
@@ -87,7 +96,7 @@ A provider whose entities can hold sessions with entities at other providers dec
 
 | Feature | Members | Meaning | When absent |
 | --- | --- | --- | --- |
-| `signaling.v1` | `endpoint` (issuer origin), `max_leg_certificate_seconds` (integer 120 to 900), `profiles` (nonempty, unique, ascending subset of the registered profile ids) | The provider accepts §9 batches at `endpoint` and sends batches only to peers' declared endpoints. It issues leg certificates (§6.1) no longer than the declared bound, and relays and validates the listed profiles. Requires `directory.v1` ([organizations §3a](../organizations.md#3a-identity-documents-and-key-discovery-directoryv1)), `extensions.v1` and `artefact-versions.v1`. | Its entities can hold sessions only with entities on the same provider, if it offers the slot at all. |
+| `signaling.v1` | `endpoint` (issuer origin), `max_leg_certificate_seconds` (integer 120 to 900), `profiles` (nonempty, unique, ascending subset of the registered profile ids) | The provider accepts §9 batches at `endpoint` and sends batches only to peers' declared endpoints. It issues leg certificates (§6.1) no longer than the declared bound, and relays and validates the listed profiles. Requires `directory.v1` ([organizations §3a](../extensions/organizations.md#3a-identity-documents-and-key-discovery-directoryv1)), `extensions.v1` and `artefact-versions.v1`. | Its entities can hold sessions only with entities on the same provider, if it offers the slot at all. |
 
 The feature confers no authority.
 
@@ -128,7 +137,7 @@ The feature confers no authority.
 
 ### 3.3 The ice-relay slot (unchanged)
 
-`https://spec.bindle.example/slots/ice-relay/v1` is kept exactly as [rtc-signaling §3.3](../rtc-signaling.md#33-the-ice-relay-slot) defines it:
+`https://spec.bindle.example/slots/ice-relay/v1` is kept exactly as [rtc-signaling §3.3](rtc-signaling.md#33-the-ice-relay-slot) defines it:
 - one `resource` field `relays`, `cardinality` 0 to 4, contract `…/contracts/ice-relay/v1`;
 - `selection: "ordered"`, `failover: "pre-dispatch"`, `consumers: ["application", "provider"]`, no options;
 - one method, `credentials({sid?})` → `{ice_servers, expires_at}`, a write effect, with brokered occupants allowed.
@@ -141,7 +150,7 @@ Carried rules:
 
 ### 3.4 Session kinds
 
-What a session is for is a **session kind**: an intent kind ([intents §4](../intents.md#4-intent-kinds)) whose body has the `session` member defined by AMD-SG-I1 (§20.1). The kind's existing members give everything the old `rtc-purpose` had except calling policy:
+What a session is for is a **session kind**: an intent kind ([intents §4](../extensions/intents.md#4-intent-kinds)) whose body has the `session` member defined by AMD-SG-I1 (§20.1). The kind's existing members give everything the old `rtc-purpose` had except calling policy:
 - the title, summary and publisher;
 - the `data` schema and `disclosure`, which become the invite **context** and its disclosure;
 - the sensitivity categories;
@@ -217,7 +226,7 @@ It MAY show the owner hook, the handoff (§11.4) and the owner controls of §14 
 
 A provider feature that consumes the slot must satisfy four things:
 1. It is declared as a `consumer` of the slot in the provider manifest, and enabled per entity by an owner action ([extensions §5.3](extensions-rev2.md#53-provider-consumers)).
-2. It declares the session kinds it handles in a provider-authored manifest, as a built-in handler ([intents §5](../intents.md#5-handler-declarations)). It is approved per kind by the owner exactly as an app is (§20.1.4).
+2. It declares the session kinds it handles in a provider-authored manifest, as a built-in handler ([intents §5](../extensions/intents.md#5-handler-declarations)). It is approved per kind by the owner exactly as an app is (§20.1.4).
 3. Its endpoints are registered by the provider. Its leg certificates carry `client: {client_id: <issuer URL>, origin: <issuer origin>, feature: <declaration ref>}` (§6.1).
 4. It gets no authority beyond the owner's approvals and enablement. It is listed among the slot's consumers (extensions §5.1). Disabling the feature ends its endpoints and sessions (§14.2).
 5. **Answering policy.** A provider feature has no user action at a device. For a cross-entity session, it accepts only when the owner set standing acceptance on its approval for that kind (§5.5). Within that setting, the enabled feature's own declared policy decides which admitted invites it accepts. The policy is disclosed when the owner enables the feature and when the owner sets standing acceptance. Without standing acceptance, the feature never accepts a cross-entity session.
@@ -226,7 +235,7 @@ A provider feature that consumes the slot must satisfy four things:
 
 Every session acts for an entity at each end. A provider acting as itself, for no entity, is not a party in this version (§19.3, answer 8). An operator that needs one hosts a **service entity** and enables a feature for it, with standing acceptance where the feature answers on its own.
 
-A service entity is an ordinary entity, typically an organization entity ([organizations §3](../organizations.md#3-organization-entities)), that the operator controls. Its approvals, feature enablement and standing acceptance are owner actions taken through its owner interface ([organizations §6.3](../organizations.md#63-owner-interface)), with the same disclosures as for any entity. There is no provider-wide shortcut.
+A service entity is an ordinary entity, typically an organization entity ([organizations §3](../extensions/organizations.md#3-organization-entities)), that the operator controls. Its approvals, feature enablement and standing acceptance are owner actions taken through its owner interface ([organizations §6.3](../extensions/organizations.md#63-owner-interface)), with the same disclosures as for any entity. There is no provider-wide shortcut.
 
 ## 5. Authorization
 
@@ -245,7 +254,7 @@ Before certifying an initiator leg (`open`, §10.2), the initiator provider MUST
 It resolves the recipient to an origin principal in one of three ways:
 - from a principal (always, for an `offer` or `relation` basis);
 - from a contact link presented as basis;
-- from a handle, through the recipient issuer's directory ([organizations §3a.2](../organizations.md#3a2-handle-lookup)). A provider without a handle index MAY support principals and links only.
+- from a handle, through the recipient issuer's directory ([organizations §3a.2](../extensions/organizations.md#3a2-handle-lookup)). A provider without a handle index MAY support principals and links only.
 
 It then checks the recipient's issuer:
 - If the issuer's validated manifest is held and declares no `signaling.v1`, or does not list the profile, `open` fails with `unsupported_peer`. That is a public fact.
@@ -266,10 +275,10 @@ The recipient provider admits an `invite` only on one of these bases, evaluated 
 | `link` | `basis: {"link_digest": <base64url SHA-256 of the canonical link>}`, with the link carried beside the message in the batch (§9.1) | The link verifies at the recipient provider as its owner host and is live, the link is an unconditional contact link (§5.3), and its parent's owner-side signaling configuration (§5.3) admits this kind and this initiator. |
 | `none` | `basis: null`, another entity | Only if the owner enabled requests from verified identities for that kind. Default: off. A `none` invite is **held**: it is never delivered to endpoints, and it is recorded only as an owner-hook entry (§11.3). |
 
-**Verifying a link basis.** This is unchanged from [rtc-signaling §4.2](../rtc-signaling.md#42-admission-bases):
+**Verifying a link basis.** This is unchanged from [rtc-signaling §4.2](rtc-signaling.md#42-admission-bases):
 - The link is canonical: the origin and path plus exactly `bindle_meta` or legacy `sig`, with no `bindle_data` and no unrelated parameters.
 - Its SHA-256 equals `link_digest`.
-- The recipient provider verifies it as if it had received a request for that URL, under [links §8](../links.md#8-processing-order-and-results) steps 1 and 2.
+- The recipient provider verifies it as if it had received a request for that URL, under [links §8](../extensions/links.md#8-processing-order-and-results) steps 1 and 2.
 - Only the digest is in the signed invite. The bearer link is never delivered to endpoints (§10.2).
 
 **Verifying an offer basis.**
@@ -287,7 +296,7 @@ Block, quarantine and limits (§13) apply after verification and are silent.
 
 ### 5.3 Contact-link signaling configuration
 
-Signaling admission on a contact link is **mutable owner-side configuration on an existing contact parent**, keyed by `jti`, like intake configuration ([links §6.2](../links.md#62-intake-configuration)). It replaces the RTC per-parent configuration (`rtc/contact/`). AMD-SG-L1a (§20.3.1) defines it. In this revision only the owner configures it, on a parent the owner already has. There are no app-minted or signaling-only parents and no delivery-off switch: those wait for the links §6 re-scope (AMD-SG-L1b, §20.3.2) and are **unavailable** until it lands. There are no callbacks at all: offers replace them (§5.7).
+Signaling admission on a contact link is **mutable owner-side configuration on an existing contact parent**, keyed by `jti`, like intake configuration ([links §6.2](../extensions/links.md#62-intake-configuration)). It replaces the RTC per-parent configuration (`rtc/contact/`). AMD-SG-L1a (§20.3.1) defines it. In this revision only the owner configures it, on a parent the owner already has. There are no app-minted or signaling-only parents and no delivery-off switch: those wait for the links §6 re-scope (AMD-SG-L1b, §20.3.2) and are **unavailable** until it lands. There are no callbacks at all: offers replace them (§5.7).
 
 | Member | Definition |
 | --- | --- |
@@ -299,7 +308,7 @@ Signaling admission on a contact link is **mutable owner-side configuration on a
 
 The configuration is never signed into the link, never disclosed in any link representation, and never delivered to the link holder. It is directional: enabling it on Alice's link lets holders reach Alice, not the reverse. When the configuration's `kinds` becomes empty, the configuration is removed.
 
-**Not on conditional parents.** The owner MUST NOT configure signaling on a conditional contact parent (one whose meta has `audience`, [links §7](../links.md#7-audience-requirement-conditional-contact-links)), and a provider refuses such an update. A conditional link presented as a basis admits nothing, silently. The reasons for forbidding it, rather than evaluating the audience policy against the verified certificate principal:
+**Not on conditional parents.** The owner MUST NOT configure signaling on a conditional contact parent (one whose meta has `audience`, [links §7](../extensions/links.md#7-audience-requirement-conditional-contact-links)), and a provider refuses such an update. A conditional link presented as a basis admits nothing, silently. The reasons for forbidding it, rather than evaluating the audience policy against the verified certificate principal:
 - Audience policy is operator host policy, evaluated at GET and at message admission (links §7.4, §7.5). Evaluating it inside §9.2 would put a policy call, and for foreign principals the unwired links §7.3 directory path, into federation verification, which must stay local and cheapest-first (§9.2 step 7).
 - Its quota model is per verified principal per UTC day (links §7.1), which does not map onto `uses`.
 - The owner already has an exact, local alternative: `principal` names one origin principal, and is compared with the verified certificate principal at step 8.
@@ -307,7 +316,7 @@ The configuration is never signed into the link, never disclosed in any link rep
 A later revision MAY lift this once links §7.3 foreign verification exists, by evaluating the policy on the verified leg-certificate principal at step 8, in the way links §7.5 evaluates it on the author principal.
 
 **What link holders and representations see.** Configuring signaling changes nothing a link representation reports:
-- The sender metadata representation ([links §6.3](../links.md#63-sender-metadata-representation)) is unchanged. Its `kinds` are still the signed message kinds, and it never reports session kinds, `uses`, `principal` or whether signaling is configured.
+- The sender metadata representation ([links §6.3](../extensions/links.md#63-sender-metadata-representation)) is unchanged. Its `kinds` are still the signed message kinds, and it never reports session kinds, `uses`, `principal` or whether signaling is configured.
 - The HTML composer, inspection, contact-profile representation and previews (links §6, §6.4) are unchanged and show no signaling state.
 - A GET or HEAD of the link never admits, spends or creates anything.
 - The parent still accepts messages exactly as its signed meta and intake allow. Configuring signaling adds a way for holders to reach the owner, and it is disclosed to the owner as such when it is set (§14.1).
@@ -509,7 +518,7 @@ Deleting a pairing ends its claimed sessions with a control statement `revoked`,
 
 ### 5.9 Enrolling headless clients
 
-A headless client, such as an agent daemon on a machine with no browser, is a public native client. It enrolls with [device authorization](../device-authorization.md) (RFC 8628 with mandatory DPoP), which 3sln.me implements locally behind `DEVICE_AUTHORIZATION_ENABLED`. This section adds nothing to that protocol. It says how a provider offering the signaling slot uses it.
+A headless client, such as an agent daemon on a machine with no browser, is a public native client. It enrolls with [device authorization](../extensions/device-authorization.md) (RFC 8628 with mandatory DPoP), which 3sln.me implements locally behind `DEVICE_AUTHORIZATION_ENABLED`. This section adds nothing to that protocol. It says how a provider offering the signaling slot uses it.
 
 1. **Start.** The client requests a device authorization with its `client_id` (a client ID metadata document listing the device grant), a `dpop_jkt`, and a request for the signaling slot fragment with the methods it needs (`register`, `listen`, `claim`, `send`, `renew`, and relay credentials).
 2. **Show.** The client shows the `user_code` and `verification_uri`. **Code entry is the default.** The client MAY also show a QR code of `verification_uri_complete`, but a prefilled code loses protection against code substitution (device authorization §10.6), so the provider still asks the owner to type the code unless its policy establishes that the approval is happening alongside the device (device authorization §5.2).
@@ -539,7 +548,7 @@ For each leg, the endpoint generates a fresh ES256 key pair:
 - it SHOULD be non-extractable;
 - it MUST NOT be reused across sessions, so that no peer can link an endpoint across sessions.
 
-The entity's provider certifies the public key in a leg certificate: a compact JWS under the [links §3.1](../links.md#31-jws-profile-shared-with-bindle_data) profile. Its protected header is exactly `{alg:"ES256", kid:<an active certification kid of the entity>, typ:"bindle-signaling-leg+jwt"}`. Its payload is exactly:
+The entity's provider certifies the public key in a leg certificate: a compact JWS under the [links §3.1](../extensions/links.md#31-jws-profile-shared-with-bindle_data) profile. Its protected header is exactly `{alg:"ES256", kid:<an active certification kid of the entity>, typ:"bindle-signaling-leg+jwt"}`. Its payload is exactly:
 
 | Member | Definition |
 | --- | --- |
@@ -551,7 +560,7 @@ The entity's provider certifies the public key in a leg certificate: a compact J
 | `kind` | `{artefact, version, digest}`: the session kind. |
 | `profile` | The profile id. |
 | `client` | `{client_id, origin, feature}`, as verified by the provider. `feature` is `null` for an app, and the declaration `ref` for a provider feature (§4.2). |
-| `cnf`, `delegate` | `{jkt}` and the public JWK, as in [organizations §5.2](../organizations.md#52-member-authentication-certificates-and-signed-requests). |
+| `cnf`, `delegate` | `{jkt}` and the public JWK, as in [organizations §5.2](../extensions/organizations.md#52-member-authentication-certificates-and-signed-requests). |
 | `aep` | The entity's authority epoch. |
 | `jti`, `iat`, `exp` | `exp − iat` is at most the declared `max_leg_certificate_seconds`. `exp` is no later than the session's maximum lifetime (§8.1). For a pending initiator leg, it is no later than `answer_by` plus the declared bound. |
 
@@ -566,7 +575,7 @@ An endpoint renews its certificate before expiry (§10.2). The renewed certifica
 **Verification.** Verifiers check:
 - the profile, `typ`, exact members, `aud`, `sid`, and `exp` with 60 s skew;
 - the signature, against the issuer's `active` certification keys. A certificate signed by an identity signing key, or by a `sig` or `enc` key, fails.
-- the `identity` member, which is only a claim. A verifier obtains the identity URI only from the issuer's directory `?sub=` lookup, from its own pin, or from an adopted move record. It checks that the URI equals `identity`, and applies the [organizations §3a.4](../organizations.md#3a-identity-documents-and-key-discovery-directoryv1) no-rollback rule.
+- the `identity` member, which is only a claim. A verifier obtains the identity URI only from the issuer's directory `?sub=` lookup, from its own pin, or from an adopted move record. It checks that the URI equals `identity`, and applies the [organizations §3a.4](../extensions/organizations.md#3a-identity-documents-and-key-discovery-directoryv1) no-rollback rule.
 
 A foreign peer's certificates are checked against its issuer's declared `max_leg_certificate_seconds`, as held. Without a held value, the maximum is 900 s (RTCe-11).
 
@@ -877,7 +886,7 @@ A queue that overflowed reports `gap: true`. The affected sessions end `failed`,
   - The payload is exactly `{"t":"signal","endpoint":"<endpoint>"}`: no initiator, kind or session.
   - Pushes count against the recipient's invite limits (§13.1). Held invites are never delivered to endpoints, so they never push.
   - A subscription reported gone is removed.
-- **Integration doorbell.** A confidential integration's server MAY receive the SET event `…/events/signaling-doorbell/v1` (payload exactly `{endpoint}`) on its existing events channel ([integrations §6](../integrations.md#6-events)), so that it can wake its native app. AMD-SG-E1 registers it.
+- **Integration doorbell.** A confidential integration's server MAY receive the SET event `…/events/signaling-doorbell/v1` (payload exactly `{endpoint}`) on its existing events channel ([integrations §6](../extensions/integrations.md#6-events)), so that it can wake its native app. AMD-SG-E1 registers it.
 
 How an app presents an invite once woken, whether it rings and what it shows, is the app's concern.
 
@@ -897,7 +906,7 @@ What remains is a minimal **owner hook**, for the invites that no app can see:
   - **Block** (§13.2).
   - **Allow later,** for a held entry: an explicit configuration change that applies only to later invites.
 
-There is no signaling mute and no interruption policy. A provider that also wants to mirror hook entries into [activity](../activity.md) needs a separate amendment first (§20.2).
+There is no signaling mute and no interruption policy. A provider that also wants to mirror hook entries into [activity](../../3sln/services/activity.md) needs a separate amendment first (§20.2).
 
 ### 11.4 Handoff to the chosen app
 
@@ -1103,7 +1112,7 @@ Re-registering after an endpoint revocation is allowed. To stop an app, the owne
 When an entity's move commits, its source provider:
 - ends every session of that entity, with a control statement `moved` for claimed legs and silently for pending ones;
 - revokes relay credentials;
-- stops issuing leg certificates. Its certification keys are revoked at commit ([identity portability §6.3](../identity-portability.md#63-commit-at-the-source));
+- stops issuing leg certificates. Its certification keys are revoked at commit ([identity portability §6.3](../extensions/identity-portability.md#63-commit-at-the-source));
 - deletes the entity's live offers. Offers are transient and never move: an invited party's dial-back after commit reaches the destination, which holds no such offer, and admits nothing;
 - deletes the entity's pairings after export. The destination MAY import exported pairings; an imported pairing is a creation (§5.8): it starts pending, needs the destination's approvals, expires after 7 days if still pending, and an own-entity pairing that binds a `client_session` cannot be imported, because client sessions do not move.
 
@@ -1134,10 +1143,10 @@ The drain that delivers those control statements MUST run before the identity is
   - An app learns its own provider's support from the manifest's `extensions` occupant declaration for the slot, beside `extensions.v1`.
   - Providers without `extensions.v1` process the slot fragment as an ordinary fragment. With no built-in occupant, there is no signaling.
 - **Versions.** The feature, the message, certificate and control `v`, the slot, the contract, each profile and each kind line version independently, each by its own rule. A receiver rejects an unknown `v`. A new message version is introduced by a new feature version, and a provider MAY declare both.
-- **Kind versions.** A recipient provider delivers an invite of kind version *M* to a handler approved for version *N* < *M* only when it has verified that the line is additive from *N* to *M* ([artefacts §7.2](../artefacts.md#72-advancing-a-head)). It then projects `context` to version *N*, and still delivers the raw invite unchanged. A version that adds disclosure needs re-approval ([intents §7.2](../intents.md#72-remembered-consent)), and the owner's re-confirmation of each pairing of that kind line (§5.8).
+- **Kind versions.** A recipient provider delivers an invite of kind version *M* to a handler approved for version *N* < *M* only when it has verified that the line is additive from *N* to *M* ([artefacts §7.2](../artefacts.md#72-advancing-a-head)). It then projects `context` to version *N*, and still delivers the raw invite unchanged. A version that adds disclosure needs re-approval ([intents §7.2](../extensions/intents.md#72-remembered-consent)), and the owner's re-confirmation of each pairing of that kind line (§5.8).
 - **No registered kinds.** This document registers no session kinds. Apps and other publishers publish them. §20.1.9 gives one worked example, which is not registered.
 - **Reserved:**
-  - `relation` values other than `"pairing"` (for example an access entry over an [organizations §9](../organizations.md#9-relations) edge);
+  - `relation` values other than `"pairing"` (for example an access entry over an [organizations §9](../extensions/organizations.md#9-relations) edge);
   - `accept` values other than `"auto"` on a pairing, and pairings that span entities on both sides of a fleet;
   - brokered signaling occupants;
   - a group member;
@@ -1394,15 +1403,15 @@ None of the amendments below is applied to its target document. Each needs proto
 
 ### 20.1 AMD-SG-I1: session kinds and addressed delivery (intents)
 
-**Target:** [intents](../intents.md) §1, §4.1, §4.4, §5, §6, §7, §7.3, §8, §9.5, §12 and §14. **Status:** proposed, unsigned. **Not applied to intents.md.**
+**Target:** [intents](../extensions/intents.md) §1, §4.1, §4.4, §5, §6, §7, §7.3, §8, §9.5, §12 and §14. **Status:** proposed, unsigned. **Not applied to intents.md.**
 
 **What it adds.** This amendment adds an **authority record** to intents: the session handler approval (§20.1.4). Intents today grants nothing (intents §1, §5, §9.5). §20.1.10 amends those sections explicitly. In revision 2, the approval authorizes a kind for every basis, but the routing handler chooses the receiving app only for `link`-basis invites and the own-entity fallback (signaling §5.4, §5.6).
 
 #### 20.1.1 The `session` member
 
 An intent kind body MAY carry `session`, exactly `{"v": 1, "parties": "self"|"other"|"any", "profiles": {<profile id>: <profile parameters>}}`, plus the optional member `bases`:
-- `profiles` names one to four profiles registered by [signaling](../signaling.md) §3.5. Each value is validated by that profile. Both registered profiles take `{}`.
-- `bases`, when present, is a nonempty, unique array whose members are drawn from `self`, `pairing`, `offer`, `link` and `none` ([signaling](../signaling.md) §3.4, §5.6). When it is absent, every basis is allowed.
+- `profiles` names one to four profiles registered by [signaling](../extensions/signaling.md) §3.5. Each value is validated by that profile. Both registered profiles take `{}`.
+- `bases`, when present, is a nonempty, unique array whose members are drawn from `self`, `pairing`, `offer`, `link` and `none` ([signaling](../extensions/signaling.md) §3.4, §5.6). When it is absent, every basis is allowed.
 
 A body with `session` (a **session kind**) MUST also have:
 - `effect: "join"`;
@@ -1427,9 +1436,9 @@ An entity's **session handler approval** is an owner record with these members:
 - the kind line, with the `{version, digest}` shown;
 - the approval time;
 - `auto_connect` (boolean, default `false`; allowed only when `parties` is `self`);
-- `standing_accept` (boolean, default `false`; allowed only when `parties` is `other` or `any`, and only when the handler is a provider feature or the entity is a hosted service entity). It lets the handler accept admitted cross-entity invites of that kind without a user action at the device ([signaling](../signaling.md) §5.5). An app of a person's entity that should answer a known peer automatically uses a pairing ([signaling](../signaling.md) §5.8) instead.
+- `standing_accept` (boolean, default `false`; allowed only when `parties` is `other` or `any`, and only when the handler is a provider feature or the entity is a hosted service entity). It lets the handler accept admitted cross-entity invites of that kind without a user action at the device ([signaling](../extensions/signaling.md) §5.5). An app of a person's entity that should answer a known peer automatically uses a pairing ([signaling](../extensions/signaling.md) §5.8) instead.
 
-**What it authorizes.** It lets that handler register endpoints for, open sessions of, receive invites of, and accept sessions of, that kind under [signaling](../signaling.md). It is the only authority for a kind. A manifest declaration confers none (§5).
+**What it authorizes.** It lets that handler register endpoints for, open sessions of, receive invites of, and accept sessions of, that kind under [signaling](../extensions/signaling.md). It is the only authority for a kind. A manifest declaration confers none (§5).
 
 **How it is recorded.** Only by an owner action on a provider page that:
 - meets the §7.1 disclosure obligations;
@@ -1441,13 +1450,13 @@ An entity's **session handler approval** is an owner record with these members:
 
 **Who approves.** The entity's owner:
 - for a person, that person;
-- for an organization entity, a person authorized by the organization's membership and grant policy, acting through its owner interface ([organizations §6.3](../organizations.md#63-owner-interface)), with the same disclosures. Owner-interface authority never reaches apps or other entities;
+- for an organization entity, a person authorized by the organization's membership and grant policy, acting through its owner interface ([organizations §6.3](../extensions/organizations.md#63-owner-interface)), with the same disclosures. Owner-interface authority never reaches apps or other entities;
 - for a hosted service entity (signaling §4.3), whoever operates that entity's owner interface under the same rule. The operator gets no provider-wide shortcut.
 
 **Where a provider MAY offer it:**
 - at authorization of the signaling slot, for the session kinds in the app's pinned manifest;
 - from the chooser (§20.1.5, AMD-INT-R1);
-- from the device-authorization approval page, for the kinds the enrolling client declares ([signaling](../signaling.md) §5.9);
+- from the device-authorization approval page, for the kinds the enrolling client declares ([signaling](../extensions/signaling.md) §5.9);
 - from the `approval_required` answer of signaling `open` and `register`. That answer carries the URL of a provider page on the provider's own origin, never a URL that the app supplies.
 
 **Lifecycle:**
@@ -1460,17 +1469,17 @@ An entity's **session handler approval** is an owner record with these members:
 
 #### 20.1.5 Routing handler
 
-The owner MAY set one approved handler as the **default** for a kind line. The **routing handler** is that default, else the sole approved handler when there is exactly one, else none. It receives only `link`-basis invites, and own-entity invites whose initiating app is not an approved handler ([signaling](../signaling.md) §5.4 cases 2 and 3). `offer` and `pairing` invites never use it. A newly approved handler never replaces an existing default (§7.3).
+The owner MAY set one approved handler as the **default** for a kind line. The **routing handler** is that default, else the sole approved handler when there is exactly one, else none. It receives only `link`-basis invites, and own-entity invites whose initiating app is not an approved handler ([signaling](../extensions/signaling.md) §5.4 cases 2 and 3). `offer` and `pairing` invites never use it. A newly approved handler never replaces an existing default (§7.3).
 
 **Promotion of the sole handler.** When the owner approves a second handler for a kind line that has no explicit default, the provider records the existing sole handler as the explicit default in the same transaction. The approval page says so, and offers to make the new handler the default instead. Routing never changes silently because a second app was approved.
 
-With no routing handler, the provider offers a chooser among the approved handlers, and the connected handlers that declare the kind, from the owner hook of [signaling](../signaling.md) §11.3, with the short list of AMD-INT-R1 (§20.10). The chooser is never shown when an invite arrives, only when the owner acts on a hook entry. A chooser opened from an incoming invite MUST say that it was triggered by an incoming request from another party, whose kind and context the provider has not verified (signaling §11.4). Choosing records an approval (§20.1.4), and optionally a default.
+With no routing handler, the provider offers a chooser among the approved handlers, and the connected handlers that declare the kind, from the owner hook of [signaling](../extensions/signaling.md) §11.3, with the short list of AMD-INT-R1 (§20.10). The chooser is never shown when an invite arrives, only when the owner acts on a hook entry. A chooser opened from an incoming invite MUST say that it was triggered by an incoming request from another party, whose kind and context the provider has not verified (signaling §11.4). Choosing records an approval (§20.1.4), and optionally a default.
 
 #### 20.1.6 Addressed delivery (amends §6)
 
 §6 says "The provider MUST NOT act on an intent itself, MUST NOT call a handler server-to-server, and MUST NOT send the intent anywhere except the route of the handler the viewer chose." Add:
 
-> For a session kind, the provider delivers an admitted invite only to the signaling endpoints of the routing set that [signaling](../signaling.md) §5.4 defines: the app that minted the offer, the paired app, the owner's routing handler, or for own-entity sessions the initiator's own approved app or target. It delivers by the handler's own `listen` calls and payload-free doorbells, never by calling the handler's servers with session content, and never to another app.
+> For a session kind, the provider delivers an admitted invite only to the signaling endpoints of the routing set that [signaling](../extensions/signaling.md) §5.4 defines: the app that minted the offer, the paired app, the owner's routing handler, or for own-entity sessions the initiator's own approved app or target. It delivers by the handler's own `listen` calls and payload-free doorbells, never by calling the handler's servers with session content, and never to another app.
 
 #### 20.1.7 Session handoff (amends §8)
 
@@ -1500,7 +1509,7 @@ An app approved for it with `auto_connect` syncs its own devices without prompti
 
 #### 20.1.10 Explicit amendments to intents §1, §5 and §9.5
 
-- **§1 Model.** After "An intent grants nothing.", add: "The one authority record this document defines is the **session handler approval** (AMD-SG-I1): an owner record, not an intent, that authorizes a handler to use [signaling](../signaling.md) for one session kind. It is recorded only by an owner action, and never by an intent, link or declaration."
+- **§1 Model.** After "An intent grants nothing.", add: "The one authority record this document defines is the **session handler approval** (AMD-SG-I1): an owner record, not an intent, that authorizes a handler to use [signaling](../extensions/signaling.md) for one session kind. It is recorded only by an owner action, and never by an intent, link or declaration."
 - **§5 Handler declarations.** In the first rule, after "`intents` grants nothing", add: "and never creates a session handler approval". In "Change handling", after "Removing a kind clears the viewer's default for that handler and kind", add: "and clears that handler's session handler approval for the kind, which narrows signaling at once (signaling §14.2)". The statement that a declaration "confers no authority" stays true.
 - **§9.5 Malicious handlers and minters.** Add: "A session handler approval is authority. An approved handler receives the verified identity, reported app origin and context of every invite routed to it. With `standing_accept`, it answers cross-entity sessions without the owner, revealing availability to admitted initiators. So an approval is recorded only by an owner action with the §20.1.4 disclosures, is removable at any time, is cleared with the connection, and is checked live on every widening signaling operation. For an organization or a hosted service entity, only a person authorized through its owner interface approves (organizations §6.3)."
 
@@ -1520,7 +1529,7 @@ Such mirrored items would also never interrupt by default, and would fold foreig
 
 ### 20.3 AMD-SG-L1: signaling configuration on contact parents (links), split
 
-**Target:** [links](../links.md) §6, §6.2, §6.3 and §7. **Status:** proposed, unsigned. Revision 1 splits it into L1a, which is needed now, and L1b, which is deferred.
+**Target:** [links](../extensions/links.md) §6, §6.2, §6.3 and §7. **Status:** proposed, unsigned. Revision 1 splits it into L1a, which is needed now, and L1b, which is deferred.
 
 #### 20.3.1 AMD-SG-L1a (now): owner-side configuration on existing contact parents
 
@@ -1578,7 +1587,7 @@ Signaling creates no activity items (§11.3), so it needs nothing from notificat
 
 **AMD-SG-S1 (security.md "Trust boundaries"): hosted signaling copies.** Proposed text:
 
-> Signaling ([signaling](../signaling.md)) relays SDP, ICE candidates and small opaque `data` messages through the providers of both parties. These are hosted plaintext copies: held until delivered or for at most 60 s, never logged, kept in replay state only as hashes, and capped at 4 KiB per `data` message, 64 KiB per leg and an aggregate per-entity budget. Providers make no confidentiality claim for them. Bulk application bytes belong on direct peer connections, which avoid hosted payload copies. An app that needs confidentiality from providers encrypts `data` end to end, and authenticates its keys independently of the provider-certified leg keys (for example with an in-band SAS), because the providers certify those keys.
+> Signaling ([signaling](../extensions/signaling.md)) relays SDP, ICE candidates and small opaque `data` messages through the providers of both parties. These are hosted plaintext copies: held until delivered or for at most 60 s, never logged, kept in replay state only as hashes, and capped at 4 KiB per `data` message, 64 KiB per leg and an aggregate per-entity budget. Providers make no confidentiality claim for them. Bulk application bytes belong on direct peer connections, which avoid hosted payload copies. An app that needs confidentiality from providers encrypts `data` end to end, and authenticates its keys independently of the provider-certified leg keys (for example with an in-band SAS), because the providers certify those keys.
 
 **AMD-SG-S2 (security.md "Required verification before a public beta" and sign-off checkpoints): relay byte cap.** Proposed text:
 
@@ -1586,7 +1595,7 @@ Signaling creates no activity items (§11.3), so it needs nothing from notificat
 
 ### 20.10 AMD-INT-R1: chooser ordering, short lists and scope (intents)
 
-**Target:** [intents](../intents.md) §2, §7.2, §7.3, a new §7.5, §11 and §14. **Status:** proposed by the [establishment-modes spike](../../architecture/signaling-modes-spike.md) §2.4, unsigned. **Not applied to intents.md.** It replaces rev 1 §20.1.11. The spec states obligations only. Ranking weights, labels and tiers stay 3sln.me policy, as chooser layout already is (spike §2.2).
+**Target:** [intents](../extensions/intents.md) §2, §7.2, §7.3, a new §7.5, §11 and §14. **Status:** proposed by the [establishment-modes spike](../../architecture/signaling-modes-spike.md) §2.4, unsigned. **Not applied to intents.md.** It replaces rev 1 §20.1.11. The spec states obligations only. Ranking weights, labels and tiers stay 3sln.me policy, as chooser layout already is (spike §2.2).
 
 1. **§7.3 Order and short lists.** "A provider MAY present a subset of candidates first, provided that every candidate is reachable with one further viewer action from the same page. Candidate order and any subset MUST be derived only from the viewer's own records and from facts the provider verified (choices, approvals, the provider's own observations of connection use, and verified hosts). They MUST NOT be derived from a manifest's claims about itself, from consideration paid by a handler, or from the provider's own review or endorsement of a handler. Nothing is preselected without a default." **Rev 2.1:** the provider's own review is removed as a ranking signal, and from the no-score fallback order, because a provider that also publishes handlers would otherwise rank its own apps first (self-preferencing). A provider MAY still show a review label beside a candidate, without moving it. With no positive score, the order is the most recent use, then `client_id` compared lexically. This changes the 3sln.me order "reviewed first, then recently used" ([intent-links design](../../architecture/intent-links.md) §6.3), and the spike's "Reviewed by 3sln.me" weight (spike §2.2) is withdrawn. A reference layout is at most three ranked candidates, with one action to expand to every capable connected app and, by provider policy, one to browse a catalogue. Excluded handlers stay hidden (§7.4).
 2. **§7.3 Single candidate.** "With exactly one candidate, the provider MAY show a confirmation of that candidate instead of a chooser. It still meets §7.1." Its control is armed after a delay. A reviewed `view` kind with one candidate is still a page, never zero clicks.
@@ -1605,7 +1614,7 @@ Signaling creates no activity items (§11.3), so it needs nothing from notificat
 
 ### 20.11 AMD-SG-D1: standing device grants (device authorization)
 
-**Target:** [device authorization](../device-authorization.md) §5.1, §7 item 4, §8 and §10. **Status:** proposed, unsigned, from the spike's finding (§1.4). **Not applied to device-authorization.md.**
+**Target:** [device authorization](../extensions/device-authorization.md) §5.1, §7 item 4, §8 and §10. **Status:** proposed, unsigned, from the spike's finding (§1.4). **Not applied to device-authorization.md.**
 
 **Problem.** Device authorization §7 item 4 revokes a client session when the approving login session is ended explicitly, including by sign-out. A headless client enrolled from a phone browser (§5.9) then ends silently when the owner signs out of that browser.
 
@@ -1624,7 +1633,7 @@ Until AMD-SG-D1 is adopted, a provider SHOULD warn at approval that signing out 
 
 These are **not signaling text**, and nothing in them changes a signaling rule. Signaling stays free of calling semantics (SG-30). They are listed so that readers can find where the parts that use signaling live.
 
-- **The call-invite message (Bindle Messaging).** A call invitation is an ordinary message whose body has the media type `application/vnd.bindle.messaging.call-invite+json` (a placeholder identifier). It carries the call identifier, state, offered media, expiry, the caller principal (equal to the verified envelope author) and one signaling offer per invited principal. It belongs to the [Bindle Messaging](../messaging.md) spec, owned by the Parlay app, as a proposed new §5.5. Its proposed text is in the [spike](../../architecture/signaling-modes-spike.md) §4, and is not applied to messaging.md. It uses signaling only through `offer`, `revoke_offer` and `open` with an offer basis (§5.7).
+- **The call-invite message (Bindle Messaging).** A call invitation is an ordinary message whose body has the media type `application/vnd.bindle.messaging.call-invite+json` (a placeholder identifier). It carries the call identifier, state, offered media, expiry, the caller principal (equal to the verified envelope author) and one signaling offer per invited principal. It belongs to the [Bindle Messaging](../extensions/messaging.md) spec, owned by the Parlay app, as a proposed new §5.5. Its proposed text is in the [spike](../../architecture/signaling-modes-spike.md) §4, and is not applied to messaging.md. It uses signaling only through `offer`, `revoke_offer` and `open` with an offer basis (§5.7).
   - **Reconciliation with this revision (rev 2.1).** Revision 1 dropped the media bound (§16.2, SG-11): a kind's `session.profiles.webrtc` is exactly `{}`, and `webrtc` invite `params` are exactly `{offer}` (§16.3). The spike's text declares `profiles: {"webrtc": {"media": [...]}}` on the call kind and sends `params.media` at answer, which this revision would refuse as unknown members. So:
     - **the audio and video choice lives in the app message body**, not in signaling: the call-invite's `media` member says what the caller offers, and the answering app's choice travels in its own app layer and its SDP (whose `m=` lines are only structurally checked, §16.4). No signaling member carries it, and no provider enforces it;
     - **the call kind, valid under this revision,** is an intent kind with `effect: "join"`, `capability: false`, `max_bytes: 64`, data `{call}`, and `session` `{"v": 1, "parties": "any", "profiles": {"webrtc": {}}, "bases": ["offer", "link"]}`. `pairing` is left out of its bases in this version (SG-34, owner question 8, §19.5), so that no cross-person call is answered automatically. `link` stays for an owner who configures a contact link for calls; such invites are never auto-accepted by an app (§5.5);

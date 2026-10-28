@@ -2,9 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {webcrypto} from 'node:crypto';
-import {MemoryMessagingStore} from '../packages/core/records.mjs';
+import {MemoryMessagingStore,canonical,digest} from '../packages/core/records.mjs';
 import {pinSchema,validateSchema} from '../packages/federation/schema.mjs';
-import {validateSlotManifest,slotDigest} from '../packages/federation/extensions.mjs';
 import {publicArtifacts} from '../packages/core/public-contracts.mjs';
 import {ACCOUNT_OPERATIONS} from '../packages/app/operations.mjs';
 import {EVENT_BUS_CONTRACT,createEventBusesProvider,BusManifest,PinBusManifest} from '../packages/federation/event-buses.mjs';
@@ -14,45 +13,54 @@ const url='https://tasks.example/buses/task-changes/v1';
 const manifest=()=>({id:url,title:'Task changes',description:'A record when a task changes.',publisher:'https://tasks.example',fields:{bus:{title:'Task changes bus',type:'resource',cardinality:{min:0,max:1},contracts:[EVENT_BUS_CONTRACT]}},slot:{v:1,crit:['bus'],field:'bus',selection:'exclusive',consumers:['application','provider'],bus:{v:1,types:['created','completed'],payload:{type:'object',additionalProperties:false,required:['task'],properties:{task:{type:'string',maxLength:128}}},max_record_bytes:2048,retention:{min_seconds:3600,max_seconds:604800},publishers:['application'],readers:['application','provider'],effects:{read:{en:'See tasks when they change.'},write:{en:'Add task changes that connected apps see.'}}}}});
 const fixture=()=>{let document=manifest(),fetches=0;return {store:new MemoryMessagingStore(),crypto:webcrypto,schemaHosts:['tasks.example'],schemaFetcher:async()=>{fetches++;return structuredClone(document);},set:next=>document=next,get fetches(){return fetches;}};};
 async function harness(t,options={}){const f=fixture(),e=await createTestEngine({providers:{config:{EVENT_BUSES_ENABLED:true},eventBuses:createEventBusesProvider(f),...options}});t.after(()=>e.dispose());return {f,e,validate:schema=>e.read(new BusManifest({input:{schema}})),pin:(target=url,digest)=>e.perform(new PinBusManifest({input:{url:target,digest}}))};}
+// The bus pin digest: sha256 over the canonical complete manifest, legacy `slot` container included.
+const slotDigest=async(crypto,schema)=>'sha256-'+await digest(crypto,canonical(schema));
 const nesting=depth=>depth===1?{type:'null'}:{type:'object',additionalProperties:false,properties:{child:nesting(depth-1)}};
 
-test('engine Query recognizes one bus occupant without mutating or weakening the ordinary slot validator',async t=>{
+test('engine Query recognizes one legacy bus container without mutating it; ordinary fragment processing refuses it',async t=>{
  const {validate}=await harness(t),schema=manifest(),before=structuredClone(schema),result=await validate(schema);
- assert.equal(result.status,'valid');assert.deepEqual(result.schema,schema);assert.deepEqual(result.slot,schema.slot);assert.deepEqual(result.bus,schema.slot.bus);assert.equal(result.harmless,false);assert.deepEqual(schema,before);
- assert.equal(validateSlotManifest(schema).status,'unrecognized','a slot-only processor cannot partially recognize a critical bus');
+ assert.equal(result.status,'valid');assert.deepEqual(result.schema,schema);assert.deepEqual(result.slot,schema.slot);assert.deepEqual(result.bus,schema.slot.bus);assert.deepEqual(schema,before);
+ // Interim (pending events CR-X3-09): only a whole, valid legacy bus container passes the fragment member table; any
+ // other top-level `slot` is unsupported.
+ assert.deepEqual(validateSchema(schema,url),schema);assert.throws(()=>validateSchema({...schema,slot:{v:1,field:'feed'}},url),{code:'unsupported_fragment'});
  result.bus.types.push('local-change');assert.deepEqual(schema,before);assert.deepEqual((await validate(schema)).bus.types,before.slot.bus.types);
  const renamed=manifest();renamed.fields.feed=renamed.fields.bus;delete renamed.fields.bus;renamed.slot.field='feed';assert.equal((await validate(renamed)).status,'valid');
 });
 
-test('ordinary fragments/slots stay absent; unknown slot versions and other critical members remain unrecognized',async t=>{
+test('ordinary fragments stay absent; unknown container versions, missing or other critical members remain unrecognized',async t=>{
  const {validate}=await harness(t);
- for(const mutate of [s=>delete s.slot,s=>{delete s.slot.bus;delete s.slot.crit;}]){const schema=manifest();mutate(schema);assert.equal((await validate(schema)).status,'absent');}
- for(const mutate of [s=>s.slot.v=2,s=>{s.slot.crit.push('future');s.slot.future=true;}]){const schema=manifest();mutate(schema);const result=await validate(schema);assert.equal(result.status,'unrecognized');assert(!Object.hasOwn(result,'bus'));assert(!Object.hasOwn(result,'slot'));}
- const schema=manifest();schema.slot.future={ignored:true};schema.future='retained';schema.slot.crit.push('selection');assert.deepEqual((await validate(schema)).schema,schema);
+ {const schema=manifest();delete schema.slot;assert.equal((await validate(schema)).status,'absent');}
+ for(const mutate of [s=>s.slot.v=2,s=>{s.slot.crit.push('future');s.slot.future=true;},s=>{delete s.slot.bus;delete s.slot.crit;},s=>delete s.slot.crit]){const schema=manifest();mutate(schema);const result=await validate(schema);assert.equal(result.status,'unrecognized');assert(!Object.hasOwn(result,'bus'));assert(!Object.hasOwn(result,'slot'));}
+ const schema=manifest();schema.slot.crit.push('selection');assert.deepEqual((await validate(schema)).schema,schema);assert.equal((await validate(schema)).status,'valid');
+ // The legacy container is closed (validated self-contained) and the fragment part uses the exhaustive member table.
+ const extra=manifest();extra.slot.future={ignored:true};assert.equal((await validate(extra)).status,'invalid');
+ const top=manifest();top.future='retained';await assert.rejects(validate(top),{code:'unsupported_fragment'});
 });
 
 test('engine validation fails atomically for bus/slot shape, purpose, version, retention, modes and declarations',async t=>{
  const {validate}=await harness(t),mutations=[
-  s=>delete s.slot.bus,s=>delete s.slot.crit,s=>s.slot.crit=[],s=>s.slot.crit=['bus','bus'],s=>s.slot.bus=null,s=>s.slot.bus={},s=>s.slot.bus.v=2,
+  s=>delete s.slot.bus,s=>s.slot.crit=[],s=>s.slot.crit=['bus','bus'],s=>s.slot.bus=null,s=>s.slot.bus={},s=>s.slot.bus.v=2,
   s=>s.slot.selection='ordered',s=>s.fields.bus.cardinality.min=1,s=>s.fields.bus.cardinality.max=2,s=>s.slot.field='missing',s=>s.slot.failover='any-error',s=>s.slot.consumers=[],
   s=>s.fields.extra={title:'Extra',type:'boolean'},s=>s.fields.bus.contracts=['https://contracts.example/lookalike/v1'],s=>s.fields.bus.contracts.push('https://contracts.example/other/v1'),
   s=>s.slot.bus.types=[],s=>s.slot.bus.types=['created','created'],s=>s.slot.bus.types=['Bad'],s=>s.slot.bus.types=['a'.repeat(49)],s=>s.slot.bus.types=Array.from({length:33},(_,n)=>'type-'+n),
   s=>s.slot.bus.max_record_bytes=63,s=>s.slot.bus.max_record_bytes=16385,s=>s.slot.bus.max_record_bytes=64.5,s=>s.slot.bus.retention={},s=>s.slot.bus.retention.min_seconds=-1,s=>s.slot.bus.retention.max_seconds=0,s=>s.slot.bus.retention.max_seconds=2592001,s=>s.slot.bus.retention.min_seconds=604801,s=>s.slot.bus.retention.max_seconds=3600.5,
   s=>s.slot.bus.publishers=[],s=>s.slot.bus.publishers=['robot'],s=>s.slot.bus.readers=['application','application'],s=>s.slot.consumers=['application'],s=>s.slot.bus.history='always',s=>s.slot.bus.categories=['personal-data','personal-data'],
-  s=>s.slot.bus.ordering='unordered',s=>s.slot.bus.delivery='push',s=>s.slot.bus.schema_version=2,s=>s.slot.supersedes=url,s=>s.slot.supersedes='https://foreign.example/old',s=>s.padding='é'.repeat(8200),
+  s=>s.slot.bus.ordering='unordered',s=>s.slot.bus.delivery='push',s=>s.slot.bus.schema_version=2,s=>s.slot.supersedes=url,s=>s.slot.supersedes='https://foreign.example/old',s=>s.slot.bus.payload.properties['é'.repeat(8200)]={type:'null'},
  ];
- for(const mutate of mutations){const schema=manifest();mutate(schema);assert.doesNotThrow(()=>validateSchema(schema,url));const result=await validate(schema);assert.equal(result.status,'invalid',String(mutate));assert.deepEqual(result.schema,schema);assert(!Object.hasOwn(result,'slot'));assert(!Object.hasOwn(result,'bus'));}
+ for(const mutate of mutations){const schema=manifest();mutate(schema);const {slot,...fragmentPart}=schema;assert.doesNotThrow(()=>validateSchema(fragmentPart,url));const result=await validate(schema);assert.equal(result.status,'invalid',String(mutate));assert.deepEqual(result.schema,schema);assert(!Object.hasOwn(result,'slot'));assert(!Object.hasOwn(result,'bus'));}
  for(const mutate of [s=>s.description='',s=>s.title='']){const schema=manifest();mutate(schema);await assert.rejects(validate(schema),{code:'invalid_schema'});}
- const insecure=manifest();insecure.publisher='http://tasks.example';await assert.rejects(validate(insecure),{code:'invalid_args'});
+ const insecure=manifest();insecure.publisher='http://tasks.example';await assert.rejects(validate(insecure),{code:'invalid_schema'});
 });
 
 test('v1 bounds and defaults preserve publisher-attributed purpose and total-order semantics',async t=>{
  const {validate}=await harness(t);
  for(const max_record_bytes of [64,16384])for(const retention of [{min_seconds:0,max_seconds:1},{min_seconds:2592000,max_seconds:2592000}]){
-  const schema=manifest();Object.assign(schema.slot.bus,{max_record_bytes,retention,history:'owner-choice',categories:['personal-data','future-category']});schema.slot.bus.types=Array.from({length:32},(_,n)=>'type-'+n);schema.slot.supersedes='https://tasks.example/buses/task-changes/v0';assert.equal((await validate(schema)).status,'valid');
+  const schema=manifest();Object.assign(schema.slot.bus,{max_record_bytes,retention,history:'owner-choice',categories:['personal-data','future-category']});schema.slot.bus.types=Array.from({length:32},(_,n)=>'type-'+n);assert.equal((await validate(schema)).status,'valid');
  }
  const result=await validate(manifest());assert(!Object.hasOwn(result.bus,'history'));assert(!Object.hasOwn(result.bus,'ordering'));assert(!Object.hasOwn(result.bus,'delivery'));assert.equal(result.schema.description,'A record when a task changes.');
- const bounded=manifest();bounded.padding='';bounded.padding='x'.repeat(16384-Buffer.byteLength(JSON.stringify(bounded)));assert.equal((await validate(bounded)).status,'valid');bounded.padding+='x';assert.equal((await validate(bounded)).status,'invalid','measure the original document, including its critical bus member');
+ // Padded through a payload property name (the fragment part has no free-form member to pad).
+ const padded=extra=>{const doc=manifest(),props=doc.slot.bus.payload.properties;props.p={type:'null'};const length=1+16384-Buffer.byteLength(JSON.stringify(doc))+extra;delete props.p;props['p'.repeat(length)]={type:'null'};return doc;};
+ assert.equal(Buffer.byteLength(JSON.stringify(padded(0))),16384);assert.equal((await validate(padded(0))).status,'valid');assert.equal((await validate(padded(1))).status,'invalid','measure the original document, including its critical bus member');
 });
 
 test('effect maps require English, valid distinct BCP 47 tags and bounded plain text counted by code point',async t=>{
@@ -87,12 +95,12 @@ test('payload accepts nullable bounded shapes, all v1 scalar kinds and the inclu
 });
 
 test('pin Action shares immutable fragment storage and hashes the complete original manifest',async t=>{
- const {f,e,pin}=await harness(t),schema=manifest(),hash=await slotDigest(webcrypto,schema),before=await pin();assert.equal(before.digest,hash);assert.deepEqual(before.schema,schema);assert.equal((await pinSchema(f,url)).digest,hash.slice(7));assert.equal((await pin(url,hash)).digest,hash);assert.equal(e.audit.entries.at(-1).operation,'events.pin');
- for(const mutate of [s=>s.slot.bus.types.push('reassigned'),s=>s.slot.bus.payload.properties.title={type:'string',maxLength:200},s=>s.slot.bus.retention.max_seconds++,s=>s.slot.bus.history='owner-choice',s=>s.slot.bus.publishers.push('provider'),s=>s.slot.bus.readers=['application'],s=>s.slot.bus.categories=['personal-data'],s=>s.slot.future=true]){
+ const {f,e,pin}=await harness(t),schema=manifest(),hash=await slotDigest(webcrypto,schema),before=await pin();assert.equal(before.digest,hash);assert.deepEqual(before.schema,schema);assert.equal((await pinSchema(f,url)).digest,hash.slice(7),'the ordinary pin path shares the same immutable record');assert.equal((await f.store.transaction(tx=>tx.get('federation/schema/'+url))).digest,hash.slice(7));assert.equal((await pin(url,hash)).digest,hash);assert.equal(e.audit.entries.at(-1).operation,'events.pin');
+ for(const mutate of [s=>s.slot.bus.types.push('reassigned'),s=>s.slot.bus.payload.properties.title={type:'string',maxLength:200},s=>s.slot.bus.retention.max_seconds++,s=>s.slot.bus.history='owner-choice',s=>s.slot.bus.publishers.push('provider'),s=>s.slot.bus.readers=['application'],s=>s.slot.bus.categories=['personal-data'],s=>s.slot.bus.effects.read.es='Ver tareas.']){
   const changed=manifest();mutate(changed);f.set(changed);await assert.rejects(pin(),{code:'schema_changed'});assert.deepEqual((await f.store.transaction(tx=>tx.get('federation/schema/'+url))).schema,schema);
  }
- f.set(schema);const ordinary=fixture();await pinSchema(ordinary,url);const provider=createEventBusesProvider(ordinary);assert.equal((await provider.pin({url})).digest,hash);
- const next=manifest();next.id=url+'-next';next.slot.supersedes=url;f.set(next);assert.equal((await pin(next.id)).schema.id,next.id);assert.equal((await f.store.transaction(tx=>tx.get('federation/schema/'+url))).digest,hash.slice(7));
+ f.set(schema);const ordinary=fixture();assert.equal((await pinSchema(ordinary,url)).digest,hash.slice(7),'interim: an ordinary pin accepts only a whole valid bus container (pending CR-X3-09)');const provider=createEventBusesProvider(ordinary);assert.equal((await provider.pin({url})).digest,hash);
+ const next=manifest();next.id=url+'-next';f.set(next);assert.equal((await pin(next.id)).schema.id,next.id);assert.equal((await f.store.transaction(tx=>tx.get('federation/schema/'+url))).digest,hash.slice(7));
 });
 
 test('pin rejects digest/host/schema failures before persistence and concurrent changes cannot replace the first pin',async t=>{

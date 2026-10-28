@@ -8,10 +8,12 @@ import {siteGlobal} from '../flags/read.mjs';
 //
 // A brokered record is the provider's coupling: {id, connection, clientId, generation, connectedAt, resource, label,
 // contracts, rpcEndpoint, status, assignments[]}. `id` is a fresh provider UUID, unique per (connection, integration
-// resource) through an index row; the integration's string is never a provider key. Each assignment links one consumer
-// (an app `clientId`, or a provider feature `ref` for a slot it consumes) to one field binding ({fragment, field} or
-// {slot}) with the contracts that field requires, and carries its own opaque `grant` (a new one on every
-// re-assignment). A record is usable only while its connection is active or degraded, at the record's generation,
+// resource) through an index row; the integration's string is never a provider key. Each assignment links one app
+// consumer (`clientId`) to one field binding ({fragment, field}) with the contracts that field requires, and carries its
+// own opaque `grant` (a new one on every re-assignment). Extensions rev 3.2 (§4.2, CR-X3-22): provider features consume
+// through their own grants in the connections domain (client identity (issuer, spec URL)); their calls carry that
+// grant and `bindle.feature` = the extension's spec URL. Records keep the full validated claim (CR-X3-07).
+// A record is usable only while its connection is active or degraded, at the record's generation,
 // in the same incarnation (`connectedAt`, no disconnect since registration) and under the account's lifecycle fence;
 // a generation bumped by resume/approve leaves it stale until an authenticated lookup rebinds it, and a reconnect
 // never revives it.
@@ -19,26 +21,23 @@ import {siteGlobal} from '../flags/read.mjs';
 // Actors (built by trusted adapters only): {kind:'owner', owner} candidates, discover, records, register, reconfirm,
 // unassign, detach, revalidate, scope-describe; {kind:'system', owner} records, revalidate, describe (C1b messaging
 // descriptors), mintable, severance, severance-done.
-// The public-intake slot and contract come from core links, not from the email bridge (messaging extraction prep):
-// brokered intake delivery depends on the slot having an occupant, whichever feature consumes it.
-import {PUBLIC_INTAKE_SLOT as INTAKE_SLOT,PUBLIC_INTAKE_CONTRACT as INTAKE_CONTRACT} from '../links/types.mjs';
-export {INTAKE_SLOT,INTAKE_CONTRACT};
+// The public-intake fragment and contract come from core links, not from the email bridge (messaging extraction prep).
+import {PUBLIC_INTAKE_FRAGMENT as INTAKE_FRAGMENT,PUBLIC_INTAKE_CONTRACT as INTAKE_CONTRACT} from '../links/types.mjs';
+export {INTAKE_FRAGMENT,INTAKE_CONTRACT};
 import {Provider} from '../../vendor/ngin/index.js';
 import {AppAction,AppQuery} from '../app/engine.mjs';
 import {AppFault} from '../app/faults.mjs';
 import {UUID} from '../core/primitives.mjs';
-import {connectionState,RECOGNIZED_SLOTS} from '../apps/connections.mjs';
-import {MESSAGING_INGRESS_SLOT,MESSAGING_ADDRESS_DECLARATION} from '../links/types.mjs';
+import {connectionState} from '../apps/connections.mjs';
+import {PROVIDER_EXT,parseSpecURL} from '../core/extensions.mjs';
+import {appendSeverance,severanceMeta,SEVER,SEVER_META} from './brokered-severance.mjs';
 import {RESOURCE_SCOPING} from '../storage/scoping.mjs';
 import {contractReferences} from './integrations.mjs';
 import {resourceId,DISCOVERY_LIMITS} from './resource-discovery.mjs';
 
 export const MAILBOX_CONTRACT='https://spec.bindle.example/messaging/v1/contracts/mailbox';
 export const BROKERED_LIMITS=Object.freeze({perConnection:64,perAccount:256,assignments:16,callBytes:16384,severance:1024,overflow:512,probe:8,candidates:100,hintCoalesceMs:60000,failuresToDegrade:3});
-/** Provider features that consume a slot through a brokered record (extensions §5.3), by slot: the feature `ref` is
- * the token's `bindle.feature` and the only provider consumer a record for that slot may name. */
-export const PROVIDER_CONSUMERS=Object.freeze({[MESSAGING_INGRESS_SLOT]:Object.freeze([MESSAGING_ADDRESS_DECLARATION.ref]),[INTAKE_SLOT]:Object.freeze(['email-bridge'])});
-const RECORD='integrations/record/',INDEX='integrations/resource/',SEVER='integrations/severance/',META='integrations/meta',CONNECTION='resource/',LIFECYCLE='lifecycle/state-v1';
+const RECORD='integrations/record/',INDEX='integrations/resource/',META=SEVER_META,CONNECTION='resource/',LIFECYCLE='lifecycle/state-v1';
 const SERVING=['active','degraded'],BLOCKED=['suspended','purge-review','purging'];
 const fault=(code,message,status,extra={})=>{throw Object.assign(new AppFault(code,message,status),extra);};
 const notFound=()=>fault('not_found','Not found.',404);
@@ -49,7 +48,7 @@ const plain=v=>v!==null&&typeof v==='object'&&!Array.isArray(v)&&[Object.prototy
 const only=(v,names)=>v===undefined?{}:plain(v)&&Object.keys(v).every(k=>names.includes(k))?v:invalid();
 const idURL=v=>{if(typeof v!=='string'||v.length>256||v.includes('#')||v.includes('?'))return false;try{const u=new URL(v);return u.href===v&&u.protocol==='https:'&&!u.username&&!u.password;}catch{return false;}};
 const clientURL=v=>{if(typeof v!=='string'||v.length>2048||v.includes('#'))return false;try{const u=new URL(v);return u.href===v&&u.protocol==='https:'&&!u.username&&!u.password;}catch{return false;}};
-const FIELD=/^[A-Za-z][A-Za-z0-9_-]{0,63}$/,FEATURE=/^[a-z][a-z0-9-]{0,63}$/;
+const FIELD=/^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
 const pad=n=>String(n).padStart(16,'0');
 // The lookup anchor: a contract an assignment actually uses, so narrowing elsewhere stays visible in the claims.
 const anchorOf=r=>r.assignments.find(a=>a.contracts.length)?.contracts[0]??r.contracts[0];
@@ -75,32 +74,26 @@ export function recordState(record,connection){
 const usable=(record,connection)=>recordState(record,connection)==='live'&&connection.serving&&record.status==='available';
 const view=(record,connection)=>({id:record.id,connection:record.connection,clientId:record.clientId,resource:record.resource,label:record.label,contracts:[...record.contracts],status:record.status,...record.reason?{reason:record.reason}:{},state:recordState(record,connection),available:Boolean(connection&&usable(record,connection)),unverified:true,registeredAt:record.registeredAt,revalidatedAt:record.revalidatedAt,assignments:record.assignments.map(a=>({grant:a.grant,binding:structuredClone(a.binding),consumer:structuredClone(a.consumer),contracts:[...a.contracts],assignedAt:a.assignedAt}))});
 
-/** Validates a field binding and consumer. Slot bindings take their contracts from the recognized slot pin and only a
- * provider feature that consumes that slot, or an app; fragment bindings take the owner's required contracts (X8
- * reconciles them with the pinned fragment). Returns {binding, consumer, contracts}. */
-export function assignmentInput({binding,consumer,contracts},{slots=RECOGNIZED_SLOTS}={}){
+/** Validates a field binding and app consumer. Fragment bindings take the owner's required contracts (X8 reconciles
+ * them with the pinned fragment). Provider features never hold assignments (extensions rev 3.2 §4.2: they consume
+ * through their own grants). Without both a binding and a consumer, the owner registers the record alone (a candidate
+ * for a provider-consumable field, extensions §5.1); the field value then names it. Returns {binding, consumer,
+ * contracts} (binding and consumer null for a record-only registration). */
+export function assignmentInput({binding,consumer,contracts}){
+ if(binding===undefined&&consumer===undefined){if(!Array.isArray(contracts)||!contracts.length||contracts.length>DISCOVERY_LIMITS.contracts||new Set(contracts).size!==contracts.length||!contracts.every(idURL))invalid('Name the contracts the field requires.');return {binding:null,consumer:null,contracts:[...contracts].sort()};}
  if(!plain(binding)||!plain(consumer))invalid('Choose a field and a consumer.');
- let b,required;
- if(Object.keys(binding).length===1&&idURL(binding.slot)){
-  const pin=Object.hasOwn(slots,binding.slot)?slots[binding.slot]:null,field=pin?.fields?.[pin?.slot?.field];if(!field?.contracts?.length)fault('unsupported_slot','This slot is not recognized here.',400);
-  b={slot:binding.slot};required=[...field.contracts];if(contracts!==undefined&&JSON.stringify([...contracts].sort())!==JSON.stringify([...required].sort()))invalid('A slot decides its own contracts.');
- }else if(Object.keys(binding).length===2&&idURL(binding.fragment)&&typeof binding.field==='string'&&FIELD.test(binding.field)){
-  if(!Array.isArray(contracts)||!contracts.length||contracts.length>DISCOVERY_LIMITS.contracts||new Set(contracts).size!==contracts.length||!contracts.every(idURL))invalid('Name the contracts this field requires.');
-  b={fragment:binding.fragment,field:binding.field};required=[...contracts];
- }else invalid('Choose a preference field or a slot.');
- let c;
- if(Object.keys(consumer).length===1&&typeof consumer.feature==='string'&&FEATURE.test(consumer.feature)){if(!b.slot||!(PROVIDER_CONSUMERS[b.slot]??[]).includes(consumer.feature))forbidden();c={feature:consumer.feature};}
- else if(Object.keys(consumer).length===1&&clientURL(consumer.clientId))c={clientId:consumer.clientId};
- else invalid('Choose the app or provider feature that uses this resource.');
- return {binding:b,consumer:c,contracts:required.sort()};
+ if(!(Object.keys(binding).length===2&&idURL(binding.fragment)&&typeof binding.field==='string'&&FIELD.test(binding.field)))invalid('Choose a preference field.');
+ if(!Array.isArray(contracts)||!contracts.length||contracts.length>DISCOVERY_LIMITS.contracts||new Set(contracts).size!==contracts.length||!contracts.every(idURL))invalid('Name the contracts this field requires.');
+ if(!(Object.keys(consumer).length===1&&clientURL(consumer.clientId)))invalid('Choose the app that uses this resource.');
+ return {binding:{fragment:binding.fragment,field:binding.field},consumer:{clientId:consumer.clientId},contracts:[...contracts].sort()};
 }
 const sameAssignment=(a,{binding,consumer})=>JSON.stringify(a.binding)===JSON.stringify(binding)&&JSON.stringify(a.consumer)===JSON.stringify(consumer);
 
 /** The `connections`-style provider class for createAppEngine. `store`: the account's transactional metadata (the
  * same store as the connection records). `discovery`: a DiscoveryClient (mint + egress injected). `brokering`:
  * BROKERING_ENABLED. `issuer`: the provider origin. */
-export function brokeredResourcesProvider({store,discovery,issuer,integrations=false,brokering=false,emailBridge=false,artefactVersions=false,slots=RECOGNIZED_SLOTS,clock=()=>Date.now(),uuid=()=>crypto.randomUUID()}={}){
- return class extends BrokeredResourcesProvider{static deps=[];constructor(){super();Object.assign(this,{store,discovery,issuer,integrations:integrations===true,brokering:brokering===true,emailBridge:emailBridge===true,artefactVersions:artefactVersions===true,slots,clock,uuid});}};
+export function brokeredResourcesProvider({store,discovery,issuer,integrations=false,brokering=false,emailBridge=false,artefactVersions=false,clock=()=>Date.now(),uuid=()=>crypto.randomUUID()}={}){
+ return class extends BrokeredResourcesProvider{static deps=[];constructor(){super();Object.assign(this,{store,discovery,issuer,integrations:integrations===true,brokering:brokering===true,emailBridge:emailBridge===true,artefactVersions:artefactVersions===true,clock,uuid});}};
 }
 export class BrokeredResourcesProvider extends Provider{
  async obtain({actor}={}){
@@ -118,12 +111,10 @@ function scope(p,actor){
  const tx=fn=>p.store.transaction(fn);
  const connection=id=>tx(t=>readConnection(t,owner,id));
  const serving=async id=>{const c=await connection(id);if(!c)notFound();if(!c.serving)fault('connection_unavailable','This connection is not active.',409);if(!c.manifest.resources)fault('discovery_unavailable','This integration offers no resources.',409);return c;};
- const meta=async t=>{const m=await t.get(META);return plain(m)&&Number.isSafeInteger(m.seq)?m:{seq:0,low:0,health:{},hints:{}};};
+ const meta=severanceMeta;
  // Severance rows commit with the change (§7.2 step 1) and are never refused: past the bound, rows collapse into one
  // `overflow` row per connection, which X8 must treat as revoking every grant of that connection (X7-R4).
- const sever=async(t,rows)=>{rows=rows.filter(r=>r.grants.length||r.type==='detached');if(!rows.length)return;const m=await meta(t),at=p.clock();
-  for(const row of rows){m.seq++;if(m.seq-m.low>BROKERED_LIMITS.severance)await t.put(SEVER+'~'+row.connection,{seq:m.seq,at,type:'overflow',connection:row.connection,generation:row.generation,grants:[]});else await t.put(SEVER+pad(m.seq),{seq:m.seq,at,...row});}
-  await t.put(META,m);};
+ const sever=(t,rows)=>appendSeverance(t,rows,{clock:p.clock,limit:BROKERED_LIMITS.severance});
  // Numbered rows and per-connection overflow rows are listed separately, so overflow never falls outside a listing.
  const severanceEntries=async t=>[...(await t.list({prefix:SEVER+'0',limit:BROKERED_LIMITS.severance+1})).entries(),...(await t.list({prefix:SEVER+'~',limit:BROKERED_LIMITS.overflow})).entries()];
  const severanceRows=async t=>(await severanceEntries(t)).map(([,row])=>row);
@@ -172,7 +163,7 @@ function scope(p,actor){
    * fresh authenticated lookup: nothing the owner's browser sends about it (label, contracts) is trusted (§4.5). */
   async register(input){
    ownerOnly();records();const v=only(input,['connection','resource','binding','consumer','contracts']);
-   const a=assignmentInput(v,{slots:p.slots}),c=await serving(v.connection);
+   const a=assignmentInput(v),c=await serving(v.connection);
    if(!resourceId(v.resource,c.manifest.resources.rpc_endpoint))invalid('Choose a resource this integration offered.');
    if(a.contracts.some(x=>!c.manifest.resources.contracts.includes(x)))fault('unsupported_contract','This integration does not offer the contracts this field needs.',400);
    const {items}=await p.discovery.discover({subject,connection:c,query:{contracts:a.contracts,ids:[v.resource]},fresh:true}),item=items.find(i=>i.id===v.resource&&i.assignable);
@@ -186,9 +177,11 @@ function scope(p,actor){
      r={v:1,id:p.uuid(),owner,connection:c.id,clientId:now.clientId,connectedAt:now.connectedAt,registeredAt:at,resource:item.id,assignments:[]};}
     if(r.contracts)rows.push(...narrow(r,r.contracts.filter(k=>contracts.includes(k))));// the owner's re-registration may widen; others never silently narrow
     Object.assign(r,{generation:now.generation,label:item.label,contracts,rpcEndpoint:now.manifest.resources.rpc_endpoint,status:'available',revalidatedAt:at});delete r.reason;
+    if(a.binding){
     const old=r.assignments.find(x=>sameAssignment(x,a));if(old)rows.push({type:'reassigned',connection:r.connection,generation:r.generation,resource:r.resource,grants:[old.grant]});
     r.assignments=r.assignments.filter(x=>x!==old);if(r.assignments.length>=BROKERED_LIMITS.assignments)fault('record_limit','This resource is assigned to too many fields.',429);
     r.assignments.push({grant:p.uuid(),binding:a.binding,consumer:a.consumer,contracts:a.contracts.filter(x=>contracts.includes(x)),assignedAt:at});
+    }
     await sever(t,rows);await t.put(RECORD+r.id,r);await t.put(key,r.id);return view(r,now);
    });
   },
@@ -240,21 +233,21 @@ function scope(p,actor){
     await sever(t,rows);return counts;});
    return {checked:mine.records.length,pruned:mine.pruned,...changes,...recovered?{health:recovered}:{}};
   },
-  /** C1b: the messaging occupant's `describe` (messaging §2.2) through the brokered record its seat names, as the
-   * `messaging-address` provider feature. `seat` is the occupancy port's answer ({seat, connection, clientId,
-   * generation, resource, cnx}); every link of seat -> record -> connection is re-checked here, so a seat pointing at
-   * another connection's record, a stale generation, a detached or unavailable record or a DPoP-required integration
-   * all answer resource_unavailable. Returns the raw `result`; the caller validates it against §2.3. */
+  /** C1b: the messaging resource's `describe` (messaging §2.2) through the brokered record a messaging-address entry
+   * names, as that provider feature (extensions rev 3.2 §4.2: `bindle.feature` = its spec URL, `bindle.grant` = its
+   * grant). `seat` is the feature projection's answer ({seat, connection, clientId, generation, resource, cnx, grant});
+   * every link of entry -> record -> connection is re-checked here, so an entry pointing at another connection's record,
+   * a stale generation, a detached or unavailable record or a DPoP-required integration all answer resource_unavailable.
+   * Returns the raw `result`; the caller validates it against §2.3. */
   async describe(input){
-   systemOnly();records();const v=only(input,['slot','seat']);const seat=v.seat,feature=(PROVIDER_CONSUMERS[v.slot]??[])[0];
-   if(!feature||!plain(seat)||typeof seat.resource!=='string'||!UUID.test(seat.resource)||typeof seat.connection!=='string'||!Number.isSafeInteger(seat.generation)||typeof seat.cnx!=='string'||!/^[a-f0-9-]{36}\.\d{1,16}$/.test(seat.cnx))unavailable();
+   systemOnly();records();const v=only(input,['feature','seat']);const seat=v.seat;
+   if(v.feature!==PROVIDER_EXT.messagingAddress||!plain(seat)||typeof seat.resource!=='string'||!UUID.test(seat.resource)||typeof seat.connection!=='string'||!Number.isSafeInteger(seat.generation)||typeof seat.cnx!=='string'||!/^[a-f0-9-]{36}\.\d{1,16}$/.test(seat.cnx)||typeof seat.grant!=='string'||!UUID.test(seat.grant))unavailable();
    let {record:r,connection:c}=await tx(async t=>{let r;try{r=await load(t,seat.resource);}catch{unavailable();}return {record:r,connection:await readConnection(t,owner,r.connection)};});
-   const assignment=r.assignments.find(a=>a.binding.slot===v.slot&&a.consumer.feature===feature&&a.contracts.includes(MAILBOX_CONTRACT));
-   if(!assignment||r.connection!==seat.connection||!c||c.clientId!==seat.clientId||c.generation!==seat.generation||!c.serving||r.status!=='available')unavailable();
+   if(r.connection!==seat.connection||!c||c.clientId!==seat.clientId||c.generation!==seat.generation||!c.serving||r.status!=='available')unavailable();
    // A stale record is never rebound from here: a public descriptor request must not cause lookups (X7-R2). The
    // account alarm and owner revalidation rebind it.
    if(!usable(r,c)||!r.contracts.includes(MAILBOX_CONTRACT))unavailable();
-   return brokeredCall(c,r,{purpose:'invoke',contract:MAILBOX_CONTRACT,method:'describe',grant:`${assignment.grant}.${seat.cnx}`,feature,pool:'describe'});
+   return brokeredCall(c,r,{purpose:'invoke',contract:MAILBOX_CONTRACT,method:'describe',grant:`${seat.grant}.${seat.cnx}`,feature:v.feature,pool:'describe'});
   },
   async intakeDeliver(input){
    systemOnly();records();if(!p.emailBridge)notFound();const v=only(input,['seat','body']),seat=v.seat;
@@ -262,10 +255,10 @@ function scope(p,actor){
    if(v.body.byteLength>1500000)invalid();let rpc;try{rpc=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(v.body));}catch{invalid();}
    if(!plain(rpc)||Object.keys(rpc).some(k=>!['version','tx','resource','contract','method','args'].includes(k))||rpc.version!=='0'||!UUID.test(rpc.tx??'')||rpc.resource!==seat.resource||rpc.contract!==INTAKE_CONTRACT||rpc.method!=='deliver'||!plain(rpc.args))invalid();
    const {record:r,connection:c}=await tx(async t=>{const r=await load(t,seat.record);return {record:r,connection:await readConnection(t,owner,r.connection)};});
-   const a=r.assignments.find(a=>a.binding.slot===INTAKE_SLOT&&a.consumer.feature==='email-bridge'&&a.contracts.includes(INTAKE_CONTRACT));
-   if(!a||!c||!usable(r,c)||r.resource!==seat.resource||r.connection!==seat.connection||c.clientId!==seat.clientId||c.generation!==seat.generation||!r.contracts.includes(INTAKE_CONTRACT)||c.manifest.resources?.dpop==='required')unavailable();
+   // Extensions rev 3.2 §4.2: the email bridge's own grant (from its live projection) names this call.
+   if(typeof seat.grant!=='string'||!UUID.test(seat.grant)||!c||!usable(r,c)||r.resource!==seat.resource||r.connection!==seat.connection||c.clientId!==seat.clientId||c.generation!==seat.generation||!r.contracts.includes(INTAKE_CONTRACT)||c.manifest.resources?.dpop==='required')unavailable();
    const url=p.discovery.endpoint(c,'rpc_endpoint');if(resourceId(r.resource,url.href)!==r.resource)unavailable();
-   let answer;try{answer=await p.discovery.call({connection:c,url,pool:'owner',maxBytes:BROKERED_LIMITS.callBytes,claims:{subject,purpose:'invoke',connection:c.id,generation:c.generation,resource:r.resource,grant:`${a.grant}.${seat.cnx}`,methods:{[INTAKE_CONTRACT]:['deliver']},scope:null,lifetime:60,...c.manifest.resources.cv?{cv:contractReferences(c.manifest.resources.cv,[INTAKE_CONTRACT])}:{},feature:'email-bridge'},requestBytes:1500000,body:rpc});}
+   let answer;try{answer=await p.discovery.call({connection:c,url,pool:'owner',maxBytes:BROKERED_LIMITS.callBytes,claims:{subject,purpose:'invoke',connection:c.id,generation:c.generation,resource:r.resource,grant:`${seat.grant}.${seat.cnx}`,methods:{[INTAKE_CONTRACT]:['deliver']},scope:null,lifetime:60,...c.manifest.resources.cv?{cv:contractReferences(c.manifest.resources.cv,[INTAKE_CONTRACT])}:{},feature:PROVIDER_EXT.emailBridge},requestBytes:1500000,body:rpc});}
    catch(error){if(['discovery_rate_limited','brokering_unavailable','discovery_unavailable','egress_busy'].includes(error?.code))throw error;fault('indeterminate','Delivery outcome unknown.',502,{indeterminate:true});}
    let json;try{if(!/^application\/json(?:\s*;.*)?$/i.test(answer.contentType??''))throw Error();json=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(answer.bytes));}catch{fault('indeterminate','Delivery outcome unknown.',502,{indeterminate:true});}
    if(answer.status===200&&(!plain(json)||Object.keys(json).some(k=>!['version','tx','result','error'].includes(k))||json.version!=='0'||json.tx!==rpc.tx||Object.hasOwn(json,'error')&&!plain(json.error)||!Object.hasOwn(json,'error')&&!plain(json.result)))fault('indeterminate','Delivery outcome unknown.',502,{indeterminate:true});
@@ -279,7 +272,7 @@ function scope(p,actor){
    * grant ∩ this assignment's contracts); minting must run in this account's serialization domain. */
   async mintable(input){systemOnly();records();const v=only(input,['record','grant']);
    return tx(async t=>{const r=await load(t,v.record),c=await readConnection(t,owner,r.connection),a=r.assignments.find(x=>x.grant===v.grant);if(!a||!c||!usable(r,c))unavailable();
-    return {subject,audience:c.manifest.resources.rpc_endpoint,connection:c.id,generation:c.generation,resource:r.resource,grant:a.grant,contracts:a.contracts.filter(k=>r.contracts.includes(k)),...c.manifest.resources.cv?{cv:contractReferences(c.manifest.resources.cv,a.contracts.filter(k=>r.contracts.includes(k)))}:{},dpop:c.manifest.resources.dpop??'none',...a.consumer.feature?{feature:a.consumer.feature}:{clientId:a.consumer.clientId}};});
+    return {subject,audience:c.manifest.resources.rpc_endpoint,connection:c.id,generation:c.generation,resource:r.resource,grant:a.grant,contracts:a.contracts.filter(k=>r.contracts.includes(k)),...c.manifest.resources.cv?{cv:contractReferences(c.manifest.resources.cv,a.contracts.filter(k=>r.contracts.includes(k)))}:{},dpop:c.manifest.resources.dpop??'none',clientId:a.consumer.clientId};});
   },
   /** X8 severance hooks: committed rows in order, and acknowledgment once their events are durably enqueued. */
   async severance(input){systemOnly();records();const v=only(input,['after','limit']),after=v.after??0,limit=v.limit??100;if(!Number.isSafeInteger(after)||after<0||!Number.isSafeInteger(limit)||limit<1||limit>500)invalid();
@@ -301,7 +294,7 @@ export class ReconfirmBrokeredRecord extends AppAction{static operation='integra
 export class UnassignBrokeredRecord extends AppAction{static operation='integrations.unassign';static deps=['brokeredResources'];static changes=CHANGED;run({brokeredResources}){return brokeredResources.unassign(this.input);}}
 export class DetachBrokeredRecord extends AppAction{static operation='integrations.detach';static deps=['brokeredResources'];static changes=CHANGED;run({brokeredResources}){return brokeredResources.detach(this.input);}}
 export class RevalidateBrokeredRecords extends AppAction{static operation='integrations.revalidate';static deps=['brokeredResources'];static changes=CHANGED;run({brokeredResources}){return brokeredResources.revalidate(this.input);}}
-/** System (C1b). `input`: {slot, seat}. */
+/** System (C1b). `input`: {feature, seat}. */
 export class DescribeOccupant extends AppQuery{static operation='integrations.describe';static deps=['brokeredResources'];static gate='none';fetch({brokeredResources}){return brokeredResources.describe(this.input);}}
 export class DescribeScoping extends AppQuery{static operation='integrations.scope-describe';static deps=['brokeredResources'];static gate='none';fetch({brokeredResources}){return brokeredResources.scopeDescribe(this.input);}}
 export class DeliverIntake extends AppAction{static operation='integrations.intake-deliver';static deps=['brokeredResources'];run({brokeredResources}){return brokeredResources.intakeDeliver(this.input);}}

@@ -1,6 +1,6 @@
 # Shared-secret conversations v1 — protocol draft
 
-> **Retired from the 3sln.me core on 2026-10-27** (DEVLOG "Messaging removed from core; Parlay rename; BB-CUT reset"). This legacy specification described core peer messaging, which left the core; the messaging app is Parlay and its interop profile is [Bindle Messaging](../../../../docs/spec/messaging.md). Kept here as historical reference for Parlay. Relative links point at the documents as they were in docs/spec.
+> **Retired from the 3sln.me core on 2026-10-27** (DEVLOG "Messaging removed from core; Parlay rename; BB-CUT reset"). This legacy specification described core peer messaging, which left the core; the messaging app is Parlay and its interop profile is [Bindle Messaging](../../../../docs/spec/extensions/messaging.md). Kept here as historical reference for Parlay. Relative links point at the documents as they were in docs/spec.
 
 Status: provisional protocol, 2026-10-12; local implementation status is recorded separately below. This is an open implementation draft, not an interoperability or production-readiness claim. Human protocol/security sign-off: reviewer ___ / date ___ / outcome ___. Decisions and final implementation reconciliation belong in [DEVLOG](../../../../DEVLOG.md). See [architecture and rationale](../../../../docs/architecture/conversations.md), [contact capabilities](contact-tokens.md), [message content](messaging.md) and [security](../../../../docs/spec/security.md).
 

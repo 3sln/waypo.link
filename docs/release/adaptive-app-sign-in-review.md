@@ -1,6 +1,6 @@
 # Adaptive app sign-in: independent review
 
-Date: 2026-10-14. Target: [adaptive-app-sign-in](../architecture/adaptive-app-sign-in.md) (provisional), plus the proposed edits in [auth](../spec/auth.md) ("Presentation, transports and key binding", "Token lifetime and client sessions"), [protocol §2](../spec/protocol.md#2-discovery-and-login) and the [security](../spec/security.md#reference-host-presentation-and-framing-3slnme-policy) reference-host section. Lens: browser security and OAuth. Cross-read: embeddable-elements §6–8 and its review, multi-account sessions (implemented section) and its review, federation-implementation, `packages/sdk/src/flows.mjs` and `identity.mjs`.
+Date: 2026-10-14. Target: [adaptive-app-sign-in](../architecture/adaptive-app-sign-in.md) (provisional), plus the proposed edits in [auth](../spec/auth.md) ("Presentation, transports and key binding", "Token lifetime and client sessions"), [protocol §2](../spec/protocol.md#2-discovery-and-login) and the [security](../3sln/release-gates.md#reference-host-presentation-and-framing-3slnme-policy) reference-host section. Lens: browser security and OAuth. Cross-read: embeddable-elements §6–8 and its review, multi-account sessions (implemented section) and its review, federation-implementation, `packages/sdk/src/flows.mjs` and `identity.mjs`.
 
 This is a design review. Nothing is implemented, so nothing here is implementation or browser evidence. Claims I checked against current documentation are marked *checked*; claims I could not check are marked *needs browser evidence*.
 
@@ -96,7 +96,7 @@ Do not sign off yet. AS-R1 changes a stated user requirement, so the user must a
 
 ## Author response (2026-10-14)
 
-All findings were addressed in the design; see the reconciliation table in [adaptive app sign-in §20](../architecture/adaptive-app-sign-in.md#20-review-reconciliation). AS-R1 was accepted as stated: the frame now claims provider-rendered integrity, not confidentiality from the client, and real confidentiality is an open user question (Q5). B2 stays deferred. The browser evidence items above remain open. No sign-off is implied.
+All findings were addressed in the design; see the reconciliation table in [adaptive app sign-in §20](../architecture/adaptive-app-sign-in.md#23-review-reconciliation). AS-R1 was accepted as stated: the frame now claims provider-rendered integrity, not confidentiality from the client, and real confidentiality is an open user question (Q5). B2 stays deferred. The browser evidence items above remain open. No sign-off is implied.
 
 ### Author response, revision 2 (2026-10-14)
 

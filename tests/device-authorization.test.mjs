@@ -91,7 +91,7 @@ test('device endpoint: reviewed device clients only, exact form media type, brow
   const limited=await f.authorize(base,{remoteIP:'198.51.100.7'});await f.authorize(base,{remoteIP:'198.51.100.7'});await f.authorize(base,{remoteIP:'198.51.100.7'});
   assert.equal(limited.status,200);const busy=await f.authorize(base,{remoteIP:'198.51.100.7'});assert.equal(busy.status,503);assert.equal(busy.body.error,'temporarily_unavailable');assert.equal(busy.headers['Retry-After'],'600');
   assert.equal((await f.authorize(base,{remoteIP:'198.51.100.8'})).status,200,'another address is unaffected');
-  assert.deepEqual(deviceManifest(issuer).features,{[DEVICE_FEATURE]:{}});assert.deepEqual(deviceManifest(issuer).grant_types_supported,[DEVICE_GRANT,'refresh_token']);
+  assert.equal(deviceManifest(issuer).features,undefined);assert.deepEqual(deviceManifest(issuer).extensions,[{spec:DEVICE_FEATURE}]);assert.deepEqual(deviceManifest(issuer).grant_types_supported,[DEVICE_GRANT,'refresh_token']);
  }finally{await f.dispose();}
  const off=await fixture({flag:false});try{
   const key=await dpopKey();await assert.rejects(off.op(DeviceAuthorize,{headers:FORM,body:body({client_id:cli.id,dpop_jkt:key.jkt})}),{code:'not_found'});

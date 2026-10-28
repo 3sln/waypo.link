@@ -59,7 +59,7 @@ export const ICE_RELAY_METHODS=Object.freeze(['credentials']);
  * Per-plan monthly hosted-relay allowance, in reserved bytes (provisional, unsigned; the cost model's relayEconomics()
  * in scripts/cost-model.mjs keeps every paid plan at a 50% or better margin on its typical profile with the whole
  * allowance spent, tests/cost-model-relay.test.mjs). Free includes no hosted relay: free accounts can still assign a
- * third-party relay occupant to the slot (RTC-7, each party funds its own relay). Organization plans are not modelled
+ * third-party relay in the ice-relay fragment (RTC-7, each party funds its own relay). Organization plans are not modelled
  * here and get none.
  */
 export const RELAY_PLAN_BYTES=Object.freeze({free:0,paid:1_000_000_000,plus:10_000_000_000,ultra:100_000_000_000});
@@ -88,10 +88,10 @@ export const leaseKey=sessionKey=>LEASE_PREFIX+encodeURIComponent(sessionKey);
 const HOUR_KEY=USAGE_PREFIX+'h',monthOf=ms=>new Date(ms).toISOString().slice(0,7),monthKey=month=>`${USAGE_PREFIX}m/${month}`;
 const fail=(code,message,status)=>{throw new AppFault(code,message,status);};
 const notFound=()=>fail('not_found','Not found.',404);
-// Every refusal before a credential exists is a no-effect outcome for the slot's ordered pre-dispatch failover, so a
+// Every refusal before a credential exists is a no-effect outcome for the ice-relay field's ordered pre-dispatch failover, so a
 // consumer moves on to the next (for example third-party) relay occupant. Review M2: only generic codes that BOTH the
 // federation runtime's dispatch keeps (packages/federation/runtime.mjs; any other code from a write becomes
-// `indeterminate`, which stops failover) AND the slot treats as no-effect (extensions NO_EFFECT_CODES) are used:
+// `indeterminate`, which stops failover) AND the ordered field treats as no-effect (extensions NO_EFFECT_CODES) are used:
 // `not_found`, `forbidden` (not included in the plan) and `rate_limited` (every quota, limit, busy, already-issued
 // and unavailable refusal), with the detail in the message. `temporarily_unavailable` is not kept by the runtime.
 const limited=message=>fail('rate_limited',message,429);
@@ -195,8 +195,8 @@ export class RtcRelay{
   if(!plain(input)||Object.keys(input).some(k=>!['sid','endpoint','endpoint_secret'].includes(k))||typeof input.sid!=='string'||typeof input.endpoint!=='string')fail('invalid_args','A session and an endpoint are required.',400);
   if(!this.configured())unavailable();
   // RTC wargame M4 (§9.1 every method checks the bound purposes live): the session's purpose must still be approved
-  // for this application under the signaling grant (the actor's per-RPC approval, no shard call); read outside the
-  // issuing transaction, which re-checks the leg.
+  // for this application (the owner's interim approval record, packages/rtc/approvals.mjs; no shard call); read
+  // outside the issuing transaction, which re-checks the leg.
   const purpose=await this.store.transaction(async tx=>{await svc.bindOwner(tx,owner);const ep=await svc.endpointAuth(tx,app,input,this.now()),found=await svc.ownSession(tx,ep,input.sid);return found?.rec?.purpose?.purpose??null;});
   if(!purpose)notFound();await svc.requireApproved(app,purpose);
   const allowance=await this.allowance(owner);

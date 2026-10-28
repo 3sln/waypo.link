@@ -1,5 +1,13 @@
 # Cloudflare email deployment
 
+> **Group:** 3sln.me reference service (hosting)
+>
+> **Status:** operator guide; configuration alone does not establish working external delivery or provider conformance.
+>
+> **Covers:** Cloudflare email sending setup.
+>
+> **Does not cover:** the protocol and its security requirements ([protocol](../spec/protocol.md), [security](../spec/security.md)); 3sln.me release gates ([release gates](../3sln/release-gates.md)).
+
 Hosted system mail uses `sys.3sln.me`, reserving bare-domain addresses for potential user email. `MAIL_SENDER_DOMAIN="sys.3sln.me"` is explicit in the hosted configuration; account links and branding remain on `3sln.me`.
 
 Hosted email uses the Cloudflare Email Sending beta `EMAIL.send({from,to,subject,text,headers})` structured binding. It returns a `messageId` acknowledgement; inbox arrival still needs operational verification. No Resend account, API key, MIME builder or `cloudflare:email` import is needed. [Workers API](https://developers.cloudflare.com/email-service/api/send-emails/workers-api/).
@@ -42,4 +50,4 @@ Email Sending onboards each subdomain separately; check the exact domain under *
 
 The adapter rejects malformed envelopes, control characters, unknown notice types and substituted link origins before calling the binding. Provider failures become a generic error with a known code only; the adapter does not log recipient addresses, tokens, bodies or raw provider errors.
 
-`sendReminder` accepts the existing caller payload, including its retry key, but Cloudflare's documented structured API offers no idempotency argument. A retry can send duplicate mail, especially after provider acceptance followed by a lost acknowledgement. Stable headers or message IDs do not establish exactly-once delivery. Production dispatch needs a durable delivery ledger and an explicit duplicate-tolerant retry policy; neither the binding nor its acknowledgement resolves that ambiguity. Follow the notification and lifecycle gates in [security.md](../spec/security.md) and [DEVLOG.md](../../DEVLOG.md).
+`sendReminder` accepts the existing caller payload, including its retry key, but Cloudflare's documented structured API offers no idempotency argument. A retry can send duplicate mail, especially after provider acceptance followed by a lost acknowledgement. Stable headers or message IDs do not establish exactly-once delivery. Production dispatch needs a durable delivery ledger and an explicit duplicate-tolerant retry policy; neither the binding nor its acknowledgement resolves that ambiguity. Follow the notification and lifecycle gates in [3sln.me release gates](../3sln/release-gates.md) and [DEVLOG.md](../../DEVLOG.md).

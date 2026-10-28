@@ -1,5 +1,13 @@
 # Portal modules, localization and keyboard shortcuts
 
+> **Group:** 3sln.me reference service
+>
+> **Status:** implemented locally.
+>
+> **Covers:** statically imported portal modules, localization and keyboard shortcuts in the 3sln.me portal.
+>
+> **Does not cover:** Bindle extensions ([extensions](spec/extensions.md)).
+
 Portal modules are statically imported application code, similar to VSCode contribution points. A deployment chooses an explicit module list at its composition root and rebuilds to change that list. There is no network code loading, marketplace, runtime installation, `eval`, mutable plugin registry, or implicit service discovery.
 
 `packages/portal/index.mjs` provides `compilePortalModules(modules)`, `portalContributionsProvider(modules)`, the `PortalContributions` ngin Query, `RunPortalCommand` ngin Action and `composePortalViews`. The provider owns one immutable resource and has declared `static deps = []`. The Query projects the resource; it creates no parallel observer system. Compilation rejects duplicate module/contribution IDs, missing dependencies, cycles, unknown contribution kinds and invalid view/command/route definitions. Module dependencies have deterministic topological order. Contributions have stable order by explicit `order`, module ID and contribution ID.

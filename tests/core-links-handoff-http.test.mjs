@@ -7,7 +7,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createNodeServer } from '../apps/node/server.mjs';
-import { MESSAGING_CONTACT_LINK_TYPE, MESSAGING_INGRESS_SLOT, MESSAGING_PROFILE, DESCRIPTOR_MEDIA_TYPE } from '../packages/links/types.mjs';
+import { MESSAGING_CONTACT_LINK_TYPE, MESSAGING_INGRESS_FRAGMENT, MESSAGING_PROFILE, DESCRIPTOR_MEDIA_TYPE } from '../packages/links/types.mjs';
 
 const BOX = { clientId: 'https://box.example/client.json', origin: 'https://box.example' };
 const claims = { resource: 'p1', kinds: ['conversation-init', 'one-off'], mimeTypes: ['text/plain'], maxMessages: 5, maxBytes: 65536, maxMessageBytes: 16384 };
@@ -25,7 +25,7 @@ const describe = { calls: 0, body: () => ({ version: 1, profiles: [MESSAGING_PRO
 
 test('descriptor route: occupant descriptor, uniform unavailability, link checks, and nothing with the flag off', async () => {
   const seat = { value: { ...BOX, generation: 1 } };
-  const s = await server(8797, { LINKS_ENABLED: 'true', LINK_SLOT_OCCUPANT: async ({ slot }) => (slot === MESSAGING_INGRESS_SLOT ? seat.value : null), MESSAGING_DESCRIBE: async ({ occupant }) => { describe.calls++; if (occupant.clientId !== BOX.clientId) throw new Error('unknown occupant'); return describe.body(); } });
+  const s = await server(8797, { LINKS_ENABLED: 'true', LINK_SLOT_OCCUPANT: async ({ fragment }) => (fragment === MESSAGING_INGRESS_FRAGMENT ? seat.value : null), MESSAGING_DESCRIBE: async ({ occupant }) => { describe.calls++; if (occupant.clientId !== BOX.clientId) throw new Error('unknown occupant'); return describe.body(); } });
   try {
     const c = s.controller(), actor = { kind: 'app', owner: s.id, clientId: BOX.clientId, handle: s.handle };
     const issued = await c.linkOperation(s.id, { actor, operation: 'links.issue', input: { type: MESSAGING_CONTACT_LINK_TYPE, claims, expiresAt: Date.now() + 86400000 } });

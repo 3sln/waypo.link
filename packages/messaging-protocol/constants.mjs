@@ -2,10 +2,11 @@
 // Placeholder identifiers under spec.bindle.example until publication authority is agreed.
 const SPEC='https://spec.bindle.example/messaging/v1';
 export const PROFILE=SPEC;
-export const INGRESS_SLOT='https://spec.bindle.example/slots/messaging-ingress/v1';
+// Extensions rev 3.2 (CR-X3-27): former slot URLs become fragment URLs.
+export const INGRESS_FRAGMENT='https://spec.bindle.example/fragments/messaging-ingress/v1';
 export const MAILBOX_CONTRACT=`${SPEC}/contracts/mailbox`;
 export const CONTACT_LINK_TYPE=`${SPEC}/links/contact`;
-export const INTAKE_SLOT='https://spec.bindle.example/slots/public-message-intake/v1';
+export const INTAKE_FRAGMENT='https://spec.bindle.example/fragments/public-intake/v1';
 export const INTAKE_CONTRACT='https://spec.bindle.example/contracts/public-intake/v1';
 export const DESCRIPTOR_MEDIA_TYPE='application/vnd.bindle.messaging.ingress+json';
 export const INTAKE_MEDIA_TYPE='application/vnd.bindle.messaging.intake+json';

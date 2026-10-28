@@ -8,7 +8,7 @@ Applications should contribute callable contract methods with optional user-comm
 
 An MCP tool can already be exposed as a human command: MCP explicitly permits different interface patterns. Its schema and title provide useful starting metadata, but tool suitability and granted authority still need host decisions. Imported annotations are untrusted unless their source is trusted; discovery must not automatically promote every tool to a user command. [Official MCP tools specification](https://modelcontextprotocol.io/specification/2026-07-28/server/tools)
 
-This means keeping the common foundation below either human UI or assistant transport. Do not require apps to implement MCP to contribute methods, or require a host to implement a 3sln command palette. Retain the [app resource and adapter model](app-resource-options.md), [contribution lifecycle](../spec/resource-contributions.md) and [browser availability boundaries](browser-automation.md).
+This means keeping the common foundation below either human UI or assistant transport. Do not require apps to implement MCP to contribute methods, or require a host to implement a 3sln command palette. Retain the [app resource and adapter model](app-resource-options.md), [contribution lifecycle](../spec/extensions/resource-contributions.md) and [browser availability boundaries](browser-automation.md).
 
 ## Existing mechanisms and the missing piece
 

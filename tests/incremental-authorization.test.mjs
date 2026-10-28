@@ -127,9 +127,14 @@ test('unreviewed apps cannot request act-as-you access (CX-1 tier 4); reviewed a
  await run(e,IncrementalAdmit,grantMoreInput([send]).input);
 });
 
-test('self-nomination: same-site candidates are filtered and occupants are never replaced inside a request',async t=>{
+test('self-nomination: same-site candidates are filtered on shared fields and occupants are never replaced inside a request',async t=>{
  assert.deepEqual(occupantCandidates([{id:'a',origin:'https://cal.tasks.example'},{id:'b',origin:'https://cal.example'},{id:'c',origin:'not a url'}],'tasks.example',registrableDomain).map(c=>c.id),['b']);
+ // Extensions rev 3.2 §8.3: the supplying integration's and contributing producer's origins count too; on a fresh field
+ // only the requesting app consumes (`shared:false`), its own resource may be offered.
+ assert.deepEqual(occupantCandidates([{id:'s',origin:'https://cal.example',supplier:'https://sync.tasks.example'},{id:'p',origin:'https://cal.example',producer:'https://tasks.example'},{id:'b',origin:'https://cal.example'}],'tasks.example',registrableDomain).map(c=>c.id),['b']);
+ assert.deepEqual(occupantCandidates([{id:'a',origin:'https://cal.tasks.example'},{id:'b',origin:'https://cal.example'},{id:'c',origin:'not a url'}],'tasks.example',registrableDomain,{shared:false}).map(c=>c.id),['a','b']);
  const f=fixture();f.p.grant(tasks.id,CAL,{fields:['color'],methods:{}});f.p.candidates.set(`${CAL}#calendar`,[{id:'https://provider.example/r/own',label:'Tasks calendar',origin:'https://hooks.tasks.example'},{id:'https://provider.example/r/work',label:'Work',origin:'https://cal.example'}]);
+ f.p.receivers.set(`${CAL}#calendar`,[{name:'Planner',kind:'app'}]);// another consumer already uses the field
  const admitted=grantMoreInput([calRequest()]),e=await engine(t,f);await run(e,IncrementalAdmit,admitted.input);const {view}=await run(e,IncrementalBegin,{entryHash:admitted.input.entryHash,subject});f.time.advance(1500);
  assert.deepEqual(view.requests[0].setup,[{field:'calendar',type:'resource',candidates:[{id:'https://provider.example/r/work',label:'Work',origin:'https://cal.example'}]}]);
  const decide=decision=>run(e,IncrementalDecide,{entryHash:admitted.input.entryHash,subject,decision});
@@ -164,6 +169,7 @@ test('review fixes: unclassifiable contracts, resource nomination, setup overwri
  const f=fixture(),e=await engine(t,f);await assert.rejects(run(e,IncrementalAdmit,grantMoreInput([{fragment:CAL,purpose:'x',fields:['calendar'],methods:{calendar:{[CALENDAR]:['unknownMethod']}}}],{client:stranger}).input),{code:'invalid_request'});
  // IA-R7: resources only from the filtered candidates, for a field without resources.
  withCalendar(f);f.p.candidates.set(`${CAL}#calendar`,[{id:'https://provider.example/r/own',origin:'https://hooks.tasks.example'},{id:'https://provider.example/r/work',origin:'https://cal.example'}]);
+ f.p.receivers.set(`${CAL}#calendar`,[{name:'Planner',kind:'app'}]);// shared field: the app's own resource is excluded (extensions §8.3)
  const a=grantMoreInput([calRequest({fields:['calendar','week']})]);await run(e,IncrementalAdmit,a.input);await run(e,IncrementalBegin,{entryHash:a.input.entryHash,subject});f.time.advance(1500);
  await assert.rejects(run(e,IncrementalDecide,{entryHash:a.input.entryHash,subject,decision:{approved:[{fragment:CAL,fields:['calendar'],resources:{calendar:['https://provider.example/r/own']}}]}}),{code:'invalid_args'});
  // IA-R9: setup cannot overwrite an existing value.

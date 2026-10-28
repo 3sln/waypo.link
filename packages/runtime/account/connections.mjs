@@ -1,15 +1,18 @@
 import {ownerFlags,existingFeature,flagsFor,siteGlobal} from './flags.mjs';
 // AccountController slice EXT-X4, connections (docs/architecture/extensibility-design.md §10 X4; docs/spec/integrations.md
-// §3, §7; docs/spec/extensions.md §3, §5). `methods` are installed on AccountController.prototype (`this` is the
+// §3, §7) with extensions revision 3.2 field values and provider-feature grants (extensions §3–§6). `methods` are installed on AccountController.prototype (`this` is the
 // controller); `rpc` lists what `invoke` accepts (packages/runtime/account/index.mjs).
 //
 // Everything new answers `not_found` unless INTEGRATIONS_ENABLED is on. Entry points:
 //   connectionsOwner(owner, {operation, id, input}, {authTime})  owner operations (CONNECTION_OWNER_OPERATIONS); the
 //       trusted route adapter passes the session's authentication time, never the request body.
 //   connectionsSystem(owner, {operation, input})  internal (no `rpc`): federation consent, X3 revalidation, X6/X7, C1b.
-//   linkSlotOccupant / delegationSlotOccupant({owner, slot})  the occupancy ports packages/runtime/account/links.mjs
-//       (LINK_SLOT_OCCUPANT) and identity.mjs (DELEGATION_SLOT_OCCUPANT) fall back to when the flag is on and no port
-//       is configured explicitly. Exclusive slots only; anything else is null (fail closed).
+//   linkSlotOccupant / delegationSlotOccupant({owner, fragment})  the value ports packages/runtime/account/links.mjs
+//       (LINK_SLOT_OCCUPANT) and identity.mjs (DELEGATION_SLOT_OCCUPANT) fall back to when the flag is on and no port is
+//       configured explicitly (legacy port names kept). Extensions rev 3.2: the resource comes from the projection of the
+//       provider feature that consumes the field (messaging-address for messaging-ingress), so nothing is returned
+//       unless the owner enabled that feature, it is declared and unsuspended, and approved this resource. Exclusive
+//       fields only; anything else is null (fail closed).
 //   connectionsSeverAccount(owner, {reason})  internal hook for suspension, recovery and deletion (review KD-4).
 //   connectionsDrain(owner)  internal: applies durable cascade rows (key-delegation revocation and reconciliation).
 //
@@ -21,43 +24,49 @@ import {ownerFlags,existingFeature,flagsFor,siteGlobal} from './flags.mjs';
 // so the delegation status endpoint persists the revocation on first observation (KD-1).
 import {createAppEngine,perform,read,operations,AppQuery} from '../../app/engine.mjs';
 import {systemClock,cryptoRandom,nullAudit} from '../../app/providers.mjs';
-import {AppConnections,recognizedSlots} from '../../apps/connections.mjs';
-import {connectionsProvider,CONNECTION_OPERATIONS,CONNECTION_OWNER_OPERATIONS,SlotOccupant,SeverAccountConnections,ConnectionCascades,ConnectionCascadeDone} from '../../app/domains/connections.mjs';
+import {AppConnections,recognizedFields} from '../../apps/connections.mjs';
+import {connectionsProvider,CONNECTION_OPERATIONS,CONNECTION_OWNER_OPERATIONS,FeatureResources,SeverAccountConnections,ConnectionCascades,ConnectionCascadeDone} from '../../app/domains/connections.mjs';
+import {FEATURE_DEFINITIONS,providerFeatureDeclarations,blockedExtensions} from '../../app/domains/provider-features.mjs';
+import {surfaceConfig} from './flags.mjs';
 import {StorageError} from '../../storage/policy.mjs';
-import {CLASSIFIER_INTEGRATION} from './classifier.mjs'; // EXT-X10 registry entry
 import {GOOGLE_DRIVE_INTEGRATION} from '../../storage/google-drive-integration.mjs'; // EXT-X10 registry entry
 
 export const CONNECTION_ENGINE_OPERATIONS=operations(...CONNECTION_OPERATIONS);
-// Provider-authored built-in integrations by id -> {name, manifest}; append-only (X10 adds Drive and the classifier).
+// Provider-authored built-in integrations by id -> {name, manifest}; append-only. Extensions rev 3.2 (CR-X3-25): the
+// classifier is a built-in resource, no longer a built-in integration connection.
 export const BUILT_IN_INTEGRATIONS=Object.freeze({
- classifier:CLASSIFIER_INTEGRATION, // EXT-X10: offered only; never connected or assigned automatically
  'google-drive':GOOGLE_DRIVE_INTEGRATION, // EXT-X10: upstream connector remains unchanged
 });
 const engines=new WeakMap();
 function connectionsEngine(c){
  let engine=engines.get(c);
  if(!engine){
-  const connections=new AppConnections({subjectDeleted:async(tx,r,now)=>{for(const [path,pending]of await tx.list({prefix:'app-removal/record/'}))if(pending.entity===r.owner&&pending.client_id===r.clientId&&['pending','in-progress'].includes(pending.state)){await tx.put(path,{...pending,state:'forced',outcome:'forced',committed_at:now,access_ends_by:now+360000});await tx.delete('app-removal/open/'+encodeURIComponent(pending.client_id));}if(!siteGlobal(c.config,'SUBJECT_DELETED_EVENTS_ENABLED')||!r.integration?.snapshot?.manifest?.events_endpoint)return false;const {enqueueIntegrationEvent}=await import('../integration-events.mjs');await enqueueIntegrationEvent(tx,{type:'subject-deleted',connection:r.id,generation:r.generation,notBefore:now+360000},{now});return true;},metadata:c.metadata,origin:c.config.APP_ORIGIN,builtins:c.config.BUILT_IN_INTEGRATIONS??BUILT_IN_INTEGRATIONS,slots:c.config.CONNECTION_SLOTS??recognizedSlots(c.config)});
-  Object.defineProperty(connections,'slotPins',{get:()=>c.config.CONNECTION_SLOTS??recognizedSlots(c.config)});
+  const connections=new AppConnections({subjectDeleted:async(tx,r,now)=>{for(const [path,pending]of await tx.list({prefix:'app-removal/record/'}))if(pending.entity===r.owner&&pending.client_id===r.clientId&&['pending','in-progress'].includes(pending.state)){await tx.put(path,{...pending,state:'forced',outcome:'forced',committed_at:now,access_ends_by:now+360000});await tx.delete('app-removal/open/'+encodeURIComponent(pending.client_id));}if(!siteGlobal(c.config,'SUBJECT_DELETED_EVENTS_ENABLED')||!r.integration?.snapshot?.manifest?.events_endpoint)return false;const {enqueueIntegrationEvent}=await import('../integration-events.mjs');await enqueueIntegrationEvent(tx,{type:'subject-deleted',connection:r.id,generation:r.generation,notBefore:now+360000},{now});return true;},metadata:c.metadata,origin:c.config.APP_ORIGIN,builtins:c.config.BUILT_IN_INTEGRATIONS??BUILT_IN_INTEGRATIONS,fields:c.config.CONNECTION_FIELDS??recognizedFields(),
+   // The provider's own feature declarations, evaluated live from configuration exactly as the manifest row is (or a
+   // test/operator port), so losing a declaration suspends the feature's grants on the next read.
+   declarations:async()=>typeof c.config.PROVIDER_FEATURE_DECLARATIONS==='function'?c.config.PROVIDER_FEATURE_DECLARATIONS():{manifest:providerFeatureDeclarations(surfaceConfig(c.config)),blocked:blockedExtensions(c.config)}});
+  Object.defineProperty(connections,'fieldPins',{get:()=>c.config.CONNECTION_FIELDS??recognizedFields()});
   engine=createAppEngine({providers:{clock:systemClock,random:cryptoRandom,audit:nullAudit,connections:connectionsProvider({connections,enabled:true,config:c.config,flags:{for:ctx=>ownerFlags(c.config,ctx?.subject?.owner??ctx?.owner,ctx?.client?.clientId??ctx?.clientId)},account:typeof c.config.IDENTITY_ACCOUNT==='function'?owner=>c.config.IDENTITY_ACCOUNT(owner):undefined})}});
   engines.set(c,engine);
  }
  return engine;
 }
-const run=async(c,Operation,params)=>{if(['connections.connect','connections.connect-built-in','connections.resume','connections.approve','connections.occupy','connections.configure-seat'].includes(Operation.operation)){const row=typeof params.input?.connection==='string'?await c.metadata.get('resource/'+params.input.connection):null,clientId=params.input?.client?.id??(row?.owner===params.actor?.owner?row.clientId:undefined);if(!ownerFlags(c.config,params.actor?.owner,clientId).enabled('INTEGRATIONS_ENABLED'))throw new StorageError('not_found','Not found.',404);}const operation=new Operation(params);return operation instanceof AppQuery?read(connectionsEngine(c),operation):perform(connectionsEngine(c),operation);};
+const run=async(c,Operation,params)=>{if(['connections.connect','connections.connect-built-in','connections.resume','connections.approve','connections.assign','connections.configure-seat'].includes(Operation.operation)){const row=typeof params.input?.connection==='string'?await c.metadata.get('resource/'+params.input.connection):null,clientId=params.input?.client?.id??(row?.owner===params.actor?.owner?row.clientId:undefined);if(!ownerFlags(c.config,params.actor?.owner,clientId).enabled('INTEGRATIONS_ENABLED'))throw new StorageError('not_found','Not found.',404);}const operation=new Operation(params);return operation instanceof AppQuery?read(connectionsEngine(c),operation):perform(connectionsEngine(c),operation);};
 const shape=value=>{if(value!==undefined&&(value===null||typeof value!=='object'||Array.isArray(value)))throw new StorageError('invalid_request','Unsupported connections request.');return value===undefined?undefined:structuredClone(value);};
 const UUID=/^[a-f0-9-]{36}$/;
 async function bound(c,owner){return typeof owner==='string'&&UUID.test(owner)&&await c.metadata.get('owner')===owner;}
 
-// The one port core. `null` when there is no single available occupant; a severed account answers null after the
-// severance commits; a failing identity directory rejects (delegation then answers 503, links fail closed).
-// Re-entrancy guard (X4-R1): a port read made by a drain (reconcile -> occupancy) never severs or drains again.
+// The one port core. `null` unless the provider feature consuming the field is live and exactly one approved resource
+// is available; a severed account answers null after the severance commits; a failing identity directory rejects
+// (delegation then answers 503, links fail closed). Re-entrancy guard (X4-R1): a port read made by a drain (reconcile ->
+// value) never severs or drains again.
 const draining=new WeakMap();const busy=(c,owner)=>draining.get(c)?.has(owner)===true;
-async function exclusiveOccupant(c,{owner,slot}={}){
- if(!await bound(c,owner)||typeof slot!=='string')return null;
- let found;try{found=await run(c,SlotOccupant,{actor:{kind:'system',owner},input:{slot}});}catch(error){if(['unsupported_slot','not_found'].includes(error?.code))return null;throw error;}
+async function exclusiveOccupant(c,{owner,fragment}={}){
+ if(!await bound(c,owner)||typeof fragment!=='string')return null;
+ const feature=Object.entries(FEATURE_DEFINITIONS).find(([,def])=>def.fragment===fragment)?.[0];if(!feature)return null;
+ let found;try{found=await run(c,FeatureResources,{actor:{kind:'system',owner},input:{feature}});}catch(error){if(['unsupported_field','not_found'].includes(error?.code))return null;throw error;}
  if(found.sever){if(!busy(c,owner))await c.connectionsSeverAccount(owner,{reason:found.reason});return null;}
- return found.selection==='exclusive'&&found.occupants.length===1?found.occupants[0]:null;
+ return found.live&&found.selection==='exclusive'&&found.resources.length===1?found.resources[0]:null;
 }
 
 export const methods={
@@ -75,13 +84,13 @@ export const methods={
    if(!Operation)throw new StorageError('not_found','Not found.',404);
    await this.warm(owner);
    const result=await run(this,Operation,{actor:{kind:'system',owner},...input===undefined?{}:{input:shape(input)}});
-   if(!['connections.cascades','connections.cascade-done','connections.outbox','connections.occupant'].includes(operation))await this.connectionsDrain(owner);
+   if(!['connections.cascades','connections.cascade-done','connections.outbox','connections.value','connections.feature-resources'].includes(operation))await this.connectionsDrain(owner);
    if(!(Operation.prototype instanceof AppQuery))await this.integrationEventsKick(owner);return result;
   },
-  // LINK_SLOT_OCCUPANT ({owner, slot}) -> {clientId, generation, cnx} | null (packages/links/engine.mjs).
+  // LINK_SLOT_OCCUPANT ({owner, fragment}) -> {clientId, generation, cnx} | null (packages/links/engine.mjs).
   async linkSlotOccupant(query){const o=await exclusiveOccupant(this,query);return o&&{clientId:o.clientId,connection:o.connection,generation:o.generation,cnx:o.cnx};},
-  // DELEGATION_SLOT_OCCUPANT ({owner, slot}) -> {clientId, origin, ingress, cnx, purposes} | null (packages/identity/delegation.mjs).
-  // `cnx` names the seat incarnation: a new seat, generation (suspend/resume, reconnect) or occupant changes it (KD-1).
+  // DELEGATION_SLOT_OCCUPANT ({owner, fragment}) -> {clientId, origin, ingress, cnx, purposes} | null (packages/identity/delegation.mjs).
+  // `cnx` names the entry incarnation: a new entry, generation (suspend/resume, reconnect) or value change changes it (KD-1).
   async delegationSlotOccupant(query){const o=await exclusiveOccupant(this,query);return o&&{clientId:o.clientId,origin:o.origin,ingress:o.ingress,cnx:o.cnx,purposes:o.purposes};},
   // Suspension, recovery and deletion hook (KD-4). Idempotent; severs every connection and revokes every delegation.
   // `recovery` (a recovery file started a recovery, or a reissue was cancelled; recovery-identity spec: recovery does not

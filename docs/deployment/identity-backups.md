@@ -1,5 +1,13 @@
 # Identity backup signing and permanent names
 
+> **Group:** 3sln.me reference service (hosting)
+>
+> **Status:** operator guide; configuration alone does not establish working external delivery or provider conformance.
+>
+> **Covers:** recovery signing authority and signup configuration.
+>
+> **Does not cover:** the protocol and its security requirements ([protocol](../spec/protocol.md), [security](../spec/security.md)); 3sln.me release gates ([release gates](../3sln/release-gates.md)).
+
 `RECOVERY_SIGNING_KEY` is an independent provider ES256 authority, encoded as a JSON object with `kid` and `privateJWK` (a P-256 signing JWK). It is not the credential-encryption key, an account key, or a passkey. Keep it in Worker secrets or the self-host's private environment. Never publish its private JWK. The current public authority is available at `GET /api/recovery/authority`; clients trust that explicitly selected same-origin service, not a key or URL supplied by a recovery file.
 
 Node reads `RECOVERY_SIGNING_KEY` when supplied and otherwise persists its initial authority in its private data directory with mode0600. Preserve these keys through restarts and backups. Provisioning a secret alone does not update the application; deploy the corresponding routes before opening signup.
@@ -12,7 +20,7 @@ Custom names are additional aliases. A verified historical paid order can establ
 
 Recovery files contain no handles: the encrypted payload holds the UUID, private identity keychain and reset credential, with a provider signature. Authenticated users download public handle certificates separately from Account & security. Both numbered and custom names resolve to the same retained UUID. Recovery preserves existing permission/revocation records; it cannot recreate a completely deleted identity or restore missing keys, inboxes or grants. Missing-account reconstitution remains a separately gated implementation task.
 
-See [identity names](../spec/identity-names.md), [recovery identity](../spec/recovery-identity.md), and [independent audit](../release/recovery-identity-audit.md). Public account creation and production release remain gated.
+See [identity names](../3sln/accounts/identity-names.md), [recovery identity](../3sln/accounts/recovery-identity.md), and [independent audit](../release/recovery-identity-audit.md). Public account creation and production release remain gated.
 
 ## Public signup control
 

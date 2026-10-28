@@ -5,13 +5,14 @@
 // only from that same WindowProxy at that exact origin with exact schemas. The hello carries the entry ID and a
 // server challenge; `done` carries only {code,state,iss,claim}. No account state ever crosses this channel.
 export const HANDSHAKE_MS=3000,ACK_MS=3000;
-const COMPONENTS_PROFILE='https://3sln.me/artefacts/profiles/components/v1';
+// Extensions rev 3.2: the components profile is declared as the embedded-components extension (`embed_origin` option).
+const COMPONENTS_EXTENSION='https://spec.bindle.example/extensions/embedded-components/v1';
 const exact=(value,keys)=>Boolean(value)&&typeof value==='object'&&!Array.isArray(value)&&Object.getPrototypeOf(value)===Object.prototype&&Object.keys(value).length===keys.length&&keys.every(k=>Object.hasOwn(value,k));
 const JWT=/^[A-Za-z0-9_-]{1,2048}\.[A-Za-z0-9_-]{1,2048}\.[A-Za-z0-9_-]{1,512}$/;
 /** The dedicated embed origin: from the entry view when the server provides it, else the issuer's own components
- * profile declaration. Anything that is not a distinct serialized origin yields null (plain mode). */
+ * extension declaration. Anything that is not a distinct serialized origin yields null (plain mode). */
 export function embedOriginFor({entry,manifest,issuer}){
- const candidate=entry?.embed?.origin??manifest?.profiles?.[COMPONENTS_PROFILE]?.embed_origin;
+ const declared=Array.isArray(manifest?.extensions)?manifest.extensions.filter(e=>e?.spec===COMPONENTS_EXTENSION):[],candidate=entry?.embed?.origin??(declared.length===1?declared[0].options?.embed_origin:undefined);
  if(typeof candidate!=='string'||candidate.length>256)return null;
  try{const url=new URL(candidate);return url.origin===candidate&&candidate!==issuer&&['https:','http:'].includes(url.protocol)?candidate:null;}catch{return null;}
 }

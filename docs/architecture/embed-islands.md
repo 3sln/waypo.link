@@ -1,6 +1,6 @@
 # Embed islands: provider iframes for avatar, account switcher and sign-in
 
-Status: **provisional design, 2026-10-14, revision 2** (all 18 review findings addressed; see §23). Nothing here is implemented, routed or production-verified. It is a 3sln reference-host and `@3sln/bindle` SDK design. It is not Bindle interop: islands are provider-operated components under the "Provider-operated components" rule in [auth](../spec/auth.md), and their framing rules belong to the reference-host section of [security](../spec/security.md#reference-host-presentation-and-framing-3slnme-policy). The coordinator records decisions in DEVLOG.md. Independent review: [embed-islands-review](../release/embed-islands-review.md).
+Status: **provisional design, 2026-10-14, revision 2** (all 18 review findings addressed; see §23). Nothing here is implemented, routed or production-verified. It is a 3sln reference-host and `@3sln/bindle` SDK design. It is not Bindle interop: islands are provider-operated components under the "Provider-operated components" rule in [auth](../spec/auth.md), and their framing rules belong to the reference-host section of [security](../3sln/release-gates.md#reference-host-presentation-and-framing-3slnme-policy). The coordinator records decisions in DEVLOG.md. Independent review: [embed-islands-review](../release/embed-islands-review.md).
 
 Architecture/security/frontend sign-off: reviewer ___ / date ___ / outcome ___.
 

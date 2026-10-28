@@ -57,7 +57,7 @@ test('ending, revoking, removing a device, blocking and clearing everything run 
  const f=await fixture();
  try{
   await loaded(f);
-  const cases=[['end-session',{sid:'s'.repeat(22),caller:peer},'Session ended.'],['revoke-ticket',{jti:'t1'},'Call link revoked.'],['revoke-endpoint',{endpoint:'ep_'+'a'.repeat(22)},'Device removed from calls.'],['block',{principal:peer},'Blocked. Their calls and requests are dropped without telling them.'],['clear-missed',{},'Removed from the list.'],['narrow-app',{clientId:APP,purposes:[CALL]},'App access narrowed. Its calls and connections for the removed purposes ended.']];
+  const cases=[['end-session',{sid:'s'.repeat(22),caller:peer},'Session ended.'],['revoke-ticket',{jti:'t1'},'Call link revoked.'],['revoke-endpoint',{endpoint:'ep_'+'a'.repeat(22)},'Device removed from calls.'],['block',{principal:peer},'Blocked. Their calls and requests are dropped without telling them.'],['clear-missed',{},'Removed from the list.'],['approve-app',{clientId:APP,purposes:[CALL]},'App access narrowed. Its calls and connections for the removed purposes ended.']];
   for(const [action,input,notice] of cases){
    await f.write({modal:null,error:'',notice:''});await f.act(new rtc.RtcOwnerAction({action,input}));let s=await f.read();
    assert.equal(s.error,rtc.RTC_REVIEW,action+' without its dialog');assert.equal(f.calls.length,0);
@@ -251,27 +251,35 @@ test('F4 poller: one tab per account polls and shares its answer; another takes 
  b.stop();other.stop();d.stop();
 });
 
-// ——— Service follow-ups (2026-10-27): narrowing an app's approved purposes from the apps panel ———
-test('narrowing: the apps form opens the confirmation with the purposes still checked; it sends nothing until confirmed',async()=>{
- const f=await fixture({submissions:{keep:{[`keep:${CALL}`]:'on'},all:{[`keep:${CALL}`]:'on',[`keep:${SYNC}`]:'on'},none:{},foreign:{[`keep:${CALL}`]:'on',[`keep:${SCREEN}`]:'on'}}});
+// ——— Interim owner approval of an app's purposes from the apps panel (extensions rev 3.2 removed AMD-X1 `bind` and
+// `narrow-app`; TODO(signaling Appendix C.2: approvals move to intents session handler approvals)) ———
+test('approval: removing a purpose opens the confirmation and sends nothing until confirmed; adding only is sent at once',async()=>{
+ const f=await fixture({submissions:{keep:{[`approve:${CALL}`]:'on'},all:{[`approve:${CALL}`]:'on',[`approve:${SYNC}`]:'on'},none:{},widen:{[`approve:${CALL}`]:'on',[`approve:${SYNC}`]:'on',[`approve:${SCREEN}`]:'on'},swap:{[`approve:${CALL}`]:'on',[`approve:${SCREEN}`]:'on'},bogus:{[`approve:${CALL}`]:'on',[`approve:${SYNC}`]:'on','approve:https://unknown.example/purpose':'on'}}});
  try{
   await loaded(f);
-  await f.act(new rtc.ReviewRtcNarrow({clientId:APP,operationId:'keep'}));let s=await f.read();
-  assert.deepEqual(s.modal,{kind:'rtc-confirm',action:'narrow-app',input:{clientId:APP,purposes:[CALL]}});assert.deepEqual(f.calls,[],'nothing is sent before the dialog');assert.deepEqual(f.effects.at(-1),['captureFocus']);
-  // A purpose the app does not hold is never added (narrowing only).
-  await f.write({modal:null});await f.act(new rtc.ReviewRtcNarrow({clientId:APP,operationId:'foreign'}));assert.deepEqual((await f.read()).modal.input.purposes,[CALL]);
-  // Unchanged or empty selections are refused with guidance; an unknown app is unavailable.
-  for(const [operationId,error] of [['all',rtc.RTC_NARROW_SAME],['none',rtc.RTC_NARROW_NONE]]){await f.write({modal:null,error:''});await f.act(new rtc.ReviewRtcNarrow({clientId:APP,operationId}));s=await f.read();assert.equal(s.error,error,operationId);assert.equal(s.modal,null);}
-  await f.write({modal:null,error:''});await f.act(new rtc.ReviewRtcNarrow({clientId:'https://unknown.example/client',operationId:'keep'}));assert.equal((await f.read()).error,rtc.RTC_UNAVAILABLE);
+  await f.act(new rtc.ReviewRtcApprove({clientId:APP,operationId:'keep'}));let s=await f.read();
+  assert.deepEqual(s.modal,{kind:'rtc-confirm',action:'approve-app',input:{clientId:APP,purposes:[CALL]}});assert.deepEqual(f.calls,[],'nothing is sent before the dialog');assert.deepEqual(f.effects.at(-1),['captureFocus']);
+  // Removing every purpose is a narrowing too (the app keeps its access, approved for nothing).
+  await f.write({modal:null});await f.act(new rtc.ReviewRtcApprove({clientId:APP,operationId:'none'}));assert.deepEqual((await f.read()).modal.input,{clientId:APP,purposes:[]});
+  // A change that removes one purpose and adds another still needs the dialog.
+  await f.write({modal:null});await f.act(new rtc.ReviewRtcApprove({clientId:APP,operationId:'swap'}));assert.deepEqual((await f.read()).modal.input.purposes,[CALL,SCREEN]);
+  // Only purposes this host holds are ever sent; an unchanged selection is refused with guidance; an unknown app is unavailable.
+  await f.write({modal:null,error:''});await f.act(new rtc.ReviewRtcApprove({clientId:APP,operationId:'bogus'}));s=await f.read();assert.equal(s.error,rtc.RTC_APPROVE_SAME);assert.equal(s.modal,null);
+  await f.write({modal:null,error:''});await f.act(new rtc.ReviewRtcApprove({clientId:APP,operationId:'all'}));s=await f.read();assert.equal(s.error,rtc.RTC_APPROVE_SAME);assert.equal(s.modal,null);
+  await f.write({modal:null,error:''});await f.act(new rtc.ReviewRtcApprove({clientId:'https://unknown.example/client',operationId:'keep'}));assert.equal((await f.read()).error,rtc.RTC_UNAVAILABLE);
   assert.deepEqual(f.calls,[]);
-  // Confirmed from the dialog: exactly {clientId, purposes} to the narrowing route, then the settings are re-read.
-  const input={clientId:APP,purposes:[CALL]};await f.write({modal:{kind:'rtc-confirm',action:'narrow-app',input},error:''});await f.act(new rtc.RtcOwnerAction({action:'narrow-app',input}));s=await f.read();
-  assert.deepEqual(f.calls.map(c=>`${c.method} ${c.path}`),['POST /api/rtc/narrow-app','GET /api/rtc/settings','GET /api/rtc/ring']);assert.deepEqual(f.calls[0].body,input);
-  assert.equal(s.modal,null);assert.match(s.notice,/narrowed/);assert.equal(rtc.needsConfirmation('narrow-app',input),true);
+  // Confirmed from the dialog: exactly {clientId, purposes} to the approval route, then the settings are re-read.
+  const input={clientId:APP,purposes:[CALL]};await f.write({modal:{kind:'rtc-confirm',action:'approve-app',input},error:''});await f.act(new rtc.RtcOwnerAction({action:'approve-app',input}));s=await f.read();
+  assert.deepEqual(f.calls.map(c=>`${c.method} ${c.path}`),['POST /api/rtc/approve-app','GET /api/rtc/settings','GET /api/rtc/ring']);assert.deepEqual(f.calls[0].body,input);
+  assert.equal(s.modal,null);assert.match(s.notice,/narrowed/);assert.equal(rtc.needsConfirmation('approve-app',input),true);
+  // Adding only (a widening the owner chose here): sent at once, no dialog.
+  f.calls.length=0;await f.write({modal:null,error:'',notice:''});await f.act(new rtc.ReviewRtcApprove({clientId:APP,operationId:'widen'}));s=await f.read();
+  assert.deepEqual(f.calls.map(c=>`${c.method} ${c.path}`),['POST /api/rtc/approve-app','GET /api/rtc/settings','GET /api/rtc/ring']);assert.deepEqual(f.calls[0].body,{clientId:APP,purposes:[CALL,SCREEN,SYNC]});
+  assert.equal(s.modal,null);assert.equal(s.notice,rtc.RTC_APPROVED);
  }finally{await f.close();}
- // A refusal (another owner's app, or the app already gone) reads as unavailable and keeps the dialog's outcome honest.
+ // A refusal (another owner's app, the app already gone, or a widening while off) reads as unavailable.
  const g=await fixture({request:()=>{throw Object.assign(Error('Not found'),{status:404});}});
- try{await loaded(g);const input={clientId:APP,purposes:[CALL]};await g.write({modal:{kind:'rtc-confirm',action:'narrow-app',input}});await g.act(new rtc.RtcOwnerAction({action:'narrow-app',input}));assert.equal((await g.read()).error,rtc.RTC_UNAVAILABLE);}finally{await g.close();}
+ try{await loaded(g);const input={clientId:APP,purposes:[CALL]};await g.write({modal:{kind:'rtc-confirm',action:'approve-app',input}});await g.act(new rtc.RtcOwnerAction({action:'approve-app',input}));assert.equal((await g.read()).error,rtc.RTC_UNAVAILABLE);}finally{await g.close();}
 });
 
 test('wargame M2/M6: a provider block and bulk call-link revocation run only from their dialog, with their own notices',async()=>{

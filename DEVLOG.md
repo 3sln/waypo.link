@@ -9144,3 +9144,71 @@ Provisional (coordinator), unsigned. Specification only: `docs/spec/signaling.md
 **Verification.** A relative link and anchor check over `docs/spec/**` passes, apart from the pre-existing `../architecture/messaging-app.md#13-email-bridge-handoff` anchor. Site-root links were not checked. No code changed, so `npm test` was not run.
 
 Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-27 — Documentation split: Bindle core, Bindle extensions, 3sln.me; full spec publication
+
+Applies the owner direction of 2026-10-27: keep Bindle specs separate from 3sln.me docs, publish every spec and extension, and fix the device sign-in confusion durably. Also applies local clients spike LC-2 / CR-A1 and contacts spike CL-2, CR-K1, CR-K2 and CR-SEC1. Documentation and publication scripts only; no runtime code changed.
+
+**Layout (git mv).**
+- `docs/spec/`, Bindle core: protocol, auth, federation-implementation, contracts, extensions, artefacts, security, and the new keys.
+- `docs/spec/extensions/`: intents, links, events, integrations, incremental-authorization, identity-portability, app-removal, device-authorization, resource-contributions, app-metadata, message-content, signaling, messaging, organizations.
+- `docs/spec/superseded/`: rtc-signaling, beaming, extensions-rev2, signaling-rev2.1.
+- `docs/3sln/accounts/`: sign-in-and-sessions (from device-login plus the hosted auth sections), approve-a-sign-in (moved from docs/architecture/linked-approval.md), identity-names, recovery-identity, recovery-file, account-lifecycle.
+- `docs/3sln/services/`: storage, app-messages, activity, notifications, omni-search, mcp-service, browser-automation.
+- `docs/3sln/release-gates.md`: the 3sln.me release gates split out of security.md.
+
+**Placement decisions (provisional, coordinator).**
+- message-content is an extension, as the Bindle Messaging content profile.
+- app-messages and activity are 3sln.me docs.
+- app-metadata stays an extension, pending the owner question.
+- device-authorization is grouped as a Bindle-owned extension under the EXT3-21 reading (unsigned).
+
+**Splits.**
+- auth.md: the interoperable rules stay. Hosted email sign-in, the hosted recovery transaction, passkeys and the APP_* values move to sign-in-and-sessions.
+- security.md: the Bindle model stays, plus a new Capability URLs section (the URL-secrecy rule moved out of Parlay's legacy docs). S3–S5 move to release-gates.
+- New keys.md holds the JWS profile, strict JSON rules and the signature-domain table.
+- links.md keeps the query envelope (to become an Organizations annex), and marks the contact type as being withdrawn.
+- No Bindle spec links into apps/parlay/docs.
+
+**Headers.** Every doc opens with Group / Status / Covers / Does not cover. The device sign-in docs cross-link each other and state that session handoff, which yields a provider session, is not the device grant, which yields an app grant.
+
+**Publication.**
+- All 51 docs are published, in groups: Start here, Bindle core, Bindle extensions, 3sln.me reference service, Hosting, Superseded.
+- Status wording stays visible; bookkeeping is stripped.
+- A build check (`publicationProblems`, tested) fails on: any unlisted spec or 3sln.me doc, a missing header, a link to an unpublished spec-area page or missing file, or a Bindle link into apps/.
+- Old docs/spec/*.html paths get noindex redirect pages.
+
+**Audit fixes.**
+- README, integration.md, self-hosting.md, the links status table, activity, contracts, events, storage and beaming are corrected.
+- Seven superseded architecture docs carry banners.
+- The walkthrough is marked outdated.
+- AGENTS.md now also names docs/3sln/release-gates.md.
+
+**Verification.**
+- A HEAD worktree with only these changes: npm test 3953 pass and 5 fail. The 5 also fail at plain HEAD without built assets, and pass after build:assets.
+- build:assets passes, with 51 docs.
+- In the shared tree, build:assets is blocked by the concurrent extensions rev 3 code work until that lands.
+
+**Open.**
+- storage.md mixes Bindle contract text with 3sln.me adapter docs; the split is pending.
+- contracts.md has a duplicate object-store section.
+- User-facing doc links in apps/web and packages/core/public-contracts.mjs still use old paths (redirected).
+- EXT3-21 needs owner sign-off.
+
+Reviewer: ___ Date: ___ Outcome: ___
+
+## 2026-10-27 — Extensions revision 3.2 implemented locally (flags off; CR-X3-18..32)
+
+Implemented locally only: nothing is published, deployed or production-verified, and every decision below is provisional (coordinator) and unsigned. Spec: docs/spec/extensions.md rev 3.2 and protocol §2–§5.
+- **Manifest (clean break).** Manifests emit `extensions: [{spec, options}]` from MANIFEST_DECLARATIONS rows and the route wrappers, and `contracts` lists built-ins. Processing, descriptors and emission helpers are in packages/core/extensions.mjs; the SDK, IdentityDirectory, successors, relation-events and the web consumers read it. `features`/`profiles` are no longer emitted or read. Each row keeps its own flag and mount.
+- **Fragments.** One exhaustive member table (packages/core/fragments.mjs) serves the federation pins and artefact growth (CR-X3-30). Slots, slot manifests and AMD-X1 `bind` are removed (CR-X3-18/20). The former slot documents are republished as fragments under docs/artefacts/fragments (intake, ingress, item-classifier), with a lock entry, Parlay pins and descriptors under docs/artefacts/extensions. The retired item-classifier slot manifest stays published, labelled withdrawn, so existing references resolve.
+- **Provider features (behind EXTENSIONS_ENABLED).** The connections domain holds provider-consumable field values and feature grants. Client identity is (issuer, spec URL), and `bindle.grant` changes on every enable, value change or reapproval. Enabling is owner consent with recent authentication. A feature is suspended at once when its declaration is lost, resumes on the same spec URL, and is revoked on disable, after 30 days of suspension, or on block; revocation writes brokered severance rows and an owner notice. The email bridge and messaging-address are 3sln.me extensions; the bridge uses `bindle.feature` = spec URL and UUIDv5 `tx`.
+- **Candidates and announcements.** Candidates come from recorded contracts only, in neutral order, with none preselected. Announcements are local owner-only notice records, once per (field, supplier). The incremental own-flow exclusion covers supplier and producer origins (EXT3-13).
+- **RTC interim.** RTC moved to fragments plus an owner-local purpose approval (TODO signaling Appendix C.2). The classifier is a paid built-in resource (CR-X3-25 partly). Event buses keep their legacy container pending CR-X3-09.
+- **Data reset (CR-X3-29), destructive, pre-release.** `connections/slot/` rows are deleted on first touch. AMD-X1 `bound` members on federation grants are ignored. Old-shape `rtc/approval/` records approve nothing.
+- **Spec divergences to reconcile** (implementation choices, provisional): interim `extensions/rtc-signaling/v1` identity until signaling Appendix C; authorization-entry `intents` also carry `grant-more`/`configure`; embedded-components `parts` encoded `name/version`, per-part FedCM dropped, no `theme_tokens`; an unknown enum value makes the entry absent; endpoint kinds the spec leaves unstated were classified (relations and portability endpoints audience; intents login, intent-links and app-removal return endpoints public); UUIDv5 inputs `|`-joined; announcements computed only for fields an enabled provider feature consumes; the messaging-address feature (withdrawn by CL-4) kept for now; enabling a feature always needs recent authentication; directory and route wrapper declarations not yet moved into rows; initial-consent candidate exclusion and per-fragment `unsupported` for provider-only fields not done.
+- **Tests and verification.** Engine-level tests cover each floor rule, plus a seeded chaos test over declaration churn against a reference model. Verified: npm test, test:worker, test:connections, test:parlay(+web), test:organizations, test:rtc-ui, strict rtc-conformance, test:e2e and check:worker.
+
+Reviewer ___ Date ___ Outcome ___
+
+Independent code review of the revision 3.2 implementation (coordinator-commissioned, not owner sign-off): 0 High, 6 Medium, 12 Low, all on flag-off paths. Open Mediums, to fix next: M1 30-day suspension revocation is lazy (read-triggered only), so a declaration returning after 30+ days unread resumes the grant; M2 email-bridge declaration computed differently by the manifest row and the account-side check; M3 authorization-entry `intents` emit `grant-more`/`configure` beyond protocol §2; M4 initial (non-incremental) consent lacks the own-flow exclusion; M5 RTC approvals survive account severance and revive on reconnect; M6 legacy bus manifests accepted with EVENT_BUSES_ENABLED off. The chaos test's reference model mirrors the implementation and must be rewritten against the spec. Full gates (gates-13) green before commit.

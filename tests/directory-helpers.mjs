@@ -5,7 +5,7 @@ import {createAppEngine,perform,read} from '../packages/app/engine.mjs';
 import {systemClock,cryptoRandom,nullAudit} from '../packages/app/providers.mjs';
 import {RefreshDirectoryIdentity,DirectoryKey,directoryHook} from '../packages/app/domains/directory.mjs';
 export const issuer='https://home.example',subject='11111111-1111-4111-8111-111111111111',identity=issuer+'/people/stable';
-export const manifest={version:'0',issuer,authorization_request_endpoint:issuer+'/requests',authorization_endpoint:issuer+'/authorize',token_endpoint:issuer+'/token',rpc_endpoint:issuer+'/rpc',jwks_uri:issuer+'/jwks',preferences_contract:'https://contracts.example/preferences',login_presentation:['redirect'],dpop_signing_alg_values_supported:['ES256'],features:{'directory.v1':{directory_url:issuer+'/directory'}}};
+export const manifest={version:'0',issuer,authorization_request_endpoint:issuer+'/requests',authorization_endpoint:issuer+'/authorize',token_endpoint:issuer+'/token',rpc_endpoint:issuer+'/rpc',jwks_uri:issuer+'/jwks',preferences_contract:'https://contracts.example/preferences',login_presentation:['redirect'],dpop_signing_alg_values_supported:['ES256'],extensions:[{spec:'https://spec.bindle.example/extensions/directory/v1',options:{directory_url:issuer+'/directory'}}]};
 export async function fixture(options={}){
  const keys=new IdentityKeyRegistry({store:new MemoryMessagingStore(),seal:async v=>v,open:async v=>v});await keys.ensure(subject,'signing');
  const state={document:null,calls:[],time:1000000};

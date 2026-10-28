@@ -107,8 +107,8 @@ export class LinkService {
       await this.#reclaim(tx, owner, state, now);
       if (state.count >= this.maxLinks) { await tx.set(key('link-state', owner), state); return 'link_limit'; }
       state.count += 1;
-      await tx.set(key('link', jti), { version: 1, jti, owner, type, slot: binding.slot, header, claims: meta, input, revoked: false, issuedAt: now, issuer: { kind: issuer.kind, ...(issuer.clientId ? { clientId: issuer.clientId } : {}), ...(issuer.generation !== undefined ? { generation: issuer.generation } : {}) } });
-      await this.#change(tx, owner, state, jti, binding.slot, 'issued');
+      await tx.set(key('link', jti), { version: 1, jti, owner, type, slot: binding.fragment, header, claims: meta, input, revoked: false, issuedAt: now, issuer: { kind: issuer.kind, ...(issuer.clientId ? { clientId: issuer.clientId } : {}), ...(issuer.generation !== undefined ? { generation: issuer.generation } : {}) } });
+      await this.#change(tx, owner, state, jti, binding.fragment, 'issued');
       await tx.set(key('link-state', owner), state);
       return null;
     });

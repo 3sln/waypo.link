@@ -2,14 +2,14 @@
 // Never import this from define.mjs or production code. Fixtures use .example hosts.
 //
 // createMockProvider() implements, in-process, the *proposed* provider contract
-// the SDK targets: manifest discovery with the protocol §2 `features`/`profiles`
-// declaration, the provider-owned authorization entry, the authorization page
+// the SDK targets: manifest discovery with extension declarations (`extensions`,
+// extensions revision 3.2 §2), the provider-owned authorization entry, the authorization page
 // decision, token exchange with PKCE S256 and optional DPoP (nonces, bound
 // refresh), refresh rotation, RFC 7009-style revocation, a minimal RPC endpoint
 // and a FedCM stand-in. Flows that pass against it are verified only against
 // this mock. Subjects deliberately do not use 3sln's /entities/<uuid> shape.
 import {handleCallback} from './callback.mjs';
-import {COMPONENTS_V1} from './capabilities.mjs';
+import {EXT} from './capabilities.mjs';
 
 const encode64=bytes=>btoa(String.fromCharCode(...new Uint8Array(bytes))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
 const decode64=text=>Uint8Array.from(atob(text.replace(/-/g,'+').replace(/_/g,'/')+'='.repeat((4-text.length%4)%4)),c=>c.charCodeAt(0));
@@ -28,25 +28,28 @@ export const declarationPresets=Object.freeze({
   standard:Object.freeze({supportsEntry:true,supportedIntents:['login','select-account'],popup:true,fedcm:false,revocation:true,dpop:false,refresh:true,components:false}),
   minimal:Object.freeze({supportsEntry:false,popup:false,fedcm:false,revocation:false,dpop:false,refresh:false,components:false}),
 });
-export function componentsDeclaration(origin,{parts=['avatar','account-switcher','sign-in'],binding=true,fedcm=false}={}){
+// Embedded-components extension options (formerly the components profile). Parts are `<name>/<version>` values;
+// the former per-part `fedcm` flag and `theme_tokens` have no descriptor option.
+export function componentsDeclaration(origin,{parts=['avatar','account-switcher','sign-in'],binding=true}={}){
   const host=new URL(origin).host;
-  return {embed_origin:`https://embed.${host}`,protocol:[1],parts:Object.fromEntries(parts.map(name=>[name,{versions:[1],...name!=='avatar'&&fedcm?{fedcm:true}:{}}])),theme_tokens:['surface','surface-raised','text','text-muted','accent','on-accent','border','focus','danger','radius'],credential_binding:binding?['key-binding.v1']:[],manage_url:`${origin}/console/apps`};
+  return {embed_origin:`https://embed.${host}`,protocol:[1],parts:parts.map(name=>name.includes('/')?name:`${name}/1`),...binding?{credential_binding:['key-binding.v1']}:{},manage_url:`${origin}/console/apps`};
 }
 
 export function createMockProvider({issuer='https://provider.example',accounts=[{handle:'alex',displayName:'Alex Example'}],clients=[{clientId:'https://app.example/client',redirectUris:['https://app.example/callback']}],declaration,clock=Date.now,profile=false,picture=false,extensionKeys=[],subjectPath=id=>`/people/${id}`,manifestPatch={},dpopTokenType=false,...options}={}){
   const settings={supportsEntry:true,supportedIntents:intents,popup:true,fedcm:false,revocation:true,dpop:false,refresh:true,components:false,clientMetadata:false,...declarationPresets[declaration]??{},...options};
   const origin=new URL(issuer).origin;
   const people=accounts.map(account=>({...account,subject:account.subject??`${origin}${subjectPath(globalThis.crypto.randomUUID())}`}));
-  const features={
-    ...settings.supportsEntry?{'authorization-entry.v1':{endpoint:`${origin}/api/oauth/entries`,intents:[...settings.supportedIntents]}}:{},
-    ...settings.fedcm?{'fedcm.v1':{config_url:`${origin}/fedcm/config.json`}}:{},
-    ...settings.clientMetadata?{'client-id-metadata.v1':{}}:{},
-  };
   const components=settings.components===true?componentsDeclaration(origin):settings.components||null;
+  const extensions=[
+    ...settings.supportsEntry?[{spec:EXT.authorizationEntry,options:{endpoint:`${origin}/api/oauth/entries`,intents:[...settings.supportedIntents]}}]:[],
+    ...settings.fedcm?[{spec:EXT.fedcm,options:{config_url:`${origin}/fedcm/config.json`}}]:[],
+    ...settings.clientMetadata?[{spec:EXT.clientIdMetadata}]:[],
+    ...components?[{spec:EXT.embeddedComponents,options:components}]:[],
+  ];
   const manifest={version:'0',issuer:origin,authorization_endpoint:`${origin}/oauth/authorize`,token_endpoint:`${origin}/oauth/token`,rpc_endpoint:`${origin}/rpc`,jwks_uri:`${origin}/.well-known/jwks.json`,authorization_request_endpoint:`${origin}/api/oauth/requests`,preferences_contract:'https://contracts.example/preferences/v1',
     login_presentation:settings.popup?['redirect','popup']:['redirect'],grant_types_supported:settings.refresh?['authorization_code','refresh_token']:['authorization_code'],
     ...settings.revocation?{revocation_endpoint:`${origin}/oauth/revoke`}:{},...settings.dpop?{dpop_signing_alg_values_supported:['ES256']}:{},
-    ...Object.keys(features).length?{features}:{},...components?{profiles:{[COMPONENTS_V1]:components}}:{},...manifestPatch};
+    ...extensions.length?{extensions}:{},...manifestPatch};
   const entries=new Map(),codes=new Map(),refresh=new Map(),revoked=new Set(),log=[],nonces=new Set(),seenJti=new Set(),accessTokens=new Map();
   const client=id=>clients.find(item=>item.clientId===id);
   async function verifyProof(proof,htu,{accessToken}={}){
@@ -154,7 +157,7 @@ export function createMockProvider({issuer='https://provider.example',accounts=[
     const calls=[],navigator=win.navigator??(win.navigator={}),previous=navigator.credentials;
     navigator.credentials={get:async options=>{
       const provider=options?.identity?.providers?.[0];calls.push({options,activation:navigator.userActivation?.isActive});
-      if(provider?.configURL!==manifest.features?.['fedcm.v1']?.config_url||options.mediation!=='required')throw new DOMException('Not allowed.','NotAllowedError');
+      if(provider?.configURL!==manifest.extensions?.find(entry=>entry.spec===EXT.fedcm)?.options?.config_url||options.mediation!=='required')throw new DOMException('Not allowed.','NotAllowedError');
       const entry=entries.get(provider.params?.entry),choice=await decide(entry);
       if(choice?.error)throw new DOMException(choice.error,choice.name??'NetworkError');
       if(!entry||entry.clientId!==provider.clientId||choice?.decision!=='approve')throw new DOMException('access_denied','IdentityCredentialError');

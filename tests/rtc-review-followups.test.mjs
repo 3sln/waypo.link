@@ -12,7 +12,8 @@ import {rtcWorld,A,B,CALL,SYNC,REF,identityURI,keyPair,fault,perform} from './he
 import {signLegCertificate} from '../packages/rtc/certificates.mjs';
 import {buildBatch,RTC_BATCH_MEDIA_TYPE} from '../packages/rtc/messages.mjs';
 import {RtcKeyRoster,RTC_ROSTER_LIMITS} from '../packages/rtc/federation.mjs';
-import {RtcLifecycle,RtcService,RtcInbox,INVITE_RESEND_DELAYS} from '../packages/rtc/service.mjs';
+import {RTC_FEATURE} from '../packages/rtc/extension.mjs';
+import {RtcLifecycle,RtcService,RtcInbox,RtcApproveApp,INVITE_RESEND_DELAYS} from '../packages/rtc/service.mjs';
 import {K} from '../packages/rtc/admission.mjs';
 import {stages as relationStages} from '../packages/runtime/routes/relations.mjs';
 import {rtcEndpoint} from '../packages/runtime/routes/rtc.mjs';
@@ -67,7 +68,7 @@ for(const attack of [false,true])test(`F1 roster starvation: an honest ticket in
 test('F1 roster lanes: live peers first, then link-verified claims, then plain claims capped per source network; classes spend their own budgets',async()=>{
  const calls=[];let now=0;const limited=new Set();
  const d={allowed:()=>true,peek:()=>null,resolve:async()=>null,peekFeatures:()=>null,
-  features:async(iss,priority)=>{if(limited.has(priority))throw Object.assign(new Error('x'),{code:'rate_limited'});return {'rtc-signaling.v1':{endpoint:`${iss}/bindle/rtc`,max_leg_certificate_seconds:600}};},
+  features:async(iss,priority)=>{if(limited.has(priority))throw Object.assign(new Error('x'),{code:'rate_limited'});return {[RTC_FEATURE]:{endpoint:`${iss}/bindle/rtc`,max_leg_certificate_seconds:600}};},
   refresh:async x=>{calls.push([x.subject.slice(-3),x.priority]);}};
  const r=new RtcKeyRoster({issuer:A,directory:()=>d,clock:()=>now});
  const p=n=>({iss:B,sub:`0a0a0a0a-0000-4000-8000-${String(n).padStart(12,'0')}`});
@@ -192,7 +193,7 @@ test('F1 live peers: a connected session keeps its foreign peer first in the ros
  for(let i=0;i<12;i++){W.clock.advance(60000);await W.tickAll();}// 12 minutes, no messages
  assert.equal(b.entity.roster.isLive(k),true,'still live through the session tick');
  // Refresh-ahead visits every roster entry over successive passes, not the same first few.
- const seen=new Set();const d={allowed:()=>true,peek:()=>null,resolve:async()=>null,peekFeatures:()=>null,features:async iss=>({'rtc-signaling.v1':{endpoint:`${iss}/bindle/rtc`,max_leg_certificate_seconds:600}}),refresh:async x=>{seen.add(x.subject);}};
+ const seen=new Set();const d={allowed:()=>true,peek:()=>null,resolve:async()=>null,peekFeatures:()=>null,features:async iss=>({[RTC_FEATURE]:{endpoint:`${iss}/bindle/rtc`,max_leg_certificate_seconds:600}}),refresh:async x=>{seen.add(x.subject);}};
  const r=new RtcKeyRoster({issuer:A,directory:()=>d,clock:()=>0});for(let n=0;n<20;n++)r.track({iss:B,sub:`0a0a0a0a-0000-4000-8000-${String(n).padStart(12,'0')}`});r.lives.clear();
  for(let i=0;i<5;i++)await r.run({limit:4});assert.equal(seen.size,20);
 });
@@ -328,7 +329,9 @@ test('(b) narrowing or revoking an app ends an unanswered invite that rang only 
  for(let i=0;i<3;i++){await W.pump();W.clock.advance(2000);await W.tickAll();}
  assert.equal(W.posts.slice(before).filter(p=>p.from===B).length,0,'nothing goes to the caller\'s provider (no control, spec §12)');
  assert.equal((await call.entity.service.missed(owner)).missed.length,0,'not recorded as missed');
- // An invite also delivered to another app's endpoint keeps ringing; a kept purpose keeps ringing too.
+ // An invite also delivered to another app's endpoint keeps ringing; a kept purpose keeps ringing too. The narrowing
+ // also narrowed the app's approval record (interim owner-local approval), so the owner approves CALL again first.
+ await perform(call.entity.engine,new RtcApproveApp({actor:owner,input:{clientId:call.grantInfo.clientId,purposes:[CALL,SYNC]}}));
  await call.register([CALL]);
  const otherApp=W.provider(B).device(1,{grant:W.provider(B).grant(1,{clientId:'https://other.example/client',origin:'https://other.example',purposes:[CALL]}),purposes:[CALL]});await otherApp.register();
  const s2=await ring(call);assert.equal((await lifecycle({event:'app-revoked',clientId:call.grantInfo.clientId})).ended,0);assert.equal((await live(s2.sid))?.state,'ringing','another app still rings it');

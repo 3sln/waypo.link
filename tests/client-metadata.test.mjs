@@ -1,6 +1,7 @@
 // client-id-metadata.v1: URL client IDs resolved from OAuth client ID metadata documents through a fake SSRF-safe
 // egress port, plus the provider runtime (manifest, entries, redirect flow, tokens, CORS, blocks) and admin blocking.
 // Fixtures use reserved .example hosts only.
+import {EXT,extensionOptions} from '../packages/core/extensions.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {ClientDirectory,metadataClientURL,validateClientMetadata,validClientSnapshot,memoryLimiter,CLIENT_METADATA_FEATURE} from '../packages/federation/client-metadata.mjs';
@@ -122,9 +123,9 @@ async function signInThroughEntry(p,{origin=appOrigin}={}){
 }
 
 test('manifest declares client-id-metadata.v1 only when enabled with an egress port',async()=>{
- const on=await cimdProvider();const manifest=await(await on.fetch(`${issuer}/.well-known/bindle/manifest.json`)).json();assert.deepEqual(manifest.features[CLIENT_METADATA_FEATURE],{});assert.ok(manifest.features['authorization-entry.v1']);
- const off=await cimdProvider({enabled:false});const plain=await(await off.fetch(`${issuer}/.well-known/bindle/manifest.json`)).json();assert.equal(plain.features?.[CLIENT_METADATA_FEATURE],undefined);
- const noPort=federationAuthority({config:{...on.config},repository:{},shard:()=>null,directory:federationClientDirectory(on.config,{})});assert.equal(noPort.manifest().features,undefined);
+ const on=await cimdProvider();const manifest=await(await on.fetch(`${issuer}/.well-known/bindle/manifest.json`)).json();assert.equal(manifest.features,undefined);assert.deepEqual(extensionOptions(manifest,CLIENT_METADATA_FEATURE),{});assert.ok(extensionOptions(manifest,EXT.authorizationEntry));
+ const off=await cimdProvider({enabled:false});const plain=await(await off.fetch(`${issuer}/.well-known/bindle/manifest.json`)).json();assert.equal(plain.extensions?.some(e=>e.spec===CLIENT_METADATA_FEATURE),false);
+ const noPort=federationAuthority({config:{...on.config},repository:{},shard:()=>null,directory:federationClientDirectory(on.config,{})});assert.equal(noPort.manifest().features,undefined);assert.equal(noPort.manifest().extensions?.some(e=>e.spec===CLIENT_METADATA_FEATURE)??false,false);
  // Disabled: a URL client ID is just an unregistered client and nothing is fetched.
  const {input}=entryInput();const refused=await post(off,`${issuer}/api/oauth/entries`,input,{Origin:appOrigin});assert.equal(refused.status,403);assert.equal(off.egress.calls.length,0);
 });

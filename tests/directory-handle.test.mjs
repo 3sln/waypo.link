@@ -11,7 +11,7 @@ const evil='https://evil.example',org='77777777-7777-4777-8777-777777777777',per
 const keypair=async()=>{const p=await crypto.subtle.generateKey({name:'ECDSA',namedCurve:'P-256'},true,['sign','verify']);const {x,y}=await crypto.subtle.exportKey('jwk',p.publicKey);return {kty:'EC',crv:'P-256',x,y};};
 const document=async handle=>({v:1,iss:evil,sub:org,kind:'organization',...handle===undefined?{}:{handle},keys:[{kid:'k1',use:'sig',alg:'ES256',jwk:await keypair(),state:'active',predecessor:null,continuity:null}]});
 async function evilFetch(handle){
- const manifest={version:'0',issuer:evil,authorization_request_endpoint:evil+'/r',authorization_endpoint:evil+'/a',token_endpoint:evil+'/t',rpc_endpoint:evil+'/rpc',jwks_uri:evil+'/jwks',preferences_contract:'https://contracts.example/p',login_presentation:['redirect'],dpop_signing_alg_values_supported:['ES256'],features:{'directory.v1':{directory_url:evil+'/directory'}}};
+ const manifest={version:'0',issuer:evil,authorization_request_endpoint:evil+'/r',authorization_endpoint:evil+'/a',token_endpoint:evil+'/t',rpc_endpoint:evil+'/rpc',jwks_uri:evil+'/jwks',preferences_contract:'https://contracts.example/p',login_presentation:['redirect'],dpop_signing_alg_values_supported:['ES256'],extensions:[{spec:'https://spec.bindle.example/extensions/directory/v1',options:{directory_url:evil+'/directory'}}]};
  const doc=await document(handle);
  return async url=>Response.json(url.endsWith('manifest.json')?manifest:url.includes('?sub=')?{iss:evil,sub:org,identity:`${evil}/identity/${org}`}:doc,{headers:{'Cache-Control':'max-age=300'}});
 }

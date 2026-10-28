@@ -32,7 +32,7 @@ export const silentEnd=s=>s?.role==='callee'&&!s.claimed&&s.state==='ringing';
 /** Whether an operation runs only from its confirmation dialog (`rtc-confirm`): ending, revoking, blocking and clearing
  * the whole missed list. Dismissing one entry and the silent decline of an unanswered incoming record (`silent: true`,
  * from the ring or the settings) do not ask: they change nothing the caller can see (review F1). */
-export const needsConfirmation=(action,input)=>action==='end-session'?input?.silent!==true:['revoke-ticket','revoke-endpoint','block','narrow-app'].includes(action)||action==='clear-missed'&&input?.id===undefined;
+export const needsConfirmation=(action,input)=>action==='end-session'?input?.silent!==true:['revoke-ticket','revoke-endpoint','block','approve-app'].includes(action)||action==='clear-missed'&&input?.id===undefined;
 export const RTC_UNAVAILABLE='This setting is not available right now.';
 export const RTC_REVIEW='Review the change in the dialog, then confirm.';
 export const RTC_DECLINED='Declined. The caller is not told; the call rings out.';
@@ -41,9 +41,9 @@ const noticeFor=(action,input)=>action==='block'&&typeof input?.issuer==='string
  :action==='unblock'&&typeof input?.issuer==='string'?'Provider unblocked.'
  :action==='mute'&&input?.kind==='origin'?'App muted. Its calls still arrive but no longer ring.'
  :action==='revoke-ticket'&&input&&!Object.hasOwn(input,'jti')?'Call links revoked.':NOTICES[action];
-const NOTICES=Object.freeze({'set-policy':'Call settings saved.','set-contact-rtc':'Contact link call settings saved.',block:'Blocked. Their calls and requests are dropped without telling them.',unblock:'Unblocked.',mute:'Muted.',unmute:'Unmuted.','revoke-ticket':'Call link revoked.','end-session':'Session ended.','revoke-endpoint':'Device removed from calls.','clear-missed':'Removed from the list.','narrow-app':'App access narrowed. Its calls and connections for the removed purposes ended.'});
-export const RTC_NARROW_NONE='Keep at least one purpose. To remove the app completely, use Manage app access.';
-export const RTC_NARROW_SAME='Uncheck the purposes this app should no longer use.';
+const NOTICES=Object.freeze({'set-policy':'Call settings saved.','set-contact-rtc':'Contact link call settings saved.',block:'Blocked. Their calls and requests are dropped without telling them.',unblock:'Unblocked.',mute:'Muted.',unmute:'Unmuted.','revoke-ticket':'Call link revoked.','end-session':'Session ended.','revoke-endpoint':'Device removed from calls.','clear-missed':'Removed from the list.','approve-app':'App access narrowed. Its calls and connections for the removed purposes ended.'});
+export const RTC_APPROVE_SAME='Change which purposes this app may use, then save.';
+export const RTC_APPROVED='Purposes approved for this app.';
 const sameInput=(a,b)=>JSON.stringify(a??null)===JSON.stringify(b??null);
 const friendly=error=>{if(error?.status===404||error?.code==='not_found')throw Error(RTC_UNAVAILABLE);throw error;};
 const values=(r,d)=>d.operationId?r.browser.consumeSubmission(d.operationId):d.values;
@@ -85,7 +85,7 @@ function declineLocally(r,ctx,sid,until){
  const prior=ringBase(r),now=Date.now();
  publish(r,ctx,{rtcRing:{...prior,invites:prior.invites.filter(i=>i.sid!==sid),declined:[...(prior.declined??[]).filter(d=>d.until>now&&d.sid!==sid),{sid,until:Number.isFinite(until)&&until>now?until:now+120000}]}});
 }
-const PANEL_HEADING=Object.freeze({'narrow-app':'#rtc-apps-title','clear-missed':'#rtc-missed-title',unblock:'#rtc-blocked-title',unmute:'#rtc-blocked-title',mute:'#rtc-blocked-title','end-session':'#rtc-sessions-title'});
+const PANEL_HEADING=Object.freeze({'approve-app':'#rtc-apps-title','clear-missed':'#rtc-missed-title',unblock:'#rtc-blocked-title',unmute:'#rtc-blocked-title',mute:'#rtc-blocked-title','end-session':'#rtc-sessions-title'});
 
 export class LoadRtcSettings extends GuardedAction {async perform(r,ctx){await load(r,ctx);}}
 /**
@@ -123,18 +123,22 @@ export class RtcOwnerAction extends GuardedAction {
 }
 
 /**
- * The apps panel's narrowing form (`keep:<line>` per approved purpose of one app): opens the `rtc-confirm` dialog for
- * `narrow-app` {clientId, purposes} with the purposes still checked. Nothing is sent from here; the request runs only
- * from the dialog (RtcOwnerAction). At least one purpose stays (the slot's schema); removing every purpose is removing
- * the app's access, which the app access view offers. Only purposes the app holds can be kept (narrowing only).
+ * The apps panel's approval form (`approve:<line>` per purpose this host holds, for one app): the owner's interim
+ * approval of that app's purposes (POST /api/rtc/approve-app {clientId, purposes}; extensions rev 3.2 removed AMD-X1
+ * `bind`). A change that only adds purposes is sent at once; one that removes any opens the `rtc-confirm` dialog for
+ * `approve-app` and runs only from it (RtcOwnerAction). TODO(signaling Appendix C.2: approvals move to intents
+ * session handler approvals)
  */
-export class ReviewRtcNarrow extends GuardedAction {
+export class ReviewRtcApprove extends GuardedAction {
+ mutation=true;
  async perform(r,ctx,d){
   const v=values(r,d),model=rtcModel(snapshot(r));if(!v||model?.status!=='loaded'||typeof d.clientId!=='string')return;
   const app=model.apps.find(a=>a.clientId===d.clientId);if(!app)throw Error(RTC_UNAVAILABLE);
-  const purposes=app.purposes.filter(l=>v['keep:'+l]==='on');
-  if(!purposes.length)throw Error(RTC_NARROW_NONE);if(purposes.length===app.purposes.length)throw Error(RTC_NARROW_SAME);
-  r.browser.captureFocus?.();publish(r,ctx,{modal:{kind:'rtc-confirm',action:'narrow-app',input:{clientId:app.clientId,purposes}},error:''});r.browser.modalFocus?.();
+  const purposes=model.purposes.filter(p=>v['approve:'+p.id]==='on').map(p=>p.id),input={clientId:app.clientId,purposes};
+  if(purposes.length===app.purposes.length&&purposes.every(l=>app.purposes.includes(l)))throw Error(RTC_APPROVE_SAME);
+  r.browser.captureFocus?.();
+  if(app.purposes.some(l=>!purposes.includes(l))){publish(r,ctx,{modal:{kind:'rtc-confirm',action:'approve-app',input},error:''});r.browser.modalFocus?.();return;}
+  await r.api.request('/api/rtc/approve-app',input).catch(friendly);await reloadAfter(r,ctx,RTC_APPROVED);r.browser.restoreFocus?.();
  }
 }
 

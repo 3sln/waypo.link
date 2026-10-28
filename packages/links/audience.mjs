@@ -10,7 +10,7 @@ import {prepareLinkResponse,signLinkResponse} from '../identity/link-response.mj
 import {evaluateLinkPolicy} from '../runtime/developer-contact.mjs';
 import {UUID} from '../core/primitives.mjs';
 import {CONTACT_KEYS} from './contact-profile.mjs';
-import {LINK_SLOT_TABLE} from './types.mjs';
+import {LINK_FRAGMENT_TABLE} from './types.mjs';
 import {assertLifecycleOpen} from '../runtime/account-deletion.mjs';
 const DAY=86400000,CONTACT_PATH=/^\/users\/(?:[a-z0-9][a-z0-9_-]{2,31}|n\.[0-9abcdefghjkmnpqrstvwxyz]{1,9})\/contact\/[a-f0-9-]{36}$/;
 const local=c=>c.config.LOCAL_DEVELOPMENT==='true';
@@ -36,10 +36,10 @@ async function cachedDecision(c,parent,principal,policy,bindPolicy=false){
 }
 // links §9 step 2: the signed-in opener's own provider signs, after an explicit click, for a same-host link only.
 export async function signOwnLinkResponse(c,owner,handle,link){
- let meta;try{meta=prepareLinkResponse(link,{types:LINK_SLOT_TABLE.map(row=>row.type),allowInsecureLocalhost:local(c)});if(new URL(link).origin!==c.config.APP_ORIGIN||meta.claims.iss!==c.config.APP_ORIGIN||!CONTACT_PATH.test(new URL(link).pathname))fail('link_invalid');}catch{invalid();}
+ let meta;try{meta=prepareLinkResponse(link,{types:LINK_FRAGMENT_TABLE.map(row=>row.type),allowInsecureLocalhost:local(c)});if(new URL(link).origin!==c.config.APP_ORIGIN||meta.claims.iss!==c.config.APP_ORIGIN||!CONTACT_PATH.test(new URL(link).pathname))fail('link_invalid');}catch{invalid();}
  if(typeof handle!=='string'||!handle)throw new StorageError('unauthorized','Sign in again to continue.',401);
  const signer=await c.signingKey(owner);
- return signLinkResponse({meta,principal:{iss:c.config.APP_ORIGIN,sub:owner,handle:`${handle}@${new URL(c.config.APP_ORIGIN).host}`},key:signer,types:LINK_SLOT_TABLE.map(row=>row.type),allowInsecureLocalhost:local(c)});
+ return signLinkResponse({meta,principal:{iss:c.config.APP_ORIGIN,sub:owner,handle:`${handle}@${new URL(c.config.APP_ORIGIN).host}`},key:signer,types:LINK_FRAGMENT_TABLE.map(row=>row.type),allowInsecureLocalhost:local(c)});
 }
 // Bounded expiry sweeps for decisions and orphaned per-parent rows.
 async function sweep(c,prefix,expired,limit=128){

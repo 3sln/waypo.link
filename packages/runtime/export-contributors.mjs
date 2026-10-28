@@ -29,7 +29,7 @@ const definitions=[
  ['links',['link/','link-change/'],'target recipient active revokedAt resource key methods scope'],
  ['resources',['resource/','hosted/'],'provider builtin contracts capabilities verifiedAt key version size contentType modifiedAt'],
  ['connections',['resource/'],'provider clientId scope fragments resources methods integration connectedAt disconnectedAt'],
- ['integrations',['connections/slot/'],'slot occupants purposes selection'],
+ ['integrations',['connections/field/','connections/feature/','connections/notice/'],'fragment entries purposes selection spec state grant approved'],
  ['events',['evbus/bus/','evbus/rec/'],'bus seq schema spec manifest digest host retention retentionSeconds features type published_at publisher data content payload source occurredAt'],
  ['external-storage',['drive/object/','drive/folder/'],'provider resource resourceId bucket prefix folderId key objectId fileId version size contentType'],
  ['billing',['billing/state','billing/ever-paid/'],'plan periodStart periodEnd cancelAtPeriodEnd customerId since paidAt validUntil currency annualAmount subscriptionId pendingChange'],
@@ -37,7 +37,8 @@ const definitions=[
  // RTC-d (packages/rtc/service.mjs): the owner's RTC settings and history. Ticket rows export only their counters and
  // dates, plus the non-secret purposes and principal binding (the meta is a bearer capability and `claims` is not
  // projected); blocks and mutes name principals the owner chose; contact rows name their link parent.
- ['rtc',['rtc/policy','rtc/block/','rtc/mute/','rtc/contact/','rtc/missed/'],'other self requests autoAccept principal at kind value purposes caller purpose parent'],
+ // Interim (extensions rev 3.2 removed AMD-X1): rtc/approval/ is the owner's own per-app purpose approval (packages/rtc/approvals.mjs).
+ ['rtc',['rtc/policy','rtc/block/','rtc/mute/','rtc/contact/','rtc/missed/','rtc/approval/'],'other self requests autoAccept principal at kind value purposes caller purpose parent clientId versions'],
  ['rtc-tickets',['rtc/ticket/'],'usesLeft revoked callback purposes principal'],
  ['quota',['quota/','hosted-usage','app-message-usage/'],'bytes messages objects limit storageBytes usage retention']
 ];
@@ -104,7 +105,6 @@ const excluded={
  'rtc/limit/':'Derived: RTC rate-limit windows (hashed keys).','rtc/aep/':'Derived: highest authority epochs seen from RTC peers (24 h).',
  'rtc/outbox/':'Transient: RTC signaling outbox.','rtc/outbox-seq':'Derived: RTC outbox sequence.','rtc/closed':'Transient: RTC deletion marker.',
  'rtc/inq/':'Transient: RTC inbound signaling batches awaiting processing.','rtc/inq-meta':'Derived: RTC inbound queue counters.',
- 'rtc/approval/':'Derived: the last bound RTC approval change the federation shard reported per app (RTC-i review L1).',
  // RTC-f: relay leases hold only TURN usernames (never credentials) of live legs; revoked at leg end, dropped once expired.
  'rtc/relay/':'Transient: RTC relay credential leases (TURN usernames only, never credentials; at most 300 s past the leg).',
  'rtc/relay-use/':'Derived: RTC relay allowance counters (reserved bytes this month and last, one-hour issuance window).'

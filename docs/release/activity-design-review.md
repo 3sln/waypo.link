@@ -1,6 +1,6 @@
 # Activity design adversarial review
 
-2026-10-20. Author self-review of the [core activity draft](../spec/activity.md) and [3sln.me host design](../architecture/activity-center.md). This is a documentation wargame, not independent cross-review, human approval, runtime testing, or production evidence. Fixes below are incorporated in those two documents; their implementation remains future work. Production release stays disabled under [security](../spec/security.md).
+2026-10-20. Author self-review of the [core activity draft](../3sln/services/activity.md) and [3sln.me host design](../architecture/activity-center.md). This is a documentation wargame, not independent cross-review, human approval, runtime testing, or production evidence. Fixes below are incorporated in those two documents; their implementation remains future work. Production release stays disabled under [security](../spec/security.md).
 
 The review uses the current app-message, notification, content/form/postback, app-connection, tag, multi-account, and scope-reduction sources cited by the host design. Earlier decision history remains in [DEVLOG](../../DEVLOG.md); this task explicitly prohibits modifying that ledger. No approval is inferred from the user's scope direction or historical tests.
 
@@ -102,8 +102,8 @@ User direction dated 2026-10-20 settles the scope: core app activity, app/tag fa
 
 | Decision | Current recommendation and linked outcome | Human reviewer / date / outcome |
 | --- | --- | --- |
-| D-A1: provenance and tags | [Core draft](../spec/activity.md): issuer-qualified app principal, signed admission per revision, typed app-tag namespace, mandatory structural app facet. Addresses A2/A4. | ___ / ___ / ___ |
-| D-A2: lifecycle and collapse | [Core draft](../spec/activity.md): notification-only collapse, explicit revision-checked replacement/retraction, terminal expiry, independent private recipient state. Addresses A3/A8. | ___ / ___ / ___ |
+| D-A1: provenance and tags | [Core draft](../3sln/services/activity.md): issuer-qualified app principal, signed admission per revision, typed app-tag namespace, mandatory structural app facet. Addresses A2/A4. | ___ / ___ / ___ |
+| D-A2: lifecycle and collapse | [Core draft](../3sln/services/activity.md): notification-only collapse, explicit revision-checked replacement/retraction, terminal expiry, independent private recipient state. Addresses A3/A8. | ___ / ___ / ___ |
 | D-A3: push policy | [Host design](../architecture/activity-center.md): per-app opt-in, selected/all future tag choice, mute precedence, prospective changes, optional update notices, quiet/digest routing and proposed finite budgets. Addresses A1/A5. | ___ / ___ / ___ |
 | D-A4: privacy and accounts | [Host design](../architecture/activity-center.md): generic defaults, stricter account/device preview policy, opaque destination routing, foreground-only review, no cross-account fallback. Addresses A4/A6/A7. | ___ / ___ / ___ |
 | D-A5: extraction and versioning | [Exact migration list](../architecture/activity-center.md#extraction-and-exact-migration-list): preserve v1 and verified app history, add a new binding, split mixed modules, transfer peers to the separate app, fence dual queues. | ___ / ___ / ___ |

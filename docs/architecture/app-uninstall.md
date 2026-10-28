@@ -2,7 +2,7 @@
 
 Status: **provisional design, 2026-10-22, revision 3.** Revision 3 answers the two open questions of Review round 1 as **Provisional (coordinator), not signed off by the user** (the user delegated them): an organization's clean removal starts after a 24 h notified delay to admins (AU-13, §7.3), and consent pages for an app with a pending removal show "You asked to remove <app>" with ⟦Remove now⟧ (AU-14, §6.1). Implementation proceeds on them, and they stay revisable. Current local status (2026-10-24): AU-S1–AU-S7 and AU-14 have local implementations, including routes, console controls, producer summaries and reminder attempts; organization clean removal remains refused pending AU-13. No production or external delivery verification is implied. Revision 2 was documentation only. Revision 2 applies the user's decisions of 2026-10-22 (§1a, UD-1…UD-3) and the confident fixes of [Review round 1](#review-round-1) (RR1-…); the review's open items remain open. Human sign-off: reviewer ___ / date ___ / outcome ___. The coordinator records the decision in [DEVLOG](../../DEVLOG.md).
 
-Normative draft: [app removal](../spec/app-removal.md) (proposed amendment, unsigned). This note holds the user's direction, rationale, rejected alternatives, the 3sln.me features, the threat model, slices, tests and open questions.
+Normative draft: [app removal](../spec/extensions/app-removal.md) (proposed amendment, unsigned). This note holds the user's direction, rationale, rejected alternatives, the 3sln.me features, the threat model, slices, tests and open questions.
 
 ## 1. User direction
 
@@ -233,7 +233,7 @@ Parlay keeps hot state in its per-user MailboxObject: metadata, receipts, replay
 
 ### 7.5 Identity portability
 
-The [identity portability](../spec/identity-portability.md) draft appeared while this note was being written (read, not edited). It says that after the redirect period the source "treats the identity exactly as a deleted identity", with the uniform 404 of organizations §3a.2. Two consequences, both reflected in the spec:
+The [identity portability](../spec/extensions/identity-portability.md) draft appeared while this note was being written (read, not edited). It says that after the redirect period the source "treats the identity exactly as a deleted identity", with the uniform 404 of organizations §3a.2. Two consequences, both reflected in the spec:
 
 - A transfer-out, the end of its redirect period and later cleanup at the source MUST NOT emit `subject-deleted` (spec §8.2, amendment AR-9 for the portability author).
 - There is no pull form of the signal (spec §8.5). An earlier draft of this note proposed a 410 `account_deleted` answer on the subject URL. That was dropped: it would contradict the uniform 404 and would make apps purge identities that only moved.

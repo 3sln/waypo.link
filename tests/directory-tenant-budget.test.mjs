@@ -16,7 +16,7 @@ import {stages,MEMBER_ACQUIRE_PER_MINUTE} from '../packages/runtime/routes/membe
 
 const issuer='https://home.example',org='55555555-5555-4555-8555-555555555555',person='99999999-9999-4999-8999-999999999999',member='66666666-6666-4666-8666-666666666666';
 const ON={APP_ORIGIN:'https://provider.example',DIRECTORY_ENABLED:'true',ORGANIZATIONS_ENABLED:'true',ORG_FOREIGN_MEMBERS_ENABLED:'true',ORG_FOREIGN_ISSUERS:JSON.stringify([issuer])};
-const manifest={version:'0',issuer,authorization_request_endpoint:issuer+'/r',authorization_endpoint:issuer+'/a',token_endpoint:issuer+'/t',rpc_endpoint:issuer+'/rpc',jwks_uri:issuer+'/jwks',preferences_contract:'https://contracts.example/p',login_presentation:['redirect'],dpop_signing_alg_values_supported:['ES256'],features:{'directory.v1':{directory_url:issuer+'/directory'}}};
+const manifest={version:'0',issuer,authorization_request_endpoint:issuer+'/r',authorization_endpoint:issuer+'/a',token_endpoint:issuer+'/t',rpc_endpoint:issuer+'/rpc',jwks_uri:issuer+'/jwks',preferences_contract:'https://contracts.example/p',login_presentation:['redirect'],dpop_signing_alg_values_supported:['ES256'],extensions:[{spec:'https://spec.bindle.example/extensions/directory/v1',options:{directory_url:issuer+'/directory'}}]};
 const settle=()=>new Promise(resolve=>setTimeout(resolve,20));
 async function world(t){
  const p=await crypto.subtle.generateKey({name:'ECDSA',namedCurve:'P-256'},true,['verify','sign']);const {x,y}=await crypto.subtle.exportKey('jwk',p.publicKey);

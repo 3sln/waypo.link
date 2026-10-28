@@ -24,7 +24,7 @@
 // (integrations §8) is not mounted: it needs an issuer-wide connection -> account directory and client-key egress.
 import {createAppEngine,perform,read,operations,AppQuery} from '../../app/engine.mjs';
 import {systemClock,cryptoRandom,nullAudit} from '../../app/providers.mjs';
-import {AppConnections,recognizedSlots} from '../../apps/connections.mjs';
+import {PROVIDER_EXT} from '../../core/extensions.mjs';
 import {brokeredResourcesProvider,readConnection,BROKERED_OPERATIONS,BROKERED_OWNER_OPERATIONS,DescribeOccupant,RevalidateBrokeredRecords,BrokeredRecords} from '../../federation/brokered.mjs';
 import {DiscoveryClient,sharedDiscoveryBudget} from '../../federation/resource-discovery.mjs';
 import {validateDescribe} from '../../links/handoff.mjs';
@@ -44,7 +44,7 @@ function engineOf(c,features){
  if(!engine){
   const issuer=c.config.APP_ORIGIN,reserved=[c.config.EMBED_ORIGIN].filter(v=>typeof v==='string'&&v).map(v=>{try{return new URL(v).hostname;}catch{return null;}}).filter(Boolean);
   const discovery=new DiscoveryClient({issuer,reserved,mint:typeof c.config.BROKERING_MINT==='function'?c.config.BROKERING_MINT:undefined,egress:typeof c.config.INTEGRATION_EGRESS?.send==='function'?c.config.INTEGRATION_EGRESS:undefined,budget:c.config.INTEGRATION_DISCOVERY_BUDGET??sharedDiscoveryBudget});
-  engine=createAppEngine({providers:{clock:systemClock,random:cryptoRandom,audit:nullAudit,brokeredResources:brokeredResourcesProvider({store:c.metadata,discovery,issuer,...features,slots:c.config.CONNECTION_SLOTS??recognizedSlots(c.config)})}});
+  engine=createAppEngine({providers:{clock:systemClock,random:cryptoRandom,audit:nullAudit,brokeredResources:brokeredResourcesProvider({store:c.metadata,discovery,issuer,...features})}});
   cache.set(key,engine);engines.set(c,cache);
  }
  return engine;
@@ -71,7 +71,7 @@ async function owned(c,owner,operation,list,{id,input}){
  try{const result=await run(c,Operation,params);if(typeof c.integrationEventsKick==='function')await c.integrationEventsKick(owner);await report(c,owner,result?.connection??params.input.connection,result?.health);return result;}
  catch(error){await report(c,owner,params.input.connection,error?.health);throw error;}
 }
-/** BB-C1b MESSAGING_DESCRIBE port over a controller: `({owner, slot, occupant}) -> describe body`. */
+/** BB-C1b MESSAGING_DESCRIBE port over a controller: `({owner, fragment, occupant}) -> describe body`. */
 export const messagingDescribe=c=>query=>c.integrationsMessagingDescribe(query);
 
 export const account={
@@ -83,22 +83,23 @@ export const account={
    if(!Operation)notFound();
    return run(this,Operation,{actor:{kind:'system',owner},...input===undefined?{}:{input:shape(input)}});
   },
-  // The occupant's `describe`, validated against messaging §2.3, for links/handoff.mjs. The occupancy port answers
-  // first (account status, severance, exclusive selection); the seat it names must still be the one whose record is
-  // described. Any failure is recipient_unavailable upstream. A changed ingress is recorded on the seat (C1b).
-  async integrationsMessagingDescribe({owner,slot,occupant}={}){
+  // The messaging-address provider feature's `describe` (extensions rev 3.2 §4.2), validated against messaging §2.3, for
+  // links/handoff.mjs. The value port answers first (feature live, account status, severance, exclusive selection);
+  // the entry it names must still be the one whose record is described. Any failure is recipient_unavailable upstream.
+  // A changed ingress is recorded on the entry (C1b).
+  async integrationsMessagingDescribe({owner,fragment,occupant}={}){
    const down=()=>fail('recipient_unavailable','The recipient is unavailable.',503);
    if(!flagEnabled(this.config,'INTEGRATIONS_ENABLED',{subject:{kind:'account',owner}})||!flagEnabled(this.config,'BROKERING_ENABLED',{subject:{kind:'account',owner}})||typeof owner!=='string'||await this.metadata.get('owner')!==owner)down();
-   const port=await this.linkSlotOccupant({owner,slot});if(!port||port.clientId!==occupant?.clientId||(occupant?.generation??null)!==port.generation)down();
-   const found=await new AppConnections({metadata:this.metadata,origin:this.config.APP_ORIGIN,slots:this.config.CONNECTION_SLOTS??recognizedSlots(this.config)}).occupant(owner,slot);
-   const seat=found.sever?null:found.occupants.find(o=>o.cnx===port.cnx);if(!seat||typeof seat.resource!=='string')down();
+   const port=await this.linkSlotOccupant({owner,fragment});if(!port||port.clientId!==occupant?.clientId||(occupant?.generation??null)!==port.generation)down();
+   const found=await this.connectionsSystem(owner,{operation:'connections.feature-resources',input:{feature:PROVIDER_EXT.messagingAddress}});
+   const seat=found.sever||!found.live?null:found.resources.find(o=>o.cnx===port.cnx);if(!seat||typeof seat.resource!=='string')down();
    // The ingress must sit on the occupant's own origin: the client_id origin, which X3 binds every endpoint to (X7-R5).
    let origin;try{origin=new URL(seat.clientId).origin;}catch{down();}if(typeof seat.origin==='string'&&seat.origin!==origin)down();
    const memo=refusals.get(this)??new Map(),key=`${owner}|${seat.cnx}`,now=Date.now();refusals.set(this,memo);if((memo.get(key)??0)>now)down();
    const refuse=()=>{memo.delete(key);while(memo.size>=REFUSALS)memo.delete(memo.keys().next().value);memo.set(key,now+REFUSAL_MS);down();};
-   let result;try{result=await run(this,DescribeOccupant,{actor:{kind:'system',owner},input:{slot,seat:{seat:seat.seat,connection:seat.connection,clientId:seat.clientId,generation:seat.generation,resource:seat.resource,cnx:seat.cnx}}});}catch{refuse();}
+   let result;try{result=await run(this,DescribeOccupant,{actor:{kind:'system',owner},input:{feature:PROVIDER_EXT.messagingAddress,seat:{seat:seat.seat,connection:seat.connection,clientId:seat.clientId,generation:seat.generation,resource:seat.resource,cnx:seat.cnx,grant:seat.grant}}});}catch{refuse();}
    const valid=validateDescribe(result,{origin,allowLoopback:this.config.LOCAL_DEVELOPMENT==='true'});if(!valid)refuse();memo.delete(key);
-   if(seat.ingress!==valid.ingress)try{await this.connectionsSystem(owner,{operation:'connections.set-ingress',input:{slot,seat:seat.seat,generation:seat.generation,ingress:valid.ingress}});}catch{/* Recorded on a later describe. */}
+   if(seat.ingress!==valid.ingress)try{await this.connectionsSystem(owner,{operation:'connections.set-ingress',input:{fragment,seat:seat.seat,generation:seat.generation,ingress:valid.ingress}});}catch{/* Recorded on a later describe. */}
    return valid;
   },
   // Account alarm hook (§4.4 "at least daily"): revalidates connections whose records were last checked a day ago, or

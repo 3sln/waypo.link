@@ -8,8 +8,12 @@
 //     the documented DIRECTORY_DNS_LOOKUP / DIRECTORY_HTTPS_REQUEST injection ports (a public IPv4 answer; the request
 //     is handed to the peer's handler instead of a TLS socket).
 // The provider-side application is driven through the real authorization request, owner consent, token and
-// /bindle/rpc routes with the DEFAULT Node wiring: the shipped slot manifest and rtc-signaling/v1 contract (no
-// FEDERATION_SCHEMAS / FEDERATION_CONTRACTS) and the default bound check (no RTC_BOUND_CHECK). Test seams beyond the two
+// /bindle/rpc routes with the DEFAULT Node wiring: the shipped signaling fragment and rtc-signaling/v1 contract (no
+// FEDERATION_SCHEMAS / FEDERATION_CONTRACTS). Extensions revision 3.2 (CR-X3-20, CR-X3-24) removed slots and AMD-X1
+// `bind`: the application requests the ordinary fragment (no options), and the owner approves its purposes through the
+// interim owner route POST /api/rtc/approve-app (TODO(signaling Appendix C.2: approvals move to intents session
+// handler approvals)); the manifest carries `extensions: [{spec, options}]` (the legacy rtc extension at its interim
+// spec URL) and the signaling contract in `contracts`. Test seams beyond the two
 // network ports and the operator configuration a deployment sets anyway (flags, RTC_FOREIGN_ISSUERS, the reviewed
 // client, the trusted client-IP header that gives each test account its own signup address):
 //   - one throwaway provider registers, as an operator would, the clean-room contract document written from spec §9.1
@@ -33,7 +37,13 @@ import {compileContractVersion} from '../packages/federation/integrations.mjs';
 import {createPeer, nodeNetwork, keyPair, newSid, now, sdp, fingerprint, linkDigest, part, sign, b64, unb64, malleate, isLowS, candidate, candidateItem, mdns, TYP, MEDIA_TYPE, randomId, verifyJws} from './rtc-conformance-peer.mjs';
 
 const PROVIDER = 'https://provider.example', PEER = 'https://peer.example', PEER_NO_RTC = 'https://plain.example', PEER_FLOOR = 'https://floor.example';
-const SLOT = 'https://spec.bindle.example/slots/rtc-signaling/v1', CONTRACT = 'https://spec.bindle.example/contracts/rtc-signaling/v1';
+const FRAGMENT = 'https://spec.bindle.example/fragments/rtc-signaling/v1', CONTRACT = 'https://spec.bindle.example/contracts/rtc-signaling/v1';
+/** Extensions rev 3.2 spec URLs: the interim legacy rtc extension and its two prerequisites. */
+const RTC_EXT = 'https://spec.bindle.example/extensions/rtc-signaling/v1', DIRECTORY_EXT = 'https://spec.bindle.example/extensions/directory/v1', VERSIONS_EXT = 'https://spec.bindle.example/extensions/artefact-versions/v1';
+/** The options of extension `spec` in manifest `m` (undefined when not declared). */
+const ext = (m, spec) => (Array.isArray(m?.extensions) ? m.extensions : []).find(e => e?.spec === spec)?.options;
+/** Whether manifest `m` declares extension `spec` (an extension without options carries no `options` member). */
+const declares = (m, spec) => (Array.isArray(m?.extensions) ? m.extensions : []).some(e => e?.spec === spec);
 const CALL = 'https://spec.bindle.example/rtc-purposes/call/v1', SCREEN = 'https://spec.bindle.example/rtc-purposes/screen-share/v1';
 const APP = {id: 'https://app.example/client', name: 'Conformance app', origin: 'https://app.example', redirectUris: ['https://app.example/callback']};
 const METHODS = ['register', 'unregister', 'endpoints', 'open', 'claim', 'send', 'renew', 'listen', 'mint_ticket'];
@@ -43,8 +53,9 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 const test = (name, fn) => nodeTest(name, {timeout: 90000}, fn);
 
 // ---- spec-derived documents the provider needs registered -----------------------------------------------------------
-/** The slot manifest exactly as spec §3.2 prints it. */
-const SLOT_MANIFEST = {id: SLOT, title: 'Real-time connections', description: 'Lets an application ring you and connect your devices with other devices.', publisher: 'https://spec.bindle.example', fields: {signaling: {title: 'Signaling service', type: 'resource', cardinality: {min: 0, max: 1}, contracts: [CONTRACT]}}, slot: {v: 1, crit: ['bind'], field: 'signaling', selection: 'exclusive', consumers: ['application'], bind: ['purposes'], options: {occupant: {}, consumer: {purposes: {title: 'Purposes', type: 'url', maxLength: 256, cardinality: {min: 1, max: 16}}}}}};
+/** The signaling fragment (spec §3.2's slot manifest republished as an ordinary fragment under extensions rev 3.2:
+ * field attributes `selection` and `consumers`, no `slot` member). */
+const FRAGMENT_DOCUMENT = {id: FRAGMENT, title: 'Real-time connections', description: 'Lets an application ring you and connect your devices with other devices.', publisher: 'https://spec.bindle.example', fields: {signaling: {title: 'Signaling service', type: 'resource', cardinality: {min: 0, max: 1}, contracts: [CONTRACT], selection: 'exclusive', consumers: ['application']}}};
 /**
  * A clean-room contract document for §9.1, registered only by the "x-bindle-brokerable" probe. Results list the §9.1
  * members; the `listen` event members are NOT named by the spec (a finding, AMD-RI4 proposed) and were discovered
@@ -115,27 +126,31 @@ async function boot({config = {}} = {}) {
     const sub = session.account.id, found = await peer.lookup(sub);
     return {sub, handle: session.account.handle, owner: {...owner, ip}, ip, identity: found?.identity, principal: {iss: PROVIDER, sub}};
   }
-  /** Authorization request for the slot with bound purposes, owner assignment of the built-in occupant, consent, token. */
+  /** Authorization request for the ordinary signaling fragment, owner assignment of the built-in signaling resource,
+   * consent, token, then the owner's approval of `purposes` (the interim owner route). */
   async function connect(acct, purposes = [CALL]) {
     const verifier = randomUUID() + randomUUID(), challenge = createHash('sha256').update(verifier).digest('base64url');
-    const r = await post('/api/oauth/requests', {clientId: APP.id, redirectUri: APP.redirectUris[0], challenge, challengeMethod: 'S256', state: 's', identity: acct.handle + '@provider.example', requests: [{fragment: SLOT, required: true, purpose: 'Calls', fields: ['signaling'], methods: {signaling: {[CONTRACT]: METHODS}}, options: {purposes}}]}, {appOrigin: APP.origin, ip: acct.ip});
+    const r = await post('/api/oauth/requests', {clientId: APP.id, redirectUri: APP.redirectUris[0], challenge, challengeMethod: 'S256', state: 's', identity: acct.handle + '@provider.example', requests: [{fragment: FRAGMENT, required: true, purpose: 'Calls', fields: ['signaling'], methods: {signaling: {[CONTRACT]: METHODS}}}]}, {appOrigin: APP.origin, ip: acct.ip});
     const pending = await r.json(); assert.equal(r.status, 201, JSON.stringify(pending));
     let view = await (await request('/api/oauth/requests/' + pending.requestId, acct.owner)).json();
     const rtcURI = view.requests[0].resources.find(x => x.id.endsWith('/rtc')).id;
     const prefs = await (await request('/api/preferences', acct.owner)).json();
-    if (!prefs.preferences.find(p => p.fragment === SLOT)) {
-      const a = await post('/api/preferences', {fragment: SLOT, expectedRevision: null, values: {signaling: rtcURI}}, acct.owner); assert.equal(a.status, 200, 'occupant assignment');
+    if (!prefs.preferences.find(p => p.fragment === FRAGMENT)) {
+      const a = await post('/api/preferences', {fragment: FRAGMENT, expectedRevision: null, values: {signaling: rtcURI}}, acct.owner); assert.equal(a.status, 200, 'signaling resource assignment');
       view = await (await request('/api/oauth/requests/' + pending.requestId, acct.owner)).json();
     }
-    const versions = view.requests[0].bound.versions;
-    const d = await post('/api/oauth/requests/' + pending.requestId + '/decision', {requestId: pending.requestId, approved: [{fragment: SLOT, revision: view.requests[0].revision, fields: ['signaling'], resources: {signaling: [rtcURI]}, methods: view.requests[0].methods, options: {purposes}}]}, acct.owner);
+    const d = await post('/api/oauth/requests/' + pending.requestId + '/decision', {requestId: pending.requestId, approved: [{fragment: FRAGMENT, revision: view.requests[0].revision, fields: ['signaling'], resources: {signaling: [rtcURI]}, methods: view.requests[0].methods}]}, acct.owner);
     const decision = await d.json(); assert.equal(d.status, 200, JSON.stringify(decision));
     const code = new URL(decision.redirectUri).searchParams.get('code');
     const token = await (await post('/oauth/token', {clientId: APP.id, redirectUri: APP.redirectUris[0], code, verifier}, {appOrigin: APP.origin, ip: acct.ip})).json();
     const rpc = (bearer, resource, contract, method, args = {}) => post('/bindle/rpc', {version: '0', tx: randomUUID(), resource, contract, method, args}, {bearer, appOrigin: APP.origin, ip: acct.ip});
-    const prefsRead = await (await rpc(token.access_token, '@preferences', 'https://3sln.me/artefacts/contracts/preferences/v1', 'read', {fragment: SLOT})).json();
+    const prefsRead = await (await rpc(token.access_token, '@preferences', 'https://3sln.me/artefacts/contracts/preferences/v1', 'read', {fragment: FRAGMENT})).json();
     assert.ok(prefsRead.result?.values?.signaling, 'preferences read: ' + JSON.stringify(prefsRead) + ' token: ' + JSON.stringify(token));
     const ref = prefsRead.result.values.signaling;
+    // The owner approves the purposes; each is pinned to the provider-held reference the owner's settings list.
+    const approved = await post('/api/rtc/approve-app', {clientId: APP.id, purposes}, acct.owner); assert.equal(approved.status, 200, 'owner approval: ' + await approved.clone().text());
+    const settings = await (await request('/api/rtc/settings', acct.owner)).json();
+    const versions = Object.fromEntries(settings.purposes.map(p => [p.id, {version: p.version, digest: p.digest}]));
     const call = async (method, args = {}) => { const res = await rpc(ref.token, ref.id, CONTRACT, method, args); return {status: res.status, ...await res.json()}; };
     return {token, ref, call, versions, grants: token.grants, purposeRef: p => ({purpose: p, version: versions[p].version, digest: versions[p].digest})};
   }
@@ -217,21 +232,23 @@ async function sentinel(ctx) {
 async function delivered(ctx, sid, {type} = {}) { await sentinel(ctx); return ctx.has(e => e.sid === sid && (!type || e.type === type)); }
 
 // ==== §3.1 / protocol §2: discovery ==================================================================================
-test('§3.1 the provider declares rtc-signaling.v1 with an issuer-origin endpoint and a 120-900 s certificate bound', async () => {
-  const m = await (await w.wire('/.well-known/bindle/manifest.json')).json(), f = m.features?.['rtc-signaling.v1'];
-  assert.ok(f, 'rtc-signaling.v1 declared');
+test('§3.1 the provider declares the rtc extension with an issuer-origin endpoint and a 120-900 s certificate bound', async () => {
+  const m = await (await w.wire('/.well-known/bindle/manifest.json')).json(), f = ext(m, RTC_EXT);
+  assert.ok(f, 'the legacy rtc extension declared (extensions rev 3.2 `extensions: [{spec, options}]`)');
   assert.equal(new URL(f.endpoint).origin, PROVIDER);
   assert.ok(Number.isInteger(f.max_leg_certificate_seconds) && f.max_leg_certificate_seconds >= 120 && f.max_leg_certificate_seconds <= 900);
-  assert.ok(m.features['directory.v1']?.directory_url?.startsWith(PROVIDER + '/'));
+  assert.ok(ext(m, DIRECTORY_EXT)?.directory_url?.startsWith(PROVIDER + '/'));
 });
 
-test('§3.1 rtc-signaling.v1 "requires directory.v1, extensions.v1 and artefact-versions.v1"', async () => {
-  // RTC-i divergence 7 (fixed): the occupant row declares extensions.v1, and the feature row needs all three.
-  const m = await (await w.wire('/.well-known/bindle/manifest.json')).json(), missing = ['directory.v1', 'extensions.v1', 'artefact-versions.v1'].filter(k => !m.features?.[k]);
-  assert.ok(m.features?.['rtc-signaling.v1'], 'rtc-signaling.v1 declared');
-  assert.deepEqual(missing, [], 'the three prerequisite features declared beside rtc-signaling.v1');
-  // §3.2 / §15: the built-in occupant declaration is now kept, because extensions.v1 is declared beside it.
-  assert.ok((m.extensions ?? []).some(e => e.slot === SLOT && e.role === 'occupant' && e.ref === 'rtc'), 'built-in signaling occupant declared');
+test('§3.1 the rtc extension requires the directory and artefact-versions extensions; the signaling contract is listed', async () => {
+  // RTC-i divergence 7 (fixed), restated for extensions rev 3.2: `extensions.v1` and the occupant declaration are gone;
+  // the prerequisites are the directory and artefact-versions extensions, and the built-in signaling resource is
+  // implied by the signaling contract in the manifest `contracts` list.
+  const m = await (await w.wire('/.well-known/bindle/manifest.json')).json(), missing = [DIRECTORY_EXT, VERSIONS_EXT].filter(spec => !declares(m, spec));
+  assert.ok(ext(m, RTC_EXT), 'the rtc extension declared');
+  assert.deepEqual(missing, [], 'both prerequisite extensions declared beside it');
+  assert.ok((m.contracts ?? []).includes(CONTRACT), 'the signaling contract listed in `contracts`');
+  assert.equal(m.features, undefined, 'no `features` member');
 });
 
 test('§9.1 / contracts: a contract document carrying x-bindle-brokerable:false is usable', async () => {
@@ -240,14 +257,14 @@ test('§9.1 / contracts: a contract document carrying x-bindle-brokerable:false 
   // (which carries the same marker) while the RTC flags are on, and calls are still served.
   const doc = contractDocument({brokerable: true}), compiled = compileContractVersion(structuredClone(doc));
   assert.equal(compiled.validate({method: 'register', args: {purposes: [CALL]}}), true, 'the clean-room document with the marker compiles');
-  const v = await boot({config: {FEDERATION_SCHEMAS: JSON.stringify({[SLOT]: SLOT_MANIFEST}), FEDERATION_CONTRACTS: JSON.stringify(envelope(doc))}});
+  const v = await boot({config: {FEDERATION_SCHEMAS: JSON.stringify({[FRAGMENT]: FRAGMENT_DOCUMENT}), FEDERATION_CONTRACTS: JSON.stringify(envelope(doc))}});
   try {
     const acct = await v.account(), c = await v.connect(acct), r = await c.call('register', {purposes: [CALL]});
     assert.equal(r.status, 200, JSON.stringify(r));
   } finally { await v.close(); }
 });
 
-test('§9.1 the default Node bound check answers contract calls (register) instead of hanging', async () => {
+test('§9.1 the default Node wiring answers contract calls (register) instead of hanging', async () => {
   // RTC-i bug 1 (fixed): the whole suite now runs on the default wiring; this pins the first write's latency bound.
   const acct = await w.account(), c = await w.connect(acct);
   const r = await Promise.race([c.call('register', {purposes: [CALL]}), sleep(4000).then(() => 'timeout')]);
@@ -458,7 +475,7 @@ test('§5.1 provider-issued caller certificates follow the profile and verify ag
   assert.deepEqual(p.client, {client_id: APP.id, origin: APP.origin});
   assert.deepEqual(p.purpose, ctx.c.purposeRef(CALL));
   assert.ok(Number.isSafeInteger(p.aep) && p.aep >= 0);
-  assert.ok(p.exp - p.iat <= m.features['rtc-signaling.v1'].max_leg_certificate_seconds);
+  assert.ok(p.exp - p.iat <= ext(m, RTC_EXT).max_leg_certificate_seconds);
   assert.ok(isLowS(cert), 'low-S');
   const v = await w.peer.verifyFromProvider(cert); assert.deepEqual(v.problems, []);
   const doc = w.peer.providerDocument(ctx.acct.sub);
@@ -967,11 +984,11 @@ test('§6.2 only the caller leg sends sas, and messages must name the receiving 
   assert.ok(seqNotes.includes('to naming no leg of the session: seq consumed'), 'the dropped message consumed its seq, as other step-7 drops do');
 });
 
-test('§3.2/§9.1 an application can request the signaling slot on a provider that declares rtc-signaling.v1, without operator-registered documents', async () => {
+test('§3.2/§9.1 an application can request the signaling fragment on a provider that declares the rtc extension, without operator-registered documents', async () => {
   // RTC-i divergence 10 (decided: ship both documents as first-party reviewed artefacts while the flags are on). The
   // shared world registers nothing; this request is the first step every other test in the suite takes.
   const acct = await w.account(), verifier = randomUUID() + randomUUID(), challenge = createHash('sha256').update(verifier).digest('base64url');
-  const r = await w.post('/api/oauth/requests', {clientId: APP.id, redirectUri: APP.redirectUris[0], challenge, challengeMethod: 'S256', state: 's', identity: acct.handle + '@provider.example', requests: [{fragment: SLOT, required: true, purpose: 'Calls', fields: ['signaling'], methods: {signaling: {[CONTRACT]: METHODS}}, options: {purposes: [CALL]}}]}, {appOrigin: APP.origin, ip: acct.ip});
+  const r = await w.post('/api/oauth/requests', {clientId: APP.id, redirectUri: APP.redirectUris[0], challenge, challengeMethod: 'S256', state: 's', identity: acct.handle + '@provider.example', requests: [{fragment: FRAGMENT, required: true, purpose: 'Calls', fields: ['signaling'], methods: {signaling: {[CONTRACT]: METHODS}}}]}, {appOrigin: APP.origin, ip: acct.ip});
   const body = await r.json();
   assert.equal(r.status, 201, JSON.stringify(body));
 });

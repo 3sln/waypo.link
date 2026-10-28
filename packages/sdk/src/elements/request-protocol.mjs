@@ -1,5 +1,5 @@
 // IA-4 / incremental-authorization §7.2. Public inputs only; never render reason, requests or suggestions.
-import {isPlainData,messageBytes,LIMITS,PROFILE} from '../islands-protocol.mjs';
+import {isPlainData,messageBytes,LIMITS} from '../islands-protocol.mjs';
 export const REQUEST_KINDS=Object.freeze(['grant-more','configure']);
 export const REQUEST_TEXT=Object.freeze({en:Object.freeze({access:'Review access',settings:'Review settings',continue:'Continue at {host}',busy:'Waiting for your provider…',finished:'Review finished.',canceled:'Review canceled.',unavailable:'Review is unavailable.',declined:'Request declined.',unchanged:'No settings changed.',blocked:'Your browser blocked the review window.'}),es:Object.freeze({access:'Revisar acceso',settings:'Revisar ajustes',continue:'Continuar en {host}',busy:'Esperando a tu proveedor…',finished:'Revisión finalizada.',canceled:'Revisión cancelada.',unavailable:'La revisión no está disponible.',declined:'Solicitud rechazada.',unchanged:'No se cambiaron los ajustes.',blocked:'Tu navegador bloqueó la ventana de revisión.'})});
 export const requestText=locale=>REQUEST_TEXT[String(locale).toLowerCase().split('-')[0]]??REQUEST_TEXT.en;
@@ -32,7 +32,7 @@ export function validatePrepareRequest(data,{kind,origins=[]}={}){
 }
 /** Honors the validated profile, key binding, issuer degradation and the embedder's islands policy. */
 export function requestIslandSpec(client,kind,{islands='auto',islandIssuers=null}={}){
- const issuer=client?.session?.issuer,cap=issuer&&client.capabilitiesFor(issuer),manifest=issuer&&client.capabilities?.manifest(issuer),profile=issuer&&client.capabilities?.declaration(issuer)?.profiles?.[PROFILE],entry=manifest?.features?.['authorization-entry.v1'];
+ const issuer=client?.session?.issuer,cap=issuer&&client.capabilitiesFor(issuer),declaration=issuer&&client.capabilities?.declaration(issuer),profile=declaration?.components,entry=declaration?.authorizationEntry;
  if(!REQUEST_KINDS.includes(kind)||islands==='off'||islandIssuers&&!islandIssuers.includes(issuer)||!cap?.profile||!cap.entry||!entry?.intents?.includes(kind)||!profile?.bindings?.includes('key-binding.v1')||profile.parts?.request?.version!==1||client.capabilities.degraded(issuer).has('part:request'))return null;
  return Object.freeze({issuer,embedOrigin:cap.embedOrigin,version:1,themeTokens:cap.themeTokens??[]});
 }

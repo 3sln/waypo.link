@@ -27,7 +27,7 @@ test('Drive definition is behind INTEGRATIONS_ENABLED, owner-scoped, and setup r
 test('X4 owner approval creates one configuring connection; setup completion and severance use the same lifecycle',async t=>{
  const f=await fixture(t);await assert.rejects(f.run(C.ConnectBuiltIn,{integration:'google-drive'},system),{code:'forbidden'});
  const connection=await f.run(C.ConnectBuiltIn,{integration:'google-drive'});assert.equal(connection.state,'configuring');assert.equal(connection.integration.kind,'built-in');assert.equal(connection.integration.builtin,'google-drive');
- assert.equal((await f.connections.slots(OWNER)).every(s=>s.occupants.length===0),true);const before=await f.query();assert.deepEqual(before.connections,[{id:connection.id,state:'configuring',generation:1,configured:false}]);
+ assert.equal((await f.connections.fields(OWNER)).every(s=>s.values.length===0),true);const before=await f.query();assert.deepEqual(before.connections,[{id:connection.id,state:'configuring',generation:1,configured:false}]);
  await f.run(C.ConnectionConfigured,{connection:connection.id,expectedGeneration:connection.generation,configured:true},system);assert.equal((await f.query()).connections[0].state,'active');
  const again=await f.run(C.ConnectBuiltIn,{integration:'google-drive'});assert.equal(again.id,connection.id);assert.equal((await f.query()).connections.length,1);
  const paused=await f.run(C.SuspendConnection,{connection:connection.id});assert.equal((await f.query()).connections[0].state,'suspended');await f.run(C.ResumeConnection,{connection:connection.id,expectedGeneration:paused.generation});await f.run(C.DisconnectConnection,{connection:connection.id});assert.equal((await f.query()).connections[0].state,'disconnected');

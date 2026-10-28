@@ -1,6 +1,6 @@
 # Semantic search: independent spend and abuse audit
 
-Audit date: 2026-10-12. Reviewer: independent automated search/spend review. Human approval: **unsigned**. Scope: actual account/search/abuse adapters and proposed Workers AI + Vectorize integration; no production deployment, network inference, invoice reconciliation or provider deletion verification is implied. This document supplements [security gates](../spec/security.md), [search specification](../spec/omni-search.md), and the decision ledger in [DEVLOG](../../DEVLOG.md).
+Audit date: 2026-10-12. Reviewer: independent automated search/spend review. Human approval: **unsigned**. Scope: actual account/search/abuse adapters and proposed Workers AI + Vectorize integration; no production deployment, network inference, invoice reconciliation or provider deletion verification is implied. This document supplements [security gates](../spec/security.md), [search specification](../3sln/services/omni-search.md), and the decision ledger in [DEVLOG](../../DEVLOG.md).
 
 ## Conclusion
 

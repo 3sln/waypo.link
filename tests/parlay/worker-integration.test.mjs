@@ -13,18 +13,23 @@ import {clientMetadata,metadataPort} from '../../apps/parlay/worker/metadata.mjs
 import {createHTTP} from '../../apps/parlay/worker/http.mjs';
 import {SqliteMailboxStore} from '../../apps/parlay/node/storage.mjs';
 import {bridgeConsumer} from './receive-fixtures.test.mjs';
-import {validateSlotManifest,slotDigest} from '../../packages/federation/extensions.mjs';
+import {fragmentOutcome} from '../../packages/core/fragments.mjs';
+import {digest,canonical} from '../../packages/core/records.mjs';
 import {validateIntegrationManifest} from '../../packages/federation/integrations.mjs';
 const vectors=JSON.parse(await readFile(new URL('./vectors/vectors.json',import.meta.url))),alice=await party('alice',vectors.keys),owner=alice.principal.subject,config={principal:alice.principal,ingress:alice.ingress,plan:'free'},resource=resourceId(config),encoder=new TextEncoder();
 const grant={revision:1,active:true,recipients:[],connection:'connection-1',generation:3},verified={owner,issuer:alice.principal.issuer,connection:grant.connection,generation:3,purpose:'invoke',resource,grant:'grant-1',methods:['describe','linkRevoked','deliver'],consumer:'https://bridge.example',live:true};
 function engine(t,{providers={}}={}){const h=createTestEngine({owner,store:memoryStore([['owner',owner],['config',config],['shell:authorization',grant],[BRIDGE_KEYS.settings,{enabled:true,consumers:[{origin:'https://bridge.example',channel:'email'}]}]]),registry:{...SHELL_OPERATIONS,...INTEGRATION_OPERATIONS},providers:{bridge:createBridgeProvider({PARLAY_ENABLED:true}),receive:ReceiveDomain,providerLink:null,...providers}});t.after(()=>h.dispose());return h;}
 const event=(type,payload,over={})=>({owner,issuer:alice.principal.issuer,connection:grant.connection,jti:crypto.randomUUID(),seq:1,type,payload,...over});
 
-test('BB-B8 client metadata carries a confidential integration manifest and exact pinned slot documents',async()=>{
+test('BB-B8 client metadata carries a confidential integration manifest: resource contracts claimed, the classifier fragment pinned by digest',async()=>{
  const client=clientMetadata();assert.equal(client.token_endpoint_auth_method,'private_key_jwt');
- const slots=new Map();for(const name of ['messaging-ingress','public-message-intake','item-classifier']){const schema=JSON.parse(await readFile(new URL(`../../docs/artefacts/slots/${name}-v1.json`,import.meta.url))),contracts={'https://spec.bindle.example/contracts/decision-model/v1':{digest:'test-only-contract-pin',schema:{$id:'https://spec.bindle.example/contracts/decision-model/v1','x-methods':{decide:{effect:'pure'}}}}};assert.equal(validateSlotManifest(schema,schema.id,{contracts}).status,'valid');slots.set(schema.id,{schema,digest:await slotDigest(crypto,schema)});}
- for(const entry of client.bindle_integration.extensions)assert.equal(entry.digest,slots.get(entry.slot).digest);
- const parsed=validateIntegrationManifest(client.bindle_integration,{clientId:client.client_id,confidential:true,slots,contracts:{'https://spec.bindle.example/contracts/decision-model/v1':{digest:'test-only-contract-pin',schema:{$id:'https://spec.bindle.example/contracts/decision-model/v1','x-methods':{decide:{effect:'pure'}}}}}});assert.equal(parsed.status,'valid');assert.equal(parsed.manifest.extensions.length,3);
+ // Extensions rev 3.2 (CR-X3-27): no occupant or consumer declarations; Parlay claims the mailbox and intake contracts and
+ // requests the item-classifier fragment as an optional setup grant, pinned by its digest.
+ assert.equal(client.bindle_integration.extensions,undefined);
+ const classifier=JSON.parse(await readFile(new URL('../../docs/artefacts/fragments/item-classifier-v1.json',import.meta.url)));assert.equal(fragmentOutcome(classifier).status,'valid');
+ const setup=client.bindle_integration.setup.fragments.find(f=>f.fragment===classifier.id);assert.equal(setup.required,false);assert.equal(setup.digest,'sha256-'+await digest(crypto,canonical(classifier)));
+ const parsed=validateIntegrationManifest(client.bindle_integration,{clientId:client.client_id,confidential:true});assert.equal(parsed.status,'valid');assert.equal(parsed.manifest.extensions,undefined);
+ assert.deepEqual(parsed.manifest.resources.contracts,['https://spec.bindle.example/messaging/v1/contracts/mailbox','https://spec.bindle.example/contracts/public-intake/v1']);
  assert.equal((await metadataPort()('/bindle/client.json')).bindle_integration.v,1);
  await assert.rejects(metadataPort()('/bindle/jwks.json'),e=>e.code==='recipient_unavailable');
  const publicSet=await metadataPort({services:{publicJwks:async()=>({keys:[{...alice.identity.publicJwk,kid:'client-1',untrusted:'omitted'}]})}})('/bindle/jwks.json');assert.equal(publicSet.keys[0].untrusted,undefined);assert.equal(publicSet.keys[0].alg,'ES256');

@@ -5,7 +5,7 @@ import {createFlags} from '../packages/flags/evaluate.mjs';import {validateRecor
 import {FlagsRuntime} from '../packages/runtime/flags.mjs';
 import {nodeResources} from '../apps/node/resources.mjs';import {deviceAuthorizationEnabled,deviceGrantMountable} from '../packages/runtime/device-grant.mjs';
 import {eventBusesEnabled} from '../packages/events/limits.mjs';import {brokeringFlag,integrationsFlag} from '../packages/federation/brokered.mjs';import {brokeringEnabled} from '../packages/federation/signing.mjs';
-import {recognizedSlots,RECOGNIZED_SLOTS} from '../packages/apps/connections.mjs';import {bridgeConfig} from '../packages/email-bridge/engine.mjs';import {billingEnabled} from '../packages/billing/catalog.mjs';
+import {recognizedFields,PUBLIC_INTAKE_FRAGMENT_DOCUMENT} from '../packages/apps/connections.mjs';import {bridgeConfig} from '../packages/email-bridge/engine.mjs';import {billingEnabled} from '../packages/billing/catalog.mjs';
 import {AccountStorageWriteBudget} from '../packages/runtime/storage-write-budget.mjs';
 import {ConsentModel} from '../packages/consent/effects.mjs';
 import {fakeClock,forEachSeed,createScheduler} from './helpers/chaos.mjs';
@@ -21,7 +21,9 @@ test('remaining domain read sites preserve legacy parsing, including booleans, e
   const env={EVENT_BUSES_ENABLED:value,BROKERING_ENABLED:value,INTEGRATIONS_ENABLED:value,EMAIL_BRIDGE_ENABLED:value,LINKS_ENABLED:value,BILLING_ENABLED:value,DEVICE_AUTHORIZATION_ENABLED:value,APP_ORIGIN:origin};
   for(const config of [env,{...env,flags:createFlags({snapshot:snapshot({},0),env})}]){
    for(const [fn,expected]of [[eventBusesEnabled,bool],[brokeringFlag,bool],[integrationsFlag,bool],[brokeringEnabled,strict],[billingEnabled,strict],[deviceAuthorizationEnabled,bool]])assert.equal(fn(config),expected(value),fn.name+' '+String(value));
-   assert.equal(bridgeConfig(config).enabled,bool(value),'bridge '+String(value));assert.equal(Object.keys(recognizedSlots(config)).length>Object.keys(RECOGNIZED_SLOTS).length,bool(value),'intake slot '+String(value));
+   assert.equal(bridgeConfig(config).enabled,bool(value),'bridge '+String(value));// Slots are gone (extensions rev 3.2): the intake field is a recognized provider-consumable field whatever the flag;
+   // the bridge flag gates the email-bridge feature, not field recognition.
+   assert.ok(Object.hasOwn(recognizedFields(config),PUBLIC_INTAKE_FRAGMENT_DOCUMENT.id),'intake field '+String(value));
   }
   assert.equal(new AccountStorageWriteBudget({metadata:{},config:{STORAGE_WRITE_ENABLED:value}}).enabled,value!==false&&value!=='false');
  }

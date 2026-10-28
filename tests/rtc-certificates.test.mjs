@@ -3,8 +3,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {parseLegCertificate,verifyLegCertificate,signLegCertificate,renewalPreserves,parseControl,verifyControl,signControl,verifyKeyStatus,certificationKey,directoryCertificationKeys,maxLegSecondsValid,LEG_CERTIFICATE_SECONDS} from '../packages/rtc/certificates.mjs';
 import {parseMessage} from '../packages/rtc/messages.mjs';
-import {validateRtcFeature,RTC_SIGNALING_SLOT_MANIFEST,ICE_RELAY_SLOT_MANIFEST} from '../packages/rtc/extension.mjs';
-import {validateSlotManifest} from '../packages/federation/extensions.mjs';
+import {validateRtcFeature,RTC_SIGNALING_FRAGMENT_DOCUMENT,ICE_RELAY_FRAGMENT_DOCUMENT} from '../packages/rtc/extension.mjs';
+import {fragmentOutcome} from '../packages/core/fragments.mjs';
 import {parseEntityCertificate,signEntityCertificate} from '../packages/identity/entity-certificates.mjs';
 import {parseMemberCertificate} from '../packages/identity/member-certificates.mjs';
 import {signRtcJws,RTC_LEG_CERTIFICATE_TYP,RTC_CONTROL_TYP,RTC_MESSAGE_TYP} from '../packages/rtc/jws.mjs';
@@ -91,10 +91,10 @@ test('control statements end legs or sessions only, under an active certificatio
  await assert.rejects(verifyControl(parsed,{keys:caller.keys,expected:{...party,aud:caller.aud,sid:SID},now:now-61}),code('rtc_control_invalid'),'future iat');
 });
 
-test('feature declaration and the RTC slot manifests',()=>{
+test('feature declaration and the RTC fragments (extensions rev 3.2: ordinary fragments, no slots)',()=>{
  assert.deepEqual(validateRtcFeature({endpoint:'https://a.example/bindle/rtc',max_leg_certificate_seconds:600},{issuer:'https://a.example'}),{endpoint:'https://a.example/bindle/rtc',max_leg_certificate_seconds:600});
  for(const value of [{endpoint:'https://b.example/bindle/rtc',max_leg_certificate_seconds:600},{endpoint:'https://a.example/bindle/rtc?x',max_leg_certificate_seconds:600},{endpoint:'https://a.example/bindle/rtc',max_leg_certificate_seconds:3600},{endpoint:'https://a.example/bindle/rtc',max_leg_certificate_seconds:600,extra:1},null])assert.equal(validateRtcFeature(value,{issuer:'https://a.example'}),null);
- assert.equal(validateSlotManifest(structuredClone(RTC_SIGNALING_SLOT_MANIFEST)).status,'valid');assert.equal(validateSlotManifest(structuredClone(ICE_RELAY_SLOT_MANIFEST)).status,'valid');
+ assert.equal(fragmentOutcome(structuredClone(RTC_SIGNALING_FRAGMENT_DOCUMENT)).status,'valid');assert.equal(fragmentOutcome(structuredClone(ICE_RELAY_FRAGMENT_DOCUMENT)).status,'valid');
 });
 
 test('seeded: random claim edits either fail verification or keep every bound the verifier relies on',async()=>{

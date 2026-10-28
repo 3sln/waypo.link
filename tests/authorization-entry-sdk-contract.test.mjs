@@ -1,6 +1,7 @@
 // Runs the SDK flow expectations (packages/sdk/test/flows.test.mjs, written against testing.mjs) against the real
 // entry, token and revocation handlers. The provider page is simulated over real HTTP: view, select, inspect, decide.
 import test from 'node:test';
+import {withExtensionEntries} from '../packages/core/extensions.mjs';
 import assert from 'node:assert/strict';
 import {createSession} from '../packages/sdk/src/flows.mjs';
 import {memoryStorage} from '../packages/sdk/src/testing.mjs';
@@ -23,7 +24,7 @@ function installPopupDriver(p,win,{decide=()=>({decision:'approve'}),blocked=fal
 }
 // Test-only adapter: the reference runtime does not advertise the authorization entry while its routes are
 // unmounted (release gate F8), so this merges the real entries module's own declaration (`entries.manifest()`,
-// protocol §2 `features` form) into the served manifest. It also declares `popup`, because these tests drive the
+// `extensions` entries, extensions §2) into the served manifest. It also declares `popup`, because these tests drive the
 // popup relay with a simulated window (the reference provider has no popup pages yet). Every other byte comes
 // from the real handlers.
 // Fetches are observable by path so fire-and-forget SDK work (revocation) is
@@ -33,7 +34,7 @@ function declared(p){const waiters=[];const fetcher=async(input,init)=>{
  for(const waiter of waiters.splice(0))if(waiter.path===url.pathname)waiter.resolve(response);else waiters.push(waiter);
  if(url.pathname!=='/.well-known/bindle/manifest.json'||!response.ok)return response;
  const manifest=await response.json(),entry=p.entries.manifest();
- return new Response(JSON.stringify({...manifest,login_presentation:['redirect','popup'],features:{...manifest.features,...entry.features}}),{status:200,headers:{'Content-Type':'application/json'}});
+ return new Response(JSON.stringify({...withExtensionEntries(manifest,entry.extensions??[],{merge:true}),login_presentation:['redirect','popup']}),{status:200,headers:{'Content-Type':'application/json'}});
 };fetcher.completed=path=>new Promise(resolve=>waiters.push({path,resolve}));return fetcher;}
 async function setup({decide,blocked,storage=memoryStorage(),endSession=false,...options}={}){
  const p=await provider({endSession}),win=fakeWindow(),driver=installPopupDriver(p,win,{decide,blocked}),fetcher=declared(p);

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { createNodePortabilityFetch } from '../packages/identity/node-portability-fetch.mjs';
 import { portabilityClient } from '../packages/identity/successors.mjs';
+import { EXT } from '../packages/core/extensions.mjs';
 
 const SUB = '6f1d2c3b-4a59-4e6f-8a7b-9c0d1e2f3a4b';
 /** A fake https.request: records options and written bytes, answers with `reply` ({status, headers, chunks, hang}). */
@@ -106,7 +107,7 @@ test('URL policy refusals dial nothing', async () => {
 
 test('works as the portability client egress (manifest, 308 lookup, move POST)', async () => {
   const replies = {
-    'https://src.example.com/.well-known/bindle/manifest.json': { chunks: [JSON.stringify({ version: '0', issuer: 'https://src.example.com', features: { 'directory.v1': { directory_url: 'https://src.example.com/bindle/directory' }, 'portability.v1': { move_endpoint: 'https://src.example.com/bindle/portability/move', attestation_jwks_uri: 'https://src.example.com/bindle/portability/attestation-keys' } } })] },
+    'https://src.example.com/.well-known/bindle/manifest.json': { chunks: [JSON.stringify({ version: '0', issuer: 'https://src.example.com', extensions: [{ spec: EXT.directory, options: { directory_url: 'https://src.example.com/bindle/directory' } }, { spec: EXT.portability, options: { move_endpoint: 'https://src.example.com/bindle/portability/move', attestation_jwks_uri: 'https://src.example.com/bindle/portability/attestation-keys' } }] })] },
     [`https://src.example.com/bindle/directory?sub=${SUB}`]: { status: 308, headers: { 'content-type': 'application/json', location: 'https://dst.example.com/r/bindle/directory?sub=x' }, chunks: [JSON.stringify({ v: 1, iss: 'https://src.example.com', sub: SUB, moved: { statement: 'S', attestation: 'A' } })] },
     'https://src.example.com/bindle/portability/move': { status: 202, chunks: [JSON.stringify({ status: 'pending', authorize_url: 'https://src.example.com/account/transfer-out', retry_after: 60 })] },
   };

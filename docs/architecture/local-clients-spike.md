@@ -4,22 +4,22 @@ Status: **design spike, 2026-10-27. Provisional (coordinator) and not signed off
 
 Spike sign-off: reviewer ___ / date ___ / outcome ___.
 
-**Owner direction (2026-10-27, summary of the verbatim request):** explain why both [device-login](../spec/device-login.md) and [device-authorization](../spec/device-authorization.md) exist, and how these logins show up in the user's interface. A CLI or daemon login is unlike a browser login: the CLI or daemon is **its own integration** and declares its own preference fragment dependencies, as an app hosted on `localhost:*` or `*.localhost` should. Separate the login **mechanism** (OAuth/DPoP versus a normal 3sln.me login) from the **use case** (handing a phone's login to a TV's browser, versus a CLI, daemon or local-integration login). Cover all of them, including local web apps, securely. For pairing, the user consents to every single app connection: the daemon and each app connecting to it are granted access individually. The owner was unsure whether a pairing can be an RPC (preferences-assignable) resource.
+**Owner direction (2026-10-27, summary of the verbatim request):** explain why both [device-login](../3sln/accounts/sign-in-and-sessions.md) and [device-authorization](../spec/extensions/device-authorization.md) exist, and how these logins show up in the user's interface. A CLI or daemon login is unlike a browser login: the CLI or daemon is **its own integration** and declares its own preference fragment dependencies, as an app hosted on `localhost:*` or `*.localhost` should. Separate the login **mechanism** (OAuth/DPoP versus a normal 3sln.me login) from the **use case** (handing a phone's login to a TV's browser, versus a CLI, daemon or local-integration login). Cover all of them, including local web apps, securely. For pairing, the user consents to every single app connection: the daemon and each app connecting to it are granted access individually. The owner was unsure whether a pairing can be an RPC (preferences-assignable) resource.
 
-Read with: [auth](../spec/auth.md), [runtime profile](../spec/federation-implementation.md), [protocol §1–§2](../spec/protocol.md), [integrations §2](../spec/integrations.md#2-integration-manifest), [extensions §5](../spec/extensions.md#5-occupancy-consumption-and-consent), [linked approval](linked-approval.md), [signaling §5.4–§5.9, §14.1, §20.1.4, §20.11](../spec/signaling.md).
+Read with: [auth](../spec/auth.md), [runtime profile](../spec/federation-implementation.md), [protocol §1–§2](../spec/protocol.md), [integrations §2](../spec/extensions/integrations.md#2-integration-manifest), [extensions §5](../spec/superseded/extensions-rev2.md#5-occupancy-consumption-and-consent), [linked approval](../3sln/accounts/approve-a-sign-in.md), [signaling §5.4–§5.9, §14.1, §20.1.4, §20.11](../spec/extensions/signaling.md).
 
 ## 1. Why there are two documents
 
 ### 1.1 What each one is
 
-| | [device-login.md](../spec/device-login.md) | [device-authorization.md](../spec/device-authorization.md) |
+| | [device-login.md](../3sln/accounts/sign-in-and-sessions.md) | [device-authorization.md](../spec/extensions/device-authorization.md) |
 | --- | --- | --- |
 | What it is | 3sln.me account policy: passkeys, owner-session management and the original QR "sign in with another device" flow. | A Bindle interop profile: RFC 8628 device grant with mandatory DPoP, for **clients**. |
 | Result | A provider owner session (a full 3sln.me login) on another browser. | A DPoP-bound app client session holding fragment grants. |
 | Interop | None. Its own text says it is "not a claim of OAuth device-grant interoperability". | Normative, declared as `device-authorization.v1`. |
-| Relation | Not superseded. Its session-handoff flow is generalized by the `session` kind of [linked approval](linked-approval.md) (LA-1, LA-13); its passkey and session rules are current 3sln.me policy. | Does not cover session handoff and does not replace device-login (its §1, as corrected). |
+| Relation | Not superseded. Its session-handoff flow is generalized by the `session` kind of [linked approval](../3sln/accounts/approve-a-sign-in.md) (LA-1, LA-13); its passkey and session rules are current 3sln.me policy. | Does not cover session handoff and does not replace device-login (its §1, as corrected). |
 
-The two overlap only because [linked approval](linked-approval.md) serves both from one code namespace and one `/approve` page. That is a 3sln.me implementation choice, not a relation between the specs.
+The two overlap only because [linked approval](../3sln/accounts/approve-a-sign-in.md) serves both from one code namespace and one `/approve` page. That is a 3sln.me implementation choice, not a relation between the specs.
 
 **The old supersession note was wrong, and has been corrected (coordinator, 2026-10-27).** device-login.md used to call device-authorization "the proposed successor for interoperable device grants". Device-authorization §1 puts provider-local cross-device sign-in out of scope, so it succeeds nothing in device-login. The note came from linked approval §14 ("Coordinator" row: "`device-login.md` supersession note"), which planned a note about the QR flow moving to linked approval's `session` kind, and the note was written against the wrong document. device-login.md now says it is session handoff for the reference service and is not superseded by device authorization. device-authorization §1 now cross-links it and says it does not replace it. The structural cause remains: a 3sln.me policy document sits in `docs/spec/` beside the Bindle spec it was confused with. §1.3 removes that cause.
 
@@ -51,7 +51,7 @@ The confusion comes from naming documents after a mechanism ("device") when the 
 
 A third-party TV *app* is U5 through M4. A TV *browser* signing in to 3sln.me itself is U1 through M2. They share the `/approve` page and nothing else.
 
-The [MCP service](../spec/mcp-service.md) is a separate 3sln.me authorization server with its own grant namespace and operator-registered clients only. Local MCP clients are a case of U2/U5. This spike does not change it; LC-14 recommends adopting the same local-client rules there later.
+The [MCP service](../3sln/services/mcp-service.md) is a separate 3sln.me authorization server with its own grant namespace and operator-registered clients only. Local MCP clients are a case of U2/U5. This spike does not change it; LC-14 recommends adopting the same local-client rules there later.
 
 ### 1.3 Document restructure (proposal; no files are moved by this spike)
 
@@ -143,7 +143,7 @@ Approval and lifetime:
 11. **Labelled unverified.** Every approval, grant, notification and audit surface labels a local client as **an unverified app on your device**. Its `name` appears only as "Name it gives itself (not verified)", bidi-isolated, and never in notifications or email. When `name` matches the name or host of a reviewed or connected HTTPS client, the approval page says that this program claims to be that app and that the vendor has not confirmed this copy.
 12. **Fresh, explicit approval.** Device-authorization §5.1 applies to both M4 and M5: fresh credential authentication, explicit account choice, no approval on navigation, at most once. For M5, re-authorization by an already approved installation (proven by rule 2) may show "approved on *date*", but never skips consent for anything not already granted.
 13. **Owner-authored label.** Approval requires the owner to name the installation and its device group ("Work laptop" / "deploy CLI"). The device group can be chosen from groups the owner used before. The provider also shows a short fingerprint derived from the key thumbprint. No app-supplied text prefills these fields.
-14. **Sensitive fragments.** Fragments or methods in the sensitivity categories of [incremental authorization §8.3](../spec/incremental-authorization.md#83-sensitivity-categories) need a second explicit confirmation for local clients.
+14. **Sensitive fragments.** Fragments or methods in the sensitivity categories of [incremental authorization §8.3](../spec/extensions/incremental-authorization.md#83-sensitivity-categories) need a second explicit confirmation for local clients.
 15. **Lifetime.** The client session follows device-authorization §7 with a shorter idle limit for local clients: RECOMMENDED 30 days (provider-configurable, at most 90). The owner may choose 1 hour, 8 hours or "until revoked". Access tokens are DPoP-bound, at most 60 minutes. Lineage and live checks apply on every refresh and RPC.
 16. **Standing grants.** AMD-SG-D1 standing marks MAY be offered to local clients, never to a `web` origin client (rule 10; a page origin is shared by everything served there), and never on an approval completed without typing the code.
 17. **Post-approval notice.** As LA-10, naming the client as "an unverified app on your device" plus the owner label, never `name`.
@@ -221,7 +221,7 @@ Rules (3sln.me policy):
 
 ### 4.1 What the current draft already does
 
-[Signaling §5.8](../spec/signaling.md) defines a pairing as an owner record with exactly one `local` side and one `peer` side for one kind. It needs each own-entity app's session handler approval and slot grant. Until those approvals exist it stays pending, and goes live when the other app is approved, provided the approval page names the pairing. §5.9 lets the device-authorization approval page offer a pairing with one peer app. §5.8 lists the events that delete it.
+[Signaling §5.8](../spec/extensions/signaling.md) defines a pairing as an owner record with exactly one `local` side and one `peer` side for one kind. It needs each own-entity app's session handler approval and slot grant. Until those approvals exist it stays pending, and goes live when the other app is approved, provided the approval page names the pairing. §5.9 lets the device-authorization approval page offer a pairing with one peer app. §5.8 lists the events that delete it.
 
 **Gaps against the owner requirement:**
 
@@ -250,7 +250,7 @@ Rules (3sln.me policy):
 
 **Recommendation (LC-11): (c).** (b) is the closest fit to the owner's suggestion, and it does give per-consumer approval and revocation for free. It fails on three counts. It cannot represent cross-entity pairings, so the same idea would need two representations. A pairing's semantics are not resource semantics, so they would either leak into core resource scoping or sit in a contract that re-implements the record. And shared preference fields apply their scope to every consumer, while a pairing is per edge. The per-consumer property the owner wants can be had in (c) by rules (CR-L1 to CR-L3), and the grant-style listing by interface (§3.2, CR-L7).
 
-When a daemon wants to expose *methods* to apps, rather than a transport, the right primitive is a resource it contributes ([resource contributions](../spec/resource-contributions.md)) and apps consume through preferences. That is (b) used for what it fits, and it does not replace pairing.
+When a daemon wants to expose *methods* to apps, rather than a transport, the right primitive is a resource it contributes ([resource contributions](../spec/extensions/resource-contributions.md)) and apps consume through preferences. That is (b) used for what it fits, and it does not replace pairing.
 
 ### 4.3 Rules for (c)
 

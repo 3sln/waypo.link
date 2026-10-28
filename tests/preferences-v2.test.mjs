@@ -4,6 +4,7 @@
 // `unavailable`, the grant-revocation race, integration `seq`, the X6 snapshot port, the federation half of
 // introspection, the issuer gateway refusing brokered tokens and references, and the feature declaration.
 import test from 'node:test';
+import {EXT,extensionOptions} from '../packages/core/extensions.mjs';
 import assert from 'node:assert/strict';
 import {webcrypto,createHash,randomUUID} from 'node:crypto';
 import {createAppEngine,perform} from '../packages/app/engine.mjs';
@@ -149,10 +150,10 @@ test('introspection, federation half: live grant, assignment, approval, consumer
  await f.s.revokeToken({token:again.refresh_token,clientId:APP});assert.equal(await live(),false,'X8-R3: the consumer session ended');
 });
 
-test('brokered-resources.v1 is declared through the registry only where mounted, carrying the moved jwks_uri',()=>{
+test('the brokered-resources extension is declared through the registry only where mounted, carrying the moved jwks_uri',()=>{
  const config={APP_ORIGIN:ISSUER,INTEGRATIONS_ENABLED:'true',BROKERING_ENABLED:'true'};
- assert.deepEqual(federationDeclarations(config,{target:'authority',mounts:{integrations:true,brokeredResources:true}}),{token_endpoint_auth_methods_supported:['none','private_key_jwt'],features:{'integrations.v1':{},'brokered-resources.v1':{jwks_uri:`${ISSUER}/oauth/brokering/jwks`,preferences_contract:PREFERENCES_V2}}});
- assert.equal(federationDeclarations(config,{target:'authority',mounts:{integrations:true,brokeredResources:true,brokeredIntrospection:true}}).features['brokered-resources.v1'].introspection_endpoint,`${ISSUER}/oauth/brokering/introspect`);
+ assert.deepEqual(federationDeclarations(config,{target:'authority',mounts:{integrations:true,brokeredResources:true}}),{token_endpoint_auth_methods_supported:['none','private_key_jwt'],extensions:[{spec:EXT.integrations},{spec:EXT.brokeredResources,options:{jwks_uri:`${ISSUER}/oauth/brokering/jwks`,preferences_contract:PREFERENCES_V2}}]});
+ assert.equal(extensionOptions({issuer:ISSUER,...federationDeclarations(config,{target:'authority',mounts:{integrations:true,brokeredResources:true,brokeredIntrospection:true}})},EXT.brokeredResources).introspection_endpoint,`${ISSUER}/oauth/brokering/introspect`);
  for(const [c,mounts] of [[config,{brokeredResources:true}],[config,{integrations:true}],[{...config,BROKERING_ENABLED:'false'},{integrations:true,brokeredResources:true}],[{...config,INTEGRATIONS_ENABLED:'false'},{integrations:true,brokeredResources:true}]])assert.deepEqual(federationDeclarations(c,{target:'authority',mounts}),{});
  assert.deepEqual(federationDeclarations(config,{target:'entries',mounts:{integrations:true,brokeredResources:true}}),{});
 });

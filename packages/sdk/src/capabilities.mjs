@@ -1,25 +1,28 @@
 // Provider declarations and per-feature capabilities (components-profile decision
-// note §4–§5, protocol §2). Pure and side-effect free: no window, storage or
-// network. identity.mjs feeds it validated manifests; elements read only the
-// frozen capability set, never the manifest.
+// note §4–§5, protocol §2, extensions §2). Pure and side-effect free: no window,
+// storage or network. identity.mjs feeds it validated manifests; elements read
+// only the frozen capability set, never the manifest.
 //
-// Provisional: protocol §2 `features`/`profiles` and the components profile are
-// unsigned drafts. `authorization-entry.v1` is reserved until its wire text is
-// published; no deployed provider declares any of this yet.
-import {PROFILE as COMPONENTS_V1,PARTS,THEME_TOKENS} from './islands-protocol.mjs';
+// Provisional: extension declarations (extensions revision 3.2 §2) and the
+// embedded-components extension are unsigned drafts; spec URLs under
+// spec.bindle.example are placeholders. Declarations are read only from
+// `extensions` through the shared processor (packages/core/extensions.mjs, bundled
+// descriptors, never fetched). The former `features`/`profiles` keys are ignored.
+import {EXT,BINDLE_REGISTRY,EXTENSION_LIMITS,readExtensions} from '../../core/extensions.mjs';
+import {PARTS} from './islands-protocol.mjs';
 
-export {COMPONENTS_V1};
+export {EXT};
+/** The embedded-components extension (formerly the components profile); its options configure islands. */
+export const COMPONENTS_V1=EXT.embeddedComponents;
 export const authorizationIntents=Object.freeze(['login','select-account','reauthenticate','end-session']);
-// Feature versions this SDK implements; a provider may declare several and the highest common one wins.
-export const implementedFeatures=Object.freeze({'authorization-entry':[1],fedcm:[1],intents:[1],'client-id-metadata':[1]});
-export const declarationLimits=Object.freeze({features:32,featureBytes:4096,profiles:8,profileBytes:8192,cacheDefault:300000,cacheMax:3600000});
+/** Extensions this SDK implements; every other declared extension is ignored (extensions §2.5). */
+export const implementedExtensions=Object.freeze([EXT.authorizationEntry,EXT.fedcm,EXT.intents,EXT.clientIdMetadata,EXT.embeddedComponents]);
+const registry=new Map(implementedExtensions.map(spec=>[spec,BINDLE_REGISTRY.get(spec)]));
+export const declarationLimits=Object.freeze({entries:EXTENSION_LIMITS.entries,entryBytes:EXTENSION_LIMITS.entryBytes,cacheDefault:300000,cacheMax:3600000});
 export const credentialBindings=Object.freeze(['key-binding.v1']);
-const featureKey=/^([a-z][a-z0-9-]{0,31})\.v([1-9][0-9]{0,2})$/;
 const freeze=value=>{if(value&&typeof value==='object'){for(const child of Object.values(value))freeze(child);Object.freeze(value);}return value;};
 const coded=(message,code)=>Object.assign(new Error(message),{code});
 const plain=value=>!!value&&typeof value==='object'&&!Array.isArray(value);
-const bytes=value=>{try{return new TextEncoder().encode(JSON.stringify(value)).length;}catch{return Infinity;}};
-const strings=(value,max)=>Array.isArray(value)&&value.length>0&&value.length<=max&&value.every(item=>typeof item==='string'&&item.length<=64);
 // An endpoint on the issuer origin with no credentials or fragment; null otherwise.
 export function issuerURL(value,issuer){
   if(typeof value!=='string'||value.length>2048)return null;let url;try{url=new URL(value);}catch{return null;}
@@ -36,53 +39,41 @@ export function checkFloor(manifest,issuer){
   if(contract.protocol!=='https:'||contract.username||contract.password||contract.hash)fail('Invalid preferences contract.');
 }
 
-const featureReaders={
-  // Absent or invalid intents make the feature absent (never "all intents"); unknown intent values are ignored.
-  'authorization-entry':(value,issuer)=>{const endpoint=issuerURL(value.endpoint,issuer);if(!endpoint||!strings(value.intents,16))return null;const intents=authorizationIntents.filter(intent=>value.intents.includes(intent));return intents.length?{endpoint,intents}:null;},
-  fedcm:(value,issuer)=>{const configUrl=issuerURL(value.config_url,issuer);return configUrl?{configUrl}:null;},
-  intents:(value,issuer)=>{const loginEndpoint=issuerURL(value.login_endpoint,issuer);return loginEndpoint&&strings(value.intents,16)?{intents:[...new Set(value.intents)],loginEndpoint}:null;},
-  'client-id-metadata':()=>({}),
-};
-
-// Components profile §2 member validation. Returns null when the declaration must be ignored.
-export function readComponentsProfile(value,issuer,{embedderOrigin}={}){
-  if(!plain(value)||bytes(value)>declarationLimits.profileBytes)return null;
-  let embed;try{embed=new URL(value.embed_origin);}catch{return null;}
-  if(embed.origin!==value.embed_origin||embed.protocol!=='https:'||/^\[|^\d+(?:\.\d+){3}$/.test(embed.hostname)||embed.origin===issuer||embed.origin===embedderOrigin)return null;
-  const positive=list=>Array.isArray(list)&&list.length>=1&&list.length<=8&&list.every(n=>Number.isSafeInteger(n)&&n>0)&&new Set(list).size===list.length;
-  if(!positive(value.protocol)||!value.protocol.includes(1)||!plain(value.parts)||Object.keys(value.parts).length>16)return null;
+/**
+ * Embedded-components options (already descriptor-validated) to the islands configuration. Adds the components
+ * profile's own §2 rules the descriptor cannot express: `embed_origin` is a bare HTTPS origin that is not an IP
+ * literal, the issuer origin or the embedder's origin, and `protocol` includes 1. Returns null when it must be ignored.
+ * Parts are `<name>/<version>` values; the former per-part `fedcm` flag no longer exists (always false).
+ */
+export function readComponentsOptions(options,issuer,{embedderOrigin}={}){
+  if(!plain(options))return null;
+  let embed;try{embed=new URL(options.embed_origin);}catch{return null;}
+  if(embed.origin!==options.embed_origin||embed.protocol!=='https:'||/^\[|^\d+(?:\.\d+){3}$/.test(embed.hostname)||embed.origin===issuer||embed.origin===embedderOrigin)return null;
+  if(!Array.isArray(options.protocol)||!options.protocol.includes(1)||!Array.isArray(options.parts))return null;
   const parts={};
-  for(const [name,part] of Object.entries(value.parts)){
-    if(!Object.hasOwn(PARTS,name)||!plain(part)||!positive(part.versions)||part.fedcm!==undefined&&typeof part.fedcm!=='boolean')continue;
-    const version=Math.max(...part.versions.filter(n=>PARTS[name].versions.includes(n)),0);
-    if(version)parts[name]={version,fedcm:part.fedcm===true};
+  for(const value of options.parts){
+    const [name,v]=value.split('/'),version=Number(v);
+    if(Object.hasOwn(PARTS,name)&&PARTS[name].versions.includes(version)&&(parts[name]?.version??0)<version)parts[name]={version,fedcm:false};
   }
-  const list=key=>Array.isArray(value[key])?value[key].filter(item=>typeof item==='string'):[];
-  const manageUrl=value.manage_url===undefined?null:issuerURL(value.manage_url,issuer);
-  return {embedOrigin:embed.origin,parts,themeTokens:THEME_TOKENS.filter(token=>list('theme_tokens').includes(token)),bindings:credentialBindings.filter(binding=>list('credential_binding').includes(binding)),...manageUrl?{manageUrl}:{}};
+  const bindings=Array.isArray(options.credential_binding)?credentialBindings.filter(binding=>options.credential_binding.includes(binding)):[];
+  const manageUrl=options.manage_url===undefined?null:issuerURL(options.manage_url,issuer);
+  // The embedded-components descriptor carries no theme-token option, so islands use provider defaults.
+  return {embedOrigin:embed.origin,parts,themeTokens:[],bindings,...manageUrl?{manageUrl}:{}};
 }
 
 // Normalized, frozen declaration. Only required members fail closed (checkFloor);
-// every optional member, feature and profile is validated independently and an
-// invalid one is treated as absent. Unknown keys are ignored.
+// every extension entry is validated independently by the shared processor and an
+// invalid one is absent. Unknown keys, unimplemented extensions and the former
+// `features`/`profiles` containers are ignored.
 export function readDeclaration(manifest,issuer,{embedderOrigin}={}){
   checkFloor(manifest,issuer);
-  const warnings=[],features={},profiles={};
-  const rawFeatures=manifest.features,rawProfiles=manifest.profiles;
-  if(rawFeatures!==undefined&&(!plain(rawFeatures)||Object.keys(rawFeatures).length>declarationLimits.features))warnings.push('features');
-  else for(const [key,value] of Object.entries(rawFeatures??{})){
-    const match=featureKey.exec(key),name=match?.[1],version=Number(match?.[2]);
-    if(!match||!implementedFeatures[name]?.includes(version))continue;
-    const read=plain(value)&&bytes(value)<=declarationLimits.featureBytes?featureReaders[name](value,issuer):null;
-    if(!read){warnings.push(key);continue;}
-    if(!features[name]||features[name].version<version)features[name]={version,...read};
-  }
-  if(rawProfiles!==undefined&&(!plain(rawProfiles)||Object.keys(rawProfiles).length>declarationLimits.profiles))warnings.push('profiles');
-  else for(const [uri,value] of Object.entries(rawProfiles??{})){
-    let url;try{url=new URL(uri);}catch{continue;}
-    if(url.protocol!=='https:'||url.href!==uri)continue;
-    if(uri===COMPONENTS_V1){const components=readComponentsProfile(value,issuer,{embedderOrigin});if(components)profiles[uri]=components;else warnings.push(uri);}
-  }
+  const warnings=[];
+  const read=readExtensions(manifest,{registry,issuer,allowInsecureLocalhost:issuer.startsWith('http://')});
+  for(const {spec,reason} of read.absent)warnings.push(spec??`extensions:${reason}`);
+  const extensions=Object.fromEntries(read.extensions),option=spec=>extensions[spec]??null;
+  const entryOptions=option(EXT.authorizationEntry),fedcmOptions=option(EXT.fedcm),intentOptions=option(EXT.intents);
+  let components=null;
+  if(option(EXT.embeddedComponents)){components=readComponentsOptions(option(EXT.embeddedComponents),issuer,{embedderOrigin});if(!components)warnings.push(EXT.embeddedComponents);}
   const algs=Array.isArray(manifest.dpop_signing_alg_values_supported)?manifest.dpop_signing_alg_values_supported:[];
   const grants=Array.isArray(manifest.grant_types_supported)?manifest.grant_types_supported:[];
   const revocationEndpoint=manifest.revocation_endpoint===undefined?null:issuerURL(manifest.revocation_endpoint,issuer);
@@ -91,7 +82,13 @@ export function readDeclaration(manifest,issuer,{embedderOrigin}={}){
     issuer,authorizationEndpoint:manifest.authorization_endpoint,tokenEndpoint:manifest.token_endpoint,rpcEndpoint:manifest.rpc_endpoint,requestEndpoint:manifest.authorization_request_endpoint,preferencesContract:manifest.preferences_contract,
     loginPresentation:['redirect','popup'].filter(value=>manifest.login_presentation.includes(value)),
     ...revocationEndpoint?{revocationEndpoint}:{},dpop:algs.includes('ES256'),refresh:grants.includes('refresh_token'),
-    features,profiles,warnings,
+    // Validated options of every present implemented extension, keyed by spec URL (descriptor option names).
+    extensions,
+    authorizationEntry:entryOptions?{endpoint:entryOptions.endpoint,intents:[...entryOptions.intents]}:null,
+    fedcm:fedcmOptions?{configUrl:fedcmOptions.config_url}:null,
+    intents:intentOptions?{intents:[...intentOptions.intents],loginEndpoint:intentOptions.login_endpoint}:null,
+    clientIdMetadata:!!option(EXT.clientIdMetadata),
+    components,warnings,
   });
 }
 
@@ -100,10 +97,12 @@ export function readDeclaration(manifest,issuer,{embedderOrigin}={}){
 export function computeCapabilities(declaration,{degraded=new Set(),defaultIssuer=null,islands='auto',islandIssuers=null,identityCredential=!!globalThis.IdentityCredential}={}){
   if(!declaration)return null;
   const issuer=declaration.issuer,off=key=>degraded.has(key);
-  const entry=!off('authorization-entry')&&declaration.features['authorization-entry']||null,intents=entry?entry.intents:[];
-  const fedcm=!off('fedcm')&&!!declaration.features.fedcm&&!!entry&&identityCredential;
+  // Intents the SDK's flows use; grant-more and configure are read by incremental.mjs from the same entry.
+  const declared=!off('authorization-entry')&&declaration.authorizationEntry||null,known=declared?authorizationIntents.filter(intent=>declared.intents.includes(intent)):[];
+  const entry=known.length?declared:null,intents=entry?known:[];
+  const fedcm=!off('fedcm')&&!!declaration.fedcm&&!!entry&&identityCredential;
   const policy=islands!=='off'&&(!islandIssuers||islandIssuers.includes(issuer));
-  const components=!off('profile')&&policy&&declaration.profiles[COMPONENTS_V1]||null;
+  const components=!off('profile')&&policy&&declaration.components||null;
   const identityless=intents.includes('login'),bound=!!components?.bindings.includes('key-binding.v1');
   const delegate=issuer===defaultIssuer||!!islandIssuers?.includes(issuer);
   const part=(name,ok)=>{const value=components?.parts[name];return value&&ok&&!off(`part:${name}`)?Object.freeze({version:value.version,fedcm:value.fedcm&&fedcm&&delegate}):null;};
@@ -114,9 +113,9 @@ export function computeCapabilities(declaration,{degraded=new Set(),defaultIssue
     revoke:!!declaration.revocationEndpoint,
     // DPoP needs the entry (it carries dpopJkt) and a refresh grant worth binding.
     dpop:!off('dpop')&&declaration.dpop&&!!entry&&declaration.refresh,refresh:declaration.refresh,
-    clientIdMetadata:!!declaration.features['client-id-metadata'],
-    intentLinks:declaration.features.intents?[...declaration.features.intents.intents]:[],
-    manageUrl:components?.manageUrl??declaration.profiles[COMPONENTS_V1]?.manageUrl??issuer+'/',
+    clientIdMetadata:declaration.clientIdMetadata,
+    intentLinks:declaration.intents?[...declaration.intents.intents]:[],
+    manageUrl:components?.manageUrl??declaration.components?.manageUrl??issuer+'/',
     profile:!!components,embedOrigin:components?.embedOrigin??null,themeTokens:components?[...components.themeTokens]:[],
     islands:{avatar:part('avatar',bound),switcher:part('account-switcher',bound&&identityless),signIn:part('sign-in',identityless)},
   });

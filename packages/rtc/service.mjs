@@ -11,7 +11,7 @@
 // Actors (built by trusted adapters, never from a request body):
 //   {kind:'app', owner, clientId, origin, grants:[id], epoch?, jkt?}   an application endpoint, from the verified
 //          federation RPC context: the token's subject owner, client, the client's verified origin, the token's grant
-//          ids (FederationService.checkBound REQUIRES them, review L6), its epoch and, when DPoP-bound, the key jkt
+//          ids, its epoch and, when DPoP-bound, the key jkt
 //   {kind:'owner', owner}                                               the account owner (settings, reads, narrowing)
 //   {kind:'system', owner}                                              adapters: ingest, tick, drain, lifecycle
 //
@@ -29,8 +29,6 @@
 //   signer      owner -> {kid, privateKey}: the entity's ACTIVE certification key (certificationSigner), loaded
 //                outside every storage transaction
 //   linkSigner  owner -> {kid, privateKey, publicJwk?}: the identity signing key for ticket metas
-//   bound       {check({subject, clientId, fragment, grants, epoch, member, value, reference}) -> boolean}:
-//                FederationService.checkBound (AMD-X1 item 4); absent means nothing is approved (fail closed)
 //   transport   {deliver(from, to, batch), foreign?:boolean}: sameHostRtcTransport here; RTC-e adds the foreign one
 //   contacts    {inspect(link) -> {parent, quarantined} | null}: the owner's contact links (ContactEndpointService)
 //   flags       {for(ctx) -> {enabled(name)}}
@@ -49,6 +47,9 @@
 //
 // Store (entity account, prefix rtc/; bounds in sessions.mjs RTC_BOUNDS and design §3.4):
 //   rtc/policy                  owner policy {other, self, requests, autoAccept}
+//   rtc/approval/<hash>         interim owner-local purpose approval per application (approvals.mjs; extensions rev 3.2
+//                               removed AMD-X1 `bind`. TODO(signaling Appendix C.2: approvals move to intents session
+//                               handler approvals))
 //   rtc/ep/<id>                 endpoint {clientId, origin, purposes, bind:{jkt}|{secretHash}, grants, q, gap, …}
 //   rtc/epq/<id>/<seq>          endpoint event queue (256 events / 512 KiB; SDP and candidates kept ≤ 60 s)
 //   rtc/out/<sid>               caller record; rtc/in/<callerKey>/<sid> callee record (sessions.mjs)
@@ -65,8 +66,8 @@ import {base64url,digest} from '../core/records.mjs';
 import {samePrincipal} from '../orgs/grants.mjs';
 import {delegatePublicJwk,jwkThumbprint,isJkt,originValid} from '../identity/delegation.mjs';
 import {parseLinkQuery,parseLinkMeta} from '../links/envelope.mjs';
-import {RTC_SIGNALING_SLOT} from './extension.mjs';
-import {boundAllows} from '../federation/extensions.mjs';
+import {RTC_SIGNALING_FRAGMENT} from './extension.mjs';
+import {approvalKey,approvalAllows,approvalRecord,approvedLines,approvalView,APPROVAL_PREFIX} from './approvals.mjs';
 import {RtcWireFault} from './jws.mjs';
 import {parseBatch,batchStep1,buildBatch,parseMessage,verifyMessage,validateMessageContent,candidateAllowedByPolicy,messageAllowedBeforeClaim,linkDigest,mediaValid,iatWithinWindow,RTC_LIMITS} from './messages.mjs';
 import {parseLegCertificate,verifyLegCertificate,signLegCertificate,parseControl,verifyControl,signControl,LEG_CERTIFICATE_SECONDS,LEG_CERTIFICATE_MAX_SECONDS} from './certificates.mjs';
@@ -76,8 +77,8 @@ import {K,readPolicy,ipPolicyFor,policyWidens,isBlocked,isMuted,MUTE_KINDS,block
 import {transition,canTransition,isLive,dueEvent,recordExpired,decideClaim,claimUsable,offerSeq,payloadDigest,newLeg,gapExpired,RTC_BOUNDS,ORDER_LIMITS,SESSION_MAX_MS,RING_MAX_MS} from './sessions.mjs';
 
 export const RTC_SIGNALING_FLAG='RTC_SIGNALING_ENABLED',RTC_FOREIGN_FLAG='RTC_FOREIGN_ENABLED',RTC_TICKETS_FLAG='RTC_TICKETS_ENABLED';
-/** The fragment the application requested (the slot manifest URL), as recorded on its grants. */
-export const RTC_FRAGMENT=RTC_SIGNALING_SLOT;
+/** The fragment the application requested (the legacy signaling fragment), as recorded on its grants. */
+export const RTC_FRAGMENT=RTC_SIGNALING_FRAGMENT;
 const CLOSED_KEY='rtc/closed',UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,ENDPOINT_ID=/^ep_[A-Za-z0-9_-]{22}$/,SID=/^[A-Za-z0-9_-]{22,43}$/;
 const DAY=86400000,FORWARD_MS=30000,BATCH=256;
 /** RTC-e review F6: a foreign invite is re-sent only after its first `202`, at most twice, these many ms after that
@@ -126,9 +127,9 @@ export function sameHostRtcTransport({issuer,dispatch}){
 }
 
 export class RtcService{
- constructor({store,issuer,clock,random,flags,keys,signer,linkSigner,bound=null,transport,contacts=null,defer=null,hostLimits=null,pushTransport=null,federationSubject,allowLoopback=false,crypto=globalThis.crypto,maxLegSeconds=LEG_CERTIFICATE_SECONDS,peerMaxLegSeconds=LEG_CERTIFICATE_MAX_SECONDS}){
+ constructor({store,issuer,clock,random,flags,keys,signer,linkSigner,transport,contacts=null,defer=null,hostLimits=null,pushTransport=null,federationSubject,allowLoopback=false,crypto=globalThis.crypto,maxLegSeconds=LEG_CERTIFICATE_SECONDS,peerMaxLegSeconds=LEG_CERTIFICATE_MAX_SECONDS}){
   if(typeof store?.transaction!=='function'||typeof issuer!=='string'||typeof keys?.certification!=='function'||typeof keys?.identity!=='function'||typeof signer!=='function'||typeof transport?.deliver!=='function')throw new TypeError('RtcService needs a store, issuer, keys, signer and transport.');
-  Object.assign(this,{store,issuer,clock,random,flags,keys,signer,linkSigner,bound,transport,contacts,defer,hostLimits,pushTransport,allowLoopback,crypto,maxLegSeconds,peerMaxLegSeconds});
+  Object.assign(this,{store,issuer,clock,random,flags,keys,signer,linkSigner,transport,contacts,defer,hostLimits,pushTransport,allowLoopback,crypto,maxLegSeconds,peerMaxLegSeconds});
   this.federationSubject=federationSubject??(owner=>`${issuer}/entities/${owner}`);
   this.waiters=new Map();this.relay=null;
  }
@@ -152,15 +153,16 @@ export class RtcService{
   * else the spec maximum. */
  peerMax(p){if(p?.iss===this.issuer)return this.peerMaxLegSeconds;let v=null;try{v=this.keys.maxLegSeconds?.(party(p));}catch{v=null;}return Number.isSafeInteger(v)&&v>=120&&v<=this.peerMaxLegSeconds?v:this.peerMaxLegSeconds;}
  async ownAep(owner){try{const v=await this.keys.aep?.(owner);return Number.isSafeInteger(v)&&v>=0?v:0;}catch{return 0;}}
- /** AMD-X1 item 4: the live bound approval of `line` (at its pinned version) behind this app's verified token. */
- async approved({owner,clientId,grants,epoch,bound},line){
-  const held=heldPurpose(line);if(!held)return false;const reference={version:held.ref.version,digest:held.ref.digest};
-  // RTC-i (bug 1): an app actor from a contract RPC carries the bound approval computed in that RPC's authorization
-  // transaction (the adapter runs inside the owner's account gate and must not call the federation shard). Stored
-  // endpoint records (fan-out) carry none and use the port, outside any account gate.
-  if(bound!==undefined){try{return boundAllows({values:bound.values,versions:bound.versions,revision:'dispatch'},'purposes',line,{reference})===true;}catch{return false;}}
-  if(!this.bound)return false;
-  try{return await this.bound.check({subject:this.federationSubject(owner),clientId,fragment:RTC_FRAGMENT,grants,...epoch!==undefined?{epoch}:{},member:'purposes',value:line,reference})===true;}catch{return false;}
+ /**
+  * Whether the owner approved `line` (at its currently held version and digest) for this application: the interim
+  * owner-local approval record (approvals.mjs), read live from this entity's own store, so a narrowing or revocation
+  * applies to the very next call. The application's live grant is checked before RTC is reached (federation dispatch
+  * on an approved, assigned resource); this only decides the purpose. Extensions rev 3.2 removed AMD-X1 `bind`.
+  * TODO(signaling Appendix C.2: approvals move to intents session handler approvals)
+  */
+ async approved({clientId},line){
+  const held=heldPurpose(line);if(!held||typeof clientId!=='string'||!clientId)return false;
+  try{const key=await approvalKey(this.crypto,clientId),record=await this.store.transaction(tx=>tx.get(key));return approvalAllows(record,line,held.ref);}catch{return false;}
  }
  async requireApproved(app,line){if(!await this.approved(app,line))fail('forbidden','This purpose is not approved for this application.',403);}
 
@@ -514,7 +516,7 @@ export class RtcService{
   const now=this.now(),found=await this.store.transaction(async tx=>{await this.bindOwner(tx,owner);const ep=await this.endpointAuth(tx,app,input,now);return this.ownSession(tx,ep,input.sid);});
   if(!found||!isLive(found.rec)||!found.rec.mine?.certificate)notFound();
   // RTC wargame M4 (§9.1 "every method checks ... the bound purposes live"): the session's purpose must still be
-  // approved behind this token (the actor's per-RPC approval; no shard call), whether or not the narrowing hook ran.
+  // approved for this application (the owner's approval record, read live; no shard call).
   await this.requireApproved(app,found.rec.purpose.purpose);
   const cert=await this.certFor({owner,app,rec:found.rec,role:found.rec.role,delegate:found.rec.mine.delegate,now});
   await this.store.transaction(async tx=>{const rec=await tx.get(found.key);if(rec&&isLive(rec)&&rec.mine?.jkt===found.rec.mine.jkt){rec.mine.certificate=cert.certificate;rec.mine.exp=cert.exp;rec.mine.certSent=null;await tx.put(found.key,rec);}else notFound();});
@@ -822,13 +824,14 @@ export class RtcService{
   // M1: an own-device invite is not a cross-entity invite and spends only the entity's `self` budget.
   if(this.hostLimits&&!own){let ok=false;try{ok=await this.hostLimits.take('caller',[sender.iss,sender.sub])===true;}catch{ok=false;}if(!ok)return;}
   let handle=null;try{handle=await this.keys.handle?.(sender)??null;}catch{handle=null;}
-  // Eligibility needs the federation grant check, which is outside this writer: done between the passes, re-read
-  // inside pass 2 (an endpoint removed meanwhile drops out). M5: one check per (client, grants, epoch) per invite.
+  // Eligibility: the owner's approval of the purpose for each endpoint's application (the interim approval record),
+  // done between the passes, re-read inside pass 2 (an endpoint removed meanwhile drops out). M5: one check per client
+  // per invite. TODO(signaling Appendix C.2: approvals move to intents session handler approvals)
   const eligible=new Set();
   if(!first.holdIt){const memo=new Map();
    for(const ep of await this.store.transaction(tx=>candidateEndpoints(tx,{line,now}))){
-    const id=JSON.stringify([ep.clientId,[...ep.grants].sort(),ep.epoch??null]);
-    if(!memo.has(id))memo.set(id,await this.approved({owner,clientId:ep.clientId,grants:ep.grants,epoch:ep.epoch},line));
+    const id=ep.clientId;
+    if(!memo.has(id))memo.set(id,await this.approved({clientId:ep.clientId},line));
     if(memo.get(id))eligible.add(ep.id);}}
   return this.commit(owner,async(tx,fx)=>{
    const g=await gate(tx,{count:false});if(!g)return;const {policy,ticket,quarantined,holdIt}=g;
@@ -953,6 +956,30 @@ export class RtcService{
  }
  async revokeEndpoint(actor,input){exact(input,['endpoint']);if(typeof input.endpoint!=='string'||!ENDPOINT_ID.test(input.endpoint))invalid();return this.ownerTx(actor,async(tx,fx,owner,now)=>{const ep=await tx.get(K.endpoint(input.endpoint));if(!ep)notFound();await this.removeEndpoint(tx,fx,ep,now,'revoked');return {revoked:true};});}
  async clearMissed(actor,input={}){exact(input,[],['id']);return this.ownerTx(actor,async tx=>{let n=0;for(const [key,row] of await tx.list({prefix:K.missedPrefix,limit:RTC_BOUNDS.missed*2}))if(input.id===undefined||row.id===input.id){await tx.delete(key);n++;}return {cleared:n};});}
+ /**
+  * rtc.approve-app {clientId, purposes}: the owner sets which purposes this application may use (the interim
+  * owner-local approval record, approvals.mjs), each pinned to the provider-held purpose reference now. Narrowing is
+  * immediate and never gated: the removed lines end the app's sessions, invites ringing only through it, its tickets
+  * for them and its endpoint registrations for them, in the same transaction. Widening (a line not approved at its
+  * current held reference) answers the uniform `not_found` while RTC_SIGNALING_ENABLED is off. An empty list deletes
+  * the record. The owner route checks that the application holds a live signaling grant before it widens.
+  * TODO(signaling Appendix C.2: approvals move to intents session handler approvals)
+  */
+ async approveApp(actor,input){
+  exact(input,['clientId','purposes']);
+  if(typeof input.clientId!=='string'||!input.clientId||input.clientId.length>2048||!Array.isArray(input.purposes)||input.purposes.length>16||input.purposes.some(l=>!heldPurpose(l))||new Set(input.purposes).size!==input.purposes.length)invalid('Choose purposes this provider offers.');
+  const key=await approvalKey(this.crypto,input.clientId),refOf=l=>heldPurpose(l)?.ref??null,refs=Object.fromEntries(input.purposes.map(l=>[l,refOf(l)]));
+  return this.ownerTx(actor,async(tx,fx,owner,now)=>{
+   const prior=await tx.get(key),before=approvedLines(prior,refOf);
+   if(input.purposes.some(l=>!before.includes(l))&&!this.flag(owner))notFound();// narrowing is never gated
+   if(input.purposes.length)await tx.put(key,approvalRecord({clientId:input.clientId,purposes:input.purposes,refs,prior,at:now}));else await tx.delete(key);
+   const removed=Array.isArray(prior?.purposes)&&prior.purposes.some(l=>!input.purposes.includes(l));
+   const ended=removed?await this.endFor(tx,fx,owner,{event:'app-narrowed',clientId:input.clientId,purposes:[...input.purposes]},now):0;
+   return {clientId:input.clientId,purposes:[...input.purposes].sort(),ended};
+  });
+ }
+ /** rtc.approvals: the owner's approval records ({clientId, purposes still usable, at}). */
+ approvals(actor){return this.ownerRead(actor,async tx=>({approvals:[...(await tx.list({prefix:APPROVAL_PREFIX,limit:1024})).values()].map(r=>approvalView(r,l=>heldPurpose(l)?.ref??null)).filter(Boolean)}));}
  async ownerRead(actor,fn){const owner=this.owner(actor);return this.store.transaction(async tx=>{await this.bindOwner(tx,owner);return fn(tx,this.now(),owner);});}
  /** The owner's live sessions. Review F2: an incoming record's `alert` is re-evaluated on every read against the
   * current mutes (principal, purpose and the caller's application), so a mute set while an invite rings silences the
@@ -987,15 +1014,29 @@ export class RtcService{
  /**
   * rtc.lifecycle (system): `deletion` (the account is being deleted: every live session ends with control `revoked`,
   * every endpoint is removed, and nothing new is admitted; the E4 drain then delivers the controls), `app-revoked`
-  * {clientId} (the application lost its slot grant), `app-narrowed` {clientId, purposes} (its bound purposes were
-  * narrowed to `purposes`). Narrowing; never gated.
+  * {clientId} (the application lost its signaling grant or connection: its approval record is deleted too),
+  * `app-narrowed` {clientId, purposes} (its approved purposes were narrowed to `purposes`: the approval record keeps
+  * only those). Narrowing; never gated.
   */
  async lifecycle(actor,input){
   const owner=this.system(actor);exact(input,['event'],['clientId','purposes']);if(!['deletion','app-revoked','app-narrowed'].includes(input.event))invalid();
   if(input.event!=='deletion'&&(typeof input.clientId!=='string'||!input.clientId))invalid();if(input.event==='app-narrowed'&&!Array.isArray(input.purposes))invalid();
+  const key=input.event==='deletion'?null:await approvalKey(this.crypto,input.clientId);
   return this.commit(owner,async(tx,fx)=>{
-   await this.bindOwner(tx,owner);const now=this.now();let ended=0;
+   await this.bindOwner(tx,owner);const now=this.now();
    if(input.event==='deletion')await tx.put(CLOSED_KEY,{at:now});
+   // The interim approval record (approvals.mjs) goes with the app's grant, and narrows with it. TODO(signaling
+   // Appendix C.2: approvals move to intents session handler approvals)
+   if(input.event==='app-revoked')await tx.delete(key);
+   else if(input.event==='app-narrowed'){const prior=await tx.get(key);if(prior){const kept=approvedLines(prior,l=>heldPurpose(l)?.ref??null).filter(l=>input.purposes.includes(l));
+    if(kept.length)await tx.put(key,approvalRecord({clientId:input.clientId,purposes:kept,refs:prior.versions,prior,at:now}));else await tx.delete(key);}}
+   return {ended:await this.endFor(tx,fx,owner,input,now)};
+  });
+ }
+ /** Ends what `input` ({event, clientId?, purposes?}, as rtc.lifecycle) takes away, inside the caller's transaction:
+  * sessions, invites ringing only through the app, its tickets and endpoint registrations. Returns the ended count. */
+ async endFor(tx,fx,owner,input,now){
+   let ended=0;
    const affected=rec=>input.event==='deletion'||rec.mine?.clientId===input.clientId&&(input.event==='app-revoked'||!input.purposes.includes(rec.purpose.purpose));
    const lost=input.event!=='deletion';
    for(const prefix of [K.outPrefix,K.inPrefix])for(const [key,rec] of await tx.list({prefix,limit:4096})){
@@ -1015,8 +1056,7 @@ export class RtcService{
     if(input.event==='deletion'||input.event==='app-revoked'&&ep.clientId===input.clientId){await this.removeEndpoint(tx,fx,ep,now,'revoked');continue;}
     if(input.event==='app-narrowed'&&ep.clientId===input.clientId){const kept=ep.purposes.filter(l=>input.purposes.includes(l));if(!kept.length)await this.removeEndpoint(tx,fx,ep,now,'revoked');else if(kept.length!==ep.purposes.length)await tx.put(K.endpoint(ep.id),{...ep,purposes:kept});}
    }
-   return {ended};
-  });
+   return ended;
  }
  /**
   * rtc.tick (system): ring and session expiry, 10 s gap timeouts, the 60 s SDP/candidate bound, idle endpoints,
@@ -1128,6 +1168,9 @@ export class RtcMissed extends RtcQuery{static operation='rtc.missed';static lif
 export class RtcBlocked extends RtcQuery{static operation='rtc.blocked';static lifecycle='suspended';fetch({rtc}){return rtc.blocked(this.actor);}}
 export class RtcTickets extends RtcQuery{static operation='rtc.tickets';static lifecycle='suspended';fetch({rtc}){return rtc.tickets(this.actor);}}
 export class RtcEndpointList extends RtcQuery{static operation='rtc.endpoint-list';static lifecycle='suspended';fetch({rtc}){return rtc.endpointList(this.actor);}}
+// Interim (extensions rev 3.2 removed AMD-X1). TODO(signaling Appendix C.2: approvals move to intents session handler approvals)
+export class RtcApproveApp extends RtcAction{static operation='rtc.approve-app';static lifecycle='suspended';run({rtc}){return rtc.approveApp(this.actor,this.input);}}
+export class RtcApprovals extends RtcQuery{static operation='rtc.approvals';static lifecycle='suspended';fetch({rtc}){return rtc.approvals(this.actor);}}
 export class RtcExport extends RtcQuery{static operation='rtc.export';static lifecycle='suspended';fetch({rtc}){return rtc.exportRecords(this.actor);}}
 // System operations (never wire-dispatchable): adapters build the system actor from verified evidence.
 class RtcSystem extends AppAction{static deps=['rtc'];static changes=CHANGED;static lifecycle='suspended';}
@@ -1142,14 +1185,14 @@ export class RtcRelayCredentials extends RtcAction{static operation='rtc.relay-c
 export class RtcRelaySweep extends RtcSystem{static operation='rtc.relay-sweep';run({rtc}){const owner=rtc.system(this.actor);return rtc.relay?rtc.relay.sweep(owner):{revoked:0,pending:0,wakeAt:null};}}
 
 export const RTC_ENDPOINT_OPERATIONS=Object.freeze([RtcRegister,RtcUnregister,RtcOpen,RtcClaim,RtcSend,RtcRenew,RtcMintTicket,RtcListen,RtcEndpoints]);
-export const RTC_OWNER_OPERATIONS=Object.freeze([RtcPolicy,RtcSetPolicy,RtcSetContactRtc,RtcBlock,RtcUnblock,RtcMute,RtcUnmute,RtcRevokeTicket,RtcEndSession,RtcRevokeEndpoint,RtcClearMissed,RtcSessions,RtcMissed,RtcBlocked,RtcTickets,RtcEndpointList,RtcExport]);
+export const RTC_OWNER_OPERATIONS=Object.freeze([RtcPolicy,RtcSetPolicy,RtcSetContactRtc,RtcBlock,RtcUnblock,RtcMute,RtcUnmute,RtcRevokeTicket,RtcEndSession,RtcRevokeEndpoint,RtcClearMissed,RtcSessions,RtcMissed,RtcBlocked,RtcTickets,RtcEndpointList,RtcExport,RtcApproveApp,RtcApprovals]);
 export const RTC_SYSTEM_OPERATIONS=Object.freeze([RtcIngest,RtcInbox,RtcTick,RtcOutboxDrain,RtcLifecycle,RtcRelaySweep]);
 /** RTC-f: operations of the ice-relay/v1 contract (application endpoint actor), mapped from contract methods. */
 export const RTC_RELAY_OPERATIONS=Object.freeze([RtcRelayCredentials]);
 export const RTC_RELAY_CONTRACT_OPERATIONS=Object.freeze({credentials:'rtc.relay-credentials'});
 /** Operations that no RTC flag ever gates (design §3.2 narrowing, plus reads of existing state). Decline claims and
  * `send` of only end/cancel/decline are narrowing inside rtc.claim and rtc.send. */
-export const RTC_NEVER_GATED=Object.freeze(['rtc.unregister','rtc.end-session','rtc.revoke-endpoint','rtc.block','rtc.mute','rtc.revoke-ticket','rtc.clear-missed','rtc.listen','rtc.endpoints','rtc.policy','rtc.sessions','rtc.missed','rtc.blocked','rtc.tickets','rtc.endpoint-list','rtc.export','rtc.ingest','rtc.inbox','rtc.tick','rtc.outbox-drain','rtc.lifecycle','rtc.relay-sweep']);
+export const RTC_NEVER_GATED=Object.freeze(['rtc.unregister','rtc.end-session','rtc.revoke-endpoint','rtc.block','rtc.mute','rtc.revoke-ticket','rtc.clear-missed','rtc.listen','rtc.endpoints','rtc.policy','rtc.sessions','rtc.missed','rtc.blocked','rtc.tickets','rtc.endpoint-list','rtc.export','rtc.approvals','rtc.ingest','rtc.inbox','rtc.tick','rtc.outbox-drain','rtc.lifecycle','rtc.relay-sweep']);
 /** The contract's method names (§9.1) → engine operations, for the RPC adapter (RTC-e). */
 export const RTC_CONTRACT_OPERATIONS=Object.freeze({register:'rtc.register',unregister:'rtc.unregister',endpoints:'rtc.endpoints',open:'rtc.open',claim:'rtc.claim',send:'rtc.send',renew:'rtc.renew',listen:'rtc.listen',mint_ticket:'rtc.mint-ticket'});
 export {DEFAULT_POLICY,iatWithinWindow};

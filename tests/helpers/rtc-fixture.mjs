@@ -4,8 +4,12 @@
 // keys and sign their own messages. Every call is a dispatched Action or Query. Local behaviour only: no foreign
 // provider, no real federation service, directory, push or relay; hosts under reserved .example domains (AGENTS.md).
 //
-// The bound-approval port is a stand-in for FederationService.checkBound with the same rule (the union of the token's
-// live grants, a pinned {version, digest} per line), using the real boundAllows. `host.network` can hold deliveries
+// Purpose approval is the interim owner-local record (packages/rtc/approvals.mjs; extensions rev 3.2 removed AMD-X1
+// `bind`). `host.grant` stands in for "the app holds a live grant and the owner approved these purposes": before every
+// dispatch the fixture writes each (entity, client) record whose union of active `host.grants` purposes changed since
+// it last wrote it, directly to the store (an owner approval whose ending steps have not run, so a test that narrows
+// `host.grants` still sees the live check refuse at once). The owner operation rtc.approve-app is exercised by its own
+// tests. TODO(signaling Appendix C.2: approvals move to intents session handler approvals). `host.network` can hold deliveries
 // for chaos tests (drop, duplicate, reorder); `host.restart(sub)` rebuilds a service over the same store (a crash).
 // Delivery is never synchronous (review M2): `defer` only records which entities asked for a pass (`host.kicked`), and
 // `host.pump()` runs each entity's inbound queue and outbox until quiet, as the runtime's detached task does. The
@@ -15,11 +19,12 @@ import {SqliteMetadata} from '../../apps/node/resources.mjs';
 import {createAppEngine,perform,read,AppQuery} from '../../packages/app/engine.mjs';
 import {memoryAudit} from '../../packages/app/providers.mjs';
 import {fakeClock,seededRandom,createRandom} from '../../packages/app/memory-providers.mjs';
-import {boundAllows} from '../../packages/federation/extensions.mjs';
+import {approvalKey,approvalRecord} from '../../packages/rtc/approvals.mjs';
 import {jwkThumbprint} from '../../packages/identity/delegation.mjs';
 import {signMessage} from '../../packages/rtc/certificates.mjs';
 import {linkDigest} from '../../packages/rtc/messages.mjs';
 import {RTC_PURPOSE_REFERENCES} from '../../packages/rtc/purposes.mjs';
+import {RTC_SIGNALING_FRAGMENT} from '../../packages/rtc/extension.mjs';
 import {RtcService,rtcProvider,sameHostRtcTransport,RTC_ENDPOINT_OPERATIONS,RTC_OWNER_OPERATIONS,RTC_SYSTEM_OPERATIONS,RTC_RELAY_OPERATIONS,RTC_LIMIT_VALUES,RtcIngest,RtcInbox,RtcTick} from '../../packages/app/domains/rtc.mjs';
 import {sdp as wireSdp,candidate as wireCandidate} from './rtc-wire-fixture.mjs';
 
@@ -59,14 +64,19 @@ export async function rtcHost({seed=1,entities=3,start=Date.UTC(2026,9,27,12),fl
   resolveHandle:async h=>{for(const a of accounts.values())if(a.handle===h&&!a.gone)return {iss:ISS,sub:a.sub};return null;},
   aep:async owner=>accounts.get(owner)?.aep??0,
  };
- // FederationService.checkBound stand-in: union of the token's active grants for (subject, client, fragment).
- const bound={async check({subject,clientId,fragment,grants:ids,member,value,reference}){
-  const values={purposes:[]},versions={};
-  for(const id of ids){const g=grants.get(id);if(!g||!g.active||`${ISS}/entities/${g.owner}`!==subject||g.clientId!==clientId||g.fragment!==fragment)continue;for(const l of g.purposes){if(!values.purposes.includes(l))values.purposes.push(l);versions[l]={version:REF[l].version,digest:REF[l].digest};}}
-  return boundAllows(values.purposes.length?{values,versions}:null,member,value,{reference});}};
+ // The owner's approval records, kept in step with `grants` (see the header).
+ const synced=new Map();
+ async function syncApprovals({force=false}={}){
+  if(force===true)synced.clear();// rewrite every record from host.grants (after a lifecycle step narrowed or deleted one)
+  const want=new Map();
+  for(const g of grants.values()){const k=g.owner+'\n'+g.clientId;if(!want.has(k))want.set(k,new Set());if(g.active)for(const l of g.purposes)want.get(k).add(l);}
+  for(const [k,set] of want){const value=JSON.stringify([...set].sort());if(synced.get(k)===value)continue;synced.set(k,value);
+   const [owner,clientId]=k.split('\n'),a=accounts.get(owner);if(!a||a.gone)continue;const key=await approvalKey(crypto,clientId);
+   if(set.size)await a.store.put(key,approvalRecord({clientId,purposes:[...set],refs:REF,prior:await a.store.get(key),at:clock.now()}));else await a.store.delete(key);}
+ }
  const dispatch=async(sub,operation,input)=>{
   const a=accounts.get(sub);if(!a||a.gone)throw Object.assign(new Error('gone'),{code:'temporarily_unavailable'});
-  return perform(a.engine,new OPS[operation]({actor:{kind:'system',owner:sub},input}));
+  await syncApprovals();return perform(a.engine,new OPS[operation]({actor:{kind:'system',owner:sub},input}));
  };
  const transport=sameHostRtcTransport({issuer:ISS,dispatch:async(sub,operation,input)=>{
   log.batches.push({to:sub,batch:input.batch});
@@ -75,7 +85,7 @@ export async function rtcHost({seed=1,entities=3,start=Date.UTC(2026,9,27,12),fl
   log.delivered++;return dispatch(sub,operation,input);
  }});
  async function build(a){
-  a.service=new RtcService({store:a.store,issuer:ISS,clock,random:ids,flags:flagPort,keys,signer:async()=>a.cert,linkSigner:async()=>a.link,bound,transport,defer:owner=>kicked.add(owner),hostLimits,contacts:{inspect:async link=>{const c=contacts.get(link);return c&&c.owner===a.sub&&!c.revoked?{parent:c.parent,quarantined:c.quarantined===true}:null;}}});
+  a.service=new RtcService({store:a.store,issuer:ISS,clock,random:ids,flags:flagPort,keys,signer:async()=>a.cert,linkSigner:async()=>a.link,transport,defer:owner=>kicked.add(owner),hostLimits,contacts:{inspect:async link=>{const c=contacts.get(link);return c&&c.owner===a.sub&&!c.revoked?{parent:c.parent,quarantined:c.quarantined===true}:null;}}});
   a.audit=memoryAudit({clock});
   a.engine=createAppEngine({providers:{clock,random:ids,audit:a.audit,rtc:rtcProvider(a.service)}});
   // RTC-f (tests/rtc-relay.test.mjs): `relay(a)` builds the entity's RtcRelay over a.service (rebuilt on restart).
@@ -94,9 +104,12 @@ export async function rtcHost({seed=1,entities=3,start=Date.UTC(2026,9,27,12),fl
   account:n=>accounts.get(subOf(n)),add,
   owner:n=>({kind:'owner',owner:subOf(n)}),system:n=>({kind:'system',owner:subOf(n)}),principal:n=>({iss:ISS,sub:subOf(n)}),
   /** Dispatch by wire name in entity n's engine. */
-  run(n,operation,{actor,input}={}){const a=accounts.get(subOf(n)),O=OPS[operation];const op=new O({actor:actor??{kind:'owner',owner:a.sub},...input===undefined?{}:{input}});return O.prototype instanceof AppQuery?read(a.engine,op):perform(a.engine,op);},
+  async run(n,operation,{actor,input}={}){await syncApprovals();const a=accounts.get(subOf(n)),O=OPS[operation];const op=new O({actor:actor??{kind:'owner',owner:a.sub},...input===undefined?{}:{input}});return O.prototype instanceof AppQuery?read(a.engine,op):perform(a.engine,op);},
+  /** Writes the approval records for `host.grants` now (dispatches do this themselves); `{force: true}` rewrites them
+   * all, as an owner re-approving after a lifecycle step narrowed or deleted them. */
+  syncApprovals,
   /** An approved application grant for entity n: {clientId, origin, grants:[id]} usable as an app actor. */
-  grant(n,{clientId=APP+'/client',origin=APP,purposes=[CALL,SYNC,FILES,SCREEN],active=true}={}){const id='g'+(++counter);grants.set(id,{owner:subOf(n),clientId,fragment:'https://spec.bindle.example/slots/rtc-signaling/v1',purposes,active});return {id,clientId,origin};},
+  grant(n,{clientId=APP+'/client',origin=APP,purposes=[CALL,SYNC,FILES,SCREEN],active=true}={}){const id='g'+(++counter);grants.set(id,{owner:subOf(n),clientId,fragment:RTC_SIGNALING_FRAGMENT,purposes,active});return {id,clientId,origin};},
   /** With `hold`: every outbox drained into `network`, whose items are then taken (in delivery order). */
   async held(){await H.drainAll();return network.splice(0);},
   /** Every entity's outbox once (with `hold`, deliveries go to `network`). */
@@ -112,12 +125,12 @@ export async function rtcHost({seed=1,entities=3,start=Date.UTC(2026,9,27,12),fl
   },
   /** For every entity: its inbound queue (rtc.inbox, steps 2–8), then one outbox pass (deliveries only queue at the
    * receiver), until quiet or `rounds`. */
-  async pump(rounds=8){for(let r=0;r<rounds;r++){let pending=0;kicked.clear();
+  async pump(rounds=8){await syncApprovals();for(let r=0;r<rounds;r++){let pending=0;kicked.clear();
    for(const a of accounts.values())if(!a.gone){const inbox=await perform(a.engine,new RtcInbox({actor:{kind:'system',owner:a.sub},input:{limit:256}})).catch(()=>({processed:0}));pending+=inbox.processed;}
    for(const a of accounts.values())if(!a.gone){const out=await a.service.drain(a.sub).catch(()=>({sent:0,pending:0}));pending+=out.sent+out.pending;}
    if(!pending&&!network.length)return;if(network.length&&!net.hold)await H.flushNetwork();}},
   /** Steps 2–8 for entity n's queued batches only (no outbox pass). */
-  inbox:n=>perform(accounts.get(subOf(n)).engine,new RtcInbox({actor:{kind:'system',owner:subOf(n)},input:{limit:256}})),
+  inbox:async n=>{await syncApprovals();return perform(accounts.get(subOf(n)).engine,new RtcInbox({actor:{kind:'system',owner:subOf(n)},input:{limit:256}}));},
   async tick(n){const a=accounts.get(subOf(n));return perform(a.engine,new RtcTick({actor:{kind:'system',owner:a.sub}}));},
   async tickAll(){for(const a of accounts.values())if(!a.gone)await perform(a.engine,new RtcTick({actor:{kind:'system',owner:a.sub}}));},
   /** A crash: the service and engine are rebuilt over the same store (memory such as long-poll waiters is lost). */

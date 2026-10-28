@@ -15,7 +15,6 @@ import {GOOGLE_DRIVE_SETUP_FRAGMENT} from '../storage/google-drive-integration.m
 import {flagsFor,siteGlobal} from '../flags/read.mjs';
 import {systemClock,cryptoRandom,nullAudit} from '../app/providers.mjs';
 import {validateSchema,fail} from '../federation/schema.mjs';
-import {validateSlotManifest} from '../federation/extensions.mjs';
 import {validateBusManifest} from '../federation/event-buses.mjs';
 // RTC-b: reviewed rtc-purpose lines, registered like intent kinds (spec rtc-signaling §3.4; the kind stays out of DEFAULT_KINDS).
 import {REGISTERED_PURPOSES,RTC_PURPOSE_KIND,validatePurpose} from '../rtc/purposes.mjs';
@@ -25,7 +24,6 @@ export function configuredArtefacts({config,store,clock=systemClock}){
  const runtime=artefactRuntime({store,documents,flags:{for:ctx=>flagsFor(config,ctx)},clock,random:cryptoRandom,audit:nullAudit,validateBody:(body,{id,kind})=>{
   if(kind==='intent')return validateIntentKind(body).id===id;
   if(kind===RTC_PURPOSE_KIND){try{return validatePurpose(body).id===id;}catch{return false;}}
-  if(kind==='slot')return validateSlotManifest(body,id).status==='valid';
   if(kind==='bus')return validateBusManifest(body,id).status==='valid';
   if(kind==='rpc-contract')return body?.$id===id&&Object.keys(contractMethods(body)).length>0;
   if(kind===undefined||kind==='fragment'){validateSchema(body,id);return true;}return false;
@@ -52,9 +50,9 @@ export function configuredArtefactDocuments(config){
  if(cached&&revision.every((value,i)=>value===cached.revision[i])){boundedSchemas(config);return cached.documents;}
  const contracts=typeof config.FEDERATION_CONTRACTS==='string'?JSON.parse(config.FEDERATION_CONTRACTS):config.FEDERATION_CONTRACTS??{},documents={};
  // RTC-i: the rtc-signaling/v1 contract (spec §9.1) is a first-party reviewed document while the provider implements
- // the signaling slot (RTC_SIGNALING_ENABLED and EXTENSIONS_ENABLED). Review L3: it WINS over an operator registration
+ // the signaling fragment (RTC_SIGNALING_ENABLED and EXTENSIONS_ENABLED). Review L3: it WINS over an operator registration
  // of the same id, for both the plain id and its `/envelope` (one source, ahead of every other), exactly as the
- // built-in slot manifest replaces an operator fragment (packages/runtime/federation.mjs federationSchemas). An
+ // built-in signaling fragment replaces an operator fragment (packages/runtime/federation.mjs federationSchemas). An
  // operator that registered only one of the two keys can therefore never get the operator body under one key and the
  // shipped body under the other. With either flag off nothing is added and operator registrations apply as before.
  const firstParty={},envelopeOf=body=>({bindle_artefact:1,id:body.$id,kind:'rpc-contract',versions:[{version:1,prev:null,body}]});

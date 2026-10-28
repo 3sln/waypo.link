@@ -5,8 +5,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createTestEngine,OWNER} from './helpers/app-engine.mjs';
-import {AppConnections} from '../packages/apps/connections.mjs';
-import * as C from '../packages/app/domains/connections.mjs';
 import * as X from '../packages/runtime/account/classifier.mjs';
 import {GlobalSemanticBudget} from '../packages/runtime/semantic-budget.mjs';
 import {LeasedSemanticSpend} from '../packages/runtime/semantic-leases.mjs';
@@ -31,10 +29,8 @@ test('one account using its classifier allowance does not pause semantic search 
  const response=()=>({model:'clef-flash',answers:Object.fromEntries(X.CLASSIFIER_CATEGORIES.map(k=>[k,.01]))});
  const ai=X.classifierAI({binding:{async run(){return response();}},spend,clock:global.clock,version:'v1',eligible:async()=>true,admitWork:async()=>true});
  const e=await createTestEngine({clock:global.clock,providers:{config,ai}});t.after(()=>e.dispose());await e.metadata.put('owner',OWNER);
- const connections=new AppConnections({metadata:e.metadata,origin:ORIGIN,clock:e.clock.now,builtins:{classifier:X.CLASSIFIER_INTEGRATION}});
- const h=await createTestEngine({clock:e.clock,providers:{config,ai,accountStore:e.metadata,connections:C.connectionsProvider({connections,enabled:C.integrationsEnabled(config),account:async()=>({status:'active'})})}});t.after(()=>h.dispose());
+ const h=await createTestEngine({clock:e.clock,providers:{config,ai,accountStore:e.metadata}});t.after(()=>h.dispose());
  const perform=(Operation,input,actor=owner)=>h.perform(new Operation({actor,...input===undefined?{}:{input}}));
- const record=await perform(C.ConnectBuiltIn,{integration:'classifier'});await perform(C.OccupySlot,{slot:X.CLASSIFIER_SLOT,connection:record.id});
  let ok=0;for(let i=0;i<40;i++){try{await perform(X.ClassifierDecide,{text:'probe '+i,hints:[]},system);ok++;}catch(error){if(error.code!=='semantic_global_budget')throw error;break;}}
  assert.ok(ok>0);
  const other=await createTestEngine();t.after(()=>other.dispose());

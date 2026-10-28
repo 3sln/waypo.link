@@ -1,0 +1,28 @@
+{
+ "id": "https://spec.bindle.example/extensions/brokered-resources/v1",
+ "title": "Brokered resources",
+ "description": "Use resources hosted by your connected integrations, with access ending when you disconnect them.",
+ "options": {
+  "jwks_uri": {
+   "title": "Brokering keys",
+   "type": "url",
+   "maxLength": 2048,
+   "endpoint": "public"
+  },
+  "preferences_contract": {
+   "title": "Preferences contract",
+   "type": "url",
+   "maxLength": 256
+  },
+  "introspection_endpoint": {
+   "title": "Introspection endpoint",
+   "type": "url",
+   "maxLength": 2048,
+   "endpoint": "audience",
+   "cardinality": {
+    "min": 0,
+    "max": 1
+   }
+  }
+ }
+}

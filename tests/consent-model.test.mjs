@@ -3,7 +3,9 @@ import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {createTestEngine} from './helpers/app-engine.mjs';
 import {ACCOUNT_OPERATIONS} from '../packages/app/operations.mjs';
-import {slotDigest} from '../packages/federation/extensions.mjs';
+import {canonical,digest} from '../packages/core/records.mjs';
+// sha256 over the canonical document (the former slotDigest; reviewed contract digests use the same reading).
+const slotDigest=async(crypto,schema)=>'sha256-'+await digest(crypto,canonical(schema));
 import {createConsentProvider,ConsentMethod,ConsentContract,ConsentBus,ConsentGrant,ConsentModel,CONSENT_OPERATIONS,REVIEWED_CONTRACTS,EVENT_BUS_CONTRACT,chooseLocale} from '../packages/consent/index.mjs';
 
 const app='https://tasks.example/client',unreviewed='https://unknown.example/client',base='https://3sln.me/artefacts/contracts/',storage=base+'object-storage/v1',third='https://calendar.example/contracts/v1',self='https://api.tasks.example/contracts/v1',feed='https://calendar.example/feeds/v1',ownFeed='https://api.tasks.example/feeds/v1',settings='https://calendar.example/settings/v1';

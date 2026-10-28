@@ -3,6 +3,7 @@
 import {strictJSON,jcs,plain,scalarString,textEncoder} from './strict-json.mjs';
 import {canonical} from './primitives.mjs';
 import {validateIntentKind} from '../intents/schema.mjs';
+import {fieldOutcome} from './fragments.mjs';
 
 export const ARTEFACT_LIMITS=Object.freeze({envelopeBytes:262144,bodyBytes:65536,bodyDepth:32,bodyMembers:4096,versions:1024});
 export const DIGEST_PATTERN=/^sha256-[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$/;
@@ -115,15 +116,12 @@ const pointer=p=>p.length?`/${p.map(pointerPart).join('/')}`:'';
 const fieldName=k=>/^[A-Za-z][A-Za-z0-9_-]{0,63}$/.test(k);
 const text=(v,n)=>typeof v==='string'&&scalarString(v)&&!controls.test(v)&&[...v].length<=n&&v.length>0;
 const distinctStrings=(v,max)=>Array.isArray(v)&&v.length>0&&v.length<=max&&new Set(v).size===v.length&&v.every(x=>text(x,2048));
+// One member table for fragments (packages/core/fragments.mjs, protocol §3; extensions CR-X3-30). Growth adds only
+// fields with `cardinality.min` 0.
 function field(v,{optional=false,title=true}={}){
- if(!plain(v)||Object.keys(v).some(k=>!['title','description','type','cardinality','contracts','values','extensible','minLength','maxLength','minimum','maximum'].includes(k)))return false;
- if((title||v.title!==undefined)&&!text(v.title,200)||v.description!==undefined&&!text(v.description,1000)||!['string','boolean','integer','number','enum','url','resource'].includes(v.type))return false;
- const c=v.cardinality??{min:1,max:1};if(!exact(c,['min','max'])||!Number.isSafeInteger(c.min)||c.min<0||!positive(c.max)||c.max>16||c.min>c.max||optional&&c.min!==0)return false;
- if(optional&&v.cardinality?.min!==0)return false;
- if(v.type==='resource'){if(!distinctStrings(v.contracts,16))return false;try{v.contracts.forEach(artefactURL);}catch{return false;}}else if(v.contracts!==undefined)return false;
- if(v.type==='enum'){if(!distinctStrings(v.values,32)||v.extensible!==undefined&&typeof v.extensible!=='boolean')return false;}else if(v.values!==undefined||v.extensible!==undefined)return false;
- if(['string','url'].includes(v.type)){if(!positive(v.maxLength)||v.maxLength>2048||v.minLength!==undefined&&(!Number.isSafeInteger(v.minLength)||v.minLength<0||v.minLength>v.maxLength))return false;}else if(v.minLength!==undefined||v.maxLength!==undefined)return false;
- if(['integer','number'].includes(v.type)){if(!Number.isSafeInteger(v.minimum)||!Number.isSafeInteger(v.maximum)||v.minimum>v.maximum)return false;}else if(v.minimum!==undefined||v.maximum!==undefined)return false;return true;
+ if(fieldOutcome(v,{optionalTitle:!title}).status!=='valid')return false;
+ if(v.type==='resource'){try{v.contracts.forEach(artefactURL);}catch{return false;}}
+ return !optional||v.cardinality?.min===0;
 }
 // Schema traversal follows schema positions only, never examples/defaults/const. Local refs are followed
 // with a visited set, so recursive definitions work without mistaking annotation data for schemas.
@@ -162,6 +160,7 @@ function schemaGraph(root,base=[]){
  };return {resolve,walk};
 }
 const rule=(pattern,operation,allow)=>Object.freeze({pattern,operation,allow});
+// Legacy bus manifests keep their `slot` container until events CR-X3-09 moves them to a field member.
 const optionRules=['occupant','consumer'].map(k=>rule(`/slot/options/${k}`,'add-member',c=>Object.keys(c.nextParent).length<=32&&fieldName(c.key)&&field(c.value,{optional:true,title:false})));
 const fragmentRules=[rule('/fields','add-member',c=>Object.keys(c.nextParent).length<=32&&fieldName(c.key)&&field(c.value,{optional:true})),rule('/fields/*/values','append',c=>at(c.old,c.segments.slice(0,-1))?.type==='enum'&&at(c.old,c.segments.slice(0,-1))?.extensible===true&&text(c.value,2048)&&!c.parent.includes(c.value)&&!c.added.slice(0,c.index).includes(c.value)&&c.parent.length+c.added.length<=32)];
 const intentRules=[
@@ -172,7 +171,7 @@ const intentRules=[
 ];
 export const DEFAULT_KINDS=Object.freeze({
  intent:Object.freeze({rules:Object.freeze(intentRules),validate:body=>{validateIntentKind(body);return true;}}),
- fragment:Object.freeze({rules:Object.freeze(fragmentRules)}),slot:Object.freeze({rules:Object.freeze(optionRules)}),
+ fragment:Object.freeze({rules:Object.freeze(fragmentRules)}),
  bus:Object.freeze({rules:Object.freeze([...optionRules,rule('/slot/bus/types','append',c=>c.old.slot?.bus?.types_extensible===true&&typeof c.value==='string'&&/^[a-z][a-z0-9.-]{0,47}$/.test(c.value)&&!c.parent.includes(c.value)&&!c.added.slice(0,c.index).includes(c.value))]),schema:'bus'}),
  'rpc-contract':Object.freeze({rules:Object.freeze([]),schema:'rpc'}),
  'submission-schema':Object.freeze({rules:Object.freeze([]),schema:'request'}),'manifest-profile':Object.freeze({rules:Object.freeze([]),schema:'profile'}),document:Object.freeze({rules:Object.freeze([])})

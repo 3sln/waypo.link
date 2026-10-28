@@ -1,14 +1,19 @@
 import {siteGlobal} from '../flags/read.mjs';
 import {digest} from '../core/records.mjs';
 import {validateIntegrationManifest} from '../federation/integrations.mjs';
-import {validateSlotManifest,validateExtensions,createSlotOperation} from '../federation/extensions.mjs';
-import {MESSAGING_INGRESS_SLOT} from '../links/types.mjs';
-import classifierSlot from '../../docs/artefacts/slots/item-classifier-v1.json' with {type:'json'};
-// The Bindle Messaging spec's published slot documents (docs/spec/messaging.md §2.1, §9). One copy each: the provider
-// pins these exact documents, and the messaging app's integration manifest pins their digests (DEVLOG 2026-10-27; the
-// former core copy of the intake slot differed from the app's in field name and consumers).
-import messagingIngressSlot from '../../docs/artefacts/slots/messaging-ingress-v1.json' with {type:'json'};
-import publicIntakeSlot from '../../docs/artefacts/slots/public-message-intake-v1.json' with {type:'json'};
+import {createFieldOperation,PROVIDER_REGISTRY} from '../federation/extensions.mjs';
+import {readExtensions} from '../core/extensions.mjs';
+import {fragmentOutcome,fieldAttributes,consumes} from '../core/fragments.mjs';
+import {canonical} from '../core/records.mjs';
+import {appendSeverance} from '../federation/brokered-severance.mjs';
+import {FEATURE_DEFINITIONS,SUSPENSION_REVOCATION_MS} from '../app/domains/provider-features.mjs';
+import {MESSAGING_INGRESS_FRAGMENT} from '../links/types.mjs';
+// Extensions rev 3.2 (CR-X3-26): the former slot documents, republished as ordinary fragments at new URLs. The provider
+// pins these exact documents; the classifier fragment is application-consumed (Parlay requests it as a setup fragment),
+// the intake and ingress fragments are consumed only by provider features.
+import classifierFragment from '../../docs/artefacts/fragments/item-classifier-v1.json' with {type:'json'};
+import messagingIngressFragment from '../../docs/artefacts/fragments/messaging-ingress-v1.json' with {type:'json'};
+import publicIntakeFragment from '../../docs/artefacts/fragments/public-intake-v1.json' with {type:'json'};
 import {REMOVAL_RECORD,REMOVAL_OPEN,removalOpen} from '../app/domains/app-removal.mjs';
 export class AppConnectionError extends Error{constructor(code,message,status=400){super(message);Object.assign(this,{code,status});}}
 const fail=(code,message,status)=>{throw new AppConnectionError(code,message,status);};
@@ -23,22 +28,26 @@ const LIVE=['configuring','active','degraded'],SERVING=['active','degraded'],PAU
 export const connectionStatus=state=>LIVE.includes(state)?'active':state==='disconnected'?'disconnected':'suspended';
 export const connectionState=r=>r?.state??(r?.status==='active'?'active':'disconnected');
 const valid=r=>r?.kind==='app-connection'&&r.provider==='app'&&Number.isSafeInteger(r.generation)&&r.generation>0&&(r.state===undefined||CONNECTION_STATES.includes(r.state)&&r.status===connectionStatus(r.state));
-// Slot occupancy is the owner's value for the slot's resource field (extensions §1): one ordered record per slot.
-// Outbox rows are the transactional events later slices drain (X6 delivery, X7 credential revocation, X8 projection);
-// cascade rows are durable intents for effects owned by other modules (key-delegation revocation), drained after commit.
-const SLOT='connections/slot/',OUTBOX='connections/outbox/',CASCADE='connections/cascade/',CASCADE_ALL=CASCADE+'~all',META='connections/meta',LIFECYCLE_STATE='lifecycle/state-v1';
-export const OUTBOX_LIMIT=4096,CASCADE_LIMIT=256,SLOT_RECORDS_LIMIT=64,RECENT_AUTH_MS=900000;
+// Extensions rev 3.2 (§3–§6): the owner's value of each provider-consumable field of a recognized fragment is one ordered
+// record per field (entries are "seats": a connection, optionally a brokered record, in owner order). Provider features
+// consume those fields only through grants (feature records) that the owner enables. Outbox rows are the transactional
+// events later slices drain (X6 delivery, X7 credential revocation, X8 projection); cascade rows are durable intents for
+// effects owned by other modules (key-delegation revocation), drained after commit. Notices are owner-only records
+// (post-connection announcements, feature suspension and revocation).
+// Local revision 2 slot rows (`connections/slot/`) are not migrated: they are deleted on first touch (CR-X3-29).
+const FIELD='connections/field/',LEGACY_SLOT='connections/slot/',FEATURE='connections/feature/',NOTICE='connections/notice/',ANNOUNCED='connections/announced/',MUTED='connections/announce-muted/',OUTBOX='connections/outbox/',CASCADE='connections/cascade/',CASCADE_ALL=CASCADE+'~all',META='connections/meta',LIFECYCLE_STATE='lifecycle/state-v1',RECORD='integrations/record/';
+export const OUTBOX_LIMIT=4096,CASCADE_LIMIT=256,FIELD_RECORDS_LIMIT=64,RECENT_AUTH_MS=900000,NOTICE_LIMIT=64;
 const BLOCKED=['suspended','purge-review','purging'];
-// Slots whose occupant holds key-delegation.v1 certificates (packages/identity/delegation.mjs): a change of occupant,
+// Fields whose value holds key-delegation.v1 certificates (packages/identity/delegation.mjs): a change of value entry,
 // generation, ingress or consented purposes revokes or reconciles them through a cascade row (review KD-4).
-export const DELEGATION_SLOTS=Object.freeze([MESSAGING_INGRESS_SLOT]);
-// Provider-recognized slot manifests (trusted pins, exact URL).
+export const DELEGATION_FIELDS=Object.freeze([MESSAGING_INGRESS_FRAGMENT]);
 const freeze=v=>{if(v&&typeof v==='object'){Object.values(v).forEach(freeze);Object.freeze(v);}return v;};
-export const MESSAGING_INGRESS_MANIFEST=freeze(messagingIngressSlot);
-export const ITEM_CLASSIFIER_MANIFEST=freeze(classifierSlot);
-export const PUBLIC_INTAKE_MANIFEST=freeze(publicIntakeSlot);
-export const RECOGNIZED_SLOTS=Object.freeze({[MESSAGING_INGRESS_SLOT]:MESSAGING_INGRESS_MANIFEST,[classifierSlot.id]:ITEM_CLASSIFIER_MANIFEST});
-export const recognizedSlots=config=>siteGlobal(config,'EMAIL_BRIDGE_ENABLED')?{...RECOGNIZED_SLOTS,[PUBLIC_INTAKE_MANIFEST.id]:PUBLIC_INTAKE_MANIFEST}:RECOGNIZED_SLOTS;
+export const MESSAGING_INGRESS_FRAGMENT_DOCUMENT=freeze(messagingIngressFragment);
+export const ITEM_CLASSIFIER_FRAGMENT_DOCUMENT=freeze(classifierFragment);
+export const PUBLIC_INTAKE_FRAGMENT_DOCUMENT=freeze(publicIntakeFragment);
+/** Provider-consumable fields this provider recognizes (trusted pins, exact URL -> fragment document). */
+export const RECOGNIZED_FIELDS=Object.freeze({[MESSAGING_INGRESS_FRAGMENT_DOCUMENT.id]:MESSAGING_INGRESS_FRAGMENT_DOCUMENT,[PUBLIC_INTAKE_FRAGMENT_DOCUMENT.id]:PUBLIC_INTAKE_FRAGMENT_DOCUMENT});
+export const recognizedFields=()=>RECOGNIZED_FIELDS;
 const pad=n=>String(n).padStart(16,'0');
 const plain=v=>v!==null&&typeof v==='object'&&!Array.isArray(v)&&Object.getPrototypeOf(v)===Object.prototype;
 const only=(v,names)=>plain(v)&&Object.keys(v).every(k=>names.includes(k));
@@ -48,7 +57,7 @@ const httpsId=v=>{if(typeof v!=='string'||v.length>256)return false;try{const u=
 const purposesValid=v=>Array.isArray(v)&&v.length<=8&&v.every((p,i)=>httpsId(p)&&(i===0||v[i-1]<p));
 const bytes=v=>new TextEncoder().encode(JSON.stringify(v)).length;
 const epochOf=s=>Number.isSafeInteger(s?.capabilityEpoch)?s.capabilityEpoch:0;
-const requiresSetup=m=>Boolean(m?.setup?.fragments?.some(f=>f.required===true)||m?.extensions?.some(e=>e.role==='consumer'&&e.required===true));
+const requiresSetup=m=>Boolean(m?.setup?.fragments?.some(f=>f.required===true));
 const bump=(r,field='generation')=>{if(!Number.isSafeInteger(r[field])||r[field]>=Number.MAX_SAFE_INTEGER)fail('unavailable','Connection generation unavailable.',503);r[field]++;};
 const cnxOf=entry=>`${entry.seat}.${entry.generation}`;
 /** Validates an approval snapshot (packages/federation/integrations.mjs integrationSnapshot): the manifest must re-derive
@@ -62,18 +71,19 @@ export function connectionSnapshotValid(s,clientId,{reserved=[],artefactVersions
  let r;try{r=validateIntegrationManifest(s.manifest,{artefactVersions,clientId,confidential:s.authMethod==='private_key_jwt',redirectUris:s.redirectUris,jwksUri:s.jwksUri,reserved});}catch{return false;}
  return r.status==='valid'&&JSON.stringify(r.manifest)===JSON.stringify(s.manifest);
 }
-/** A provider-authored built-in manifest: {v:1, setup?, extensions?, resources?:{contracts}} with valid extension claims. */
+/** A provider-authored built-in manifest: {v:1, setup?, resources?:{contracts}} (extensions rev 3.2: no `extensions`). */
 export function builtInManifestValid(m){
- if(!only(m,['v','setup','extensions','resources'])||m.v!==1||bytes(m)>8192)return false;
+ if(!only(m,['v','setup','resources'])||m.v!==1||bytes(m)>8192)return false;
  if(m.resources!==undefined&&(!only(m.resources,['contracts'])||!Array.isArray(m.resources.contracts)||m.resources.contracts.length>32||!m.resources.contracts.every(httpsId)))return false;
- if(m.extensions!==undefined&&(!Array.isArray(m.extensions)||validateExtensions(m.extensions,{kind:'integration'}).some(r=>r.status==='invalid')))return false;
  return m.setup===undefined||only(m.setup,['fragments'])&&Array.isArray(m.setup.fragments)&&m.setup.fragments.length<=8;
 }
 export class AppConnections{
- /** `slots`: provider-recognized slot manifests by exact URL (trusted pins). `builtins`: provider-authored built-in
-  * integrations by id -> {name, manifest}. `severed(owner)`: optional hook run after a legacy disconnect that wrote
-  * cascade rows (the account controller drains them); its failure never undoes the committed disconnect. */
- constructor({metadata,origin,config,clock=()=>Date.now(),slots=RECOGNIZED_SLOTS,builtins={},severed,subjectDeleted,uuid=()=>crypto.randomUUID()}){Object.assign(this,{metadata,origin,config,clock,slotPins:slots,builtins,severed,subjectDeleted,uuid});}
+ /** `fields`: provider-recognized fragments with a provider-consumable resource field, by exact URL (trusted pins).
+  * `declarations()`: the provider's own feature declarations right now, `{manifest:{issuer, extensions}, blocked:[spec]}`
+  * (packages/app/domains/provider-features.mjs), read on every feature operation so suspension is immediate.
+  * `builtins`: provider-authored built-in integrations by id -> {name, manifest}. `severed(owner)`: optional hook run
+  * after a legacy disconnect that wrote cascade rows; its failure never undoes the committed disconnect. */
+ constructor({metadata,origin,config,clock=()=>Date.now(),fields=RECOGNIZED_FIELDS,declarations=async()=>({manifest:{extensions:[]},blocked:[]}),builtins={},severed,subjectDeleted,uuid=()=>crypto.randomUUID()}){Object.assign(this,{metadata,origin,config,clock,fieldPins:fields,declarations,builtins,severed,subjectDeleted,uuid});}
  async id(owner,clientId){const encoded=await digest(globalThis.crypto,`app-connection/v1\0${owner}\0${clientId}`);const hex=[...atob(encoded.replace(/-/g,'+').replace(/_/g,'/'))].slice(0,16).map(c=>c.charCodeAt(0).toString(16).padStart(2,'0')).join('');return `${hex.slice(0,8)}-${hex.slice(8,12)}-8${hex.slice(13,16)}-a${hex.slice(17,20)}-${hex.slice(20,32)}`;}
  async binding(owner,clientId){const id=await this.id(owner,clientId);const r=await this.metadata.get(prefix+id);if(r&&!valid(r))fail('unavailable','Invalid connection record.',503);return {id,generation:r?.generation??0,notificationGeneration:r?.notifications?.generation??1};}
  async registerBrowser(owner){return this.register(owner,{id:`${this.origin}/automation/browser`,name:'Browser automation'},undefined,{transport:'browser',provenance:{kind:'owner-browser-consent'}});}
@@ -104,6 +114,8 @@ export class AppConnections{
     events.push({type:'connection-activated',connection:id,clientId:client.id,generation,state:record.state,kind:trusted.integration.kind});
    }else if(same&&prior.state!==undefined)for(const k of ['state','configured','stateChangedAt','fence','integration'])if(prior[k]!==undefined)record[k]=structuredClone(prior[k]);
    await tx.put(prefix+id,record);if(events.length)await this.#emit(tx,events);
+   // Extensions §6: a newly active integration connection may be announced to the owner (local, owner-only).
+   if(trusted.integration&&!same)await this.#announce(tx,record);
    if(changed){await this.#cascade(tx,this.#delegationRows(await this.#affected(tx,id),'system'));await this.#reseat(tx,record);}
    return this.view(record);
   });
@@ -117,7 +129,7 @@ export class AppConnections{
   return true;}
  async notificationSettings(owner,id,input){return this.metadata.transaction(async tx=>{const r=await tx.get(prefix+id);if(!valid(r)||r.owner!==owner||r.transport!=='bindle')fail('not_found','App connection not found.',404);const current=r.notifications??{enabled:false,generation:1};if(!Number.isSafeInteger(current.generation)||current.generation<1||typeof current.enabled!=='boolean')fail('unavailable','Notification settings unavailable.',503);if(input===undefined)return current;if(!input||Object.keys(input).length!==1||typeof input.enabled!=='boolean')fail('invalid_request','Choose whether this app may send messages.');if(r.status!=='active')fail('invalid_token','Reconnect this application first.',401);if(current.enabled!==input.enabled){if(current.generation>=Number.MAX_SAFE_INTEGER)fail('unavailable','Notification settings unavailable.',503);r.notifications={enabled:input.enabled,generation:current.generation+1};await tx.put(prefix+id,r);}return r.notifications??current;});}
  /** Severs one connection (integrations §7.1 Disconnect). A legacy record keeps exactly its old effect; a migrated one,
-  * or one holding slot seats, also vacates every seat, enqueues `connection-revoked` (terminal) and the delegation
+  * or one holding field entries, also vacates every entry, enqueues `connection-revoked` (terminal) and the delegation
   * cascade in the same transaction, then runs the `severed` hook. */
  async disconnect(owner,id,{reason='uninstalled',expectedGeneration}={}){
   if(!/^[a-f0-9-]{36}$/.test(id))fail('not_found','App connection not found.',404);
@@ -160,38 +172,106 @@ export class AppConnections{
  async #emit(tx,events){const m=await this.#meta(tx),at=this.clock();for(const e of events){m.seq++;await tx.put(OUTBOX+pad(m.seq),{seq:m.seq,at,...e});if(m.seq-m.low>OUTBOX_LIMIT){m.low++;await tx.delete?.(OUTBOX+pad(m.low));}}await tx.put(META,m);}
  // Over-revocation is always safe: past the bound, pending cascades collapse into one revoke-all row.
  async #cascade(tx,rows){if(!rows.length)return;const m=await this.#meta(tx),at=this.clock();for(const row of rows){if(m.pending>=CASCADE_LIMIT){await tx.put(CASCADE_ALL,{kind:'delegations',all:true,reason:'system',at});continue;}m.cascade++;m.pending++;await tx.put(CASCADE+pad(m.cascade),{...row,at});}await tx.put(META,m);}
- #slot(url){
-  const schema=typeof url==='string'&&Object.hasOwn(this.slotPins,url)?this.slotPins[url]?.schema??this.slotPins[url]:null;
-  let result=null;try{result=schema?validateSlotManifest(schema,url):null;}catch{result=null;}if(result?.status!=='valid')fail('unsupported_slot','This slot is not recognized here.',400);
-  const field=result.schema.fields[result.slot.field];return {url,schema:result.schema,policy:result.slot,max:field.cardinality.max,contracts:field.contracts};
+ #field(url){
+  const doc=typeof url==='string'&&Object.hasOwn(this.fieldPins,url)?this.fieldPins[url]:null;
+  if(!doc||fragmentOutcome(doc,url).status!=='valid')fail('unsupported_field','This field is not recognized here.',400);
+  const found=Object.entries(doc.fields).find(([,f])=>f.type==='resource'&&consumes(f,'provider'));if(!found)fail('unsupported_field','This field is not recognized here.',400);
+  const [name,field]=found,a=fieldAttributes(field);
+  return {url,schema:doc,name,field,selection:a.selection,consumers:a.consumers,announce:a.announce,max:a.max,contracts:[...a.contracts]};
  }
- async #seats(tx,url){const key=SLOT+await digest(globalThis.crypto,url),r=await tx.get(key);return {key,record:r?.slot===url&&Array.isArray(r.occupants)?r:{slot:url,revision:0,occupants:[]}};}
- async #slotRows(tx){const rows=[...(await tx.list({prefix:SLOT,limit:SLOT_RECORDS_LIMIT+1})).entries()];if(rows.length>SLOT_RECORDS_LIMIT)fail('unavailable','Too many slot records.',503);return rows.filter(([,v])=>typeof v?.slot==='string'&&Array.isArray(v.occupants));}
- #summary(rec){return rec.occupants.map(e=>({seat:e.seat,connection:e.connection,clientId:e.clientId,generation:e.generation}));}
+ async #values(tx,url){const key=FIELD+await digest(globalThis.crypto,url),r=await tx.get(key);return {key,record:r?.fragment===url&&Array.isArray(r.entries)?r:{fragment:url,revision:0,entries:[]}};}
+ async #fieldRows(tx){
+  // CR-X3-29: revision 2 slot rows are reset, never migrated (pre-release data, DEVLOG).
+  for(const [key] of [...(await tx.list({prefix:LEGACY_SLOT,limit:FIELD_RECORDS_LIMIT+1})).entries()])await tx.delete(key);
+  const rows=[...(await tx.list({prefix:FIELD,limit:FIELD_RECORDS_LIMIT+1})).entries()];if(rows.length>FIELD_RECORDS_LIMIT)fail('unavailable','Too many field records.',503);return rows.filter(([,v])=>typeof v?.fragment==='string'&&Array.isArray(v.entries));
+ }
+ #summary(rec){return rec.entries.map(e=>({seat:e.seat,connection:e.connection,clientId:e.clientId,generation:e.generation}));}
  async #vacateConnection(tx,id,{keep}={}){
   const removed=[];
-  for(const [key,rec] of await this.#slotRows(tx)){
-   const gone=rec.occupants.filter(e=>e.connection===id&&!keep?.(rec.slot,e));if(!gone.length)continue;
-   rec.occupants=rec.occupants.filter(e=>!gone.includes(e));rec.revision=(rec.revision??0)+1;await tx.put(key,rec);
-   for(const e of gone)removed.push({slot:rec.slot,entry:e});
-   await this.#emit(tx,[...gone.map(e=>({type:'occupant-removed',slot:rec.slot,seat:e.seat,connection:id,clientId:e.clientId,generation:e.generation})),{type:'slot-changed',slot:rec.slot,revision:rec.revision,occupants:this.#summary(rec)}]);
+  for(const [key,rec] of await this.#fieldRows(tx)){
+   const gone=rec.entries.filter(e=>e.connection===id&&!keep?.(rec.fragment,e));if(!gone.length)continue;
+   rec.entries=rec.entries.filter(e=>!gone.includes(e));rec.revision=(rec.revision??0)+1;await tx.put(key,rec);
+   for(const e of gone)removed.push({fragment:rec.fragment,entry:e});
+   await this.#emit(tx,[...gone.map(e=>({type:'value-removed',fragment:rec.fragment,seat:e.seat,connection:id,clientId:e.clientId,generation:e.generation})),{type:'field-changed',fragment:rec.fragment,revision:rec.revision,entries:this.#summary(rec)}]);
+   await this.#withdrawApprovals(tx,rec.fragment,gone);
   }
   return removed;
  }
- // Delegation cascades for seats leaving (or changing generation in) a delegation slot.
- #delegationRows(changes,reason){return changes.filter(c=>DELEGATION_SLOTS.includes(c.slot)).map(c=>({kind:'delegations',clientId:c.entry.clientId,reason}));}
- #eligible(r,slot){
+ // Delegation cascades for entries leaving (or changing generation in) a delegation field.
+ #delegationRows(changes,reason){return changes.filter(c=>DELEGATION_FIELDS.includes(c.fragment)).map(c=>({kind:'delegations',clientId:c.entry.clientId,reason}));}
+ // Extensions §5.1: a connection is a candidate (a brokered offer, or a built-in) when the contracts recorded for it at
+ // the connection include every contract the field requires. Declarations, names and labels never qualify one.
+ #eligible(r,field){
   const manifest=r.integration?.snapshot?.manifest??r.integration?.manifest;if(!manifest)return false;
-  const declared=(manifest.extensions??[]).some(e=>e.slot===slot.url&&e.role==='occupant'),offered=manifest.resources?.contracts??[];
-  return declared&&slot.contracts.every(c=>offered.includes(c));
+  const offered=manifest.resources?.contracts??[];return field.contracts.every(c=>offered.includes(c));
  }
- // Re-binds this connection's seats to its new generation (resume/approve), dropping seats it no longer qualifies for.
+ // Re-binds this connection's entries to its new generation (resume/approve), dropping entries it no longer qualifies for.
  async #reseat(tx,r){
-  const removed=await this.#vacateConnection(tx,r.id,{keep:(url,e)=>{try{return this.#eligible(r,this.#slot(url));}catch{return false;}}});
-  for(const [key,rec] of await this.#slotRows(tx)){let changed=false;for(const e of rec.occupants)if(e.connection===r.id&&e.generation!==r.generation){e.generation=r.generation;changed=true;}if(changed){rec.revision=(rec.revision??0)+1;await tx.put(key,rec);await this.#emit(tx,[{type:'slot-changed',slot:rec.slot,revision:rec.revision,occupants:this.#summary(rec)}]);if(DELEGATION_SLOTS.includes(rec.slot))await this.#cascade(tx,[{kind:'reconcile'}]);}}
+  const removed=await this.#vacateConnection(tx,r.id,{keep:(url,e)=>{try{return this.#eligible(r,this.#field(url));}catch{return false;}}});
+  for(const [key,rec] of await this.#fieldRows(tx)){let changed=false;for(const e of rec.entries)if(e.connection===r.id&&e.generation!==r.generation){e.generation=r.generation;changed=true;}if(changed){rec.revision=(rec.revision??0)+1;await tx.put(key,rec);await this.#emit(tx,[{type:'field-changed',fragment:rec.fragment,revision:rec.revision,entries:this.#summary(rec)}]);if(DELEGATION_FIELDS.includes(rec.fragment))await this.#cascade(tx,[{kind:'reconcile'}]);}}
   await this.#cascade(tx,this.#delegationRows(removed,'system'));
  }
- #affected=async(tx,id)=>(await this.#slotRows(tx)).flatMap(([,rec])=>rec.occupants.filter(e=>e.connection===id).map(entry=>({slot:rec.slot,entry})));
+ #affected=async(tx,id)=>(await this.#fieldRows(tx)).flatMap(([,rec])=>rec.entries.filter(e=>e.connection===id).map(entry=>({fragment:rec.fragment,entry})));
+
+ // ---- Provider-feature grants (extensions §4.2) ----
+ async #featureKey(spec){return FEATURE+await digest(globalThis.crypto,spec);}
+ async #featureRecord(tx,spec){const r=await tx.get(await this.#featureKey(spec));return r?.spec===spec?r:null;}
+ async #featureRecords(tx){const out=[];for(const spec of Object.keys(FEATURE_DEFINITIONS)){const r=await this.#featureRecord(tx,spec);if(r)out.push(r);}return out;}
+ async #featuresFor(tx,url){return (await this.#featureRecords(tx)).filter(r=>r.fragment===url);}
+ async #putFeature(tx,r){await tx.put(await this.#featureKey(r.spec),r);}
+ #descriptor(spec){const d=PROVIDER_REGISTRY.get(spec);return {title:d?.title??spec,description:d?.description??'',host:new URL(spec).host};}
+ // The live declaration state of every provider feature, read through the trusted port (never request input).
+ async #declarationState(){
+  let out;try{out=await this.declarations();}catch{out=null;}
+  const valid=out?new Set(readExtensions(out.manifest,{registry:PROVIDER_REGISTRY,issuer:out.manifest?.issuer}).extensions.keys()):new Set();
+  return {valid,blocked:new Set(Array.isArray(out?.blocked)?out.blocked:[])};
+ }
+ async #notice(tx,notice){
+  const rows=[...(await tx.list({prefix:NOTICE,limit:NOTICE_LIMIT+8})).entries()].sort(([a],[b])=>a<b?-1:1);for(const [key] of rows.slice(0,Math.max(0,rows.length-NOTICE_LIMIT+1)))await tx.delete(key);
+  const m=await this.#meta(tx);m.notice=(m.notice??0)+1;await tx.put(META,m);const id=pad(m.notice);await tx.put(NOTICE+id,{id,at:this.clock(),...notice});
+ }
+ // Revokes the brokered credentials minted under `grant` for the brokered records among `entries` (integrations §5.3).
+ async #severGrant(tx,grant,entries,type){
+  const rows=[];for(const e of entries){if(typeof e.resource!=='string')continue;const rec=await tx.get(RECORD+e.resource);if(rec?.v===1&&rec.connection===e.connection)rows.push({type,connection:rec.connection,generation:rec.generation,resource:rec.resource,grants:[grant]});}
+  await appendSeverance(tx,rows,{clock:this.clock});
+ }
+ async #revokeFeature(tx,r,reason,entries){
+  const old=r.grant;r.state='revoked';r.reason=reason;r.revokedAt=this.clock();delete r.suspendedAt;await this.#putFeature(tx,r);
+  await this.#severGrant(tx,old,entries??(await this.#values(tx,r.fragment)).record.entries.filter(e=>r.approved.includes(e.seat)),'feature-revoked');
+  await this.#emit(tx,[{type:'feature-revoked',feature:r.spec,grant:old,reason}]);await this.#notice(tx,{kind:'feature-revoked',feature:r.spec,reason});
+ }
+ // Applies declaration loss, return, blocking and the 30-day bound to every feature grant, in the caller's transaction.
+ async #syncFeatures(tx,state){
+  const now=this.clock(),changes=[];
+  for(const r of await this.#featureRecords(tx)){
+   if(!['active','suspended'].includes(r.state))continue;
+   if(state.blocked.has(r.spec)){await this.#revokeFeature(tx,r,'blocked');changes.push({feature:r.spec,state:'revoked'});continue;}
+   // 30 days of continuous suspension revoke, even when nothing looked during them (checked before any resumption).
+   if(r.state==='suspended'&&now-r.suspendedAt>=SUSPENSION_REVOCATION_MS){await this.#revokeFeature(tx,r,'suspension-expired');changes.push({feature:r.spec,state:'revoked'});continue;}
+   if(r.state==='active'&&!state.valid.has(r.spec)){r.state='suspended';r.suspendedAt=now;r.reason='declaration';await this.#putFeature(tx,r);await this.#emit(tx,[{type:'feature-suspended',feature:r.spec,grant:r.grant}]);await this.#notice(tx,{kind:'feature-suspended',feature:r.spec});changes.push({feature:r.spec,state:'suspended'});}
+   else if(r.state==='suspended'&&state.valid.has(r.spec)){r.state='active';delete r.suspendedAt;delete r.reason;await this.#putFeature(tx,r);await this.#emit(tx,[{type:'feature-resumed',feature:r.spec,grant:r.grant}]);changes.push({feature:r.spec,state:'active'});}
+   if(r.state==='suspended'&&now-r.suspendedAt>=SUSPENSION_REVOCATION_MS){await this.#revokeFeature(tx,r,'suspension-expired');changes.push({feature:r.spec,state:'revoked'});}
+  }
+  return changes;
+ }
+ // An approval set changed (value change, reapproval): a new `bindle.grant`, and credentials of the old one revoked.
+ async #regrant(tx,r,entries){const old=r.grant;r.grant=this.uuid();r.revision=(r.revision??0)+1;await this.#putFeature(tx,r);await this.#severGrant(tx,old,entries,'feature-regranted');await this.#emit(tx,[{type:'feature-regranted',feature:r.spec,grant:r.grant,previous:old}]);}
+ async #withdrawApprovals(tx,url,gone){
+  const seats=gone.map(e=>e.seat);for(const r of await this.#featuresFor(tx,url)){if(!r.approved?.some(s=>seats.includes(s)))continue;r.approved=r.approved.filter(s=>!seats.includes(s));await this.#regrant(tx,r,gone);}
+ }
+ // Extensions §6: post-connection announcements, computed locally from the contracts recorded at the connection. Only
+ // for `announce` fields an enabled (live) provider feature consumes, never for the provider's own built-ins, at most
+ // once per (field, supplier). Nothing is sent to the integration; the notice is an owner-only record.
+ async #announce(tx,r){
+  if(r.integration?.kind!=='external'||!SERVING.includes(r.state))return;
+  for(const url of Object.keys(this.fieldPins)){
+   let field;try{field=this.#field(url);}catch{continue;}if(!field.announce||!this.#eligible(r,field))continue;
+   const consumers=(await this.#featuresFor(tx,url)).filter(f=>f.state==='active');if(!consumers.length)continue;
+   if(await tx.get(MUTED+await digest(globalThis.crypto,url))===true)continue;
+   const marker=ANNOUNCED+await digest(globalThis.crypto,`${url}\0${r.clientId}`);if(await tx.get(marker))continue;await tx.put(marker,{at:this.clock()});
+   await this.#notice(tx,{kind:'announcement',template:'candidate-available',fragment:url,field:field.name,supplier:{clientId:r.clientId,origin:r.appOrigin??new URL(r.clientId).origin},contracts:[...field.contracts],claimed:true,consumers:consumers.map(f=>({feature:f.spec,...this.#descriptor(f.spec)}))});
+  }
+ }
 
  /** Connect from an approved integration manifest snapshot (system actor: the federation consent adapter). */
  async connect(owner,{client,snapshot,expectedGeneration}={}){
@@ -228,7 +308,7 @@ export class AppConnections{
     this.#fenced(r,input.expectedGeneration,true);if(typeof input.configured!=='boolean')fail('invalid_request','Say whether setup is complete.');
     if(!LIVE.includes(from))fail('invalid_state','This connection is not live.',409);
     r.configured=input.configured;const to=input.configured?(from==='configuring'?'active':from):'configuring';
-    if(to!==from){if(to==='configuring'){bump(r);await this.#cascade(tx,this.#delegationRows(await this.#affected(tx,id),'system'));}set(to);events.push({type:'connection-state',connection:id,clientId:r.clientId,generation:r.generation,state:to});if(SERVING.includes(to))await this.#reseat(tx,r);}
+    if(to!==from){if(to==='configuring'){bump(r);await this.#cascade(tx,this.#delegationRows(await this.#affected(tx,id),'system'));}set(to);events.push({type:'connection-state',connection:id,clientId:r.clientId,generation:r.generation,state:to});if(SERVING.includes(to))await this.#reseat(tx,r);if(from==='configuring'&&to==='active')await this.#announce(tx,r);}
    }else if(op==='health'){
     this.#fenced(r,input.expectedGeneration,true);if(typeof input.degraded!=='boolean')fail('invalid_request','Say whether the connection is degraded.');
     const to=input.degraded&&from==='active'?'degraded':!input.degraded&&from==='degraded'?'active':from;if(to!==from){set(to);events.push({type:'connection-state',connection:id,clientId:r.clientId,generation:r.generation,state:to});}
@@ -307,122 +387,220 @@ export class AppConnections{
   return {severed};
  }
 
- // ---- Slot occupancy (extensions §3, §5.1): only the owner assigns, reorders or removes occupants ----
- /** `input`: {slot, connection, resource?, position?, replace?, purposes?, expectedRevision?}. `actor.authTime`: when
-  * the owner last authenticated (trusted adapter), required for replacing an exclusive provider-consumed occupant. */
- async occupy(owner,input,actor={}){
-  if(!only(input,['slot','connection','resource','position','replace','purposes','expectedRevision']))fail('invalid_request','Unsupported occupancy request.');
-  const slot=this.#slot(input.slot);
+ // ---- Field values (extensions §3, §5): only the owner assigns, reorders or removes resources ----
+ #fresh(authTime){return Number.isSafeInteger(authTime)&&authTime<=this.clock()&&this.clock()-authTime<=RECENT_AUTH_MS;}
+ /** `input`: {fragment, connection, resource?, position?, replace?, purposes?, approve?, expectedRevision?}. `approve`:
+  * the provider features (spec URLs) the owner explicitly approves for this new resource; none by default (§3.4). Any
+  * add, replace or fill of a field an enabled provider feature consumes needs recent authentication (§3.4, EXT3-27). */
+ async assign(owner,input,actor={}){
+  if(!only(input,['fragment','connection','resource','position','replace','purposes','approve','expectedRevision']))fail('invalid_request','Unsupported field request.');
+  const field=this.#field(input.fragment);
   if(input.resource!==undefined&&!text(input.resource,128))fail('invalid_request','Choose a resource.');
   if(input.purposes!==undefined&&!purposesValid(input.purposes))fail('invalid_request','Choose recognized purposes in ascending order.');
   if(input.position!==undefined&&(!Number.isSafeInteger(input.position)||input.position<0))fail('invalid_request','Choose a position.');
-  if(input.replace!==undefined&&typeof input.replace!=='boolean')fail('invalid_request','Unsupported occupancy request.');
+  if(input.replace!==undefined&&typeof input.replace!=='boolean')fail('invalid_request','Unsupported field request.');
+  if(input.approve!==undefined&&(!Array.isArray(input.approve)||input.approve.length>8||input.approve.some(s=>typeof s!=='string')||new Set(input.approve).size!==input.approve.length))fail('invalid_request','Unsupported field request.');
+  const state=await this.#declarationState();
   return this.metadata.transaction(async tx=>{
-   const r=await this.#load(tx,owner,input.connection),lifecycle=await tx.get(LIFECYCLE_STATE);
-   if(!SERVING.includes(r.state)||r.status!=='active')fail('connection_unavailable','Only an active connection can occupy a slot.',409);
-   if(!this.#eligible(r,slot))fail('not_an_occupant','This integration does not declare this role with the required contracts.',403);
-   if(BLOCKED.includes(lifecycle?.phase)||r.fence!==epochOf(lifecycle))fail('connection_stale','The connection changed. Reload and try again.',409);
-   const {key,record}=await this.#seats(tx,slot.url);
-   if(input.expectedRevision!==undefined&&input.expectedRevision!==record.revision)fail('slot_changed','The slot changed. Reload and try again.',409);
-   const resource=input.resource??null;
-   if(record.occupants.some(e=>e.connection===r.id&&e.resource===resource))fail('already_occupied','This resource already occupies the slot.',409);
-   const removed=[];
-   if(slot.policy.selection==='exclusive'&&record.occupants.length){
-    if(input.replace!==true)fail('slot_occupied','Another occupant fills this slot. Replace it explicitly.',409);
-    // extensions §3.4: replacing an exclusive occupant that a provider feature consumes needs recent authentication.
-    if(slot.policy.consumers.includes('provider')&&!(Number.isSafeInteger(actor.authTime)&&this.clock()-actor.authTime<=RECENT_AUTH_MS&&actor.authTime<=this.clock()))fail('reauthentication_required','Confirm it is you before replacing this occupant.',401);
-    removed.push(...record.occupants.map(entry=>({slot:slot.url,entry})));record.occupants=[];
-   }else if(record.occupants.length>=slot.max)fail('slot_full','This slot is full.',409);
-   const entry={seat:this.uuid(),connection:r.id,clientId:r.clientId,generation:r.generation,resource,purposes:structuredClone(input.purposes??[]),ingress:null,assignedAt:this.clock()};
-   const at=Math.min(input.position??record.occupants.length,record.occupants.length);record.occupants.splice(at,0,entry);record.revision=(record.revision??0)+1;
-   await tx.put(key,record);
-   await this.#emit(tx,[...removed.map(c=>({type:'occupant-removed',slot:slot.url,seat:c.entry.seat,connection:c.entry.connection,clientId:c.entry.clientId,generation:c.entry.generation})),{type:'slot-changed',slot:slot.url,revision:record.revision,occupants:this.#summary(record)}]);
-   await this.#cascade(tx,[...this.#delegationRows(removed,'system'),...DELEGATION_SLOTS.includes(slot.url)?[{kind:'reconcile'}]:[]]);
-   return this.#slotView(tx,slot,record);
+   await this.#syncFeatures(tx,state);
+   const result=await this.#assignTx(tx,owner,field,input,actor);return result;
   });
  }
- /** `input`: {slot, seat, expectedRevision?}. */
- async vacate(owner,input){
-  if(!only(input,['slot','seat','expectedRevision'])||!SEAT.test(input.seat??''))fail('invalid_request','Unsupported occupancy request.');
-  const slot=this.#slot(input.slot);
+ async #assignTx(tx,owner,field,input,actor){
+  const r=await this.#load(tx,owner,input.connection),lifecycle=await tx.get(LIFECYCLE_STATE);
+  if(!SERVING.includes(r.state)||r.status!=='active')fail('connection_unavailable','Only an active connection can fill a field.',409);
+  if(!this.#eligible(r,field))fail('not_a_candidate','This connection does not offer the contracts this field requires.',403);
+  if(BLOCKED.includes(lifecycle?.phase)||r.fence!==epochOf(lifecycle))fail('connection_stale','The connection changed. Reload and try again.',409);
+  const {key,record}=await this.#values(tx,field.url);
+  if(input.expectedRevision!==undefined&&input.expectedRevision!==record.revision)fail('field_changed','The field changed. Reload and try again.',409);
+  const features=await this.#featuresFor(tx,field.url),live=features.filter(f=>f.state==='active');
+  if(live.length&&!this.#fresh(actor.authTime))fail('reauthentication_required','Confirm it is you before changing a field a provider feature uses.',401);
+  const approve=input.approve??[];for(const spec of approve)if(!live.some(f=>f.spec===spec))fail('invalid_request','Approve only enabled features that use this field.');
+  const resource=input.resource??null;
+  if(record.entries.some(e=>e.connection===r.id&&e.resource===resource))fail('already_assigned','This resource is already in the field.',409);
+  const removed=[],exclusive=field.selection==='exclusive'||field.max===1;
+  if(exclusive&&record.entries.length){
+   if(input.replace!==true)fail('field_filled','Another resource fills this field. Replace it explicitly.',409);
+   removed.push(...record.entries.map(entry=>({fragment:field.url,entry})));record.entries=[];
+  }else if(record.entries.length>=field.max)fail('field_full','This field is full.',409);
+  const entry={seat:this.uuid(),connection:r.id,clientId:r.clientId,generation:r.generation,resource,purposes:structuredClone(input.purposes??[]),ingress:null,assignedAt:this.clock()};
+  const at=Math.min(input.position??record.entries.length,record.entries.length);record.entries.splice(at,0,entry);record.revision=(record.revision??0)+1;
+  await tx.put(key,record);
+  await this.#emit(tx,[...removed.map(c=>({type:'value-removed',fragment:field.url,seat:c.entry.seat,connection:c.entry.connection,clientId:c.entry.clientId,generation:c.entry.generation})),{type:'field-changed',fragment:field.url,revision:record.revision,entries:this.#summary(record)}]);
+  if(removed.length)await this.#withdrawApprovals(tx,field.url,removed.map(c=>c.entry));
+  // Per-consumer approval of the new resource: only the features the owner ticked, each with a new grant.
+  for(const spec of approve){const f=await this.#featureRecord(tx,spec);f.approved=[...new Set([...(f.approved??[]),entry.seat])];await this.#regrant(tx,f,[]);}
+  await this.#cascade(tx,[...this.#delegationRows(removed,'system'),...DELEGATION_FIELDS.includes(field.url)?[{kind:'reconcile'}]:[]]);
+  return this.#fieldView(tx,field,record);
+ }
+ /** `input`: {fragment, seat, expectedRevision?}. Removal needs no reauthentication (§3.4). */
+ async unassign(owner,input){
+  if(!only(input,['fragment','seat','expectedRevision'])||!SEAT.test(input.seat??''))fail('invalid_request','Unsupported field request.');
+  const field=this.#field(input.fragment);
   return this.metadata.transaction(async tx=>{
-   const {key,record}=await this.#seats(tx,slot.url);if(input.expectedRevision!==undefined&&input.expectedRevision!==record.revision)fail('slot_changed','The slot changed. Reload and try again.',409);
-   const entry=record.occupants.find(e=>e.seat===input.seat);if(!entry)fail('not_found','Occupant not found.',404);
-   record.occupants=record.occupants.filter(e=>e!==entry);record.revision++;await tx.put(key,record);
-   await this.#emit(tx,[{type:'occupant-removed',slot:slot.url,seat:entry.seat,connection:entry.connection,clientId:entry.clientId,generation:entry.generation},{type:'slot-changed',slot:slot.url,revision:record.revision,occupants:this.#summary(record)}]);
-   await this.#cascade(tx,this.#delegationRows([{slot:slot.url,entry}],'system'));
-   return this.#slotView(tx,slot,record);
+   const {key,record}=await this.#values(tx,field.url);if(input.expectedRevision!==undefined&&input.expectedRevision!==record.revision)fail('field_changed','The field changed. Reload and try again.',409);
+   const entry=record.entries.find(e=>e.seat===input.seat);if(!entry)fail('not_found','Resource not found in this field.',404);
+   record.entries=record.entries.filter(e=>e!==entry);record.revision++;await tx.put(key,record);
+   await this.#emit(tx,[{type:'value-removed',fragment:field.url,seat:entry.seat,connection:entry.connection,clientId:entry.clientId,generation:entry.generation},{type:'field-changed',fragment:field.url,revision:record.revision,entries:this.#summary(record)}]);
+   await this.#withdrawApprovals(tx,field.url,[entry]);
+   await this.#cascade(tx,this.#delegationRows([{fragment:field.url,entry}],'system'));
+   return this.#fieldView(tx,field,record);
   });
  }
- /** `input`: {slot, seats:[seat...] (a permutation), expectedRevision?}. Order is the owner's priority. */
- async reorder(owner,input){
-  if(!only(input,['slot','seats','expectedRevision'])||!Array.isArray(input.seats))fail('invalid_request','Unsupported occupancy request.');
-  const slot=this.#slot(input.slot);
+ /** `input`: {fragment, seats:[seat...] (a permutation), expectedRevision?}. Order is the owner's priority. */
+ async reorder(owner,input,actor={}){
+  if(!only(input,['fragment','seats','expectedRevision'])||!Array.isArray(input.seats))fail('invalid_request','Unsupported field request.');
+  const field=this.#field(input.fragment),state=await this.#declarationState();
   return this.metadata.transaction(async tx=>{
-   const {key,record}=await this.#seats(tx,slot.url);if(input.expectedRevision!==undefined&&input.expectedRevision!==record.revision)fail('slot_changed','The slot changed. Reload and try again.',409);
-   if(input.seats.length!==record.occupants.length||new Set(input.seats).size!==input.seats.length||input.seats.some(s=>!record.occupants.some(e=>e.seat===s)))fail('invalid_request','List every current occupant exactly once.');
-   record.occupants=input.seats.map(s=>record.occupants.find(e=>e.seat===s));record.revision++;await tx.put(key,record);
-   await this.#emit(tx,[{type:'slot-changed',slot:slot.url,revision:record.revision,occupants:this.#summary(record)}]);
-   return this.#slotView(tx,slot,record);
+   await this.#syncFeatures(tx,state);
+   const {key,record}=await this.#values(tx,field.url);if(input.expectedRevision!==undefined&&input.expectedRevision!==record.revision)fail('field_changed','The field changed. Reload and try again.',409);
+   if(input.seats.length!==record.entries.length||new Set(input.seats).size!==input.seats.length||input.seats.some(s=>!record.entries.some(e=>e.seat===s)))fail('invalid_request','List every current resource exactly once.');
+   if((await this.#featuresFor(tx,field.url)).some(f=>f.state==='active')&&!this.#fresh(actor.authTime))fail('reauthentication_required','Confirm it is you before changing a field a provider feature uses.',401);
+   record.entries=input.seats.map(s=>record.entries.find(e=>e.seat===s));record.revision++;await tx.put(key,record);
+   await this.#emit(tx,[{type:'field-changed',fragment:field.url,revision:record.revision,entries:this.#summary(record)}]);
+   return this.#fieldView(tx,field,record);
   });
  }
- /** `input`: {slot, seat, purposes}: the owner's consented purposes for this occupant (withdrawal reconciles at once). */
+ /** `input`: {fragment, seat, purposes}: the owner's consented purposes for this entry (withdrawal reconciles at once). */
  async configureSeat(owner,input){
-  if(!only(input,['slot','seat','purposes'])||!SEAT.test(input.seat??'')||!purposesValid(input.purposes))fail('invalid_request','Unsupported occupancy request.');
-  const slot=this.#slot(input.slot);
+  if(!only(input,['fragment','seat','purposes'])||!SEAT.test(input.seat??'')||!purposesValid(input.purposes))fail('invalid_request','Unsupported field request.');
+  const field=this.#field(input.fragment);
   return this.metadata.transaction(async tx=>{
    if(BLOCKED.includes((await tx.get(LIFECYCLE_STATE))?.phase))fail('account_suspended','This account is suspended.',423);
-   const {key,record}=await this.#seats(tx,slot.url),entry=record.occupants.find(e=>e.seat===input.seat);if(!entry)fail('not_found','Occupant not found.',404);
+   const {key,record}=await this.#values(tx,field.url),entry=record.entries.find(e=>e.seat===input.seat);if(!entry)fail('not_found','Resource not found in this field.',404);
    entry.purposes=structuredClone(input.purposes);record.revision++;await tx.put(key,record);
-   await this.#emit(tx,[{type:'slot-changed',slot:slot.url,revision:record.revision,occupants:this.#summary(record)}]);
-   if(DELEGATION_SLOTS.includes(slot.url))await this.#cascade(tx,[{kind:'reconcile'}]);
-   return this.#slotView(tx,slot,record);
+   await this.#emit(tx,[{type:'field-changed',fragment:field.url,revision:record.revision,entries:this.#summary(record)}]);
+   if(DELEGATION_FIELDS.includes(field.url))await this.#cascade(tx,[{kind:'reconcile'}]);
+   return this.#fieldView(tx,field,record);
   });
  }
- /** System (the C1b `describe` adapter): records the occupant's validated ingress, on the connection's own origin,
-  * for the seat incarnation the adapter observed. `input`: {slot, seat, generation, ingress}. */
+ /** System (the C1b `describe` adapter): records the entry's validated ingress, on the connection's own origin, for the
+  * entry incarnation the adapter observed. `input`: {fragment, seat, generation, ingress}. */
  async setIngress(owner,input){
-  if(!only(input,['slot','seat','generation','ingress'])||!SEAT.test(input.seat??'')||typeof input.ingress!=='string'||input.ingress.length>2048)fail('invalid_request','Unsupported occupancy request.');
-  const slot=this.#slot(input.slot);
+  if(!only(input,['fragment','seat','generation','ingress'])||!SEAT.test(input.seat??'')||typeof input.ingress!=='string'||input.ingress.length>2048)fail('invalid_request','Unsupported field request.');
+  const field=this.#field(input.fragment);
   return this.metadata.transaction(async tx=>{
    if(BLOCKED.includes((await tx.get(LIFECYCLE_STATE))?.phase))fail('account_suspended','This account is suspended.',423);
-   const {key,record}=await this.#seats(tx,slot.url),entry=record.occupants.find(e=>e.seat===input.seat);if(!entry)fail('not_found','Occupant not found.',404);
+   const {key,record}=await this.#values(tx,field.url),entry=record.entries.find(e=>e.seat===input.seat);if(!entry)fail('not_found','Resource not found in this field.',404);
    const r=await this.#load(tx,owner,entry.connection);if(entry.generation!==input.generation||r.generation!==input.generation||!SERVING.includes(r.state))fail('connection_stale','The connection changed. Reload and try again.',409);
    let u;try{u=new URL(input.ingress);}catch{fail('invalid_request','Invalid ingress.');}
    if(u.origin!==r.appOrigin||u.href!==input.ingress||u.username||u.password||u.hash||u.search)fail('invalid_request','The ingress must be on the app origin.');
-   if(entry.ingress!==input.ingress){entry.ingress=input.ingress;record.revision++;await tx.put(key,record);await this.#emit(tx,[{type:'slot-changed',slot:slot.url,revision:record.revision,occupants:this.#summary(record)}]);if(DELEGATION_SLOTS.includes(slot.url))await this.#cascade(tx,[{kind:'reconcile'}]);}
-   return this.#slotView(tx,slot,record);
+   if(entry.ingress!==input.ingress){entry.ingress=input.ingress;record.revision++;await tx.put(key,record);await this.#emit(tx,[{type:'field-changed',fragment:field.url,revision:record.revision,entries:this.#summary(record)}]);if(DELEGATION_FIELDS.includes(field.url))await this.#cascade(tx,[{kind:'reconcile'}]);}
+   return this.#fieldView(tx,field,record);
   });
  }
- async #slotView(tx,slot,record){
-  const out=[];for(const e of record.occupants){const r=await tx.get(prefix+e.connection);out.push({seat:e.seat,connection:e.connection,clientId:e.clientId,name:r?.name??null,resource:e.resource,purposes:[...e.purposes??[]],ingress:e.ingress??null,available:Boolean(r&&valid(r)&&SERVING.includes(connectionState(r))&&r.status==='active'&&r.generation===e.generation),assignedAt:e.assignedAt});}
-  return {slot:slot.url,title:slot.schema.title,host:new URL(slot.url).host,selection:slot.policy.selection,max:slot.max,revision:record.revision,occupants:out};
+ async #fieldView(tx,field,record){
+  const out=[];for(const e of record.entries){const r=await tx.get(prefix+e.connection);out.push({seat:e.seat,connection:e.connection,clientId:e.clientId,name:r?.name??null,origin:r?.appOrigin??null,builtIn:r?.integration?.kind==='built-in',resource:e.resource,purposes:[...e.purposes??[]],ingress:e.ingress??null,available:Boolean(r&&valid(r)&&SERVING.includes(connectionState(r))&&r.status==='active'&&r.generation===e.generation),assignedAt:e.assignedAt});}
+  const consumers=(await this.#featuresFor(tx,field.url)).filter(f=>['active','suspended'].includes(f.state)).map(f=>({feature:f.spec,...this.#descriptor(f.spec),state:f.state,approved:[...f.approved??[]]}));
+  return {fragment:field.url,field:field.name,title:field.schema.title,host:new URL(field.url).host,selection:field.selection,max:field.max,contracts:[...field.contracts],announce:field.announce,revision:record.revision,values:out,consumers,muted:await tx.get(MUTED+await digest(globalThis.crypto,field.url))===true};
  }
- /** Owner view: every recognized slot with its occupants (built-in and external alike, in owner order). */
- async slots(owner){return this.metadata.transaction(async tx=>{const out=[];for(const url of Object.keys(this.slotPins)){let slot;try{slot=this.#slot(url);}catch{continue;}out.push(await this.#slotView(tx,slot,(await this.#seats(tx,url)).record));}return out;});}
- /** The occupancy port core. Available occupants in owner order, plus the account fence: `sever` is true when the
-  * account lifecycle is blocked, or its capability epoch moved since a seated connection was (re)activated, meaning a
-  * suspension happened that no hook reported (review KD-4). */
- async occupant(owner,url){
-  const slot=this.#slot(url);
+ /** Owner view: every recognized provider-consumable field with its values (owner order) and its consumers. */
+ async fields(owner){const state=await this.#declarationState();return this.metadata.transaction(async tx=>{await this.#syncFeatures(tx,state);const out=[];for(const url of Object.keys(this.fieldPins)){let field;try{field=this.#field(url);}catch{continue;}out.push(await this.#fieldView(tx,field,(await this.#values(tx,url)).record));}return out;});}
+ /**
+  * Extensions §5.1 candidates for one field, from recorded contracts only: brokered offers (active external connections
+  * whose recorded `resources.contracts` cover the field), the provider's built-ins (built-in connections), and brokered
+  * records. Neutral order (by origin, then id), nothing preselected, no provider preference; contracts of offers and
+  * records are the supplier's claims. Owner-only (the owner's own settings, never an app's flow).
+  */
+ async candidates(owner,{fragment}={}){
+  const field=this.#field(fragment);
   return this.metadata.transaction(async tx=>{
-   const bound=await tx.get('owner');if(bound!==undefined&&bound!==owner)return {slot:slot.url,selection:slot.policy.selection,occupants:[],sever:false};
-   const lifecycle=await tx.get(LIFECYCLE_STATE),{record}=await this.#seats(tx,slot.url),occupants=[];let sever=BLOCKED.includes(lifecycle?.phase);
-   if(!sever)for(let after='';;){const rows=[...(await tx.list({prefix,startAfter:after,limit:200})).entries()];if(rows.some(([,r])=>r?.kind==='app-connection'&&r.owner===owner&&r.status!=='disconnected'&&r.fence!==undefined&&r.fence!==epochOf(lifecycle))){sever=true;break;}if(rows.length<200||rows.at(-1)[0]<=after)break;after=rows.at(-1)[0];}
-   for(const e of record.occupants){
-    const r=await tx.get(prefix+e.connection);if(!valid(r)||r.owner!==owner)continue;
-    if(r.status==='active'&&r.fence!==undefined&&r.fence!==epochOf(lifecycle))sever=true;
-    if(SERVING.includes(connectionState(r))&&r.status==='active'&&r.generation===e.generation&&r.fence===epochOf(lifecycle))occupants.push({seat:e.seat,connection:e.connection,clientId:e.clientId,origin:r.appOrigin??null,generation:e.generation,cnx:cnxOf(e),resource:e.resource,purposes:[...e.purposes??[]],ingress:e.ingress??null,kind:r.integration?.kind??'external'});
-   }
-   return {slot:slot.url,selection:slot.policy.selection,occupants:sever?[]:occupants,sever};
+   const lifecycle=await tx.get(LIFECYCLE_STATE),out=[];
+   for(let after='';;){const rows=[...(await tx.list({prefix,startAfter:after,limit:200})).entries()];
+    for(const [,r] of rows){if(!valid(r)||r.owner!==owner||!r.integration)continue;const state=connectionState(r);if(!SERVING.includes(state)||r.status!=='active'||r.fence!==undefined&&r.fence!==epochOf(lifecycle)||!this.#eligible(r,field))continue;
+     const builtIn=r.integration.kind==='built-in',origin=builtIn?this.origin:r.appOrigin??new URL(r.clientId).origin;
+     out.push({kind:builtIn?'built-in':'offer',id:`connection:${r.id}`,connection:r.id,clientId:r.clientId,origin,label:r.name,labelSupplied:!builtIn,builtIn,contracts:[...field.contracts],claimed:!builtIn});}
+    if(rows.length<200||rows.at(-1)[0]<=after)break;after=rows.at(-1)[0];}
+   for(const [,rec] of await tx.list({prefix:RECORD,limit:257})){if(rec?.v!==1||rec.owner!==owner||rec.status!=='available'||!Array.isArray(rec.contracts)||!field.contracts.every(c=>rec.contracts.includes(c)))continue;const c=await tx.get(prefix+rec.connection);if(!valid(c)||c.owner!==owner||!SERVING.includes(connectionState(c))||c.status!=='active'||c.generation!==rec.generation)continue;
+    out.push({kind:'record',id:`record:${rec.id}`,connection:rec.connection,record:rec.id,clientId:rec.clientId,origin:c.appOrigin??new URL(rec.clientId).origin,label:rec.label??null,labelSupplied:true,builtIn:false,contracts:[...rec.contracts],claimed:true});}
+   return {fragment:field.url,field:field.name,candidates:out.sort((a,b)=>a.origin<b.origin?-1:a.origin>b.origin?1:a.id<b.id?-1:a.id>b.id?1:0)};
   });
  }
- /** A selection state machine (packages/federation/extensions.mjs createSlotOperation) over the current occupancy:
-  * configured occupants in owner order, unavailable ones marked so, for a consumer of this slot. */
- async slotOperation(owner,url,{consumer='provider',featureEnabled=false}={}){
-  const slot=this.#slot(url),view=await this.metadata.transaction(async tx=>this.#slotView(tx,slot,(await this.#seats(tx,slot.url)).record)),live=await this.occupant(owner,url);
-  const occupants=view.occupants.map(o=>({id:o.seat,status:!live.sever&&live.occupants.some(a=>a.seat===o.seat)?'available':'unavailable',credentialCurrent:true}));
-  return createSlotOperation(slot.schema,slot.max===1?occupants[0]:occupants,{consumer,featureEnabled});
+ /** The value port core: available entries in owner order, plus the account fence: `sever` is true when the account
+  * lifecycle is blocked, or its capability epoch moved since a connection was (re)activated, meaning a suspension
+  * happened that no hook reported (review KD-4). */
+ async value(owner,url){
+  const field=this.#field(url);
+  return this.metadata.transaction(async tx=>this.#valueTx(tx,owner,field));
+ }
+ async #valueTx(tx,owner,field){
+  const bound=await tx.get('owner');if(bound!==undefined&&bound!==owner)return {fragment:field.url,selection:field.selection,entries:[],sever:false};
+  const lifecycle=await tx.get(LIFECYCLE_STATE),{record}=await this.#values(tx,field.url),entries=[];let sever=BLOCKED.includes(lifecycle?.phase);
+  if(!sever)for(let after='';;){const rows=[...(await tx.list({prefix,startAfter:after,limit:200})).entries()];if(rows.some(([,r])=>r?.kind==='app-connection'&&r.owner===owner&&r.status!=='disconnected'&&r.fence!==undefined&&r.fence!==epochOf(lifecycle))){sever=true;break;}if(rows.length<200||rows.at(-1)[0]<=after)break;after=rows.at(-1)[0];}
+  for(const e of record.entries){
+   const r=await tx.get(prefix+e.connection);if(!valid(r)||r.owner!==owner)continue;
+   if(r.status==='active'&&r.fence!==undefined&&r.fence!==epochOf(lifecycle))sever=true;
+   if(SERVING.includes(connectionState(r))&&r.status==='active'&&r.generation===e.generation&&r.fence===epochOf(lifecycle))entries.push({seat:e.seat,connection:e.connection,clientId:e.clientId,origin:r.appOrigin??null,generation:e.generation,cnx:cnxOf(e),resource:e.resource,purposes:[...e.purposes??[]],ingress:e.ingress??null,kind:r.integration?.kind??'external'});
+  }
+  return {fragment:field.url,selection:field.selection,entries:sever?[]:entries,sever};
+ }
+ /** A selection state machine (packages/federation/extensions.mjs createFieldOperation) over the current value for a
+  * provider feature: the feature's approved entries in owner order, unavailable ones marked so (extensions §3.1). */
+ async fieldOperation(owner,{feature}={}){
+  const live=await this.featureResources(owner,{feature}),def=FEATURE_DEFINITIONS[feature],field=this.#field(def.fragment);
+  const view=await this.metadata.transaction(async tx=>(await this.#values(tx,field.url)).record);
+  const resources=view.entries.filter(e=>live.approved.includes(e.seat)).map(e=>({id:e.seat,status:live.resources.some(a=>a.seat===e.seat)?'available':'unavailable',credentialCurrent:true}));
+  return createFieldOperation(field.field,resources,{consumer:'provider',featureLive:live.live});
+ }
+
+ // ---- Provider features (extensions §4.2) ----
+ #featureView(spec,r,declared){const def=FEATURE_DEFINITIONS[spec];return {feature:spec,...this.#descriptor(spec),declared,fragment:def.fragment,field:def.field,methods:structuredClone(def.methods),state:r?.state??'off',...r?{grant:r.grant,approved:[...r.approved??[]],enabledAt:r.enabledAt,...r.suspendedAt!==undefined?{suspendedAt:r.suspendedAt}:{},...r.revokedAt!==undefined?{revokedAt:r.revokedAt}:{},...r.reason?{reason:r.reason}:{}}:{}};}
+ /** Owner view of every provider feature: descriptor text with the host of its spec URL, whether it is declared now,
+  * the field and methods it requests, and its grant state (off, active, suspended, revoked). */
+ async features(owner){const state=await this.#declarationState();return this.metadata.transaction(async tx=>{await this.#syncFeatures(tx,state);const out=[];for(const spec of Object.keys(FEATURE_DEFINITIONS))out.push(this.#featureView(spec,await this.#featureRecord(tx,spec),state.valid.has(spec)&&!state.blocked.has(spec)));return out;});}
+ /** Owner, with recent authentication (§3.4): enabling is the consent for the feature's request, bound to the field's
+  * current values. `assign` ({connection, resource?}) fills an empty field on the same screen (§4.2). */
+ async enableFeature(owner,input={},actor={}){
+  if(!only(input,['feature','assign','expectedRevision']))fail('invalid_request','Unsupported feature request.');
+  const def=typeof input.feature==='string'&&Object.hasOwn(FEATURE_DEFINITIONS,input.feature)?FEATURE_DEFINITIONS[input.feature]:null;if(!def)fail('not_found','Feature not found.',404);
+  if(input.assign!==undefined&&!only(input.assign,['connection','resource']))fail('invalid_request','Unsupported feature request.');
+  const field=this.#field(def.fragment);if(field.name!==def.field||!field.consumers.includes('provider'))fail('unsupported_field','This field is not available to provider features.',400);
+  if(!this.#fresh(actor.authTime))fail('reauthentication_required','Confirm it is you before enabling this feature.',401);
+  const state=await this.#declarationState();
+  if(state.blocked.has(input.feature))fail('feature_blocked','This feature is blocked on this provider.',409);
+  if(!state.valid.has(input.feature))fail('feature_unavailable','This feature is not available right now.',409);
+  return this.metadata.transaction(async tx=>{
+   await this.#syncFeatures(tx,state);
+   if(BLOCKED.includes((await tx.get(LIFECYCLE_STATE))?.phase))fail('account_suspended','This account is suspended.',423);
+   let r=await this.#featureRecord(tx,input.feature);if(r?.state==='active')return this.#featureView(input.feature,r,true);
+   let {record}=await this.#values(tx,field.url);
+   if(input.expectedRevision!==undefined&&input.expectedRevision!==record.revision)fail('field_changed','The field changed. Reload and try again.',409);
+   if(input.assign){if(record.entries.length)fail('field_filled','This field already has a value. Change it in the field settings.',409);await this.#assignTx(tx,owner,field,{fragment:field.url,...input.assign},{authTime:actor.authTime});record=(await this.#values(tx,field.url)).record;}
+   const pin='sha256-'+await digest(globalThis.crypto,canonical(field.schema));
+   r={spec:input.feature,issuer:this.origin,fragment:field.url,field:field.name,pin,methods:structuredClone(def.methods),state:'active',grant:this.uuid(),approved:record.entries.map(e=>e.seat),enabledAt:this.clock(),revision:(r?.revision??0)+1};
+   await this.#putFeature(tx,r);await this.#emit(tx,[{type:'feature-enabled',feature:r.spec,grant:r.grant}]);
+   return this.#featureView(input.feature,r,true);
+  });
+ }
+ /** Owner: disabling revokes the feature's grant at once, with its brokered credentials (§4.2). No reauthentication. */
+ async disableFeature(owner,input={}){
+  if(!only(input,['feature'])||typeof input.feature!=='string'||!Object.hasOwn(FEATURE_DEFINITIONS,input.feature))fail('not_found','Feature not found.',404);
+  const state=await this.#declarationState();
+  return this.metadata.transaction(async tx=>{await this.#syncFeatures(tx,state);const r=await this.#featureRecord(tx,input.feature);if(!r)fail('not_found','Feature not found.',404);if(['active','suspended'].includes(r.state))await this.#revokeFeature(tx,r,'disabled');return this.#featureView(input.feature,r,state.valid.has(input.feature));});
+ }
+ /** System: applies declaration loss and return, blocking and the 30-day revocation (also run by every read). */
+ async featureSync(owner){const state=await this.#declarationState();return this.metadata.transaction(async tx=>({changes:await this.#syncFeatures(tx,state)}));}
+ /** System, the provider feature's projection (extensions §3.1): only while its enablement is live and unsuspended,
+  * its approved resources that are available now, in owner order, with the current `bindle.grant`. */
+ async featureResources(owner,{feature}={}){
+  const def=typeof feature==='string'&&Object.hasOwn(FEATURE_DEFINITIONS,feature)?FEATURE_DEFINITIONS[feature]:null;if(!def)fail('not_found','Feature not found.',404);
+  const field=this.#field(def.fragment),state=await this.#declarationState();
+  return this.metadata.transaction(async tx=>{
+   await this.#syncFeatures(tx,state);const r=await this.#featureRecord(tx,feature);
+   if(r?.state!=='active')return {feature,live:false,state:r?.state??'off',approved:[],resources:[],sever:false};
+   const value=await this.#valueTx(tx,owner,field);
+   return {feature,live:true,state:'active',grant:r.grant,approved:[...r.approved],resources:value.entries.filter(e=>r.approved.includes(e.seat)).map(e=>({...e,grant:r.grant})),selection:field.selection,sever:value.sever};
+  });
+ }
+ /** Owner-only notices (announcements, feature suspension and revocation), newest last. */
+ async notices(owner){return this.metadata.transaction(async tx=>({notices:[...(await tx.list({prefix:NOTICE,limit:NOTICE_LIMIT+8})).values()].sort((a,b)=>a.id<b.id?-1:1)}));}
+ async dismissNotice(owner,{id}={}){if(typeof id!=='string'||!/^\d{16}$/.test(id))fail('invalid_request','Unsupported notice.');return this.metadata.transaction(async tx=>{const had=await tx.get(NOTICE+id);if(had)await tx.delete(NOTICE+id);return {dismissed:Boolean(had)};});}
+ /** Owner: turn announcements for a field off or back on (§6 rule 6: turning them on again resets "at most once"). */
+ async announcements(owner,{fragment,enabled}={}){
+  const field=this.#field(fragment);if(typeof enabled!=='boolean')fail('invalid_request','Say whether announcements are on.');
+  return this.metadata.transaction(async tx=>{const key=MUTED+await digest(globalThis.crypto,field.url);
+   if(!enabled)await tx.put(key,true);else{await tx.delete(key);for(const [k] of await tx.list({prefix:ANNOUNCED,limit:512}))await tx.delete(k);}
+   return {fragment:field.url,enabled};});
  }
 
  // ---- Outbox and cascades (system actors only) ----

@@ -1,7 +1,8 @@
-// BB-B5 classifier consumer. The host port owns live slot occupancy/grants and the first occupant's transport.
+// BB-B5 classifier consumer. The host port owns the live field value, grants and the first resource's transport.
 // Port: decide({text,hints}) -> {labels:{category:probability},evidence:{model,version,schema}}. It MUST NOT
 // retry another occupant after an ambiguous dispatch; this consumer never requests failover or passes identity.
-// Shared with BB-B2/X10: the published item-classifier slot; decision-model/v1 remains an unpublished .example contract.
+// Shared with BB-B2/X10: the published item-classifier fragment (extensions rev 3.2, formerly a slot); decision-model/v1
+// remains an unpublished .example contract (generic item-classification/v1 is a later change, CR-X3-25).
 import {MailboxAction,MailboxQuery} from '../engine.mjs';
 import {fault} from '../faults.mjs';
 import {minimize} from './intake.mjs';
@@ -9,7 +10,7 @@ import {TAG_CATEGORIES,heuristicSuspectedTags,applyAutomatedTags,boundedString} 
 import {incomingItem,organizationOf} from '../store/item-index.mjs';
 import {KEYS} from '../store/mailbox.mjs';
 import {fromBase64url} from '../../messaging-protocol/index.mjs';
-export const CLASSIFIER_SLOT='https://3sln.me/artefacts/slots/item-classifier/v1',CLASSIFIER_CONTRACT='https://spec.bindle.example/contracts/decision-model/v1';
+export const CLASSIFIER_FRAGMENT='https://3sln.me/artefacts/fragments/item-classifier/v1',CLASSIFIER_CONTRACT='https://spec.bindle.example/contracts/decision-model/v1';
 const SETTINGS='bb:classify:settings',defaults=()=>({revision:0,consent:false,allowance:200,usage:{day:0,calls:0},pins:[],conversations:[]});
 const plain=v=>v!==null&&typeof v==='object'&&!Array.isArray(v),evidenceOK=e=>plain(e)&&boundedString(e.model,100)&&boundedString(e.version,64)&&boundedString(e.schema,128);
 const modelKey=e=>JSON.stringify([e.model,e.version,e.schema]),decoder=new TextDecoder(),encoder=new TextEncoder();

@@ -1,0 +1,6 @@
+{
+ "id": "https://spec.bindle.example/extensions/device-authorization/v1",
+ "title": "Device sign-in",
+ "description": "Sign in on devices without a browser by approving a short code on another device.",
+ "options": {}
+}

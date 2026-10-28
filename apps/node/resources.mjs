@@ -166,11 +166,10 @@ export async function nodeResources({directory,config,formTransport,mailer}){
  for(const name of Object.keys(integrationConfig))if(config[name]!==undefined)integrationConfig[name]=config[name];
  if(integrationConfig.BROKERED_INTROSPECTION_MOUNTED)integrationConfig.BROKERED_INTROSPECTION=request=>handleBrokeredIntrospection(request,{issuer:config.APP_ORIGIN,enabled:true,artefactVersions:siteGlobal(config,'ARTEFACT_VERSIONS_ENABLED'),verifyToken:(token,options)=>brokering.verify(token,options),clientKeys:({clientId,jwksUri})=>clientDirectory.resolveKeys({id:clientId,jwksUri,authMethod:'private_key_jwt'}),account:owner=>new Proxy({},{get:(_,method)=>input=>accounts.get(owner)[method](owner,input)}),federation:owner=>federationShard(owner)});
  integrationConfig.APP_REMOVAL_REVOKE_EXTERNAL=row=>federationShard(row.owner).removalRevoke(row);
- // RTC-e: the signaling occupant's live bound approval (FederationService.checkBound in the owner's federation shard;
- // absent, every endpoint operation is refused) and the foreign-delivery egress: the reviewed Node integration egress
- // (public IPv4 only, DNS pinned into TLS, no redirects, bounded). Both are inert unless the RTC flags are on, and the
- // egress dials only origins on the RTC_FOREIGN_ISSUERS allowlist (packages/rtc/federation.mjs rtcEgress).
- integrationConfig.RTC_BOUND_CHECK=config.RTC_BOUND_CHECK??(input=>{const owner=/\/entities\/([0-9a-f-]{36})$/.exec(input?.subject??'')?.[1];return owner?federationShard(owner).checkBound(input):false;});
+ // RTC-e: the foreign-delivery egress: the reviewed Node integration egress (public IPv4 only, DNS pinned into TLS, no
+ // redirects, bounded). Inert unless the RTC flags are on; it dials only origins on the RTC_FOREIGN_ISSUERS allowlist
+ // (packages/rtc/federation.mjs rtcEgress). (Per-app RTC purpose approval is the account's own interim record now:
+ // extensions rev 3.2 removed AMD-X1 and checkBound.)
  integrationConfig.RTC_EGRESS=config.RTC_EGRESS??createNodeIntegrationEgress({issuer:config.APP_ORIGIN,reserved:[config.EMBED_ORIGIN].filter(Boolean).map(o=>{try{return new URL(o).hostname;}catch{return null;}}).filter(Boolean),...typeof config.DIRECTORY_DNS_LOOKUP==='function'?{lookup:config.DIRECTORY_DNS_LOOKUP}:{},...typeof config.DIRECTORY_HTTPS_REQUEST==='function'?{request:config.DIRECTORY_HTTPS_REQUEST}:{}});
  integrationConfig.INTEGRATION_CLIENT_SNAPSHOT=async client=>integrationSnapshot(client,await clientDirectory.resolveKeys(client));
  for(const {controller}of accountMap.values())Object.assign(controller.config,integrationConfig);

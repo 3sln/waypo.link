@@ -336,42 +336,26 @@ import {FederationController,federationMetadata} from '../packages/federation/ru
 import {SqliteMetadata} from '../apps/node/resources.mjs';
 import {configuredArtefacts,reviewedSchemaFetcher} from '../packages/runtime/artefact-pins.mjs';
 import {FederationService} from '../packages/federation/service.mjs';
-import {RTC_SIGNALING_SLOT,RTC_SIGNALING_SLOT_MANIFEST,RTC_BOUND_ARTEFACTS,RTC_SIGNALING_CONTRACT} from '../packages/rtc/extension.mjs';
+import {RTC_SIGNALING_FRAGMENT,RTC_SIGNALING_FRAGMENT_DOCUMENT,RTC_SIGNALING_CONTRACT,RTC_FEATURE} from '../packages/rtc/extension.mjs';
 
-test('contract route: the app actor comes only from the verified dispatch context, with the token grant ids; listen never waits inside the gate',async()=>{
+test('contract route: the app actor comes only from the verified dispatch context, with the token grant ids; listen never waits inside the gate; no approval rides the context',async()=>{
  const owner='0a0a0a0a-0009-4000-8000-000000000001',origin='https://home.example',calls=[],checks=[];
  const records=new Map(),c={metadata:{get:async k=>records.get(k)},config:{APP_ORIGIN:origin,FEDERATION_IDENTITY_CHECK:async(o,epoch)=>o===owner&&epoch==='e1'},apps:{check:async(...args)=>{checks.push(args);}},
   rtcDispatch:async(o,x)=>{calls.push(['dispatch',o,x]);return {ok:true};},rtcListen:async(o,x)=>{calls.push(['listen',o,x]);return {cursor:0,events:[],gap:false};}};
- const ctx=(over={})=>({authority:'bindle',contract:RTC_SIGNALING_CONTRACT,subject:`${origin}/entities/${owner}`,resource:`${origin}/entities/${owner}/rtc`,resourceGeneration:owner,connection:{id:'conn',generation:2},epoch:'e1',clientId:'https://app.example/client',clientOrigin:'https://app.example',grants:['g1','g2'],method:'register',args:{purposes:[CALL]},...over});
+ const ctx=(over={})=>({authority:'bindle',contract:RTC_SIGNALING_CONTRACT,subject:`${origin}/entities/${owner}`,resource:`${origin}/entities/${owner}/rtc`,resourceGeneration:owner,connection:{id:'conn',generation:2},epoch:'e1',clientId:'https://app.example/client',clientOrigin:'https://app.example',grants:['g1','g2'],grant:{fragment:RTC_SIGNALING_FRAGMENT,digest:'d',readSince:'g1'},method:'register',args:{purposes:[CALL]},...over});
  assert.deepEqual(await rtcResourceMethod(c,owner,ctx()),{ok:true});
- assert.deepEqual(calls[0],['dispatch',owner,{operation:'rtc.register',actor:{kind:'app',owner,clientId:'https://app.example/client',origin:'https://app.example',grants:['g1','g2'],epoch:'e1',bound:{values:{},versions:{}}},input:{purposes:[CALL]}}]);
+ assert.deepEqual(calls[0],['dispatch',owner,{operation:'rtc.register',actor:{kind:'app',owner,clientId:'https://app.example/client',origin:'https://app.example',grants:['g1','g2'],epoch:'e1'},input:{purposes:[CALL]}}]);
  assert.deepEqual(checks[0],[owner,'conn',2,'https://app.example/client'],'the app connection is checked live');
  await rtcResourceMethod(c,owner,ctx({method:'open',jkt:'k'.repeat(43),args:{}}));assert.equal(calls[1][2].actor.jkt,'k'.repeat(43),'a DPoP-bound token binds the endpoint key');
  await rtcResourceMethod(c,owner,ctx({method:'listen',args:{endpoint:'ep',wait:25}}));assert.equal(calls[2][0],'listen');assert.equal(calls[2][2].input.wait,0,'no long poll while holding the account gate');
- for(const [over,code] of [[{grants:[]},'forbidden'],[{grants:undefined},'forbidden'],[{resource:`${origin}/entities/${owner}/links`},'forbidden'],[{resourceGeneration:'other'},'forbidden'],[{authority:'mcp'},'forbidden'],[{subject:`${origin}/entities/other`},'forbidden'],[{connection:undefined},'forbidden'],[{method:'ingest'},'unsupported_method'],[{method:'lifecycle'},'unsupported_method'],[{epoch:'old'},'unauthorized'],[{clientOrigin:'not a url',clientId:'also not'},'forbidden']])
+ for(const [over,code] of [[{grants:[]},'forbidden'],[{grants:undefined},'forbidden'],[{resource:`${origin}/entities/${owner}/links`},'forbidden'],[{resourceGeneration:'other'},'forbidden'],[{authority:'mcp'},'forbidden'],[{subject:`${origin}/entities/other`},'forbidden'],[{connection:undefined},'forbidden'],[{method:'ingest'},'unsupported_method'],[{method:'lifecycle'},'unsupported_method'],[{epoch:'old'},'unauthorized'],[{clientOrigin:'not a url',clientId:'also not'},'forbidden'],[{grant:undefined},'forbidden'],[{grant:{fragment:'https://other.example/fragment'}},'forbidden']])
   assert.equal((await fault(rtcResourceMethod(c,owner,ctx(over)))).code,code,JSON.stringify(over));
  assert.equal(calls.length,3,'nothing was dispatched for a refused context');
- // RTC-i bug 1: the bound approval rides only from the verified dispatch context's `bound` for the signaling slot
- // (never from arguments); another fragment's approval, or a malformed one, approves nothing.
- const approval={values:{purposes:[CALL]},versions:{[CALL]:[{version:1,digest:'d'}]},revision:'r'};
- await rtcResourceMethod(c,owner,ctx({bound:{[RTC_SIGNALING_SLOT]:approval},args:{purposes:[CALL],bound:{values:{purposes:['x']}}}}));
- assert.deepEqual(calls[3][2].actor.bound,{values:approval.values,versions:approval.versions});
- await rtcResourceMethod(c,owner,ctx({bound:{'https://other.example/slot':approval}}));assert.deepEqual(calls[4][2].actor.bound,{values:{},versions:{}});
- await rtcResourceMethod(c,owner,ctx({bound:{[RTC_SIGNALING_SLOT]:{values:'x',versions:{}}}}));assert.deepEqual(calls[5][2].actor.bound,{values:{},versions:{}});
- // RTC-i review L1: the client's account-local approval record (written by rtcAppChanged inside the gate) narrows any
- // dispatch approval that is not newer than it; a newer approval (a later approval or narrowing) stands.
- const two={values:{purposes:[CALL,SYNC]},versions:{[CALL]:[{version:1,digest:'d'}],[SYNC]:[{version:1,digest:'s'}]},revision:'r',at:1000};
- const recordKey='rtc/approval/'+Buffer.from(await crypto.subtle.digest('SHA-256',new TextEncoder().encode('rtc-approval\0https://app.example/client'))).toString('base64url');
- const actorWith=async(record,approval=two)=>{if(record===undefined)records.delete(recordKey);else records.set(recordKey,record);await rtcResourceMethod(c,owner,ctx({bound:{[RTC_SIGNALING_SLOT]:approval}}));return calls.at(-1)[2].actor.bound;};
- assert.deepEqual(await actorWith(undefined),{values:two.values,versions:two.versions},'no record: the dispatch approval');
- assert.deepEqual(await actorWith({clientId:'https://app.example/client',purposes:[CALL],revision:1,at:2000}),{values:{purposes:[CALL]},versions:{[CALL]:two.versions[CALL]}},'a later narrowing intersects');
- assert.deepEqual(await actorWith({clientId:'https://app.example/client',purposes:[CALL],revision:1,at:1000}),{values:{purposes:[CALL]},versions:{[CALL]:two.versions[CALL]}},'same time: intersect (fail closed)');
- assert.deepEqual(await actorWith({clientId:'https://app.example/client',purposes:null,revision:2,at:2000}),{values:{},versions:{}},'a later revocation approves nothing');
- assert.deepEqual(await actorWith({clientId:'https://app.example/client',purposes:[CALL],revision:1,at:500}),{values:two.values,versions:two.versions},'an approval newer than the record stands (re-approval)');
- assert.deepEqual(await actorWith({clientId:'https://app.example/client',purposes:[CALL],revision:1,at:2000},{...two,at:undefined}),{values:{purposes:[CALL]},versions:{[CALL]:two.versions[CALL]}},'no approval time: intersect');
- for(const bad of [{purposes:'x',at:1},{purposes:[CALL]},'x',{purposes:[CALL],at:1.5}])assert.deepEqual(await actorWith(bad),{values:{},versions:{}},'a malformed record approves nothing: '+JSON.stringify(bad));
- const broken={...c,metadata:{get:async()=>{throw new Error('down');}}};await rtcResourceMethod(broken,owner,ctx({bound:{[RTC_SIGNALING_SLOT]:two}}));
- assert.deepEqual(calls.at(-1)[2].actor.bound,{values:{},versions:{}},'an unreadable record approves nothing');
+ // Extensions rev 3.2 removed AMD-X1: nothing in the context or the arguments carries a purpose approval to the actor
+ // (RtcService reads the owner's interim approval record itself). TODO(signaling Appendix C.2: approvals move to
+ // intents session handler approvals)
+ await rtcResourceMethod(c,owner,ctx({bound:{[RTC_SIGNALING_FRAGMENT]:{values:{purposes:[CALL]},versions:{}}},args:{purposes:[CALL],bound:{values:{purposes:['x']}}}}));
+ assert.equal(Object.hasOwn(calls[3][2].actor,'bound'),false,'no approval on the actor');
 });
 
 test('federation journal: RTC reads are never journaled and RTC write results are not retained',async()=>{
@@ -386,31 +370,31 @@ test('federation journal: RTC reads are never journaled and RTC write results ar
  rows.clear();db.close();
 });
 
-test('lifecycle triggers: bound narrowing and grant revocation tell the occupant hook the remaining approval (null when none)',async t=>{
+test('lifecycle trigger: revoking the last grant on the signaling fragment tells grantChanged (inactive), which the runtime maps to rtcAppChanged purposes:null',async t=>{
+ // Extensions rev 3.2 removed AMD-X1 bound narrowing; the generic grantChanged hook replaces boundChanged.
+ // TODO(signaling Appendix C.2: approvals move to intents session handler approvals)
  const issuer='https://provider.example',subject=issuer+'/entities/alice',authority={session:'owner'},client='https://a.example/client';
- const db=new SqliteMetadata(':memory:'),config={ARTEFACT_VERSIONS_ENABLED:'true',RTC_SIGNALING_ENABLED:'true',FEDERATION_SCHEMAS:{[RTC_SIGNALING_SLOT]:structuredClone(RTC_SIGNALING_SLOT_MANIFEST)}};
+ const db=new SqliteMetadata(':memory:'),config={ARTEFACT_VERSIONS_ENABLED:'true',RTC_SIGNALING_ENABLED:'true',FEDERATION_SCHEMAS:{[RTC_SIGNALING_FRAGMENT]:structuredClone(RTC_SIGNALING_FRAGMENT_DOCUMENT)}};
  const artefacts=configuredArtefacts({config,store:db});config.ARTEFACTS=artefacts;t.after(async()=>{await artefacts.engine.dispose();db.close();});
- const service=new FederationService({issuer,store:federationMetadata(db),schemaHosts:['spec.bindle.example'],schemaFetcher:reviewedSchemaFetcher(config),authenticateOwner:async()=>({subject,epoch:'epoch'}),clients:[{id:client,origin:'https://a.example',name:'a.example',redirectUris:['https://a.example/callback']}],boundOptions:true,boundArtefacts:RTC_BOUND_ARTEFACTS});
- const seen=[];service.boundChanged=async x=>{seen.push(structuredClone(x));};
- const begin=async options=>(await service.beginAuthorization({clientId:client,redirectUri:'https://a.example/callback',challenge:'A'.repeat(43),challengeMethod:'S256',state:'s',requests:[{fragment:RTC_SIGNALING_SLOT,required:true,purpose:'Ring you',fields:['signaling'],options}]})).requestId;
- const id=await begin({purposes:[CALL,SYNC].sort()});await service.configure(authority,{fragment:RTC_SIGNALING_SLOT,values:{}});const r=(await service.inspect(id,authority)).requests[0];
- await service.approve(authority,{requestId:id,approved:[{fragment:RTC_SIGNALING_SLOT,fields:['signaling'],resources:{signaling:[]},methods:{},revision:r.revision,options:{purposes:[CALL,SYNC].sort()}}]});
- await service.narrowBoundOptions(authority,{clientId:client,fragment:RTC_SIGNALING_SLOT,options:{purposes:[CALL]}});
- const {at:narrowedAt,...narrowed}=seen.at(-1);assert.deepEqual(narrowed,{subject,clientId:client,fragment:RTC_SIGNALING_SLOT,values:{purposes:[CALL]}});
- // RTC-i review L1: `at` is the shard's clock when boundSync read the remaining grants, never before the narrowing.
- const narrowedGrant=(await service.store.transaction(tx=>tx.list('federation/grant/'))).map(x=>x.value).find(g=>g.active);
- assert.ok(Number.isSafeInteger(narrowedAt)&&narrowedAt>=narrowedGrant.bound.narrowedAt,'boundChanged carries the sync time');
+ const service=new FederationService({issuer,store:federationMetadata(db),schemaHosts:['spec.bindle.example'],schemaFetcher:reviewedSchemaFetcher(config),authenticateOwner:async()=>({subject,epoch:'epoch'}),clients:[{id:client,origin:'https://a.example',name:'a.example',redirectUris:['https://a.example/callback']}]});
+ const seen=[];service.grantChanged=async x=>{seen.push(structuredClone(x));};
+ const begin=async()=>(await service.beginAuthorization({clientId:client,redirectUri:'https://a.example/callback',challenge:'A'.repeat(43),challengeMethod:'S256',state:'s',requests:[{fragment:RTC_SIGNALING_FRAGMENT,required:true,purpose:'Ring you',fields:['signaling']}]})).requestId;
+ const id=await begin();await service.configure(authority,{fragment:RTC_SIGNALING_FRAGMENT,values:{}});const r=(await service.inspect(id,authority)).requests[0];
+ assert.equal(Object.hasOwn(r,'bound'),false,'no bound options in the consent view');
+ await service.approve(authority,{requestId:id,approved:[{fragment:RTC_SIGNALING_FRAGMENT,fields:['signaling'],resources:{signaling:[]},methods:{},revision:r.revision}]});
  const grant=(await service.store.transaction(tx=>tx.list('federation/grant/'))).map(x=>x.value).find(g=>g.active);
- await service.revoke(authority,grant.id);
- {const {at,...rest}=seen.at(-1);assert.deepEqual(rest,{subject,clientId:client,fragment:RTC_SIGNALING_SLOT,values:null},'revocation of the last bound grant: app-revoked');assert.ok(at>=narrowedAt);}
- // A hook that fails never fails the revocation (the occupant re-checks the live approval anyway).
- service.boundChanged=async()=>{throw new Error('down');};assert.deepEqual(await service.revoke(authority,grant.id),{revoked:true});
+ assert.equal(Object.hasOwn(grant,'bound'),false,'grants carry no bound options');
+ const before=Date.now();await service.revoke(authority,grant.id);
+ const last=seen.findLast(x=>x.fragment===RTC_SIGNALING_FRAGMENT);assert.ok(last,'grantChanged ran for the signaling fragment');
+ {const {at,...rest}=last;assert.deepEqual(rest,{subject,clientId:client,fragment:RTC_SIGNALING_FRAGMENT,active:false});assert.ok(Number.isSafeInteger(at)&&at>=before-1000);}
+ // A hook that fails never fails the revocation.
+ service.grantChanged=async()=>{throw new Error('down');};assert.deepEqual(await service.revoke(authority,grant.id),{revoked:true});
 });
 
 test('key roster: cache-only reads, bounded refresh queue per issuer and in total, negative caching, manifest floor first',async()=>{
  const calls=[];let now=0,fail=false,feature={endpoint:`${B}/bindle/rtc`,max_leg_certificate_seconds:300};
- const d={allowed:iss=>[B,C].includes(iss)||/^https:\/\/d\d\.example$/.test(iss),peek:()=>null,resolve:async()=>null,peekFeatures:()=>({'rtc-signaling.v1':feature}),
-  features:async iss=>{calls.push(['manifest',iss]);if(fail)throw Object.assign(new Error('x'),{code:'temporarily_unavailable'});return {'rtc-signaling.v1':feature};},
+ const d={allowed:iss=>[B,C].includes(iss)||/^https:\/\/d\d\.example$/.test(iss),peek:()=>null,resolve:async()=>null,peekFeatures:()=>({[RTC_FEATURE]:feature}),
+  features:async iss=>{calls.push(['manifest',iss]);if(fail)throw Object.assign(new Error('x'),{code:'temporarily_unavailable'});return {[RTC_FEATURE]:feature};},
   refresh:async x=>{calls.push(['refresh',x.issuer,x.subject,x.kid??null,x.priority]);}};
  const r=new RtcKeyRoster({issuer:A,directory:()=>d,clock:()=>now});
  const p=(iss,n)=>({iss,sub:`0a0a0a0a-0000-4000-8000-${String(n).padStart(12,'0')}`});

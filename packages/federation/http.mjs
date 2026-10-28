@@ -1,3 +1,4 @@
+import {EXT} from '../core/extensions.mjs';
 import {lifecycleUnknown,lookupUnknown} from '../runtime/public-unknown.mjs';
 import {BROKERING_JWKS_PATH,JWKS_MAX_AGE,brokeringManifest} from './signing.mjs';
 import {providerLegalMetadata} from './legal.mjs';
@@ -39,7 +40,7 @@ export async function handleFederation(request,{controller,issuer,clients=contro
   if(!enabled||!controller||!await controller.ready())throw error('temporarily_unavailable','Federation is not configured and release enabled.',503);
   const path=url.pathname,origin=request.headers.get('Origin'),context=typeof ownerContext==='function'?await ownerContext(request):sessionContext(request,allowInsecureLocalhost,issuer);
   if(request.method==='OPTIONS'){if(origin!==issuer&&!clients.some(c=>c.origin===origin)&&!preflightOrigin(origin,path,directory))throw error('forbidden','Application origin is not registered.',403);return new Response(null,{status:204,headers:{...privateHeaders,'Access-Control-Allow-Origin':origin,Vary:'Origin','Access-Control-Allow-Methods':'GET, POST, OPTIONS','Access-Control-Allow-Headers':'Content-Type, Authorization, DPoP','Access-Control-Max-Age':'600'}});}
-  if(path==='/.well-known/bindle/manifest.json'&&request.method==='GET'){const manifest=await controller.manifest();return json({...manifest,...providerLegalMetadata(issuer),...brokered&&!manifest.features?.['brokered-resources.v1']?brokeringManifest(issuer):{}},200,{'Access-Control-Allow-Origin':'*'});}
+  if(path==='/.well-known/bindle/manifest.json'&&request.method==='GET'){const manifest=await controller.manifest();return json({...manifest,...providerLegalMetadata(issuer),...brokered&&!manifest.extensions?.some(e=>e.spec===EXT.brokeredResources)?brokeringManifest(issuer):{}},200,{'Access-Control-Allow-Origin':'*'});}
   if(brokered&&path===BROKERING_JWKS_PATH&&request.method==='GET')return await brokeringJwks(request,brokering);
   if(path==='/oauth/jwks'&&request.method==='GET')return json({keys:[]},200,{'Access-Control-Allow-Origin':'*'});
   if(path==='/oauth/authorize'&&request.method==='GET'){const id=url.searchParams.get('request_id');if(!id||!/^(?:[a-f0-9-]{36}\.)?[A-Za-z0-9_-]{43}$/.test(id)||!authorizeQueryAllowed(url.searchParams))throw error('invalid_request','A provider-stored request identifier is required.');await controller.inspect(undefined,id);if(!assets?.fetch)throw error('temporarily_unavailable','Authorization interface is unavailable.',503);const page=await assets.fetch(new Request(new URL('/authorize.html',issuer),{method:'GET'}));const headers=new Headers(page.headers);for(const[k,v]of Object.entries(privateHeaders))headers.set(k,v);return new Response(page.body,{status:page.status,headers});}

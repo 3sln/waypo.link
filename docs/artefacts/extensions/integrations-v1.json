@@ -1,0 +1,17 @@
+{
+ "id": "https://spec.bindle.example/extensions/integrations/v1",
+ "title": "Integrations",
+ "description": "Connect services that supply resources to your account and receive its events.",
+ "options": {
+  "hint_endpoint": {
+   "title": "Hint endpoint",
+   "type": "url",
+   "maxLength": 2048,
+   "endpoint": "audience",
+   "cardinality": {
+    "min": 0,
+    "max": 1
+   }
+  }
+ }
+}

@@ -1,7 +1,9 @@
 // RTC-d over the durable Node runtime: real account single writers (one per person), real certification keys and the
 // same-host transport between writers (rtcPeer, gate 'none'). The application hop (a verified federation RPC context)
-// is supplied as the RTC-e adapter will supply it: an {kind:'app'} actor plus the config.RTC_BOUND_CHECK port standing
-// in for FederationService.checkBound. Local behaviour only: no HTTP contract route (RTC-e), no foreign provider.
+// is supplied as the RTC-e adapter will supply it: an {kind:'app'} actor. The owner approves the app's purposes through
+// the interim owner operation rtc.approve-app (extensions rev 3.2 removed AMD-X1 and checkBound; TODO(signaling Appendix
+// C.2: approvals move to intents session handler approvals)). Local behaviour only: no HTTP contract route (RTC-e), no
+// foreign provider.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtemp,readFile,rm} from 'node:fs/promises';
@@ -29,10 +31,8 @@ const payloadOf=c=>JSON.parse(Buffer.from(c.split('.')[1],'base64url'));
 async function legKey(){const pair=await crypto.subtle.generateKey({name:'ECDSA',namedCurve:'P-256'},true,['sign','verify']);const {x,y}=await crypto.subtle.exportKey('jwk',pair.publicKey);const jwk={kty:'EC',crv:'P-256',x,y};return {...pair,jwk,jkt:await jwkThumbprint(jwk)};}
 
 async function runtime(t,{flags=FLAGS}={}){
- const directory=await mkdtemp(join(tmpdir(),'rtc-runtime-')),checks=[];
- // The adapter's FederationService.checkBound port: approves exactly the grant ids it was given, for call.
- const RTC_BOUND_CHECK=async input=>{checks.push(input);return input.grants.includes('grant-ok')&&input.member==='purposes'&&input.value===CALL.artefact&&input.reference.digest===CALL.digest;};
- const app=await createNodeServer({directory,config:{...flags,APP_ORIGIN:ORIGIN,LOCAL_DEVELOPMENT:'true',RTC_BOUND_CHECK}});
+ const directory=await mkdtemp(join(tmpdir(),'rtc-runtime-'));
+ const app=await createNodeServer({directory,config:{...flags,APP_ORIGIN:ORIGIN,LOCAL_DEVELOPMENT:'true'}});
  t.after(async()=>{await app.close();await rm(directory,{recursive:true,force:true});});
  const RECOVERY_SIGNING_KEY=await readFile(join(directory,'recovery-signing-key'),'utf8'),repository=app.resources.repository,accounts=app.resources.accounts;
  const identity=new IdentityService({repository,identityBackup:identityBackupPort({config:{APP_ORIGIN:ORIGIN,RECOVERY_SIGNING_KEY},accounts}),turnstile:{verify:async()=>true},rateLimiter:{check:async()=>true},webauthn:{},passwordHasher:fakeHasher,config:{origin:ORIGIN,rpID:new URL(ORIGIN).hostname,termsVersion:'2026-10-11',allowInsecureLocalhost:true}});
@@ -42,16 +42,19 @@ async function runtime(t,{flags=FLAGS}={}){
   const downloaded=await identity.downloadRecovery({pendingToken:pending.pendingToken},base);
   await identity.confirmRecovery({pendingToken:pending.pendingToken,recoveryToken:downloaded.recoveryToken,downloadConfirmed:true},base);
   const id=pending.account.id,object=accountHandle(env,id),actor={kind:'app',owner:id,clientId:'https://app.example/client',origin:'https://app.example',grants:['grant-ok']};
+  // The owner approves call for the app (the interim owner-local approval record); widening needs the flag.
+  if(flags.RTC_SIGNALING_ENABLED==='true')await object.rtcDispatch(id,{operation:'rtc.approve-app',actor:{kind:'owner',owner:id},input:{clientId:actor.clientId,purposes:[CALL.artefact]}});
   return {id,object,actor,principal:{iss:ORIGIN,sub:id},identity:`${ORIGIN}/identity/${id}`,
    dispatch:(operation,input,as=actor)=>object.rtcDispatch(id,{operation,actor:as,input}),listen:input=>object.rtcListen(id,{actor,input})};
  };
- return {app,env,person,checks};
+ return {app,env,person};
 }
 
 test('runtime: two people on one host call through a ticket; the writers deliver to each other through rtcPeer',async t=>{
  const f=await runtime(t),a=await f.person(),b=await f.person();
  const ea=await a.dispatch('rtc.register',{purposes:[CALL.artefact]}),eb=await b.dispatch('rtc.register',{purposes:[CALL.artefact]});
- assert.ok(f.checks.every(c=>c.subject.endsWith('/entities/'+c.subject.split('/').pop())&&c.fragment==='https://spec.bindle.example/slots/rtc-signaling/v1'),'the occupant asks with the token subject and the slot fragment');
+ // Only the purposes the owner approved: another purpose is refused (the approval record, not the token).
+ await assert.rejects(a.dispatch('rtc.register',{purposes:[RTC_PURPOSE_REFERENCES[3].artefact]}),e=>e.code==='forbidden');
  const {link}=await b.dispatch('rtc.mint-ticket',{purposes:[CALL.artefact],uses:2,expires_in:600});
  const leg=await legKey(),opened=await a.dispatch('rtc.open',{endpoint:ea.endpoint,endpoint_secret:ea.endpoint_secret,to:b.principal,purpose:CALL.artefact,media:['audio'],delegate:leg.jwk,basis:link});
  assert.equal(payloadOf(opened.certificate).aud,b.identity);assert.ok(opened.peer_keys.length>0);
@@ -81,7 +84,9 @@ test('runtime: with RTC_SIGNALING_ENABLED off every widening operation answers t
   await assert.rejects(a.dispatch(operation,input),e=>e.status===404&&e.code==='not_found',operation);
  await assert.rejects(a.dispatch('rtc.set-policy',{other:'public'},{kind:'owner',owner:a.id}),e=>e.status===404);
  assert.deepEqual((await a.dispatch('rtc.sessions',undefined,{kind:'owner',owner:a.id})).sessions,[]);
- assert.equal(f.checks.length,0,'nothing asked the federation port');
+ // Approving a purpose is a widening: the uniform 404 while off; narrowing (to nothing) stays available.
+ await assert.rejects(a.dispatch('rtc.approve-app',{clientId:a.actor.clientId,purposes:[CALL.artefact]},{kind:'owner',owner:a.id}),e=>e.status===404);
+ assert.deepEqual(await a.dispatch('rtc.approve-app',{clientId:a.actor.clientId,purposes:[]},{kind:'owner',owner:a.id}),{clientId:a.actor.clientId,purposes:[],ended:0});
 });
 
 // ---- review follow-ups (DEVLOG RTC-d "Review follow-ups") -----------------------------------------------------------

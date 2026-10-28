@@ -42,7 +42,7 @@ async function fixture(t,{engine=chromium,providers,attributes,account}){
       if(['/','/callback'].includes(url.pathname))return route.fulfill({contentType:'text/html',body:appPage({redirect:'/callback',attributes,account})});
       if(url.pathname==='/popup')return route.fulfill({contentType:'text/html',body:appPage({redirect:'/popup-callback',attributes,account})});
       if(url.pathname==='/popup-callback')return route.fulfill({contentType:'text/html',headers:{'Referrer-Policy':'no-referrer'},body:callbackPage});
-      if(/^\/(?:packages\/sdk\/src|packages\/i18n|vendor\/dodo)\//.test(url.pathname)&&!url.pathname.includes('..'))return route.fulfill({contentType:extname(url.pathname)==='.mjs'||extname(url.pathname)==='.js'?'text/javascript':'text/plain',body:await readFile(resolve(root,'.'+url.pathname))});
+      if(/^\/(?:packages\/sdk\/src|packages\/i18n|packages\/core|vendor\/dodo)\//.test(url.pathname)&&!url.pathname.includes('..'))return route.fulfill({contentType:extname(url.pathname)==='.mjs'||extname(url.pathname)==='.js'?'text/javascript':'text/plain',body:await readFile(resolve(root,'.'+url.pathname))});
       return route.fulfill({status:404,body:''});
     }
     if(url.hostname.startsWith('embed.')){embedRequests.push(url.href);return route.abort();}

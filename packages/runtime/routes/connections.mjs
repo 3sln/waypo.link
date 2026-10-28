@@ -18,10 +18,10 @@ async function setup(env,object,id,context,input){
 export const stages={async beforeActivity({env,path,request,id}){if(flagGlobal(env,'INTEGRATIONS_ENABLED')&&path==='/api/connections/contracts'&&request.method==='GET')return json({contracts:await consentContracts()});},async owner({request,env,path,object,id,context,owner}){
  if(!flagReadable(env,'INTEGRATIONS_ENABLED')||!paths.includes(path))return;
  const input=await body(request,16384),ctx={subject:{kind:'account',owner:id}};
- const reverse=path==='/api/connections/setup'&&input.action!=='save'||['connections.list','connections.slots','connections.suspend','connections.disconnect','connections.vacate'].includes(input.operation);
+ const reverse=path==='/api/connections/setup'&&input.action!=='save'||['connections.list','connections.fields','connections.features','connections.notices','connections.suspend','connections.disconnect','connections.unassign','connections.disable-feature','connections.dismiss-notice'].includes(input.operation);
  if(path==='/api/connections/owner'){
   const target=input.id??input.input?.id??input.input?.connection;if(!reverse&&target){const list=await object.connectionsOwner(id,{operation:'connections.list'}),c=list.connections.find(c=>c.id===target);if(c?.clientId)ctx.client={clientId:c.clientId};}
-  if(!reverse&&!flagEnabled(env,'INTEGRATIONS_ENABLED',ctx))return json({error:'feature_unavailable'},409);if(input.operation==='connections.connect-built-in'&&input.input?.integration==='classifier'&&!flagEnabled(env,'EXTENSIONS_ENABLED',ctx))fail('not_found','Not found.',404);const result=await object.connectionsOwner(id,input,{authTime:owner.authTime});return json(input.operation==='connections.list'?{...result,offerings:Object.entries(BUILT_IN_INTEGRATIONS).filter(([id])=>id!=='classifier'||flagEnabled(env,'EXTENSIONS_ENABLED',ctx)).map(([id,def])=>({id,...def}))}:result);}
+  if(!reverse&&!flagEnabled(env,'INTEGRATIONS_ENABLED',ctx))return json({error:'feature_unavailable'},409);const result=await object.connectionsOwner(id,input,{authTime:owner.authTime});return json(input.operation==='connections.list'?{...result,offerings:Object.entries(BUILT_IN_INTEGRATIONS).map(([id,def])=>({id,...def}))}:result);}
  if(path==='/api/connections/client-metadata'){
   if(typeof input.clientId!=='string'||Object.keys(input).some(k=>k!=='clientId'))fail('invalid_request','Use a client metadata document.',400);
   const directory=env.FEDERATION_AUTHORITY?.directory;if(!directory?.enabled)fail('connections_unavailable','Client metadata lookup is unavailable.',503);

@@ -26,10 +26,11 @@
 // organization's certification key at delivery time (current `aep`, fresh `iat`, the row's `jti`, so a retry is re-signed
 // with the same `jti`) and hands it to the transport's `deliver(from, to, jws)`. Same host: the other organization's
 // writer (the same signed path, RL-15). Another provider: ORG-11a, through `manifestEventDelivery` below, which posts only
-// to the counterpart's current issuer's validated manifest `relations.v1.events_endpoint` (RL-6).
+// to the counterpart's current issuer's validated manifest relations extension `events_endpoint` option (RL-6).
 import {AppAction,AppQuery} from '../app/engine.mjs';
 import {AppFault} from '../app/faults.mjs';
 import {plain} from '../core/strict-json.mjs';
+import {EXT,BINDLE_REGISTRY,readExtensions} from '../core/extensions.mjs';
 import {digest,textEncoder} from '../core/records.mjs';
 import {signCompact,parseCompact,verifyCompact} from './relation-statements.mjs';
 import {RELATION_EVENT,RELATION_EVENT_TYPES,RELATION_EVENT_PAST_S,RELATION_EVENT_FUTURE_S,halfEvent,applyMirror,narrowingEvent,outgoingLive,incomingLive} from './relation-edges.mjs';
@@ -81,14 +82,15 @@ export async function dummyVerify(crypto=globalThis.crypto){
 /**
  * RL-6 delivery to an entity on another provider (the ORG-11a transport plugs in here; this is the port and its rule).
  * The endpoint comes ONLY from the validated manifest of the counterpart's CURRENT issuer (`current(origin)` follows the
- * successor index): `relations.v1.events_endpoint`, an https URL on that issuer's origin. Nothing received in a response,
+ * successor index): the relations extension's `events_endpoint` option, an https URL on that issuer's origin. Nothing received in a response,
  * a link or an event is ever used as a delivery target. `post(url, body, {contentType})` performs the SSRF-safe fetch.
  */
+const RELATIONS_REGISTRY=new Map([[EXT.relations,BINDLE_REGISTRY.get(EXT.relations)]]);
 export function manifestEventDelivery({current=async p=>p,manifest,post}){
  if(typeof manifest!=='function'||typeof post!=='function')throw new TypeError('Event delivery needs manifest and post ports.');
  return async(to,jws)=>{
   const target=await current(to),issuer=target?.iss;if(!originOk(issuer))throw Object.assign(new Error('No current issuer.'),{code:'relation_delivery_unavailable'});
-  const m=await manifest(issuer),endpoint=m?.features?.['relations.v1']?.events_endpoint;let url;try{url=new URL(endpoint);}catch{url=null;}
+  const m=await manifest(issuer),endpoint=readExtensions(m,{registry:RELATIONS_REGISTRY,issuer}).extensions.get(EXT.relations)?.events_endpoint;let url;try{url=new URL(endpoint);}catch{url=null;}
   if(!url||url.protocol!=='https:'||url.origin!==issuer||url.username||url.password||url.hash||url.href!==endpoint)throw Object.assign(new Error('No validated events endpoint.'),{code:'relation_delivery_unavailable'});
   return post(endpoint,jws,{contentType:RELATION_EVENT_MEDIA_TYPE});
  };

@@ -41,7 +41,7 @@ async function fixture(t,browserType){
       if(url.pathname==='/'||url.pathname==='/callback')return route.fulfill({contentType:'text/html',body:appPage('/callback')});
       if(url.pathname==='/popup')return route.fulfill({contentType:'text/html',body:appPage('/popup-callback')});
       if(url.pathname==='/popup-callback')return route.fulfill({contentType:'text/html',headers:{'Referrer-Policy':'no-referrer'},body:callbackPage});
-      if(/^\/(?:packages\/sdk\/src|packages\/i18n|vendor\/dodo)\//.test(url.pathname)&&!url.pathname.includes('..'))return route.fulfill({contentType:types[extname(url.pathname)]??'text/plain',body:await readFile(resolve(root,'.'+url.pathname))});
+      if(/^\/(?:packages\/sdk\/src|packages\/i18n|packages\/core|vendor\/dodo)\//.test(url.pathname)&&!url.pathname.includes('..'))return route.fulfill({contentType:types[extname(url.pathname)]??'text/plain',body:await readFile(resolve(root,'.'+url.pathname))});
       return route.fulfill({status:404,body:''});
     }
     if(url.origin===providerOrigin){

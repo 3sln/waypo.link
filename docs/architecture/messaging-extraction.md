@@ -9,7 +9,7 @@
 > - **Slots.** One copy of each messaging slot document (`docs/artefacts/slots/`), pinned by both the provider and Parlay.
 
 
-Status: **provisional plan**, 2026-10-20. Documentation only: nothing has moved yet. This plan implements the [Parlay architecture](messaging-app.md) and the [Bindle Messaging interop draft](../spec/messaging.md). It is coordinated with:
+Status: **provisional plan**, 2026-10-20. Documentation only: nothing has moved yet. This plan implements the [Parlay architecture](messaging-app.md) and the [Bindle Messaging interop draft](../spec/extensions/messaging.md). It is coordinated with:
 
 - the activity owner's [activity center](activity-center.md) extraction table, which owns every "core: activity" row below;
 - [extensions](../spec/extensions.md);

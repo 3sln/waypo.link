@@ -1,10 +1,12 @@
 import {ownerFlags} from './flags.mjs';
-// EXT-X10. One immutable slot artifact for the host occupant and Parlay consumer. No automatic connection,
-// assignment, threshold or model fallback. The built-in registry offers this definition; the integrator supplies
-// the recognized slot pin and gateway discovery. X4 alone writes connections/occupancy. The contract stays unpublished pending its publisher.
-// Provisional deviation: pre-dispatch failover until X4 passes pinned pure/read contracts into slot validation.
-// Its current #slot calls validateSlotManifest without contract pins and therefore rejects any-error manifests.
-import manifest from '../../../docs/artefacts/slots/item-classifier-v1.json' with {type:'json'};
+// EXT-X10, extensions rev 3.2 (CR-X3-25, partly): the classifier is a paid built-in resource in the owner's pool, listed
+// in the provider manifest's `contracts` (extensions §5.2) while it is offered. Parlay consumes it as an application,
+// through an ordinary grant on the item-classifier fragment (`selection: ordered`, `consumers: [application]`), whose
+// value only the owner sets. No slot, no automatic assignment, threshold or model fallback. The contract stays
+// unpublished pending its publisher.
+// TODO(extensions CR-X3-25): replace decision-model/v1 and the hard-coded categories with the generic
+// item-classification/v1 contract (caller-supplied labels; needs a security review); Parlay then owns its categories.
+import fragment from '../../../docs/artefacts/fragments/item-classifier-v1.json' with {type:'json'};
 import {AppAction,AppQuery,createAppEngine,perform,read,operations} from '../../app/engine.mjs';
 import {AppFault} from '../../app/faults.mjs';
 import {systemClock,cryptoRandom,nullAudit} from '../../app/providers.mjs';
@@ -12,10 +14,14 @@ import {SemanticBudgetError} from '../semantic-budget.mjs';
 import {SEMANTIC_LAYOUT,semanticShard} from '../semantic-routing.mjs';
 
 const freeze=v=>{if(v&&typeof v==='object'){Object.values(v).forEach(freeze);Object.freeze(v);}return v;};
-export const CLASSIFIER_SLOT_MANIFEST=freeze(manifest),CLASSIFIER_SLOT=manifest.id,CLASSIFIER_CONTRACT=manifest.fields.occupants.contracts[0];
+export const CLASSIFIER_FRAGMENT_DOCUMENT=freeze(fragment),CLASSIFIER_FRAGMENT=fragment.id,CLASSIFIER_CONTRACT=fragment.fields.classifiers.contracts[0];
 export const CLASSIFIER_MODEL='@cf/cloudflare/clef-flash',CLASSIFIER_SCHEMA='item-categories-v1';
 export const CLASSIFIER_CATEGORIES=Object.freeze(['spam','social','promotional','recruitment','conversation','outreach','transactional','receipt','automation','verification','code']);
-export const CLASSIFIER_INTEGRATION=freeze({name:'3sln.me classifier',manifest:{v:1,resources:{contracts:[CLASSIFIER_CONTRACT]},extensions:[{slot:CLASSIFIER_SLOT,role:'occupant',ref:'classifier',options:{label:'3sln.me classifier'}}]}});
+export const CLASSIFIER_LABEL='3sln.me classifier';
+/** The built-in classifier resource of `owner` (one per account, stable). */
+export const classifierResource=(config,owner)=>`${config.APP_ORIGIN}/entities/${owner}/classifier`;
+/** Offered (manifest `contracts`, resource descriptor) only with an AI binding, a spend authority and a model version. */
+export const classifierOffered=config=>typeof config?.AI?.run==='function'&&typeof config?.SEMANTIC_SPEND?.authorityFor==='function'&&typeof config?.CLASSIFIER_MODEL_VERSION==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/.test(config.CLASSIFIER_MODEL_VERSION);
 export const CLASSIFIER_LIMITS=Object.freeze({inputBytes:2000,requestBytes:8192,responseBytes:16384,dailyCalls:200,monthlyCalls:2000,microUSD:3000,timeoutMs:10000});
 const HINTS=['auto-submitted','list-id','list-unsubscribe','precedence-bulk'],USAGE='classifier/usage/v1';
 const plain=v=>v!==null&&typeof v==='object'&&!Array.isArray(v),only=(v,keys)=>plain(v)&&Object.keys(v).every(k=>keys.includes(k));
@@ -65,13 +71,6 @@ export function classifierAI({binding,spend,eligible,admitWork,version,clock=sys
   async run(request){let timer;try{return await Promise.race([Promise.resolve().then(()=>binding.run(CLASSIFIER_MODEL,request)),new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error('Classifier timeout')),timeoutMs);})]);}finally{clearTimeout(timer);}},
  });
 }
-async function selected(connections,config){
- const found=await connections.occupant({slot:CLASSIFIER_SLOT}),first=found.occupants?.[0];
- if(found.sever||!first||first.kind!=='built-in'||first.resource!==null&&first.resource!=='classifier')fail('forbidden','Choose this classifier in the slot first.',403);
- const {connections:rows}=await connections.list(),record=rows.find(r=>r.id===first.connection);
- if(record?.integration?.builtin!=='classifier'||record.clientId!==`${config.APP_ORIGIN}/integrations/classifier`||record.generation!==first.generation||!['active','degraded'].includes(record.state))fail('forbidden','Classifier connection is unavailable.',403);
- return `${first.connection}:${first.generation}:${first.cnx}`;
-}
 async function reserveAccount(store,clock){
  const day=new Date(clock.now()).toISOString().slice(0,10),month=day.slice(0,7);
  await store.transaction(async tx=>{const prior=await tx.get(USAGE);if(prior!==undefined&&(!only(prior,['day','month','dailyCalls','monthlyCalls'])||typeof prior.day!=='string'||typeof prior.month!=='string'||!Number.isSafeInteger(prior.dailyCalls)||prior.dailyCalls<0||!Number.isSafeInteger(prior.monthlyCalls)||prior.monthlyCalls<0))fail('classifier_account_budget','Classifier allowance is unavailable.',429);
@@ -86,36 +85,35 @@ function resultOf(value,evidence){
  return {labels:{...value.answers},evidence:{...evidence}};
 }
 export class ClassifierStatus extends AppQuery {
- static operation='classifier.status';static deps=['config','accountStore','connections','ai'];static refreshOn=['connections-changed'];
- async fetch({config,accountStore,connections,ai}){enabled(config,this.actor);await actorOwner(this.actor,accountStore);let assigned=false;try{await selected(connections,config);assigned=true;}catch(error){if(error.code!=='forbidden'&&error.code!=='unsupported_slot')throw error;}return {configured:ai.configured===true,assigned,evidence:{...ai.evidence},limits:{...CLASSIFIER_LIMITS}};}
+ static operation='classifier.status';static deps=['config','accountStore','ai'];
+ async fetch({config,accountStore,ai}){enabled(config,this.actor);await actorOwner(this.actor,accountStore);return {configured:ai.configured===true,offered:ai.configured===true,evidence:{...ai.evidence},limits:{...CLASSIFIER_LIMITS}};}
 }
 export class ClassifierDescriptors extends AppQuery {
- static operation='classifier.descriptors';static deps=['config','accountStore','connections','ai'];static refreshOn=['connections-changed'];
- async fetch({config,accountStore,connections,ai}){
+ static operation='classifier.descriptors';static deps=['config','accountStore','ai'];
+ async fetch({config,accountStore,ai}){
   enabled(config,this.actor);const owner=await actorOwner(this.actor,accountStore);if(ai.configured!==true)return [];
-  let seat;try{seat=await selected(connections,config);}catch(error){if(['forbidden','unsupported_slot'].includes(error.code))return [];throw error;}
-  const {connections:rows}=await connections.list(),record=rows.find(r=>seat.startsWith(`${r.id}:${r.generation}:`));if(!record)return [];
-  return [{id:`${config.APP_ORIGIN}/entities/${owner}/resources/${record.id}`,label:CLASSIFIER_INTEGRATION.name,provider:'bindle',contracts:{[CLASSIFIER_CONTRACT]:['decide']},generation:String(record.generation),limits:{maxRequestBytes:CLASSIFIER_LIMITS.requestBytes,maxResultBytes:CLASSIFIER_LIMITS.responseBytes,txRetentionSeconds:86400}}];
+  return [{id:classifierResource(config,owner),label:CLASSIFIER_LABEL,provider:'bindle',contracts:{[CLASSIFIER_CONTRACT]:['decide']},generation:'v1',limits:{maxRequestBytes:CLASSIFIER_LIMITS.requestBytes,maxResultBytes:CLASSIFIER_LIMITS.responseBytes,txRetentionSeconds:86400}}];
  }
 }
+// Reached only through a verified federation RPC on this built-in resource, which the app's grant must cover and the
+// owner must have assigned in the field (protocol §4 intersection rule).
 export class ClassifierDecide extends AppAction {
- static operation='classifier.decide';static deps=['config','accountStore','connections','ai','clock'];
- async run({config,accountStore,connections,ai,clock}){
+ static operation='classifier.decide';static deps=['config','accountStore','ai','clock'];
+ async run({config,accountStore,ai,clock}){
   enabled(config,this.actor);const owner=await actorOwner(this.actor,accountStore),request=classifierRequest(this.input);
   if(ai.configured!==true)fail('temporarily_unavailable','Classifier is not configured.',503);
-  const seat=await selected(connections,config);if(await ai.eligible(owner)!==true)fail('forbidden','Classification needs a current paid entitlement.',403);
+  if(await ai.eligible(owner)!==true)fail('forbidden','Classification needs a current paid entitlement.',403);
   if(await ai.admitWork(owner,this.actor.clientId)!==true)fail('rate_limited','Activity allowance is exhausted.',429);
   await reserveAccount(accountStore,clock);await ai.reserve(owner,request);
-  if(await selected(connections,config)!==seat||await ai.eligible(owner)!==true)fail('forbidden','Classifier consent changed.',403);
+  if(await ai.eligible(owner)!==true)fail('forbidden','Classifier consent changed.',403);
   let value;try{value=await ai.run(request);}catch{fail('indeterminate','Classifier outcome is unknown; allowance remains charged.',503);}
-  if(await selected(connections,config)!==seat||await ai.eligible(owner)!==true)fail('forbidden','Classifier consent changed.',403);
+  if(await ai.eligible(owner)!==true)fail('forbidden','Classifier consent changed.',403);
   return resultOf(value,ai.evidence);
  }
 }
 export const CLASSIFIER_OPERATIONS=Object.freeze([ClassifierStatus,ClassifierDescriptors,ClassifierDecide]),CLASSIFIER_ENGINE_OPERATIONS=operations(...CLASSIFIER_OPERATIONS);
 // Runtime composition uses the read-only X4 system port. The AI binding, paid check and work admission are effects.
 function runtimeEngine(c,owner){return createAppEngine({providers:{clock:systemClock,random:cryptoRandom,audit:nullAudit,config:c.config,accountStore:c.metadata,
- connections:{occupant:input=>c.connectionsSystem(owner,{operation:'connections.occupant',input}),list:()=>c.connectionsSystem(owner,{operation:'connections.list'})},
  ai:classifierAI({binding:c.config.AI,spend:c.config.SEMANTIC_SPEND,version:c.config.CLASSIFIER_MODEL_VERSION,eligible:async id=>{await c.billingRefresh(id);return ['paid','plus','ultra'].includes((await c.billing.entitlement(id)).plan);},admitWork:(id,clientId)=>c.admitWork(id,{clientId:typeof clientId==='string'&&clientId?clientId:'@classifier'})})}});}
 // Contract adapter: context comes only from verified federation RPC, never from content or consumer parameters.
 export async function classifierResourceMethod(c,owner,context){
@@ -124,8 +122,7 @@ export async function classifierResourceMethod(c,owner,context){
  await c.warm(owner);
  if(typeof c.config.FEDERATION_IDENTITY_CHECK!=='function'||await c.config.FEDERATION_IDENTITY_CHECK(owner,context.epoch)!==true)fail('unauthorized','Application authorization is no longer active.',401);
  await c.apps.check(owner,context.connection.id,context.connection.generation,context.clientId);
- const rows=await c.connectionsSystem(owner,{operation:'connections.list'}),classifier=rows.connections.find(r=>r.integration?.builtin==='classifier');
- if(!classifier||context.resource!==`${c.config.APP_ORIGIN}/entities/${owner}/resources/${classifier.id}`||context.resourceGeneration!==String(classifier.generation))fail('forbidden','Classifier resource changed.',403);
+ if(context.resource!==classifierResource(c.config,owner)||context.resourceGeneration!=='v1')fail('forbidden','Classifier resource changed.',403);
  const engine=runtimeEngine(c,owner);try{const result=await perform(engine,new ClassifierDecide({actor:{kind:'system',owner,clientId:context.clientId},input:context.args}));if(await c.config.FEDERATION_IDENTITY_CHECK(owner,context.epoch)!==true)fail('unauthorized','Application authorization is no longer active.',401);await c.apps.check(owner,context.connection.id,context.connection.generation,context.clientId);return result;}finally{await engine.dispose();}
 }
 

@@ -1,10 +1,10 @@
 # Blob messaging — implementation draft
 
-> **Retired from the 3sln.me core on 2026-10-27** (DEVLOG "Messaging removed from core; Parlay rename; BB-CUT reset"). This legacy specification described core peer messaging, which left the core; the messaging app is Parlay and its interop profile is [Bindle Messaging](../../../../docs/spec/messaging.md). Kept here as historical reference for Parlay. Relative links point at the documents as they were in docs/spec.
+> **Retired from the 3sln.me core on 2026-10-27** (DEVLOG "Messaging removed from core; Parlay rename; BB-CUT reset"). This legacy specification described core peer messaging, which left the core; the messaging app is Parlay and its interop profile is [Bindle Messaging](../../../../docs/spec/extensions/messaging.md). Kept here as historical reference for Parlay. Relative links point at the documents as they were in docs/spec.
 
-The [message content profile](../../../../docs/spec/message-content.md) specifies format interpretation, HTML safety, recipient privacy, form-result semantics, and motion controls without prescribing rendering APIs or SDKs.
+The [message content profile](../../../../docs/spec/extensions/message-content.md) specifies format interpretation, HTML safety, recipient privacy, form-result semantics, and motion controls without prescribing rendering APIs or SDKs.
 
-Status: core implemented with unit evidence; no claim of public deployment, archive format registration, malware scanning, or interoperable messaging clients. Decision sign-off: reviewer ___ / date ___ / outcome ___. See [contact capabilities](contact-tokens.md), [notifications](../../../../docs/spec/notifications.md), and [DEVLOG](../../../../DEVLOG.md).
+Status: core implemented with unit evidence; no claim of public deployment, archive format registration, malware scanning, or interoperable messaging clients. Decision sign-off: reviewer ___ / date ___ / outcome ___. See [contact capabilities](contact-tokens.md), [notifications](../../../../docs/3sln/services/notifications.md), and [DEVLOG](../../../../DEVLOG.md).
 
 ## Model and persistence interface
 

@@ -1,6 +1,6 @@
 # Recovery identity and permanent-name review
 
-Review date: 2026-10-12. Independent agent review; human reviewer: ___ / Date: ___ / Outcome: ___. This is a development audit, not production or cryptographic certification. See [recovery identity design](../spec/recovery-identity.md), [security gates](../spec/security.md), and [DEVLOG](../../DEVLOG.md).
+Review date: 2026-10-12. Independent agent review; human reviewer: ___ / Date: ___ / Outcome: ___. This is a development audit, not production or cryptographic certification. See [recovery identity design](../3sln/accounts/recovery-identity.md), [security gates](../spec/security.md), and [DEVLOG](../../DEVLOG.md).
 
 ## Security boundaries
 

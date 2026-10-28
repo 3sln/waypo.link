@@ -1,5 +1,6 @@
 // Real federation stack for entry, app-session and embed tests: per-owner FederationController shards behind the
 // runtime routing authority, the pre-owner entry store and the actual HTTP handlers. Fixtures use .example hosts.
+import {withExtensionEntries} from '../packages/core/extensions.mjs';
 import {webcrypto,createHash,randomUUID} from 'node:crypto';
 import {FederationController} from '../packages/federation/runtime.mjs';
 import {MemoryFederationStore} from '../packages/federation/index.mjs';
@@ -37,7 +38,7 @@ export async function provider({endSession,limits,handles=['alex','sam'],refresh
   const response=await handleEmbedAPI(request,{authority,embedOrigin,...embed})??await handleAuthorizationEntry(request,{entries,issuer,assets,remote:async r=>r.headers.get('X-Test-Remote')??'test-remote',...endSession?{endSession:endHook}:{}})??await handleFederation(request,{controller:authority,issuer,assets})??new Response('Not found',{status:404});
   // As the root adapter does: mounted entry routes (and here the embed origin) join the core manifest (review F8).
   if(new URL(request.url).pathname!=='/.well-known/bindle/manifest.json'||!response.ok||!entryConfig)return response;
-  const manifest=await response.json(),extra=entries.manifest({components:true});return new Response(JSON.stringify({...manifest,features:{...manifest.features,...extra.features},...extra.profiles?{profiles:extra.profiles}:{}}),{status:200,headers:response.headers});};
+  const manifest=await response.json(),extra=entries.manifest({components:true});return new Response(JSON.stringify(withExtensionEntries(manifest,extra.extensions??[],{merge:true})),{status:200,headers:response.headers});};
  const accounts=[...owners].map(([owner,o])=>({owner,handle:o.handle,subject:`${issuer}/entities/${owner}`}));
  /** First-party sign-in: a session whose createdAt is the auth time. */
  const signIn=(account=accounts[0],createdAt=clock())=>{const token=`${account.owner}.${b64(32)}`,csrf=b64(16);owners.get(account.owner).sessions.set(token,{createdAt,csrf});return {token,csrf,cookie:`__Host-bindle_session=${token}`,account};};

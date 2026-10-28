@@ -1,6 +1,8 @@
 # Integrated implementation roadmap
 
-Status: working plan, 2026-10-20. It merges the slice plans of [extensibility](extensibility-design.md), [Parlay extraction](messaging-extraction.md) and [app](messaging-app.md), [linked approval](linked-approval.md), [activity center](activity-center.md) and [app engine §12](app-engine.md). Decisions are recorded in [DEVLOG](../../DEVLOG.md). Where this plan and a design's own slice list differ, this plan wins.
+> **Historical (completed through Wave 6; superseded by the 2026-10-27 direction).** This 2026-10-20 plan predates the removal of messaging from the core, the Parlay rename, slot removal (extensions revision 3, draft) and the generic signaling draft. Its "this plan wins" rule no longer applies: current direction is in the DEVLOG entries of 2026-10-27 and the specs.
+
+Status: working plan, 2026-10-20. It merges the slice plans of [extensibility](extensibility-design.md), [Parlay extraction](messaging-extraction.md) and [app](messaging-app.md), [linked approval](../3sln/accounts/approve-a-sign-in.md), [activity center](activity-center.md) and [app engine §12](app-engine.md). Decisions are recorded in [DEVLOG](../../DEVLOG.md). Where this plan and a design's own slice list differ, this plan wins.
 
 ## Conventions
 
@@ -55,7 +57,7 @@ AMD-C1–C11 are applied to the core drafts as **proposed (approved provisionall
 | AMD-C9 | Publish the preferences v2 artifact and implement uniform resource projection, broker credentials and integration-only `seq`; keep v1 free of brokered values and retain its existing shape. | EXT-X8 |
 | AMD-C10 | Validate pinned method `effect`/`introspect` and contract `x-bindle-brokerable` metadata; enforce failover and brokering eligibility, treating unknown effects conservatively. | EXT-X1, EXT-X7–EXT-X9 |
 
-The linked-approval decisions are recorded in [§15](linked-approval.md#15-open-questions--accepted-decisions-2026-10-20). Their implementation remains LA1/LA2/LA4/LA7 work: fresh sign-in for app approval, 30 d absolute / 7 d idle app expiry, provisional lineage retention past natural owner-session expiry for app revocation, ordinary sign-out cascade with warning, reviewed-client eligibility and kind-specific defaults. No linked-approval runtime change is included in Wave 0.
+The linked-approval decisions are recorded in [§15](../3sln/accounts/approve-a-sign-in.md#15-open-questions--accepted-decisions-2026-10-20). Their implementation remains LA1/LA2/LA4/LA7 work: fresh sign-in for app approval, 30 d absolute / 7 d idle app expiry, provisional lineage retention past natural owner-session expiry for app revocation, ordinary sign-out cascade with warning, reviewed-client eligibility and kind-specific defaults. No linked-approval runtime change is included in Wave 0.
 
 **Wave 1, parallel foundations:**
 - LA1 identity core [S]: `packages/identity/{service,device-login,linked-approval,index}.mjs`, the deviceRequests adapter hunks in `apps/worker/index.mjs` and `apps/node/*`.
@@ -138,7 +140,7 @@ Every wave ends green with flags off, which means a deployable `check:worker` pl
 
 ## Additions: events, consent and incremental authorization (2026-10-20)
 
-From [consent experience](consent-experience.md), [events](../spec/events.md) and [incremental authorization](../spec/incremental-authorization.md). Slices use the prefixes EV (events), IA (incremental authorization) and CX (consent experience).
+From [consent experience](consent-experience.md), [events](../spec/extensions/events.md) and [incremental authorization](../spec/extensions/incremental-authorization.md). Slices use the prefixes EV (events), IA (incremental authorization) and CX (consent experience).
 
 - **Wave 2:** CX-1 risk/wording model, EV-1 bus manifest validation.
 - **Wave 3:** IA-1 `grant-more`/`configure` backend, IA-2 suppression and rate limits, EV-2 bus engine, CX-2 consent walkthrough, IA-3 SDK helpers.

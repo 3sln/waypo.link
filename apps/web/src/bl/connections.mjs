@@ -1,11 +1,11 @@
 import {Query} from '../shared/stack.mjs';
 import {OwnerFlow,snapshot,publish} from './owner-flow.mjs';
-import {connectionManifest,connectionLink} from './connections-port.mjs';
+import {connectionLink} from './connections-port.mjs';
 export const connectionsEnabled=s=>s.config?.integrationsEnabled===true;
 export const connectionsModel=s=>connectionsEnabled(s)&&!s.offline&&s.session?.account?.id&&s.connectionsConsole?.owner===s.session.account.id&&s.connectionsConsole?.session===s.session.sessionContext&&s.connectionsConsole?.generation===(s.beamGeneration??0)?s.connectionsConsole:null;
 // Display availability follows configured upstream capability and the current connection state.
 export const connectionOfferings=s=>{const m=connectionsModel(s);return (m?.offerings??[]).filter(d=>d.id!=='google-drive'||s.config?.providers?.google?.enabled===true||s.data?.providerCapabilities?.['google-drive']?.enabled===true).map(d=>({...d,connected:(m.connections??[]).some(c=>c.integration?.builtin===d.id&&c.state!=='disconnected')}));};
-const base=s=>connectionsModel(s)??{owner:s.session.account.id,session:s.session.sessionContext,generation:s.beamGeneration??0,connections:[],slots:[],offerings:[]};
+const base=s=>connectionsModel(s)??{owner:s.session.account.id,session:s.session.sessionContext,generation:s.beamGeneration??0,connections:[],fields:[],features:[],notices:[],offerings:[]};
 const put=(r,ctx,p)=>publish(r,ctx,{connectionsConsole:{...base(snapshot(r)),...p}});
 // Optional host focus port: moves focus to a rendered panel heading (or back to the console title) after a change.
 const focus=(r,id)=>{try{r.browser?.focusConnections?.(id);}catch{}};
@@ -22,7 +22,8 @@ export class ConnectionsIntent extends OwnerFlow {
  async perform(resources,ctx,d){
   const initial=snapshot(resources),session=initial.session.sessionContext,r={...resources,current:()=>resources.current()&&snapshot(resources).session?.sessionContext===session&&connectionsEnabled(snapshot(resources))},port=r.connectionsConsole;
   const options={api:r.api,owner:initial.session.account.id},checked=async fn=>{if(!r.current())fail('connection_changed');const result=await fn();if(!r.current())fail('connection_changed');return result;},call=(operation,input)=>checked(()=>port.owner({operation,...input===undefined?{}:{input}},options)),m=base(initial),v=d.values??{},a=d.action;
-  const reload=async()=>{const result=await call('connections.list');put(r,ctx,{connections:result.connections,slots:result.slots,offerings:result.offerings??port.offerings,stale:false,confirm:null,picker:null,setup:null,error:null});};
+  // Extensions rev 3.2: provider-consumable fields, provider features and owner-only notices ride the same reload.
+  const reload=async()=>{const result=await call('connections.list');put(r,ctx,{connections:result.connections,fields:result.fields??[],features:result.features??[],notices:result.notices??[],offerings:result.offerings??port.offerings,stale:false,confirm:null,picker:null,setup:null,candidates:null,error:null});};
   const change=async(operation,input)=>{put(r,ctx,{stale:true,confirm:null});await call(operation,input);put(r,ctx,{notice:'saved'});try{await reload();}catch{put(r,ctx,{error:'saved_stale'});}if(m.confirm)focus(r,'connections-title');};
   try{
    if(a==='reload'){await reload();return;}
@@ -59,23 +60,32 @@ export class ConnectionsIntent extends OwnerFlow {
     const record=await r.api.request('/api/integrations/records',{connection:p.connection,resource:item.id,binding:{fragment:p.fragment,field:p.field},consumer:{clientId:c.clientId},contracts:p.contracts});
     const key=p.fragment+'#'+p.field;put(r,ctx,{setup:{...setup,resources:{...setup.resources,[key]:record}},picker:null,notice:'picked'});focus(r,'connections-setup');return;
    }
-   if(a==='slot-assign'){
-    const slot=m.slots.find(s=>s.slot===d.slot),c=m.connections.find(c=>c.id===v.connection),eligible=c&&connectionManifest(c).extensions?.some(e=>e.slot===slot?.slot&&e.role==='occupant');
-    if(!slot||!eligible||!['active','degraded'].includes(c.state))fail('connection_changed');
-    const input={slot:slot.slot,connection:c.id,expectedRevision:slot.revision,...v.resource?{resource:String(v.resource)}:{}};
-    if(slot.selection==='exclusive'&&slot.occupants.length){put(r,ctx,{confirm:{kind:'replace',input:{...input,replace:true},old:slot.occupants[0].name,new:c.name}});focus(r,'connections-review');return;}
-    await change('connections.occupy',input);return;
+   // Extensions §5.1: candidates come only from the provider (recorded contracts), in neutral order, none preselected.
+   if(a==='field-candidates'){const field=m.fields.find(f=>f.fragment===d.fragment);if(!field)fail('field_changed');const result=await call('connections.candidates',{fragment:field.fragment});put(r,ctx,{candidates:{fragment:field.fragment,list:result.candidates}});focus(r,'connections-fields');return;}
+   if(a==='field-assign'){
+    const field=m.fields.find(f=>f.fragment===d.fragment),pick=m.candidates?.fragment===field?.fragment?m.candidates.list.find(x=>x.id===v.candidate):null;
+    if(!field||!pick)fail('field_changed');
+    // §3.4: each consumer of the field is approved separately, unchecked by default; nothing is preselected.
+    const approve=field.consumers.filter(f=>f.state==='active'&&v['approve.'+f.feature]===true).map(f=>f.feature);
+    const input={fragment:field.fragment,connection:pick.connection,expectedRevision:field.revision,...pick.record?{resource:pick.record}:{},...approve.length?{approve}:{}};
+    if((field.selection==='exclusive'||field.max===1)&&field.values.length){put(r,ctx,{confirm:{kind:'replace',input:{...input,replace:true},old:field.values[0].name,new:pick.label??pick.origin,consumers:field.consumers.map(f=>f.title)}});focus(r,'connections-review');return;}
+    await change('connections.assign',input);return;
    }
-   if(a==='confirm-replace'){if(m.confirm?.kind!=='replace'||v.confirm!==true)fail('review_required');await change('connections.occupy',m.confirm.input);return;}
-   if(a==='slot-remove'||a==='slot-up'){
-    const slot=m.slots.find(s=>s.slot===d.slot),at=slot?.occupants.findIndex(o=>o.seat===d.seat);if(!slot||at<0)fail('slot_changed');
-    if(a==='slot-remove'){await change('connections.vacate',{slot:slot.slot,seat:d.seat,expectedRevision:slot.revision});return;}
-    if(slot.selection!=='ordered'||at===0)fail('invalid_order');const seats=slot.occupants.map(o=>o.seat);[seats[at-1],seats[at]]=[seats[at],seats[at-1]];await change('connections.reorder',{slot:slot.slot,seats,expectedRevision:slot.revision});return;
+   if(a==='confirm-replace'){if(m.confirm?.kind!=='replace'||v.confirm!==true)fail('review_required');await change('connections.assign',m.confirm.input);return;}
+   if(a==='field-remove'||a==='field-up'){
+    const field=m.fields.find(f=>f.fragment===d.fragment),at=field?.values.findIndex(o=>o.seat===d.seat);if(!field||at<0)fail('field_changed');
+    if(a==='field-remove'){await change('connections.unassign',{fragment:field.fragment,seat:d.seat,expectedRevision:field.revision});return;}
+    if(field.selection!=='ordered'||at===0)fail('invalid_order');const seats=field.values.map(o=>o.seat);[seats[at-1],seats[at]]=[seats[at],seats[at-1]];await change('connections.reorder',{fragment:field.fragment,seats,expectedRevision:field.revision});return;
    }
+   // Extensions §4.2: enabling a provider feature is the owner's consent, shown with its descriptor text and host.
+   if(a==='feature-enable'){const f=m.features.find(x=>x.feature===d.feature);if(!f||!f.declared||f.state==='active')fail('feature_changed');put(r,ctx,{confirm:{kind:'feature',feature:f.feature,title:f.title,description:f.description,host:f.host,methods:f.methods,field:m.fields.find(x=>x.fragment===f.fragment)?.values.map(x=>x.name)??[]}});focus(r,'connections-review');return;}
+   if(a==='confirm-feature'){if(m.confirm?.kind!=='feature'||v.confirm!==true)fail('review_required');await change('connections.enable-feature',{feature:m.confirm.feature});return;}
+   if(a==='feature-disable'){const f=m.features.find(x=>x.feature===d.feature);if(!f)fail('feature_changed');await change('connections.disable-feature',{feature:f.feature});return;}
+   if(a==='notice-dismiss'){await change('connections.dismiss-notice',{id:String(d.notice??'')});return;}
    const c=m.connections.find(c=>c.id===d.id);if(!c)fail('connection_changed');
    if(a==='review-manifest'){if(!c.integration?.staged)fail('connection_changed');put(r,ctx,{confirm:{kind:'manifest',id:c.id,generation:c.generation,stagedRevision:c.integration.stagedRevision,name:c.name,manifest:c.integration.staged}});focus(r,'connections-review');return;}
    if(a==='confirm-manifest'){if(m.confirm?.kind!=='manifest'||m.confirm.id!==c.id||m.confirm.generation!==c.generation||m.confirm.stagedRevision!==c.integration?.stagedRevision||v.confirm!==true)fail('review_required');await change('connections.approve',{connection:c.id,expectedGeneration:c.generation,stagedRevision:m.confirm.stagedRevision});return;}
-   if(a==='disconnect'){put(r,ctx,{confirm:{kind:'disconnect',id:c.id,generation:c.generation,name:c.name,slots:m.slots.filter(s=>s.occupants.some(o=>o.connection===c.id)).map(s=>s.title)}});focus(r,'connections-review');return;}
+   if(a==='disconnect'){put(r,ctx,{confirm:{kind:'disconnect',id:c.id,generation:c.generation,name:c.name,fields:m.fields.filter(f=>f.values.some(o=>o.connection===c.id)).map(f=>f.title)}});focus(r,'connections-review');return;}
    if(a==='confirm-disconnect'){if(m.confirm?.kind!=='disconnect'||m.confirm.id!==c.id||m.confirm.generation!==c.generation||v.confirm!==true)fail('review_required');await change('connections.disconnect',{connection:c.id,expectedGeneration:c.generation});return;}
    if(a==='suspend'||a==='resume'){await change('connections.'+a,{connection:c.id,expectedGeneration:c.generation});return;}
    fail('invalid_request');

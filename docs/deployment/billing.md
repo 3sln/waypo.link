@@ -1,6 +1,14 @@
 # Polar billing deployment
 
-Billing is implemented for the portable Worker/Node account runtime. Its registry fallback is off; checked-in hosted Wrangler configuration sets `BILLING_ENABLED=true` while `RELEASE_READY=false`. No product, customer, webhook endpoint, checkout, or real transaction has been created by this implementation. Offline tests validate local behavior; they do not establish live payment acceptance, webhook delivery, provider conformance, or production readiness. Production release gates remain in [security.md](../spec/security.md) and the decision ledger in [DEVLOG.md](../../DEVLOG.md). Pricing economics and production sign-offs remain provisional.
+> **Group:** 3sln.me reference service (hosting)
+>
+> **Status:** operator guide; configuration alone does not establish working external delivery or provider conformance.
+>
+> **Covers:** Polar billing setup for the hosted service.
+>
+> **Does not cover:** the protocol and its security requirements ([protocol](../spec/protocol.md), [security](../spec/security.md)); 3sln.me release gates ([release gates](../3sln/release-gates.md)).
+
+Billing is implemented for the portable Worker/Node account runtime. Its registry fallback is off; checked-in hosted Wrangler configuration sets `BILLING_ENABLED=true` while `RELEASE_READY=false`. No product, customer, webhook endpoint, checkout, or real transaction has been created by this implementation. Offline tests validate local behavior; they do not establish live payment acceptance, webhook delivery, provider conformance, or production readiness. Production release gates remain in [3sln.me release gates](../3sln/release-gates.md) and the decision ledger in [DEVLOG.md](../../DEVLOG.md). Pricing economics and production sign-offs remain provisional.
 
 | Plan | Included hosted storage | Base annual USD catalog price |
 | --- | ---: | ---: |
@@ -230,4 +238,4 @@ In metadata mode, the person catalog skips products marked `<prefix>catalog=orga
 - **Operator override.** `ORGANIZATIONS_PAID_ALLOWLIST` (creator, owner or organization UUIDs) still marks an organization as paid without a subscription.
 - **Effects** leave through a durable outbox: immediate revocation of the previous owner's subscription, full refunds of unbound payments, invalidation of the recovery file, and discovery hints. Each effect re-reads the provider before acting, so a retry never refunds twice. Refunds of a previous owner's remaining period are discretionary on request, under the terms ("Refunds"), and are not automated.
 
-Before any live use, still needed: a sandbox run against real Polar (checkout metadata propagation, `subscriptions.revoke`, `refunds.create` amounts with tax), reviewed pricing, counsel's organization terms (ORG-13), and the production gates in [security](../spec/security.md).
+Before any live use, still needed: a sandbox run against real Polar (checkout metadata propagation, `subscriptions.revoke`, `refunds.create` amounts with tax), reviewed pricing, counsel's organization terms (ORG-13), and the production gates in [3sln.me release gates](../3sln/release-gates.md).

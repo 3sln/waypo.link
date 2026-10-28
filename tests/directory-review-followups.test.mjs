@@ -35,7 +35,7 @@ test('F1: background traffic together is capped at half of every window, so inte
 });
 
 const issuer='https://home.example',subject=()=>crypto.randomUUID();
-const manifest={version:'0',issuer,authorization_request_endpoint:issuer+'/r',authorization_endpoint:issuer+'/a',token_endpoint:issuer+'/t',rpc_endpoint:issuer+'/rpc',jwks_uri:issuer+'/jwks',preferences_contract:'https://contracts.example/p',login_presentation:['redirect'],dpop_signing_alg_values_supported:['ES256'],features:{'directory.v1':{directory_url:issuer+'/directory'}}};
+const manifest={version:'0',issuer,authorization_request_endpoint:issuer+'/r',authorization_endpoint:issuer+'/a',token_endpoint:issuer+'/t',rpc_endpoint:issuer+'/rpc',jwks_uri:issuer+'/jwks',preferences_contract:'https://contracts.example/p',login_presentation:['redirect'],dpop_signing_alg_values_supported:['ES256'],extensions:[{spec:'https://spec.bindle.example/extensions/directory/v1',options:{directory_url:issuer+'/directory'}}]};
 const store=()=>{const rows=new Map();return {transaction:async fn=>fn({get:async k=>structuredClone(rows.get(k)),set:async(k,v)=>{rows.set(k,structuredClone(v));}})};};
 async function documentFor(sub,padding){const p=await crypto.subtle.generateKey({name:'ECDSA',namedCurve:'P-256'},true,['sign','verify']);const {x,y}=await crypto.subtle.exportKey('jwk',p.publicKey);
  return {v:1,iss:issuer,sub,kind:'person',...padding?{features:{pad:'x'.repeat(padding)}}:{},keys:[{kid:'k1',use:'sig',alg:'ES256',jwk:{kty:'EC',crv:'P-256',x,y},state:'active'}]};}

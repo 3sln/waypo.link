@@ -13,10 +13,11 @@ test('authorization entry: cookieless creation, strict entry document, owner sel
  const config=await(await context.request.get(baseURL+'/api/config')).json(),post=(path,data)=>context.request.post(baseURL+path,{headers:{Origin:baseURL},data});
  const signup=await(await post('/api/auth/signup',{method:'password',password:'Authorization entry browser password!',ageConfirmed:18,termsAccepted:true,termsVersion:config.termsVersion,turnstileToken:'local-browser-test-token'})).json();assert.ok(signup.pendingToken,JSON.stringify(signup));
  const file=await(await post('/api/auth/recovery/download',{pendingToken:signup.pendingToken})).json();assert.equal((await post('/api/auth/recovery/confirm',{pendingToken:signup.pendingToken,recoveryToken:file.recoveryToken,downloadConfirmed:true})).status(),200);
- // F8: the entry feature is advertised because the routes are mounted; the components profile because the islands shell
+ // F8: the entry extension is declared because the routes are mounted; embedded components because the islands shell
  // is built, the embed routes are mounted and DPoP is configured (a loopback embed origin only under LOCAL_DEVELOPMENT).
  const manifest=await(await context.request.get(baseURL+'/.well-known/bindle/manifest.json')).json();
- assert.deepEqual(manifest.features['authorization-entry.v1'],{endpoint:baseURL+'/api/oauth/entries',intents:['login','select-account','reauthenticate','end-session']});assert.deepEqual(manifest.profiles,{'https://3sln.me/artefacts/profiles/components/v1':{embed_origin:embedOrigin,protocol:[1],parts:{avatar:{versions:[1]},'account-switcher':{versions:[1]},'sign-in':{versions:[1]}},credential_binding:['key-binding.v1']}});
+ const declared=spec=>manifest.extensions?.find(e=>e.spec===spec)?.options;assert.equal(manifest.features,undefined);assert.equal(manifest.profiles,undefined);
+ assert.deepEqual(declared('https://spec.bindle.example/extensions/authorization-entry/v1'),{endpoint:baseURL+'/api/oauth/entries',intents:['login','select-account','reauthenticate','end-session']});assert.deepEqual(declared('https://spec.bindle.example/extensions/embedded-components/v1'),{embed_origin:embedOrigin,protocol:[1],parts:['avatar/1','account-switcher/1','sign-in/1'],credential_binding:['key-binding.v1']});
  await context.route(appOrigin+'/**',route=>route.fulfill({contentType:'text/html',body:'<!doctype html><title>Independent fixture app</title><h1>Fixture app</h1>'}));
  const app=await context.newPage();const errors=[];app.on('pageerror',error=>errors.push(error.message));await app.goto(appOrigin+'/');
  const created=await app.evaluate(async({baseURL,clientId,redirectUri})=>{

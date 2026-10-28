@@ -5,7 +5,6 @@ import assert from 'node:assert/strict';
 import {webcrypto} from 'node:crypto';
 import {ClientDirectory,validateClientMetadata,validClientSnapshot,memoryLimiter,CLIENT_METADATA_LIMITS} from '../packages/federation/client-metadata.mjs';
 import {validateIntegrationManifest,validIntegrationValue,validateJwks,jwkThumbprint,pinnedKeys,integrationSnapshot,classifyIntegrationChange,promotePendingKeys,prefixedURL,createIntegrationsProvider,IntegrationManifest,IntegrationClient,IntegrationRevalidation,PREFERENCES_UPDATED_EVENT,INTEGRATION_LIMITS} from '../packages/federation/integrations.mjs';
-import {slotDigest} from '../packages/federation/extensions.mjs';
 import {createTestEngine} from './helpers/app-engine.mjs';
 import {fakeEgress,body} from './client-metadata-helpers.mjs';
 
@@ -30,7 +29,7 @@ test('a confidential manifest normalizes to known members only; unknown members 
  assert.equal(result.status,'valid');assert.equal(result.manifest.future_member,undefined);assert.equal(result.manifest.resources.extra,undefined);
  assert.deepEqual(result.manifest.setup.fragments[0],{fragment:'https://inbox.example/preferences/inbox-settings/v1',required:true,purpose:'Where to store your messages.',fields:['store','retention']});
  assert.deepEqual(result.manifest.resources,{rpc_endpoint:P+'rpc',discovery_endpoint:P+'resources',contracts:[CONTRACT],dpop:'supported'});
- assert.equal(result.manifest.extensions.length,2);assert.equal(validateIntegrationManifest(result.manifest,confidential).status,'valid');
+ assert.equal(result.manifest.extensions,undefined,'extensions rev 3.2 §2.1: integration manifests carry no `extensions`');assert.equal(validateIntegrationManifest(result.manifest,confidential).status,'valid');
  assert.deepEqual(validateIntegrationManifest(result.manifest,confidential),result,'normalization is idempotent, so snapshots re-derive');
  const defaults=validateIntegrationManifest(manifest({events:undefined,resources:{rpc_endpoint:P+'rpc',discovery_endpoint:P+'resources',contracts:[CONTRACT]}}),confidential).manifest;
  assert.deepEqual(defaults.events,[PREFERENCES_UPDATED_EVENT]);assert.equal(defaults.resources.dpop,'none');
@@ -48,8 +47,8 @@ test('hostile manifests: foreign origins, path-prefix escapes, collisions and co
  assert.deepEqual(validateIntegrationManifest(manifest({resources:{...manifest().resources,discovery_endpoint:P+'rpc'}}),confidential),{status:'invalid',reason:'endpoint_collision'});
  assert.deepEqual(validateIntegrationManifest(manifest({management_url:P+'events'}),confidential),{status:'invalid',reason:'endpoint_collision'});
  const pub={clientId:ID,redirectUris:[P+'callback']};
- for(const over of [{events_endpoint:P+'events'},{resources:'garbage'},{extensions:[{slot:SLOT,role:'occupant',ref:'inbox'}]}])assert.deepEqual(validateIntegrationManifest({v:1,...over},pub),{status:'invalid',reason:'confidential_required'},JSON.stringify(over));
- assert.equal(validateIntegrationManifest({v:1,extensions:[{slot:CLASSIFIER,role:'consumer',ref:'triage'}],management_url:P+'manage'},pub).status,'valid','public clients may declare setup and consumers');
+ for(const over of [{events_endpoint:P+'events'},{resources:'garbage'}])assert.deepEqual(validateIntegrationManifest({v:1,...over},pub),{status:'invalid',reason:'confidential_required'},JSON.stringify(over));
+ assert.deepEqual(validateIntegrationManifest({v:1,extensions:[{slot:SLOT,role:'occupant',ref:'inbox'}],management_url:P+'manage'},pub),{status:'valid',manifest:{v:1,management_url:P+'manage'}},'a revision 2 `extensions` member is ignored, never a confidential-client trigger');
  assert.deepEqual(validateIntegrationManifest({v:1},{...pub,redirectUris:['https://inbox.example/elsewhere/cb']}),{status:'invalid',reason:'path_prefix'});
  assert.deepEqual(validateIntegrationManifest({v:1},{...confidential,jwksUri:'https://inbox.example/keys.json'}),{status:'invalid',reason:'path_prefix'});
  assert.deepEqual(validateIntegrationManifest({v:1},{...pub,clientId:'https://provider.example/bindle/c.json',redirectUris:[],reserved:['provider.example']}),{status:'invalid',reason:'issuer_origin'});
@@ -65,17 +64,9 @@ test('hostile manifests: foreign origins, path-prefix escapes, collisions and co
  assert.deepEqual(validateIntegrationManifest({v:1,get management_url(){throw new Error('getter');}},pub),{status:'invalid',reason:'invalid_manifest'},'a throwing accessor is reported invalid, never propagated');
 });
 
-test('extension claims: syntax-only without pins, and validated against trusted slot pins when supplied',async()=>{
- const slot={id:SLOT,title:'Intake',description:'Public intake',publisher:'https://spec.bindle.example/',fields:{target:{title:'Target',type:'resource',cardinality:{min:0,max:1},contracts:[CONTRACT]}},slot:{v:1,field:'target',selection:'exclusive',consumers:['application','provider']}};
- const digest=await slotDigest(webcrypto,slot),slots=new Map([[SLOT,{schema:slot,digest}]]);
- const entries=[{slot:SLOT,role:'occupant',ref:'inbox',digest},{slot:SLOT,role:'occupant',ref:'bad',digest:'sha256-'+'A'.repeat(43)},{slot:SLOT,role:'occupant',ref:'Bad Ref'},{slot:'http://spec.bindle.example/s',role:'consumer',ref:'x'},{slot:CLASSIFIER,role:'consumer',ref:'triage',required:true,purpose:'Sort.'},{slot:CLASSIFIER,role:'consumer',ref:'triage'}];
- const plain=validateIntegrationManifest({v:1,extensions:entries},confidential).manifest.extensions;
- assert.deepEqual(plain.map(e=>e.ref),['inbox','bad'],'malformed and duplicate triples are dropped; unfetched slots stay unknown');
- const pinned=validateIntegrationManifest({v:1,extensions:entries},{...confidential,slots}).manifest.extensions;
- assert.deepEqual(pinned.map(e=>e.ref),['inbox'],'a digest mismatch against the trusted pin is dropped');
- assert.equal(validateIntegrationManifest({v:1,extensions:Array(33).fill(entries[0])},confidential).manifest.extensions,undefined,'over-long arrays are ignored');
- const providerOnly={...slot,slot:{...slot.slot,consumers:['provider']}};
- assert.equal(validateIntegrationManifest({v:1,extensions:[{slot:SLOT,role:'consumer',ref:'c'}]},{...confidential,slots:new Map([[SLOT,{schema:providerOnly,digest:await slotDigest(webcrypto,providerOnly)}]])}).manifest.extensions,undefined,'apps cannot claim provider-only consumption');
+test('extensions rev 3.2: no occupant or consumer declarations survive; candidates come only from recorded resources.contracts',()=>{
+ for(const extensions of [[{slot:SLOT,role:'occupant',ref:'inbox'}],[{spec:'https://spec.bindle.example/extensions/integrations/v1'}],'x',[]]){
+  const r=validateIntegrationManifest(manifest({extensions}),confidential);assert.equal(r.status,'valid');assert.equal(r.manifest.extensions,undefined);assert.deepEqual(r.manifest.resources.contracts,[CONTRACT]);}
 });
 
 test('AMD-C7: confidential clients only with integrations.v1; origin/path-bound jwks_uri; secrets and inline keys always refused',()=>{
@@ -186,7 +177,7 @@ test('§2.3 classification: narrowing adopted, widening staged, transient failur
  assert.deepEqual(next(manifest({resources:{...manifest().resources,dpop:'none'}})).changes,['dpop_weakened']);
  const strong=next(manifest({resources:{...manifest().resources,dpop:'required'}}));assert.equal(strong.decision,'adopt');assert.equal(strong.next.manifest.resources.dpop,'required');
  const moved=next(manifest({resources:{...manifest().resources,rpc_endpoint:P+'rpc2'},management_url:P+'m2'}));assert.equal(moved.decision,'adopt');assert.deepEqual(moved.changes.sort(),['management_url_changed','rpc_endpoint_changed']);
- for(const integration of [manifest({setup:{fragments:[]}}),manifest({extensions:[]}),manifest({events:[]}),manifest({setup:{fragments:[{id:'https://inbox.example/f/v2',purpose:'New.',fields:['a']}]}})])assert.equal(next(integration).decision,'review');
+ for(const integration of [manifest({setup:{fragments:[]}}),manifest({events:[]}),manifest({setup:{fragments:[{id:'https://inbox.example/f/v2',purpose:'New.',fields:['a']}]}})])assert.equal(next(integration).decision,'review');
  assert.deepEqual(next(manifest({resources:undefined})).changes,['resources_removed']);assert.equal(next(manifest({events_endpoint:undefined,events:undefined})).decision,'adopt');
  const pubPin={...pin,manifest:{v:1}};assert.ok(classifyIntegrationChange(pubPin,{client:validateClientMetadata(document(),ID,{integrations:true})},keys).changes.includes('resources_added'));
  assert.deepEqual(next({v:3}).decision,'review');assert.deepEqual(next({v:3}).next,pin,'an unknown version keeps the pin and never degrades');

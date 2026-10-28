@@ -1,11 +1,11 @@
 // App-as-RP FedCM transport (auth.md "FedCM exchange", adaptive sign-in §11.6),
-// loaded only for providers that declare `fedcm.v1`. It creates the
+// loaded only for providers that declare the fedcm extension. It creates the
 // authorization entry with presentation "fedcm", asks the browser for an
 // assertion with `mediation:'required'` (never auto-selected), and validates the
 // returned {v,code,state,iss} exactly as callback parameters. Non-user failures
 // report `unavailable`, so the controller continues with a popup or, once the
 // click's activation has expired, a redirect. Provisional: no provider declares
-// fedcm.v1 yet; verified against testing.mjs only.
+// the fedcm extension yet; verified against testing.mjs only.
 // Errors raised before any browser UI could show; everything else may be a user dismissal,
 // which browsers deliberately report as a generic NetworkError/IdentityCredentialError.
 const beforeUI=new Set(['NotAllowedError','NotSupportedError','SecurityError','InvalidStateError']);
@@ -19,7 +19,7 @@ export async function authorizeWithFedCM({intent,params,client,navigator,capabil
     return ['invalid-identity','identity-required','discovery-unavailable','unsupported-provider','unregistered-client','no-provider'].includes(error?.code)?{outcome:'discovery-error',code:error.code}:{outcome:'unavailable'};
   }
   if(begun.kind!=='provider')return {outcome:'discovery-error',code:'no-provider',fallback:begun};
-  const configURL=begun.declaration.features.fedcm?.configUrl,clientId=client.clientIdFor(issuer);
+  const configURL=begun.declaration.fedcm?.configUrl,clientId=client.clientIdFor(issuer);
   let credential;
   try{
     credential=await navigator.credentials.get({identity:{providers:[{configURL,clientId,params:{v:1,entry:begun.entryId}}],mode:'active',context:'signin'},mediation:'required',signal});

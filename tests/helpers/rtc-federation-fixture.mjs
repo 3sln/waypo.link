@@ -10,7 +10,9 @@ import {SqliteMetadata} from '../../apps/node/resources.mjs';
 import {createAppEngine,perform,read,AppQuery} from '../../packages/app/engine.mjs';
 import {memoryAudit} from '../../packages/app/providers.mjs';
 import {fakeClock,seededRandom,createRandom} from '../../packages/app/memory-providers.mjs';
-import {boundAllows} from '../../packages/federation/extensions.mjs';
+import {approvalKey,approvalRecord} from '../../packages/rtc/approvals.mjs';
+import {RTC_FEATURE,RTC_SIGNALING_FRAGMENT} from '../../packages/rtc/extension.mjs';
+import {EXT} from '../../packages/core/extensions.mjs';
 import {IdentityDirectory} from '../../packages/federation/directory.mjs';
 import {jwkThumbprint} from '../../packages/identity/delegation.mjs';
 import {signMessage} from '../../packages/rtc/certificates.mjs';
@@ -25,7 +27,7 @@ export const A='https://alpha.example',B='https://beta.example',C='https://gamma
 export const [CALL,SCREEN,FILES,SYNC]=RTC_PURPOSE_REFERENCES.map(r=>r.artefact);
 export const REF=Object.fromEntries(RTC_PURPOSE_REFERENCES.map(r=>[r.artefact,{purpose:r.artefact,version:r.version,digest:r.digest}]));
 export const OPS=Object.fromEntries([...RTC_ENDPOINT_OPERATIONS,...RTC_OWNER_OPERATIONS,...RTC_SYSTEM_OPERATIONS].map(O=>[O.operation,O]));
-const SLOT='https://spec.bindle.example/slots/rtc-signaling/v1';
+const SLOT=RTC_SIGNALING_FRAGMENT;
 export const identityURI=p=>`${p.iss}/identity/${p.sub}`;
 export const payloadOf=compact=>JSON.parse(Buffer.from(compact.split('.')[1],'base64url'));
 export const headerOf=compact=>JSON.parse(Buffer.from(compact.split('.')[0],'base64url'));
@@ -70,7 +72,7 @@ export async function rtcWorld({seed=1,start=Date.UTC(2026,9,27,12),providers=[A
  W.provider=origin=>W.providers.get(origin);
  W.entity=(origin,n)=>W.providers.get(origin).entity(n);
  /** Every entity's inbound queue, outbox and key roster, until quiet (`rounds` bound). */
- W.pump=async(rounds=8)=>{for(let r=0;r<rounds;r++){let work=0;
+ W.pump=async(rounds=8)=>{for(const p of W.providers.values())await p.syncApprovals();for(let r=0;r<rounds;r++){let work=0;
   for(const p of W.providers.values())for(const e of p.entities.values())if(!e.gone){const inbox=await perform(e.engine,new RtcInbox({actor:{kind:'system',owner:e.sub},input:{limit:256}})).catch(()=>({processed:0}));work+=inbox.processed;}
   for(const p of W.providers.values())for(const e of p.entities.values())if(!e.gone){const out=await e.service.drain(e.sub).catch(()=>({sent:0,pending:0}));work+=out.sent;const ros=await e.roster.run({limit:8});work+=ros.fetched>0&&r<2?1:0;}
   if(!work)return;}};
@@ -84,7 +86,8 @@ async function provider(W,origin,i,{allow,flags,maxAge,entities,ids,directoryLim
   manifestFeature:{endpoint:`${origin}/bindle/rtc`,max_leg_certificate_seconds:600},manifestPatch:null,directoryPatch:null,documentPatch:null,abuse:new Map()};
  const subOf=n=>`0a0a0a0a-000${i}-4000-8000-${n.toString(16).padStart(12,'0')}`;
  P.manifest=()=>({version:'0',issuer:origin,authorization_request_endpoint:`${origin}/requests`,authorization_endpoint:`${origin}/authorize`,token_endpoint:`${origin}/token`,rpc_endpoint:`${origin}/bindle/rpc`,jwks_uri:`${origin}/jwks`,preferences_contract:'https://contracts.example/preferences',login_presentation:['redirect'],dpop_signing_alg_values_supported:['ES256'],
-  features:{'directory.v1':{directory_url:`${origin}/directory`},...P.manifestFeature?{'rtc-signaling.v1':P.manifestFeature}:{}},...P.manifestPatch??{}});
+  // Extensions rev 3.2: `extensions: [{spec, options}]`; the legacy rtc extension needs directory and artefact-versions.
+  extensions:[{spec:EXT.directory,options:{directory_url:`${origin}/directory`}},{spec:EXT.artefactVersions,options:{}},...P.manifestFeature?[{spec:RTC_FEATURE,options:P.manifestFeature}]:[]],...P.manifestPatch??{}});
  P.document=e=>({v:1,iss:origin,sub:e.sub,kind:'person',keys:[{kid:e.sig.kid,use:'sig',alg:'ES256',jwk:e.sig.jwk,state:'active',predecessor:null,continuity:null},...e.certKeys.map(k=>({kid:k.kid,use:'cert',alg:'ES256',jwk:k.jwk,state:k.state}))]});
  P.serve=async(u,init)=>{
   if(u.pathname==='/.well-known/bindle/manifest.json')return json(P.manifest(),200,P.maxAge);
@@ -100,16 +103,23 @@ async function provider(W,origin,i,{allow,flags,maxAge,entities,ids,directoryLim
    const e=[...P.entities.values()].find(x=>x.sub===id);if(method!=='rtcPeer'||!e)return {$fault:{code:'not_found',message:'Not found.',status:404}};
    try{return await perform(e.engine,new RtcIngest({actor:{kind:'system',owner:id},input:{batch:args[1].input.batch,...typeof args[1].input.source==='string'?{source:args[1].input.source}:{},...args[1].input.dark===true?{dark:true}:{}}}));}catch(error){return {$fault:{code:error.code,message:error.message,status:error.status}};}}})}};
  const flagPort={for:()=>({enabled:name=>P.flags[name]===true})};
- const bound={async check({subject,clientId,fragment,grants:list,member,value,reference}){
-  const values={purposes:[]},versions={};
-  for(const id of list){const g=P.grants.get(id);if(!g||!g.active||`${origin}/entities/${g.owner}`!==subject||g.clientId!==clientId||g.fragment!==fragment)continue;for(const l of g.purposes){if(!values.purposes.includes(l))values.purposes.push(l);versions[l]={version:REF[l].version,digest:REF[l].digest};}}
-  return boundAllows(values.purposes.length?{values,versions}:null,member,value,{reference});}};
+ // Interim owner-local approval records (packages/rtc/approvals.mjs; extensions rev 3.2 removed AMD-X1), kept in step
+ // with P.grants before every dispatch: a (entity, client) record is rewritten only when the union of its active
+ // grants' purposes changed since the last write. TODO(signaling Appendix C.2: approvals move to intents session
+ // handler approvals)
+ const synced=new Map();
+ P.syncApprovals=async()=>{
+  const want=new Map();for(const g of P.grants.values()){const k=g.owner+'\n'+g.clientId;if(!want.has(k))want.set(k,new Set());if(g.active)for(const l of g.purposes)want.get(k).add(l);}
+  for(const [k,set] of want){const value=JSON.stringify([...set].sort());if(synced.get(k)===value)continue;synced.set(k,value);
+   const [owner,clientId]=k.split('\n'),e=[...P.entities.values()].find(x=>x.sub===owner);if(!e)continue;const key=await approvalKey(crypto,clientId);
+   if(set.size)await e.store.put(key,approvalRecord({clientId,purposes:[...set],refs:REF,prior:await e.store.get(key),at:W.clock.now()}));else await e.store.delete(key);}
+ };
  P.push={send:async(subscription,payload,options)=>{W.pushes.push({from:origin,subscription:structuredClone(subscription),payload:structuredClone(payload),options:structuredClone(options)});if(P.pushGone)throw Object.assign(new Error('gone'),{code:'push_subscription_gone'});return {accepted:true};}};
  const local=p=>p?.iss===origin;
  async function build(e){
   // Review F4: every directory of this provider shares the host-wide limiter (WORK_AUTHORITY in the adapters: a fixed
   // window per key, as P.env.ABUSE). Review F2: the roster's control path ignores RTC_FOREIGN_ENABLED, as rtcDirectory.
-  e.directory=new IdentityDirectory({store:{transaction:fn=>e.store.transaction(tx=>fn({get:k=>tx.get(k),set:(k,v)=>tx.put(k,v)}))},fetch:W.fetchFrom(origin),issuers:P.allow,enabled:true,clock:()=>W.clock.now(),features:['rtc-signaling.v1'],feature:'rtc',tenant:e.sub,hostLimiter:P.env.ABUSE,...directoryLimits?{limits:directoryLimits}:{}});
+  e.directory=new IdentityDirectory({store:{transaction:fn=>e.store.transaction(tx=>fn({get:k=>tx.get(k),set:(k,v)=>tx.put(k,v)}))},fetch:W.fetchFrom(origin),issuers:P.allow,enabled:true,clock:()=>W.clock.now(),features:[RTC_FEATURE],feature:'rtc',tenant:e.sub,hostLimiter:P.env.ABUSE,...directoryLimits?{limits:directoryLimits}:{}});
   e.roster=new RtcKeyRoster({issuer:origin,directory:({control=false}={})=>control||P.flags.RTC_FOREIGN_ENABLED?e.directory:null,clock:()=>W.clock.now()});
   const keys={
    certification:async p=>{if(local(p)){const x=[...P.entities.values()].find(y=>y.sub===p.sub);return x&&!x.gone?x.certKeys.filter(k=>k.state==='active').map(k=>({kid:k.kid,use:'cert',alg:'ES256',jwk:k.jwk,state:'active'})):[];}return e.roster.certification(p);},
@@ -119,7 +129,7 @@ async function provider(W,origin,i,{allow,flags,maxAge,entities,ids,directoryLim
   };
   const sameHost=sameHostRtcTransport({issuer:origin,dispatch:async(sub,operation,input)=>{const x=[...P.entities.values()].find(y=>y.sub===sub);if(!x||x.gone)throw Object.assign(new Error('gone'),{code:'temporarily_unavailable'});return perform(x.engine,new OPS[operation]({actor:{kind:'system',owner:sub},input}));}});
   e.transport=foreignRtcTransport({issuer:origin,local:sameHost,roster:e.roster,post:rtcEgress({send:W.egressFrom(origin),issuers:P.allow}),enabled:async()=>P.flags.RTC_FOREIGN_ENABLED===true});
-  e.service=new RtcService({store:e.store,issuer:origin,clock:W.clock,random:ids,flags:flagPort,keys,signer:async()=>{const k=e.certKeys.find(c=>c.kid===e.signing);return k?{kid:k.kid,privateKey:k.privateKey}:null;},linkSigner:async()=>({kid:e.sig.kid,privateKey:e.sig.privateKey,publicJwk:e.sig.jwk}),bound,transport:e.transport,defer:()=>{},pushTransport:P.push});
+  e.service=new RtcService({store:e.store,issuer:origin,clock:W.clock,random:ids,flags:flagPort,keys,signer:async()=>{const k=e.certKeys.find(c=>c.kid===e.signing);return k?{kid:k.kid,privateKey:k.privateKey}:null;},linkSigner:async()=>({kid:e.sig.kid,privateKey:e.sig.privateKey,publicJwk:e.sig.jwk}),transport:e.transport,defer:()=>{},pushTransport:P.push});
   e.engine=createAppEngine({providers:{clock:W.clock,random:ids,audit:memoryAudit({clock:W.clock}),rtc:rtcProvider(e.service)}});
  }
  P.add=async n=>{
@@ -144,7 +154,7 @@ export class Device{
  get actor(){return {kind:'app',owner:this.entity.sub,clientId:this.grantInfo.clientId,origin:this.grantInfo.origin,grants:[this.grantInfo.id]};}
  get principal(){return this.entity.principal;}
  auth(){return {endpoint:this.endpoint,endpoint_secret:this.secret};}
- run(operation,input){const O=OPS[operation],op=new O({actor:this.actor,input});return O.prototype instanceof AppQuery?read(this.entity.engine,op):perform(this.entity.engine,op);}
+ async run(operation,input){for(const p of this.world.providers.values())await p.syncApprovals();const O=OPS[operation],op=new O({actor:this.actor,input});return O.prototype instanceof AppQuery?read(this.entity.engine,op):perform(this.entity.engine,op);}
  async register(purposes=this.purposes){const out=await this.run('rtc.register',{purposes,...this.pushSub?{push:this.pushSub}:{}});this.endpoint=out.endpoint;this.secret=out.endpoint_secret;return out;}
  async mintTicket({purposes=[CALL],uses=1,expires_in=600,principal}={}){return (await this.run('rtc.mint-ticket',{purposes,uses,expires_in,...principal!==undefined?{principal}:{}})).link;}
  async open(to,purpose=CALL,{media=['audio'],basis,leg}={}){

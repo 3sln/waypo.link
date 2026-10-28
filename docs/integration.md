@@ -1,8 +1,16 @@
 # Integrating with 3sln.me and Bindle
 
-Bindle is an open implementation draft for identity, preference fragments and resource contracts. The current repository contains a working local identity/messaging application; federated OAuth login and general fragment consent are not yet a released interoperability service. Production publication is gated by release-status.json.
+> **Group:** 3sln.me reference service
+>
+> **Status:** guide; describes local behaviour, which is not a released interoperability service. Production publication is gated.
+>
+> **Covers:** how an application signs users in and uses preference fragments and resources with Bindle and the 3sln.me reference host.
+>
+> **Does not cover:** the normative rules ([protocol](spec/protocol.md), [auth](spec/auth.md)); self-hosting ([self-hosting](self-hosting.md)).
 
-Start with [the protocol](spec/protocol.md), [authentication](spec/auth.md), [baseline contracts](spec/contracts.md), [object storage](spec/storage.md), [links](spec/links.md), [messages from connected apps](spec/app-messages.md), and [device login](spec/device-login.md).
+Bindle is an open implementation draft for identity, preference fragments and resource contracts. The current repository contains a working local identity and resource application (peer messaging is the separate Parlay app since 2026-10-27); federated OAuth login and general fragment consent are not yet a released interoperability service. Production publication is gated by release-status.json.
+
+Start with the Bindle core: [the protocol](spec/protocol.md), [authentication](spec/auth.md), [baseline contracts](spec/contracts.md), [extensions](spec/extensions.md) and [security](spec/security.md). Apps without a usable browser redirect (CLIs, TV apps) use the [device authorization](spec/extensions/device-authorization.md) extension. For the 3sln.me reference service see [object storage](3sln/services/storage.md) and [messages from connected apps](3sln/services/app-messages.md). The [documentation index](https://3sln.me/docs/) lists every published spec by group.
 
 ## App login
 
@@ -30,7 +38,7 @@ Access tokens are short-lived (at most five minutes) and stay in memory. When th
 
 ## Incremental authorization (provisional, default off)
 
-The opt-in SDK module `packages/sdk/src/incremental.mjs` implements the [incremental authorization draft](spec/incremental-authorization.md) against a spec-contract extension of the SDK testing double. This is local mock verification; provider integration, independent review and production verification remain outstanding. Package exports and a standalone distribution entry are integrator work; the example uses the repository source module. The helper's `enabled` option defaults to `false`; enable it only through your app's default-off `INCREMENTAL_AUTH_ENABLED` flag. Load the module when preparing the optional feature, before its user action, to preserve popup activation and keep it outside the first-render element bundle:
+The opt-in SDK module `packages/sdk/src/incremental.mjs` implements the [incremental authorization draft](spec/extensions/incremental-authorization.md) against a spec-contract extension of the SDK testing double. This is local mock verification; provider integration, independent review and production verification remain outstanding. Package exports and a standalone distribution entry are integrator work; the example uses the repository source module. The helper's `enabled` option defaults to `false`; enable it only through your app's default-off `INCREMENTAL_AUTH_ENABLED` flag. Load the module when preparing the optional feature, before its user action, to preserve popup activation and keep it outside the first-render element bundle:
 
 ```js
 // Inside your app's enabled feature branch, before enabling the request button.
@@ -78,7 +86,7 @@ Framework-neutral custom elements: `<bindle-session>`, `<bindle-sign-in>`, `<bin
 
 `<bindle-session>` discovers the current provider (the session's issuer, else the default provider) on connect and exposes a frozen `capabilities` object, updated before `bindle-capabilities-change {issuer, capabilities}` fires. Elements compose from it; they never read the manifest. The members are `entry`, `intents`, `identityless`, `selectAccount`, `reauthenticate`, `endSession`, `popup`, `fedcm`, `revoke`, `dpop`, `refresh`, `clientIdMetadata`, `manageUrl`, `profile`, `embedOrigin`, `themeTokens` and `islands: {avatar, switcher, signIn}`. Headless apps call `createSession()` from `flows.mjs`, then `await session.loadCapabilities()`, and read `session.capabilities`.
 
-Declaration processing follows protocol §2: at most 32 features of at most 4 KiB and 8 profiles of at most 8 KiB, unknown keys ignored, an invalid feature or profile treated as absent, caching for the HTTP freshness lifetime capped at one hour, and values of one issuer never combined with another's. A declared capability that turns out not to be implemented (for example an entry endpoint answering 404, 405 or 501, or FedCM twice unavailable for non-user reasons) is degraded for that issuer until the page reloads; network and 5xx errors stay retryable.
+Declaration processing in the current SDK follows the revision 2 shapes (`features` and `profiles`); [extensions revision 3](spec/extensions.md) (draft, not implemented) replaces them with `{spec, options}` declarations, and the SDK will follow when the code moves (change requests CR-X3). Today: at most 32 features of at most 4 KiB and 8 profiles of at most 8 KiB, unknown keys ignored, an invalid feature or profile treated as absent, caching for the HTTP freshness lifetime capped at one hour, and values of one issuer never combined with another's. A declared capability that turns out not to be implemented (for example an entry endpoint answering 404, 405 or 501, or FedCM twice unavailable for non-user reasons) is degraded for that issuer until the page reloads; network and 5xx errors stay retryable.
 
 | Area | Behaviour |
 | --- | --- |
@@ -136,13 +144,13 @@ Resources have identifiers and exact contract URLs; a display name is not confor
 
 Storage capabilities describe read/write/range/presigning support. Object listing is absent; apps maintain directory/index objects. Do not assume every Google Drive, WebDAV or S3-compatible connection supports safe conditional writes. Object URLs are bearer capabilities for one object and operation. The result reports mode and revocation: native provider URLs can remain valid until expiry after grant revocation, while provider-proxy URLs perform live grant checks. Users approve temporary-link powers explicitly; callers must send the returned requiredHeaders and must not infer revocation behavior from the storage provider name.
 
-## Contact links
+## Contact links (being withdrawn)
 
-A contact link is a signed capability URL on the owner's provider ([links](spec/links.md)). Since 2026-10-27 the reference host keeps only the generic link plumbing: issuance through the links contract by the owner's messaging app, verification, the landing page with its preview and handoff, the contact-profile representation and the messaging-address descriptor. Peer messaging itself (composer, intake, delivery, conversations, saved contacts) is the job of a messaging app that occupies the messaging-ingress slot, such as Parlay; its interop profile is the draft Bindle Messaging extension. Signed URLs need safe handling and log redaction.
+Contact links are being withdrawn from Bindle (contacts and links rethink, provisional and unsigned): invitations between people move to [Bindle Messaging](spec/extensions/messaging.md) and the Parlay app, in phases. The reference host still serves the generic link plumbing behind `LINKS_ENABLED` (verification, the landing page with its preview and handoff), and the [links](spec/extensions/links.md) draft still describes it, but new integrations should not depend on contact links. Any capability URL needs the handling in [security](spec/security.md#capability-urls).
 
 ## App messages and Views
 
-Messages from connected apps ([app messages](spec/app-messages.md)) live in the owner's activity store. Saved Views filter that store by metadata; an item can appear in multiple Views without duplicate storage. Renaming or deleting a View does not modify retained items. Views never determine app permissions, and changing their filters cannot expand a resource grant. The owner-facing `/api/views` and `/api/incoming` implementation is separate from the existing scoped app/MCP APIs; it is not a published Bindle RPC contract.
+Messages from connected apps ([app messages](3sln/services/app-messages.md)) live in the owner's activity store. Saved Views filter that store by metadata; an item can appear in multiple Views without duplicate storage. Renaming or deleting a View does not modify retained items. Views never determine app permissions, and changing their filters cannot expand a resource grant. The owner-facing `/api/views` and `/api/incoming` implementation is separate from the existing scoped app/MCP APIs; it is not a published Bindle RPC contract.
 
 ## Self-hosting and extension
 
@@ -154,7 +162,7 @@ Messages from connected apps ([app messages](spec/app-messages.md)) live in the 
 
 ## Events: integration-hosted bus conformance (EV-4, provisional)
 
-An integration-hosted bus implements [events §3.2–§8](spec/events.md#32-integration-hosted-buses): pull only, with live provider introspection before **every** publish, including transaction replays. The manifest URL and canonical digest are immutable; grants do not cover successor buses. Brokered reads require the verified `bindle.bus: {floor_at, history}` claim, and return only records strictly after that time unless the owner approved history. Reads stop within the 360-second revocation bound, or earlier after acknowledged revocation. These draft requirements and passing local fixtures confer no production approval.
+An integration-hosted bus implements [events §3.2–§8](spec/extensions/events.md#32-integration-hosted-buses): pull only, with live provider introspection before **every** publish, including transaction replays. The manifest URL and canonical digest are immutable; grants do not cover successor buses. Brokered reads require the verified `bindle.bus: {floor_at, history}` claim, and return only records strictly after that time unless the owner approved history. Reads stop within the 360-second revocation bound, or earlier after acknowledged revocation. These draft requirements and passing local fixtures confer no production approval.
 
 From a repository checkout with Node 24+ and dependencies installed, run the reference in-memory host and provider client checks:
 
@@ -206,7 +214,7 @@ Review/sign-off for this provisional conformance contract: reviewer ___ / date _
 
 ## Integrations: provider and integration conformance (EXT-X9b, provisional)
 
-The integration conformance suite checks a provider's side of [integrations §5–§7](spec/integrations.md) against a reference integration, and an integration's side against this provider's real token, event and introspection code. Everything runs locally with `.example` identities and fake clocks; nothing is fetched from the network. Integrations are default off (`INTEGRATIONS_ENABLED`, `BROKERING_ENABLED`).
+The integration conformance suite checks a provider's side of [integrations §5–§7](spec/extensions/integrations.md) against a reference integration, and an integration's side against this provider's real token, event and introspection code. Everything runs locally with `.example` identities and fake clocks; nothing is fetched from the network. Integrations are default off (`INTEGRATIONS_ENABLED`, `BROKERING_ENABLED`).
 
 From a repository checkout with Node 24+ and dependencies installed:
 

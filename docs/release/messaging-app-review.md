@@ -5,10 +5,10 @@ Date: 2026-10-20.
 Reviewed:
 
 - [BindleBox architecture](../architecture/messaging-app.md);
-- [BindleBox interop v1](../spec/messaging.md);
+- [BindleBox interop v1](../spec/extensions/messaging.md);
 - [messaging extraction plan](../architecture/messaging-extraction.md).
 
-Method: two independent reviewer subagents, a security/abuse red team and a product/interop wargame, each reading the full drafts and their context. Neither reviewer edited any file. The lead designer then revised all three documents and checked them against [extensions](../spec/extensions.md), [integrations](../spec/integrations.md) and [extensibility design](../architecture/extensibility-design.md) revision 2 as finalized, and against the [scaling spike](messaging-scaling-spike.md) checklist.
+Method: two independent reviewer subagents, a security/abuse red team and a product/interop wargame, each reading the full drafts and their context. Neither reviewer edited any file. The lead designer then revised all three documents and checked them against [extensions](../spec/extensions.md), [integrations](../spec/extensions/integrations.md) and [extensibility design](../architecture/extensibility-design.md) revision 2 as finalized, and against the [scaling spike](messaging-scaling-spike.md) checklist.
 
 This is agent review, not human sign-off. Human sign-off: reviewer ___ / date ___ / outcome ___. Every decision stays provisional until the slots in the architecture header are signed. Nothing is implemented.
 
@@ -91,7 +91,7 @@ Arch §12.1 and spec §6.7 add public-request filtering with two tiers. This add
 | R-1 | Activity ([activity center](../architecture/activity-center.md)) | **Resolved 2026-10-20** at the coordinator's direction: activity-center now keeps both files in core and resets peer records pending user confirmation. Original issue: its extraction table moved `apps/worker/email.mjs` (core system-mail transport) and `packages/messaging/dispatcher.mjs` (lifecycle notices) to the messaging app. Both stay core. Its cutover proposes an owner-reviewed transfer of peer records. This plan proposes a reset instead (extraction §4), pending the user's answer to arch §19 question 7. |
 | R-2 | Extensions/integrations | Integrations §6.2 defines no identity-key-rotation or link-change event. BindleBox works without them (directory lookups and `links.changes` polling) and requests them as an optimization. |
 | R-3 | Extensions | The open question "public per-entity slot resolution" is answered **no** for messaging (arch §5, spec §2.3). The X12 email-bridge consumer is shared and follows spec §9 and arch §13. |
-| R-4 | Core protocol (coordinator) | Two proposed core amendments: `key-delegation.v1` (spec §3.2–§3.4), and the links contract with its link-type → slot registration (spec §4.2). Also new rows for the [links §7.2](../spec/links.md) signature-domain table. |
+| R-4 | Core protocol (coordinator) | Two proposed core amendments: `key-delegation.v1` (spec §3.2–§3.4), and the links contract with its link-type → slot registration (spec §4.2). Also new rows for the [links §7.2](../spec/extensions/links.md) signature-domain table. |
 | R-5 | Coordinator | DEVLOG entry recording these decisions as provisional and linking this record. |
 
 ## Residual risks accepted

@@ -29,13 +29,16 @@ export default function connections(state,{accessHref}={}){
  const stateOf=c=>c.state??(c.status==='disconnected'?'disconnected':'active'),badge=c=>h('span',t[stateOf(c)]??t.unavailable).classes('connections-state').data({state:stateOf(c)});
 
  const review=m?.confirm,definition=m?.offerings.find(x=>x.id===review?.id);
- const confirmation=review?panel('connections-review',review.kind==='replace'?t.replacementTitle:review.kind==='disconnect'?t.disconnectTitle:t.connect,
-  h('p',plain(review.kind==='connect'?definition?.name:review.kind==='replace'?review.old:review.name)),review.new?h('p','→ ',plain(review.new)):null,
-  h('p',review.kind==='disconnect'?t.cascade:review.kind==='replace'?t.replacement:t.configureConsent),
-  review.slots?.length?h('ul',...review.slots.map(title=>h('li',plain(title)))):null,
+ const confirmation=review?panel('connections-review',review.kind==='replace'?t.replacementTitle:review.kind==='disconnect'?t.disconnectTitle:review.kind==='feature'?t.featureTitle:t.connect,
+  h('p',plain(review.kind==='connect'?definition?.name:review.kind==='replace'?review.old:review.kind==='feature'?review.title:review.name)),review.new?h('p','→ ',plain(review.new)):null,
+  review.kind==='feature'?h('p',plain(review.description),' · ',plain(review.host)):null,
+  review.kind==='feature'?h('ul',...Object.entries(review.methods??{}).map(([contract,methods])=>h('li',plain(methods.join(', ')),' · ',plain(contract))),...(review.field??[]).map(name=>h('li',t.featureResource,': ',plain(name)))):null,
+  h('p',review.kind==='disconnect'?t.cascade:review.kind==='replace'?t.replacement:review.kind==='feature'?t.featureConsent:t.configureConsent),
+  review.fields?.length?h('ul',...review.fields.map(title=>h('li',plain(title)))):null,
+  review.consumers?.length?h('ul',...review.consumers.map(title=>h('li',plain(title)))):null,
   review.kind==='connect'?h('ul',...(definition?.manifest?.setup?.fragments??[]).map(f=>h('li',plain(f.purpose),))):null,
   review.kind==='manifest'?h('pre',plain(JSON.stringify(review.manifest,null,2))).styles({whiteSpace:'pre-wrap',overflowWrap:'anywhere'}):null,
-  form([confirm()],review.kind==='manifest'?'confirm-manifest':review.kind==='disconnect'?'confirm-disconnect':review.kind==='replace'?'confirm-replace':'confirm-built-in',review.kind==='disconnect'?t.disconnect:review.kind==='replace'?t.replace:t.connect,{id:review.id}),
+  form([confirm()],review.kind==='manifest'?'confirm-manifest':review.kind==='disconnect'?'confirm-disconnect':review.kind==='replace'?'confirm-replace':review.kind==='feature'?'confirm-feature':'confirm-built-in',review.kind==='disconnect'?t.disconnect:review.kind==='replace'?t.replace:review.kind==='feature'?t.featureEnable:t.connect,{id:review.id}),
   btn(t.cancel,'close')).classes('connections-review'):null;
 
  const owner=m?.connections.find(c=>c.id===m.setup?.connection);
@@ -71,16 +74,24 @@ export default function connections(state,{accessHref}={}){
   h('div',c.integration?.staged?btn(state.locale==='es'?'Revisar cambios':'Review changes','review-manifest',{id:c.id},busy):null,s!=='disconnected'&&c.integration?btn(t.setup,'setup',{id:c.id},busy):null,s==='suspended'?btn(t.resume,'resume',{id:c.id},busy):[...SERVING,'configuring'].includes(s)&&c.integration?btn(t.suspend,'suspend',{id:c.id},busy):null,s!=='disconnected'?btn(state.locale==='es'?'Quitar app…':'Remove app…','removal-review',{id:c.id},busy):null,s!=='disconnected'?btn(t.disconnect,'disconnect',{id:c.id},busy).classes('connections-danger'):null).classes('connections-actions'),s!=='disconnected'?h('p',state.locale==='es'?'Desconectar detiene el acceso. Quitar app también permite revisar y gestionar sus datos.':'Disconnect stops access. Remove app also lets you review and manage its data.').classes('connections-note'):null
  ).data({connection:c.id})).key(c.id);})).classes('connections-grid'));
 
- const slots=h('section',h('h2',t.slots),h('p',t.rolesIntro),h('ul',...(m?.slots??[]).map(slot=>{
-  const eligible=m.connections.filter(c=>SERVING.includes(c.state)&&connectionManifest(c).extensions?.some(e=>e.slot===slot.slot&&e.role==='occupant')),full=slot.selection!=='exclusive'&&slot.occupants.length>=slot.max;
-  return h('li',h('article',h('h3',plain(slot.title)),h('p',plain(slot.host)),h('p',t[slot.selection]??t.unavailable).classes('connections-note'),
-   slot.occupants.length?h('ol',...slot.occupants.map((o,i)=>h('li',plain(o.name??o.clientId),' · ',o.available?t.active:t.offline,h('div',btn(t.remove,'slot-remove',{slot:slot.slot,seat:o.seat},busy,{'aria-label':t.remove+': '+(o.name??o.clientId??'')}),slot.selection==='ordered'?btn(t.up,'slot-up',{slot:slot.slot,seat:o.seat},busy||i===0,{'aria-label':t.up+': '+(o.name??o.clientId??'')}):null).classes('connections-actions')).key(o.seat))):h('p',t.noOccupants),
-   eligible.length?form([select('connection',t.connection,eligible.map(c=>[c.id,c.name])),input('resource',t.resource,'','text',{maxLength:128})],'slot-assign',slot.selection==='exclusive'&&slot.occupants.length?t.replace:t.assign,{slot:slot.slot},busy||full):h('p',t.noEligible)
-  ).data({slot:slot.slot})).key(slot.slot);})).classes('connections-grid'));
+ // Extensions rev 3.2 (behind EXTENSIONS_ENABLED, minimal): provider-consumable fields with their values in owner order,
+ // the consumers each value is approved for, provider-listed candidates (neutral order, none preselected, supplier
+ // claims marked), provider features (descriptor text with its host) and owner-only notices.
+ const fieldsView=h('section',h('h2',t.fields).props({id:'connections-fields',tabIndex:-1}),h('p',t.fieldsIntro),h('ul',...(m?.fields??[]).map(field=>{
+  const shown=m.candidates?.fragment===field.fragment?m.candidates.list:null,full=field.selection==='ordered'&&field.values.length>=field.max;
+  return h('li',h('article',h('h3',plain(field.title)),h('p',plain(field.host)),h('p',t[field.selection]??t.noPolicy).classes('connections-note'),
+   field.consumers.length?h('p',t.consumers,': ',...field.consumers.map((f,i)=>h('span',i?', ':'',plain(f.title),' · ',plain(f.host),f.state==='suspended'?' ('+t.suspendedFeature+')':''))):h('p',t.noConsumers).classes('connections-note'),
+   field.values.length?h('ol',...field.values.map((o,i)=>h('li',plain(o.name??o.clientId),o.builtIn?' · '+t.builtinMarker:'',' · ',o.available?t.active:t.offline,h('div',btn(t.remove,'field-remove',{fragment:field.fragment,seat:o.seat},busy,{'aria-label':t.remove+': '+(o.name??o.clientId??'')}),field.selection==='ordered'?btn(t.up,'field-up',{fragment:field.fragment,seat:o.seat},busy||i===0,{'aria-label':t.up+': '+(o.name??o.clientId??'')}):null).classes('connections-actions')).key(o.seat))):h('p',t.noValues),
+   shown?(shown.length?form([select('candidate',t.candidate,shown.map(c=>[c.id,`${c.builtIn?t.builtinMarker+' · ':''}${c.label??''} · ${c.origin}${c.claimed?' · '+t.claimed:''}`])),...field.consumers.filter(f=>f.state==='active').map(f=>h('label',h('input').props({type:'checkbox',name:'approve.'+f.feature,checked:false}).key('approve.'+f.feature),h('span',t.approveFor,' ',plain(f.title),' · ',plain(f.host))).classes('connections-check'))],'field-assign',(field.selection==='exclusive'||field.max===1)&&field.values.length?t.replace:t.assign,{fragment:field.fragment},busy||full):h('p',t.noEligible)):btn(t.candidates,'field-candidates',{fragment:field.fragment},busy)
+  ).data({fragment:field.fragment})).key(field.fragment);})).classes('connections-grid'));
+ const featuresView=m?.features?.length?h('section',h('h2',t.features),h('ul',...m.features.map(f=>h('li',h('article',h('h3',plain(f.title)),h('p',plain(f.description)),h('p',plain(f.host)),h('p',t['feature_'+f.state]??f.state).classes('connections-note'),
+  f.state==='active'||f.state==='suspended'?btn(t.featureDisable,'feature-disable',{feature:f.feature},busy):btn(t.featureEnable,'feature-enable',{feature:f.feature},busy||!f.declared)
+ )).key(f.feature))).classes('connections-grid')):null;
+ const noticesView=m?.notices?.length?h('section',h('h2',t.notices),h('ul',...m.notices.map(n=>h('li',h('p',n.kind==='announcement'?[t.announcement,' ',plain(n.supplier?.origin),' · ',...(n.consumers??[]).map((c,i)=>h('span',i?', ':'',plain(c.title),' · ',plain(c.host))),' (',t.claimed,')']:t['notice_'+n.kind]??n.kind),n.kind==='announcement'?btn(t.candidates,'field-candidates',{fragment:n.fragment},busy):null,btn(t.dismiss,'notice-dismiss',{notice:n.id},busy)).key(n.id)))):null;
 
  return h('section',h('style',connectionsCSS),h('header',h('h1',t.title).props({id:'connections-title',tabIndex:-1}),h('p',t.intro),btn(t.reload,'reload')),
   h('p',t.external_site).props({id:'connections-external-site',hidden:true}),
   m?.error?h('p',t[m.error]??t.error).attrs({role:'alert'}):null,m?.notice&&!m.error?h('p',t[m.notice]??t.saved).attrs({role:'status'}):null,!m?h('p',t.loading):null,
-  removalPanels(state,{btn,form,confirm,panel,plain}),confirmation,setup,picker,external,m?list:null,m?slots:null,m?connect:null)
+  removalPanels(state,{btn,form,confirm,panel,plain}),confirmation,setup,picker,external,m?list:null,noticesView,m?.fields?.length?fieldsView:null,featuresView,m?connect:null)
  .classes('connections-console').attrs({lang:state.locale==='es'?'es':'en','aria-labelledby':'connections-title','aria-busy':state.busy?'true':'false'});
 }

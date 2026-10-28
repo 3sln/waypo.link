@@ -2,7 +2,7 @@
 // default-off INCREMENTAL_AUTH_ENABLED gate; no element/first-render imports.
 import {Engine,Provider,Action,Query} from '../../../vendor/ngin/index.js';
 import {createSession} from './flows.mjs';
-import {issuerURL,declarationLimits,notImplemented} from './capabilities.mjs';
+import {issuerURL,notImplemented} from './capabilities.mjs';
 import {boundedJSON,deepFreeze,validateAccessResponse} from './tokens.mjs';
 import {createKey,createProof} from './dpop.mjs';
 
@@ -32,9 +32,10 @@ function discard(state,io,key,record){
  consume(state,io,key);
  if(record?.dpopJkt){io.client.dpopKeys.delete(record.dpopJkt);io.client.keyStore?.delete(`${io.client.storageKey}:${record.dpopJkt}`)?.catch?.(()=>{});}
 }
+// The authorization-entry extension's options (descriptor-validated, issuer-origin endpoint) from a fresh declaration.
 function declaration(client,issuer){
- const manifest=client.capabilities.manifest(issuer),base=client.capabilitiesFor(issuer),entry=manifest?.features?.['authorization-entry.v1'];
- if(!base?.entry||!object(entry)||bytes(entry)>declarationLimits.featureBytes||!issuerURL(entry.endpoint,issuer)||!Array.isArray(entry.intents)||entry.intents.length>16||entry.intents.some(value=>typeof value!=='string'||value.length>64))return null;
+ const manifest=client.capabilities.manifest(issuer),base=client.capabilitiesFor(issuer),entry=client.capabilities.declaration(issuer)?.authorizationEntry;
+ if(!manifest||!base?.entry||!object(entry))return null;
  return {manifest,base,entry};
 }
 function validate(intent,input){

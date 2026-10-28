@@ -1,0 +1,58 @@
+{
+ "id": "https://spec.bindle.example/extensions/embedded-components/v1",
+ "title": "Embedded components",
+ "description": "Show your account, sign-in and request controls inside the apps you use.",
+ "options": {
+  "embed_origin": {
+   "title": "Component origin",
+   "type": "url",
+   "maxLength": 2048,
+   "endpoint": "public"
+  },
+  "protocol": {
+   "title": "Protocol versions",
+   "type": "integer",
+   "minimum": 1,
+   "maximum": 64,
+   "cardinality": {
+    "min": 1,
+    "max": 8
+   }
+  },
+  "parts": {
+   "title": "Parts",
+   "type": "enum",
+   "values": [
+    "avatar/1",
+    "account-switcher/1",
+    "sign-in/1",
+    "request/1"
+   ],
+   "cardinality": {
+    "min": 1,
+    "max": 4
+   }
+  },
+  "credential_binding": {
+   "title": "Credential binding",
+   "type": "enum",
+   "values": [
+    "key-binding.v1"
+   ],
+   "cardinality": {
+    "min": 0,
+    "max": 4
+   }
+  },
+  "manage_url": {
+   "title": "Account management page",
+   "type": "url",
+   "maxLength": 2048,
+   "endpoint": "public",
+   "cardinality": {
+    "min": 0,
+    "max": 1
+   }
+  }
+ }
+}

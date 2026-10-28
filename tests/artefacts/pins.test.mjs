@@ -4,7 +4,6 @@ import {SqliteMetadata} from '../../apps/node/resources.mjs';
 import {federationMetadata} from '../../packages/federation/runtime.mjs';
 import {configuredArtefacts,reviewedSchemaFetcher} from '../../packages/runtime/artefact-pins.mjs';
 import {pinSchema} from '../../packages/federation/schema.mjs';
-import {createExtensionsProvider,PinSlotManifest} from '../../packages/federation/extensions.mjs';
 import {createEventBusesProvider,PinBusManifest} from '../../packages/federation/event-buses.mjs';
 import {createAppEngine,perform} from '../../packages/app/engine.mjs';
 import {versionRecord,versionDigest} from '../../packages/core/artefacts.mjs';
@@ -13,17 +12,18 @@ import {forEachSeed,createScheduler,fakeClock} from '../helpers/chaos.mjs';
 import {manifest as busManifest} from '../event-bus-fixture.mjs';
 const ID='https://pins.example/preferences',code=code=>error=>error.code===code;
 const fragment=()=>({id:ID,title:'Preferences',description:'Owner choices.',publisher:'https://pins.example',fields:{enabled:{title:'Enabled',type:'boolean',cardinality:{min:0,max:1}}}});
-const slot=()=>({...fragment(),fields:{occupants:{title:'Occupants',type:'resource',cardinality:{min:0,max:4},contracts:['https://contracts.example/read/v1']}},slot:{v:1,field:'occupants',selection:'ordered',consumers:['application','provider'],options:{consumer:{}}}});
+// Slot manifests are gone (extensions rev 3.2); a bus manifest keeps its own legacy `slot` container and pin kind.
+const bus=()=>({...busManifest(),slot:{...busManifest().slot,options:{consumer:{}}}});
 async function publication(body,kind){const versions=[],digests=[];for(let n=1;n<=2;n++){const next=structuredClone(body);if(kind!=='fragment')next.slot.options={consumer:{}};if(n===2){const fields=kind==='fragment'?next.fields:next.slot.options.consumer;fields.extra={title:'Extra',type:'boolean',cardinality:{min:0,max:1}};}const entry={version:n,prev:digests.at(-1)??null,body:next};versions.push(entry);digests.push(await versionDigest(versionRecord({id:body.id,kind},entry)));}return {envelope:{bindle_artefact:1,id:body.id,kind,versions},digests};}
 function harness(t,body=fragment(),{enabled=true,wrap=store=>store}={}){
  const db=new SqliteMetadata(':memory:'),clock=fakeClock(),config={ARTEFACT_VERSIONS_ENABLED:String(enabled),EXTENSIONS_ENABLED:'true',EVENT_BUSES_ENABLED:'true',FEDERATION_SCHEMAS:{[body.id]:body}};
  const port=configuredArtefacts({config,store:wrap(db),clock});config.ARTEFACTS=port;
  const options={store:federationMetadata(db),crypto,schemaHosts:[new URL(body.id).host],schemaFetcher:reviewedSchemaFetcher(config)};
- const engine=createAppEngine({providers:{config,clock,random:{},audit:{record(){}},extensions:createExtensionsProvider(options),eventBuses:createEventBusesProvider(options)}});
+ const engine=createAppEngine({providers:{config,clock,random:{},audit:{record(){}},eventBuses:createEventBusesProvider(options)}});
  t.after(async()=>{await engine.dispose();await port.engine.dispose();db.close();});return {db,clock,config,port,options,engine};
 }
-test('flag off retains exact legacy schema/slot/bus pins and namespaces',async t=>{
- for(const [body,Kind,kind]of [[fragment(),null,'fragment'],[slot(),PinSlotManifest,'slot'],[{...busManifest(),slot:{...busManifest().slot,options:{consumer:{}}}},PinBusManifest,'bus']]){
+test('flag off retains exact legacy schema/bus pins and namespaces',async t=>{
+ for(const [body,Kind,kind]of [[fragment(),null,'fragment'],[bus(),PinBusManifest,'bus']]){
   const h=harness(t,body,{enabled:false}),bare=await digest(crypto,canonical(body));
   const pin=Kind?await perform(h.engine,new Kind({input:{url:body.id}})):await pinSchema(h.options,body.id);
   assert.equal(pin.digest,Kind?'sha256-'+bare:bare);assert.equal(pin.version,undefined);assert.deepEqual((await h.db.get('federation/schema/'+body.id)),{schema:body,digest:bare});assert.equal((await h.db.list({prefix:'artefacts/'})).size,0);
@@ -33,8 +33,8 @@ test('flag off retains exact legacy schema/slot/bus pins and namespaces',async t
   await assert.rejects(Kind?perform(h.engine,new Kind({input:{url:body.id}})):pinSchema(h.options,body.id));
  }
 });
-test('engine slot/bus pins carry exact versions; foreign mismatch fails just its request',async t=>{
- for(const [body,Kind,kind]of [[slot(),PinSlotManifest,'slot'],[{...busManifest(),slot:{...busManifest().slot,options:{consumer:{}}}},PinBusManifest,'bus']]){
+test('engine bus pins carry exact versions; foreign mismatch fails just its request',async t=>{
+ for(const [body,Kind,kind]of [[bus(),PinBusManifest,'bus']]){
   const h=harness(t,body),line=await publication(body,kind);h.config.FEDERATION_SCHEMAS[body.id+'/envelope']=line.envelope;
   const latest=await perform(h.engine,new Kind({input:{url:body.id}}));assert.equal(latest.version,2);assert.equal(latest.digest,line.digests[1]);
   await assert.rejects(perform(h.engine,new Kind({input:{url:body.id,version:1,digest:'sha256-'+'A'.repeat(43)}})),code('artefact_digest_mismatch'));
@@ -49,8 +49,9 @@ test('legacy pins migrate only against version one and remain legacy across flag
  const pin=await pinSchema(h.options,ID);assert.equal(pin.digest,legacy.digest);assert.equal(pin.version,undefined);assert.deepEqual(pin.schema,body);
  assert.equal((await pinSchema(h.options,{fragment:ID,version:2,digest:line.digests[1]})).version,2);
  h.config.ARTEFACT_VERSIONS_ENABLED='false';assert.deepEqual(await pinSchema(h.options,ID),legacy);
- // Fractional numbers in legacy metadata stay permissive; no envelope is needed to keep the pin valid.
- const permissive={...body,metadata:1.5},other=harness(t,permissive);const loose=await pinSchema(other.options,ID);assert.deepEqual(loose.schema,permissive);assert.equal(loose.version,undefined);
+ // Fractional numbers in a legacy document stay permissive; no envelope is needed to keep the pin valid. (A top-level
+ // `metadata` member no longer serves: the fragment member table is exhaustive.)
+ const permissive={...body,fields:{...body.fields,ratio:{title:'Ratio',type:'number',minimum:0.5,maximum:1.5,cardinality:{min:0,max:1}}}},other=harness(t,permissive);const loose=await pinSchema(other.options,ID);assert.deepEqual(loose.schema,permissive);assert.equal(loose.version,undefined);
 });
 test('legacy migration verifies the stored document before accepting an envelope sibling',async t=>{
  const body=fragment(),h=harness(t,body,{enabled:false}),legacy=await pinSchema(h.options,ID),line=await publication(body,'fragment');
@@ -60,17 +61,17 @@ test('legacy migration verifies the stored document before accepting an envelope
 });
 test('seeded concurrent call-site pins and additive publication preserve exact snapshots',async t=>{
  await forEachSeed(20,async random=>{
-  const scheduler=createScheduler(random),body=slot(),h=harness(t,body,{wrap:db=>scheduler.wrap(db,'artefacts')}),line=await publication(body,'slot');
-  h.config.FEDERATION_SCHEMAS[ID+'/envelope']={...line.envelope,versions:line.envelope.versions.slice(0,1)};
-  const first=await perform(h.engine,new PinSlotManifest({input:{url:ID,version:1,digest:line.digests[0]}}));
+  const scheduler=createScheduler(random),body=bus(),id=body.id,h=harness(t,body,{wrap:db=>scheduler.wrap(db,'artefacts')}),line=await publication(body,'bus');
+  h.config.FEDERATION_SCHEMAS[id+'/envelope']={...line.envelope,versions:line.envelope.versions.slice(0,1)};
+  const first=await perform(h.engine,new PinBusManifest({input:{url:id,version:1,digest:line.digests[0]}}));
   const outcomes=await scheduler.run([
-   ()=>perform(h.engine,new PinSlotManifest({input:{url:ID,version:1,digest:line.digests[0]}})),
-   async()=>{h.config.FEDERATION_SCHEMAS[ID+'/envelope']=line.envelope;return perform(h.engine,new PinSlotManifest({input:{url:ID,version:2,digest:line.digests[1]}}));},
-   ()=>perform(h.engine,new PinSlotManifest({input:{url:ID,version:2,digest:'sha256-'+'A'.repeat(43)}})),
+   ()=>perform(h.engine,new PinBusManifest({input:{url:id,version:1,digest:line.digests[0]}})),
+   async()=>{h.config.FEDERATION_SCHEMAS[id+'/envelope']=line.envelope;return perform(h.engine,new PinBusManifest({input:{url:id,version:2,digest:line.digests[1]}}));},
+   ()=>perform(h.engine,new PinBusManifest({input:{url:id,version:2,digest:'sha256-'+'A'.repeat(43)}})),
    ()=>h.port.resolve(first.reference)
   ]);
   assert.equal(outcomes[0].status,'fulfilled');assert.equal(outcomes[1].status,'fulfilled');assert.equal(outcomes[2].status,'rejected');assert.equal(outcomes[2].reason.code,'artefact_digest_mismatch');assert.deepEqual((await h.port.resolve(first.reference)).body,body);
-  assert.equal((await h.db.get('artefacts/line/'+ID)).head,2);assert.deepEqual((await h.db.get('artefacts/line/'+ID)).faults,[]);
+  assert.equal((await h.db.get('artefacts/line/'+id)).head,2);assert.deepEqual((await h.db.get('artefacts/line/'+id)).faults,[]);
  });
 });
 
@@ -100,9 +101,12 @@ test('flag-off runtime fetchers preserve the original missing-fragment faults',a
  const options={...h.options,schemaFetcher:reviewedSchemaFetcher(h.config,'unsupported_fragment')};await assert.rejects(pinSchema(options,missing),{code:'unsupported_fragment',message:'Unsupported fragment.'});
 });
 
-test('legacy URLs outside the versioned URL profile retain their original pins with the flag on',async t=>{
+test('URLs outside the identifier profile are refused as fragments with the flag off or on, and never pinned',async t=>{
+ // Protocol §3 (extensions rev 3.2): a fragment id is an HTTPS identifier (no query, at most 256 characters), the same
+ // profile as artefact URLs, so no legacy pin can exist outside the versioned URL profile any more.
  for(const id of [ID+'?legacy=1',ID+'/'+'x'.repeat(260)]){
-  const body={...fragment(),id},h=harness(t,body,{enabled:false}),pin=await pinSchema(h.options,id);h.config.ARTEFACT_VERSIONS_ENABLED='true';assert.deepEqual(await pinSchema(h.options,id),pin);assert.equal((await h.db.list({prefix:'artefacts/'})).size,0);
+  const body={...fragment(),id},h=harness(t,body,{enabled:false});await assert.rejects(pinSchema(h.options,id),code('invalid_schema'));h.config.ARTEFACT_VERSIONS_ENABLED='true';await assert.rejects(pinSchema(h.options,id));
+  assert.equal(await h.db.get('federation/schema/'+id),undefined);assert.equal((await h.db.list({prefix:'artefacts/'})).size,0);
  }
 });
 

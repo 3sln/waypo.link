@@ -1,5 +1,6 @@
 // Shared fixtures for client-id-metadata.v1 tests: a fake SSRF-safe egress port and a real provider stack (owner
 // controllers, routing authority, entry store, HTTP handlers) with metadata clients enabled. Reserved .example hosts.
+import {withExtensionEntries} from '../packages/core/extensions.mjs';
 import {webcrypto,createHash,randomUUID} from 'node:crypto';
 import {FederationController} from '../packages/federation/runtime.mjs';
 import {MemoryFederationStore} from '../packages/federation/index.mjs';
@@ -36,7 +37,7 @@ export async function cimdProvider({documents={[clientId]:metadata()},enabled=tr
  const fetch=async(input,init)=>{const request=input instanceof Request?input:new Request(input,init);
   const response=await handleAuthorizationEntry(request,{entries,issuer,assets,remote:async r=>r.headers.get('X-Test-Remote')??'test-remote'})??await handleFederation(request,{controller:authority,issuer,assets})??new Response('Not found',{status:404});
   if(new URL(request.url).pathname!=='/.well-known/bindle/manifest.json'||!response.ok)return response;
-  const manifest=await response.json(),extra=entries.manifest();return new Response(JSON.stringify({...manifest,features:{...manifest.features,...extra.features}}),{status:200,headers:response.headers});};
+  const manifest=await response.json(),extra=entries.manifest();return new Response(JSON.stringify(withExtensionEntries(manifest,extra.extensions??[],{merge:true})),{status:200,headers:response.headers});};
  const accounts=[...owners].map(([owner,o])=>({owner,handle:o.handle,subject:`${issuer}/entities/${owner}`}));
  const signIn=(account=accounts[0])=>{const token=`${account.owner}.${b64(32)}`,csrf=b64(16);owners.get(account.owner).sessions.set(token,{createdAt:clock(),csrf});return {token,csrf,cookie:`__Host-bindle_session=${token}`,account};};
  return {config,egress,directory:dir,blocked,authority,entries,shards,shard,fetch,accounts,signIn,restart:owner=>shards.delete(owner),advance:ms=>{offset+=ms;}};

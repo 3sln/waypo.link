@@ -5,8 +5,8 @@ import {siteGlobal} from '../flags/read.mjs';
 // EXT-X3: the integration manifest (docs/spec/integrations.md §2) is the `bindle_integration` member of a client's OAuth
 // metadata (client ID metadata document or operator registration) and nothing else; it is never fetched separately.
 // A manifest is presentation and claims only: parsing it grants nothing, assigns nothing and widens no grant. Every URL
-// is HTTPS on the client_id origin and path prefix (§2.1). Confidential-only members (`events_endpoint`, `resources`,
-// `occupant` extensions) in a public client make the manifest invalid, because the document and the manifest disagree.
+// is HTTPS on the client_id origin and path prefix (§2.1). Confidential-only members (`events_endpoint`, `resources`)
+// in a public client make the manifest invalid, because the document and the manifest disagree.
 // Key continuity (§2.3, AMD-C7): JWK thumbprints (RFC 7638) are pinned at approval; a key set with no pinned key, or any
 // change of `jwks_uri`, auth method or `redirect_uris`, is staged for owner review and adopts nothing that widens.
 // Unmounted: these are pure validators plus gated engine Queries; INTEGRATIONS_ENABLED and an injected directory are
@@ -14,7 +14,6 @@ import {siteGlobal} from '../flags/read.mjs';
 import {parseReference,versionDigest} from '../core/artefacts.mjs';
 import {AppQuery} from '../app/engine.mjs';
 import {fail,object} from './schema.mjs';
-import {validateExtensions,validateExtensionDigest} from './extensions.mjs';
 export const INTEGRATIONS_FEATURE='integrations.v1';
 export const PREFERENCES_UPDATED_EVENT='https://spec.bindle.example/events/preferences-updated/v1';
 export const INTEGRATION_LIMITS=Object.freeze({manifestBytes:8192,fragments:8,fields:32,methods:32,contracts:32,events:16,keys:16,urlLength:2048,idLength:256});
@@ -34,7 +33,7 @@ export function prefixedURL(value,clientId,max=INTEGRATION_LIMITS.urlLength){
  if(url.pathname.split('/').some(segment=>/^(?:\.|%2e){1,2}$/i.test(segment))||/%2f|%5c|\\/i.test(url.pathname))return undefined;
  return value;
 }
-// Identifier URLs (fragments, contracts, events, slots): canonical HTTPS, bounded, no userinfo, query or fragment.
+// Identifier URLs (fragments, contracts, events): canonical HTTPS, bounded, no userinfo, query or fragment.
 const idURL=value=>{if(typeof value!=='string'||value.length>INTEGRATION_LIMITS.idLength||value.includes('?')||value.includes('#'))return undefined;try{const url=new URL(value);return url.href===value&&url.protocol==='https:'&&!url.username&&!url.password?value:undefined;}catch{return undefined;}};
 const idList=(value,max,{empty=false}={})=>Array.isArray(value)&&value.length<=max&&(empty||value.length>0)&&new Set(value).size===value.length&&value.every(idURL)?[...value]:undefined;
 function setupFragment(entry,{artefactVersions=false}={}){
@@ -44,7 +43,7 @@ function setupFragment(entry,{artefactVersions=false}={}){
  const purpose=presentationText(entry.purpose,1000),fields=entry.fields;if(!purpose||entry.required!==undefined&&typeof entry.required!=='boolean')return undefined;
  if(!Array.isArray(fields)||!fields.length||fields.length>INTEGRATION_LIMITS.fields||new Set(fields).size!==fields.length||fields.some(name=>typeof name!=='string'||!/^[A-Za-z][A-Za-z0-9_-]{0,63}$/.test(name)))return undefined;
  let methods;if(entry.methods!==undefined){if(!object(entry.methods)||Object.keys(entry.methods).length>INTEGRATION_LIMITS.contracts)return undefined;for(const [contract,list] of Object.entries(entry.methods))if(!idURL(contract)||!Array.isArray(list)||!list.length||list.length>INTEGRATION_LIMITS.methods||new Set(list).size!==list.length||list.some(name=>typeof name!=='string'||!/^[A-Za-z][A-Za-z0-9_.-]{0,63}$/.test(name)))return undefined;methods=structuredClone(entry.methods);}
- if(entry.digest!==undefined)try{validateExtensionDigest(entry.digest);}catch{return undefined;}
+ if(entry.digest!==undefined&&(typeof entry.digest!=='string'||!/^sha256-[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$/.test(entry.digest)))return undefined;
  let contract_versions;if(artefactVersions){
   if(entry.version!==undefined)try{parseReference({fragment:id,version:entry.version,digest:entry.digest},{urlMember:'fragment'});}catch{return undefined;}
   if(entry.contract_versions!==undefined)try{contract_versions=contractReferences(entry.contract_versions);if(Object.keys(contract_versions).some(c=>!Object.hasOwn(methods??{},c)))return undefined;}catch{return undefined;}
@@ -53,8 +52,7 @@ function setupFragment(entry,{artefactVersions=false}={}){
 }
 /** Validates `bindle_integration` for one exact client. `confidential` is true only for a validated private_key_jwt
  * client; `redirectUris` and `jwksUri` are the document's own values, which must share the path prefix; `reserved` are
- * the provider's hosts. `slots`/`contracts` are trusted pins for claim validation; without them extension entries stay
- * syntax-checked (`unknown`) so the snapshot never depends on fetch timing. Returns
+ * the provider's hosts. Returns
  * {status:'absent'|'valid'|'unrecognized'|'invalid', manifest?, v?, reason?}; never throws for hostile input. */
 function validateIntegrationManifestBase(value,{clientId,confidential=false,redirectUris=[],jwksUri,initiateLoginUri,reserved=[],slots,contracts={},artefactVersions=false}={}){
  if(value===undefined)return {status:'absent'};
@@ -66,8 +64,8 @@ function validateIntegrationManifestBase(value,{clientId,confidential=false,redi
  if(value.v!==1)return Number.isSafeInteger(value.v)&&value.v>1?{status:'unrecognized',v:value.v}:invalid('invalid_version');
  // The member applies to this exact document: its own redirect and key URLs must sit under the same prefix.
  if(!Array.isArray(redirectUris)||redirectUris.some(uri=>!prefixedURL(uri,clientId))||jwksUri!==undefined&&!prefixedURL(jwksUri,clientId))return invalid('path_prefix');
- const declaresOccupant=Array.isArray(value.extensions)&&value.extensions.some(entry=>object(entry)&&entry.role==='occupant');
- if(!confidential&&(Object.hasOwn(value,'events_endpoint')||Object.hasOwn(value,'resources')||declaresOccupant))return invalid('confidential_required');
+ // Extensions rev 3.2 §2.1: integration manifests carry no `extensions` member (an unknown member, ignored).
+ if(!confidential&&(Object.hasOwn(value,'events_endpoint')||Object.hasOwn(value,'resources')))return invalid('confidential_required');
  const manifest={v:1};
  if(object(value.setup)&&Array.isArray(value.setup.fragments)&&value.setup.fragments.length<=INTEGRATION_LIMITS.fragments){const fragments=value.setup.fragments.map(entry=>setupFragment(entry,{artefactVersions}));if(fragments.length&&fragments.every(Boolean)&&new Set(fragments.map(f=>f.fragment)).size===fragments.length)manifest.setup={fragments};}
  const management=prefixedURL(value.management_url,clientId);if(management)manifest.management_url=management;
@@ -83,10 +81,6 @@ function validateIntegrationManifestBase(value,{clientId,confidential=false,redi
  // Each audience names exactly one purpose; a collision is a security-relevant defect, never silently repaired.
  const endpoints=[manifest.events_endpoint,manifest.resources?.rpc_endpoint,manifest.resources?.discovery_endpoint].filter(Boolean);
  if(new Set(endpoints).size!==endpoints.length||endpoints.includes(manifest.management_url))return invalid('endpoint_collision');
- if(value.extensions!==undefined){
-  const results=validateExtensions(value.extensions,{kind:'integration',...slots?{slots}:{},contracts});
-  const entries=results.filter(result=>result.status==='valid'||result.status==='unknown').map(result=>result.entry);if(entries.length)manifest.extensions=entries;
- }
  return {status:'valid',manifest};
 }
 /** Shape check of a stored `integration` snapshot value: a valid manifest must re-derive exactly from itself. */
@@ -191,7 +185,6 @@ function classifyIntegrationChangeBase(pinned,observed,keySet,{artefactVersions=
  if(old.events_endpoint&&!current.events_endpoint){changes.push('events_removed');delete next.manifest.events_endpoint;delete next.manifest.events;}
  else if(!old.events_endpoint&&current.events_endpoint)review.push('events_added');
  if(!same(old.setup,current.setup))review.push('setup_changed');
- if(!same(old.extensions,current.extensions))review.push('extensions_changed');
  if(old.events_endpoint&&current.events_endpoint&&!same(old.events,current.events))review.push('events_changed');
  // Same-prefix endpoint moves and DPoP strengthening are adopted only while client identity and keys hold.
  if(keysOk){
@@ -215,7 +208,7 @@ export function promotePendingKeys(pinned,{signedBy}={}){
 const currentSnapshot=(client,keySet)=>({clientId:client.id,redirectUris:sorted(client.redirectUris),authMethod:client.authMethod==='private_key_jwt'?'private_key_jwt':'none',...client.jwksUri?{jwksUri:client.jwksUri,thumbprints:keySet?.thumbprints?[...keySet.thumbprints]:[]}:{},manifest:structuredClone(client.integration.manifest)});
 
 // --- Engine edge operations (unmounted; INTEGRATIONS_ENABLED required) ---
-/** `directory` is a ClientDirectory constructed with `integrations:true`; `slots`/`contracts` are trusted pins. */
+/** `directory` is a ClientDirectory constructed with `integrations:true`; `contracts` are trusted pins. */
 export function createIntegrationsProvider({directory,slots,contracts={},artefactVersions=false,contractResolver,compileContract}={}){
  return Object.freeze({
   contract:versionedContractProvider({enabled:artefactVersions,resolve:contractResolver,compile:compileContract}).contract,

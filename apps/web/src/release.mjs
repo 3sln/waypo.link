@@ -101,7 +101,7 @@ const constructors={
  'start-google-drive':googleDriveActions.StartGoogleDrive,
  'clear-automation-review':automationActions.ClearAutomationReview,'load-automation':automationActions.LoadAutomation,'enable-automation':automationActions.EnableAutomation,'disable-automation':automationActions.DisableAutomation,'confirm-automation':automationActions.ConfirmAutomation,
  'load-mcp-request':mcpActions.LoadMCPRequest,'decide-mcp':mcpActions.DecideMCP,'load-mcp-grants':mcpActions.LoadMCPGrants,'revoke-bindle-grant':mcpActions.RevokeBindleGrant,'revoke-mcp-grant':mcpActions.RevokeMCPGrant,'disconnect-app':mcpActions.DisconnectApp,'set-app-notifications':mcpActions.SetAppNotifications,
- 'load-rtc-settings':rtcActions.LoadRtcSettings,'rtc-action':rtcActions.RtcOwnerAction,'save-rtc-policy':rtcActions.SaveRtcPolicy,'save-rtc-contact':rtcActions.SaveRtcContact,'save-rtc-auto-accept':rtcActions.SaveRtcAutoAccept,'review-rtc-narrow':rtcActions.ReviewRtcNarrow,'dismiss-rtc-ring':rtcActions.DismissRtcRing,
+ 'load-rtc-settings':rtcActions.LoadRtcSettings,'rtc-action':rtcActions.RtcOwnerAction,'save-rtc-policy':rtcActions.SaveRtcPolicy,'save-rtc-contact':rtcActions.SaveRtcContact,'save-rtc-auto-accept':rtcActions.SaveRtcAutoAccept,'review-rtc-approve':rtcActions.ReviewRtcApprove,'dismiss-rtc-ring':rtcActions.DismissRtcRing,
  'load-contact-profile':contactProfileActions.LoadContactProfile,'rename-device':RenameDevice,'update-contact-sharing':contactProfileActions.UpdateContactSharing,'save-profile':contactProfileActions.SaveProfile,
   signup:actions.SignUp,signin:actions.SignIn,signout:actions.SignOut,
   'start-recovery':actions.StartRecovery,'inspect-recovery':actions.InspectRecovery,

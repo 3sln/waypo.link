@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 const manifest = {version:'0',issuer:'https://self.example',authorization_endpoint:'https://self.example/login',token_endpoint:'https://self.example/token',rpc_endpoint:'https://self.example/rpc',jwks_uri:'https://self.example/keys',authorization_request_endpoint:'https://self.example/api/oauth/requests',preferences_contract:'https://contracts.example/preferences/v1',login_presentation:['redirect']};
 const reply = value => ({status:200,ok:true,headers:{get:()=> 'application/json'},text:async()=>JSON.stringify(value),json:async()=>value});
 import { parseIdentity, discoverIdentity } from '../src/identity.mjs';
+import { EXT } from '../src/capabilities.mjs';
 test('default host applies only before an explicit @', () => {
   assert.equal(parseIdentity('alex').handle, 'alex@3sln.me');
   assert.equal(parseIdentity('alex@self.example').manifestUrl, 'https://self.example/.well-known/bindle/manifest.json');
@@ -90,8 +91,10 @@ test('userMessage binds native browser origin to the registered callback and kee
  }finally{if(prior)Object.defineProperty(globalThis,'window',prior);else delete globalThis.window;}
 });
 test('discovery returns the floor-checked manifest (frozen, unknown members kept) next to the normalized declaration',async()=>{
- const declared={...manifest,features:{'intents.v1':{intents:['send-message'],login_endpoint:'https://self.example/console'},'future.v9':{x:1}}};
+ const future={spec:'https://future.example/extensions/teleport/v9',options:{x:1}};
+ const declared={...manifest,extensions:[{spec:EXT.intents,options:{intents:['send-message'],login_endpoint:'https://self.example/console'}},future]};
  const found=await discoverIdentity('alex@self.example',{fetcher:async()=>reply(declared)});
- assert.equal(found.kind,'provider');assert.deepEqual(found.manifest.features['future.v9'],{x:1});assert.ok(Object.isFrozen(found.manifest.features));
- assert.deepEqual(found.declaration.features.intents.intents,['send-message']);assert.equal(found.declaration.features.future,undefined);
+ assert.equal(found.kind,'provider');assert.deepEqual(found.manifest.extensions[1],future);assert.ok(Object.isFrozen(found.manifest.extensions));
+ assert.deepEqual(found.declaration.intents,{intents:['send-message'],loginEndpoint:'https://self.example/console'});assert.equal(found.declaration.extensions[future.spec],undefined);
+ assert.deepEqual(found.capabilities.intentLinks,['send-message']);
 });

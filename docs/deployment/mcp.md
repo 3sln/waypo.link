@@ -1,5 +1,13 @@
 # Configure the 3sln.me MCP endpoint
 
+> **Group:** 3sln.me reference service (hosting)
+>
+> **Status:** operator guide; configuration alone does not establish working external delivery or provider conformance.
+>
+> **Covers:** configuring the 3sln.me MCP endpoint.
+>
+> **Does not cover:** the protocol and its security requirements ([protocol](../spec/protocol.md), [security](../spec/security.md)); 3sln.me release gates ([release gates](../3sln/release-gates.md)).
+
 MCP is a separate 3sln.me application service. It is not a Bindle protocol extension. Configuration and local tests do not enable the account production release gate.
 
 Set `MCP_ENABLED=true`, keep `MCP_LAYOUT=mcp-auth-v1-64`, and configure `MCP_CLIENTS` with operator-reviewed public clients. The checked-in empty client list intentionally permits no authorization flow. A JSON example using reserved domains is:
@@ -31,11 +39,11 @@ node --test tests/worker/mcp.test.mjs
 npm run check:worker
 ```
 
-The Worker test runs real local workerd/SQLite Durable Objects and requires loopback socket permission. Frontend consent changes additionally require DOM/browser checks. Production publication requires the existing security and release gates, independent MCP client interoperability, provider checks and recorded reviewer sign-off in `DEVLOG.md` and [the service specification](../spec/mcp-service.md).
+The Worker test runs real local workerd/SQLite Durable Objects and requires loopback socket permission. Frontend consent changes additionally require DOM/browser checks. Production publication requires the existing security and release gates, independent MCP client interoperability, provider checks and recorded reviewer sign-off in `DEVLOG.md` and [the service specification](../3sln/services/mcp-service.md).
 
 
 ## App connections and presentation
 
 Successful reviewed consent creates an owner app-connection resource. GET `/api/apps` lists these records; owner-authenticated, CSRF-protected DELETE `/api/apps/:id` disconnects the app without deleting its data. Generation checks deny old grants, authorization codes and refresh tokens even after a later reconnect. Connected apps also provides narrower individual agent-login revocation. Inspection is required before approval; reviewed pending requests become stale after disconnect.
 
-`MCP_CLIENTS` may add `application` and `metadataSources` as described in [app metadata](../spec/app-metadata.md). Node self-hosting can enable `APP_METADATA_DISCOVERY_ENABLED=true` for the bounded DNS-pinned public HTTPS adapter. The default is off; IPv6-only metadata hosts fall back to registered presentation. Cloudflare has no verified discovery egress port configured and uses registered metadata. Icon references are not automatically rendered from external servers.
+`MCP_CLIENTS` may add `application` and `metadataSources` as described in [app metadata](../spec/extensions/app-metadata.md). Node self-hosting can enable `APP_METADATA_DISCOVERY_ENABLED=true` for the bounded DNS-pinned public HTTPS adapter. The default is off; IPv6-only metadata hosts fall back to registered presentation. Cloudflare has no verified discovery egress port configured and uses registered metadata. Icon references are not automatically rendered from external servers.

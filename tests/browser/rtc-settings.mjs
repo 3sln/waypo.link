@@ -21,7 +21,7 @@ const {SETTINGS}=await import('../helpers/rtc-settings-fixture.mjs');
 test.after(async()=>{await window.happyDOM.close();for(const name of names)globalThis[name]=previous[name];});
 
 const OWNER='550e8400-e29b-41d4-a716-446655440001',OTHER='550e8400-e29b-41d4-a716-446655440002',ORIGIN='https://space.example',now=Date.now();
-const CALL='https://spec.bindle.example/rtc-purposes/call/v1',SYNC='https://spec.bindle.example/rtc-purposes/device-sync/v1',APP='https://app.example/client';
+const CALL='https://spec.bindle.example/rtc-purposes/call/v1',SYNC='https://spec.bindle.example/rtc-purposes/device-sync/v1',SCREEN='https://spec.bindle.example/rtc-purposes/screen-share/v1',APP='https://app.example/client';
 const peer={iss:ORIGIN,sub:OTHER},foreign={iss:'https://far.example',sub:'990e8400-e29b-41d4-a716-000000000009'};
 const CONTACT='770e8400-e29b-41d4-a716-000000000001';
 const full={...structuredClone(SETTINGS),contacts:[{parent:CONTACT,purposes:[CALL]}],
@@ -44,7 +44,7 @@ function renderer(locale,{seen,missing}={}){
  return {root,ringRoot,render:state=>{dodo.reconcile(root,[app(state)]);const ringTree=rtcRing(state);dodo.reconcile(ringRoot,ringTree?[localize(ringTree)]:[]);return root;}};
 }
 const literalAttributes=root=>[...root.querySelectorAll('*')].flatMap(node=>[...node.attributes].filter(a=>a.value==='null'||a.value==='undefined').map(a=>`${node.tagName.toLowerCase()}[${a.name}="${a.value}"]`));
-const MODALS=[...['end-session','revoke-ticket','revoke-endpoint','block','clear-missed','narrow-app'].map(action=>({kind:'rtc-confirm',action,input:{}})),{kind:'rtc-confirm',action:'narrow-app',input:{clientId:APP,purposes:[CALL]}},
+const MODALS=[...['end-session','revoke-ticket','revoke-endpoint','block','clear-missed','approve-app'].map(action=>({kind:'rtc-confirm',action,input:{}})),{kind:'rtc-confirm',action:'approve-app',input:{clientId:APP,purposes:[CALL]}},
  // Wargame M2/M6: the provider block and the bulk revocations have their own wording.
  {kind:'rtc-confirm',action:'block',input:{issuer:'https://far.example'}},{kind:'rtc-confirm',action:'revoke-ticket',input:{clientId:APP}},{kind:'rtc-confirm',action:'revoke-ticket',input:{clientId:null}},{kind:'rtc-confirm',action:'revoke-ticket',input:{all:true}}];
 // Wargame M2/M6: call links from a known app, a removed app and no known app (legacy); a blocked provider; every mute kind.
@@ -195,29 +195,29 @@ test('F8: the ring stack is bounded and scrolls instead of covering the screen',
  assert.match(rule,/max-height:min\(70vh,calc\(100vh - 32px\)\)/);assert.match(rule,/overflow-y:auto/);assert.match(rule,/overscroll-behavior:contain/);
 });
 
-// ——— Service follow-ups (2026-10-27): narrowing an app's approved purposes ———
-test('narrowing: an app with several purposes offers checked boxes and a review button; one purpose is listed only; the dialog names what is lost',()=>{
+// ——— Interim owner approval of an app's purposes (extensions rev 3.2 removed AMD-X1 `bind`) ———
+test('approval: every held purpose is a checkbox, checked when approved, with a save button; the dialog names what is lost',()=>{
  for(const locale of ['en','es']){
-  const {render}=renderer(locale),root=render(fixture({locale})),app=root.querySelector('.rtc-app'),boxes=[...app.querySelectorAll('input[type=checkbox]')].filter(b=>b.name.startsWith('keep:'));
-  assert.deepEqual(boxes.map(b=>[b.name,b.checked]),[[`keep:${CALL}`,true],[`keep:${SYNC}`,true]],locale);
+  const {render}=renderer(locale),root=render(fixture({locale})),app=root.querySelector('.rtc-app'),boxes=[...app.querySelectorAll('input[type=checkbox]')].filter(b=>b.name.startsWith('approve:'));
+  assert.deepEqual(boxes.map(b=>[b.name,b.checked]),[[`approve:${CALL}`,true],[`approve:${SCREEN}`,false],[`approve:${SYNC}`,true]],locale);
   for(const box of boxes)assert.ok(box.closest('label'),'each purpose is labelled');
   const form=boxes[0].closest('form'),submit=form.querySelector('button[type=submit],button:not([type])');assert.ok(submit,'a native submit button');
-  assert.match(submit.textContent,locale==='en'?/Approve fewer purposes/:/Aprobar menos fines/);
-  assert.match(app.textContent,locale==='en'?/To remove the app completely/:/Para quitar la app por completo/);
+  assert.match(submit.textContent,locale==='en'?/Save approved purposes/:/Guardar fines aprobados/);
+  assert.match(app.textContent,locale==='en'?/you can approve them again here/:/puedes volver a aprobarlos aquí/);
  }
  const events=[],{render}=renderer('en'),root=render(fixture());root.addEventListener('3sln-intent',event=>events.push(event.detail));
  const form=root.querySelector('.rtc-app form');form.dispatchEvent(new Event('submit',{bubbles:true,cancelable:true}));
- const sent=events.find(e=>e.kind==='review-rtc-narrow');assert.ok(sent,'the form bubbles its review intent');assert.equal(sent.clientId,APP);
- // One approved purpose: nothing to narrow, no checkbox.
- const single=render(fixture({rtc:{...structuredClone(SETTINGS),apps:[{clientId:APP,name:'Caller',origin:'https://app.example',purposes:[CALL]}]}}));
- assert.equal(single.querySelectorAll('.rtc-app input[name^="keep:"]').length,0);assert.match(single.querySelector('.rtc-app').textContent,/Call/);
+ const sent=events.find(e=>e.kind==='review-rtc-approve');assert.ok(sent,'the form bubbles its review intent');assert.equal(sent.clientId,APP);
+ // An app approved for nothing (a new grant): the same form, nothing checked, and it says so.
+ const none=render(fixture({rtc:{...structuredClone(SETTINGS),apps:[{clientId:APP,name:'Caller',origin:'https://app.example',purposes:[]}]}}));
+ assert.deepEqual([...none.querySelectorAll('.rtc-app input[name^="approve:"]')].map(b=>b.checked),[false,false,false]);assert.match(none.querySelector('.rtc-app').textContent,/No purposes approved/);
  // The dialog: removed and kept purposes as owner data, and its confirm button sends the same input.
- const dialog=rtcDialog(fixture({modal:{kind:'rtc-confirm',action:'narrow-app',input:{clientId:APP,purposes:[CALL]}}}));assert.equal(dialog.title,'Approve fewer purposes for this app?');
+ const dialog=rtcDialog(fixture({modal:{kind:'rtc-confirm',action:'approve-app',input:{clientId:APP,purposes:[CALL]}}}));assert.equal(dialog.title,'Approve fewer purposes for this app?');
  const holder=document.createElement('div');dodo.reconcile(holder,[dialog.body]);
- assert.match(holder.textContent,/No longer approved\s*Device sync/);assert.match(holder.textContent,/Still approved\s*Call/);assert.match(holder.textContent,/Caller/);
+ assert.match(holder.textContent,/No longer approved\s*Device sync/);assert.match(holder.textContent,/Still approved\s*Call/);assert.match(holder.textContent,/Caller/);assert.match(holder.textContent,/You can approve them again here/);
  for(const node of holder.querySelectorAll('li'))assert.ok(node.querySelector('[translate=no]'),'purpose titles are owner data');
  const intents=[];holder.addEventListener('3sln-intent',event=>intents.push(event.detail));[...holder.querySelectorAll('button')].find(b=>b.textContent==='Approve fewer purposes').click();
- assert.deepEqual(intents.at(-1),{kind:'rtc-action',action:'narrow-app',input:{clientId:APP,purposes:[CALL]}});
+ assert.deepEqual(intents.at(-1),{kind:'rtc-action',action:'approve-app',input:{clientId:APP,purposes:[CALL]}});
 });
 
 test('wargame M2: call links are grouped by the app that created them, with per-app and all-links revocation',()=>{

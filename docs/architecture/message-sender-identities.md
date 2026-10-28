@@ -1,5 +1,7 @@
 # Ordinary identities as message senders
 
+> **Mostly superseded (2026-10-27).** The frontend part was already superseded by [app notifications](app-notifications.md). Peer-message signing belongs to [Bindle Messaging](../spec/extensions/messaging.md) and the Parlay app. Links to `packages/conversations/*` point at deleted code.
+
 Provisional design, 2026-10-14. No runtime, identity schema, public contract or app messaging permission is implemented by this document.
 
 Human product reviewer: __________ Date: __________ Outcome: __________.
@@ -30,7 +32,7 @@ A browser-only app cannot safely contain the shared private key for its global s
 | Recipient delivery capability | Recipient-issued permission to submit permitted message types/bytes within rate, tag and lifetime constraints. It may additionally bind the sender UUID and connection incarnation. Possession alone does not authenticate the sender. |
 | Notification policy | Recipient-owned channel, quiet, privacy, priority and allow/block settings. Neither a valid signature nor a delivery capability grants permission to ring a device. |
 
-Reuse [resource contributions](../spec/resource-contributions.md), the existing resource-valued preference model and [callable bindings](callables-and-user-commands.md). An app can be an identity and also expose independently granted resources; those roles do not collapse. A grant to read profile or write files never implies send-message permission. Resource contribution, app installation and verified OAuth redirect control also do not imply notification consent.
+Reuse [resource contributions](../spec/extensions/resource-contributions.md), the existing resource-valued preference model and [callable bindings](callables-and-user-commands.md). An app can be an identity and also expose independently granted resources; those roles do not collapse. A grant to read profile or write files never implies send-message permission. Resource contribution, app installation and verified OAuth redirect control also do not imply notification consent.
 
 ## Source reality and version boundary
 

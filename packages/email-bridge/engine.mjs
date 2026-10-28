@@ -24,12 +24,14 @@ import {siteGlobal,siteEnabled,flagsFor} from '../flags/read.mjs';
 //  - The acceptance follow-up is sent at most once per accepted item, only after the recipient accepts, only to a
 //    sender that passed the reply gates and was DMARC-validated (platform reply or trusted result), under its own caps.
 import {Engine,Provider,Action,Query} from '../../vendor/ngin/index.js';
-import {INTAKE_CONTRACT,INTAKE_SLOT,intakeDigest,jcs,sha256,decodedLength} from './wire.mjs';
+import {INTAKE_CONTRACT,INTAKE_FRAGMENT,intakeDigest,jcs,sha256,decodedLength} from './wire.mjs';
+import {PROVIDER_EXT,featureTx} from '../core/extensions.mjs';
 import {mailbox,parseEmail,ingressFingerprint,BridgeMimeError,MIME_LIMITS} from './mime.mjs';
 import {buildReply,buildFollowup} from './reply.mjs';
 
-export {INTAKE_SLOT};
-export const BRIDGE_REF='email-bridge';
+export {INTAKE_FRAGMENT};
+// The bridge's identity is its extension's spec URL (extensions §4.2), never a local `ref`.
+export const BRIDGE_REF=PROVIDER_EXT.emailBridge;
 export const BRIDGE_LIMITS=Object.freeze({
  ingressPerHour:20000,sourcePerHour:2000,sourceDomainMissesPerHour:50,sourceAuthenticatedPerHour:20000,sourceUnauthenticatedPerHour:20000,ownerDaily:200,ownerDailyBytes:16*1048576,queueItems:500,queueBytes:32*1048576,
  // The occupant bounds receivedAt to its last 7 days (spec §9), so mail is held 7 days less an hour, not §13's 30.
@@ -53,8 +55,8 @@ export const senderKey=address=>hex(`email-bridge-sender-v1\0${address.toLowerCa
 const domainKey=address=>hex(`email-bridge-domain-v1\0${address.slice(address.lastIndexOf('@')+1).toLowerCase()}`);
 
 /** Effective deployment switch: EMAIL_BRIDGE_ENABLED, an exact HTTPS origin and a receiving domain. No messaging-app
- * flag is consulted (messaging extraction prep, 2026-10-26): delivery waits for any occupant of the public-message-intake
- * slot, and mail is held while the slot is empty. */
+ * flag is consulted (messaging extraction prep, 2026-10-26): delivery waits for a resource in the intake
+ * field and the bridge's grant, and mail is held while the field is empty or the bridge is not enabled. */
 export function bridgeConfig(config={},owner){
  let origin=null;try{const u=new URL(config.APP_ORIGIN);if(u.protocol==='https:'&&u.origin===config.APP_ORIGIN)origin=u.origin;}catch{}
  const domain=String(config.EMAIL_BRIDGE_DOMAIN??(origin?new URL(origin).hostname:'')).toLowerCase();
@@ -63,18 +65,13 @@ export function bridgeConfig(config={},owner){
  // sender-supplied Authentication-Results bearing it (RFC 8601 §5; review EB-1). Cloudflare: leave both unset.
  authservId:flag(config.EMAIL_BRIDGE_AUTHSERV_STRIPS)&&typeof config.EMAIL_BRIDGE_AUTHSERV_ID==='string'&&/^[A-Za-z0-9.-]{1,253}$/.test(config.EMAIL_BRIDGE_AUTHSERV_ID)?config.EMAIL_BRIDGE_AUTHSERV_ID:null};
 }
-// RFC 9562 UUIDv5 (URL namespace) over (feature ref, contract, entity, ingress fingerprint), as spec §9 derives `tx`.
-const NAMESPACE=Uint8Array.from('6ba7b8119dad11d180b400c04fd430c8'.match(/../g),h=>parseInt(h,16));
-export async function deliveryTx(owner,fingerprint){
- const bytes=new Uint8Array(await crypto.subtle.digest('SHA-1',new Uint8Array([...NAMESPACE,...new TextEncoder().encode(`${BRIDGE_REF}|${INTAKE_CONTRACT}|${owner}|${fingerprint}`)]))).slice(0,16);
- bytes[6]=bytes[6]&15|80;bytes[8]=bytes[8]&63|128;const h=[...bytes].map(b=>b.toString(16).padStart(2,'0')).join('');
- return `${h.slice(0,8)}-${h.slice(8,12)}-${h.slice(12,16)}-${h.slice(16,20)}-${h.slice(20)}`;
-}
+// Extensions rev 3.2 §4.2 (CR-X3-32): `tx` = UUIDv5(spec URL, contract, entity, ingress fingerprint).
+export const deliveryTx=(owner,fingerprint)=>featureTx(BRIDGE_REF,INTAKE_CONTRACT,owner,fingerprint);
 
 // ---- Catalogue and composition ----
 const row=(placement,summary)=>Object.freeze({placement,summary});
 export const PROVIDERS=Object.freeze({
- config:row('both','Frozen deployment configuration; EMAIL_BRIDGE_ENABLED decides everything; slot occupancy decides delivery.'),
+ config:row('both','Frozen deployment configuration; EMAIL_BRIDGE_ENABLED decides everything; the intake field and the bridge grant decide delivery.'),
  clock:row('both','{now()} in epoch milliseconds.'),
  random:row('both','{uuid()}.'),
  audit:row('both','{record(entry)}; never records input.'),

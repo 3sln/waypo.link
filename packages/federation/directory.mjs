@@ -8,6 +8,7 @@ import {strictJSON,plainObject} from '../links/envelope.mjs';
 import {canonical,key} from '../core/records.mjs';
 import {siteGlobal} from '../flags/read.mjs';
 import {isUUID} from '../core/primitives.mjs';
+import {readExtensions,EXT,BINDLE_REGISTRY} from '../core/extensions.mjs';
 import {verifyKeyContinuity} from '../identity/keys.mjs';
 import {MAX_MOVES,MAX_MOVES_DOCUMENT_BYTES,DOCUMENT_BYTES,MAX_DOCUMENT_KEYS,MAX_STATEMENT_BYTES,MAX_ATTESTATION_BYTES} from '../identity/succession.mjs';
 export const DIRECTORY_LIMITS=Object.freeze({timeoutMs:1500,maxBytes:65536,cacheEntries:256,cacheBytes:8388608,inFlight:32,global:{windowMs:60000,limit:600},perSite:{windowMs:60000,limit:30},
@@ -155,23 +156,27 @@ export class IdentityDirectory {
  }
  async #manifest(issuer,priority){
   const result=await this.json(issuer+'/.well-known/bindle/manifest.json',65536,priority),d=result.document;
-  if(!plainObject(d)||d.issuer!==issuer||d.version!=='0'||!plainObject(d.features)||!onOrigin(d.features['directory.v1']?.directory_url,issuer))fail('invalid_manifest');
+  if(!plainObject(d)||d.issuer!==issuer||d.version!=='0')fail('invalid_manifest');
   for(const name of ['authorization_request_endpoint','authorization_endpoint','token_endpoint','rpc_endpoint','jwks_uri'])if(!onOrigin(d[name],issuer))fail('invalid_manifest');
-  if(!Array.isArray(d.login_presentation)||!d.login_presentation.includes('redirect')||Object.keys(d.features).length>32||Object.values(d.features).some(v=>!plainObject(v)||new TextEncoder().encode(JSON.stringify(v)).length>4096))fail('invalid_manifest');
+  if(!Array.isArray(d.login_presentation)||!d.login_presentation.includes('redirect'))fail('invalid_manifest');
   // RTC-i: protocol §2 makes the DPoP declaration optional (absent: no sender-constrained tokens), and nothing here
   // uses it, so a floor manifest without it is valid. When it IS declared it must still be a list of algorithm
   // names that includes ES256 (unchanged), so a malformed or ES256-less declaration is still refused.
   const dpop=d.dpop_signing_alg_values_supported;
   if(typeof d.preferences_contract!=='string'||!directoryURL(d.preferences_contract)||dpop!==undefined&&(!Array.isArray(dpop)||dpop.length>16||dpop.some(v=>typeof v!=='string'||!v||v.length>32)||!dpop.includes('ES256')))fail('invalid_manifest');
-  // RTC-e: a caller may ask to keep named manifest features (each already bounded to 4 KiB above), e.g. rtc-signaling.v1;
+  // Extensions revision 3.2 (protocol §2): `extensions` entries, processed with the bundled descriptors. The directory
+  // extension is required here; an invalid or absent declaration fails the manifest for this purpose only.
+  const declared=readExtensions(d,{registry:BINDLE_REGISTRY,issuer}).extensions,dir=declared.get(EXT.directory);
+  if(!dir||!onOrigin(dir.directory_url,issuer))fail('invalid_manifest');
+  // RTC-e: a caller may ask to keep named extensions' options (spec URLs, e.g. the legacy rtc-signaling extension);
   // nothing else of the manifest is kept.
-  const directory=d.features['directory.v1'].directory_url,features={};for(const name of this.keepFeatures)if(plainObject(d.features[name]))features[name]=structuredClone(d.features[name]);
+  const directory=dir.directory_url,features={};for(const name of this.keepFeatures)if(declared.has(name))features[name]=structuredClone(declared.get(name));
   this.remember(this.manifests,issuer,{directory,features,until:this.clock()+age(result.header,3600000)});return directory;
  }
- /** RTC-e: the kept manifest features of `issuer` (see `features` in the constructor), fetching the manifest under the
+ /** RTC-e: the kept extension options of `issuer` by spec URL (see `features` in the constructor), fetching the manifest under the
   * same budgets when it is not cached. */
  async features(issuer,priority='background'){await this.manifest(issuer,priority);return structuredClone(this.manifests.get(issuer)?.features??{});}
- /** Cache only, never dials: the kept manifest features of `issuer` while its manifest is fresh, else null. */
+ /** Cache only, never dials: the kept extension options of `issuer` while its manifest is fresh, else null. */
  peekFeatures(issuer){const cached=this.manifests.get(issuer);return this.allowed(issuer)&&cached?.until>this.clock()?structuredClone(cached.features??{}):null;}
  async accept(issuer,subject,identity,document){
   return this.store.transaction(async tx=>{

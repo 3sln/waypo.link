@@ -145,12 +145,9 @@ test('M4 (W2): a narrowed application whose hook was lost can no longer renew or
  const {link}=await b.run('rtc.mint-ticket',{purposes:[CALL],uses:4,expires_in:3600});
  const s=await a.open(h.principal(2),CALL,{basis:link});await a.invite(s);await h.pump();await b.listen();
  const c=await b.claim(s.sid);await b.accept(c);await h.pump();await a.listen();
- // A contract RPC's actor carries its per-RPC approval (already narrowed by the account-local approval record): that
- // is what is checked, with no shard call.
- const svc=h.account(2).service;let calls=0;const inner=svc.bound;svc.bound={check:async x=>{calls++;return inner.check(x);}};
- const narrowed={...b.actor,bound:{values:{purposes:[SYNC]},versions:{[SYNC]:{version:REF[SYNC].version,digest:REF[SYNC].digest}}}};
- assert.equal((await fault(h.run(2,'rtc.renew',{actor:narrowed,input:{...b.auth(),sid:s.sid}}))).code,'forbidden');assert.equal(calls,0);
- h.grants.get(a.grantInfo.id).purposes=[SYNC];// narrowed at the shard; no rtc.lifecycle ran
+ // The approval is the owner's interim record, read live on every method (extensions rev 3.2 removed AMD-X1): a record
+ // narrowed without its ending steps (here written directly, as after a crash between the two) is still enforced.
+ h.grants.get(a.grantInfo.id).purposes=[SYNC];// the approval record narrowed; no rtc.lifecycle ran
  assert.equal((await fault(a.run('rtc.renew',{...a.auth(),sid:s.sid}))).code,'forbidden');
  assert.equal((await fault(a.candidates(s,[relay()]))).code,'forbidden');s.seq--;// refused whole: its seq was not used
  assert.deepEqual(await a.end(s),{accepted:1},'end is narrowing and never refused');
@@ -174,16 +171,16 @@ test('M5 (W7): blocked or unconfigured invites cost no eligibility check; one ch
  for(let i=0;i<RTC_BOUNDS.endpointsPerApp;i++){await h.device(2,{grant:grantA}).register();}
  for(let i=0;i<4;i++)await h.device(2,{grant:grantB}).register();
  const {link}=await h.device(2,{grant:grantA}).run('rtc.mint-ticket',{purposes:[CALL],uses:20,expires_in:3600});
- const svc=h.account(2).service,inner=svc.bound;let calls=0;svc.bound={check:async x=>{calls++;return inner.check(x);}};
+ const svc=h.account(2).service,inner=svc.approved.bind(svc);let calls=0;svc.approved=async(...x)=>{calls++;return inner(...x);};// approval reads at admission
  // No basis (requests are off): dropped at the local checks.
  for(let i=0;i<4;i++){const s=await atk.open(h.principal(2),CALL);await atk.invite(s);await atk.cancel(s);}await h.pump();
- assert.equal(calls,0,'no shard call for an unconfigured basis');
+ assert.equal(calls,0,'no approval read for an unconfigured basis');
  await h.run(2,'rtc.block',{input:{principal:h.principal(1)}});
  for(let i=0;i<4;i++){const s=await atk.open(h.principal(2),CALL,{basis:link});await atk.invite(s);await atk.cancel(s);}await h.pump();
- assert.equal(calls,0,'no shard call for a blocked caller');assert.equal((await h.rows(2,'rtc/in/')).length,0,'nothing admitted');
+ assert.equal(calls,0,'no approval read for a blocked caller');assert.equal((await h.rows(2,'rtc/in/')).length,0,'nothing admitted');
  await h.run(2,'rtc.unblock',{input:{principal:h.principal(1)}});
  const s=await atk.open(h.principal(2),CALL,{basis:link});await atk.invite(s);await h.pump();
- assert.equal(calls,2,'an admitted invite: one check per (client, grants), not per endpoint');
+ assert.equal(calls,2,'an admitted invite: one check per application, not per endpoint');
  assert.equal((await inRec(h,2,s.sid)).delivered.length,RTC_BOUNDS.endpointsPerApp+4);
 });
 

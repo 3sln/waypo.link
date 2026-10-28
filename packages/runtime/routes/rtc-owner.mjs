@@ -5,7 +5,8 @@
 // session, CSRF for writes and capacity admission (narrowing paths are exempt below).
 //
 //   GET  /api/rtc/settings   the owner's settings and lists in one read: policy, held purposes, contact-link RTC
-//                            configuration, apps with bound RTC purposes (from the owner's federation grants), live
+//                            configuration, apps holding the signaling grant (from the owner's federation grants)
+//                            with the purposes the owner approved for each (the interim approval records), live
 //                            sessions, missed and held invites, blocks (people and, wargame M6, providers) and
 //                            mutes, tickets (with the minting app, wargame M2) and endpoints
 //   GET  /api/rtc/ring       incoming invites the portal may ring for (see `ringable`): only what spec §9.1 lets a
@@ -16,20 +17,23 @@
 //                            `block`/`unblock` take {principal} or {issuer}; `mute`/`unmute` also take the kinds
 //                            `issuer` and `origin`; `revoke-ticket` takes {jti}, {clientId} or {all:true}. The
 //                            engine validates each (packages/rtc/admission.mjs, tickets.mjs).
-//   POST /api/rtc/narrow-app {clientId, purposes}: narrows an app's approved RTC purposes (FederationService
-//                            narrowBoundOptions on the signaling slot; never gated, see narrowApp)
+//   POST /api/rtc/approve-app {clientId, purposes}: sets the purposes the owner approves for one app (rtc.approve-app,
+//                            the interim owner-local approval record; see approveApp). Extensions rev 3.2 removed
+//                            AMD-X1 `bind`, so this replaced `narrow-app` (FederationService narrowBoundOptions).
+//                            TODO(signaling Appendix C.2: approvals move to intents session handler approvals)
 //
 // Flags: RTC_SIGNALING_ENABLED gates widening only. While it is off, `unblock` and `unmute` (RTC_WIDENING) and any
-// set-policy or set-contact-rtc change that widens (decided by the engine against the stored value) answer the uniform
+// set-policy, set-contact-rtc or approve-app change that widens (decided by the engine against the stored value) answer the uniform
 // 404, exactly like an unknown /api path. Reads, narrowing and ending stay available (design §3.2).
 import {json,body,flagEnabled} from './shared.mjs';
 import {RTC_WIDENING,RTC_FRAGMENT,heldPurpose} from '../../app/domains/rtc.mjs';
 import {REGISTERED_PURPOSES} from '../../rtc/purposes.mjs';
 import {rtcContactBasis} from '../../links/parents.mjs';
 
-const ACTIONS=Object.freeze(['set-policy','set-contact-rtc','block','unblock','mute','unmute','revoke-ticket','end-session','revoke-endpoint','clear-missed','narrow-app']);
-/** Narrowing actions: never refused for capacity (protective, as withdrawing contact sharing is). */
-const NARROWING=Object.freeze(['block','mute','revoke-ticket','end-session','revoke-endpoint','clear-missed','narrow-app']);
+const ACTIONS=Object.freeze(['set-policy','set-contact-rtc','block','unblock','mute','unmute','revoke-ticket','end-session','revoke-endpoint','clear-missed','approve-app']);
+/** Narrowing actions: never refused for capacity (protective, as withdrawing contact sharing is). `approve-app` may also
+ * widen; it stays exempt so narrowing an app is never refused, and a widening still needs the flag and a live grant. */
+const NARROWING=Object.freeze(['block','mute','revoke-ticket','end-session','revoke-endpoint','clear-missed','approve-app']);
 const ACTION_PATH=/^\/api\/rtc\/([a-z-]+)$/;
 const READS=['/api/rtc/settings','/api/rtc/ring'];
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -39,9 +43,10 @@ const actionOf=path=>{const m=ACTION_PATH.exec(path);return m&&ACTIONS.includes(
 export function allowedMethods(path){if(READS.includes(path))return ['GET'];if(actionOf(path))return ['POST'];return null;}
 export const admission={exempt:path=>NARROWING.includes(actionOf(path))};
 
-/** The purposes this host holds pinned (the only usable versions, spec §3.5 item 3): presentation metadata only. */
+/** The purposes this host holds pinned (the only usable versions, spec §3.5 item 3): presentation metadata and the
+ * pinned reference (`version`, `digest`) an owner approval pins (rtc.approve-app). */
 export function heldPurposes(){
- return REGISTERED_PURPOSES.map(e=>heldPurpose(e.id)).filter(Boolean).map(({ref,body:b})=>({id:ref.purpose,version:ref.version,title:structuredClone(b.title),summary:structuredClone(b.summary),media:[...b.media],alert:b.alert===true,parties:b.parties,autoAccept:b.auto_accept}));
+ return REGISTERED_PURPOSES.map(e=>heldPurpose(e.id)).filter(Boolean).map(({ref,body:b})=>({id:ref.purpose,version:ref.version,digest:ref.digest,title:structuredClone(b.title),summary:structuredClone(b.summary),media:[...b.media],alert:b.alert===true,parties:b.parties,autoAccept:b.auto_accept}));
 }
 /** A handle only for a principal of this host whose account is active (the provider's own verified binding). */
 async function handleOf(env,principal){
@@ -55,14 +60,20 @@ async function handleOf(env,principal){
  * provider"; null for a same-host caller (this host's own issuer is never a provider block target). */
 export const callerProvider=(env,s)=>typeof s.peer?.iss==='string'&&s.peer.iss!==env.APP_ORIGIN?s.peer.iss:null;
 export function callerOriginReporter(env,s){if(typeof s.callerOrigin!=='string'||s.peer?.iss===env.APP_ORIGIN)return null;try{return new URL(s.peer.iss).host;}catch{return null;}}
-/** The owner's apps holding an active grant on the signaling slot, with their approved bound purposes (AMD-X1). */
-async function rtcApps(env,context){
+/** The owner's apps holding an active grant on the legacy signaling fragment (federation grants). */
+async function grantedApps(env,context){
  let grants=[];try{grants=(await env.FEDERATION_AUTHORITY?.grants?.(context))?.grants??[];}catch{grants=[];}
  const apps=new Map();
- for(const g of grants){if(!g?.active||g.fragment!==RTC_FRAGMENT||typeof g.clientId!=='string')continue;const purposes=Array.isArray(g.bound?.values?.purposes)?g.bound.values.purposes.filter(l=>typeof l==='string'):[];
-  const app=apps.get(g.clientId)??{clientId:g.clientId,name:typeof g.client?.name==='string'?g.client.name:null,origin:typeof g.client?.origin==='string'?g.client.origin:null,purposes:[]};
-  for(const l of purposes)if(!app.purposes.includes(l))app.purposes.push(l);apps.set(g.clientId,app);}
- return [...apps.values()].map(a=>({...a,purposes:a.purposes.sort()}));
+ for(const g of grants){if(!g?.active||g.fragment!==RTC_FRAGMENT||typeof g.clientId!=='string'||apps.has(g.clientId))continue;
+  apps.set(g.clientId,{clientId:g.clientId,name:typeof g.client?.name==='string'?g.client.name:null,origin:typeof g.client?.origin==='string'?g.client.origin:null});}
+ return apps;
+}
+/** Those apps, each with the purposes the owner approved for it in the interim approval records (rtc.approvals),
+ * never from the grant: extensions rev 3.2 removed AMD-X1 `bind`. TODO(signaling Appendix C.2: approvals move to
+ * intents session handler approvals) */
+async function rtcApps(env,context,approvals){
+ const apps=await grantedApps(env,context),approved=new Map(approvals.approvals.map(a=>[a.clientId,a.purposes]));
+ return [...apps.values()].map(a=>({...a,purposes:[...approved.get(a.clientId)??[]].sort()}));
 }
 /**
  * Whether the portal may ring for a live session (spec §4.4, design §7 "Incoming ring", RTC-16): an incoming,
@@ -106,20 +117,20 @@ function endSession(call,input){
  return call('rtc.end-session',input);
 }
 /**
- * Narrowing an app's approved RTC purposes (AMD-X1 item 3, spec §14 "Slot changes"): `{clientId, purposes}` becomes
- * FederationService.narrowBoundOptions for the signaling slot fragment, as the signed-in owner (the federation shard
- * re-authenticates the session and CSRF token as a mutation). It keeps the intersection on every active grant of that
- * app, and its boundSync hook then runs `rtc.lifecycle` `app-narrowed`, which ends the app's sessions and endpoint
- * registrations for the removed purposes. Never gated (narrowing); a widening is refused by the federation service,
- * and while RTC_SIGNALING_ENABLED is off it answers the uniform 404 like any other widening.
+ * The owner's approval of an app's RTC purposes (interim; extensions rev 3.2 removed AMD-X1 `bind`): `{clientId,
+ * purposes}` becomes rtc.approve-app as the owner. The engine pins each line to the provider-held purpose reference,
+ * ends the app's sessions, tickets and endpoint registrations for removed lines at once, and refuses a widening while
+ * RTC_SIGNALING_ENABLED is off (the uniform 404). A list that adds a line needs the app to hold an active grant on the
+ * signaling fragment now (otherwise the uniform 404); narrowing, including to nothing, never does.
+ * TODO(signaling Appendix C.2: approvals move to intents session handler approvals)
  */
-const NARROW_KEYS=['clientId','purposes'];
-async function narrowApp(env,context,input,enabled){
- if(!input||typeof input!=='object'||Array.isArray(input)||Object.keys(input).some(k=>!NARROW_KEYS.includes(k))||typeof input.clientId!=='string'||!input.clientId||input.clientId.length>2048||!Array.isArray(input.purposes)||input.purposes.length>16||input.purposes.some(l=>typeof l!=='string'||l.length>256))throw invalidArgs();
- if(typeof env.FEDERATION_AUTHORITY?.narrowBoundOptions!=='function')return unknown();
- try{const out=await env.FEDERATION_AUTHORITY.narrowBoundOptions(context,{clientId:input.clientId,fragment:RTC_FRAGMENT,options:{purposes:[...input.purposes]}});
-  return json({clientId:out.clientId,purposes:Array.isArray(out.values?.purposes)?[...out.values.purposes].sort():[]});}
- catch(error){if(error?.code==='bound_options_widening')return enabled?json({error:'bound_options_widening',message:'Approving more purposes needs a new approval in the app.'},400):unknown();if(error?.code==='invalid_args')throw invalidArgs();throw error;}
+const APPROVE_KEYS=['clientId','purposes'];
+async function approveApp(env,context,call,input){
+ if(!input||typeof input!=='object'||Array.isArray(input)||Object.keys(input).some(k=>!APPROVE_KEYS.includes(k))||typeof input.clientId!=='string'||!input.clientId||input.clientId.length>2048||!Array.isArray(input.purposes)||input.purposes.length>16||input.purposes.some(l=>typeof l!=='string'||l.length>256))throw invalidArgs();
+ const prior=(await call('rtc.approvals')).approvals.find(a=>a.clientId===input.clientId)?.purposes??[];
+ if(input.purposes.some(l=>!prior.includes(l))&&!(await grantedApps(env,context)).has(input.clientId))return unknown();
+ const out=await call('rtc.approve-app',{clientId:input.clientId,purposes:[...input.purposes]});
+ return json({clientId:out.clientId,purposes:out.purposes,ended:out.ended});
 }
 
 export const stages={
@@ -130,7 +141,7 @@ export const stages={
   const enabled=flagEnabled(env,'RTC_SIGNALING_ENABLED',{subject:{kind:'account',owner:id}});
   try{
    if(path==='/api/rtc/settings'){
-    const [policy,contacts,sessions,missed,blocked,tickets,endpoints,apps]=await Promise.all([call('rtc.policy'),call('rtc.export'),call('rtc.sessions'),call('rtc.missed'),call('rtc.blocked'),call('rtc.tickets'),call('rtc.endpoint-list'),rtcApps(env,context)]);
+    const [policy,contacts,sessions,missed,blocked,tickets,endpoints,apps]=await Promise.all([call('rtc.policy'),call('rtc.export'),call('rtc.sessions'),call('rtc.missed'),call('rtc.blocked'),call('rtc.tickets'),call('rtc.endpoint-list'),call('rtc.approvals').then(a=>rtcApps(env,context,a))]);
     const handles=new Map(),named=async p=>{const key=p?.iss+'\n'+p?.sub;if(!handles.has(key))handles.set(key,await handleOf(env,p));return handles.get(key);};
     return json({enabled:enabled===true,policy,purposes:heldPurposes(),contacts:contacts.contacts.map(c=>({parent:c.parent,purposes:[...c.purposes]})),apps,
      sessions:await Promise.all(sessions.sessions.map(async s=>({...s,peerHandle:await named(s.peer)}))),
@@ -152,7 +163,7 @@ export const stages={
    if(RTC_WIDENING.has('rtc.'+action)&&!enabled)return unknown();
    const input=await body(request,16384);
    if(action==='end-session')return json(await endSession(call,input));
-   if(action==='narrow-app')return await narrowApp(env,context,input,enabled);
+   if(action==='approve-app')return await approveApp(env,context,call,input);
    // Review F7: a contact-link configuration names one of this owner's active contact links (the account's contact
    // parents); an unknown or inactive parent is the uniform 404, and so is one RTC never admits as a basis (review L6:
    // not a contact-type link, or conditional). Removing a configuration (no purposes) stays available for any parent,

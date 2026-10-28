@@ -91,7 +91,7 @@ async function fixture(t,name,faults){
       if(url.pathname==='/')return route.fulfill({contentType:'text/html',headers:{'Cross-Origin-Opener-Policy':'same-origin-allow-popups'},body:appPage});
       if(url.pathname==='/elements')return route.fulfill({contentType:'text/html',headers:{'Cross-Origin-Opener-Policy':'same-origin-allow-popups'},body:elementsPage});
       // The real @3sln/bindle elements, served from this checkout.
-      if(/^\/(?:packages\/sdk\/src|packages\/i18n|vendor\/dodo)\//.test(url.pathname)&&!url.pathname.includes('..'))return route.fulfill({contentType:['.mjs','.js'].includes(extname(url.pathname))?'text/javascript':'text/plain',body:await readFile(resolve('.'+url.pathname))});
+      if(/^\/(?:packages\/sdk\/src|packages\/i18n|packages\/core|vendor\/dodo)\//.test(url.pathname)&&!url.pathname.includes('..'))return route.fulfill({contentType:['.mjs','.js'].includes(extname(url.pathname))?'text/javascript':'text/plain',body:await readFile(resolve('.'+url.pathname))});
       return route.fulfill({status:404,body:''});
     }
     if(url.origin===ISSUER&&url.pathname==='/oauth/authorize'&&url.searchParams.has('entry'))return route.fulfill({contentType:'text/html',headers:{'Referrer-Policy':'no-referrer'},body:popupPage});

@@ -13,6 +13,7 @@ import { base64url, textEncoder, canonical } from '../../packages/core/records.m
 import { signMoveStatement, signMoveAttestation, statementDigest, parseMoveStatement } from '../../packages/identity/succession.mjs';
 import { createAttestationKeySet, rotateAttestationKeySet, parseAttestationKeySet, publishedAttestationJwks } from '../../packages/identity/attestation-keys.mjs';
 import { MANIFEST_PATH } from '../../packages/identity/successors.mjs';
+import { EXT } from '../../packages/core/extensions.mjs';
 
 const ES = { name: 'ECDSA', hash: 'SHA-256' }, P = { name: 'ECDSA', namedCurve: 'P-256' };
 export const json = (body, status = 200, headers = {}) => new Response(body === null ? null : JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json', ...headers } });
@@ -45,7 +46,7 @@ export function providerHandler({ origin, state, jwks, portability = true, move,
   return async request => {
     if (extra) { const answered = await extra(request); if (answered) return answered; }
     const { path, method } = request;
-    if (path === MANIFEST_PATH && method === 'GET') return json({ version: '0', issuer: origin, features: { 'directory.v1': { directory_url: `${origin}/directory` }, ...portability ? { 'portability.v1': { move_endpoint: `${origin}/move`, attestation_jwks_uri: `${origin}/attestation-keys`, transfer_in_endpoint: `${origin}/transfer-in` } } : {} } });
+    if (path === MANIFEST_PATH && method === 'GET') return json({ version: '0', issuer: origin, extensions: [{ spec: EXT.directory, options: { directory_url: `${origin}/directory` } }, ...portability ? [{ spec: EXT.portability, options: { move_endpoint: `${origin}/move`, attestation_jwks_uri: `${origin}/attestation-keys`, transfer_in_endpoint: `${origin}/transfer-in` } }] : []] });
     if (path === '/attestation-keys' && method === 'GET' && portability) return json(typeof jwks === 'function' ? jwks() : jwks);
     if (path === '/directory' && method === 'GET') {
       const sub = new URLSearchParams(request.query).get('sub'), entry = state.get(sub);

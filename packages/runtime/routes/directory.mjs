@@ -8,6 +8,7 @@ import {stages as federation} from './federation.mjs';
 import {flagGlobal,json,pseudonym,subnet} from './shared.mjs';
 import {memberCertificateLifetime,MEMBER_CERTIFICATE_DEFAULT_SECONDS,MEMBER_REVOCATION_BOUND_SECONDS} from '../../identity/member-certificates.mjs';
 import {JWT_BEARER} from '../../orgs/certificates.mjs';
+import {EXT,declare,withExtensionEntries} from '../../core/extensions.mjs';
 const DOCUMENT=/^\/identity\/([a-f0-9-]{36})\/identity\.json$/;
 const headers={'Access-Control-Allow-Origin':'*','Referrer-Policy':'no-referrer','Cache-Control':'no-store','X-Content-Type-Options':'nosniff','X-Robots-Tag':'noindex, nofollow'};
 const unknown=()=>json({error:'not_found'},404,headers);
@@ -19,14 +20,16 @@ export const stages={async public(ctx){
  // Compose the existing manifest handler here to avoid changing another workstream's route module.
  if(manifest){
   const response=await federation.public(ctx);if(!response?.ok||request.method!=='GET')return response;
-  const value=await response.json(),features={...value.features,'directory.v1':{directory_url:env.APP_ORIGIN+DIRECTORY_PATH}};
+  // Extensions rev 3.2 (protocol §2): `extensions` entries. TODO(CR-X3-19): move these wrapper declarations into
+  // MANIFEST_DECLARATIONS rows with mounted checks.
+  let value=await response.json();const entries=[declare(EXT.directory,{directory_url:env.APP_ORIGIN+DIRECTORY_PATH})];
   const keys=parseAttestationKeySet(env.IDENTITY_ATTESTATION_KEYS??env.IDENTITY_ATTESTATION_KEY);
   // ORG-4 (organizations §14): member certificates as a home provider, and organization hosting with the jwt-bearer member grant.
-  if(flagGlobal(env,'MEMBER_CERTIFICATES_ENABLED'))features['key-delegation.v1']={...value.features?.['key-delegation.v1'],max_certificate_seconds:memberCertificateLifetime(env.MEMBER_CERTIFICATE_SECONDS)??MEMBER_CERTIFICATE_DEFAULT_SECONDS,revocation_bound_seconds:MEMBER_REVOCATION_BOUND_SECONDS};
-  if(flagGlobal(env,'ORGANIZATIONS_ENABLED')){features['organizations.v1']={};value.grant_types_supported=[...new Set([...(Array.isArray(value.grant_types_supported)?value.grant_types_supported:[]),JWT_BEARER])];}
-  if(flagGlobal(env,'IDENTITY_TRANSFER_OUT_ENABLED')&&keys?.keys.length)features['portability.v1']={move_endpoint:env.APP_ORIGIN+MOVE_PATH,attestation_jwks_uri:env.APP_ORIGIN+ATTESTATION_KEYS_PATH};
-  if(flagGlobal(env,'IDENTITY_TRANSFER_IN_ENABLED')&&env.TRANSFER_IN_INTAKE)features['portability.v1']={...features['portability.v1'],transfer_in_endpoint:env.APP_ORIGIN+'/bindle/portability/transfer-in'};
-  return json({...value,features},200,{'Access-Control-Allow-Origin':'*','Referrer-Policy':'no-referrer'});
+  if(flagGlobal(env,'MEMBER_CERTIFICATES_ENABLED'))entries.push(declare(EXT.keyDelegation,{max_certificate_seconds:memberCertificateLifetime(env.MEMBER_CERTIFICATE_SECONDS)??MEMBER_CERTIFICATE_DEFAULT_SECONDS,revocation_bound_seconds:MEMBER_REVOCATION_BOUND_SECONDS}));
+  if(flagGlobal(env,'ORGANIZATIONS_ENABLED')){entries.push(declare(EXT.organizations));value.grant_types_supported=[...new Set([...(Array.isArray(value.grant_types_supported)?value.grant_types_supported:[]),JWT_BEARER])];}
+  if(flagGlobal(env,'IDENTITY_TRANSFER_OUT_ENABLED')&&keys?.keys.length)entries.push(declare(EXT.portability,{move_endpoint:env.APP_ORIGIN+MOVE_PATH,attestation_jwks_uri:env.APP_ORIGIN+ATTESTATION_KEYS_PATH}));
+  value=withExtensionEntries(value,entries,{merge:true});
+  return json(value,200,{'Access-Control-Allow-Origin':'*','Referrer-Policy':'no-referrer'});
  }
  if(request.method==='OPTIONS')return new Response(null,{status:204,headers:{...headers,'Access-Control-Allow-Methods':'GET, HEAD, OPTIONS'}});
  if(!['GET','HEAD'].includes(request.method))return json({error:'method_not_allowed'},405,{...headers,Allow:'GET, HEAD, OPTIONS'});

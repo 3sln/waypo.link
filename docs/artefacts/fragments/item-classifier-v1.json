@@ -1,0 +1,7 @@
+{
+ "id":"https://3sln.me/artefacts/fragments/item-classifier/v1",
+ "title":"Item classifier",
+ "description":"Answers typed questions about an incoming item. Model evidence never authorizes an action.",
+ "publisher":"https://3sln.me",
+ "fields":{"classifiers":{"title":"Classifiers","type":"resource","cardinality":{"min":0,"max":4},"contracts":["https://spec.bindle.example/contracts/decision-model/v1"],"selection":"ordered","consumers":["application"]}}
+}

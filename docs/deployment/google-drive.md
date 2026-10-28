@@ -1,5 +1,13 @@
 # Google Drive setup
 
+> **Group:** 3sln.me reference service (hosting)
+>
+> **Status:** operator guide; configuration alone does not establish working external delivery or provider conformance.
+>
+> **Covers:** Google Drive connector setup.
+>
+> **Does not cover:** the protocol and its security requirements ([protocol](../spec/protocol.md), [security](../spec/security.md)); 3sln.me release gates ([release gates](../3sln/release-gates.md)).
+
 Create a Google OAuth web application and enable the Drive API. Register `https://3sln.me/api/integrations/google/callback` as its exact authorized redirect URI. Local testing must register the actual fixed localhost origin/port plus the same callback path; self-hosts use their own canonical `APP_ORIGIN`.
 
 Set the public `GOOGLE_CLIENT_ID` in production Wrangler variables and attach `GOOGLE_CLIENT_SECRET` as a Worker secret, alongside the existing private `KEY_ENCRYPTION_KEY`. Do not commit client secrets or encryption keys. The Node adapter reads the same environment names. Provider availability stays false until these values exist. The hosted Google client ID is now checked into production Wrangler vars to match the dashboard. Local development retains an empty placeholder; self-hosts supply their own client ID. The client secret and encryption key remain private runtime secrets. Production Wrangler uses keep_vars=true to retain dashboard-only variables such as the Google client ID. Values explicitly pinned in Wrangler still belong in source; public signup remains release-gated.

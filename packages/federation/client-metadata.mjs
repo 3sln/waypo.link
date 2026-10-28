@@ -9,10 +9,11 @@
 // accepts a confidential `private_key_jwt` client with a `jwks_uri` on the client_id origin and path prefix, parses
 // `bindle_integration` (./integrations.mjs) and fetches key sets through the same egress port, budgets and cache rules.
 // Otherwise every confidential document is refused exactly as before. Inline keys and client secrets are always refused.
+import {EXT} from '../core/extensions.mjs';
 import {fail,object} from './schema.mjs';
 import {clientPolicyLinks,withClientPolicies} from './legal.mjs';
 import {TEXT_BAD,presentationText as presentation,prefixedURL,validateIntegrationManifest,validIntegrationValue,validateJwks,classifyIntegrationChange} from './integrations.mjs';
-export const CLIENT_METADATA_FEATURE='client-id-metadata.v1';
+export const CLIENT_METADATA_FEATURE=EXT.clientIdMetadata;
 export const CLIENT_METADATA_LIMITS=Object.freeze({maxBytes:16384,timeoutMs:3000,defaultMs:3600000,minMs:300000,maxMs:86400000,negativeMs:60000,cacheEntries:512,blockMs:30000,inFlight:16,
  perHost:Object.freeze({windowMs:60000,limit:6}),global:Object.freeze({windowMs:60000,limit:120})});
 const unavailable=()=>fail('invalid_client','This application is not available with this provider.');
