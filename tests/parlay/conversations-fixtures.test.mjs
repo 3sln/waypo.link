@@ -19,10 +19,11 @@ import {OUTBOX_OPERATIONS,createOutboxProvider} from '../../packages/messaging-e
 import {EVENT_OPERATIONS} from '../../packages/messaging-engine/domains/events.mjs';
 import {CONVERSATION_OPERATIONS,ConversationsDomain,ConversationsReceive,ConversationsRespond,createConversationEdge,flushConversationEdge,handleConversationIngress,withConversations} from '../../packages/messaging-engine/domains/conversations.mjs';
 import * as B from '../../packages/messaging-protocol/index.mjs';
+import {INVITE_OPERATIONS,ReceiveRedeem,ReceiveFirstContact} from '../../packages/messaging-engine/domains/invites.mjs';
 
 export {B};
 export const NOW=Date.UTC(2026,9,20,12);
-export const REGISTRY=operations(...RECEIVE_OPERATIONS,...CONTACT_OPERATIONS,...DELEGATION_OPERATIONS,...SEND_OPERATIONS,...OUTBOX_OPERATIONS,...EVENT_OPERATIONS,...CONVERSATION_OPERATIONS);
+export const REGISTRY=operations(...RECEIVE_OPERATIONS,...CONTACT_OPERATIONS,...DELEGATION_OPERATIONS,...SEND_OPERATIONS,...OUTBOX_OPERATIONS,...EVENT_OPERATIONS,...CONVERSATION_OPERATIONS,...INVITE_OPERATIONS);
 export const encoder=new TextEncoder();
 const ES={name:'ECDSA',namedCurve:'P-256'},pub=({kty,crv,x,y})=>({kty,crv,x,y});
 const enc=v=>B.base64url(encoder.encode(JSON.stringify(v)));
@@ -30,7 +31,9 @@ const HOSTS={alice:'https://alice.box.example/ingress',bob:'https://hub.box.exam
 async function signCompact(header,claims,privateKey){const head=`${enc(header)}.${enc(claims)}`;return `${head}.${B.base64url(new Uint8Array(await crypto.subtle.sign({name:'ECDSA',hash:'SHA-256'},privateKey,encoder.encode(head))))}`;}
 
 // `storage: true` composes an in-memory user storage resource per party (bodies of 4 KiB or more are staged there).
-export async function createMesh({names=['alice','bob','carol','dave'],seed=1,rules=[],maxParticipants={},shell=false,storage=false}={}){
+// `issuers` maps a party to a shared provider origin (same-host invitations, contacts spike CL-24); `budget` is the
+// edge's first-contact budget (createFirstContactBudget), absent by default.
+export async function createMesh({names=['alice','bob','carol','dave'],seed=1,rules=[],maxParticipants={},shell=false,storage=false,issuers={},budget}={}){
  const clock=fakeClock(NOW),network=createNetwork({peers:names,clock,seed,rules}),edgeStore=memoryStore(),edge=createEdgeIndex(edgeStore),conversationEdge=createConversationEdge(edgeStore,{now:()=>clock.now()});
  const parties=new Map(),revoked=new Map(),routes=new Map(),calls={status:0,resolve:0};
  const directory={
@@ -47,7 +50,7 @@ export async function createMesh({names=['alice','bob','carol','dave'],seed=1,ru
  const engineOf=owner=>[...parties.values()].find(p=>p.owner===owner);
  for(const name of names){
   const peer=network.peers.get(name);await peer.engine.dispose();
-  const issuer=`https://${name}.provider.example`,owner=peer.owner,principal={issuer,subject:owner,identityURI:`${issuer}/identity/${owner}`},keyId=`${principal.identityURI}#k1`;
+  const issuer=issuers[name]??`https://${name}.provider.example`,owner=peer.owner,principal={issuer,subject:owner,identityURI:`${issuer}/identity/${owner}`},keyId=`${principal.identityURI}#k1`;
   const identity=await crypto.subtle.generateKey(ES,true,['sign','verify']),delegate=await crypto.subtle.generateKey(ES,true,['sign','verify']);
   const objects=new Map(),userStorage=storage?{objects,put:async(k,v)=>{objects.set(k,Uint8Array.from(v));},get:async k=>objects.get(k)??null,delete:async k=>{objects.delete(k);}}:null;
   const party={name,owner,peer,principal,keyId,userStorage,ingress:shell?(HOSTS[name]??`https://${name}.box.example/ingress`).replace('/ingress','/bindle/ingress'):HOSTS[name]??`https://${name}.box.example/ingress`,identity:{privateKey:identity.privateKey,publicJwk:pub(await crypto.subtle.exportKey('jwk',identity.publicKey))},delegatePrivate:delegate.privateKey,delegateJwk:pub(await crypto.subtle.exportKey('jwk',delegate.publicKey)),store:peer.store,links:0};
@@ -64,7 +67,9 @@ export async function createMesh({names=['alice','bob','carol','dave'],seed=1,ru
   peer.handler=request=>handleConversationIngress(request,{edge,conversationEdge,now:()=>clock.now(),
    deliverLink:(o,input)=>engineOf(o).peer.engine.perform(new ReceiveDeliver({actor:{kind:'ingress',owner:o},input})),
    deliverRecord:(o,input)=>engineOf(o).peer.engine.perform(new ConversationsReceive({actor:{kind:'ingress',owner:o},input})),
-   deliverResponse:(o,input)=>engineOf(o).peer.engine.perform(new ConversationsRespond({actor:{kind:'ingress',owner:o},input}))});
+   deliverResponse:(o,input)=>engineOf(o).peer.engine.perform(new ConversationsRespond({actor:{kind:'ingress',owner:o},input})),
+   deliverInvite:(o,input)=>engineOf(o).peer.engine.perform(new ReceiveRedeem({actor:{kind:'ingress',owner:o},input})),
+   deliverFirst:(o,input)=>engineOf(o).peer.engine.perform(new ReceiveFirstContact({actor:{kind:'ingress',owner:o},input})),budget});
   if(shell){await peer.engine.run('shell.bind');await peer.engine.run('shell.authorization',{input:{revision:1,active:true,recipients:[]}});}
   await peer.engine.run('receive.configure',{input:{principal,ingress:party.ingress}});
   if(maxParticipants[name])await peer.engine.run('conversations.configure',{input:{maxParticipants:maxParticipants[name]}});
@@ -112,7 +117,7 @@ export async function createMesh({names=['alice','bob','carol','dave'],seed=1,ru
    const e=epoch??room.current,s=Uint8Array.from(secret??await f.store.get(`conv/secret/${cid}/${e}`)),inc=incarnation??(type==='peer-hello'?'hello':peer.outbound.incarnation),sign=signer??f.signer;
    const authorDescriptor=author??{principal:f.principal,identityDocument:`${f.principal.identityURI}/identity.json`,keyId:f.keyId,delegate:sign.kid};
    const body=['message','edit'].includes(type)?encoder.encode(text):null;
-   const payload={version:1,profile:B.PROFILE,kind:'conversation-record',noReply:false,operationId:crypto.randomUUID(),createdAt:clock.now(),recipient:{issuer:t.principal.issuer,owner:t.principal.subject,conversationId:cid,incarnation:inc},content:body?await B.contentDescriptor('text/plain',body):null,subject:'',optionalTags:[],author:authorDescriptor,record:{type,conversationId:cid,epoch:e,stream:authorDescriptor.delegate,counter:counter??1,previous:previous??((counter??1)>1?B.base64url(crypto.getRandomValues(new Uint8Array(32))):null),parents,...target?{target}:{},...data?{data}:{}}};
+   const payload={version:1,profile:B.PROFILE,kind:'conversation-record',noReply:false,operationId:crypto.randomUUID(),createdAt:clock.now(),recipient:{issuer:t.principal.issuer,owner:t.principal.subject,conversationId:cid,incarnation:inc},content:body?await B.contentDescriptor('text/plain',body):null,subject:'',author:authorDescriptor,record:{type,conversationId:cid,epoch:e,stream:authorDescriptor.delegate,counter:counter??1,previous:previous??((counter??1)>1?B.base64url(crypto.getRandomValues(new Uint8Array(32))):null),parents,...target?{target}:{},...data?{data}:{}}};
    const envelope=await B.signEnvelope(payload,sign),principalFor=author_principal??f.principal;
    const token=await B.pairToken(s,{conversationId:cid,author:{issuer:principalFor.issuer,subject:principalFor.subject},recipient:t.principal,incarnation:inc});
    const wire=B.encodeDelivery(envelope,{body,secret:share,boundary:'bb4-crafted'});

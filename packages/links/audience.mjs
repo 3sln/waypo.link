@@ -7,13 +7,19 @@ import {StorageError} from '../storage/policy.mjs';
 import {key,digest,fail} from '../core/records.mjs';
 import {LinkReplayRecord} from './replay.mjs';
 import {prepareLinkResponse,signLinkResponse} from '../identity/link-response.mjs';
-import {evaluateLinkPolicy} from '../runtime/developer-contact.mjs';
+import {developerEvaluation} from '../runtime/developer-contact.mjs';
+import {developerPolicy,evaluateRegisteredPolicy} from './policies.mjs';
 import {UUID} from '../core/primitives.mjs';
 import {CONTACT_KEYS} from './contact-profile.mjs';
 import {LINK_FRAGMENT_TABLE} from './types.mjs';
 import {assertLifecycleOpen} from '../runtime/account-deletion.mjs';
 const DAY=86400000,CONTACT_PATH=/^\/users\/(?:[a-z0-9][a-z0-9_-]{2,31}|n\.[0-9abcdefghjkmnpqrstvwxyz]{1,9})\/contact\/[a-f0-9-]{36}$/;
 const local=c=>c.config.LOCAL_DEVELOPMENT==='true';
+// The contact-link policy evaluator (links §7.1; moved here from packages/runtime/developer-contact.mjs by contacts
+// spike CR-C5, behaviour unchanged): same-host principals only, the operator registry's developer policy evaluated by
+// the developer billing-tier decision. Contact links keep it until contacts phase 4; developer contact itself no longer
+// uses links.
+export function evaluateLinkPolicy(c,policy,principal){return evaluateRegisteredPolicy({origin:c.config.APP_ORIGIN,config:c.config,policy,principal,evaluators:{[developerPolicy(c.config)]:subject=>developerEvaluation(c,subject)}});}
 const decisionPath=async(parent,principal)=>`link-audience/${parent}/${await digest(crypto,`${principal.issuer}\u0000${principal.subject}`)}`;
 const invalid=()=>{throw new StorageError('link_invalid','This contact link is invalid or no longer active.',401);};
 // Host-policy decision for one (parent, verified principal), with bounded reuse (links §7.5): a final positive

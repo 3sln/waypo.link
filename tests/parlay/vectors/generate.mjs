@@ -4,7 +4,7 @@
 // node tests/parlay/vectors/generate.mjs [--new-keys]
 import {readFile,writeFile} from 'node:fs/promises';
 import {DOMAINS,PROFILE,signEnvelope,payloadDigest,eventId,genesisDigest,signingInput,sha256,base64url,jcs,pairToken,edgeKey,tokenDigest,encodeDelivery,encodeMulticast,secretDigest} from '../../../packages/messaging-protocol/index.mjs';
-import {NOW,NAMES,generateKeys,party,encoder,initEnvelope,recordPayload,linkPayload,invitationResponse,receiptFor,genesisFor,binding,linkRecipient,SECRET,SECRET2,CONVERSATION,EPOCH,EPOCH2,uuidOf} from './fixtures.mjs';
+import {NOW,NAMES,generateKeys,party,encoder,initEnvelope,recordPayload,linkPayload,invitationResponse,receiptFor,genesisFor,binding,linkRecipient,plainRecipient,redemptionEnvelope,INVITE_TOKEN,SECRET,SECRET2,CONVERSATION,EPOCH,EPOCH2,uuidOf} from './fixtures.mjs';
 
 const file=new URL('./vectors.json',import.meta.url);
 let keys;try{if(!process.argv.includes('--new-keys'))keys=JSON.parse(await readFile(file,'utf8')).keys;}catch{}
@@ -19,11 +19,14 @@ async function add(name,type,signed,{domain,body,secret}={}){
  objects.push(entry);return signed;
 }
 const E=DOMAINS.envelope,body=encoder.encode('Hello from the vectors.');
-const oneOff=await add('one-off','envelope',await signEnvelope(await linkPayload(alice,bob,{optionalTags:['billing','urgent']}),alice.signer),{domain:E,body});
+const oneOff=await add('one-off','envelope',await signEnvelope(await linkPayload(alice,bob),alice.signer),{domain:E,body});
 // Same signed payload carried with a renewed certificate for the same jkt: identity must not change (§5.4).
 await add('one-off-renewed-certificate','envelope',{payload:oneOff.payload,proof:{...oneOff.proof,delegation:await alice.issue({iat:Math.floor(NOW/1000)-60,since:Math.floor(NOW/1000)-3600-3*86400,jti:'cert-alice-renewed'})}},{domain:E,body});
 const genesis=await add('genesis','genesis',await genesisFor(alice,[alice,bob,carol]),{domain:DOMAINS.genesis});
 const init=await add('conversation-init','envelope',await initEnvelope(alice,bob,[alice,bob,carol]),{domain:E,body:encoder.encode('Let us talk.')});
+// Contacts spike phase 3 (provisional): credential-less first contact to {issuer, owner}, and an invitation redemption.
+await add('one-off-first-contact','envelope',await signEnvelope(await linkPayload(alice,bob,{operationId:uuidOf(5),recipient:plainRecipient(bob)}),alice.signer),{domain:E,body});
+await add('conversation-init-redemption','envelope',await redemptionEnvelope(carol,bob),{domain:E});
 await add('invitation-response-accept','invitation-response',await invitationResponse(bob,init.payload.conversation.genesis),{domain:DOMAINS.invitationResponse});
 const carolResponse=await add('invitation-response-carol','invitation-response',await invitationResponse(carol,init.payload.conversation.genesis),{domain:DOMAINS.invitationResponse});
 await add('invitation-response-decline','invitation-response',await invitationResponse(bob,init.payload.conversation.genesis,{decision:'decline',acceptListed:false}),{domain:DOMAINS.invitationResponse});
@@ -58,6 +61,7 @@ const out={description:'Bindle Messaging interop v1 draft vectors (docs/spec/mes
  pairToken:{secretBase64url:base64url(SECRET),input:tokenInput,token,tokenDigest:await tokenDigest(token),edgeKey:await edgeKey({conversationId:CONVERSATION,author:tokenInput.author,owner:tokenInput.recipient}),helloToken},
  multipart:{name:'record-rotate',contentType:delivery.contentType,bytesBase64url:base64url(delivery.bytes)},
  multicast:{contentType:multicast.contentType,bytesBase64url:base64url(multicast.bytes),payloadDigests:[await payloadDigest(oneOff),await payloadDigest(toCarol)]},
+ invitation:{token:INVITE_TOKEN,tokenDigest:await sha256(crypto,INVITE_TOKEN),authorization:`BindleInvite ${INVITE_TOKEN}`},
  contactDeliveryV1:{name:'one-off',signature:legacySignature},
  helloEventId:await eventId(hello)};
 await writeFile(file,JSON.stringify(out,null,1)+'\n');

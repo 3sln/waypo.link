@@ -14,22 +14,28 @@ export async function pairToken(secret,{conversationId,author,recipient,incarnat
 }
 export const secretDigest=(secret,crypto=globalThis.crypto)=>{if(!(secret instanceof Uint8Array)||secret.byteLength!==32)malformed();return sha256(crypto,secret);};
 
-// Authorization header grammar: exactly `BindleLink <compact>` or `BindleConversation <epoch>.<token>`; no other scheme,
-// whitespace or casing. Absent yields {scheme:null}. Link values that fail grammar are link_malformed (§4.5).
+// Authorization header grammar: exactly `BindleLink <compact>`, `BindleInvite <token>` or
+// `BindleConversation <epoch>.<token>`; no other scheme, whitespace or casing. Absent yields {scheme:null}. Link values
+// that fail grammar are link_malformed (§4.5, kept while contact links overlap invitations); an invitation token outside
+// 22–43 base64url characters is malformed (§4.1, §4.4 step 2).
 export function parseCredential(header){
  if(header===undefined||header===null)return {scheme:null};
  if(typeof header!=='string'||header.length>LIMITS.maxHeaderChars)fail('malformed');
- const m=/^(BindleLink|BindleConversation) ([^\s]+)$/.exec(header);if(!m)fail('malformed');
+ const m=/^(BindleLink|BindleInvite|BindleConversation) ([^\s]+)$/.exec(header);if(!m)fail('malformed');
  if(m[1]==='BindleLink'){try{compactValue(m[2]);}catch{fail('link_malformed');}return {scheme:'BindleLink',value:m[2]};}
+ if(m[1]==='BindleInvite'){if(!/^[A-Za-z0-9_-]{22,43}$/.test(m[2]))fail('malformed');return {scheme:'BindleInvite',value:m[2],token:m[2]};}
  const [epoch,token,...rest]=m[2].split('.');if(rest.length||!isUUID(epoch))fail('not_authorized');try{digestValue(token);}catch{fail('not_authorized');}
  return {scheme:'BindleConversation',value:m[2],epoch,token};
 }
-export const formatCredential=credential=>credential.scheme==='BindleConversation'?`BindleConversation ${uuid(credential.epoch)}.${digestValue(credential.token)}`:`BindleLink ${compactValue(credential.value)}`;
-// The one credential each envelope travels with (§7.1): links for link kinds, the pair token for records, none for rejoin.
-export const credentialScheme=envelope=>envelope.payload.kind!=='conversation-record'?'BindleLink':envelope.payload.record.type==='rejoin'?null:'BindleConversation';
+export const formatCredential=credential=>credential.scheme==='BindleConversation'?`BindleConversation ${uuid(credential.epoch)}.${digestValue(credential.token)}`:credential.scheme==='BindleInvite'?`BindleInvite ${parseCredential(`BindleInvite ${credential.token}`).token}`:`BindleLink ${compactValue(credential.value)}`;
+// The one credential each envelope travels with (§7.1): the invitation token for a redemption (`recipient.invite`), a
+// contact link for the withdrawn link recipient (contactId/resource; overlap until contacts spike phase 4), none for
+// other first contact and rejoin, and the pair token for every other record.
+export const credentialScheme=envelope=>{const p=envelope.payload;if(p.kind==='conversation-record')return p.record.type==='rejoin'?null:'BindleConversation';return Object.hasOwn(p.recipient,'invite')?'BindleInvite':Object.hasOwn(p.recipient,'contactId')?'BindleLink':null;};
+// §4.4 step 2: an invitation credential without `recipient.invite`, or the reverse, is malformed whatever else is wrong.
 export function checkCredentialKind(envelope,credential){
- const expected=credentialScheme(envelope);
- if((credential?.scheme??null)!==expected)fail(expected==='BindleLink'?'link_invalid':'not_authorized');
+ const expected=credentialScheme(envelope),presented=credential?.scheme??null;
+ if(presented!==expected){if(expected==='BindleInvite'||presented==='BindleInvite')fail('malformed');fail(expected==='BindleLink'||(presented==='BindleLink'&&envelope.payload.kind!=='conversation-record')?'link_invalid':'not_authorized');}
  if(expected==='BindleConversation'&&credential.epoch!==envelope.payload.record.epoch)fail('not_authorized');
  return expected;
 }

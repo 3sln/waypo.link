@@ -160,7 +160,7 @@ Every row has a blank Reviewer, Date and Outcome (or a "Pending" slot). Recorded
 | [federation-implementation.md](../spec/federation-implementation.md), [client-metadata-review.md](client-metadata-review.md), [components-profile.md](../architecture/components-profile.md) | Reviewer blank; `client-id-metadata.v1` declaration needs sign-off |
 | [embed-islands.md](../architecture/embed-islands.md), [adaptive-app-sign-in.md](../architecture/adaptive-app-sign-in.md), [embeddable-elements.md](../architecture/embeddable-elements.md) | Architecture/security/frontend sign-off blank |
 | [boot-and-admin.md](../architecture/boot-and-admin.md), [admin-ui-review.md](admin-ui-review.md) | Reviewer blank |
-| [bindle-links.md](../architecture/bindle-links.md), [links.md](../spec/extensions/links.md) | Sign-off blank |
+| [bindle-links.md](../architecture/bindle-links.md), [links.md](../spec/superseded/links.md) | Sign-off blank |
 | [app-engine.md](../architecture/app-engine.md) | "User sign-off: Reviewer ___ Date ___" |
 | [recovery-identity.md](../3sln/accounts/recovery-identity.md), [messaging.md](../spec/extensions/messaging.md), [app-metadata.md](../spec/extensions/app-metadata.md) | Reviewer blank (older, outside the scope-reduction period) |
 | [wave4-integration.md](wave4-integration.md) | Six decision rows, all "provisional" |

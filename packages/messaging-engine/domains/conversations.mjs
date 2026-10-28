@@ -151,10 +151,15 @@ export async function flushConversationEdge(mailboxStore,edge,owner){
  return rows.size;
 }
 
-// Edge adapter: return-control POSTs (§6.2), link kinds (BB-B2 handleIngress) and conversation records, each refused
-// before a mailbox is woken when the credential does not match.
+// Edge adapter: return-control POSTs (§6.2), link kinds (BB-B2 handleIngress), conversation records, invitation
+// redemptions and credential-less first contact, each refused before a mailbox is woken when it fails a cheap check.
+// First contact (contacts spike phase 3; messaging §6.7, §7.4) runs: framing; per-source and per-claimed-owner budgets
+// (`budget`, whether or not the owner is hosted); "not hosted here" (recipient_unavailable from the edge's hosted
+// index); for a redemption, the credential pairing (malformed) and the token pre-filter (invite_invalid). Only then
+// does `deliverInvite` (receive.redeem) or `deliverFirst` (receive.first-contact) wake the routed mailbox, which runs
+// author verification and the rest. Without those ports, first contact other than links stays refused as before.
 const RETURN=/\/return\/([A-Za-z0-9_-]{32})$/;
-export async function handleConversationIngress(request,{edge,conversationEdge,deliverLink,deliverRecord,deliverResponse,now=()=>Date.now()}){
+export async function handleConversationIngress(request,{edge,conversationEdge,deliverLink,deliverRecord,deliverResponse,deliverInvite,deliverFirst,budget,now=()=>Date.now()}){
  const ok=json=>Response.json(json,{status:200,headers:{'Cache-Control':'no-store','Referrer-Policy':'no-referrer'}});
  try{
   if(request?.method!=='POST'||!(request.body instanceof Uint8Array))protocol('malformed');
@@ -163,10 +168,24 @@ export async function handleConversationIngress(request,{edge,conversationEdge,d
   if(route){if(request.body.byteLength>P.LIMITS.maxInvitationResponseBytes)protocol('too_large');const owner=await conversationEdge.route(route[1]);return ok(await deliverResponse(owner,{token:route[1],contentType:headers['content-type'],body:request.body}));}
   const credential=P.parseCredential(headers.authorization);
   if(credential.scheme==='BindleLink')return handleIngress(request,{edge,deliver:deliverLink,now});
-  const delivery=await P.parseDelivery(headers['content-type'],request.body,{idempotencyKey:headers['idempotency-key']});
+  const delivery=await P.parseDelivery(headers['content-type'],request.body,{idempotencyKey:headers['idempotency-key']}),p=delivery.envelope.payload;
+  const input={contentType:headers['content-type'],body:request.body,authorization:headers.authorization,idempotencyKey:headers['idempotency-key'],ingress:request.url};
+  if(p.kind!=='conversation-record'&&typeof deliverFirst==='function'&&typeof edge?.hosted==='function'){
+   budget?.charge({source:request.source??headers['cf-connecting-ip']??'unknown',owner:p.recipient.owner});
+   const owner=await edge.hosted(p.recipient.issuer,p.recipient.owner);
+   const scheme=P.checkCredentialKind(delivery.envelope,credential);
+   if(scheme==='BindleInvite'){
+    if(typeof deliverInvite!=='function')protocol('invite_invalid');
+    if(await edge.checkInvite(credential.token,{invite:p.recipient.invite,owner,author:p.author.principal})!==owner)protocol('invite_invalid');
+    return ok({receipt:(await deliverInvite(owner,input)).receipt});
+   }
+   if(scheme!==null)protocol('malformed');
+   return ok({receipt:(await deliverFirst(owner,input)).receipt});
+  }
+  if(p.kind!=='conversation-record')protocol(credential.scheme==='BindleInvite'?'invite_invalid':'not_authorized');
   P.checkCredentialKind(delivery.envelope,credential);
   const owner=await conversationEdge.check(credential,delivery.envelope);
-  const result=await deliverRecord(owner,{contentType:headers['content-type'],body:request.body,authorization:headers.authorization,idempotencyKey:headers['idempotency-key'],ingress:request.url});
+  const result=await deliverRecord(owner,input);
   return ok({receipt:result.receipt});
  }catch(error){return ingressError(error,now());}
 }
@@ -218,7 +237,7 @@ async function emit(ctx,{cid,type,to=null,target=null,data=null,body=null,mimeTy
   const recordData=typeof data==='function'?data({counter,peer:recipients[0]?.peer}):data;
   const record={type,conversationId:cid,epoch:recordEpoch,stream:signer.kid,counter,previous,parents:room.heads.slice(-P.LIMITS.maxParents),...target?{target}:{},...recordData?{data:recordData}:{}};
   const content=body?await P.contentDescriptor(mimeType,body):null;
-  const payload={version:1,profile:P.PROFILE,kind:'conversation-record',noReply:false,operationId,createdAt:now,content,subject:'',optionalTags:[],author:signer.author,record,...resendOf?{resendOf}:{}};
+  const payload={version:1,profile:P.PROFILE,kind:'conversation-record',noReply:false,operationId,createdAt:now,content,subject:'',author:signer.author,record,...resendOf?{resendOf}:{}};
   const eventId=await P.eventId({payload:{...payload,recipient:null},proof:{alg:'ES256',kid:signer.kid}});
   for(const r of recipients){r.credential=type==='rejoin'?null:P.formatCredential({scheme:'BindleConversation',epoch:recordEpoch,token:await P.pairToken(Uint8Array.from(s),{conversationId:cid,author:principal(config.principal),recipient:r.principal,incarnation:r.incarnation})});delete r.peer;}
   const audience=await P.freezeAudience(recipients.map(r=>({...r.principal,incarnation:r.incarnation})));
@@ -396,51 +415,79 @@ export class ConversationsConfigure extends MailboxAction {
  }
 }
 
-// ---- Create and invite (§6.1). Participants: [{principal, keyId, link, ingress}], where `link` is the invitee's contact
-// link and `ingress` its resolved descriptor ingress (descriptor resolution belongs to the composition).
+// ---- Create and invite (§6.1). Participants are one of:
+//  - {principal, keyId, link, ingress}: the invitee's contact link (withdrawn; kept while links overlap invitations);
+//  - {principal}: a member of one of this owner's contact lists whose signed conversation binding (keyId, ingress) the
+//    lists recorded (contacts spike phase 3). It travels as credential-less first contact (§6.7, §7.1).
+// The redemption of an invitation (§4.3) is built by packages/messaging-engine/domains/invites.mjs through
+// createConversation with one invitee carrying `invite`, `credential` and no text.
+export async function recordListBinding(tx,who,binding){
+ if(typeof binding?.ingress!=='string'||typeof binding.keyId!=='string'||typeof binding.identityURI!=='string')return 0;let n=0;
+ for(const [,m] of await tx.list({prefix:`member-of/${pk(who)}/`})){const key=`list-member/${m.list}/${pk(who)}`,row=await tx.get(key);if(row){await tx.put(key,{...row,binding:{keyId:binding.keyId,ingress:binding.ingress,identityURI:binding.identityURI}});n++;}}
+ return n;
+}
+export async function resolveListBinding(store,who){
+ for(const [,m] of await store.list({prefix:`member-of/${pk(who)}/`})){const row=await store.get(`list-member/${m.list}/${pk(who)}`);if(row?.binding)return row.binding;}
+ return null;
+}
+export async function createConversation({store,outbox,delegateKeys,clock},{subject='',text,operationId:requested,invitees:raw}){
+ const now=clock.now(),config=await readConfig(store),settings=await settingsOf(store),operationId=operationOf(requested);
+ const prior=await store.get(C.op(operationId));if(prior)return {conversationId:prior.cid,...await submitOp({store,outbox,signer:await snapshot(delegateKeys,config,settings,now),config,clock},prior)};
+ if([...(await store.list({prefix:C.rooms})).values()].filter(r=>r.state==='active').length>=CONVERSATION_LIMITS.liveConversations)fault('limit_reached','Too many conversations.',409);
+ const signer=await snapshot(delegateKeys,config,settings,now),invitees=raw.map(i=>({...i,incarnation:token(),nonce:token(16),route:token(24)}));
+ const cid=newId(),epoch=newId(),secret=globalThis.crypto.getRandomValues(new Uint8Array(32)),body=text===null?null:te.encode(text),content=body?await P.contentDescriptor('text/plain',body):null,expiresAt=now+CONVERSATION_LIMITS.bootstrapMs;
+ const participants=[{principal:signer.author.principal,keyId:signer.author.keyId},...invitees.map(i=>({principal:i.principal,keyId:i.keyId}))];
+ const genesis=await P.signGenesis({version:1,profile:P.PROFILE,conversationId:cid,createdAt:now,creator:signer.author,participants,secretEpoch:epoch,secretDigest:await P.secretDigest(secret),subject,content},signer),genesisDigest=await P.genesisDigest(genesis);
+ const recipients=[];
+ for(const i of invitees){
+  const returnControl={resource:`${config.ingress}/return/${i.route}`,nonce:i.nonce,expiresAt,maxResponseBytes:P.LIMITS.maxInvitationResponseBytes};
+  const envelope=await P.signEnvelope({version:1,profile:P.PROFILE,kind:'conversation-init',noReply:false,operationId,createdAt:now,recipient:i.recipient,content,subject,author:signer.author,conversation:{genesis,sharedSecret:P.base64url(secret),returnControl,creatorBinding:bindingOf(config,settings,i.incarnation)}},signer);
+  recipients.push({envelope,ingress:i.ingress,credential:i.credential});
+ }
+ const room={id:cid,role:'creator',state:'active',subject,createdAt:now,creator:{principal:signer.author.principal,keyId:signer.author.keyId},participants,genesisDigest,genesisEpoch:epoch,secretDigest:genesis.payload.secretDigest,acceptListed:false,epochs:{[epoch]:{until:null,digest:genesis.payload.secretDigest}},current:epoch,maxParticipants:settings.maxParticipants,heads:[genesisDigest],lastOwn:null,placeholders:0,gap:false,awaitingSecret:false,...invitees.some(i=>i.recipient.invite)?{redemption:true}:{}};
+ const op=await store.transaction(async tx=>{
+  const existing=await tx.get(C.op(operationId));if(existing)return existing;
+  await projectRoom(tx,room,now);await tx.put(C.room(cid),room);await tx.put(C.secret(cid,epoch),Array.from(secret));
+  await tx.put(C.event(cid,genesisDigest),{signedGenesis:genesis,eventId:genesisDigest,type:'genesis',author:{principal:principal(signer.author.principal),keyId:signer.author.keyId,jkt:signer.jkt},parents:[],previous:null,content,createdAt:now,receivedAt:now,own:true,revisions:[],retracted:null,quarantined:false});
+  if(body)await tx.put(C.body(cid,genesisDigest),body.slice());
+  for(const i of invitees){
+   await tx.put(C.invite(cid,i.principal),{principal:i.principal,nonce:i.nonce,incarnation:i.incarnation,expiresAt,route:i.route,response:null});
+   await tx.put(C.route(i.route),{cid,principal:principal(i.principal)});await queueEdge(tx,{kind:'route',token:i.route});
+   await putPeer(tx,room,{principal:i.principal,keyId:i.keyId,state:'invited',inbound:i.incarnation,outbound:null,ready:true,generation:0,via:i.recipient.invite?'redemption':'invitation'},config,now);
+  }
+  const row={operationId,cid,eventId:genesisDigest,type:'conversation-init',kid:signer.kid,recipients:[],prepared:recipients,secret:null,hasBody:Boolean(body),submitted:false,abandoned:false,createdAt:now};
+  await tx.put(C.op(operationId),row);return row;
+ });
+ const result=await submitOp({store,outbox,signer,config,clock},op);
+ return {conversationId:op.cid,returnExpiresAt:expiresAt,...result};
+}
 export class ConversationsCreate extends MailboxAction {
  static operation='conversations.create';static deps=['conversations','outbox','delegateKeys','clock'];static changes='conversations-changed';
  async run({conversations:h,outbox,delegateKeys,clock}){
   actorOwner(this.actor);const store=h.store,now=clock.now(),config=await readConfig(store),settings=await settingsOf(store),input=this.input??{};
-  const subject=input.subject??'',text=textOf(input.text??'',P.LIMITS.maxBodyBytes),operationId=operationOf(input.operationId);
+  const subject=input.subject??'',text=textOf(input.text??'',P.LIMITS.maxBodyBytes);
   if(typeof subject!=='string'||[...subject].length>200||/[\p{Cc}\p{Bidi_Control}\u2028\u2029]/u.test(subject))invalid('Choose a shorter subject.');
   const people=input.participants;if(!Array.isArray(people)||!people.length)invalid('Choose who to invite.');
   if(people.length+1>settings.maxParticipants)fault('participants_exceeded','That group is larger than you accept.',403);
-  const prior=await store.get(C.op(operationId));if(prior)return {conversationId:prior.cid,...await submitOp({store,outbox,signer:await snapshot(delegateKeys,config,settings,now),config,clock},prior)};
-  if([...(await store.list({prefix:C.rooms})).values()].filter(r=>r.state==='active').length>=CONVERSATION_LIMITS.liveConversations)fault('limit_reached','Too many conversations.',409);
-  const signer=await snapshot(delegateKeys,config,settings,now),seen=new Set([pk(config.principal)]),invitees=[];
+  if(input.operationId!==undefined&&await store.get(C.op(operationOf(input.operationId))))return createConversation({store,outbox,delegateKeys,clock},{subject,text,operationId:input.operationId,invitees:[]});
+  const seen=new Set([pk(config.principal)]),invitees=[];
   for(const x of people){
-   try{P.validatePrincipal(x?.principal);if(typeof x.keyId!=='string'||!x.keyId||x.keyId.length>200)throw new Error();const u=new URL(x.ingress);if(u.protocol!=='https:'||u.search||u.hash||u.href!==x.ingress)throw new Error();}catch{invalid('Choose valid participants.');}
+   try{P.validatePrincipal(x?.principal);}catch{if(x?.link!==undefined)invalid('Choose valid participants.');}
+   if(x?.link===undefined){
+    // A list member: the binding its accepted two-party conversation recorded; credential-less first contact.
+    const who={issuer:x?.principal?.issuer,subject:x?.principal?.subject},binding=typeof who.issuer==='string'&&typeof who.subject==='string'?await resolveListBinding(store,who):null;
+    if(!binding)invalid('Choose people from your contacts.');
+    if(seen.has(pk(who)))invalid('Choose each person once.');seen.add(pk(who));
+    invitees.push({principal:{issuer:who.issuer,subject:who.subject,identityURI:binding.identityURI},keyId:binding.keyId,ingress:binding.ingress,recipient:{issuer:who.issuer,owner:who.subject},credential:null});continue;
+   }
+   try{if(typeof x.keyId!=='string'||!x.keyId||x.keyId.length>200)throw new Error();const u=new URL(x.ingress);if(u.protocol!=='https:'||u.search||u.hash||u.href!==x.ingress)throw new Error();}catch{invalid('Choose valid participants.');}
    const {meta}=parseLinkURL(x.link),{claims:c}=contactMeta(meta);
    if(c.iss!==x.principal.issuer||c.sub!==x.principal.subject||!c.kinds.includes('conversation-init')||c.exp*1000<=now)invalid('That contact link cannot carry an invitation.');
    if(seen.has(pk(x.principal)))invalid('Choose each person once.');seen.add(pk(x.principal));
-   invitees.push({principal:{issuer:x.principal.issuer,subject:x.principal.subject,identityURI:x.principal.identityURI},keyId:x.keyId,ingress:x.ingress,meta,recipient:{issuer:c.iss,owner:c.sub,contactId:c.jti,resource:c.resource},incarnation:token(),nonce:token(16),route:token(24)});
+   invitees.push({principal:{issuer:x.principal.issuer,subject:x.principal.subject,identityURI:x.principal.identityURI},keyId:x.keyId,ingress:x.ingress,recipient:{issuer:c.iss,owner:c.sub,contactId:c.jti,resource:c.resource},credential:`BindleLink ${meta}`});
   }
-  const cid=newId(),epoch=newId(),secret=globalThis.crypto.getRandomValues(new Uint8Array(32)),body=te.encode(text),content=await P.contentDescriptor('text/plain',body),expiresAt=now+CONVERSATION_LIMITS.bootstrapMs;
-  const participants=[{principal:signer.author.principal,keyId:signer.author.keyId},...invitees.map(i=>({principal:i.principal,keyId:i.keyId}))];
-  const genesis=await P.signGenesis({version:1,profile:P.PROFILE,conversationId:cid,createdAt:now,creator:signer.author,participants,secretEpoch:epoch,secretDigest:await P.secretDigest(secret),subject,content},signer),genesisDigest=await P.genesisDigest(genesis);
-  const recipients=[];
-  for(const i of invitees){
-   const returnControl={resource:`${config.ingress}/return/${i.route}`,nonce:i.nonce,expiresAt,maxResponseBytes:P.LIMITS.maxInvitationResponseBytes};
-   const envelope=await P.signEnvelope({version:1,profile:P.PROFILE,kind:'conversation-init',noReply:false,operationId,createdAt:now,recipient:i.recipient,content,subject,optionalTags:[],author:signer.author,conversation:{genesis,sharedSecret:P.base64url(secret),returnControl,creatorBinding:bindingOf(config,settings,i.incarnation)}},signer);
-   recipients.push({envelope,ingress:i.ingress,credential:`BindleLink ${i.meta}`});
-  }
-  const room={id:cid,role:'creator',state:'active',subject,createdAt:now,creator:{principal:signer.author.principal,keyId:signer.author.keyId},participants,genesisDigest,genesisEpoch:epoch,secretDigest:genesis.payload.secretDigest,acceptListed:false,epochs:{[epoch]:{until:null,digest:genesis.payload.secretDigest}},current:epoch,maxParticipants:settings.maxParticipants,heads:[genesisDigest],lastOwn:null,placeholders:0,gap:false,awaitingSecret:false};
-  const op=await store.transaction(async tx=>{
-   const existing=await tx.get(C.op(operationId));if(existing)return existing;
-   await projectRoom(tx,room,now);await tx.put(C.room(cid),room);await tx.put(C.secret(cid,epoch),Array.from(secret));
-   await tx.put(C.event(cid,genesisDigest),{signedGenesis:genesis,eventId:genesisDigest,type:'genesis',author:{principal:principal(signer.author.principal),keyId:signer.author.keyId,jkt:signer.jkt},parents:[],previous:null,content,createdAt:now,receivedAt:now,own:true,revisions:[],retracted:null,quarantined:false});
-   await tx.put(C.body(cid,genesisDigest),body.slice());
-   for(const i of invitees){
-    await tx.put(C.invite(cid,i.principal),{principal:i.principal,nonce:i.nonce,incarnation:i.incarnation,expiresAt,route:i.route,response:null});
-    await tx.put(C.route(i.route),{cid,principal:principal(i.principal)});await queueEdge(tx,{kind:'route',token:i.route});
-    await putPeer(tx,room,{principal:i.principal,keyId:i.keyId,state:'invited',inbound:i.incarnation,outbound:null,ready:true,generation:0,via:'invitation'},config,now);
-   }
-   const row={operationId,cid,eventId:genesisDigest,type:'conversation-init',kid:signer.kid,recipients:[],prepared:recipients,secret:null,hasBody:true,submitted:false,abandoned:false,createdAt:now};
-   await tx.put(C.op(operationId),row);return row;
-  });
-  const result=await submitOp({store,outbox,signer,config,clock},op);
-  return {conversationId:op.cid,...result};
+  const {returnExpiresAt,...result}=await createConversation({store,outbox,delegateKeys,clock},{subject,text,operationId:input.operationId,invitees});
+  return result;
  }
 }
 
@@ -476,8 +523,13 @@ async function sendResponse(store,egress,clock,cid){
 
 export class ConversationsAccept extends MailboxAction {
  static operation='conversations.accept';static deps=['conversations','delegateKeys','egress','clock'];static changes='conversations-changed';
- async run({conversations:h,delegateKeys,egress,clock}){
-  actorOwner(this.actor);const store=h.store,now=clock.now(),config=await readConfig(store),settings=await settingsOf(store),{itemId,decision='accept',acceptListed=false}=this.input??{};
+ async run({conversations:h,delegateKeys,egress,clock}){actorOwner(this.actor);return acceptItem({store:h.store,delegateKeys,egress,clock},this.input??{});}
+}
+// The invitee side of §6.2 for one admitted conversation-init item: the owner's explicit answer (conversations.accept)
+// or, for an invitation redemption that the owner's admission rules placed in a list, the automatic accept the drain
+// runs (invites.mjs; never acceptListed, §4.3). `send: false` leaves the response for the next drain.
+export async function acceptItem({store,delegateKeys,egress,clock},{itemId,decision='accept',acceptListed=false,send=true}={}){
+ {const now=clock.now(),config=await readConfig(store),settings=await settingsOf(store);
   if(typeof itemId!=='string'||!/^[A-Za-z0-9_-]{1,64}$/.test(itemId)||!['accept','decline'].includes(decision)||typeof acceptListed!=='boolean')invalid('Choose an invitation.');
   const item=await store.get(KEYS.item(itemId));if(!item||item.kind!=='conversation-init'||item.quarantined)fault('not_found','Invitation not found.',404);
   const decided=await store.get(C.decided(itemId));if(decided)return {conversationId:decided.conversationId,decision:decided.decision,response:(await store.get(C.response(decided.conversationId)))?.state??null};
@@ -508,7 +560,7 @@ export class ConversationsAccept extends MailboxAction {
    await putPeer(tx,room,{principal:g.creator.principal,keyId:g.creator.keyId,state:'accepted',inbound,outbound:c.creatorBinding,ready:false,epoch:g.secretEpoch,generation:1,via:'invitation',acceptedAt:now},config,now);
    for(const x of g.participants)if(!same(x.principal,creator)&&!same(x.principal,config.principal))await putPeer(tx,room,{principal:x.principal,keyId:x.keyId,state:'listed',inbound:null,outbound:null,ready:true,generation:0,via:'genesis'},config,now);
   });
-  const sent=await sendResponse(store,egress,clock,cid);
+  const sent=send?await sendResponse(store,egress,clock,cid):await store.get(C.response(cid));
   return {conversationId:cid,decision,response:sent?.state??null};
  }
 }
@@ -537,6 +589,9 @@ export class ConversationsRespond extends MailboxAction {
    if(verified.decision==='accept'){
     await admit(tx,live,{...peer,state:'accepted',inbound:inv.incarnation,outbound:verified.binding,ready:true,epoch:live.genesisEpoch,generation:(peer?.generation??0)+1,via:'invitation',acceptListed:verified.acceptListed,acceptedAt:now},config,now);state='accepted';
     await tx.put(C.intro(room.id,route.principal),verified.response);
+    // Contacts spike phase 3: the inviter accepted this owner's redemption; its signed binding becomes the binding the
+    // owner's lists use for later credential-less first contact, and the pending redemption is settled (invites.mjs).
+    if(live.redemption){const listed=live.participants.find(x=>same(x.principal,route.principal));await recordListBinding(tx,route.principal,{keyId:peer?.keyId??listed?.keyId,ingress:verified.binding.ingress,identityURI:listed?.principal?.identityURI});for(const [key,row] of await tx.list({prefix:'inv/pending/'}))if(row.conversationId===room.id&&row.state==='pending')await tx.put(key,{...row,state:'accepted',settledAt:now});}
     // Relay each accepted participant's own signed response to the others (§6.3 peer-proposal introductions).
     for(const [,other] of await tx.list({prefix:C.intros(room.id)})){const about=principal(other.payload.responder.principal);if(same(about,route.principal))continue;await enqueue(tx,{type:'introduce',cid:room.id,principal:route.principal,about});await enqueue(tx,{type:'introduce',cid:room.id,principal:about,about:route.principal});}
    }else await putPeer(tx,live,{...peer,state:'declined',inbound:null},config,now);
@@ -820,6 +875,12 @@ export class ConversationsDrain extends MailboxAction {
  static operation='conversations.drain';static deps=['conversations','outbox','delegateKeys','egress','clock'];static changes='conversations-changed';
  async run({conversations:h,outbox,delegateKeys,egress,clock}){
   actorOwner(this.actor);const store=h.store,now=clock.now(),config=await readConfig(store),settings=await settingsOf(store);let responses=0,work=0,failed=0,submitted=0,signer;
+  // Contacts spike phase 3: redemptions the owner's admission rules placed in a list are accepted here (never
+  // acceptListed, messaging §4.3); the response joins the ordinary retried responses below.
+  for(const [key,row] of [...await store.list({prefix:'inv/accept/'})].slice(0,CONVERSATION_LIMITS.workPerDrain)){
+   try{if(!await store.get(C.decided(row.itemId))){const item=await store.get(KEYS.item(row.itemId));if(item&&!item.quarantined&&item.state!=='refused')await acceptItem({store,delegateKeys,egress,clock},{itemId:row.itemId,decision:'accept',acceptListed:false,send:false});}await store.transaction(tx=>tx.delete(key));work++;}
+   catch(error){failed++;if(['not_found','conversation_conflict','invitation_expired','participants_exceeded','limit_reached'].includes(error?.code))await store.transaction(tx=>tx.delete(key));}
+  }
   for(const [key,row] of await store.list({prefix:C.responses}))if(row.state==='pending'&&row.nextAt<=now){await sendResponse(store,egress,clock,key.slice(C.responses.length));responses++;}
   const ctx={store,outbox,config,settings,clock,get signer(){return signer;}};
   const ensureSigner=async()=>{signer??=await snapshot(delegateKeys,config,settings,clock.now());};

@@ -4,7 +4,7 @@ import {MailboxAction,MailboxQuery,ownerOf,operations} from '../../../packages/m
 import {BridgeReceive} from '../../../packages/messaging-engine/domains/bridge.mjs';
 import {KEYS,readConfig,queueEdge} from '../../../packages/messaging-engine/store/mailbox.mjs';
 import {fault} from '../../../packages/messaging-engine/faults.mjs';
-import {PROFILE,MAILBOX_CONTRACT,INTAKE_CONTRACT,LINK_KINDS,LIMITS} from '../../../packages/messaging-protocol/index.mjs';
+import {MAILBOX_CONTRACT,INTAKE_CONTRACT} from '../../../packages/messaging-protocol/index.mjs';
 import {APP_BRAND} from './brand.mjs';
 const invalid=()=>fault('invalid_input','Invalid integration request.',400),denied=()=>fault('not_authorized','Not authorized.',403);
 export const resourceId=config=>new URL(`/bindle/mailbox/${config.principal.subject}`,config.ingress).href;
@@ -17,7 +17,7 @@ async function authority(tx,owner,v,{purpose,write=false,method,resource}={}){
 }
 export class MailboxDescribe extends MailboxQuery {
  static operation='shell.describe';static deps=['mailboxStore'];
- async fetch({mailboxStore:store}){const owner=ownerOf(this.actor),v=this.input?.verified,config=await authority(store,owner,v,{purpose:'invoke',resource:this.input?.resource,method:'describe'});return {version:1,profiles:[PROFILE],ingress:config.ingress,kinds:LINK_KINDS,limits:{maxParticipants:LIMITS.maxParticipants,maxMessageBytes:LIMITS.maxBodyBytes,maxEnvelopeBytes:LIMITS.maxEnvelopeBytes}};}
+ async fetch({mailboxStore:store}){const owner=ownerOf(this.actor),v=this.input?.verified,config=await authority(store,owner,v,{purpose:'invoke',resource:this.input?.resource,method:'describe'});return {version:1,ingress:config.ingress};}
 }
 export class MailboxDiscover extends MailboxQuery {
  static operation='shell.discover';static deps=['mailboxStore'];

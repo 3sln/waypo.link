@@ -1,5 +1,6 @@
 // HTTP routes of slice 3, contact links (docs/architecture/app-engine.md §12): link previews (oEmbed, avatar), the public
-// contact-link landing page and contact-profile representation, the opener's audience response and developer contact.
+// contact-link landing page and contact-profile representation, the opener's audience response and developer contact
+// (GET eligibility, POST a principal-bound invitation; contacts spike CR-C5, packages/runtime/developer-contact.mjs).
 // Legacy messaging representations and owner contact management left the core on 2026-10-27 (DEVLOG "Messaging removed
 // from core; Parlay rename; BB-CUT reset"): the composer, intake metadata, JSON inspection, token mints, signed-link
 // POST delivery, /api/contacts*, /api/contact-links and /api/links/envelope. The messaging-address descriptor is
@@ -17,12 +18,13 @@ import {json,publicUnknown,contactUnknown,body,limit,securePage,brandPage,privat
 const previewProfile=(env,request,local)=>async canonical=>{if(!await limit(env,{operation:'contact-preview',remoteIP:request.headers.get('CF-Connecting-IP')||(local?'127.0.0.1':'unknown')}))throw new Error('limited');const recipient=await env.IDENTITY_REPOSITORY.get(canonical.sub);if(!recipient||recipient.status!=='active'||recipient.handle!==canonical.handle)throw new Error('unavailable');return accountHandle(env,canonical.sub).contactProfile(canonical.sub,canonical.link);};
 
 export function allowedMethods(path){
- if(path==='/api/developer-contact')return ['GET'];
+ if(path==='/api/developer-contact')return ['GET','POST'];
  if(path==='/api/links/respond')return ['POST'];
  return null;
 }
-// The opener operation is not refused for capacity.
-export const admission={exempt:path=>path==='/api/links/respond'};
+// The opener operation is not refused for capacity. Neither is developer contact's POST (an invitation mint on the
+// developer identity's Parlay, nothing stored in this account), so a full account can still reach support.
+export const admission={exempt:path=>path==='/api/links/respond'||path==='/api/developer-contact'};
 export const stages={
  async public({request,env,url,path,local}){
    // Public, credentialless previews: oEmbed and the link-scoped avatar redirect (never deliver or evaluate data).

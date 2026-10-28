@@ -106,7 +106,7 @@ Reviewer ___ / date ___ / outcome ___ (for each row).
 | Association that can be severed | Connection with state, generation, severance and SET events ([integrations §3, §6, §7](../spec/extensions/integrations.md)) | Generalized counterparty (ORG-D3) |
 | What an app may touch | Fragment grants, resource fields, scoping ([protocol §3–§4](../spec/protocol.md), [resource scoping](resource-scoping.md)) | Unchanged at the organization level. Intersected with member grants. |
 | Short-lived, sender-bound credentials | Brokered tokens with `aud`, `exp` ≤ 300 s and `cnf.jkt`, the generation floor and `access_ends_by` ([integrations §5](../spec/extensions/integrations.md#5-brokered-resources)) | Same shape for cross-entity tokens, plus an actor chain |
-| Capability documents bound to a principal | Bindle links with a signed meta, an audience proof and single use ([links](../spec/extensions/links.md)) | Two new link types: organization invitation and relation invitation |
+| Capability documents bound to a principal | Bindle links with a signed meta, an audience proof and single use ([links](../spec/superseded/links.md)) | Two new link types: organization invitation and relation invitation |
 | Public, pinned descriptions of what may be asked | Fragments, slot and bus manifests; AMD-C2 digests; [artefact references](artefact-references.md) (in progress) | Relation documents, a new artefact class built from fragment references |
 | A remote provider passing a link to the user's own provider | Links §9 opener flow (top-level POST to the user's provider) | Relation-invitation acceptance at the invitee's provider |
 | Business events between parties | Event buses ([events](../spec/extensions/events.md)) | Adds an `entity` consumer kind |
@@ -167,7 +167,7 @@ Names: **Acme** is the user's company, on 3sln.me unless stated otherwise. **ERP
 **Joining.**
 
 1. Ray invites Alice with the "Bookkeeper" template, which is a 3sln.me feature. The provider stores a pending membership and issues an invitation link (`bindle_meta`, type `…/links/org-invitation/v1`, single use, `exp` 7 days, optionally bound to `alice@3sln.me` resolved to `(iss, sub)` at issue). Ray sends it any way he likes.
-2. Alice opens the link. The owner host verifies it as in [links §8](../spec/extensions/links.md#8-processing-order-and-results). The page shows: who invites (the organization's public name and handle, never inviter-supplied free text), what Acme will learn (her handle and the profile fields she picks), and "Acme controls what you create in Acme".
+2. Alice opens the link. The owner host verifies it as in [links §8](../spec/superseded/links.md#8-processing-order-and-results). The page shows: who invites (the organization's public name and handle, never inviter-supplied free text), what Acme will learn (her handle and the profile fields she picks), and "Acme controls what you create in Acme".
 3. Alice accepts from a client that holds a member certificate her home provider issued for Acme with the `member-accept` purpose (§6.2). The 3sln.me console is such a client: since she is already signed in at home, accepting is one confirmation. One commit:
    - activates `m_alice` (a connection o→person, generation 1);
    - copies the template's grants, with `source` recorded as provenance only;
@@ -1999,7 +1999,7 @@ Reviewer: ___ Date: ___ Outcome: ___ . A red-team review of organizations found 
 - **[Components profile](../profiles/components-v1.md) and [embed islands](embed-islands.md):** entity section and events (ORG-6).
 - **[Privacy](../legal/privacy.md) and [terms](../legal/terms.md):** the organization sections, and the DPA (§12).
 - **[Bindle Messaging spec](../spec/extensions/messaging.md):** "on behalf of" attribution, as a request to the messaging owner. Also: §3.2 `key-delegation.v1` becomes the shared core feature with two certificate profiles (AMD-O12), and §3.3 resolves identities through `directory.v1`.
-- **[Contact delivery](../../apps/parlay/docs/legacy/contact-delivery.md) and [links §7.3](../spec/extensions/links.md#73-verifying-the-audience-identity):** replace the references to the "unimplemented directory profile" with spec §3a (AMD-O10).
+- **[Contact delivery](../../apps/parlay/docs/legacy/contact-delivery.md) and [links §7.3](../spec/superseded/links.md#73-verifying-the-audience-identity):** replace the references to the "unimplemented directory profile" with spec §3a (AMD-O10).
 
 ## 15. Open questions for the user
 

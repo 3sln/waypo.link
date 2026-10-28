@@ -14,7 +14,7 @@ import {deviceAuthorizationEnabled,deviceGrantMountable,deviceGrantRunner} from 
 import {incrementalAuthorizationEnabled,incrementalMountable,incrementalRunner} from '../incremental-authorization.mjs';
 import {lifecycleMode} from '../lifecycle-runner.mjs';
 import {linksEnabled} from './links.mjs';
-import {clientMetadataEnabled,federationSchemas,messagingAddressMounted,federationDeclarations} from '../federation.mjs';
+import {clientMetadataEnabled,federationSchemas,messagingMailboxMounted,federationDeclarations} from '../federation.mjs';
 import {integrationPorts} from '../integration-ports.mjs';
 import {manifest} from '../../../tests/event-bus-fixture.mjs';
 const owner='00000000-0000-4000-8000-000000000001',other='00000000-0000-4000-8000-000000000002',experimentId='00000000-0000-4000-8000-000000000003',client='https://client.example/client.json',start=Date.UTC(2026,9,21,12);
@@ -35,14 +35,15 @@ test('legacy read-site tables: exact strings, booleans, defaults, dependencies a
   assert.equal(deviceAuthorizationEnabled({DEVICE_AUTHORIZATION_ENABLED:raw}),raw===true||raw==='true',`device ${raw}`);
   assert.equal(clientMetadataEnabled({CLIENT_METADATA_ENABLED:raw}),raw==='true',`metadata ${raw}`);
   assert.equal(lifecycleMode({LIFECYCLE_ENABLED:raw,LIFECYCLE_DRY_RUN:'false'}),raw===true||raw==='true'?'live':'off',`lifecycle ${raw}`);
-  assert.equal(messagingAddressMounted({LINKS_ENABLED:raw,INTEGRATIONS_ENABLED:'true',MESSAGING_DESCRIBE(){}}),raw==='true',`messaging address ${raw}`);
+  assert.equal(messagingMailboxMounted({KEY_DELEGATION_ENABLED:raw,INTEGRATIONS_ENABLED:'true',BROKERING_ENABLED:'true',MESSAGING_DESCRIBE(){}}),raw==='true',`messaging mailbox ${raw}`);
+  assert.equal(messagingMailboxMounted({LINKS_ENABLED:raw,INTEGRATIONS_ENABLED:'true',BROKERING_ENABLED:'true',MESSAGING_DESCRIBE(){}}),false,`LINKS_ENABLED never mounts the mailbox ${raw}`);
   if(raw!==true)assert.equal(incrementalAuthorizationEnabled({INCREMENTAL_AUTH_ENABLED:raw}),raw==='true',`incremental ${raw}`);
   for(const dry of [undefined,'',false,true,'false','true','FALSE'])assert.equal(lifecycleMode({LIFECYCLE_ENABLED:'true',LIFECYCLE_DRY_RUN:dry}),dry===false||dry==='false'?'live':'dry-run');
  }
  assert.equal(deviceGrantMountable({DEVICE_AUTHORIZATION_ENABLED:'true',FEDERATION_ENABLED:'true',KEY_ENCRYPTION_KEY:'key'}),true);
  assert.equal(deviceGrantMountable({DEVICE_AUTHORIZATION_ENABLED:'true',FEDERATION_ENABLED:'true',FEDERATION_REFRESH_ENABLED:'false',KEY_ENCRYPTION_KEY:'key'}),false);
  assert.equal(incrementalMountable({INCREMENTAL_AUTH_ENABLED:'true',FEDERATION_ENABLED:'true',FEDERATION_ENTRY_ENABLED:'true'}),true);
- const mint=()=>{},all={INTEGRATIONS_ENABLED:true,BROKERING_ENABLED:'true',LINKS_ENABLED:true};assert.equal(typeof integrationPorts(all,{mint,egress:{},describe(){}}).MESSAGING_DESCRIBE,'function');
+ const mint=()=>{},all={INTEGRATIONS_ENABLED:true,BROKERING_ENABLED:'true',KEY_DELEGATION_ENABLED:true};assert.equal(typeof integrationPorts(all,{mint,egress:{},describe(){}}).MESSAGING_DESCRIBE,'function');
  assert.equal(integrationPorts({...all,INTEGRATIONS_ENABLED:'false'},{mint}).BROKERING_CONSUMER_MINT,undefined);
  assert.equal(Object.keys(federationSchemas({INTEGRATIONS_ENABLED:true,EXTENSIONS_ENABLED:true})).length,2);
 });

@@ -2,10 +2,12 @@
 import {ARCHIVE_CAPABILITIES} from '../../../apps/parlay/web/providers/mailbox.mjs';
 export const OWNER='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',ROOM='bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',MESSAGE='cccccccc-cccc-4ccc-8ccc-cccccccccccc';
 export const principal={issuer:'https://provider.example',subject:OWNER};
+// Contacts spike phase 3 invitation fixture values (local only; the token and certificate are inert test strings).
+export const INVITE='eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',INVITE_TOKEN='T'.repeat(43),INVITE_DELEGATION='aGVhZGVy.Y2xhaW1z.c2ln',REDEEMER={issuer:'https://provider.example',subject:'ffffffff-ffff-4fff-8fff-ffffffffffff'};
 export function fixture({size=10001,archive=false}={}){
  const calls=[],drafts=new Map(),rooms=[{id:ROOM,subject:'A conversation <script>window.hacked=true</script>',state:'active'}],timeline=Array.from({length:size},(_,i)=>({eventId:'event-'+i,author:principal,createdAt:1792454400000+i,text:'Message '+i,own:true}));
  const message={messageId:MESSAGE,revision:1,recipientCount:4,delivered:1,pending:1,failed:1,cancelled:1,recipients:['delivered','unknown','expired','cancelled'].map((state,i)=>({principal:{issuer:principal.issuer,subject:'recipient-'+i},state,reason:state==='unknown'?'unreachable':null,nextAttemptAt:1792454500000,deadline:1792540800000}))};
- const rejected=[{id:'R'.repeat(43),subject:'A recoverable request',origin:'native',kind:'one-off',state:'rejected',priority:'normal',author:{verified:true,principal},tags:[{id:'sys:spam'}],tagHistory:[{action:'rejected',rule:'default:reject.spam'}]}],requests=[],views=[{id:'all',name:'All messages',builtin:true,revision:1}],contacts=[],outbox=[message];let lostReply=false,progressFailure=false;
+ const rejected=[{id:'R'.repeat(43),subject:'A recoverable request',origin:'native',kind:'one-off',state:'rejected',priority:'normal',author:{verified:true,principal},tags:[{id:'sys:spam'}],tagHistory:[{action:'rejected',rule:'default:reject.spam'}]}],requests=[],views=[{id:'all',name:'All messages',builtin:true,revision:1}],contacts=[],outbox=[message];let lostReply=false,progressFailure=false;const invites=[],members=[],blocked=[];
  const archiveStatus={enabled:true,generation:0,lastCheckpointAt:null,encrypted:true,endToEnd:false,imported:null,resend:0};
  const mailbox={calls,archive:archive?ARCHIVE_CAPABILITIES:undefined,async run(name,{input={},id}={}){
   calls.push({name,input:structuredClone(input),id});
@@ -24,7 +26,12 @@ export function fixture({size=10001,archive=false}={}){
   if(name==='intake.rescue'){const i=rejected.findIndex(r=>r.id===input.id);if(i<0)throw new Error('missing request');requests.push({...rejected.splice(i,1)[0],state:'request',allowed:input.allow});return {id:input.id,state:'request'};}
   if(name==='contacts.add'){contacts.push({id:'contact',label:input.label,principal});return contacts.at(-1);}
   if(name==='contacts.remove'){contacts.splice(0,1);return {removed:true};}
-  if(name==='contacts.block')return {blocked:true};
+  if(name==='contacts.block'){blocked.push(structuredClone(input.principal));return {principal:input.principal,blocked:true};}
+  if(name==='invites.list')return {invites:structuredClone(invites)};
+  if(name==='lists.members'){if(input.list!=='contacts')throw new Error('unexpected list');return {list:{id:'contacts',name:'Contacts',policy:'message',builtin:true,members:members.length},members:structuredClone(members)};}
+  if(name==='lists.remove'){const i=members.findIndex(m=>m.principal.subject===input.principal?.subject);if(i>=0)members.splice(i,1);return {removed:i>=0};}
+  if(name==='invites.create'){if(input.template!=='person')throw new Error('template');const invite={id:invites.length?INVITE.slice(0,-1)+invites.length:INVITE,name:input.name??'Invitation',template:'person',uses:{max:1,used:0},expiresAt:1792454400000+7*86400000,state:'live',createdAt:1792454400000,ledger:[]};invites.unshift(invite);return {invite:structuredClone(invite),data:{inviter:{iss:principal.issuer,sub:OWNER},token:INVITE_TOKEN,delegation:INVITE_DELEGATION,expires_at:Math.floor(invite.expiresAt/1000)}};}
+  if(name==='invites.revoke'){const invite=invites.find(i=>i.id===input.id);invite.state='revoked';return {invite:structuredClone(invite),rulesRemoved:1,membersRemoved:0};}
   if(name==='views.create'){views.push({id:'view-'+views.length,name:input.name,revision:1,filter:input.filter});return views.at(-1);}
   if(name==='incoming.query')return {items:Array.from({length:40},(_,i)=>({id:'item-'+i,subject:'View item '+i,state:'inbox'})),cursor:input.cursor?null:'next',total:80};
   if(name==='conversations.send'){if(lostReply){lostReply=false;throw Object.assign(new Error('lost reply'),{code:'network'});}return {operationId:input.operationId};}
@@ -39,5 +46,5 @@ export function fixture({size=10001,archive=false}={}){
  },async progress(after){calls.push({name:'progress',after});return after==='stale'?{events:[{type:'reset',id:'epoch/2',data:{reason:'resume_gap'}}],reset:true,resumeToken:'epoch/2'}:{events:[{type:'message',id:'epoch/1',data:{messageId:MESSAGE}}],reset:false,resumeToken:'epoch/1'};}};
  const browser={id:()=> 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',drafts:{get:async id=>drafts.get(id),set:async(id,text)=>{drafts.set(id,text);}}};
  function assertId(id){if(id!==MESSAGE)throw new Error('wrong message');}
- return {mailbox,browser,calls,drafts,message,requests,rejected,archiveStatus,archiveEnabled:archive,loseReply:()=>{lostReply=true;},failSnapshot:()=>{progressFailure=true;}};
+ return {mailbox,browser,calls,drafts,invites,members,blocked,redeemInvite:name=>{const invite=invites.find(i=>i.name===name);Object.assign(invite,{state:'used',uses:{max:1,used:1},ledger:[{principal:REDEEMER,at:1792454500000,outcome:'admitted'}]});members.push({principal:REDEEMER,addedAt:1792454500000,via:'invite',invite:invite.id,reachable:true});},message,requests,rejected,archiveStatus,archiveEnabled:archive,loseReply:()=>{lostReply=true;},failSnapshot:()=>{progressFailure=true;}};
 }

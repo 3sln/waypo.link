@@ -1,13 +1,16 @@
-// Core links: the `messaging-address` handoff (slice BB-C1b; docs/spec/messaging.md §2.1–§2.3; links §6.4;
-// messaging-app.md §5 "Endpoints come from the occupant"; extensions rev 3.2: the occupant is the field's current value).
+// Core links: the contact-link descriptor handoff (slice BB-C1b; superseded links §6.4; messaging-app.md §5 "Endpoints
+// come from the occupant"; extensions rev 3.2: the occupant is the field's current value). Kept until contacts spike
+// phase 4 removes contact links. Since 2026-10-28 the occupant's `describe` is exactly `{version: 1, ingress}` (Bindle
+// Messaging §2.2) and is obtained through the messaging-mailbox provider feature (§2.5); this module adds the fixed
+// descriptor values (profiles, limits) the withdrawn messaging-address descriptor carried, from constants.
 //
 // A sender who holds a contact link (from the landing page, an intent `web+bindle://send-message?contact-url=…`, or
 // a QR code) GETs the link at the owner host with `Accept: application/vnd.bindle.messaging.ingress+json`. The provider
 //   1. verifies the link itself (LinkService.verify: links §8 steps 1–2, exact stored claims, retired-key history);
 //   2. reads the CURRENT occupant of the slot the link type is bound to (./types.mjs), through the occupancy port;
 //   3. obtains that occupant's `describe` result through the provider's own consumer port (never from the sender or
-//      from the slot), validates it against §2.3, and serves it with the link's signed `kinds` and an `expiresAt` of
-//      at most one hour (and never past the link's own expiry).
+//      from the slot), validates it (exact members), and serves `{version, profiles, ingress, limits}` with the link's
+//      signed `kinds` and an `expiresAt` of at most one hour (and never past the link's own expiry).
 // No occupant, an occupant whose describe fails or is invalid, or a failing port answers the single uniform
 // `recipient_unavailable` (503, Retry-After 3600): nothing distinguishes an absent occupant from one mid-switch.
 // Resolution delivers nothing, consumes no quota and creates no state. Describe results are cached per
@@ -16,8 +19,13 @@ import { fail } from '../core/records.mjs';
 import { linkBinding } from './types.mjs';
 // validateDescribe moved to the delegation side (contacts spike CR-C0): the validated ingress becomes the key-delegation
 // certificate's client.ingress. Re-exported here until CR-C1 removes this module.
-import { validateDescribe, DESCRIPTOR_LIMITS } from '../identity/messaging-ingress.mjs';
+import { validateDescribe, DESCRIPTOR_LIMITS, MESSAGING_PROFILE } from '../identity/messaging-ingress.mjs';
 export { validateDescribe, DESCRIPTOR_LIMITS };
+/** The kinds a contact link may carry (links/types.mjs); the descriptor serves the link's own signed subset. */
+export const DESCRIPTOR_KINDS = Object.freeze(['conversation-init', 'one-off']);
+/** The fixed descriptor around a validated ingress: the messaging profile and the §11 maxima (contacts spike CR-M3
+ * removed them from `describe`; peers learn an occupant's own parameters from signed bindings, messaging §2.2). */
+export const descriptorFor = ({ ingress }) => ({ version: 1, profiles: [MESSAGING_PROFILE], ingress, limits: { maxParticipants: DESCRIPTOR_LIMITS.maxParticipants, maxMessageBytes: DESCRIPTOR_LIMITS.maxMessageBytes, maxEnvelopeBytes: DESCRIPTOR_LIMITS.maxEnvelopeBytes } });
 
 const plain = v => v !== null && typeof v === 'object' && !Array.isArray(v) && [Object.prototype, null].includes(Object.getPrototypeOf(v));
 const unavailable = () => fail('recipient_unavailable');
@@ -49,7 +57,6 @@ export class LinkHandoff {
       while (this.cache.size >= this.maxCache) this.cache.delete(this.cache.keys().next().value);
       this.cache.set(cacheKey, body);
     }
-    const { kinds: _instanceKinds, ...rest } = body.value;
-    return { ...structuredClone(rest), kinds: [...verified.meta.claims.kinds], expiresAt: Math.min(body.until, now + DESCRIPTOR_LIMITS.cacheMs, verified.meta.claims.exp * 1000) };
+    return { ...descriptorFor(body.value), kinds: verified.meta.claims.kinds.filter(kind => DESCRIPTOR_KINDS.includes(kind)), expiresAt: Math.min(body.until, now + DESCRIPTOR_LIMITS.cacheMs, verified.meta.claims.exp * 1000) };
   }
 }

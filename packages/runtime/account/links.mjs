@@ -13,10 +13,11 @@ import {flagsFor,ownerFlags,existingFeature,featureConfig} from './flags.mjs';
 //   - `evaluate` requires the author proof (links/author-proof.mjs). The host resolves the author's identity key
 //     (same-host principals through `identityKey`; any other issuer is unverifiable until the directory profile
 //     exists) and the delegation status (`delegationStatus`, same account or through CONVERSATION_ACCOUNT).
-//   - `linkDescriptor(owner, url)`: the `messaging-address` handoff (links/handoff.mjs), reached by the public
+//   - `linkDescriptor(owner, url)`: the contact-link descriptor handoff (links/handoff.mjs), reached by the public
 //     descriptor route in routes/links.mjs with gate 'none' (it calls the occupancy and describe ports, never inside
-//     the account gate). `config.MESSAGING_DESCRIBE({owner, slot, occupant})` is the provider's consumer call to the
-//     occupant's `describe` (brokered RPC, EXT-X7); until it is configured every descriptor is recipient_unavailable.
+//     the account gate). `config.MESSAGING_DESCRIBE({owner, fragment, occupant})` is the messaging-mailbox feature's
+//     consumer call to the occupant's `describe` (brokered RPC, EXT-X7; Bindle Messaging §2.5, offered with
+//     KEY_DELEGATION_ENABLED); until it is configured every descriptor is recipient_unavailable.
 //   - `linksResourceMethod(c, owner, context)`: the links contract (`…/contracts/links/v1`) as a federation resource
 //     method (account/storage.mjs RESOURCE_METHOD_HANDLERS). The app actor is built only from the verified context:
 //     live federation epoch, the active app connection and its generation, the occupancy port's seat for that client
@@ -117,7 +118,7 @@ export const methods={
    if(!developerLinkRecord(this,owner,record)||record.revoked||!(record.claims.exp*1000>Date.now()))return {state:'unavailable'};
    return decideLinkAudience(this,{parent:jti,policy:record.claims.audience.policy,principal});
   },
-  // Public messaging-address handoff (messaging §2.3): the descriptor for one of this owner's verified links.
+  // Public contact-link descriptor handoff: the descriptor for one of this owner's verified links.
   async linkDescriptor(owner,url){
    if(!ownerFlags(this.config,owner).enabled('LINKS_ENABLED'))throw new StorageError('not_found','Not found.',404);
    if(await this.metadata.get('owner')!==owner)throw new StorageError('recipient_unavailable','The recipient is unavailable.',503);

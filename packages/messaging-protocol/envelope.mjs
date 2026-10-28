@@ -26,7 +26,6 @@ export function validateContent(v,limits=LIMITS){
  exact(v,['mimeType','byteLength','sha256']);if(!mimeValid(v.mimeType)||!time(v.byteLength))malformed();
  if(v.byteLength>Math.min(limits.maxBodyBytes,LIMITS.maxBodyBytes))fail('too_large');digestValue(v.sha256);return v;
 }
-const validateTags=v=>{if(!Array.isArray(v)||v.length>LIMITS.maxTags)malformed();for(let i=0;i<v.length;i++){if(!text(v[i],64,1)||v[i].trim()!==v[i])malformed();if(i&&scalarCompare(v[i-1],v[i])>=0)malformed();}return v;};
 const validateProfiles=v=>{if(!Array.isArray(v)||!v.length||v.length>LIMITS.maxProfiles)malformed();v.forEach(uriValue);if(new Set(v).size!==v.length||!v.includes(PROFILE))fail('unsupported_profile');return v;};
 export function validateLimits(v){
  exact(v,['maxParticipants','maxMessageBytes','maxEnvelopeBytes'],['maxBatchContexts']);
@@ -57,7 +56,7 @@ export function validateGenesis(input,options={}){
  const {local,maxParticipants}=o(options),g=detach(input);exact(g,['payload','proof']);
  const p=exact(g.payload,['version','profile','conversationId','createdAt','creator','participants','secretEpoch','secretDigest','subject','content']);
  if(p.version!==1)malformed();if(p.profile!==PROFILE)fail('unsupported_profile');uuid(p.conversationId);if(!time(p.createdAt))malformed();
- validateAuthor(p.creator,{local});uuid(p.secretEpoch);digestValue(p.secretDigest);if(!text(p.subject,LIMITS.maxSubjectPoints))malformed();validateContent(p.content);
+ validateAuthor(p.creator,{local});uuid(p.secretEpoch);digestValue(p.secretDigest);if(!text(p.subject,LIMITS.maxSubjectPoints))malformed();if(p.content!==null)validateContent(p.content);
  if(!Array.isArray(p.participants)||p.participants.length<2||p.participants.length>LIMITS.maxParticipants)malformed();
  const seen=new Set();for(const entry of p.participants){exact(entry,['principal','keyId']);validatePrincipal(entry.principal,{local});keyIdValue(entry.keyId);const k=principalKey(entry.principal);if(seen.has(k))malformed();seen.add(k);}
  if(p.participants.length>maxParticipants)fail('participants_exceeded');
@@ -118,23 +117,36 @@ export async function validateEnvelope(input,options={}){
  if(!plain(e)||!plain(e.payload))malformed();
  if(e.payload.author==null||e.proof==null)fail('author_required');
  exact(e,['payload','proof']);const p=e.payload;
- exact(p,['version','profile','kind','noReply','operationId','createdAt','recipient','content','subject','optionalTags','author'],['conversation','record','resendOf']);
+ // `optionalTags` is removed with the intake allowlist it drew from (§5.1; contacts spike CL-4), so it fails here.
+ exact(p,['version','profile','kind','noReply','operationId','createdAt','recipient','content','subject','author'],['conversation','record','resendOf']);
  if(p.version!==1)malformed();if(p.profile!==PROFILE)fail(typeof p.profile==='string'?'unsupported_profile':'malformed');
  if(!KINDS.includes(p.kind)||p.noReply!==(p.kind==='one-off')||!isUUID(p.operationId)||!time(p.createdAt)||!text(p.subject,LIMITS.maxSubjectPoints))malformed();
- validateAuthor(p.author,{local});validateProof(e.proof,p.author.delegate);validateTags(p.optionalTags);
+ validateAuthor(p.author,{local});validateProof(e.proof,p.author.delegate);
  if(p.content!==null)validateContent(p.content,limits);
  if(p.kind==='conversation-record'){
-  if(Object.hasOwn(p,'conversation')||!Object.hasOwn(p,'record')||p.optionalTags.length)malformed();
+  if(Object.hasOwn(p,'conversation')||!Object.hasOwn(p,'record'))malformed();
   exact(p.recipient,['issuer','owner','conversationId','incarnation']);originValue(p.recipient.issuer,local);uuid(p.recipient.owner);uuid(p.recipient.conversationId);opaque(p.recipient.incarnation);
   if(Object.hasOwn(p,'resendOf'))digestValue(p.resendOf);
   if(options.nested&&p.record?.type==='peer-proposal')malformed();
   await validateRecord(p,options);
  }else{
-  if(Object.hasOwn(p,'record')||Object.hasOwn(p,'conversation')!==(p.kind==='conversation-init')||p.content===null||options.nested)malformed();
-  exact(p.recipient,['issuer','owner','contactId','resource']);originValue(p.recipient.issuer,local);uuid(p.recipient.owner);
-  if(!text(p.recipient.contactId,128,1)||!text(p.recipient.resource,128,1))malformed();
+  if(Object.hasOwn(p,'record')||Object.hasOwn(p,'conversation')!==(p.kind==='conversation-init')||options.nested)malformed();
+  // First-contact recipient (§5.1): {issuer, owner}; a redemption adds `invite` (§4.3). The withdrawn contact-link
+  // recipient {issuer, owner, contactId, resource} stays readable while contact links overlap invitations (phase 4).
+  const r=exact(p.recipient,['issuer','owner'],['invite','contactId','resource']);originValue(r.issuer,local);uuid(r.owner);
+  const link=Object.hasOwn(r,'contactId')||Object.hasOwn(r,'resource'),invite=Object.hasOwn(r,'invite');
+  if(link&&(invite||!text(r.contactId,128,1)||!text(r.resource,128,1)))malformed();
+  if(invite){
+   // §4.3 redemption shape: only conversation-init, empty subject, null content, a two-party genesis (author and
+   // recipient). A one-off carrying `invite` is malformed (§5.1).
+   digestValue(r.invite);
+   if(p.kind!=='conversation-init'||p.subject!==''||p.content!==null)malformed();
+  }else if(p.content===null)malformed();
   if(Object.hasOwn(p,'resendOf'))uuid(p.resendOf);
-  if(p.kind==='conversation-init')await validateConversation(p.conversation,p,options);
+  if(p.kind==='conversation-init'){
+   await validateConversation(p.conversation,p,options);
+   if(invite){const parts=p.conversation.genesis.payload.participants;if(parts.length!==2||!parts.some(x=>sameValue(x.principal,p.author.principal)))malformed();}
+  }
  }
  if(textEncoder.encode(jcs(e)).byteLength>limits.maxEnvelopeBytes)fail('too_large');
  return e;

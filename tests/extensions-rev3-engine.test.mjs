@@ -23,7 +23,7 @@ import {forEachSeed,fakeClock} from './helpers/chaos.mjs';
 const OWNER='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',ISSUER='https://3sln.example',DAY=86400000;
 const INTAKE=PUBLIC_INTAKE_FRAGMENT_DOCUMENT.id,INGRESS=MESSAGING_INGRESS_FRAGMENT_DOCUMENT.id;
 const INTAKE_CONTRACT='https://spec.bindle.example/contracts/public-intake/v1',MAILBOX='https://spec.bindle.example/messaging/v1/contracts/mailbox';
-const BRIDGE=PROVIDER_EXT.emailBridge,ADDRESS=PROVIDER_EXT.messagingAddress;
+const BRIDGE=PROVIDER_EXT.emailBridge,MAILBOX_FEATURE=EXT.messagingMailbox;
 const code=c=>e=>{assert.equal(e.code,c,`expected ${c}, got ${e.code}: ${e.message}`);return true;};
 
 function snapshot(host,{contracts=[INTAKE_CONTRACT,MAILBOX]}={}){
@@ -32,11 +32,11 @@ function snapshot(host,{contracts=[INTAKE_CONTRACT,MAILBOX]}={}){
  const r=validateIntegrationManifest(raw,{clientId,confidential:true,redirectUris,jwksUri});assert.equal(r.status,'valid',r.reason);
  return {client:{id:clientId,name:host},snapshot:{clientId,redirectUris,authMethod:'private_key_jwt',jwksUri,thumbprints:['A'.repeat(43)],manifest:r.manifest}};
 }
-async function fixture({declared=[BRIDGE,ADDRESS],blocked=[],builtins={}}={}){
+async function fixture({declared=[BRIDGE,MAILBOX_FEATURE],blocked=[],builtins={}}={}){
  const clock=fakeClock(Date.UTC(2026,9,27,12)),metadata=new SqliteMetadata(':memory:');await metadata.put('owner',OWNER);
  const decl={list:[...declared],blocked:[...blocked],raw:null,throws:false};
  let n=0;const connections=new AppConnections({metadata,origin:ISSUER,clock:clock.now,builtins,uuid:()=>`00000000-0000-4000-8000-${String(++n).padStart(12,'0')}`,
-  declarations:async()=>{if(decl.throws)throw new Error('port down');return {manifest:decl.raw??{issuer:ISSUER,extensions:decl.list.map(spec=>declare(spec))},blocked:decl.blocked};}});
+  declarations:async()=>{if(decl.throws)throw new Error('port down');return {manifest:decl.raw??{issuer:ISSUER,extensions:decl.list.flatMap(spec=>spec===MAILBOX_FEATURE?[declare(EXT.keyDelegation),declare(spec)]:[declare(spec)])},blocked:decl.blocked};}});
  const engine=createAppEngine({providers:{clock,random:{uuid:()=>crypto.randomUUID(),bytes:k=>crypto.getRandomValues(new Uint8Array(k))},audit:memoryAudit({clock}),config:{},connections:C.connectionsProvider({connections,enabled:true,account:async()=>({status:'active'})})}});
  const owner=()=>({kind:'owner',owner:OWNER,authTime:clock.now()}),stale={kind:'owner',owner:OWNER},system={kind:'system',owner:OWNER};
  const op=(Operation,actor,input)=>{const o=new Operation({actor,...input===undefined?{}:{input}});return o instanceof AppQuery?read(engine,o):perform(engine,o);};
@@ -94,9 +94,9 @@ test('provider features: enabling is owner consent with recent authentication; i
  const p=await f.projection(BRIDGE);assert.equal(p.live,true);assert.equal(p.resources.length,1);assert.equal(p.resources[0].grant,on.grant);
  assert.equal(featureIdentity(ISSUER,BRIDGE),`feature:${ISSUER}|${BRIDGE}`);
  const tx=await featureTx(BRIDGE,INTAKE_CONTRACT,OWNER,'fp');assert.match(tx,/^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
- assert.equal(tx,await featureTx(BRIDGE,INTAKE_CONTRACT,OWNER,'fp'));assert.notEqual(tx,await featureTx(ADDRESS,INTAKE_CONTRACT,OWNER,'fp'),'two features never share a tx');
+ assert.equal(tx,await featureTx(BRIDGE,INTAKE_CONTRACT,OWNER,'fp'));assert.notEqual(tx,await featureTx(MAILBOX_FEATURE,INTAKE_CONTRACT,OWNER,'fp'),'two features never share a tx');
  // Another feature never sees this grant.
- assert.equal((await f.projection(ADDRESS)).live,false);
+ assert.equal((await f.projection(MAILBOX_FEATURE)).live,false);
 });
 
 test('per-consumer approval: adding or replacing a resource approves no feature unless the owner ticks it',async t=>{
@@ -104,7 +104,7 @@ test('per-consumer approval: adding or replacing a resource approves no feature 
  await f.op(C.AssignField,f.owner(),{fragment:INTAKE,connection:a.id});
  const on=await f.op(C.EnableFeature,f.owner(),{feature:BRIDGE});assert.equal(on.approved.length,1,'enabling consents to the current value');
  await assert.rejects(f.op(C.AssignField,f.stale,{fragment:INTAKE,connection:b.id,replace:true}),code('reauthentication_required'),'replacing in a feature-consumed field needs recent authentication');
- await assert.rejects(f.op(C.AssignField,f.owner(),{fragment:INTAKE,connection:b.id,replace:true,approve:[ADDRESS]}),code('invalid_request'),'only features that use this field');
+ await assert.rejects(f.op(C.AssignField,f.owner(),{fragment:INTAKE,connection:b.id,replace:true,approve:[MAILBOX_FEATURE]}),code('invalid_request'),'only features that use this field');
  await f.op(C.AssignField,f.owner(),{fragment:INTAKE,connection:b.id,replace:true});
  const p=await f.projection(BRIDGE);assert.equal(p.live,true);assert.deepEqual(p.resources,[],'the replacement is not approved for the bridge');assert.notEqual(p.grant,on.grant,'the value change issues a new grant');
  // Removing needs no reauthentication; reapproval is explicit.
@@ -117,14 +117,14 @@ test('per-consumer approval: adding or replacing a resource approves no feature 
 test('suspension on declaration loss, resumption on the same spec URL, revocation after 30 days and on disable or block',async t=>{
  const f=await fixture();t.after(f.dispose);const a=await f.connect('alpha.example');
  const on=await f.op(C.EnableFeature,f.owner(),{feature:BRIDGE,assign:{connection:a.id}});
- f.decl.list=[ADDRESS];
+ f.decl.list=[MAILBOX_FEATURE];
  let p=await f.projection(BRIDGE);assert.equal(p.live,false,'suspended at once');assert.equal(p.state,'suspended');
  let view=(await f.op(C.FeatureList,f.owner())).find(x=>x.feature===BRIDGE);assert.equal(view.state,'suspended');assert.equal(view.approved.length,1,'grant records and values are kept');
  await assert.rejects(f.op(C.EnableFeature,f.owner(),{feature:BRIDGE}),code('feature_unavailable'));
  // A different version of the line resumes nothing.
  f.decl.raw={issuer:ISSUER,extensions:[declare('https://3sln.me/extensions/email-bridge/v2')]};
  assert.equal((await f.projection(BRIDGE)).live,false);f.decl.raw=null;
- f.decl.list=[BRIDGE,ADDRESS];f.clock.advance(5*DAY);
+ f.decl.list=[BRIDGE,MAILBOX_FEATURE];f.clock.advance(5*DAY);
  p=await f.projection(BRIDGE);assert.equal(p.live,true,'resumes');assert.equal(p.grant,on.grant,'bound to the values it was approved under');
  // 30 days of continuous suspension revokes.
  f.decl.list=[];await f.op(C.FeatureSync,f.system);f.clock.advance(SUSPENSION_REVOCATION_MS-1);await f.op(C.FeatureSync,f.system);
@@ -143,8 +143,8 @@ test('suspension on declaration loss, resumption on the same spec URL, revocatio
  await assert.rejects(f.op(C.EnableFeature,f.owner(),{feature:BRIDGE}),code('feature_blocked'));
  const events=(await f.outbox()).map(e=>e.type);for(const type of ['feature-enabled','feature-suspended','feature-resumed','feature-revoked'])assert.ok(events.includes(type),type);
  // A failing declarations port reads as "not declared": the feature is suspended, never left live.
- f.decl.blocked=[];f.decl.list=[BRIDGE,ADDRESS];await f.op(C.EnableFeature,f.owner(),{feature:ADDRESS});f.decl.throws=true;
- assert.equal((await f.projection(ADDRESS)).live,false);
+ f.decl.blocked=[];f.decl.list=[BRIDGE,MAILBOX_FEATURE];await f.op(C.EnableFeature,f.owner(),{feature:MAILBOX_FEATURE});f.decl.throws=true;
+ assert.equal((await f.projection(MAILBOX_FEATURE)).live,false);
 });
 
 test('announcements: post-connection, owner-only, once per (field, supplier), never for built-ins, never assign',async t=>{
@@ -259,13 +259,13 @@ test('brokered credentials: disabling, a value change, suspension expiry and blo
  const off=await f.op(C.DisableFeature,f.owner(),{feature:BRIDGE});assert.equal(off.state,'revoked');
  let rows=await f.severance();assert.deepEqual(rows.map(r=>[r.type,r.connection,r.resource,r.grants]),[['feature-revoked',a.id,'https://alpha.example/r/intake',[on.grant]]]);
  // Suspension expiry: 30 days after the loss, with the credentials of the grant that was suspended.
- const second=await f.op(C.EnableFeature,f.owner(),{feature:BRIDGE});f.decl.list=[ADDRESS];await f.op(C.FeatureSync,f.system);
+ const second=await f.op(C.EnableFeature,f.owner(),{feature:BRIDGE});f.decl.list=[MAILBOX_FEATURE];await f.op(C.FeatureSync,f.system);
  assert.equal((await f.projection(BRIDGE)).state,'suspended');assert.equal((await f.severance()).length,1,'suspension alone revokes nothing');
  f.clock.advance(SUSPENSION_REVOCATION_MS);await f.op(C.FeatureSync,f.system);
  rows=await f.severance();assert.deepEqual(rows.at(-1).grants,[second.grant]);assert.equal(rows.at(-1).type,'feature-revoked');
  assert.equal((await f.op(C.FeatureList,f.owner())).find(x=>x.feature===BRIDGE).reason,'suspension-expired');
  // Blocking.
- f.decl.list=[BRIDGE,ADDRESS];const third=await f.op(C.EnableFeature,f.owner(),{feature:BRIDGE});f.decl.blocked=[BRIDGE];await f.op(C.FeatureSync,f.system);
+ f.decl.list=[BRIDGE,MAILBOX_FEATURE];const third=await f.op(C.EnableFeature,f.owner(),{feature:BRIDGE});f.decl.blocked=[BRIDGE];await f.op(C.FeatureSync,f.system);
  rows=await f.severance();assert.deepEqual([rows.at(-1).type,rows.at(-1).grants],['feature-revoked',[third.grant]]);
  // A value change: the old grant's credentials go, the grant changes.
  f.decl.blocked=[];const again=await f.op(C.EnableFeature,f.owner(),{feature:BRIDGE});const field=(await f.op(C.FieldList,f.owner())).find(x=>x.fragment===INTAKE);

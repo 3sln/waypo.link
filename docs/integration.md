@@ -144,9 +144,12 @@ Resources have identifiers and exact contract URLs; a display name is not confor
 
 Storage capabilities describe read/write/range/presigning support. Object listing is absent; apps maintain directory/index objects. Do not assume every Google Drive, WebDAV or S3-compatible connection supports safe conditional writes. Object URLs are bearer capabilities for one object and operation. The result reports mode and revocation: native provider URLs can remain valid until expiry after grant revocation, while provider-proxy URLs perform live grant checks. Users approve temporary-link powers explicitly; callers must send the returned requiredHeaders and must not infer revocation behavior from the storage provider name.
 
-## Contact links (being withdrawn)
+## Contacts and first contact
 
-Contact links are being withdrawn from Bindle (contacts and links rethink, provisional and unsigned): invitations between people move to [Bindle Messaging](spec/extensions/messaging.md) and the Parlay app, in phases. The reference host still serves the generic link plumbing behind `LINKS_ENABLED` (verification, the landing page with its preview and handoff), and the [links](spec/extensions/links.md) draft still describes it, but new integrations should not depend on contact links. Any capability URL needs the handling in [security](spec/security.md#capability-urls).
+Contacts are not part of the Bindle core (contacts and links rethink, provisional and unsigned, 2026-10-28). First contact between people is a [Bindle Messaging](spec/extensions/messaging.md) invitation: the inviter's messaging app mints a link carrying the `connect` intent ([messaging §4](spec/extensions/messaging.md#4-invitations)), and the redeemer opens it in a handler of their choice through [intents](spec/extensions/intents.md). Messaging §4 is a draft and is not implemented. Contact lists, admission rules and relationship policies are application behaviour, not wire protocol.
+
+The former contact link type is withdrawn; the [links](spec/superseded/links.md) draft is a dissolved, frozen record. The reference host still implements contact links locally behind `LINKS_ENABLED` until contacts phase 4 removes them from the core, so new integrations should not depend on them. Signed-object rules are in [keys](spec/keys.md), and the generic `bindle_meta` link envelope that Organizations uses is the [Organizations link envelope annex](spec/extensions/organizations-link-envelope.md). Any capability URL needs the handling in [security](spec/security.md#capability-urls).
+
 
 ## App messages and Views
 

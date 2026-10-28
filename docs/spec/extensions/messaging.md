@@ -32,7 +32,7 @@ It replaces these drafts for peer messaging:
 | Draft | Reused | Removed |
 | --- | --- | --- |
 | contact delivery (Parlay legacy record `apps/parlay/docs/legacy/contact-delivery.md`) | Envelope, display-string rules, verification order, replay | Bearer RPC, anonymous branches |
-| [links](links.md) (dissolved) | — | Contact type, intake, links contract, ingress descriptor and conditional links (contacts spike CL-3, CL-4) |
+| [links](../superseded/links.md) (dissolved) | — | Contact type, intake, links contract, ingress descriptor and conditional links (contacts spike CL-3, CL-4) |
 | contact endpoints (Parlay legacy record `apps/parlay/docs/legacy/contact-tokens.md`) | — | Legacy `?sig=` and inbox bearers |
 | conversations v1 (Parlay legacy record `apps/parlay/docs/legacy/conversations.md`) | — | Central authority, `actor:"bearer"` |
 

@@ -6,6 +6,9 @@ export const PROFILE=SPEC;
 export const INGRESS_FRAGMENT='https://spec.bindle.example/fragments/messaging-ingress/v1';
 export const MAILBOX_CONTRACT=`${SPEC}/contracts/mailbox`;
 export const CONTACT_LINK_TYPE=`${SPEC}/links/contact`;
+// Invitations (spec §4; contacts spike CL-5, provisional, unsigned): the `connect` intent kind and the redemption credential.
+export const CONNECT_INTENT=`${SPEC}/intents/connect`;
+export const INVITE_SCHEME='BindleInvite';
 export const INTAKE_FRAGMENT='https://spec.bindle.example/fragments/public-intake/v1';
 export const INTAKE_CONTRACT='https://spec.bindle.example/contracts/public-intake/v1';
 export const DESCRIPTOR_MEDIA_TYPE='application/vnd.bindle.messaging.ingress+json';
@@ -24,4 +27,4 @@ export const RECORD_TYPES=Object.freeze(['message','edit','retract','peer-propos
 export const STATUS_REQUIRED_RECORDS=Object.freeze(['edit','retract','rotate','leave','ingress','peer-proposal','peer-response','peer-hello','rejoin','secret-share']);
 export const LIMITS=Object.freeze({maxParticipants:32,maxBodyBytes:1048576,maxEnvelopeBytes:65536,maxRequestBytes:1500000,maxBatchContexts:32,maxBatchBytes:524288,maxParents:8,maxPlaceholders:64,maxPendingMutations:64,maxGapExceptions:256,maxCounterJump:1024,maxPendingProposals:16,maxCertificateSeconds:86400,statusCacheMs:300000,descriptorCacheMs:3600000,clockSkewMs:60000,linkWindowMs:86400000,recordWindowMs:604800000,rotationOverlapMs:604800000,retentionMs:777600000,maxInvitationResponseBytes:8192,maxBootstrapMs:604800000,maxCompactChars:8192,maxSubjectPoints:200,maxTags:32,maxProfiles:16,maxVerifies:64,maxIntakeParts:16,maxHeaderChars:8192});
 // §8.3 plus the RPC envelope codes of protocol §5. A status alone never carries classification or policy state.
-export const ERRORS=Object.freeze({malformed:400,link_malformed:400,envelope_expired:400,counter_gap:400,clock_skew:400,link_invalid:401,author_unverifiable:401,author_required:403,not_authorized:403,audience_ineligible:403,participants_exceeded:403,record_forbidden:403,operation_conflict:409,incarnation_stale:409,invitation_used:409,invitation_expired:410,ingress_moved:410,too_large:413,record_unsupported:415,unsupported_profile:415,rate_limited:429,recipient_unavailable:503,recipient_storage_unavailable:503,audience_unavailable:503,invalid_args:400,unsupported_contract:400,unsupported_method:400});
+export const ERRORS=Object.freeze({malformed:400,link_malformed:400,envelope_expired:400,counter_gap:400,clock_skew:400,link_invalid:401,invite_invalid:401,author_unverifiable:401,author_required:403,not_authorized:403,audience_ineligible:403,participants_exceeded:403,record_forbidden:403,operation_conflict:409,incarnation_stale:409,invitation_used:409,invitation_expired:410,ingress_moved:410,too_large:413,record_unsupported:415,unsupported_profile:415,rate_limited:429,recipient_unavailable:503,recipient_storage_unavailable:503,audience_unavailable:503,invalid_args:400,unsupported_contract:400,unsupported_method:400});

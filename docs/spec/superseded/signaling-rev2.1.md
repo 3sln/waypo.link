@@ -27,7 +27,7 @@ This document defines a Bindle extension on the existing extension system. It ha
 It defines no artefact kind, no link type and no extension-system member. Instead it reuses core primitives:
 - **What a session is for** is an [intent kind](../extensions/intents.md#4-intent-kinds) with a `session` member.
 - **Who may open a session, and which app receives it,** depends on an explicit **establishment basis** (§5.6): `self` (own devices), `pairing` (an owner record that pre-authorizes two apps, or one peer, for a kind), `offer` (a one-use dial-back authorization that an app hands to an invited party inside its own app message), `link` (a configured contact link) or `none` (requests, held). Only `link` invites, and own-entity invites with no initiating app to route to, use the owner's intent handler choice for the kind.
-- **Shareable admission** uses the owner's existing [contact links](../extensions/links.md#6-contact-link-type) with owner-side configuration. App-minted links wait for the links §6 re-scope (§20.3.2). Callbacks are withdrawn: the `offer` basis replaces them (§5.7).
+- **Shareable admission** uses the owner's existing [contact links](links.md#6-contact-link-type) with owner-side configuration. App-minted links wait for the links §6 re-scope (§20.3.2). Callbacks are withdrawn: the `offer` basis replaces them (§5.7).
 - **Presentation** is the app's. The provider keeps only a minimal owner hook for invites no app can see (§11.3). Calling and other use semantics are app-level: a messaging app's call invite, for example, is a message with a JSON media type in the Bindle Messaging spec, not part of this document (§20.12).
 
 The intents, links and device-authorization changes this needs, and two security.md statements, are written as proposed, unsigned amendments in §20. None of those documents is edited by this draft.
@@ -278,7 +278,7 @@ The recipient provider admits an `invite` only on one of these bases, evaluated 
 **Verifying a link basis.** This is unchanged from [rtc-signaling §4.2](rtc-signaling.md#42-admission-bases):
 - The link is canonical: the origin and path plus exactly `bindle_meta` or legacy `sig`, with no `bindle_data` and no unrelated parameters.
 - Its SHA-256 equals `link_digest`.
-- The recipient provider verifies it as if it had received a request for that URL, under [links §8](../extensions/links.md#8-processing-order-and-results) steps 1 and 2.
+- The recipient provider verifies it as if it had received a request for that URL, under [links §8](links.md#8-processing-order-and-results) steps 1 and 2.
 - Only the digest is in the signed invite. The bearer link is never delivered to endpoints (§10.2).
 
 **Verifying an offer basis.**
@@ -296,7 +296,7 @@ Block, quarantine and limits (§13) apply after verification and are silent.
 
 ### 5.3 Contact-link signaling configuration
 
-Signaling admission on a contact link is **mutable owner-side configuration on an existing contact parent**, keyed by `jti`, like intake configuration ([links §6.2](../extensions/links.md#62-intake-configuration)). It replaces the RTC per-parent configuration (`rtc/contact/`). AMD-SG-L1a (§20.3.1) defines it. In this revision only the owner configures it, on a parent the owner already has. There are no app-minted or signaling-only parents and no delivery-off switch: those wait for the links §6 re-scope (AMD-SG-L1b, §20.3.2) and are **unavailable** until it lands. There are no callbacks at all: offers replace them (§5.7).
+Signaling admission on a contact link is **mutable owner-side configuration on an existing contact parent**, keyed by `jti`, like intake configuration ([links §6.2](links.md#62-intake-configuration)). It replaces the RTC per-parent configuration (`rtc/contact/`). AMD-SG-L1a (§20.3.1) defines it. In this revision only the owner configures it, on a parent the owner already has. There are no app-minted or signaling-only parents and no delivery-off switch: those wait for the links §6 re-scope (AMD-SG-L1b, §20.3.2) and are **unavailable** until it lands. There are no callbacks at all: offers replace them (§5.7).
 
 | Member | Definition |
 | --- | --- |
@@ -308,7 +308,7 @@ Signaling admission on a contact link is **mutable owner-side configuration on a
 
 The configuration is never signed into the link, never disclosed in any link representation, and never delivered to the link holder. It is directional: enabling it on Alice's link lets holders reach Alice, not the reverse. When the configuration's `kinds` becomes empty, the configuration is removed.
 
-**Not on conditional parents.** The owner MUST NOT configure signaling on a conditional contact parent (one whose meta has `audience`, [links §7](../extensions/links.md#7-audience-requirement-conditional-contact-links)), and a provider refuses such an update. A conditional link presented as a basis admits nothing, silently. The reasons for forbidding it, rather than evaluating the audience policy against the verified certificate principal:
+**Not on conditional parents.** The owner MUST NOT configure signaling on a conditional contact parent (one whose meta has `audience`, [links §7](links.md#7-audience-requirement-conditional-contact-links)), and a provider refuses such an update. A conditional link presented as a basis admits nothing, silently. The reasons for forbidding it, rather than evaluating the audience policy against the verified certificate principal:
 - Audience policy is operator host policy, evaluated at GET and at message admission (links §7.4, §7.5). Evaluating it inside §9.2 would put a policy call, and for foreign principals the unwired links §7.3 directory path, into federation verification, which must stay local and cheapest-first (§9.2 step 7).
 - Its quota model is per verified principal per UTC day (links §7.1), which does not map onto `uses`.
 - The owner already has an exact, local alternative: `principal` names one origin principal, and is compared with the verified certificate principal at step 8.
@@ -316,7 +316,7 @@ The configuration is never signed into the link, never disclosed in any link rep
 A later revision MAY lift this once links §7.3 foreign verification exists, by evaluating the policy on the verified leg-certificate principal at step 8, in the way links §7.5 evaluates it on the author principal.
 
 **What link holders and representations see.** Configuring signaling changes nothing a link representation reports:
-- The sender metadata representation ([links §6.3](../extensions/links.md#63-sender-metadata-representation)) is unchanged. Its `kinds` are still the signed message kinds, and it never reports session kinds, `uses`, `principal` or whether signaling is configured.
+- The sender metadata representation ([links §6.3](links.md#63-sender-metadata-representation)) is unchanged. Its `kinds` are still the signed message kinds, and it never reports session kinds, `uses`, `principal` or whether signaling is configured.
 - The HTML composer, inspection, contact-profile representation and previews (links §6, §6.4) are unchanged and show no signaling state.
 - A GET or HEAD of the link never admits, spends or creates anything.
 - The parent still accepts messages exactly as its signed meta and intake allow. Configuring signaling adds a way for holders to reach the owner, and it is disclosed to the owner as such when it is set (§14.1).
@@ -548,7 +548,7 @@ For each leg, the endpoint generates a fresh ES256 key pair:
 - it SHOULD be non-extractable;
 - it MUST NOT be reused across sessions, so that no peer can link an endpoint across sessions.
 
-The entity's provider certifies the public key in a leg certificate: a compact JWS under the [links §3.1](../extensions/links.md#31-jws-profile-shared-with-bindle_data) profile. Its protected header is exactly `{alg:"ES256", kid:<an active certification kid of the entity>, typ:"bindle-signaling-leg+jwt"}`. Its payload is exactly:
+The entity's provider certifies the public key in a leg certificate: a compact JWS under the [links §3.1](links.md#31-jws-profile-shared-with-bindle_data) profile. Its protected header is exactly `{alg:"ES256", kid:<an active certification kid of the entity>, typ:"bindle-signaling-leg+jwt"}`. Its payload is exactly:
 
 | Member | Definition |
 | --- | --- |
@@ -1529,7 +1529,7 @@ Such mirrored items would also never interrupt by default, and would fold foreig
 
 ### 20.3 AMD-SG-L1: signaling configuration on contact parents (links), split
 
-**Target:** [links](../extensions/links.md) §6, §6.2, §6.3 and §7. **Status:** proposed, unsigned. Revision 1 splits it into L1a, which is needed now, and L1b, which is deferred.
+**Target:** [links](links.md) §6, §6.2, §6.3 and §7. **Status:** proposed, unsigned. Revision 1 splits it into L1a, which is needed now, and L1b, which is deferred.
 
 #### 20.3.1 AMD-SG-L1a (now): owner-side configuration on existing contact parents
 

@@ -14,7 +14,7 @@ export const PROVIDERS=Object.freeze({
  directory:row('both','effect','local','Injected identity directory and status; CLI uses ephemeral local keys.'),
  classifier:row('mailbox','effect','planned','Optional classifier slot; absent means no AI.'),
  activity:row('mailbox','effect','planned','Ordinary consented activity submission.'),
- contacts:row('mailbox','domain','local','Contact parents and intake.',{scoped:true}),
+ contacts:row('mailbox','domain','local','Contact parents and intake; contacts spike phase 3 lists and invitations (invites.mjs).',{scoped:true}),
  receive:row('mailbox','domain','local','Admission and replay.',{scoped:true}),
  outbox:row('mailbox','domain','local','Durable send obligations.',{scoped:true}),
  conversations:row('mailbox','domain','local','Bilateral conversation state.',{scoped:true}),

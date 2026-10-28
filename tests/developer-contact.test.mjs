@@ -1,8 +1,8 @@
-// Developer-contact policy, tier and route checks. The legacy core developer grant (one conditional contact-grant link,
-// daily grants, legacy delivery and inspection) left the core with messaging on 2026-10-27; the occupant route is
-// covered by developer-contact-occupant.test.mjs.
+// Developer-contact tier checks and the contact-link developer policy (re-homed to packages/links/audience.mjs by
+// contacts spike CR-C5; contact links keep it until phase 4). The developer-contact route (eligibility read and
+// principal-bound invitations) is covered by developer-contact-invitations.test.mjs.
 import test from 'node:test';import assert from 'node:assert/strict';
-import {AccountController} from '../packages/runtime/accounts.mjs';import {SqliteMetadata,SerialGate} from '../apps/node/resources.mjs';import {developerContactTier,developerContactRoutes,evaluateLinkPolicy,DEVELOPER_CONTACT_POLICY} from '../packages/runtime/developer-contact.mjs';import {key} from '../packages/core/records.mjs';import {BILLING_STATE_KEY} from '../packages/billing/catalog.mjs';
+import {AccountController} from '../packages/runtime/accounts.mjs';import {SqliteMetadata,SerialGate} from '../apps/node/resources.mjs';import {developerContactTier,developerContactRoutes} from '../packages/runtime/developer-contact.mjs';import {evaluateLinkPolicy} from '../packages/links/audience.mjs';import {DEVELOPER_CONTACT_POLICY} from '../packages/links/policies.mjs';import {key} from '../packages/core/records.mjs';import {BILLING_STATE_KEY} from '../packages/billing/catalog.mjs';
 const owner=crypto.randomUUID(),beneficiary=crypto.randomUUID(),origin='https://developer.example';
 // A same-host world: developer and senders are real AccountControllers wired through the identity and account ports.
 async function world(){

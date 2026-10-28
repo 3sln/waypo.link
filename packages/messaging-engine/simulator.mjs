@@ -37,7 +37,7 @@ export async function createMailboxSimulator({count=2,seed=1,clock=memoryEffects
  return {peers,clock,trace,directory,async prepare(from,to,{text='Hello',operationId}={}){
   const sender=peers.get(from),recipient=peers.get(to);if(!sender||!recipient)throw new TypeError('Unknown simulated peer');
   const link=await recipient.run('contacts.create-link');await flushEdgeOutbox(recipient.store,edge,recipient.owner);
-  const body=encoder.encode(text),id=operationId??sender.effects.random.uuid(),envelope=await B.signEnvelope({version:1,profile:B.PROFILE,kind:'one-off',noReply:true,operationId:id,createdAt:clock.now(),recipient:{issuer:recipient.principal.issuer,owner:recipient.owner,contactId:link.jti,resource:link.resource},content:await B.contentDescriptor('text/plain',body),subject:'Simulator message',optionalTags:[],author:sender.author},sender.signer);
+  const body=encoder.encode(text),id=operationId??sender.effects.random.uuid(),envelope=await B.signEnvelope({version:1,profile:B.PROFILE,kind:'one-off',noReply:true,operationId:id,createdAt:clock.now(),recipient:{issuer:recipient.principal.issuer,owner:recipient.owner,contactId:link.jti,resource:link.resource},content:await B.contentDescriptor('text/plain',body),subject:'Simulator message',author:sender.author},sender.signer);
   return {operationId:id,body,recipients:[{envelope,ingress:recipient.ingress,credential:`BindleLink ${new URL(link.link).searchParams.get('bindle_meta')}`}]};
  },dispose:()=>Promise.all([...peers.values()].map(p=>p.engine.dispose()))};
 }

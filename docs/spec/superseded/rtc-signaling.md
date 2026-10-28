@@ -16,7 +16,7 @@ Status: **design candidate, 2026-10-26, revision 1.** The wire validators (§5, 
 
 Protocol/security/interop sign-off: reviewer ___ / date ___ / outcome ___.
 
-This document defines a Bindle extension under the existing extension system: a provider **feature** ([protocol §2](../protocol.md#2-discovery-and-login)), two **slots** ([extensions](../extensions.md)), one **artefact kind** ([artefacts §6.3](../artefacts.md#63-growth-points-by-kind)) and one **link type** ([links](../extensions/links.md)). It adds no parallel declaration, discovery, pinning or permission mechanism. The one thing the extension system cannot yet express is named in §3.5, with the smallest proposed addition (AMD-X1). It defines interoperability rules only: no chooser, ring, prompt or settings presentation beyond the disclosures it lists, and no SDK behavior. It satisfies the preconditions [messaging](../extensions/messaging.md) lists for WebRTC signaling (schemas and bounds, peer identity distinct from bearer possession, replay and expiry, consent, TURN, IP privacy, cancellation, abuse).
+This document defines a Bindle extension under the existing extension system: a provider **feature** ([protocol §2](../protocol.md#2-discovery-and-login)), two **slots** ([extensions](../extensions.md)), one **artefact kind** ([artefacts §6.3](../artefacts.md#63-growth-points-by-kind)) and one **link type** ([links](links.md)). It adds no parallel declaration, discovery, pinning or permission mechanism. The one thing the extension system cannot yet express is named in §3.5, with the smallest proposed addition (AMD-X1). It defines interoperability rules only: no chooser, ring, prompt or settings presentation beyond the disclosures it lists, and no SDK behavior. It satisfies the preconditions [messaging](../extensions/messaging.md) lists for WebRTC signaling (schemas and bounds, peer identity distinct from bearer possession, replay and expiry, consent, TURN, IP privacy, cancellation, abuse).
 
 ## 1. Scope and model
 
@@ -164,7 +164,7 @@ Quarantine, blocking and muting (§13) apply after admission and are silent.
 
 ### 4.3 Contact-link configuration and the RTC ticket link type
 
-**Contact links.** RTC permission on a contact link is mutable owner-side configuration on the parent (keyed by `jti`), like intake configuration ([links §6.2](../extensions/links.md#62-intake-configuration)): a list of purpose lines (at most 16). It is not a link member, is never signed into the link, and is never disclosed in any link representation. It is directional: Alice enabling RTC on her link lets holders call Alice, not the reverse. Legacy Beam permissions were dropped when Beam was removed on 2026-10-26 and do not map to any RTC configuration (design §5).
+**Contact links.** RTC permission on a contact link is mutable owner-side configuration on the parent (keyed by `jti`), like intake configuration ([links §6.2](links.md#62-intake-configuration)): a list of purpose lines (at most 16). It is not a link member, is never signed into the link, and is never disclosed in any link representation. It is directional: Alice enabling RTC on her link lets holders call Alice, not the reverse. Legacy Beam permissions were dropped when Beam was removed on 2026-10-26 and do not map to any RTC configuration (design §5).
 
 **RTC ticket link** (`type` = `https://spec.bindle.example/links/rtc-ticket/v1`). The meta payload member set is the links §3.2 common members plus exactly:
 

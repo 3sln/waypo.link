@@ -18,7 +18,7 @@ The design in one paragraph: an application asks for the **`rtc-signaling/v1` sl
 | App-facing capability, consent, revocation, pinning, versioning | A slot whose built-in occupant is declared in the provider manifest's `extensions` array, requested as a fragment with `digest` | spec §3.2 |
 | Owner-chosen relay funding | A second slot, `ice-relay/v1`, `ordered`, brokered occupants allowed | spec §3.3 |
 | Purpose identifiers that apps register | An artefact kind with a growth table, like intent kinds | spec §3.4 |
-| Capabilities for nearby pairing, call-me links and callbacks | A link type under [links](../spec/extensions/links.md) | spec §4.3 |
+| Capabilities for nearby pairing, call-me links and callbacks | A link type under [links](../spec/superseded/links.md) | spec §4.3 |
 | Contact-based admission | Contact links plus mutable owner-side configuration, like intake configuration | spec §4.3 |
 | Signatures, key discovery, no-oracle verification | Certification keys, `directory.v1`, background refresh, the organizations §5.2 and §9.9 rules | spec §5, §8 |
 | Push to native apps | The integrations SET channel, a doorbell like events §7.2 | spec §9.2 |

@@ -1,6 +1,6 @@
 // BB-C1b descriptor and slot handoff, end to end in process: the core links contract (LinkService + links engine,
 // app actors admitted through the occupancy port) issues a contact link for the messaging-ingress occupant; the
-// provider's `messaging-address` handoff resolves the link to the occupant's ingress; a same-host sender delivers to
+// provider's contact-link handoff (describe through the messaging-mailbox feature) resolves the link to the occupant's ingress; a same-host sender delivers to
 // that ingress; the Parlay occupant admits it through B2's receive path, and conditional links are evaluated by
 // the host on a host-verified author proof. Also: occupant replacement (the previous app loses link authority; links
 // are inherited provisionally per DEVLOG), the links contract resource method and the manifest declaration row.
@@ -14,11 +14,12 @@ import { linksProvider, IssueLink, RevokeLink, EvaluateLink, LinkList } from '..
 import { verifyAuthorProof, ENVELOPE_DOMAIN, jcs } from '../packages/links/author-proof.mjs';
 import { LinkHandoff, validateDescribe } from '../packages/links/handoff.mjs';
 import { MESSAGING_INGRESS_FRAGMENT, MESSAGING_CONTACT_LINK_TYPE, MESSAGING_PROFILE, DESCRIPTOR_MEDIA_TYPE, LINK_FRAGMENT_TABLE, LINKS_CONTRACT } from '../packages/links/types.mjs';
-import { PROVIDER_EXT } from '../packages/core/extensions.mjs';
+import { EXT } from '../packages/core/extensions.mjs';
 import { contactIntent } from '../packages/links/preview.mjs';
 import { linksResourceMethod } from '../packages/runtime/account/links.mjs';
 import { RESOURCE_METHOD_HANDLERS } from '../packages/runtime/account/storage.mjs';
 import { MANIFEST_DECLARATIONS, federationDeclarations } from '../packages/runtime/federation.mjs';
+import { PROVIDER_FEATURE_ROWS } from '../packages/app/domains/provider-features.mjs';
 import { createAppEngine, perform, read } from '../packages/app/engine.mjs';
 import { memoryAudit } from '../packages/app/providers.mjs';
 import { fakeClock } from './helpers/chaos.mjs';
@@ -34,7 +35,9 @@ const BOX_A = { clientId: 'https://box-a.example/client.json', origin: 'https://
 const encoder = new TextEncoder(), ES = { name: 'ECDSA', namedCurve: 'P-256' };
 const pub = ({ kty, crv, x, y }) => ({ kty, crv, x, y });
 const principalOf = subject => ({ issuer: ISSUER, subject, identityURI: `${ISSUER}/identity/${subject}` });
-const describeBody = origin => ({ version: 1, profiles: [MESSAGING_PROFILE], ingress: `${origin}/ingress`, kinds: ['conversation-init', 'one-off'], limits: { maxParticipants: 32, maxMessageBytes: 1048576, maxEnvelopeBytes: 65536 } });
+// Bindle Messaging §2.2 (contacts spike CR-M3): the occupant's `describe` is exactly {version: 1, ingress}; the handoff
+// adds the fixed profiles and limits itself.
+const describeBody = origin => ({ version: 1, ingress: `${origin}/ingress` });
 
 // A same-host principal: an identity key in the provider registry and a delegate key certified by CORE's encoder.
 async function party(subject, registry, clock, { client = BOX_A, purposes } = {}) {
@@ -81,7 +84,7 @@ async function world({ seed = Number(process.env.CHAOS_SEED ?? 1) } = {}) {
   // A sender: resolve the descriptor from the link (as an intent handler does), then POST the authored envelope.
   const send = async (target, from, link, { operationId = crypto.randomUUID(), text = 'Hello', createdAt = clock.now() - 1000 } = {}) => {
     const descriptor = await handoff.descriptor(link.link), meta = new URL(link.link).searchParams.get('bindle_meta'), body = encoder.encode(text);
-    const envelope = await B.signEnvelope({ version: 1, profile: B.PROFILE, kind: 'one-off', noReply: true, operationId, createdAt, recipient: { issuer: ISSUER, owner: BOB, contactId: link.jti, resource: link.resource }, content: await B.contentDescriptor('text/plain', body), subject: 'Hi', optionalTags: [], author: from.author }, from.signer);
+    const envelope = await B.signEnvelope({ version: 1, profile: B.PROFILE, kind: 'one-off', noReply: true, operationId, createdAt, recipient: { issuer: ISSUER, owner: BOB, contactId: link.jti, resource: link.resource }, content: await B.contentDescriptor('text/plain', body), subject: 'Hi', author: from.author }, from.signer);
     const { contentType, bytes } = B.encodeDelivery(envelope, { body, boundary: 'c1b' });
     const response = await handleIngress({ url: descriptor.ingress, method: 'POST', headers: { authorization: `BindleLink ${meta}`, 'content-type': contentType }, body: bytes }, { edge, now: clock.now, deliver: (owner, input) => { assert.equal(descriptor.ingress, `${target.box.origin}/ingress`, 'delivered where the descriptor pointed'); return target.perform(new ReceiveDeliver({ actor: { kind: 'ingress', owner }, input })); } });
     return { status: response.status, json: await response.json(), envelope, descriptor };
@@ -98,10 +101,11 @@ test('pins: core proof verification, certificates and descriptors match the Parl
   assert.equal(B.parseDelegation(w.parties.alice.signer.delegation).claims.sub, ALICE);
   const value = { b: [1, 'x', { d: null, c: true }], a: 'ü' }; assert.equal(jcs(value), B.jcs(value));
   for (const bad of [1.5, -0, 2 ** 60, '\ud800']) { assert.throws(() => jcs(bad), { code: 'author_proof_invalid' }); assert.throws(() => B.jcs(bad)); }
-  // validateDescribe accepts what the protocol's descriptor validator accepts, and refuses an off-origin ingress.
-  const body = describeBody(BOX_A.origin); assert.ok(validateDescribe(body, { origin: BOX_A.origin })); B.validateDescriptor(body, { describe: true });
+  // validateDescribe accepts exactly {version: 1, ingress} (messaging §2.2) and refuses an off-origin ingress; the
+  // descriptor the handoff serves around it is checked against the protocol's validator in the end-to-end test.
+  const body = describeBody(BOX_A.origin); assert.deepEqual(validateDescribe(body, { origin: BOX_A.origin }), body);
   assert.equal(validateDescribe(body, { origin: BOX_B.origin }), null);
-  for (const over of [{ version: 2 }, { profiles: ['https://other.example/p'] }, { ingress: 'http://box-a.example/ingress' }, { ingress: 'https://box-a.example/ingress?x=1' }, { limits: { maxParticipants: 33, maxMessageBytes: 1, maxEnvelopeBytes: 1 } }, { kinds: ['one-off', 'conversation-init'] }, { multicast: 'https://elsewhere.example/m' }, { extra: true }]) assert.equal(validateDescribe({ ...body, ...over }), null, JSON.stringify(over));
+  for (const over of [{ version: 2 }, { profiles: [MESSAGING_PROFILE] }, { ingress: 'http://box-a.example/ingress' }, { ingress: 'https://box-a.example/ingress?x=1' }, { limits: { maxParticipants: 32, maxMessageBytes: 1, maxEnvelopeBytes: 1 } }, { kinds: ['conversation-init', 'one-off'] }, { multicast: 'https://box-a.example/m' }, { extra: true }]) assert.equal(validateDescribe({ ...body, ...over }), null, JSON.stringify(over));
 });
 
 test('handoff end to end: provider contact link -> descriptor -> occupant ingress -> B2 admission, with host-verified author proofs on conditional links', async () => {
@@ -129,7 +133,7 @@ test('handoff end to end: provider contact link -> descriptor -> occupant ingres
 
 test('evaluate: a bare principal, a misbound, tampered, stale, cross-host, revoked or unverifiable proof never reaches the policy', async () => {
   const w = await world(), box = await w.mailbox(BOX_A, 1), link = await box.link({ conditional: true, policy: POLICY }), unconditional = await box.link();
-  const alice = w.parties.alice, sign = (over = {}, signer = alice.signer, author = alice.author) => B.signEnvelope({ version: 1, profile: B.PROFILE, kind: 'one-off', noReply: true, operationId: crypto.randomUUID(), createdAt: w.clock.now() - 1000, recipient: { issuer: ISSUER, owner: BOB, contactId: link.jti, resource: link.resource }, content: { mimeType: 'text/plain', byteLength: 1, sha256: 'A'.repeat(43) }, subject: 'x', optionalTags: [], author, ...over }, signer);
+  const alice = w.parties.alice, sign = (over = {}, signer = alice.signer, author = alice.author) => B.signEnvelope({ version: 1, profile: B.PROFILE, kind: 'one-off', noReply: true, operationId: crypto.randomUUID(), createdAt: w.clock.now() - 1000, recipient: { issuer: ISSUER, owner: BOB, contactId: link.jti, resource: link.resource }, content: { mimeType: 'text/plain', byteLength: 1, sha256: 'A'.repeat(43) }, subject: 'x', author, ...over }, signer);
   const evaluate = (proof, principal = { issuer: ISSUER, subject: ALICE }, jti = link.jti) => perform(w.core, new EvaluateLink({ actor: w.actor(BOX_A), input: { jti, principal, proof } }));
   assert.deepEqual(await evaluate(await sign()), { state: 'eligible' });
   await assert.rejects(perform(w.core, new EvaluateLink({ actor: w.actor(BOX_A), input: { jti: link.jti, principal: { issuer: ISSUER, subject: ALICE } } })), { code: 'author_proof_required' });
@@ -170,7 +174,7 @@ test('evaluate: a bare principal, a misbound, tampered, stale, cross-host, revok
   // Unconditional links have no audience; budgets still bound everything (60 per link per hour).
   assert.deepEqual(await evaluate(await sign(), undefined, unconditional.jti), { state: 'unavailable' });
   // Review LH-1: a flood of proofs that fail verification (e.g. other-host authors) never spends the evaluation budget.
-  const other = await box.link({ conditional: true, policy: POLICY }), signOther = (over = {}) => B.signEnvelope({ version: 1, profile: B.PROFILE, kind: 'one-off', noReply: true, operationId: crypto.randomUUID(), createdAt: w.clock.now() - 1000, recipient: { issuer: ISSUER, owner: BOB, contactId: other.jti, resource: other.resource }, content: { mimeType: 'text/plain', byteLength: 1, sha256: 'A'.repeat(43) }, subject: 'x', optionalTags: [], author: fresh.author, ...over }, fresh.signer);
+  const other = await box.link({ conditional: true, policy: POLICY }), signOther = (over = {}) => B.signEnvelope({ version: 1, profile: B.PROFILE, kind: 'one-off', noReply: true, operationId: crypto.randomUUID(), createdAt: w.clock.now() - 1000, recipient: { issuer: ISSUER, owner: BOB, contactId: other.jti, resource: other.resource }, content: { mimeType: 'text/plain', byteLength: 1, sha256: 'A'.repeat(43) }, subject: 'x', author: fresh.author, ...over }, fresh.signer);
   const foreign = { ...fresh.author, principal: { issuer: 'https://other.example', subject: ALICE, identityURI: `https://other.example/identity/${ALICE}` }, identityDocument: `https://other.example/identity/${ALICE}/d.json` };
   for (let i = 0; i < 70; i++) await assert.rejects(perform(w.core, new EvaluateLink({ actor: w.actor(BOX_A), input: { jti: other.jti, principal: { issuer: 'https://other.example', subject: ALICE }, proof: await signOther({ author: foreign }) } })), { code: 'author_proof_invalid' });
   assert.deepEqual(await perform(w.core, new EvaluateLink({ actor: w.actor(BOX_A), input: { jti: other.jti, principal: { issuer: ISSUER, subject: ALICE }, proof: await signOther() } })), { state: 'eligible' });
@@ -241,16 +245,19 @@ test('links contract resource method: the app actor comes only from verified con
   assert.equal([...rows.keys()].filter(k => k.startsWith('links-rpc/')).length, journalSize); assert.equal(seen.length, calls);
 });
 
-test('manifest: the messaging-address provider feature row needs LINKS_ENABLED, EXTENSIONS_ENABLED and a mounted handoff', () => {
-  const row = MANIFEST_DECLARATIONS.find(r => Array.isArray(r.flag) && r.flag.includes('LINKS_ENABLED'));
-  assert.deepEqual(row.flag, ['LINKS_ENABLED', 'EXTENSIONS_ENABLED']);
-  assert.equal(row.mounted({ target: 'authority', mounts: {} }), false); assert.equal(row.mounted({ target: 'entries', mounts: { messagingAddress: true } }), false);
-  assert.equal(row.mounted({ target: 'authority', mounts: { messagingAddress: true } }), true);
-  // Extensions rev 3.2: the feature is its own provider-published extension, identified by its spec URL.
-  assert.deepEqual(row.declare({}), { extensions: [{ spec: PROVIDER_EXT.messagingAddress }] });
-  const config = { APP_ORIGIN: ISSUER, LINKS_ENABLED: 'true', EXTENSIONS_ENABLED: 'true' };
-  assert.equal(federationDeclarations({ ...config, LINKS_ENABLED: 'false' }, { target: 'authority', mounts: { messagingAddress: true } }).extensions, undefined);
-  assert.equal(federationDeclarations({ ...config, EXTENSIONS_ENABLED: 'false' }, { target: 'authority', mounts: { messagingAddress: true } }).extensions, undefined);
-  assert.deepEqual(federationDeclarations(config, { target: 'authority', mounts: { messagingAddress: true } }).extensions, [{ spec: PROVIDER_EXT.messagingAddress }]);
-  assert.equal(federationDeclarations(config, { target: 'authority', mounts: {} }).extensions, undefined, 'flags alone never declare');
+test('manifest: the messaging-mailbox provider feature row needs KEY_DELEGATION, INTEGRATIONS, BROKERING and EXTENSIONS, never LINKS_ENABLED, and declares its prerequisite', () => {
+  const row = PROVIDER_FEATURE_ROWS[EXT.messagingMailbox];
+  assert.ok(MANIFEST_DECLARATIONS.includes(row), 'the manifest spreads the very row the account side evaluates');
+  assert.deepEqual(row.flag, ['KEY_DELEGATION_ENABLED', 'INTEGRATIONS_ENABLED', 'BROKERING_ENABLED', 'EXTENSIONS_ENABLED']);
+  assert.equal(row.mounted({ target: 'authority', mounts: {} }), false); assert.equal(row.mounted({ target: 'entries', mounts: { messagingMailbox: true } }), false);
+  assert.equal(row.mounted({ target: 'authority', mounts: { messagingMailbox: true } }), true);
+  // Messaging §2.5: a Bindle extension whose prerequisite (key-delegation) the same row declares (extensions §2.5).
+  assert.deepEqual(row.declare({ config: {} }), { extensions: [{ spec: EXT.keyDelegation, options: { max_certificate_seconds: 86400 } }, { spec: EXT.messagingMailbox }] });
+  assert.deepEqual(row.declare({ config: { DELEGATION_CERTIFICATE_SECONDS: '3600' } }).extensions[0].options, { max_certificate_seconds: 3600 });
+  const config = { APP_ORIGIN: ISSUER, KEY_DELEGATION_ENABLED: 'true', INTEGRATIONS_ENABLED: 'true', BROKERING_ENABLED: 'true', EXTENSIONS_ENABLED: 'true' }, mounts = { messagingMailbox: true };
+  const specs = value => (value.extensions ?? []).map(e => e.spec);
+  for (const off of ['KEY_DELEGATION_ENABLED', 'INTEGRATIONS_ENABLED', 'BROKERING_ENABLED', 'EXTENSIONS_ENABLED']) assert.equal(specs(federationDeclarations({ ...config, [off]: 'false' }, { target: 'authority', mounts })).includes(EXT.messagingMailbox), false, off);
+  assert.deepEqual(specs(federationDeclarations(config, { target: 'authority', mounts })).filter(s => [EXT.keyDelegation, EXT.messagingMailbox].includes(s)), [EXT.keyDelegation, EXT.messagingMailbox]);
+  assert.deepEqual(federationDeclarations({ ...config, LINKS_ENABLED: 'false' }, { target: 'authority', mounts }), federationDeclarations({ ...config, LINKS_ENABLED: 'true' }, { target: 'authority', mounts }), 'LINKS_ENABLED plays no part');
+  assert.equal(specs(federationDeclarations(config, { target: 'authority', mounts: {} })).includes(EXT.messagingMailbox), false, 'flags alone never declare');
 });

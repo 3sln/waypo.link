@@ -10,7 +10,8 @@ import {ownerFlags,existingFeature,flagsFor,siteGlobal} from './flags.mjs';
 //   linkSlotOccupant / delegationSlotOccupant({owner, fragment})  the value ports packages/runtime/account/links.mjs
 //       (LINK_SLOT_OCCUPANT) and identity.mjs (DELEGATION_SLOT_OCCUPANT) fall back to when the flag is on and no port is
 //       configured explicitly (legacy port names kept). Extensions rev 3.2: the resource comes from the projection of the
-//       provider feature that consumes the field (messaging-address for messaging-ingress), so nothing is returned
+//       provider feature that consumes the field (messaging-mailbox for messaging-ingress, Bindle Messaging §2.5; it needs
+//       KEY_DELEGATION_ENABLED, not LINKS_ENABLED, contacts spike CR-C0), so nothing is returned
 //       unless the owner enabled that feature, it is declared and unsuspended, and approved this resource. Exclusive
 //       fields only; anything else is null (fail closed).
 //   connectionsSeverAccount(owner, {reason})  internal hook for suspension, recovery and deletion (review KD-4).
@@ -32,7 +33,9 @@ import {connectionsProvider,CONNECTION_OPERATIONS,CONNECTION_OWNER_OPERATIONS,Fe
 import {FEATURE_DEFINITIONS,FEATURE_SWEEP_MS,providerFeatureDeclarations,blockedExtensions} from '../../app/domains/provider-features.mjs';
 import {surfaceConfig} from './flags.mjs';
 import {brokeringMounts} from '../integration-ports.mjs';
-import {messagingAddressMounted} from '../../app/domains/provider-features.mjs';
+import {messagingMailboxMounted} from '../../app/domains/provider-features.mjs';
+import {EXT} from '../../core/extensions.mjs';
+import {MESSAGING_INGRESS_FRAGMENT} from '../../identity/messaging-ingress.mjs';
 import {StorageError} from '../../storage/policy.mjs';
 import {GOOGLE_DRIVE_INTEGRATION} from '../../storage/google-drive-integration.mjs'; // EXT-X10 registry entry
 
@@ -43,8 +46,8 @@ export const BUILT_IN_INTEGRATIONS=Object.freeze({
  'google-drive':GOOGLE_DRIVE_INTEGRATION, // EXT-X10: upstream connector remains unchanged
 });
 /** The adapter mount evidence behind the provider-feature rows, exactly as the authority manifest receives it: the
- * adapters pass `messagingAddress: messagingAddressMounted(config)` and federation.mjs adds brokeringMounts(config). */
-export const providerFeatureMounts=config=>({...brokeringMounts(config),messagingAddress:messagingAddressMounted(config)});
+ * adapters pass `messagingMailbox: messagingMailboxMounted(config)` and federation.mjs adds brokeringMounts(config). */
+export const providerFeatureMounts=config=>({...brokeringMounts(config),messagingMailbox:messagingMailboxMounted(config)});
 const engines=new WeakMap();
 function connectionsEngine(c){
  let engine=engines.get(c);
@@ -87,6 +90,9 @@ export const methods={
    const result=await run(this,Operation,{actor:{kind:'owner',owner,...Number.isSafeInteger(authTime)?{authTime}:{}},...id===undefined?{}:{id},...input===undefined?{}:{input:shape(input)}});
    await this.connectionsDrain(owner);if(!(Operation.prototype instanceof AppQuery))await this.integrationEventsKick(owner);
    if(operation==='connections.enable-feature'&&typeof this.scheduleAlarm==='function')try{await this.scheduleAlarm(Date.now()+FEATURE_SWEEP_MS);}catch{/* the weekly alarm sweeps */}
+   // Messaging §2.5 step 3: the mailbox feature describes the value on enablement and on every value change and records
+   // the validated ingress (routes/integrations.mjs integrationsMailboxRecord; best effort, after the commit).
+   if((operation==='connections.enable-feature'&&input?.feature===EXT.messagingMailbox||['connections.assign','connections.reorder'].includes(operation)&&input?.fragment===MESSAGING_INGRESS_FRAGMENT)&&typeof this.integrationsMailboxRecord==='function')await this.integrationsMailboxRecord(owner);
    return result;
   },
   // Review M1: the scheduled feature sweep. Re-arms itself while anything is watched; a failure re-arms within an hour.

@@ -76,7 +76,7 @@ const excluded={
  'app-notification-budget/':'Derived: per-connection app message rate accounting.',
  'app-notification-receipt/':'Transient: app message replay receipts (48-hour retention).',
  'message-postback-prepared/':'Secret: prepared form-submission capabilities (encrypted scope).',
- 'developer-contact/':'Secret: the developer-contact pointer: the last developer-policy link this account\'s messaging-ingress occupant issued, with its capability URL sealed (read only on the configured developer account).',
+ 'developer-contact/':'Secret: the legacy developer-contact pointer: the last developer-policy contact link this account\'s messaging-ingress occupant issued, with its capability URL sealed. Developer contact no longer reads it (it mints principal-bound invitations, contacts spike CR-C5); it goes with contact links in phase 4.',
  'link-gc-cursor/':'Transient: link-state sweep cursors.', 'link-audience/':'Derived: cached audience decisions (at most one UTC day).', 'link-replay/':'Transient: audience-response replay rows (at most 420 s).', 'migration/':'Derived: storage migration markers (including the BB-CUT reset marker).', 'export/':'Transient: exports and download authority.',
  'notification-event/':'Transient: notification queue.', 'notification-job/':'Transient: delivery queue.', 'notification-unsubscribe/':'Secret: unsubscribe capabilities.',
  'search-queue-usage/':'Derived: search usage.', 'search-vector-revision/':'Derived: search vectors.',

@@ -2,7 +2,7 @@
 // without waking any mailbox. Entries hold digests only: {owner, claimsDigest, revoked, generation}, never a meta,
 // secret or plaintext token. Keyed by (meta iss, jti) so two providers' jti spaces cannot collide on a shared host.
 // The mailbox always re-verifies in full; the index is a cheap pre-filter that may lag (a stale entry only costs work).
-import {parseCredential,parseCompact,sha256,ProtocolFault} from '../../messaging-protocol/index.mjs';
+import {parseCredential,parseCompact,sha256,jcs,ProtocolFault} from '../../messaging-protocol/index.mjs';
 import {equalDigest} from '../../messaging-protocol/encoding.mjs';
 
 export const LINK_META_TYPE='bindle-link-meta+jwt';
@@ -17,6 +17,13 @@ export function linkClaims(compact){
  const c=jws.claims;if(typeof c.iss!=='string'||typeof c.jti!=='string'||!c.jti||c.jti.length>128||c.iss.length>2048)linkInvalid();return jws;
 }
 
+// Contacts spike phase 3 (messaging §7.4, §6.7 step 2; provisional): invitation entries keyed by token digest
+// {owner, state: live|exhausted|dead, redeemers: [H(principal)], expiresAt} and hosted-recipient entries keyed by
+// (issuer, owner) {owner}. Neither holds a token, a secret or a principal in clear.
+export const inviteKey=digest=>`invite/${digest}`;
+export const hostKey=(issuer,owner)=>`host/${encodeURIComponent(issuer)}|${encodeURIComponent(owner)}`;
+const redeemerDigest=p=>sha256(globalThis.crypto,jcs(['bindle-messaging-redeemer-v1',p.issuer,p.subject]));
+const inviteInvalid=()=>{throw new ProtocolFault('invite_invalid');};
 export function createEdgeIndex(store){
  if(!store||typeof store.get!=='function'||typeof store.put!=='function')throw new TypeError('The edge index needs a store');
  return Object.freeze({
@@ -34,11 +41,28 @@ export function createEdgeIndex(store){
   },
   // Monotonic per (iss, jti): an older generation never overwrites a newer one, and another owner never takes over.
   async publish(entry){
+   if(entry.kind==='invite'||entry.kind==='host'){
+    const key=entry.kind==='invite'?inviteKey(entry.digest):hostKey(entry.issuer,entry.subject),prior=await store.get(key);
+    if(prior&&(prior.owner!==entry.owner||prior.generation>=entry.generation))return false;
+    await store.put(key,entry.kind==='invite'?{owner:entry.owner,state:entry.state,redeemers:entry.redeemers??[],expiresAt:entry.expiresAt,generation:entry.generation}:{owner:entry.owner,active:entry.active===true,generation:entry.generation});return true;
+   }
    const key=edgeKey(entry.iss,entry.jti),prior=await store.get(key);
    if(prior&&(prior.owner!==entry.owner||prior.generation>=entry.generation))return false;
    await store.put(key,{owner:entry.owner,claimsDigest:entry.claimsDigest,revoked:entry.revoked===true,generation:entry.generation});return true;
   },
   get:(iss,jti)=>store.get(edgeKey(iss,jti)),
+  // §6.7 step 2: the routed owner of a hosted recipient with a current occupant, or recipient_unavailable. One body and
+  // timing class for "not hosted" and "no occupant".
+  async hosted(issuer,owner){const entry=typeof issuer==='string'&&typeof owner==='string'?await store.get(hostKey(issuer,owner)):undefined;if(!entry||entry.active!==true)throw new ProtocolFault('recipient_unavailable',{retryAfter:60});return entry.owner;},
+  // §4.4 step 3 pre-filter: the presented token's digest must equal `recipient.invite`, name a live entry for the claimed
+  // owner, or an exhausted one whose recorded redeemers include the claimed author (so its identical retry reaches the
+  // replay step). Every failure is the same invite_invalid after the same digest work. The mailbox re-checks in full.
+  async checkInvite(token,{invite,owner,author}){
+   const digest=await sha256(globalThis.crypto,String(token)),claimed=await redeemerDigest(author),entry=await store.get(inviteKey(invite));
+   const live=entry&&entry.owner===owner&&(entry.state==='live'||entry.state==='exhausted'&&Array.isArray(entry.redeemers)&&entry.redeemers.includes(claimed));
+   if(!equalDigest(digest,typeof invite==='string'?invite:DUMMY)||!live)inviteInvalid();
+   return entry.owner;
+  },
  });
 }
 // Delivers queued publications from one mailbox to the edge index, then deletes exactly the rows it delivered.

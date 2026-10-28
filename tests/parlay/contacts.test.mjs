@@ -15,7 +15,8 @@ test('creating a link stores the exact issued claims and publishes a digest-only
  // Not routable until the outbox is flushed; flushing twice publishes once and empties the outbox.
  const meta=new URL(created.link).searchParams.get('bindle_meta'),link={...created,meta};
  code(await w.deliver('alice','bob',link),401,'link_invalid');
- assert.equal(await w.flush('bob'),1);assert.equal(await w.flush('bob'),0);
+ // Two publications: the link and the hosted-recipient entry receive.configure queued (contacts spike phase 3).
+ assert.equal(await w.flush('bob'),2);assert.equal(await w.flush('bob'),0);
  const entry=await w.edge.get(P.bob.principal.issuer,created.jti);assert.deepEqual(Object.keys(entry).sort(),['claimsDigest','generation','owner','revoked']);
  assert.equal(JSON.stringify(entry).includes(meta.split('.')[1]),false,'no meta material in the index');
  assert.equal((await w.deliver('alice','bob',link)).status,200);

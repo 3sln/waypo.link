@@ -31,12 +31,11 @@ export const publicDocumentation=Object.freeze([
  ['Bindle extensions','docs/spec/extensions/app-metadata.md','Application metadata'],
  ['Bindle extensions','docs/spec/extensions/events.md','Event buses (draft)'],
  ['Bindle extensions','docs/spec/extensions/intents.md','Intent links and handlers (draft)'],
- ['Bindle extensions','docs/spec/extensions/links.md','Links (dissolved; frozen record)'],
  ['Bindle extensions','docs/spec/extensions/identity-portability.md','Identity portability (draft)'],
  ['Bindle extensions','docs/spec/extensions/app-removal.md','App removal and subject deletion (proposed)'],
  ['Bindle extensions','docs/spec/extensions/organizations.md','Organizations and relations (skeleton)'],
  ['Bindle extensions','docs/spec/extensions/organizations-link-envelope.md','Link envelope (Organizations annex, draft)'],
- ['Bindle extensions','docs/spec/extensions/signaling.md','Signaling (draft, unimplemented)'],
+ ['Bindle extensions','docs/spec/extensions/signaling.md','Signaling (draft; implemented locally behind flags)'],
  ['Bindle extensions','docs/spec/extensions/messaging.md','Bindle Messaging (draft)'],
  ['Bindle extensions','docs/spec/extensions/message-content.md','Message content (draft)'],
  ['3sln.me reference service','docs/3sln/accounts/sign-in-and-sessions.md','Sign-in, passkeys and sessions'],
@@ -65,9 +64,11 @@ export const publicDocumentation=Object.freeze([
  ['Superseded (for reference)','docs/spec/superseded/beaming.md','Beaming (superseded)'],
  ['Superseded (for reference)','docs/spec/superseded/extensions-rev2.md','Extensions revision 2 (frozen copy)'],
  ['Superseded (for reference)','docs/spec/superseded/signaling-rev2.1.md','Signaling revision 2.1 (frozen copy)'],
+ ['Superseded (for reference)','docs/spec/superseded/links.md','Links (dissolved; frozen record)'],
 ].map(([group,source,title])=>Object.freeze({group,source,title})));
 // Locations that moved in the 2026-10-27 documentation split (old docs/spec/ paths,
-// some previously published and some referenced by the contract registry).
+// some previously published and some referenced by the contract registry), and later
+// moves such as the dissolved links draft (docs/spec/extensions/ to superseded/, 2026-10-28).
 // The build writes a small redirect page at each old location so existing links keep working.
 export const movedDocumentation=Object.freeze({
  'docs/spec/device-login.md':'docs/3sln/accounts/sign-in-and-sessions.md',
@@ -85,7 +86,8 @@ export const movedDocumentation=Object.freeze({
  'docs/spec/app-metadata.md':'docs/spec/extensions/app-metadata.md',
  'docs/spec/message-content.md':'docs/spec/extensions/message-content.md',
  'docs/spec/intents.md':'docs/spec/extensions/intents.md',
- 'docs/spec/links.md':'docs/spec/extensions/links.md',
+ 'docs/spec/links.md':'docs/spec/superseded/links.md',
+ 'docs/spec/extensions/links.md':'docs/spec/superseded/links.md',
  'docs/spec/events.md':'docs/spec/extensions/events.md',
  'docs/spec/integrations.md':'docs/spec/extensions/integrations.md',
  'docs/spec/incremental-authorization.md':'docs/spec/extensions/incremental-authorization.md',

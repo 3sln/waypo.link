@@ -7,16 +7,19 @@
 //     gone" and "the feature's grants are suspended" are the same fact.
 // Pure: no storage. The grants themselves live in the connections domain (packages/apps/connections.mjs).
 import {siteGlobal} from '../../flags/read.mjs';
-import {PROVIDER_EXT,declare} from '../../core/extensions.mjs';
+import {EXT,PROVIDER_EXT,declare} from '../../core/extensions.mjs';
 import {PUBLIC_INTAKE_FRAGMENT,PUBLIC_INTAKE_CONTRACT} from '../../email-bridge/wire.mjs';
 import {MESSAGING_INGRESS_FRAGMENT} from '../../identity/messaging-ingress.mjs';
 import {bridgeConfig} from '../../email-bridge/engine.mjs';
+import {delegationLifetime} from '../../identity/delegation.mjs';
 
 export const MAILBOX_CONTRACT='https://spec.bindle.example/messaging/v1/contracts/mailbox';
 /** spec URL -> {fragment, field, methods}. Methods per contract are the feature's fixed request (extensions §4.2). */
 export const FEATURE_DEFINITIONS=Object.freeze({
  [PROVIDER_EXT.emailBridge]:Object.freeze({fragment:PUBLIC_INTAKE_FRAGMENT,field:'intake',methods:Object.freeze({[PUBLIC_INTAKE_CONTRACT]:Object.freeze(['deliver'])})}),
- [PROVIDER_EXT.messagingAddress]:Object.freeze({fragment:MESSAGING_INGRESS_FRAGMENT,field:'ingress',methods:Object.freeze({[MAILBOX_CONTRACT]:Object.freeze(['describe'])})}),
+ // Bindle Messaging §2.5 (contacts spike CR-X1, provisional): the messaging-mailbox feature replaces the withdrawn
+ // messaging-address one. Key delegation certifies the Parlay purposes only through it (identity/delegation.mjs).
+ [EXT.messagingMailbox]:Object.freeze({fragment:MESSAGING_INGRESS_FRAGMENT,field:'mailbox',methods:Object.freeze({[MAILBOX_CONTRACT]:Object.freeze(['describe'])})}),
 });
 /** Suspended grants are revoked after this long of continuous suspension (extensions §4.2). */
 export const SUSPENSION_REVOCATION_MS=30*86400000;
@@ -25,16 +28,20 @@ export const SUSPENSION_REVOCATION_MS=30*86400000;
  * A loss is dated from the last evaluation that still saw the declaration (packages/apps/connections.mjs), so the
  * 30-day bound is never late and at most this much early. Same cadence as the 6-hourly lifecycle sweeps. */
 export const FEATURE_SWEEP_MS=6*3600000;
-/** BB-C1b: the messaging-address handoff is mounted only with LINKS, INTEGRATIONS and a describe port. */
-export const messagingAddressMounted=config=>siteGlobal(config,'LINKS_ENABLED',true)&&siteGlobal(config,'INTEGRATIONS_ENABLED',true)&&typeof config.MESSAGING_DESCRIBE==='function';
+/** Messaging §2.5: the mailbox feature's `describe` is mounted only with key delegation, integrations, brokering and a
+ * describe port (MESSAGING_DESCRIBE, the brokered consumer call). Contacts spike CR-C0: LINKS_ENABLED is no longer
+ * involved. A host certificate lifetime that does not parse leaves it unmounted (it could not be declared honestly). */
+export const messagingMailboxMounted=config=>siteGlobal(config,'KEY_DELEGATION_ENABLED',true)&&siteGlobal(config,'INTEGRATIONS_ENABLED',true)&&siteGlobal(config,'BROKERING_ENABLED',true)&&typeof config.MESSAGING_DESCRIBE==='function'&&delegationLifetime(config.DELEGATION_CERTIFICATE_SECONDS)!==null;
 // The manifest rows of the provider features (packages/runtime/federation.mjs MANIFEST_DECLARATIONS spreads exactly these
 // objects), in the registry's row shape {flag, mounted, declare}. Review M2 (2026-10-27): the account-side declarations
 // port evaluates the same rows with the same mounts, so a feature counts as declared to its grants exactly when the
 // published manifest carries its entry (mount requirements such as BROKERED_INTROSPECTION_MOUNTED included).
 export const PROVIDER_FEATURE_ROWS=Object.freeze({
- // BB-C1b: the descriptor handoff must be mounted (`mounts.messagingAddress`). Withdrawn by the contacts spike (CL-4);
- // kept until that code path is removed.
- [PROVIDER_EXT.messagingAddress]:Object.freeze({flag:Object.freeze(['LINKS_ENABLED','EXTENSIONS_ENABLED']),mounted:c=>c.target==='authority'&&c.mounts?.messagingAddress===true,declare:()=>({extensions:[declare(PROVIDER_EXT.messagingAddress)]})}),
+ // Messaging §2.5 (provisional): describe mounted (`mounts.messagingMailbox`). The row also declares its prerequisite,
+ // key-delegation (extensions §2.5, messaging §3.2), with this host's delegation certificate lifetime, so both the
+ // published manifest and the account-side declarations port hold exactly one key-delegation entry beside it. The
+ // directory route's member-certificate entry merges into this one (routes/directory.mjs, `merge:true`).
+ [EXT.messagingMailbox]:Object.freeze({flag:Object.freeze(['KEY_DELEGATION_ENABLED','INTEGRATIONS_ENABLED','BROKERING_ENABLED','EXTENSIONS_ENABLED']),mounted:c=>c.target==='authority'&&c.mounts?.messagingMailbox===true,declare:c=>({extensions:[declare(EXT.keyDelegation,{max_certificate_seconds:delegationLifetime(c?.config?.DELEGATION_CERTIFICATE_SECONDS)??86400}),declare(EXT.messagingMailbox)]})}),
  // Extensions rev 3.2 (§11.1, Q2 provisional): integrations and brokered resources mounted, and a configured bridge.
  [PROVIDER_EXT.emailBridge]:Object.freeze({flag:Object.freeze(['EMAIL_BRIDGE_ENABLED','INTEGRATIONS_ENABLED','BROKERING_ENABLED','EXTENSIONS_ENABLED']),mounted:c=>c.target==='authority'&&c.mounts?.integrations===true&&c.mounts?.brokeredResources===true&&bridgeConfig(c.config).enabled===true,declare:()=>({extensions:[declare(PROVIDER_EXT.emailBridge)]})}),
 });
@@ -49,7 +56,7 @@ export function providerFeatureDeclared(config={},spec,mounts={}){
 }
 /** The provider's own feature declarations as a manifest fragment ({issuer, extensions}), for the declarations port. */
 export function providerFeatureDeclarations(config={},mounts={}){
- const extensions=Object.keys(FEATURE_DEFINITIONS).filter(spec=>providerFeatureDeclared(config,spec,mounts)).flatMap(spec=>PROVIDER_FEATURE_ROWS[spec].declare().extensions);
+ const extensions=Object.keys(FEATURE_DEFINITIONS).filter(spec=>providerFeatureDeclared(config,spec,mounts)).flatMap(spec=>PROVIDER_FEATURE_ROWS[spec].declare({config,issuer:config.APP_ORIGIN,target:'authority',mounts:mounts??{}}).extensions);
  return {issuer:config.APP_ORIGIN,extensions};
 }
 /** Extension versions the operator blocked (extensions §7): EXTENSION_BLOCKLIST, a JSON array or comma list of URLs. */

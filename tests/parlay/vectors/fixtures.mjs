@@ -1,6 +1,6 @@
 // Test-only Bindle Messaging parties: identity keys, delegate keys, certificates and in-memory directory/status ports.
 // Reserved .example hosts only. These fixtures are not a provider, directory or delegation service.
-import {encodeDelegation,thumbprint,PURPOSES,PROFILE,contentDescriptor,signGenesis,signEnvelope,signInvitationResponse,signReceipt,receiptPayload,genesisDigest,secretDigest,base64url,fromBase64url} from '../../../packages/messaging-protocol/index.mjs';
+import {encodeDelegation,thumbprint,PURPOSES,PROFILE,contentDescriptor,signGenesis,signEnvelope,signInvitationResponse,signReceipt,receiptPayload,genesisDigest,secretDigest,base64url,fromBase64url,sha256} from '../../../packages/messaging-protocol/index.mjs';
 
 export const NOW=Date.UTC(2026,9,20,12);
 export const NAMES=['alice','bob','carol'];
@@ -52,12 +52,16 @@ export const SECRET=Uint8Array.from({length:32},(_,i)=>i+1);
 export const SECRET2=Uint8Array.from({length:32},(_,i)=>64+i);
 export const NONCE=base64url(Uint8Array.from({length:16},(_,i)=>200-i));
 export const linkRecipient=(to,contactId='jti-contact-1',resource='parent-1')=>({issuer:to.principal.issuer,owner:to.principal.subject,contactId,resource});
+export const plainRecipient=to=>({issuer:to.principal.issuer,owner:to.principal.subject});
+// Invitation redemption (spec §4.3): a fixed test token (not a secret) and its digest name the invitation.
+export const INVITE_TOKEN='vectors-invite-token-0123456789AB';
+export const inviteRecipient=async(to,token=INVITE_TOKEN,crypto=globalThis.crypto)=>({issuer:to.principal.issuer,owner:to.principal.subject,invite:await sha256(crypto,token)});
 export const recordRecipient=(to,incarnation='inc-for-alice')=>({issuer:to.principal.issuer,owner:to.principal.subject,conversationId:CONVERSATION,incarnation});
 export const binding=(p,incarnation=`inc-from-${p.name}`)=>({ingress:p.ingress,incarnation,profiles:[PROFILE],limits:{maxParticipants:32,maxMessageBytes:1048576,maxEnvelopeBytes:65536,maxBatchContexts:32},...p.ingress.startsWith('https://hub.')?{multicast:MULTICAST}:{}});
 export const uuidOf=n=>`00000000-0000-4000-8000-${String(n).padStart(12,'0')}`;
 
-export async function linkPayload(from,to,{kind='one-off',body=encoder.encode('Hello from the vectors.'),mimeType='text/plain',operationId=uuidOf(1),createdAt=NOW-60000,subject='Hello',optionalTags=[],recipient=linkRecipient(to),...extra}={},crypto=globalThis.crypto){
- return {version:1,profile:PROFILE,kind,noReply:kind==='one-off',operationId,createdAt,recipient,content:await contentDescriptor(mimeType,body,crypto),subject,optionalTags,author:from.author,...extra};
+export async function linkPayload(from,to,{kind='one-off',body=encoder.encode('Hello from the vectors.'),mimeType='text/plain',operationId=uuidOf(1),createdAt=NOW-60000,subject='Hello',recipient=linkRecipient(to),...extra}={},crypto=globalThis.crypto){
+ return {version:1,profile:PROFILE,kind,noReply:kind==='one-off',operationId,createdAt,recipient,content:await contentDescriptor(mimeType,body,crypto),subject,author:from.author,...extra};
 }
 export async function genesisFor(creator,participants,{body=encoder.encode('Let us talk.'),createdAt=NOW-120000,subject='Planning'}={},crypto=globalThis.crypto){
  return signGenesis({version:1,profile:PROFILE,conversationId:CONVERSATION,createdAt,creator:creator.author,participants:participants.map(p=>({principal:p.principal,keyId:p.keyId})),secretEpoch:EPOCH,secretDigest:await secretDigest(SECRET,crypto),subject,content:await contentDescriptor('text/plain',body,crypto)},creator.signer,{crypto});
@@ -68,8 +72,13 @@ export async function initEnvelope(creator,invitee,participants,{body=encoder.en
  return signEnvelope(payload,creator.signer,{crypto});
 }
 export async function recordPayload(from,to,type,{counter=1,previous=null,parents=[],target,data,body,incarnation=`inc-for-${from.name}`,createdAt=NOW-30000,operationId=uuidOf(100+counter),epoch=EPOCH,stream=from.author.delegate,...extra}={},crypto=globalThis.crypto){
- return {version:1,profile:PROFILE,kind:'conversation-record',noReply:false,operationId,createdAt,recipient:recordRecipient(to,type==='peer-hello'?'hello':incarnation),content:body?await contentDescriptor('text/plain',body,crypto):null,subject:'',optionalTags:[],author:from.author,
+ return {version:1,profile:PROFILE,kind:'conversation-record',noReply:false,operationId,createdAt,recipient:recordRecipient(to,type==='peer-hello'?'hello':incarnation),content:body?await contentDescriptor('text/plain',body,crypto):null,subject:'',author:from.author,
   record:{type,conversationId:CONVERSATION,epoch,stream,counter,previous,parents,...target?{target}:{},...data?{data}:{}},...extra};
+}
+// A redemption: a content-free conversation-init whose genesis lists exactly the redeemer and the inviter (§4.3).
+export async function redemptionEnvelope(redeemer,inviter,{token=INVITE_TOKEN,createdAt=NOW-60000,operationId=uuidOf(4)}={},crypto=globalThis.crypto){
+ const genesis=await signGenesis({version:1,profile:PROFILE,conversationId:CONVERSATION,createdAt:createdAt-1000,creator:redeemer.author,participants:[redeemer,inviter].map(p=>({principal:p.principal,keyId:p.keyId})),secretEpoch:EPOCH,secretDigest:await secretDigest(SECRET,crypto),subject:'',content:null},redeemer.signer,{crypto});
+ return signEnvelope({version:1,profile:PROFILE,kind:'conversation-init',noReply:false,operationId,createdAt,recipient:await inviteRecipient(inviter,token,crypto),content:null,subject:'',author:redeemer.author,conversation:{genesis,sharedSecret:base64url(SECRET),returnControl:{resource:`${new URL(redeemer.ingress).origin}/return/redeem-1`,nonce:NONCE,expiresAt:createdAt+86400000,maxResponseBytes:8192},creatorBinding:binding(redeemer,`inc-for-${inviter.name}`)}},redeemer.signer,{crypto});
 }
 export async function invitationResponse(responder,genesis,{decision='accept',acceptListed=true,createdAt=NOW-30000}={},crypto=globalThis.crypto){
  return signInvitationResponse({version:1,profile:PROFILE,conversationId:CONVERSATION,genesisDigest:await genesisDigest(genesis,crypto),nonce:NONCE,decision,acceptListed,responder:responder.author,...decision==='accept'?{binding:binding(responder)}:{},createdAt},responder.signer,{crypto});

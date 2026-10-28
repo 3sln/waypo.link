@@ -30,12 +30,20 @@ export class LinkIndexObject extends DurableObject {
  async checkConversation(credential,envelope){try{if(!enabled(this.env.PARLAY_ENABLED))fault('not_found','Messaging is disabled.',404);return {ok:true,value:await createConversationEdge(this.store??workerStore(this.ctx.storage)).check(credential,envelope)};}catch(error){return {ok:false,error:{code:error?.code??'internal_error',status:error?.status??500}};}}
  async routeConversation(token){try{if(!enabled(this.env.PARLAY_ENABLED))fault('not_found','Messaging is disabled.',404);return {ok:true,value:await createConversationEdge(workerStore(this.ctx.storage)).route(token)};}catch(error){return {ok:false,error:{code:error?.code??'internal_error',status:error?.status??500}};}}
  publishConversation(entry){if(!enabled(this.env.PARLAY_ENABLED))fault('not_found','Messaging is disabled.',404);return this.ctx.storage.transaction(tx=>createConversationEdge(tx).publish(entry));}
+ // Contacts spike phase 3: hosted-recipient and invitation entries (messaging §6.7 step 2, §7.4).
+ async hosted(issuer,owner){try{if(!enabled(this.env.PARLAY_ENABLED))fault('not_found','Messaging is disabled.',404);return {ok:true,value:await this.index.hosted(issuer,owner)};}catch(error){return {ok:false,error:{code:error?.code??'internal_error',status:error?.status??500}};}}
+ async checkInvite(token,claim){try{if(!enabled(this.env.PARLAY_ENABLED))fault('not_found','Messaging is disabled.',404);return {ok:true,value:await this.index.checkInvite(token,claim)};}catch(error){return {ok:false,error:{code:error?.code??'internal_error',status:error?.status??500}};}}
 }
 function indexStub(env,key){if(!env.LINK_INDEX)fault('recipient_unavailable','Ingress index unavailable.',503);let hash=2166136261;for(const c of key)hash=Math.imul(hash^c.charCodeAt(0),16777619)>>>0;return env.LINK_INDEX.get(env.LINK_INDEX.idFromName(`links-v1/${hash%64}`));}
 function checked(result){if(!result.ok)throw new ProtocolFault(result.error.code,{status:result.error.status});return result.value;}
 export function edgeIndex(env){
  const stub=(iss,jti)=>indexStub(env,JSON.stringify([iss,jti]));
- return {check:async header=>{const credential=parseCredential(header);if(credential.scheme!=='BindleLink')fault('not_authorized','Not authorized.',403);const {claims}=linkClaims(credential.value),result=await stub(claims.iss,claims.jti).check(header);if(!result.ok)throw new ProtocolFault(result.error.code,{status:result.error.status});return result.value;},publish:entry=>stub(entry.iss,entry.jti).publish(entry)};
+ // Invitation entries shard by token digest, hosted-recipient entries by (issuer, owner); link entries by (iss, jti).
+ const shard=entry=>entry.kind==='invite'?indexStub(env,'invite:'+entry.digest):entry.kind==='host'?indexStub(env,'host:'+JSON.stringify([entry.issuer,entry.subject])):stub(entry.iss,entry.jti);
+ return {check:async header=>{const credential=parseCredential(header);if(credential.scheme!=='BindleLink')fault('not_authorized','Not authorized.',403);const {claims}=linkClaims(credential.value),result=await stub(claims.iss,claims.jti).check(header);if(!result.ok)throw new ProtocolFault(result.error.code,{status:result.error.status});return result.value;},
+  hosted:async(issuer,owner)=>checked(await indexStub(env,'host:'+JSON.stringify([issuer,owner])).hosted(issuer,owner)),
+  checkInvite:async(token,claim)=>checked(await indexStub(env,'invite:'+claim.invite).checkInvite(token,claim)),
+  publish:entry=>shard(entry).publish(entry)};
 }
 export function conversationIndex(env){return {
  async check(credential,envelope){const p=envelope.payload,key=await edgeKey({conversationId:p.record.conversationId,author:{issuer:p.author.principal.issuer,subject:p.author.principal.subject},owner:{issuer:p.recipient.issuer,subject:p.recipient.owner}});return checked(await indexStub(env,'peer:'+key).checkConversation(credential,envelope));},

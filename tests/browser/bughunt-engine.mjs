@@ -86,7 +86,11 @@ test('F10 sharing restores focus to the control that opened the dialog',async()=
  }finally{await f.close();}
 });
 
-test('F13 copying the developer contact link says "Contact link copied."',async()=>{
- const f=await fixture({secrets:{developerContactURL:{owner:OWNER,generation:1,url:'https://space.example/users/dev/contact/x?bindle_meta=a.b'}}});
- try{await f.act(new CopyDeveloperContact());assert.equal((await f.read()).notice,'Contact link copied.');assert.deepEqual(f.effects.at(-1),['copy','https://space.example/users/dev/contact/x?bindle_meta=a.b']);}finally{await f.close();}
+test('F13 copying the developer invitation says "Invitation link copied."; an expired one is not copied',async()=>{
+ // Contacts spike CR-C5/CR-C8: the console holds a minted `connect` invitation, never a contact link.
+ const url='web+bindle://intent?bintent=abc',f=await fixture({secrets:{developerContactURL:{owner:OWNER,generation:1,value:'abc',url,expiresAt:Date.now()+3600000}}});
+ try{await f.act(new CopyDeveloperContact());assert.equal((await f.read()).notice,'Invitation link copied.');assert.deepEqual(f.effects.at(-1),['copy',url]);
+}finally{await f.close();}
+ const expired=await fixture({secrets:{developerContactURL:{owner:OWNER,generation:1,value:'abc',url,expiresAt:Date.now()+1000}}});
+ try{await expired.act(new CopyDeveloperContact());assert.deepEqual(expired.effects,[]);}finally{await expired.close();}
 });

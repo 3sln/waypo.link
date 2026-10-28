@@ -11,6 +11,9 @@ export async function nextWake(tx,now){
   for(const row of (await tx.list({prefix:'conv/work/'})).values())due.push(Math.max(now+1,row.nextAt??now));
   for(const row of (await tx.list({prefix:'conv/response/'})).values())if(row.state==='pending')due.push(Math.max(now+1,row.nextAt??now));
   for(const row of (await tx.list({prefix:'conv/op/'})).values())if(!row.submitted&&!row.abandoned)due.push(now+60000);
+  // Contacts spike phase 3: automatic redemption accepts, and pending redemptions awaiting their rollback deadline.
+  if((await tx.list({prefix:'inv/accept/',limit:1})).size)due.push(now+1);
+  for(const row of (await tx.list({prefix:'inv/pending/'})).values())if(row.state==='pending'&&Number.isSafeInteger(row.returnExpiresAt))due.push(Math.max(now+1,row.returnExpiresAt));
  }
  return due.length?Math.min(...due):null;
 }

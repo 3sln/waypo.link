@@ -22,8 +22,10 @@ const unavailable=()=>new StorageError('identity_keys_unavailable','Identity key
 // Slice C3, key-delegation.v1 (packages/identity/delegation.mjs): one delegation engine per controller over the same
 // account store. New issuance and renewal are `not_found` unless KEY_DELEGATION_ENABLED (or, until contacts spike CR-C7,
 // LINKS_ENABLED) admits them (keyDelegationAdmits). `config.DELEGATION_SLOT_OCCUPANT`
-// ({owner, slot}) -> {clientId, origin, ingress, cnx, purposes} | null is the messaging-ingress occupancy port (EXT-X4
-// connections and C1b slot handoff provide it); without it nothing is certified. `DELEGATION_CERTIFICATE_SECONDS`
+// ({owner, fragment}) -> {clientId, origin, ingress, cnx, purposes} | null is the messaging-ingress occupancy port; the
+// default (delegationSlotOccupant) answers only through the enabled, unsuspended messaging-mailbox provider feature with a
+// filled `mailbox` field and a recorded ingress (Bindle Messaging §2.5, §3.2); without it nothing is certified. Disabling
+// or revoking that feature writes a reconcile cascade that revokes every active jkt (apps/connections.mjs). `DELEGATION_CERTIFICATE_SECONDS`
 // sets the certificate lifetime (default and maximum 86400). The app/system entry `delegationOperation` is internal
 // (no `rpc` entry): the trusted contract adapter builds the actor from the verified app grant, never from a request.
 export const DELEGATION_ENGINE_OPERATIONS=operations(...DELEGATION_OPERATIONS);

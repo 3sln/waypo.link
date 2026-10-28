@@ -30,7 +30,7 @@ const rows=[
  ['SUBJECT_DELETED_EVENTS_ENABLED','a','G',{risk:'crit',requires:['INTEGRATIONS_ENABLED'],envParse:'boolean'}],
  ['INCREMENTAL_AUTH_ENABLED','a','G A S P C',{risk:'crit',requires:['FEDERATION_ENABLED'],stateful:true,retainExisting:false,retentionReason:'Pending requests and grants live in federation stores; no account-local predicate.',envParse:'boolean'}],
  ['EXTENSIONS_ENABLED','a','G A C',{stateful:true,envParse:'boolean'}],
- // Core links contract, key-delegation certificates and the messaging-address descriptor (messaging extraction prep,
+ // Core links contract and the contact-link descriptor; key-delegation issuance only as KEY_DELEGATION_ENABLED's fallback (messaging extraction prep,
  // 2026-10-26). Formerly BINDLEBOX_ENABLED, which named the separate messaging app; that name is retired below and its
  // raw env value is still honoured through envAlias (the new name wins when both are set). BB-CUT (2026-10-27) kept the
  // alias; removing it is an open item (DEVLOG "Messaging removed from core; Parlay rename; BB-CUT reset", review fixes).
@@ -39,8 +39,9 @@ const rows=[
  // with a live `key-delegation/` row stays serviceable through a ramp-down (runtime/account/flags.mjs reads those rows only,
  // never `link/`). Once configured (a console record or an env value) it decides alone; until CR-C7 retires LINKS_ENABLED,
  // an unconfigured one falls back to LINKS_ENABLED, except a LINKS_ENABLED retention that only `link/` rows could justify
- // (identity/delegation.mjs keyDelegationAdmits), so no existing deployment changes. Later it folds into rev 3.1
- // Messaging extension enablement.
+ // (identity/delegation.mjs keyDelegationAdmits), so no existing deployment changes. Since 2026-10-28 it also gates the
+ // messaging-mailbox provider feature's declaration row and MESSAGING_DESCRIBE (Bindle Messaging §2.5), which is what
+ // key-delegation occupancy reads; that row requires KEY_DELEGATION_ENABLED explicitly (no LINKS_ENABLED fallback).
  ['KEY_DELEGATION_ENABLED','a','G A S P',{stateful:true,envParse:'boolean'}],
  // The email bridge needs no messaging-app flag: delivery waits for any occupant of the public-message-intake slot.
  ['EMAIL_BRIDGE_ENABLED','a','G A S P',{risk:'crit',stateful:true,retainExisting:false,retentionReason:'Holding queues and opt-in live in the external email-bridge store; no account-local predicate.',envParse:'boolean'}],

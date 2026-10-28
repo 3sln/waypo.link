@@ -39,7 +39,7 @@ import {PROVIDER_FEATURE_ROWS} from '../app/domains/provider-features.mjs';
 import {ICE_RELAY_METHODS,relayConfigured} from '../signaling/relay.mjs';
 import {LEG_CERTIFICATE_SECONDS} from '../signaling/certificates.mjs';
 
-export {messagingAddressMounted} from '../app/domains/provider-features.mjs';
+export {messagingMailboxMounted} from '../app/domains/provider-features.mjs';
 export const BROKERING_STORE='bindle-brokering-v1';
 export const FEDERATION_LAYOUT='bindle-federation-v1';
 /** Append-only declaration registry (EXT-X2). Slices append rows; never edit builders or other slices' rows.
@@ -64,10 +64,10 @@ export const MANIFEST_DECLARATIONS=Object.freeze([
  // branch, DPoP RPC and cancellation (runtime/device-grant.mjs). DPoP algorithms and revocation_endpoint are already
  // base authority members whenever that mount is possible.
  {flag:'DEVICE_AUTHORIZATION_ENABLED',mounted:c=>c.target==='authority'&&c.mounts.deviceAuthorization===true,declare:c=>{const {device_authorization_endpoint,grant_types_supported,extensions}=deviceManifest(c.issuer);return {device_authorization_endpoint,grant_types_supported,extensions};}},
- // BB-C1b, extensions rev 3.2: the `messaging-address` provider feature is its own 3sln.me extension (extensions §4.2).
- // Its row lives with the feature definitions (app/domains/provider-features.mjs) so the account-side declarations port
- // evaluates the very same row (review M2).
- PROVIDER_FEATURE_ROWS[PROVIDER_EXT.messagingAddress],
+ // Messaging §2.5 (contacts spike CR-X1, provisional): the Bindle messaging-mailbox extension with its key-delegation
+ // prerequisite (replacing the withdrawn 3sln.me messaging-address row). Its row lives with the feature definitions
+ // (app/domains/provider-features.mjs) so the account-side declarations port evaluates the very same row (review M2).
+ PROVIDER_FEATURE_ROWS[EXT.messagingMailbox],
  // IA-1: `grant-more`/`configure` need no row of their own (a second authorization-entry entry would fail closed as a
  // duplicate). They ride the FEDERATION_ENTRY_ENABLED row through `entries.intents()`, which lists them only when the
  // adapter passed AuthorizationEntries a mounted INCREMENTAL_AUTHORIZATION port (INCREMENTAL_AUTH_ENABLED on).

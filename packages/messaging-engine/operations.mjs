@@ -16,6 +16,7 @@ export const MAILBOX_OPERATIONS=operations(MailboxPing,...CONVERSATION_OPERATION
  ...VIEW_OPERATIONS,...RULE_OPERATIONS,...TAG_OPERATIONS,...CLASSIFY_OPERATIONS, // BB-B5
  ...BRIDGE_OPERATIONS, // BB-B7
  ...ARCHIVE_OPERATIONS, // BB-B6
+ ...INVITE_OPERATIONS, // contacts spike phase 3
 );
 
 // BB-B5 append-only domain registration.
@@ -29,3 +30,6 @@ import {BRIDGE_OPERATIONS} from './domains/bridge.mjs';
 
 // BB-B6 append-only domain registration.
 import {ARCHIVE_OPERATIONS} from './domains/archive.mjs';
+
+// Contacts spike phase 3 append-only domain registration (provisional, unsigned).
+import {INVITE_OPERATIONS} from './domains/invites.mjs';

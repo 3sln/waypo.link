@@ -29,7 +29,7 @@ import {AppAction,AppQuery} from '../app/engine.mjs';
 import {AppFault} from '../app/faults.mjs';
 import {UUID} from '../core/primitives.mjs';
 import {connectionState} from '../apps/connections.mjs';
-import {PROVIDER_EXT,parseSpecURL} from '../core/extensions.mjs';
+import {EXT,PROVIDER_EXT,parseSpecURL} from '../core/extensions.mjs';
 import {appendSeverance,severanceMeta,SEVER,SEVER_META} from './brokered-severance.mjs';
 import {RESOURCE_SCOPING} from '../storage/scoping.mjs';
 import {contractReferences} from './integrations.mjs';
@@ -233,15 +233,15 @@ function scope(p,actor){
     await sever(t,rows);return counts;});
    return {checked:mine.records.length,pruned:mine.pruned,...changes,...recovered?{health:recovered}:{}};
   },
-  /** C1b: the messaging resource's `describe` (messaging §2.2) through the brokered record a messaging-address entry
-   * names, as that provider feature (extensions rev 3.2 §4.2: `bindle.feature` = its spec URL, `bindle.grant` = its
+  /** C1b: the messaging resource's `describe` (messaging §2.2) through the brokered record a messaging-ingress `mailbox`
+   * entry names, as the messaging-mailbox provider feature (messaging §2.5) (extensions rev 3.2 §4.2: `bindle.feature` = its spec URL, `bindle.grant` = its
    * grant). `seat` is the feature projection's answer ({seat, connection, clientId, generation, resource, cnx, grant});
    * every link of entry -> record -> connection is re-checked here, so an entry pointing at another connection's record,
    * a stale generation, a detached or unavailable record or a DPoP-required integration all answer resource_unavailable.
-   * Returns the raw `result`; the caller validates it against §2.3. */
+   * Returns the raw `result`; the caller validates it (exact members, messaging §2.2). */
   async describe(input){
    systemOnly();records();const v=only(input,['feature','seat']);const seat=v.seat;
-   if(v.feature!==PROVIDER_EXT.messagingAddress||!plain(seat)||typeof seat.resource!=='string'||!UUID.test(seat.resource)||typeof seat.connection!=='string'||!Number.isSafeInteger(seat.generation)||typeof seat.cnx!=='string'||!/^[a-f0-9-]{36}\.\d{1,16}$/.test(seat.cnx)||typeof seat.grant!=='string'||!UUID.test(seat.grant))unavailable();
+   if(v.feature!==EXT.messagingMailbox||!plain(seat)||typeof seat.resource!=='string'||!UUID.test(seat.resource)||typeof seat.connection!=='string'||!Number.isSafeInteger(seat.generation)||typeof seat.cnx!=='string'||!/^[a-f0-9-]{36}\.\d{1,16}$/.test(seat.cnx)||typeof seat.grant!=='string'||!UUID.test(seat.grant))unavailable();
    let {record:r,connection:c}=await tx(async t=>{let r;try{r=await load(t,seat.resource);}catch{unavailable();}return {record:r,connection:await readConnection(t,owner,r.connection)};});
    if(r.connection!==seat.connection||!c||c.clientId!==seat.clientId||c.generation!==seat.generation||!c.serving||r.status!=='available')unavailable();
    // A stale record is never rebound from here: a public descriptor request must not cause lookups (X7-R2). The

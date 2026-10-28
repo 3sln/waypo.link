@@ -33,8 +33,9 @@ const messagingContact = Object.freeze({
 export const LINK_TYPE_BINDINGS = Object.freeze(Object.assign(Object.create(null), { [MESSAGING_CONTACT_LINK_TYPE]: messagingContact }));
 export const linkBinding = type => (typeof type === 'string' && Object.hasOwn(LINK_TYPE_BINDINGS, type) ? LINK_TYPE_BINDINGS[type] : null);
 
-// BB-C1b: the handoff. The `messaging-address` provider feature resolves a link of a bound type to the current value of
-// the binding's field (messaging.md §2.1, §2.3). Placeholders under spec.bindle.example.
+// BB-C1b: the handoff (links/handoff.mjs). A link of a bound type resolves to the current value of the binding's field,
+// described through the messaging-mailbox provider feature (Bindle Messaging §2.5; the 3sln.me messaging-address
+// feature it replaced is withdrawn). Kept until contacts spike phase 4. Placeholders under spec.bindle.example.
 export const DESCRIPTOR_MEDIA_TYPE = 'application/vnd.bindle.messaging.ingress+json';
 /** Link type -> field fragment, the reviewed registration table (messaging.md §4.2). */
 export const LINK_FRAGMENT_TABLE = Object.freeze(Object.entries(LINK_TYPE_BINDINGS).map(([type, binding]) => Object.freeze({ type, fragment: binding.fragment })));

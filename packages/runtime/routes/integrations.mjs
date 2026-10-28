@@ -16,18 +16,19 @@
 //
 // Account slice (`account`, registered in packages/runtime/account/index.mjs): integrationsOwner (warm, in the gate:
 // writes and revalidation), integrationsSearch (gate none: candidates and discovery are read-only egress, never held
-// inside the single writer), and the internal integrationsSystem, integrationsMessagingDescribe (BB-C1b's
-// MESSAGING_DESCRIBE port: `messagingDescribe(controller)`) and integrationsRevalidateDue (the account alarm hook).
+// inside the single writer), and the internal integrationsSystem, integrationsMessagingDescribe (the MESSAGING_DESCRIBE
+// port: `messagingDescribe(controller)`), integrationsMailboxRecord (messaging §2.5 step 3: describe-and-record on
+// enablement and value change) and integrationsRevalidateDue (the account alarm hook).
 // Ports from the adapter config: BROKERING_MINT(claims) -> {token} (mintAccessToken over the provider brokering key
 // set) and INTEGRATION_EGRESS ({send}, createIntegrationEgress or a DNS-pinned equivalent); without them discovery and
 // describe answer discovery_unavailable and descriptors stay recipient_unavailable. The change-hint endpoint
 // (integrations §8) is not mounted: it needs an issuer-wide connection -> account directory and client-key egress.
 import {createAppEngine,perform,read,operations,AppQuery} from '../../app/engine.mjs';
 import {systemClock,cryptoRandom,nullAudit} from '../../app/providers.mjs';
-import {PROVIDER_EXT} from '../../core/extensions.mjs';
+import {EXT} from '../../core/extensions.mjs';
 import {brokeredResourcesProvider,readConnection,BROKERED_OPERATIONS,BROKERED_OWNER_OPERATIONS,DescribeOccupant,RevalidateBrokeredRecords,BrokeredRecords} from '../../federation/brokered.mjs';
 import {DiscoveryClient,sharedDiscoveryBudget} from '../../federation/resource-discovery.mjs';
-import {validateDescribe} from '../../identity/messaging-ingress.mjs';
+import {validateDescribe,MESSAGING_INGRESS_FRAGMENT} from '../../identity/messaging-ingress.mjs';
 import {flagReadable,routeFlags,flagEnabled,json,body} from './shared.mjs';
 
 export const BROKERED_ENGINE_OPERATIONS=operations(...BROKERED_OPERATIONS);
@@ -83,25 +84,36 @@ export const account={
    if(!Operation)notFound();
    return run(this,Operation,{actor:{kind:'system',owner},...input===undefined?{}:{input:shape(input)}});
   },
-  // The messaging-address provider feature's `describe` (extensions rev 3.2 §4.2), validated against messaging §2.3, for
-  // links/handoff.mjs and for key delegation: the validated ingress recorded below is the occupant port's `ingress`, which
-  // becomes the delegation certificate's client.ingress (contacts spike CR-C0; validateDescribe lives with delegation). The value port answers first (feature live, account status, severance, exclusive selection);
-  // the entry it names must still be the one whose record is described. Any failure is recipient_unavailable upstream.
-  // A changed ingress is recorded on the entry (C1b).
+  // The messaging-mailbox provider feature's `describe` (Bindle Messaging §2.2, §2.5; extensions §4.2), validated with
+  // exact members ({version: 1, ingress}), for key delegation and for links/handoff.mjs: the validated ingress recorded
+  // below is the occupant port's `ingress`, which becomes the delegation certificate's client.ingress (contacts spike
+  // CR-C0; validateDescribe lives with delegation). The value port answers first (feature live, account status,
+  // severance, exclusive selection); the entry it names must still be the one whose record is described. Any failure is
+  // recipient_unavailable upstream. A changed ingress is recorded on the entry (C1b).
   async integrationsMessagingDescribe({owner,fragment,occupant}={}){
    const down=()=>fail('recipient_unavailable','The recipient is unavailable.',503);
-   if(!flagEnabled(this.config,'INTEGRATIONS_ENABLED',{subject:{kind:'account',owner}})||!flagEnabled(this.config,'BROKERING_ENABLED',{subject:{kind:'account',owner}})||typeof owner!=='string'||await this.metadata.get('owner')!==owner)down();
+   if(fragment!==MESSAGING_INGRESS_FRAGMENT||!flagEnabled(this.config,'INTEGRATIONS_ENABLED',{subject:{kind:'account',owner}})||!flagEnabled(this.config,'BROKERING_ENABLED',{subject:{kind:'account',owner}})||typeof owner!=='string'||await this.metadata.get('owner')!==owner)down();
    const port=await this.linkSlotOccupant({owner,fragment});if(!port||port.clientId!==occupant?.clientId||(occupant?.generation??null)!==port.generation)down();
-   const found=await this.connectionsSystem(owner,{operation:'connections.feature-resources',input:{feature:PROVIDER_EXT.messagingAddress}});
+   const found=await this.connectionsSystem(owner,{operation:'connections.feature-resources',input:{feature:EXT.messagingMailbox}});
    const seat=found.sever||!found.live?null:found.resources.find(o=>o.cnx===port.cnx);if(!seat||typeof seat.resource!=='string')down();
    // The ingress must sit on the occupant's own origin: the client_id origin, which X3 binds every endpoint to (X7-R5).
    let origin;try{origin=new URL(seat.clientId).origin;}catch{down();}if(typeof seat.origin==='string'&&seat.origin!==origin)down();
    const memo=refusals.get(this)??new Map(),key=`${owner}|${seat.cnx}`,now=Date.now();refusals.set(this,memo);if((memo.get(key)??0)>now)down();
    const refuse=()=>{memo.delete(key);while(memo.size>=REFUSALS)memo.delete(memo.keys().next().value);memo.set(key,now+REFUSAL_MS);down();};
-   let result;try{result=await run(this,DescribeOccupant,{actor:{kind:'system',owner},input:{feature:PROVIDER_EXT.messagingAddress,seat:{seat:seat.seat,connection:seat.connection,clientId:seat.clientId,generation:seat.generation,resource:seat.resource,cnx:seat.cnx,grant:seat.grant}}});}catch{refuse();}
+   let result;try{result=await run(this,DescribeOccupant,{actor:{kind:'system',owner},input:{feature:EXT.messagingMailbox,seat:{seat:seat.seat,connection:seat.connection,clientId:seat.clientId,generation:seat.generation,resource:seat.resource,cnx:seat.cnx,grant:seat.grant}}});}catch{refuse();}
    const valid=validateDescribe(result,{origin,allowLoopback:this.config.LOCAL_DEVELOPMENT==='true'});if(!valid)refuse();memo.delete(key);
    if(seat.ingress!==valid.ingress)try{await this.connectionsSystem(owner,{operation:'connections.set-ingress',input:{fragment,seat:seat.seat,generation:seat.generation,ingress:valid.ingress}});}catch{/* Recorded on a later describe. */}
    return valid;
+  },
+  // Messaging §2.5 step 3 (provisional): on enablement and on every value change the feature calls `describe` on the
+  // current value and records the validated ingress. Best effort and outside any transaction: a failure leaves the
+  // ingress unset (or stale until the next describe), which the occupant port reports, so no certificate is issued.
+  async integrationsMailboxRecord(owner){
+   try{
+    const port=await this.linkSlotOccupant({owner,fragment:MESSAGING_INGRESS_FRAGMENT});if(!port)return {recorded:false};
+    const valid=await this.integrationsMessagingDescribe({owner,fragment:MESSAGING_INGRESS_FRAGMENT,occupant:{clientId:port.clientId,generation:port.generation}});
+    return {recorded:true,ingress:valid.ingress};
+   }catch{return {recorded:false};}
   },
   // Account alarm hook (§4.4 "at least daily"): revalidates connections whose records were last checked a day ago, or
   // whose records went stale with a resume/approval (descriptors never rebind from the public path).

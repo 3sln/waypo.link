@@ -22,12 +22,16 @@ export const EXT=Object.freeze({
  // behind SIGNALING_ENABLED and SIGNALING_FOREIGN_ENABLED (default off). The interim `…/extensions/rtc-signaling/v1`
  // identity is retired with packages/rtc (Appendix C.1/C.2); it was never published.
  signaling:B('signaling'),
+ // Bindle Messaging §2.5 (contacts spike CR-X1, provisional, unsigned): published by Bindle Messaging. Its one provider
+ // feature consumes the messaging-ingress `mailbox` field and gates the Parlay key-delegation purposes. Prerequisite:
+ // key-delegation (below).
+ messagingMailbox:B('messaging-mailbox'),
 });
 /** 3sln.me-published extensions whose single provider feature (extensions §4.2) consumes a provider-only field. */
 export const PROVIDER_EXT=Object.freeze({
  emailBridge:'https://3sln.me/extensions/email-bridge/v1',
- // Retained only while the contacts spike's withdrawal (CL-4) has not removed the messaging-address code path.
- messagingAddress:'https://3sln.me/extensions/messaging-address/v1',
+ // The 3sln.me `messaging-address` extension was withdrawn by the contacts spike (CL-4, CR-X1) and removed on 2026-10-28;
+ // the Bindle-published messaging-mailbox extension (EXT.messagingMailbox) replaces its feature.
 });
 
 const url=(title,{endpoint,min=1,maxLength=2048}={})=>({title,type:'url',maxLength,...endpoint?{endpoint}:{},...min===1?{}:{cardinality:{min,max:1}}});
@@ -56,12 +60,12 @@ export const BINDLE_DESCRIPTORS=Object.freeze([
  // an option (options are atomic, extensions §2.4), so each part is the value `<name>/<version>`.
  d(EXT.embeddedComponents,'Embedded components','Show your account, sign-in and request controls inside the apps you use.',{embed_origin:url('Component origin',{endpoint:'public'}),protocol:{title:'Protocol versions',type:'integer',minimum:1,maximum:64,cardinality:{min:1,max:8}},parts:choice('Parts',['avatar/1','account-switcher/1','sign-in/1','request/1'],{min:1,max:4}),credential_binding:choice('Credential binding',['key-binding.v1'],{min:0,max:4}),manage_url:url('Account management page',{endpoint:'public',min:0})}),
  // Signaling (extensions §2.3 example; signaling §3.1): `endpoint` is an audience endpoint option.
+ d(EXT.messagingMailbox,'Messaging app keys','Lets the messaging app you choose send and receive Bindle messages as you.'),
  d(EXT.signaling,'Signaling','Direct connections between your devices and other people\'s, for the kinds you approve.',{endpoint:url('Session endpoint',{endpoint:'audience'}),max_leg_certificate_seconds:int('Leg certificate lifetime',120,900),profiles:choice('Profiles',['data','webrtc'],{min:1,max:2})},'https://spec.bindle.example/extensions/signaling/v1/spec.html'),
 ].map(value=>deepFreeze(value)));
 /** 3sln.me provider-feature descriptors (extensions §11.1). Their user-facing text is the feature's consent text. */
 export const PROVIDER_DESCRIPTORS=Object.freeze([
  d(PROVIDER_EXT.emailBridge,'Email to your messaging app','Delivers email sent to your public address to the app you choose.'),
- d(PROVIDER_EXT.messagingAddress,'Messaging address','Tells people who hold your contact links where to deliver.'),
 ].map(value=>deepFreeze(value)));
 
 /** Prose prerequisites (extensions §2.5), as each extension's spec states them. Non-recursive presence checks only. */
@@ -70,6 +74,7 @@ export const PREREQUISITES=Object.freeze({
  [EXT.subjectDeleted]:Object.freeze([EXT.integrations]),[EXT.intentLinks]:Object.freeze([EXT.artefactVersions]),
  [EXT.portability]:Object.freeze([EXT.directory]),
  [EXT.signaling]:Object.freeze([EXT.directory,EXT.artefactVersions]),
+ [EXT.messagingMailbox]:Object.freeze([EXT.keyDelegation]),
 });
 /** Flat OAuth/core members that receive audience-bound requests (extensions §2.4 distinctness). */
 export const FLAT_AUDIENCE_ENDPOINTS=Object.freeze(['authorization_request_endpoint','token_endpoint','rpc_endpoint','revocation_endpoint','device_authorization_endpoint']);

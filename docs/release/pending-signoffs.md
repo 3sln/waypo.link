@@ -12,10 +12,12 @@ A fifth update, at HEAD 67329c9, adds the entries after "RTC service follow-ups 
 
 A sixth update, on the uncommitted working tree at HEAD ce28f79, adds the three RTC wargame entries: "2026-10-27 — RTC wargame findings and fixes (engine/route)", "2026-10-27 — RTC wargame M2/M6: ticket lifecycle and spam controls" and "2026-10-27 — RTC wargame review follow-ups" (AMD-RW1 to AMD-RW6). The new items are the "RTC wargame" sub-section under "RTC signaling": 21 decision items (RTCw-H1 to RTCw-L5 with the review's R and I fixes, RTCw-M2-1 to RTCw-M2-5, RTCw-M6-1 to RTCw-M6-5, AMD-RW1, AMD-RW2) plus RTCw-info, RTCw-copy, RTCw-resid and RTCw-open, 24 items in all, which brings the digest to 319. RTC-11, RTCd-4/RTCd-5, RTCd-10, RTCd-11, RTCd-14, RTCd-18/RTCd-19, RTCg-13/RTCg-15/RTCg-16 and RTCe-3/RTCe-4 carry dated update notes, and RTCi-11 is revised in place (the relay actor now carries the narrowed signaling approval). Four entries join the highest-impact list: provider block and mutes (RTCw-M6-1, RTCw-M6-2), tickets tied to the minting app (RTCw-M2-1 to RTCw-M2-3), the new limit values (RTCw-M1, RTCw-M3, RTCw-M2-2) and cross-application visibility (AMD-RW1); entry 18 (RTCe-4) now records the 202-with-dark-ingest answer for a per-account flag-off. The flag-cohort drain-rate residual and the wargame's local-only evidence are added to the unverified assumptions at the end.
 
+A seventh update, on the uncommitted working tree at HEAD 74b94ee (2026-10-28), adds every entry after "2026-10-27 — RTC wargame review follow-ups", from "2026-10-27 — Bug hunt round 3 (browser)" through "2026-10-28 — Contacts phase 2: CR-C0 safety gates implemented locally". Unlike earlier updates it lists one item per decision group, with a link to each DEVLOG entry, in the new section "Core scope, extensions revision 3, signaling revision 3 and contacts": 22 items (OD-1 to OD-4, EXT3-21, the EXT3 set, EXT3-impl, EXT3-surf, EC-1, SG-C5-1, SG-rest, SG-AMD, SG-ENG, MSG-55, LC-1 to LC-14, MC-23, CL-1 to CL-25, CL-17, CR-C0, UI-16, OL-24 and ID-12), which brings the digest to 341. Three owner approvals that DEVLOG records (EXT3-25, EXT3-26 and the islands document at the `embed_origin` root) are listed there separately as approved, not pending. Signaling revision 3.2 supersedes the RTC signaling sub-sections, which stay as history. Four entries join the highest-impact list: EXT3-21, signaling C.5 step 1, CL-17 and the signaling `data` budget's cost.
+
 How to read this file:
 
 - [DEVLOG.md](../../DEVLOG.md) is the source of record. This file only summarises it, and where the two differ, DEVLOG wins. Sign-offs go on the DEVLOG entry's `Reviewer / Date / Outcome` line, not here.
-- **Nothing here is signed off.** Every item is provisional, open, or a user statement whose DEVLOG sign-off line is still blank. Items marked *(user)* are positions the user stated. They are listed because their ledger lines are unsigned, not because they are in doubt.
+- **Nothing here is signed off**, except the owner approvals listed as such at the start of the seventh-update section. Every other item is provisional, open, or a user statement whose DEVLOG sign-off line is still blank. Items marked *(user)* are positions the user stated. They are listed because their ledger lines are unsigned, not because they are in doubt.
 - "Source" gives the DEVLOG entry title, without the date when it is 2026-10-23. "Safe alternative" is filled in only where DEVLOG or the cited design records one.
 - Decisions from before 2026-10-22 (spam thresholds, the messaging app name, the BindleBox cutover reset, conversation gate A/C and others) are in [open-items.md](open-items.md) §1. They are not repeated here.
 - Everything is local behaviour behind default-off flags. Polar is sandbox only, and no mail, push or provider delivery has been verified. Production release remains disabled.
@@ -53,6 +55,10 @@ These items reverse an earlier stated position, carry legal or compliance weight
 27. **RTCw-M2-1 to RTCw-M2-3 — Call links are tied to the app that minted them (AMD-RW6).** A ticket records its minting app, is revoked when the app is removed (or when a purpose it names is narrowed away), and each app may hold at most 64 live tickets of the owner's 256, with a mint window of 120 an hour. Legacy tickets without an app are revoked by no app event. Four apps together can still fill the cap.
 28. **RTCw-M1, RTCw-M3, RTCw-M2-2 — New RTC limit policy values.** `self` 120 invites an hour per entity, outside every cross-entity window; principal-bound ticket (`preferred`) invites 60 an hour per callee, outside the per-callee and issuer windows; all same-host callers together 40 of the 60 per-callee invites an hour; a ringing reserve of 2 above the 4 ringing slots for `self` and `preferred`; 8 live endpoints per app within 32, and at most 16 endpoints per invite fanned out round-robin across apps; 64 tickets and 120 mints an hour per app. All provisional provider policy, untested under load (AMD-RW1, AMD-RW3).
 29. **AMD-RW1 — Every approved app sees every invite of its purpose.** Proposed spec text: every application approved for a purpose sees each invite fanned out to it (caller, caller's app origin and `client_id`, purpose, media, context, basis kind and raw invite) and may accept or decline it for the owner, and approval is consent to that. To stop an app seeing calls the owner narrows or revokes its approval; a mute only silences the alert (spec text corrected 2026-10-27 to match the implementation).
+30. **EXT3-21 — What "core" means.** Core is the conformance floor plus the extension mechanism, and the areas the owner called core are Bindle-owned extensions. This reading reconciles two owner statements and needs the owner's sign-off.
+31. **SG-C5-1 — Signaling C.5 step 1: kind authorization and bases (SG-2, SG-23 to SG-30, SG-36 to SG-46, AMD-SG-I1).** The engine phase is implemented locally behind default-off flags; no signaling flag may be enabled before this sign-off.
+32. **CL-17 — The Bindle Messaging gate covers first contact only.** A provisional widening of the 2026-10-14 decision, with first contact by `connect` invitations and contacts out of core.
+33. **SG-ENG — The signaling `data` budget (1 MiB per hour per entity).** At the full budget, Paid falls under the 50% margin floor even without relay (unit economics, "Relayed signaling `data` bytes"); the request prices are not rechecked against a primary source.
 
 ## Pricing and billing
 
@@ -3047,6 +3053,136 @@ These are owner questions about what stays in the 3sln.me core now that app expe
 - Context: the extraction plan turns the MCP `item_read`, `item_write` and `item_delete` tools into activity-item tools ("Core: activity") and says BindleBox MAY later expose its own MCP tools under its own grant. The MCP projection and journal rules (AP-5) and the class-b browser-automation switch (AP-7) concern the same tool surface. "App-contributed callables" would route through the app and extension machinery instead.
 - Source: [messaging-extraction.md](../architecture/messaging-extraction.md) (`packages/mcp/account.mjs` row); raised by the core-scope audit. Related: AP-5, AP-7.
 - Safe alternative: the extraction plan's recorded default, activity items.
+- Owner: ___
+
+## Core scope, extensions revision 3, signaling revision 3 and contacts (2026-10-27 to 2026-10-28)
+
+Added by the seventh update. Each item links its DEVLOG entry; sign-offs go on that entry's `Reviewer / Date / Outcome` line. Signaling revision 3.2 supersedes the design behind the "RTC signaling" sub-sections above. The local `packages/rtc` code, the interim `…/extensions/rtc-signaling/v1` identity and the core call UI were retired locally on 2026-10-28, so those RTC items are now history. Their disposition (kept, changed or dropped) is in [signaling](../spec/extensions/signaling.md) Appendix B. Signaling decisions from revisions 0 to 3.1 were revised in place, so the current set is SG-1 to SG-51 in signaling §19.2.
+
+**Recorded as owner-approved (not pending; listed so they are not asked again):**
+- EXT3-25: unknown fragment members fail closed everywhere, reversing AMD-C1's ignorable top-level members. Approved by the owner in session on 2026-10-27 ([DEVLOG](../../DEVLOG.md#2026-10-27--owner-sign-offs-ext3-25-setup-exception-components-direction-contacts-spike-rev-2-address-routing-reconciliation)).
+- EXT3-26 (extensions §13 Q6): the strict account-setup exception. The built-in default is never preselected and sits beside an equally prominent "decide later". Approved on 2026-10-27, in the same entry.
+- Keep `embed_origin`, with the island document at the origin root. Approved on 2026-10-27, "sounds fine" ([DEVLOG](../../DEVLOG.md#2026-10-27--owner-direction-keep-embed_origin-islands-document-at-the-origin-root)). The code moved on 2026-10-28 ([DEVLOG](../../DEVLOG.md#2026-10-28--embedded-components-migration-implemented-locally-cr-x3-16-incl-cr-x3-35-code-side-of-cr-x3-33)).
+
+### Owner directions with blank ledger lines *(user)*
+
+**OD-1. Core scope: what Bindle core is**
+- Stated: core Bindle is identity, preferences, intents, resources and hub connectivity, and event buses stay in core. Messaging leaves core for Parlay, and calling is app-level. Generic signaling stays, with invite-style and always-on consumers. Organizations and relations become one extension if they shard cleanly. Commands and automation become an extension. The activity feed is a 3sln.me feature. Where the email bridge goes needs a spike. "Parlay" is adopted provisionally as the app name.
+- Source: [DEVLOG "Owner direction: core scope, Parlay, signaling consumers"](../../DEVLOG.md#2026-10-27--owner-direction-core-scope-parlay-signaling-consumers); [DEVLOG "Generic signaling.v1 spec draft"](../../DEVLOG.md#2026-10-27--generic-signalingv1-spec-draft-replaces-calling-shaped-rtc) (verbatim).
+- Owner: ___
+
+**OD-2. Manifest declarations, slots and the classifier**
+- Stated: remove `features`. Anything optional is an extension. No slot exists outside an extension spec, and then remove slots. Selection is a general field attribute. Provider features may consume fragments. No `ref` or local ids without a use case. The classifier becomes a generic AI resource, and message categories belong to Parlay.
+- Source: [DEVLOG "Owner direction: manifest declarations"](../../DEVLOG.md#2026-10-27--owner-direction-manifest-declarations-features-slots-ref); [DEVLOG "Owner direction: remove slots"](../../DEVLOG.md#2026-10-27--owner-direction-remove-slots-classifier-scope-surfacing-candidates).
+- Owner: ___
+
+**OD-3. Invitations: use cases, admission rules, lists and one-way links**
+- Stated: single-use invitations suit person-to-person contact, but website links, admission rules, contact lists and one-way (newsletter) links are needed too. The coordinator's five-setting invitation proposal is provisional and was folded into contacts spike revision 2.
+- Source: [DEVLOG "Owner direction: invitation use cases"](../../DEVLOG.md#2026-10-27--owner-direction-invitation-use-cases-admission-rules-lists-one-way-links).
+- Owner: ___
+
+**OD-4. Bindle specs kept separate from 3sln.me docs, and every spec published**
+- Stated, and applied by the documentation split. The provisional placements: message-content is an extension, app-messages and activity are 3sln.me docs, app-metadata stays an extension pending the owner question, and device-authorization is a Bindle-owned extension under the EXT3-21 reading. On 2026-10-28 the dissolved links record moved to `docs/spec/superseded/`, with a redirect from its old address.
+- Source: [DEVLOG "Device sign-in doc scope fix; local clients … doc split direction"](../../DEVLOG.md#2026-10-27--device-sign-in-doc-scope-fix-local-clients-and-pairing-consent-spike-bindle3slnme-doc-split-direction); [DEVLOG "Documentation split"](../../DEVLOG.md#2026-10-27--documentation-split-bindle-core-bindle-extensions-3slnme-full-spec-publication).
+- Owner: ___
+
+### Extensions revision 3
+
+**EXT3-21. What "core" means (needs owner sign-off)**
+- Decided (provisional): "core" is the conformance floor plus the extension mechanism. The areas the owner called core (intents, hub connectivity, events, authorization entry, device authorization) are Bindle-owned extensions in the core document set.
+- Source: [DEVLOG "Extensions rev 3 open questions"](../../DEVLOG.md#2026-10-27--extensions-rev-3-open-questions-provisional-coordinator-answers) (answer 3); [DEVLOG "Extensions revision 3.1"](../../DEVLOG.md#2026-10-27--extensions-revision-31-rev-3-review-fixes-and-cuts-spec-only).
+- Owner: ___
+
+**EXT3-1 to EXT3-36 (except EXT3-21, EXT3-25 and EXT3-26). The revision 3 to 3.3 decision set**
+- Decided (provisional): `{spec, options}` declarations with the spec URL as identity. No slots, `ref`, `crit`, `supersedes`, `requires` or declaration `digest`. The field attributes `selection`, `consumers` and `announce` (Q1). Provider-feature client identity is (issuer, spec URL), at most one feature per extension. Endpoint options are `audience` or `public`, and only audience endpoints must be distinct (EXT3-31, EXT3-32). Fragments follow artefacts. The candidate and announcement floor. The email bridge is a provider-published extension (Q2). Embedded components become a Bindle-owned extension (EXT3-29, EXT3-34). The UUIDv5 `tx` encoding (EXT3-33). The interim RTC identity (EXT3-35) is retired since 2026-10-28. CR-X3-04 and CR-X3-23 are void, and CR-X3-11 is void since contacts phase 1.
+- Source: [DEVLOG "Extensions revision 3 draft"](../../DEVLOG.md#2026-10-27--extensions-revision-3-draft-spec-only-supersedes-rev-2-pending-sign-off); [revision 3.1](../../DEVLOG.md#2026-10-27--extensions-revision-31-rev-3-review-fixes-and-cuts-spec-only); [revision 3.2](../../DEVLOG.md#2026-10-27--extensions-revision-32-rev-31-verification-review-fixes-spec-only); [revision 3.3](../../DEVLOG.md#2026-10-27--extensions-revision-33-spec-reconciled-with-the-revision-32-implementation-spec-only).
+- Owner: ___
+
+**EXT3-impl. Revision 3.2 implemented locally, with review-fix readings**
+- Decided (provisional): a clean break in manifests, with no `features`/`profiles`. Destructive reset of `connections/slot/` rows (CR-X3-29). A feature is suspended at once on declaration loss and revoked after 30 days dated from `seenAt` (a 6-hourly sweep). `bindle.grant` changes on reorder, purpose or ingress change (a provisional L3 reading of "value change"). The own-flow exclusion applies in the initial flow, `inspect` and `approve`. Deferred: L6, L10, L11 and L12.
+- Source: [DEVLOG "Extensions revision 3.2 implemented locally"](../../DEVLOG.md#2026-10-27--extensions-revision-32-implemented-locally-flags-off-cr-x3-1832); [DEVLOG "Extensions revision 3.2 code review fixes"](../../DEVLOG.md#2026-10-27--extensions-revision-32-code-review-fixes-provisional).
+- Owner: ___
+
+**EXT3-surf. Candidate surfacing and the classifier (3sln.me policy proposals)**
+- Decided (provisional, not applied): offer a resource only for an empty field with a waiting consumer. Ask each (field, resource) pair once. No preselection or self-preferencing. A generic `item-classification/v1` contract with caller-supplied labels, which needs a security review.
+- Source: [DEVLOG "Owner direction: remove slots"](../../DEVLOG.md#2026-10-27--owner-direction-remove-slots-classifier-scope-surfacing-candidates).
+- Owner: ___
+
+**EC-1. Embedded-components migration choices**
+- Decided (provisional, EXT3-34): `parts` as `<name>/<version>`. Islands never delegate to FedCM. No `theme_tokens`, while the wire `theme` member stays as `{}`. The components profile URL is no longer emitted and is listed as withdrawn. The Node host accepts only origin-form request targets.
+- Source: [DEVLOG "Embedded-components migration"](../../DEVLOG.md#2026-10-28--embedded-components-migration-implemented-locally-cr-x3-16-incl-cr-x3-35-code-side-of-cr-x3-33); [DEVLOG "Embedded-components review follow-ups"](../../DEVLOG.md#2026-10-28--embedded-components-review-follow-ups-l1-l2-i1-i3).
+- Owner: ___
+
+### Signaling revision 3.2
+
+**SG-C5-1. Signaling C.5 step 1: kind authorization and bases (blocks enabling any signaling flag)**
+- Decided (provisional): SG-2 (session kinds are intent kinds, with session handler approvals), SG-23 to SG-30 (the `offer` and `pairing` bases), SG-36 to SG-46 (core-scope cut, extensions rev 3 shape, pairing consent, local clients, open offers, `none` reserved, intents routing cut) and AMD-SG-I1 (intents session kinds and approvals).
+- Source: [DEVLOG "signaling.v1 spec rev 2"](../../DEVLOG.md#2026-10-27--signalingv1-spec-rev-2-offer-and-pairing-bases); [rev 3](../../DEVLOG.md#2026-10-27--signalingv1-spec-rev-3-core-scope-cut-extensions-rev-3-pairing-consent); [rev 3.1](../../DEVLOG.md#2026-10-27--signalingv1-spec-rev-31-rev-3-review-fixes-open-offers); signaling Appendix C.5.
+- Owner: ___
+
+**SG-rest. The other signaling decisions: SG-1 to SG-51 not listed above**
+- Decided (provisional): a generic channel with `webrtc` and `data` profiles (SG-1, with `data` at 4 KiB per message and 64 KiB per leg). Abuse limit kinds and windows (SG-9, SG-33, SG-48). Blocks (SG-10). The SAS is out of core (SG-11). App-origin disclosure (SG-12). Decline reasons (SG-13). `ice-relay/v1` (SG-14). New identifiers (SG-15). Offer rules (SG-31, SG-47, SG-49). Pairing rules (SG-32, SG-34, SG-46). Glare by leg-key rank (SG-35). Service-class narrowed to provider features and designated organization service entities (SG-50). Residuals accepted (SG-51). SMS-1 to SMS-8 come from the establishment-modes spike.
+- Source: [DEVLOG "signaling.v1 spec rev 1"](../../DEVLOG.md#2026-10-27--signalingv1-spec-rev-1-review-fixes); [rev 2.1](../../DEVLOG.md#2026-10-27--signalingv1-spec-rev-21-rev-2-review-fixes); [rev 3.2](../../DEVLOG.md#2026-10-27--signalingv1-spec-rev-32-rev-31-verification-fixes).
+- Owner: ___
+
+**SG-AMD. Proposed amendments and owner questions**
+- Proposed (unsigned, not applied to their targets): AMD-SG-D1 (a standing device grant that survives the approving browser's sign-out), AMD-SG-S1 and AMD-SG-S2 (security.md: hosted signaling copies, and no relay credential without an enforced per-owner byte cap), AMD-SG-E1 (integration doorbell) and AMD-INT-R1 (intents chooser short-list, moved to the intents change requests). Withdrawn: AMD-X1, AMD-R4, AMD-R5, AMD-RW1, AMD-SG-A1, AMD-SG-N1, and AMD-SG-L1a and L1b with the `link` basis. Owner questions are in signaling §19.3 to §19.5 (Q1 to Q12), with provisional answers adopted.
+- Source: the signaling revision entries above.
+- Owner: ___
+
+**SG-ENG. Engine phase choices and divergences (implemented locally, flags off)**
+- Decided (provisional): fresh authentication for cross-entity pairings means session `authTime` within 5 minutes. The `data` budget is 1 MiB per hour per entity, with a pairing sub-budget of half. Pairings are capped at half of base pending capacity (corrected by review M-3). Maximum pairing expiry is 366 days. An unpaired relation invite counts as unbased. `approval_required` is in `NO_EFFECT_CODES`. The offer refresh lane is stricter than the text. Any change of connection generation counts as connection end (H-1). Grant revocation also clears approvals (L-7, a divergence from §20.1.4). Legacy `rtc/` rows are deleted (destructive, pre-release). Open: L-4 (`signalingClientSessionRevoked` uncalled), the provider pages, steps 6 to 8.
+- Cost note: at the full `data` budget, Paid's worst case puts it under the 50% margin floor even without relay ([unit economics](../architecture/unit-economics.md), "Relayed signaling `data` bytes").
+- Source: [DEVLOG "Signaling revision 3.2 engine phase"](../../DEVLOG.md#2026-10-28--signaling-revision-32-engine-phase-implemented-locally-appendix-c5-steps-24-and-the-core-removal-half-of-5); [DEVLOG "Signaling revision 3.2 engine: independent review fixes"](../../DEVLOG.md#2026-10-28--signaling-revision-32-engine-independent-review-fixes-h-1-m-1-to-m-4-l-1-to-l-3-l-6).
+- Owner: ___
+
+**MSG-55. Bindle Messaging §5.5 call invitations**
+- Decided (provisional): the call kind uses bases `["offer"]` and `profiles: {"webrtc": {}}`, and the media choice lives in the body. `expiresAt` is at most the earliest offer `expires_at` minus 60 s. At most 8 offer entries. Alerting needs a two-party unlock with the author, which persists until a block or a per-author clear.
+- Source: [DEVLOG "signaling.v1 spec rev 3"](../../DEVLOG.md#2026-10-27--signalingv1-spec-rev-3-core-scope-cut-extensions-rev-3-pairing-consent); [rev 3.1](../../DEVLOG.md#2026-10-27--signalingv1-spec-rev-31-rev-3-review-fixes-open-offers); [rev 3.2](../../DEVLOG.md#2026-10-27--signalingv1-spec-rev-32-rev-31-verification-fixes).
+- Owner: ___
+
+**LC-1 to LC-14. Local clients spike**
+- Decided (provisional, not applied): a per-installation DPoP-thumbprint `client_id`. A self-asserted local manifest pinned at approval and always shown as unverified. A 30-day idle limit. Loopback code with PKCE and DPoP, behind `LOCAL_CLIENTS_ENABLED`. Pairing rules P1 to P4. Change requests CR-L1 to CR-L10 and CR-A1 to CR-A7 (CR-A1 applied by the documentation split).
+- Source: [DEVLOG "Device sign-in doc scope fix; local clients …"](../../DEVLOG.md#2026-10-27--device-sign-in-doc-scope-fix-local-clients-and-pairing-consent-spike-bindle3slnme-doc-split-direction).
+- Owner: ___
+
+### Messaging out of core, and contacts
+
+**MC-23. Messaging torn out of core; Parlay rename**
+- Decided (provisional): the renames and `PARLAY_*` flags, with an app-side `BINDLEBOX_*` fallback (removing the alias is open). `conversation-v1.json` stays published as withdrawn. Collections, Views, rules, tags and `/api/messages*` stay as activity surfaces. Public-message-intake consumers stay provider-only (M2). The RTC compatibility port is now moot with RTC retired (L6). The BB-CUT reset itself is SQ-1, answered by the user.
+- Source: [DEVLOG "Messaging removed from core; Parlay rename; BB-CUT reset"](../../DEVLOG.md#2026-10-27--messaging-removed-from-core-parlay-rename-bb-cut-reset).
+- Owner: ___
+
+**CL-1 to CL-25. Contacts and links rethink**
+- Decided (provisional): contacts are not core. First contact is a Bindle Messaging invitation through the `connect` intent, `{inviter, token, delegation, expires_at?, hint?}`. Contact lists live in the messaging app. The signed-object profile moves to keys.md, and the query envelope to the Organizations annex. links.md is dissolved (AMD-L1 withdrawn), and `intents.v1` and `link-response.v1` are withdrawn. Intents register no kinds. Change requests CR-C1 to CR-C10. Answers to the spike questions: the website template uses a `request` list, the signing profile goes in keys.md, and redeemer-side following is a `can message you` list.
+- Source: [DEVLOG "Contacts and links rethink spike"](../../DEVLOG.md#2026-10-27--contacts-and-links-rethink-spike); [spike rev 2](../../DEVLOG.md#2026-10-27--owner-sign-offs-ext3-25-setup-exception-components-direction-contacts-spike-rev-2-address-routing-reconciliation); [phase 1](../../DEVLOG.md#2026-10-28--contacts-and-links-rethink-phase-1-specs-applied).
+- Owner: ___
+
+**CL-17. First-contact-only gate (widens the 2026-10-14 decision)**
+- Decided (provisional): Messaging §6.7 gates only first contact. It runs budgets, then "not hosted here", token checks, author verification, and finally owner policy on the verified principal. The inviter verifies only same-host redeemers (CL-24). Accepted residual: a token holder can learn whether a named principal redeemed it. A new `…/extensions/messaging-mailbox/v1` provider feature gates the Parlay key-delegation purposes.
+- Source: [DEVLOG "Contacts phase 1: spec review fixes"](../../DEVLOG.md#2026-10-28--contacts-phase-1-spec-review-fixes).
+- Owner: ___
+
+**CR-C0. `KEY_DELEGATION_ENABLED` safety gate**
+- Decided (provisional): a new stateful gate for key-delegation issuance, routes and the member-certificate fallback. Until CR-C7 an unset value falls back to `LINKS_ENABLED`, but a retention resting on `link/` rows alone no longer keeps delegation open (the one deliberate behaviour change). Open for review: the decoder accepts a leading byte-order mark, and core now holds two strict-JSON and two canonical-encoding profiles.
+- Source: [DEVLOG "Contacts phase 2: CR-C0 safety gates"](../../DEVLOG.md#2026-10-28--contacts-phase-2-cr-c0-safety-gates-implemented-locally).
+- Owner: ___
+
+### Fixes with product choices
+
+**UI-16. Bug hunt round 3 readings**
+- Decided (provisional): a stale contact-profile save is refused with `409 profile_stale` unless the stored profile still discloses (refines L-1). A browser navigation to an ended `/oauth/authorize` gets a fixed HTML page. R1 was withdrawn, and D1 to D5 are deferred. The contact-profile surfaces are being removed with contacts.
+- Source: [DEVLOG "Bug hunt round 3 (browser)"](../../DEVLOG.md#2026-10-27--bug-hunt-round-3-browser).
+- Owner: ___
+
+**OL-24. Cleanup audit and core-scope step 1**
+- Decided (provisional): `SIGNED_INTENTS_ENABLED` is kept, reserved for INT-8. Without `DEVELOPER_CONTACT_HANDLE`, developer contact is off; the `ray` default is removed, so deployments must set it. The core-scope step 1 moves changed no behaviour.
+- Source: [DEVLOG "Cleanup-audit code fixes"](../../DEVLOG.md#2026-10-27--cleanup-audit-code-fixes); [DEVLOG "Core-scope step 1"](../../DEVLOG.md#2026-10-27--core-scope-step-1-re-home-core-code-out-of-messaging).
+- Owner: ___
+
+**ID-12. Recovery reissue cancel from the replacing device signs it out**
+- Decided (provisional): the cancel stays offered on the replacing device and signs that browser out. The follow-up is queued: warn on the control.
+- Source: [DEVLOG "Recovery reissue: cancel from the replacing device"](../../DEVLOG.md#2026-10-27--recovery-reissue-cancel-from-the-replacing-device-bug-fix).
 - Owner: ___
 
 ## Unverified external assumptions

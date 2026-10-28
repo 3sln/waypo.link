@@ -1,4 +1,5 @@
 import test from 'node:test';
+import {flushEdgeOutbox} from '../../packages/messaging-engine/store/edge-index.mjs';
 import assert from 'node:assert/strict';
 import {createWorld,B,encoder} from './receive-fixtures.test.mjs';
 import {createArchiveMesh,rejected} from './archive-fixtures.test.mjs';
@@ -96,7 +97,7 @@ test('BB6-S7: public intake rechecks the import hold after asynchronous provenan
 
 test('B6 shell composes archive ports and schedules a fixed checkpoint deadline plus durable failure retry',async t=>{
  const {nextWake}=await import('../../apps/parlay/worker/storage.mjs'),a=await createArchiveMesh({names:['alice','bob']});t.after(()=>a.dispose());const bob=a.party('bob'),box=createMailbox({store:bob.store,PARLAY_ENABLED:true,clock:a.clock,ports:{directory:a.directory,userStorage:bob.storage,ownerKeys:bob.custody,delegateKeys:{current:()=>bob.current()}}});t.after(()=>box.dispose());
- await box.provision(bob.owner,{authorization:{revision:1,active:true,recipients:[],connection:bob.cnx,generation:1}});const start=a.clock.now();assert.equal(await nextWake(bob.store,start),start+15*60000);a.clock.advance(1000);assert.equal(await nextWake(bob.store,a.clock.now()),start+15*60000);
+ await box.provision(bob.owner,{authorization:{revision:1,active:true,recipients:[],connection:bob.cnx,generation:1}});await flushEdgeOutbox(bob.store,{publish:async()=>true},bob.owner);const start=a.clock.now();assert.equal(await nextWake(bob.store,start),start+15*60000);a.clock.advance(1000);assert.equal(await nextWake(bob.store,a.clock.now()),start+15*60000);
  assert.equal((await box.run(bob.owner,'archive.status')).enabled,true);assert.equal((await box.run(bob.owner,'archive.checkpoint')).kind,'snapshot');a.clock.advance(16*60000);await bob.store.put('shell:archive-retry',a.clock.now()+60000);assert.equal(await nextWake(bob.store,a.clock.now()),a.clock.now()+60000);
 });
 

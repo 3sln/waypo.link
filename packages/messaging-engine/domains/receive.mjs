@@ -16,7 +16,7 @@ import {verifyES256} from '../../messaging-protocol/certificate.mjs';
 import {equalDigest} from '../../messaging-protocol/encoding.mjs';
 import {MailboxAction,MailboxQuery} from '../engine.mjs';
 import {MailboxFault,fault} from '../faults.mjs';
-import {KEYS,BOUNDS,actorOwner,readConfig,chargeUsage,principalKey} from '../store/mailbox.mjs';
+import {KEYS,BOUNDS,actorOwner,readConfig,chargeUsage,principalKey,queueEdge} from '../store/mailbox.mjs';
 import {linkClaims} from '../store/edge-index.mjs';
 import {chargeBudget,ownerExhausted} from './receive-budget.mjs';
 import {verificationPorts,knownRevoked,recordRevocation,jktIndex,seenKey,boundedCache} from './delegation.mjs';
@@ -38,7 +38,8 @@ export class ReceiveConfigure extends MailboxAction {
   try{P.validatePrincipal(principal);const u=new URL(ingress);if(u.protocol!=='https:'||u.search||u.hash||u.href!==ingress)throw new Error();}catch{fault('invalid_input','Choose a valid principal and ingress.',400);}
   if(!['free','paid','plus','ultra'].includes(plan))fault('invalid_input','Choose a valid plan.',400);
   const config={principal:{issuer:principal.issuer,subject:principal.subject,identityURI:principal.identityURI},ingress,plan};
-  await receive.store.transaction(tx=>tx.put(KEYS.config,config));return config;
+  // Contacts spike phase 3: the edge's hosted-recipient entry (messaging §6.7 step 2), active while a connection is.
+  await receive.store.transaction(async tx=>{await tx.put(KEYS.config,config);await queueEdge(tx,{kind:'host',issuer:principal.issuer,subject:principal.subject,active:(await tx.get('shell:authorization'))?.active!==false});});return config;
  }
 }
 
@@ -150,8 +151,9 @@ export class ReceiveDeliver extends MailboxAction {
     const plan=admissionPlan({live,budget:await tx.get(KEYS.budget),known:await tx.get(`known/${principalKey(principal)}`),principal,bytes,now,plan:config.plan}),request=plan.request;let hot=0;
     await tx.put(KEYS.budget,plan.budget);
     if(delivery.body&&bytes>=BOUNDS.inlineBodyBytes&&!staged){/* The item row keeps the envelope too, so it is charged with the body. */const charge=bytes+new TextEncoder().encode(P.jcs(envelope)).byteLength,u=await tx.get(KEYS.usage)??{hotBytes:0,hotItems:0};if(u.hotBytes+charge>BOUNDS.hotBytes||u.hotItems+1>BOUNDS.hotItems)unavailable('recipient_storage_unavailable');await chargeUsage(tx,{bytes:charge});hot=charge;}
-    const intake=live.intake??{revision:0,autoTags:[],optionalTags:[]},offered=new Set(intake.optionalTags.map(t=>t.id));
-    const tags=[...intake.autoTags.map(id=>({id,source:'intake'})),...p.optionalTags.filter(t=>offered.has(t)).map(id=>({id,source:'sender'}))];
+    // Sender-chosen tags are gone with `optionalTags` (messaging §5.1); only the link's intake tags apply.
+    const intake=live.intake??{revision:0,autoTags:[]};
+    const tags=intake.autoTags.map(id=>({id,source:'intake'}));
     const item={id,origin:'native',kind:p.kind,author:{principal:author.principal,keyId:author.keyId,jkt:author.jkt,client:{client_id:author.client.client_id,origin:author.client.origin}},
      jti:live.jti,operationId:p.operationId,subject:p.subject,content:p.content,bodyRef:delivery.body?(staged??{storage:'mailbox'}):null,createdAt:p.createdAt,receivedAt:now,
      state:request?'pending':'inbox',request,hot,tags,tagHistory:[],payloadDigest:delivery.payloadDigest,quarantined:false,reviewed:false,notification:request?null:'push',envelope};
@@ -208,7 +210,7 @@ export const RECEIVE_OPERATIONS=[ReceiveConfigure,ReceiveDeliver,ReceiveItems,Re
 // Edge adapter (placement `edge`): framing bound and edge-index credential check before any mailbox is woken, then
 // one `receive.deliver` dispatch to the routed owner's mailbox. Bodies are {error, message} with fixed messages;
 // 429 and 503 carry Retry-After; clock_skew carries serverTime. Unknown failures are a 500 without detail.
-const MESSAGES={malformed:'The request is malformed.',link_malformed:'The link is malformed.',link_invalid:'The link is not valid.',envelope_expired:'The message has expired.',clock_skew:'The message is dated in the future.',author_unverifiable:'The author cannot be verified.',author_required:'An author is required.',not_authorized:'Not authorized.',audience_ineligible:'Not eligible for this link.',operation_conflict:'The operation conflicts with an earlier one.',too_large:'The request is too large.',record_unsupported:'Unsupported record.',unsupported_profile:'Unsupported profile.',rate_limited:'Too many messages. Try again later.',recipient_unavailable:'The recipient is unavailable.',recipient_storage_unavailable:'The recipient is unavailable.',audience_unavailable:'Eligibility is unavailable.',ingress_moved:'The ingress has moved.',counter_gap:'Counter gap.',incarnation_stale:'Stale incarnation.',participants_exceeded:'Too many participants.',record_forbidden:'Record forbidden.'};
+const MESSAGES={malformed:'The request is malformed.',link_malformed:'The link is malformed.',link_invalid:'The link is not valid.',invite_invalid:'The invitation is not valid.',envelope_expired:'The message has expired.',clock_skew:'The message is dated in the future.',author_unverifiable:'The author cannot be verified.',author_required:'An author is required.',not_authorized:'Not authorized.',audience_ineligible:'Not eligible for this link.',operation_conflict:'The operation conflicts with an earlier one.',too_large:'The request is too large.',record_unsupported:'Unsupported record.',unsupported_profile:'Unsupported profile.',rate_limited:'Too many messages. Try again later.',recipient_unavailable:'The recipient is unavailable.',recipient_storage_unavailable:'The recipient is unavailable.',audience_unavailable:'Eligibility is unavailable.',ingress_moved:'The ingress has moved.',counter_gap:'Counter gap.',incarnation_stale:'Stale incarnation.',participants_exceeded:'Too many participants.',record_forbidden:'Record forbidden.'};
 export function ingressError(error,now){
  const code=error?.code,headers={'Cache-Control':'no-store','Referrer-Policy':'no-referrer'};
  if(typeof code!=='string'||!Object.hasOwn(P.ERRORS,code))return Response.json({error:'internal_error',message:'The request could not be completed.'},{status:500,headers});

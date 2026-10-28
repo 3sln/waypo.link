@@ -3,6 +3,7 @@ import {parseLinkURL,contactMeta} from '../../../packages/messaging-engine/domai
 import {verifyES256} from '../../../packages/messaging-protocol/certificate.mjs';
 import {MailboxAction,ownerOf,operations} from '../../../packages/messaging-engine/engine.mjs';
 import {fault} from '../../../packages/messaging-engine/faults.mjs';
+import {queueEdge} from '../../../packages/messaging-engine/store/mailbox.mjs';
 export class BindMailbox extends MailboxAction {
  static operation='shell.bind';static deps=['mailboxStore'];
  run({mailboxStore:store}){const owner=ownerOf(this.actor);return store.transaction(async tx=>{const bound=await tx.get('owner');if(bound!==undefined&&bound!==owner)fault('forbidden','Mailbox owner mismatch.',403);await tx.put('owner',owner);return {owner};});}
@@ -15,7 +16,11 @@ export class MailboxAuthorization extends MailboxAction {
   if(!input||!Number.isSafeInteger(input.revision)||input.revision<1||typeof input.active!=='boolean'||!Array.isArray(input.recipients)||input.recipients.length>1000)fault('invalid_input','Invalid authorization snapshot.',400);
   if(input.connection!==undefined&&(typeof input.connection!=='string'||!input.connection||input.connection.length>128||!Number.isSafeInteger(input.generation)||input.generation<0))fault('invalid_input','Invalid connection binding.',400);
   for(const p of input.recipients)try{if(new URL(p.issuer).origin!==p.issuer||!p.issuer.startsWith('https://')||typeof p.subject!=='string'||!p.subject)throw new Error();}catch{fault('invalid_input','Invalid recipient.',400);}
-  return store.transaction(async tx=>{if(await tx.get('owner')!==owner)fault('forbidden','Mailbox owner mismatch.',403);const prior=await tx.get('shell:authorization');if(prior?.revision>=input.revision)return {applied:false,revision:prior.revision};await tx.put('shell:authorization',{revision:input.revision,active:input.active,recipients:input.recipients.map(({issuer,subject})=>({issuer,subject})),...input.connection!==undefined?{connection:input.connection,generation:input.generation}:{}});if(!input.active)await tx.delete('shell:renewal');return {applied:true,revision:input.revision};});
+  return store.transaction(async tx=>{if(await tx.get('owner')!==owner)fault('forbidden','Mailbox owner mismatch.',403);const prior=await tx.get('shell:authorization');if(prior?.revision>=input.revision)return {applied:false,revision:prior.revision};await tx.put('shell:authorization',{revision:input.revision,active:input.active,recipients:input.recipients.map(({issuer,subject})=>({issuer,subject})),...input.connection!==undefined?{connection:input.connection,generation:input.generation}:{}});if(!input.active)await tx.delete('shell:renewal');
+  // Contacts spike phase 3: the edge's hosted-recipient entry follows the connection (messaging §6.7 step 2: a recipient
+  // with no current occupant gets the same recipient_unavailable as one not hosted here).
+  const config=await tx.get('config');if(config?.principal&&(prior?.active??null)!==input.active)await queueEdge(tx,{kind:'host',issuer:config.principal.issuer,subject:config.principal.subject,active:input.active});
+  return {applied:true,revision:input.revision};});
  }
 }
 export async function authorizeSend(tx,task){const grant=await tx.get('shell:authorization');return grant?.active===true&&grant.recipients.some(p=>p.issuer===task.principal.issuer&&p.subject===task.principal.subject);}

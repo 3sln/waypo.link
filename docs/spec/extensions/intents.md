@@ -124,7 +124,7 @@ Display strings follow artefacts §3 rule 7. Every display string is untrusted p
 
 | Field | Members |
 | --- | --- |
-| String | `{"type":"string","maxLength":n}` with n from 1 to 4,352 Unicode code points, and optionally `format`: `https-url` (an absolute URL with scheme `https`, no userinfo and no fragment, equal to its own WHATWG serialization), `uuid` (lowercase 8-4-4-4-12 hexadecimal), `handle` (the full `local@host` form of [protocol §2](../protocol.md#2-discovery-and-login), ASCII lowercase host), or `capability` (a bearer secret, bounded only by the field's `maxLength`; a value that is also an absolute HTTPS URL under the `https-url` rules may be displayed by its origin). A `capability` field forces `capability: true` and is displayed only by `presence` or `origin` (§4.3). |
+| String | `{"type":"string","maxLength":n}` with n from 1 to 4,352 Unicode code points, and optionally `format`: `https-url` (an absolute URL with scheme `https`, no userinfo and no fragment, equal to its own WHATWG serialization), `uuid` (lowercase 8-4-4-4-12 hexadecimal), `handle` (the full `local@host` form of [protocol §2](../protocol.md#2-discovery-and-login), ASCII lowercase host), or `capability` (a bearer secret, bounded only by the field's `maxLength`; under `origin` display, its origin is shown only when the value is an absolute HTTPS URL under the `https-url` rules; any other value is shown by presence only). A `capability` field forces `capability: true` and is displayed only by `presence` or `origin` (§4.3). |
 | Integer | `{"type":"integer","minimum":a,"maximum":b}` with safe integers a ≤ b. |
 | Boolean | `{"type":"boolean"}` |
 | Enum | `{"type":"enum","values":[...]}`: 1–64 unique strings of at most 64 code points. |
@@ -137,7 +137,7 @@ Data members not defined by the schema at the referenced version are invalid. A 
 - `categories`: the [incremental authorization §8.3](incremental-authorization.md#83-sensitivity-categories) categories that any link of this kind can involve. A missing category never lowers risk, and unknown values are ignored for display but never lower risk.
 - `fields`: exactly one entry per data property: `{"title": <map as for title>, "categories": [...], "display": "value"|"origin"|"presence"}`.
   - `value`: the provider may show the value. Allowed only for enum, boolean, integer and principal fields, and for strings with `maxLength` at most 120 and no `format` other than `uuid` or `handle`. A shown string is labelled as text from the link and quoted. A principal is shown as its `iss` host, plus a handle only when the provider already holds a verified binding for that principal; showing it never triggers a fetch, and it is always labelled as the link's claim.
-  - `origin`: shows only the origin of an `https-url` value, or of a `capability` value that is an HTTPS URL.
+  - `origin`: shows only the origin of an `https-url` value. For a `capability` value, the origin is shown only when the value is an absolute HTTPS URL under the `https-url` rules; otherwise the provider shows only that the member is present, as for `presence`, and never the value or any part of it.
   - `presence`: shows only that the member is present.
   - A field that carries a capability MUST use `origin` or `presence`. Every `capability` field carries one.
 

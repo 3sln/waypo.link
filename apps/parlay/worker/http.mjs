@@ -5,6 +5,9 @@ import {LIMITS,strictJSON,ProtocolFault,parseRPC,MAILBOX_CONTRACT,INTAKE_CONTRAC
 import {fault,MailboxFault} from '../../../packages/messaging-engine/faults.mjs';
 import {enabled} from './mailbox.mjs';
 import {handleConversationIngress} from '../../../packages/messaging-engine/domains/conversations.mjs';
+import {createFirstContactBudget} from '../../../packages/messaging-engine/domains/invites.mjs';
+// First-contact budgets (messaging §7.4) are per isolate: an approximation where many edge isolates serve one host.
+const firstContactBudget=createFirstContactBudget();
 const headers={'Cache-Control':'no-store','Referrer-Policy':'no-referrer','X-Content-Type-Options':'nosniff'};
 export async function bodyBytes(request,limit=LIMITS.maxRequestBytes){
  if(Number(request.headers.get('Content-Length'))>limit)fault('too_large','Request too large.',413);
@@ -36,8 +39,8 @@ export function createHTTP({PARLAY_ENABLED=false,INTENT_LINKS_ENABLED=false,APP_
 
   if((path==='/bindle/ingress'||/^\/bindle\/ingress\/return\/[A-Za-z0-9_-]{32}$/.test(path))&&request.method==='POST')try{
    if(!edge)fault('recipient_unavailable','Ingress index unavailable.',503);
-   const wire={url:request.url,method:'POST',headers:Object.fromEntries(request.headers),body:await bodyBytes(request)},deliver=(name)=>async(owner,input)=>(await mailbox(owner)).run(owner,name,{input});
-   return conversationEdge?await handleConversationIngress(wire,{edge,conversationEdge,deliverLink:deliver('receive.deliver'),deliverRecord:deliver('conversations.receive'),deliverResponse:deliver('conversations.respond')}):await handleIngress(wire,{edge,deliver:deliver('receive.deliver')});
+   const wire={url:request.url,method:'POST',headers:Object.fromEntries(request.headers),body:await bodyBytes(request),source:request.headers.get('CF-Connecting-IP')??undefined},deliver=(name)=>async(owner,input)=>(await mailbox(owner)).run(owner,name,{input});
+   return conversationEdge?await handleConversationIngress(wire,{edge,conversationEdge,deliverLink:deliver('receive.deliver'),deliverRecord:deliver('conversations.receive'),deliverResponse:deliver('conversations.respond'),deliverInvite:deliver('receive.redeem'),deliverFirst:deliver('receive.first-contact'),budget:firstContactBudget}):await handleIngress(wire,{edge,deliver:deliver('receive.deliver')});
   }catch(error){return ingressError(error,Date.now());}
   try{
    if(request.method==='GET'&&['/bindle/client.json','/bindle/jwks.json'].includes(path)){if(!metadata)fault('recipient_unavailable','Client metadata unavailable.',503);return Response.json(await metadata(path),{headers});}

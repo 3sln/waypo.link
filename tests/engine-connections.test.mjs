@@ -11,7 +11,7 @@ import {AppConnections,RECOGNIZED_FIELDS} from '../packages/apps/connections.mjs
 import * as C from '../packages/app/domains/connections.mjs';
 import {validateIntegrationManifest} from '../packages/federation/integrations.mjs';
 import {createFieldOperation,nextFieldDispatch,recordFieldOutcome,fieldOperationResult} from '../packages/federation/extensions.mjs';
-import {PROVIDER_EXT,declare} from '../packages/core/extensions.mjs';
+import {PROVIDER_EXT,EXT,declare} from '../packages/core/extensions.mjs';
 import {MESSAGING_INGRESS_FRAGMENT} from '../packages/identity/messaging-ingress.mjs';
 import {DELEGATION_PURPOSES,signDelegationPop,jwkThumbprint} from '../packages/identity/delegation.mjs';
 import {AccountController} from '../packages/runtime/accounts.mjs';
@@ -24,8 +24,8 @@ const ALL=Object.values(DELEGATION_PURPOSES).sort();
 // Extensions rev 3.2: a provider-consumable test field with `selection: ordered` (no slots; broadcast and
 // consumer-choice were cut, §10.1).
 const ORDERED={id:'https://spec.bindle.example/fragments/ordered-test/v1',title:'ordered-test',description:'Test field.',publisher:'https://spec.bindle.example',fields:{models:{title:'Models',type:'resource',cardinality:{min:0,max:3},contracts:[MODEL],selection:'ordered',consumers:['application','provider']}}};
-const FIELDS={...RECOGNIZED_FIELDS,[ORDERED.id]:ORDERED},ADDRESS=PROVIDER_EXT.messagingAddress;
-const DECLARED=()=>({manifest:{issuer:ISSUER,extensions:[declare(ADDRESS),declare(PROVIDER_EXT.emailBridge)]},blocked:[]});
+const FIELDS={...RECOGNIZED_FIELDS,[ORDERED.id]:ORDERED},MAILBOX_FEATURE=EXT.messagingMailbox;
+const DECLARED=()=>({manifest:{issuer:ISSUER,extensions:[declare(EXT.keyDelegation),declare(MAILBOX_FEATURE),declare(PROVIDER_EXT.emailBridge)]},blocked:[]});
 const BUILTINS={classifier:{name:'3sln.me models',manifest:{v:1,resources:{contracts:[MODEL]}}}};
 const code=c=>e=>{assert.equal(e.code,c,`expected ${c}, got ${e.code}: ${e.message}`);return true;};
 
@@ -121,13 +121,13 @@ test('field values: exclusive needs explicit replacement, recently authenticated
  await assert.rejects(f.op(C.AssignField,f.owner,{fragment:MESSAGING_INGRESS_FRAGMENT,connection:wrong.id}),code('not_a_candidate'),'required contracts are not offered');
  await f.op(C.AssignField,f.owner,{fragment:MESSAGING_INGRESS_FRAGMENT,connection:a.id});
  await assert.rejects(f.op(C.AssignField,f.owner,{fragment:MESSAGING_INGRESS_FRAGMENT,connection:b.id}),code('field_filled'),'a new connection never displaces the value');
- await f.op(C.EnableFeature,f.owner,{feature:ADDRESS});
+ await f.op(C.EnableFeature,f.owner,{feature:MAILBOX_FEATURE});
  await assert.rejects(f.op(C.AssignField,{kind:'owner',owner:OWNER},{fragment:MESSAGING_INGRESS_FRAGMENT,connection:b.id,replace:true}),code('reauthentication_required'));
  await assert.rejects(f.op(C.AssignField,{kind:'owner',owner:OWNER,authTime:f.clock.now()-16*60000},{fragment:MESSAGING_INGRESS_FRAGMENT,connection:b.id,replace:true}),code('reauthentication_required'));
  const replaced=await f.op(C.AssignField,f.owner,{fragment:MESSAGING_INGRESS_FRAGMENT,connection:b.id,replace:true});
  assert.deepEqual(replaced.values.map(o=>o.clientId),[b.clientId]);assert.equal(replaced.selection,'exclusive');assert.equal(replaced.host,'spec.bindle.example');
  assert.equal((await f.occupant(MESSAGING_INGRESS_FRAGMENT)).entries[0].clientId,b.clientId);
- assert.deepEqual((await f.op(C.FeatureResources,f.system,{feature:ADDRESS})).resources,[],'the replacement is not approved for the feature');
+ assert.deepEqual((await f.op(C.FeatureResources,f.system,{feature:MAILBOX_FEATURE})).resources,[],'the replacement is not approved for the feature');
  await f.op(C.SuspendConnection,f.owner,{connection:a.id});
  await assert.rejects(f.op(C.AssignField,f.owner,{fragment:ORDERED.id,connection:a.id}),code('connection_unavailable'));
  const cascades=await f.op(C.ConnectionCascades,f.system);
@@ -242,8 +242,8 @@ async function account(t,overrides={}){
  const bucket={put:async()=>{},get:async()=>null,delete:async()=>{}};
  const a=new AccountController({metadata:db,gate:new SerialGate(),blobs:bucket,archives:bucket,config,sql:db.sql});await a.touch(OWNER);
  const sys=(operation,input)=>a.connectionsSystem(OWNER,{operation,input}),own=(operation,input,authTime=Date.now())=>a.connectionsOwner(OWNER,{operation,input},{authTime});
- // Extensions rev 3.2: the ports answer only through the messaging-address feature's grant (owner consent, §4.2).
- const install=async host=>{const s=snapshot(host);const c=await sys('connections.connect',s);const live=(await own('connections.features')).find(x=>x.feature===ADDRESS)?.state==='active';const seat=(await own('connections.assign',{fragment:MESSAGING_INGRESS_FRAGMENT,connection:c.id,purposes:ALL,replace:true,...live?{approve:[ADDRESS]}:{}})).values[0];if(!live)await own('connections.enable-feature',{feature:ADDRESS});await sys('connections.set-ingress',{fragment:MESSAGING_INGRESS_FRAGMENT,seat:seat.seat,generation:c.generation,ingress:`https://${host}/ingress`});return {...c,seat:seat.seat};};
+ // Extensions rev 3.2: the ports answer only through the messaging-mailbox feature's grant (owner consent, §4.2).
+ const install=async host=>{const s=snapshot(host);const c=await sys('connections.connect',s);const live=(await own('connections.features')).find(x=>x.feature===MAILBOX_FEATURE)?.state==='active';const seat=(await own('connections.assign',{fragment:MESSAGING_INGRESS_FRAGMENT,connection:c.id,purposes:ALL,replace:true,...live?{approve:[MAILBOX_FEATURE]}:{}})).values[0];if(!live)await own('connections.enable-feature',{feature:MAILBOX_FEATURE});await sys('connections.set-ingress',{fragment:MESSAGING_INGRESS_FRAGMENT,seat:seat.seat,generation:c.generation,ingress:`https://${host}/ingress`});return {...c,seat:seat.seat};};
  const key=async()=>{const pair=await crypto.subtle.generateKey({name:'ECDSA',namedCurve:'P-256'},true,['sign','verify']);const {kty,crv,x,y}=await crypto.subtle.exportKey('jwk',pair.publicKey);const jwk={kty,crv,x,y};return {...pair,jwk,jkt:await jwkThumbprint(jwk)};};
  const issue=async(clientId,k)=>a.delegationOperation(OWNER,{actor:{kind:'app',owner:OWNER,clientId},operation:'delegations.issue',input:{delegate:k.jwk,purposes:ALL,proof:await signDelegationPop({privateKey:k.privateKey,issuer:ISSUER,clientId,jkt:k.jkt,subject:OWNER,iat:Math.floor(Date.now()/1000)})}});
  const links=clientId=>a.linkOperation(OWNER,{actor:{kind:'app',owner:OWNER,clientId,handle:'alice'},operation:'links.list'});
@@ -257,7 +257,7 @@ test('ports: the messaging-ingress occupant is certified and holds link authorit
  assert.equal(await c.account.delegationSlotOccupant({owner:OTHER,fragment:MESSAGING_INGRESS_FRAGMENT}),null,'another owner is never answered');
  assert.equal(await c.account.linkSlotOccupant({owner:OWNER,fragment:'https://spec.bindle.example/fragments/unknown/v1'}),null);
  // Disabling the provider feature ends the port answer at once (extensions §4.2).
- await c.own('connections.disable-feature',{feature:ADDRESS});assert.equal(await c.account.linkSlotOccupant({owner:OWNER,fragment:MESSAGING_INGRESS_FRAGMENT}),null);await c.own('connections.enable-feature',{feature:ADDRESS});
+ await c.own('connections.disable-feature',{feature:MAILBOX_FEATURE});assert.equal(await c.account.linkSlotOccupant({owner:OWNER,fragment:MESSAGING_INGRESS_FRAGMENT}),null);await c.own('connections.enable-feature',{feature:MAILBOX_FEATURE});
  const k=await c.key(),issued=await c.issue(app.clientId,k);assert.equal(issued.purposes.length,3);
  assert.deepEqual(await c.links(app.clientId),{links:[]});
  await assert.rejects(c.links('https://evil.example/client.json'),code('forbidden'));
@@ -344,7 +344,7 @@ test('migration: legacy records read as active/disconnected, are migrated on fir
 
 test('the recognized fields are the provider-consumable intake and ingress fragments', ()=>{
  assert.deepEqual(Object.keys(RECOGNIZED_FIELDS).sort(),[MESSAGING_INGRESS_FRAGMENT,'https://spec.bindle.example/fragments/public-intake/v1'].sort());
- const ingress=RECOGNIZED_FIELDS[MESSAGING_INGRESS_FRAGMENT].fields.ingress;assert.equal(ingress.selection,'exclusive');assert.deepEqual(ingress.consumers,['provider']);
+ const ingress=RECOGNIZED_FIELDS[MESSAGING_INGRESS_FRAGMENT].fields.mailbox;assert.equal(ingress.selection,'exclusive');assert.deepEqual(ingress.consumers,['provider']);
  assert.ok(C.CONNECTION_OWNER_OPERATIONS.every(name=>C.CONNECTION_OPERATIONS.some(O=>O.operation===name)));
 });
 

@@ -73,6 +73,21 @@ What this does and does not bound:
 
 Economics reviewer ___ / Date ___ / Outcome ___.
 
+### Relayed signaling `data` bytes (provisional)
+
+Provisional coordinator row, 2026-10-28 (signaling §3.5 production gate; signaling engine phase), not signed off. Run `dataEconomics()` in `scripts/cost-model.mjs`; `tests/cost-model-relay.test.mjs` checks that the row is derived from the engine's own bounds. This is provider signaling traffic, not TURN: each `data` message is one Worker request and one account Durable Object request at each provider. The worst case is an entity whose legs use the whole aggregate `data` budget (1 MiB per hour, the provisional engine value, the same for every plan) every hour of a 30-day month, as 4 KiB messages: about 755 MB and 184,320 messages a month. The request prices (US$0.30 per million Worker requests, US$0.15 per million Durable Object requests) are a planning snapshot **not rechecked against a primary source; recheck before declaring the `data` profile in production.**
+
+| Plan | Data/month at the budget | Messages/month | Data at the budget/year | Share of price | Margin with typical infra, fee and data (no relay) | Margin with relay allowance and data |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Free | about 755 MB | 184,320 | $1.00 | n/a | n/a | n/a |
+| Paid, $5 | about 755 MB | 184,320 | $1.00 | 19.9% | 45.6% | 33.6% |
+| Plus, $35 | about 755 MB | 184,320 | $1.00 | 2.8% | 69.0% | 51.8% |
+| Ultra, $250 | about 755 MB | 184,320 | $1.00 | 0.4% | 77.1% | 53.1% |
+
+The last two columns are computed here from `relayEconomics()` and `dataEconomics()`; the model does not combine them, and no test guards a floor for them. At the full budget, Paid falls under the 50% margin floor even without any relay, and a Free account's worst-case `data` cost is about eight times its typical infrastructure cost ($0.13). The budget is the binding assumption (doubling it doubles the cost), so a per-plan budget, or a lower Free budget, is the lever if the floor is to hold. Each provider in a cross-entity session bears its own side.
+
+Economics reviewer ___ / Date ___ / Outcome ___.
+
 ## Organization tiers (provisional)
 
 Provisional coordinator pricing, 2026-10-23, not signed off. Run `organizationEconomics()` in `scripts/cost-model.mjs`; `tests/cost-model-organizations.test.mjs` fails if any tier drops under a 50% worst-case margin.

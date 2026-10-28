@@ -11,7 +11,12 @@
 // payload exactly {bindle, v, iss, sub, delegate, jkt, purposes, client, cnx, since, jti, iat, exp}.
 //
 // Rules (spec §3.2):
-//   - Only the current messaging-ingress occupant, as reported by the `occupant({owner, slot})` port ->
+//   - Occupant check (Bindle Messaging §3.2, §2.5; contacts spike CR-X1/CR-C0, provisional): only the installation that
+//     supplies the resource assigned to the messaging-ingress `mailbox` field, and only while the messaging-mailbox
+//     provider feature is enabled and unsuspended, with the ingress that feature recorded from `describe`. The runtime
+//     port (runtime/account/connections.mjs delegationSlotOccupant) answers from that feature's projection only, so
+//     occupancy needs KEY_DELEGATION_ENABLED and the feature, never LINKS_ENABLED. That occupant, as reported by the
+//     `occupant({owner, fragment})` port ->
 //     {clientId, origin, ingress, cnx, purposes} | null, is certified, and only for purposes it reports as consented
 //     that this provider recognizes (author, receipt, archive). No port, a failing port, or another occupant means
 //     `forbidden`; occupancy is re-read before signing and again before commit. `client` and `cnx` come from the port,

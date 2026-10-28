@@ -4,11 +4,12 @@ import {LIMITS} from './constants.mjs';
 import {fail,malformed,jcs,uuid,originValue,digestValue,time} from './encoding.mjs';
 
 const principalParts=p=>{originValue(p.issuer);uuid(p.subject);return [p.issuer,p.subject];};
-// Receiver namespace. Link kinds: (recipient owner, contactId, author principal, operationId).
+// Receiver namespace. First-contact kinds (§8.2): (recipient owner, author principal, operationId); the withdrawn
+// link recipient keeps its contactId component until contact links are removed (contacts spike phase 4).
 // Records: (recipient owner, conversationId, author principal, stream, counter); eventId is compared alongside.
 export function replayKey(envelope){
  const p=envelope.payload,r=p.recipient,a=principalParts(p.author.principal);
- return p.kind==='conversation-record'?jcs(['bindle-messaging-replay-record-v1',r.issuer,r.owner,r.conversationId,...a,p.record.stream,p.record.counter]):jcs(['bindle-messaging-replay-link-v1',r.issuer,r.owner,r.contactId,...a,p.operationId]);
+ return p.kind==='conversation-record'?jcs(['bindle-messaging-replay-record-v1',r.issuer,r.owner,r.conversationId,...a,p.record.stream,p.record.counter]):Object.hasOwn(r,'contactId')?jcs(['bindle-messaging-replay-link-v1',r.issuer,r.owner,r.contactId,...a,p.operationId]):jcs(['bindle-messaging-replay-first-v1',r.issuer,r.owner,...a,p.operationId]);
 }
 // Sender-local operation namespace (app send API, Idempotency-Key): (author principal, operationId).
 export const operationKey=(principal,operationId)=>jcs(['bindle-messaging-operation-v1',...principalParts(principal),uuid(operationId)]);

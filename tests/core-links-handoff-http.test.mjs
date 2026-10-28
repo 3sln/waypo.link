@@ -21,7 +21,8 @@ async function server(port, config) {
   const session = await activated.json();
   return { app, origin, fetchURL, id: session.account.id, handle: session.account.handle, controller: () => app.resources.accounts.get(session.account.id), async close() { await app.close(); await rm(directory, { recursive: true, force: true }); } };
 }
-const describe = { calls: 0, body: () => ({ version: 1, profiles: [MESSAGING_PROFILE], ingress: `${BOX.origin}/ingress`, kinds: ['conversation-init', 'one-off'], limits: { maxParticipants: 32, maxMessageBytes: 1048576, maxEnvelopeBytes: 65536 } }) };
+// Bindle Messaging §2.2: `describe` is exactly {version: 1, ingress}; the handoff adds the fixed profiles and limits.
+const describe = { calls: 0, body: () => ({ version: 1, ingress: `${BOX.origin}/ingress` }) };
 
 test('descriptor route: occupant descriptor, uniform unavailability, link checks, and nothing with the flag off', async () => {
   const seat = { value: { ...BOX, generation: 1 } };
@@ -34,7 +35,7 @@ test('descriptor route: occupant descriptor, uniform unavailability, link checks
     assert.equal(response.status, 200, await response.clone().text());
     assert.equal(response.headers.get('Content-Type'), DESCRIPTOR_MEDIA_TYPE); assert.equal(response.headers.get('Cache-Control'), 'no-store'); assert.equal(response.headers.get('Referrer-Policy'), 'no-referrer'); assert.equal(response.headers.get('Access-Control-Allow-Origin'), '*'); assert.equal(response.headers.get('Set-Cookie'), null);
     const descriptor = await response.json();
-    assert.equal(descriptor.ingress, `${BOX.origin}/ingress`); assert.deepEqual(descriptor.kinds, claims.kinds); assert.ok(descriptor.expiresAt <= Date.now() + 3600000);
+    assert.equal(descriptor.ingress, `${BOX.origin}/ingress`); assert.deepEqual(descriptor.kinds, claims.kinds); assert.deepEqual(descriptor.profiles, [MESSAGING_PROFILE]); assert.deepEqual(descriptor.limits, { maxParticipants: 32, maxMessageBytes: 1048576, maxEnvelopeBytes: 65536 }); assert.ok(descriptor.expiresAt <= Date.now() + 3600000);
     // Unrelated parameters are dropped before verification; HEAD and the CORS preflight work credentialless.
     assert.equal((await get(`${issued.link}&utm_source=x`)).status, 200);
     assert.equal((await get(issued.link, DESCRIPTOR_MEDIA_TYPE, 'HEAD')).status, 200);

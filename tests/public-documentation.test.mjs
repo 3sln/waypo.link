@@ -46,8 +46,8 @@ test('the publication check fails on unlisted specs, links to unpublished specs 
 });
 test('published pages keep their group and draft status visible while dropping reviewer bookkeeping',async()=>{
  for(const page of publicDocumentation){const text=await published(page.source);assert.match(text,/^# .+\n+> \*\*Group:\*\* /,page.source);assert.match(text,/> \*\*Status:\*\* \S/,page.source);assert.doesNotMatch(text,/Reviewer:? ___/,page.source);}
- assert.match(await published('docs/spec/extensions/signaling.md'),/\*\*Status:\*\* draft, revision 3\.2, specification only: nothing is implemented/);
- const links=await published('docs/spec/extensions/links.md');assert.match(links,/Proposed amendment AMD-L1 \(2026-10-27, provisional, unsigned\)/);assert.doesNotMatch(links,/DEVLOG/);
+ assert.match(await published('docs/spec/extensions/signaling.md'),/\*\*Status:\*\* draft, revision 3\.2; the engine phase is implemented locally behind default-off flags \(2026-10-28\)/);
+ const links=await published('docs/spec/superseded/links.md');assert.equal(movedDocumentation['docs/spec/extensions/links.md'],'docs/spec/superseded/links.md');assert.equal(publicDocumentation.find(page=>page.source==='docs/spec/superseded/links.md')?.group,'Superseded (for reference)');assert.match(links,/> \*\*Group:\*\* Superseded/);assert.match(links,/Proposed amendment AMD-L1 \(2026-10-27, provisional, unsigned\)/);assert.doesNotMatch(links,/DEVLOG/);
  const device=await published('docs/spec/extensions/device-authorization.md');assert.match(device,/\*\*Does not cover:\*\* session handoff/);assert.match(device,/approve-a-sign-in\.md/);
  const signin=await published('docs/3sln/accounts/sign-in-and-sessions.md');assert.match(signin,/Device authorization does not replace or supersede anything here/);
  const source='# T\n\n> **Group:** Bindle core\n>\n> **Status:** draft; Reviewer ___ Date ___ Outcome ___ stays in the header.\n\nThe rule is proposed (approved provisionally 2026-10-20; DEVLOG "Example entry"). Reviewer ___ / date ___ / outcome ___.\n\n| ID | Decision | Sign-off |\n| --- | --- | --- |\n| X-1 | Keep it. | Reviewer ___ Date ___ Outcome ___ |\n';

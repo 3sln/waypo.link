@@ -39,6 +39,21 @@ rescue and archive handoff across locales, sizes and themes. Integration regress
 `tests/parlay/wave4-integration.test.mjs` additionally exercise actual shell mounting,
 verified contact creation, encrypted Rejected reads and the archive security gates.
 
+Contacts spike phase 3 (provisional, unsigned; behind `PARLAY_ENABLED` and, for the handoff,
+`INTENT_LINKS_ENABLED`). The intent handler accepts the Bindle Messaging `connect` kind
+(`docs/artefacts/intents/connect-v1.json`, pinned by digest in `bl/intents.mjs`; messaging §4.1–§4.2).
+Receipt validates the data and `expires_at` locally and fetches nothing. The first armed confirmation runs
+only `invites.inspect`, which verifies the inviter's certificate, status and ingress. The question
+"Allow <handle, else host> to message you?" then appears, with the labelled `no-reply` hint. Only a second,
+re-armed confirmation runs `invites.redeem`. Failures render fixed text: used or no longer valid, could not
+verify (both terminal), or could not check right now (retry after re-arming). Contacts adds "Invite a
+person", which calls `invites.create` and shows the `web+bindle://intent?bintent=…` link once. The token
+stays in memory only and is discarded by Done or navigation. Contacts also lists invitations (state, expiry,
+"Used by" ledger entries with Block, and Revoke) and the members of the built-in Contacts list. The worker's
+intent declaration for `connect` and its provider registration belong to phase 4.
+`tests/parlay/connect-intent.test.mjs`, `tests/browser/intent-parlay-browser.mjs` and
+`tests/parlay/browser/invites-browser.test.mjs` cover these flows.
+
 These are local implementation and harness/browser checks. External identity, delivery,
 object-storage and key-holder conformance remain unverified. Production release remains disabled.
 DEVLOG.md was not edited for this integration pass.

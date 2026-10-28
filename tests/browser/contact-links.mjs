@@ -147,25 +147,52 @@ test('seeded arrivals: only the same link ever reaches the intent router, and no
  });
 });
 
-test('developer contact: occupant mode only; the legacy shape and malformed links are unavailable',async()=>{
+// "Message the developer" (contacts spike CR-C5/CR-C8; provisional): GET is an eligibility read; POST answers a bound
+// `connect` invitation. A structurally valid unsigned intent (the console checks shape and kind, not the token).
+const CONNECT={artefact:'https://spec.bindle.example/messaging/v1/intents/connect',version:1,digest:'sha256-oCyJ6fKE_vJrmdRY5bF5U_R8t_pfE2HZoZy81yG7H-g'},inviteToken='T'.repeat(32);
+const connectAnswer=async({kind=CONNECT,expiresAt=Date.now()+3600000,url}={})=>{const {encodeIntent}=await import('../../packages/intents/format.mjs'),exp=Math.floor(expiresAt/1000),value=encodeIntent({bintent:1,kind,data:{inviter:{iss:origin,sub:'550e8400-e29b-41d4-a716-446655440009'},token:inviteToken,delegation:'a.b.c',expires_at:exp},exp});return {intent:{value,url:url??'web+bindle://intent?bintent='+value},expiresAt:exp*1000};};
+const buttons=root=>[...root.querySelectorAll('button')].map(b=>b.textContent);
+
+test('developer contact: an eligibility read only; ineligible accounts get no button and never mint; old link fields are dropped',async()=>{
  const f=await fixture({route:{kind:'home'},session:{account}});try{
-  f.api.get=async()=>({available:true,url:link,expiresAt:Date.now()+86400000,eligibility:{state:'eligible'}});await f.act(new LoadDeveloperContact());let state=await f.read();assert.deepEqual(state.developerContact,{available:false,reason:'contact-unavailable'});assert.equal(f.secrets.developerContactURL,null);
-  f.api.get=async()=>({available:true,mode:'occupant',intent:'send-message',url:link,expiresAt:Date.now()+86400000,policy:'https://3sln.example/policies/developer-contact/v1',recipientBadge:{role:'developer'},eligibility:{state:'ineligible',reason:'paid-required'}});await f.act(new LoadDeveloperContact());state=await f.read();assert.equal(state.developerContact.eligibility.state,'ineligible');assert.equal(f.secrets.developerContactURL.url,link);assert.equal(JSON.stringify(state).includes(meta),false);
-  const root=render(developerContact,state);assert.ok(root.textContent.includes('not currently eligible'));assert.ok(root.textContent.includes('Developer contact is currently available to paid accounts.'));
+  f.api.get=async()=>({available:true,eligibility:{state:'ineligible',reason:'paid-required',tier:'free'},recipientBadge:{role:'developer'}});await f.act(new LoadDeveloperContact());let state=await f.read();
+  assert.deepEqual(state.developerContact,{available:true,eligibility:{state:'ineligible',reason:'paid-required',tier:'free'},recipientBadge:{role:'developer'}});assert.equal(f.secrets.developerContactURL,null);
+  const root=render(developerContact,state);assert.ok(root.textContent.includes('not currently eligible'));assert.ok(root.textContent.includes('Developer contact is currently available to paid accounts.'));assert.deepEqual(buttons(root),['Check eligibility again']);
+  await f.act(new OpenDeveloperContact());assert.equal(f.calls.some(c=>c.method==='POST'),false);assert.deepEqual(f.nav,[]);
   f.api.get=async()=>({available:false,reason:'developer-unavailable'});await f.act(new LoadDeveloperContact());assert.match(render(developerContact,await f.read()).textContent,/not ready to receive messages/);
-  f.api.get=async()=>({available:true,mode:'occupant',url:link.replace('bindle_meta','sig'),eligibility:{state:'eligible'}});await f.act(new LoadDeveloperContact());assert.match((await f.read()).error,/not available/);
+  // A pre-CR-C5 answer: the link, its URL and policy never reach state; only eligibility does.
+  f.api.get=async()=>({available:true,mode:'occupant',intent:'send-message',url:link,policy:'https://3sln.example/policies/developer-contact/v1',eligibility:{state:'eligible'}});await f.act(new LoadDeveloperContact());state=await f.read();
+  assert.deepEqual(state.developerContact,{available:true,eligibility:{state:'eligible'}});assert.equal(JSON.stringify(state).includes(meta),false);assert.equal(f.secrets.developerContactURL,null);
+  f.api.get=async()=>({available:true,eligibility:{state:'maybe'}});await f.act(new LoadDeveloperContact());assert.equal((await f.read()).developerContact.eligibility.state,'unavailable');
  }finally{await f.close();}
 });
 
-test('developer contact hands off a send-message intent, or opens the landing page without intents, in every locale',async()=>{
- const f=await fixture({route:{kind:'home'},session:{account}});try{f.api.get=async()=>({available:true,mode:'occupant',intent:'send-message',url:link,expiresAt:Date.now()+86400000,eligibility:{state:'eligible',tier:'free'}});await f.act(new LoadDeveloperContact());const state=await f.read();assert.equal(state.developerContact.mode,'occupant');
-  const intents=withIntents(state);
-  const en=render(developerContact,intents);assert.ok(en.textContent.includes('Write with your messaging app'));assert.ok(en.textContent.includes('Your messaging app opens to write to the developer.'));assert.equal(en.textContent.includes('Open developer contact'),false);
-  const es=render(developerContact,intents,'es');assert.ok(es.textContent.includes('Escribir con tu app de mensajería'));assert.equal(es.textContent.includes('Write with your messaging app'),false);
-  // Review I2: without intents the button opens the link's landing page, so the copy is the link copy in every locale.
-  const enOff=render(developerContact,state);assert.ok(enOff.textContent.includes('Open developer contact'));assert.ok(enOff.textContent.includes('The contact link opens'));assert.equal(enOff.textContent.includes('Write with your messaging app'),false);
-  const t=createLocalization({locale:'es'}).t,esOff=render(developerContact,state,'es');for(const source of ['Open developer contact','The contact link opens, so you can continue in your messaging app. Tags identify your plan and topic; they do not guarantee a response time.']){assert.notEqual(t(source),source);assert.ok(esOff.textContent.includes(t(source)));}
-  await f.act(new OpenDeveloperContact());assert.equal(f.nav.at(-1),link);await f.write(withIntents(await f.read()));await f.act(new OpenDeveloperContact());assert.match(f.nav.at(-1),/^\/i#bintent=/);
+test('Message the developer mints a bound invitation and hands it off; the token stays in browser secret storage, in every locale',async()=>{
+ const f=await fixture({route:{kind:'home'},session:{account}});try{
+  f.api.get=async()=>({available:true,eligibility:{state:'eligible',tier:'free'},recipientBadge:{role:'developer'}});await f.act(new LoadDeveloperContact());let state=await f.read();
+  const en=render(developerContact,state);assert.deepEqual(buttons(en),['Message the developer','Check eligibility again']);assert.ok(en.textContent.includes('one-time invitation'));
+  const t=createLocalization({locale:'es'}).t,es=render(developerContact,withIntents(state),'es');for(const source of ['Message the developer','Your messaging app opens with a one-time invitation from the developer, valid for one hour. The developer sees your plan as a label; it does not guarantee a response time.']){assert.notEqual(t(source),source);assert.ok(es.textContent.includes(t(source)));}
+  const answer=await connectAnswer(),posts=[];f.api.request=async(p,b,m)=>{posts.push([p,b,m]);return answer;};
+  // Without intents the scheme URL goes to the browser's registered messaging app.
+  await f.act(new OpenDeveloperContact());assert.deepEqual(posts,[['/api/developer-contact',{},'POST']]);assert.equal(f.nav.at(-1),answer.intent.url);
+  state=await f.read();assert.deepEqual(state.developerContact.invitation,{expiresAt:answer.expiresAt});for(const secret of [inviteToken,answer.intent.value])assert.equal(JSON.stringify(state).includes(secret),false);
+  assert.deepEqual(f.secrets.developerContactURL,{...answer.intent,expiresAt:answer.expiresAt,owner:account.id,generation:state.beamGeneration??0});
+  const minted=render(developerContact,state);assert.deepEqual(buttons(minted),['Open in your messaging app','Copy invitation link','Check eligibility again']);assert.ok(minted.textContent.includes('works once'));
+  // Reopening reuses this session's unexpired invitation; with intents it goes through the provider's intent router (fragment).
+  await f.write(withIntents(state));await f.act(new OpenDeveloperContact());assert.equal(posts.length,1);assert.equal(f.nav.at(-1),'/i#bintent='+answer.intent.value);
+  // Rechecking eligibility forgets the invitation.
+  await f.act(new LoadDeveloperContact());assert.equal(f.secrets.developerContactURL,null);assert.equal((await f.read()).developerContact.invitation,undefined);
+  // Malformed answers are refused without navigation or storage.
+  const navs=f.nav.length;
+  for(const bad of [await connectAnswer({url:'web+bindle://intent?bintent=other'}),await connectAnswer({kind:{...CONNECT,artefact:'https://spec.bindle.example/intents/send-message/v1'}}),await connectAnswer({expiresAt:Date.now()+7200000}),{intent:{value:'!',url:'web+bindle://intent?bintent=!'},expiresAt:Date.now()+1000}]){
+   f.api.request=async()=>bad;await f.write({error:''});await f.act(new OpenDeveloperContact());assert.match((await f.read()).error,/not available right now/);assert.equal(f.nav.length,navs);assert.equal(f.secrets.developerContactURL,null);}
+  // The server's recheck wins: an ineligible answer updates the card and explains.
+  f.api.request=async()=>{throw Object.assign(Error('not_eligible'),{code:'not_eligible',status:403});};await f.write({error:''});await f.act(new OpenDeveloperContact());state=await f.read();
+  assert.equal(state.developerContact.eligibility.state,'ineligible');assert.equal(state.error,'Your account is not currently eligible to message the developer.');assert.equal(f.nav.length,navs);
+  // An account switch while minting never hands the previous owner's invitation off or stores it.
+  await f.write({developerContact:{available:true,eligibility:{state:'eligible',tier:'free'}},error:''});let release;f.api.request=()=>new Promise(resolve=>{release=()=>resolve(answer);});
+  const pending=f.act(new OpenDeveloperContact());while(!release)await new Promise(resolve=>setTimeout(resolve,1));await f.write({session:{account:other}});release();await pending;
+  assert.equal(f.nav.length,navs);assert.equal(f.secrets.developerContactURL,null);
  }finally{await f.close();}
 });
 

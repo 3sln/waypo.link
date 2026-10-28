@@ -3,7 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as B from '../../packages/messaging-protocol/index.mjs';
-import {NOW,NAMES,generateKeys,party,world,encoder,linkPayload,initEnvelope,recordPayload,invitationResponse,receiptFor,binding,claimsFor,SECRET,CONVERSATION,EPOCH,EPOCH2,NONCE,uuidOf,linkRecipient,MULTICAST} from './vectors/fixtures.mjs';
+import {NOW,NAMES,generateKeys,party,world,encoder,linkPayload,initEnvelope,recordPayload,invitationResponse,receiptFor,binding,claimsFor,SECRET,CONVERSATION,EPOCH,EPOCH2,NONCE,uuidOf,linkRecipient,MULTICAST,plainRecipient,inviteRecipient,redemptionEnvelope,INVITE_TOKEN} from './vectors/fixtures.mjs';
 
 const keys=await generateKeys(),P={};for(const name of NAMES)P[name]=await party(name,keys);
 const {alice,bob,carol}=P;
@@ -54,10 +54,10 @@ test('certificate validation: lifetime, purpose, ingress, header and key binding
 });
 
 test('envelope schema: exact members, kinds, display strings, tags, sizes and profiles',async()=>{
- const e=await oneOff({optionalTags:['a','b']});await B.validateEnvelope(e);
+ const e=await oneOff();await B.validateEnvelope(e);
  const cases=[
   [p=>{p.extra=1;},'malformed'],[p=>{p.noReply=false;},'malformed'],[p=>{p.subject='a\u202eb';},'malformed'],[p=>{p.subject='line\u2028break';},'malformed'],
-  [p=>{p.subject='x'.repeat(201);},'malformed'],[p=>{p.optionalTags=['b','a'];},'malformed'],[p=>{p.optionalTags=['a','a'];},'malformed'],[p=>{p.optionalTags=[' a'];},'malformed'],
+  [p=>{p.subject='x'.repeat(201);},'malformed'],[p=>{p.optionalTags=[];},'malformed'],[p=>{p.optionalTags=['a'];},'malformed'],
   [p=>{p.operationId='0000000A-0000-4000-8000-000000000001';},'malformed'],[p=>{p.profile='https://spec.bindle.example/messaging/v2';},'unsupported_profile'],[p=>{p.version=2;},'malformed'],
   [p=>{p.recipient.resource='x'.repeat(129);},'malformed'],[p=>{p.content.byteLength=1048577;},'too_large'],[p=>{p.resendOf='not-a-uuid';},'malformed'],
   [p=>{p.author.identityDocument='https://evil.example/doc';},'malformed'],[p=>{p.author.delegate='jkt:short';},'malformed'],[p=>{p.recipient.issuer='https://bob.provider.example/';},'malformed'],
@@ -69,7 +69,7 @@ test('envelope schema: exact members, kinds, display strings, tags, sizes and pr
  await assert.rejects(B.validateEnvelope({...e,proof:{...e.proof,kid:alice.renewed.kid}}),code('malformed'));
  await assert.rejects(B.validateEnvelope(e,{limits:{maxBodyBytes:4}}),code('too_large'),'host limits shrink the maxima');
  assert.equal(B.clampLimits({maxBodyBytes:1e12}).maxBodyBytes,B.LIMITS.maxBodyBytes,'host limits never raise the maxima');
- const big=structuredClone(e);big.payload.author.keyId='k'.repeat(200);big.payload.optionalTags=Array.from({length:32},(_,i)=>`t${String(i).padStart(2,'0')}${'x'.repeat(58)}`);await B.validateEnvelope(big);
+ const big=structuredClone(e);big.payload.author.keyId='k'.repeat(200);await B.validateEnvelope(big);
  const huge=structuredClone(e);huge.proof.delegation=`${'A'.repeat(4000)}.${'A'.repeat(4000)}.${'A'.repeat(100)}`;await B.validateEnvelope(huge);
  // Getters run once on detach; the validated copy is detached from the caller.
  let reads=0;const tricky={get payload(){reads++;return structuredClone(e.payload);},proof:e.proof};const v=await B.validateEnvelope(tricky);assert.equal(reads,1);v.payload.subject='changed';assert.notEqual(e.payload.subject,'changed');
@@ -373,4 +373,33 @@ test('security review regressions (docs/release/messaging-protocol-review.md BR-
  // Ordering: a binding mismatch on a status-required record costs no status fetch.
  const elsewhere=binding(alice);elsewhere.ingress='https://alice.box.example/hijack';const before=w.calls.status;
  await assert.rejects(B.verifyEnvelope(await record('ingress',{data:{binding:elsewhere}}),opts(w)),code('author_unverifiable'));assert.equal(w.calls.status,before);
+});
+
+// Contacts spike phase 3 (messaging §4.3, §5.1, §7.1; provisional): recipient forms, the invitation credential and the
+// redemption shape. Every shape failure is `malformed`, whatever else is wrong.
+test('invitations: BindleInvite grammar, recipient forms and the content-free two-party redemption shape',async()=>{
+ const token=INVITE_TOKEN,redemption=await redemptionEnvelope(carol,bob);await B.validateEnvelope(redemption);
+ assert.deepEqual(B.parseCredential(`BindleInvite ${token}`),{scheme:'BindleInvite',value:token,token});
+ for(const bad of ['BindleInvite short','BindleInvite '+'A'.repeat(44),'BindleInvite a+b/cdefghijklmnopqrstuvwxyz','bindleinvite '+token,'BindleInvite  '+token])assert.throws(()=>B.parseCredential(bad),code('malformed'),bad);
+ assert.equal(B.formatCredential({scheme:'BindleInvite',token}),`BindleInvite ${token}`);
+ assert.equal(B.credentialScheme(redemption),'BindleInvite');
+ assert.equal(B.checkCredentialKind(redemption,B.parseCredential(`BindleInvite ${token}`)),'BindleInvite');
+ assert.throws(()=>B.checkCredentialKind(redemption,{scheme:null}),code('malformed'),'invite without BindleInvite');
+ const plain=await oneOff({recipient:plainRecipient(bob),operationId:uuidOf(61)});await B.validateEnvelope(plain);
+ assert.equal(B.credentialScheme(plain),null);assert.equal(B.checkCredentialKind(plain,{scheme:null}),null);
+ assert.throws(()=>B.checkCredentialKind(plain,B.parseCredential(`BindleInvite ${token}`)),code('malformed'),'BindleInvite without invite');
+ const linked=await oneOff();assert.throws(()=>B.checkCredentialKind(linked,{scheme:null}),code('link_invalid'),'the overlapping link recipient still needs its link');
+ // Redemption shape (§4.3): subject, body, a one-off, a third participant, a mixed recipient.
+ const resignAs=async(envelope,edit,signer=carol.signer)=>{const payload=structuredClone(envelope.payload);edit(payload);return B.signEnvelope(payload,signer);};
+ await assert.rejects(resignAs(redemption,p=>{p.subject='hi';}),code('malformed'));
+ await assert.rejects(resignAs(redemption,p=>{p.content={mimeType:'text/plain',byteLength:1,sha256:B.base64url(new Uint8Array(32))};}),code('malformed'));
+ await assert.rejects(oneOff({recipient:await inviteRecipient(bob),subject:'',operationId:uuidOf(62)}),code('malformed'),'a one-off never carries invite');
+ await assert.rejects(resignAs(redemption,p=>{p.recipient.contactId='x';p.recipient.resource='y';}),code('malformed'));
+ await assert.rejects(resignAs(redemption,p=>{p.recipient.invite='short';}),code('malformed'));
+ // A third genesis participant: the creator signs a three-party genesis for a redemption.
+ const three=await B.signGenesis({...redemption.payload.conversation.genesis.payload,participants:[carol,bob,alice].map(p=>({principal:p.principal,keyId:p.keyId}))},carol.signer);
+ await assert.rejects(resignAs(redemption,p=>{p.conversation.genesis=three;}),code('malformed'));
+ // Replay namespaces: first contact (owner, author, operationId); redemption the same key class.
+ assert.notEqual(B.replayKey(plain),B.replayKey(await oneOff({operationId:uuidOf(61)})),'the link form keeps its own namespace');
+ assert.match(B.replayKey(plain),/replay-first-v1/);assert.match(B.replayKey(redemption),/replay-first-v1/);
 });

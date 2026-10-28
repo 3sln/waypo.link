@@ -13,7 +13,7 @@ import {DiscoveryClient,DiscoveryBudget,createIntegrationEgress} from '../packag
 import {validateIntegrationManifest} from '../packages/federation/integrations.mjs';
 import {brokeringKeys,mintAccessToken,verifyAccessToken} from '../packages/federation/signing.mjs';
 import {MESSAGING_INGRESS_FRAGMENT,MESSAGING_PROFILE,MESSAGING_CONTACT_LINK_TYPE} from '../packages/links/types.mjs';
-import {PROVIDER_EXT,declare} from '../packages/core/extensions.mjs';
+import {PROVIDER_EXT,EXT,declare} from '../packages/core/extensions.mjs';
 import {LinkHandoff} from '../packages/links/handoff.mjs';
 import {AccountController} from '../packages/runtime/accounts.mjs';
 import {SqliteMetadata,SerialGate} from '../apps/node/resources.mjs';
@@ -23,13 +23,14 @@ import {fakeClock} from './helpers/chaos.mjs';
 
 const OWNER='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',ISSUER='https://3sln.example',SUBJECT=`${ISSUER}/entities/${OWNER}`;
 const MAILBOX=B.MAILBOX_CONTRACT,MODEL='https://spec.bindle.example/contracts/decision-model/v1',FRAGMENT='https://notes.example/preferences/models/v1',APP='https://notes.example/client.json';
-const ALL=Object.values(DELEGATION_PURPOSES).sort(),ADDRESS=PROVIDER_EXT.messagingAddress,BRIDGE=PROVIDER_EXT.emailBridge;
+const ALL=Object.values(DELEGATION_PURPOSES).sort(),MAILBOX_FEATURE=EXT.messagingMailbox,BRIDGE=PROVIDER_EXT.emailBridge;
 // The provider's own feature declarations for the account-slice tests (extensions rev 3.2 §4.2).
-const DECLARED=()=>({manifest:{issuer:ISSUER,extensions:[declare(ADDRESS),declare(BRIDGE)]},blocked:[]});
+const DECLARED=()=>({manifest:{issuer:ISSUER,extensions:[declare(EXT.keyDelegation),declare(MAILBOX_FEATURE),declare(BRIDGE)]},blocked:[]});
 const code=c=>e=>{assert.equal(e.code,c,`expected ${c}, got ${e.code}: ${e.message}`);return true;};
 const SECRET=Buffer.alloc(32,5).toString('base64');
 function memory(){const map=new Map();let tail=Promise.resolve();return {transaction(fn){const run=tail.then(()=>fn({get:async k=>structuredClone(map.get(k)),set:async(k,v)=>{map.set(k,structuredClone(v));},delete:async k=>{map.delete(k);},list:async()=>[]}));tail=run.catch(()=>{});return run;}};}
-const DESCRIBE=host=>({version:1,profiles:[MESSAGING_PROFILE],ingress:`https://${host}/ingress`,limits:{maxParticipants:8,maxMessageBytes:65536,maxEnvelopeBytes:16384},kinds:['conversation-init','one-off']});
+// Bindle Messaging §2.2 (contacts spike CR-M3): `describe` answers exactly {version: 1, ingress}.
+const DESCRIBE=host=>({version:1,ingress:`https://${host}/ingress`});
 
 /** A validated approval snapshot for an external integration on `host` (X4 shape). */
 function snapshot(host,{contracts=[MAILBOX,MODEL],dpop}={}){
@@ -67,10 +68,10 @@ async function fixture(t,{integrations=true,brokering=true,routes={}}={}){
  const connect=async(host,options)=>op(C.ConnectIntegration,system,snapshot(host,options));
  const integration=(host,options)=>{routes[host]=stubIntegration(host,keys,options);return routes[host];};
  const register=(connection,resource,extra={})=>op(B.RegisterBrokeredRecord,owner,{connection,resource,binding:{fragment:FRAGMENT,field:'model'},consumer:{clientId:APP},contracts:[MODEL],...extra});
- // The ingress field's value is the record; the messaging-address feature is enabled (owner consent) and approved for it.
+ // The ingress field's value is the record; the messaging-mailbox feature is enabled (owner consent) and approved for it.
  const fresh=()=>({kind:'owner',owner:OWNER,authTime:clock.now()});
- const seatFor=async(connection,record)=>{const live=(await op(C.FeatureList,fresh())).find(x=>x.feature===ADDRESS)?.state==='active';const field=await op(C.AssignField,fresh(),{fragment:MESSAGING_INGRESS_FRAGMENT,connection,resource:record,purposes:ALL,replace:true,...live?{approve:[ADDRESS]}:{}});if(!live)await op(C.EnableFeature,fresh(),{feature:ADDRESS});const port=await op(C.FeatureResources,system,{feature:ADDRESS});return port.resources.find(o=>o.seat===field.values[0].seat);};
- const describe=seat=>op(B.DescribeOccupant,system,{feature:ADDRESS,seat});
+ const seatFor=async(connection,record)=>{const live=(await op(C.FeatureList,fresh())).find(x=>x.feature===MAILBOX_FEATURE)?.state==='active';const field=await op(C.AssignField,fresh(),{fragment:MESSAGING_INGRESS_FRAGMENT,connection,resource:record,purposes:ALL,replace:true,...live?{approve:[MAILBOX_FEATURE]}:{}});if(!live)await op(C.EnableFeature,fresh(),{feature:MAILBOX_FEATURE});const port=await op(C.FeatureResources,system,{feature:MAILBOX_FEATURE});return port.resources.find(o=>o.seat===field.values[0].seat);};
+ const describe=seat=>op(B.DescribeOccupant,system,{feature:MAILBOX_FEATURE,seat});
  const record=(connection,resource,contracts=[MAILBOX])=>register(connection,resource,{binding:undefined,consumer:undefined,contracts});
  return {metadata,clock,keys,discovery,engine,cx,audit,owner,system,op,connect,integration,register,record,seatFor,describe,routes};
 }
@@ -96,7 +97,7 @@ test('registration trusts only a fresh authenticated lookup; field, consumer and
  await assert.rejects(f.register(a.id,'https://box.example/r/missing'),code('resource_unavailable'),'an ID the integration does not return');
  await assert.rejects(f.register(a.id,'https://box.example/r/mailbox',{contracts:['https://spec.bindle.example/contracts/unoffered/v1']}),code('unsupported_contract'));
  // Extensions rev 3.2 §4.2: provider features never hold assignments (they consume through their own grants).
- await assert.rejects(f.register(a.id,'https://box.example/r/mailbox',{consumer:{feature:ADDRESS}}),code('invalid_request'));
+ await assert.rejects(f.register(a.id,'https://box.example/r/mailbox',{consumer:{feature:MAILBOX_FEATURE}}),code('invalid_request'));
  await assert.rejects(f.register(a.id,'https://box.example/r/mailbox',{binding:{slot:'https://spec.bindle.example/slots/messaging-ingress/v1'}}),code('invalid_request'),'no slot bindings');
  await assert.rejects(f.register(a.id,'https://box.example/r/mailbox',{binding:undefined,consumer:undefined,contracts:undefined}),code('invalid_request'),'a record-only registration names the field contracts');
  await assert.rejects(f.register(a.id,'https://box.example/r/mailbox',{label:'Spoofed'}),code('invalid_request'),'the browser cannot set a label');
@@ -179,7 +180,7 @@ test('C1b describe: a provider-feature invoke token for exactly the mailbox desc
  const seat=await f.seatFor(a.id,r.id);
  assert.deepEqual(await f.describe(seat),DESCRIBE('box.example'));
  const claims=box.tokens.at(-1),call=box.calls.at(-1).body;
- assert.deepEqual([claims.aud,claims.client_id,claims.sub,claims.exp-claims.iat,claims.bindle.purpose,claims.bindle.feature,claims.bindle.resource,claims.bindle.generation],['https://box.example/bindle/rpc',ISSUER,SUBJECT,60,'invoke',ADDRESS,'https://box.example/r/mailbox',a.generation]);
+ assert.deepEqual([claims.aud,claims.client_id,claims.sub,claims.exp-claims.iat,claims.bindle.purpose,claims.bindle.feature,claims.bindle.resource,claims.bindle.generation],['https://box.example/bindle/rpc',ISSUER,SUBJECT,60,'invoke',MAILBOX_FEATURE,'https://box.example/r/mailbox',a.generation]);
  assert.deepEqual(claims.bindle.methods,{[MAILBOX]:['describe']});assert.equal(claims.bindle.grant,`${seat.grant}.${seat.cnx}`,'the feature grant, scoped to the entry incarnation');
  assert.deepEqual([call.version,call.contract,call.method,call.args,call.resource],['0',MAILBOX,'describe',{},'https://box.example/r/mailbox']);
  const answers={status:()=>new Response('{}',{status:500}),error:(p,b)=>Response.json({version:'0',tx:b.tx,error:{code:'temporarily_unavailable',message:'x'}}),tx:()=>Response.json({version:'0',tx:'00000000-0000-4000-8000-000000000000',result:DESCRIBE('box.example')}),extra:(p,b)=>Response.json({version:'0',tx:b.tx,result:DESCRIBE('box.example'),token:'x'}),big:(p,b)=>Response.json({version:'0',tx:b.tx,result:{...DESCRIBE('box.example'),pad:'x'.repeat(17000)}}),html:(p,b)=>new Response(JSON.stringify({version:'0',tx:b.tx,result:DESCRIBE('box.example')}),{headers:{'Content-Type':'text/html'}})};
@@ -187,10 +188,10 @@ test('C1b describe: a provider-feature invoke token for exactly the mailbox desc
  box.answer=null;
  await assert.rejects(f.describe({...seat,generation:seat.generation+1}),code('resource_unavailable'),'a seat from another generation');
  await assert.rejects(f.describe({...seat,resource:crypto.randomUUID()}),code('resource_unavailable'));
- await assert.rejects(f.op(B.DescribeOccupant,f.system,{feature:BRIDGE,seat}),code('resource_unavailable'),'only the messaging-address feature describes');
+ await assert.rejects(f.op(B.DescribeOccupant,f.system,{feature:BRIDGE,seat}),code('resource_unavailable'),'only the messaging-mailbox feature describes');
  await assert.rejects(f.describe({...seat,grant:undefined}),code('resource_unavailable'),'a call carries the feature grant');
  // Disabling the feature empties its projection: nothing names the record any more (extensions §4.2).
- await f.op(C.DisableFeature,f.owner,{feature:ADDRESS});assert.deepEqual((await f.op(C.FeatureResources,f.system,{feature:ADDRESS})).resources,[]);
+ await f.op(C.DisableFeature,f.owner,{feature:MAILBOX_FEATURE});assert.deepEqual((await f.op(C.FeatureResources,f.system,{feature:MAILBOX_FEATURE})).resources,[]);
  const d=await fixture(t),b=await d.connect('strict.example',{dpop:'required'}),strict=d.integration('strict.example');
  const rs=await d.record(b.id,'https://strict.example/r/mailbox');const n=strict.calls.length;
  await assert.rejects(d.describe(await d.seatFor(b.id,rs.id)),code('resource_unavailable'),'the provider holds no DPoP key');assert.equal(strict.calls.length,n);
@@ -231,13 +232,13 @@ test('fixture conformance: discovery, probes, pagination and registration agains
 });
 
 /** The real AccountController with the X7 slice, its ports and the link handoff over them. */
-async function account(t,{answer,intake=false}={}){
+async function account(t,{answer,intake=false,describe}={}){
  const db=new SqliteMetadata(':memory:');t.after(()=>db.close());const keys=brokeringKeys({issuer:ISSUER,secret:SECRET,metadata:memory()}),routes={};
  const egress=createIntegrationEgress({fetcher:(url,init)=>routes[new URL(url).hostname].fetch(url,init),resolve:async()=>['93.184.216.34'],publicRouting:true});
  const config={EMAIL_BRIDGE_ENABLED:intake?'true':'false',APP_ORIGIN:ISSUER,KEY_ENCRYPTION_KEY:Buffer.alloc(32,9).toString('base64'),INTEGRATIONS_ENABLED:'true',BROKERING_ENABLED:'true',LINKS_ENABLED:'true',EXTENSIONS_ENABLED:'true',IDENTITY_ACCOUNT:async owner=>owner===OWNER?{status:'active',handle:'alice'}:null,BROKERING_MINT:claims=>mintAccessToken(keys,claims),INTEGRATION_EGRESS:egress,INTEGRATION_DISCOVERY_BUDGET:new DiscoveryBudget(),PROVIDER_FEATURE_DECLARATIONS:DECLARED};
  const bucket={put:async()=>{},get:async()=>null,delete:async()=>{}};
  const a=new AccountController({metadata:db,gate:new SerialGate(),blobs:bucket,archives:bucket,config,sql:db.sql});await a.touch(OWNER);
- const fragment=intake?B.INTAKE_FRAGMENT:MESSAGING_INGRESS_FRAGMENT,contract=intake?B.INTAKE_CONTRACT:MAILBOX,feature=intake?BRIDGE:ADDRESS,s=snapshot('box.example',{contracts:[contract,MODEL]}),c=await a.connectionsSystem(OWNER,{operation:'connections.connect',input:s});routes['box.example']=stubIntegration('box.example',keys,{items:[{id:'https://box.example/r/mailbox',label:'Mailbox',contracts:[contract,MODEL]}]});
+ const fragment=intake?B.INTAKE_FRAGMENT:MESSAGING_INGRESS_FRAGMENT,contract=intake?B.INTAKE_CONTRACT:MAILBOX,feature=intake?BRIDGE:MAILBOX_FEATURE,s=snapshot('box.example',{contracts:[contract,MODEL]}),c=await a.connectionsSystem(OWNER,{operation:'connections.connect',input:s});routes['box.example']=stubIntegration('box.example',keys,{items:[{id:'https://box.example/r/mailbox',label:'Mailbox',contracts:[contract,MODEL]}],...describe?{describe}:{}});
  const record=await a.integrationsOwner(OWNER,{operation:'integrations.register',input:{connection:c.id,resource:'https://box.example/r/mailbox',contracts:[contract]}});
  // Extensions rev 3.2: the owner fills the field and enables the provider feature that consumes it (consent).
  await a.connectionsOwner(OWNER,{operation:'connections.enable-feature',input:{feature,assign:{connection:c.id,resource:record.id}}},{authTime:Date.now()});
@@ -258,6 +259,15 @@ test('account slice: the MESSAGING_DESCRIBE port resolves descriptors through th
  await assert.rejects(a.integrationsMessagingDescribe({owner:OWNER,fragment:MESSAGING_INGRESS_FRAGMENT,occupant:{clientId:'https://other.example/bindle/client.json',generation:c.generation}}),code('recipient_unavailable'),'a mid-switch occupant');
  await a.connectionsOwner(OWNER,{operation:'connections.suspend',input:{connection:c.id}});routes['box.example'].answer=null;handoff.cache.clear();
  await assert.rejects(handoff.descriptor('https://3sln.example/l/x'),code('recipient_unavailable'),'no occupant while suspended');
+});
+
+test('messaging §2.5 step 3: enabling the mailbox feature describes the value and records the validated ingress; an invalid describe leaves it unset',async t=>{
+ const {a,routes}=await account(t),box=routes['box.example'],call=box.tokens.find(c=>c.bindle?.methods?.[MAILBOX]);
+ assert.equal((await a.delegationSlotOccupant({owner:OWNER,fragment:MESSAGING_INGRESS_FRAGMENT})).ingress,'https://box.example/ingress','recorded at enablement, before any link handoff');
+ assert.deepEqual([call.client_id,call.bindle.feature,call.bindle.methods],[ISSUER,MAILBOX_FEATURE,{[MAILBOX]:['describe']}],'as the feature: client_id = issuer, bindle.feature = the spec URL');
+ for(const describe of [{...DESCRIBE('box.example'),profiles:[MESSAGING_PROFILE]},{version:1},{version:1,ingress:'https://box.example/ingress?x=1'}]){
+  const bad=await account(t,{describe});assert.equal((await bad.a.delegationSlotOccupant({owner:OWNER,fragment:MESSAGING_INGRESS_FRAGMENT})).ingress,null,JSON.stringify(describe));
+ }
 });
 
 test('account slice: discovery failures degrade the connection and recovery restores it; the owner routes are flag-gated',async t=>{
@@ -289,7 +299,7 @@ test('review regressions: describe has its own budget pool, never rebinds from t
  assert.equal((await f.op(B.DiscoverResources,f.owner,{connection:a.id,contracts:[MODEL]})).items.length,1,'anonymous describes never exhaust the owner pool');
  f.discovery.budget=new DiscoveryBudget();
  await f.op(C.SuspendConnection,f.owner,{connection:a.id});await f.op(C.ResumeConnection,f.owner,{connection:a.id,expectedGeneration:2});
- const resumed=(await f.op(C.FeatureResources,f.system,{feature:ADDRESS})).resources[0],before=box.calls.length;
+ const resumed=(await f.op(C.FeatureResources,f.system,{feature:MAILBOX_FEATURE})).resources[0],before=box.calls.length;
  await assert.rejects(f.describe(resumed),code('resource_unavailable'));assert.equal(box.calls.length,before,'a stale record causes no lookup from the public path');
  assert.equal((await f.op(B.RevalidateBrokeredRecords,f.system,{connection:a.id,reason:'scheduled'})).rebound,1);
  assert.equal((await f.describe(resumed)).ingress,'https://box.example/ingress');
@@ -304,7 +314,8 @@ test('review regressions: account slice remembers describe failures for a minute
  const ask=()=>a.integrationsMessagingDescribe({owner:OWNER,fragment:MESSAGING_INGRESS_FRAGMENT,occupant:{clientId:c.clientId,generation:c.generation}});
  await assert.rejects(ask(),code('recipient_unavailable'));const n=box.calls.length;await assert.rejects(ask(),code('recipient_unavailable'));assert.equal(box.calls.length,n,'the refusal is remembered');
  box.answer=null;box.describe={...DESCRIBE('box.example'),ingress:'https://box.example.evil.example/ingress'};
- const fresh=await account(t);fresh.routes['box.example'].describe={...DESCRIBE('box.example'),ingress:'https://other.example/ingress'};
+ // Messaging §2.5 step 3: enabling the feature already describes; a foreign ingress then is never recorded.
+ const fresh=await account(t,{describe:{...DESCRIBE('box.example'),ingress:'https://other.example/ingress'}});
  await assert.rejects(fresh.handoff.descriptor('https://3sln.example/l/x'),code('recipient_unavailable'));
  assert.equal((await fresh.a.delegationSlotOccupant({owner:OWNER,fragment:MESSAGING_INGRESS_FRAGMENT})).ingress,null,'nothing is recorded for a foreign ingress');
 });

@@ -11,9 +11,10 @@ import {launch,screenshot} from './browser.mjs';
 // Real Node identity/runtime + real Chromium. A local wrangler Worker cannot bootstrap the
 // protected developer identity (it needs a configured email or push provider), so the
 // developer-contact panel runs on the Node adapter with a loopback-only captured mailer. No debug routes are added.
-// Developer contact is occupant-only since messaging left the core (2026-10-27): the link belongs to the developer's
-// messaging app. This host runs no messaging app, so the service answers unavailable and the console says so; the
-// eligible hand-off (`send-message` intent) is covered at engine level in tests/browser/contact-links.mjs.
+// Developer contact mints principal-bound invitations (contacts spike CR-C5; provisional): GET is an eligibility read and
+// POST asks the developer identity's Parlay, through the host mint hook DEVELOPER_CONTACT_MINT, for a single-use
+// invitation bound to the requesting user. No adapter carries that request to Parlay yet, so without the hook the
+// service answers developer-unavailable; with a loopback test double the eligible hand-off runs end to end.
 const password='Private conditional browser password 2026!',secret=Buffer.alloc(32,61).toString('base64url');
 let browser;const servers=[];
 test.before(async()=>{browser=await launch();});
@@ -43,13 +44,28 @@ async function person(t,s,{signedIn=true}={}){
 }
 async function developerLink(page,s){await page.goto(s.origin+'/console');await page.locator('.app-shell').waitFor();return page.evaluate(async()=>{const session=await (await fetch('/api/session')).json();return (await fetch('/api/developer-contact',{headers:{'X-Bindle-Account':session.account.id,'X-Bindle-Session-Context':session.sessionContext}})).json();});}
 
-test('developer contact without a messaging app is shown as unavailable in Account & security and signs nothing',async t=>{
- const s=await server(),alice=await person(t,s),signs=[];alice.page.on('request',request=>{if(/\/api\/links\/(respond|envelope)$/.test(request.url()))signs.push(request.url());});
- const developer=await developerLink(alice.page,s);assert.deepEqual(developer,{available:false,reason:'contact-unavailable'});
+test('developer contact without a mint hook is shown as unavailable in Account & security and mints nothing',async t=>{
+ const s=await server(),alice=await person(t,s),posts=[];alice.page.on('request',request=>{if(request.method()==='POST'&&/\/api\/(developer-contact|links\/(respond|envelope))$/.test(request.url()))posts.push(request.url());});
+ const developer=await developerLink(alice.page,s);assert.deepEqual(developer,{available:false,reason:'developer-unavailable'});
  await alice.page.getByRole('button',{name:'Account & security',exact:true}).click();const panel=alice.page.locator('.developer-contact-panel');
- await panel.getByText('The developer contact link is unavailable right now.').waitFor();assert.equal(await panel.getByRole('button',{name:'Write with your messaging app',exact:true}).count(),0);assert.equal(await panel.getByRole('button',{name:'Open developer contact',exact:true}).count(),0);
- await panel.getByRole('button',{name:'Check eligibility again',exact:true}).click();await panel.getByText('The developer contact link is unavailable right now.').waitFor();assert.equal(await alice.page.locator('[role=alert]').count(),0);
- assert.equal(signs.length,0);await screenshot(alice.page,'links-developer-contact-unavailable');
+ await panel.getByText('The platform developer account is not ready to receive messages.').waitFor();assert.equal(await panel.getByRole('button',{name:'Message the developer',exact:true}).count(),0);
+ await panel.getByRole('button',{name:'Check eligibility again',exact:true}).click();await panel.getByText('The platform developer account is not ready to receive messages.').waitFor();assert.equal(await alice.page.locator('[role=alert]').count(),0);
+ assert.equal(posts.length,0);await screenshot(alice.page,'links-developer-contact-unavailable');
+});
+
+test('Message the developer mints a bound invitation through the host hook and hands off its connect intent',async t=>{
+ const mints=[];let token;
+ const s=await server({DEVELOPER_CONTACT_MINT:async input=>{mints.push(structuredClone(input));token=Buffer.from(crypto.getRandomValues(new Uint8Array(24))).toString('base64url');return {inviter:{iss:s.origin,sub:input.developer.id},token,delegation:'eyJhbGciOiJFUzI1NiJ9.e30.'+'A'.repeat(86),expires_at:Math.floor((Date.now()+input.expiresIn)/1000)};}});
+ const alice=await person(t,s),eligibility=await developerLink(alice.page,s);assert.equal(eligibility.available,true);assert.deepEqual(eligibility.eligibility,{state:'eligible',tier:'free'});assert.equal(mints.length,0,'the eligibility read mints nothing');
+ await alice.page.getByRole('button',{name:'Account & security',exact:true}).click();const panel=alice.page.locator('.developer-contact-panel');
+ const button=panel.getByRole('button',{name:'Message the developer',exact:true});await button.waitFor();
+ const minted=alice.page.waitForResponse(response=>response.url().endsWith('/api/developer-contact')&&response.request().method()==='POST');await button.focus();await alice.page.keyboard.press('Enter');const response=await minted;
+ assert.equal(response.status(),200);assert.equal(response.headers()['cache-control'],'no-store');const body=await response.json();assert.equal(body.intent.url,'web+bindle://intent?bintent='+body.intent.value);
+ assert.deepEqual(mints,[{developer:{id:mints[0].developer.id,handle:mints[0].developer.handle},principal:{issuer:s.origin,subject:alice.account.id},tier:'free',expiresIn:3600000}]);
+ await panel.getByText(/Your invitation works once and is valid until/).waitFor();await panel.getByRole('button',{name:'Copy invitation link',exact:true}).waitFor();
+ // The token is a bearer capability: never in the console's persisted state or the page markup.
+ assert.equal((await alice.page.content()).includes(token),false);assert.equal((await alice.page.evaluate(()=>JSON.stringify({...localStorage})+JSON.stringify({...sessionStorage}))).includes(token),false);
+ for(const [name,width]of [['links-developer-contact-invited',1440],['links-developer-contact-invited-390',390],['links-developer-contact-invited-320',320]]){await alice.page.setViewportSize({width,height:900});assert.equal(await alice.page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);await screenshot(alice.page,name);}
 });
 
 test('the contact profile saves on the Node adapter and reloads with its stored values in Spanish',async t=>{

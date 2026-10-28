@@ -1,0 +1,6 @@
+{
+ "id": "https://spec.bindle.example/extensions/messaging-mailbox/v1",
+ "title": "Messaging app keys",
+ "description": "Lets the messaging app you choose send and receive Bindle messages as you.",
+ "options": {}
+}

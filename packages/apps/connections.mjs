@@ -265,6 +265,10 @@ export class AppConnections{
   const old=r.grant;r.state='revoked';r.reason=reason;r.revokedAt=this.clock();delete r.suspendedAt;delete r.seenAt;await this.#putFeature(tx,r);
   await this.#severGrant(tx,old,entries??(await this.#values(tx,r.fragment)).record.entries.filter(e=>r.approved.includes(e.seat)),'feature-revoked');
   await this.#emit(tx,[{type:'feature-revoked',feature:r.spec,grant:old,reason}]);await this.#notice(tx,{kind:'feature-revoked',feature:r.spec,reason});
+  // Messaging §2.5 step 4: disabling the feature that gates key delegation, or revoking its grant (blocking, 30-day
+  // suspension), revokes every delegate key it allowed. The occupant port answers null from this commit on, so the
+  // durable reconcile row revokes every active jkt (all of them carry Parlay purposes) when drained.
+  if(DELEGATION_FIELDS.includes(r.fragment))await this.#cascade(tx,[{kind:'reconcile'}]);
  }
  // L5: a grant is bound to the fragment pin it was approved under; the provider's pinned document must still match.
  async #pinCurrent(r){const doc=Object.hasOwn(this.fieldPins,r.fragment)?this.fieldPins[r.fragment]:null;return Boolean(doc)&&typeof r.pin==='string'&&r.pin==='sha256-'+await digest(globalThis.crypto,canonical(doc));}
