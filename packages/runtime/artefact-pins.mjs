@@ -1,6 +1,6 @@
-import sendMessageIntent from '../../docs/artefacts/intents/send-message-v1.json' with {type:'json'};
-import addContactIntent from '../../docs/artefacts/intents/add-contact-v1.json' with {type:'json'};
+import connectIntent from '../../docs/artefacts/intents/connect-v1.json' with {type:'json'};
 import openConversationIntent from '../../docs/artefacts/intents/open-conversation-v1.json' with {type:'json'};
+import {verifyChain} from '../core/artefacts.mjs';
 import {validateIntentKind} from '../intents/schema.mjs';
 import {contractMethods} from '../core/contract-methods.mjs';
 import preferencesV2 from '../../docs/artefacts/preferences-v2.json' with {type:'json'};
@@ -17,6 +17,21 @@ import {systemClock,cryptoRandom,nullAudit} from '../app/providers.mjs';
 import {validateSchema,fail} from '../federation/schema.mjs';
 import {validateBusManifest} from '../federation/event-buses.mjs';
 export const ARTEFACT_STORE='bindle-artefacts-v1';
+// Messaging-published intent kinds this provider ships as operator-reviewed documents (contacts spike §4.2, CL-11,
+// CR-C3, contacts phase 4; provisional, unsigned). Kinds stay public URL-identified artefacts: the intents code hard-codes
+// none, and these are ordinary operator registrations, pinned only while INTENT_LINKS_ENABLED (the intent router is their
+// only consumer). `connect` (messaging §4.1) lets the provider's `/i` route resolve invitations and the console hand
+// developer contact to it; `open-conversation` as before. `send-message` and `add-contact` are reserved Messaging names
+// whose former data was a contact link (messaging §4.6), so they are no longer registered.
+export const REVIEWED_INTENT_ENVELOPES=Object.freeze([connectIntent,openConversationIntent]);
+let reviewedReferences;
+const reviewedIntentReferences=()=>reviewedReferences??=Promise.all(REVIEWED_INTENT_ENVELOPES.map(envelope=>verifyChain(envelope,{id:envelope.id,kind:'intent',validateBody:body=>validateIntentKind(body).id===envelope.id}))).then(rows=>rows.map(row=>({artefact:row.id,version:row.version,digest:row.digest})));
+/** True when `ref` ({artefact, version, digest}) is exactly one of the provider-reviewed intent kind lines (intents §7: only
+ * a provider's own review marks a kind reviewed) and intent links are on. Never throws. */
+export async function reviewedIntentKind(config,ref){
+ if(!siteGlobal(config,'INTENT_LINKS_ENABLED')||!ref||typeof ref!=='object')return false;
+ try{return (await reviewedIntentReferences()).some(r=>r.artefact===ref.artefact&&r.version===ref.version&&r.digest===ref.digest);}catch{return false;}
+}
 export function configuredArtefacts({config,store,clock=systemClock}){
  const documents=new Proxy({}, {get:(_,key)=>configuredArtefactDocuments(config)[key],getOwnPropertyDescriptor:(_,key)=>Object.hasOwn(configuredArtefactDocuments(config),key)?{configurable:true,enumerable:true,value:configuredArtefactDocuments(config)[key]}:undefined});
  const runtime=artefactRuntime({store,documents,flags:{for:ctx=>flagsFor(config,ctx)},clock,random:cryptoRandom,audit:nullAudit,validateBody:(body,{id,kind})=>{
@@ -25,7 +40,7 @@ export function configuredArtefacts({config,store,clock=systemClock}){
   if(kind==='rpc-contract')return body?.$id===id&&Object.keys(contractMethods(body)).length>0;
   if(kind===undefined||kind==='fragment'){validateSchema(body,id,{eventBuses:siteGlobal(config,'EVENT_BUSES_ENABLED')});return true;}return false;
  }});
- return {get enabled(){return siteGlobal(config,'ARTEFACT_VERSIONS_ENABLED');},...runtime};
+ return {get enabled(){return siteGlobal(config,'ARTEFACT_VERSIONS_ENABLED');},reviewedIntent:ref=>reviewedIntentKind(config,ref),...runtime};
 }
 export function reviewedSchemaFetcher(config,missing='untrusted_schema_host'){
  const fetcher=async url=>{const schemas=federationSchemas(config);if(!Object.hasOwn(schemas,url))fail(missing,missing==='unsupported_fragment'?'Unsupported fragment.':'This fragment has not been registered with this provider.');return structuredClone(schemas[url]);};
@@ -33,7 +48,7 @@ export function reviewedSchemaFetcher(config,missing='untrusted_schema_host'){
 }
 // The registry check is local (operator configuration), so an unregistered id never reaches the provider-wide store.
 export const registeredArtefact=(config,id)=>{if(typeof id!=='string')return false;const documents=configuredArtefactDocuments(config);return Object.hasOwn(documents,id)||Object.hasOwn(documents,id+'/envelope');};
-export function remoteArtefacts(config,invoke){return {get enabled(){return siteGlobal(config,'ARTEFACT_VERSIONS_ENABLED');},registered:id=>registeredArtefact(config,id),...Object.fromEntries(['pin','resolve','refresh','record'].map(method=>[method,async input=>{const response=await invoke(method,input);if(!response.ok)throw Object.assign(new Error(response.error.code),response.error);return response.result;}]))};}
+export function remoteArtefacts(config,invoke){return {get enabled(){return siteGlobal(config,'ARTEFACT_VERSIONS_ENABLED');},registered:id=>registeredArtefact(config,id),reviewedIntent:ref=>reviewedIntentKind(config,ref),...Object.fromEntries(['pin','resolve','refresh','record'].map(method=>[method,async input=>{const response=await invoke(method,input);if(!response.ok)throw Object.assign(new Error(response.error.code),response.error);return response.result;}]))};}
 
 // Operator-reviewed contracts share the durable resolver; no URL from an app becomes an ambient fetch.
 const documentRevisions=new WeakMap(),frozenCopies=new WeakMap();
@@ -55,10 +70,10 @@ export function configuredArtefactDocuments(config){
  const firstParty={},envelopeOf=body=>({bindle_artefact:1,id:body.$id,kind:'rpc-contract',versions:[{version:1,prev:null,body}]});
  if(siteGlobal(config,'SIGNALING_ENABLED')&&siteGlobal(config,'EXTENSIONS_ENABLED')){firstParty[signalingV1.$id]=signalingV1;firstParty[signalingV1.$id+'/envelope']=envelopeOf(signalingV1);}
  for(const body of [...CONSENT_CONTRACT_SCHEMAS,preferencesV2]){documents[body.$id]=body;documents[body.$id+'/envelope']=envelopeOf(body);}
- // The messaging intent kinds serve only the intent router (INTENT_LINKS_ENABLED), so a default deployment registers
- // none of them (cleanup audit 2026-10-27). Signaling registers no session kinds (signaling §15, Appendix C.2: the four
- // rtc-purpose lines were removed from core); apps publish their own, pinned here like any operator-reviewed kind.
- const builtIns=siteGlobal(config,'INTENT_LINKS_ENABLED')?[sendMessageIntent,addContactIntent,openConversationIntent]:[];
+ // The reviewed Messaging intent kinds serve only the intent router (INTENT_LINKS_ENABLED), so a default deployment
+ // registers none of them (cleanup audit 2026-10-27). Signaling registers no session kinds (signaling §15, Appendix C.2:
+ // the four rtc-purpose lines were removed from core); apps publish their own, pinned here like any operator-reviewed kind.
+ const builtIns=siteGlobal(config,'INTENT_LINKS_ENABLED')?REVIEWED_INTENT_ENVELOPES:[];
  for(const envelope of builtIns){documents[envelope.id]=envelope;documents[envelope.id+'/envelope']=envelope;}
  const schemas=federationSchemas(config),liveSchemas=config.FEDERATION_SCHEMAS&&typeof config.FEDERATION_SCHEMAS==='object'?config.FEDERATION_SCHEMAS:null;
  if(liveSchemas){const builtins=federationSchemas({...config,FEDERATION_SCHEMAS:{}});for(const key of Object.keys(schemas))delete schemas[key];Object.assign(schemas,builtins);}

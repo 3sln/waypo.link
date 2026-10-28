@@ -26,7 +26,7 @@ test('ports: no directory means no fetch; active status is reused for 5 minutes;
 });
 
 test('quarantine follows revokedHour - 1 h, and the recheck sweep learns revocations without new traffic',async t=>{
- const w=await createWorld();t.after(()=>w.dispose());const link=await w.link('bob',{kinds:['conversation-init','one-off']});
+ const w=await createWorld();t.after(()=>w.dispose());const link=await w.admit('bob');
  // An old item (created two hours before the revocation hour) stays; a recent one is quarantined.
  const hour=Math.floor(NOW/3600000);
  assert.equal((await w.deliver('alice','bob',link,{operationId:uuidOf(1),createdAt:(hour-2)*3600000})).status,200);

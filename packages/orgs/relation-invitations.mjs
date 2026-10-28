@@ -1,12 +1,12 @@
 // ORG-10b relation invitations (spec docs/spec/organizations.md §9.4, rev 4.5; design §8b.2, §8b.7, RL-11). A link of type
 // relation-invitation/v1 signed with the inviting entity's identity key through the shared link envelope
-// (packages/links/envelope.mjs). Its type-specific meta members are exactly instance, relation, slot, invitee, accept and
+// (packages/orgs/link-envelope.mjs, the Organizations link envelope annex). Its type-specific meta members are exactly instance, relation, slot, invitee, accept and
 // the inviter's fresh participation statement (spec §9.3: every relation invitation carries it). It is single use,
 // bound to its invitee, `exp − iat` ≤ 30 days, and a withdrawn invitation is refused exactly as an invalid one.
 //
 // Like the organization invitation type (packages/orgs/invitations.mjs), the type is a provider link type with no app
-// slot binding, so packages/links/types.mjs needs no registration row (reconciled with §8b.10's "type-registration hunk").
-import {signLinkJWS,parseLinkMeta,verifyLinkSignature,LINK_META_TYP} from '../links/envelope.mjs';
+// slot binding, so it needed no links type-table row (that table was deleted in contacts phase 4) (reconciled with §8b.10's "type-registration hunk").
+import {signLinkJWS,parseLinkMeta,verifyLinkSignature,LINK_META_TYP} from './link-envelope.mjs';
 import {digest} from '../core/records.mjs';
 import {plain} from '../core/strict-json.mjs';
 

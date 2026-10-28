@@ -24,7 +24,7 @@ import {deviceManifest} from '../federation/device-authorization.mjs';
 import {createManifestDeclarationProvider,ManifestDeclarations,withManifestDeclarations} from '../federation/runtime.mjs';
 import {ClientDirectory,CLIENT_METADATA_FEATURE,clientSite} from '../federation/client-metadata.mjs';
 import {UUID_V4 as UUID} from '../core/primitives.mjs';
-import {LINKS_CONTRACT} from '../links/types.mjs';
+import {EMAIL_BRIDGE_CONTRACT,EMAIL_BRIDGE_METHODS} from '../email-bridge/wire.mjs';
 import {GOOGLE_DRIVE_SETUP_FRAGMENT} from '../storage/google-drive-integration.mjs';
 import {ITEM_CLASSIFIER_FRAGMENT_DOCUMENT} from '../apps/connections.mjs';
 import {CLASSIFIER_CONTRACT,classifierOffered} from './account/classifier.mjs';
@@ -185,7 +185,8 @@ export function federationControllerOptions({config,repository,accounts,owner,ma
    const signalingOn=siteEnabled(config,'SIGNALING_ENABLED',{subject:{kind:'account',owner}},true)&&siteEnabled(config,'SESSION_KINDS_ENABLED',{subject:{kind:'account',owner}},true)&&siteEnabled(config,'EXTENSIONS_ENABLED',{subject:{kind:'account',owner}},true);
    if(signalingOn&&ownerFlags(config,owner).enabled('SIGNALING_TURN_ENABLED')&&relayConfigured(config))descriptors.push({id:`${subject}/relay`,label:'Connection relay',provider:'bindle',contracts:{[ICE_RELAY_CONTRACT]:[...ICE_RELAY_METHODS]},generation:owner,limits:{maxRequestBytes:4096,maxResultBytes:16384,txRetentionSeconds:86400}});
    if(signalingOn)descriptors.push({id:`${subject}/signaling`,label:'Signaling',provider:'bindle',contracts:{[SIGNALING_CONTRACT]:[...SIGNALING_METHODS]},generation:owner,limits:{maxRequestBytes:262144,maxResultBytes:1048576,txRetentionSeconds:86400}});
-   if(siteEnabled(config,'LINKS_ENABLED',{subject:{kind:'account',owner}},true))descriptors.push({id:`${subject}/links`,label:'Contact links',provider:'bindle',contracts:{[LINKS_CONTRACT]:['issue','revoke','rotate','evaluate','list','changes',...bridgeConfig(featureConfig(config,{subject:{kind:'account',owner}})).enabled?['consumerKey','accepted']:[]]},generation:owner});
+   // The email bridge's occupant callbacks (contacts phase 4 moved them off the withdrawn links contract and resource).
+   if(bridgeConfig(featureConfig(config,{subject:{kind:'account',owner}})).enabled)descriptors.push({id:`${subject}/email-bridge`,label:'Email bridge',provider:'bindle',contracts:{[EMAIL_BRIDGE_CONTRACT]:[...EMAIL_BRIDGE_METHODS]},generation:owner});
    // ORG-10f: an organization's imported resources (relation import mirrors kept by its writer), so its admins can
    // assign them to fragments and approve them for applications; never dispatched here (provider 'relation').
    if(ownerFlags(config,owner).enabled('ORGANIZATIONS_ENABLED')&&current.kind==='organization')descriptors.push(...await account.relationImportDescriptors(owner));

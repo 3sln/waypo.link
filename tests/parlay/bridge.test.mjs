@@ -51,10 +51,10 @@ async function fakeProvider({origin=PROVIDER,recipient=PRINCIPAL,clock,deliver,c
 
 async function world(t,{enabled=true,faults={},seed=Number(process.env.CHAOS_SEED??1)}={}){
  const clock=fakeClock(NOW),store=memoryStore([['owner',OWNER]]),keys=new Map(),calls={consumerKey:0,egress:0},c=classifier();
- const providerLink={async consumerKey({consumer,keyId}){calls.consumerKey++;const k=keys.get(consumer);return k&&k.keyId===keyId?{keyId,publicJwk:k.publicJwk}:null;}};
+ const providerBridge={async consumerKey({consumer,keyId}){calls.consumerKey++;const k=keys.get(consumer);return k&&k.keyId===keyId?{keyId,publicJwk:k.publicJwk}:null;}};
  // A trapped egress: the bridge must never send anything over any channel (no backscatter).
  const egress={fetch:async()=>{calls.egress++;throw new Error('egress forbidden');},send:async()=>{calls.egress++;throw new Error('egress forbidden');}};
- const e=createTestEngine({seed,owner:OWNER,clock,store,faults,providers:{contacts:ContactsDomain,receive:ReceiveDomain,bridge:createBridgeProvider({PARLAY_ENABLED:enabled}),providerLink,classifier:c,egress,userStorage:null}});
+ const e=createTestEngine({seed,owner:OWNER,clock,store,faults,providers:{contacts:ContactsDomain,receive:ReceiveDomain,bridge:createBridgeProvider({PARLAY_ENABLED:enabled}),providerBridge,classifier:c,egress,userStorage:null}});
  t.after(()=>e.dispose());
  if(enabled)await e.run('receive.configure',{input:{principal:PRINCIPAL,ingress:'https://hub.box.example/ingress'}});
  const deliver=input=>e.perform(new BridgeReceive({actor:{kind:'ingress',owner:OWNER},input}));

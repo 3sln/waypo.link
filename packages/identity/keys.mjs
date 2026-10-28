@@ -41,9 +41,9 @@
 // the next prune. `retainedState` reports what an owner's key state retains.
 //
 // Old-key honouring (identity portability P11, PORT-9; docs/spec/identity-portability.md §7.1). A retired signing key
-// is never pruned while it is *referenced*: named by a live stored record whose exact header the provider re-serves
-// (`link/<jti>/` records, unrevoked and unexpired, by `header.kid`; legacy `contact-grant/` parents left the core
-// with messaging on 2026-10-27), or bound to an issued recovery file (below). When every
+// is never pruned while it is *referenced*: bound to an issued recovery file (below). Contact-link records (`link/<jti>`)
+// used to count by `header.kid`; contact links left the core in contacts phase 4 (2026-10-28), so keys pinned only by
+// them became prunable under this ordinary policy, as the `contact-links-retired-v1` reset intends (rethink §9). When every
 // non-current record is referenced, a signing rotation refuses with `key_history_full` and changes nothing.
 // Descriptors carry `created` and `retired` in Unix seconds (spec §7.1, AMD-P10) beside the millisecond fields.
 //
@@ -116,8 +116,7 @@ const kidList = (value, max = 8) => Array.isArray(value) && value.length <= max 
 /** Signing kids `owner` still needs at `now` (ms): kids named by live stored records the provider re-serves, plus the
  * recovery binding. Records of other owners and expired, revoked or inactive records do not count (see header). */
 export async function referencedSigningKids(tx, owner, now) {
-  const kids = new Set(), live = exp => Number.isSafeInteger(exp) && exp * 1000 > now, add = kid => { if (boundedString(kid)) kids.add(kid); };
-  for (const { value: link } of await tx.list(key('link'))) if (link?.owner === owner && link.revoked !== true && live(link.claims?.exp)) add(link.header?.kid);
+  const kids = new Set(), add = kid => { if (boundedString(kid)) kids.add(kid); };
   for (const kid of (await tx.get(key(BINDING, owner)))?.kids ?? []) add(kid);
   return kids;
 }

@@ -3,13 +3,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as B from '../../packages/messaging-protocol/index.mjs';
-import {NOW,NAMES,generateKeys,party,world,encoder,linkPayload,initEnvelope,recordPayload,invitationResponse,receiptFor,binding,claimsFor,SECRET,CONVERSATION,EPOCH,EPOCH2,NONCE,uuidOf,linkRecipient,MULTICAST,plainRecipient,inviteRecipient,redemptionEnvelope,INVITE_TOKEN} from './vectors/fixtures.mjs';
+import {NOW,NAMES,generateKeys,party,world,encoder,firstContactPayload,initEnvelope,recordPayload,invitationResponse,receiptFor,binding,claimsFor,SECRET,CONVERSATION,EPOCH,EPOCH2,NONCE,uuidOf,MULTICAST,plainRecipient,inviteRecipient,redemptionEnvelope,INVITE_TOKEN} from './vectors/fixtures.mjs';
 
 const keys=await generateKeys(),P={};for(const name of NAMES)P[name]=await party(name,keys);
 const {alice,bob,carol}=P;
 const fresh=()=>world(P);
 const opts=w=>({resolveKey:w.resolveKey,status:w.status,now:NOW});
-const oneOff=async(over={})=>B.signEnvelope(await linkPayload(alice,bob,over),alice.signer);
+const oneOff=async(over={})=>B.signEnvelope(await firstContactPayload(alice,bob,over),alice.signer);
 const record=async(type,over={},from=alice,to=bob)=>B.signEnvelope(await recordPayload(from,to,type,over),from.signer);
 const code=c=>error=>{assert.equal(error.code,c,`expected ${c}, got ${error.code}: ${error.stack}`);return true;};
 // Re-signs a mutated payload as Alice, so the schema (not the signature) is what fails.
@@ -26,7 +26,7 @@ test('strict I-JSON and JCS: duplicates, BOM, surrogates, unsafe numbers and ord
 });
 
 test('certificate validation: lifetime, purpose, ingress, header and key binding',async()=>{
- const w=fresh(),payload=await linkPayload(alice,bob),reissue=async over=>B.signEnvelope(payload,{...alice.signer,delegation:await alice.issue(over)});
+ const w=fresh(),payload=await firstContactPayload(alice,bob),reissue=async over=>B.signEnvelope(payload,{...alice.signer,delegation:await alice.issue(over)});
  await B.verifyEnvelope(await reissue({}),opts(w));
  await assert.rejects(alice.issue({lifetime:86401}),code('malformed'));
  await assert.rejects(alice.issue({ingress:null}),code('malformed'),'Bindle Messaging purposes require client.ingress');
@@ -107,12 +107,12 @@ test('conversation-init: genesis bindings, secret digest, participants and retur
  await assert.rejects(edit(p=>{p.conversation.returnControl.expiresAt=p.createdAt+604800001;}),code('malformed'));
  await assert.rejects(edit(p=>{p.conversation.returnControl.maxResponseBytes=9000;}),code('malformed'));
  await assert.rejects(edit(p=>{p.subject='Other';}),code('malformed'));
- await assert.rejects(edit(p=>{p.recipient=linkRecipient(carol);}).then(e=>initEnvelope(alice,bob,[alice,carol])),code('malformed'),'the approached recipient must be listed');
+ await assert.rejects(edit(p=>{p.recipient=plainRecipient(carol);}).then(e=>initEnvelope(alice,bob,[alice,carol])),code('malformed'),'the approached recipient must be listed');
  // The creator binding and the return control must sit on the creator's certified ingress (S-4, S-11).
  const moved=await edit(p=>{p.conversation.creatorBinding.ingress='https://alice.box.example/other';});await assert.rejects(B.verifyEnvelope(moved,opts(w)),code('author_unverifiable'));
  const rc=await edit(p=>{p.conversation.returnControl.resource='https://evil.example/return';});await assert.rejects(B.verifyEnvelope(rc,opts(w)),code('author_unverifiable'));
  // A genesis signed under the envelope domain is not a genesis.
- const g=structuredClone(init.payload.conversation.genesis);g.proof.signature=(await B.signEnvelope(await linkPayload(alice,bob),alice.signer)).proof.signature;
+ const g=structuredClone(init.payload.conversation.genesis);g.proof.signature=(await B.signEnvelope(await firstContactPayload(alice,bob),alice.signer)).proof.signature;
  await assert.rejects(edit(p=>{p.conversation.genesis=g;}).then(e=>B.verifyEnvelope(e,opts(w))),code('author_unverifiable'));
 });
 
@@ -187,8 +187,9 @@ test('pair tokens, credential grammar and the pre-authentication gate',async()=>
  assert.notEqual(await B.pairToken(new Uint8Array(32),base),t);
  await assert.rejects(B.pairToken(SECRET,{...base,incarnation:'a b'}),code('malformed'));
  assert.deepEqual(B.parseCredential(null),{scheme:null});
- for(const bad of ['Bearer x','bindlelink a.b.c','BindleLink  a.b.c','BindleLink a.b.c ','BindleConversation x'])assert.throws(()=>B.parseCredential(bad),e=>['malformed','link_malformed','not_authorized'].includes(e.code),bad);
- assert.throws(()=>B.parseCredential('BindleLink a.b'),code('link_malformed'));
+ for(const bad of ['Bearer x','bindlelink a.b.c','BindleLink  a.b.c','BindleLink a.b.c ','BindleConversation x'])assert.throws(()=>B.parseCredential(bad),e=>['malformed','not_authorized'].includes(e.code),bad);
+ // Contacts spike phase 4: the withdrawn BindleLink scheme is malformed whatever its value.
+ for(const gone of ['BindleLink a.b','BindleLink a.b.c','BindleLink eyJhbGciOiJFUzI1NiJ9.eyJ9.AA'])assert.throws(()=>B.parseCredential(gone),code('malformed'),gone);
  const credential=B.parseCredential(`BindleConversation ${EPOCH}.${t}`);assert.equal(credential.token,t);assert.equal(B.formatCredential(credential),`BindleConversation ${EPOCH}.${t}`);
  const m=await record('message',{body:encoder.encode('x')}),entry={tokenDigests:{[EPOCH]:await B.tokenDigest(t)},incarnation:'inc-for-alice'};
  assert.equal(await B.checkPairGate(credential,m,entry),true);assert.equal(B.checkCredentialKind(m,credential),'BindleConversation');
@@ -196,11 +197,12 @@ test('pair tokens, credential grammar and the pre-authentication gate',async()=>
  await assert.rejects(B.checkPairGate(B.parseCredential(`BindleConversation ${EPOCH2}.${t}`),m,{...entry,tokenDigests:{...entry.tokenDigests,[EPOCH2]:entry.tokenDigests[EPOCH]}}),code('not_authorized'),'epoch must match the record');
  await assert.rejects(B.checkPairGate(credential,m,{...entry,incarnation:'inc-new'}),code('incarnation_stale'));
  assert.throws(()=>B.checkCredentialKind(m,{scheme:'BindleLink',value:'a.b.c'}),code('not_authorized'));
- const link=await oneOff(),rejoin=await record('rejoin',{data:{binding:binding(alice)}});
- assert.throws(()=>B.checkCredentialKind(link,{scheme:null}),code('link_invalid'));
+ const first=await oneOff(),rejoin=await record('rejoin',{data:{binding:binding(alice)}});
+ assert.equal(B.checkCredentialKind(first,{scheme:null}),null,'first contact travels without a credential');
+ assert.throws(()=>B.checkCredentialKind(first,credential),code('not_authorized'));
  assert.equal(B.checkCredentialKind(rejoin,{scheme:null}),null);
  assert.throws(()=>B.checkCredentialKind(rejoin,credential),code('not_authorized'));
- assert.throws(()=>B.checkLinkRecipient(link,{issuer:bob.principal.issuer,owner:bob.principal.subject,jti:'other',resource:'parent-1'}),code('link_invalid'));
+ assert.equal(B.checkLinkRecipient,undefined);
  const k1=await B.edgeKey({conversationId:CONVERSATION,author:alice.principal,owner:bob.principal}),k2=await B.edgeKey({conversationId:CONVERSATION,author:bob.principal,owner:alice.principal});assert.notEqual(k1,k2);
 });
 
@@ -226,7 +228,7 @@ test('frozen audiences are order independent and mutation audiences intersect',a
 });
 
 test('replay namespaces, windows and decisions',async()=>{
- const e=await oneOff(),other=await B.signEnvelope({...(await linkPayload(carol,bob)),operationId:e.payload.operationId},carol.signer);
+ const e=await oneOff(),other=await B.signEnvelope({...(await firstContactPayload(carol,bob)),operationId:e.payload.operationId},carol.signer);
  assert.notEqual(B.replayKey(e),B.replayKey(other),'operation IDs are namespaced by author principal');
  assert.notEqual(B.operationKey(alice.principal,e.payload.operationId),B.operationKey(carol.principal,e.payload.operationId));
  const r1=await record('message',{body:encoder.encode('x')}),r2=await record('message',{body:encoder.encode('y')});assert.equal(B.replayKey(r1),B.replayKey(r2));
@@ -268,7 +270,7 @@ test('multicast results are validated per context and never inferred',async()=>{
 
 test('single delivery multipart: round trip and strict framing',async()=>{
  const e=await oneOff(),body=encoder.encode('Hello from the vectors.'),{contentType,bytes}=B.encodeDelivery(e,{body,boundary:'b0'});
- const parsed=await B.parseDelivery(contentType,bytes,{idempotencyKey:e.payload.operationId});assert.deepEqual(parsed.envelope,e);assert.deepEqual(parsed.body,body);assert.equal(parsed.credentialScheme,'BindleLink');
+ const parsed=await B.parseDelivery(contentType,bytes,{idempotencyKey:e.payload.operationId});assert.deepEqual(parsed.envelope,e);assert.deepEqual(parsed.body,body);assert.equal(parsed.credentialScheme,null);
  await assert.rejects(B.parseDelivery(contentType,bytes,{idempotencyKey:uuidOf(9)}),code('malformed'));
  const text=new TextDecoder().decode(bytes),enc=s=>encoder.encode(s);
  for(const bad of ['preamble\r\n'+text,text.replace('name="message"','name="message"; size=1'),text.replace('Content-Type: text/plain','Content-Type: text/html'),text.replace('--b0--','--b0\r\nContent-Disposition: form-data; name="extra"\r\n\r\nx\r\n--b0--'),text.replace('Content-Disposition','Content-Transfer-Encoding: base64\r\nContent-Disposition'),text.replace('from the vectors','from the vectorz'),text+'trailing'])await assert.rejects(B.parseDelivery(contentType,enc(bad)),code('malformed'),bad.slice(0,60));
@@ -286,14 +288,15 @@ test('single delivery multipart: round trip and strict framing',async()=>{
 });
 
 test('multicast parsing: whole-request failures versus confined context errors',async()=>{
- const body=encoder.encode('Hello from the vectors.'),toBob=await oneOff(),toCarol=await B.signEnvelope(await linkPayload(alice,carol,{operationId:uuidOf(3),recipient:linkRecipient(carol,'jti-c','parent-c')}),alice.signer);
- const cred=v=>({scheme:'BindleLink',value:`a.b.${v}`}),other=await oneOff({body:encoder.encode('different'),operationId:uuidOf(4)}),m=await record('message',{body});
+ // Contexts carry only BindleConversation credentials (§7.3): first contact travels by single delivery.
+ const body=encoder.encode('Hello from the vectors.'),toBob=await record('message',{body}),toCarol=await B.signEnvelope(await recordPayload(alice,carol,'message',{body}),alice.signer);
+ const cred=v=>({scheme:'BindleConversation',value:`${EPOCH}.${B.base64url(new Uint8Array(32).fill(v))}`}),other=await record('message',{body:encoder.encode('different'),operationId:uuidOf(4)}),first=await oneOff({body});
  const broken=structuredClone(toCarol);broken.payload.extra=1;
- const batch=B.encodeMulticast({batchId:uuidOf(8),contexts:[{credential:cred('a'),envelope:toBob},{credential:cred('b'),envelope:other},{credential:cred('c'),envelope:toBob},{credential:{scheme:'BindleLink',value:'a.b.d'},envelope:m},{credential:cred('e'),envelope:broken},{credential:cred('f'),envelope:toCarol}]},body,{boundary:'mb'});
+ const batch=B.encodeMulticast({batchId:uuidOf(8),contexts:[{credential:cred(1),envelope:toBob},{credential:cred(2),envelope:other},{credential:cred(3),envelope:toBob},{credential:{scheme:'BindleLink',value:'a.b.d'},envelope:toCarol},{credential:cred(5),envelope:broken},{credential:cred(6),envelope:toCarol},{credential:cred(7),envelope:first}]},body,{boundary:'mb'});
  const parsed=await B.parseMulticast(batch.contentType,batch.bytes);
- assert.deepEqual(parsed.contexts.map(c=>c.error??'ok'),['ok','malformed','malformed','malformed','malformed','ok']);
- const many=B.encodeMulticast({batchId:uuidOf(8),contexts:Array.from({length:32},()=>({credential:cred('a'),envelope:toBob}))},body,{boundary:'mb'});
- const bytes=new TextDecoder().decode(many.bytes).replace('"contexts":[',`"contexts":[{"credential":{"scheme":"BindleLink","value":"a.b.c"},"envelope":{}},`);
+ assert.deepEqual(parsed.contexts.map(c=>c.error??'ok'),['ok','malformed','malformed','malformed','malformed','ok','malformed']);
+ const many=B.encodeMulticast({batchId:uuidOf(8),contexts:Array.from({length:32},()=>({credential:cred(1),envelope:toBob}))},body,{boundary:'mb'});
+ const bytes=new TextDecoder().decode(many.bytes).replace('"contexts":[',`"contexts":[{"credential":{"scheme":"BindleConversation","value":"x"},"envelope":{}},`);
  await assert.rejects(B.parseMulticast(many.contentType,encoder.encode(bytes)),code('too_large'),'33 contexts');
  await assert.rejects(B.parseMulticast(batch.contentType,batch.bytes,{limits:{maxBatchContexts:4}}),code('too_large'),'descriptor limit');
  await assert.rejects(B.parseMulticast(batch.contentType,encoder.encode(new TextDecoder().decode(batch.bytes).replace('from the vectors','from the vectorz'))),code('malformed'),'one body for all');
@@ -303,7 +306,8 @@ test('multicast parsing: whole-request failures versus confined context errors',
 test('mailbox and intake RPC: strict envelope, methods and provenance',async()=>{
  const resource='https://hub.box.example/mailboxes/m1',req=(contract,method,args,extra={})=>encoder.encode(JSON.stringify({version:'0',tx:uuidOf(1),resource,contract,method,args,...extra}));
  assert.equal(B.parseRPC(req(B.MAILBOX_CONTRACT,'describe',{})).method,'describe');
- assert.equal(B.parseRPC(req(B.MAILBOX_CONTRACT,'linkRevoked',{jti:'j1'}),{resource}).args.jti,'j1');
+ // Contacts spike phase 4: the mailbox contract is `describe` only; the withdrawn linkRevoked is unsupported.
+ assert.throws(()=>B.parseRPC(req(B.MAILBOX_CONTRACT,'linkRevoked',{jti:'j1'}),{resource}),code('unsupported_method'));
  assert.throws(()=>B.parseRPC(req(B.MAILBOX_CONTRACT,'describe',{x:1})),e=>e.code==='invalid_args'&&e.rpc===true);
  assert.throws(()=>B.parseRPC(req(B.MAILBOX_CONTRACT,'deliver',{})),code('unsupported_method'));
  assert.throws(()=>B.parseRPC(req('https://x.example/c','describe',{})),code('unsupported_contract'));
@@ -327,12 +331,10 @@ test('mailbox and intake RPC: strict envelope, methods and provenance',async()=>
  assert.throws(()=>B.parseRPC(req(B.INTAKE_CONTRACT,'deliver',{message,provenance:alice.signer.delegation})),code('invalid_args'),'a delegation is not a provenance');
 });
 
-test('descriptors: limits, profiles, multicast origin and expiry',()=>{
- const d={version:1,profiles:[B.PROFILE],ingress:bob.ingress,multicast:MULTICAST,verifies:['https://bob.provider.example'],limits:{maxParticipants:32,maxMessageBytes:1048576,maxEnvelopeBytes:65536,maxBatchContexts:32},kinds:['conversation-init','one-off'],expiresAt:NOW+3600000};
- B.validateDescriptor(d,{now:NOW});const {expiresAt,...describe}=d;B.validateDescriptor(describe,{describe:true});
- for(const [edit,c] of [[x=>{x.expiresAt=NOW+3600001;},'malformed'],[x=>{x.expiresAt=NOW;},'malformed'],[x=>{x.profiles=['https://other.example/p'];},'unsupported_profile'],[x=>{x.multicast='https://other.example/m';},'malformed'],[x=>{x.limits.maxParticipants=33;},'malformed'],[x=>{x.kinds=['one-off','conversation-init'];},'malformed'],[x=>{x.ingress='http://hub.box.example/ingress';},'malformed']])
-  {const t=structuredClone(d);edit(t);assert.throws(()=>B.validateDescriptor(t,{now:NOW}),code(c));}
- assert.ok(B.validateDescriptor({...structuredClone(d),ingress:'http://localhost:8787/ingress',multicast:'http://localhost:8787/m'},{now:NOW,allowLoopback:true}));
+test('the dissolved link-era ingress descriptor, link kinds and link codes are gone (contacts spike phase 4)',()=>{
+ for(const name of ['validateDescriptor','validateKinds','checkLinkRecipient','CONTACT_LINK_TYPE','LINK_KINDS','DESCRIPTOR_MEDIA_TYPE'])assert.equal(B[name],undefined,name);
+ for(const c of ['link_malformed','link_invalid','audience_ineligible','audience_unavailable'])assert.equal(Object.hasOwn(B.ERRORS,c),false,c);
+ assert.equal(B.LIMITS.firstContactWindowMs,86400000);assert.equal(Object.hasOwn(B.LIMITS,'linkWindowMs'),false);
 });
 
 test('security review regressions (docs/release/messaging-protocol-review.md BR-1–BR-10)',async()=>{
@@ -388,7 +390,9 @@ test('invitations: BindleInvite grammar, recipient forms and the content-free tw
  const plain=await oneOff({recipient:plainRecipient(bob),operationId:uuidOf(61)});await B.validateEnvelope(plain);
  assert.equal(B.credentialScheme(plain),null);assert.equal(B.checkCredentialKind(plain,{scheme:null}),null);
  assert.throws(()=>B.checkCredentialKind(plain,B.parseCredential(`BindleInvite ${token}`)),code('malformed'),'BindleInvite without invite');
- const linked=await oneOff();assert.throws(()=>B.checkCredentialKind(linked,{scheme:null}),code('link_invalid'),'the overlapping link recipient still needs its link');
+ // Contacts spike phase 4: the contact-link recipient form is gone; its members fail the exact member set.
+ await assert.rejects(oneOff({recipient:{...plainRecipient(bob),contactId:'jti-contact-1',resource:'parent-1'},operationId:uuidOf(63)}),code('malformed'),'the withdrawn link recipient');
+ await assert.rejects(oneOff({recipient:{...plainRecipient(bob),contactId:'jti-contact-1'},operationId:uuidOf(64)}),code('malformed'));
  // Redemption shape (§4.3): subject, body, a one-off, a third participant, a mixed recipient.
  const resignAs=async(envelope,edit,signer=carol.signer)=>{const payload=structuredClone(envelope.payload);edit(payload);return B.signEnvelope(payload,signer);};
  await assert.rejects(resignAs(redemption,p=>{p.subject='hi';}),code('malformed'));
@@ -400,6 +404,6 @@ test('invitations: BindleInvite grammar, recipient forms and the content-free tw
  const three=await B.signGenesis({...redemption.payload.conversation.genesis.payload,participants:[carol,bob,alice].map(p=>({principal:p.principal,keyId:p.keyId}))},carol.signer);
  await assert.rejects(resignAs(redemption,p=>{p.conversation.genesis=three;}),code('malformed'));
  // Replay namespaces: first contact (owner, author, operationId); redemption the same key class.
- assert.notEqual(B.replayKey(plain),B.replayKey(await oneOff({operationId:uuidOf(61)})),'the link form keeps its own namespace');
+ assert.equal(B.replayKey(plain),B.replayKey(await oneOff({recipient:plainRecipient(bob),operationId:uuidOf(61)})));
  assert.match(B.replayKey(plain),/replay-first-v1/);assert.match(B.replayKey(redemption),/replay-first-v1/);
 });

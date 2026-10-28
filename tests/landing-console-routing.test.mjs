@@ -35,13 +35,15 @@ test('public auth continuations retain URL and load console while recovery remai
  }
  const prefs=await f.get('/preferences');assert.match(await prefs.text(),/AUTHORIZE/);
 });
-test('signed contact HTML selects console; removed legacy representations are refused uniformly without a lookup',async()=>{
- const f=fixture(),path='/users/alice/contact/12345678-1234-1234-1234-123456789abc?sig=invalid';
- const html=await f.get(path,{headers:{Accept:'text/html'}});assert.equal(html.status,404);const page=await html.text();assert.match(page,/^<!doctype html><title>Send a private message on /);assert.match(page,/<meta name="robots" content="noindex, nofollow">/);assert.equal(f.calls.at(-1).path,'/console.html');assert.equal(html.headers.get('Vary'),'Accept, Accept-Language');assert.equal(html.headers.get('Access-Control-Allow-Origin'),'*');assert.equal(html.headers.get('X-Robots-Tag'),'noindex, nofollow, nosnippet');assert.equal(html.headers.get('Referrer-Policy'),'no-referrer');assert.equal(html.headers.get('Cache-Control'),'no-store');assert.equal(f.calls.at(-1).search,'');
- const options=await f.get(path,{method:'OPTIONS'});assert.equal(options.status,204);assert.equal(f.calls.length,1);
- f.env.KEY_ENCRYPTION_KEY='test-only-key';f.env.ABUSE={consume:async()=>true};
- // Token mints left the core with messaging (2026-10-27): 406 before any identity lookup or account call.
- const token=await f.get(path,{headers:{Accept:'application/vnd.bindle.contact-token+jwt'}});assert.equal(token.status,406);assert.equal(token.headers.get('Access-Control-Allow-Origin'),'*');assert.equal(f.calls.length,1);
+test('former contact-link paths are not special (contacts phase 4): no preview page, no contact CORS, no lookup, no query to assets',async()=>{
+ const f=fixture(),path='/users/alice/contact/12345678-1234-1234-1234-123456789abc?bindle_meta=a.b.c',control='/users/alice/not-a-route/12345678-1234-1234-1234-123456789abc?bindle_meta=a.b.c';
+ for(const accept of ['text/html','application/vnd.bindle.contact-token+jwt','application/vnd.bindle.contact-profile+json','application/vnd.bindle.messaging.ingress+json']){
+  const response=await f.get(path,{headers:{Accept:accept}}),expected=await f.get(control,{headers:{Accept:accept}});
+  assert.equal(response.status,expected.status,accept);assert.equal(response.headers.get('Content-Type'),expected.headers.get('Content-Type'),accept);
+  assert.equal(response.headers.get('Access-Control-Allow-Origin'),null,accept);const text=await response.text();assert.doesNotMatch(text,/Send a private message|og:|oembed/i,accept);
+ }
+ const options=await f.get(path,{method:'OPTIONS'});assert.notEqual(options.status,204,'no contact-link preflight');
+ assert.ok(f.calls.every(call=>call.search===''),'no capability query reaches assets');
 });
 
 test('durable Node host serves separate landing/console files through the shared router',async()=>{

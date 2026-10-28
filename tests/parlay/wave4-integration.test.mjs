@@ -10,8 +10,8 @@ import {createNodeShell} from '../../apps/parlay/node/server.mjs';
 import {objectStorage} from './archive-fixtures.test.mjs';
 import {objectStoragePort} from '../../apps/parlay/worker/archive-ports.mjs';
 
-test('BB6-S7: link admission and shell conversation/control ingress are held until control import commits',async t=>{
- const w=await createWorld();t.after(()=>w.dispose());const link=await w.link('bob'),store=w.peer('bob').store;
+test('BB6-S7: first-contact admission and shell conversation/control ingress are held until control import commits',async t=>{
+ const w=await createWorld();t.after(()=>w.dispose());const link=await w.admit('bob'),store=w.peer('bob').store;await w.enlist('alice','bob',link);
  await store.put('archive/hold',true);let result=await w.deliver('alice','bob',link);assert.equal(result.status,503);assert.equal(result.json.error,'recipient_storage_unavailable');assert.equal((await w.items('bob')).length,0);
  await store.delete('archive/hold');await store.put('archive/import',{done:false,phase:1,source:{checkpointAt:w.clock.now()-500}});
  result=await w.deliver('alice','bob',link,{createdAt:w.clock.now()-1000});assert.equal(result.json.error,'not_authorized');
@@ -43,7 +43,9 @@ test('B9 shell and owner web RPC mount only behind the existing default-off flag
  const shell=await createNodeShell({directory,PARLAY_ENABLED:true,localTestArchiveKeys:true,services:{authenticate:async()=>({kind:'owner',owner})}});t.after(async()=>{await shell.close();await rm(directory,{recursive:true,force:true});});
  const [first,second]=await Promise.all([shell.mailbox(owner),shell.mailbox(owner)]);assert.equal(first.box,second.box);
  assert.match(await (await shell.fetch(new Request('https://messages.example/'))).text(),/app.mjs/);
- const response=await shell.fetch(new Request('https://messages.example/api/web/operation',{method:'POST',headers:{Authorization:'Bearer test','Content-Type':'application/json'},body:JSON.stringify({name:'contacts.list',input:{}})}));assert.equal(response.status,200);assert.deepEqual((await response.json()).contacts,[]);
+ const response=await shell.fetch(new Request('https://messages.example/api/web/operation',{method:'POST',headers:{Authorization:'Bearer test','Content-Type':'application/json'},body:JSON.stringify({name:'lists.members',input:{list:'contacts'}})}));assert.equal(response.status,200);assert.deepEqual((await response.json()).members,[]);
+ // Contacts spike phase 4: the contact-link web operations are no longer allowlisted.
+ for(const name of ['contacts.list','contacts.add','contacts.remove','shell.conversation-create'])assert.equal((await shell.fetch(new Request('https://messages.example/api/web/operation',{method:'POST',headers:{Authorization:'Bearer test','Content-Type':'application/json'},body:JSON.stringify({name,input:{}})}))).status,400,name);
 });
 
 test('B9 timeline pages bound transfer and body reads, preserving stable older/newer offsets',async t=>{
@@ -53,17 +55,24 @@ test('B9 timeline pages bound transfer and body reads, preserving stable older/n
  await assert.rejects(a.run('bob','conversations.get',{conversationId:cid,limit:101}),{code:'invalid_input'});
 });
 
-test('B9 new conversations resolve stored contacts through live verified identity and messaging descriptor ports',async t=>{
- const a=await createArchiveMesh({names:['alice','bob','carol']});t.after(()=>a.dispose());const alice=a.party('alice'),bob=a.party('bob'),contact=await a.run('bob','contacts.add',{link:await a.link('alice'),label:'Alice'});let corrupt=false;
- const box=createMailbox({store:bob.store,PARLAY_ENABLED:true,clock:a.clock,ports:{directory:{...a.directory,resolveContact:async()=>({principal:corrupt?a.party('carol').principal:alice.principal,keyId:alice.keyId,ingress:alice.ingress})},delegateKeys:{current:()=>bob.current()}}});t.after(()=>box.dispose());
+test('B9 new conversations start with Contacts members through the binding their conversation verified (contacts spike phase 4)',async t=>{
+ const a=await createArchiveMesh({names:['alice','bob','carol']});t.after(()=>a.dispose());const alice=a.party('alice'),bob=a.party('bob'),carol=a.party('carol');await a.connect('bob','alice');
+ const box=createMailbox({store:bob.store,PARLAY_ENABLED:true,clock:a.clock,ports:{directory:a.directory,delegateKeys:{current:()=>bob.current()}}});t.after(()=>box.dispose());
  await box.run(bob.owner,'shell.authorization',{input:{revision:1,active:true,recipients:[alice.principal]}});
- corrupt=true;await assert.rejects(box.run(bob.owner,'shell.conversation-create',{input:{contacts:[contact.id],subject:'Verified conversation',text:'Hello'}}),{code:'author_unverifiable'});
- corrupt=false;const created=await box.run(bob.owner,'shell.conversation-create',{input:{contacts:[contact.id],subject:'Verified conversation',text:'Hello'}});assert.ok(created.conversationId);
+ const who=p=>({issuer:p.principal.issuer,subject:p.principal.subject});
+ // A person outside the owner's lists (or a list member without a verified binding) cannot be invited.
+ await assert.rejects(box.run(bob.owner,'conversations.create',{input:{participants:[{principal:who(carol)}],subject:'Hi',text:'Hello'}}),{code:'invalid_input'});
+ await box.run(bob.owner,'lists.add',{input:{list:'contacts',principal:who(carol)}});
+ await assert.rejects(box.run(bob.owner,'conversations.create',{input:{participants:[{principal:who(carol)}],subject:'Hi',text:'Hello'}}),{code:'invalid_input'});
+ // The withdrawn contact-link participant form and the shell's contact-ID operation are gone.
+ await assert.rejects(box.run(bob.owner,'conversations.create',{input:{participants:[{principal:alice.principal,keyId:alice.keyId,link:'https://alice.provider.example/c?bindle_meta=a.b.c',ingress:alice.ingress}],text:'Hello'}}),{code:'invalid_input'});
+ await assert.rejects(box.run(bob.owner,'shell.conversation-create',{input:{contacts:['x'],text:'Hello'}}),{code:'not_found'});
+ const created=await box.run(bob.owner,'conversations.create',{input:{participants:[{principal:who(alice)}],subject:'Verified conversation',text:'Hello'}});assert.ok(created.conversationId);
 });
 
 test('B9 owner Rejected body reads decrypt staged content and reject quarantined items',async t=>{
  const objects=objectStorage(),store=memoryStore([['owner','aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa']]),port=objectStoragePort({store,services:{objectStorage:({method,args})=>objects.call(method,args)}}),w=await createWorld({userStorage:port});t.after(()=>w.dispose());
- const link=await w.link('bob',{public:true}),body=encoder.encode('private rejected content '.repeat(5000)),result=await w.deliver('alice','bob',link,{body});assert.equal(result.status,200);const item=(await w.items('bob'))[0];item.state='rejected';item.imported={verified:false};item.rejectedAt=w.clock.now();await w.peer('bob').store.put('rejected/'+String(item.rejectedAt).padStart(16,'0')+'/'+item.id,{id:item.id});await w.peer('bob').store.put('item/'+item.id,item);
+ const link=await w.admit('bob',{policy:'request'}),body=encoder.encode('private rejected content '.repeat(5000)),result=await w.deliver('alice','bob',link,{body});assert.equal(result.status,200);const item=(await w.items('bob'))[0];item.state='rejected';item.imported={verified:false};item.rejectedAt=w.clock.now();await w.peer('bob').store.put('rejected/'+String(item.rejectedAt).padStart(16,'0')+'/'+item.id,{id:item.id});await w.peer('bob').store.put('item/'+item.id,item);
  assert.equal((await w.run('bob','intake.rejected'))[0].author.verified,false);
  const read=await w.run('bob','receive.body',{id:item.id});assert.ok(read.text.startsWith('private rejected content'));assert.equal(read.truncated,true);
  item.quarantined=true;await w.peer('bob').store.put('item/'+item.id,item);await assert.rejects(w.run('bob','receive.body',{id:item.id}),{code:'not_found'});
@@ -90,8 +99,8 @@ test('B9 timeline transfer caps revision bodies independently of the message pag
 
 test('BB6-S7: public intake rechecks the import hold after asynchronous provenance verification',async t=>{
  const {bridgeConsumer,P,uuidOf}=await import('./receive-fixtures.test.mjs'),w=await createWorld();t.after(()=>w.dispose());const consumer=await bridgeConsumer(),args=await consumer.args({recipient:P.bob.principal,receivedAt:w.clock.now(),text:'channel request'}),store=w.peer('bob').store;
- w.links.bob.state.consumers.set(consumer.origin,consumer);let paused,release;const entered=new Promise(resolve=>paused=resolve),wait=new Promise(resolve=>release=resolve),original=w.links.bob.consumerKey;
- w.links.bob.consumerKey=async q=>{paused();await wait;return original(q);};const pending=w.intake('bob',{contract:B.INTAKE_CONTRACT,consumer:consumer.origin,tx:uuidOf(900),args});await entered;await store.put('archive/hold',true);release();await assert.rejects(pending,{code:'recipient_storage_unavailable'});assert.equal((await w.items('bob')).length,0);
+ w.bridges.bob.state.consumers.set(consumer.origin,consumer);let paused,release;const entered=new Promise(resolve=>paused=resolve),wait=new Promise(resolve=>release=resolve),original=w.bridges.bob.consumerKey;
+ w.bridges.bob.consumerKey=async q=>{paused();await wait;return original(q);};const pending=w.intake('bob',{contract:B.INTAKE_CONTRACT,consumer:consumer.origin,tx:uuidOf(900),args});await entered;await store.put('archive/hold',true);release();await assert.rejects(pending,{code:'recipient_storage_unavailable'});assert.equal((await w.items('bob')).length,0);
  await store.delete('archive/hold');await w.intake('bob',{contract:B.INTAKE_CONTRACT,consumer:consumer.origin,tx:uuidOf(901),args});const item=(await w.items('bob'))[0];item.state='rejected';await store.put('item/'+item.id,item);assert.equal((await w.run('bob','receive.body',{id:item.id})).text,'channel request');
 });
 

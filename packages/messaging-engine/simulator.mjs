@@ -5,7 +5,8 @@ import {MAILBOX_OPERATIONS} from './operations.mjs';
 import {memoryEffects} from './providers.mjs';
 import {ContactsDomain,ReceiveDomain} from './store/mailbox.mjs';
 import {createEdgeIndex,flushEdgeOutbox} from './store/edge-index.mjs';
-import {ReceiveDeliver,handleIngress} from './domains/receive.mjs';
+import {ReceiveFirstContact} from './domains/invites.mjs';
+import {handleConversationIngress} from './domains/conversations.mjs';
 import {createOutboxProvider} from './domains/outbox.mjs';
 import * as B from '../messaging-protocol/index.mjs';
 const encoder=new TextEncoder(),ES={name:'ECDSA',namedCurve:'P-256'},pub=({kty,crv,x,y})=>({kty,crv,x,y});
@@ -25,19 +26,19 @@ export async function createMailboxSimulator({count=2,seed=1,clock=memoryEffects
   const peer={name,owner,principal,keyId,ingress,identity:{privateKey:identity.privateKey,publicJwk:identityJwk},signer:{privateKey:delegate.privateKey,delegation,kid:`jkt:${jkt}`},author:{principal,identityDocument:`${identityURI}/identity.json`,keyId,delegate:`jkt:${jkt}`},store:memoryMailbox([['owner',owner]]),audit:effects.audit,effects};peers.set(name,peer);
  }
  for(const peer of peers.values()){
-  let serial=0;
-  const providerLink={async issue({type,claims}){const jti=`sim-${peer.name}-${++serial}`,iat=Math.floor(clock.now()/1000),aud=`${peer.principal.issuer}/contact/${serial}`,encode=value=>B.base64url(encoder.encode(JSON.stringify(value))),head=`${encode({alg:'ES256',kid:peer.keyId,typ:'bindle-link-meta+jwt'})}.${encode({bindle:'link-meta',v:1,type,iss:peer.principal.issuer,aud,jti,iat,exp:iat+30*86400,...claims})}`,signature=await crypto.subtle.sign({name:'ECDSA',hash:'SHA-256'},peer.identity.privateKey,encoder.encode(head));return {jti,link:`${aud}?bindle_meta=${head}.${B.base64url(new Uint8Array(signature))}`};},revoke:async()=>({}),evaluate:async()=>({state:'eligible'})};
-  const egress={async fetch(url,init){const target=[...peers.values()].find(p=>p.ingress===url);if(!target)throw new Error('Unknown simulated ingress');trace.push({from:peer.name,to:target.name});return handleIngress({url,method:init.method,headers:Object.fromEntries(new Headers(init.headers)),body:init.body},{edge,now:clock.now,deliver:(owner,input)=>{if(owner!==target.owner)throw new Error('Wrong simulated mailbox');return operate(target.engine,new ReceiveDeliver({actor:{kind:'ingress',owner},input}));}});}};
-  peer.engine=createMailboxEngine({providers:{...peer.effects,mailboxStore:peer.store,contacts:ContactsDomain,receive:ReceiveDomain,directory,delegateKeys:{current:async()=>peer.signer},providerLink,userStorage:null,classifier:null,egress,outbox:createOutboxProvider({PARLAY_ENABLED:true,authorize:()=>true})}});
+  // Simulated wire: the same edge adapter and credential-less first-contact admission as the app shells (messaging §6.7).
+  const egress={async fetch(url,init){const target=[...peers.values()].find(p=>p.ingress===url);if(!target)throw new Error('Unknown simulated ingress');trace.push({from:peer.name,to:target.name});return handleConversationIngress({url,method:init.method,headers:Object.fromEntries(new Headers(init.headers)),body:init.body},{edge,conversationEdge:{check:async()=>{throw new B.ProtocolFault('not_authorized');},route:async()=>{throw new B.ProtocolFault('not_authorized');}},now:clock.now,deliverRecord:async()=>{throw new B.ProtocolFault('not_authorized');},deliverFirst:(owner,input)=>{if(owner!==target.owner)throw new Error('Wrong simulated mailbox');return operate(target.engine,new ReceiveFirstContact({actor:{kind:'ingress',owner},input}));}});}};
+  peer.engine=createMailboxEngine({providers:{...peer.effects,mailboxStore:peer.store,contacts:ContactsDomain,receive:ReceiveDomain,directory,delegateKeys:{current:async()=>peer.signer},userStorage:null,classifier:null,egress,outbox:createOutboxProvider({PARLAY_ENABLED:true,authorize:()=>true})}});
   peer.run=(op,params={})=>{if(!Object.hasOwn(MAILBOX_OPERATIONS,op))throw new TypeError(`Unknown operation ${op}`);return operate(peer.engine,new MAILBOX_OPERATIONS[op]({actor:{kind:'owner',owner:peer.owner},...params}));};
-  await peer.run('receive.configure',{input:{principal:peer.principal,ingress:peer.ingress}});
+  await peer.run('receive.configure',{input:{principal:peer.principal,ingress:peer.ingress}});await flushEdgeOutbox(peer.store,edge,peer.owner);
   // Setup is composition, not a user operation in the CLI audit.
   peer.audit.entries.length=0;
  }
  return {peers,clock,trace,directory,async prepare(from,to,{text='Hello',operationId}={}){
   const sender=peers.get(from),recipient=peers.get(to);if(!sender||!recipient)throw new TypeError('Unknown simulated peer');
-  const link=await recipient.run('contacts.create-link');await flushEdgeOutbox(recipient.store,edge,recipient.owner);
-  const body=encoder.encode(text),id=operationId??sender.effects.random.uuid(),envelope=await B.signEnvelope({version:1,profile:B.PROFILE,kind:'one-off',noReply:true,operationId:id,createdAt:clock.now(),recipient:{issuer:recipient.principal.issuer,owner:recipient.owner,contactId:link.jti,resource:link.resource},content:await B.contentDescriptor('text/plain',body),subject:'Simulator message',author:sender.author},sender.signer);
-  return {operationId:id,body,recipients:[{envelope,ingress:recipient.ingress,credential:`BindleLink ${new URL(link.link).searchParams.get('bindle_meta')}`}]};
+  // The recipient lists the sender in its "Contacts" list (`can message you`), so a credential-less one-off is admitted.
+  await recipient.run('lists.add',{input:{list:'contacts',principal:{issuer:sender.principal.issuer,subject:sender.owner}}});
+  const body=encoder.encode(text),id=operationId??sender.effects.random.uuid(),envelope=await B.signEnvelope({version:1,profile:B.PROFILE,kind:'one-off',noReply:true,operationId:id,createdAt:clock.now(),recipient:{issuer:recipient.principal.issuer,owner:recipient.owner},content:await B.contentDescriptor('text/plain',body),subject:'Simulator message',author:sender.author},sender.signer);
+  return {operationId:id,body,recipients:[{envelope,ingress:recipient.ingress}]};
  },dispose:()=>Promise.all([...peers.values()].map(p=>p.engine.dispose()))};
 }

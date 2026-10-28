@@ -11,7 +11,7 @@ import {createHTTP} from '../../apps/parlay/worker/http.mjs';
 import {operations} from '../../packages/messaging-engine/engine.mjs';
 import {ContactsDomain,ReceiveDomain} from '../../packages/messaging-engine/store/mailbox.mjs';
 import {createEdgeIndex,flushEdgeOutbox} from '../../packages/messaging-engine/store/edge-index.mjs';
-import {RECEIVE_OPERATIONS,ReceiveDeliver} from '../../packages/messaging-engine/domains/receive.mjs';
+import {RECEIVE_OPERATIONS} from '../../packages/messaging-engine/domains/receive.mjs';
 import {CONTACT_OPERATIONS} from '../../packages/messaging-engine/domains/contacts.mjs';
 import {DELEGATION_OPERATIONS} from '../../packages/messaging-engine/domains/delegation.mjs';
 import {SEND_OPERATIONS} from '../../packages/messaging-engine/domains/send.mjs';
@@ -19,16 +19,14 @@ import {OUTBOX_OPERATIONS,createOutboxProvider} from '../../packages/messaging-e
 import {EVENT_OPERATIONS} from '../../packages/messaging-engine/domains/events.mjs';
 import {CONVERSATION_OPERATIONS,ConversationsDomain,ConversationsReceive,ConversationsRespond,createConversationEdge,flushConversationEdge,handleConversationIngress,withConversations} from '../../packages/messaging-engine/domains/conversations.mjs';
 import * as B from '../../packages/messaging-protocol/index.mjs';
-import {INVITE_OPERATIONS,ReceiveRedeem,ReceiveFirstContact} from '../../packages/messaging-engine/domains/invites.mjs';
+import {INVITE_OPERATIONS,ReceiveRedeem,ReceiveFirstContact,addMember,CONTACTS_LIST} from '../../packages/messaging-engine/domains/invites.mjs';
 
 export {B};
 export const NOW=Date.UTC(2026,9,20,12);
 export const REGISTRY=operations(...RECEIVE_OPERATIONS,...CONTACT_OPERATIONS,...DELEGATION_OPERATIONS,...SEND_OPERATIONS,...OUTBOX_OPERATIONS,...EVENT_OPERATIONS,...CONVERSATION_OPERATIONS,...INVITE_OPERATIONS);
 export const encoder=new TextEncoder();
 const ES={name:'ECDSA',namedCurve:'P-256'},pub=({kty,crv,x,y})=>({kty,crv,x,y});
-const enc=v=>B.base64url(encoder.encode(JSON.stringify(v)));
 const HOSTS={alice:'https://alice.box.example/ingress',bob:'https://hub.box.example/ingress',carol:'https://hub.box.example/ingress',dave:'https://dave.box.example/ingress',erin:'https://erin.box.example/ingress'};
-async function signCompact(header,claims,privateKey){const head=`${enc(header)}.${enc(claims)}`;return `${head}.${B.base64url(new Uint8Array(await crypto.subtle.sign({name:'ECDSA',hash:'SHA-256'},privateKey,encoder.encode(head))))}`;}
 
 // `storage: true` composes an in-memory user storage resource per party (bodies of 4 KiB or more are staged there).
 // `issuers` maps a party to a shared provider origin (same-host invitations, contacts spike CL-24); `budget` is the
@@ -55,17 +53,14 @@ export async function createMesh({names=['alice','bob','carol','dave'],seed=1,ru
   const objects=new Map(),userStorage=storage?{objects,put:async(k,v)=>{objects.set(k,Uint8Array.from(v));},get:async k=>objects.get(k)??null,delete:async k=>{objects.delete(k);}}:null;
   const party={name,owner,peer,principal,keyId,userStorage,ingress:shell?(HOSTS[name]??`https://${name}.box.example/ingress`).replace('/ingress','/bindle/ingress'):HOSTS[name]??`https://${name}.box.example/ingress`,identity:{privateKey:identity.privateKey,publicJwk:pub(await crypto.subtle.exportKey('jwk',identity.publicKey))},delegatePrivate:delegate.privateKey,delegateJwk:pub(await crypto.subtle.exportKey('jwk',delegate.publicKey)),store:peer.store,links:0};
   await certify(party);parties.set(name,party);routes.set(party.ingress,routes.get(party.ingress)??name);
-  let serial=0;
-  const providerLink={async issue({type,claims}){const jti=`jti-${name}-${++serial}`,iat=Math.floor(clock.now()/1000),aud=`${issuer}/users/${name}/contact/${serial}`;const meta=await signCompact({alg:'ES256',kid:keyId,typ:'bindle-link-meta+jwt'},{bindle:'link-meta',v:1,type,iss:issuer,aud,jti,iat,exp:iat+30*86400,...claims},identity.privateKey);return {link:`${aud}?bindle_meta=${meta}`,jti};},revoke:async()=>({}),evaluate:async()=>({state:'eligible'})};
   // Outbox transport: route by exact ingress or its return-control prefix to the host's simulator peer.
   const egress={fetch:async(url,init)=>{const target=[...routes].find(([ingress])=>url===ingress||url.startsWith(`${ingress}/return/`));if(!target)throw Object.assign(new Error('Unknown simulated ingress'),{code:'network_denied'});const {signal,...wire}=init;return network.send(name,target[1],{url,...wire});}};
   const Outbox=createOutboxProvider({PARLAY_ENABLED:true,authorize:withConversations(()=>true),renewDelegation:async()=>{await certify(party);return party.signer.delegation;}});
   const delegateKeys={current:async()=>party.current?party.current():party.signer,renew:()=>certify(party)};
-  const start=()=>shell?(()=>{const box=createMailbox({store:peer.store,clock:peer.clock,PARLAY_ENABLED:true,ports:{egress,directory,delegateKeys,providerLink}});return {...box,run:(op,params)=>box.run(owner,op,params)};})():createTestEngine({seed:seed+1,owner,clock:peer.clock,store:peer.store,registry:REGISTRY,providers:{conversations:ConversationsDomain,contacts:ContactsDomain,receive:ReceiveDomain,outbox:Outbox,egress,directory:{resolveKey:q=>directory.resolveKey(q),status:q=>directory.status(q)},delegateKeys:{current:async()=>party.current?party.current():party.signer},providerLink,userStorage,classifier:null}});
+  const start=()=>shell?(()=>{const box=createMailbox({store:peer.store,clock:peer.clock,PARLAY_ENABLED:true,ports:{egress,directory,delegateKeys}});return {...box,run:(op,params)=>box.run(owner,op,params)};})():createTestEngine({seed:seed+1,owner,clock:peer.clock,store:peer.store,registry:REGISTRY,providers:{conversations:ConversationsDomain,contacts:ContactsDomain,receive:ReceiveDomain,outbox:Outbox,egress,directory:{resolveKey:q=>directory.resolveKey(q),status:q=>directory.status(q)},delegateKeys:{current:async()=>party.current?party.current():party.signer},userStorage,classifier:null}});
   peer.engine=start();party.engine=()=>peer.engine;
   peer.restart=async()=>{peer.online=false;await peer.engine.dispose();peer.engine=start();peer.online=true;};
   peer.handler=request=>handleConversationIngress(request,{edge,conversationEdge,now:()=>clock.now(),
-   deliverLink:(o,input)=>engineOf(o).peer.engine.perform(new ReceiveDeliver({actor:{kind:'ingress',owner:o},input})),
    deliverRecord:(o,input)=>engineOf(o).peer.engine.perform(new ConversationsReceive({actor:{kind:'ingress',owner:o},input})),
    deliverResponse:(o,input)=>engineOf(o).peer.engine.perform(new ConversationsRespond({actor:{kind:'ingress',owner:o},input})),
    deliverInvite:(o,input)=>engineOf(o).peer.engine.perform(new ReceiveRedeem({actor:{kind:'ingress',owner:o},input})),
@@ -97,11 +92,14 @@ export async function createMesh({names=['alice','bob','carol','dave'],seed=1,ru
    }
    await m.flush();return total;
   },
-  async link(name){const created=await m.run(name,'contacts.create-link',{kinds:['conversation-init','one-off']});await m.flush();return created.link;},
-  async participant(name){const p=parties.get(name);return {principal:p.principal,keyId:p.keyId,link:await m.link(name),ingress:p.ingress};},
+  // Mutual Contacts membership with each side's verified binding, as an accepted invitation would leave it (test-only
+  // seeding through the engine's own addMember; contact links were removed in contacts spike phase 4). `a` can then
+  // invite `b` by principal, and `b`'s list policy admits `a`'s credential-less first contact.
+  async connect(a,b){for(const [x,y] of [[a,b],[b,a]]){const px=parties.get(x),py=parties.get(y);await px.store.transaction(tx=>addMember(tx,CONTACTS_LIST,py.principal,{via:{kind:'manual'},now:clock.now(),binding:{keyId:py.keyId,ingress:py.ingress,identityURI:py.principal.identityURI}}));}},
+  async participant(name,creator='alice'){await m.connect(creator,name);const p=parties.get(name);return {principal:{issuer:p.principal.issuer,subject:p.principal.subject}};},
   // Creator invites; each invitee accepts (or not); then the mesh settles.
   async conversation(creator,invitees,{text='Let us talk.',subject='Planning',acceptListed=true,accept=invitees}={}){
-   const participants=[];for(const name of invitees)participants.push(await m.participant(name));
+   const participants=[];for(const name of invitees)participants.push(await m.participant(name,creator));
    const created=await m.run(creator,'conversations.create',{subject,text,participants});await m.settle();
    for(const name of accept){const {invitations}=await m.run(name,'conversations.invitations');const inv=invitations.find(i=>i.conversationId===created.conversationId);await m.run(name,'conversations.accept',{itemId:inv.itemId,acceptListed});}
    await m.settle();return created.conversationId;

@@ -10,7 +10,7 @@
 //   CR-M3). The delegation path depends on it: runtime/routes/integrations.mjs records the validated `ingress` on the
 //   field entry (`connections.set-ingress`, the only writer of an entry's ingress), the occupant port
 //   (runtime/account/connections.mjs delegationSlotOccupant) reads it back, and DelegationRegistry certifies it as the
-//   certificate's `client.ingress`. packages/links/handoff.mjs reuses it and adds the fixed descriptor values itself.
+//   certificate's `client.ingress`. (The contact-link descriptor handoff that also reused it was removed in contacts phase 4.)
 // Placeholders under spec.bindle.example until publication authority is agreed (messaging-protocol/constants.mjs, which
 // core may not import, pins the same values).
 export const MESSAGING_INGRESS_FRAGMENT = 'https://spec.bindle.example/fragments/messaging-ingress/v1';

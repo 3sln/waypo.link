@@ -11,7 +11,6 @@ import {stages as connections} from './connections.mjs';
 import {stages as integrations} from './integrations.mjs';
 import {stages as incremental} from './incremental.mjs';
 import {stages as notifications} from './notifications.mjs';
-import {stages as links} from './links.mjs';
 import {stages as delegation} from './delegation.mjs';
 import {stages as appSessions} from './app-sessions.mjs';
 import {stages as emailBridge} from './email-bridge.mjs';
@@ -31,8 +30,8 @@ async function fixture(t,{env={},...options}={}){
 
 test('legacy read-site table preserves strict strings, boolean sites, mount capability and signup defaults',async()=>{
  for(const raw of [undefined,'','false',false,'true',true,'invalid']){
-  const env={APP_ORIGIN:origin,ACTIVITY_V2_ENABLED:raw,INTEGRATIONS_ENABLED:raw,EVENT_BUSES_ENABLED:raw,LINKS_ENABLED:raw,EXTENSIONS_ENABLED:raw,SEMANTIC_SEARCH_ENABLED:raw,WAITLIST_ENABLED:raw,FEDERATION_ENABLED:raw,MCP_ENABLED:raw};
-  for(const [name,strict,expected]of [['ACTIVITY_V2_ENABLED',false,raw===true||raw==='true'],['ACTIVITY_V2_ENABLED',true,raw==='true'],['INTEGRATIONS_ENABLED',false,raw===true||raw==='true'],['INTEGRATIONS_ENABLED',true,raw==='true'],['EVENT_BUSES_ENABLED',false,raw===true||raw==='true'],['EVENT_BUSES_ENABLED',true,raw==='true'],['LINKS_ENABLED',true,raw==='true'],['EXTENSIONS_ENABLED',false,raw===true||raw==='true'],['SEMANTIC_SEARCH_ENABLED',true,raw==='true'],['WAITLIST_ENABLED',true,raw==='true']])assert.equal(flagEnabled(env,name,{},strict),expected,`${name}, strict=${strict}, raw=${String(raw)}`);
+  const env={APP_ORIGIN:origin,ACTIVITY_V2_ENABLED:raw,INTEGRATIONS_ENABLED:raw,EVENT_BUSES_ENABLED:raw,KEY_DELEGATION_ENABLED:raw,EXTENSIONS_ENABLED:raw,SEMANTIC_SEARCH_ENABLED:raw,WAITLIST_ENABLED:raw,FEDERATION_ENABLED:raw,MCP_ENABLED:raw};
+  for(const [name,strict,expected]of [['ACTIVITY_V2_ENABLED',false,raw===true||raw==='true'],['ACTIVITY_V2_ENABLED',true,raw==='true'],['INTEGRATIONS_ENABLED',false,raw===true||raw==='true'],['INTEGRATIONS_ENABLED',true,raw==='true'],['EVENT_BUSES_ENABLED',false,raw===true||raw==='true'],['EVENT_BUSES_ENABLED',true,raw==='true'],['KEY_DELEGATION_ENABLED',true,raw==='true'],['EXTENSIONS_ENABLED',false,raw===true||raw==='true'],['SEMANTIC_SEARCH_ENABLED',true,raw==='true'],['WAITLIST_ENABLED',true,raw==='true']])assert.equal(flagEnabled(env,name,{},strict),expected,`${name}, strict=${strict}, raw=${String(raw)}`);
   for(const name of ['FEDERATION_ENABLED','MCP_ENABLED'])assert.equal(flagGlobal(env,name),raw==='true');
  }
  const ready={RECOVERY_SIGNING_KEY:'key',TURNSTILE_SITE_KEY:'site',TURNSTILE_SECRET_KEY:'secret',KEY_ENCRYPTION_KEY:'key'};
@@ -90,21 +89,21 @@ test('cold store outage fails safe even for unmanaged legacy children; explicit 
 });
 
 test('email bridge targets the verified recipient owner and keeps settings, acceptance status and opt-out accessible',async t=>{
- const f=await fixture(t);await f.edit('LINKS_ENABLED',{on:true,fallthrough:true});await f.edit('EMAIL_BRIDGE_ENABLED',{on:true,fallthrough:false,rules:[{when:{accounts:[OWNER]},serve:{value:true}}]});
+ const f=await fixture(t);await f.edit('EMAIL_BRIDGE_ENABLED',{on:true,fallthrough:false,rules:[{when:{accounts:[OWNER]},serve:{value:true}}]});
  const env={...await f.ports(),EMAIL_BRIDGE_OWNER:{settings:async()=>({enabled:false}),configure:async(_,input)=>input,accepted:async()=>({status:'accepted'})}},object={emailBridgeEntitled:async()=>true};
  assert.equal((await emailBridge.owner(route(env,'/api/email-bridge','PUT',{enabled:true},{id:OWNER,object}))).status,200);
  assert.equal((await emailBridge.owner(route(env,'/api/email-bridge','PUT',{enabled:true},{id:OTHER,object}))).status,409);
  for(const [path,method,input]of [['/api/email-bridge','GET'],['/api/email-bridge','PUT',{enabled:false}],['/api/email-bridge/accepted','POST',{jti:'existing-receipt'}]])assert.equal((await emailBridge.owner(route(env,path,method,input,{id:OTHER,object}))).status,200);
- // Messaging extraction prep: a links (formerly messaging-app) kill no longer touches the bridge.
+ // The retired LINKS_ENABLED and BINDLEBOX_ENABLED env names (contacts phase 4) never touch the bridge.
  let runtime=new FlagsRuntime({store:f.flagStore,env:{LINKS_ENABLED:'false',BINDLEBOX_ENABLED:'false'},clock:f.clock.now});env.flags=await runtime.pin();assert.equal((await emailBridge.owner(route(env,'/api/email-bridge','PUT',{enabled:true},{id:OWNER,object}))).status,200);
  runtime=new FlagsRuntime({store:f.flagStore,env:{EMAIL_BRIDGE_ENABLED:'false'},clock:f.clock.now});env.flags=await runtime.pin();assert.equal((await emailBridge.owner(route(env,'/api/email-bridge','PUT',{enabled:true},{object}))).status,409);assert.equal((await emailBridge.owner(route(env,'/api/email-bridge','PUT',{enabled:false},{object}))).status,200);
 });
 
 test('owner reads, status and reversal remain available through deny, console off, env kills and outages after adoption',async t=>{
- const f=await fixture(t);for(const name of ['EVENT_BUSES_ENABLED','LINKS_ENABLED','INTEGRATIONS_ENABLED','ACTIVITY_V2_ENABLED','DEVICE_AUTHORIZATION_ENABLED'])await f.edit(name,{on:false,deny:{accounts:[OWNER],clients:[]}});
+ const f=await fixture(t);for(const name of ['EVENT_BUSES_ENABLED','KEY_DELEGATION_ENABLED','INTEGRATIONS_ENABLED','ACTIVITY_V2_ENABLED','DEVICE_AUTHORIZATION_ENABLED'])await f.edit(name,{on:false,deny:{accounts:[OWNER],clients:[]}});
  const base=await f.ports(),env={...base,INCREMENTAL_AUTHORIZATION:{mounted:true,suppressionList:async()=>({suppressions:[]}),suppressionRemove:async()=>({removed:true})},FEDERATION_AUTHORITY:{ready:()=>true,appSessions:async()=>({sessions:[]})}};
- const object={eventBusOwner:async()=>({buses:[]}),listLinks:async()=>({links:[]}),revokeLink:async()=>({revoked:true}),listDelegations:async()=>({delegations:[]}),revokeDelegations:async()=>({revoked:true}),integrationsOwner:async()=>({records:[]}),connectionsOwner:async()=>({connections:[]}),activityPush:async()=>({enabled:false})};
- const cases=[[events.owner,'/api/events/buses','GET'],[events.owner,'/api/events/buses/'+OWNER,'DELETE'],[links.owner,'/api/links','GET'],[links.owner,'/api/links/'+OWNER+'/revoke','POST',{}],[delegation.owner,'/api/delegations','GET'],[delegation.owner,'/api/delegations/revoke','POST',{}],[integrations.owner,'/api/integrations/records','GET'],[connections.owner,'/api/connections/owner','POST',{operation:'connections.list'}],[notifications.owner,'/api/notifications/activity','GET'],[incremental.beforeActivity,'/api/incremental/suppressions','GET'],[incremental.beforeActivity,'/api/incremental/suppressions/'+OWNER,'DELETE'],[appSessions.beforeActivity,'/api/app-sessions','DELETE']];
+ const object={eventBusOwner:async()=>({buses:[]}),listDelegations:async()=>({delegations:[]}),revokeDelegations:async()=>({revoked:true}),integrationsOwner:async()=>({records:[]}),connectionsOwner:async()=>({connections:[]}),activityPush:async()=>({enabled:false})};
+ const cases=[[events.owner,'/api/events/buses','GET'],[events.owner,'/api/events/buses/'+OWNER,'DELETE'],[delegation.owner,'/api/delegations','GET'],[delegation.owner,'/api/delegations/revoke','POST',{}],[integrations.owner,'/api/integrations/records','GET'],[connections.owner,'/api/connections/owner','POST',{operation:'connections.list'}],[notifications.owner,'/api/notifications/activity','GET'],[incremental.beforeActivity,'/api/incremental/suppressions','GET'],[incremental.beforeActivity,'/api/incremental/suppressions/'+OWNER,'DELETE'],[appSessions.beforeActivity,'/api/app-sessions','DELETE']];
  for(const [handle,path,method,value]of cases){const response=await handle(route(env,path,method,value,{object}));assert.equal(response?.status,200,`${method} ${path}`);}
  assert.equal(flagReadable({...env,flags:createFlags({snapshot:await f.flagStore.flagsSnapshot(),env:{EVENT_BUSES_ENABLED:'false'}})},'EVENT_BUSES_ENABLED'),true);
  f.runtime.store={flagsSnapshot:async()=>{throw Error('outage');}};f.clock.advance(3600001);env.flags=await f.runtime.pin();assert.equal((await events.owner(route(env,'/api/events/buses','GET',undefined,{object}))).status,200);assert.equal((await events.owner(route(env,'/api/events/buses','POST',{}, {object}))).status,409);

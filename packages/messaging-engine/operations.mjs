@@ -17,6 +17,7 @@ export const MAILBOX_OPERATIONS=operations(MailboxPing,...CONVERSATION_OPERATION
  ...BRIDGE_OPERATIONS, // BB-B7
  ...ARCHIVE_OPERATIONS, // BB-B6
  ...INVITE_OPERATIONS, // contacts spike phase 3
+ ...RESET_OPERATIONS, // contacts spike phase 4
 );
 
 // BB-B5 append-only domain registration.
@@ -33,3 +34,6 @@ import {ARCHIVE_OPERATIONS} from './domains/archive.mjs';
 
 // Contacts spike phase 3 append-only domain registration (provisional, unsigned).
 import {INVITE_OPERATIONS} from './domains/invites.mjs';
+
+// Contacts spike phase 4 append-only registration (provisional, unsigned): the contact-links reset.
+import {RESET_OPERATIONS} from './domains/contact-links-reset.mjs';

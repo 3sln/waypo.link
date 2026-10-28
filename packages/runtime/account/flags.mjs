@@ -28,9 +28,6 @@ export class AccountFeatureState extends AppQuery{
   state.EXTENSIONS_ENABLED=await any('connections/field/',r=>r?.entries?.length>0)||await any('connections/feature/',r=>['active','suspended'].includes(r?.state));
   // Contacts spike CR-C0: key delegation is retained by live `key-delegation/` rows only, never by `link/` rows.
   const delegations=await any(key('key-delegation',owner),r=>live(r,owner));state.KEY_DELEGATION_ENABLED=delegations;
-  // The links contract's own retention (removed with the links code in CR-C1). It still counts delegation rows, as before,
-  // but the delegation gate accepts a LINKS_ENABLED retention only with KEY_DELEGATION_ENABLED state behind it.
-  state.LINKS_ENABLED=delegations||await any('link/',r=>live(r,owner));
   // ORG-1: an organization's own account, and a person who is owner of record of one, stay serviceable.
   state.ORGANIZATIONS_ENABLED=(await store.get('org/record-v1'))?.kind==='organization'||await any('orgs/owned/',r=>typeof r?.org==='string');
   // Incremental grants and linked-device lineages live on the federation/identity

@@ -92,9 +92,12 @@ test('userMessage binds native browser origin to the registered callback and kee
 });
 test('discovery returns the floor-checked manifest (frozen, unknown members kept) next to the normalized declaration',async()=>{
  const future={spec:'https://future.example/extensions/teleport/v9',options:{x:1}};
- const declared={...manifest,extensions:[{spec:EXT.intents,options:{intents:['send-message'],login_endpoint:'https://self.example/console'}},future]};
+ // The withdrawn contact-intents extension (contacts phase 4) is now just another unimplemented extension: kept in the
+ // frozen manifest, never normalized into the declaration or capabilities.
+ const withdrawn={spec:'https://spec.bindle.example/extensions/intents/v1',options:{intents:['send-message'],login_endpoint:'https://self.example/console'}};
+ const declared={...manifest,extensions:[withdrawn,future]};
  const found=await discoverIdentity('alex@self.example',{fetcher:async()=>reply(declared)});
  assert.equal(found.kind,'provider');assert.deepEqual(found.manifest.extensions[1],future);assert.ok(Object.isFrozen(found.manifest.extensions));
- assert.deepEqual(found.declaration.intents,{intents:['send-message'],loginEndpoint:'https://self.example/console'});assert.equal(found.declaration.extensions[future.spec],undefined);
- assert.deepEqual(found.capabilities.intentLinks,['send-message']);
+ assert.equal(found.declaration.intents,undefined);assert.equal(found.declaration.extensions[future.spec],undefined);assert.equal(found.declaration.extensions[withdrawn.spec],undefined);
+ assert.equal(found.capabilities.intentLinks,undefined);
 });

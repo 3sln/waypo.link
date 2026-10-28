@@ -85,3 +85,15 @@ test('invite a person: the link carries the pinned connect kind, appears once in
   await assert.rejects(client.run('invite',{kind:'unknown'}),TypeError);
  }finally{await client.dispose();}
 });
+
+test('contacts spike phase 4: the contact-link intent kinds are refused on receipt and nothing reaches the mailbox',async()=>{
+ const f=fixture();try{
+  // The former pinned digests of send-message and add-contact (their data carried a contact link).
+  for(const [artefact,digest] of [['https://spec.bindle.example/intents/send-message/v1','sha256-lWZkE2SQRlCcsCRMZ2ven529CrbjGNAsgxHWSyIF4MU'],['https://spec.bindle.example/intents/add-contact/v1','sha256-Nu6S97f-t26Tk_KCTwaHtaWgxUGSOJ3JUIn4gdBeaZs']]){
+   await assert.rejects(f.client.run('intent',{value:encodeIntent({bintent:1,kind:{artefact,version:1,digest},data:{contact:'https://person.example/c?bindle_meta=a.b.c'}})}),{code:'intent_kind_invalid'},artefact);
+   assert.equal(f.client.state.value.intentFlow??null,null);
+  }
+  assert.deepEqual(f.names(),[]);
+  for(const op of ['contacts.add','contacts.list','contacts.remove','shell.conversation-create'])assert.equal(WEB_OPERATIONS.includes(op),false,op);
+ }finally{f.client.dispose();}
+});

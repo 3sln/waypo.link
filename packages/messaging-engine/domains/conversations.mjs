@@ -6,7 +6,8 @@ import {projectIncoming} from '../store/item-index.mjs';
 // accepted-peer set, no sequencer and direct mesh delivery. Nothing here is mounted or flag-enabled; the outbox the
 // composition supplies carries PARLAY_ENABLED, and its `authorize` must include `withConversations`.
 //  - Create/invite: one creator-signed genesis, a per-invitee creatorBinding, return control and nonce (§6.1); the
-//    conversation-init travels on the invitee's contact link through BB-B3's queue and BB-B2's link admission.
+//    conversation-init travels through BB-B3's queue as credential-less first contact to a list member, or as an
+//    invitation redemption (invites.mjs); contact links were removed in contacts spike phase 4.
 //  - Accept: the invitee signs a response (§6.2) and both sides can send at once (review P-1). The creator relays each
 //    accepted participant's own signed response as a peer-proposal introduction; participants then exchange direct
 //    peer-hellos, auto-accepted only under acceptListed or an accepted proposal (review P-2, S-2).
@@ -24,9 +25,8 @@ import {MailboxAction,MailboxQuery} from '../engine.mjs';
 import {fault} from '../faults.mjs';
 import {MailboxDomain,KEYS,BOUNDS,actorOwner,readConfig,principalKey,pad,chargeUsage} from '../store/mailbox.mjs';
 import {stageBody,readBody,bodyObjects} from '../store/bodies.mjs';
-import {parseLinkURL,contactMeta} from './contacts.mjs';
 import {verificationPorts,knownRevoked,recordRevocation,seenKey} from './delegation.mjs';
-import {handleIngress,ingressError} from './receive.mjs';
+import {ingressError} from './receive.mjs';
 
 const DAY=86400000,HOUR=3600000,te=new TextEncoder(),td=new TextDecoder();
 // Provisional mailbox policy (architecture §7.7, spec §11); protocol maxima come from P.LIMITS.
@@ -41,7 +41,7 @@ const C={settings:'conv/settings',room:c=>`conv/room/${c}`,rooms:'conv/room/',se
 export const replayDue=(at,id)=>`conv/replay-due/${String(Math.floor(at)).padStart(16,'0')}/${id}`;
 async function putReplay(tx,id,row){const prior=await tx.get(C.replay(id));if(prior&&prior.retainUntil!==row.retainUntil)await tx.delete(replayDue(prior.retainUntil,id));await tx.put(C.replay(id),row);await tx.put(replayDue(row.retainUntil,id),id);}
 const BODY_TYPES=new Set(['message','edit']);
-// Conversation records have their own receive allowance (architecture §11), separate from BB-B2's link budgets:
+// Conversation records have their own receive allowance (architecture §11), separate from the first-contact budgets:
 // per author per conversation and per owner, per UTC day, with a bounded key count. Provisional policy values.
 // authorTotal* bound one author across every conversation of this owner, so N shared rooms do not give N x 5,000.
 export const CONVERSATION_ALLOWANCE=Object.freeze({authorRecords:5000,authorBytes:256*1048576,authorTotalRecords:10000,authorTotalBytes:512*1048576,ownerRecords:50000,ownerBytes:2048*1048576,keys:4096});
@@ -141,7 +141,7 @@ export function createConversationEdge(store,{now=()=>Date.now()}={}){
    return entry.owner;
   },
   async route(t){const r=typeof t==='string'&&/^[A-Za-z0-9_-]{32}$/.test(t)?await store.get(`conv-route/${t}`):undefined;if(!r)protocol('not_authorized');return r.owner;},
-  // Monotonic per key and owner, like the link index: an older generation or another owner never overwrites.
+  // Monotonic per key and owner, like the invitation index: an older generation or another owner never overwrites.
   async publish(entry){const key=entry.kind==='route'?`conv-route/${entry.token}`:`conv-peer/${entry.key}`,prior=await store.get(key);if(prior&&(prior.owner!==entry.owner||prior.generation>=entry.generation))return false;await store.put(key,entry);return true;},
  });
 }
@@ -151,15 +151,15 @@ export async function flushConversationEdge(mailboxStore,edge,owner){
  return rows.size;
 }
 
-// Edge adapter: return-control POSTs (§6.2), link kinds (BB-B2 handleIngress), conversation records, invitation
-// redemptions and credential-less first contact, each refused before a mailbox is woken when it fails a cheap check.
+// Edge adapter: return-control POSTs (§6.2), conversation records, invitation redemptions and credential-less first
+// contact, each refused before a mailbox is woken when it fails a cheap check.
 // First contact (contacts spike phase 3; messaging §6.7, §7.4) runs: framing; per-source and per-claimed-owner budgets
 // (`budget`, whether or not the owner is hosted); "not hosted here" (recipient_unavailable from the edge's hosted
 // index); for a redemption, the credential pairing (malformed) and the token pre-filter (invite_invalid). Only then
 // does `deliverInvite` (receive.redeem) or `deliverFirst` (receive.first-contact) wake the routed mailbox, which runs
-// author verification and the rest. Without those ports, first contact other than links stays refused as before.
+// author verification and the rest. Without those ports, first contact is refused (not_authorized).
 const RETURN=/\/return\/([A-Za-z0-9_-]{32})$/;
-export async function handleConversationIngress(request,{edge,conversationEdge,deliverLink,deliverRecord,deliverResponse,deliverInvite,deliverFirst,budget,now=()=>Date.now()}){
+export async function handleConversationIngress(request,{edge,conversationEdge,deliverRecord,deliverResponse,deliverInvite,deliverFirst,budget,now=()=>Date.now()}){
  const ok=json=>Response.json(json,{status:200,headers:{'Cache-Control':'no-store','Referrer-Policy':'no-referrer'}});
  try{
   if(request?.method!=='POST'||!(request.body instanceof Uint8Array))protocol('malformed');
@@ -167,7 +167,6 @@ export async function handleConversationIngress(request,{edge,conversationEdge,d
   const headers=Object.fromEntries(Object.entries(request.headers??{}).map(([k,v])=>[k.toLowerCase(),v])),route=RETURN.exec(new URL(request.url).pathname);
   if(route){if(request.body.byteLength>P.LIMITS.maxInvitationResponseBytes)protocol('too_large');const owner=await conversationEdge.route(route[1]);return ok(await deliverResponse(owner,{token:route[1],contentType:headers['content-type'],body:request.body}));}
   const credential=P.parseCredential(headers.authorization);
-  if(credential.scheme==='BindleLink')return handleIngress(request,{edge,deliver:deliverLink,now});
   const delivery=await P.parseDelivery(headers['content-type'],request.body,{idempotencyKey:headers['idempotency-key']}),p=delivery.envelope.payload;
   const input={contentType:headers['content-type'],body:request.body,authorization:headers.authorization,idempotencyKey:headers['idempotency-key'],ingress:request.url};
   if(p.kind!=='conversation-record'&&typeof deliverFirst==='function'&&typeof edge?.hosted==='function'){
@@ -336,7 +335,7 @@ async function admitGate(s,{cid,author,envelope,credential,me,now}){
  return {room,peer,mode:r.type==='peer-hello'?'hello':'record'};
 }
 // Conversation events signed by a revoked delegate key are quarantined by delegation.recordRevocation (conv/by-jkt/),
-// whether the revocation is learned here, on a link delivery or by the delegation.recheck sweep (B7).
+// whether the revocation is learned here, on a first-contact delivery or by the delegation.recheck sweep (B7).
 
 // Record effects inside the admission transaction. Each may queue replies; none performs network I/O.
 async function onHello(tx,{room,peer,author,r,ev,config,now}){
@@ -416,10 +415,9 @@ export class ConversationsConfigure extends MailboxAction {
  }
 }
 
-// ---- Create and invite (§6.1). Participants are one of:
-//  - {principal, keyId, link, ingress}: the invitee's contact link (withdrawn; kept while links overlap invitations);
-//  - {principal}: a member of one of this owner's contact lists whose signed conversation binding (keyId, ingress) the
-//    lists recorded (contacts spike phase 3). It travels as credential-less first contact (§6.7, §7.1).
+// ---- Create and invite (§6.1). Each participant is {principal}: a member of one of this owner's contact lists whose
+// signed conversation binding (keyId, ingress) the lists recorded (contacts spike phase 3). It travels as credential-less
+// first contact (§6.7, §7.1). The contact-link participant form was removed in contacts spike phase 4.
 // The redemption of an invitation (§4.3) is built by packages/messaging-engine/domains/invites.mjs through
 // createConversation with one invitee carrying `invite`, `credential` and no text.
 export async function recordListBinding(tx,who,binding){
@@ -476,26 +474,20 @@ export class ConversationsCreate extends MailboxAction {
   if(input.operationId!==undefined&&await store.get(C.op(operationOf(input.operationId))))return createConversation({store,outbox,delegateKeys,clock},{subject,text,operationId:input.operationId,invitees:[]});
   const seen=new Set([pk(config.principal)]),invitees=[];
   for(const x of people){
-   try{P.validatePrincipal(x?.principal);}catch{if(x?.link!==undefined)invalid('Choose valid participants.');}
-   if(x?.link===undefined){
-    // A list member: the binding its accepted two-party conversation recorded; credential-less first contact.
-    const who={issuer:x?.principal?.issuer,subject:x?.principal?.subject},binding=typeof who.issuer==='string'&&typeof who.subject==='string'?await resolveListBinding(store,who):null;
-    if(!binding)invalid('Choose people from your contacts.');
-    if(seen.has(pk(who)))invalid('Choose each person once.');seen.add(pk(who));
-    invitees.push({principal:{issuer:who.issuer,subject:who.subject,identityURI:binding.identityURI},keyId:binding.keyId,ingress:binding.ingress,recipient:{issuer:who.issuer,owner:who.subject},credential:null});continue;
-   }
-   try{if(typeof x.keyId!=='string'||!x.keyId||x.keyId.length>200)throw new Error();const u=new URL(x.ingress);if(u.protocol!=='https:'||u.search||u.hash||u.href!==x.ingress)throw new Error();}catch{invalid('Choose valid participants.');}
-   const {meta}=parseLinkURL(x.link),{claims:c}=contactMeta(meta);
-   if(c.iss!==x.principal.issuer||c.sub!==x.principal.subject||!c.kinds.includes('conversation-init')||c.exp*1000<=now)invalid('That contact link cannot carry an invitation.');
-   if(seen.has(pk(x.principal)))invalid('Choose each person once.');seen.add(pk(x.principal));
-   invitees.push({principal:{issuer:x.principal.issuer,subject:x.principal.subject,identityURI:x.principal.identityURI},keyId:x.keyId,ingress:x.ingress,recipient:{issuer:c.iss,owner:c.sub,contactId:c.jti,resource:c.resource},credential:`BindleLink ${meta}`});
+   // A list member: the binding its accepted two-party conversation recorded; credential-less first contact.
+   if(!x||typeof x!=='object'||Array.isArray(x)||Object.keys(x).some(k=>k!=='principal'))invalid('Choose people from your contacts.');
+   const who={issuer:x.principal?.issuer,subject:x.principal?.subject},binding=typeof who.issuer==='string'&&typeof who.subject==='string'?await resolveListBinding(store,who):null;
+   if(!binding)invalid('Choose people from your contacts.');
+   if(seen.has(pk(who)))invalid('Choose each person once.');seen.add(pk(who));
+   invitees.push({principal:{issuer:who.issuer,subject:who.subject,identityURI:binding.identityURI},keyId:binding.keyId,ingress:binding.ingress,recipient:{issuer:who.issuer,owner:who.subject},credential:null});
   }
   const {returnExpiresAt,...result}=await createConversation({store,outbox,delegateKeys,clock},{subject,text,operationId:input.operationId,invitees});
   return result;
  }
 }
 
-// Pending invitations admitted by BB-B2 (contact link, conversation-init). The roster is the creator's unverified proposal.
+// Pending conversation invitations (conversation-init items admitted by first contact or a redemption). The roster is
+// the creator's unverified proposal.
 export class ConversationsInvitations extends MailboxQuery {
  static operation='conversations.invitations';static deps=['conversations'];static refreshOn=['incoming-changed','conversations-changed'];
  async fetch({conversations:h}){
@@ -707,7 +699,7 @@ export class ConversationsReceive extends MailboxAction {
    await putReplay(tx,replayId,{payloadDigest:delivery.payloadDigest,eventId:ev.eventId,receipt,retainUntil:P.retainUntil(envelope,now)});
    await tx.put(C.counter(cid,author,r.stream,r.counter),ev.eventId);
    await tx.put(C.byJkt(a.jkt,cid,ev.eventId),1);
-   // Conversation authors feed the delegation recheck sweep like link authors do (B7).
+   // Conversation authors feed the delegation recheck sweep like first-contact authors do (B7).
    const seen=await tx.get(seenKey(a.jkt));await tx.put(seenKey(a.jkt),{jkt:a.jkt,principal:a.principal,lastSeen:now,checkedAt:seen?.checkedAt??(a.statusChecked?now:0)});
    const current=await tx.get(C.peer(cid,author));if(current){current.lastSeen=now;if(mode!=='rejoin'&&mode!=='awaiting')current.epoch=r.epoch;await tx.put(C.peer(cid,author),current);}
    // Any authenticated record from a peer starts catch-up of its expired in-window obligations (architecture §9.6).

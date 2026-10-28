@@ -1,4 +1,8 @@
 // INT-4. Routing decisions are owner operations; persisted memory never contains an intent or its data.
+// Intents register no kinds and the core hard-codes none (contacts spike §4.2, CL-11, CR-C3; provisional, unsigned):
+// a kind is a public URL-identified artefact that resolves only when the operator registered it (runtime/artefact-pins.mjs),
+// and handlers are only connected apps that declare it. The built-in contacts handler, `INTENT_BUILTINS`, the legacy
+// `web+bindle://send-message?contact-url=` forms and the hard-coded reviewed-kind list were removed in contacts phase 4.
 import {AppAction,AppQuery,ownerOf} from '../app/engine.mjs';
 import {AppFault} from '../app/faults.mjs';
 import {flagsFor} from '../flags/read.mjs';
@@ -7,8 +11,6 @@ import {decodeIntent,encodeIntent,parseIntentURL} from './format.mjs';
 import {validateIntentKind,validateIntentData,httpsURLValue} from './schema.mjs';
 import {projectIntent} from './project.mjs';
 import {validateIntentDeclarations} from './declarations.mjs';
-import {parseLegacyIntent,legacyIntentScheme} from './legacy.mjs';
-import {REGISTERED_INTENT_REFERENCES} from './registered.mjs';
 import {getDomain} from '../../vendor/tldts/index.js';
 const fail=(code,status=400)=>{throw new AppFault(code,code,status);};
 const key=(owner,line)=>'intent-memory/'+owner+'/'+encodeURIComponent(line),flowKey=(owner,id)=>'intent-flow/'+owner+'/'+id;
@@ -17,7 +19,7 @@ const enabled=(r,actor,name='INTENT_LINKS_ENABLED')=>flagsFor(r.config,{subject:
 function guard(r,actor,input={},reverse=false){const owner=ownerOf(actor);if(input.entity!==undefined&&input.entity!==owner)fail('intent_member_context_unavailable',409);if(!reverse&&!enabled(r,actor))fail('not_found',404);return owner;}
 async function bound(r,owner){const actual=await r.accountStore.get('owner');if(actual!==undefined&&actual!==owner)fail('forbidden',403);}
 async function resolve(r,actor,input){
- const owner=guard(r,actor,input);await bound(r,owner);const parsed=input.legacy?parseLegacyIntent(input.legacy):null,intent=parsed?.intent??decodeIntent(input.value,{now:0}),ref=intent.kind;
+ const owner=guard(r,actor,input);await bound(r,owner);if(input.legacy!==undefined)fail('intent_malformed');const intent=decodeIntent(input.value,{now:0}),ref=intent.kind;
  if(!r.config.ARTEFACTS?.enabled)fail('intent_kind_unavailable',503);
  // Wargame F1: an attacker-chosen kind URL that the operator never registered is refused before any provider-wide
  // store read, pin or fetch, so junk kinds create no artefact rows and spend no shared fetch budget.
@@ -26,14 +28,16 @@ async function resolve(r,actor,input){
  const body=pin.body;if(pin.reference?.digest!==ref.digest||pin.reference?.version!==ref.version||pin.kind!==undefined&&pin.kind!=='intent')fail('intent_kind_invalid');validateIntentKind(body);if(body.id!==ref.artefact)fail('intent_kind_invalid');
  // Signaling AMD-SG-I1 §20.1.2 (proposed, unsigned): a session kind never travels as an intent link; it reaches handlers
  // only through signaling's addressed delivery. Refused after kind resolution, without handoff.
- if(body.session!==undefined)fail('intent_kind_invalid');if(!parsed)validateIntentData(body,intent.data);
+ if(body.session!==undefined)fail('intent_kind_invalid');validateIntentData(body,intent.data);
  if(body.capability&&input.placement==='query')fail('intent_malformed');if(intent.exp!==undefined&&intent.exp<=Math.floor(r.clock.now()/1000))fail('intent_expired',410);
  const resolutions=new Map([[JSON.stringify([ref.artefact,ref.version,ref.digest]),Promise.resolve(pin)]]),versions=reference=>{const key=JSON.stringify([reference.artefact,reference.version,reference.digest]);if(!resolutions.has(key))resolutions.set(key,Promise.resolve().then(()=>r.config.ARTEFACTS.resolve({...reference,kind:'intent'})));return resolutions.get(key);};
- return {owner,intent,body,legacy:parsed?.legacy,versions};
+ // Only the provider's own review marks a kind reviewed (intents §7); the host decides which lines it reviewed.
+ let reviewed=false;try{reviewed=await r.config.ARTEFACTS.reviewedIntent?.(ref)===true;}catch{reviewed=false;}
+ return {owner,intent,body,versions,reviewed};
 }
-async function handlers(r,tx,owner,intent,body,memory,legacy,versions){
- const list=[...r.config.INTENT_BUILTINS??[]];
- if(!legacy&&enabled(r,{owner},'INTENT_APP_HANDLERS_ENABLED')){
+async function handlers(r,tx,owner,intent,body,memory,versions){
+ const list=[];
+ if(enabled(r,{owner},'INTENT_APP_HANDLERS_ENABLED')){
   const indexed=tx.intentHandlers?await tx.intentHandlers({owner,kind:intent.kind.artefact}):null;
   const indexedDeclarations=indexed?new Set(indexed.map(h=>JSON.stringify([h.connection,h.generation,h.kind,h.version,h.digest,h.route]))):null;
   const rows=indexed?await Promise.all([...new Set(indexed.map(h=>h.connection))].map(id=>tx.get('resource/'+id))):[...(await tx.list({prefix:'resource/'})).values()];
@@ -55,7 +59,7 @@ async function handlers(r,tx,owner,intent,body,memory,legacy,versions){
    if(target.affected||target.reference?.digest!==h.digest||target.reference?.version!==h.version||!validateAdditive('intent',target.body,body).additive)continue;
    try{outgoing=projectIntent(intent,body,target.body,{additive:true,reference:{artefact:h.kind,version:h.version,digest:h.digest}});}catch{continue;}
   }
-  candidates.push({...h,origin:new URL(h.route).origin,outgoing,projected:h.version<intent.kind.version,...legacy?{legacy}:{}});
+  candidates.push({...h,origin:new URL(h.route).origin,outgoing,projected:h.version<intent.kind.version});
  }
  return candidates.sort((a,b)=>a.id.localeCompare(b.id));
 }
@@ -67,12 +71,11 @@ async function validDefault(r,memory,intent,body,candidates,versions){
  }else if(intent.kind.version===d.version&&intent.kind.digest!==d.digest)return null;
  return handler;
 }
-const target=(r,h,wire)=>h.legacy?h.route+'#legacy='+encodeURIComponent(legacyIntentScheme(h.legacy)):h.route+'#bintent='+(wire&&!h.projected?wire:encodeIntent(h.outgoing))+'&bintent_iss='+encodeURIComponent(r.config.APP_ORIGIN);
+const target=(r,h,wire)=>h.route+'#bintent='+(wire&&!h.projected?wire:encodeIntent(h.outgoing))+'&bintent_iss='+encodeURIComponent(r.config.APP_ORIGIN);
 export function intentRisk(body,data,candidates=[]){const categories=[...body.disclosure.categories,...Object.keys(data).flatMap(k=>body.disclosure.fields[k].categories)],known=['personal-data','location','send-as-you','money','identity','public'];let tier=({view:0,save:1,join:1,send:2})[body.effect]??3;if(categories.some(c=>!known.includes(c)))tier=3;else if(categories.some(c=>['money','identity','send-as-you','public'].includes(c)))tier++;if(candidates.some(h=>site(h.id)===site(body.id)))tier++;return ['low','medium','high','critical'][Math.min(3,tier)];}
-const reviewed=intent=>REGISTERED_INTENT_REFERENCES.some(p=>p.artefact===intent.kind.artefact&&p.version===intent.kind.version&&p.digest===intent.kind.digest);
 // A `capability` value that is not an https-url shows only its presence under `origin` display (intents §4.3).
 export function intentDisclosure(body,data){return Object.fromEntries(Object.entries(data).map(([name,value])=>{const field=body.disclosure.fields[name];return [name,field.display==='origin'?(body.data.properties[name]?.format==='capability'&&!httpsURLValue(value)?true:new URL(value).origin):field.display==='value'?typeof value==='object'?new URL(value.iss).host+' (according to the link)':String(value):true];}));}
-const publicHandler=({outgoing,projected,legacy,...h})=>h;
+const publicHandler=({outgoing,projected,...h})=>h;
 export function viewerActivated(headers={}){const h=new Headers(headers),site=h.get('Sec-Fetch-Site');return h.get('Sec-Fetch-Mode')==='navigate'&&h.get('Sec-Fetch-Dest')==='document'&&!h.get('Purpose')&&!h.get('Sec-Purpose')&&(site==='none'||site==='same-origin'||site==='cross-site'&&h.get('Sec-Fetch-User')==='?1');}
 export class ReceiveIntent extends AppQuery {
  static operation='intents.receive';static deps=[];
@@ -80,26 +83,26 @@ export class ReceiveIntent extends AppQuery {
 }
 export class Candidates extends AppQuery {
  static operation='intents.candidates';static deps=['accountStore','config','clock'];
- async fetch(r){const {owner,intent,body,legacy,versions}=await resolve(r,this.actor,this.input),memory=await r.accountStore.get(key(owner,body.id));if(memory?.ignored)return {state:'ignored',candidates:[]};const candidates=await handlers(r,r.accountStore,owner,intent,body,memory,legacy,versions),d=await validDefault(r,memory,intent,body,candidates,versions);return {state:candidates.length?'choose':'no-handler',body,risk:intentRisk(body,intent.data,candidates),reviewed:reviewed(intent),disclosure:intentDisclosure(body,intent.data),sender:'unknown',signatureUnchecked:typeof this.input.value==='string'&&this.input.value.includes('.'),account:owner,candidates:candidates.map(publicHandler),default:d?.id??null};}
+ async fetch(r){const {owner,intent,body,versions,reviewed}=await resolve(r,this.actor,this.input),memory=await r.accountStore.get(key(owner,body.id));if(memory?.ignored)return {state:'ignored',candidates:[]};const candidates=await handlers(r,r.accountStore,owner,intent,body,memory,versions),d=await validDefault(r,memory,intent,body,candidates,versions);return {state:candidates.length?'choose':'no-handler',body,risk:intentRisk(body,intent.data,candidates),reviewed,disclosure:intentDisclosure(body,intent.data),sender:'unknown',signatureUnchecked:typeof this.input.value==='string'&&this.input.value.includes('.'),account:owner,candidates:candidates.map(publicHandler),default:d?.id??null};}
 }
 export class ResolveIntent extends AppAction {
  static operation='intents.resolve';static deps=['accountStore','config','clock','random'];
- async run(r){const {owner,intent,body,legacy,versions}=await resolve(r,this.actor,this.input),now=r.clock.now(),digest=await digestJSON(intent);return r.accountStore.transaction(async tx=>{
+ async run(r){const {owner,intent,body,versions,reviewed}=await resolve(r,this.actor,this.input),now=r.clock.now(),digest=await digestJSON(intent);return r.accountStore.transaction(async tx=>{
   const memory=await tx.get(key(owner,body.id));if(memory?.ignored)return {state:'ignored',kind:body.id};
-  const candidates=await handlers(r,tx,owner,intent,body,memory,legacy,versions),d=await validDefault(r,memory,intent,body,candidates,versions);
+  const candidates=await handlers(r,tx,owner,intent,body,memory,versions),d=await validDefault(r,memory,intent,body,candidates,versions);
   // Sweep receipts; they hold only a digest, not link data. Defaults never retain a flow.
   for(const [k,f]of await tx.list({prefix:'intent-flow/'+owner+'/'}))if(f.expires<=now)await tx.delete(k);
   if(d&&this.input.activated===true){const meter=await tx.get('intent-meter/'+owner)??{start:now,count:0};if(now-meter.start>=60000){meter.start=now;meter.count=0;}if(meter.count<5){meter.count++;await tx.put('intent-meter/'+owner,meter);return {state:'handoff',target:target(r,d,this.input.value)};}}
   const receipts=[...(await tx.list({prefix:'intent-flow/'+owner+'/'}))].sort((a,b)=>a[1].created-b[1].created);while(receipts.length>=64)await tx.delete(receipts.shift()[0]);const id=r.random.uuid();await tx.put(flowKey(owner,id),{digest,kind:body.id,created:now,expires:now+3600000});
-  return {state:d?'continue':candidates.length?'choose':'no-handler',flow:id,body,risk:intentRisk(body,intent.data,candidates),reviewed:reviewed(intent),disclosure:intentDisclosure(body,intent.data),sender:'unknown',signatureUnchecked:typeof this.input.value==='string'&&this.input.value.includes('.'),account:owner,candidates:candidates.map(publicHandler),default:d?.id??null,armedAt:now+1000};
+  return {state:d?'continue':candidates.length?'choose':'no-handler',flow:id,body,risk:intentRisk(body,intent.data,candidates),reviewed,disclosure:intentDisclosure(body,intent.data),sender:'unknown',signatureUnchecked:typeof this.input.value==='string'&&this.input.value.includes('.'),account:owner,candidates:candidates.map(publicHandler),default:d?.id??null,armedAt:now+1000};
  });}
 }
 async function receipt(r,tx,owner,input,intent){const path=flowKey(owner,input.flow),flow=await tx.get(path),now=r.clock.now();if(!flow||flow.expires<=now||flow.created+1000>now||flow.digest!==await digestJSON(intent))fail('intent_stale',409);return path;}
 export class RecordDecision extends AppAction {
  static operation='intents.decide';static deps=['accountStore','config','clock'];static changes='intents-changed';
- async run(r){const {owner,intent,body,legacy,versions}=await resolve(r,this.actor,this.input);if(!['once','always'].includes(this.input.choice))fail('intent_malformed');return r.accountStore.transaction(async tx=>{
+ async run(r){const {owner,intent,body,versions,reviewed}=await resolve(r,this.actor,this.input);if(!['once','always'].includes(this.input.choice))fail('intent_malformed');return r.accountStore.transaction(async tx=>{
   const path=await receipt(r,tx,owner,this.input,intent),k=key(owner,body.id),memory=await tx.get(k)??{};if(memory.ignored)fail('intent_stale',409);
-  const candidates=await handlers(r,tx,owner,intent,body,memory,legacy,versions),handler=candidates.find(h=>h.id===this.input.handler);if(!handler)fail('intent_stale',409);
+  const candidates=await handlers(r,tx,owner,intent,body,memory,versions),handler=candidates.find(h=>h.id===this.input.handler);if(!handler)fail('intent_stale',409);
   if(this.input.choice==='always')await tx.put(k,{...memory,kind:body.id,default:{handler:handler.id,version:intent.kind.version,digest:intent.kind.digest,...handler.connection?{connection:handler.connection,generation:handler.generation}:{},at:r.clock.now()}});
   await tx.delete(path);return {state:'handoff',target:target(r,handler,this.input.value)};
  });}
@@ -107,11 +110,11 @@ export class RecordDecision extends AppAction {
 export class SetDefault extends RecordDecision {static operation='intents.set-default';async run(r){this.input={...this.input,choice:'always'};return super.run(r);}}
 export class ExcludeHandler extends AppAction {
  static operation='intents.exclude';static deps=['accountStore','config','clock'];static changes='intents-changed';
- async run(r){const {owner,intent,body,legacy,versions}=await resolve(r,this.actor,this.input);return r.accountStore.transaction(async tx=>{const path=await receipt(r,tx,owner,this.input,intent),k=key(owner,body.id),m=await tx.get(k)??{},candidates=await handlers(r,tx,owner,intent,body,m,legacy,versions),h=candidates.find(h=>h.id===this.input.handler);if(!h)fail('intent_stale',409);const s=site(h.id);m.excluded=[...m.excluded??[],{site:s,at:r.clock.now()}];if(m.default&&site(m.default.handler)===s)delete m.default;await tx.put(k,{...m,kind:body.id});await tx.delete(path);return {state:'done'};});}
+ async run(r){const {owner,intent,body,versions,reviewed}=await resolve(r,this.actor,this.input);return r.accountStore.transaction(async tx=>{const path=await receipt(r,tx,owner,this.input,intent),k=key(owner,body.id),m=await tx.get(k)??{},candidates=await handlers(r,tx,owner,intent,body,m,versions),h=candidates.find(h=>h.id===this.input.handler);if(!h)fail('intent_stale',409);const s=site(h.id);m.excluded=[...m.excluded??[],{site:s,at:r.clock.now()}];if(m.default&&site(m.default.handler)===s)delete m.default;await tx.put(k,{...m,kind:body.id});await tx.delete(path);return {state:'done'};});}
 }
 export class IgnoreKind extends AppAction {
  static operation='intents.ignore';static deps=['accountStore','config','clock'];static changes='intents-changed';
- async run(r){const {owner,intent,body,legacy,versions}=await resolve(r,this.actor,this.input);return r.accountStore.transaction(async tx=>{const path=await receipt(r,tx,owner,this.input,intent),k=key(owner,body.id),m=await tx.get(k)??{};await tx.put(k,{...m,kind:body.id,ignored:{at:r.clock.now()}});await tx.delete(path);return {state:'done'};});}
+ async run(r){const {owner,intent,body,versions,reviewed}=await resolve(r,this.actor,this.input);return r.accountStore.transaction(async tx=>{const path=await receipt(r,tx,owner,this.input,intent),k=key(owner,body.id),m=await tx.get(k)??{};await tx.put(k,{...m,kind:body.id,ignored:{at:r.clock.now()}});await tx.delete(path);return {state:'done'};});}
 }
 export class IntentRecords extends AppQuery {
  static operation='intents.records';static deps=['accountStore','config'];

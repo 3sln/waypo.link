@@ -2,7 +2,7 @@
 // messaging-app.md §4). The provider certifies an app-held per-user P-256 delegate key with a short-lived compact JWS
 // signed by the owner's current identity signing key (packages/identity/keys.mjs). Engine-first: DelegationRegistry is
 // the provider resource, and the Actions/Queries below are the operations over it. New issuance needs
-// KEY_DELEGATION_ENABLED (or, until CR-C7, LINKS_ENABLED; keyDelegationAdmits); owner reads, status and revocations
+// KEY_DELEGATION_ENABLED (keyDelegationAdmits; LINKS_ENABLED was retired by CR-C7); owner reads, status and revocations
 // remain available during rollout changes.
 //
 // Core may not import Parlay (tests/parlay/import-boundary.test.mjs), so the certificate encoding is written
@@ -15,7 +15,7 @@
 //     supplies the resource assigned to the messaging-ingress `mailbox` field, and only while the messaging-mailbox
 //     provider feature is enabled and unsuspended, with the ingress that feature recorded from `describe`. The runtime
 //     port (runtime/account/connections.mjs delegationSlotOccupant) answers from that feature's projection only, so
-//     occupancy needs KEY_DELEGATION_ENABLED and the feature, never LINKS_ENABLED. That occupant, as reported by the
+//     occupancy needs KEY_DELEGATION_ENABLED and the feature. That occupant, as reported by the
 //     `occupant({owner, fragment})` port ->
 //     {clientId, origin, ingress, cnx, purposes} | null, is certified, and only for purposes it reports as consented
 //     that this provider recognizes (author, receipt, archive). No port, a failing port, or another occupant means
@@ -79,19 +79,13 @@ const forbidden = () => fault('forbidden', 'This app cannot hold delegated signi
 const invalid = message => fault('invalid_request', message ?? 'Unsupported delegation request.', 400);
 const unavailable = () => fault('delegation_unavailable', 'Delegated signing is unavailable right now.', 503);
 /**
- * Contacts spike CR-C0 (H5, CL-25; provisional, unsigned): whether new issuance or renewal is open, given an evaluated
- * flags port (`flags.for(ctx)`). A configured KEY_DELEGATION_ENABLED (a console record, an env value, or an unusable
- * snapshot) decides alone. Until CR-C7 retires LINKS_ENABLED, an unconfigured one falls back to LINKS_ENABLED, so no
- * existing deployment changes, with one exception: a LINKS_ENABLED `retained` decision counts only when the writer pin's
- * KEY_DELEGATION_ENABLED state (live `key-delegation/` rows) is true, because that retention may rest on `link/` rows
- * alone. `featureState(name)` is the writer pin's already-read account state (runtime/account/flags.mjs
- * ACCOUNT_FEATURE_STATE); without it such a retention does not count.
+ * Contacts spike CR-C0 (H5, CL-25) and CR-C7 (contacts phase 4; provisional, unsigned): whether new issuance or renewal
+ * is open, given an evaluated flags port (`flags.for(ctx)`). KEY_DELEGATION_ENABLED decides alone; its retention comes from
+ * live `key-delegation/` rows only. The LINKS_ENABLED fallback ended when CR-C7 retired that flag. `featureState` is
+ * accepted for call-site compatibility and unused.
  */
 export function keyDelegationAdmits(port, featureState) {
-  const own = port.evaluate('KEY_DELEGATION_ENABLED');
-  if (own.reason !== 'no-record') return own.value === true;
-  const links = port.evaluate('LINKS_ENABLED');
-  return links.value === true && (links.reason !== 'retained' || (typeof featureState === 'function' && featureState('KEY_DELEGATION_ENABLED') === true));
+  return port.evaluate('KEY_DELEGATION_ENABLED').value === true;
 }
 /** Creation/renewal only. ctx carries the verified owner subject; reverse/status paths never target. */
 export const delegationsEnabled = (config={},ctx={}) => keyDelegationAdmits((config?.flags??config?.FLAGS??createFlags({snapshot:{v:1,version:0,issuedAt:0,flags:{}},env:config??{}})).for(ctx), config?.ACCOUNT_FEATURE_STATE);

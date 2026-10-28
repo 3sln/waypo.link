@@ -60,7 +60,7 @@ test('Message the developer mints a bound invitation through the host hook and h
  await alice.page.getByRole('button',{name:'Account & security',exact:true}).click();const panel=alice.page.locator('.developer-contact-panel');
  const button=panel.getByRole('button',{name:'Message the developer',exact:true});await button.waitFor();
  const minted=alice.page.waitForResponse(response=>response.url().endsWith('/api/developer-contact')&&response.request().method()==='POST');await button.focus();await alice.page.keyboard.press('Enter');const response=await minted;
- assert.equal(response.status(),200);assert.equal(response.headers()['cache-control'],'no-store');const body=await response.json();assert.equal(body.intent.url,'web+bindle://intent?bintent='+body.intent.value);
+ assert.equal(response.status(),200);assert.equal(response.headers()['cache-control'],'no-store');const body=await response.json();assert.equal(body.intent.url,'web+bindle://intent?bintent='+body.intent.value);assert.equal('route' in body.intent,false,'no provider route while intent links are off');
  assert.deepEqual(mints,[{developer:{id:mints[0].developer.id,handle:mints[0].developer.handle},principal:{issuer:s.origin,subject:alice.account.id},tier:'free',expiresIn:3600000}]);
  await panel.getByText(/Your invitation works once and is valid until/).waitFor();await panel.getByRole('button',{name:'Copy invitation link',exact:true}).waitFor();
  // The token is a bearer capability: never in the console's persisted state or the page markup.
@@ -68,9 +68,27 @@ test('Message the developer mints a bound invitation through the host hook and h
  for(const [name,width]of [['links-developer-contact-invited',1440],['links-developer-contact-invited-390',390],['links-developer-contact-invited-320',320]]){await alice.page.setViewportSize({width,height:900});assert.equal(await alice.page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);await screenshot(alice.page,name);}
 });
 
-test('the contact profile saves on the Node adapter and reloads with its stored values in Spanish',async t=>{
+test('with intent links on, Message the developer opens the minted connect intent in this provider\'s /i router',async t=>{
+ let token;
+ const s=await server({ARTEFACT_VERSIONS_ENABLED:'true',INTENT_LINKS_ENABLED:'true',DEVELOPER_CONTACT_MINT:async input=>{token=Buffer.from(crypto.getRandomValues(new Uint8Array(24))).toString('base64url');return {inviter:{iss:s.origin,sub:input.developer.id},token,delegation:'eyJhbGciOiJFUzI1NiJ9.e30.'+'A'.repeat(86),expires_at:Math.floor((Date.now()+input.expiresIn)/1000)};}});
+ const alice=await person(t,s);await developerLink(alice.page,s);
+ await alice.page.getByRole('button',{name:'Account & security',exact:true}).click();const panel=alice.page.locator('.developer-contact-panel');
+ const button=panel.getByRole('button',{name:'Message the developer',exact:true});await button.waitFor();
+ const navigations=[];alice.page.on('framenavigated',frame=>{if(frame===alice.page.mainFrame())navigations.push(frame.url());});
+ // The answer is read in transit: the page navigates away as soon as it has checked it.
+ let body;await alice.page.route('**/api/developer-contact',async route=>{if(route.request().method()!=='POST')return route.continue();const response=await route.fetch();body=await response.json();return route.fulfill({response,json:body});});
+ const arrived=alice.page.waitForURL(url=>url.pathname==='/i');await button.click();await arrived;
+ assert.equal(body.intent.route,s.origin+'/i#bintent='+body.intent.value,'the route is exactly this origin\'s /i fragment for the minted value');
+ assert.ok(navigations.some(url=>url===body.intent.route),navigations.join(' '));
+ // The intent page scrubs the capability from the address bar before rendering.
+ await alice.page.waitForFunction(()=>location.hash==='');assert.equal((await alice.page.content()).includes(token),false);
+});
+
+test('the profile saves display name only on the Node adapter and reloads with its stored values in Spanish',async t=>{
  const s=await server(),bob=await person(t,s);await bob.page.goto(s.origin+'/console?view=security&lang=es');const profile=bob.page.locator('.contact-profile-settings');await profile.locator('form[aria-busy=false]').waitFor();
- await profile.locator('input[name=displayName]').fill('Bob');await profile.locator('input[name=discloseToContacts]').check();await profile.locator('button[type=submit]').click();await bob.page.getByText('Perfil de contacto guardado.').waitFor();
- await bob.page.reload();await profile.locator('form[aria-busy=false]').waitFor();assert.equal(await profile.locator('input[name=displayName]').inputValue(),'Bob');assert.equal(await profile.locator('input[name=discloseToContacts]').isChecked(),true);
- await profile.getByText('Ninguna de tus apps ha creado todavía un enlace de contacto.').waitFor();assert.equal(await bob.page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);await screenshot(bob.page,'links-contact-profile-es');
+ assert.deepEqual(await profile.locator('input').evaluateAll(inputs=>inputs.map(input=>input.name)),['displayName','avatar']);
+ const saved=bob.page.waitForResponse(response=>response.url().endsWith('/api/profile')&&response.request().method()==='PUT');
+ await profile.locator('input[name=displayName]').fill('Bob');await profile.locator('button[type=submit]').click();const put=await saved;assert.equal(put.status(),200);assert.deepEqual(Object.keys(put.request().postDataJSON()).filter(key=>key!=='expectedRevision').sort(),['avatar','displayName']);
+ await bob.page.reload();await profile.locator('form[aria-busy=false]').waitFor();assert.equal(await profile.locator('input[name=displayName]').inputValue(),'Bob');
+ assert.equal(await bob.page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);await screenshot(bob.page,'links-profile-es');
 });

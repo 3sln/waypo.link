@@ -236,31 +236,19 @@ test('rapid navigation while billing loads never shows billing data elsewhere an
  await page.getByRole('button',{name:'Storage & billing',exact:true}).click();await page.locator('.plan-card').first().waitFor();await c.settled();
 });
 
-test('saving the contact profile: a triple submit saves once, and a stale refusal shows the latest profile without claiming success',async t=>{
- let stored={displayName:'Stored',bio:'',avatar:'',discloseToContacts:false,revision:'a'.repeat(32)},puts=0;
+test('saving the profile: a triple submit saves once, and a stale refusal shows the latest profile without claiming success',async t=>{
+ let stored={displayName:'Stored',avatar:'',revision:'a'.repeat(32)},puts=0;
  const c=await chaosConsole(browser,t,{handlers:{
   'GET /api/profile':route=>route.fulfill({json:stored}),'GET /api/developer-contact':route=>route.fulfill({json:{available:false,reason:'contact-unavailable'}}),
-  'PUT /api/profile':(route,{body})=>{puts++;if(body.expectedRevision!==stored.revision)return route.fulfill({status:409,json:{error:'profile_stale',code:'profile_stale',message:'Your contact profile changed in another session.'}});const {expectedRevision,...rest}=body;stored={...rest,revision:'b'.repeat(32)};return route.fulfill({json:stored});}}});const {page}=c;
+  'PUT /api/profile':(route,{body})=>{puts++;if(body.expectedRevision!==stored.revision)return route.fulfill({status:409,json:{error:'profile_stale',code:'profile_stale',message:'Your profile changed in another session.'}});const {expectedRevision,...rest}=body;assert.deepEqual(Object.keys(rest).sort(),['avatar','displayName'],'only display name and avatar are sent');stored={...rest,revision:'b'.repeat(32)};return route.fulfill({json:stored});}}});const {page}=c;
  await page.getByRole('button',{name:'Account & security',exact:true}).click();await page.locator('.contact-profile-settings form[aria-busy=false]').waitFor();
  const name=page.locator('.contact-profile-settings input[name=displayName]'),submit=page.locator('.contact-profile-settings form button[type=submit]');assert.equal(await name.inputValue(),'Stored');
- await name.fill('Mine');const held=c.hold('PUT','/api/profile');await submit.click({clickCount:3});const gate=await held;await c.busy();await submit.click({force:true});await c.release(gate);await page.getByText('Contact profile saved.').waitFor();await c.settled();
+ await name.fill('Mine');const held=c.hold('PUT','/api/profile');await submit.click({clickCount:3});const gate=await held;await c.busy();await submit.click({force:true});await c.release(gate);await page.getByText('Profile saved.').waitFor();await c.settled();
  assert.equal(puts,1,'one save for repeated submits');assert.equal(stored.displayName,'Mine');
  // Another session changes the profile; this tab's next save is refused and the form shows the latest values.
  stored={...stored,displayName:'Other session',revision:'c'.repeat(32)};await name.fill('Mine again');await submit.click();await c.settled();
- assert.ok((await c.alerts()).some(text=>/changed in another session/.test(text)),'the stale refusal is explained');assert.equal(await name.inputValue(),'Other session');assert.equal(puts,2);assert.equal((await c.notices()).filter(text=>/Contact profile saved/.test(text)).length,0);
+ assert.ok((await c.alerts()).some(text=>/changed in another session/.test(text)),'the stale refusal is explained');assert.equal(await name.inputValue(),'Other session');assert.equal(puts,2);assert.equal((await c.notices()).filter(text=>/Profile saved/.test(text)).length,0);
 });
 
-test('public contact page: a failing link check is reported honestly, offers no compose path, and Try again recovers without the stripped capability',async t=>{
- const invitation='/users/reader/contact/44444444-1111-4111-8111-111111111111?sig=fixture.signed.endpoint';let failures=1,checks=0;
- const c=await chaosConsole(browser,t,{signedIn:false,goto:null});const {page,context}=c;
- await context.route(url=>new URL(url).pathname===new URL(baseURL+invitation).pathname,route=>{if(route.request().resourceType()==='document')return route.continue();checks++;
-  assert.equal(route.request().headers().accept,'application/vnd.bindle.contact-profile+json');
-  if(failures-->0)return route.fulfill({status:503,json:{error:'unavailable',message:'The service is temporarily unavailable.'}});
-  return route.fulfill({contentType:'application/vnd.bindle.contact-profile+json',json:{identityURI:baseURL+'/users/reader',profile:{displayName:'Reader'}}});});
- await page.goto(baseURL+invitation);await page.getByText('This contact link could not be checked right now. Try again shortly.').waitFor();await c.settled();
- assert.equal(await page.locator('textarea').count(),0,'no compose path');assert.equal(await page.locator('a.contact-intent').count(),0,'no hand-off before the link is verified');assert.equal((await c.notices()).length,0);
- // The signed capability is removed from the address bar on load, so only an in-page retry can recover.
- assert.equal(new URL(page.url()).search,'','capability no longer in the URL');await page.getByRole('button',{name:'Try again',exact:true}).click({clickCount:2});
- await page.getByRole('heading',{name:/^Send a message to \u2068?Reader\u2069?\.$/}).waitFor();await page.locator('a.contact-intent').first().waitFor();await c.settled();assert.equal((await c.alerts()).length,0);assert.ok(checks>=2,'the in-page retry asked again');
- assert.equal(c.count('POST',/\/api\/links\//),0);
-});
+// The public contact page (contact-link landing) was removed in contacts phase 4.
+

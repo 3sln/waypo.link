@@ -7,7 +7,7 @@ export const INVITE='eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',INVITE_TOKEN='T'.repe
 export function fixture({size=10001,archive=false}={}){
  const calls=[],drafts=new Map(),rooms=[{id:ROOM,subject:'A conversation <script>window.hacked=true</script>',state:'active'}],timeline=Array.from({length:size},(_,i)=>({eventId:'event-'+i,author:principal,createdAt:1792454400000+i,text:'Message '+i,own:true}));
  const message={messageId:MESSAGE,revision:1,recipientCount:4,delivered:1,pending:1,failed:1,cancelled:1,recipients:['delivered','unknown','expired','cancelled'].map((state,i)=>({principal:{issuer:principal.issuer,subject:'recipient-'+i},state,reason:state==='unknown'?'unreachable':null,nextAttemptAt:1792454500000,deadline:1792540800000}))};
- const rejected=[{id:'R'.repeat(43),subject:'A recoverable request',origin:'native',kind:'one-off',state:'rejected',priority:'normal',author:{verified:true,principal},tags:[{id:'sys:spam'}],tagHistory:[{action:'rejected',rule:'default:reject.spam'}]}],requests=[],views=[{id:'all',name:'All messages',builtin:true,revision:1}],contacts=[],outbox=[message];let lostReply=false,progressFailure=false;const invites=[],members=[],blocked=[];
+ const rejected=[{id:'R'.repeat(43),subject:'A recoverable request',origin:'native',kind:'one-off',state:'rejected',priority:'normal',author:{verified:true,principal},tags:[{id:'sys:spam'}],tagHistory:[{action:'rejected',rule:'default:reject.spam'}]}],requests=[],views=[{id:'all',name:'All messages',builtin:true,revision:1}],outbox=[message];let lostReply=false,progressFailure=false;const invites=[],members=[],blocked=[];
  const archiveStatus={enabled:true,generation:0,lastCheckpointAt:null,encrypted:true,endToEnd:false,imported:null,resend:0};
  const mailbox={calls,archive:archive?ARCHIVE_CAPABILITIES:undefined,async run(name,{input={},id}={}){
   calls.push({name,input:structuredClone(input),id});
@@ -15,8 +15,7 @@ export function fixture({size=10001,archive=false}={}){
   if(name==='conversations.invitations')return {invitations:[]};
   if(name==='conversations.get'){const limit=input.limit??40,offset=input.offset??Math.floor(Math.max(0,timeline.length-1)/limit)*limit;return {...rooms.find(r=>r.id===input.conversationId),timeline:structuredClone(timeline.slice(offset,offset+limit)),pagination:{offset,limit,total:timeline.length,previous:offset>0?Math.max(0,offset-limit):null,next:offset+limit<timeline.length?offset+limit:null},gap:true};}
   if(name==='receive.body')return {id:input.id,text:'A recoverable request body',truncated:false};
-  if(name==='shell.conversation-create')return {conversationId:ROOM};
-  if(name==='contacts.list')return {contacts:structuredClone(contacts),links:[]};
+  if(name==='conversations.create'){if(!Array.isArray(input.participants)||input.participants.some(p=>Object.keys(p).join()!=='principal'))throw new Error('participants');return {conversationId:ROOM};}
   if(name==='views.list')return {views:structuredClone(views)};
   if(name==='outbox.list'){if(progressFailure){progressFailure=false;throw Object.assign(new Error('unavailable'),{code:'unavailable'});}return structuredClone(outbox);}
   if(name==='outbox.get')return structuredClone(message);
@@ -24,8 +23,6 @@ export function fixture({size=10001,archive=false}={}){
   if(name==='intake.requests')return structuredClone(requests);
   if(name==='intake.rejected')return structuredClone(rejected);
   if(name==='intake.rescue'){const i=rejected.findIndex(r=>r.id===input.id);if(i<0)throw new Error('missing request');requests.push({...rejected.splice(i,1)[0],state:'request',allowed:input.allow});return {id:input.id,state:'request'};}
-  if(name==='contacts.add'){contacts.push({id:'contact',label:input.label,principal});return contacts.at(-1);}
-  if(name==='contacts.remove'){contacts.splice(0,1);return {removed:true};}
   if(name==='contacts.block'){blocked.push(structuredClone(input.principal));return {principal:input.principal,blocked:true};}
   if(name==='invites.list')return {invites:structuredClone(invites)};
   if(name==='lists.members'){if(input.list!=='contacts')throw new Error('unexpected list');return {list:{id:'contacts',name:'Contacts',policy:'message',builtin:true,members:members.length},members:structuredClone(members)};}

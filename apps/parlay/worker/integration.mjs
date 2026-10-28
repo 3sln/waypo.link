@@ -2,7 +2,7 @@
 // in the mailbox transaction. No token, snapshot or populated binding is treated as approval by itself.
 import {MailboxAction,MailboxQuery,ownerOf,operations} from '../../../packages/messaging-engine/engine.mjs';
 import {BridgeReceive} from '../../../packages/messaging-engine/domains/bridge.mjs';
-import {KEYS,readConfig,queueEdge} from '../../../packages/messaging-engine/store/mailbox.mjs';
+import {KEYS,readConfig} from '../../../packages/messaging-engine/store/mailbox.mjs';
 import {fault} from '../../../packages/messaging-engine/faults.mjs';
 import {MAILBOX_CONTRACT,INTAKE_CONTRACT} from '../../../packages/messaging-protocol/index.mjs';
 import {APP_BRAND} from './brand.mjs';
@@ -30,15 +30,6 @@ export class MailboxDiscover extends MailboxQuery {
   const exists=!q.parent&&!q.cursor&&(!q.ids||q.ids.includes(id))&&(!q.text||APP_BRAND.toLowerCase().includes(q.text.toLowerCase()));
   return q.limit===0?{v:1,items:[],exists}:{v:1,items:exists?[{id,label:APP_BRAND,contracts,container:false,facets_applied:[]}]:[],cursor:null};
  }
-}
-export class MailboxLinkRevoked extends MailboxAction {
- static operation='shell.link-revoked';static deps=['mailboxStore','clock'];static changes='contacts-changed';
- run({mailboxStore:store,clock}){return store.transaction(async tx=>{
-  await authority(tx,ownerOf(this.actor),this.input?.verified,{purpose:'invoke',write:true,resource:this.input?.resource,method:'linkRevoked'});const jti=this.input?.args?.jti;if(typeof jti!=='string'||!jti||jti.length>128)invalid();
-  const parent=await tx.get(KEYS.parent(jti));if(!parent)return {};
-  if(!parent.revoked){await tx.put(KEYS.parent(jti),{...parent,revoked:true,revokedAt:clock.now(),providerRevoke:'revoked'});await queueEdge(tx,{iss:parent.iss,jti,claimsDigest:parent.claimsDigest,revoked:true});}
-  for(const [key]of await tx.list({prefix:`decision/${encodeURIComponent(jti)}/`}))await tx.delete(key);return {};
- });}
 }
 // Reuse B2's proven admission implementation while wrapping its commit handle with live local broker checks.
 export class MailboxPublicIntake extends BridgeReceive {
@@ -78,4 +69,4 @@ export class MailboxPurgeExpired extends MailboxAction {
  static operation='shell.purge-expired';static deps=['mailboxStore','clock'];
  run({mailboxStore:store,clock}){return store.transaction(async tx=>{const pending=await tx.get('shell:purge');if(!pending)return {purged:false};const grant=await tx.get('shell:authorization');if(grant?.generation>=pending.floor){await tx.delete('shell:purge');return {purged:false};}if(pending.at>clock.now())return {purged:false};await purge(tx);return {purged:true};});}
 }
-export const INTEGRATION_OPERATIONS=operations(MailboxPurgeExpired,MailboxDescribe,MailboxDiscover,MailboxLinkRevoked,MailboxPublicIntake,MailboxIntegrationEvent);
+export const INTEGRATION_OPERATIONS=operations(MailboxPurgeExpired,MailboxDescribe,MailboxDiscover,MailboxPublicIntake,MailboxIntegrationEvent);

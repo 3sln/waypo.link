@@ -7,11 +7,12 @@ import {ownerFlags,existingFeature,flagsFor,siteGlobal} from './flags.mjs';
 //   connectionsOwner(owner, {operation, id, input}, {authTime})  owner operations (CONNECTION_OWNER_OPERATIONS); the
 //       trusted route adapter passes the session's authentication time, never the request body.
 //   connectionsSystem(owner, {operation, input})  internal (no `rpc`): federation consent, X3 revalidation, X6/X7, C1b.
-//   linkSlotOccupant / delegationSlotOccupant({owner, fragment})  the value ports packages/runtime/account/links.mjs
-//       (LINK_SLOT_OCCUPANT) and identity.mjs (DELEGATION_SLOT_OCCUPANT) fall back to when the flag is on and no port is
-//       configured explicitly (legacy port names kept). Extensions rev 3.2: the resource comes from the projection of the
+//   linkSlotOccupant / delegationSlotOccupant({owner, fragment})  the messaging-mailbox occupant lookups: the first is
+//       read by the feature's describe call (routes/integrations.mjs; its name predates the removal of contact links in
+//       contacts phase 4), the second is identity.mjs's default when DELEGATION_SLOT_OCCUPANT is not configured
+//       explicitly (legacy port names kept). Extensions rev 3.2: the resource comes from the projection of the
 //       provider feature that consumes the field (messaging-mailbox for messaging-ingress, Bindle Messaging §2.5; it needs
-//       KEY_DELEGATION_ENABLED, not LINKS_ENABLED, contacts spike CR-C0), so nothing is returned
+//       KEY_DELEGATION_ENABLED, contacts spike CR-C0), so nothing is returned
 //       unless the owner enabled that feature, it is declared and unsuspended, and approved this resource. Exclusive
 //       fields only; anything else is null (fail closed).
 //   connectionsSeverAccount(owner, {reason})  internal hook for suspension, recovery and deletion (review KD-4).
@@ -110,7 +111,7 @@ export const methods={
    if(!['connections.cascades','connections.cascade-done','connections.outbox','connections.value','connections.feature-resources'].includes(operation))await this.connectionsDrain(owner);
    if(!(Operation.prototype instanceof AppQuery))await this.integrationEventsKick(owner);return result;
   },
-  // LINK_SLOT_OCCUPANT ({owner, fragment}) -> {clientId, generation, cnx} | null (packages/links/engine.mjs).
+  // ({owner, fragment}) -> {clientId, connection, generation, cnx} | null: the exclusive occupant, without its ingress.
   async linkSlotOccupant(query){const o=await exclusiveOccupant(this,query);return o&&{clientId:o.clientId,connection:o.connection,generation:o.generation,cnx:o.cnx};},
   // DELEGATION_SLOT_OCCUPANT ({owner, fragment}) -> {clientId, origin, ingress, cnx, purposes} | null (packages/identity/delegation.mjs).
   // `cnx` names the entry incarnation: a new entry, generation (suspend/resume, reconnect) or value change changes it (KD-1).

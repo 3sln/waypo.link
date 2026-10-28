@@ -9,7 +9,7 @@ export function invitationProposal(input,now){
 
 // Link payloads follow the shared envelope parser/signer, with no inviter-supplied display text.
 export async function signOrganizationInvitation({row,record,issuer,signer}){
- const {signLinkJWS,LINK_META_TYP}=await import('../links/envelope.mjs');
+ const {signLinkJWS,LINK_META_TYP}=await import('./link-envelope.mjs');
  const claims={bindle:'link-meta',v:1,type:ORG_INVITATION_TYPE,iss:issuer,aud:`${issuer}/identity/${record.id}`,jti:row.id,iat:Math.floor(row.createdAt/1000),exp:Math.floor(row.expiresAt/1000),...row.invitee?{invitee:row.invitee}:{}};
  const meta=await signLinkJWS({header:{alg:signer.alg??'ES256',kid:signer.kid,typ:LINK_META_TYP},claims,privateKey:signer.privateKey});
  return {meta,url:`${issuer}/orgs/${record.id}/invitation?bindle_meta=${meta}`};

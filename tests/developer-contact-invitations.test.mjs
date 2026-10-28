@@ -8,7 +8,7 @@ import {readFile} from 'node:fs/promises';
 import {AccountController} from '../packages/runtime/accounts.mjs';
 import {SqliteMetadata,SerialGate} from '../apps/node/resources.mjs';
 import {developerContactRoutes,connectKindReference,DEVELOPER_INVITE_TTL,CONNECT_INTENT_KIND} from '../packages/runtime/developer-contact.mjs';
-import {allowedMethods,admission} from '../packages/runtime/routes/contacts.mjs';
+import {allowedMethods,admission} from '../packages/runtime/routes/developer-contact.mjs';
 import {decodeIntent,parseProtocolIntent} from '../packages/intents/format.mjs';
 import {CONNECT_REFERENCE} from '../apps/parlay/web/bl/intents.mjs';
 
@@ -28,7 +28,7 @@ async function world({population='all-active',mint=true}={}){
   DEVELOPER_CONTACT_POPULATION:{policy:async()=>{if(state.population==='throw')throw Error('down');const now=Date.now();return {mode:state.population,observedAt:now,validUntil:now+60000};}},
   ...mint?{DEVELOPER_CONTACT_MINT:async input=>{state.mints.push(structuredClone(input));if(state.mintAnswer)return state.mintAnswer(input);return {inviter:{iss:origin,sub:developerId},token:state.token=token(),delegation:'eyJhbGciOiJFUzI1NiJ9.e30.'+'A'.repeat(86),expires_at:Math.floor((Date.now()+input.expiresIn)/1000)};}}:{}};
  const object=new Proxy({},{get:(_,method)=>async(...args)=>{const result=await controller.invoke({method,args});if(result?.$fault)throw Object.assign(Error(result.$fault.message),result.$fault);return result;}});
- const route=(method='GET',{input={},limit}={})=>developerContactRoutes({path:'/api/developer-contact',request:{method},env,owner:{account:{id:userId}},object,accountHandle:()=>{throw Error('unused');},body:async()=>input,json:(value,status=200,headers={})=>({status,value,headers}),limit,remoteIP:'192.0.2.1'});
+ const route=(method='GET',{input={},limit,intentRoute}={})=>developerContactRoutes({path:'/api/developer-contact',request:{method},env,owner:{account:{id:userId}},object,accountHandle:()=>{throw Error('unused');},body:async()=>input,json:(value,status=200,headers={})=>({status,value,headers}),limit,remoteIP:'192.0.2.1',intentRoute});
  return {env,state,controller,metadata,userId,developerId,recipient,route,close:()=>closers.forEach(close=>close())};
 }
 
@@ -74,6 +74,14 @@ test('POST mints only when eligible, bound to the requesting user with a one-hou
  w.state.tier='free';assert.equal((await w.route('POST')).status,200);assert.equal(w.state.mints.at(-1).tier,'free');
  // POST takes an empty JSON object only.
  assert.deepEqual((await w.route('POST',{input:{principal:{issuer:origin,subject:crypto.randomUUID()}}})).value,{error:'invalid_request'});
+}finally{w.close();}});
+
+test('contacts phase 4: with intent links on for the account the answer also names the provider /i route, which carries the same value',async()=>{const w=await world();try{
+ w.state.tier='paid';const off=await w.route('POST');assert.equal(off.value.intent.route,undefined,'scheme URL only while the provider does not route connect');
+ const on=await w.route('POST',{intentRoute:true}),{intent}=on.value;assert.equal(on.status,200);
+ assert.equal(intent.route,origin+'/i#bintent='+intent.value);assert.equal(intent.url,'web+bindle://intent?bintent='+intent.value);
+ assert.equal(decodeIntent(new URL(intent.route).hash.slice('#bintent='.length)).kind.artefact,'https://spec.bindle.example/messaging/v1/intents/connect');
+ for(const truthy of ['true',1,{}])assert.equal((await w.route('POST',{intentRoute:truthy})).value.intent.route,undefined,'only a boolean true enables the route');
 }finally{w.close();}});
 
 test('developer contact is unavailable without a mint hook, a developer handle or the developer identity',async()=>{

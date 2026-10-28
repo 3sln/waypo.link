@@ -200,7 +200,7 @@ test('revoke: stops joins at the edge, removes the link rules and optionally the
 
 test('groups with non-contacts keep working: list policy gates first contact only, never records, hellos or rejoin',async t=>{
  const m=await mesh(t),{data}=await invite(m);await m.run('bob','invites.redeem',{data});await m.settle();
- // carol is in nobody's lists; alice invites bob and carol through carol's contact link and bob through his.
+ // bob and carol are in neither's lists; alice invites both (the mesh makes alice and each invitee mutual contacts).
  const cid=await m.conversation('alice',['bob','carol']);
  for(const name of ['alice','bob','carol'])await m.run(name,'conversations.send',{conversationId:cid,text:`hi from ${name}`});await m.settle();
  for(const name of ['bob','carol'])assert.deepEqual((await m.texts(name,cid)).filter(x=>x?.startsWith('hi from')).sort(),['hi from alice','hi from bob','hi from carol']);

@@ -1,7 +1,7 @@
 // Exact shapes, semantic digests and signing for every Bindle Messaging signed object (spec §2.3, §3.1, §5, §6, §8.1).
 // Structural only: author, certificate and binding checks live in verify.mjs. Envelope parsing rules are
 // adapted from core contact-delivery.mjs "One semantic envelope" (copied, not imported).
-import {PROFILE,DOMAINS,LIMITS,KINDS,LINK_KINDS,RECORD_TYPES,HELLO_INCARNATION,RECEIPT_PURPOSE} from './constants.mjs';
+import {PROFILE,DOMAINS,LIMITS,KINDS,RECORD_TYPES,HELLO_INCARNATION,RECEIPT_PURPOSE} from './constants.mjs';
 import {fail,malformed,textEncoder,jcs,sha256,plain,exact,text,time,positive,uuid,isUUID,digestValue,opaque,keyIdValue,mimeValid,compactValue,urlValue,endpointValue,originValue,uriValue,scalarCompare,fromBase64url,sameValue,detach} from './encoding.mjs';
 import {jktOf,parseDelegation,signES256} from './certificate.mjs';
 
@@ -38,18 +38,6 @@ export function validateBinding(v,{local=false}={}){
  if(v.incarnation===HELLO_INCARNATION)malformed();validateProfiles(v.profiles);validateLimits(v.limits);
  if(Object.hasOwn(v,'multicast')&&endpointValue(v.multicast,local).origin!==u.origin)malformed();return v;
 }
-// §2.3 ingress descriptor (`describe` omits expiresAt). Pass `now` to bound expiresAt to the next hour.
-export function validateDescriptor(input,{now,describe=false,allowLoopback=false}={}){
- const v=detach(input),local=allowLoopback===true;
- exact(v,['version','profiles','ingress','limits','kinds',...describe?[]:['expiresAt']],['multicast','verifies']);
- if(v.version!==1)malformed();validateProfiles(v.profiles);const u=endpointValue(v.ingress,local);validateLimits(v.limits);
- if(Object.hasOwn(v,'multicast')&&endpointValue(v.multicast,local).origin!==u.origin)malformed();
- if(Object.hasOwn(v,'verifies')){if(!Array.isArray(v.verifies)||v.verifies.length>LIMITS.maxVerifies)malformed();v.verifies.forEach(x=>originValue(x,local));if(new Set(v.verifies).size!==v.verifies.length)malformed();}
- validateKinds(v.kinds);
- if(!describe&&(!time(v.expiresAt)||(now!==undefined&&(v.expiresAt<=now||v.expiresAt>now+LIMITS.descriptorCacheMs))))malformed();
- return v;
-}
-export const validateKinds=v=>{if(!Array.isArray(v)||!v.length||v.some((k,i)=>!LINK_KINDS.includes(k)||(i&&!(v[i-1]<k))))malformed();return v;};
 
 // Genesis {payload, proof} (§6.1). The participant list is a proposal, never a roster.
 export function validateGenesis(input,options={}){
@@ -132,10 +120,9 @@ export async function validateEnvelope(input,options={}){
  }else{
   if(Object.hasOwn(p,'record')||Object.hasOwn(p,'conversation')!==(p.kind==='conversation-init')||options.nested)malformed();
   // First-contact recipient (§5.1): {issuer, owner}; a redemption adds `invite` (§4.3). The withdrawn contact-link
-  // recipient {issuer, owner, contactId, resource} stays readable while contact links overlap invitations (phase 4).
-  const r=exact(p.recipient,['issuer','owner'],['invite','contactId','resource']);originValue(r.issuer,local);uuid(r.owner);
-  const link=Object.hasOwn(r,'contactId')||Object.hasOwn(r,'resource'),invite=Object.hasOwn(r,'invite');
-  if(link&&(invite||!text(r.contactId,128,1)||!text(r.resource,128,1)))malformed();
+  // recipient members (contactId, resource) fail the exact member set (contacts spike phase 4).
+  const r=exact(p.recipient,['issuer','owner'],['invite']);originValue(r.issuer,local);uuid(r.owner);
+  const invite=Object.hasOwn(r,'invite');
   if(invite){
    // §4.3 redemption shape: only conversation-init, empty subject, null content, a two-party genesis (author and
    // recipient). A one-off carrying `invite` is malformed (§5.1).

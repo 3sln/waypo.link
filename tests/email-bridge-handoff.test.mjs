@@ -12,12 +12,12 @@ import {handleEmail,runOwnerOperation,runSenderMethod,memoryStore,GENERIC_REFUSA
 
 async function parlay(t,{clock,key,enabled=true}){
  const egress={fetch:async()=>{throw new Error('egress forbidden');},send:async()=>{throw new Error('egress forbidden');}};
- const providerLink={async consumerKey({consumer,keyId}){return consumer===ORIGIN&&keyId===key.keyId?{keyId,publicJwk:key.publicJwk}:null;}};
- const e=createTestEngine({owner:OWNER,clock,store:boxStore([['owner',OWNER]]),providers:{contacts:ContactsDomain,receive:ReceiveDomain,bridge:createBridgeProvider({PARLAY_ENABLED:enabled}),providerLink,classifier:{decide:async()=>({labels:{spam:0},evidence:{model:'m',version:'1',schema:'s'}})},egress,userStorage:null}});
+ const providerBridge={async consumerKey({consumer,keyId}){return consumer===ORIGIN&&keyId===key.keyId?{keyId,publicJwk:key.publicJwk}:null;}};
+ const e=createTestEngine({owner:OWNER,clock,store:boxStore([['owner',OWNER]]),providers:{contacts:ContactsDomain,receive:ReceiveDomain,bridge:createBridgeProvider({PARLAY_ENABLED:enabled}),providerBridge,classifier:{decide:async()=>({labels:{spam:0},evidence:{model:'m',version:'1',schema:'s'}})},egress,userStorage:null}});
  t.after(()=>e.dispose());
  if(enabled)await e.run('receive.configure',{input:{principal:PRINCIPAL,ingress:'https://hub.box.example/ingress'}});
  const call=async({body,seat})=>{const tx=JSON.parse(text(body)).tx;try{return {status:200,json:{version:'0',tx,result:await e.perform(new BoxReceive({actor:{kind:'ingress',owner:OWNER},input:{body,consumer:ORIGIN,resource:seat.resource}}))}};}catch(error){return {status:error.status??400,json:{error:{code:error.code}}};}};
- return {...e,call,providerLink,items:async()=>[...(await e.store.list({prefix:'item/'})).values()]};
+ return {...e,call,providerBridge,items:async()=>[...(await e.store.list({prefix:'item/'})).values()]};
 }
 
 test('handoff to BB-B7: provenance verifies with the bridge key, the item is channel-origin and unverified, duplicates and re-signed retries store once',async t=>{
@@ -121,7 +121,7 @@ test('Worker email handler: every outcome waits for the same response floor (tim
 
 test('Parlay explicit acceptance calls the provider follow-up once; classification/rescue never sends it',async t=>{
  const clock=fakeClock(NOW),key=await bridgeKey(),box=await parlay(t,{clock,key}),w=await world({clock,key,call:box.call});
- box.providerLink.accepted=({jti})=>w.bridge.accepted(OWNER,jti);
+ box.providerBridge.accepted=({jti})=>w.bridge.accepted(OWNER,jti);
  await w.enable();await w.receive(rawMail());await w.bridge.drain(OWNER);
  await box.run('intake.drain');const [item]=await box.items();assert.equal(item.state,'request');assert.equal(w.mails.length,0);
  const result=await box.run('intake.accept',{input:{id:item.id}});assert.deepEqual(result,{id:item.id,state:'accepted'});assert.equal(w.mails.length,1);

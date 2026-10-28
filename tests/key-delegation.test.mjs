@@ -321,7 +321,7 @@ test('flag off: the status endpoint and owner routes are not mounted and the app
 
 test('flag on: issuance through the account, protocol verification, and status endpoint cache semantics', async () => {
   const seat = { value: { clientId: APP, origin: 'https://box.example', ingress: 'https://box.example/ingress', cnx: 'cnx-1', purposes: ALL } };
-  const s = await server(8797, { LINKS_ENABLED: 'true', DELEGATION_SLOT_OCCUPANT: async ({ fragment }) => (fragment === MESSAGING_INGRESS_FRAGMENT ? seat.value : null), DELEGATION_CERTIFICATE_SECONDS: '7200' });
+  const s = await server(8797, { KEY_DELEGATION_ENABLED: 'true', DELEGATION_SLOT_OCCUPANT: async ({ fragment }) => (fragment === MESSAGING_INGRESS_FRAGMENT ? seat.value : null), DELEGATION_CERTIFICATE_SECONDS: '7200' });
   try {
     const c = s.controller(), actor = { kind: 'app', owner: s.id, clientId: APP }, key = await delegateKey();
     await assert.rejects(c.delegationOperation(s.id, { actor: { ...actor, owner: crypto.randomUUID() }, operation: 'delegations.issue', input: {} }), code('forbidden'));
@@ -363,7 +363,7 @@ test('flag on: issuance through the account, protocol verification, and status e
     const moved = await s.fetchURL(`/identity/${s.id}/delegations/${next.jkt}`), movedBody = await moved.json();
     assert.deepEqual([movedBody.status, typeof movedBody.revokedHour, moved.headers.get('Cache-Control')], ['revoked', 'number', 'public, max-age=86400, immutable'], 'the first observed mismatch is persisted (KD-1)');
     seat.value = { ...seat.value, clientId: APP };
-    const failing = await server(8798, { LINKS_ENABLED: 'true', DELEGATION_SLOT_OCCUPANT: async () => { throw new Error('down'); } });
+    const failing = await server(8798, { KEY_DELEGATION_ENABLED: 'true', DELEGATION_SLOT_OCCUPANT: async () => { throw new Error('down'); } });
     try {
       const unavailable = await failing.fetchURL(`/identity/${failing.id}/delegations/${key.jkt}`);
       // Nothing was ever issued there, so the key is unknown; only an active record consults the port.

@@ -1,10 +1,10 @@
 // Third wargame round (2026-10-23) against BB-B4 conversations: regressions ported from the red-team repros (B1–B7)
-// plus the cheap plausible findings (owner-wide author allowance, issuer refusal buckets, pending-mutation fair share).
+// plus the cheap plausible findings (owner-wide author allowance, pending-mutation fair share). The issuer refusal buckets belonged to the contact-link
+// receive path, removed in contacts spike phase 4.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createMesh,B} from './conversations-fixtures.test.mjs';
 import {orderEvents} from '../../packages/messaging-engine/domains/conversations.mjs';
-import {issuerSite,refusalKeys,REFUSALS} from '../../packages/messaging-engine/domains/receive.mjs';
 import {recordRevocation,REVOCATION_BATCH} from '../../packages/messaging-engine/domains/delegation.mjs';
 import {ROOM_STORAGE} from '../../packages/messaging-engine/domains/conversations.mjs';
 import {memoryStore} from './helpers/engine.mjs';
@@ -190,17 +190,6 @@ test('plausible: one author is bounded across every conversation of the owner pe
  const res=await m.post('bob','alice',(await m.craft('bob','alice',cid,{counter:70,text:'over'})).request);
  assert.equal(res.status,429);assert.equal(res.json.error,'rate_limited');
  assert.equal((await m.post('carol','alice',(await m.craft('carol','alice',cid,{counter:70,text:'fine'})).request)).status,200);
-});
-
-test('plausible: issuer refusal buckets use the registrable domain',()=>{
- // Per host (200) alongside per registrable domain (1,000), and per principal (20).
- assert.equal(REFUSALS.issuer,200);assert.equal(REFUSALS.site,1000);
- assert.deepEqual(refusalKeys({issuer:'https://a.attacker.example',subject:'s'}).slice(1),[['i|a.attacker.example',200],['s|attacker.example',1000]]);
- assert.equal(issuerSite('https://a.attacker.example'),'attacker.example');
- assert.equal(issuerSite('https://b.c.attacker.example'),'attacker.example');
- assert.equal(issuerSite('https://id.foo.co.uk'),'foo.co.uk');
- assert.equal(issuerSite('https://127.0.0.1:8443'),'127.0.0.1');
- assert.equal(issuerSite('https://localhost'),'localhost');
 });
 
 test('plausible: colluding members evict only each other\'s pending mutations',async t=>{

@@ -15,16 +15,15 @@ import {LIFECYCLE_POLICIES,GATE_POLICIES,ACTIVITY_POLICIES} from '../../app/engi
 import * as intents from './intents.mjs';
 import * as views from './views.mjs';
 import * as messages from './messages.mjs';
-import * as contacts from './contacts.mjs';
+import * as developerContact from './developer-contact.mjs';
 import * as storage from './storage.mjs';
 import * as billing from './billing.mjs';
 import * as search from './search.mjs';
 import * as lifecycle from './lifecycle.mjs';
 import * as notifications from './notifications.mjs';
-import * as contactProfile from './contact-profile.mjs';
+import * as profile from './profile.mjs';
 import * as automation from './automation.mjs';
 import * as identity from './identity.mjs';
-import * as links from './links.mjs';
 import * as connections from './connections.mjs';
 import * as events from './events.mjs';
 import * as emailBridge from './email-bridge.mjs';
@@ -46,7 +45,7 @@ import * as memberCertificates from './member-certificates.mjs';
 import * as relations from './relations.mjs';
 import * as signaling from './signaling.mjs';
 
-export const ACCOUNT_SLICES=Object.freeze({intents,views,messages,contacts,storage,billing,search,lifecycle,notifications,contactProfile,automation,identity,links,connections,events,integrations,integrationEvents,classifier,brokeredTokens,emailBridge,deletion,exports,retention,transferOut,appRemoval,transferIn,transferSuccessor,transferIntake,directory,orgs,memberCertificates,relations,signaling});
+export const ACCOUNT_SLICES=Object.freeze({intents,views,messages,developerContact,storage,billing,search,lifecycle,notifications,profile,automation,identity,connections,events,integrations,integrationEvents,classifier,brokeredTokens,emailBridge,deletion,exports,retention,transferOut,appRemoval,transferIn,transferSuccessor,transferIntake,directory,orgs,memberCertificates,relations,signaling});
 
 /** Installs every slice's methods; a name defined twice (by two slices, or by a slice and the core) is a programming error. */
 export function installAccountMethods(prototype,slices=ACCOUNT_SLICES){

@@ -1,7 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {parseLinkQuery,parseLinkMeta,parseLinkData,strictJSON,metaDigest,verifyLinkSignature,replayDigest,LINK_LIMITS} from '../packages/links/envelope.mjs';
+// The Organizations link envelope annex (docs/spec/extensions/organizations-link-envelope.md §8 vector mapping) over
+// packages/orgs/link-envelope.mjs (contacts spike CR-C2). The audience-response (`bindle_data`), metadata-digest and
+// replay vectors were dropped with conditional links (CL-3, contacts phase 4); the meta vectors keep their contact type,
+// which the generic parser treats as just another HTTPS type URI.
+import {parseLinkQuery,parseLinkMeta,verifyLinkSignature,LINK_LIMITS} from '../packages/orgs/link-envelope.mjs';
+import {strictIJSON as strictJSON} from '../packages/core/strict-json.mjs';
 import {base64url} from '../packages/core/records.mjs';
 const vector=JSON.parse(readFileSync(new URL('../docs/architecture/artefacts/bindle-links.vectors.json',import.meta.url),'utf8'));
 const owner={alg:'ES256',publicJwk:vector.ownerPublicJwk},audience={alg:'ES256',publicJwk:vector.audiencePublicJwk};
@@ -14,20 +19,16 @@ test('§11.1–2 fixed meta vectors parse under the strict profile and verify on
   const meta=parseLinkMeta(value);assert.deepEqual(meta.claims,claims);assert.deepEqual(meta.header,{alg:'ES256',kid:'owner-key-1',typ:'bindle-link-meta+jwt'});
   assert.equal(await verifyLinkSignature(crypto,meta,owner),true);assert.equal(await verifyLinkSignature(crypto,meta,audience),false);
  }
- const data=parseLinkData(vector.response);assert.deepEqual(data.claims,vector.responseClaims);assert.equal(await verifyLinkSignature(crypto,data,audience),true);
- assert.equal(await metaDigest(crypto,parseLinkMeta(vector.conditionalMeta)),vector.md);assert.equal(vector.md.length,43);assert.equal(data.claims.md,vector.md);
- assert.equal(await replayDigest(crypto,{jti:vector.conditionalClaims.jti,iss:data.claims.iss,sub:data.claims.sub,nonce:data.claims.nonce}),vector.replayKey);
  assert.equal('d' in vector.ownerPublicJwk||'d' in vector.audiencePublicJwk,false);
 });
 test('§11.3 a semantically equal re-serialized payload fails exact-bytes verification',async()=>{
  const meta=parseLinkMeta(vector.reserializedMeta);assert.deepEqual(meta.claims,vector.conditionalClaims);
- assert.equal(await verifyLinkSignature(crypto,meta,owner),false);assert.notEqual(await metaDigest(crypto,meta),vector.md);
+ assert.equal(await verifyLinkSignature(crypto,meta,owner),false);
 });
-test('§11.4 meta/data position swap and typ/bindle mismatches are rejected by profile',()=>{
- assert.throws(()=>parseLinkData(vector.conditionalMeta),{code:'audience_malformed'});assert.throws(()=>parseLinkMeta(vector.response),{code:'link_invalid'});
+test('§11.4 a data-position value and typ/bindle mismatches are rejected by the meta profile',()=>{
+ assert.throws(()=>parseLinkMeta(vector.response),{code:'link_invalid'});
  const header=JSON.stringify({alg:'ES256',kid:'owner-key-1',typ:'bindle-link-data+jwt'});assert.throws(()=>parseLinkMeta(swapHeader(vector.conditionalMeta,header)),{code:'link_invalid'});
  assert.throws(()=>parseLinkMeta(swapPayload(vector.conditionalMeta,JSON.stringify({...vector.conditionalClaims,bindle:'link-data'}))),{code:'link_invalid'});
- assert.throws(()=>parseLinkData(swapPayload(vector.response,JSON.stringify({...vector.responseClaims,bindle:'link-meta'}))),{code:'audience_malformed'});
  for(const typ of ['bindle-contact-endpoint+jwt','bindle-inbox+jwt','contact+jwt','JWT'])assert.throws(()=>parseLinkMeta(swapHeader(vector.conditionalMeta,JSON.stringify({alg:'ES256',kid:'k',typ}))),{code:'link_invalid'});
 });
 test('§11.5/§11.12 raw query grammar vectors: one parser decides legacy, new form and malformed',()=>{
@@ -57,7 +58,6 @@ test('§3.1 profile rejects extra header members, forbidden JOSE members, bad al
  const [h,p,s]=vector.conditionalMeta.split('.');
  const last=s.at(-1),alphabet='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_',tweaked=alphabet[alphabet.indexOf(last)^1];
  for(const value of [`${h}.${p}.${s}=`,`${h}.${p}.${s.slice(0,-1)}${tweaked}`,`${h}.${p}`,`${h}.${p}.${s}.x`,`${h}.${p}.${s.slice(0,-4)}`])assert.throws(()=>parseLinkMeta(value),{code:'link_invalid'},value.slice(-8));
- assert.throws(()=>parseLinkData(vector.response,['EdDSA']),{code:'audience_malformed'});
  assert.throws(()=>parseLinkMeta(swapHeader(vector.conditionalMeta,JSON.stringify({alg:'ES256',kid:'k\u0085',typ:'bindle-link-meta+jwt'}))),{code:'link_invalid'});
  assert.throws(()=>parseLinkMeta(swapPayload(vector.conditionalMeta,'\ufeff'+JSON.stringify(vector.conditionalClaims))),{code:'link_invalid'},'BOM is another encoding');
 });
@@ -66,11 +66,8 @@ test('§3.2 meta common members: magic, version, type URI, iss origin, aud, safe
   assert.throws(()=>parseLinkMeta(swapPayload(vector.conditionalMeta,JSON.stringify({...vector.conditionalClaims,...changes}))),{code:'link_invalid'},JSON.stringify(changes));
  }
  for(const missing of ['bindle','v','type','iss','aud','jti','iat','exp']){const claims={...vector.conditionalClaims};delete claims[missing];assert.throws(()=>parseLinkMeta(swapPayload(vector.conditionalMeta,JSON.stringify(claims))),{code:'link_invalid'},missing);}
- for(const changes of [{md:'A'.repeat(42)},{md:'A'.repeat(43)+'='}])assert.throws(()=>parseLinkData(swapPayload(vector.response,JSON.stringify({...vector.responseClaims,...changes}))),{code:'audience_malformed'});
 });
-test('§11.7/§11.13 md binds one issued signing input: rotation changes it, high-s re-encoding does not',async()=>{
+test('§3.1 a high-S re-encoding of an issued meta still verifies (the annex permits it; owner storage binds the exact bytes)',async()=>{
  const high=parseLinkMeta(vector.conditionalMetaHighS);assert.notEqual(vector.conditionalMetaHighS,vector.conditionalMeta);
- assert.equal(await verifyLinkSignature(crypto,high,owner),true);assert.equal(await metaDigest(crypto,high),vector.md);
- const rotated=parseLinkMeta(vector.rotatedMeta);assert.equal(await metaDigest(crypto,rotated),vector.rotatedMd);assert.notEqual(vector.rotatedMd,vector.md);
- assert.equal(await metaDigest(crypto,parseLinkMeta(vector.unconditionalMeta))===vector.md,false);
+ assert.equal(await verifyLinkSignature(crypto,high,owner),true);assert.equal(await verifyLinkSignature(crypto,parseLinkMeta(vector.rotatedMeta),owner),true);
 });

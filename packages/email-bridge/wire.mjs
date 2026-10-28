@@ -6,12 +6,17 @@ import {ijsonJCS} from '../core/strict-json.mjs';
  * the one this helper always threw (contacts spike CR-C0 moved it without behaviour change). */
 export const jcs=value=>ijsonJCS(value,{code:'author_proof_invalid'});
 // Extensions rev 3.2 (§11.1, CR-X3-26): the former public-message-intake slot, republished as the intake fragment.
-// Placeholders under spec.bindle.example. Contacts spike CR-C0 moved them here from packages/links/types.mjs.
+// Placeholders under spec.bindle.example. Contacts spike CR-C0 moved them here from the links type table (deleted in contacts phase 4).
 export const PUBLIC_INTAKE_FRAGMENT='https://spec.bindle.example/fragments/public-intake/v1';
 /** The public-intake contract a resource in the intake field serves (`deliver`). Core consumers (brokered records, the
  * email bridge) depend on the field and this contract, never on a particular messaging app or its flag. */
 export const PUBLIC_INTAKE_CONTRACT='https://spec.bindle.example/contracts/public-intake/v1';
 export const INTAKE_FRAGMENT=PUBLIC_INTAKE_FRAGMENT,INTAKE_CONTRACT=PUBLIC_INTAKE_CONTRACT;
+/** The provider resource the intake occupant calls back on (contacts phase 4; provisional, unsigned): `consumerKey`
+ * (the bridge's public provenance key) and `accepted` (the owner accepted a bridged request). Published by the 3sln.me
+ * email-bridge extension; these two methods formerly rode on the withdrawn core links contract. */
+export const EMAIL_BRIDGE_CONTRACT='https://3sln.me/contracts/email-bridge/v1';
+export const EMAIL_BRIDGE_METHODS=Object.freeze(['consumerKey','accepted']);
 export const base64url=bytes=>{let s='';for(let i=0;i<bytes.length;i+=32768)s+=String.fromCharCode(...bytes.subarray(i,i+32768));return btoa(s).replaceAll('+','-').replaceAll('/','_').replace(/=+$/,'');};
 export const decodedLength=value=>Math.floor(value.length*3/4);
 export const sha256=async value=>base64url(new Uint8Array(await crypto.subtle.digest('SHA-256',typeof value==='string'?new TextEncoder().encode(value):value)));

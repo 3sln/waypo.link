@@ -83,7 +83,7 @@ test('ORG-2 engine ports, existing-member admin invitations, muted requests, exp
  }finally{await w.close();}});
 test('ORG-2 signed invitation uses the common envelope and only accepts its exact signed proposal',async()=>{const w=await world();try{
  const key=await crypto.subtle.generateKey({name:'ECDSA',namedCurve:'P-256'},true,['sign','verify']);w.service.invitationSigner=async()=>({alg:'ES256',kid:'invitation-key',privateKey:key.privateKey});const i=await w.run('orgs.invite',A,{invitee:p(B),grants:[]});
- const {parseLinkMeta,verifyLinkSignature}=await import('../packages/links/envelope.mjs');const parsed=parseLinkMeta(i.meta);assert.equal(parsed.claims.type,i.type);assert.equal(parsed.claims.aud,ISS+'/identity/'+ORG);assert.deepEqual(parsed.claims.invitee,p(B));assert.equal(await verifyLinkSignature(crypto,parsed,{alg:'ES256',publicJwk:await crypto.subtle.exportKey('jwk',key.publicKey)}),true);
+ const {parseLinkMeta,verifyLinkSignature}=await import('../packages/orgs/link-envelope.mjs');const parsed=parseLinkMeta(i.meta);assert.equal(parsed.claims.type,i.type);assert.equal(parsed.claims.aud,ISS+'/identity/'+ORG);assert.deepEqual(parsed.claims.invitee,p(B));assert.equal(await verifyLinkSignature(crypto,parsed,{alg:'ES256',publicJwk:await crypto.subtle.exportKey('jwk',key.publicKey)}),true);
  await rejects(w.run('orgs.accept',B,{invitation:i.invitation}),'invitation_invalid');await rejects(w.run('orgs.accept',B,{invitation:i.meta+'x'}),'invitation_invalid');await w.run('orgs.accept',B,{invitation:i.meta});
  }finally{await w.close();}});
 test('ORG-3 authority query and pure evaluator obey every randomized ceiling',async()=>{await forEachSeed(32,async random=>{

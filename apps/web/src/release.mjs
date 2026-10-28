@@ -19,7 +19,6 @@ import * as accountActions from './bl/accounts.mjs';
 import MessageActionsProvider from './providers/message-actions.mjs';
 import * as messageActions from './bl/message-actions.mjs';
 import * as incomingActions from './bl/incoming.mjs';
-import * as contactLinkActions from './bl/contact-link.mjs';
 import * as ruleActions from './bl/rules.mjs';
 import * as googleDriveActions from './bl/google-drive.mjs';
 import * as identityActions from './bl/identity.mjs';
@@ -93,14 +92,14 @@ const constructors={
  'confirm-owner':ConfirmOwner,'cancel-owner-confirmation':CancelOwnerConfirmation,
  'open-accounts':accountActions.OpenAccounts,'close-accounts':accountActions.CloseAccounts,'add-account':accountActions.AddAccount,'switch-account':accountActions.SwitchAccount,'logout-account':accountActions.LogoutAccounts,'logout-all-accounts':accountActions.LogoutAccounts,'retry-account-cleanup':accountActions.RetryAccountCleanup,
  'message-submission-unknown':messageActions.MessageSubmissionUnknown,'review-message-action':messageActions.ReviewMessageAction,'submit-message-action':messageActions.SubmitMessageAction,'load-message-revision':messageActions.LoadMessageRevision,
- 'load-developer-contact':incomingActions.LoadDeveloperContact,'contact-auth':contactLinkActions.ContactAuth,'contact-handoff':contactLinkActions.ContactHandoff,'discover-provider':contactLinkActions.DiscoverProvider,'continue-with-provider':contactLinkActions.ContinueWithProvider,'reload-contact-page':contactLinkActions.ReloadContactPage,'restore-default-rule':ruleActions.RestoreDefaultRule,'save-tag-label':ruleActions.SaveTagLabel,'open-developer-contact':incomingActions.OpenDeveloperContact,'copy-developer-contact':incomingActions.CopyDeveloperContact,
+ 'load-developer-contact':incomingActions.LoadDeveloperContact,'restore-default-rule':ruleActions.RestoreDefaultRule,'save-tag-label':ruleActions.SaveTagLabel,'open-developer-contact':incomingActions.OpenDeveloperContact,'copy-developer-contact':incomingActions.CopyDeveloperContact,
  'select-view':incomingActions.SelectView,'load-incoming':incomingActions.LoadIncoming,'save-view':incomingActions.SaveView,'delete-view':incomingActions.DeleteView,
  'claim-handle':identityActions.ClaimHandle,'download-name-certificate':identityActions.DownloadNameCertificate,...RECOVERY_REISSUE_INTENTS,
  'start-google-drive':googleDriveActions.StartGoogleDrive,
  'clear-automation-review':automationActions.ClearAutomationReview,'load-automation':automationActions.LoadAutomation,'enable-automation':automationActions.EnableAutomation,'disable-automation':automationActions.DisableAutomation,'confirm-automation':automationActions.ConfirmAutomation,
  'load-mcp-request':mcpActions.LoadMCPRequest,'decide-mcp':mcpActions.DecideMCP,'load-mcp-grants':mcpActions.LoadMCPGrants,'revoke-bindle-grant':mcpActions.RevokeBindleGrant,'revoke-mcp-grant':mcpActions.RevokeMCPGrant,'disconnect-app':mcpActions.DisconnectApp,'set-app-notifications':mcpActions.SetAppNotifications,
  'load-signaling-settings':signalingActions.LoadSignalingSettings,'signaling-action':signalingActions.SignalingOwnerAction,'save-signaling-policy':signalingActions.SaveSignalingPolicy,
- 'load-contact-profile':contactProfileActions.LoadContactProfile,'rename-device':RenameDevice,'update-contact-sharing':contactProfileActions.UpdateContactSharing,'save-profile':contactProfileActions.SaveProfile,
+ 'load-contact-profile':contactProfileActions.LoadContactProfile,'rename-device':RenameDevice,'save-profile':contactProfileActions.SaveProfile,
   signup:actions.SignUp,signin:actions.SignIn,signout:actions.SignOut,
   'start-recovery':actions.StartRecovery,'inspect-recovery':actions.InspectRecovery,
   'recover-account':actions.RecoverAccount,'cancel-reissue-with-file':actions.CancelReissueWithFile,'encrypt-recovery':actions.EncryptRecovery,
@@ -148,7 +147,6 @@ engine.feed.addEventListener('device-poll-due',()=>engine.dispatch(new actions.P
 engine.feed.addEventListener('session-check-due',()=>engine.dispatch(new actions.RecheckSession()));
 engine.feed.addEventListener('accounts-refresh-due',()=>engine.dispatch(new accountActions.OpenAccounts()));
 engine.feed.addEventListener('network-changed',event=>engine.dispatch(new actions.NetworkChanged({online:event.detail})));
-engine.feed.addEventListener('contact-handoff',()=>engine.dispatch(new contactLinkActions.StartHandoff()));
 engine.feed.addEventListener('mcp-request-opened',()=>engine.dispatch(new mcpActions.LoadMCPRequest()));
 engine.feed.addEventListener('automation-call',event=>engine.dispatch(new automationActions.InvokeAutomation(event.detail)));
 engine.feed.addEventListener('google-drive-returned',()=>engine.dispatch(new googleDriveActions.CompleteGoogleDrive()));
@@ -158,7 +156,7 @@ const stateCell=queryCell(engine.query(new actions.BrowserState())),contextCell=
 dodo.reconcile(root,[watch(stateCell,state=>watch(contextCell,context=>{return watch(googleDriveCell,()=>watch(automationCell,enabled=>(surfaces[state.locale??'en']({...state,messageActionReview:messageFrameResource.projection(state.modal?.id),notice:state.notice||(state.route.googleDriveCallback&&!state.session?'Sign in to finish Google Drive authorization. If this browser session changed, start a new connection from Resources.':state.notice),automation:{...state.automation,enabled},context}))));} ))]);
 messageFrameResource.connect(root,readModel,dispatchIntent);
 let accessHash='',consoleOwner='';const syncIntegrationRoute=()=>{const s=readModel();if(!s.config?.integrationsEnabled||!s.session?.account||s.offline)return;const route=accessRoute(location.hash),key=s.session.account.id+':'+s.session.sessionContext+':'+s.beamGeneration+':'+location.hash;if(route&&key!==accessHash){accessHash=key;engine.dispatch(new actions.NavigateSpace({kind:'navigate',view:'access'}));engine.dispatch(new AccessAction('open',{route}));}if((s.view==='connections'||new URLSearchParams(location.search).has('removal_return')||new URLSearchParams(location.search).get('view')==='connections')&&consoleOwner!==key){consoleOwner=key;if(s.view!=='connections')engine.dispatch(new actions.NavigateSpace({kind:'navigate',view:'connections'}));engine.dispatch(new ConnectionsIntent({action:'reload'})).next('complete').then(async()=>{await engine.dispatch(new AppRemovalIntent({action:'removal-load'})).next('complete');const returned=new URLSearchParams(location.search).get('removal_return');if(returned)await engine.dispatch(new AppRemovalIntent({action:'removal-return',query:returned})).next('complete');});}};addEventListener('hashchange',syncIntegrationRoute);engine.feed.addEventListener('browser-state-updated',syncIntegrationRoute);
-// The contact profile (Account & security) and the developer contact panel load whenever that view is entered (including
+// The profile (Account & security) and the developer contact panel load whenever that view is entered (including
 // a reload on it) and again after an account or session-epoch change while it stays open.
 let contactProfileOwner='';const syncContactProfile=()=>{const s=readModel();if(s.view!=='security'||!s.session?.account||s.offline){contactProfileOwner='';return;}const key=s.session.account.id+':'+s.session.sessionContext+':'+(s.beamGeneration??0);if(key===contactProfileOwner)return;contactProfileOwner=key;engine.dispatch(new contactProfileActions.LoadContactProfile({quiet:true}));engine.dispatch(new incomingActions.LoadDeveloperContact({quiet:true}));};engine.feed.addEventListener('browser-state-updated',syncContactProfile);
 // Signaling owner controls (flags off; signaling.md §14.1): the settings load whenever a surface that shows them

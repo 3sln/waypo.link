@@ -98,7 +98,7 @@ export async function parseMulticast(contentType,bytes,options={}){
  for(const [index,ctx] of batch.contexts.entries()){
   try{
    exact(ctx,['credential','envelope']);exact(ctx.credential,['scheme','value']);
-   if(!['BindleLink','BindleConversation'].includes(ctx.credential.scheme)||typeof ctx.credential.value!=='string')malformed();
+   if(ctx.credential.scheme!=='BindleConversation'||typeof ctx.credential.value!=='string')malformed();
    const credential=parseCredential(`${ctx.credential.scheme} ${ctx.credential.value}`);
    if(textEncoder.encode(jcs(ctx.envelope)).byteLength>limits.maxEnvelopeBytes)fail('too_large');
    const envelope=await validateEnvelope(ctx.envelope,options);
@@ -126,7 +126,6 @@ export function parseRPC(bytes,{resource,allowLoopback=false}={}){
  urlValue(r.resource,allowLoopback);if(resource!==undefined&&r.resource!==resource)malformed();
  if(r.contract===MAILBOX_CONTRACT){
   if(r.method==='describe'){if(Object.keys(r.args).length)rpcFault('invalid_args');}
-  else if(r.method==='linkRevoked'){try{exact(r.args,['jti']);if(!text(r.args.jti,128,1))malformed();}catch{rpcFault('invalid_args');}}
   else rpcFault('unsupported_method');
  }else if(r.contract===INTAKE_CONTRACT){
   if(r.method!=='deliver')rpcFault('unsupported_method');

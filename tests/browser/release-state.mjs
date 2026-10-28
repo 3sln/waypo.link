@@ -47,20 +47,12 @@ test('API faults preserve bounded code and retry delay without trusting malforme
 test('a channel repaired before final activation preserves the already tested recovery file',async()=>{const f=fixture(),original=f.api.request;let verified=true;f.api.request=async(path,body)=>{if(path==='/api/auth/setup/status')return {accountId:'550e8400-e29b-41d4-a716-446655440001',channelRequired:true,channelVerified:verified,emailAvailable:true,pushAvailable:false};if(path==='/api/auth/setup/email/confirm'){verified=true;return {channelVerified:true};}return original(path,body);};await f.act(new PatchContactState({config:{signupContactRequired:true},route:{kind:'recovery-setup'}}));await f.act(new PrepareRecovery());await f.act(new EncryptRecovery({values:{'answer:question-id':'private answer'}}));await f.act(new DownloadRecovery());await f.act(new VerifyRecovery({values:{'verify:question-id':'private answer'}}));verified=false;await f.act(new ConfirmRecovery({values:{confirmed:'on'}}));assert.equal((await f.query.peek()).setupContact.channelVerified,false);assert.equal((await f.query.peek()).recoveryVerified,true);assert.equal(f.calls.some(call=>call.path.endsWith('/recovery/confirm')),false);await f.act(new ConfirmSetupEmail({values:{code:'12345678'}}));assert.equal((await f.query.peek()).recoveryStage,'confirm');assert.equal((await f.query.peek()).recoveryVerified,true);assert.equal(f.calls.filter(call=>call.path.endsWith('/recovery/download')).length,1);await f.act(new ConfirmRecovery({values:{confirmed:'on'}}));assert.equal((await f.query.peek()).session.account.handle,'river');await f.close();});
 
 
-test('contact profiles are bounded optional projections and never carry redirects or ambient credentials',async t=>{
- const original=globalThis.fetch;t.after(()=>{globalThis.fetch=original;});const calls=[];let response;
- globalThis.fetch=async(endpoint,options)=>{calls.push({endpoint,options});return response;};const api=createAPI();
- response=new Response(JSON.stringify({identityURI:'https://attacker.example',profile:{displayName:'<img src=x onerror=alert(1)>',bio:'Sign in',avatar:'https://images.example/avatar.png',owner:'forged'}}),{headers:{'content-type':'application/vnd.bindle.contact-profile+json; charset=utf-8'}});
- assert.deepEqual(await api.contactProfile('/private?sig=secret'),{displayName:'<img src=x onerror=alert(1)>',bio:'Sign in',avatar:'https://images.example/avatar.png'});
- const options=calls[0].options;assert.equal(options.credentials,'omit');assert.equal(options.redirect,'error');assert.equal(options.cache,'no-store');assert.equal(options.referrerPolicy,'no-referrer');
- response=new Response(JSON.stringify({profile:{displayName:'Allowed',bio:4,avatar:'https://user:password@images.example/pixel'}}),{headers:{'content-type':'application/vnd.bindle.contact-profile+json'}});assert.deepEqual(await api.contactProfile('/private'),{displayName:'Allowed'});
- for(const [body,type] of [[JSON.stringify({profile:null}),'application/vnd.bindle.contact-profile+json'],['x'.repeat(8193),'application/vnd.bindle.contact-profile+json'],[JSON.stringify({profile:{displayName:'No'}}),'text/html']]){response=new Response(body,{headers:{'content-type':type}});assert.equal(await api.contactProfile('/private'),null);}
- globalThis.fetch=async()=>{throw new Error('Failed');};assert.equal(await api.contactProfile('/private'),null);
-});
-
-test('the contact landing is verified by the profile representation and discards a late changed-context answer',async()=>{
- const f=fixture();try{f.browser.route=()=>({kind:'contact',recipient:'numeric-alias'});f.secrets.contactEndpoint='/users/numeric-alias/contact/id?bindle_meta=private';let answers=0;f.api.contactLanding=async endpoint=>{answers++;assert.equal(endpoint,'/users/numeric-alias/contact/id?bindle_meta=private');return {valid:true,profile:{displayName:'River'}};};await f.act(new InitializeSpace());let peek=await f.query.peek();assert.equal(peek.loading,false);assert.equal(answers,1);assert.equal(peek.contactPage.checked,true);assert.deepEqual(peek.contactPage.profile,{displayName:'River'});assert.equal(peek.contactPage.link,'/users/numeric-alias/contact/id?bindle_meta=private');assert.equal(JSON.stringify({...peek,contactPage:{...peek.contactPage,link:null}}).includes('bindle_meta=private'),false);}finally{await f.close();}
- const g=fixture();try{g.browser.route=()=>({kind:'contact',recipient:'numeric-alias'});g.secrets.contactEndpoint='/users/numeric-alias/contact/id?bindle_meta=private';let resolve;g.api.contactLanding=()=>new Promise(done=>{resolve=done;});const booting=g.act(new InitializeSpace());while(!resolve)await new Promise(done=>setTimeout(done,0));g.secrets.contactEndpoint='/different?bindle_meta=other';resolve({valid:true,profile:{displayName:'Wrong recipient'}});await booting;const peek=await g.query.peek();assert.equal(peek.contactPage.checked,false);assert.equal(peek.contactPage.profile,null);assert.equal(JSON.stringify(peek).includes('Wrong recipient'),false);}finally{await g.close();}
+test('a stale contact route boots without describing a contact link or calling a removed endpoint',async()=>{
+ // Contacts phase 4 removed the landing: even a route claiming `contact` (an older tab's state) only boots the shell.
+ const f=fixture();try{f.browser.route=()=>({kind:'contact',recipient:'river'});let described=0;f.api.contactLanding=async()=>{described++;return {valid:true,profile:null};};
+  await f.act(new InitializeSpace());const state=await f.query.peek();assert.equal(state.loading,false);assert.equal(described,0);assert.equal('contactPage' in state,false);assert.doesNotMatch(state.error??'',/contact link/);
+ }finally{await f.close();}
+ const client=createAPI();for(const gone of ['contactProfile','contactLanding'])assert.equal(gone in client,false,gone);
 });
 
 
@@ -113,14 +105,8 @@ test('retired device decisions navigate to approval without submitting URL or ty
 test('signup step navigation records history and restores earlier steps without clearing choices',async()=>{const f=fixture(),history=[];f.browser.signupHistory=(step,replace)=>history.push({step,replace});try{await f.act(new PatchContactState({auth:'signup',signupStep:'method',config:{signupEnabled:true,signupContactRequired:false}}));await f.act(new SignupNext({values:{}}));const next=(await f.query.peek()).signupStep;assert.notEqual(next,'method');assert.equal(history.at(-1).step,next);await f.act(new NavigateSpace({kind:'signup-history',step:'method'}));assert.equal((await f.query.peek()).signupStep,'method');await f.act(new NavigateSpace({kind:'signup-history',step:'invalid'}));assert.equal((await f.query.peek()).signupStep,'method');}finally{await f.close();}});
 
 // Bug hunt round 3 (DEVLOG 2026-10-27).
-test('round 3 B2: a reloaded contact page without its captured link explains instead of waiting forever',async()=>{
- const f=fixture();try{f.browser.route=()=>({kind:'contact',recipient:'river'});let described=0;f.api.contactLanding=async()=>{described++;return {valid:true,profile:null};};
-  await f.act(new InitializeSpace());const state=await f.query.peek();
-  assert.equal(state.error,'This contact link is incomplete. Open the original link again.');assert.equal(described,0,'nothing to describe without the capability');assert.equal(state.contactPage?.checked??null,null);
- }finally{await f.close();}
-});
 test('round 3 B3: opening a dialog clears the previous success notice so it is not shown inside the dialog',async()=>{
- const f=fixture({authenticated:true});try{await f.act(new InitializeSpace());await f.act(new PatchContactState({notice:'Contact profile saved.'}));
+ const f=fixture({authenticated:true});try{await f.act(new InitializeSpace());await f.act(new PatchContactState({notice:'Profile saved.'}));
   await f.act(new NavigateSpace({kind:'open-modal',modal:{kind:'collection'}}));const state=await f.query.peek();assert.equal(state.modal.kind,'collection');assert.equal(state.notice,'');
  }finally{await f.close();}
 });

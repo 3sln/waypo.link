@@ -14,8 +14,8 @@ const code=(r,status,error)=>{assert.equal(r.status,status,JSON.stringify(r.json
 const say=(w,from,link,n,text)=>w.deliver(from,'bob',link,{operationId:uuidOf(n),body:encoder.encode(text),createdAt:w.clock.now()-1000});
 const byState=async w=>Object.groupBy(await w.items('bob'),i=>i.state);
 
-test('spam storm on a public link: tiers apply after custody and nothing observable varies with them',async t=>{
- const c=classifier(),w=await fresh(t,{classifier:c}),link=await w.link('bob',{public:true});
+test('spam storm through a request list: tiers apply after custody and nothing observable varies with them',async t=>{
+ const c=classifier(),w=await fresh(t,{classifier:c}),link=await w.admit('bob',{policy:'request'});
  await w.run('bob','intake.settings',{classifierConsent:true,pin:MODEL});
  const responses=[];
  for(let i=0;i<5;i++)responses.push(await say(w,'alice',link,i+1,`Win money p=0.99 ${i}`));
@@ -39,7 +39,7 @@ test('spam storm on a public link: tiers apply after custody and nothing observa
 });
 
 test('calibration mode, allowlist and rescue: thresholds are bound to the model version and allowlisted senders are never rejected',async t=>{
- const c=classifier(),w=await fresh(t,{classifier:c}),link=await w.link('bob',{public:true});
+ const c=classifier(),w=await fresh(t,{classifier:c}),link=await w.admit('bob',{policy:'request'});
  await w.run('bob','intake.settings',{classifierConsent:true});
  await say(w,'alice',link,1,'p=0.995 unpinned');await w.system('bob','intake.drain',{});
  let [item]=await w.items('bob');assert.equal(item.state,'request');assert.equal(item.priority,'low');assert.equal(item.tagHistory[0].action,'calibration');
@@ -49,9 +49,9 @@ test('calibration mode, allowlist and rescue: thresholds are bound to the model 
  assert.equal((await byState(w)).rejected,undefined);
  // A published host calibration for exactly the reported version counts as a pin.
  // The occupant cannot calibrate itself, and a provider calibration must have sane thresholds (BB2-R5).
- c.calibration=()=>({...MODEL,version:'4',high:0.5,low:0.1});w.links.bob.calibration=evidence=>({...evidence,high:2,low:0.1});
+ c.calibration=()=>({...MODEL,version:'4',high:0.5,low:0.1});w.bridges.bob.calibration=evidence=>({...evidence,high:2,low:0.1});
  await say(w,'alice',link,7,'p=0.995 self-calibrated');await w.system('bob','intake.drain',{});assert.equal((await byState(w)).rejected,undefined);
- w.links.bob.calibration=evidence=>evidence?.version==='4'?{...MODEL,version:'4',high:0.99,low:0.8}:null;
+ w.bridges.bob.calibration=evidence=>evidence?.version==='4'?{...MODEL,version:'4',high:0.99,low:0.8}:null;
  await say(w,'alice',link,3,'p=0.995 calibrated');await w.system('bob','intake.drain',{});
  const rejected=(await byState(w)).rejected;assert.equal(rejected.length,1);
  // Allowlisted principals: the reject is skipped and recorded; rules may still tag and deprioritize.
@@ -64,13 +64,13 @@ test('calibration mode, allowlist and rescue: thresholds are bound to the model 
  await assert.rejects(w.run('bob','intake.rescue',{id:rejected[0].id}),{code:'not_found'});
  assert.equal((await w.run('bob','intake.rejected')).length,0);
  await say(w,'alice',link,5,'p=0.999 again');await w.system('bob','intake.drain',{});assert.equal((await byState(w)).rejected,undefined);
- // Known contacts and private links are not public requests at all.
- const priv=await w.link('bob');const r=await w.deliver('alice','bob',priv,{operationId:uuidOf(6),body:encoder.encode('p=0.999 private')});assert.equal(r.status,200);
+ // Members of a `message` list (Contacts) are not requests at all.
+ const priv=await w.admit('bob');const r=await w.deliver('alice','bob',priv,{operationId:uuidOf(6),body:encoder.encode('p=0.999 private')});assert.equal(r.status,200);
  assert.equal((await w.items('bob')).find(i=>i.operationId===uuidOf(6)).state,'inbox');
 });
 
 test('without consent, occupant or allowance there is no auto-reject: heuristics only deprioritize',async t=>{
- const c=classifier(),w=await fresh(t,{classifier:c}),consumer=await bridgeConsumer();w.links.bob.state.consumers.set(consumer.origin,consumer);
+ const c=classifier(),w=await fresh(t,{classifier:c}),consumer=await bridgeConsumer();w.bridges.bob.state.consumers.set(consumer.origin,consumer);
  const deliver=async(over,tx)=>{w.clock.advance(2100);return w.intake('bob',{tx:tx??crypto.randomUUID(),contract:INTAKE_CONTRACT,consumer:consumer.origin,args:await consumer.args({recipient:P.bob.principal,receivedAt:w.clock.now()-1000,...over})});};
  assert.deepEqual(await deliver({text:'p=0.999',automation:['list-unsubscribe']}),{disposition:'stored-receipt'});
  await w.system('bob','intake.drain',{});assert.equal(c.inputs.length,0,'no consent: never called');
@@ -87,7 +87,7 @@ test('without consent, occupant or allowance there is no auto-reject: heuristics
 });
 
 test('bridged intake verifies provenance, deduplicates on jti and tx, and storms hit domain and owner limits',async t=>{
- const c=classifier(),w=await fresh(t,{classifier:c}),consumer=await bridgeConsumer(),forger=await bridgeConsumer();w.links.bob.state.consumers.set(consumer.origin,consumer);
+ const c=classifier(),w=await fresh(t,{classifier:c}),consumer=await bridgeConsumer(),forger=await bridgeConsumer();w.bridges.bob.state.consumers.set(consumer.origin,consumer);
  await w.run('bob','intake.settings',{classifierConsent:true,pin:MODEL,allowance:10000});
  const args=over=>consumer.args({recipient:P.bob.principal,receivedAt:w.clock.now()-1000,...over}),call=(a,tx=crypto.randomUUID(),origin=consumer.origin)=>{w.clock.advance(2100);return w.intake('bob',{tx,contract:INTAKE_CONTRACT,consumer:origin,args:a});};
  // 2.1 s between mails keeps the storm under the owner's per-minute receipt window, isolating the public limits.
@@ -109,7 +109,7 @@ test('bridged intake verifies provenance, deduplicates on jti and tx, and storms
 });
 
 test('the Rejected view is bounded to 500 items and 7 days, from its own reserve',async t=>{
- const c=classifier(),w=await fresh(t,{classifier:c}),consumer=await bridgeConsumer();w.links.bob.state.consumers.set(consumer.origin,consumer);
+ const c=classifier(),w=await fresh(t,{classifier:c}),consumer=await bridgeConsumer();w.bridges.bob.state.consumers.set(consumer.origin,consumer);
  await w.run('bob','intake.settings',{classifierConsent:true,pin:MODEL,allowance:10000});
  const legit=await consumer.args({recipient:P.bob.principal,receivedAt:w.clock.now()-1000,from:'friend@ok.example',text:'p=0.10 lunch?'});
  await w.intake('bob',{tx:crypto.randomUUID(),contract:INTAKE_CONTRACT,consumer:consumer.origin,args:legit});
@@ -132,7 +132,7 @@ test('minimization redacts capabilities, URLs, tokens and codes and bounds the t
 });
 
 test('a crash during the drain leaves the item pending and the rerun applies it exactly once; quarantine wins',async t=>{
- const c=classifier(),w=await fresh(t,{classifier:c}),link=await w.link('bob',{public:true});
+ const c=classifier(),w=await fresh(t,{classifier:c}),link=await w.admit('bob',{policy:'request'});
  await w.run('bob','intake.settings',{classifierConsent:true,pin:MODEL});
  await say(w,'alice',link,1,'p=0.99 crash');
  const bob=w.peer('bob');bob.faults={mailboxStore:[{method:'transaction',when:1,mode:'throw'}]};await w.network.recover('bob');
@@ -147,7 +147,7 @@ test('a crash during the drain leaves the item pending and the rerun applies it 
 });
 
 test('review regressions: intake dedup binds consumer and digest, spoofed allowlisted addresses, the allowance reservation, user-body erasure',async t=>{
- const c=classifier(),deleted=[],storage={async put(){},async delete(key){deleted.push(key);}},w=await fresh(t,{classifier:c,userStorage:storage}),consumer=await bridgeConsumer();w.links.bob.state.consumers.set(consumer.origin,consumer);
+ const c=classifier(),deleted=[],storage={async put(){},async delete(key){deleted.push(key);}},w=await fresh(t,{classifier:c,userStorage:storage}),consumer=await bridgeConsumer();w.bridges.bob.state.consumers.set(consumer.origin,consumer);
  const args=over=>consumer.args({recipient:P.bob.principal,receivedAt:w.clock.now()-1000,...over}),call=(a,tx=crypto.randomUUID(),origin=consumer.origin)=>{w.clock.advance(2100);return w.intake('bob',{tx,contract:INTAKE_CONTRACT,consumer:origin,args:a});};
  // BB2-R4: a stored tx is never answered for another consumer or other content.
  const first=await args({jti:'r4'}),tx=crypto.randomUUID();await call(first,tx);

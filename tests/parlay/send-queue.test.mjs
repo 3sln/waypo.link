@@ -43,8 +43,8 @@ test('BB-B3 validates bytes, recipient uniqueness, credentials and live authorit
 });
 
 test('BB-B3 owner reads never disclose envelope, credential, body or custody proof',async t=>{
- const f=await fixture(t);await f.submit();await f.drain();const text=JSON.stringify(await f.get(1));
- for(const secret of ['BindleLink','Queue body','delegation','signature','payloadDigest'])assert.equal(text.includes(secret),false);
+ const f=await fixture(t);await f.submit({record:true});await f.drain();const text=JSON.stringify(await f.get(1));
+ for(const secret of ['BindleConversation','Queue body','delegation','signature','payloadDigest'])assert.equal(text.includes(secret),false);
  assert.equal((await f.get(1)).delivered,1);assert.deepEqual(f.requests.map(r=>[r.redirect,r.credentials]),[['manual','omit']]);
  assert.equal(B.aggregate(['delivered']).delivered,1);
 });

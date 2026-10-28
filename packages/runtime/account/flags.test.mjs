@@ -13,7 +13,6 @@ import {AccountFeatureState,flagsFor,ownerFlags,writerConfig,withWriterFlags,rec
 import {deviceAuthorizationEnabled,deviceGrantMountable,deviceGrantRunner} from '../device-grant.mjs';
 import {incrementalAuthorizationEnabled,incrementalMountable,incrementalRunner} from '../incremental-authorization.mjs';
 import {lifecycleMode} from '../lifecycle-runner.mjs';
-import {linksEnabled} from './links.mjs';
 import {clientMetadataEnabled,federationSchemas,messagingMailboxMounted,federationDeclarations} from '../federation.mjs';
 import {integrationPorts} from '../integration-ports.mjs';
 import {manifest} from '../../../tests/event-bus-fixture.mjs';
@@ -31,7 +30,6 @@ async function account(t,{flags={},env={},version=1}={}){
 
 test('legacy read-site tables: exact strings, booleans, defaults, dependencies and mount evidence',()=>{
  for(const raw of [undefined,'',false,true,'false','true','TRUE',0]){
-  assert.equal(linksEnabled({LINKS_ENABLED:raw}),raw===true||raw==='true',`links ${raw}`);
   assert.equal(deviceAuthorizationEnabled({DEVICE_AUTHORIZATION_ENABLED:raw}),raw===true||raw==='true',`device ${raw}`);
   assert.equal(clientMetadataEnabled({CLIENT_METADATA_ENABLED:raw}),raw==='true',`metadata ${raw}`);
   assert.equal(lifecycleMode({LIFECYCLE_ENABLED:raw,LIFECYCLE_DRY_RUN:'false'}),raw===true||raw==='true'?'live':'off',`lifecycle ${raw}`);
@@ -144,9 +142,9 @@ test('retention predicates page beyond inactive rows and exclude foreign, expire
  const f=await account(t),e=engine({accountStore:f.db});for(let i=0;i<70;i++)await f.db.put('evbus/bus/'+String(i).padStart(3,'0'),{owner,state:'deleted'});await f.db.put('evbus/bus/last',{owner,state:'active'});
  await f.db.put('activity-item/'+owner+'/expired',{owner,state:'active',expiresAt:start-1});await f.db.put('activity-item/'+owner+'/foreign',{owner:other,state:'active'});
  await f.db.put('activity-item/'+owner+'/completed',{owner,state:'completed',expiresAt:start+100000});await f.db.put('link/revoked',{owner,revoked:true});
- let state=await read(e,new AccountFeatureState({actor:{kind:'system',owner}}));assert.equal(Object.entries(state).find(([name])=>name==='EVENT_BUSES_ENABLED')[1],true);for(const name of ['ACTIVITY_V2_ENABLED','LINKS_ENABLED'])assert.equal(state[name],false);
+ let state=await read(e,new AccountFeatureState({actor:{kind:'system',owner}}));assert.equal(Object.entries(state).find(([name])=>name==='EVENT_BUSES_ENABLED')[1],true);for(const name of ['ACTIVITY_V2_ENABLED','KEY_DELEGATION_ENABLED'])assert.equal(state[name],false);assert.equal(Object.hasOwn(state,'LINKS_ENABLED'),false,'the retired flag has no account state');
  await f.db.put('activity-item/'+owner+'/live',{owner,state:'active',expiresAt:null});await f.db.put('key-delegation/'+owner+'/live',{owner,state:'active'});
- state=await read(e,new AccountFeatureState({actor:{kind:'system',owner}}));for(const name of ['ACTIVITY_V2_ENABLED','LINKS_ENABLED'])assert.equal(state[name],true);
+ state=await read(e,new AccountFeatureState({actor:{kind:'system',owner}}));for(const name of ['ACTIVITY_V2_ENABLED','KEY_DELEGATION_ENABLED'])assert.equal(state[name],true);
 });
 
 test('incremental boolean true preserves its former boolean read site',()=>{

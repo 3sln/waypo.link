@@ -1,6 +1,7 @@
 // Contacts spike phase 3 (docs/architecture/contacts-and-links-rethink.md §4.3–§4.5, CR-C9 single-use subset;
 // docs/spec/extensions/messaging.md §4, §6.7, §7.4, §8.2; provisional, unsigned). Parlay single-use invitations,
-// first-class contact lists and the first-contact gate, alongside the withdrawn contact links (removed in phase 4).
+// first-class contact lists and the first-contact gate. Since phase 4 (contact links removed) these are the only
+// first-contact paths: an invitation redemption or a list policy that admits the author.
 //
 // Application behaviour (spec §4 scope: none of it is on the wire):
 //  - lists: a list has a name and one relationship policy, `message` ("can message you"), `request` or `receive-only`.
@@ -363,9 +364,11 @@ export class ReceiveFirstContact extends MailboxAction {
    const live=await firstContactPolicy(tx,principal);if(!['message','request'].includes(live))protocol('not_authorized');
    if(await tx.get(KEYS.revoked(author.jkt)))protocol('author_unverifiable',{revoked:true});
    if(outcome==='replay')return {receipt:recorded.receipt,replay:true};
-   const bytes=delivery.body?.byteLength??0;
-   await tx.put(KEYS.budget,chargeBudget(await tx.get(KEYS.budget),{now,plan:config.plan,bytes,parent:'first-contact',sender:pk(principal)}));
-   const hot=await chargeHot(tx,delivery,envelope),request=live==='request';
+   const bytes=delivery.body?.byteLength??0,request=live==='request';
+   // A held (`request`) first contact counts against the public-request limits (architecture §12.1: per sender, per issuer
+   // host and per owner per day), which applied to public contact-link requests before contacts spike phase 4.
+   await tx.put(KEYS.budget,chargeBudget(await tx.get(KEYS.budget),{now,plan:config.plan,bytes,parent:'first-contact',sender:pk(principal),...request?{request:{sender:pk(principal),domain:new URL(principal.issuer).host}}:{}}));
+   const hot=await chargeHot(tx,delivery,envelope);
    await storeItem(tx,itemOf({id,envelope,author,delivery,now,state:request?'pending':'inbox',request,extra:{firstContact:{policy:live}}}),delivery,author,now,{hot});
    await tx.put(KEYS.replay(id),{payloadDigest:delivery.payloadDigest,itemId:id,receipt,retainUntil:P.retainUntil(envelope,now)});
    return {receipt,replay:false};

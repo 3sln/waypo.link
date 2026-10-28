@@ -1,4 +1,3 @@
-import {withdrawsSharing} from '../links/sharing-fields.mjs';
 import {Engine,Provider,Action,Query} from '../../vendor/ngin/src/index.js';
 
 // Research snapshot: docs/release/age-requirements.md (2026-10-21).
@@ -35,11 +34,12 @@ export function createsContentOrGrant(path,method,input={}){
  if(path==='/api/rules'&&method==='PUT')return !Array.isArray(input.rules)||input.rules.length>0;
  if(path==='/api/connections/owner')return ['connections.connect','connections.connect-built-in','connections.resume','connections.approve','connections.occupy','connections.configure-seat'].includes(input.operation);
  if(path==='/api/connections/setup')return input.action==='save';
- if(path==='/api/profile')return input.discloseToContacts!==false;
- if(/^\/api\/contacts\/[^/]+\/sharing$/.test(path))return !withdrawsSharing(input);
+ // `/api/profile` (display name and avatar, shown to apps through the identity profile resource) is content. Since
+ // contacts phase 4 removed the disclosure toggle there is no protective withdrawal body any more, so every save is fenced.
+ if(path==='/api/profile')return true;
  if(path==='/api/email-bridge')return input.enabled===true||input.autoReply===true;
  if(/^\/api\/events\/buses\/[^/]+\/features$/.test(path))return input.read===true||input.publish===true;
- return /^\/api\/(?:views\/[^/]+|rules\/[^/]+\/restore|collections|views|rules|tags\/labels|links\/respond|resources|integrations\/google\/(?:start|complete)|integrations\/records|automation\/grant|apps\/[^/]+\/grants|connections|mcp\/approve|events\/buses)$/.test(path)||/^\/api\/(?:resources\/[^/]+\/(?:objects|upload)|messages\/[^/]+\/postbacks\/prepare|events\/buses\/[^/]+\/history|integrations\/records\/[^/]+\/reconfirm)$/.test(path);
+ return /^\/api\/(?:views\/[^/]+|rules\/[^/]+\/restore|collections|views|rules|tags\/labels|resources|integrations\/google\/(?:start|complete)|integrations\/records|automation\/grant|apps\/[^/]+\/grants|connections|mcp\/approve|events\/buses)$/.test(path)||/^\/api\/(?:resources\/[^/]+\/(?:objects|upload)|messages\/[^/]+\/postbacks\/prepare|events\/buses\/[^/]+\/history|integrations\/records\/[^/]+\/reconfirm)$/.test(path);
 }
 export class TermsRequestAllowed extends Query {static deps=['identity'];constructor(context,input){super();this.context=context;this.input=input;}async fetch({identity}){if(createsContentOrGrant(this.input.path,this.input.method,this.input.document)){const {account}=await identity.authorized(this.context);identity.requireCurrentTerms(account);}return true;}}
 

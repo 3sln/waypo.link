@@ -5,9 +5,9 @@ import {workerStore} from './storage.mjs';
 import {createHTTP} from './http.mjs';
 import {servicePorts} from './ports.mjs';
 import {metadataPort} from './metadata.mjs';
-import {createEdgeIndex,flushEdgeOutbox,linkClaims} from '../../../packages/messaging-engine/store/edge-index.mjs';
+import {createEdgeIndex,flushEdgeOutbox,resetEdgeIndexLinks} from '../../../packages/messaging-engine/store/edge-index.mjs';
 import {createConversationEdge,flushConversationEdge} from '../../../packages/messaging-engine/domains/conversations.mjs';
-import {parseCredential,ProtocolFault,edgeKey} from '../../../packages/messaging-protocol/index.mjs';
+import {ProtocolFault,edgeKey} from '../../../packages/messaging-protocol/index.mjs';
 import {MailboxFault,fault} from '../../../packages/messaging-engine/faults.mjs';
 // One mailbox per authenticated owner; only this app's Worker/bindings can invoke its RPC methods.
 export class MailboxObject extends DurableObject {
@@ -21,11 +21,12 @@ export class MailboxObject extends DurableObject {
  }
  async alarm(){if(!enabled(this.env.PARLAY_ENABLED))return;const result=await (await this.mailbox()).alarm(),owner=await this.store.get('owner');if(owner&&this.env.LINK_INDEX)await flushIndexes(this.store,this.env,owner);return result;}
 }
-// Separate SQLite index objects keep malformed/unknown capabilities away from per-user mailboxes. Keys are
-// digests only, as in B2. The full admission transaction always checks the live parent again.
+// Separate SQLite index objects keep malformed/unknown credentials and unhosted recipients away from per-user mailboxes.
+// Keys are digests only. The mailbox always re-checks in full. (The class and binding keep their contact-link era names,
+// LinkIndexObject and LINK_INDEX, because renaming a Durable Object class needs a migration.) Contacts spike phase 4:
+// each shard deletes its retired contact-link entries once, before serving (resetEdgeIndexLinks, marker last).
 export class LinkIndexObject extends DurableObject {
- constructor(ctx,env){super(ctx,env);env=this.env=parlayEnv(env);this.index=createEdgeIndex(workerStore(ctx.storage));}
- async check(header){try{if(!enabled(this.env.PARLAY_ENABLED))fault('not_found','Messaging is disabled.',404);return {ok:true,value:await this.index.check(header)};}catch(error){return {ok:false,error:{code:error?.code??'internal_error',status:error?.status??500}};}}
+ constructor(ctx,env){super(ctx,env);env=this.env=parlayEnv(env);const store=workerStore(ctx.storage);this.index=createEdgeIndex(store);if(enabled(env.PARLAY_ENABLED))ctx.blockConcurrencyWhile(async()=>{for(;;)if((await resetEdgeIndexLinks(store)).done)break;});}
  publish(entry){if(!enabled(this.env.PARLAY_ENABLED))fault('not_found','Messaging is disabled.',404);return this.ctx.storage.transaction(tx=>createEdgeIndex(tx).publish(entry));}
  async checkConversation(credential,envelope){try{if(!enabled(this.env.PARLAY_ENABLED))fault('not_found','Messaging is disabled.',404);return {ok:true,value:await createConversationEdge(this.store??workerStore(this.ctx.storage)).check(credential,envelope)};}catch(error){return {ok:false,error:{code:error?.code??'internal_error',status:error?.status??500}};}}
  async routeConversation(token){try{if(!enabled(this.env.PARLAY_ENABLED))fault('not_found','Messaging is disabled.',404);return {ok:true,value:await createConversationEdge(workerStore(this.ctx.storage)).route(token)};}catch(error){return {ok:false,error:{code:error?.code??'internal_error',status:error?.status??500}};}}
@@ -34,18 +35,17 @@ export class LinkIndexObject extends DurableObject {
  async hosted(issuer,owner){try{if(!enabled(this.env.PARLAY_ENABLED))fault('not_found','Messaging is disabled.',404);return {ok:true,value:await this.index.hosted(issuer,owner)};}catch(error){return {ok:false,error:{code:error?.code??'internal_error',status:error?.status??500}};}}
  async checkInvite(token,claim){try{if(!enabled(this.env.PARLAY_ENABLED))fault('not_found','Messaging is disabled.',404);return {ok:true,value:await this.index.checkInvite(token,claim)};}catch(error){return {ok:false,error:{code:error?.code??'internal_error',status:error?.status??500}};}}
 }
-// Every key (link, invitation digest, hosted recipient, conversation) maps onto one of 64 fixed index objects by hash, so
+// Every key (invitation digest, hosted recipient, conversation) maps onto one of 64 fixed index objects by hash, so
 // attacker-chosen junk keys never create more objects than that (contacts phase 3 review L4).
 function indexStub(env,key){if(!env.LINK_INDEX)fault('recipient_unavailable','Ingress index unavailable.',503);let hash=2166136261;for(const c of key)hash=Math.imul(hash^c.charCodeAt(0),16777619)>>>0;return env.LINK_INDEX.get(env.LINK_INDEX.idFromName(`links-v1/${hash%64}`));}
 function checked(result){if(!result.ok)throw new ProtocolFault(result.error.code,{status:result.error.status});return result.value;}
 export function edgeIndex(env){
- const stub=(iss,jti)=>indexStub(env,JSON.stringify([iss,jti]));
- // Invitation entries shard by token digest, hosted-recipient entries by (issuer, owner); link entries by (iss, jti).
- const shard=entry=>entry.kind==='invite'?indexStub(env,'invite:'+entry.digest):entry.kind==='host'?indexStub(env,'host:'+JSON.stringify([entry.issuer,entry.subject])):stub(entry.iss,entry.jti);
- return {check:async header=>{const credential=parseCredential(header);if(credential.scheme!=='BindleLink')fault('not_authorized','Not authorized.',403);const {claims}=linkClaims(credential.value),result=await stub(claims.iss,claims.jti).check(header);if(!result.ok)throw new ProtocolFault(result.error.code,{status:result.error.status});return result.value;},
-  hosted:async(issuer,owner)=>checked(await indexStub(env,'host:'+JSON.stringify([issuer,owner])).hosted(issuer,owner)),
+ // Invitation entries shard by token digest, hosted-recipient entries by (issuer, owner). Any other queued entry (a
+ // contact-link publication from before phase 4) is dropped without a call.
+ const shard=entry=>entry.kind==='invite'?indexStub(env,'invite:'+entry.digest):entry.kind==='host'?indexStub(env,'host:'+JSON.stringify([entry.issuer,entry.subject])):null;
+ return {hosted:async(issuer,owner)=>checked(await indexStub(env,'host:'+JSON.stringify([issuer,owner])).hosted(issuer,owner)),
   checkInvite:async(token,claim)=>checked(await indexStub(env,'invite:'+claim.invite).checkInvite(token,claim)),
-  publish:entry=>shard(entry).publish(entry)};
+  publish:entry=>shard(entry)?.publish(entry)??false};
 }
 export function conversationIndex(env){return {
  async check(credential,envelope){const p=envelope.payload,key=await edgeKey({conversationId:p.record.conversationId,author:{issuer:p.author.principal.issuer,subject:p.author.principal.subject},owner:{issuer:p.recipient.issuer,subject:p.recipient.owner}});return checked(await indexStub(env,'peer:'+key).checkConversation(credential,envelope));},

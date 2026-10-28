@@ -24,7 +24,7 @@ import * as P from '../../messaging-protocol/index.mjs';
 import {equalDigest} from '../../messaging-protocol/encoding.mjs';
 import {MailboxAction,MailboxQuery} from '../engine.mjs';
 import {fault,MailboxFault} from '../faults.mjs';
-import {KEYS,actorOwner,readConfig,queueEdge,chargeUsage} from '../store/mailbox.mjs';
+import {KEYS,actorOwner,readConfig,chargeUsage} from '../store/mailbox.mjs';
 import * as W from '../store/archive-writer.mjs';
 
 const te=W.encoder;
@@ -248,6 +248,7 @@ async function readAll(storage,owner,segments,unwrap,blobs=new Map()){
    const rec=W.parseLine(line);
    if(ref?.blob&&(rec.key!==ref.k||ref.t!==rec.type))bad();
    if((prev!==null&&rec.key<=prev)||(s.kind==='snapshot'&&rec.deleted))bad();prev=rec.key;
+   if(rec.retired){map.delete(rec.key);continue;}
    map.set(rec.key,rec);
   }
  }
@@ -255,15 +256,13 @@ async function readAll(storage,owner,segments,unwrap,blobs=new Map()){
 }
 
 // Writes one batch of imported rows. Live rows win (absent-only), so traffic admitted during an import, or a resumed
-// import, never rolls a row back; counters take the maximum. Imported parents republish to the edge index; imported
-// hot bodies are charged to the hot allowance; unresolved obligations of the previous occupant are listed for resend.
+// import, never rolls a row back; counters take the maximum. Imported hot bodies are charged to the hot allowance; unresolved obligations of the previous occupant are listed for resend.
 async function applyBatch(tx,rows,counts){
  for(const r of rows){
   const existing=await tx.get(r.key);
   if(W.COUNTERS.has(r.key)){if(typeof r.value==='number'&&(existing===undefined||r.value>existing))await tx.put(r.key,r.value);continue;}
   if(existing!==undefined){counts.kept=(counts.kept??0)+1;continue;}
   await tx.put(r.key,r.value);counts[r.type]=(counts[r.type]??0)+1;
-  if(r.key.startsWith('parent/')&&r.value?.iss&&r.value.jti)await queueEdge(tx,{iss:r.value.iss,jti:r.value.jti,claimsDigest:r.value.claimsDigest,revoked:r.value.revoked===true});
   if((r.key.startsWith('item/')||r.key.startsWith('conv/event/'))&&Number.isSafeInteger(r.value?.hot)&&r.value.hot>0)await chargeUsage(tx,{bytes:r.value.hot});
   if(r.key.startsWith(SEND.task)&&r.value?.resend){const id=r.value.messageId;const prior=await tx.get(A.resend(id));await tx.put(A.resend(id),{messageId:id,kind:r.value.kind??null,recipients:[...new Map([...(prior?.recipients??[]),r.value.principal].filter(Boolean).map(p=>[`${p.issuer}|${p.subject}`,p])).values()],at:r.value.createdAt??null});}
   // Review L1 (scale round 2): derived conversation indexes are not archived, so imported rows rebuild them. A replay

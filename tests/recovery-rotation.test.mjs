@@ -14,18 +14,13 @@ import { IdentityService, recoveryCredential } from '../packages/identity/servic
 import { identityBackupPort } from '../packages/runtime/identity-backup.mjs';
 import { verifyKeyContinuity, KEY_HISTORY_LIMIT } from '../packages/identity/keys.mjs';
 import { key } from '../packages/core/records.mjs';
-import { linkService } from '../packages/runtime/account/links.mjs';
-import { MESSAGING_CONTACT_LINK_TYPE } from '../packages/links/types.mjs';
 import { forEachSeed, createScheduler } from './helpers/chaos.mjs';
 
 const origin = 'http://localhost:8788', password = 'Portable recovery rotation test password!', challenge = 'local-browser-test-token';
 const headerOf = token => JSON.parse(Buffer.from(token.split('.')[0], 'base64url').toString('utf8'));
-const linkClaims = { resource: 'contact', kinds: ['one-off'], mimeTypes: ['text/plain'], maxMessages: 50, maxBytes: 65536, maxMessageBytes: 4096 };
-// One contact link through the core links service (the type-neutral contact parent; legacy contact grants left the core
-// with messaging on 2026-10-27).
-const issueLink = (c, owner, handle) => linkService(c).issue(owner, { type: MESSAGING_CONTACT_LINK_TYPE, claims: linkClaims, expiresAt: Date.now() + 86400000, handle }).then(r => ({ ...r, url: r.link }));
-const metaKid = url => headerOf(new URL(url).searchParams.get('bindle_meta')).kid;
-const verifies = async (c, link) => (await linkService(c).verify(link.url)).record.jti === link.jti;
+// Contact links, which also referenced signing keys, left the core in contacts phase 4 (2026-10-28); only recovery bindings
+// reference keys now, so the full-history edge is reached here with a planted binding (real issuance binds at most 8).
+const pinHistory = async (c, owner) => { const kids = (await c.identityKeyHistory(owner, { purpose: 'signing' })).map(k => k.kid); await c.metadata.put(key('identity-key-recovery', owner), { owner, kids, at: Date.now() }); };
 
 async function fixture(t) {
   const directory = await mkdtemp(join(tmpdir(), 'recovery-rotation-'));
@@ -67,10 +62,10 @@ test('the first file adopts the signer; every later issuance rotates with contin
   assert.equal((await f.recover(second)).status, 200, 'the current file recovers');
 });
 
-test('the replacement file after a recovery rotates; old contact links keep working; the old file\'s key signs nothing honoured', async t => {
+test('the replacement file after a recovery rotates; the old file\'s key signs nothing honoured', async t => {
   const f = await fixture(t), pending = await f.signup(), id = pending.account.id, c = f.controller(id);
   const file = await f.download(pending.pendingToken); await f.activate(pending.pendingToken, file.recoveryToken);
-  const link = await issueLink(c, id, pending.account.handle), k0 = file.backup.keychain.signing.kid;
+  const k0 = file.backup.keychain.signing.kid;
   const oldKey = await c.signingKey(id); assert.equal(oldKey.kid, k0);
   const started = await f.recover(file); assert.equal(started.status, 200, started.value.error);
   assert.equal((await f.request('/api/auth/password/pending', { pendingToken: started.value.pendingToken, password })).status, 200);
@@ -83,9 +78,7 @@ test('the replacement file after a recovery rotates; old contact links keep work
   await f.activate(resumed.value.pendingToken, replacement.recoveryToken);
   record = await f.identity(id); assert.equal(record.recoveryResumeKeyKid, undefined, 'activation removes the resume binding');
   assert.equal((await f.recover(file)).status, 401, 'the consumed file never recovers again');
-  // Links recorded before the rotation keep verifying; new links are signed with the current key.
-  assert.ok(await verifies(c, link));
-  assert.equal(metaKid((await issueLink(c, id, pending.account.handle)).url), k1);
+  assert.equal((await c.signingKey(id)).kid, k1, 'the current key signs from now on');
   // The old file's key: fresh signatures under it resolve inactive.
   assert.equal((await c.identityKey(id, k0)).active, false);
   assert.equal((await f.recover(replacement)).status, 200);
@@ -113,12 +106,12 @@ test('a lost identity commit after the account rotated leaves the current file u
 test('a full history of referenced keys issues without rotating and audits it (P15 known edge)', async t => {
   const f = await fixture(t), pending = await f.signup(), id = pending.account.id, c = f.controller(id);
   let file = await f.download(pending.pendingToken);
-  // Each issuance rotates; a live contact link then references the outgoing key, so nothing may be pruned.
+  // Each issuance rotates; a planted binding then references the outgoing key, so nothing may be pruned.
   // Downloads are budgeted (5 per setup token, per-network and per-account windows; wargame 2026-10-23), so this
   // white-box test resets the per-token count and spreads the downloads over addresses to reach the edge quickly.
   const reset = async () => { const record = await f.identity(id); assert.equal(await f.app.resources.repository.compareAndSwap(id, record.revision, { ...record, recoveryDownloads: 0, revision: record.revision + 1 }), true); };
-  for (let i = 1; i < KEY_HISTORY_LIMIT; i++) { await issueLink(c, id, pending.account.handle); await reset(); file = await f.download(pending.pendingToken, { 'CF-Connecting-IP': `198.51.100.${i}` }); }
-  await issueLink(c, id, pending.account.handle);
+  for (let i = 1; i < KEY_HISTORY_LIMIT; i++) { await pinHistory(c, id); await reset(); file = await f.download(pending.pendingToken, { 'CF-Connecting-IP': `198.51.100.${i}` }); }
+  await pinHistory(c, id);
   assert.equal((await c.identityKeyHistory(id, { purpose: 'signing' })).length, KEY_HISTORY_LIMIT);
   await reset(); const full = await f.download(pending.pendingToken, { 'CF-Connecting-IP': '198.51.100.200' });
   assert.equal(full.backup.keychain.signing.kid, file.backup.keychain.signing.kid, 'issued without rotating');
@@ -129,13 +122,12 @@ test('a full history of referenced keys issues without rotating and audits it (P
   assert.equal((await f.recover(full)).status, 200);
 });
 
-test('seeded chaos: concurrent issuance, resumption, link issuance and verification keep exactly one current file and honour no superseded key', async t => {
+test('seeded chaos: concurrent issuance and resumption keep exactly one current file and honour no superseded key', async t => {
   await forEachSeed(8, async random => {
     // A fresh runtime per seed, so the server's per-network signup and recovery limits never interfere.
     const f = await fixture(t), authority = await readFile(join(f.directory, 'recovery-signing-key'), 'utf8');
     const pending = await f.signup(), id = pending.account.id, c = f.controller(id);
     const file = await f.download(pending.pendingToken); await f.activate(pending.pendingToken, file.recoveryToken);
-    const link = await issueLink(c, id, pending.account.handle);
     const started = await f.recover(file); assert.equal(started.status, 200);
     assert.equal((await f.request('/api/auth/password/pending', { pendingToken: started.value.pendingToken, password })).status, 200);
     const scheduler = createScheduler(random), repository = scheduler.wrap(f.app.resources.repository, 'identity');
@@ -146,9 +138,7 @@ test('seeded chaos: concurrent issuance, resumption, link issuance and verificat
     const context = { origin, remoteIP: '127.0.0.1' }, issued = [];
     const downloadTask = () => service.downloadRecovery({ pendingToken: started.value.pendingToken }, context).then(result => { issued.push({ recoveryToken: result.recoveryToken, backup: JSON.parse(result.content) }); return result; });
     const work = random.shuffle([downloadTask, downloadTask, downloadTask,
-      () => random.chance(0.5) ? service.recover({ recoveryToken: file.recoveryToken, identityBackup: file.backup, turnstileToken: challenge }, context) : Promise.resolve(null),
-      () => issueLink(c, id, pending.account.handle),
-      () => linkService(c).verify(link.url)]);
+      () => random.chance(0.5) ? service.recover({ recoveryToken: file.recoveryToken, identityBackup: file.backup, turnstileToken: challenge }, context) : Promise.resolve(null)]);
     const results = await scheduler.run(work);
     for (const result of results) if (result.status === 'rejected') assert.ok(['conflict', 'unauthorized', 'key_conflict'].includes(result.reason?.code), `unexpected ${result.reason?.code}: ${result.reason?.message} ${scheduler.trace.join(' | ')}`);
     const record = await f.identity(id), current = (await c.signingKey(id)).kid;
@@ -167,8 +157,6 @@ test('seeded chaos: concurrent issuance, resumption, link issuance and verificat
     await f.activate(resumed.value.pendingToken, finalFile.recoveryToken);
     assert.equal((await f.recover(file)).status, 401);
     for (const one of issued.filter(other => other !== finalFile)) assert.equal((await f.recover(one)).status, 401, 'superseded files never recover');
-    assert.ok(await verifies(c, link), 'the pre-rotation link survives');
-    assert.equal(metaKid((await issueLink(c, id, pending.account.handle)).url), (await c.signingKey(id)).kid);
     assert.notEqual((await c.signingKey(id)).kid, undefined); assert.ok(current);
     assert.equal((await f.recover(finalFile)).status, 200, 'the final current file recovers');
   });

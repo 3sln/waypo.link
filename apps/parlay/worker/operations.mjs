@@ -1,6 +1,3 @@
-import {ConversationsCreate} from '../../../packages/messaging-engine/domains/conversations.mjs';
-import {parseLinkURL,contactMeta} from '../../../packages/messaging-engine/domains/contacts.mjs';
-import {verifyES256} from '../../../packages/messaging-protocol/certificate.mjs';
 import {MailboxAction,ownerOf,operations} from '../../../packages/messaging-engine/engine.mjs';
 import {fault} from '../../../packages/messaging-engine/faults.mjs';
 import {queueEdge} from '../../../packages/messaging-engine/store/mailbox.mjs';
@@ -34,21 +31,4 @@ export class RenewMailboxDelegation extends MailboxAction {
   const result=await delegateKeys.renew();return {jkt:result.jkt,expiresAt:result.expiresAt};
  }
 }
-// The browser selects stored contacts; a live verified directory/descriptor resolves the principal and ingress.
-export class CreateContactConversation extends ConversationsCreate {
- static operation='shell.conversation-create';static deps=[...ConversationsCreate.deps,'directory'];
- async run(deps){
-  const {conversations:h,directory}=deps,ids=this.input?.contacts;if(!Array.isArray(ids)||!ids.length||ids.length>63||ids.some(id=>typeof id!=='string'))fault('invalid_input','Choose contacts.',400);
-  const participants=[];
-  for(const id of ids){
-   const contact=await h.store.get('contact/'+id);if(!contact||typeof directory?.resolveContact!=='function')fault('recipient_unavailable','Contact verification unavailable.',503);
-   const resolved=await directory.resolveContact({id,principal:contact.principal,link:contact.link}),{meta}=parseLinkURL(contact.link),parsed=contactMeta(meta);
-   if(!resolved||resolved.principal?.issuer!==contact.principal.issuer||resolved.principal?.subject!==contact.principal.subject||typeof resolved.principal.identityURI!=='string')fault('author_unverifiable','Contact identity unavailable.',503);
-   const key=await directory.resolveKey({...resolved.principal,keyId:parsed.jws.header.kid});
-   if(!key||key.identityURI!==resolved.principal.identityURI||key.keyId!==parsed.jws.header.kid||!await verifyES256(key.publicJwk,parsed.jws.signature,parsed.jws.signingInput))fault('author_unverifiable','Contact signature unavailable.',403);
-   participants.push({principal:resolved.principal,keyId:resolved.keyId,ingress:resolved.ingress,link:contact.link});
-  }
-  this.input={subject:this.input.subject??'',text:this.input.text??'',operationId:this.input.operationId,participants};return super.run(deps);
- }
-}
-export const SHELL_OPERATIONS=operations(BindMailbox,MailboxAuthorization,RenewMailboxDelegation,CreateContactConversation);
+export const SHELL_OPERATIONS=operations(BindMailbox,MailboxAuthorization,RenewMailboxDelegation);

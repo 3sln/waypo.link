@@ -9,7 +9,9 @@ import {PinArtefact} from '../../packages/federation/artefact-store.mjs';
 import {ArtefactFault} from '../../packages/core/artefacts.mjs';
 import {ResolveIntent} from '../../packages/intents/router.mjs';
 import {encodeIntent} from '../../packages/intents/format.mjs';
-import {registeredIntent} from '../../packages/intents/registered.mjs';
+// The operator-registered open-conversation line (runtime/artefact-pins.mjs; the hard-coded registry left the intents code
+// in contacts phase 4).
+const registeredIntent=name=>({'open-conversation':{artefact:'https://spec.bindle.example/intents/open-conversation/v1',version:1,digest:'sha256-BVp7Z5PiP2NNpO9cb-mxI_8uyZWO1PKJ5PsKgPZNU70'}})[name];
 import {fakeClock} from '../helpers/chaos.mjs';
 const owner='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',code=c=>e=>e.code===c;
 const legitData={conversation:'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',creator:{iss:'https://provider.example',sub:'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'},profile:'https://profile.example/v1'};

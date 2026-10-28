@@ -1,7 +1,7 @@
 // EXT-X4 connections domain (packages/app/domains/connections.mjs over packages/apps/connections.mjs): lifecycle
 // transitions, generation fencing against stale operations, occupancy under each selection policy (consistent with
 // packages/federation/extensions.mjs), X3 revalidation, the outbox, seeded concurrency (tests/helpers/chaos.mjs), the
-// occupancy ports, the KD-4 cascades (delegations revoked, link authority removed) on the real AccountController, and
+// occupancy ports, the KD-4 cascades (delegations revoked, mailbox occupancy removed) on the real AccountController, and
 // unchanged legacy app-connection behaviour with INTEGRATIONS_ENABLED off.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -238,7 +238,7 @@ test('concurrency (seeded): one exclusive winner, suspend vs occupy, and disconn
 // ---- The ports and the KD-4 cascades on the real AccountController ----
 async function account(t,overrides={}){
  const db=new SqliteMetadata(':memory:');t.after(()=>db.close());const identity={status:'active'};
- const config={APP_ORIGIN:ISSUER,KEY_ENCRYPTION_KEY:Buffer.alloc(32,9).toString('base64'),INTEGRATIONS_ENABLED:'true',LINKS_ENABLED:'true',EXTENSIONS_ENABLED:'true',PROVIDER_FEATURE_DECLARATIONS:DECLARED,IDENTITY_ACCOUNT:async owner=>owner===OWNER?{status:identity.status,handle:'alice'}:null,...overrides};
+ const config={APP_ORIGIN:ISSUER,KEY_ENCRYPTION_KEY:Buffer.alloc(32,9).toString('base64'),INTEGRATIONS_ENABLED:'true',KEY_DELEGATION_ENABLED:'true',EXTENSIONS_ENABLED:'true',PROVIDER_FEATURE_DECLARATIONS:DECLARED,IDENTITY_ACCOUNT:async owner=>owner===OWNER?{status:identity.status,handle:'alice'}:null,...overrides};
  const bucket={put:async()=>{},get:async()=>null,delete:async()=>{}};
  const a=new AccountController({metadata:db,gate:new SerialGate(),blobs:bucket,archives:bucket,config,sql:db.sql});await a.touch(OWNER);
  const sys=(operation,input)=>a.connectionsSystem(OWNER,{operation,input}),own=(operation,input,authTime=Date.now())=>a.connectionsOwner(OWNER,{operation,input},{authTime});
@@ -246,12 +246,14 @@ async function account(t,overrides={}){
  const install=async host=>{const s=snapshot(host);const c=await sys('connections.connect',s);const live=(await own('connections.features')).find(x=>x.feature===MAILBOX_FEATURE)?.state==='active';const seat=(await own('connections.assign',{fragment:MESSAGING_INGRESS_FRAGMENT,connection:c.id,purposes:ALL,replace:true,...live?{approve:[MAILBOX_FEATURE]}:{}})).values[0];if(!live)await own('connections.enable-feature',{feature:MAILBOX_FEATURE});await sys('connections.set-ingress',{fragment:MESSAGING_INGRESS_FRAGMENT,seat:seat.seat,generation:c.generation,ingress:`https://${host}/ingress`});return {...c,seat:seat.seat};};
  const key=async()=>{const pair=await crypto.subtle.generateKey({name:'ECDSA',namedCurve:'P-256'},true,['sign','verify']);const {kty,crv,x,y}=await crypto.subtle.exportKey('jwk',pair.publicKey);const jwk={kty,crv,x,y};return {...pair,jwk,jkt:await jwkThumbprint(jwk)};};
  const issue=async(clientId,k)=>a.delegationOperation(OWNER,{actor:{kind:'app',owner:OWNER,clientId},operation:'delegations.issue',input:{delegate:k.jwk,purposes:ALL,proof:await signDelegationPop({privateKey:k.privateKey,issuer:ISSUER,clientId,jkt:k.jkt,subject:OWNER,iat:Math.floor(Date.now()/1000)})}});
- const links=clientId=>a.linkOperation(OWNER,{actor:{kind:'app',owner:OWNER,clientId,handle:'alice'},operation:'links.list'});
+ // Mailbox occupancy (the authority the contact-link `links.list` probe used to stand for before contacts phase 4 removed
+ // the links contract): the exclusive messaging-ingress occupant as the describe call reads it.
+ const links=async clientId=>{const o=await a.linkSlotOccupant({owner:OWNER,fragment:MESSAGING_INGRESS_FRAGMENT});if(o?.clientId!==clientId)throw Object.assign(new Error('forbidden'),{code:'forbidden'});return {links:[]};};
  const delegations=async()=>(await a.listDelegations(OWNER)).delegations;
  return {db,account:a,identity,sys,own,install,key,issue,links,delegations};
 }
 
-test('ports: the messaging-ingress occupant is certified and holds link authority; nobody else does', async t=>{
+test('ports: the messaging-ingress occupant is certified and holds mailbox occupancy; nobody else does', async t=>{
  const c=await account(t),app=await c.install('box.example');
  assert.deepEqual(await c.account.delegationSlotOccupant({owner:OWNER,fragment:MESSAGING_INGRESS_FRAGMENT}),{clientId:app.clientId,origin:'https://box.example',ingress:'https://box.example/ingress',cnx:`${app.seat}.1`,purposes:ALL});
  assert.equal(await c.account.delegationSlotOccupant({owner:OTHER,fragment:MESSAGING_INGRESS_FRAGMENT}),null,'another owner is never answered');
@@ -267,7 +269,7 @@ test('ports: the messaging-ingress occupant is certified and holds link authorit
  assert.equal((await c.delegations()).find(d=>d.jkt===k.jkt).state,'revoked');
 });
 
-test('KD-4 cascades: disconnect (owner route and legacy route), suspension, vacate and replacement revoke delegations and link authority', async t=>{
+test('KD-4 cascades: disconnect (owner route and legacy route), suspension, vacate and replacement revoke delegations and mailbox occupancy', async t=>{
  // Owner disconnect through the connections domain.
  let c=await account(t),app=await c.install('box.example'),k=await c.key();await c.issue(app.clientId,k);
  await c.own('connections.disconnect',{connection:app.id});

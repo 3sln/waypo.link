@@ -11,7 +11,7 @@ import {createMailbox,enabled} from '../worker/mailbox.mjs';
 import {createHTTP,httpError} from '../worker/http.mjs';
 import {servicePorts} from '../worker/ports.mjs';
 import {metadataPort} from '../worker/metadata.mjs';
-import {createEdgeIndex,flushEdgeOutbox} from '../../../packages/messaging-engine/store/edge-index.mjs';
+import {createEdgeIndex,flushEdgeOutbox,resetEdgeIndexLinks} from '../../../packages/messaging-engine/store/edge-index.mjs';
 import {createConversationEdge,flushConversationEdge} from '../../../packages/messaging-engine/domains/conversations.mjs';
 import {fault} from '../../../packages/messaging-engine/faults.mjs';
 // The first-contact budget's source on Node (messaging §7.4, review L1): the socket address, never a client-sent
@@ -25,7 +25,11 @@ export function nodeSource(request,{remoteAddress}={},{trustedClientIpHeader=nul
 export async function createNodeShell({directory='.output/parlay',PARLAY_ENABLED=false,INTENT_LINKS_ENABLED=false,APP_CLEAN_REMOVAL_ENABLED=false,services,egress,secret,clientId,portsFor,clock,assetsDirectory=resolve('.output/parlay-public'),localTestArchiveKeys=false,trustedClientIpHeader=null}={}){
  if(trustedClientIpHeader!==null&&(typeof trustedClientIpHeader!=='string'||!/^[A-Za-z0-9-]{1,64}$/.test(trustedClientIpHeader)))throw new TypeError('trustedClientIpHeader must be a header name.');
  const on=enabled(PARLAY_ENABLED),boxes=new Map();let indexStore,edge,conversationEdge;
- if(on){await mkdir(directory,{recursive:true,mode:0o700});indexStore=new SqliteMailboxStore(join(directory,'links.sqlite'),{clock});edge={check:header=>createEdgeIndex(indexStore).check(header),hosted:(issuer,owner)=>createEdgeIndex(indexStore).hosted(issuer,owner),checkInvite:(token,claim)=>createEdgeIndex(indexStore).checkInvite(token,claim),publish:entry=>indexStore.transaction(tx=>createEdgeIndex(tx).publish(entry))};conversationEdge={check:(...args)=>createConversationEdge(indexStore,{now:clock?.now}).check(...args),route:token=>createConversationEdge(indexStore).route(token),publish:entry=>indexStore.transaction(tx=>createConversationEdge(tx).publish(entry))};}
+ if(on){await mkdir(directory,{recursive:true,mode:0o700});indexStore=new SqliteMailboxStore(join(directory,'links.sqlite'),{clock});
+  // Contacts spike phase 4: delete the retired contact-link index entries once (bounded pages, marker last). The file keeps
+  // its contact-link era name, links.sqlite; it holds the invitation, hosted-recipient and conversation entries.
+  for(;;)if((await resetEdgeIndexLinks(indexStore,{now:()=>clock?.now?.()??Date.now()})).done)break;
+  edge={hosted:(issuer,owner)=>createEdgeIndex(indexStore).hosted(issuer,owner),checkInvite:(token,claim)=>createEdgeIndex(indexStore).checkInvite(token,claim),publish:entry=>indexStore.transaction(tx=>createEdgeIndex(tx).publish(entry))};conversationEdge={check:(...args)=>createConversationEdge(indexStore,{now:clock?.now}).check(...args),route:token=>createConversationEdge(indexStore).route(token),publish:entry=>indexStore.transaction(tx=>createConversationEdge(tx).publish(entry))};}
  const flush=async(store,owner)=>{await flushEdgeOutbox(store,edge,owner);await flushConversationEdge(store,conversationEdge,owner);};
  const mailbox=async owner=>{
   if(!on)fault('not_found','Messaging is disabled.',404);if(!/^[a-f0-9-]{36}$/.test(owner))fault('unauthorized','Invalid owner.',401);

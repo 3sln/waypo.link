@@ -8,16 +8,16 @@ import {Miniflare,Log,LogLevel,convertV4MiniflareOptions} from 'miniflare';
 import {createTestEngine,ownerActor,OWNER,OTHER} from './helpers/engine.mjs';
 import {SHELL_OPERATIONS} from '../../apps/parlay/worker/operations.mjs';
 import {createNodeShell,listenNodeShell} from '../../apps/parlay/node/server.mjs';
-import {linkContract} from './receive-fixtures.test.mjs';
+import {EDGE_LINKS_RESET_MARKER} from '../../packages/messaging-engine/store/edge-index.mjs';
 import {SqliteMailboxStore} from '../../apps/parlay/node/storage.mjs';
 import {createHTTP} from '../../apps/parlay/worker/http.mjs';
-import {party,world,linkPayload,recordPayload,receiptFor,uuidOf} from './vectors/fixtures.mjs';
+import {party,world,firstContactPayload,recordPayload,receiptFor,uuidOf} from './vectors/fixtures.mjs';
 import {principalKey} from '../../packages/messaging-engine/store/mailbox.mjs';
 import * as B from '../../packages/messaging-protocol/index.mjs';
 const vectors=JSON.parse(await readFile(new URL('./vectors/vectors.json',import.meta.url))),now=Date.now();
 const alice=await party('alice',vectors.keys,{now}),bob=await party('bob',vectors.keys,{now}),owner=alice.principal.subject;
 const grant={revision:1,active:true,recipients:[{issuer:bob.principal.issuer,subject:bob.principal.subject}]};
-async function draft(n=1){const body=new TextEncoder().encode('Durable shell message'),payload=await linkPayload(alice,bob,{operationId:uuidOf(n),createdAt:Date.now()-1000,body});return {operationId:uuidOf(n),body,recipients:[{envelope:await B.signEnvelope(payload,alice.signer),ingress:bob.ingress,credential:'BindleLink e30.e30.AA'}]};}
+async function draft(n=1){const body=new TextEncoder().encode('Durable shell message'),payload=await firstContactPayload(alice,bob,{operationId:uuidOf(n),createdAt:Date.now()-1000,body});return {operationId:uuidOf(n),body,recipients:[{envelope:await B.signEnvelope(payload,alice.signer),ingress:bob.ingress}]};}
 const harness=`
 import worker,{MailboxObject,LinkIndexObject} from './apps/parlay/worker/index.mjs';
 import {DurableObject} from 'cloudflare:workers';
@@ -128,13 +128,21 @@ test('BB-B8 HTTP maps allowlisted intents to dispatch, pins the authenticated ac
 });
 
 test('BB-B8 Node HTTP receives a signed delivery through its durable edge index and replays committed custody',async t=>{
- const directory=await mkdtemp(join(tmpdir(),'bb-b8-receive-')),ingress='https://alice.box.example/bindle/ingress',recipient=await party('alice',vectors.keys,{claims:{ingress}}),clock={now:()=>Date.UTC(2026,9,20,12)},links=linkContract(recipient,clock);let shell;
- const start=()=>createNodeShell({directory,PARLAY_ENABLED:true,clock,portsFor:()=>({directory:world({alice:recipient,bob:awaitedBob}),delegateKeys:{current:async()=>recipient.signer},providerLink:links})});
+ const directory=await mkdtemp(join(tmpdir(),'bb-b8-receive-')),ingress='https://alice.box.example/bindle/ingress',recipient=await party('alice',vectors.keys,{claims:{ingress}}),clock={now:()=>Date.UTC(2026,9,20,12)};let shell;
+ // Contacts spike phase 4: a retired contact-link index entry left by an older version is deleted at startup, marker last.
+ {const index=new SqliteMailboxStore(join(directory,'links.sqlite'),{clock});await index.put('link/'+encodeURIComponent('https://alice.provider.example')+'/jti-1',{owner,claimsDigest:'x',revoked:false,generation:1});await index.close();}
+ const start=()=>createNodeShell({directory,PARLAY_ENABLED:true,clock,portsFor:()=>({directory:world({alice:recipient,bob:awaitedBob}),delegateKeys:{current:async()=>recipient.signer}})});
  const awaitedBob=await party('bob',vectors.keys);shell=await start();t.after(async()=>{await shell.close();await rm(directory,{recursive:true,force:true});});
- await shell.provision(owner,{receive:{principal:recipient.principal,ingress},authorization:{...grant,recipients:[]}});const target=await shell.mailbox(owner),link=await target.run(owner,'contacts.create-link',{input:{}}),body=new TextEncoder().encode('Actual Node custody');
- const payload=await linkPayload(awaitedBob,recipient,{operationId:uuidOf(40),createdAt:clock.now()-1000,body,recipient:{issuer:recipient.principal.issuer,owner,contactId:link.jti,resource:link.resource}}),envelope=await B.signEnvelope(payload,awaitedBob.signer),wire=B.encodeDelivery(envelope,{body,boundary:'bb-b8-node'}),headers={'Content-Type':wire.contentType,Authorization:'BindleLink '+new URL(link.link).searchParams.get('bindle_meta'),'Idempotency-Key':payload.operationId};
+ await shell.provision(owner,{receive:{principal:recipient.principal,ingress},authorization:{...grant,recipients:[]}});const target=await shell.mailbox(owner),body=new TextEncoder().encode('Actual Node custody');
+ // Credential-less first contact (messaging §6.7): the recipient's Contacts list admits bob.
+ await target.run(owner,'lists.add',{input:{list:'contacts',principal:{issuer:awaitedBob.principal.issuer,subject:awaitedBob.principal.subject}}});
+ const payload=await firstContactPayload(awaitedBob,recipient,{operationId:uuidOf(40),createdAt:clock.now()-1000,body}),envelope=await B.signEnvelope(payload,awaitedBob.signer),wire=B.encodeDelivery(envelope,{body,boundary:'bb-b8-node'}),headers={'Content-Type':wire.contentType,'Idempotency-Key':payload.operationId};
  const first=await shell.fetch(new Request(ingress,{method:'POST',headers,body:wire.bytes}));assert.equal(first.status,200,await first.clone().text());const admitted=await first.json();assert.ok(admitted.receipt);
- await shell.close();shell=await start();const replay=await shell.fetch(new Request(ingress,{method:'POST',headers,body:wire.bytes}));assert.equal(replay.status,200,await replay.clone().text());assert.deepEqual(await replay.json(),admitted);assert.equal((await (await shell.mailbox(owner)).store.list({prefix:'item/'})).size,1);
+ // The withdrawn BindleLink scheme is malformed at the edge.
+ const link=await shell.fetch(new Request(ingress,{method:'POST',headers:{...headers,Authorization:'BindleLink e30.e30.AA'},body:wire.bytes}));assert.equal(link.status,400);assert.equal((await link.json()).error,'malformed');
+ await shell.close();
+ {const index=new SqliteMailboxStore(join(directory,'links.sqlite'),{clock});assert.equal((await index.list({prefix:'link/'})).size,0);assert.ok(await index.get(EDGE_LINKS_RESET_MARKER));await index.close();}
+ shell=await start();const replay=await shell.fetch(new Request(ingress,{method:'POST',headers,body:wire.bytes}));assert.equal(replay.status,200,await replay.clone().text());assert.deepEqual(await replay.json(),admitted);assert.equal((await (await shell.mailbox(owner)).store.list({prefix:'item/'})).size,1);
 });
 
 test('BB-B8 executable Node listener serves default-off HTTP over a real loopback socket',async t=>{

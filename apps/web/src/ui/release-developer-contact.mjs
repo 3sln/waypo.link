@@ -1,6 +1,6 @@
 import {h,badge,helpers,interfaceText} from './release-primitives.mjs';
-import {fullDate} from './release-contact.mjs';
-import {intentsAvailable} from '../bl/contact-link.mjs';
+import {intentsAvailable} from '../bl/incoming.mjs';
+const fullDate=(value,locale)=>value?new Intl.DateTimeFormat(locale,{year:'numeric',month:'short',day:'numeric'}).format(new Date(value)):'—';
 const unavailable={'developer-unavailable':'The platform developer account is not ready to receive messages.','contact-unavailable':'Developer contact is not available right now. Try again later.'};
 const eligibility={eligible:'Your account can currently message the developer. Eligibility is checked again when you start.',ineligible:'Your account is not currently eligible to message the developer.',unavailable:'Your eligibility could not be checked right now. Try again shortly.'};
 const reasons={'paid-required':'Developer contact is currently available to paid accounts.','eligibility-unavailable':'Your eligibility could not be verified. Recheck your subscription or try again shortly.'};

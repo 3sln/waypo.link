@@ -1,6 +1,6 @@
 import {createWebHTTP} from '../web/http.mjs';
 import {webShell} from '../web/shell.mjs';
-import {handleIngress,ingressError} from '../../../packages/messaging-engine/domains/receive.mjs';
+import {ingressError} from '../../../packages/messaging-engine/domains/receive.mjs';
 import {LIMITS,strictJSON,ProtocolFault,parseRPC,MAILBOX_CONTRACT,INTAKE_CONTRACT,fromBase64url} from '../../../packages/messaging-protocol/index.mjs';
 import {fault,MailboxFault} from '../../../packages/messaging-engine/faults.mjs';
 import {enabled} from './mailbox.mjs';
@@ -41,9 +41,9 @@ export function createHTTP({PARLAY_ENABLED=false,INTENT_LINKS_ENABLED=false,APP_
   }catch(error){return httpError(error);}
 
   if((path==='/bindle/ingress'||/^\/bindle\/ingress\/return\/[A-Za-z0-9_-]{32}$/.test(path))&&request.method==='POST')try{
-   if(!edge)fault('recipient_unavailable','Ingress index unavailable.',503);
+   if(!edge||!conversationEdge)fault('recipient_unavailable','Ingress index unavailable.',503);
    const wire={url:request.url,method:'POST',headers:Object.fromEntries(request.headers),body:await bodyBytes(request),source:sourceOf(request,info)},deliver=(name)=>async(owner,input)=>(await mailbox(owner)).run(owner,name,{input});
-   return conversationEdge?await handleConversationIngress(wire,{edge,conversationEdge,deliverLink:deliver('receive.deliver'),deliverRecord:deliver('conversations.receive'),deliverResponse:deliver('conversations.respond'),deliverInvite:deliver('receive.redeem'),deliverFirst:deliver('receive.first-contact'),budget:firstContactBudget}):await handleIngress(wire,{edge,deliver:deliver('receive.deliver')});
+   return await handleConversationIngress(wire,{edge,conversationEdge,deliverRecord:deliver('conversations.receive'),deliverResponse:deliver('conversations.respond'),deliverInvite:deliver('receive.redeem'),deliverFirst:deliver('receive.first-contact'),budget:firstContactBudget});
   }catch(error){return ingressError(error,Date.now());}
   try{
    if(request.method==='GET'&&['/bindle/client.json','/bindle/jwks.json'].includes(path)){if(!metadata)fault('recipient_unavailable','Client metadata unavailable.',503);return Response.json(await metadata(path),{headers});}
@@ -63,7 +63,7 @@ export function createHTTP({PARLAY_ENABLED=false,INTENT_LINKS_ENABLED=false,APP_
     const verified=await services.verifyIntegration({url:request.url,authorization:request.headers.get('Authorization'),purpose,...rpc?{resource:rpc.resource,contract:rpc.contract,method:rpc.method}:{}});
     if(!verified?.owner)fault('not_authorized','Not authorized.',403);const box=await mailbox(verified.owner);
     if(purpose==='discover')return Response.json(await box.run(verified.owner,'shell.discover',{input:{verified,query:strictJSON(bytes,{maxBytes:65536,maxDepth:12})}}),{headers});
-    const name=rpc.contract===MAILBOX_CONTRACT?(rpc.method==='describe'?'shell.describe':'shell.link-revoked'):rpc.contract===INTAKE_CONTRACT?'shell.public-intake':null;
+    const name=rpc.contract===MAILBOX_CONTRACT?'shell.describe':rpc.contract===INTAKE_CONTRACT?'shell.public-intake':null;
     if(!name)fault('unsupported_contract','Unsupported contract.',400);
     const result=await box.run(verified.owner,name,{input:{verified,resource:rpc.resource,tx:rpc.tx,contract:rpc.contract,args:rpc.args,consumer:verified.consumer}});
     return Response.json({version:'0',tx:rpc.tx,result},{headers});

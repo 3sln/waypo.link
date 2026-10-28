@@ -29,7 +29,7 @@ test('data: any string within maxLength; under origin display only an https-url 
  assert.deepEqual(intentDisclosure(presence,{token:'https://host.example/invite/abc'}),{token:true});
 });
 
-test('contact-link keeps its own rules until CR-C3 removes it',()=>{
- assert.ok(validateIntentKind(kind({format:'contact-link',maxLength:4352,display:'origin'})));
+test('contacts phase 4 (CR-C3): the contact-link format is gone; a kind naming it is invalid in every display',()=>{
+ for(const display of ['origin','presence','value'])kindInvalid(kind({format:'contact-link',maxLength:4352,display}));
  kindInvalid(kind({format:'contact-link',capability:false}));
 });

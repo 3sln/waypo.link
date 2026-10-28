@@ -51,7 +51,6 @@ export const EPOCH2='e0e0e0e0-0000-4000-8000-00000000e0e2';
 export const SECRET=Uint8Array.from({length:32},(_,i)=>i+1);
 export const SECRET2=Uint8Array.from({length:32},(_,i)=>64+i);
 export const NONCE=base64url(Uint8Array.from({length:16},(_,i)=>200-i));
-export const linkRecipient=(to,contactId='jti-contact-1',resource='parent-1')=>({issuer:to.principal.issuer,owner:to.principal.subject,contactId,resource});
 export const plainRecipient=to=>({issuer:to.principal.issuer,owner:to.principal.subject});
 // Invitation redemption (spec §4.3): a fixed test token (not a secret) and its digest name the invitation.
 export const INVITE_TOKEN='vectors-invite-token-0123456789AB';
@@ -60,7 +59,8 @@ export const recordRecipient=(to,incarnation='inc-for-alice')=>({issuer:to.princ
 export const binding=(p,incarnation=`inc-from-${p.name}`)=>({ingress:p.ingress,incarnation,profiles:[PROFILE],limits:{maxParticipants:32,maxMessageBytes:1048576,maxEnvelopeBytes:65536,maxBatchContexts:32},...p.ingress.startsWith('https://hub.')?{multicast:MULTICAST}:{}});
 export const uuidOf=n=>`00000000-0000-4000-8000-${String(n).padStart(12,'0')}`;
 
-export async function linkPayload(from,to,{kind='one-off',body=encoder.encode('Hello from the vectors.'),mimeType='text/plain',operationId=uuidOf(1),createdAt=NOW-60000,subject='Hello',recipient=linkRecipient(to),...extra}={},crypto=globalThis.crypto){
+// A first-contact payload (one-off or conversation-init) to {issuer, owner} (§5.1); contact-link recipients are gone.
+export async function firstContactPayload(from,to,{kind='one-off',body=encoder.encode('Hello from the vectors.'),mimeType='text/plain',operationId=uuidOf(1),createdAt=NOW-60000,subject='Hello',recipient=plainRecipient(to),...extra}={},crypto=globalThis.crypto){
  return {version:1,profile:PROFILE,kind,noReply:kind==='one-off',operationId,createdAt,recipient,content:await contentDescriptor(mimeType,body,crypto),subject,author:from.author,...extra};
 }
 export async function genesisFor(creator,participants,{body=encoder.encode('Let us talk.'),createdAt=NOW-120000,subject='Planning'}={},crypto=globalThis.crypto){
@@ -68,7 +68,7 @@ export async function genesisFor(creator,participants,{body=encoder.encode('Let 
 }
 export async function initEnvelope(creator,invitee,participants,{body=encoder.encode('Let us talk.'),createdAt=NOW-60000}={},crypto=globalThis.crypto){
  const genesis=await genesisFor(creator,participants,{body},crypto);
- const payload=await linkPayload(creator,invitee,{kind:'conversation-init',body,createdAt,operationId:uuidOf(2),subject:'Planning',conversation:{genesis,sharedSecret:base64url(SECRET),returnControl:{resource:`${new URL(creator.ingress).origin}/return/invite-1`,nonce:NONCE,expiresAt:createdAt+86400000,maxResponseBytes:8192},creatorBinding:binding(creator,`inc-for-${invitee.name}`)}},crypto);
+ const payload=await firstContactPayload(creator,invitee,{kind:'conversation-init',body,createdAt,operationId:uuidOf(2),subject:'Planning',conversation:{genesis,sharedSecret:base64url(SECRET),returnControl:{resource:`${new URL(creator.ingress).origin}/return/invite-1`,nonce:NONCE,expiresAt:createdAt+86400000,maxResponseBytes:8192},creatorBinding:binding(creator,`inc-for-${invitee.name}`)}},crypto);
  return signEnvelope(payload,creator.signer,{crypto});
 }
 export async function recordPayload(from,to,type,{counter=1,previous=null,parents=[],target,data,body,incarnation=`inc-for-${from.name}`,createdAt=NOW-30000,operationId=uuidOf(100+counter),epoch=EPOCH,stream=from.author.delegate,...extra}={},crypto=globalThis.crypto){

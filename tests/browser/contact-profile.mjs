@@ -3,9 +3,10 @@ import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {within} from '../helpers/async.mjs';
 import {Window} from 'happy-dom';
-// The optional contact profile (Account & security), per-link profile sharing for the contact links the owner's apps
-// created, and device naming, driven through the real engine. Saved contacts, core contact-link management and
-// conversations left the core with messaging (2026-10-27); the last tests pin that none of them remain.
+// The account profile (Account & security): display name and avatar only, against GET/PUT /api/profile, plus device
+// naming, driven through the real engine. Per-link sharing, the disclosure switch and the bio were removed with contact
+// links (contacts phase 4); saved contacts and conversations left the core with messaging (2026-10-27). The last tests
+// pin that none of them remain.
 const window=new Window({url:'https://space.example/'}),names=['document','HTMLElement','CustomEvent','Event','EventTarget','Node','Element','FormData'];
 const previous=Object.fromEntries(names.map(name=>[name,globalThis[name]]));for(const name of names)globalThis[name]=window[name];
 const {dodo,Engine,Provider}=await import('../../apps/web/src/shared/stack.mjs');
@@ -13,9 +14,10 @@ const {forEachSeed}=await import('../helpers/chaos.mjs');
 const {default:StateProvider}=await import('../../apps/web/src/providers/browser-state.mjs');
 const {default:localize}=await import('../../apps/web/src/ui/localize.mjs');
 const {createLocalization}=await import('../../packages/i18n/index.mjs');
-const {LoadContactProfile,UpdateContactSharing,SaveProfile,sharingLinks}=await import('../../apps/web/src/bl/contact-profile.mjs');
+const profileModule=await import('../../apps/web/src/bl/contact-profile.mjs');
 const {RenameDevice}=await import('../../apps/web/src/bl/devices.mjs');
-const {contactProfilePanel,contactSharingDialog}=await import('../../apps/web/src/ui/contact-profile.mjs');
+const {LoadContactProfile,SaveProfile}=profileModule;
+const profileView=await import('../../apps/web/src/ui/contact-profile.mjs'),{contactProfilePanel}=profileView;
 const {default:securityView}=await import('../../apps/web/src/ui/release-security.mjs');
 const {builtInModules}=await import('../../apps/web/src/shared/portal-modules.mjs');
 // Finish imports before registering tests: a late top-level await can let the
@@ -26,6 +28,7 @@ test.after(async()=>{await window.happyDOM.close();for(const name of names)globa
 const render=(node,locale='en')=>{const root=document.createElement('main');dodo.reconcile(root,[localize(node,createLocalization({locale}))]);return root;};
 const buttons=(root,text)=>[...root.querySelectorAll('button')].filter(button=>button.textContent.trim()===text);
 const jti='a1b2c3d4-0000-4000-8000-000000000001';
+// A pre-phase-4 contact parent that a stale account snapshot might still carry; nothing renders or sends it.
 const parent=(patch={})=>({id:jti,type:'https://spec.bindle.example/links/contact/v1',slot:'messaging-ingress',active:true,createdAt:Date.UTC(2026,9,1),expiresAt:Date.UTC(2027,9,1),conditional:false,issuer:{kind:'app',clientId:'https://parlay.example/client'},profileFields:[],discloseProfile:false,...patch});
 async function fixture({api={},submissions={},contacts=[parent()]}={}){
  const calls=[];
@@ -37,67 +40,58 @@ async function fixture({api={},submissions={},contacts=[parent()]}={}){
  return {engine,calls,write,read,act:(action,what=action.constructor.name)=>within(engine.dispatch(action).next('complete'),what),close:()=>engine.dispose()};
 }
 
-test('the contact profile loads only GET /api/profile and saving sends only the profile body',async()=>{
- const saved={displayName:'Ray',bio:'Builds things',avatar:'https://images.example/ray.png',discloseToContacts:true,revision:'r2'};
- const f=await fixture({submissions:{profile:{displayName:'Ray',bio:'Builds things',avatar:'https://images.example/ray.png',discloseToContacts:'on'}},api:{get:async()=>({displayName:'',bio:'',avatar:'',discloseToContacts:false,revision:'r1'}),request:async()=>saved}});
+test('the profile loads only GET /api/profile and saving sends only displayName, avatar and the expected revision',async()=>{
+ const saved={displayName:'Ray',avatar:'https://images.example/ray.png',revision:'r2'};
+ // Stale form or service members (bio, the disclosure switch, sharing fields) never reach the request body.
+ const f=await fixture({submissions:{profile:{displayName:'Ray',bio:'Builds things',avatar:'https://images.example/ray.png',discloseToContacts:'on','profile:bio':'on'}},api:{get:async()=>({displayName:'',bio:'old',avatar:'',discloseToContacts:false,revision:'r1'}),request:async()=>saved}});
  try{
   // Bug hunt F1: a save is refused until the stored profile has loaded (it would otherwise overwrite it with blanks).
   await f.act(new SaveProfile({operationId:'profile'}));assert.deepEqual(f.calls,[]);assert.match((await f.read()).error,/still loading/);
-  await f.write({error:''});await f.act(new LoadContactProfile());assert.deepEqual(f.calls,[{method:'GET',path:'/api/profile'}]);assert.equal((await f.read()).contactProfile.status,'loaded');
+  await f.write({error:''});await f.act(new LoadContactProfile());assert.deepEqual(f.calls,[{method:'GET',path:'/api/profile'}]);
+  let state=await f.read();assert.equal(state.contactProfile.status,'loaded');assert.deepEqual(state.contactProfile.profile,{displayName:'',avatar:'',revision:'r1'},'only profile members are kept');
   await f.act(new SaveProfile({operationId:'profile'}));
-  assert.deepEqual(f.calls.at(-1),{method:'PUT',path:'/api/profile',body:{displayName:'Ray',bio:'Builds things',avatar:'https://images.example/ray.png',discloseToContacts:true,expectedRevision:'r1'}});
-  const state=await f.read();assert.deepEqual(state.contactProfile.profile,saved);assert.equal(state.notice,'Contact profile saved.');assert.equal(state.busy,false);
-  const root=render(contactProfilePanel(state));assert.equal(root.querySelector('input[name=displayName]').value,'Ray');assert.equal(root.querySelector('input[name=discloseToContacts]').checked,true);
-  assert.equal(f.calls.some(call=>/\/api\/contacts(\/directory|\/redeem|$)/.test(call.path)),false,'no saved-contact directory or redeem call');
+  const put=f.calls.at(-1);assert.deepEqual(put,{method:'PUT',path:'/api/profile',body:{displayName:'Ray',avatar:'https://images.example/ray.png',expectedRevision:'r1'}});assert.deepEqual(Object.keys(put.body),['displayName','avatar','expectedRevision']);
+  state=await f.read();assert.deepEqual(state.contactProfile.profile,saved);assert.equal(state.notice,'Profile saved.');assert.equal(state.busy,false);
+  const root=render(contactProfilePanel(state));assert.equal(root.querySelector('input[name=displayName]').value,'Ray');assert.equal(root.querySelector('input[name=avatar]').value,'https://images.example/ray.png');
+  assert.deepEqual([...root.querySelectorAll('input')].map(input=>input.name),['displayName','avatar']);
+  assert.equal(f.calls.some(call=>/\/api\/(contacts|links)/.test(call.path)),false,'no contact, sharing or link call');
  }finally{await f.close();}
+ // Without a stored revision the body is exactly the two fields; missing form fields are sent as empty strings.
+ const g=await fixture({submissions:{profile:{}},api:{request:async()=>({displayName:'',avatar:'',revision:'r1'})}});
+ try{await g.write({contactProfile:{profile:{},status:'loaded'}});await g.act(new SaveProfile({operationId:'profile'}));assert.deepEqual(g.calls.at(-1).body,{displayName:'',avatar:''});}finally{await g.close();}
 });
 
 test('a stale profile save reloads the latest version instead of claiming success',async()=>{
- let latest={displayName:'Other session',bio:'',avatar:'',discloseToContacts:false,revision:'r9'};
- const f=await fixture({submissions:{profile:{displayName:'Mine',bio:'',avatar:'',discloseToContacts:'on'}},api:{get:async()=>latest,request:async()=>{throw Object.assign(new Error('stale'),{code:'profile_stale',status:409});}}});
- try{await f.write({contactProfile:{profile:{displayName:'',revision:'r1'},status:'loaded'}});await f.act(new SaveProfile({operationId:'profile'}));const state=await f.read();assert.match(state.error,/changed in another session/);assert.deepEqual(state.contactProfile.profile,latest);assert.equal(state.contactProfile.epoch,1);assert.notEqual(state.notice,'Contact profile saved.');}finally{await f.close();}
+ let latest={displayName:'Other session',avatar:'',revision:'r9'};
+ const f=await fixture({submissions:{profile:{displayName:'Mine',avatar:''}},api:{get:async()=>latest,request:async()=>{throw Object.assign(new Error('stale'),{code:'profile_stale',status:409});}}});
+ try{await f.write({contactProfile:{profile:{displayName:'',revision:'r1'},status:'loaded'}});await f.act(new SaveProfile({operationId:'profile'}));const state=await f.read();assert.match(state.error,/changed in another session/);assert.deepEqual(state.contactProfile.profile,latest);assert.equal(state.contactProfile.epoch,1);assert.notEqual(state.notice,'Profile saved.');}finally{await f.close();}
+ // A refused body (profile_invalid) is reported, not reloaded or claimed as saved.
+ const g=await fixture({submissions:{profile:{displayName:'x'.repeat(81),avatar:''}},api:{request:async()=>{throw Object.assign(new Error('Use a display name of up to 80 characters.'),{code:'profile_invalid',status:400});}}});
+ try{await g.write({contactProfile:{profile:{revision:'r1'},status:'loaded'}});await g.act(new SaveProfile({operationId:'profile'}));const state=await g.read();assert.match(state.error,/up to 80 characters/);assert.equal(g.calls.filter(call=>call.method==='GET').length,0);assert.notEqual(state.notice,'Profile saved.');}finally{await g.close();}
 });
 
-test('the profile panel lives in Account & security and lists only live app-created links for sharing',()=>{
- const contacts=[parent({profileFields:['bio']}),parent({id:'b1b2c3d4-0000-4000-8000-000000000002',active:false}),parent({id:'c1b2c3d4-0000-4000-8000-000000000003',conditional:true,issuer:{kind:'app'}})];
- const state={locale:'en',session:{account:{id:'owner',handle:'ray'}},config:{},brand:{host:'space.example'},data:{contacts,account:{id:'owner',handle:'ray'}},contactProfile:{status:'loaded',profile:{}}};
+test('the profile panel lives in Account & security with display name and avatar only; no sharing editor or disclosure switch',()=>{
+ const contacts=[parent({profileFields:['bio']}),parent({id:'c1b2c3d4-0000-4000-8000-000000000003',conditional:true})];
+ const state={locale:'en',session:{account:{id:'owner',handle:'ray'}},config:{},brand:{host:'space.example'},data:{contacts,account:{id:'owner',handle:'ray'}},contactProfile:{status:'loaded',profile:{displayName:'Ray',avatar:'',bio:'stale',discloseToContacts:true}}};
  const root=render(securityView(state));const panel=root.querySelector('.contact-profile-settings');assert.ok(panel);
- assert.equal(panel.querySelectorAll('.link-sharing-row').length,2,'revoked links are not offered');assert.equal(buttons(panel,'Choose shared fields').length,2);
- assert.match(panel.textContent,/Shares: About you/);assert.match(panel.textContent,/Shares no profile fields\./);assert.match(panel.textContent,/Conditional/);
- assert.equal(panel.querySelector('bdi[translate=no]')?.textContent,'https://parlay.example/client');
- assert.doesNotMatch(root.textContent,/Saved contacts|New contact link|Create a contact link|Quarantine|Rotate challenge/);
- const es=render(securityView({...state,locale:'es'}),'es').querySelector('.contact-profile-settings');assert.ok(buttons(es,createLocalization({locale:'es'}).t('Choose shared fields')).length===2);assert.notEqual(createLocalization({locale:'es'}).t('Choose shared fields'),'Choose shared fields');
- const empty=render(contactProfilePanel({...state,data:{contacts:[]}}));assert.match(empty.textContent,/None of your apps has created a contact link yet\./);
+ assert.deepEqual([...panel.querySelectorAll('input')].map(input=>input.name),['displayName','avatar']);assert.equal(panel.querySelector('input[type=checkbox]'),null);
+ assert.equal(panel.querySelector('.link-sharing,.link-sharing-row'),null);assert.equal(buttons(panel,'Choose shared fields').length,0);assert.equal(buttons(panel,'Save profile').length,1);
+ assert.doesNotMatch(root.textContent,/contact link|Shares:|About you|stale|Saved contacts|New contact link|Create a contact link|Quarantine|Rotate challenge/i);
+ // The sharing editor's module surface is gone.
+ for(const gone of ['UpdateContactSharing','sharingLinks','PROFILE_WITHDRAWN_STALE'])assert.equal(gone in profileModule,false,gone);assert.equal('contactSharingDialog' in profileView,false);
+ assert.deepEqual(profileModule.PROFILE_FIELDS,['displayName','avatar']);
 });
 
-test('the sharing dialog saves PUT /api/contacts/{jti}/sharing with profileFields only for a live link',async()=>{
- const contact={id:jti,profileFields:['bio']};
- const dialog=contactSharingDialog({locale:'en',modal:{kind:'contact-permissions',contact}}),root=render(dialog.body);
- assert.deepEqual([...root.querySelectorAll('input[type=checkbox]')].map(input=>[input.name,input.checked]),[['profile:displayName',false],['profile:bio',true],['profile:avatar',false]]);
- assert.doesNotMatch(root.textContent,/file offer/i);assert.equal(contactSharingDialog({locale:'en',modal:{kind:'other'}}),null);
- const intents=[];root.addEventListener('3sln-intent',event=>intents.push(event.detail));root.querySelector('form').dispatchEvent(new window.Event('submit',{bubbles:true,cancelable:true}));
- assert.equal(intents.at(-1)?.kind,'update-contact-sharing');assert.equal(intents.at(-1).id,jti);
- const f=await fixture({submissions:{share:{'profile:displayName':'on','profile:avatar':'on','beamEnabled':'on'}},api:{get:async path=>path==='/api/account'?{contacts:[parent({profileFields:['displayName','avatar']})]}:{}}});
- try{
-  await f.write({modal:{kind:'contact-permissions',contact}});await f.act(new UpdateContactSharing({id:jti,operationId:'share'}));
-  const put=f.calls.find(call=>call.method==='PUT');assert.deepEqual(put,{method:'PUT',path:`/api/contacts/${jti}/sharing`,body:{profileFields:['displayName','avatar']}});
-  const state=await f.read();assert.equal(state.modal,null);assert.equal(state.notice,'Contact sharing permissions saved.');assert.deepEqual(state.data.contacts[0].profileFields,['displayName','avatar']);
-  await f.act(new UpdateContactSharing({id:jti}));assert.equal(f.calls.filter(call=>call.method==='PUT').length,1,'no form values never clears sharing');
-  // A link that is not live in the snapshot is never sent; a link revoked meanwhile answers contact_not_found.
-  await f.act(new UpdateContactSharing({id:'not-a-live-link',operationId:'share'}));assert.equal(f.calls.filter(call=>call.method==='PUT').length,1);assert.match((await f.read()).error,/no longer active/);
- }finally{await f.close();}
- const g=await fixture({submissions:{share:{'profile:bio':'on'}},api:{get:async()=>({contacts:[]}),request:async()=>{throw Object.assign(new Error('gone'),{code:'contact_not_found',status:404});}}});
- try{await g.write({modal:{kind:'contact-permissions',contact}});await g.act(new UpdateContactSharing({id:jti,operationId:'share'}));const state=await g.read();assert.equal(state.modal,null);assert.match(state.error,/no longer active/);assert.deepEqual(state.data.contacts,[]);assert.equal(state.busy,false);}finally{await g.close();}
-});
-
-test('seeded snapshots: sharing rows match live links exactly and owner data is never translated',async()=>{
+test('seeded snapshots: the panel and save body ignore contact parents and stale profile members',async()=>{
  await forEachSeed(40,async random=>{
-  const contacts=Array.from({length:random.int(6)},(_,index)=>random.chance(.15)?random.pick([null,{},{id:7},{active:true}]):parent({id:`${index}0000000-0000-4000-8000-00000000000${index}`,active:random.chance(.7),name:random.chance(.3)?random.pick(['Friends','<b>x</b>','‮evil','Contact link']):undefined,conditional:random.chance(.3),profileFields:random.shuffle(['displayName','bio','avatar','beam','unknown']).slice(0,random.int(4)),issuer:random.chance(.5)?{kind:'app',clientId:random.pick(['https://a.example/c','<script>'])}:{kind:'app'},createdAt:random.chance(.8)?Date.UTC(2026,0,1+index):'bad',expiresAt:random.chance(.5)?Date.UTC(2027,0,1):undefined}));
-  const state={locale:random.pick(['en','es']),session:{account:{id:'owner'}},config:{},data:{contacts},contactProfile:{status:random.pick(['loading','loaded','error']),profile:{}}};
-  const live=sharingLinks(state);assert.deepEqual(live.map(link=>link.id),contacts.filter(c=>c?.active===true&&typeof c.id==='string').map(c=>c.id));
-  const root=render(contactProfilePanel(state),state.locale),rows=[...root.querySelectorAll('.link-sharing-row')];assert.equal(rows.length,live.length);
-  assert.equal(root.querySelector('b'),null);assert.equal(root.querySelector('script'),null);
-  for(const [index,row] of rows.entries()){const expected=live[index].profileFields.filter(name=>['displayName','bio','avatar'].includes(name));assert.equal(row.querySelectorAll('button').length,1);if(!expected.length)assert.ok(row.querySelector('.link-sharing-fields'));assert.doesNotMatch(row.textContent,/beam|unknown/);}
+  const contacts=Array.from({length:random.int(4)},(_,index)=>parent({id:`${index}0000000-0000-4000-8000-00000000000${index}`,profileFields:['displayName','bio','avatar'].slice(0,random.int(3))}));
+  const profile={displayName:random.pick(['','Ray','<b>x</b>','\u202eevil']),avatar:random.pick(['','https://images.example/a.png']),...random.chance(.5)?{bio:'BIO_SECRET'}:{},...random.chance(.5)?{discloseToContacts:true}:{},...random.chance(.5)?{revision:'r'+random.int(9)}:{}};
+  const state={locale:random.pick(['en','es']),session:{account:{id:'owner'}},config:{},data:{contacts},contactProfile:{status:random.pick(['loading','loaded','error']),profile}};
+  const root=render(contactProfilePanel(state),state.locale);assert.deepEqual([...root.querySelectorAll('input')].map(input=>input.name),['displayName','avatar']);
+  assert.equal(root.querySelector('b'),null);assert.equal(root.textContent.includes('BIO_SECRET'),false);assert.equal(root.querySelector('.link-sharing-row'),null);
+  const f=await fixture({contacts,submissions:{s:{displayName:'N',avatar:'',bio:'BIO_SECRET',discloseToContacts:'on'}},api:{request:async(path,body)=>({...body,revision:'next'})}});
+  try{await f.write({contactProfile:{status:'loaded',profile}});await f.act(new SaveProfile({operationId:'s'}));const put=f.calls.find(call=>call.method==='PUT');
+   assert.deepEqual(put.body,{displayName:'N',avatar:'',...typeof profile.revision==='string'?{expectedRevision:profile.revision}:{}});assert.equal(JSON.stringify((await f.read()).contactProfile).includes('BIO_SECRET'),false);}finally{await f.close();}
  });
 });
 
@@ -130,7 +124,7 @@ test('device rename keeps the account-epoch guard and busy reservation',async()=
  }finally{resume();await g.close();}
 });
 
-test('offline and sign-out clear the contact profile, and a late load cannot restore it',{timeout:10000},async()=>{
+test('offline and sign-out clear the profile, and a late load cannot restore it',{timeout:10000},async()=>{
  let release,started;const wait=new Promise(resolve=>release=resolve),loading=new Promise(resolve=>started=resolve);
  const f=await fixture({api:{get:async path=>{if(path==='/api/profile'){started();await wait;return {displayName:'PRIVATE_NAME'};}return {};}}});
  let pending;

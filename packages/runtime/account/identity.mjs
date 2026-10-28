@@ -20,8 +20,8 @@ function keyEngine(c){let engine=engines.get(c);if(!engine){engine=createIdentit
 const unavailable=()=>new StorageError('identity_keys_unavailable','Identity keys are unavailable.',409);
 
 // Slice C3, key-delegation.v1 (packages/identity/delegation.mjs): one delegation engine per controller over the same
-// account store. New issuance and renewal are `not_found` unless KEY_DELEGATION_ENABLED (or, until contacts spike CR-C7,
-// LINKS_ENABLED) admits them (keyDelegationAdmits). `config.DELEGATION_SLOT_OCCUPANT`
+// account store. New issuance and renewal are `not_found` unless KEY_DELEGATION_ENABLED admits them
+// (keyDelegationAdmits; contacts spike CR-C7 retired the LINKS_ENABLED fallback). `config.DELEGATION_SLOT_OCCUPANT`
 // ({owner, fragment}) -> {clientId, origin, ingress, cnx, purposes} | null is the messaging-ingress occupancy port; the
 // default (delegationSlotOccupant) answers only through the enabled, unsuspended messaging-mailbox provider feature with a
 // filled `mailbox` field and a recorded ingress (Bindle Messaging §2.5, §3.2); without it nothing is certified. Disabling

@@ -27,18 +27,16 @@ function fixture({locale='en',view='inbox',activity=false,modal=null,extra={}}={
  const account={id:OWNER,handle:'n.fixture',verifiedEmail:'owner@example.com',termsVersion:'2026-10-11'};
  const messages=[{id:legacyId,owner:OWNER,collection:'c1',mimeType:'text/plain',size:12,receivedAt:now,readAt:null,tags:['app-message','receipt'],grantId:null,senderMetadata:{subject:'Build finished'},appNotification:{name:'Calendar',origin:'https://calendar.example',clientId:app.clientId}},{id:'660e8400-e29b-41d4-a716-000000000002',owner:OWNER,collection:'c1',mimeType:'text/plain',size:7,receivedAt:now-1000,readAt:now,tags:[],grantId:'770e8400-e29b-41d4-a716-000000000001',senderMetadata:{subject:'Hello'}}];
  const views=[{id:'all',name:'All messages',builtin:true,revision:1,filter:{version:1},sort:'activity-desc'},{id:'unread',name:'Unread',builtin:true,revision:1,filter:{version:1,read:false},sort:'activity-desc'},{id:'custom',name:'Receipts',revision:2,filter:{version:1,tagsAll:['receipt']},sort:'activity-desc'}];
- // Snapshot contacts are the owner's contact parents (links the owner's apps created), keyed by their record jti.
- const contacts=[{id:'770e8400-e29b-41d4-a716-000000000001',type:'https://spec.bindle.example/links/contact/v1',slot:'messaging-ingress',active:true,createdAt:now-86400000,expiresAt:now+86400000*30,conditional:false,issuer:{kind:'app',clientId:app.clientId},profileFields:[],discloseProfile:false}];
  const devices=[{id:'d1',label:'Laptop',current:true,createdAt:now-86400000,lastUsedAt:now,expiresAt:now+86400000*30},{id:'d2',label:null,current:false,createdAt:now-86400000*2,lastUsedAt:now-3600000,expiresAt:now+86400000*20}];
  const incoming=activity?{activityV2:true,owner:OWNER,generation:1,items:[{id:'880e8400-e29b-41d4-a716-000000000001',app,subject:'Native item',revision:1,receivedAt:now,updatedAt:now,state:'active',read:false,archived:false,tags:[{namespace:'app',app:app.principal,id:'receipt'}]},{id:legacyId,legacy:true,app,subject:'Build finished',revision:1,receivedAt:now,updatedAt:now,state:'active',read:false,archived:false,verified:false,tags:[]}],filters:{},pages:[],cursor:null,facets:{apps:[{...app,count:1,unread:1}],tags:[]}}:{items:messages.map(m=>({...m,type:'message'})),cursor:null};
  return {locale,view,modal,brand:{name:'3sln.me'},loading:false,busy:false,offline:false,route:{kind:'home'},filter:'all',search:'',beamGeneration:1,commands:[{id:'messaging.collection',title:'Create view'}],
   session:{account,sessionContext:'ctx'},config:{origin:'https://space.example',termsVersion:'2026-10-11',activityV2Enabled:activity,pushEnabled:false,signupEnabled:true,localDevelopment:true},
-  data:{account,features:{},messages,views,contacts,collections:[{id:'c1',name:'Inbox'}],resources:[],rules:[],devices,pushDevices:[],storage:{plan:'free',usedBytes:1000,storageBytes:1000000}},
-  incoming,incomingView:'all',contactProfile:{profile:{displayName:'Ray',bio:'',avatar:'',discloseToContacts:false,revision:'0'.repeat(32)},status:'loaded'},
+  data:{account,features:{},messages,views,collections:[{id:'c1',name:'Inbox'}],resources:[],rules:[],devices,pushDevices:[],storage:{plan:'free',usedBytes:1000,storageBytes:1000000}},
+  incoming,incomingView:'all',contactProfile:{profile:{displayName:'Ray',avatar:'',revision:'0'.repeat(32)},status:'loaded'},
   developerContact:{available:false,reason:'developer-unavailable'},...extra};
 }
 const MAIN_VIEWS=['inbox','resources','rules','notifications','security','connected-apps','automation','billing','settings','space-search'];
-const MODALS=[{kind:'rename-device',device:{id:'d2',label:null}},{kind:'tag-label',id:'receipt',label:'Receipts'},{kind:'contact-permissions',contact:{id:'770e8400-e29b-41d4-a716-000000000001',profileFields:[]}},{kind:'command-palette'}];
+const MODALS=[{kind:'rename-device',device:{id:'d2',label:null}},{kind:'tag-label',id:'receipt',label:'Receipts'},{kind:'command-palette'}];
 function renderer(locale,{seen,missing}={}){
  const base=createLocalization({locale,onMissing:(_,id)=>missing?.add(id)}),localization={...base,t:(key,variables)=>{seen?.add(String(key));return base.t(key,variables);}};
  const app=createApp({localize:tree=>localizeTree(tree,localization)}),root=document.createElement('main');
@@ -64,7 +62,7 @@ test('F2 no attribute renders as "null" or "undefined" across the main views, di
 test('F8 the Spanish catalogue covers the interface text of the main views and dialogs',()=>{
  const seen=new Set(),missing=new Set(),en=renderer('en',{seen}),es=renderer('es',{missing});
  for(const activity of [false,true]){for(const view of MAIN_VIEWS){en.render(fixture({view,activity}));es.render(fixture({locale:'es',view,activity}));}for(const modal of MODALS){en.render(fixture({view:'security',activity,modal}));es.render(fixture({locale:'es',view:'security',activity,modal}));}}
- for(const extra of [{contactProfile:{profile:{},status:'loading'}},{contactProfile:{profile:{},status:'error'}},{data:{...fixture().data,contacts:[]}}]){en.render(fixture({view:'security',extra}));es.render(fixture({locale:'es',view:'security',extra}));}
+ for(const extra of [{contactProfile:{profile:{},status:'loading'}},{contactProfile:{profile:{},status:'error'}}]){en.render(fixture({view:'security',extra}));es.render(fixture({locale:'es',view:'security',extra}));}
  // Untranslated interface text is a key the English render also passed to the translator. Data (numbers, dates,
  // handles, the brand domain) and URL placeholders are not interface text.
  const untranslated=[...missing].filter(key=>seen.has(key)&&/[A-Za-z]{3,}/.test(key)&&!/^https?:/.test(key)&&!/^[\w-]+(?:\.[\w-]+)+$/.test(key));
@@ -74,12 +72,12 @@ test('F8 the Spanish catalogue covers the interface text of the main views and d
 
 test('F1 the profile form disables Save and is aria-busy until the profile loads; loaded values arrive as defaults',()=>{
  const {render}=renderer('en'),loading=render(fixture({view:'security',extra:{contactProfile:{profile:{},status:'loading'}}})),form=loading.querySelector('.contact-profile-settings form');
- assert.equal(form.getAttribute('aria-busy'),'true');assert.equal(form.querySelector('button[type=submit]').disabled,true);assert.match(form.textContent,/Loading your contact profile/);
+ assert.equal(form.getAttribute('aria-busy'),'true');assert.equal(form.querySelector('button[type=submit]').disabled,true);assert.match(form.textContent,/Loading your profile/);
  const name=form.querySelector('input[name=displayName]');assert.equal(name.disabled,false,'fields stay editable while loading');
- const loaded=render(fixture({view:'security',extra:{contactProfile:{profile:{displayName:'Stored',bio:'About',avatar:'',discloseToContacts:true,revision:'a'.repeat(32)},status:'loaded'}}})).querySelector('.contact-profile-settings form');
+ const loaded=render(fixture({view:'security',extra:{contactProfile:{profile:{displayName:'Stored',avatar:'',revision:'a'.repeat(32)},status:'loaded'}}})).querySelector('.contact-profile-settings form');
  assert.equal(loaded,form,'the same form element is kept across the load');assert.equal(loaded.getAttribute('aria-busy'),'false');assert.equal(loaded.querySelector('button[type=submit]').disabled,false);
  assert.equal(name.defaultValue,'Stored','the stored value is the field default; a field the owner already edited keeps its text');
- assert.equal(loaded.querySelector('input[name=discloseToContacts]').checked,true);
+ assert.equal(loaded.querySelector('input[name=discloseToContacts]'),null,'no disclosure switch');assert.equal(loaded.querySelector('input[name=bio]'),null,'no bio');
  const failed=render(fixture({view:'security',extra:{contactProfile:{profile:{},status:'error'}}})).querySelector('.contact-profile-settings form');assert.equal(failed.querySelector('button[type=submit]').disabled,true);
 });
 

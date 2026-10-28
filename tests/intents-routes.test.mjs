@@ -2,7 +2,8 @@ import test from 'node:test';import assert from 'node:assert/strict';
 import {stages,intentFeature} from '../packages/runtime/routes/intents.mjs';
 import {EXT} from '../packages/core/extensions.mjs';
 import {encodeIntent} from '../packages/intents/format.mjs';
-import {registeredIntent,REGISTERED_INTENTS,REGISTERED_INTENT_REFERENCES} from '../packages/intents/registered.mjs';
+import {REVIEWED_INTENT_ENVELOPES} from '../packages/runtime/artefact-pins.mjs';
+const registeredIntent=()=>({artefact:'https://spec.bindle.example/intents/open-conversation/v1',version:1,digest:'sha256-BVp7Z5PiP2NNpO9cb-mxI_8uyZWO1PKJ5PsKgPZNU70'});
 import {versionDigest,versionRecord} from '../packages/core/artefacts.mjs';
 import {redactIntentLog} from '../packages/intents/redaction.mjs';
 const origin='https://provider.example',value=encodeIntent({bintent:1,kind:registeredIntent('open-conversation'),data:{conversation:'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',creator:{iss:origin,sub:'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'},profile:'https://profile.example/v1'}});
@@ -21,9 +22,11 @@ test('one /manifest.webmanifest handler keeps branding and Cache-Control in both
   if(brand)assert.equal(manifest.icons[0].src,'/generic-icon.svg');else assert.equal(manifest.icons,undefined);
  }
 });
-test('INT-5 reviewed built-in pins match actual documents',async()=>{for(let i=0;i<REGISTERED_INTENTS.length;i++){const envelope=REGISTERED_INTENTS[i];assert.equal(await versionDigest(versionRecord(envelope,envelope.versions[0])),REGISTERED_INTENT_REFERENCES[i].digest);}});
+test('INT-5 reviewed provider pins match actual documents (connect and open-conversation; contacts phase 4)',async()=>{const expected={'https://spec.bindle.example/messaging/v1/intents/connect':'sha256-oCyJ6fKE_vJrmdRY5bF5U_R8t_pfE2HZoZy81yG7H-g','https://spec.bindle.example/intents/open-conversation/v1':'sha256-BVp7Z5PiP2NNpO9cb-mxI_8uyZWO1PKJ5PsKgPZNU70'};assert.deepEqual(REVIEWED_INTENT_ENVELOPES.map(e=>e.id),Object.keys(expected));for(const envelope of REVIEWED_INTENT_ENVELOPES)assert.equal(await versionDigest(versionRecord(envelope,envelope.versions[0])),expected[envelope.id]);});
 test('INT-5 adapter log redaction includes every intent spelling without keeping capability bytes',()=>{const raw='GET /i?bintent=SECRET&x=1 #Bintent=OTHER bindle_intent=THIRD ?sig=FOUR';const log=redactIntentLog(raw);for(const word of ['SECRET','OTHER','THIRD','FOUR'])assert(!log.includes(word));assert(log.includes('&x=1'));});
-test('INT-7 contact landing permits explicit cross-provider form handoff only behind the flag',async()=>{
- const {stages:contacts}=await import('../packages/runtime/routes/contacts.mjs'),id='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',part=Buffer.from(JSON.stringify({sub:id})).toString('base64url'),url=new URL(origin+'/users/alice/contact/'+id+'?sig=e30.'+part+'.YWJj');
- for(const enabled of ['false','true']){const request=new Request(url,{headers:{Accept:'text/html'}}),response=await contacts.public({request,env:{...env,INTENT_LINKS_ENABLED:enabled},url,path:url.pathname,local:false});assert.equal(response.status,404);assert.match(response.headers.get('Content-Security-Policy'),enabled==='true'?/form-action https:/:/form-action 'self'/);}
+test('contacts phase 4 (CR-C3): /i/contact and the legacy console bootstrap are gone; /i takes only bintent',async()=>{
+ const legacy='web+bindle://send-message?contact-url='+encodeURIComponent(origin+'/users/alice/contact/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa?bindle_meta=a.b.c');
+ assert.equal(await route(origin+'/i/contact'),undefined);assert.equal(await route(origin+'/console?intent='+encodeURIComponent(legacy)),undefined);
+ const {allowedMethods}=await import('../packages/runtime/routes/intents.mjs');assert.equal(allowedMethods('/i/contact'),null);assert.deepEqual(allowedMethods('/i'),['GET','HEAD','POST']);
+ const response=await route(origin+'/i?legacy='+encodeURIComponent(legacy),{headers:{Accept:'application/json'}});assert.equal(response.status,400);
 });

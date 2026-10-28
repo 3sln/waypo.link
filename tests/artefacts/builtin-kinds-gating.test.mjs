@@ -3,10 +3,11 @@
 // registers no session kinds at all (the four rtc-purpose documents are removed; a kind is published by the app that
 // needs it), so even with the signaling flags on, no session kind is registered.
 import test from 'node:test';import assert from 'node:assert/strict';
-import {configuredArtefactDocuments,registeredArtefact} from '../../packages/runtime/artefact-pins.mjs';
-import {REGISTERED_INTENT_REFERENCES} from '../../packages/intents/registered.mjs';
+import {configuredArtefactDocuments,registeredArtefact,REVIEWED_INTENT_ENVELOPES,reviewedIntentKind} from '../../packages/runtime/artefact-pins.mjs';
 import {SIGNALING_CONTRACT} from '../../packages/signaling/extension.mjs';
-const intents=REGISTERED_INTENT_REFERENCES.map(r=>r.artefact);
+// Contacts phase 4: the provider-reviewed Messaging kinds are `connect` and `open-conversation`; `send-message` and
+// `add-contact` (withdrawn contact-link data) are never registered.
+const intents=REVIEWED_INTENT_ENVELOPES.map(e=>e.id),withdrawn=['send-message','add-contact'].map(n=>`https://spec.bindle.example/intents/${n}/v1`);
 // The retired rtc-purpose lines (docs/artefacts/rtc-purposes/*, removed with signaling rev 3.2).
 const retired=['call','screen-share','file-transfer','device-sync'].map(p=>`https://spec.bindle.example/rtc-purposes/${p}/v1`);
 const visible=(config,ids)=>ids.map(id=>[registeredArtefact(config,id),Object.hasOwn(configuredArtefactDocuments(config),id),Object.hasOwn(configuredArtefactDocuments(config),id+'/envelope')].every(Boolean));
@@ -23,6 +24,7 @@ test('a default deployment registers no built-in intent kind or session kind',()
 });
 test('intent kinds follow INTENT_LINKS_ENABLED; core registers no session kind under SIGNALING_ENABLED',()=>{
  const links={ARTEFACT_VERSIONS_ENABLED:'true',INTENT_LINKS_ENABLED:'true'};assert.ok(all(visible(links,intents)));assert.deepEqual(sessionKinds(links),[]);
+ assert.deepEqual(intents,['https://spec.bindle.example/messaging/v1/intents/connect','https://spec.bindle.example/intents/open-conversation/v1']);assert.ok(none(visible(links,withdrawn)),'withdrawn contact kinds');
  assert.ok(none(visible(SIGNALING,intents)),'signaling never registers the messaging intent kinds');assert.ok(none(visible(SIGNALING,retired)),'nor any rtc purpose');
  assert.deepEqual(sessionKinds(SIGNALING),[],'no session kind is registered');
  // What signaling does add is its first-party contract (signaling §10), not a kind.
@@ -34,4 +36,10 @@ test('a flag change on the same config object takes effect at the next lookup',(
  config.INTENT_LINKS_ENABLED='true';assert.ok(all(visible(config,intents)));
  config.INTENT_LINKS_ENABLED='false';Object.assign(config,SIGNALING);assert.ok(none(visible(config,intents)));assert.deepEqual(sessionKinds(config),[]);
  assert.ok(Object.hasOwn(configuredArtefactDocuments(config),SIGNALING_CONTRACT),'the signaling flag took effect too');
+});
+
+test('reviewed: only the exact pinned line of a provider-reviewed kind, and only with INTENT_LINKS_ENABLED',async()=>{
+ const on={ARTEFACT_VERSIONS_ENABLED:'true',INTENT_LINKS_ENABLED:'true'},connect={artefact:'https://spec.bindle.example/messaging/v1/intents/connect',version:1,digest:'sha256-oCyJ6fKE_vJrmdRY5bF5U_R8t_pfE2HZoZy81yG7H-g'};
+ assert.equal(await reviewedIntentKind(on,connect),true);assert.equal(await reviewedIntentKind({ARTEFACT_VERSIONS_ENABLED:'true'},connect),false);
+ for(const ref of [{...connect,version:2},{...connect,digest:'sha256-'+'A'.repeat(43)},{...connect,artefact:withdrawn[0]},null,'x'])assert.equal(await reviewedIntentKind(on,ref),false,JSON.stringify(ref));
 });

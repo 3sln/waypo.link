@@ -17,20 +17,24 @@ export class DeleteView extends OwnerFlow{async perform(r,ctx){const view=snapsh
 // invitation token is a bearer capability: it lives only in browser.secret('developerContactURL'), scoped to the owner
 // and session generation, never in persisted or rendered state.
 const CONNECT_KIND='https://spec.bindle.example/messaging/v1/intents/connect',STATES=['eligible','ineligible','unavailable'];
+/** Whether intent links are on for this account (the console copy follows it, review I2). */
+export const intentsAvailable=s=>(s.data?.features??s.session?.account?.consoleFeatures??s.config)?.intentLinksEnabled===true;
 const eligibilityOf=e=>{const state=STATES.includes(e?.state)?e.state:'unavailable';return {state,...typeof e?.reason==='string'?{reason:e.reason}:{},...typeof e?.tier==='string'?{tier:e.tier}:{}};};
 const unavailableContact=result=>({available:false,reason:typeof result?.reason==='string'?result.reason:'contact-unavailable'});
 const storedInvitation=r=>{const record=r.browser.secret('developerContactURL');return record?.owner===snapshot(r).session?.account?.id&&record.generation===(snapshot(r).beamGeneration??0)&&Number.isSafeInteger(record.expiresAt)&&record.expiresAt>Date.now()+60000?record:null;};
-// The minted answer is untrusted until checked: one unsigned `connect` intent value, its scheme URL, and a bounded expiry.
-function invitationOf(result){
- const value=result?.intent?.value,url=result?.intent?.url,expiresAt=result?.expiresAt;
+// The minted answer is untrusted until checked: one unsigned `connect` intent value, its scheme URL, a bounded expiry and,
+// only when intent links are on for this account, the provider's own intent-router route for exactly that value on this
+// origin. A route for any other origin, path or value refuses the whole answer.
+function invitationOf(result,origin){
+ const value=result?.intent?.value,url=result?.intent?.url,route=result?.intent?.route,expiresAt=result?.expiresAt;
  if(typeof value!=='string'||!/^[A-Za-z0-9_-]{1,6400}$/.test(value)||url!=='web+bindle://intent?bintent='+value||!Number.isSafeInteger(expiresAt)||expiresAt<=Date.now()||expiresAt>Date.now()+3660000)return null;
+ if(route!==undefined&&(typeof origin!=='string'||!origin||route!==origin+'/i#bintent='+value))return null;
  try{if(decodeIntent(value).kind.artefact!==CONNECT_KIND)return null;}catch{return null;}
- return {value,url,expiresAt};
+ return {value,url,...route!==undefined?{route}:{},expiresAt};
 }
-// The scheme URL, which the browser hands to a registered messaging app. The provider's intent router does not route the
-// `connect` kind until contacts phase 4, so it is not used here even when intents are on (review divergence 6;
-// provisional). Phase 4 switches intents-enabled accounts to '/i#bintent=' once the router handles `connect`.
-const handoffTarget=record=>record.url;
+// Contacts phase 4: the provider's intent router routes the `connect` kind, so a minted route (present only when intent
+// links are on for this account) opens it there; otherwise the scheme URL goes to the browser's registered messaging app.
+const handoffTarget=record=>record.route??record.url;
 const failures={not_eligible:'Your account is not currently eligible to message the developer.',eligibility_unavailable:'Your eligibility could not be checked right now. Try again shortly.',developer_unavailable:'The platform developer account is not ready to receive messages.',rate_limited:'Please wait before trying again.'};
 export class LoadDeveloperContact extends OwnerFlow{mutation=false;async perform(r,ctx){publish(r,ctx,{developerContactLoading:true});try{const result=await r.api.get('/api/developer-contact');r.browser.storeSecret('developerContactURL',null);if(result?.available!==true){publish(r,ctx,{developerContact:unavailableContact(result)});return;}publish(r,ctx,{developerContact:{available:true,eligibility:eligibilityOf(result.eligibility),...result.recipientBadge&&typeof result.recipientBadge==='object'?{recipientBadge:result.recipientBadge}:{}}});}catch(error){if(this.detail.quiet&&error.status!==401)return;if(error.code==='rate_limited')throw Error('Please wait before checking again.');throw error;}finally{publish(r,ctx,{developerContactLoading:false});}}}
 // Mints (or reuses this session's unexpired) invitation and hands it off. Eligibility is checked again by the server.
@@ -43,7 +47,7 @@ export class OpenDeveloperContact extends OwnerFlow{async perform(r,ctx){
    if(error.code==='developer_unavailable')publish(r,ctx,{developerContact:{available:false,reason:'developer-unavailable'}});
    if(failures[error.code])throw Error(failures[error.code]);throw error;}
   if(result?.available===false){publish(r,ctx,{developerContact:unavailableContact(result)});return;}
-  const invitation=invitationOf(result);if(!invitation)throw Error('Developer contact is not available right now. Try again later.');
+  const invitation=invitationOf(result,r.browser.origin);if(!invitation)throw Error('Developer contact is not available right now. Try again later.');
   record={...invitation,owner,generation};r.browser.storeSecret('developerContactURL',record);
   publish(r,ctx,{developerContact:{...snapshot(r).developerContact,invitation:{expiresAt:record.expiresAt}}});
  }

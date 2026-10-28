@@ -13,7 +13,8 @@ DEVLOG.md is integrator-owned during this wave; this note supplies the B8 handof
 ## Placement and configuration
 
 `../wrangler.jsonc` is the separate app Worker config. It creates a SQLite `MailboxObject` namespace and 64
-SQLite link-index shards. It defaults `PARLAY_ENABLED` to `false`, disables workers.dev/preview URLs, and
+SQLite ingress-index shards (binding `LINK_INDEX`, class `LinkIndexObject`; the names predate contacts spike phase 4
+and are kept because renaming a Durable Object class needs a migration). It defaults `PARLAY_ENABLED` to `false`, disables workers.dev/preview URLs, and
 uses reserved `.example` identifiers. Root Worker configuration and core imports remain untouched.
 
 Run Node with `node apps/parlay/node/server.mjs`. It listens on `127.0.0.1:8790`, defaults off, and creates no
@@ -23,6 +24,15 @@ directory. The implementation uses SQLite WAL/FULL, serialized async transaction
 The first-contact budget's source on Node is the socket address; a client-sent `CF-Connecting-IP` or
 `X-Forwarded-For` is ignored. Behind a reverse proxy, set `PARLAY_TRUSTED_CLIENT_IP_HEADER` (option
 `trustedClientIpHeader`) to the header the proxy overwrites with one client address.
+
+Contacts spike phase 4 reset `parlay-contact-links-retired-v1` (provisional, unsigned): `createMailbox` runs the engine's
+`mailbox.reset-contact-links` (system actor; packages/messaging-engine/domains/contact-links-reset.mjs) on every mailbox
+open before the requested operation, in at most 64 bounded slices, and again from the alarm until its marker
+`migration/parlay-contact-links-retired-v1` exists. It deletes queued contact-link edge publications, `decision/`,
+`contact-link/`, `known/`, `contact/` and then `parent/` rows, seeds the built-in Contacts list from accepted two-party
+conversation peers (never group-only peers or blocked peers, never a duplicate) and writes its marker last. Each
+ingress-index shard (Worker `LinkIndexObject`, Node `links.sqlite`) deletes its retired `link/` entries once before
+serving (`resetEdgeIndexLinks`, marker last).
 
 Node and Worker share the mailbox composition, ngin operations and HTTP translator. B4 conversation and B5
 organization providers are composed over the same mailbox store. UI, OAuth installation screens, and the storage-setup fragment's
@@ -41,7 +51,10 @@ issuer is not evidence of current directory availability.
 - `authenticate({authorization,method,url})` → `{kind:'owner',owner}` after live app-credential verification.
   Cookies and body/query/forwarding-header owner claims never select a mailbox.
 - `resolveKey(query)`, `delegationStatus(query)`: identity directory/pinned continuity and revocation lookup.
-- `links({owner,method,input})`: ordinary links contract; `consumerKey` supplies a verified public bridge key.
+- `emailBridge({owner,method,input})`: the owner's provider email-bridge resource (`${subject}/email-bridge`, contract
+  `https://3sln.me/contracts/email-bridge/v1`, offered only while the email bridge is enabled for the owner). Methods:
+  `consumerKey({consumer,keyId})` → `{keyId,publicJwk}|null` (the verified public bridge key for `intake.deliver`)
+  and `accepted({jti})` (`intake.accept`). It replaces the retired links contract (contacts spike phase 4).
 - `certify({owner,renew,input})`: the ordinary issue/renew delegation contract, authenticated by the app's own
   connection credential. Input contains a public key, fixed purposes and IDKEYS-2's proof of possession.
 - `publicJwks()`: the confidential client's public signing keys, separate from per-user delegate keys.
@@ -80,8 +93,9 @@ half-life, persists a retry before network work, and fences a concurrent authori
 
 Every endpoint is absent while `PARLAY_ENABLED` is off.
 
-- `POST /bindle/ingress`: bounded protocol delivery, capability-index check, then `receive.deliver` or
-  `conversations.receive`. `POST /bindle/ingress/return/:token` routes invitation responses through the durable
+- `POST /bindle/ingress`: bounded protocol delivery, ingress-index checks (hosted recipient, invitation token or
+  conversation pair gate), then `receive.redeem`, `receive.first-contact` or `conversations.receive`. A `BindleLink`
+  credential is `malformed` (contact links were removed in contacts spike phase 4). `POST /bindle/ingress/return/:token` routes invitation responses through the durable
   return-capability index to `conversations.respond`.
 - `POST /api/send`: prepared signed envelopes and message bytes (`body`: null, byte array or base64url), max
   4 MiB JSON. Returns the engine's committed queue snapshot; it does not claim delivery.
@@ -90,14 +104,14 @@ Every endpoint is absent while `PARLAY_ENABLED` is off.
   `Last-Event-ID`. Clients reconnect; `reset` requires a snapshot refetch. No idle streaming timer.
 - `POST /api/delegation/renew`: dispatches certificate renewal, never returns private material.
 - `GET /bindle/client.json`: carries `integration.json` as `bindle_integration`; JWKS at `/bindle/jwks.json`.
-- `POST /bindle/resources`, `/bindle/rpc`, `/bindle/events`: verified discovery, mailbox describe/linkRevoked,
+- `POST /bindle/resources`, `/bindle/rpc`, `/bindle/events`: verified discovery, mailbox `describe`,
   public intake, and SET dispatch. Preference SETs retain bounded snapshots without expanding local grants.
 
 Queue claim/finish/submission/cancellation and their alarms commit together. A crash during remote delivery
 leaves a leased obligation and a recovery alarm; retries retain the immutable operation ID and signed bytes.
 Final tasks remove the alarm unless renewal or an edge publication remains. Node startup scans persisted
 mailboxes and restores alarms without waiting for a request. Edge publication also has durable retry wiring.
-Both hosts publish link and pair/return indexes, drain B4's durable conversation work and invitation responses,
+Both hosts publish invitation, hosted-recipient and pair/return indexes, drain B4's durable conversation work and invitation responses,
 and recover unsubmitted conversation operations. None of this changes B4's protocol/state algorithms.
 
 ## Verification and remaining integration gates
@@ -142,11 +156,6 @@ The new trusted service methods are:
   one object's content key after authenticating the live occupant connection and verifying
   its fresh proof; `attest` checks occupancy and proof for takeover. This service must retain
   old encryption keys, log accesses and never return raw ECDH output or private keys.
-- `resolveContact({owner,id,principal,link})`: returns live directory-verified
-  `{principal:{issuer,subject,identityURI},keyId,ingress}` from the contact's identity and
-  messaging descriptor. The shell independently verifies the stored contact meta signature
-  with the resolved identity key and rejects a changed principal. Browsers select stored
-  contact IDs; they never provide trusted key or ingress tuples.
 
 `createMailbox` now composes the B6 archive provider. Configured storage and key-holder ports
 activate archive controls, checkpoint alarms (15 minutes) and reclamation. Failed checkpoints
@@ -161,7 +170,7 @@ key lives only in this process: restarting loses access to those test archives. 
 must supply the durable, connection-authenticated `archiveKeys` service described above; the
 local helper is never selected by Worker or by default.
 
-Archive imports persist an admission hold before archive reads and takeover. Link,
+Archive imports persist an admission hold before archive reads and takeover. First-contact,
 conversation, return-control and public-intake ingress refuse custody until control rows commit;
 resumes retain the hold across failures. Old envelopes absent from the restored replay set are
 refused at the checkpoint boundary. Preserved envelopes and genesis proofs are reverified at

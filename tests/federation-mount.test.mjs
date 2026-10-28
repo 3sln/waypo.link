@@ -30,7 +30,7 @@ const manifestOf=async f=>(await f.fetch(issuer+'/.well-known/bindle/manifest.js
 
 test('F8: the manifest advertises the entry feature only when mounted and the components profile only with a served shell',async()=>{
  const none=await fixture({entries:false});const bare=await manifestOf(none);
- assert.equal(bare.features,undefined);assert.equal(bare.profiles,undefined);assert.equal(ext(bare,EXT.authorizationEntry),undefined);assert.equal(ext(bare,EXT.embeddedComponents),undefined);assert.ok(ext(bare,EXT.intents));assert.equal(bare.revocation_endpoint,issuer+'/oauth/revoke');
+ assert.equal(bare.features,undefined);assert.equal(bare.profiles,undefined);assert.equal(ext(bare,EXT.authorizationEntry),undefined);assert.equal(ext(bare,EXT.embeddedComponents),undefined);assert.equal((bare.extensions??[]).some(e=>e.spec==='https://spec.bindle.example/extensions/intents/v1'),false,'the contact-intents extension is withdrawn (contacts phase 4)');assert.equal(bare.revocation_endpoint,issuer+'/oauth/revoke');
  const noShell=await manifestOf(await fixture());
  assert.deepEqual(ext(noShell,EXT.authorizationEntry),{endpoint:issuer+'/api/oauth/entries',intents:['login','select-account','reauthenticate']});assert.equal(ext(noShell,EXT.embeddedComponents),undefined,'no islands are built, so the extension is not declared');
  const noEmbed=await manifestOf(await fixture({embed:false,shell:true}));assert.equal(ext(noEmbed,EXT.embeddedComponents),undefined,'an entry store without the embed origin mounted declares no embedded components');

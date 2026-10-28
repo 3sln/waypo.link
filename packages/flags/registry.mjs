@@ -30,18 +30,11 @@ const rows=[
  ['SUBJECT_DELETED_EVENTS_ENABLED','a','G',{risk:'crit',requires:['INTEGRATIONS_ENABLED'],envParse:'boolean'}],
  ['INCREMENTAL_AUTH_ENABLED','a','G A S P C',{risk:'crit',requires:['FEDERATION_ENABLED'],stateful:true,retainExisting:false,retentionReason:'Pending requests and grants live in federation stores; no account-local predicate.',envParse:'boolean'}],
  ['EXTENSIONS_ENABLED','a','G A C',{stateful:true,envParse:'boolean'}],
- // Core links contract and the contact-link descriptor; key-delegation issuance only as KEY_DELEGATION_ENABLED's fallback (messaging extraction prep,
- // 2026-10-26). Formerly BINDLEBOX_ENABLED, which named the separate messaging app; that name is retired below and its
- // raw env value is still honoured through envAlias (the new name wins when both are set). BB-CUT (2026-10-27) kept the
- // alias; removing it is an open item (DEVLOG "Messaging removed from core; Parlay rename; BB-CUT reset", review fixes).
- ['LINKS_ENABLED','a','G A S P',{stateful:true,envParse:'boolean',envAlias:'BINDLEBOX_ENABLED'}],
  // Contacts-and-links spike CR-C0 (H5, CL-25; provisional, unsigned): the key-delegation issuance gate. Stateful: an account
- // with a live `key-delegation/` row stays serviceable through a ramp-down (runtime/account/flags.mjs reads those rows only,
- // never `link/`). Once configured (a console record or an env value) it decides alone; until CR-C7 retires LINKS_ENABLED,
- // an unconfigured one falls back to LINKS_ENABLED, except a LINKS_ENABLED retention that only `link/` rows could justify
- // (identity/delegation.mjs keyDelegationAdmits), so no existing deployment changes. Since 2026-10-28 it also gates the
- // messaging-mailbox provider feature's declaration row and MESSAGING_DESCRIBE (Bindle Messaging §2.5), which is what
- // key-delegation occupancy reads; that row requires KEY_DELEGATION_ENABLED explicitly (no LINKS_ENABLED fallback).
+ // with a live `key-delegation/` row stays serviceable through a ramp-down (runtime/account/flags.mjs reads those rows only).
+ // It decides alone (identity/delegation.mjs keyDelegationAdmits): its LINKS_ENABLED fallback ended when CR-C7 retired
+ // that flag in contacts phase 4 (2026-10-28). It also gates the messaging-mailbox provider feature's declaration row and
+ // MESSAGING_DESCRIBE (Bindle Messaging §2.5), which is what key-delegation occupancy reads.
  ['KEY_DELEGATION_ENABLED','a','G A S P',{stateful:true,envParse:'boolean'}],
  // The email bridge needs no messaging-app flag: delivery waits for any occupant of the public-message-intake slot.
  ['EMAIL_BRIDGE_ENABLED','a','G A S P',{risk:'crit',stateful:true,retainExisting:false,retentionReason:'Holding queues and opt-in live in the external email-bridge store; no account-local predicate.',envParse:'boolean'}],
@@ -142,8 +135,13 @@ export const RETIRED_FLAGS=freeze({
  BEAM_ENABLED:{retiredOn:'2026-10-26',reason:'Beam removed from the core'},
  BEAM_TURN_ENABLED:{retiredOn:'2026-10-26',reason:'Beam removed from the core'},
  BEAM_STUN_ENABLED:{retiredOn:'2026-10-26',reason:'Beam removed from the core'},
- // Peer messaging leaves the core (Parlay). Core links and delegation moved to LINKS_ENABLED (env alias kept past BB-CUT; removal is open).
- BINDLEBOX_ENABLED:{retiredOn:'2026-10-26',reason:'Renamed to LINKS_ENABLED; the messaging app reads its own switch',replacement:'LINKS_ENABLED'},
+ // Peer messaging leaves the core (Parlay). It was renamed LINKS_ENABLED on 2026-10-26 (its env value read through an
+ // alias); contacts phase 4 retired LINKS_ENABLED and the alias with it, so neither name is read any more.
+ BINDLEBOX_ENABLED:{retiredOn:'2026-10-26',reason:'Renamed to LINKS_ENABLED, itself retired on 2026-10-28; the messaging app reads its own switch'},
+ // Contacts phase 4 (contacts spike CR-C7; provisional, unsigned): contact links, the links contract and the contact-link
+ // descriptor left the core. Key delegation reads KEY_DELEGATION_ENABLED alone (CR-C0), so nothing replaces this flag
+ // and a stored LINKS_ENABLED record is not carried to any other flag.
+ LINKS_ENABLED:{retiredOn:'2026-10-28',reason:'Contact links removed from the core (contacts phase 4); key delegation has its own flag'},
  // RTC signaling replaced by generic signaling rev 3.2 (signaling Appendix C.2; provisional, unsigned). No RTC flag had
  // an envDefault or a deployment setting (Appendix C evidence), so nothing is aliased.
  RTC_SIGNALING_ENABLED:{retiredOn:'2026-10-28',reason:'Renamed with the signaling rev 3.2 code',replacement:'SIGNALING_ENABLED'},

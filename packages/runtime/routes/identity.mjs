@@ -89,7 +89,7 @@ export function allowedMethods(path){
  if(path.startsWith('/api/auth/'))return ['POST'];
  return null;
 }
-// Terms gates: new content, saved views/rules, contact profile sharing, link responses, storage connections,
+// Terms gates: new content, saved views/rules, storage connections,
 // uploads, app grants and authorization changes. GET/HEAD, export, deletion, revoke, cleanup,
 // security settings, billing cancellation and sign-out remain accessible.
 export {createsContentOrGrant} from '../../identity/age-policy.mjs';
@@ -98,9 +98,6 @@ export {createsContentOrGrant} from '../../identity/age-policy.mjs';
 const paidCheckout=async(path,request)=>path==='/api/billing/checkout'||path==='/api/orgs/checkout'||/^\/api\/orgs\/[0-9a-f-]{36}\/(?:billing-checkout|claim|break-glass-checkout)$/.test(path)||/^\/api\/orgs\/[0-9a-f-]{36}\/transfer$/.test(path)&&(await body(request.clone(),8192))?.operation==='accept';
 export const stages={
  async public({request,env,path}){
-  // Incoming contact-delivery capabilities authorize recipient ingress; their authors may belong to another
-  // provider. Hosted authors create envelopes through the gated /api/links/envelope path. Remote delivery
-  // and retries of already-signed envelopes do not create a new local-owner grant.
   // Preparations made before a policy update cannot submit new content afterwards.
   const postback=/^\/api\/messages\/([a-f0-9-]{36})\/postbacks$/.exec(path);
   if(postback&&request.method==='POST'&&!request.headers.has('Cookie')&&request.headers.get('Origin')===env.APP_ORIGIN){const token=request.headers.get('Authorization')?.match(/^Bearer (.+)$/)?.[1];let owner;try{owner=await verifyPreparedPostbackToken(env,token,postback[1]);}catch{return;}const document=await body(request.clone(),128);if(Object.keys(document).length)return json({error:'invalid_request'},400);const engine=await identity(env);try{await engine.query(new TermsSubjectAllowed(owner)).peek();}catch(error){if(lifecycleUnknown(error)||error.code==='unauthorized')return json({error:'unauthorized',message:'This prepared submission is invalid or expired.'},401);throw error;}finally{engine.dispose();}}

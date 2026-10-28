@@ -16,7 +16,9 @@ export {EXT};
 export const COMPONENTS_V1=EXT.embeddedComponents;
 export const authorizationIntents=Object.freeze(['login','select-account','reauthenticate','end-session']);
 /** Extensions this SDK implements; every other declared extension is ignored (extensions §2.5). */
-export const implementedExtensions=Object.freeze([EXT.authorizationEntry,EXT.fedcm,EXT.intents,EXT.clientIdMetadata,EXT.embeddedComponents]);
+// The contact-intents extension (`…/extensions/intents/v1`, options `intents` and `login_endpoint`) was withdrawn by the
+// contacts spike (CR-P1, CL-11) and removed in contacts phase 4; the SDK no longer reads it.
+export const implementedExtensions=Object.freeze([EXT.authorizationEntry,EXT.fedcm,EXT.clientIdMetadata,EXT.embeddedComponents]);
 const registry=new Map(implementedExtensions.map(spec=>[spec,BINDLE_REGISTRY.get(spec)]));
 export const declarationLimits=Object.freeze({entries:EXTENSION_LIMITS.entries,entryBytes:EXTENSION_LIMITS.entryBytes,cacheDefault:300000,cacheMax:3600000});
 export const credentialBindings=Object.freeze(['key-binding.v1']);
@@ -71,7 +73,7 @@ export function readDeclaration(manifest,issuer,{embedderOrigin}={}){
   const read=readExtensions(manifest,{registry,issuer,allowInsecureLocalhost:issuer.startsWith('http://')});
   for(const {spec,reason} of read.absent)warnings.push(spec??`extensions:${reason}`);
   const extensions=Object.fromEntries(read.extensions),option=spec=>extensions[spec]??null;
-  const entryOptions=option(EXT.authorizationEntry),fedcmOptions=option(EXT.fedcm),intentOptions=option(EXT.intents);
+  const entryOptions=option(EXT.authorizationEntry),fedcmOptions=option(EXT.fedcm);
   let components=null;
   if(option(EXT.embeddedComponents)){components=readComponentsOptions(option(EXT.embeddedComponents),issuer,{embedderOrigin});if(!components)warnings.push(EXT.embeddedComponents);}
   const algs=Array.isArray(manifest.dpop_signing_alg_values_supported)?manifest.dpop_signing_alg_values_supported:[];
@@ -86,7 +88,6 @@ export function readDeclaration(manifest,issuer,{embedderOrigin}={}){
     extensions,
     authorizationEntry:entryOptions?{endpoint:entryOptions.endpoint,intents:[...entryOptions.intents]}:null,
     fedcm:fedcmOptions?{configUrl:fedcmOptions.config_url}:null,
-    intents:intentOptions?{intents:[...intentOptions.intents],loginEndpoint:intentOptions.login_endpoint}:null,
     clientIdMetadata:!!option(EXT.clientIdMetadata),
     components,warnings,
   });
@@ -113,7 +114,6 @@ export function computeCapabilities(declaration,{degraded=new Set(),defaultIssue
     // DPoP needs the entry (it carries dpopJkt) and a refresh grant worth binding.
     dpop:!off('dpop')&&declaration.dpop&&!!entry&&declaration.refresh,refresh:declaration.refresh,
     clientIdMetadata:declaration.clientIdMetadata,
-    intentLinks:declaration.intents?[...declaration.intents.intents]:[],
     manageUrl:components?.manageUrl??declaration.components?.manageUrl??issuer+'/',
     profile:!!components,embedOrigin:components?.embedOrigin??null,
     islands:{avatar:part('avatar',bound),switcher:part('account-switcher',bound&&identityless),signIn:part('sign-in',identityless)},

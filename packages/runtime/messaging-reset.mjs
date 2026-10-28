@@ -24,12 +24,10 @@
 // under the owner's `messages/<owner>/` prefix), its postback preparations and `notification-event/` row are deleted,
 // and `effects.item` removes it from the item index and tombstones its search document.
 //
-// What is kept: `app-message/` items (activity), collections, rules, tag labels, Views, `profile` (the owner's contact
-// profile), link records (`link/`, `link-state/`, `link-change/`), `link-replay/`, identity keys, notification state,
-// billing and lifecycle state. Also kept (review L1, live families of the new core): `contact-sharing/<jti>` (per-parent
-// profile sharing, packages/links/contact-profile.mjs), `link-audience/` and `link-gc-cursor/` (packages/links/
-// audience.mjs). Legacy rows in those families are reclaimed by the link-state alarm sweep (`collectLinkState`): a
-// sharing row whose `link/<jti>` parent is not this owner's is deleted, and audience decisions expire within a day.
+// What is kept: `app-message/` items (activity), collections, rules, tag labels, Views, `profile`, identity keys,
+// notification state, billing and lifecycle state. The contact-link families it kept at the time (`link/`, `link-*`,
+// `contact-sharing/`) were deleted later by the contacts phase 4 reset `contact-links-retired-v1`
+// (packages/runtime/contact-links-reset.mjs).
 // The marker is written last, so a crash resumes. The account gate serializes slices.
 import {key} from '../core/records.mjs';
 import {erasePostbackPreparations} from './message-postbacks.mjs';

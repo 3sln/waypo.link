@@ -60,7 +60,10 @@ export function decodeValue(v,depth=0){
 // ---- Classification (spec §10 record types; phases are the import order: control, peers, outbox, items). First match
 // wins. Excluded by omission: owner, config, shell:*, edge outboxes, conv/secret, conv/route, conv/work, conv/response,
 // bb:send body/queue/breaker/events, cursors, hot usage (recomputed on import) and archive/* itself.
-const R=(prefix,type,phase,exact=false)=>Object.freeze({prefix,type,phase,exact});
+const R=(prefix,type,phase,exact=false,retired=false)=>Object.freeze({prefix,type,phase,exact,...retired?{retired:true}:{}});
+// Retired families (contacts spike phase 4: contact-link parents, contacts added from links and their indexes) are never
+// exported; an older archive's lines for them still parse, in order, and are skipped on import.
+const RETIRED=(prefix,type)=>R(prefix,type,3,false,true);
 export const ARCHIVE_CLASSES=Object.freeze([
  R('block/','block',0),R('revoked/','revocation',0),R('conv/frontier/','frontier',0),R('conv/counter/','frontier',0),R('conv/mutations/','pending-mutation',0),
  R('conv/replay/','replay',0),R('replay/','replay',0),R('conv/evidence/','evidence',0),R('intake/jti/','replay',0),R('intake/tx/','replay',0),
@@ -70,7 +73,7 @@ export const ARCHIVE_CLASSES=Object.freeze([
  R('bb:send:message/','outbox',2),R('bb:send:task/','outbox',2),R('conv/op/','outbox',2),
  R('conv/event/','item',3),R('conv/body/','body-ref',3),R('conv/by-jkt/','item',3),R('conv/decided/','overlay',3),
  R('item/','item',3),R('body/','body-ref',3),R('pending/','item',3),R('rejected/','item',3),R('by-jkt/','item',3),R('seen-jkt/','item',3),
- R('parent/','link-parent',3),R('contact/','contact',3),R('contact-link/','contact',3),R('known/','contact',3),R('allow/','rule',3),
+ RETIRED('parent/','link-parent'),RETIRED('contact/','contact'),RETIRED('contact-link/','contact'),RETIRED('known/','contact'),RETIRED('decision/','link-decision'),R('allow/','rule',3),
  R('settings/','overlay',3),R('budget/','quota',3),R('bridge/settings','overlay',3,true),R('storage-gc/','gc',3),
  R('bb:views/','view',3),R('bb:view-operations/','view',3),R('bb:rules','rule',3,true),R('bb:classify:settings','rule',3,true),R('bb:tag-labels','tag-label',3,true),
  R('bb:incoming:row/','overlay',3),R('bb:incoming:organization/','overlay',3),R('bb:incoming:revision','counter',3,true),
@@ -92,7 +95,6 @@ export function sanitize(key,value,{phase='export'}={}){
  if(key.startsWith('conv/op/')){const unsent=!v.submitted;return {operationId:v.operationId,cid:v.cid,eventId:v.eventId,type:v.type,kid:v.kid,createdAt:v.createdAt,knownRotation:Boolean(v.knownRotation),recipients:unsent?[]:(v.recipients??[]).map(r=>({principal:r.principal})),prepared:null,secret:null,payload:null,hasBody:false,submitted:true,abandoned:Boolean(v.abandoned),...unsent?{unsent:true}:{}};}
  if(key.startsWith('bb:send:task/')){const t=compactTask(v);if(phase==='import'&&!FINAL.has(t.state))Object.assign(t,{state:'expired',reason:'moved',resend:true,manualUsed:true});return t;}
  if(key.startsWith('bb:send:message/'))return compactMessage(v);
- if(key.startsWith('parent/'))return {...v,link:null};
  // Invitations lose the secret and the creator's return capability; an undecided one needs a fresh invitation (BB6-S9).
  if(key.startsWith('item/')&&v?.envelope?.payload?.conversation){const c=v.envelope.payload.conversation;if(Object.hasOwn(c,'sharedSecret')||Object.hasOwn(c,'returnControl')||Object.hasOwn(c,'creatorBinding')){delete c.sharedSecret;delete c.returnControl;delete c.creatorBinding;v.secretRedacted=true;v.needsReinvite=true;}}
  return v;
@@ -100,7 +102,7 @@ export function sanitize(key,value,{phase='export'}={}){
 export const recordType=(c,value)=>c.prefix==='conv/event/'&&value?.type==='retract'?'tombstone':c.type;
 // One archive line. Deletions carry no value; types come from the classification, never from the archive alone.
 export function lineOf(key,value){
- const c=classify(key);if(!c)return null;
+ const c=classify(key);if(!c||c.retired)return null;
  if(value===undefined)return JSON.stringify({t:c.type,k:key,d:1});
  const v=sanitize(key,value);if(v===undefined)return null;
  return JSON.stringify({t:recordType(c,v),k:key,v:encodeValue(v)});
@@ -111,6 +113,7 @@ export function parseLine(line){
  let r;try{r=P.strictJSON(line,{maxBytes:64*1048576,maxDepth:72});}catch{corrupt();}
  if(!isPlain(r)||typeof r.t!=='string'||typeof r.k!=='string'||r.k.length>2048)corrupt();
  const c=classify(r.k);if(!c)fault('archive_invalid','The archive contains data Parlay does not import.',422);
+ if(c.retired)return {key:r.k,type:c.type,phase:c.phase,retired:true};
  if(r.d===1){if(Object.keys(r).sort().join(',')!=='d,k,t'||r.t!==c.type)corrupt();return {key:r.k,type:c.type,phase:c.phase,deleted:true};}
  if(Object.keys(r).sort().join(',')!=='k,t,v')corrupt();
  const value=sanitize(r.k,decodeValue(r.v),{phase:'import'});if(value===undefined)return {key:r.k,type:c.type,phase:c.phase,deleted:true};

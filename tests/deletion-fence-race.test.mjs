@@ -58,7 +58,7 @@ test('gated orchestration refuses to start once the fence, a purge job or the to
 test('an invoke queued behind the account gate is refused if the fence commits while it waits',async t=>{
  const x=await fixture(t),c=x.controller;let release;const held=new Promise(r=>{release=r;});let holding;const started=new Promise(r=>{holding=r;});
  const blocker=c.gate.run(async()=>{holding();await held;});await started;
- const queued=x.invoke('contacts',owner);
+ const queued=x.invoke('accountProfile',owner);
  await new Promise(r=>setTimeout(r,20));await x.db.put(FENCE_KEY,{owner});release();await blocker;
  assert.equal((await queued)?.$fault?.code,'account_deleting');
 });

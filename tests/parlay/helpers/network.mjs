@@ -40,9 +40,8 @@ export function createNetwork({peers=3,seed=Number(process.env.CHAOS_SEED??1),cl
   let offset=0;const localClock={now:()=>clock.now()+offset,advance:ms=>{offset+=ms;return localClock.now();},set:ms=>{offset=ms-clock.now();return ms;}};
   // These are deliberately fake fixtures, never signatures or delegation certificates.
   const delegateKeys={fake:true,id:effects.random.uuid(),material:effects.random.bytes(32)};
-  const providerLink={fake:true,links:new Map(),slots:new Map(),principal};
-  const peer={name,owner,principal,ingress,store,delegateKeys,providerLink,online:true,clock:localClock};
-  const providers={delegateKeys,providerLink,directory,egress:{send:(to,request)=>send(name,to,request),fetch:async(url,init)=>{const target=[...parties.values()].find(peer=>peer.ingress===String(url));if(!target)throw failure('network_denied');return send(name,target.name,{url:String(url),...init});}}};
+  const peer={name,owner,principal,ingress,store,delegateKeys,online:true,clock:localClock};
+  const providers={delegateKeys,directory,egress:{send:(to,request)=>send(name,to,request),fetch:async(url,init)=>{const target=[...parties.values()].find(peer=>peer.ingress===String(url));if(!target)throw failure('network_denied');return send(name,target.name,{url:String(url),...init});}}};
   const start=()=>createTestEngine({seed:seed+index+1,owner,clock:localClock,store,providers});peer.engine=start();
   peer.handler=async request=>{try{return Response.json(await peer.engine.run(request.op,request.params));}catch(error){const fault=faultOf(error);return Response.json(fault,{status:fault.status??500});}};
   peer.restart=async()=>{peer.online=false;await peer.engine.dispose();peer.engine=start();peer.online=true;};parties.set(name,peer);

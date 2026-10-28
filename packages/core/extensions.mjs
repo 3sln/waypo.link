@@ -12,10 +12,11 @@ import {fieldOutcome,httpsIdentifier,cardinalityOf} from './fragments.mjs';
 
 export const BINDLE_EXTENSIONS_BASE='https://spec.bindle.example/extensions';
 const B=name=>`${BINDLE_EXTENSIONS_BASE}/${name}/v1`;
-/** Bindle-owned extension spec URLs (extensions §2.8; EXT3-21 reading, pending owner sign-off). */
+/** Bindle-owned extension spec URLs (extensions §2.8; EXT3-21 reading, pending owner sign-off). The contact-intents
+ * extension `…/extensions/intents/v1` is withdrawn (contacts spike CR-P1, CL-11; removed in contacts phase 4). */
 export const EXT=Object.freeze({
  authorizationEntry:B('authorization-entry'),deviceAuthorization:B('device-authorization'),integrations:B('integrations'),brokeredResources:B('brokered-resources'),
- fedcm:B('fedcm'),intents:B('intents'),intentLinks:B('intent-links'),clientIdMetadata:B('client-id-metadata'),
+ fedcm:B('fedcm'),intentLinks:B('intent-links'),clientIdMetadata:B('client-id-metadata'),
  directory:B('directory'),organizations:B('organizations'),keyDelegation:B('key-delegation'),relations:B('relations'),portability:B('portability'),
  appRemoval:B('app-removal'),subjectDeleted:B('subject-deleted'),artefactVersions:B('artefact-versions'),embeddedComponents:B('embedded-components'),
  // Signaling rev 3.2 (docs/spec/extensions/signaling.md §3.1; extensions §2.8 row `signaling.v1`). Implemented locally
@@ -45,7 +46,6 @@ export const BINDLE_DESCRIPTORS=Object.freeze([
  d(EXT.integrations,'Integrations','Connect services that supply resources to your account and receive its events.',{hint_endpoint:url('Hint endpoint',{endpoint:'audience',min:0})}),
  d(EXT.brokeredResources,'Brokered resources','Use resources hosted by your connected integrations, with access ending when you disconnect them.',{jwks_uri:url('Brokering keys',{endpoint:'public'}),preferences_contract:url('Preferences contract',{maxLength:256}),introspection_endpoint:url('Introspection endpoint',{endpoint:'audience',min:0})}),
  d(EXT.fedcm,'Browser sign-in','Sign in with the browser\'s own account chooser.',{config_url:url('FedCM configuration',{endpoint:'public'})}),
- d(EXT.intents,'Contact intents','Open contact links from other sites in your own account.',{intents:choice('Intents',['send-message','add-contact']),login_endpoint:url('Console entry',{endpoint:'public'})}),
  d(EXT.intentLinks,'Intent links','Handle intent links for apps you approve.',{endpoint:url('Intent endpoint',{endpoint:'public'})}),
  d(EXT.clientIdMetadata,'App metadata documents','Use apps that identify themselves with a published metadata document.'),
  d(EXT.directory,'Directory','Look up handles and identity documents for people on this provider.',{directory_url:url('Directory',{endpoint:'public'})}),

@@ -8,8 +8,6 @@ import { createNodeServer } from '../apps/node/server.mjs';
 import { IdentityService } from '../packages/identity/service.mjs';
 import { identityBackupPort } from '../packages/runtime/identity-backup.mjs';
 import { verifyIdentityBackup, verifyNameAssignment } from '../packages/recovery/identity-backup.mjs';
-import { linkService } from '../packages/runtime/account/links.mjs';
-import { MESSAGING_CONTACT_LINK_TYPE } from '../packages/links/types.mjs';
 
 const origin = 'http://localhost:8788';
 const password = 'Portable recovery runtime test password!';
@@ -53,7 +51,7 @@ async function fixture(t, config = {}) {
   };
 }
 
-test('durable signed recovery adopts the existing signer and preserves valid and revoked contact policy across restart and return', async t => {
+test('durable signed recovery adopts the existing signer across restart and return', async t => {
   const f = await fixture(t), pending = await f.signup();
   const accountId = pending.account.id, assignedHandle = pending.account.handle;
   const originalSigner = await f.app.resources.accounts.get(accountId).signingKey(accountId);
@@ -89,13 +87,7 @@ test('durable signed recovery adopts the existing signer and preserves valid and
   }
   const snapshot = await f.request('/api/account', undefined, owner.headers, 'GET');
   assert.equal(snapshot.status, 200);
-  // Contact parents through the core links service (legacy contact grants left the core on 2026-10-27).
-  const links = () => linkService(f.app.resources.accounts.get(accountId)), issue = async () => { const r = await links().issue(accountId, { type: MESSAGING_CONTACT_LINK_TYPE, claims: { resource: 'contact', kinds: ['one-off'], mimeTypes: ['text/plain'], maxMessages: 5, maxBytes: 4096, maxMessageBytes: 1024 }, expiresAt: Date.now() + 86400000, handle: assignedHandle }); return { value: { id: r.jti, url: r.link } }; };
-  const active = await issue(), revoked = await issue();
-  await links().revoke(accountId, revoked.value.id);
-  const inspect = async url => f.app.fetch(new Request(url, { headers: { Accept: 'application/vnd.bindle.contact-profile+json' } }));
-  assert.equal((await inspect(active.value.url)).status, 200);
-  assert.equal((await inspect(revoked.value.url)).status,404);
+  // Contact links (and the contact policy this test once carried across recovery) left the core in contacts phase 4.
   const beforeKeys = digest(await f.app.resources.accounts.get(accountId).identityKeychain(accountId, { create: false }));
   await f.restart();
   assert.equal(digest(await readFile(authorityPath, 'utf8')), digest(authorityText));
@@ -103,7 +95,6 @@ test('durable signed recovery adopts the existing signer and preserves valid and
   assert.equal(recovered.status, 200, recovered.value.error);
   assert.equal(recovered.value.account.id, accountId);
   assert.equal(recovered.value.account.handle, assignedHandle);
-  assert.equal((await inspect(active.value.url)).status,404, 'Recovering accounts cannot accept contact access');
   assert.equal((await f.request('/api/session', undefined, owner.headers, 'GET')).value.authenticated, false);
   const pendingToken = recovered.value.pendingToken;
   assert.equal((await f.request('/api/auth/password/pending', { pendingToken, password })).status, 200);
@@ -125,8 +116,6 @@ test('durable signed recovery adopts the existing signer and preserves valid and
   const returnedCertificate = await f.request('/api/auth/handles/certificate', {}, returned.headers);
   assert.equal(returnedCertificate.status, 200);
   assert.equal(JSON.parse(returnedCertificate.value.content).assignmentId, assignment.assignmentId);
-  assert.equal((await inspect(active.value.url)).status, 200);
-  assert.equal((await inspect(revoked.value.url)).status,404);
   const beforeReplay = digest(await f.app.resources.repository.get(accountId));
   const replay = await f.recover(file);
   assert.equal(replay.status, 401);

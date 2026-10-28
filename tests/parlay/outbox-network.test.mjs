@@ -76,7 +76,7 @@ test('BB-B3 429 interrupts consecutive host failures and never opens the breaker
  for(let n=0;n<6;n++)await f.due();const breaker=[...(await f.store.list({prefix:'bb:send:breaker/'})).values()][0];assert.equal(breaker.failures,1);assert.equal(breaker.until,0);
 });
 
-test('BB-B3 re-resolved link endpoints acquire a new host slot before forwarding credentials',async t=>{
+test('BB-B3 re-resolved first-contact endpoints acquire a new host slot before forwarding credentials',async t=>{
  const f=await fixture(t,{rules:[{to:'bob',when:1,mode:'status',status:404}],repair:async()=>({ingress:'https://recovered.box.example/ingress'})});await f.submit();await f.due();await f.drain();
  assert.equal(f.requests.length,1);const view=await f.get(1);assert.equal(view.recipients[0].state,'retry_scheduled');assert.equal(view.recipients[0].reason,'moved');
  f.clock.set(view.recipients[0].nextAttemptAt);await f.drain();assert.equal(f.requests.length,2);assert.equal(f.requests[1].url,'https://recovered.box.example/ingress');

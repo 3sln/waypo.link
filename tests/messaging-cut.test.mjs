@@ -28,7 +28,6 @@ import {parlayEnv,PARLAY_ENV_NAMES} from '../apps/parlay/env.mjs';
 import {RETIRED_FLAGS,FLAGS} from '../packages/flags/registry.mjs';
 import {world,rawMail,text,DOMAIN,OWNER as BRIDGE_OWNER} from './email-bridge-helpers.mjs';
 import {forEachSeed} from './helpers/chaos.mjs';
-import {contactParents,CONTACT_PARENT_SCAN} from '../packages/links/parents.mjs';
 
 const OWNER='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',ORIGIN='https://provider.example',KEK=Buffer.alloc(32,7).toString('base64');
 const memoryBucket=()=>{const objects=new Map();return {objects,put:async(k,v)=>{objects.set(k,typeof v==='string'?v:new Uint8Array(v));},get:async k=>objects.has(k)?{size:objects.get(k).length??objects.get(k).byteLength,text:async()=>objects.get(k),json:async()=>JSON.parse(objects.get(k)),arrayBuffer:async()=>objects.get(k).buffer}:null,delete:async k=>{for(const name of [k].flat())objects.delete(name);}};};
@@ -64,12 +63,13 @@ const KEPT_ROWS=[
  [appMessageKey(OWNER,'a1'),{id:'a1',owner:OWNER,collection:'c',mimeType:'text/plain',size:4,receivedAt:3,readAt:null,tags:[]}],
  [appMessageUsageKey(OWNER),{bytes:4,messages:1}],[key('notification-event',OWNER,'a1'),{id:'a1',owner:OWNER,messageId:'a1'}],
  [key('collection',OWNER,'c'),{id:'c',owner:OWNER,name:'Inbox',active:true}],[key('rules',OWNER),[]],[key('tag-labels',OWNER),{revision:0,labels:{}}],
- ['profile',{owner:OWNER,displayName:'Kept',bio:'',avatar:'',discloseToContacts:false}],[key('link','j1'),{jti:'j1',owner:OWNER,claims:{exp:2e9}}],
- ['link-replay/j1/e/x',{expiresAt:1}],['developer-contact/occupant-v1',{version:1}],['message-views/v1/'+OWNER,{views:[]}],
- // Review L1: live families of the new core (per-parent sharing, audience decisions, link sweep cursors).
- ['contact-sharing/j1',{profileFields:['bio'],updatedAt:1}],['link-audience/j1/h',{version:1,expiresAt:2e12}],['link-gc-cursor/replay','link/j0/'],
+ ['profile',{owner:OWNER,displayName:'Kept',avatar:''}],['message-views/v1/'+OWNER,{views:[]}],
  ['message-postback-prepared/h-a1',{version:1,owner:OWNER,messageId:'a1',expiresAt:2e12}],
 ];
+// Contact-link families the BB-CUT reset itself keeps (review L1). Since contacts phase 4 the `contact-links-retired-v1`
+// reset deletes them in `warm` too (tests/contact-links-reset.test.mjs), so they are checked against the BB-CUT function only.
+const LINK_ROWS=[[key('link','j1'),{jti:'j1',owner:OWNER,claims:{exp:2e9}}],['link-replay/j1/e/x',{expiresAt:1}],['developer-contact/occupant-v1',{version:1}],
+ ['contact-sharing/j1',{profileFields:['bio'],updatedAt:1}],['link-audience/j1/h',{version:1,expiresAt:2e12}],['link-gc-cursor/replay','link/j0/']];
 const seed=async db=>{for(const [k,v]of [...LEGACY_ROWS,...LEGACY_SIDE_ROWS,...KEPT_ROWS])await db.put(k,v);};
 const remaining=async db=>{const out=[];for(const prefix of MESSAGING_RESET_PREFIXES)for(const k of (await db.list({prefix})).keys())out.push(k);return out;};
 
@@ -149,12 +149,12 @@ test('a shelved archive from before the reset restores without legacy message ro
  assert.deepEqual(await garbage(db),[`messages/${OWNER}/old`,`messages/${OWNER}/old/presentations/p1`].sort());
 });
 
-test('review L1: a sharing row written between reset slices survives; the reset never touches live link families',async t=>{
- const {db,controller}=account(t);await db.put('owner',OWNER);await seed(db);
+test('review L1: the BB-CUT reset never touches contact-link families (the contacts phase 4 reset owns them)',async t=>{
+ const {db}=account(t);await db.put('owner',OWNER);await seed(db);for(const [k,v]of LINK_ROWS)await db.put(k,v);
  assert.equal((await resetLegacyMessaging(db,{limit:3})).done,false);
  await db.put('contact-sharing/j2',{profileFields:['displayName'],updatedAt:2});
- await controller.warm(OWNER);
- assert.deepEqual(await db.get('contact-sharing/j2'),{profileFields:['displayName'],updatedAt:2});
+ while(!(await resetLegacyMessaging(db,{limit:3})).done);
+ assert.deepEqual(await db.get('contact-sharing/j2'),{profileFields:['displayName'],updatedAt:2});for(const [k,v]of LINK_ROWS)assert.deepEqual(await db.get(k),v,k);
  for(const prefix of ['contact-sharing/','link-audience/','link-gc-cursor/'])assert.ok(!MESSAGING_RESET_PREFIXES.some(p=>p.startsWith(prefix)||prefix.startsWith(p)),prefix);
 });
 
@@ -163,8 +163,9 @@ test('review L3: a legacy-only beam/profile is copied to profile before beam/ is
  await db.put('beam/profile',{displayName:'Legacy name',bio:'Old bio',avatar:'https://avatars.example/a.png',discloseToContacts:true,updatedAt:5,extra:'dropped'});
  await controller.warm(OWNER);
  assert.equal(await db.get('beam/profile'),undefined);
- assert.deepEqual(await db.get('profile'),{displayName:'Legacy name',bio:'Old bio',avatar:'https://avatars.example/a.png',discloseToContacts:true,owner:OWNER,updatedAt:5});
- assert.equal((await controller.contactProfiles.profile(OWNER)).displayName,'Legacy name');
+ // The contacts phase 4 reset (also run by warm) then strips the retired bio and discloseToContacts members.
+ assert.deepEqual(await db.get('profile'),{displayName:'Legacy name',avatar:'https://avatars.example/a.png',owner:OWNER,updatedAt:5});
+ assert.equal((await controller.accountProfile(OWNER)).displayName,'Legacy name');
  const other=account(t);await other.db.put('owner',OWNER);await other.db.put('profile',{displayName:'Current',bio:'',avatar:'',discloseToContacts:false});await other.db.put('beam/profile',{displayName:'Legacy',bio:'',avatar:'http://insecure.example',discloseToContacts:true});
  await other.controller.warm(OWNER);assert.equal((await other.db.get('profile')).displayName,'Current');
 });
@@ -187,23 +188,14 @@ test('review L2: corrupt legacy rows never wedge the reset, and a failing reset 
  assert.equal(await db.get('maintenance/alarm-retry'),undefined,'the failure did not enter the maintenance retry backoff');
 });
 
-test('review L5: contact parents and sharing rows page past one scan; nothing is silently truncated',async t=>{
- const {db,controller}=account(t);await db.put('owner',OWNER);
- const total=CONTACT_PARENT_SCAN+70,now=Date.now(),jti=i=>`00000000-0000-4000-8000-${String(i).padStart(12,'0')}`;
- for(let i=0;i<total;i++){await db.put(key('link',jti(i)),{jti:jti(i),owner:OWNER,type:'t',revoked:i<total-1,claims:{exp:2e9}});await db.put('contact-sharing/'+jti(i),{profileFields:['bio']});}
- const parents=await contactParents(options=>db.list(options),OWNER,now);
- assert.equal(parents.length,total);assert.equal(parents.at(-1).id,jti(total-1));assert.equal(parents.at(-1).active,true,'the live parent past the first page is listed');
- assert.equal((await controller.contactProfiles.sharingRows()).size,total);
- const contacts=await controller.contacts(OWNER);assert.deepEqual(contacts.at(-1).profileFields,['bio'],'its sharing row is found');
-});
-
-test('removed legacy routes answer uniformly and never reach an account',async()=>{
+test('removed legacy routes answer like any unknown path and never reach an account (contact paths are not special since contacts phase 4)',async()=>{
  let calls=0;const env={APP_ORIGIN:ORIGIN,ABUSE_HASH_KEY:'k',ABUSE:{consume:async()=>true},IDENTITY_REPOSITORY:{get:async()=>{calls++;return {status:'active',handle:'person'};}},ACCOUNTS:{get:()=>({invoke:async()=>{calls++;return {};}})}};
  const link=`${ORIGIN}/users/person/contact/eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee?bindle_meta=a.b.c`;
  const send=(url,init)=>application.fetch(new Request(url,init),env);
- for(const accept of ['application/json','application/vnd.bindle.contact-intake+json','application/vnd.bindle.contact-token+jwt','text/plain'])assert.equal((await send(link,{headers:{Accept:accept}})).status,406,accept);
- const post=await send(link,{method:'POST',body:'x',headers:{'Content-Type':'multipart/form-data; boundary=x'}});assert.equal(post.status,405);assert.equal(post.headers.get('Allow'),'GET, HEAD, OPTIONS');
- assert.equal((await send(link+'&bindle_data=a.b.c',{headers:{Accept:'application/json'}})).status,400,'no core representation evaluates audience data');
+ const control=link.replace('/contact/','/not-a-route/');
+ for(const accept of ['application/json','application/vnd.bindle.contact-intake+json','application/vnd.bindle.contact-token+jwt','application/vnd.bindle.contact-profile+json','text/plain'])assert.equal((await send(link,{headers:{Accept:accept}})).status,(await send(control,{headers:{Accept:accept}})).status,accept);
+ const init=()=>({method:'POST',body:'x',headers:{'Content-Type':'multipart/form-data; boundary=x'}});assert.equal((await send(link,init())).status,(await send(control,init())).status);
+ assert.equal((await send(link+'&bindle_data=a.b.c',{headers:{Accept:'application/json'}})).status,(await send(control+'&bindle_data=a.b.c',{headers:{Accept:'application/json'}})).status);
  assert.equal(calls,0,'no identity lookup or account call');
 });
 
@@ -249,6 +241,7 @@ test('Parlay env rename: PARLAY_* wins; an unset PARLAY_* reads the retired BIND
  assert.equal(parlayEnv({BINDLEBOX_ENABLED:'true',PARLAY_ENABLED:'false'}).PARLAY_ENABLED,'false','the new name wins');
  assert.equal(parlayEnv({}).PARLAY_ENABLED,undefined);
  const binding={get(){}},env=parlayEnv({LINK_INDEX:binding,BINDLEBOX_SERVICES:binding});assert.equal(env.LINK_INDEX,binding);assert.equal(env.PARLAY_SERVICES,binding,'bindings pass through');
- // Core: BINDLEBOX_ENABLED stays retired (replaced by LINKS_ENABLED); no core flag is named for the app.
- assert.equal(RETIRED_FLAGS.BINDLEBOX_ENABLED.replacement,'LINKS_ENABLED');assert.equal(FLAGS.LINKS_ENABLED.envAlias,'BINDLEBOX_ENABLED');assert.equal(FLAGS.PARLAY_ENABLED,undefined);
+ // Core: BINDLEBOX_ENABLED stays retired, and LINKS_ENABLED (its rename) was retired by contacts phase 4; no core flag is
+ // named for the app and none reads either old name.
+ assert.ok(RETIRED_FLAGS.BINDLEBOX_ENABLED&&RETIRED_FLAGS.LINKS_ENABLED);assert.equal(FLAGS.LINKS_ENABLED,undefined);assert.equal(FLAGS.PARLAY_ENABLED,undefined);
 });

@@ -4,6 +4,7 @@
 import {FLAGS} from '../flags/registry.mjs';
 import {fault} from '../app/faults.mjs';
 import {exportPath} from './export-tar.mjs';
+import {CONTACT_LINKS_RESET_PREFIXES} from './contact-links-reset.mjs';
 const fields=text=>text.split(' '),pick=(row,names)=>Object.fromEntries(names.filter(k=>row?.[k]!==undefined).map(k=>[k,structuredClone(row[k])]));
 const COMMON=fields('v version id owner name label title description status state createdAt updatedAt modifiedAt expiresAt revision generation');
 // These fields can occur inside otherwise public descriptors. User message
@@ -23,12 +24,9 @@ const definitions=[
  ['collections',['collection/'],'active'],['tags',['tag-labels/'],'labels'],['rules',['rules/','rule-defaults/'],'actions filter conditions enabled origin automatic updatedAt'],
  ['views',['message-views/'],'filter sort'],['activity',['activity-item/'],'app item activity source content occurredAt readAt tags collection'],
  ['notifications',['notification-preferences/','push-subscription/','activity-push-policy/','activity-push-app/','activity-push-device/'],'enabled email push collections quietHours rules previewConsent consent preferences'],
- // Contact profile families (packages/links/contact-profile.mjs): the owner's profile and per-link sharing keyed by
- // contact parent. Legacy contacts, contact grants, redemptions, saved contacts and conversations left the core with
- // messaging and were deleted by the BB-CUT reset (DEVLOG 2026-10-27).
- ['profile',['profile'],'displayName bio avatar discloseToContacts'],
- ['contact-sharing',['contact-sharing/'],''],
- ['links',['link/','link-change/'],'target recipient active revokedAt resource key methods scope'],
+ // The owner's profile preference (packages/runtime/account/profile.mjs). Per-link sharing (`contact-sharing`) and contact
+ // links (`links`) left the core in contacts phase 4; the `contact-links-retired-v1` reset deletes their rows.
+ ['profile',['profile'],'displayName avatar'],
  ['resources',['resource/','hosted/'],'provider builtin contracts capabilities verifiedAt key version size contentType modifiedAt'],
  ['connections',['resource/'],'provider clientId scope fragments resources methods integration connectedAt disconnectedAt'],
  ['integrations',['connections/field/','connections/feature/','connections/notice/'],'fragment entries purposes selection spec state grant approved'],
@@ -76,8 +74,7 @@ const excluded={
  'app-notification-budget/':'Derived: per-connection app message rate accounting.',
  'app-notification-receipt/':'Transient: app message replay receipts (48-hour retention).',
  'message-postback-prepared/':'Secret: prepared form-submission capabilities (encrypted scope).',
- 'developer-contact/':'Secret: the legacy developer-contact pointer: the last developer-policy contact link this account\'s messaging-ingress occupant issued, with its capability URL sealed. Developer contact no longer reads it (it mints principal-bound invitations, contacts spike CR-C5); it goes with contact links in phase 4.',
- 'link-gc-cursor/':'Transient: link-state sweep cursors.', 'link-audience/':'Derived: cached audience decisions (at most one UTC day).', 'link-replay/':'Transient: audience-response replay rows (at most 420 s).', 'migration/':'Derived: storage migration markers (including the BB-CUT reset marker).', 'export/':'Transient: exports and download authority.',
+ 'migration/':'Derived: storage migration markers (including the BB-CUT and contact-links reset markers).', 'export/':'Transient: exports and download authority.',
  'notification-event/':'Transient: notification queue.', 'notification-job/':'Transient: delivery queue.', 'notification-unsubscribe/':'Secret: unsubscribe capabilities.',
  'search-queue-usage/':'Derived: search usage.', 'search-vector-revision/':'Derived: search vectors.',
  'search':'Derived: search indexes, queues and maintenance cursors.', 'item-index':'Derived: SQLite item index.',
@@ -87,9 +84,8 @@ const excluded={
  'message-view-receipts/':'Transient: mutation receipts.', 'message-views-receipts/':'Transient: mutation receipts.',
  'connections/outbox/':'Transient: severance delivery.', 'connections/cascade/':'Transient: cascade delivery.', 'connections/meta':'Derived: sequence and outbox counters.',
  'key-delegation/':'Public lineage is projected by the keys port; encrypted private authority is excluded.',
- 'link-state/':'Derived: link sequence.', 'link-evaluations/':'Derived: link rate accounting.',
  'builtin/':'Derived: built-in resource pointer.', 'hosted-index':'Derived: hosted index.', 'storage/':'Transient: quota cleanup and reservations.',
- 'rpc-journal/':'Transient: RPC replay journal.', 'links-rpc/':'Transient: RPC replay journal.',
+ 'rpc-journal/':'Transient: RPC replay journal.',
  'integration-events/':'Transient: integration delivery outbox.', 'brokered/':'Secret: brokered authority and severance journal.',
  'shelved':'Derived: archive placement marker.', 'cold-index-mode':'Derived: archive placement marker.', 'lastOwnerActiveAt':'Lifecycle projection supplies activity time.', 'lastResourceActiveAt':'Lifecycle projection supplies activity time.', 'account/created-at':'Derived: account-local creation time for the semantic admission age gate.', 'semantic/first-seen':'Derived: semantic admission age-gate fallback clock.',
  'lifecycle':'Lifecycle state uses the lifecycle contributor; transport/effect journals are transient.', '@alarm':'Transient: scheduler wake.',
@@ -113,7 +109,10 @@ const excluded={
  'sig/relay-use/':'Derived: relay allowance counters (reserved bytes this month and last, one-hour issuance window).',
  // Legacy rows of the replaced RTC code (dev and test stores only), deleted by the one-time reset on the account alarm
  // (packages/runtime/account/signaling.mjs legacyRtcReset; signaling Appendix C).
- 'rtc/':'Retired: rows of the replaced RTC signaling code, pending the one-time reset; never exported.'
+ 'rtc/':'Retired: rows of the replaced RTC signaling code, pending the one-time reset; never exported.',
+ // Contact-link families (contacts phase 4): no code writes them any more. Rows written before the change exist only
+ // until the `contact-links-retired-v1` reset (packages/runtime/contact-links-reset.mjs) deletes them; never exported.
+ ...Object.fromEntries(CONTACT_LINKS_RESET_PREFIXES.filter(prefix=>prefix!=='rtc/contact/').map(prefix=>[prefix,'Retired: contact-link rows pending the contact-links-retired-v1 reset; never exported.']))
 };
 export const EXPORT_EXCLUDED_PREFIXES=Object.freeze(excluded);
 // Singleton keys match exactly, never as a prefix (review R4): `profile` must not claim `profile-other/...`.
@@ -145,7 +144,7 @@ export function createExportContributors({accountStore,identity,keys,grants,exte
    const index=cursor?.index??0,prefix=prefixes[index],pageLimit=name==='messages'?Math.min(limit,15):limit,rows=EXPORT_SINGLETON_KEYS.has(prefix)?new Map([...await accountStore.list({prefix,startAfter:cursor?.after??'',limit:pageLimit})].filter(([key])=>key===prefix)):await accountStore.list({prefix,startAfter:cursor?.after??'',limit:pageLimit}),payloads=[],out=[];
    for(const [key,row]of rows){
     if(row?.owner!==undefined&&row.owner!==owner||name==='connections'&&row?.kind!=='app-connection'||name==='resources'&&row?.kind==='app-connection')continue;
-    const id=decodeURIComponent(key.split('/').filter(Boolean).at(-1)),value=name==='contact-sharing'?{id,profileFields:Array.isArray(row?.profileFields)?[...row.profileFields]:[]}:projection(row,names);out.push({schemaVersion:1,record:value});
+    const value=projection(row,names);out.push({schemaVersion:1,record:value});
     if(row?.blobRef&&name==='messages')payloads.push({entryId:stable(row.id),kind:'message',source:{message:row.id,part:0},ref:row.blobRef,path:exportPath(`data/messages/${stable(row.id)}/0.bin`),size:row.size,contentType:row.mimeType});
     if(name==='messages')for(const part of row.presentation?.history??[])if(part.blobRef)payloads.push({entryId:stable(row.id)+'_'+part.revision,kind:'message',source:{message:row.id,part:part.revision},ref:part.blobRef,path:exportPath(`data/messages/${stable(row.id)}/${part.revision}.bin`),size:part.size,contentType:part.mimeType??'application/octet-stream'});
     if(row?.blobRef&&key.startsWith('hosted/')){const resource=key.split('/')[1];payloads.push({entryId:stable(row.version),kind:'object',source:{resource,key:row.key,version:row.version},ref:row.blobRef,path:exportPath(`data/objects/${stable(resource)}/${stable(row.version)}.bin`),size:row.size,contentType:row.contentType});}

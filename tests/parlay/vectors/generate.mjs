@@ -4,7 +4,7 @@
 // node tests/parlay/vectors/generate.mjs [--new-keys]
 import {readFile,writeFile} from 'node:fs/promises';
 import {DOMAINS,PROFILE,signEnvelope,payloadDigest,eventId,genesisDigest,signingInput,sha256,base64url,jcs,pairToken,edgeKey,tokenDigest,encodeDelivery,encodeMulticast,secretDigest} from '../../../packages/messaging-protocol/index.mjs';
-import {NOW,NAMES,generateKeys,party,encoder,initEnvelope,recordPayload,linkPayload,invitationResponse,receiptFor,genesisFor,binding,linkRecipient,plainRecipient,redemptionEnvelope,INVITE_TOKEN,SECRET,SECRET2,CONVERSATION,EPOCH,EPOCH2,uuidOf} from './fixtures.mjs';
+import {NOW,NAMES,generateKeys,party,encoder,initEnvelope,recordPayload,firstContactPayload,invitationResponse,receiptFor,genesisFor,binding,plainRecipient,redemptionEnvelope,INVITE_TOKEN,SECRET,SECRET2,CONVERSATION,EPOCH,EPOCH2,uuidOf} from './fixtures.mjs';
 
 const file=new URL('./vectors.json',import.meta.url);
 let keys;try{if(!process.argv.includes('--new-keys'))keys=JSON.parse(await readFile(file,'utf8')).keys;}catch{}
@@ -19,13 +19,14 @@ async function add(name,type,signed,{domain,body,secret}={}){
  objects.push(entry);return signed;
 }
 const E=DOMAINS.envelope,body=encoder.encode('Hello from the vectors.');
-const oneOff=await add('one-off','envelope',await signEnvelope(await linkPayload(alice,bob),alice.signer),{domain:E,body});
+const oneOff=await add('one-off','envelope',await signEnvelope(await firstContactPayload(alice,bob),alice.signer),{domain:E,body});
 // Same signed payload carried with a renewed certificate for the same jkt: identity must not change (§5.4).
 await add('one-off-renewed-certificate','envelope',{payload:oneOff.payload,proof:{...oneOff.proof,delegation:await alice.issue({iat:Math.floor(NOW/1000)-60,since:Math.floor(NOW/1000)-3600-3*86400,jti:'cert-alice-renewed'})}},{domain:E,body});
 const genesis=await add('genesis','genesis',await genesisFor(alice,[alice,bob,carol]),{domain:DOMAINS.genesis});
 const init=await add('conversation-init','envelope',await initEnvelope(alice,bob,[alice,bob,carol]),{domain:E,body:encoder.encode('Let us talk.')});
-// Contacts spike phase 3 (provisional): credential-less first contact to {issuer, owner}, and an invitation redemption.
-await add('one-off-first-contact','envelope',await signEnvelope(await linkPayload(alice,bob,{operationId:uuidOf(5),recipient:plainRecipient(bob)}),alice.signer),{domain:E,body});
+// Contacts spike phases 3 and 4 (provisional): credential-less first contact to {issuer, owner} (every first-contact
+// vector now has this recipient; the contact-link recipient is gone), and an invitation redemption.
+await add('one-off-first-contact','envelope',await signEnvelope(await firstContactPayload(alice,bob,{operationId:uuidOf(5),recipient:plainRecipient(bob)}),alice.signer),{domain:E,body});
 await add('conversation-init-redemption','envelope',await redemptionEnvelope(carol,bob),{domain:E});
 await add('invitation-response-accept','invitation-response',await invitationResponse(bob,init.payload.conversation.genesis),{domain:DOMAINS.invitationResponse});
 const carolResponse=await add('invitation-response-carol','invitation-response',await invitationResponse(carol,init.payload.conversation.genesis),{domain:DOMAINS.invitationResponse});
@@ -46,9 +47,12 @@ const hello=await add('record-peer-hello','envelope',await signEnvelope(await re
 await add('receipt-one-off','receipt',await receiptFor(bob,oneOff),{domain:DOMAINS.receipt});
 await add('receipt-record','receipt',await receiptFor(bob,message),{domain:DOMAINS.receipt});
 await add('receipt-control-record','receipt',await receiptFor(bob,retract),{domain:DOMAINS.receipt});
-// Multicast: one identical body to bob and carol on the same instance.
-const toCarol=await signEnvelope(await linkPayload(alice,carol,{operationId:uuidOf(3),recipient:linkRecipient(carol,'jti-contact-carol','parent-carol')}),alice.signer);
-const multicast=encodeMulticast({batchId:uuidOf(9),contexts:[{credential:{scheme:'BindleLink',value:'eyJhbGciOiJFUzI1NiJ9.eyJiaW5kbGUiOiJsaW5rLW1ldGEifQ.AAAA'},envelope:oneOff},{credential:{scheme:'BindleLink',value:'eyJhbGciOiJFUzI1NiJ9.eyJiaW5kbGUiOiJsaW5rLW1ldGEifQ.BBBB'},envelope:toCarol}]},body,{boundary:'bindle-messaging-vector-batch'});
+// Multicast: one identical message record to bob and carol on the same instance (contexts carry only BindleConversation
+// credentials, §7.3; first contact travels by single delivery).
+const multiBody=encoder.encode('Hello from the vectors.');
+const toBob=await signEnvelope(await recordPayload(alice,bob,'message',{counter:11,previous:messageId,body:multiBody,operationId:uuidOf(3)}),alice.signer);
+const toCarol=await signEnvelope(await recordPayload(alice,carol,'message',{counter:11,previous:messageId,body:multiBody,operationId:uuidOf(3)}),alice.signer);
+const multicast=encodeMulticast({batchId:uuidOf(9),contexts:[{credential:{scheme:'BindleConversation',value:`${EPOCH}.${base64url(new Uint8Array(32).fill(1))}`},envelope:toBob},{credential:{scheme:'BindleConversation',value:`${EPOCH}.${base64url(new Uint8Array(32).fill(2))}`},envelope:toCarol}]},multiBody,{boundary:'bindle-messaging-vector-batch'});
 const delivery=encodeDelivery(objects.find(o=>o.name==='record-rotate').signed,{secret:SECRET2,boundary:'bindle-messaging-vector-1'});
 const tokenInput={conversationId:CONVERSATION,author:{issuer:alice.principal.issuer,subject:alice.principal.subject},recipient:{issuer:bob.principal.issuer,subject:bob.principal.subject},incarnation:'inc-for-alice'};
 const token=await pairToken(SECRET,tokenInput),helloToken=await pairToken(SECRET,{...tokenInput,author:{issuer:carol.principal.issuer,subject:carol.principal.subject},incarnation:'hello'});
@@ -60,7 +64,7 @@ const out={description:'Bindle Messaging interop v1 draft vectors (docs/spec/mes
  objects,
  pairToken:{secretBase64url:base64url(SECRET),input:tokenInput,token,tokenDigest:await tokenDigest(token),edgeKey:await edgeKey({conversationId:CONVERSATION,author:tokenInput.author,owner:tokenInput.recipient}),helloToken},
  multipart:{name:'record-rotate',contentType:delivery.contentType,bytesBase64url:base64url(delivery.bytes)},
- multicast:{contentType:multicast.contentType,bytesBase64url:base64url(multicast.bytes),payloadDigests:[await payloadDigest(oneOff),await payloadDigest(toCarol)]},
+ multicast:{contentType:multicast.contentType,bytesBase64url:base64url(multicast.bytes),payloadDigests:[await payloadDigest(toBob),await payloadDigest(toCarol)]},
  invitation:{token:INVITE_TOKEN,tokenDigest:await sha256(crypto,INVITE_TOKEN),authorization:`BindleInvite ${INVITE_TOKEN}`},
  contactDeliveryV1:{name:'one-off',signature:legacySignature},
  helloEventId:await eventId(hello)};

@@ -11,8 +11,10 @@
 // an app-grant RPC agreed by a spec owner. Until a host configures the hook, developer contact answers like an unready
 // developer account (`developer-unavailable`).
 //
-// This module no longer depends on packages/links (CR-C5). Contact links keep their developer link policy until contacts
-// phase 4 through packages/links/audience.mjs `evaluateLinkPolicy`, which reuses `developerEvaluation` below.
+// Contacts phase 4 removed contact links and their developer link policy (the occupant developer card and
+// `developerEvaluation`). When INTENT_LINKS_ENABLED is on for the account, the answer also carries `route`, this
+// provider's `/i#bintent=` page, which resolves the `connect` kind (runtime/artefact-pins.mjs) and hands it to the user's
+// messaging app; otherwise the console uses the scheme URL.
 import {systemBadge} from '../identity/system-bootstrap.mjs';
 import {StorageError} from '../storage/policy.mjs';
 import {BILLING_STATE_KEY,entitlementFromState} from '../billing/catalog.mjs';
@@ -52,14 +54,6 @@ export async function developerDecision(config,tier){
  const mode=await populationMode(config);if(!mode)return {state:'unavailable'};
  return mode==='paid-only'?{eligible:false,reason:'paid-required',tier:'free'}:{eligible:true,tier:'free',tags:['priority:free'],final:false};
 }
-/** The developer evaluation run on an AccountController for one same-host principal: the principal's tier from its own
- * account (this one, or through CONVERSATION_ACCOUNT), then `developerDecision`. Used by the contact-link policy
- * evaluator (packages/links/audience.mjs) until contacts phase 4. */
-export async function developerEvaluation(controller,principal){
- let tier;try{if(principal.subject===await controller.metadata.get('owner'))tier=await controller.gated(()=>developerContactTier(controller,principal.subject));else{const result=await controller.config.CONVERSATION_ACCOUNT?.(principal.subject)?.invoke({method:'developerContactTier',args:[principal.subject]});if(typeof result!=='string')return {state:'unavailable'};tier=result;}}catch{return {state:'unavailable'};}
- return developerDecision(controller.config,tier);
-}
-
 /** The configured developer handle, or null when developer contact is off (unset or blank configuration). */
 export function developerContactHandle(env){const value=env?.DEVELOPER_CONTACT_HANDLE;return typeof value==='string'&&value.trim()?value.trim():null;}
 
@@ -72,8 +66,7 @@ export function connectKindReference(){
 const TOKEN=/^[A-Za-z0-9_-]{22,43}$/;
 // The minted `connect` data, checked before it leaves: the members and bounds of messaging §4.1, the inviter is the
 // developer identity on this host, and the expiry is at most the requested hour (plus clock slack) away. Handlers
-// validate the data against the kind again (messaging §4.2 step 1); this module stays free of the intent-kind schema
-// code, which still reaches packages/links until contacts phase 4.
+// validate the data against the kind again (messaging §4.2 step 1).
 function connectData(data,{origin,developer,now}){
  if(!data||typeof data!=='object'||Array.isArray(data))return null;
  const keys=Object.keys(data);if(!keys.every(k=>['inviter','token','delegation','expires_at','hint'].includes(k)))return null;
@@ -99,7 +92,8 @@ async function requesterEligibility(env,owner,account,{fresh=true}={}){
 }
 const eligibilityView=decision=>decision.state==='unavailable'?{state:'unavailable'}:{state:decision.eligible?'eligible':'ineligible',...decision.reason?{reason:decision.reason}:{},...decision.tier?{tier:decision.tier}:{}};
 
-export async function developerContactRoutes({path,request,env,owner,object,accountHandle,body,json,limit,remoteIP}){
+/** `intentRoute` is true when this provider's `/i` route serves the account (INTENT_LINKS_ENABLED for it). */
+export async function developerContactRoutes({path,request,env,owner,object,accountHandle,body,json,limit,remoteIP,intentRoute=false}){
  if(path!=='/api/developer-contact')return null;
  if(!['GET','POST'].includes(request.method))return json({error:'method_not_allowed'},405,{Allow:'GET, POST'});
  if(limit&&!await limit(env,{operation:'developer-contact',remoteIP,handle:owner.account.id}))return json({error:'rate_limited'},429,{'Retry-After':'60'});
@@ -122,5 +116,5 @@ export async function developerContactRoutes({path,request,env,owner,object,acco
  // Nothing about a failed mint is echoed or logged: the hook's answer may hold the token.
  if(!data)return json({error:'developer_unavailable',available:false,reason:'developer-unavailable'},503);
  let value;try{value=encodeIntent({bintent:1,kind:{artefact:kind.artefact,version:kind.version,digest:kind.digest},data,exp:data.expires_at});}catch{return json({error:'developer_unavailable',available:false,reason:'developer-unavailable'},503);}
- return json({intent:{value,url:'web+bindle://intent?bintent='+value},expiresAt:data.expires_at*1000});
+ return json({intent:{value,url:'web+bindle://intent?bintent='+value,...intentRoute===true?{route:env.APP_ORIGIN+'/i#bintent='+value}:{}},expiresAt:data.expires_at*1000});
 }

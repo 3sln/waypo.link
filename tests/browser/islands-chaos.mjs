@@ -109,7 +109,7 @@ async function fixture(t,name,faults){
     const signup=await post('/api/auth/signup',{method:'password',password:'Islands browser fixture password!',ageConfirmed:18,termsAccepted:true,termsVersion:config.termsVersion,turnstileToken:'local-browser-test-token'});if(!signup.body.pendingToken)return {error:signup};
     const file=await post('/api/auth/recovery/download',{pendingToken:signup.body.pendingToken});const confirmed=await post('/api/auth/recovery/confirm',{pendingToken:signup.body.pendingToken,recoveryToken:file.body.recoveryToken,downloadConfirmed:true});if(confirmed.status!==200)return {error:confirmed};
     const session=await(await fetch('/api/session')).json(),member={'X-Bindle-Account':session.account.id,'X-Bindle-Session-Context':session.sessionContext,'X-CSRF-Token':session.csrfToken};
-    const profile=await post('/api/profile',{displayName:'Display alex',bio:'',avatar,discloseToContacts:false},member);if(profile.status!==200)return {error:profile};
+    const profile=await post('/api/profile',{displayName:'Display alex',avatar},member);if(profile.status!==200)return {error:profile};
     return {id:session.account.id,handle:session.account.handle};
   },AVATAR_URL);
   assert.ok(account.id,JSON.stringify(account));await provider.close();

@@ -1,5 +1,5 @@
 // BB-B6 app switch over the conversation mesh: the owner moves from app instance A to a fresh app instance B (new
-// mailbox, key, connection and ingress, same storage resource). B imports the archive and contacts, re-occupies the
+// mailbox, key, connection and ingress, same storage resource). B imports the archive (history, blocks), re-occupies the
 // slot, rejoins without looking like a forger, and A is fenced. Deleted rows stay deleted; exports and imports resume.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -9,18 +9,16 @@ import {MANIFEST_KEY} from '../../packages/messaging-engine/store/archive-writer
 
 const mesh=async(t,options)=>{const a=await createArchiveMesh(options);t.after(()=>a.dispose());return a;};
 const HOUR=3600000;
-const edgeKey=(iss,jti)=>`link/${encodeURIComponent(iss)}/${encodeURIComponent(jti)}`;
+const blockKey=p=>`block/${encodeURIComponent(p.issuer)}|${encodeURIComponent(p.subject)}`;
 
-test('full switch from app A to app B keeps history, contacts and links, rejoins without looking like a forger, and fences A',async t=>{
+test('full switch from app A to app B keeps history and blocks, rejoins without looking like a forger, and fences A',async t=>{
  const a=await mesh(t,{names:['alice','bob','carol','dave']}),cid=await a.conversation('alice',['bob','carol','dave']);
  const own=await a.run('bob','conversations.send',{conversationId:cid,text:'from the old app'});
  await a.run('carol','conversations.send',{conversationId:cid,text:'carol before'});
- await a.run('bob','contacts.add',{link:await a.link('alice'),label:'Alice Work'});
- const link=await a.run('bob','contacts.create-link',{kinds:['one-off'],label:'Public'});
  const spammer={issuer:'https://spam.provider.example',subject:'99999999-9999-4999-8999-999999999999'};await a.run('bob','contacts.block',{principal:spammer});
  await a.settle();await a.archive('bob','archive.checkpoint');
  await a.run('dave','conversations.send',{conversationId:cid,text:'after the checkpoint'});await a.settle();
- const before={texts:await a.texts('bob',cid),contacts:await a.run('bob','contacts.list'),order:await a.order('bob',cid)},edgeBefore=(await a.edgeStore.get(edgeKey(link.resource?a.party('bob').principal.issuer:'',link.jti)))?.generation;
+ const before={texts:await a.texts('bob',cid),blocks:await a.run('bob','contacts.blocks'),order:await a.order('bob',cid)};
  const anchor=await a.archive('bob','archive.export');
  const sw=await a.switchApp('bob',{ingress:'https://bob-next.box.example/ingress'});
  // B starts empty and cannot start a second archive over the existing one.
@@ -31,14 +29,9 @@ test('full switch from app A to app B keeps history, contacts and links, rejoins
  // The takeover manifest names B; importing twice returns the finished result.
  const payload=a.party('bob').storage.payload();assert.equal(payload.writer.cnx,'cnx-bob-next');assert.equal(payload.takeover.digest,anchor.digest);
  assert.deepEqual(await a.archive('bob','archive.import',{expect:{generation:anchor.generation,digest:anchor.digest}}),result);
- // History, contacts, own links (without their metas) and blocks are back before any peer answers.
+ // History and blocks are back before any peer answers (contact links were removed in contacts spike phase 4).
  assert.deepEqual(await a.texts('bob',cid),before.texts);assert.deepEqual(await a.order('bob',cid),before.order);
- const contacts=await a.run('bob','contacts.list');
- assert.deepEqual(contacts.contacts,before.contacts.contacts);
- assert.deepEqual(contacts.links.map(l=>[l.jti,l.label,l.revoked]),before.contacts.links.map(l=>[l.jti,l.label,l.revoked]));assert.ok(contacts.links.every(l=>!l.link));
- assert.ok(await a.party('bob').store.get(`block/${encodeURIComponent(spammer.issuer)}|${encodeURIComponent(spammer.subject)}`));
- // Own contact links keep routing: B republishes them to the edge index above A's generations.
- await a.flush();const edge=await a.edgeStore.get(edgeKey(a.party('bob').principal.issuer,link.jti));assert.equal(edge.owner,a.party('bob').owner);assert.ok(!edgeBefore||edge.generation>edgeBefore);
+ assert.deepEqual(await a.run('bob','contacts.blocks'),before.blocks);assert.ok(await a.party('bob').store.get(blockKey(spammer)));
  // Rejoin under B's own key: secrets come back from peers, never from the archive.
  assert.equal((await a.run('bob','conversations.rejoin')).rejoins,3);assert.equal((await a.get('bob',cid)).awaitingSecret,true);
  await a.settle({advance:true});assert.equal((await a.get('bob',cid)).awaitingSecret,false);
@@ -59,14 +52,14 @@ test('full switch from app A to app B keeps history, contacts and links, rejoins
  assert.ok(aObjects.every(n=>!a.party('bob').storage.objects.has(n)));assert.equal((await a.archive('bob','archive.verify')).ok,true);
 });
 
-test('a retracted message and a removed contact stay deleted through import, replay, compaction and a rolled-back manifest',async t=>{
+test('a retracted message and a lifted block stay deleted through import, replay, compaction and a rolled-back manifest',async t=>{
  const a=await mesh(t),cid=await a.conversation('alice',['bob','carol']),bob=a.party('bob');
  const doomed=await a.run('alice','conversations.send',{conversationId:cid,text:'regrettable'});await a.run('alice','conversations.send',{conversationId:cid,text:'kept'});
- const contact=await a.run('bob','contacts.add',{link:await a.link('carol'),label:'Carol Old'});await a.settle();
+ const stranger={issuer:'https://old.provider.example',subject:'0d0d0d0d-0000-4000-8000-000000000d0d'};await a.run('bob','contacts.block',{principal:stranger});await a.settle();
  await a.archive('bob','archive.checkpoint');const stale=bob.storage.bytes(MANIFEST_KEY).slice();
- // Two hours later the message is retracted and the contact removed; the delta carries both.
+ // Two hours later the message is retracted and the block lifted; the delta carries both.
  a.clock.advance(2*HOUR);
- await a.run('alice','conversations.retract',{conversationId:cid,target:doomed.eventId});await a.run('bob','contacts.remove',{id:contact.id});await a.settle({advance:true});
+ await a.run('alice','conversations.retract',{conversationId:cid,target:doomed.eventId});await a.run('bob','contacts.block',{principal:stranger,blocked:false});await a.settle({advance:true});
  assert.equal((await a.get('bob',cid)).timeline.find(e=>e.eventId===doomed.eventId).deleted,true);
  const delta=await a.archive('bob','archive.checkpoint');assert.equal(delta.kind,'delta');
  const anchor={generation:delta.generation,digest:delta.digest},current=bob.storage.bytes(MANIFEST_KEY).slice();
@@ -78,7 +71,7 @@ test('a retracted message and a removed contact stay deleted through import, rep
  bob.storage.set(MANIFEST_KEY,current);await rejected(a.archive('bob','archive.import'),'archive_anchor_required');await rejected(a.archive('bob','archive.import',{unanchored:true}),'archive_untrusted');
  await a.archive('bob','archive.import',{expect:anchor});
  const deleted=async()=>{const v=await a.get('bob',cid),e=v.timeline.find(x=>x.eventId===doomed.eventId);return e.deleted===true&&e.text===null&&v.timeline.some(x=>x.text==='kept');};
- assert.ok(await deleted(),'retraction imported');assert.ok(!(await a.run('bob','contacts.list')).contacts.some(c=>c.label==='Carol Old'),'removed contact not resurrected');
+ assert.ok(await deleted(),'retraction imported');assert.equal(await bob.store.get(blockKey(stranger)),undefined,'lifted block not resurrected');
  // Replaying the original message at B changes nothing, before and after rejoin.
  const early=await a.deliverPrepared('alice',doomed.operationId,'bob');assert.notEqual(early.status,500);assert.ok(await deleted());
  await a.run('bob','conversations.rejoin');await a.settle({advance:true});
@@ -86,7 +79,7 @@ test('a retracted message and a removed contact stay deleted through import, rep
  // Compaction keeps the tombstone: B's snapshot, exported again and imported by a third app instance.
  await a.archive('bob','archive.compact');const again=await a.archive('bob','archive.export');
  await a.switchApp('bob',{ingress:'https://bob-third.box.example/ingress'});await a.archive('bob','archive.import',{expect:again});
- assert.ok(await deleted(),'still deleted after compaction and a second switch');assert.ok(!(await a.run('bob','contacts.list')).contacts.some(c=>c.label==='Carol Old'));
+ assert.ok(await deleted(),'still deleted after compaction and a second switch');assert.equal(await bob.store.get(blockKey(stranger)),undefined);
 });
 
 test('an interrupted export resumes without re-uploading finished segments',async t=>{

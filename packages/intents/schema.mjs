@@ -1,7 +1,6 @@
 // Intent-kind declarative schemas; unknown data and display controls are refused, never stripped.
 import {jcs,strictJSON,plain,scalarString,textEncoder} from '../core/strict-json.mjs';
 import {exact,origin,uuid,IntentFault} from './format.mjs';
-import {canonicalContactLink} from '../links/preview.mjs';
 import {sessionBodyValid} from './sessions.mjs';
 const controls=/[\p{Cc}\p{Bidi_Control}\u2028\u2029\u200b\ufeff]/u;
 const text=(v,n)=>typeof v==='string'&&scalarString(v)&&[...v].length<=n;
@@ -14,7 +13,7 @@ const url=(v,{line=false}={})=>{try{const u=new URL(v);return typeof v==='string
 export const httpsURLValue=v=>url(v);
 const field=v=>{
  if(!plain(v))return false;
- if(v.type==='string')return exact(v,['type','maxLength'],['format'])&&Number.isSafeInteger(v.maxLength)&&v.maxLength>=1&&v.maxLength<=4352&&(v.format===undefined||['https-url','uuid','handle','contact-link','capability'].includes(v.format));
+ if(v.type==='string')return exact(v,['type','maxLength'],['format'])&&Number.isSafeInteger(v.maxLength)&&v.maxLength>=1&&v.maxLength<=4352&&(v.format===undefined||['https-url','uuid','handle','capability'].includes(v.format));
  if(v.type==='integer')return exact(v,['type','minimum','maximum'])&&Number.isSafeInteger(v.minimum)&&Number.isSafeInteger(v.maximum)&&v.minimum<=v.maximum;
  if(v.type==='enum')return exact(v,['type','values'],['extensible'])&&(v.extensible===undefined||typeof v.extensible==='boolean')&&Array.isArray(v.values)&&v.values.length>=1&&v.values.length<=64&&new Set(v.values).size===v.values.length&&v.values.every(x=>text(x,64));
  return ['boolean','principal'].includes(v.type)&&exact(v,['type']);
@@ -27,9 +26,10 @@ export function validateIntentKind(input){try{
  if(!exact(d,['categories','fields'])||!list(d.categories)||!plain(d.fields)||Object.keys(d.fields).length!==Object.keys(s.properties).length)throw 0;
  for(const [k,f]of Object.entries(s.properties)){const x=d.fields[k];if(!exact(x,['title','categories','display'])||!map(x.title,80)||!list(x.categories)||!['value','origin','presence'].includes(x.display))throw 0;
   // A capability field (contacts spike §4.2, CR-I2; provisional, unsigned) is a bearer secret: it forces `capability: true`
-  // and is displayed only by `presence` or `origin`, like a contact link. Its bound is the field's own maxLength.
-  if(['contact-link','capability'].includes(f.format)&&(!b.capability||x.display==='value'))throw 0;
-  if(x.display==='origin'&&(!['https-url','contact-link','capability'].includes(f.format)||f.type!=='string'))throw 0;
+  // and is displayed only by `presence` or `origin`. Its bound is the field's own maxLength. The former `contact-link`
+  // format was removed with contact links (contacts phase 4, CR-C3); a kind naming it is invalid.
+  if(f.format==='capability'&&(!b.capability||x.display==='value'))throw 0;
+  if(x.display==='origin'&&(!['https-url','capability'].includes(f.format)||f.type!=='string'))throw 0;
   if(x.display==='value'&&f.type==='string'&&(f.maxLength>120||f.format!==undefined&&!['uuid','handle'].includes(f.format)))throw 0;
  }
  // Signaling AMD-SG-I1 (proposed, unsigned): an optional `session` member makes this a session kind (sessions.mjs).
@@ -41,7 +41,6 @@ export function validateIntentData(body,input){const b=validateIntentKind(body);
  for(const [k,v]of Object.entries(data)){if(!Object.hasOwn(b.data.properties,k))throw 0;const f=b.data.properties[k];
   if(f.type==='string'){if(!text(v,f.maxLength)||b.disclosure.fields[k].display==='value'&&controls.test(v))throw 0;
    if(f.format==='uuid'&&!uuid(v)||f.format==='https-url'&&!url(v)||f.format==='handle'&&!/^[a-z0-9][a-z0-9_.-]{0,63}@[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/.test(v))throw 0;
-   if(f.format==='contact-link'){if(!url(v))throw 0;const c=canonicalContactLink(new URL(v).origin,v);if(!c||c.link!==v)throw 0;}
    // A capability value is any string within maxLength (intents §4.2); its origin shows only when it is an https-url.
   }else if(f.type==='integer'){if(!Number.isSafeInteger(v)||v<f.minimum||v>f.maximum)throw 0;}
   else if(f.type==='boolean'){if(typeof v!=='boolean')throw 0;}

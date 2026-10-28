@@ -22,8 +22,7 @@
 // Routes of different modules in one stage must not overlap. Where they do, this order decides: `relations` (ORG-10f) answers only entity
 // certificates on /oauth/token and the BindleEntity and relation-token schemes on /bindle/rpc before `memberCertificates`
 // and `federation`, `memberCertificates` (ORG-4) answers only
-// the jwt-bearer member grant on /oauth/token before `federation` and member holder-key status before `delegation`, and `contactProfile` answers
-// PUT /api/contacts/{id}/sharing before `contacts`. `moved` (PORT-3) is first on purpose: its edge-stage router
+// the jwt-bearer member grant on /oauth/token before `federation` and member holder-key status before `delegation`. `moved` (PORT-3) is first on purpose: its edge-stage router
 // answers per-identity paths of a moved identity (308 during the redirect period) before any per-identity route,
 // and falls through for every other identity. Append-only otherwise: one import and one entry per slice; a slice
 // adds routes to its own module.
@@ -38,8 +37,8 @@ import * as identity from './identity.mjs';
 import * as lifecycle from './lifecycle.mjs';
 import * as deletion from './deletion.mjs';
 import * as automation from './automation.mjs';
-import * as contactProfile from './contact-profile.mjs';
-import * as contacts from './contacts.mjs';
+import * as profile from './profile.mjs';
+import * as developerContact from './developer-contact.mjs';
 import * as messages from './messages.mjs';
 import * as views from './views.mjs';
 import * as storage from './storage.mjs';
@@ -47,7 +46,6 @@ import * as billing from './billing.mjs';
 import * as search from './search.mjs';
 import * as notifications from './notifications.mjs';
 import * as federation from './federation.mjs';
-import * as links from './links.mjs';
 import * as delegation from './delegation.mjs';
 import * as incremental from './incremental.mjs';
 import * as events from './events.mjs';
@@ -66,7 +64,7 @@ import * as relations from './relations.mjs';
 import * as signalingOwner from './signaling-owner.mjs';
 import * as signaling from './signaling.mjs';
 
-export const ROUTES=Object.freeze([moved,transferPages,directory,intents,recoveryReissue,orgClaimAbort,site,admin,identity,lifecycle,deletion,automation,contactProfile,contacts,messages,views,storage,billing,search,notifications,relations,memberCertificates,federation,links,delegation,incremental,events,appSessions,integrations,connections,emailBridge,exports,retention,appRemoval,orgs,transferIn,signalingOwner,signaling]);
+export const ROUTES=Object.freeze([moved,transferPages,directory,intents,recoveryReissue,orgClaimAbort,site,admin,identity,lifecycle,deletion,automation,profile,developerContact,messages,views,storage,billing,search,notifications,relations,memberCertificates,federation,delegation,incremental,events,appSessions,integrations,connections,emailBridge,exports,retention,appRemoval,orgs,transferIn,signalingOwner,signaling]);
 export const STAGES=Object.freeze(['edge','public','anonymous','unauthenticated','api','session','beforeActivity','owner','pages']);
 for(const module of ROUTES)for(const name of Object.keys(module.stages??{}))if(!STAGES.includes(name))throw new TypeError(`Unknown route stage ${name}`);
 

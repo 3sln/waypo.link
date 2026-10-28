@@ -1,92 +1,61 @@
-// BB-B2 contacts: contact parents through the links contract, edge publication, revocation, contacts added from a
-// link, blocks and conditional-link decisions.
+// Contacts after contacts spike phase 4: blocks (the one per-person setting; lists carry every relationship) and the
+// removal of contact links (operations, the edge index's link entries and the shell's link-revocation method).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createWorld,P,uuidOf} from './receive-fixtures.test.mjs';
-import {parseLinkURL} from '../../packages/messaging-engine/domains/contacts.mjs';
-import {edgeKey} from '../../packages/messaging-engine/store/edge-index.mjs';
+import {createEdgeIndex} from '../../packages/messaging-engine/store/edge-index.mjs';
+import {ContactsBlock,ContactsBlocks,CONTACT_OPERATIONS} from '../../packages/messaging-engine/domains/contacts.mjs';
+import {MAILBOX_OPERATIONS} from '../../packages/messaging-engine/operations.mjs';
+import {createMailbox} from '../../apps/parlay/worker/mailbox.mjs';
+import {memoryStore} from './helpers/engine.mjs';
 
 const fresh=async t=>{const w=await createWorld();t.after(()=>w.dispose());return w;};
 const code=(r,status,error)=>{assert.equal(r.status,status,JSON.stringify(r.json));assert.equal(r.json.error,error);};
+const who=p=>({issuer:p.principal.issuer,subject:p.principal.subject});
 
-test('creating a link stores the exact issued claims and publishes a digest-only edge entry, idempotently',async t=>{
- const w=await fresh(t),created=await w.run('bob','contacts.create-link',{label:'Website',kinds:['conversation-init','one-off']});
- assert.equal(created.revoked,false);assert.deepEqual(created.kinds,['conversation-init','one-off']);
- // Not routable until the outbox is flushed; flushing twice publishes once and empties the outbox.
- const meta=new URL(created.link).searchParams.get('bindle_meta'),link={...created,meta};
- code(await w.deliver('alice','bob',link),401,'link_invalid');
- // Two publications: the link and the hosted-recipient entry receive.configure queued (contacts spike phase 3).
- assert.equal(await w.flush('bob'),2);assert.equal(await w.flush('bob'),0);
- const entry=await w.edge.get(P.bob.principal.issuer,created.jti);assert.deepEqual(Object.keys(entry).sort(),['claimsDigest','generation','owner','revoked']);
- assert.equal(JSON.stringify(entry).includes(meta.split('.')[1]),false,'no meta material in the index');
- assert.equal((await w.deliver('alice','bob',link)).status,200);
- // An older generation or another owner cannot overwrite the entry.
- assert.equal(await w.edge.publish({iss:P.bob.principal.issuer,jti:created.jti,owner:w.peer('carol').owner,claimsDigest:'x',revoked:false,generation:99}),false);
- assert.equal(await w.edge.publish({iss:P.bob.principal.issuer,jti:created.jti,owner:w.peer('bob').owner,claimsDigest:'x',revoked:true,generation:0}),false);
- // The provider returning an unexpected meta is refused and nothing is stored.
- const issue=w.links.bob.issue;w.links.bob.issue=async request=>issue({...request,claims:{...request.claims,maxMessages:7}});
- await assert.rejects(w.run('bob','contacts.create-link',{}),{code:'links_unavailable'});w.links.bob.issue=issue;
- assert.equal((await w.run('bob','contacts.list')).links.length,1);
-});
-
-test('revocation applies locally first, even when the provider call fails, and stays revoked through the edge',async t=>{
- const w=await fresh(t),link=await w.link('bob');assert.equal((await w.deliver('alice','bob',link)).status,200);
- w.links.bob.state.down.add('revoke');
- const revoked=await w.run('bob','contacts.revoke-link',{jti:link.jti});assert.equal(revoked.revoked,true);assert.equal(revoked.providerRevoke,'pending');assert.equal(revoked.link,null);
- // Before the edge learns of it, the mailbox itself refuses (a stale index only costs work).
- code(await w.deliver('alice','bob',link,{operationId:uuidOf(2)}),401,'link_invalid');
- // A replay of the earlier delivery no longer retrieves its receipt.
- code(await w.deliver('alice','bob',link),401,'link_invalid');
- await w.flush('bob');assert.equal((await w.edge.get(P.bob.principal.issuer,link.jti)).revoked,true);
- const before=w.delivered.count;code(await w.deliver('alice','bob',link,{operationId:uuidOf(3)}),401,'link_invalid');assert.equal(w.delivered.count,before,'refused at the edge');
- w.links.bob.state.down.delete('revoke');assert.equal((await w.run('bob','contacts.revoke-link',{jti:link.jti})).providerRevoke,'revoked');
- // The provider's own linkRevoked notice (system actor) is accepted; an ingress actor cannot revoke.
- const second=await w.link('bob');assert.equal((await w.system('bob','contacts.revoke-link',{jti:second.jti})).providerRevoke,'revoked');
- const bob=w.peer('bob'),{ContactsRevokeLink}=await import('../../packages/messaging-engine/domains/contacts.mjs');
- await assert.rejects(bob.engine.perform(new ContactsRevokeLink({actor:{kind:'ingress',owner:bob.owner},input:{jti:second.jti}})),{code:'unauthorized'});
- await assert.rejects(w.run('bob','contacts.revoke-link',{jti:'jti-missing'}),{code:'not_found'});
-});
-
-test('contacts are added from a link by the links §2 raw-query rules and stored canonically as unverified claims',async t=>{
- const w=await fresh(t),alice=await w.run('alice','contacts.create-link',{}),url=alice.link;
- const added=await w.run('bob','contacts.add',{link:`${url}&utm_campaign=x#frag`,label:'Alice'});
- assert.deepEqual(added.principal,{issuer:P.alice.principal.issuer,subject:P.alice.principal.subject});assert.equal(added.verified,false);
- assert.equal(added.link.includes('utm_'),false);assert.equal(added.link.endsWith(new URL(url).searchParams.get('bindle_meta')),true);
- assert.equal((await w.run('bob','contacts.add',{link:url})).id,added.id,'adding the same link twice is idempotent');
- const meta=new URL(url).searchParams.get('bindle_meta'),base=url.split('?')[0];
- for(const bad of [`${base}?bindle_x=1&bindle_meta=${meta}`,`${base}?Bindle_meta=${meta}`,`${base}?bindle%5Fmeta=${meta}`,`${base}?bindle_meta=${meta}&bindle_meta=${meta}`,`${base}?sig=abc&bindle_meta=${meta}`,`${base}?bindle_meta=${meta}%3D`,`http://alice.provider.example/x?bindle_meta=${meta}`,`${base}/moved?bindle_meta=${meta}`,`${base}#bindle_meta=${meta}`])
-  await assert.rejects(w.run('bob','contacts.add',{link:bad}),{code:'invalid_input'},bad);
- assert.equal(parseLinkURL(`${base}?a=1&&bindle_meta=${meta}&b`).meta,meta);
- await assert.rejects(w.run('bob','contacts.add',{link:(await w.run('bob','contacts.create-link',{})).link}),{code:'invalid_input'},'own link');
- w.clock.advance(31*86400000);await assert.rejects(w.run('carol','contacts.add',{link:url}),{code:'invalid_input'},'expired');
- const list=await w.run('bob','contacts.list');assert.equal(list.contacts.length,1);
- assert.deepEqual(await w.run('bob','contacts.remove',{id:added.id}),{id:added.id,removed:true});assert.equal((await w.run('bob','contacts.list')).contacts.length,0);
- assert.equal(await w.peer('bob').store.get(`known/${encodeURIComponent(P.alice.principal.issuer)}|${P.alice.principal.subject}`),undefined);
-});
-
-test('blocks refuse a principal on every link and invalidate reused conditional decisions',async t=>{
- const w=await fresh(t),open=await w.link('bob'),gated=await w.link('bob',{conditional:true});
- assert.equal((await w.deliver('alice','bob',gated)).status,200);assert.equal((await w.deliver('alice','bob',gated,{operationId:uuidOf(2)})).status,200);
- assert.equal(w.links.bob.calls.evaluate,1,'a positive decision is reused until the UTC day ends');
+test('a block refuses first contact uniformly and overrides every list; unblocking restores the earlier membership',async t=>{
+ const w=await fresh(t),contacts=await w.admit('bob'),requests=await w.admit('bob',{policy:'request'});
+ assert.equal((await w.deliver('alice','bob',contacts)).status,200);await w.enlist('alice','bob',requests);
  await w.run('bob','contacts.block',{principal:P.alice.principal});
- code(await w.deliver('alice','bob',open,{operationId:uuidOf(3)}),403,'not_authorized');code(await w.deliver('alice','bob',gated,{operationId:uuidOf(4)}),403,'not_authorized');
+ code(await w.deliver('alice','bob',contacts,{operationId:uuidOf(2)}),403,'not_authorized');
+ // The same code and timing class as an author no list admits (§6.7).
+ code(await w.deliver('carol','bob',null,{operationId:uuidOf(3)}),403,'not_authorized');
+ // A replay of the admitted delivery no longer retrieves its receipt while the block holds.
+ code(await w.deliver('alice','bob',contacts),403,'not_authorized');
+ const listed=await w.run('bob','contacts.blocks');assert.deepEqual(listed.blocks.map(b=>b.principal),[who(P.alice)]);
+ assert.equal((await w.run('bob','lists.members',{list:'contacts'})).members.length,1,'the membership is kept');
  await w.run('bob','contacts.block',{principal:P.alice.principal,blocked:false});
- assert.equal((await w.deliver('alice','bob',gated,{operationId:uuidOf(5)})).status,200);assert.equal(w.links.bob.calls.evaluate,2,'the block dropped the reused decision');
- // Ineligible is cached for 15 minutes; unavailable is never cached and is retryable.
- w.links.bob.state.policy=p=>p.subject===P.carol.principal.subject?'ineligible':'eligible';
- code(await w.deliver('carol','bob',gated,{operationId:uuidOf(6)}),403,'audience_ineligible');code(await w.deliver('carol','bob',gated,{operationId:uuidOf(7)}),403,'audience_ineligible');assert.equal(w.links.bob.calls.evaluate,3);
- w.links.bob.state.policy=()=>'eligible';w.clock.advance(900001);w.links.bob.state.down.add('evaluate');
- const down=await w.deliver('carol','bob',gated,{operationId:uuidOf(8),createdAt:w.clock.now()-1000});code(down,503,'audience_unavailable');assert.equal(down.headers.get('retry-after'),'60');
- w.links.bob.state.down.delete('evaluate');assert.equal((await w.deliver('carol','bob',gated,{operationId:uuidOf(8),createdAt:w.clock.now()-1000})).status,200);
+ assert.deepEqual((await w.run('bob','contacts.blocks')).blocks,[]);
+ assert.equal((await w.deliver('alice','bob',contacts,{operationId:uuidOf(4)})).status,200);
 });
 
-test('conditional quotas are per verified author per UTC day; owner operations reject other actor kinds',async t=>{
- const w=await fresh(t),gated=await w.link('bob',{conditional:true,maxMessages:2});
- for(const n of [1,2])assert.equal((await w.deliver('alice','bob',gated,{operationId:uuidOf(n)})).status,200);
- const limited=await w.deliver('alice','bob',gated,{operationId:uuidOf(3)});code(limited,429,'rate_limited');assert.ok(Number(limited.headers.get('retry-after'))>0);
- assert.equal((await w.deliver('carol','bob',gated,{operationId:uuidOf(4)})).status,200,'another author has its own quota');
- const bob=w.peer('bob'),{ContactsCreateLink}=await import('../../packages/messaging-engine/domains/contacts.mjs');
- for(const kind of ['ingress','system'])await assert.rejects(bob.engine.perform(new ContactsCreateLink({actor:{kind,owner:bob.owner},input:{}})),{code:'unauthorized'});
- await assert.rejects(bob.engine.perform(new ContactsCreateLink({actor:{kind:'owner',owner:w.peer('alice').owner},input:{}})),{code:'forbidden'});
- assert.ok(edgeKey('https://a.example','x/y').includes('x%2Fy'));
+test('block operations are owner-only and validate the principal',async t=>{
+ const w=await fresh(t),bob=w.peer('bob');
+ for(const kind of ['ingress','system']){
+  await assert.rejects(bob.engine.perform(new ContactsBlock({actor:{kind,owner:bob.owner},input:{principal:P.alice.principal}})),{code:'unauthorized'});
+  await assert.rejects(bob.engine.read(new ContactsBlocks({actor:{kind,owner:bob.owner}})),{code:'unauthorized'});
+ }
+ await assert.rejects(bob.engine.perform(new ContactsBlock({actor:{kind:'owner',owner:w.peer('alice').owner},input:{principal:P.alice.principal}})),{code:'forbidden'});
+ for(const principal of [null,{issuer:'http://alice.provider.example',subject:P.alice.principal.subject},{issuer:P.alice.principal.issuer,subject:'not-a-uuid'}])
+  await assert.rejects(w.run('bob','contacts.block',{principal}),{code:'invalid_input'});
+});
+
+test('contact-link operations are gone from the engine and the app shell (contacts spike phase 4)',async()=>{
+ assert.deepEqual(CONTACT_OPERATIONS.map(o=>o.operation),['contacts.block','contacts.blocks']);
+ for(const op of ['contacts.create-link','contacts.revoke-link','contacts.add','contacts.remove','contacts.list','receive.deliver','intake.update'])assert.equal(Object.hasOwn(MAILBOX_OPERATIONS,op),false,op);
+ // The shell answers them as unknown operations (not_found), exactly like any other unregistered name.
+ const owner='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',box=createMailbox({store:memoryStore(),PARLAY_ENABLED:true,clock:{now:()=>Date.UTC(2026,9,28)}});
+ try{
+  await box.open(owner);
+  for(const op of ['contacts.create-link','contacts.revoke-link','contacts.add','contacts.remove','contacts.list','shell.link-revoked','shell.conversation-create','receive.deliver'])
+   await assert.rejects(box.run(owner,op,{input:{}}),{code:'not_found'},op);
+ }finally{await box.dispose();}
+});
+
+test('the edge index has no contact-link entries: no link check, and a queued link publication is dropped',async()=>{
+ const store=memoryStore(),edge=createEdgeIndex(store);
+ assert.equal(edge.check,undefined);assert.equal(edge.get,undefined);
+ assert.equal(await edge.publish({iss:'https://bob.provider.example',jti:'jti-1',owner:'o',claimsDigest:'x',revoked:false,generation:1}),false);
+ assert.deepEqual([...(await store.list({prefix:''})).keys()],[]);
+ assert.equal(await edge.publish({kind:'host',issuer:'https://bob.provider.example',subject:P.bob.principal.subject,owner:'o',active:true,generation:1}),true);
 });

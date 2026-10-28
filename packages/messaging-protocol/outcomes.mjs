@@ -10,7 +10,7 @@ export const OBLIGATION_STATES=Object.freeze({
 });
 export const RETRY_REASONS=Object.freeze(['rate_limited','unreachable','unavailable','storage','epoch','moved','authorization']);
 export const REJECT_CLASSES=Object.freeze(['not_authorized','invalid','too_large','participants_exceeded','author_unverifiable']);
-const rejectClass=code=>code==='too_large'?'too_large':code==='participants_exceeded'?'participants_exceeded':code==='author_unverifiable'?'author_unverifiable':['not_authorized','link_invalid','audience_ineligible','author_required','record_forbidden'].includes(code)?'not_authorized':'invalid';
+const rejectClass=code=>code==='too_large'?'too_large':code==='participants_exceeded'?'participants_exceeded':code==='author_unverifiable'?'author_unverifiable':['not_authorized','author_required','record_forbidden'].includes(code)?'not_authorized':'invalid';
 
 // Retry-After as a lower bound in ms; absent or malformed means 60 s (architecture §9.2).
 export function retryAfterMs(value,now){

@@ -2,7 +2,7 @@ import {siteGlobal,siteEnabled,capability} from './account/flags.mjs';
 // Shared host composition. X8's projection is unavailable unless an adapter passes `snapshot` (EXT-X8
 // preferencesSnapshotPort over the owner's federation shard) with BROKERING_ENABLED; X8 hook: `snapshot`, consumer mint,
 // introspection evidence. MESSAGING_DESCRIBE (the messaging-mailbox feature's brokered `describe`, messaging §2.5) is
-// offered with KEY_DELEGATION_ENABLED; contacts spike CR-C0 removed its LINKS_ENABLED gate.
+// offered with KEY_DELEGATION_ENABLED (contacts spike CR-C0; LINKS_ENABLED was retired by CR-C7).
 // One adapter mount decision controls the handler, declaration and write minting (X8-R7).
 export const brokeringMounts=c=>({integrations:capability(c,'BROKERED_INTROSPECTION_MOUNTED'),brokeredResources:capability(c,'BROKERED_INTROSPECTION_MOUNTED'),brokeredIntrospection:capability(c,'BROKERED_INTROSPECTION_MOUNTED')});
 const on=(c,k)=>siteGlobal(c,k);

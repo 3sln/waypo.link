@@ -49,7 +49,7 @@ test('owner grants resolve during the lease and transactional faults separate ro
 test('multi-party simulator replays seeded fault plans with isolated stores, keys, provider fakes and clocks',async()=>{
  await forEachSeed(3,async random=>{
   const run=async()=>{const network=createNetwork({seed:random.seed,rules:[{to:'bob',when:.5,mode:'drop'}]});try{
-   const alice=network.peers.get('alice'),bob=network.peers.get('bob');assert.notEqual(alice.store,bob.store);assert.notEqual(alice.delegateKeys.id,bob.delegateKeys.id);assert.notEqual(alice.providerLink,bob.providerLink);assert.equal(alice.delegateKeys.fake,true);
+   const alice=network.peers.get('alice'),bob=network.peers.get('bob');assert.notEqual(alice.store,bob.store);assert.notEqual(alice.delegateKeys.id,bob.delegateKeys.id);assert.equal(alice.delegateKeys.fake,true);
    await alice.store.put('private',1);assert.equal(await bob.store.get('private'),undefined);assert.equal((await alice.engine.engine.container.use(['directory'],({directory})=>directory.resolve('bob'))).ingress,bob.ingress);
    network.skew('bob',60000);assert.equal(bob.clock.now()-alice.clock.now(),60000);const outcomes=[];
    for(let i=0;i<8;i++){try{outcomes.push(await (await network.send('alice','bob',{op:'mailbox.ping'})).json());}catch(error){outcomes.push(error.code);}}

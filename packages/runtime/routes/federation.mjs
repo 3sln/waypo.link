@@ -9,7 +9,6 @@ import {movedAuthorization} from './moved.mjs';
 // HTTP routes of slice 13c, Federation and the MCP authority (docs/architecture/app-engine.md §12): the embed origin, federation protocol and authorization entry, MCP OAuth and owner MCP routes.
 // Stage handlers and route-module shape: packages/runtime/routes/index.mjs.
 import {accountCookiesEnabled,selectedAccountMember,parseAccountCookies,hasAccountVault,removedAccountCookies,accountFault,readAccountMember,defaultAccountOwner,removedMemberCookie,accountCookieName} from '../account-cookies.mjs';
-import {CONTACT_INTENTS} from '../../links/preview.mjs';
 import {EXT,declare,withExtensionEntries} from '../../core/extensions.mjs';
 import {IdentityAction} from '../../identity/index.mjs';
 import {handleMcpPublic,handleMcpOwner,mcpPublicPath,mcpOwnerPath} from '../../mcp/http.mjs';
@@ -76,7 +75,7 @@ export const stages={
     if(movedTarget&&response?.status===400){const headers=new Headers(response.headers);headers.set('Cache-Control','no-store');return json({error:'identity_moved',message:'This identity moved to another provider.',to:movedTarget},400,headers);}
     // Contact intents (links §6.4, the intents extension): this host accepts `bindle_intent` on its console entry.
     // Entry routes and the components profile are advertised only while this adapter mounts them (review F8).
-    if(response&&path==='/.well-known/bindle/manifest.json'&&request.method==='GET'&&response.ok){const manifest=await response.json(),entries=env.FEDERATION_ENTRIES?env.FEDERATION_ENTRIES.manifest({components:await embedShellMounted(env)}):{};return json(withExtensionEntries(manifest,[...entries.extensions??[],...intentFeature(env),...flagGlobal(env,'IDENTITY_TRANSFER_IN_ENABLED')&&env.TRANSFER_IN_INTAKE?[declare(EXT.portability,{transfer_in_endpoint:env.APP_ORIGIN+'/bindle/portability/transfer-in'})]:[],declare(EXT.intents,{intents:[...CONTACT_INTENTS],login_endpoint:`${env.APP_ORIGIN}/console`})],{merge:true}),200,{'Access-Control-Allow-Origin':'*'});}
+    if(response&&path==='/.well-known/bindle/manifest.json'&&request.method==='GET'&&response.ok){const manifest=await response.json(),entries=env.FEDERATION_ENTRIES?env.FEDERATION_ENTRIES.manifest({components:await embedShellMounted(env)}):{};return json(withExtensionEntries(manifest,[...entries.extensions??[],...intentFeature(env),...flagGlobal(env,'IDENTITY_TRANSFER_IN_ENABLED')&&env.TRANSFER_IN_INTAKE?[declare(EXT.portability,{transfer_in_endpoint:env.APP_ORIGIN+'/bindle/portability/transfer-in'})]:[]],{merge:true}),200,{'Access-Control-Allow-Origin':'*'});}
     // Bug hunt round 3, B5: Back from the app (or an old tab) onto a completed or expired authorization request is a
     // browser navigation; it gets a readable page instead of the raw JSON error. API clients keep the JSON answer.
     if(response&&path==='/oauth/authorize'&&request.method==='GET'&&response.status===400&&request.headers.get('Accept')?.includes('text/html'))return passthrough(securePage(new Response(authorizationEndedPage(new URL(request.url).searchParams.get('lang')??request.headers.get('Accept-Language')),{status:400,headers:{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store',Vary:'Accept'}})));

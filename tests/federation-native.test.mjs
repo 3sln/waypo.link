@@ -88,7 +88,9 @@ test('native standard refresh rotation preserves scoped identity and reuse revok
 });
 test('explicit profile resource consent exposes configured name/avatar without granting unrelated fields or contact disclosure',async t=>{
  const f=await fixture(t),profileURI=`${origin}/entities/${f.session.account.id}/profile`;
- const saved=await f.request('/api/profile',{...f.owner,method:'PUT',data:{displayName:'Profile owner',bio:'Private biography not in the baseline contract',avatar:'https://images.example/avatar.png',discloseToContacts:false}});assert.equal(saved.status,200);
+ const saved=await f.request('/api/profile',{...f.owner,method:'PUT',data:{displayName:'Profile owner',avatar:'https://images.example/avatar.png'}});assert.equal(saved.status,200);
+ // Contacts phase 4: the profile has no bio or disclosure members any more; a body naming them is refused.
+ assert.equal((await f.request('/api/profile',{...f.owner,method:'PUT',data:{displayName:'Profile owner',bio:'Private biography',avatar:'',discloseToContacts:false}})).status,400);
  const state=(await(await f.request('/api/preferences',f.owner)).json()).preferences[0];
  assert.equal((await f.post('/api/preferences',{fragment,expectedRevision:state.revision,values:{...state.values,self:profileURI}},f.owner)).status,200);
  const verifier='p'.repeat(43),challenge=createHash('sha256').update(verifier).digest('base64url');

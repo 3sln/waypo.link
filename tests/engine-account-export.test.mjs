@@ -91,7 +91,7 @@ test('projections exclude authentication, connector and contact capabilities fro
 });
 
 test('inventory covers every literal account key family and seeded persisted account prefixes',async t=>{
- const roots=['packages/runtime/account','packages/activity','packages/events','packages/apps','packages/links'],prefixes=new Set(),files=[];
+ const roots=['packages/runtime/account','packages/activity','packages/events','packages/apps'],prefixes=new Set(),files=[];
  for(const root of roots)for(const file of await readdir(new URL('../'+root+'/',import.meta.url)))if(file.endsWith('.mjs'))files.push(root+'/'+file);
  files.push(...['accounts','account-lifecycle','lifecycle-runner','storage-quota','storage-write-budget','message-receipt-budget','message-postbacks','message-presentations','app-notifications','integration-events'].map(f=>'packages/runtime/'+f+'.mjs'),'packages/storage/google-drive.mjs','packages/identity/keys.mjs',
   // Account-store writers outside the roots above (core-scope audit, 2026-10-26).
@@ -102,11 +102,13 @@ test('inventory covers every literal account key family and seeded persisted acc
  // Computed key-family maps (as opposed to literal writes) are part of the
  // inventory as well: key rotations, bus rows and external version mappings.
  for(const prefix of ['identity-encryption-key/','encryption-key','identity-key-retained/','identity-key-pruned/','evbus/rec/','evbus/reader/','evbus/permit/','evbus/tx/','evbus/rate/','evbus/meter/','evbus/wait/','drive/object/','drive/retained/',
-  // Contact profile families written through CONTACT_KEYS (packages/links/contact-profile.mjs), link-state rows written
-  // through computed paths, and the BB-CUT reset marker (packages/runtime/messaging-reset.mjs).
-  'profile','contact-sharing/','link-audience/','link-replay/','migration/messaging-retired-v1',
+  // The profile (packages/runtime/account/profile.mjs), the BB-CUT and contacts phase 4 reset markers, and the retired
+  // contact-link families that may persist until the contact-links-retired-v1 reset runs (packages/runtime/contact-links-reset.mjs).
+  'profile','migration/messaging-retired-v1','migration/contact-links-retired-v1','link/','link-state/','link-change/','link-evaluations/','links-rpc/','contact-sharing/','link-audience/','link-replay/','link-gc-cursor/',
   // Activity's app-message families and the audit's export gaps.
   'app-message/','app-message-usage/','mcp/operation/','mcp/operation-expiry/','automation/session/','automation/confirmation/','classifier/usage/v1','app-notification-budget/','app-notification-receipt/','message-postback-prepared/','developer-contact/occupant-v1'])prefixes.add(prefix);
+ // The inventory also covers the reset module's families (it deletes them; nothing writes them any more).
+ for(const prefix of (await import('../packages/runtime/contact-links-reset.mjs')).CONTACT_LINKS_RESET_PREFIXES)prefixes.add(prefix);
  const missing=exportInventory([...prefixes]).filter(v=>!v.contributor&&!v.reason);assert.deepEqual(missing,[]);
  const f=await fixture(t);await f.metadata.put('app-message/'+OWNER+'/id/',{owner:OWNER,id:'id'});await f.metadata.put('vault/oauth',{token:'secret'});const keys=[...(await f.metadata.list()).keys()].filter(k=>k!=='item-index-ready');assert.deepEqual(exportInventory(keys).filter(v=>!v.contributor&&!v.reason),[]);
  assert.deepEqual(exportInventory(['new-unreviewed-domain/'])[0],{prefix:'new-unreviewed-domain/'});

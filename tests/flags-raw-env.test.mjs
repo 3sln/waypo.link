@@ -82,8 +82,8 @@ const values=[undefined,'','false','true',false,true,'invalid',0,1];
 test('each migrated helper preserves its old predicate with no console records, including parser quirks',()=>{
  for(const enabled of [activityEnabled,integrationsEnabled,delegationsEnabled])for(const config of [undefined,null,{}])assert.equal(enabled(config),false);
  for(const raw of values){
-  for(const flags of [undefined,port({}, {ACTIVITY_V2_ENABLED:raw,INTEGRATIONS_ENABLED:raw,LINKS_ENABLED:raw,PAID_SIGNUP_ENABLED:raw,...billing})]){
-   const config={ACTIVITY_V2_ENABLED:raw,INTEGRATIONS_ENABLED:raw,LINKS_ENABLED:raw,PAID_SIGNUP_ENABLED:raw,...billing,...flags?{flags}:{}};
+  for(const flags of [undefined,port({}, {ACTIVITY_V2_ENABLED:raw,INTEGRATIONS_ENABLED:raw,KEY_DELEGATION_ENABLED:raw,PAID_SIGNUP_ENABLED:raw,...billing})]){
+   const config={ACTIVITY_V2_ENABLED:raw,INTEGRATIONS_ENABLED:raw,KEY_DELEGATION_ENABLED:raw,PAID_SIGNUP_ENABLED:raw,...billing,...flags?{flags}:{}};
    assert.equal(activityEnabled(config,context(owner)),raw==='true',`activity ${raw}`);
    assert.equal(integrationsEnabled(config,context(owner)),raw===true||raw==='true',`integrations ${raw}`);
    assert.equal(delegationsEnabled(config,context(owner)),raw===true||raw==='true',`delegations ${raw}`);
@@ -97,7 +97,7 @@ test('each migrated helper preserves its old predicate with no console records, 
 });
 
 test('owner/client targeting and percentage now control the domain helpers; kill and outage fail closed',()=>{
- for(const [name,enabled]of [['ACTIVITY_V2_ENABLED',activityEnabled],['INTEGRATIONS_ENABLED',integrationsEnabled],['LINKS_ENABLED',delegationsEnabled]]){
+ for(const [name,enabled]of [['ACTIVITY_V2_ENABLED',activityEnabled],['INTEGRATIONS_ENABLED',integrationsEnabled],['KEY_DELEGATION_ENABLED',delegationsEnabled]]){
   const rules=[{when:{accounts:[owner]},serve:{value:true}}],flags=port({[name]:record({rules})});
   assert.equal(enabled({flags},context(owner)),true);assert.equal(enabled({flags},context(other)),false);assert.equal(enabled({flags}),false);
   assert.equal(enabled({flags:port({[name]:record({rules:[{when:{},serve:{value:true,percent:10000}}]})})},context(owner)),true);
@@ -124,9 +124,9 @@ test('signup helpers use trusted request geo, preserve capabilities, and retain 
 
 const engine=providers=>createAppEngine({providers:{clock:fakeClock(),random:{uuid:()=>other},audit:{record(){}},...providers}});
 test('real delegation and connections Actions honor evaluated owner rollout at composition',async()=>{
- const records=rules=>({LINKS_ENABLED:record({rules}),INTEGRATIONS_ENABLED:record({rules})}),targeted=records([{when:{accounts:[owner]},serve:{value:true}}]);
+ const records=rules=>({KEY_DELEGATION_ENABLED:record({rules}),INTEGRATIONS_ENABLED:record({rules})}),targeted=records([{when:{accounts:[owner]},serve:{value:true}}]);
  // Known buckets for ff5c-salt: owner=1482, other=2250, so a 20% ramp admits only owner.
- const scenarios=[port(targeted),port(records([{when:{},serve:{value:true,percent:2000}}])),port(targeted,{LINKS_ENABLED:'false',INTEGRATIONS_ENABLED:'false'}),createFlags({snapshot:null})];
+ const scenarios=[port(targeted),port(records([{when:{},serve:{value:true,percent:2000}}])),port(targeted,{KEY_DELEGATION_ENABLED:'false',INTEGRATIONS_ENABLED:'false'}),createFlags({snapshot:null})];
  for(const [index,flags]of scenarios.entries())for(const id of [owner,other]){
   const actor={kind:'owner',owner:id},allowed=index<2&&id===owner,registry={issue:async()=>({issued:true}),list:async()=>[],revoke:async()=>({revoked:true})};
   const delegation=engine({delegations:delegationsProvider({registry,flags})});

@@ -1,10 +1,8 @@
-import {contactPage} from './release-contact.mjs';
 import { h,badge,logo,helpers } from './release-primitives.mjs';
 export default function publicPage(state){
   const {btn,form,alerts}=helpers(state),route=state.route;
   let content;
-  if(route.kind==='contact')content=contactPage(state);
-  else if(route.kind==='unsubscribe')content=h('div',badge('YOUR NOTIFICATIONS'),h('h2',state.unsubscribed?'A little quieter.':'Turn off this notification channel?'),h('p',state.unsubscribed?'You are unsubscribed. This link has turned off the channel it belongs to.':'Confirm to stop notifications for the channel included in this link. You do not need to sign in.').classes('muted'),alerts(),!state.unsubscribed?btn('Unsubscribe',{kind:'unsubscribe'},'button primary'):null);
+  if(route.kind==='unsubscribe')content=h('div',badge('YOUR NOTIFICATIONS'),h('h2',state.unsubscribed?'A little quieter.':'Turn off this notification channel?'),h('p',state.unsubscribed?'You are unsubscribed. This link has turned off the channel it belongs to.':'Confirm to stop notifications for the channel included in this link. You do not need to sign in.').classes('muted'),alerts(),!state.unsubscribed?btn('Unsubscribe',{kind:'unsubscribe'},'button primary'):null);
   else if(route.kind==='device'){
     // LA3 supplies the HTTP redirect. Until then this retired review surface cannot make decisions.
     const id=/^[a-f0-9-]{36}$/.test(route.requestId??'')?route.requestId:null;

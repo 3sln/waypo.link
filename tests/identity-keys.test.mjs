@@ -9,7 +9,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { MemoryMessagingStore } from '../packages/core/records.mjs';
 import { IdentityKeyRegistry, createIdentityKeyEngine, performKeyAction, readKeyQuery, EnsureIdentityKey, RotateIdentityKey, RevokeIdentityKey, RegisterIdentityKey, IdentityKeyByKid, CurrentIdentityKey, IdentityKeyHistory, verifyKeyContinuity, resolveIdentityKey, KEY_HISTORY_LIMIT, verifiableSigningKey } from '../packages/identity/keys.mjs';
-import { mintableSigningKey } from '../packages/links/issuance.mjs';
 import { encryptSecret, decryptSecret } from '../packages/runtime/secrets.mjs';
 import { createScheduler, forEachSeed, fakeClock } from './helpers/chaos.mjs';
 import { createNodeServer } from '../apps/node/server.mjs';
@@ -94,7 +93,6 @@ test('revocation is monotonic, stops stored artifacts verifying, and revoking th
   assert.equal(revoked.state, 'revoked'); assert.equal(revoked.verifiable, false);
   assert.equal((await f.act(RevokeIdentityKey, { purpose: 'signing', kid: k0 })).revokedAt, revoked.revokedAt, 'idempotent');
   assert.equal(await f.store.transaction(tx => verifiableSigningKey(tx, OWNER, k0)), null, 'a revoked key verifies no stored artifact');
-  assert.equal(await f.store.transaction(tx => mintableSigningKey(tx, OWNER, k0)), false, 'and mints nothing');
   await assert.rejects(f.act(RotateIdentityKey, { purpose: 'signing', expectedKid: k0 }), code('key_conflict'));
   await f.act(RevokeIdentityKey, { purpose: 'signing', kid: k1 });
   assert.equal(await f.keys.privateKey(OWNER, 'signing'), null); assert.equal(await f.ask(CurrentIdentityKey, { purpose: 'signing' }), null);

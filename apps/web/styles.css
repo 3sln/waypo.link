@@ -66,9 +66,7 @@
 
 @media(max-width:420px){.landing-story{padding-left:12px;padding-right:12px}}
 
-.contact-recipient-profile{margin:18px 0;padding:16px;border:1px solid var(--line);border-radius:10px;background:var(--surface-raised)}.contact-recipient-profile .field-help{margin:0 0 8px}.contact-recipient-profile strong,.contact-profile-bio{overflow-wrap:anywhere;white-space:pre-wrap}.contact-profile-bio{margin:8px 0}
 
-.contact-recipient-heading{overflow-wrap:anywhere}
 
 :root{color-scheme:light}.logo picture{display:flex;flex-shrink:0}.logo:has(picture){gap:4px}
 /* Public identity pages follow the device preference. The signed-in console retains its reviewed light palette. */
@@ -82,7 +80,7 @@
  :root .button.danger-button{background:#873b39;color:var(--on-accent);border-color:#b76a60}
  :root :is(.field-help,.hero-copy,.hero-points,.feature-grid p,.landing-footer,.auth-note,.auth-switch,.checkbox-field,.passkey-hint,.security-note,.floating-tile b,.auth-card>.pill,.logo-suffix){color:var(--public-muted)}
  :root :is(.eyebrow,.landing-footer>span:first-child,.question-toolbar>strong){color:#b9d69d}
- :root :is(.passkey-hint,.security-note,.signup-contact-choice,.contact-recipient-profile,.recovery-question){background:#26282d;border-color:var(--line)}
+ :root :is(.passkey-hint,.security-note,.signup-contact-choice,.recovery-question){background:#26282d;border-color:var(--line)}
  :root .security-note strong{color:#e0e4e9}
  :root .input{background:#17191d;color:#edf0f3;border-color:#5a606b}
  :root .input::placeholder{color:#abb2bd;opacity:1}
@@ -134,13 +132,12 @@
 @media(prefers-color-scheme:dark){:root .account-row{border-color:var(--line)}:root .account-row .pill.good{background:#26402f;color:#cfeeda}:root .account-row .pill.warning{background:#47391d;color:#f3dfb3}:root .account-row .danger{color:#f0a49b}}
 @media(max-width:620px){.account-row{flex-direction:column;align-items:flex-start}.account-picker>.buttons .button{width:100%}}
 .pill.system-tag{color:var(--ink);background:var(--status-good)}.pill.suspected-tag{color:var(--ink);background:var(--status-warning);border:1px dashed #a88a4c;font-style:italic}.contact-tag-list{display:flex;flex-wrap:wrap;gap:6px}.contact-limits dd .pill{margin:0 4px 4px 0;max-width:100%;white-space:normal;overflow-wrap:anywhere}.contact-limits>div{min-width:0;max-width:100%}
-.visually-hidden{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}.contact-sender{font-weight:600;overflow-wrap:anywhere}.contact-intents,.contact-signed-in,.contact-signin{margin-top:16px}.developer-eligibility{font-weight:600}.eligibility-eligible{color:var(--ink)}.eligibility-ineligible,.eligibility-unavailable{color:var(--danger)}.tag-labels-panel{margin-top:18px}.tag-label-list code{font-size:11px;color:var(--muted);overflow-wrap:anywhere}
+.visually-hidden{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}.developer-eligibility{font-weight:600}.eligibility-eligible{color:var(--ink)}.eligibility-ineligible,.eligibility-unavailable{color:var(--danger)}.tag-labels-panel{margin-top:18px}.tag-label-list code{font-size:11px;color:var(--muted);overflow-wrap:anywhere}
 .developer-contact-panel{margin-bottom:24px}.developer-contact-panel .field-help{margin:6px 0 0}.developer-contact-panel .buttons{margin-top:12px}
 .buttons{display:flex;flex-wrap:wrap;gap:8px}
 @media(max-width:420px){.buttons>.button,.buttons>a.button{width:100%;justify-content:center}}
 @media(prefers-color-scheme:dark){:root .pill.system-tag{color:#cfeeda;background:#26402f}:root .pill.suspected-tag{color:#f3dfb3;border-color:#c9a865;background:transparent}}
-.contact-signin .field-help{margin-top:10px}.contact-signin form .button.primary{background:transparent;color:inherit;border:1px solid currentColor}
-.auth-card .contact-limits{display:flex;flex-wrap:wrap;gap:8px 16px}.auth-card .contact-limits>div{min-width:0}.auth-card .contact-recipient-heading,.auth-card .contact-recipient-profile,.auth-card .field-help{overflow-wrap:anywhere}.auth-card a.contact-intent,.auth-card .contact-signin .button,.auth-card .contact-signed-in .button{max-width:100%;white-space:normal;text-align:center}
+.auth-card .contact-limits{display:flex;flex-wrap:wrap;gap:8px 16px}.auth-card .contact-limits>div{min-width:0}.auth-card .field-help{overflow-wrap:anywhere}
 /* The account switcher joined the top bar; keep its controls inside narrow viewports. */
 @media(max-width:760px){.topbar>div:last-child{gap:10px;min-width:0}.topbar>div:last-child>.button.secondary{padding:7px 10px;font-size:11px;white-space:nowrap}}
 @media(max-width:420px){.topbar{padding:0 14px;gap:8px}.topbar>.breadcrumb{min-width:0;flex:1 1 auto;overflow:hidden}.topbar>.breadcrumb>span{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.topbar>div:last-child{flex:0 0 auto}.topbar>div:last-child>.button.secondary{padding:6px 8px}.topbar>div:last-child{gap:7px}.topbar>div:last-child>.small-avatar{display:none}.topbar>div:last-child>.pill{white-space:normal;max-width:62px;line-height:1.25;text-align:center;padding:4px 7px}}
@@ -321,7 +318,6 @@ div.boot-only-zone{padding:14px;margin-top:16px}
 .button+.field-help,.button+p.field-help{margin-top:10px}
 .public-main .auth-card .pill+h2{margin-top:14px}
 .public-main .auth-card .buttons{margin-top:12px}
-.contact-signin>.field-help:first-child{margin:0 0 8px}
 .settings-details dt{flex-shrink:0}.settings-details dd{min-width:0;text-align:end;overflow-wrap:anywhere}
 .rule-description .contact-limits>div{min-width:0}
 :is(span,strong,code,a)[translate=no]{unicode-bidi:isolate}
@@ -415,8 +411,6 @@ input[type=checkbox][required]:user-invalid{outline:3px solid #c5221f;outline-of
 :root label:has(input[type=checkbox]){min-height:44px;display:flex;align-items:center;gap:10px}
 :root :is(.logo,.logo-link,.account-data a[href],.security-note a[href]){min-height:44px;display:inline-flex;align-items:center}
 
-/* Contact profile (Account & security): per-link sharing rows for the contact links the owner's apps created. */
-.link-sharing{margin-top:24px;border-top:1px solid var(--line);padding-top:18px}.link-sharing h3{font-size:13px;margin:0 0 6px}.link-sharing-row>div{flex:1;min-width:0;overflow-wrap:anywhere}.link-sharing-row strong{margin-right:8px}.link-sharing-row .text-button{align-self:center}
 
 /* Signaling owner controls (flags off; provisional): connection privacy and the blocked lists under Account & security,
    and each app's approvals, devices, offers and pairings with its app connection. */

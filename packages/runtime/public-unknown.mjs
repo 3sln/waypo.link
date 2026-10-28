@@ -6,6 +6,3 @@
 export const lifecycleUnknown=error=>error?.status===410||['account_deleting','account_deleted','account_suspended','account_moved'].includes(error?.code);
 // Target lookups: a lifecycle-faulted target or a missing addressed resource. Credential errors are excluded.
 export const lookupUnknown=error=>lifecycleUnknown(error)||error?.status===404||error?.code==='not_found';
-// Signed contact links and contact-delivery tokens address their target identity (the link is the target), so a
-// refused link is the same target lookup as an unknown identity on those routes only.
-export const contactUnknown=error=>lookupUnknown(error)||['link_invalid','unauthorized'].includes(error?.code);

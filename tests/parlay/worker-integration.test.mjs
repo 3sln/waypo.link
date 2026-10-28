@@ -17,8 +17,8 @@ import {fragmentOutcome} from '../../packages/core/fragments.mjs';
 import {digest,canonical} from '../../packages/core/records.mjs';
 import {validateIntegrationManifest} from '../../packages/federation/integrations.mjs';
 const vectors=JSON.parse(await readFile(new URL('./vectors/vectors.json',import.meta.url))),alice=await party('alice',vectors.keys),owner=alice.principal.subject,config={principal:alice.principal,ingress:alice.ingress,plan:'free'},resource=resourceId(config),encoder=new TextEncoder();
-const grant={revision:1,active:true,recipients:[],connection:'connection-1',generation:3},verified={owner,issuer:alice.principal.issuer,connection:grant.connection,generation:3,purpose:'invoke',resource,grant:'grant-1',methods:['describe','linkRevoked','deliver'],consumer:'https://bridge.example',live:true};
-function engine(t,{providers={}}={}){const h=createTestEngine({owner,store:memoryStore([['owner',owner],['config',config],['shell:authorization',grant],[BRIDGE_KEYS.settings,{enabled:true,consumers:[{origin:'https://bridge.example',channel:'email'}]}]]),registry:{...SHELL_OPERATIONS,...INTEGRATION_OPERATIONS},providers:{bridge:createBridgeProvider({PARLAY_ENABLED:true}),receive:ReceiveDomain,providerLink:null,...providers}});t.after(()=>h.dispose());return h;}
+const grant={revision:1,active:true,recipients:[],connection:'connection-1',generation:3},verified={owner,issuer:alice.principal.issuer,connection:grant.connection,generation:3,purpose:'invoke',resource,grant:'grant-1',methods:['describe','deliver'],consumer:'https://bridge.example',live:true};
+function engine(t,{providers={}}={}){const h=createTestEngine({owner,store:memoryStore([['owner',owner],['config',config],['shell:authorization',grant],[BRIDGE_KEYS.settings,{enabled:true,consumers:[{origin:'https://bridge.example',channel:'email'}]}]]),registry:{...SHELL_OPERATIONS,...INTEGRATION_OPERATIONS},providers:{bridge:createBridgeProvider({PARLAY_ENABLED:true}),receive:ReceiveDomain,providerBridge:null,...providers}});t.after(()=>h.dispose());return h;}
 const event=(type,payload,over={})=>({owner,issuer:alice.principal.issuer,connection:grant.connection,jti:crypto.randomUUID(),seq:1,type,payload,...over});
 
 test('BB-B8 client metadata carries a confidential integration manifest: resource contracts claimed, the classifier fragment pinned by digest',async()=>{
@@ -57,10 +57,8 @@ test('BB-B8 broker Queries bind issuer, connection, generation, resource and met
  const discovery=await h.run('shell.discover',{input:{verified:{...verified,purpose:'discover'},query:{v:1,contracts:[B.MAILBOX_CONTRACT],limit:0}}});assert.deepEqual(discovery,{v:1,items:[],exists:true});
  for(const patch of [{issuer:'https://other.example'},{connection:'foreign'},{generation:4},{resource:'https://other.example/r'},{methods:[]}])await assert.rejects(h.run('shell.describe',{input:{verified:{...verified,...patch},resource}}),e=>e.code==='not_authorized');
  await assert.rejects(h.run('shell.discover',{input:{verified:{...verified,purpose:'discover'},query:{v:1,contracts:[B.MAILBOX_CONTRACT],facets:{unknown:{}}}}}),e=>e.code==='unsupported_facet');
- await h.store.put('parent/link-1',{iss:alice.principal.issuer,jti:'link-1',claimsDigest:'digest',revoked:false});await h.store.put('decision/link-1/subject',{state:'eligible'});
- await assert.rejects(h.run('shell.link-revoked',{input:{verified:{...verified,live:false},resource,args:{jti:'link-1'}}}),e=>e.code==='not_authorized');
- assert.deepEqual(await h.run('shell.link-revoked',{input:{verified,resource,args:{jti:'link-1'}}}),{});assert.equal((await h.store.get('parent/link-1')).revoked,true);assert.equal(await h.store.get('decision/link-1/subject'),undefined);assert.equal((await h.store.list({prefix:'edge-outbox/'})).size,1);
- await h.run('shell.link-revoked',{input:{verified,resource,args:{jti:'link-1'}}});assert.equal((await h.store.list({prefix:'edge-outbox/'})).size,1);
+ // Contacts spike phase 4: the mailbox contract's linkRevoked method and its shell operation are gone.
+ assert.throws(()=>h.run('shell.link-revoked',{input:{verified,resource,args:{jti:'link-1'}}}),/Unknown operation/);
  await assert.rejects(h.run('shell.public-intake',{input:{verified:{...verified,live:false},resource}}),e=>e.code==='not_authorized');
 });
 
@@ -77,13 +75,13 @@ test('BB-B8 authenticated SETs are idempotent, keep generation floors monotonic 
 
 test('BB-B8 public intake uses the Node SQLite provider and checks broker authority again inside custody commit',async t=>{
  const store=new SqliteMailboxStore(':memory:');await store.put('owner',owner);await store.put('config',config);await store.put('shell:authorization',grant);
- const consumer=await bridgeConsumer(alice.principal.issuer),h=createTestEngine({owner,store,registry:INTEGRATION_OPERATIONS,providers:{bridge:createBridgeProvider({PARLAY_ENABLED:true}),receive:ReceiveDomain,providerLink:{consumerKey:async()=>({keyId:consumer.keyId,publicJwk:consumer.publicJwk})}}});t.after(async()=>{await h.dispose();await store.close();});
+ const consumer=await bridgeConsumer(alice.principal.issuer),h=createTestEngine({owner,store,registry:INTEGRATION_OPERATIONS,providers:{bridge:createBridgeProvider({PARLAY_ENABLED:true}),receive:ReceiveDomain,providerBridge:{consumerKey:async()=>({keyId:consumer.keyId,publicJwk:consumer.publicJwk})}}});t.after(async()=>{await h.dispose();await store.close();});
  const input={verified,resource,tx:crypto.randomUUID(),contract:B.INTAKE_CONTRACT,consumer:consumer.origin,args:await consumer.args({recipient:alice.principal,receivedAt:h.clock.now()-1000})},actor={kind:'ingress',owner};
  assert.deepEqual(await h.run('shell.public-intake',{actor,input}),{disposition:'stored-receipt'});assert.deepEqual(await h.run('shell.public-intake',{actor,input}),{disposition:'stored-receipt'});assert.equal((await store.list({prefix:'item/'})).size,1);
  // The provenance-key fetch happens outside the transaction. A disconnect that wins during that fetch must
  // prevent the already-authenticated invocation from committing a second item.
  let release,started;const fetched=new Promise(resolve=>started=resolve),hold=new Promise(resolve=>release=resolve);
- const racing=createTestEngine({owner,store,registry:INTEGRATION_OPERATIONS,providers:{bridge:createBridgeProvider({PARLAY_ENABLED:true}),receive:ReceiveDomain,providerLink:{consumerKey:async()=>{started();await hold;return {keyId:consumer.keyId,publicJwk:consumer.publicJwk};}}}});t.after(()=>racing.dispose());
+ const racing=createTestEngine({owner,store,registry:INTEGRATION_OPERATIONS,providers:{bridge:createBridgeProvider({PARLAY_ENABLED:true}),receive:ReceiveDomain,providerBridge:{consumerKey:async()=>{started();await hold;return {keyId:consumer.keyId,publicJwk:consumer.publicJwk};}}}});t.after(()=>racing.dispose());
  const pending=racing.run('shell.public-intake',{actor,input:{...input,tx:crypto.randomUUID(),args:await consumer.args({recipient:alice.principal,receivedAt:h.clock.now()-1000})}});await fetched;await store.put('shell:authorization',{...grant,active:false});release();await assert.rejects(pending,e=>e.code==='not_authorized');assert.equal((await store.list({prefix:'item/'})).size,1);
 });
 

@@ -29,20 +29,24 @@ test('archive operations are registered engine operations behind the default-off
 test('checkpoints write sealed, signed segments; deltas carry only changes; no plaintext, secret or capability is archived',async t=>{
  const a=await mesh(t),cid=await a.conversation('alice',['bob','carol']);
  await a.run('alice','conversations.send',{conversationId:cid,text:'secret plans alpha'});
- await a.run('bob','contacts.add',{link:await a.link('carol'),label:'Label Zeta'});await a.run('bob','contacts.create-link',{kinds:['one-off']});await a.settle();
+ await a.run('bob','contacts.block',{principal:{issuer:'https://zeta.provider.example',subject:'5e7a0000-0000-4000-8000-000000000e7a'}});await a.settle();
  const first=await a.archive('bob','archive.checkpoint');assert.equal(first.kind,'snapshot');assert.equal(first.generation,1);
  const bob=a.party('bob'),storage=bob.storage,payload=storage.payload(),header=JSON.parse(td.decode(B.fromBase64url(storage.manifest().split('.')[0])));
  assert.deepEqual(header,{alg:'ES256',kid:(await bob.current()).kid,typ:'bindle-messaging-archive+jwt'});
  assert.equal(payload.writer.cnx,'cnx-bob');assert.equal(payload.owner.subject,bob.owner);assert.ok(payload.segments.every(s=>s.keyId===bob.custody.current().kid));
- // The storage resource holds ciphertext only: no message text, label, link or conversation secret.
+ // The storage resource holds ciphertext only: no message text, principal or conversation secret.
  const secret=B.base64url(Uint8Array.from(await bob.store.get(`conv/secret/${cid}/${(await a.get('bob',cid)).epoch}`))),stored=storedText(storage);
- for(const needle of ['secret plans','Label Zeta','bindle_meta',secret,btoa('secret plans alpha')])assert.ok(!stored.includes(needle),needle);
- // Decrypted, the archive holds history and contacts but never secrets, link metas, routes, keys or app config.
+ for(const needle of ['secret plans','zeta.provider.example',secret,btoa('secret plans alpha')])assert.ok(!stored.includes(needle),needle);
+ // Decrypted, the archive holds history and blocks but never secrets, routes, keys or app config.
  const plain=await plaintextOf(a,'bob');
- assert.ok(plain.includes('Label Zeta')&&plain.includes('"k":"contact/'));
+ assert.ok(plain.includes('zeta.provider.example')&&plain.includes('"k":"block/'));
  for(const needle of [secret,'conv/secret/','sharedSecret','"k":"config"','"k":"owner"','shell:','conv/route/','privateKey'])assert.ok(!plain.includes(needle),needle);
- // Other people's contact links are the owner's address book and travel (encrypted); the owner's own link metas do not.
- for(const line of plain.split('\n'))if(line.includes('bindle_meta'))assert.match(JSON.parse(line).k,/^contact\//);
+ // Contacts spike phase 4: no contact-link family is ever exported; an older archive's lines for them parse and are skipped.
+ for(const line of plain.split('\n'))assert.doesNotMatch(JSON.parse(line).k,/^(parent|contact|contact-link|known|decision)\//);
+ for(const key of ['parent/jti-1','contact/c1','contact-link/i/j','known/i|s','decision/j/i|s']){
+  assert.equal(lineOf(key,{x:1}),null,key);const old=JSON.stringify({t:classify(key).type,k:key,v:{x:1}});
+  assert.deepEqual(parseLine(old),{key,type:classify(key).type,phase:3,retired:true},key);
+ }
  assert.ok(plain.split('\n').every(l=>classify(JSON.parse(l).k)));
  // Unchanged state writes nothing; one more message writes a small delta.
  assert.equal((await a.archive('bob','archive.checkpoint')).kind,'none');

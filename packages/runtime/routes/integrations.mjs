@@ -85,7 +85,7 @@ export const account={
    return run(this,Operation,{actor:{kind:'system',owner},...input===undefined?{}:{input:shape(input)}});
   },
   // The messaging-mailbox provider feature's `describe` (Bindle Messaging §2.2, §2.5; extensions §4.2), validated with
-  // exact members ({version: 1, ingress}), for key delegation and for links/handoff.mjs: the validated ingress recorded
+  // exact members ({version: 1, ingress}), for key delegation: the validated ingress recorded
   // below is the occupant port's `ingress`, which becomes the delegation certificate's client.ingress (contacts spike
   // CR-C0; validateDescribe lives with delegation). The value port answers first (feature live, account status,
   // severance, exclusive selection); the entry it names must still be the one whose record is described. Any failure is

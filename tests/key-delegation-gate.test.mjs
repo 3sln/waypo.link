@@ -1,6 +1,6 @@
 // Contacts-and-links spike CR-C0 (H5, CL-25; provisional, unsigned): the KEY_DELEGATION_ENABLED gate. Its retained state
-// comes from live `key-delegation/` rows only, never from `link/` rows; until CR-C7 the gate also honours LINKS_ENABLED,
-// except a LINKS_ENABLED retention that link rows alone could justify. Engine level: the AccountFeatureState Query, the
+// comes from live `key-delegation/` rows only, never from `link/` rows. Contacts phase 4 (CR-C7) retired LINKS_ENABLED, so
+// the gate's transitional LINKS_ENABLED fallback is gone: KEY_DELEGATION_ENABLED decides alone. Engine level: the AccountFeatureState Query, the
 // pure gate, and the real AccountController issuance path under a writer pin.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -9,7 +9,8 @@ import {SqliteMetadata,SerialGate} from '../apps/node/resources.mjs';
 import {createAppEngine,read} from '../packages/app/engine.mjs';
 import {FlagsRuntime,flagWriter} from '../packages/runtime/flags.mjs';
 import {createFlags} from '../packages/flags/evaluate.mjs';
-import {FLAGS} from '../packages/flags/registry.mjs';
+import {FLAGS,RETIRED_FLAGS} from '../packages/flags/registry.mjs';
+import {validateSnapshot} from '../packages/flags/snapshot.mjs';
 import {AccountFeatureState,withWriterFlags} from '../packages/runtime/account/flags.mjs';
 import {keyDelegationAdmits,delegationsEnabled} from '../packages/identity/delegation.mjs';
 import {fakeClock,forEachSeed} from './helpers/chaos.mjs';
@@ -46,37 +47,33 @@ test('retained state: live key-delegation rows only; link rows, revoked, foreign
  const e=engine(db);try{assert.deepEqual(await read(e,new AccountFeatureState({actor:{kind:'system',owner:other}})),{});}finally{await e.dispose();}
 });
 
-test('gate: KEY_DELEGATION_ENABLED decides when configured; LINKS_ENABLED is the transitional fallback only when it is not',()=>{
+test('gate: KEY_DELEGATION_ENABLED decides alone; the retired LINKS_ENABLED (record or env) has no effect',()=>{
  const on=record({fallthrough:true}),off=record({on:false});
- // Configured KEY_DELEGATION_ENABLED (record or env) decides alone.
+ assert.equal(Object.hasOwn(FLAGS,'LINKS_ENABLED'),false);assert.ok(RETIRED_FLAGS.LINKS_ENABLED);
  assert.equal(keyDelegationAdmits(port({KEY_DELEGATION_ENABLED:on})),true);
- assert.equal(keyDelegationAdmits(port({KEY_DELEGATION_ENABLED:on,LINKS_ENABLED:off})),true,'LINKS_ENABLED off does not close a configured gate');
- assert.equal(keyDelegationAdmits(port({KEY_DELEGATION_ENABLED:off,LINKS_ENABLED:on})),false,'a console-off record closes it');
- assert.equal(keyDelegationAdmits(port({LINKS_ENABLED:on},{KEY_DELEGATION_ENABLED:'false'})),false,'the env kill closes it');
+ assert.equal(keyDelegationAdmits(port({KEY_DELEGATION_ENABLED:off})),false,'a console-off record closes it');
+ assert.equal(keyDelegationAdmits(port({},{KEY_DELEGATION_ENABLED:'false'})),false,'the env kill closes it');
  assert.equal(keyDelegationAdmits(port({},{KEY_DELEGATION_ENABLED:'true'})),true,'legacy env force-on before console adoption');
- assert.equal(keyDelegationAdmits(port({KEY_DELEGATION_ENABLED:record({rules:[{when:{accounts:[other]},serve:{value:true}}]}),LINKS_ENABLED:on})),false,'targeting another account');
- // Unconfigured: LINKS_ENABLED, exactly as before CR-C0.
- assert.equal(keyDelegationAdmits(port({LINKS_ENABLED:on})),true);
+ assert.equal(keyDelegationAdmits(port({KEY_DELEGATION_ENABLED:record({rules:[{when:{accounts:[other]},serve:{value:true}}]})})),false,'targeting another account');
+ // Unconfigured stays closed whatever the retired names say (no fallback since CR-C7).
  assert.equal(keyDelegationAdmits(port({})),false);
- assert.equal(keyDelegationAdmits(port({},{LINKS_ENABLED:'true'})),true);
- assert.equal(keyDelegationAdmits(port({LINKS_ENABLED:on},{LINKS_ENABLED:'false'})),false);
- assert.equal(keyDelegationAdmits(createFlags({snapshot:null,env:{KEY_DELEGATION_ENABLED:'true',LINKS_ENABLED:'true'}}).for({subject:{kind:'account',owner}})),false,'an unusable snapshot fails closed');
+ for(const env of [{LINKS_ENABLED:'true'},{BINDLEBOX_ENABLED:'true'}])assert.equal(keyDelegationAdmits(port({},env)),false,JSON.stringify(env));
+ assert.equal(keyDelegationAdmits(port({KEY_DELEGATION_ENABLED:on},{LINKS_ENABLED:'false'})),true,'a retired env kill closes nothing');
+ // A stored LINKS_ENABLED console record is quarantined by snapshot validation, never applied to key delegation.
+ const validated=validateSnapshot(snapshot({LINKS_ENABLED:on}),{quarantine:true});assert.deepEqual(validated.quarantined,['LINKS_ENABLED']);
+ assert.equal(keyDelegationAdmits(createFlags({snapshot:validated,env:{},clock:()=>start}).for({subject:{kind:'account',owner}})),false);
+ assert.equal(keyDelegationAdmits(createFlags({snapshot:null,env:{KEY_DELEGATION_ENABLED:'true'}}).for({subject:{kind:'account',owner}})),false,'an unusable snapshot fails closed');
  // delegationsEnabled is the same gate over a config.
  assert.equal(delegationsEnabled({KEY_DELEGATION_ENABLED:'true'},{subject:{kind:'account',owner}}),true);
- assert.equal(delegationsEnabled({KEY_DELEGATION_ENABLED:'false',LINKS_ENABLED:'true'},{subject:{kind:'account',owner}}),false);
- assert.equal(delegationsEnabled({LINKS_ENABLED:'true'},{subject:{kind:'account',owner}}),true);
+ assert.equal(delegationsEnabled({KEY_DELEGATION_ENABLED:'false'},{subject:{kind:'account',owner}}),false);
+ assert.equal(delegationsEnabled({LINKS_ENABLED:'true'},{subject:{kind:'account',owner}}),false,'the retired fallback is gone');
 });
 
-test('gate: a LINKS_ENABLED retention counts only with key-delegation state behind it',()=>{
- const flags={LINKS_ENABLED:record({retainExisting:true})};
- const retained=port(flags,{},{hasState:name=>name==='LINKS_ENABLED'});assert.equal(retained.evaluate('LINKS_ENABLED').reason,'retained');
- assert.equal(keyDelegationAdmits(retained),false,'no account state: a link-row retention is not enough');
- assert.equal(keyDelegationAdmits(retained,name=>name==='LINKS_ENABLED'),false,'link rows alone');
- assert.equal(keyDelegationAdmits(retained,name=>name==='KEY_DELEGATION_ENABLED'),true,'live delegation rows');
- // KEY_DELEGATION_ENABLED's own retention.
+test('gate: KEY_DELEGATION_ENABLED retention comes from its own state only',()=>{
  const own=port({KEY_DELEGATION_ENABLED:record({retainExisting:true})},{},{hasState:name=>name==='KEY_DELEGATION_ENABLED'});
  assert.equal(own.evaluate('KEY_DELEGATION_ENABLED').reason,'retained');assert.equal(keyDelegationAdmits(own),true);
  assert.equal(keyDelegationAdmits(port({KEY_DELEGATION_ENABLED:record({retainExisting:true})},{},{hasState:()=>false})),false);
+ assert.equal(keyDelegationAdmits(port({KEY_DELEGATION_ENABLED:record({retainExisting:true})},{},{hasState:name=>name==='LINKS_ENABLED'})),false,'no retired state counts');
 });
 
 async function account(t,{flags={},env={}}={}){
@@ -88,35 +85,30 @@ async function account(t,{flags={},env={}}={}){
  return {db,issue};
 }
 
-test('AccountController: a LINKS_ENABLED ramp-down retains issuance for delegation rows, never for link rows',async t=>{
- const flags={LINKS_ENABLED:record({retainExisting:true})};
- const links=await account(t,{flags});await links.db.put('link/one',{owner,state:'active'});
- assert.equal(await links.issue(),'not_found','link rows alone no longer keep key delegation open');
- const delegated=await account(t,{flags});await delegated.db.put(`key-delegation/${owner}/live`,{owner,state:'active'});
- assert.equal(await delegated.issue(),'forbidden','a live delegation row keeps it open, as before');
- const fresh=await account(t,{flags});assert.equal(await fresh.issue(),'not_found');
+test('AccountController: with the retired LINKS_ENABLED set in env and no KEY_DELEGATION_ENABLED, issuance stays closed',async t=>{
+ const links=await account(t,{env:{LINKS_ENABLED:'true'}});await links.db.put('link/one',{owner,state:'active'});
+ assert.equal(await links.issue(),'not_found','neither the retired env name nor link rows open key delegation');
+ const delegated=await account(t,{env:{LINKS_ENABLED:'true'}});await delegated.db.put(`key-delegation/${owner}/live`,{owner,state:'active'});
+ assert.equal(await delegated.issue(),'not_found','delegation rows retain only a configured KEY_DELEGATION_ENABLED');
 });
 
-test('AccountController: KEY_DELEGATION_ENABLED opens issuance without LINKS_ENABLED and retains it by delegation rows',async t=>{
+test('AccountController: KEY_DELEGATION_ENABLED opens issuance and retains it by delegation rows',async t=>{
  assert.equal(await (await account(t,{flags:{KEY_DELEGATION_ENABLED:record({fallthrough:true})}})).issue(),'forbidden');
- assert.equal(await (await account(t,{flags:{KEY_DELEGATION_ENABLED:record({fallthrough:true}),LINKS_ENABLED:record({on:false})}})).issue(),'forbidden');
  assert.equal(await (await account(t,{flags:{KEY_DELEGATION_ENABLED:record({fallthrough:true})},env:{KEY_DELEGATION_ENABLED:'false'}})).issue(),'not_found','env kill');
- const retained=await account(t,{flags:{KEY_DELEGATION_ENABLED:record({retainExisting:true}),LINKS_ENABLED:record({on:false})}});
+ const retained=await account(t,{flags:{KEY_DELEGATION_ENABLED:record({retainExisting:true})}});
  assert.equal(await retained.issue(),'not_found');
  await retained.db.put('link/one',{owner,state:'active'});assert.equal(await retained.issue(),'not_found','link rows never retain it');
  await retained.db.put(`key-delegation/${owner}/live`,{owner,state:'active'});assert.equal(await retained.issue(),'forbidden');
 });
 
-test('seeded: the gate verdict depends on delegation rows and flags, never on link rows',async()=>{
+test('seeded: the gate verdict depends on KEY_DELEGATION_ENABLED and its delegation rows only, never on link rows or retired names',async()=>{
  await forEachSeed(40,async random=>{
   const pick=list=>random.pick(list);
-  const kd=pick([undefined,record({fallthrough:true}),record({on:false}),record({retainExisting:true})]),lk=pick([undefined,record({fallthrough:true}),record({on:false}),record({retainExisting:true})]);
-  const env=pick([{},{KEY_DELEGATION_ENABLED:'false'},{LINKS_ENABLED:'false'},{LINKS_ENABLED:'true'}]),delegationRows=random.chance(0.5),linkRows=random.chance(0.5);
-  const flags=Object.fromEntries(Object.entries({KEY_DELEGATION_ENABLED:kd,LINKS_ENABLED:lk}).filter(([,v])=>v));
-  // AccountFeatureState as CR-C0 computes it: delegation rows for KEY_DELEGATION_ENABLED, either for LINKS_ENABLED.
-  const state={KEY_DELEGATION_ENABLED:delegationRows,LINKS_ENABLED:delegationRows||linkRows};
-  const verdict=rows=>keyDelegationAdmits(port(flags,env,{hasState:name=>rows[name]===true}),name=>rows[name]===true);
-  const withoutLinks=verdict({KEY_DELEGATION_ENABLED:delegationRows,LINKS_ENABLED:delegationRows});
-  assert.equal(verdict(state),withoutLinks,`link rows changed the verdict: ${JSON.stringify({kd,lk,env,delegationRows,linkRows})}`);
+  const kd=pick([undefined,record({fallthrough:true}),record({on:false}),record({retainExisting:true})]);
+  const env=pick([{},{KEY_DELEGATION_ENABLED:'false'},{KEY_DELEGATION_ENABLED:'true'}]),retired=pick([{},{LINKS_ENABLED:'false'},{LINKS_ENABLED:'true'},{BINDLEBOX_ENABLED:'true'}]),delegationRows=random.chance(0.5),linkRows=random.chance(0.5);
+  const flags=kd?{KEY_DELEGATION_ENABLED:kd}:{};
+  const verdict=(extraEnv,rows)=>keyDelegationAdmits(port(flags,{...env,...extraEnv},{hasState:name=>rows[name]===true}),name=>rows[name]===true);
+  const clean=verdict({},{KEY_DELEGATION_ENABLED:delegationRows});
+  assert.equal(verdict(retired,{KEY_DELEGATION_ENABLED:delegationRows,LINKS_ENABLED:delegationRows||linkRows}),clean,`retired inputs changed the verdict: ${JSON.stringify({kd,env,retired,delegationRows,linkRows})}`);
  });
 });

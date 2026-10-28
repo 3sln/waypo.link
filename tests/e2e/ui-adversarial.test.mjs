@@ -6,7 +6,6 @@ import {launch,baseURL,waitForApp,screenshot,publicAssetCache,completeSignupQues
 // to explicitly labeled fault-injection cases; worker-flow covers real endpoints.
 // Contact-link landing pages ask only for the contact-profile representation; it also verifies the link (messaging left
 // the core on 2026-10-27, so there is no intake description, composer or delivery).
-const PROFILE='application/vnd.bindle.contact-profile+json';
 let browser;
 test.before(async()=>{browser=await launch();});
 test.after(async()=>{await browser?.close();});
@@ -147,28 +146,7 @@ test('interaction-only flexible CAPTCHA fits every auth flow and preserves chall
 });
 
 
-test('contact profile is literal scoped optional metadata with no automatic avatar requests',async t=>{
- const invitation='/users/reader/contact/11111111-1111-1111-1111-111111111111?sig=private-profile-fixture';
- const claims={collections:['inbox'],mimeTypes:['text/plain'],maxMessageBytes:65536},token=`e30.${Buffer.from(JSON.stringify(claims)).toString('base64url')}.signature`;
- for(const scenario of ['shared','long','partial','disabled','failure','expired']){
-  const context=await browser.newContext({viewport:{width:320,height:1000}});t.after(()=>context.close());const page=await context.newPage();page.setDefaultTimeout(8000);let profiles=0,avatarRequests=0;
-  await context.addInitScript(()=>localStorage.setItem('personal-space-preferences',JSON.stringify({locale:'es'})));
-  await page.route('https://images.example/**',route=>{avatarRequests++;return route.abort();});
-  await page.route('**/api/config',route=>route.fulfill({json:{origin:baseURL,providers:{}}}));
-  await page.route('**/api/session',route=>route.fulfill({json:{account:scenario==='shared'?{id:'owner-fixture',handle:'owner'}:null}}));
-  await page.route('**/api/account',route=>route.fulfill({json:{account:{id:'owner-fixture',handle:'owner'},collections:[],messages:[],contacts:[],rules:[],resources:[]}}));
-  await page.route('**'+invitation,route=>{
-   const accept=route.request().headers().accept;
-   if(accept===PROFILE){profiles++;return route.fulfill(scenario==='expired'?{status:404,json:{error:'not_found'}}:scenario==='failure'?{status:503,body:'Unavailable'}:{json:{identityURI:'https://forged.example',profile:scenario==='disabled'?null:scenario==='long'?{displayName:'Z'.repeat(100)}:scenario==='partial'?{bio:'Sign in',unknown:'not shared'}:{displayName:'<img src=x onerror=alert(1)>',bio:'Sign in',avatar:'https://images.example/avatar.png'}},contentType:'application/vnd.bindle.contact-profile+json'});}
-   return route.continue();
-  });
-  await page.goto(baseURL+invitation);await page.getByText(/^Identidad del contacto: \u2068?reader@[^\s]+?\u2069?$/).waitFor();assert.equal(new URL(page.url()).search,'');
-  if(scenario==='expired'){await page.getByText('Este enlace de contacto ha caducado, se ha revocado o no es válido.').first().waitFor();assert.equal(profiles,1);assert.equal(await page.locator('a.contact-intent').count(),0);assert.equal(await page.getByRole('button',{name:'Intentar de nuevo',exact:true}).count(),0,'a refused link is final');}
-  else if(scenario==='failure'){await page.getByText('No se pudo comprobar este enlace de contacto en este momento. Inténtalo de nuevo en breve.').first().waitFor();assert.equal(await page.locator('a.contact-intent').count(),0);await page.getByRole('button',{name:'Intentar de nuevo',exact:true}).waitFor();}
-  else{await page.locator(scenario==='shared'?'section.contact-signed-in':'section.contact-signin').waitFor();assert.equal(await page.locator('textarea').count(),0);if(scenario==='shared'||scenario==='partial'){await page.getByText('Compartido por este enlace de contacto',{exact:true}).waitFor();assert.equal(await page.locator('.contact-profile-bio').textContent(),'Sign in','User biography must not be translated');}if(scenario==='long'){await page.getByRole('heading',{name:new RegExp('^Envía un mensaje a \u2068?'+'Z'.repeat(100)+'\u2069?\\.$')}).waitFor();await screenshot(page,'contact-profile-long-es-320');}if(scenario==='shared'){await page.getByRole('heading',{name:/^Envía un mensaje a \u2068?<img src=x onerror=alert\(1\)>\u2069?\.$/}).waitFor();assert.equal(await page.locator('.contact-recipient-profile strong').textContent(),'<img src=x onerror=alert(1)>');assert.equal(await page.locator('.contact-recipient-profile img').count(),0);const avatar=page.getByRole('link',{name:'Ver avatar compartido',exact:true});assert.equal(await avatar.getAttribute('rel'),'noreferrer noopener');await screenshot(page,'contact-profile-shared-es-320');}else assert.equal(await page.getByRole('link',{name:'Ver avatar compartido',exact:true}).count(),0);}
-  assert.equal(avatarRequests,0);assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);assert.equal(await page.locator('[href*="forged.example"]').count(),0);
- }
-});
+// The contact-link landing (and its profile preview) was removed in contacts phase 4; its adversarial cases left with it.
 
 test('public pages follow system theme with readable controls and preserve the CAPTCHA when preference changes',async t=>{
  const context=await browser.newContext({viewport:{width:1440,height:1000},colorScheme:'light'});t.after(()=>context.close());const page=await context.newPage();page.setDefaultTimeout(8000);
@@ -185,9 +163,6 @@ test('public pages follow system theme with readable controls and preserve the C
   const logo=page.locator('.landing-nav .logo img');await page.waitForFunction(dark=>document.querySelector('.landing-nav .logo img').currentSrc.includes('ondark')===dark,theme==='dark');
   await page.locator('.auth-card .button.primary').hover();await assertContrast('.auth-card .button.primary');assert.equal(await page.evaluate(()=>window.themeCaptchaRenders),renders,'Changing device theme must preserve the challenge');
  }
- const invitation='/users/theme-owner/contact/11111111-1111-1111-1111-111111111111?sig=theme-private';const token=`e30.${Buffer.from(JSON.stringify({collections:['inbox'],mimeTypes:['text/plain']})).toString('base64url')}.signature`;
- await page.route('**'+invitation,route=>{const accept=route.request().headers().accept;if(accept===PROFILE)return route.fulfill({json:{profile:{displayName:'Destinatario',bio:'Perfil compartido'}},contentType:accept});return route.continue();});
- await page.goto(baseURL+invitation);await page.getByRole('heading',{name:/^Envía un mensaje a \u2068?Destinatario\u2069?\.$/}).waitFor();await assertContrast('.contact-recipient-profile strong');await assertContrast('.contact-profile-bio');await assertContrast('.auth-card .button.primary');await screenshot(page,'system-theme-dark-contact-es-320');
  for(const path of ['/recovery/setup','/mcp/consent']){await page.goto(baseURL+path);await page.locator('.auth-card,.mcp-consent').first().waitFor();assert.equal(await page.evaluate(()=>getComputedStyle(document.documentElement).colorScheme),'dark');assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);await screenshot(page,'system-theme-dark-'+(path.includes('recovery')?'recovery':'mcp')+'-320');}
  await page.route('**/api/session',route=>route.fulfill({json:{account:{id:'theme-owner',handle:'owner'}}}));await page.route('**/api/account',route=>route.fulfill({json:{account:{id:'theme-owner',handle:'owner'},collections:[],messages:[],contacts:[],rules:[],resources:[]}}));await page.goto(baseURL+'/console?signup');await page.locator('.app-shell').waitFor();assert.equal(await page.evaluate(()=>getComputedStyle(document.documentElement).colorScheme),'dark');assert.equal(await page.locator('.sidebar .logo img').evaluate(node=>node.currentSrc.includes('ondark')),true,'Console follows the system theme with its matching logo');
 

@@ -1,7 +1,7 @@
 import {requireRestored} from '../store/restore.mjs';
 import {bodyObjects} from '../store/bodies.mjs';
 import {projectIncoming,removeIncoming} from '../store/item-index.mjs';
-// Intake: per-parent intake configuration (spec §4.3), bridged public intake `deliver` (spec §9), and public-request
+// Intake: bridged public intake `deliver` (spec §9), and public-request
 // filtering with the spam tiers of architecture §12.1. Filtering runs after custody in `intake.drain`, so no
 // receipt, error, header or timing class at admission depends on classification, score, rule or allowlist (§6.7).
 //  - very likely spam: p >= T_high under a threshold pinned to the occupant's {model, version, schema}: auto-reject
@@ -19,7 +19,6 @@ import {chargeBudget,intakeBudgetIdentity} from './receive-budget.mjs';
 
 export const T_HIGH=0.97,T_LOW=0.70,SPAM='sys:suspected.spam',FINAL_SPAM='sys:spam',DEFAULT_ALLOWANCE=200,MAX_CLASSIFIER_CHARS=8000;
 const invalid=message=>fault('invalid_input',message,400);
-const TAG=/^[a-z0-9][a-z0-9._-]{0,63}$/;
 const EMAIL=/^[^\s@<>()]{1,64}@([a-z0-9-]+(?:\.[a-z0-9-]+)+)$/i;
 const decoder=new TextDecoder('utf-8',{fatal:false});
 export const defaultSettings=()=>({classifierConsent:false,allowance:DEFAULT_ALLOWANCE,usage:{day:0,calls:0},pins:[]});
@@ -51,21 +50,6 @@ export function decideTier({result,pins=[],allowlisted=false,hints=[]}){
  return {tier:'none',tags:[],history:[]};
 }
 
-// Intake configuration per parent, compare-and-swap on revision (spec §4.3). Owner-private; never disclosed.
-export class IntakeUpdate extends MailboxAction {
- static operation='intake.update';static deps=['contacts'];static changes='contacts-changed';
- async run({contacts}){
-  actorOwner(this.actor);const {jti,revision,autoTags=[],optionalTags=[]}=this.input??{};
-  if(!Array.isArray(autoTags)||!Array.isArray(optionalTags)||autoTags.some(t=>!TAG.test(t))||optionalTags.some(t=>!t||!TAG.test(t.id)||(t.label!==undefined&&(typeof t.label!=='string'||t.label.length>64))))invalid('Choose valid tags.');
-  const ids=[...autoTags,...optionalTags.map(t=>t.id)];if(new Set(ids).size!==ids.length||ids.length>32)invalid('Tags must be distinct, at most 32.');
-  return contacts.store.transaction(async tx=>{
-   const parent=await tx.get(KEYS.parent(jti));if(!parent)fault('not_found','That link does not exist.',404);
-   const current=parent.intake??{revision:0,autoTags:[],optionalTags:[]};if(current.revision!==revision)fault('conflict','The intake changed. Reload and try again.',409);
-   const intake={revision:revision+1,autoTags:[...autoTags],optionalTags:optionalTags.map(t=>({id:t.id,...t.label?{label:t.label}:{}}))};
-   await tx.put(KEYS.parent(jti),{...parent,intake});return intake;
-  });
- }
-}
 // Owner settings: classifier consent, metered allowance, and explicit threshold pins per model version.
 export class IntakeSettings extends MailboxAction {
  static operation='intake.settings';static deps=['receive'];
@@ -97,14 +81,14 @@ export class IntakeAllow extends MailboxAction {
 
 // Public-intake `deliver({message, provenance})` from the authenticated consumer (spec §9, review S-6). The app shell
 // authenticates the brokered token and passes the consumer origin; the consumer's published key comes from
-// providerLink.consumerKey. Dedup on provenance jti and tx. The disposition never reflects later classification.
+// providerBridge.consumerKey. Dedup on provenance jti and tx. The disposition never reflects later classification.
 export class IntakeDeliver extends MailboxAction {
- static operation='intake.deliver';static deps=['receive','providerLink','clock'];static changes='incoming-changed';
- async run({receive,providerLink,clock}){
+ static operation='intake.deliver';static deps=['receive','providerBridge','clock'];static changes='incoming-changed';
+ async run({receive,providerBridge,clock}){
   actorOwner(this.actor,['ingress']);const {tx:txId,args,consumer,contract}=this.input??{},now=clock.now(),store=receive.store,config=await readConfig(store);
   if(contract!==INTAKE_CONTRACT||typeof txId!=='string'||!/^[a-f0-9-]{36}$/.test(txId)||typeof consumer!=='string')fault('malformed','The request is malformed.',400);
   let kid;try{kid=JSON.parse(decoder.decode(fromBase64url(String(args?.provenance).split('.')[0]))).kid;}catch{fault('malformed','The request is malformed.',400);}
-  let consumerKey;try{consumerKey=await providerLink?.consumerKey?.({consumer,keyId:kid});}catch{fault('recipient_unavailable','The recipient is unavailable.',503);}
+  let consumerKey;try{consumerKey=await providerBridge?.consumerKey?.({consumer,keyId:kid});}catch{fault('recipient_unavailable','The recipient is unavailable.',503);}
   const v=await verifyProvenance(args,{consumerKey,consumer,recipient:config.principal,now});
   const address=(v.asserted.sender.headerFrom.match(/<([^<>]+)>\s*$/)?.[1]??v.asserted.sender.headerFrom).trim().toLowerCase();
   const budget=intakeBudgetIdentity({consumer,channel:v.channel,sender:v.asserted.sender});
@@ -132,8 +116,8 @@ const channelText=item=>item.message.parts.filter(x=>x.mimeType.startsWith('text
 // Drains pending public requests: classification outside any transaction, then one result transaction per item that
 // rechecks the item is still pending (a quarantine, rescue or crash in between wins). Re-running is safe.
 export class IntakeDrain extends MailboxAction {
- static operation='intake.drain';static deps=['receive','classifier','providerLink','clock'];static changes='incoming-changed';
- async run({receive,classifier,providerLink,clock}){
+ static operation='intake.drain';static deps=['receive','classifier','providerBridge','clock'];static changes='incoming-changed';
+ async run({receive,classifier,providerBridge,clock}){
   actorOwner(this.actor,['system','owner']);const store=receive.store,limit=Math.min(Math.max(Number(this.input?.limit)||32,1),256);
   const queue=[...(await store.list({prefix:'pending/'})).entries()].slice(0,limit),out={processed:0,rejected:0,suspected:0,classified:0};
   for(const [pendingKey,{id}] of queue){
@@ -149,9 +133,9 @@ export class IntakeDrain extends MailboxAction {
     const text=minimize(item.origin==='channel'?channelText(item):`${item.subject}\n\n${body}`);
     try{const r=await classifier.decide({text,hints:item.origin==='channel'?item.asserted.automation.slice(0,16):[]});result={spam:r?.labels?.spam,evidence:r?.evidence};}catch{result=null;}
     // A host-published calibration for exactly this model version counts as a pin (architecture §12.1). It comes from
-    // the owner's provider (providerLink.calibration), never from the occupant being calibrated, and must pass the same
+    // the owner's provider (providerBridge.calibration), never from the occupant being calibrated, and must pass the same
     // threshold checks as an owner pin (BB2-R5).
-    const published=result&&typeof providerLink?.calibration==='function'?await Promise.resolve().then(()=>providerLink.calibration(structuredClone(result.evidence))).catch(()=>null):null;
+    const published=result&&typeof providerBridge?.calibration==='function'?await Promise.resolve().then(()=>providerBridge.calibration(structuredClone(result.evidence))).catch(()=>null):null;
     if(validPin(published)&&modelKey(published)===modelKey(result.evidence))settings.pins=[...settings.pins,{model:published.model,version:published.version,schema:published.schema,high:published.high,low:published.low}];
    }
    const decision=decideTier({result,pins:settings.pins,allowlisted,hints:result?[]:heuristics(item)});
@@ -211,8 +195,8 @@ export class IntakeRejected extends MailboxQuery {
  async fetch({receive}){actorOwner(this.actor);const out=[];for(const [,{id}] of [...(await receive.store.list({prefix:'rejected/'})).entries()].reverse()){const i=await receive.store.get(KEYS.item(id));if(i)out.push(view(i));}return out;}
 }
 export class IntakeAccept extends MailboxAction {
- static operation='intake.accept';static deps=['receive','providerLink','clock'];static changes='incoming-changed';
- async run({receive,providerLink,clock}){
+ static operation='intake.accept';static deps=['receive','providerBridge','clock'];static changes='incoming-changed';
+ async run({receive,providerBridge,clock}){
   actorOwner(this.actor);const {id}=this.input??{};if(typeof id!=='string'||!/^[A-Za-z0-9_-]{43}$/.test(id))invalid('Choose an item.');
   const bridge=await receive.store.transaction(async tx=>{
    await requireRestored(tx);const item=await tx.get(KEYS.item(id)),config=await readConfig(tx);
@@ -220,8 +204,8 @@ export class IntakeAccept extends MailboxAction {
    if(item.state!=='accepted'){const next={...item,state:'accepted',acceptedAt:clock.now(),reviewed:true};await tx.put(KEYS.item(id),next);await projectIncoming(tx,next);}
    return item.bridge;
   });
-  if(typeof providerLink?.accepted!=='function')fault('recipient_unavailable','Your provider is unavailable.',503);
-  await providerLink.accepted({jti:bridge.jti});return {id,state:'accepted'};
+  if(typeof providerBridge?.accepted!=='function')fault('recipient_unavailable','Your provider is unavailable.',503);
+  await providerBridge.accepted({jti:bridge.jti});return {id,state:'accepted'};
  }
 }
-export const INTAKE_OPERATIONS=[IntakeUpdate,IntakeSettings,IntakeAllow,IntakeDeliver,IntakeDrain,IntakeSweep,IntakeRescue,IntakeAccept,IntakeRequests,IntakeRejected];
+export const INTAKE_OPERATIONS=[IntakeSettings,IntakeAllow,IntakeDeliver,IntakeDrain,IntakeSweep,IntakeRescue,IntakeAccept,IntakeRequests,IntakeRejected];

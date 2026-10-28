@@ -66,8 +66,8 @@ export class BridgeSettings extends MailboxQuery {
 }
 
 export class BridgeReceive extends MailboxAction {
- static operation='bridge.receive';static deps=['bridge','receive','providerLink','clock'];static changes='incoming-changed';
- async run({bridge,receive,providerLink,clock}){
+ static operation='bridge.receive';static deps=['bridge','receive','providerBridge','clock'];static changes='incoming-changed';
+ async run({bridge,receive,providerBridge,clock}){
   actorOwner(this.actor,['ingress']);const {body,consumer,resource}=this.input??{},store=bridge.store,config=await readConfig(store);
   if(!(body instanceof Uint8Array))throw new ProtocolFault('malformed');
   const rpc=parseRPC(body,resource===undefined?{}:{resource});
@@ -92,7 +92,7 @@ export class BridgeReceive extends MailboxAction {
    return result;
   })};
   const intake=new IntakeDeliver({actor:this.actor,input:{tx:rpc.tx,contract:INTAKE_CONTRACT,consumer,args:rpc.args}});
-  const result=await intake.run({receive:{...receive,store:guarded},providerLink,clock});
+  const result=await intake.run({receive:{...receive,store:guarded},providerBridge,clock});
   return {disposition:result.disposition==='refused'?'refused':'stored-receipt'};
  }
 }

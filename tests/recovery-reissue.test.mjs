@@ -3,8 +3,7 @@
 // repository and account objects (single writer, real key registry, real transfer-out service), with recording notice
 // ports. Seeded chaos interleavings are in tests/recovery-reissue-chaos.test.mjs.
 import test from 'node:test';
-import { linkService } from '../packages/runtime/account/links.mjs';
-import { MESSAGING_CONTACT_LINK_TYPE } from '../packages/links/types.mjs';
+import { key } from '../packages/core/records.mjs';
 import assert from 'node:assert/strict';
 import { reissueFixture, DAY, MINUTE, TRANSFER_KEY, LOCK_KEY, REQUEST_KEY } from './helpers/recovery-reissue.mjs';
 import { recoveryCredential, RECOVERY_CREDENTIAL_AGE_MS, RECOVERY_REISSUE_TTL_MS, RECOVERY_REISSUE_WINDOW_MS } from '../packages/identity/service.mjs';
@@ -125,9 +124,10 @@ test('an ordinary key rotation between begin and confirm refuses the stale stage
 test('a reissue that must rotate but cannot (a full history of referenced keys) refuses with rotation_unavailable and stages nothing', async t => {
   // Review 2026-10-23 item 3: never issue a replacement file that holds the same signing key.
   const f = await reissueFixture(t), { id, c } = f; await f.age();
-  // A live contact parent (core links service) references the current key; legacy contact grants left the core on 2026-10-27.
-  const issue = () => linkService(c).issue(id, { type: MESSAGING_CONTACT_LINK_TYPE, claims: { resource: 'contact', kinds: ['one-off'], mimeTypes: ['text/plain'], maxMessages: 50, maxBytes: 65536, maxMessageBytes: 4096 }, expiresAt: Date.now() + 365 * DAY, handle: f.handle });
-  // Each cycle: a live contact link references the file's key, then a reissue rotates away from it; nothing is prunable.
+  // Only recovery bindings reference keys since contacts phase 4 removed contact links, and real issuance binds at most 8,
+  // so the full-history edge is reached with a planted binding naming every key in the history.
+  const issue = async () => { const kids = (await c.identityKeyHistory(id, { purpose: 'signing' })).map(k => k.kid); await c.metadata.put(key('identity-key-recovery', id), { owner: id, kids, at: Date.now() }); };
+  // Each cycle: the planted binding references the file's key, then a reissue rotates away from it; nothing is prunable.
   // Each committed reissue opens a 7-day window, so every cycle waits it out with a new session.
   let ctx = f.ctx;
   for (let i = 1; i < KEY_HISTORY_LIMIT; i++) { await issue(); await f.age(); await f.stepUp('password', ctx); await f.confirm(f.parse(await f.begin(undefined, ctx)), {}, ctx); f.advance(RECOVERY_REISSUE_WINDOW_MS); ctx = await f.secondSession(); }

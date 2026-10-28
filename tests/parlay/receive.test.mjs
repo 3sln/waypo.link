@@ -1,5 +1,6 @@
-// BB-B2 receive path over the seeded network simulator: admission order, honest receipts, replay, forged authors,
-// revoked app keys, budget exhaustion, crash/restart idempotency and dead hosts.
+// First-contact receive path (receive.first-contact, messaging §6.7) over the seeded network simulator: admission order,
+// honest receipts, replay, forged authors, revoked app keys, budget exhaustion, crash/restart idempotency and dead hosts.
+// Contacts spike phase 4 removed the contact-link path (receive.deliver, BindleLink); its removal regressions are here.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createWorld,P,B,NOW,INGRESS,uuidOf,encoder,keys} from './receive-fixtures.test.mjs';
@@ -10,7 +11,7 @@ const fresh=async(t,options)=>{const w=await createWorld(options);t.after(()=>w.
 const code=(r,status,error)=>{assert.equal(r.status,status,JSON.stringify(r.json));assert.equal(r.json.error,error);};
 
 test('a one-off is admitted once with a custody receipt the sender verifies; identical retries replay it without a charge',async t=>{
- const w=await fresh(t),link=await w.link('bob'),r=await w.deliver('alice','bob',link,{},{idempotencyKey:uuidOf(1)});
+ const w=await fresh(t),link=await w.admit('bob'),r=await w.deliver('alice','bob',link,{},{idempotencyKey:uuidOf(1)});
  assert.equal(r.status,200);assert.deepEqual(Object.keys(r.json),['receipt']);assert.equal(r.headers.get('cache-control'),'no-store');
  const verified=await w.verify('bob',r,r.json.receipt);assert.equal(verified.state,'delivered');
  assert.equal(r.json.receipt.payload.receivedAt,w.clock.now());assert.equal(r.json.receipt.payload.ingress,INGRESS.bob);
@@ -24,25 +25,27 @@ test('a one-off is admitted once with a custody receipt the sender verifies; ide
  assert.equal((await B.verifyReceipt(r.json.receipt,{obligation:{principal:P.carol.principal,ingress:INGRESS.carol,operationId:uuidOf(1),payloadDigest:await B.payloadDigest(r.envelope),bodyDigest:await B.sha256(crypto,r.body),kind:'one-off'},resolveKey:w.directory.resolveKey,status:w.directory.status,now:w.clock.now()})).state,'unknown');
 });
 
-test('bad link credentials are refused at the edge without waking a mailbox, uniformly',async t=>{
- const w=await fresh(t),link=await w.link('bob'),other=await w.link('bob'),before=w.delivered.count;
- const [h,p,s]=link.meta.split('.'),flip=s.slice(0,-2)+(s.at(-2)==='A'?'B':'A')+s.at(-1);
- const claims=JSON.parse(new TextDecoder().decode(B.fromBase64url(p)));
- const cases=[`BindleLink ${h}.${p}.${flip}`,`BindleLink ${h}.${B.base64url(encoder.encode(JSON.stringify({...claims,jti:'jti-unknown'})))}.${s}`,`BindleLink ${h}.${B.base64url(encoder.encode(JSON.stringify({...claims,maxMessages:9999})))}.${s}`];
- for(const authorization of cases){const built=await w.envelope('alice','bob',link);code(await w.post('alice','bob',w.request('bob',link,built,{authorization})),401,'link_invalid');}
- // A flipped signature with the same claims matches the edge digest, reaches the mailbox, and fails its signature check.
- assert.equal(w.delivered.count,before+1);
- code(await w.post('alice','bob',w.request('bob',link,await w.envelope('alice','bob',link),{authorization:'BindleLink not-a-jws'})),400,'link_malformed');
- code(await w.post('alice','bob',w.request('bob',link,await w.envelope('alice','bob',link),{authorization:`BindleConversation ${uuidOf(9)}.${'A'.repeat(43)}`})),403,'not_authorized');
- // Recipient binding (§4.5 step 4): an envelope addressed to the other link fails as link_invalid.
- code(await w.deliver('alice','bob',link,{operationId:uuidOf(3),recipient:{issuer:P.bob.principal.issuer,owner:P.bob.principal.subject,contactId:other.jti,resource:other.resource}}),401,'link_invalid');
- // Kind outside the link's kinds.
- code(await w.deliver('alice','bob',link,{kind:'conversation-init',operationId:uuidOf(4)}),401,'link_invalid');
+test('contact links are gone: BindleLink credentials and link recipients are malformed at the edge, unlisted authors are refused uniformly',async t=>{
+ const w=await fresh(t),admission=await w.admit('bob');await w.enlist('alice','bob',admission);const before=w.delivered.count;
+ // The withdrawn credential scheme fails the header grammar before any mailbox wakes.
+ for(const authorization of ['BindleLink eyJhbGciOiJFUzI1NiJ9.eyJqdGkiOiJ4In0.AAAA','BindleLink not-a-jws'])code(await w.post('alice','bob',w.request('bob',admission,await w.envelope('alice','bob',admission),{authorization})),400,'malformed');
+ // The withdrawn recipient form {issuer, owner, contactId, resource} fails the exact member set.
+ const link={issuer:P.bob.principal.issuer,owner:P.bob.principal.subject,contactId:'jti-bob-1',resource:'parent-1'};
+ await assert.rejects(w.envelope('alice','bob',admission,{operationId:uuidOf(3),recipient:link}),{code:'malformed'},'senders cannot even sign it');
+ const valid=await w.envelope('alice','bob',admission,{operationId:uuidOf(3)}),forged=structuredClone(valid.envelope);Object.assign(forged.payload.recipient,{contactId:link.contactId,resource:link.resource});
+ code(await w.post('alice','bob',w.request('bob',admission,{envelope:forged,body:valid.body})),400,'malformed');
+ assert.equal(w.delivered.count,before,'no mailbox was woken');
+ // Without any list admitting the author, first contact is not_authorized (the gate runs after author verification).
+ code(await w.deliver('carol','bob',null,{operationId:uuidOf(4)}),403,'not_authorized');
+ // The engine has no link operations or link admission any more.
+ const {MAILBOX_OPERATIONS}=await import('../../packages/messaging-engine/operations.mjs');
+ for(const op of ['receive.deliver','contacts.create-link','contacts.revoke-link','contacts.add','contacts.remove','contacts.list','intake.update'])assert.equal(Object.hasOwn(MAILBOX_OPERATIONS,op),false,op);
+ assert.throws(()=>w.run('bob','contacts.create-link',{}),/Unknown operation/);
  assert.deepEqual(await w.items('bob'),[]);assert.equal(await w.budget('bob'),undefined,'refusals before custody charge nothing');
 });
 
 test('forged authors fail before any status fetch, storage or charge',async t=>{
- const w=await fresh(t),link=await w.link('bob'),statusBefore=w.directory.calls.status;
+ const w=await fresh(t),link=await w.admit('bob'),statusBefore=w.directory.calls.status;
  // Payload altered after signing.
  code(await w.deliver('alice','bob',link,{tamper:e=>{e.payload.subject='Altered';return e;}}),401,'author_unverifiable');
  // A certificate for Alice signed by Carol's identity key under Alice's kid.
@@ -58,7 +61,7 @@ test('forged authors fail before any status fetch, storage or charge',async t=>{
 });
 
 test('revoked app keys: status-required kinds check live, others honour known revocations, and earlier items quarantine',async t=>{
- const w=await fresh(t),link=await w.link('bob',{kinds:['conversation-init','one-off']});
+ const w=await fresh(t),link=await w.admit('bob');
  const first=await w.deliver('alice','bob',link,{operationId:uuidOf(10)});assert.equal(first.status,200);
  // Status cannot be determined: 503 with Retry-After, nothing stored.
  w.directory.outage('status');const down=await w.deliver('alice','bob',link,{kind:'conversation-init',operationId:uuidOf(11)});code(down,503,'author_unverifiable');assert.equal(down.headers.get('retry-after'),'60');w.directory.restore('status');
@@ -75,26 +78,23 @@ test('revoked app keys: status-required kinds check live, others honour known re
 });
 
 test('budget exhaustion is a retryable 429 before custody; replays of admitted messages still answer',async t=>{
- const w=await fresh(t),link=await w.link('bob',{maxMessages:1000});let first;
+ const w=await fresh(t),link=await w.admit('bob');let first;
  for(let i=0;i<30;i++){const r=await w.deliver('alice','bob',link,{operationId:uuidOf(100+i)});assert.equal(r.status,200,JSON.stringify(r.json));first??=r;}
  const limited=await w.deliver('alice','bob',link,{operationId:uuidOf(200)});code(limited,429,'rate_limited');assert.ok(Number(limited.headers.get('retry-after'))>=1&&Number(limited.headers.get('retry-after'))<=60);
  assert.deepEqual((await w.post('alice','bob',first.request)).json,first.json);assert.equal((await w.items('bob')).length,30);
  w.clock.advance(60000);assert.equal((await w.deliver('alice','bob',link,{operationId:uuidOf(200),createdAt:w.clock.now()-1000})).status,200);
- // Unconditional link lifetime quota: a spent link stops authorizing.
- const small=await w.link('bob',{maxMessages:1});assert.equal((await w.deliver('carol','bob',small,{operationId:uuidOf(300),createdAt:w.clock.now()-1000})).status,200);
- code(await w.deliver('carol','bob',small,{operationId:uuidOf(301),createdAt:w.clock.now()-1000}),401,'link_invalid');
 });
 
 test('crash and restart: rollback admits on retry, a lost reply replays the stored receipt, concurrent duplicates admit once',async t=>{
  for(const mode of ['throw','after']){
-  const w=await fresh(t),link=await w.link('bob');
+  const w=await fresh(t),link=await w.admit('bob');await w.enlist('alice','bob',link);
   w.peer('bob').faults={mailboxStore:[{method:'transaction',when:1,mode}]};await w.network.recover('bob');
   const lost=await w.deliver('alice','bob',link);assert.equal(lost.status,500);assert.deepEqual(Object.keys(lost.json),['error','message']);
   assert.equal((await w.items('bob')).length,mode==='after'?1:0,'the commit either happened or rolled back entirely');
   const retry=await w.post('alice','bob',lost.request);assert.equal(retry.status,200);assert.equal((await w.verify('bob',lost,retry.json.receipt)).state,'delivered');
   assert.equal((await w.items('bob')).length,1);assert.equal((await w.budget('bob')).windows.day.messages,1,'charged exactly once');
  }
- const w=await fresh(t),link=await w.link('bob'),built=await w.envelope('alice','bob',link),request=w.request('bob',link,built);
+ const w=await fresh(t),link=await w.admit('bob');await w.enlist('alice','bob',link);const built=await w.envelope('alice','bob',link),request=w.request('bob',link,built);
  const results=await concurrently(Array.from({length:6},()=>()=>w.post('alice','bob',request)));
  const receipts=results.map(r=>r.value.json);assert.ok(receipts.every(r=>JSON.stringify(r)===JSON.stringify(receipts[0])));
  assert.equal((await w.items('bob')).length,1);assert.equal((await w.budget('bob')).windows.day.messages,1);
@@ -107,7 +107,7 @@ test('crash and restart: rollback admits on retry, a lost reply replays the stor
 });
 
 test('dead directory, clock skew, window and an unusable receipt key all refuse before custody',async t=>{
- const w=await fresh(t),link=await w.link('bob');
+ const w=await fresh(t),link=await w.admit('bob');
  w.directory.outage('directory');const down=await w.deliver('alice','bob',link);assert.equal(down.status,503);assert.equal(down.headers.get('retry-after'),'60');w.directory.restore('directory');
  const skew=await w.deliver('alice','bob',link,{createdAt:w.clock.now()+61000,operationId:uuidOf(20)});code(skew,400,'clock_skew');assert.equal(skew.json.serverTime,w.clock.now());
  code(await w.deliver('alice','bob',link,{createdAt:w.clock.now()-86400001,operationId:uuidOf(21)}),400,'envelope_expired');
@@ -120,43 +120,33 @@ test('dead directory, clock skew, window and an unusable receipt key all refuse 
  bob.signer={...P.bob.signer,delegation:P.bob.renewed.delegation};code(await w.deliver('alice','bob',link,{operationId:uuidOf(24)}),503,'recipient_unavailable');
  delete bob.signer;assert.deepEqual(await w.items('bob'),[]);
  // Posting to another ingress than the configured one is ingress_moved.
- const built=await w.envelope('alice','bob',link,{operationId:uuidOf(25)});code(await w.post('alice','bob',{...w.request('bob',link,built),url:'https://elsewhere.box.example/ingress'}),410,'ingress_moved');
+ await w.enlist('alice','bob',link);const built=await w.envelope('alice','bob',link,{operationId:uuidOf(25)});code(await w.post('alice','bob',{...w.request('bob',link,built),url:'https://elsewhere.box.example/ingress'}),410,'ingress_moved');
 });
 
-test('large bodies are staged in the owner storage resource first, else held in the bounded hot allowance',async t=>{
- const puts=[],storage={fail:false,async put(key,bytes){if(this.fail)throw new Error('storage down');puts.push([key,bytes.byteLength]);}};
- const w=await fresh(t,{userStorage:storage}),link=await w.link('bob'),big=encoder.encode('x'.repeat(5000));
- assert.equal((await w.deliver('alice','bob',link,{body:big})).status,200);assert.equal(puts.length,1);assert.ok(puts[0][0].startsWith('parlay/v1/items/'));
- let [item]=await w.items('bob');assert.equal(item.bodyRef.storage,'user');assert.equal(await w.peer('bob').store.get(`body/${item.id}`),undefined);
- storage.fail=true;assert.equal((await w.deliver('alice','bob',link,{body:big,operationId:uuidOf(2)})).status,200);
- item=(await w.items('bob')).find(i=>i.operationId===uuidOf(2));assert.equal(item.bodyRef.storage,'mailbox');
- // The hot charge covers the body and the envelope the item row keeps (wargame 2026-10-23 review of B2).
+test('first-contact bodies are held in the bounded hot allowance, charged with the envelope the item keeps',async t=>{
+ // receive.first-contact keeps bodies in the mailbox (phase 3 behaviour; the removed link path also staged them in the
+ // owner's storage resource, which first contact does not do yet).
+ const puts=[],storage={async put(key,bytes){puts.push([key,bytes.byteLength]);}};
+ const w=await fresh(t,{userStorage:storage}),link=await w.admit('bob'),big=encoder.encode('x'.repeat(5000));
+ assert.equal((await w.deliver('alice','bob',link,{body:big})).status,200);assert.equal(puts.length,0);
+ const [item]=await w.items('bob');assert.equal(item.bodyRef.storage,'mailbox');assert.ok(await w.peer('bob').store.get(`body/${item.id}`));
+ // The hot charge covers the body and the envelope the item row keeps.
  const raw=await w.peer('bob').store.get(`item/${item.id}`),envelopeBytes=encoder.encode(B.jcs(raw.envelope)).byteLength;
- assert.equal(raw.hot,5000+envelopeBytes);assert.ok(envelopeBytes>0);
- assert.deepEqual(await w.peer('bob').store.get('usage/v1'),{hotBytes:5000+envelopeBytes,hotItems:1,rejected:0});
- // Small bodies stay inline and never count against the hot allowance.
- assert.equal((await w.deliver('alice','bob',link,{operationId:uuidOf(3)})).status,200);assert.equal((await w.peer('bob').store.get('usage/v1')).hotItems,1);
+ assert.equal(raw.hot,5000+envelopeBytes);assert.deepEqual(await w.peer('bob').store.get('usage/v1'),{hotBytes:5000+envelopeBytes,hotItems:1,rejected:0});
+ assert.equal((await w.deliver('alice','bob',link,{operationId:uuidOf(3)})).status,200);assert.equal((await w.peer('bob').store.get('usage/v1')).hotItems,2,'first contact charges every body it keeps');
 });
 
-test('review regressions: refused attempts stage nothing, conflicts never overwrite bodies, verified refusals are limited before crypto',async t=>{
- const puts=new Map(),deleted=[],storage={async put(key,bytes){puts.set(key,B.base64url(bytes).slice(0,8));},async delete(key){deleted.push(key);puts.delete(key);}};
- const w=await fresh(t,{userStorage:storage}),spent=await w.link('bob',{maxMessages:1}),big=n=>encoder.encode(String(n).repeat(5000));
- assert.equal((await w.deliver('alice','bob',spent,{body:big(1)})).status,200);assert.equal(puts.size,1);const [[key,stored]]=[...puts];
- // BB2-R1: a spent link refuses before staging.
- for(let i=2;i<6;i++)code(await w.deliver('alice','bob',spent,{body:big(i),operationId:uuidOf(i)}),401,'link_invalid');assert.equal(puts.size,1);
- // BB2-R2: a conflicting retry of the admitted operation never touches its stored body.
- const open=await w.link('bob');assert.equal((await w.deliver('carol','bob',open,{body:big(7),operationId:uuidOf(70)})).status,200);
- code(await w.deliver('carol','bob',open,{body:big(8),operationId:uuidOf(70)}),409,'operation_conflict');assert.equal(puts.get(key),stored);assert.equal(puts.size,2);
- // A refusal found inside the commit discards the staged copy.
+test('review regressions: conflicts never overwrite bodies, a block found in the commit refuses, verified policy refusals are limited',async t=>{
+ const w=await fresh(t),open=await w.admit('bob'),big=n=>encoder.encode(String(n).repeat(5000));
+ assert.equal((await w.deliver('carol','bob',open,{body:big(7),operationId:uuidOf(70)})).status,200);const [item]=await w.items('bob'),stored=await w.peer('bob').store.get(`body/${item.id}`);
+ code(await w.deliver('carol','bob',open,{body:big(8),operationId:uuidOf(70)}),409,'operation_conflict');assert.deepEqual(await w.peer('bob').store.get(`body/${item.id}`),stored);
+ // A block that lands inside the commit refuses with the uniform not_authorized and stores nothing.
  const store=w.peer('bob').store,originalTx=store.transaction.bind(store);let once=true;
- store.transaction=work=>{if(once){once=false;return originalTx(async tx=>{await tx.put('block/'+encodeURIComponent(P.carol.principal.issuer)+'|'+encodeURIComponent(P.carol.principal.subject),{});return work(tx);}).catch(e=>{throw e;});}return originalTx(work);};
- code(await w.deliver('carol','bob',open,{body:big(9),operationId:uuidOf(71)}),403,'not_authorized');store.transaction=originalTx;
- assert.equal(deleted.length,1);assert.equal(puts.size,2);
- // BB2-R3: after 20 verified refusals a principal is refused before crypto, status or the links contract.
- const gated=await w.link('bob',{conditional:true});w.links.bob.state.policy=()=>'ineligible';
- // Alice already has 4 verified refusals (the spent link above); 16 more reach the limit of 20 per hour.
- for(let i=0;i<16;i++)code(await w.deliver('alice','bob',gated,{operationId:uuidOf(200+i),createdAt:w.clock.now()-1000}),403,'audience_ineligible');
- assert.equal(w.links.bob.calls.evaluate,1,'the negative decision is reused for 15 minutes');const evaluations=w.links.bob.calls.evaluate;w.clock.advance(900001);const limited=await w.deliver('alice','bob',gated,{operationId:uuidOf(300),createdAt:w.clock.now()-1000});
- code(limited,429,'rate_limited');assert.equal(w.links.bob.calls.evaluate,evaluations);
- assert.equal((await w.deliver('carol','bob',gated,{operationId:uuidOf(301),createdAt:w.clock.now()-1000})).json.error,'audience_ineligible','other principals are unaffected');
+ store.transaction=work=>{if(once){once=false;return originalTx(async tx=>{await tx.put('block/'+encodeURIComponent(P.carol.principal.issuer)+'|'+encodeURIComponent(P.carol.principal.subject),{principal:{issuer:P.carol.principal.issuer,subject:P.carol.principal.subject}});return work(tx);});}return originalTx(work);};
+ code(await w.deliver('carol','bob',open,{body:big(9),operationId:uuidOf(71)}),403,'not_authorized');store.transaction=originalTx;assert.equal((await w.items('bob')).length,1);
+ // After 20 verified policy refusals in an hour, that principal is refused (429) before its policy is read again; others
+ // are unaffected, and nothing before verification depends on the claimed principal's history.
+ for(let i=0;i<20;i++)code(await w.deliver('alice','bob',null,{operationId:uuidOf(200+i)}),403,'not_authorized');
+ const limited=await w.deliver('alice','bob',null,{operationId:uuidOf(300)});code(limited,429,'rate_limited');assert.ok(Number(limited.headers.get('retry-after'))>=1);
+ await w.run('bob','lists.remove',{list:'contacts',principal:{issuer:P.carol.principal.issuer,subject:P.carol.principal.subject}});code(await w.deliver('carol','bob',null,{operationId:uuidOf(301)}),403,'not_authorized');
 });

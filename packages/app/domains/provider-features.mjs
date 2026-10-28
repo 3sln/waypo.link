@@ -30,8 +30,8 @@ export const SUSPENSION_REVOCATION_MS=30*86400000;
  * 30-day bound is never late and at most this much early. Same cadence as the 6-hourly lifecycle sweeps. */
 export const FEATURE_SWEEP_MS=6*3600000;
 /** Messaging §2.5: the mailbox feature's `describe` is mounted only with key delegation, integrations, brokering and a
- * describe port (MESSAGING_DESCRIBE, the brokered consumer call). Contacts spike CR-C0: LINKS_ENABLED is no longer
- * involved. A host certificate lifetime that does not parse leaves it unmounted (it could not be declared honestly). */
+ * describe port (MESSAGING_DESCRIBE, the brokered consumer call). Contacts spike CR-C0 removed LINKS_ENABLED
+ * from it; CR-C7 retired that flag. A host certificate lifetime that does not parse leaves it unmounted (it could not be declared honestly). */
 export const messagingMailboxMounted=config=>siteGlobal(config,'KEY_DELEGATION_ENABLED',true)&&siteGlobal(config,'INTEGRATIONS_ENABLED',true)&&siteGlobal(config,'BROKERING_ENABLED',true)&&typeof config.MESSAGING_DESCRIBE==='function'&&delegationLifetime(config.DELEGATION_CERTIFICATE_SECONDS)!==null;
 /** The key-delegation options this host declares beside the messaging-mailbox feature: one entry for every certificate
  * profile it issues, so each option is the maximum over them (organizations §14, review M3; provisional): Parlay

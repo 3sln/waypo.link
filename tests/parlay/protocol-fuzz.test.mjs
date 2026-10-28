@@ -92,7 +92,7 @@ test('multipart delivery parser: only ProtocolFaults, and accepted inputs are in
 test('multicast parser: whole-request faults or per-context codes, never thrown context errors',async()=>{
  const seed=bytes(V.multicast.bytesBase64url);
  await forEachSeed(ROUNDS*3,async random=>{
-  const r=await attempt(()=>B.parseMulticast(V.multicast.contentType,mutateBytes(seed,random,[Array.from(encoder.encode('{"credential":{"scheme":"BindleLink","value":"a.b.c"},"envelope":{}},'))])));
+  const r=await attempt(()=>B.parseMulticast(V.multicast.contentType,mutateBytes(seed,random,[Array.from(encoder.encode('{"credential":{"scheme":"BindleConversation","value":"a.b"},"envelope":{}},'))])));
   if(!r.value)return;assert.ok(r.value.contexts.length>=1&&r.value.contexts.length<=32);
   for(const c of r.value.contexts){if(c.error)assert.ok(codes.has(c.error));else{await B.validateEnvelope(c.envelope);assert.deepEqual(c.envelope.payload.content,r.value.content);}}
  });
@@ -100,14 +100,14 @@ test('multicast parser: whole-request faults or per-context codes, never thrown 
 
 test('certificate, credential, receipt and RPC parsers reject garbage with ProtocolFaults only',async()=>{
  const certs=Object.values(V.parties).flatMap(p=>[p.certificate,p.renewedCertificate]),receipts=V.objects.filter(o=>o.type==='receipt').map(o=>o.signed);
- const rpc=encoder.encode(JSON.stringify({version:'0',tx:'00000000-0000-4000-8000-000000000001',resource:'https://hub.box.example/m/1',contract:B.MAILBOX_CONTRACT,method:'linkRevoked',args:{jti:'j1'}}));
+ const rpc=encoder.encode(JSON.stringify({version:'0',tx:'00000000-0000-4000-8000-000000000001',resource:'https://hub.box.example/m/1',contract:B.MAILBOX_CONTRACT,method:'describe',args:{}}));
  await forEachSeed(ROUNDS*3,async random=>{
   const cert=new TextDecoder().decode(mutateBytes(encoder.encode(random.pick(certs)),random,[[46],[61],[43]]));
   const c=await attempt(()=>B.parseDelegation(cert));if(c.value)assert.equal(c.value.claims.bindle,'key-delegation');
   await attempt(()=>B.parseCredential(new TextDecoder().decode(mutateBytes(encoder.encode(`BindleConversation ${V.objects[0].signed.payload.operationId}.${V.pairToken.token}`),random))));
   const r=await attempt(()=>B.validateReceipt(mutateValue(random.pick(receipts),random)));if(r.value)assert.equal(r.value.payload.state,'delivered');
   const q=await attempt(()=>B.parseRPC(mutateBytes(rpc,random)));if(q.value)assert.ok([B.MAILBOX_CONTRACT,B.INTAKE_CONTRACT].includes(q.value.contract));
-  await attempt(()=>B.validateDescriptor(mutateValue({version:1,profiles:[B.PROFILE],ingress:'https://hub.box.example/ingress',limits:{maxParticipants:32,maxMessageBytes:1,maxEnvelopeBytes:1},kinds:['one-off'],expiresAt:V.now+1000},random),{now:V.now}));
+  await attempt(()=>B.parseCredential(new TextDecoder().decode(mutateBytes(encoder.encode(`BindleInvite ${V.invitation.token}`),random))));
   await attempt(()=>B.parseMulticastResults(mutateValue({results:[{index:0,state:'delivered',receipt:receipts[0]},{index:1,state:'unknown'}]},random),2));
  });
 });

@@ -90,7 +90,7 @@ test('real passkey signup, confirmation gate, sign out and assertion login',asyn
   }
 
 });
-test('real password setup resumes, recovery rotates, the contact profile saves, and private APIs never cache',async t=>{
+test('real password setup resumes, recovery rotates, the profile saves, and private APIs never cache',async t=>{
   const {page,context}=await setup(t);
   await page.getByRole('button',{name:'Password',exact:true}).click();assert.equal(await page.getByLabel('Your handle').count(),0);
   await completeSignupQuestions(page);await page.getByLabel('Password',{exact:true}).fill('Test only long password 2026!');await page.getByRole('button',{name:'Create my account'}).click();
@@ -112,12 +112,13 @@ test('real password setup resumes, recovery rotates, the contact profile saves, 
   await page.getByRole('button',{name:'Notifications',exact:true}).click();await screenshot(page,'live-notifications-desktop');
   await page.getByRole('button',{name:'Messages',exact:true}).first().click();
   const account=await ownerAPI(page,'/api/account',null,'GET');assert.equal(account.cache,'private, no-store');
-  // Messaging left the core (2026-10-27): the console keeps only the optional contact profile, edited in Account & security.
+  // Messaging left the core (2026-10-27) and contact links followed (contacts phase 4): the console keeps only the account
+  // profile (display name and avatar), edited in Account & security.
   await page.getByRole('button',{name:'Account & security',exact:true}).click();const profile=page.locator('.contact-profile-settings');await profile.locator('form[aria-busy=false]').waitFor();
-  assert.match(await profile.textContent(),/None of your apps has created a contact link yet\./);
-  await profile.getByLabel('Display name',{exact:true}).fill('Actual scoped recipient');await profile.getByLabel('Enable the profile fields allowed by each contact link',{exact:true}).check();await profile.getByRole('button',{name:'Save contact profile',exact:true}).click();await page.getByText('Contact profile saved.').waitFor();await screenshot(page,'live-contact-profile-desktop');
-  const stored=await ownerAPI(page,'/api/profile',null,'GET');assert.equal(stored.status,200);assert.equal(stored.body.displayName,'Actual scoped recipient');assert.equal(stored.body.discloseToContacts,true);assert.match(stored.cache,/no-store/);
-  for(const [path,method] of [['/api/contacts','POST'],['/api/contact-links','POST'],['/api/links/envelope','POST'],['/api/conversations','GET'],['/api/contacts/redeem','POST']])assert.ok([404,405,406].includes(await page.evaluate(async({path,method})=>{const session=await (await fetch('/api/session')).json();return (await fetch(path,{method,headers:{'Content-Type':'application/json','X-CSRF-Token':session.csrfToken,'X-Bindle-Account':session.account.id,'X-Bindle-Session-Context':session.sessionContext},...method==='GET'?{}:{body:'{}'}})).status;},{path,method})),`${method} ${path} left the core`);
+  assert.doesNotMatch(await profile.textContent(),/contact link/i);
+  await profile.getByLabel('Display name',{exact:true}).fill('Actual scoped recipient');await profile.getByRole('button',{name:'Save profile',exact:true}).click();await page.getByText('Profile saved.').waitFor();await screenshot(page,'live-contact-profile-desktop');
+  const stored=await ownerAPI(page,'/api/profile',null,'GET');assert.equal(stored.status,200);assert.equal(stored.body.displayName,'Actual scoped recipient');assert.deepEqual(Object.keys(stored.body).sort(),['avatar','displayName','revision']);assert.match(stored.cache,/no-store/);
+  for(const [path,method] of [['/api/contacts','POST'],['/api/contact-links','POST'],['/api/links/envelope','POST'],['/api/links/respond','POST'],['/api/contacts/'+crypto.randomUUID()+'/sharing','PUT'],['/api/conversations','GET'],['/api/contacts/redeem','POST']])assert.ok([404,405,406].includes(await page.evaluate(async({path,method})=>{const session=await (await fetch('/api/session')).json();return (await fetch(path,{method,headers:{'Content-Type':'application/json','X-CSRF-Token':session.csrfToken,'X-Bindle-Account':session.account.id,'X-Bindle-Session-Context':session.sessionContext},...method==='GET'?{}:{body:'{}'}})).status;},{path,method})),`${method} ${path} left the core`);
   const urls=await publicAssetCache(page);assert.ok(urls.every(url=>!new URL(url).pathname.startsWith('/api/')));
   await page.getByRole('button',{name:'Messages',exact:true}).first().click();await page.setViewportSize({width:390,height:844});await screenshot(page,'live-inbox-mobile');
 });

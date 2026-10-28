@@ -21,9 +21,10 @@ older/newer offsets and totals. The client retains only the selected page. Per-e
 history is capped at 20 and reports truncation. Server causal ordering still reads conversation
 metadata before slicing; this work bounds browser transfer, not server sorting memory.
 
-New conversations select stored contacts. The shell resolves their live identity and messaging
-descriptor, verifies the stored contact meta signature, and constructs trusted participant
-bindings. A changed/unavailable identity fails closed. Rejected body reads are explicit owner
+New conversations select members of the owner's Contacts list (`conversations.create` with the member's
+principal). The engine uses the binding that member's accepted two-party conversation verified; a member
+without one cannot be messaged yet. Contact links (adding a contact link, link-based contacts and the
+`send-message`/`add-contact` intent kinds) were removed in contacts spike phase 4. Rejected body reads are explicit owner
 queries; encrypted staged parts and signed body digests are checked before a maximum 64 KiB
 text projection is returned. Quarantined items cannot be read. Peer content remains literal text.
 
@@ -37,7 +38,7 @@ Run `npm run test:parlay:web` for client engine, transport and Chromium checks, 
 bounded transfer of a 10,001-event history, drafts, partial delivery, Retry missing, SSE reset,
 rescue and archive handoff across locales, sizes and themes. Integration regressions in
 `tests/parlay/wave4-integration.test.mjs` additionally exercise actual shell mounting,
-verified contact creation, encrypted Rejected reads and the archive security gates.
+encrypted Rejected reads and the archive security gates.
 
 Contacts spike phase 3 (provisional, unsigned; behind `PARLAY_ENABLED` and, for the handoff,
 `INTENT_LINKS_ENABLED`). The intent handler accepts the Bindle Messaging `connect` kind
@@ -49,8 +50,8 @@ re-armed confirmation runs `invites.redeem`. Failures render fixed text: used or
 verify (both terminal), or could not check right now (retry after re-arming). Contacts adds "Invite a
 person", which calls `invites.create` and shows the `web+bindle://intent?bintent=…` link once. The token
 stays in memory only and is discarded by Done or navigation. Contacts also lists invitations (state, expiry,
-"Used by" ledger entries with Block, and Revoke) and the members of the built-in Contacts list. The worker's
-intent declaration for `connect` and its provider registration belong to phase 4.
+"Used by" ledger entries with Block, and Revoke) and the members of the built-in Contacts list, each with
+Remove and, when reachable, Start conversation.
 `tests/parlay/connect-intent.test.mjs`, `tests/browser/intent-parlay-browser.mjs` and
 `tests/parlay/browser/invites-browser.test.mjs` cover these flows.
 

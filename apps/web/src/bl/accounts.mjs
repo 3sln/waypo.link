@@ -33,7 +33,7 @@ class AccountAction extends Action {
   publish(r,ctx,{busy:false,accountsLoading:false,error:error.message??'The account request could not be completed.'});}}
 }
 export class OpenAccounts extends AccountAction {async perform(r,ctx){this.ticket=generation(r);publish(r,ctx,{accountPicker:true,error:''});await accountInventory(r,ctx,this.ticket);r.browser.focusAccounts?.();}}
-export class CloseAccounts extends AccountAction {async perform(r,ctx){publish(r,ctx,{accountPicker:false,error:''});if(state(r).handoff?.choosing&&state(r).session?.account)ctx.engineFeed.dispatchEvent(new Event('contact-handoff-ready'));}}
+export class CloseAccounts extends AccountAction {async perform(r,ctx){publish(r,ctx,{accountPicker:false,error:''});}}
 export class AddAccount extends AccountAction {async perform(r,ctx){const inventory=state(r).browserAccounts;if(inventory&&inventory.accounts.length>=(inventory.limit??5))throw Error('Sign out of an account before adding another.');const code=r.browser.secret('deviceCode')??r.browser.secret('deviceCanceledCode');clearBrowserAccount(r);publish(r,ctx,{...accountReset(state(r)),addingAccount:true,accountPicker:false,auth:'login',busy:true});this.ticket=generation(r);const warning=await cancelPreviousDevice(r,code);if(this.ticket!==generation(r))return;publish(r,ctx,{busy:false,notice:warning});r.browser.setCaptchaAction('login');r.browser.installCaptcha(state(r).config);}}
 // Explicit, confirmed switch. Old private state is torn down before the network
 // call; the request carries the original tab authority plus the picker proof.
@@ -44,8 +44,6 @@ export class SwitchAccount extends AccountAction {async perform(r,ctx,{owner}){
  const result=await r.api.request('/api/auth/accounts/switch',{owner,expectedRevision:inventory.revision,...pickerToken?{pickerToken}:{}},'POST',{context});if(this.ticket!==generation(r))return;
  if(result.account?.id!==owner||!result.csrfToken||typeof result.sessionContext!=='string')throw Error('The selected account could not be verified.');installAPIContext(r.api,result);r.browser.announceAccounts?.();
  publish(r,ctx,{session:{account:result.account,sessionContext:result.sessionContext},accountPicker:false,addingAccount:false,busy:false,notice:warning,auth:'login',view:'inbox'});
- // A pending contact handoff continues with the newly chosen account.
- if(state(r).handoff?.choosing)ctx.engineFeed.dispatchEvent(new Event('contact-handoff-ready'));
  const data=await r.api.get('/api/account');if(this.ticket!==generation(r)||state(r).session?.account?.id!==owner)return;publish(r,ctx,{data});
  }}
 // Signing out another saved account leaves this tab's account and view intact.

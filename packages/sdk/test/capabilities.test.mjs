@@ -85,7 +85,7 @@ test('clean break: the former features and profiles containers are ignored entir
   const legacy={...full,extensions:undefined,features:{'authorization-entry.v1':{endpoint:`${issuer}/entries`,intents:['login','select-account']},'fedcm.v1':{config_url:`${issuer}/fedcm.json`},'client-id-metadata.v1':{},'intents.v1':{intents:['send-message'],login_endpoint:`${issuer}/console`}},profiles:{'https://3sln.me/artefacts/profiles/components/v1':{embed_origin:'https://embed.idp.example',protocol:[1],parts:{'sign-in':{versions:[1]}},credential_binding:['key-binding.v1']}}};
   const declaration=readDeclaration(legacy,issuer),c=computeCapabilities(declaration,{identityCredential:true});
   assert.deepEqual(declaration.extensions,{});assert.equal(declaration.authorizationEntry,null);assert.equal(declaration.components,null);
-  assert.deepEqual({entry:c.entry,fedcm:c.fedcm,clientIdMetadata:c.clientIdMetadata,profile:c.profile,intentLinks:c.intentLinks},{entry:false,fedcm:false,clientIdMetadata:false,profile:false,intentLinks:[]});
+  assert.deepEqual({entry:c.entry,fedcm:c.fedcm,clientIdMetadata:c.clientIdMetadata,profile:c.profile,intentLinks:c.intentLinks},{entry:false,fedcm:false,clientIdMetadata:false,profile:false,intentLinks:undefined});
   // Alongside `extensions`, legacy containers neither add nor remove anything.
   assert.deepEqual(readDeclaration({...full,features:{},profiles:{}},issuer).extensions,readDeclaration(full,issuer).extensions);
 });
